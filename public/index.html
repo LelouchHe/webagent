@@ -1,0 +1,435 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agent Web</title>
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<style>
+  :root {
+    --bg: #1a1a2e;
+    --surface: #16213e;
+    --border: #2a2a4a;
+    --text: #e0e0e0;
+    --text-dim: #8888aa;
+    --accent: #4fc3f7;
+    --green: #66bb6a;
+    --yellow: #ffa726;
+    --red: #ef5350;
+    --blue: #42a5f5;
+    --radius: 8px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace;
+    background: var(--bg);
+    color: var(--text);
+    height: 100dvh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* Header */
+  #header {
+    padding: 8px 16px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    font-size: 14px;
+  }
+  #header .logo { font-weight: bold; color: var(--accent); }
+  #header .status { color: var(--text-dim); margin-left: auto; }
+  #header .status.connected { color: var(--green); }
+
+  /* Messages */
+  #messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .msg {
+    max-width: 90%;
+    padding: 10px 14px;
+    border-radius: var(--radius);
+    line-height: 1.5;
+    font-size: 14px;
+    overflow-wrap: break-word;
+  }
+  .msg.user {
+    align-self: flex-end;
+    background: #1e3a5f;
+    border: 1px solid #2a5080;
+  }
+  .msg.assistant {
+    align-self: flex-start;
+    background: var(--surface);
+    border: 1px solid var(--border);
+  }
+  .msg.assistant pre {
+    background: #0d1117;
+    padding: 10px;
+    border-radius: 4px;
+    overflow-x: auto;
+    margin: 8px 0;
+    font-size: 13px;
+  }
+  .msg.assistant code {
+    font-family: "SF Mono", "Fira Code", monospace;
+    font-size: 13px;
+  }
+  .msg.assistant p { margin: 4px 0; }
+  .msg.assistant ul, .msg.assistant ol { padding-left: 20px; margin: 4px 0; }
+
+  /* Thinking */
+  .thinking {
+    color: var(--text-dim);
+    font-style: italic;
+    font-size: 13px;
+    padding: 6px 14px;
+    border-left: 2px solid var(--border);
+  }
+  .thinking summary { cursor: pointer; }
+
+  /* Tool calls */
+  .tool-call {
+    font-size: 13px;
+    padding: 4px 14px;
+    color: var(--text-dim);
+  }
+  .tool-call .icon { margin-right: 4px; }
+  .tool-call.completed { color: var(--green); }
+  .tool-call.failed { color: var(--red); }
+
+  /* Plan */
+  .plan {
+    font-size: 13px;
+    padding: 8px 14px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+  }
+  .plan-title { color: var(--blue); font-weight: bold; margin-bottom: 4px; }
+  .plan-entry { padding: 2px 0; }
+
+  /* Permission dialog */
+  .permission {
+    background: #2a1a00;
+    border: 1px solid var(--yellow);
+    border-radius: var(--radius);
+    padding: 12px 14px;
+    font-size: 14px;
+  }
+  .permission .title { color: var(--yellow); font-weight: bold; margin-bottom: 8px; }
+  .permission button {
+    margin: 4px 4px 4px 0;
+    padding: 6px 14px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--surface);
+    color: var(--text);
+    cursor: pointer;
+    font-size: 13px;
+  }
+  .permission button:hover { background: #2a2a4a; }
+  .permission button.allow { border-color: var(--green); }
+  .permission button.deny { border-color: var(--red); }
+
+  /* Input */
+  #input-area {
+    padding: 12px 16px;
+    background: var(--surface);
+    border-top: 1px solid var(--border);
+    display: flex;
+    gap: 8px;
+  }
+  #input {
+    flex: 1;
+    background: var(--bg);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 10px 14px;
+    font-size: 14px;
+    font-family: inherit;
+    resize: none;
+    min-height: 42px;
+    max-height: 200px;
+  }
+  #input:focus { outline: none; border-color: var(--accent); }
+  #send-btn {
+    background: var(--accent);
+    color: #000;
+    border: none;
+    border-radius: var(--radius);
+    padding: 0 20px;
+    font-size: 14px;
+    font-weight: bold;
+    cursor: pointer;
+  }
+  #send-btn:disabled { opacity: 0.4; cursor: default; }
+</style>
+</head>
+<body>
+
+<div id="header">
+  <span class="logo">Agent Web</span>
+  <span id="status" class="status">disconnected</span>
+</div>
+
+<div id="messages"></div>
+
+<div id="input-area">
+  <textarea id="input" rows="1" placeholder="Send a message..." autofocus></textarea>
+  <button id="send-btn" disabled>Send</button>
+</div>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const messagesEl = $('#messages');
+const inputEl = $('#input');
+const sendBtn = $('#send-btn');
+const statusEl = $('#status');
+
+let ws = null;
+let sessionId = null;
+let currentAssistantEl = null;
+let currentAssistantText = '';
+let currentThinkingEl = null;
+let currentThinkingText = '';
+let busy = false;
+
+// --- Markdown ---
+marked.setOptions({ breaks: true, gfm: true });
+
+function renderMd(text) {
+  return marked.parse(text);
+}
+
+// --- WebSocket ---
+
+function connect() {
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  ws = new WebSocket(`${proto}//${location.host}`);
+
+  ws.onopen = () => {
+    statusEl.textContent = 'connected';
+    statusEl.className = 'status connected';
+    // Auto-create session with server cwd
+    ws.send(JSON.stringify({ type: 'new_session' }));
+  };
+
+  ws.onclose = () => {
+    statusEl.textContent = 'disconnected';
+    statusEl.className = 'status';
+    sendBtn.disabled = true;
+    sessionId = null;
+    setTimeout(connect, 3000);
+  };
+
+  ws.onerror = () => ws.close();
+
+  ws.onmessage = (e) => {
+    const msg = JSON.parse(e.data);
+    handleEvent(msg);
+  };
+}
+
+function handleEvent(msg) {
+  switch (msg.type) {
+    case 'connected':
+      break;
+
+    case 'session_created':
+      sessionId = msg.sessionId;
+      sendBtn.disabled = false;
+      addSystem(`Session created: ${msg.sessionId.slice(0, 8)}...`);
+      break;
+
+    case 'message_chunk':
+      if (!currentAssistantEl) {
+        currentAssistantEl = addMessage('assistant', '');
+        currentAssistantText = '';
+        finishThinking();
+      }
+      currentAssistantText += msg.text;
+      currentAssistantEl.innerHTML = renderMd(currentAssistantText);
+      scrollToBottom();
+      break;
+
+    case 'thought_chunk':
+      if (!currentThinkingEl) {
+        currentThinkingEl = document.createElement('details');
+        currentThinkingEl.className = 'thinking';
+        currentThinkingEl.innerHTML = '<summary>💭 Thinking...</summary><div class="thinking-content"></div>';
+        currentThinkingText = '';
+        messagesEl.appendChild(currentThinkingEl);
+      }
+      currentThinkingText += msg.text;
+      currentThinkingEl.querySelector('.thinking-content').textContent = currentThinkingText;
+      scrollToBottom();
+      break;
+
+    case 'tool_call': {
+      finishThinking();
+      finishAssistant();
+      const icons = { read: '📖', edit: '✏️', execute: '⚡', search: '🔍', delete: '🗑️' };
+      const icon = icons[msg.kind] || '🔧';
+      const el = document.createElement('div');
+      el.className = 'tool-call';
+      el.id = `tc-${msg.id}`;
+      el.innerHTML = `<span class="icon">${icon}</span> ${escHtml(msg.title)}`;
+      messagesEl.appendChild(el);
+      scrollToBottom();
+      break;
+    }
+
+    case 'tool_call_update': {
+      const el = document.getElementById(`tc-${msg.id}`);
+      if (el) {
+        const statusIcon = msg.status === 'completed' ? '✓' : msg.status === 'failed' ? '✗' : '…';
+        el.className = `tool-call ${msg.status}`;
+        // Prepend status icon
+        const iconSpan = el.querySelector('.icon');
+        if (iconSpan) iconSpan.textContent = statusIcon;
+      }
+      break;
+    }
+
+    case 'plan': {
+      finishThinking();
+      finishAssistant();
+      const el = document.createElement('div');
+      el.className = 'plan';
+      el.innerHTML = '<div class="plan-title">📋 Plan</div>' +
+        msg.entries.map(e => {
+          const s = { pending: '○', in_progress: '◉', completed: '●' }[e.status] || '?';
+          return `<div class="plan-entry">${s} ${escHtml(e.content)}</div>`;
+        }).join('');
+      messagesEl.appendChild(el);
+      scrollToBottom();
+      break;
+    }
+
+    case 'permission_request': {
+      finishThinking();
+      const el = document.createElement('div');
+      el.className = 'permission';
+      el.innerHTML = `<div class="title">🔐 ${escHtml(msg.title)}</div>`;
+      msg.options.forEach(opt => {
+        const btn = document.createElement('button');
+        const isAllow = (opt.kind || '').includes('allow');
+        btn.className = isAllow ? 'allow' : 'deny';
+        btn.textContent = opt.name;
+        btn.onclick = () => {
+          const isDeny = (opt.kind || '').includes('reject') || (opt.kind || '').includes('deny');
+          ws.send(JSON.stringify({
+            type: 'permission_response',
+            requestId: msg.requestId,
+            optionId: opt.optionId,
+            denied: isDeny,
+          }));
+          el.innerHTML = `<div class="title" style="opacity:0.5">🔐 ${escHtml(msg.title)} — ${escHtml(opt.name)}</div>`;
+        };
+        el.appendChild(btn);
+      });
+      messagesEl.appendChild(el);
+      scrollToBottom();
+      break;
+    }
+
+    case 'prompt_done':
+      finishThinking();
+      finishAssistant();
+      busy = false;
+      sendBtn.disabled = false;
+      inputEl.focus();
+      break;
+
+    case 'error':
+      addSystem(`❌ ${msg.message}`);
+      busy = false;
+      sendBtn.disabled = false;
+      break;
+  }
+}
+
+// --- Helpers ---
+
+function addMessage(role, text) {
+  const el = document.createElement('div');
+  el.className = `msg ${role}`;
+  el.innerHTML = role === 'user' ? escHtml(text) : renderMd(text);
+  messagesEl.appendChild(el);
+  scrollToBottom();
+  return el;
+}
+
+function addSystem(text) {
+  const el = document.createElement('div');
+  el.className = 'tool-call';
+  el.textContent = text;
+  messagesEl.appendChild(el);
+  scrollToBottom();
+}
+
+function finishAssistant() {
+  currentAssistantEl = null;
+  currentAssistantText = '';
+}
+
+function finishThinking() {
+  if (currentThinkingEl) {
+    currentThinkingEl.querySelector('summary').textContent = '💭 Thought';
+    currentThinkingEl = null;
+    currentThinkingText = '';
+  }
+}
+
+function scrollToBottom() {
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+
+function escHtml(s) {
+  const d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+// --- Input ---
+
+function sendMessage() {
+  const text = inputEl.value.trim();
+  if (!text || !sessionId || busy) return;
+
+  addMessage('user', text);
+  ws.send(JSON.stringify({ type: 'prompt', sessionId, text }));
+  inputEl.value = '';
+  inputEl.style.height = 'auto';
+  busy = true;
+  sendBtn.disabled = true;
+}
+
+sendBtn.onclick = sendMessage;
+inputEl.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    sendMessage();
+  }
+});
+
+// Auto-resize textarea
+inputEl.addEventListener('input', () => {
+  inputEl.style.height = 'auto';
+  inputEl.style.height = Math.min(inputEl.scrollHeight, 200) + 'px';
+});
+
+// --- Boot ---
+connect();
+</script>
+</body>
+</html>
