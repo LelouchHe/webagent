@@ -12,6 +12,17 @@ const DATA_DIR = process.env.DATA_DIR ?? "data";
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const PUBLIC_DIR = join(__dirname, "..", "public");
 
+/** Extract a human-readable message from any thrown value. */
+function errorMessage(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  if (typeof err === "string") return err;
+  try {
+    return JSON.stringify(err);
+  } catch {
+    return String(err);
+  }
+}
+
 const MIME: Record<string, string> = {
   ".html": "text/html",
   ".js": "application/javascript",
@@ -324,8 +335,8 @@ wss.on("connection", (ws) => {
               client.send(userEvent);
             }
           }
-          bridge.prompt(msg.sessionId, msg.text, images).catch((err: Error) => {
-            send(ws, { type: "error", message: err.message });
+          bridge.prompt(msg.sessionId, msg.text, images).catch((err: unknown) => {
+            send(ws, { type: "error", message: errorMessage(err) });
           });
           break;
         }
@@ -360,8 +371,7 @@ wss.on("connection", (ws) => {
             await bridge.setModel(msg.sessionId, msg.modelId);
             send(ws, { type: "model_set", modelId: msg.modelId } as any);
           } catch (err: unknown) {
-            const message = err instanceof Error ? err.message : String(err);
-            send(ws, { type: "error", message: `Failed to set model: ${message}` });
+            send(ws, { type: "error", message: `Failed to set model: ${errorMessage(err)}` });
           }
           break;
         }
@@ -370,8 +380,7 @@ wss.on("connection", (ws) => {
           send(ws, { type: "error", message: `Unknown message type: ${msg.type}` });
       }
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err);
-      send(ws, { type: "error", message });
+      send(ws, { type: "error", message: errorMessage(err) });
     }
   });
 

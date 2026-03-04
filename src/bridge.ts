@@ -120,7 +120,7 @@ export class CopilotBridge extends EventEmitter {
         stopReason: result.stopReason ?? "end_turn",
       } satisfies AgentEvent);
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = err instanceof Error ? err.message : (typeof err === "string" ? err : JSON.stringify(err));
       if (/cancel/i.test(message)) return; // Expected on cancel, not an error
       this.emit("event", { type: "error", message } satisfies AgentEvent);
     }
