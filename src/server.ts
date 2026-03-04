@@ -1,5 +1,5 @@
 import { createServer } from "node:http";
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { join, extname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer, WebSocket } from "ws";
@@ -18,6 +18,11 @@ const MIME: Record<string, string> = {
   ".css": "text/css",
   ".json": "application/json",
   ".svg": "image/svg+xml",
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
 };
 
 // --- Store ---
@@ -57,8 +62,50 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    // POST /api/images/:sessionId — upload image, returns { path, url }
+    const imgMatch = url.match(/^\/api\/images\/([^/]+)$/);
+    if (imgMatch && req.method === "POST") {
+      const sessionId = decodeURIComponent(imgMatch[1]);
+      const chunks: Buffer[] = [];
+      for await (const chunk of req) chunks.push(chunk as Buffer);
+      const body = JSON.parse(Buffer.concat(chunks).toString());
+      const { data, mimeType } = body as { data: string; mimeType: string };
+      const ext = mimeType.split("/")[1]?.replace("jpeg", "jpg") ?? "png";
+      const seq = Date.now();
+      const relPath = `images/${sessionId}/${seq}.${ext}`;
+      const absPath = join(DATA_DIR, relPath);
+      await mkdir(join(DATA_DIR, "images", sessionId), { recursive: true });
+      await writeFile(absPath, Buffer.from(data, "base64"));
+      const imgUrl = `/data/${relPath}`;
+      res.end(JSON.stringify({ path: relPath, url: imgUrl }));
+      return;
+    }
+
     res.writeHead(404);
     res.end(JSON.stringify({ error: "Not found" }));
+    return;
+  }
+
+  // Serve uploaded images: /data/images/...
+  if (url.startsWith("/data/images/")) {
+    const filePath = join(DATA_DIR, url.slice(6)); // strip "/data/"
+    if (!filePath.startsWith(join(DATA_DIR, "images"))) {
+      res.writeHead(403);
+      res.end("Forbidden");
+      return;
+    }
+    try {
+      const data = await readFile(filePath);
+      const ext = extname(filePath);
+      res.writeHead(200, {
+        "Content-Type": MIME[ext] ?? "application/octet-stream",
+        "Cache-Control": "public, max-age=31536000, immutable",
+      });
+      res.end(data);
+    } catch {
+      res.writeHead(404);
+      res.end("Not found");
+    }
     return;
   }
 
@@ -238,8 +285,12 @@ wss.on("connection", (ws) => {
             send(ws, { type: "error", message: "Missing sessionId or text" });
             return;
           }
-          store.saveEvent(msg.sessionId, "user_message", { text: msg.text });
-          bridge.prompt(msg.sessionId, msg.text).catch((err: Error) => {
+          const images = msg.images as Array<{ data: string; mimeType: string; path: string }> | undefined;
+          store.saveEvent(msg.sessionId, "user_message", {
+            text: msg.text,
+            ...(images && { images: images.map((i: { path: string; mimeType: string }) => ({ path: i.path, mimeType: i.mimeType })) }),
+          });
+          bridge.prompt(msg.sessionId, msg.text, images).catch((err: Error) => {
             send(ws, { type: "error", message: err.message });
           });
           break;

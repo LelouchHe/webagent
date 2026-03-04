@@ -199,6 +199,59 @@
   }
   #send-btn:hover { color: var(--text); border-color: var(--text-dim); }
   #send-btn:disabled { opacity: 0.3; cursor: default; }
+
+  /* Image attach */
+  #attach-btn {
+    background: transparent;
+    color: var(--text-dim);
+    border: none;
+    padding: 6px 4px;
+    font-size: 16px;
+    cursor: pointer;
+    line-height: 1;
+  }
+  #attach-btn:hover { color: var(--text); }
+  #attach-preview {
+    display: none;
+    padding: 4px 16px;
+    background: var(--bg);
+    border-top: 1px solid var(--border);
+  }
+  #attach-preview.active { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .attach-thumb {
+    position: relative;
+    display: inline-block;
+  }
+  .attach-thumb img {
+    max-height: 60px;
+    max-width: 120px;
+    border-radius: 4px;
+    border: 1px solid var(--border);
+  }
+  .attach-thumb .remove {
+    position: absolute;
+    top: -4px;
+    right: -4px;
+    background: var(--red);
+    color: #fff;
+    border: none;
+    border-radius: 50%;
+    width: 16px;
+    height: 16px;
+    font-size: 10px;
+    line-height: 16px;
+    text-align: center;
+    cursor: pointer;
+    padding: 0;
+  }
+  .msg.user img.user-image {
+    max-width: 200px;
+    max-height: 150px;
+    border-radius: 4px;
+    border: 1px solid var(--border);
+    display: block;
+    margin-top: 4px;
+  }
 </style>
 </head>
 <body>
@@ -211,10 +264,13 @@
 
 <div id="messages"></div>
 
+<div id="attach-preview"></div>
 <div id="input-area">
   <span id="input-prompt">❯ </span>
+  <button id="attach-btn" title="Attach image">⊕</button>
   <textarea id="input" rows="1" placeholder="Type a message or /help" autofocus></textarea>
   <button id="send-btn" disabled>↵</button>
+  <input type="file" id="file-input" accept="image/*" multiple hidden>
 </div>
 
 <script>
@@ -224,6 +280,9 @@ const inputEl = $('#input');
 const sendBtn = $('#send-btn');
 const statusEl = $('#status');
 const sessionInfoEl = $('#session-info');
+const attachBtn = $('#attach-btn');
+const fileInput = $('#file-input');
+const attachPreview = $('#attach-preview');
 
 let ws = null;
 let sessionId = null;
@@ -235,6 +294,7 @@ let currentAssistantText = '';
 let currentThinkingEl = null;
 let currentThinkingText = '';
 let busy = false;
+let pendingImages = []; // { data: base64, mimeType, previewUrl }
 
 // --- Markdown ---
 marked.setOptions({ breaks: true, gfm: true });
@@ -277,9 +337,18 @@ async function loadHistory(sid) {
 
 function replayEvent(type, data) {
   switch (type) {
-    case 'user_message':
-      addMessage('user', data.text);
+    case 'user_message': {
+      const el = addMessage('user', data.text);
+      if (data.images) {
+        for (const img of data.images) {
+          const imgEl = document.createElement('img');
+          imgEl.className = 'user-image';
+          imgEl.src = `/data/${img.path}`;
+          el.appendChild(imgEl);
+        }
+      }
       break;
+    }
     case 'assistant_message':
       addMessage('assistant', data.text);
       break;
@@ -691,16 +760,72 @@ async function handleSlashCommand(text) {
   }
 }
 
+// --- Image attach ---
+
+function readFileAsBase64(file) {
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const base64 = reader.result.split(',')[1];
+      resolve({ data: base64, mimeType: file.type, previewUrl: reader.result });
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+function addPendingImage(img) {
+  pendingImages.push(img);
+  renderAttachPreview();
+}
+
+function renderAttachPreview() {
+  attachPreview.innerHTML = '';
+  if (pendingImages.length === 0) {
+    attachPreview.classList.remove('active');
+    return;
+  }
+  attachPreview.classList.add('active');
+  pendingImages.forEach((img, i) => {
+    const thumb = document.createElement('span');
+    thumb.className = 'attach-thumb';
+    thumb.innerHTML = `<img src="${img.previewUrl}"><button class="remove">×</button>`;
+    thumb.querySelector('.remove').onclick = () => {
+      pendingImages.splice(i, 1);
+      renderAttachPreview();
+    };
+    attachPreview.appendChild(thumb);
+  });
+}
+
+attachBtn.onclick = () => fileInput.click();
+fileInput.onchange = async () => {
+  for (const f of fileInput.files) {
+    if (f.type.startsWith('image/')) addPendingImage(await readFileAsBase64(f));
+  }
+  fileInput.value = '';
+};
+
+// Paste images
+inputEl.addEventListener('paste', async (e) => {
+  for (const item of e.clipboardData.items) {
+    if (item.type.startsWith('image/')) {
+      e.preventDefault();
+      addPendingImage(await readFileAsBase64(item.getAsFile()));
+    }
+  }
+});
+
 // --- Input ---
 
 function sendMessage() {
   const text = inputEl.value.trim();
-  if (!text || busy) return;
+  if (!text && pendingImages.length === 0) return;
+  if (busy) return;
 
   inputEl.value = '';
   inputEl.style.height = 'auto';
 
-  if (text.startsWith('/')) {
+  if (text.startsWith('/') && pendingImages.length === 0) {
     handleSlashCommand(text);
     return;
   }
@@ -709,8 +834,34 @@ function sendMessage() {
     addSystem('warn: Session not ready yet, please wait…');
     return;
   }
-  addMessage('user', text);
-  ws.send(JSON.stringify({ type: 'prompt', sessionId, text }));
+
+  // Show user message with image thumbnails
+  const msgEl = addMessage('user', text || '(image)');
+  for (const img of pendingImages) {
+    const imgEl = document.createElement('img');
+    imgEl.className = 'user-image';
+    imgEl.src = img.previewUrl;
+    msgEl.appendChild(imgEl);
+  }
+
+  // Upload images to server, then send prompt
+  const images = pendingImages.slice();
+  pendingImages = [];
+  renderAttachPreview();
+
+  if (images.length > 0) {
+    Promise.all(images.map(img =>
+      fetch(`/api/images/${sessionId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ data: img.data, mimeType: img.mimeType }),
+      }).then(r => r.json()).then(j => ({ data: img.data, mimeType: img.mimeType, path: j.path }))
+    )).then(uploaded => {
+      ws.send(JSON.stringify({ type: 'prompt', sessionId, text: text || 'What is in this image?', images: uploaded }));
+    });
+  } else {
+    ws.send(JSON.stringify({ type: 'prompt', sessionId, text }));
+  }
   busy = true;
   sendBtn.disabled = true;
 }

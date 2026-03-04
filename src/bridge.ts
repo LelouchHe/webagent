@@ -93,12 +93,26 @@ export class CopilotBridge extends EventEmitter {
     await this.conn.unstable_setSessionModel({ sessionId, modelId });
   }
 
-  async prompt(sessionId: string, text: string): Promise<void> {
+  async prompt(
+    sessionId: string,
+    text: string,
+    images?: Array<{ data: string; mimeType: string }>,
+  ): Promise<void> {
     if (!this.conn) throw new Error("Not connected");
     try {
+      const promptParts: Array<
+        | { type: "text"; text: string }
+        | { type: "image"; data: string; mimeType: string }
+      > = [];
+      if (images) {
+        for (const img of images) {
+          promptParts.push({ type: "image", data: img.data, mimeType: img.mimeType });
+        }
+      }
+      promptParts.push({ type: "text", text });
       const result = await this.conn.prompt({
         sessionId,
-        prompt: [{ type: "text", text }],
+        prompt: promptParts,
       });
       this.emit("event", {
         type: "prompt_done",
