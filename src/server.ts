@@ -137,6 +137,23 @@ const wss = new WebSocketServer({ server });
 // One bridge per server (single copilot process, multiple sessions)
 let bridge: CopilotBridge | null = null;
 const liveSessions = new Set<string>(); // Sessions alive in current bridge
+const DEFAULT_CWD = process.env.DEFAULT_CWD ?? process.cwd();
+
+// Pre-warmed session: created at startup so first client connects instantly
+let prewarmedSession: { id: string; cwd: string } | null = null;
+
+async function prewarmSession(): Promise<void> {
+  if (!bridge) return;
+  try {
+    const id = await bridge.newSession(DEFAULT_CWD);
+    liveSessions.add(id);
+    store.createSession(id, DEFAULT_CWD);
+    prewarmedSession = { id, cwd: DEFAULT_CWD };
+    console.log(`[bridge] prewarmed session: ${id.slice(0, 8)}…`);
+  } catch (err) {
+    console.error(`[bridge] prewarm failed:`, err);
+  }
+}
 
 // Track current assistant message per session for aggregation
 const assistantBuffers = new Map<string, string>();
@@ -240,10 +257,19 @@ wss.on("connection", (ws) => {
             send(ws, { type: "error", message: "Agent not ready yet" });
             return;
           }
-          const cwd = msg.cwd ?? process.cwd();
-          const sessionId = await bridge.newSession(cwd);
-          liveSessions.add(sessionId);
-          store.createSession(sessionId, cwd);
+          const cwd = msg.cwd ?? DEFAULT_CWD;
+          let sessionId: string;
+          if (prewarmedSession && (!msg.cwd || msg.cwd === DEFAULT_CWD)) {
+            // Use prewarmed session instantly
+            sessionId = prewarmedSession.id;
+            prewarmedSession = null;
+            // Prewarm next one in background
+            prewarmSession();
+          } else {
+            sessionId = await bridge.newSession(cwd);
+            liveSessions.add(sessionId);
+            store.createSession(sessionId, cwd);
+          }
           break;
         }
 
@@ -375,6 +401,7 @@ server.listen(PORT, "0.0.0.0", async () => {
   try {
     await initBridge();
     console.log(`[bridge] ready`);
+    await prewarmSession();
   } catch (err) {
     console.error(`[bridge] failed to start:`, err);
   }
