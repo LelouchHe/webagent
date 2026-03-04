@@ -341,7 +341,9 @@ wss.on("connection", (ws) => {
         }
 
         case "cancel": {
-          await bridge?.cancel();
+          if (msg.sessionId) {
+            await bridge?.cancel(msg.sessionId);
+          }
           break;
         }
 

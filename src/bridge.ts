@@ -126,8 +126,8 @@ export class CopilotBridge extends EventEmitter {
     }
   }
 
-  async cancel(): Promise<void> {
-    await this.conn?.cancel();
+  async cancel(sessionId: string): Promise<void> {
+    await this.conn?.cancel({ sessionId });
   }
 
   resolvePermission(requestId: string, optionId: string): void {

@@ -22,6 +22,8 @@
     --radius: 4px;
     --user-bg: #1e3a5f;
     --code-bg: #161b22;
+    --permission-bg: #1c1305;
+    --permission-title: #d29922;
   }
   [data-theme="light"] {
     --bg: #ffffff;
@@ -36,6 +38,8 @@
     --blue: #0969da;
     --user-bg: #ddf4ff;
     --code-bg: #f6f8fa;
+    --permission-bg: #fff4cc;
+    --permission-title: #7a4f00;
   }
   @media (prefers-color-scheme: light) {
     [data-theme="auto"] {
@@ -51,6 +55,8 @@
       --blue: #0969da;
       --user-bg: #ddf4ff;
       --code-bg: #f6f8fa;
+      --permission-bg: #fff4cc;
+      --permission-title: #7a4f00;
     }
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -143,6 +149,7 @@
     border-left: 2px solid var(--border);
   }
   .thinking summary { cursor: pointer; }
+  .thinking-content { cursor: pointer; }
   .thinking summary.active { animation: pulse 1.5s ease-in-out infinite; }
 
   /* Waiting indicator (after user sends, before first response) */
@@ -155,27 +162,50 @@
   }
   #waiting .cursor { animation: blink 1s step-end infinite; }
 
+  /* System messages */
+  .system-msg {
+    font-size: 15px;
+    padding: 2px 14px;
+    color: var(--text-dim);
+  }
+
   /* Tool calls */
   .tool-call {
     font-size: 15px;
     padding: 2px 14px;
     color: var(--text-dim);
+    animation: pulse 1.5s ease-in-out infinite;
   }
   .tool-call .icon { margin-right: 4px; }
-  .tool-call.completed { color: var(--green); }
-  .tool-call.failed { color: var(--red); }
+  .tool-call.completed { color: var(--green); animation: none; }
+  .tool-call.failed { color: var(--red); animation: none; }
+  .tool-call { cursor: pointer; }
+  .tool-call .tc-detail {
+    display: block;
+    color: var(--text-dim);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 100%;
+  }
+  .tool-call .tc-detail.expanded {
+    white-space: pre-wrap;
+    overflow: visible;
+    text-overflow: unset;
+  }
   .tool-call details { margin-top: 2px; }
   .tool-call details summary { cursor: pointer; color: var(--text-dim); }
   .tool-call .tc-content {
     margin: 4px 0 4px 16px;
     padding: 6px 10px;
-    background: #0d1117;
+    background: var(--code-bg);
     border-radius: var(--radius);
     font-size: 14px;
     white-space: pre-wrap;
     max-height: 200px;
     overflow-y: auto;
     color: var(--text);
+    cursor: pointer;
   }
 
   /* Plan */
@@ -190,13 +220,13 @@
 
   /* Permission dialog */
   .permission {
-    background: #1c1305;
+    background: var(--permission-bg);
     border-left: 3px solid var(--yellow);
     border-radius: 0 var(--radius) var(--radius) 0;
     padding: 8px 14px;
     font-size: 15px;
   }
-  .permission .title { color: var(--yellow); font-weight: bold; margin-bottom: 6px; }
+  .permission .title { color: var(--permission-title); font-weight: bold; margin-bottom: 6px; }
   .permission button {
     margin: 2px 4px 2px 0;
     padding: 4px 10px;
@@ -244,15 +274,18 @@
   #send-btn {
     background: transparent;
     color: var(--text-dim);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 4px 10px;
-    font-size: 15px;
+    border: none;
+    padding: 4px 8px;
+    font-size: 14px;
     font-family: inherit;
     cursor: pointer;
+    display: none;
   }
-  #send-btn:hover { color: var(--text); border-color: var(--text-dim); }
-  #send-btn:disabled { opacity: 0.3; cursor: default; }
+  #send-btn.visible { display: inline-block; }
+  #send-btn:hover { color: var(--text); }
+  #send-btn.cancel { color: var(--red); font-weight: bold; }
+  #send-btn.cancel:hover { color: var(--text); }
+  #input-prompt.busy { color: var(--yellow); }
 
   /* Image attach */
   #attach-btn {
@@ -325,8 +358,8 @@
 <div id="input-area">
   <span id="input-prompt">❯ </span>
   <textarea id="input" rows="1" placeholder="Message or /help" autofocus></textarea>
-  <button id="attach-btn" title="Attach image">⊕</button>
-  <button id="send-btn" disabled>↵</button>
+  <button id="attach-btn" title="Attach image (^F)">^F</button>
+  <button id="send-btn" title="Cancel (^C)">^C</button>
   <input type="file" id="file-input" accept="image/*" multiple hidden>
 </div>
 
@@ -335,12 +368,37 @@ const $ = (s) => document.querySelector(s);
 const messagesEl = $('#messages');
 const inputEl = $('#input');
 const sendBtn = $('#send-btn');
+const promptEl = $('#input-prompt');
 const statusEl = $('#status');
 const sessionInfoEl = $('#session-info');
+
+function setBusy(on) {
+  busy = on;
+  if (on) {
+    sendBtn.classList.add('cancel', 'visible');
+    promptEl.classList.add('busy');
+  } else {
+    sendBtn.classList.remove('cancel', 'visible');
+    promptEl.classList.remove('busy');
+  }
+}
 const attachBtn = $('#attach-btn');
 const fileInput = $('#file-input');
 const attachPreview = $('#attach-preview');
 const themeBtn = $('#theme-btn');
+
+// --- Click-to-collapse for expanded details (thinking, tool output) ---
+messagesEl.addEventListener('click', (e) => {
+  const el = e.target;
+  // Clicking thinking content or tool output content collapses the parent <details>
+  if (el.classList.contains('thinking-content') || el.classList.contains('tc-content')) {
+    const details = el.closest('details');
+    if (details && details.open) {
+      details.open = false;
+      e.stopPropagation();
+    }
+  }
+});
 
 // --- Theme ---
 const THEME_ICONS = { auto: '◑', light: '☀', dark: '☾' };
@@ -442,11 +500,13 @@ function replayEvent(type, data) {
       let label = `<span class="icon">${icon}</span> ${escHtml(data.title)}`;
       const ri = data.rawInput;
       if (ri && ri.command) {
-        label += `\n  <span style="color:var(--text-dim)">$ ${escHtml(ri.command)}</span>`;
+        label += `<span class="tc-detail">$ ${escHtml(ri.command)}</span>`;
       } else if (ri && ri.path) {
-        label += `\n  <span style="color:var(--text-dim)">${escHtml(ri.path)}</span>`;
+        label += `<span class="tc-detail">${escHtml(ri.path)}</span>`;
       }
       el.innerHTML = label;
+      const detail = el.querySelector('.tc-detail');
+      if (detail) el.onclick = () => detail.classList.toggle('expanded');
       messagesEl.appendChild(el);
       break;
     }
@@ -509,7 +569,9 @@ function connect() {
   ws.onclose = () => {
     statusEl.textContent = 'disconnected';
     statusEl.className = 'status';
-    sendBtn.disabled = true;
+    finishThinking();
+    finishAssistant();
+    setBusy(false);
     setTimeout(connect, 3000);
   };
 
@@ -537,7 +599,6 @@ function handleEvent(msg) {
       updateSessionInfo(sessionId);
       statusEl.textContent = 'connected';
       statusEl.className = 'status connected';
-      sendBtn.disabled = false;
       if (messagesEl.children.length === 0) {
         addSystem(`Session created: ${msg.sessionId.slice(0, 8)}…`);
       }
@@ -561,10 +622,10 @@ function handleEvent(msg) {
 
     case 'message_chunk':
       hideWaiting();
+      finishThinking();
       if (!currentAssistantEl) {
         currentAssistantEl = addMessage('assistant', '');
         currentAssistantText = '';
-        finishThinking();
       }
       currentAssistantText += msg.text;
       currentAssistantEl.innerHTML = renderMd(currentAssistantText);
@@ -595,14 +656,15 @@ function handleEvent(msg) {
       el.className = 'tool-call';
       el.id = `tc-${msg.id}`;
       let label = `<span class="icon">${icon}</span> ${escHtml(msg.title)}`;
-      // Show command for execute kind
       const ri = msg.rawInput;
       if (ri && ri.command) {
-        label += `\n  <span style="color:var(--text-dim)">$ ${escHtml(ri.command)}</span>`;
+        label += `<span class="tc-detail">$ ${escHtml(ri.command)}</span>`;
       } else if (ri && ri.path) {
-        label += `\n  <span style="color:var(--text-dim)">${escHtml(ri.path)}</span>`;
+        label += `<span class="tc-detail">${escHtml(ri.path)}</span>`;
       }
       el.innerHTML = label;
+      const detail = el.querySelector('.tc-detail');
+      if (detail) el.onclick = () => detail.classList.toggle('expanded');
       messagesEl.appendChild(el);
       scrollToBottom();
       break;
@@ -682,8 +744,7 @@ function handleEvent(msg) {
       hideWaiting();
       finishThinking();
       finishAssistant();
-      busy = false;
-      sendBtn.disabled = false;
+      setBusy(false);
       inputEl.focus();
       break;
 
@@ -700,9 +761,10 @@ function handleEvent(msg) {
 
     case 'error':
       hideWaiting();
+      finishThinking();
+      finishAssistant();
       addSystem(`err: ${msg.message}`);
-      busy = false;
-      sendBtn.disabled = false;
+      setBusy(false);
       break;
   }
 }
@@ -720,7 +782,7 @@ function addMessage(role, text) {
 
 function addSystem(text) {
   const el = document.createElement('div');
-  el.className = 'tool-call';
+  el.className = 'system-msg';
   el.textContent = text;
   messagesEl.appendChild(el);
   scrollToBottom();
@@ -733,8 +795,10 @@ function finishAssistant() {
 
 function finishThinking() {
   if (currentThinkingEl) {
-    currentThinkingEl.querySelector('summary').textContent = '⠿ thought';
-    currentThinkingEl.querySelector('summary').classList.remove('active');
+    const sum = currentThinkingEl.querySelector('summary');
+    sum.textContent = '⠿ thought';
+    sum.classList.remove('active');
+    sum.style.animation = 'none';
     currentThinkingEl = null;
     currentThinkingText = '';
   }
@@ -826,9 +890,8 @@ async function handleSlashCommand(text) {
     }
 
     case '/cancel':
-      if (busy && ws) {
-        ws.send(JSON.stringify({ type: 'cancel' }));
-        addSystem('⏹ Cancelling…');
+      if (busy) {
+        doCancel();
       } else {
         addSystem('Nothing to cancel.');
       }
@@ -852,9 +915,19 @@ async function handleSlashCommand(text) {
         }
         return true;
       }
-      const match = availableModels.find(m =>
-        m.modelId === arg || m.modelId.includes(arg)
-      );
+      const query = arg.trim();
+      const normalize = (s) => s.toLowerCase().replace(/[\s_]+/g, '-');
+      const normalizedQuery = normalize(query);
+      let match = availableModels.find(m => normalize(m.modelId) === normalizedQuery);
+      if (!match) {
+        const matches = availableModels.filter(m => normalize(m.modelId).includes(normalizedQuery));
+        if (matches.length === 1) {
+          match = matches[0];
+        } else if (matches.length > 1) {
+          addSystem(`err: Ambiguous model "${arg}". Try /model to see available models.`);
+          return true;
+        }
+      }
       if (!match) {
         addSystem(`err: Unknown model "${arg}". Try /model to see available models.`);
         return true;
@@ -972,16 +1045,26 @@ function sendMessage() {
   } else {
     ws.send(JSON.stringify({ type: 'prompt', sessionId, text }));
   }
-  busy = true;
-  sendBtn.disabled = true;
+  setBusy(true);
   showWaiting();
 }
 
-sendBtn.onclick = sendMessage;
+function doCancel() {
+  if (busy && ws) {
+    ws.send(JSON.stringify({ type: 'cancel', sessionId: currentSession }));
+    addSystem('^C');
+  }
+}
+
+sendBtn.onclick = doCancel;
 inputEl.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault();
-    sendMessage();
+    if (busy) {
+      doCancel();
+    } else {
+      sendMessage();
+    }
   }
 });
 
