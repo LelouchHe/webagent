@@ -9,10 +9,10 @@ export type AgentEvent =
   | { type: "session_created"; sessionId: string; cwd?: string; models?: acp.ModelsInfo }
   | { type: "message_chunk"; sessionId: string; text: string }
   | { type: "thought_chunk"; sessionId: string; text: string }
-  | { type: "tool_call"; sessionId: string; id: string; title: string; kind: string }
+  | { type: "tool_call"; sessionId: string; id: string; title: string; kind: string; rawInput?: unknown }
   | { type: "tool_call_update"; sessionId: string; id: string; status: string; content?: unknown[] }
   | { type: "plan"; sessionId: string; entries: unknown[] }
-  | { type: "permission_request"; requestId: string; sessionId: string; title: string; options: acp.PermissionOption[] }
+  | { type: "permission_request"; requestId: string; sessionId: string; title: string; toolCallId?: string | null; options: acp.PermissionOption[] }
   | { type: "prompt_done"; sessionId: string; stopReason: string }
   | { type: "session_expired"; sessionId: string }
   | { type: "error"; message: string };
@@ -160,12 +160,15 @@ export class CopilotBridge extends EventEmitter {
   private handlePermission(params: acp.RequestPermissionRequest): Promise<acp.RequestPermissionResponse> {
     const requestId = `perm_${++this.permissionCounter}`;
     const title = params.toolCall?.title ?? "Permission requested";
+    const toolCallId = params.toolCall?.toolCallId ?? null;
+    console.log(`[bridge] permission: toolCallId=${toolCallId}, title=${title}`);
 
     this.emit("event", {
       type: "permission_request",
       requestId,
       sessionId: params.sessionId,
       title,
+      toolCallId,
       options: params.options,
     } satisfies AgentEvent);
 
@@ -200,16 +203,19 @@ export class CopilotBridge extends EventEmitter {
         break;
 
       case "tool_call":
+        console.log(`[bridge] tool_call:`, JSON.stringify(update).slice(0, 500));
         this.emit("event", {
           type: "tool_call",
           sessionId,
           id: update.toolCallId ?? "",
           title: update.title ?? "",
           kind: update.kind ?? "unknown",
+          rawInput: update.rawInput,
         } satisfies AgentEvent);
         break;
 
       case "tool_call_update":
+        console.log(`[bridge] tool_call_update:`, JSON.stringify(update).slice(0, 500));
         this.emit("event", {
           type: "tool_call_update",
           sessionId,

@@ -8,39 +8,40 @@
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 <style>
   :root {
-    --bg: #1a1a2e;
-    --surface: #16213e;
-    --border: #2a2a4a;
-    --text: #e0e0e0;
-    --text-dim: #8888aa;
-    --accent: #4fc3f7;
-    --green: #66bb6a;
-    --yellow: #ffa726;
-    --red: #ef5350;
-    --blue: #42a5f5;
-    --radius: 8px;
+    --bg: #0d1117;
+    --surface: #161b22;
+    --border: #30363d;
+    --text: #c9d1d9;
+    --text-dim: #6e7681;
+    --accent: #58a6ff;
+    --green: #3fb950;
+    --yellow: #d29922;
+    --red: #f85149;
+    --blue: #58a6ff;
+    --radius: 4px;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace;
+    font-family: "SF Mono", "Fira Code", "Cascadia Code", "Consolas", monospace;
     background: var(--bg);
     color: var(--text);
     height: 100dvh;
     display: flex;
     flex-direction: column;
+    font-size: 16px;
   }
 
   /* Header */
   #header {
-    padding: 8px 16px;
+    padding: 6px 16px;
     background: var(--surface);
     border-bottom: 1px solid var(--border);
     display: flex;
     align-items: center;
     gap: 12px;
-    font-size: 14px;
+    font-size: 15px;
   }
-  #header .logo { font-weight: bold; color: var(--accent); }
+  #header .logo { font-weight: bold; color: var(--green); }
   #header .status { color: var(--text-dim); margin-left: auto; }
   #header .status.connected { color: var(--green); }
   #header .status.connecting { color: var(--yellow); }
@@ -52,25 +53,28 @@
     padding: 16px;
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    gap: 4px;
   }
   .msg {
-    max-width: 90%;
-    padding: 10px 14px;
-    border-radius: var(--radius);
-    line-height: 1.5;
-    font-size: 14px;
+    padding: 8px 14px;
+    line-height: 1.6;
+    font-size: 16px;
     overflow-wrap: break-word;
   }
   .msg.user {
-    align-self: flex-end;
     background: #1e3a5f;
-    border: 1px solid #2a5080;
+    border-left: 3px solid var(--accent);
+    border-radius: 0 var(--radius) var(--radius) 0;
+    margin: 8px 0 4px 0;
+    font-weight: 500;
+  }
+  .msg.user::before {
+    content: '▶ ';
+    color: var(--accent);
+    font-weight: bold;
   }
   .msg.assistant {
-    align-self: flex-start;
-    background: var(--surface);
-    border: 1px solid var(--border);
+    padding: 4px 14px;
   }
   .msg.assistant pre {
     background: #0d1117;
@@ -78,11 +82,11 @@
     border-radius: 4px;
     overflow-x: auto;
     margin: 8px 0;
-    font-size: 13px;
+    font-size: 15px;
   }
   .msg.assistant code {
     font-family: "SF Mono", "Fira Code", monospace;
-    font-size: 13px;
+    font-size: 15px;
   }
   .msg.assistant p { margin: 4px 0; }
   .msg.assistant ul, .msg.assistant ol { padding-left: 20px; margin: 4px 0; }
@@ -91,7 +95,7 @@
   .thinking {
     color: var(--text-dim);
     font-style: italic;
-    font-size: 13px;
+    font-size: 15px;
     padding: 6px 14px;
     border-left: 2px solid var(--border);
   }
@@ -99,81 +103,102 @@
 
   /* Tool calls */
   .tool-call {
-    font-size: 13px;
-    padding: 4px 14px;
+    font-size: 15px;
+    padding: 2px 14px;
     color: var(--text-dim);
   }
   .tool-call .icon { margin-right: 4px; }
   .tool-call.completed { color: var(--green); }
   .tool-call.failed { color: var(--red); }
+  .tool-call details { margin-top: 2px; }
+  .tool-call details summary { cursor: pointer; color: var(--text-dim); }
+  .tool-call .tc-content {
+    margin: 4px 0 4px 16px;
+    padding: 6px 10px;
+    background: #0d1117;
+    border-radius: var(--radius);
+    font-size: 14px;
+    white-space: pre-wrap;
+    max-height: 200px;
+    overflow-y: auto;
+    color: var(--text);
+  }
 
   /* Plan */
   .plan {
-    font-size: 13px;
-    padding: 8px 14px;
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
+    font-size: 15px;
+    padding: 6px 14px;
+    border-left: 3px solid var(--blue);
+    border-radius: 0 var(--radius) var(--radius) 0;
   }
-  .plan-title { color: var(--blue); font-weight: bold; margin-bottom: 4px; }
-  .plan-entry { padding: 2px 0; }
+  .plan-title { color: var(--blue); font-weight: bold; margin-bottom: 2px; }
+  .plan-entry { padding: 1px 0; }
 
   /* Permission dialog */
   .permission {
-    background: #2a1a00;
-    border: 1px solid var(--yellow);
-    border-radius: var(--radius);
-    padding: 12px 14px;
-    font-size: 14px;
+    background: #1c1305;
+    border-left: 3px solid var(--yellow);
+    border-radius: 0 var(--radius) var(--radius) 0;
+    padding: 8px 14px;
+    font-size: 15px;
   }
-  .permission .title { color: var(--yellow); font-weight: bold; margin-bottom: 8px; }
+  .permission .title { color: var(--yellow); font-weight: bold; margin-bottom: 6px; }
   .permission button {
-    margin: 4px 4px 4px 0;
-    padding: 6px 14px;
+    margin: 2px 4px 2px 0;
+    padding: 4px 10px;
     border: 1px solid var(--border);
-    border-radius: 4px;
-    background: var(--surface);
+    border-radius: var(--radius);
+    background: transparent;
     color: var(--text);
     cursor: pointer;
-    font-size: 13px;
+    font-size: 14px;
+    font-family: inherit;
   }
-  .permission button:hover { background: #2a2a4a; }
+  .permission button:hover { background: var(--surface); }
   .permission button.allow { border-color: var(--green); }
   .permission button.deny { border-color: var(--red); }
 
   /* Input */
   #input-area {
-    padding: 12px 16px;
-    background: var(--surface);
+    padding: 8px 16px;
+    background: var(--bg);
     border-top: 1px solid var(--border);
     display: flex;
-    gap: 8px;
+    align-items: flex-end;
+    gap: 0;
+  }
+  #input-prompt {
+    color: var(--green);
+    font-weight: bold;
+    padding: 8px 0;
+    user-select: none;
   }
   #input {
     flex: 1;
-    background: var(--bg);
+    background: transparent;
     color: var(--text);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 10px 14px;
-    font-size: 14px;
+    border: none;
+    padding: 8px 8px;
+    font-size: 16px;
     font-family: inherit;
     resize: none;
-    min-height: 42px;
+    min-height: 32px;
     max-height: 200px;
+    line-height: 1.5;
   }
-  #input:focus { outline: none; border-color: var(--accent); }
+  #input:focus { outline: none; }
   #send-btn {
-    background: var(--accent);
-    color: #000;
-    border: none;
+    background: transparent;
+    color: var(--text-dim);
+    border: 1px solid var(--border);
     border-radius: var(--radius);
-    padding: 0 20px;
-    font-size: 14px;
-    font-weight: bold;
+    padding: 6px 12px;
+    font-size: 15px;
+    font-family: inherit;
     cursor: pointer;
   }
-  #send-btn:disabled { opacity: 0.4; cursor: default; }
+  #send-btn:hover { color: var(--text); border-color: var(--text-dim); }
+  #send-btn:disabled { opacity: 0.3; cursor: default; }
 </style>
 </head>
 <body>
@@ -187,8 +212,9 @@
 <div id="messages"></div>
 
 <div id="input-area">
-  <textarea id="input" rows="1" placeholder="Send a message..." autofocus></textarea>
-  <button id="send-btn" disabled>Send</button>
+  <span id="input-prompt">❯ </span>
+  <textarea id="input" rows="1" placeholder="Type a message or /help" autofocus></textarea>
+  <button id="send-btn" disabled>↵</button>
 </div>
 
 <script>
@@ -260,17 +286,24 @@ function replayEvent(type, data) {
     case 'thinking': {
       const el = document.createElement('details');
       el.className = 'thinking';
-      el.innerHTML = `<summary>💭 Thought</summary><div class="thinking-content">${escHtml(data.text)}</div>`;
+      el.innerHTML = `<summary>⠿ thought</summary><div class="thinking-content">${escHtml(data.text)}</div>`;
       messagesEl.appendChild(el);
       break;
     }
     case 'tool_call': {
-      const icons = { read: '📖', edit: '✏️', execute: '⚡', search: '🔍', delete: '🗑️' };
-      const icon = icons[data.kind] || '🔧';
+      const icons = { read: 'cat', edit: 'edit', execute: 'exec', search: 'find', delete: 'rm' };
+      const icon = icons[data.kind] || 'run';
       const el = document.createElement('div');
       el.className = 'tool-call';
       el.id = `tc-${data.id}`;
-      el.innerHTML = `<span class="icon">${icon}</span> ${escHtml(data.title)}`;
+      let label = `<span class="icon">${icon}</span> ${escHtml(data.title)}`;
+      const ri = data.rawInput;
+      if (ri && ri.command) {
+        label += `\n  <span style="color:var(--text-dim)">$ ${escHtml(ri.command)}</span>`;
+      } else if (ri && ri.path) {
+        label += `\n  <span style="color:var(--text-dim)">${escHtml(ri.path)}</span>`;
+      }
+      el.innerHTML = label;
       messagesEl.appendChild(el);
       break;
     }
@@ -287,7 +320,7 @@ function replayEvent(type, data) {
     case 'plan': {
       const el = document.createElement('div');
       el.className = 'plan';
-      el.innerHTML = '<div class="plan-title">📋 Plan</div>' +
+      el.innerHTML = '<div class="plan-title">― plan</div>' +
         (data.entries || []).map(e => {
           const s = { pending: '○', in_progress: '◉', completed: '●' }[e.status] || '?';
           return `<div class="plan-entry">${s} ${escHtml(e.content)}</div>`;
@@ -298,7 +331,7 @@ function replayEvent(type, data) {
     case 'permission_request': {
       const el = document.createElement('div');
       el.className = 'permission';
-      el.innerHTML = `<div class="title" style="opacity:0.5">🔐 ${escHtml(data.title)}</div>`;
+      el.innerHTML = `<div class="title" style="opacity:0.5">⚿ ${escHtml(data.title)}</div>`;
       messagesEl.appendChild(el);
       break;
     }
@@ -314,7 +347,7 @@ function connect() {
   ws = new WebSocket(`${proto}//${location.host}`);
 
   ws.onopen = async () => {
-    statusEl.textContent = 'starting agent…';
+    statusEl.textContent = 'session loading…';
     statusEl.className = 'status connecting';
 
     const existingId = getHashSessionId();
@@ -323,7 +356,6 @@ function connect() {
       const loaded = await loadHistory(existingId);
       if (loaded) {
         scrollToBottom();
-        statusEl.textContent = 'resuming session…';
       }
       ws.send(JSON.stringify({ type: 'resume_session', sessionId: existingId }));
       return;
@@ -383,7 +415,7 @@ function handleEvent(msg) {
       if (!currentThinkingEl) {
         currentThinkingEl = document.createElement('details');
         currentThinkingEl.className = 'thinking';
-        currentThinkingEl.innerHTML = '<summary>💭 Thinking...</summary><div class="thinking-content"></div>';
+        currentThinkingEl.innerHTML = '<summary>⠿ thinking...</summary><div class="thinking-content"></div>';
         currentThinkingText = '';
         messagesEl.appendChild(currentThinkingEl);
       }
@@ -395,12 +427,20 @@ function handleEvent(msg) {
     case 'tool_call': {
       finishThinking();
       finishAssistant();
-      const icons = { read: '📖', edit: '✏️', execute: '⚡', search: '🔍', delete: '🗑️' };
-      const icon = icons[msg.kind] || '🔧';
+      const icons = { read: 'cat', edit: 'edit', execute: 'exec', search: 'find', delete: 'rm' };
+      const icon = icons[msg.kind] || 'run';
       const el = document.createElement('div');
       el.className = 'tool-call';
       el.id = `tc-${msg.id}`;
-      el.innerHTML = `<span class="icon">${icon}</span> ${escHtml(msg.title)}`;
+      let label = `<span class="icon">${icon}</span> ${escHtml(msg.title)}`;
+      // Show command for execute kind
+      const ri = msg.rawInput;
+      if (ri && ri.command) {
+        label += `\n  <span style="color:var(--text-dim)">$ ${escHtml(ri.command)}</span>`;
+      } else if (ri && ri.path) {
+        label += `\n  <span style="color:var(--text-dim)">${escHtml(ri.path)}</span>`;
+      }
+      el.innerHTML = label;
       messagesEl.appendChild(el);
       scrollToBottom();
       break;
@@ -413,7 +453,24 @@ function handleEvent(msg) {
         el.className = `tool-call ${msg.status}`;
         const iconSpan = el.querySelector('.icon');
         if (iconSpan) iconSpan.textContent = statusIcon;
+        // Render tool output as collapsible content
+        if (msg.content && msg.content.length && !el.querySelector('details')) {
+          const text = msg.content
+            .map(c => {
+              if (c.type === 'terminal') return `[terminal ${c.terminalId}]`;
+              if (c.content?.text) return c.content.text;
+              if (Array.isArray(c.content)) return c.content.map(cc => cc.text || '').join('');
+              return '';
+            })
+            .filter(Boolean).join('\n');
+          if (text) {
+            const details = document.createElement('details');
+            details.innerHTML = `<summary>output</summary><div class="tc-content">${escHtml(text)}</div>`;
+            el.appendChild(details);
+          }
+        }
       }
+      scrollToBottom();
       break;
     }
 
@@ -422,7 +479,7 @@ function handleEvent(msg) {
       finishAssistant();
       const el = document.createElement('div');
       el.className = 'plan';
-      el.innerHTML = '<div class="plan-title">📋 Plan</div>' +
+      el.innerHTML = '<div class="plan-title">― plan</div>' +
         msg.entries.map(e => {
           const s = { pending: '○', in_progress: '◉', completed: '●' }[e.status] || '?';
           return `<div class="plan-entry">${s} ${escHtml(e.content)}</div>`;
@@ -434,9 +491,9 @@ function handleEvent(msg) {
 
     case 'permission_request': {
       finishThinking();
-      const el = document.createElement('div');
-      el.className = 'permission';
-      el.innerHTML = `<div class="title">🔐 ${escHtml(msg.title)}</div>`;
+      const permEl = document.createElement('div');
+      permEl.className = 'permission';
+      permEl.innerHTML = `<span class="title">⚿ ${escHtml(msg.title)}</span> `;
       msg.options.forEach(opt => {
         const btn = document.createElement('button');
         const isAllow = (opt.kind || '').includes('allow');
@@ -450,11 +507,11 @@ function handleEvent(msg) {
             optionId: opt.optionId,
             denied: isDeny,
           }));
-          el.innerHTML = `<div class="title" style="opacity:0.5">🔐 ${escHtml(msg.title)} — ${escHtml(opt.name)}</div>`;
+          permEl.innerHTML = `<span style="opacity:0.5">⚿ ${escHtml(msg.title)} — ${escHtml(opt.name)}</span>`;
         };
-        el.appendChild(btn);
+        permEl.appendChild(btn);
       });
-      messagesEl.appendChild(el);
+      messagesEl.appendChild(permEl);
       scrollToBottom();
       break;
     }
@@ -469,17 +526,17 @@ function handleEvent(msg) {
 
     case 'session_expired':
       messagesEl.innerHTML = '';
-      addSystem('⚠️ Previous session expired, created new one.');
+      addSystem('warn: Previous session expired, created new one.');
       ws.send(JSON.stringify({ type: 'new_session' }));
       break;
 
     case 'model_set':
       currentModel = msg.modelId;
-      addSystem(`✅ Model: ${msg.modelId}`);
+      addSystem(`ok: Model: ${msg.modelId}`);
       break;
 
     case 'error':
-      addSystem(`❌ ${msg.message}`);
+      addSystem(`err: ${msg.message}`);
       busy = false;
       sendBtn.disabled = false;
       break;
@@ -512,7 +569,7 @@ function finishAssistant() {
 
 function finishThinking() {
   if (currentThinkingEl) {
-    currentThinkingEl.querySelector('summary').textContent = '💭 Thought';
+    currentThinkingEl.querySelector('summary').textContent = '⠿ thought';
     currentThinkingEl = null;
     currentThinkingText = '';
   }
@@ -562,7 +619,7 @@ async function handleSlashCommand(text) {
           }
         }
       } catch {
-        addSystem('❌ Failed to fetch sessions');
+        addSystem('err: Failed to fetch sessions');
       }
       return true;
     }
@@ -577,7 +634,7 @@ async function handleSlashCommand(text) {
         const sessions = await res.json();
         const match = sessions.find(s => s.id.startsWith(arg));
         if (!match) {
-          addSystem(`❌ No session matching "${arg}"`);
+          addSystem(`err: No session matching "${arg}"`);
           return true;
         }
         messagesEl.innerHTML = '';
@@ -585,7 +642,7 @@ async function handleSlashCommand(text) {
         scrollToBottom();
         ws.send(JSON.stringify({ type: 'resume_session', sessionId: match.id }));
       } catch {
-        addSystem('❌ Failed to switch session');
+        addSystem('err: Failed to switch session');
       }
       return true;
     }
@@ -611,7 +668,7 @@ async function handleSlashCommand(text) {
 
     case '/model': {
       if (!arg) {
-        addSystem(`🤖 ${currentModel || 'unknown'}`);
+        addSystem(`model: ${currentModel || 'unknown'}`);
         if (availableModels.length) {
           addSystem('Available: ' + availableModels.map(m => m.modelId).join(', '));
         }
@@ -621,7 +678,7 @@ async function handleSlashCommand(text) {
         m.modelId === arg || m.modelId.includes(arg)
       );
       if (!match) {
-        addSystem(`❌ Unknown model "${arg}". Try /model to see available models.`);
+        addSystem(`err: Unknown model "${arg}". Try /model to see available models.`);
         return true;
       }
       ws.send(JSON.stringify({ type: 'set_model', sessionId, modelId: match.modelId }));
@@ -648,7 +705,10 @@ function sendMessage() {
     return;
   }
 
-  if (!sessionId) return;
+  if (!sessionId) {
+    addSystem('warn: Session not ready yet, please wait…');
+    return;
+  }
   addMessage('user', text);
   ws.send(JSON.stringify({ type: 'prompt', sessionId, text }));
   busy = true;

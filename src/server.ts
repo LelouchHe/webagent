@@ -113,10 +113,10 @@ async function initBridge(): Promise<CopilotBridge> {
       }
       case "tool_call":
         flushBuffers(event.sessionId);
-        store.saveEvent(event.sessionId, event.type, { id: event.id, title: event.title, kind: event.kind });
+        store.saveEvent(event.sessionId, event.type, { id: event.id, title: event.title, kind: event.kind, rawInput: event.rawInput });
         break;
       case "tool_call_update":
-        store.saveEvent(event.sessionId, event.type, { id: event.id, status: event.status });
+        store.saveEvent(event.sessionId, event.type, { id: event.id, status: event.status, content: event.content });
         break;
       case "plan":
         flushBuffers(event.sessionId);
@@ -222,13 +222,9 @@ wss.on("connection", (ws) => {
               cwd: session.cwd,
             } as AgentEvent);
           } else {
-            try {
-              await bridge.loadSession(msg.sessionId, session.cwd);
-              liveSessions.add(msg.sessionId);
-            } catch (err) {
-              console.error(`[bridge] loadSession failed:`, err);
-              send(ws, { type: "session_expired", sessionId: msg.sessionId });
-            }
+            // Session not in current bridge — expired
+            // TODO: try ACP loadSession once verified it works across restarts
+            send(ws, { type: "session_expired", sessionId: msg.sessionId });
           }
           break;
         }
