@@ -16,25 +16,45 @@ npm install
 
 ## 运行
 
+### 生产（launchd 服务）
+
+服务通过 macOS launchd 管理，开机自启 + 崩溃自动重启，端口 6800。
+
 ```bash
-# 开发模式（文件变更自动重启）
-npm run dev
-
-# 生产模式
-npm start
-
-# 后台运行（关终端不退出）
-nohup npm start > agent-web.log 2>&1 &
-echo $! > .pid
+npm run svc:status    # 查看状态
+npm run svc:restart   # 重启（改完代码后）
+npm run svc:stop      # 停止
 
 # 查看日志
 tail -f agent-web.log
+```
 
-# 停止
-kill $(cat .pid)
+首次安装：
+```bash
+launchctl bootstrap gui/501 ~/Library/LaunchAgents/com.lelouch.agent-web.plist
+```
+
+### 开发
+
+```bash
+npm run dev           # 端口 6801，文件变更自动重启
 ```
 
 然后打开 http://localhost:6800
+
+## 使用
+
+在输入框中输入消息与 Copilot CLI 对话。支持以下 slash 命令：
+
+| 命令 | 作用 |
+|---|---|
+| `/new [cwd]` | 新建 session（可选指定工作目录） |
+| `/cwd` | 显示当前工作目录 |
+| `/model [name]` | 查看或切换模型（支持模糊匹配，如 `/model opus`） |
+| `/cancel` | 取消当前回复 |
+| `/sessions` | 列出所有 session |
+| `/switch <id>` | 切换到指定 session（前缀匹配） |
+| `/help` | 显示命令列表 |
 
 ## 通过 Cloudflare Tunnel 远程访问
 

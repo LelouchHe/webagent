@@ -6,7 +6,7 @@ import * as acp from "@agentclientprotocol/sdk";
 // Events emitted to WebSocket layer
 export type AgentEvent =
   | { type: "connected"; agent: { name: string; version: string }; models: acp.ModelInfo[] }
-  | { type: "session_created"; sessionId: string; models?: acp.ModelsInfo }
+  | { type: "session_created"; sessionId: string; cwd?: string; models?: acp.ModelsInfo }
   | { type: "message_chunk"; sessionId: string; text: string }
   | { type: "thought_chunk"; sessionId: string; text: string }
   | { type: "tool_call"; sessionId: string; id: string; title: string; kind: string }
@@ -14,6 +14,7 @@ export type AgentEvent =
   | { type: "plan"; sessionId: string; entries: unknown[] }
   | { type: "permission_request"; requestId: string; sessionId: string; title: string; options: acp.PermissionOption[] }
   | { type: "prompt_done"; sessionId: string; stopReason: string }
+  | { type: "session_expired"; sessionId: string }
   | { type: "error"; message: string };
 
 export class CopilotBridge extends EventEmitter {
@@ -69,9 +70,27 @@ export class CopilotBridge extends EventEmitter {
     this.emit("event", {
       type: "session_created",
       sessionId: session.sessionId,
+      cwd,
       models: session.models,
     } satisfies AgentEvent);
     return session.sessionId;
+  }
+
+  async loadSession(sessionId: string, cwd: string): Promise<string> {
+    if (!this.conn) throw new Error("Not connected");
+    const session = await this.conn.loadSession({ sessionId, cwd, mcpServers: [] });
+    this.emit("event", {
+      type: "session_created",
+      sessionId: session.sessionId,
+      cwd,
+      models: session.models,
+    } satisfies AgentEvent);
+    return session.sessionId;
+  }
+
+  async setModel(sessionId: string, modelId: string): Promise<void> {
+    if (!this.conn) throw new Error("Not connected");
+    await this.conn.unstable_setSessionModel({ sessionId, modelId });
   }
 
   async prompt(sessionId: string, text: string): Promise<void> {

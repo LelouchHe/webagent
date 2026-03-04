@@ -4,9 +4,11 @@ import { join, extname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer, WebSocket } from "ws";
 import { CopilotBridge } from "./bridge.ts";
+import { Store } from "./store.ts";
 import type { AgentEvent } from "./bridge.ts";
 
 const PORT = parseInt(process.env.PORT ?? "6800", 10);
+const DATA_DIR = process.env.DATA_DIR ?? "data";
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const PUBLIC_DIR = join(__dirname, "..", "public");
 
@@ -18,11 +20,50 @@ const MIME: Record<string, string> = {
   ".svg": "image/svg+xml",
 };
 
-// --- HTTP server (static files) ---
+// --- Store ---
+
+const store = new Store(DATA_DIR);
+console.log(`[store] using ${DATA_DIR}/`);
+
+// --- HTTP server (static files + API) ---
 
 const server = createServer(async (req, res) => {
-  const url = req.url === "/" ? "/index.html" : req.url ?? "/index.html";
-  const filePath = join(PUBLIC_DIR, url);
+  const url = req.url ?? "/";
+
+  // API routes
+  if (url.startsWith("/api/")) {
+    res.setHeader("Content-Type", "application/json");
+
+    // GET /api/sessions
+    if (url === "/api/sessions" && req.method === "GET") {
+      res.end(JSON.stringify(store.listSessions()));
+      return;
+    }
+
+    // GET /api/sessions/:id/events?thinking=0|1
+    const eventsMatch = url.match(/^\/api\/sessions\/([^/]+)\/events(\?.*)?$/);
+    if (eventsMatch && req.method === "GET") {
+      const sessionId = decodeURIComponent(eventsMatch[1]);
+      const params = new URLSearchParams(eventsMatch[2]?.slice(1) ?? "");
+      const excludeThinking = params.get("thinking") === "0";
+      const session = store.getSession(sessionId);
+      if (!session) {
+        res.writeHead(404);
+        res.end(JSON.stringify({ error: "Session not found" }));
+        return;
+      }
+      const events = store.getEvents(sessionId, { excludeThinking });
+      res.end(JSON.stringify(events));
+      return;
+    }
+
+    res.writeHead(404);
+    res.end(JSON.stringify({ error: "Not found" }));
+    return;
+  }
+
+  // Static files
+  const filePath = join(PUBLIC_DIR, url === "/" ? "/index.html" : url);
 
   // Prevent path traversal
   if (!filePath.startsWith(PUBLIC_DIR)) {
@@ -48,24 +89,69 @@ const wss = new WebSocketServer({ server });
 
 // One bridge per server (single copilot process, multiple sessions)
 let bridge: CopilotBridge | null = null;
+const liveSessions = new Set<string>(); // Sessions alive in current bridge
 
-async function getBridge(ws: WebSocket): Promise<CopilotBridge> {
-  if (bridge) return bridge;
+// Track current assistant message per session for aggregation
+const assistantBuffers = new Map<string, string>();
+const thinkingBuffers = new Map<string, string>();
 
-  bridge = new CopilotBridge();
+async function initBridge(): Promise<CopilotBridge> {
+  const b = new CopilotBridge();
 
-  bridge.on("event", (event: AgentEvent) => {
+  b.on("event", (event: AgentEvent) => {
+    // Store aggregated events (not raw chunks)
+    switch (event.type) {
+      case "message_chunk": {
+        const buf = (assistantBuffers.get(event.sessionId) ?? "") + event.text;
+        assistantBuffers.set(event.sessionId, buf);
+        break;
+      }
+      case "thought_chunk": {
+        const buf = (thinkingBuffers.get(event.sessionId) ?? "") + event.text;
+        thinkingBuffers.set(event.sessionId, buf);
+        break;
+      }
+      case "tool_call":
+        flushBuffers(event.sessionId);
+        store.saveEvent(event.sessionId, event.type, { id: event.id, title: event.title, kind: event.kind });
+        break;
+      case "tool_call_update":
+        store.saveEvent(event.sessionId, event.type, { id: event.id, status: event.status });
+        break;
+      case "plan":
+        flushBuffers(event.sessionId);
+        store.saveEvent(event.sessionId, event.type, { entries: event.entries });
+        break;
+      case "permission_request":
+        flushBuffers(event.sessionId);
+        store.saveEvent(event.sessionId, event.type, {
+          requestId: event.requestId, title: event.title, options: event.options,
+        });
+        break;
+      case "prompt_done":
+        flushBuffers(event.sessionId);
+        store.saveEvent(event.sessionId, event.type, { stopReason: event.stopReason });
+        break;
+    }
     broadcast(event);
   });
 
-  try {
-    await bridge.start();
-  } catch (err) {
-    bridge = null;
-    throw err;
-  }
+  await b.start();
+  bridge = b;
+  return b;
+}
 
-  return bridge;
+function flushBuffers(sessionId: string): void {
+  const assistant = assistantBuffers.get(sessionId);
+  if (assistant) {
+    store.saveEvent(sessionId, "assistant_message", { text: assistant });
+    assistantBuffers.delete(sessionId);
+  }
+  const thinking = thinkingBuffers.get(sessionId);
+  if (thinking) {
+    store.saveEvent(sessionId, "thinking", { text: thinking });
+    thinkingBuffers.delete(sessionId);
+  }
 }
 
 function broadcast(event: AgentEvent) {
@@ -103,9 +189,47 @@ wss.on("connection", (ws) => {
     try {
       switch (msg.type) {
         case "new_session": {
-          const b = await getBridge(ws);
+          if (!bridge) {
+            send(ws, { type: "error", message: "Agent not ready yet" });
+            return;
+          }
           const cwd = msg.cwd ?? process.cwd();
-          await b.newSession(cwd);
+          const sessionId = await bridge.newSession(cwd);
+          liveSessions.add(sessionId);
+          store.createSession(sessionId, cwd);
+          break;
+        }
+
+        case "resume_session": {
+          if (!bridge) {
+            send(ws, { type: "error", message: "Agent not ready yet" });
+            return;
+          }
+          if (!msg.sessionId) {
+            send(ws, { type: "error", message: "Missing sessionId" });
+            return;
+          }
+          const session = store.getSession(msg.sessionId);
+          if (!session) {
+            send(ws, { type: "error", message: "Session not found" });
+            return;
+          }
+          if (liveSessions.has(msg.sessionId)) {
+            // Session is alive in current bridge — just re-emit session_created
+            send(ws, {
+              type: "session_created",
+              sessionId: msg.sessionId,
+              cwd: session.cwd,
+            } as AgentEvent);
+          } else {
+            try {
+              await bridge.loadSession(msg.sessionId, session.cwd);
+              liveSessions.add(msg.sessionId);
+            } catch (err) {
+              console.error(`[bridge] loadSession failed:`, err);
+              send(ws, { type: "session_expired", sessionId: msg.sessionId });
+            }
+          }
           break;
         }
 
@@ -118,7 +242,7 @@ wss.on("connection", (ws) => {
             send(ws, { type: "error", message: "Missing sessionId or text" });
             return;
           }
-          // Run prompt without awaiting (streaming events come via bridge)
+          store.saveEvent(msg.sessionId, "user_message", { text: msg.text });
           bridge.prompt(msg.sessionId, msg.text).catch((err: Error) => {
             send(ws, { type: "error", message: err.message });
           });
@@ -137,6 +261,25 @@ wss.on("connection", (ws) => {
 
         case "cancel": {
           await bridge?.cancel();
+          break;
+        }
+
+        case "set_model": {
+          if (!bridge) {
+            send(ws, { type: "error", message: "Agent not ready yet" });
+            return;
+          }
+          if (!msg.sessionId || !msg.modelId) {
+            send(ws, { type: "error", message: "Missing sessionId or modelId" });
+            return;
+          }
+          try {
+            await bridge.setModel(msg.sessionId, msg.modelId);
+            send(ws, { type: "model_set", modelId: msg.modelId } as any);
+          } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : String(err);
+            send(ws, { type: "error", message: `Failed to set model: ${message}` });
+          }
           break;
         }
 
@@ -161,6 +304,7 @@ async function shutdown() {
   console.log("\n[server] shutting down...");
   wss.close();
   await bridge?.shutdown();
+  store.close();
   server.close();
   process.exit(0);
 }
@@ -170,6 +314,13 @@ process.on("SIGTERM", shutdown);
 
 // --- Start ---
 
-server.listen(PORT, () => {
+server.listen(PORT, "0.0.0.0", async () => {
   console.log(`[server] listening on http://localhost:${PORT}`);
+  console.log(`[bridge] starting copilot --acp...`);
+  try {
+    await initBridge();
+    console.log(`[bridge] ready`);
+  } catch (err) {
+    console.error(`[bridge] failed to start:`, err);
+  }
 });

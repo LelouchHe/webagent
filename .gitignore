@@ -8,6 +8,8 @@ build/
 
 *.log
 logs/
+*.pid
+.pid
 
 coverage/
 
@@ -15,3 +17,4 @@ coverage/
 Thumbs.db
 
 *.tsbuildinfo
+data-dev/

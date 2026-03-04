@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Agent Web</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🤖</text></svg>">
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 <style>
   :root {
@@ -42,6 +43,7 @@
   #header .logo { font-weight: bold; color: var(--accent); }
   #header .status { color: var(--text-dim); margin-left: auto; }
   #header .status.connected { color: var(--green); }
+  #header .status.connecting { color: var(--yellow); }
 
   /* Messages */
   #messages {
@@ -178,6 +180,7 @@
 
 <div id="header">
   <span class="logo">Agent Web</span>
+  <span id="session-info" class="status"></span>
   <span id="status" class="status">disconnected</span>
 </div>
 
@@ -194,9 +197,13 @@ const messagesEl = $('#messages');
 const inputEl = $('#input');
 const sendBtn = $('#send-btn');
 const statusEl = $('#status');
+const sessionInfoEl = $('#session-info');
 
 let ws = null;
 let sessionId = null;
+let sessionCwd = null;
+let availableModels = [];
+let currentModel = null;
 let currentAssistantEl = null;
 let currentAssistantText = '';
 let currentThinkingEl = null;
@@ -210,16 +217,117 @@ function renderMd(text) {
   return marked.parse(text);
 }
 
+// --- Hash routing ---
+
+function getHashSessionId() {
+  const h = location.hash.slice(1);
+  return h || null;
+}
+
+function setHashSessionId(id) {
+  history.replaceState(null, '', `#${id}`);
+}
+
+function updateSessionInfo(id) {
+  sessionInfoEl.textContent = id ? id.slice(0, 8) + '…' : '';
+}
+
+// --- History replay ---
+
+async function loadHistory(sid) {
+  try {
+    const res = await fetch(`/api/sessions/${sid}/events`);
+    if (!res.ok) return false;
+    const events = await res.json();
+    for (const ev of events) {
+      const data = JSON.parse(ev.data);
+      replayEvent(ev.type, data);
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function replayEvent(type, data) {
+  switch (type) {
+    case 'user_message':
+      addMessage('user', data.text);
+      break;
+    case 'assistant_message':
+      addMessage('assistant', data.text);
+      break;
+    case 'thinking': {
+      const el = document.createElement('details');
+      el.className = 'thinking';
+      el.innerHTML = `<summary>💭 Thought</summary><div class="thinking-content">${escHtml(data.text)}</div>`;
+      messagesEl.appendChild(el);
+      break;
+    }
+    case 'tool_call': {
+      const icons = { read: '📖', edit: '✏️', execute: '⚡', search: '🔍', delete: '🗑️' };
+      const icon = icons[data.kind] || '🔧';
+      const el = document.createElement('div');
+      el.className = 'tool-call';
+      el.id = `tc-${data.id}`;
+      el.innerHTML = `<span class="icon">${icon}</span> ${escHtml(data.title)}`;
+      messagesEl.appendChild(el);
+      break;
+    }
+    case 'tool_call_update': {
+      const el = document.getElementById(`tc-${data.id}`);
+      if (el) {
+        const statusIcon = data.status === 'completed' ? '✓' : data.status === 'failed' ? '✗' : '…';
+        el.className = `tool-call ${data.status}`;
+        const iconSpan = el.querySelector('.icon');
+        if (iconSpan) iconSpan.textContent = statusIcon;
+      }
+      break;
+    }
+    case 'plan': {
+      const el = document.createElement('div');
+      el.className = 'plan';
+      el.innerHTML = '<div class="plan-title">📋 Plan</div>' +
+        (data.entries || []).map(e => {
+          const s = { pending: '○', in_progress: '◉', completed: '●' }[e.status] || '?';
+          return `<div class="plan-entry">${s} ${escHtml(e.content)}</div>`;
+        }).join('');
+      messagesEl.appendChild(el);
+      break;
+    }
+    case 'permission_request': {
+      const el = document.createElement('div');
+      el.className = 'permission';
+      el.innerHTML = `<div class="title" style="opacity:0.5">🔐 ${escHtml(data.title)}</div>`;
+      messagesEl.appendChild(el);
+      break;
+    }
+  }
+}
+
 // --- WebSocket ---
 
 function connect() {
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  statusEl.textContent = 'connecting…';
+  statusEl.className = 'status connecting';
   ws = new WebSocket(`${proto}//${location.host}`);
 
-  ws.onopen = () => {
-    statusEl.textContent = 'connected';
-    statusEl.className = 'status connected';
-    // Auto-create session with server cwd
+  ws.onopen = async () => {
+    statusEl.textContent = 'starting agent…';
+    statusEl.className = 'status connecting';
+
+    const existingId = getHashSessionId();
+    if (existingId) {
+      // Try to restore session — load chat history + resume copilot context
+      const loaded = await loadHistory(existingId);
+      if (loaded) {
+        scrollToBottom();
+        statusEl.textContent = 'resuming session…';
+      }
+      ws.send(JSON.stringify({ type: 'resume_session', sessionId: existingId }));
+      return;
+    }
     ws.send(JSON.stringify({ type: 'new_session' }));
   };
 
@@ -227,7 +335,6 @@ function connect() {
     statusEl.textContent = 'disconnected';
     statusEl.className = 'status';
     sendBtn.disabled = true;
-    sessionId = null;
     setTimeout(connect, 3000);
   };
 
@@ -246,8 +353,19 @@ function handleEvent(msg) {
 
     case 'session_created':
       sessionId = msg.sessionId;
+      sessionCwd = msg.cwd || sessionCwd;
+      if (msg.models) {
+        availableModels = msg.models.availableModels || [];
+        currentModel = msg.models.currentModelId || null;
+      }
+      setHashSessionId(sessionId);
+      updateSessionInfo(sessionId);
+      statusEl.textContent = 'connected';
+      statusEl.className = 'status connected';
       sendBtn.disabled = false;
-      addSystem(`Session created: ${msg.sessionId.slice(0, 8)}...`);
+      if (messagesEl.children.length === 0) {
+        addSystem(`Session created: ${msg.sessionId.slice(0, 8)}…`);
+      }
       break;
 
     case 'message_chunk':
@@ -293,7 +411,6 @@ function handleEvent(msg) {
       if (el) {
         const statusIcon = msg.status === 'completed' ? '✓' : msg.status === 'failed' ? '✗' : '…';
         el.className = `tool-call ${msg.status}`;
-        // Prepend status icon
         const iconSpan = el.querySelector('.icon');
         if (iconSpan) iconSpan.textContent = statusIcon;
       }
@@ -350,6 +467,17 @@ function handleEvent(msg) {
       inputEl.focus();
       break;
 
+    case 'session_expired':
+      messagesEl.innerHTML = '';
+      addSystem('⚠️ Previous session expired, created new one.');
+      ws.send(JSON.stringify({ type: 'new_session' }));
+      break;
+
+    case 'model_set':
+      currentModel = msg.modelId;
+      addSystem(`✅ Model: ${msg.modelId}`);
+      break;
+
     case 'error':
       addSystem(`❌ ${msg.message}`);
       busy = false;
@@ -400,16 +528,129 @@ function escHtml(s) {
   return d.innerHTML;
 }
 
+// --- Slash commands ---
+
+async function handleSlashCommand(text) {
+  const parts = text.split(/\s+/);
+  const cmd = parts[0].toLowerCase();
+  const arg = parts.slice(1).join(' ').trim();
+
+  switch (cmd) {
+    case '/new': {
+      messagesEl.innerHTML = '';
+      addSystem('Creating new session…');
+      const payload = { type: 'new_session' };
+      if (arg) payload.cwd = arg;
+      ws.send(JSON.stringify(payload));
+      return true;
+    }
+
+    case '/cwd':
+      addSystem(`📁 ${sessionCwd || 'unknown'}`);
+      return true;
+
+    case '/sessions': {
+      try {
+        const res = await fetch('/api/sessions');
+        const sessions = await res.json();
+        if (sessions.length === 0) {
+          addSystem('No sessions.');
+        } else {
+          for (const s of sessions) {
+            const current = s.id === sessionId ? ' ← current' : '';
+            addSystem(`${s.id.slice(0, 8)}… | ${s.cwd} | ${s.created_at}${current}`);
+          }
+        }
+      } catch {
+        addSystem('❌ Failed to fetch sessions');
+      }
+      return true;
+    }
+
+    case '/switch': {
+      if (!arg) {
+        addSystem('Usage: /switch <session-id-prefix>');
+        return true;
+      }
+      try {
+        const res = await fetch('/api/sessions');
+        const sessions = await res.json();
+        const match = sessions.find(s => s.id.startsWith(arg));
+        if (!match) {
+          addSystem(`❌ No session matching "${arg}"`);
+          return true;
+        }
+        messagesEl.innerHTML = '';
+        await loadHistory(match.id);
+        scrollToBottom();
+        ws.send(JSON.stringify({ type: 'resume_session', sessionId: match.id }));
+      } catch {
+        addSystem('❌ Failed to switch session');
+      }
+      return true;
+    }
+
+    case '/cancel':
+      if (busy && ws) {
+        ws.send(JSON.stringify({ type: 'cancel' }));
+        addSystem('⏹ Cancelling…');
+      } else {
+        addSystem('Nothing to cancel.');
+      }
+      return true;
+
+    case '/help':
+      addSystem('/new [cwd] — New session');
+      addSystem('/cwd — Show working directory');
+      addSystem('/model [name] — Show or switch model');
+      addSystem('/cancel — Cancel current response');
+      addSystem('/sessions — List all sessions');
+      addSystem('/switch <id> — Switch to session (prefix match)');
+      addSystem('/help — Show this help');
+      return true;
+
+    case '/model': {
+      if (!arg) {
+        addSystem(`🤖 ${currentModel || 'unknown'}`);
+        if (availableModels.length) {
+          addSystem('Available: ' + availableModels.map(m => m.modelId).join(', '));
+        }
+        return true;
+      }
+      const match = availableModels.find(m =>
+        m.modelId === arg || m.modelId.includes(arg)
+      );
+      if (!match) {
+        addSystem(`❌ Unknown model "${arg}". Try /model to see available models.`);
+        return true;
+      }
+      ws.send(JSON.stringify({ type: 'set_model', sessionId, modelId: match.modelId }));
+      addSystem(`Switching to ${match.modelId}…`);
+      return true;
+    }
+
+    default:
+      return false;
+  }
+}
+
 // --- Input ---
 
 function sendMessage() {
   const text = inputEl.value.trim();
-  if (!text || !sessionId || busy) return;
+  if (!text || busy) return;
 
-  addMessage('user', text);
-  ws.send(JSON.stringify({ type: 'prompt', sessionId, text }));
   inputEl.value = '';
   inputEl.style.height = 'auto';
+
+  if (text.startsWith('/')) {
+    handleSlashCommand(text);
+    return;
+  }
+
+  if (!sessionId) return;
+  addMessage('user', text);
+  ws.send(JSON.stringify({ type: 'prompt', sessionId, text }));
   busy = true;
   sendBtn.disabled = true;
 }

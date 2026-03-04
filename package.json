@@ -3,15 +3,19 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "start": "node --experimental-strip-types src/server.ts",
-    "dev": "node --experimental-strip-types --watch src/server.ts"
+    "dev": "DATA_DIR=data-dev PORT=6801 node --experimental-strip-types --watch src/server.ts",
+    "svc:restart": "launchctl kickstart -k gui/501/com.lelouch.agent-web",
+    "svc:stop": "launchctl bootout gui/501/com.lelouch.agent-web",
+    "svc:status": "launchctl print gui/501/com.lelouch.agent-web"
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "^0.14.1",
+    "better-sqlite3": "^12.6.2",
     "ws": "^8.19.0",
     "zod": "^4.3.6"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^25.3.3",
     "@types/ws": "^8.18.1"
   }
