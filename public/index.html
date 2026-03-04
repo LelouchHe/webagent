@@ -6,6 +6,7 @@
 <title>>_</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='16' fill='%230d1117'/><text x='12' y='68' font-family='monospace' font-size='56' font-weight='bold' fill='%2358a6ff'>%3E_</text></svg>">
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script>document.documentElement.setAttribute('data-theme', localStorage.getItem('theme') || 'auto');</script>
 <style>
   :root {
     --bg: #0d1117;
@@ -19,6 +20,32 @@
     --red: #f85149;
     --blue: #58a6ff;
     --radius: 4px;
+  }
+  [data-theme="light"] {
+    --bg: #ffffff;
+    --surface: #f6f8fa;
+    --border: #d0d7de;
+    --text: #1f2328;
+    --text-dim: #656d76;
+    --accent: #0969da;
+    --green: #1a7f37;
+    --yellow: #9a6700;
+    --red: #cf222e;
+    --blue: #0969da;
+  }
+  @media (prefers-color-scheme: light) {
+    [data-theme="auto"] {
+      --bg: #ffffff;
+      --surface: #f6f8fa;
+      --border: #d0d7de;
+      --text: #1f2328;
+      --text-dim: #656d76;
+      --accent: #0969da;
+      --green: #1a7f37;
+      --yellow: #9a6700;
+      --red: #cf222e;
+      --blue: #0969da;
+    }
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
@@ -45,6 +72,16 @@
   #header .status { color: var(--text-dim); margin-left: auto; }
   #header .status.connected { color: var(--green); }
   #header .status.connecting { color: var(--yellow); }
+  #theme-btn {
+    background: transparent;
+    border: none;
+    color: var(--text-dim);
+    cursor: pointer;
+    font-size: 15px;
+    font-family: inherit;
+    padding: 2px 6px;
+  }
+  #theme-btn:hover { color: var(--text); }
 
   /* Messages */
   #messages {
@@ -100,6 +137,17 @@
     border-left: 2px solid var(--border);
   }
   .thinking summary { cursor: pointer; }
+  .thinking summary.active { animation: pulse 1.5s ease-in-out infinite; }
+
+  /* Waiting indicator (after user sends, before first response) */
+  @keyframes blink { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
+  #waiting {
+    padding: 6px 14px;
+    color: var(--text-dim);
+    font-size: 15px;
+  }
+  #waiting .cursor { animation: blink 1s step-end infinite; }
 
   /* Tool calls */
   .tool-call {
@@ -262,6 +310,7 @@
   <span class="logo">>_</span>
   <span id="session-info" class="status"></span>
   <span id="status" class="status">disconnected</span>
+  <button id="theme-btn" title="Toggle theme">◑</button>
 </div>
 
 <div id="messages"></div>
@@ -285,6 +334,23 @@ const sessionInfoEl = $('#session-info');
 const attachBtn = $('#attach-btn');
 const fileInput = $('#file-input');
 const attachPreview = $('#attach-preview');
+const themeBtn = $('#theme-btn');
+
+// --- Theme ---
+const THEME_ICONS = { auto: '◑', light: '☀', dark: '☾' };
+const THEME_CYCLE = ['auto', 'light', 'dark'];
+function getTheme() { return localStorage.getItem('theme') || 'auto'; }
+function applyTheme(t) {
+  document.documentElement.setAttribute('data-theme', t);
+  themeBtn.textContent = THEME_ICONS[t];
+  themeBtn.title = `Theme: ${t}`;
+  localStorage.setItem('theme', t);
+}
+themeBtn.onclick = () => {
+  const cur = getTheme();
+  applyTheme(THEME_CYCLE[(THEME_CYCLE.indexOf(cur) + 1) % 3]);
+};
+applyTheme(getTheme());
 
 let ws = null;
 let sessionId = null;
@@ -488,6 +554,7 @@ function handleEvent(msg) {
     }
 
     case 'message_chunk':
+      hideWaiting();
       if (!currentAssistantEl) {
         currentAssistantEl = addMessage('assistant', '');
         currentAssistantText = '';
@@ -499,10 +566,11 @@ function handleEvent(msg) {
       break;
 
     case 'thought_chunk':
+      hideWaiting();
       if (!currentThinkingEl) {
         currentThinkingEl = document.createElement('details');
         currentThinkingEl.className = 'thinking';
-        currentThinkingEl.innerHTML = '<summary>⠿ thinking...</summary><div class="thinking-content"></div>';
+        currentThinkingEl.innerHTML = '<summary class="active">⠿ thinking...</summary><div class="thinking-content"></div>';
         currentThinkingText = '';
         messagesEl.appendChild(currentThinkingEl);
       }
@@ -512,6 +580,7 @@ function handleEvent(msg) {
       break;
 
     case 'tool_call': {
+      hideWaiting();
       finishThinking();
       finishAssistant();
       const icons = { read: 'cat', edit: 'edit', execute: 'exec', search: 'find', delete: 'rm' };
@@ -604,6 +673,7 @@ function handleEvent(msg) {
     }
 
     case 'prompt_done':
+      hideWaiting();
       finishThinking();
       finishAssistant();
       busy = false;
@@ -623,6 +693,7 @@ function handleEvent(msg) {
       break;
 
     case 'error':
+      hideWaiting();
       addSystem(`err: ${msg.message}`);
       busy = false;
       sendBtn.disabled = false;
@@ -657,9 +728,23 @@ function finishAssistant() {
 function finishThinking() {
   if (currentThinkingEl) {
     currentThinkingEl.querySelector('summary').textContent = '⠿ thought';
+    currentThinkingEl.querySelector('summary').classList.remove('active');
     currentThinkingEl = null;
     currentThinkingText = '';
   }
+}
+
+let waitingEl = null;
+function showWaiting() {
+  hideWaiting();
+  waitingEl = document.createElement('div');
+  waitingEl.id = 'waiting';
+  waitingEl.innerHTML = '<span class="cursor">▌</span>';
+  messagesEl.appendChild(waitingEl);
+  scrollToBottom();
+}
+function hideWaiting() {
+  if (waitingEl) { waitingEl.remove(); waitingEl = null; }
 }
 
 function scrollToBottom() {
@@ -883,6 +968,7 @@ function sendMessage() {
   }
   busy = true;
   sendBtn.disabled = true;
+  showWaiting();
 }
 
 sendBtn.onclick = sendMessage;
