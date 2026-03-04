@@ -279,9 +279,7 @@
     font-size: 14px;
     font-family: inherit;
     cursor: pointer;
-    display: none;
   }
-  #send-btn.visible { display: inline-block; }
   #send-btn:hover { color: var(--text); }
   #send-btn.cancel { color: var(--red); font-weight: bold; }
   #send-btn.cancel:hover { color: var(--text); }
@@ -359,7 +357,7 @@
   <span id="input-prompt">❯ </span>
   <textarea id="input" rows="1" placeholder="Message or /help" autofocus></textarea>
   <button id="attach-btn" title="Attach image (^F)">^F</button>
-  <button id="send-btn" title="Cancel (^C)">^C</button>
+  <button id="send-btn" title="Send (Enter)">↵</button>
   <input type="file" id="file-input" accept="image/*" multiple hidden>
 </div>
 
@@ -375,10 +373,14 @@ const sessionInfoEl = $('#session-info');
 function setBusy(on) {
   busy = on;
   if (on) {
-    sendBtn.classList.add('cancel', 'visible');
+    sendBtn.textContent = '^C';
+    sendBtn.title = 'Cancel (^C)';
+    sendBtn.classList.add('cancel');
     promptEl.classList.add('busy');
   } else {
-    sendBtn.classList.remove('cancel', 'visible');
+    sendBtn.textContent = '↵';
+    sendBtn.title = 'Send (Enter)';
+    sendBtn.classList.remove('cancel');
     promptEl.classList.remove('busy');
   }
 }
@@ -1051,12 +1053,12 @@ function sendMessage() {
 
 function doCancel() {
   if (busy && ws) {
-    ws.send(JSON.stringify({ type: 'cancel', sessionId: currentSession }));
+    ws.send(JSON.stringify({ type: 'cancel', sessionId }));
     addSystem('^C');
   }
 }
 
-sendBtn.onclick = doCancel;
+sendBtn.onclick = () => busy ? doCancel() : sendMessage();
 inputEl.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault();
