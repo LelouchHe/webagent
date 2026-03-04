@@ -164,25 +164,25 @@
     background: var(--bg);
     border-top: 1px solid var(--border);
     display: flex;
-    align-items: flex-end;
-    gap: 0;
+    align-items: center;
+    gap: 4px;
   }
   #input-prompt {
     color: var(--green);
     font-weight: bold;
-    padding: 8px 0;
     user-select: none;
+    line-height: 1.5;
   }
   #input {
     flex: 1;
     background: transparent;
     color: var(--text);
     border: none;
-    padding: 8px 8px;
+    padding: 4px 8px;
     font-size: 16px;
     font-family: inherit;
     resize: none;
-    min-height: 32px;
+    min-height: 28px;
     max-height: 200px;
     line-height: 1.5;
   }
@@ -192,7 +192,7 @@
     color: var(--text-dim);
     border: 1px solid var(--border);
     border-radius: var(--radius);
-    padding: 6px 12px;
+    padding: 4px 10px;
     font-size: 15px;
     font-family: inherit;
     cursor: pointer;
@@ -204,12 +204,14 @@
   #attach-btn {
     background: transparent;
     color: var(--text-dim);
-    border: none;
-    padding: 6px 4px;
-    font-size: 16px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 4px 10px;
+    font-size: 15px;
+    font-family: inherit;
     cursor: pointer;
-    line-height: 1;
   }
+  #attach-btn:hover { color: var(--text); border-color: var(--text-dim); }
   #attach-btn:hover { color: var(--text); }
   #attach-preview {
     display: none;
@@ -267,8 +269,8 @@
 <div id="attach-preview"></div>
 <div id="input-area">
   <span id="input-prompt">❯ </span>
+  <textarea id="input" rows="1" placeholder="Message or /help" autofocus></textarea>
   <button id="attach-btn" title="Attach image">⊕</button>
-  <textarea id="input" rows="1" placeholder="Type a message or /help" autofocus></textarea>
   <button id="send-btn" disabled>↵</button>
   <input type="file" id="file-input" accept="image/*" multiple hidden>
 </div>
@@ -468,6 +470,22 @@ function handleEvent(msg) {
         addSystem(`Session created: ${msg.sessionId.slice(0, 8)}…`);
       }
       break;
+
+    case 'user_message': {
+      // Broadcast from another client
+      if (msg.sessionId === sessionId) {
+        const el = addMessage('user', msg.text);
+        if (msg.images) {
+          for (const img of msg.images) {
+            const imgEl = document.createElement('img');
+            imgEl.className = 'user-image';
+            imgEl.src = `/data/${img.path}`;
+            el.appendChild(imgEl);
+          }
+        }
+      }
+      break;
+    }
 
     case 'message_chunk':
       if (!currentAssistantEl) {
@@ -776,6 +794,7 @@ function readFileAsBase64(file) {
 function addPendingImage(img) {
   pendingImages.push(img);
   renderAttachPreview();
+  inputEl.focus();
 }
 
 function renderAttachPreview() {

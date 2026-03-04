@@ -286,10 +286,18 @@ wss.on("connection", (ws) => {
             return;
           }
           const images = msg.images as Array<{ data: string; mimeType: string; path: string }> | undefined;
-          store.saveEvent(msg.sessionId, "user_message", {
+          const userData = {
             text: msg.text,
             ...(images && { images: images.map((i: { path: string; mimeType: string }) => ({ path: i.path, mimeType: i.mimeType })) }),
-          });
+          };
+          store.saveEvent(msg.sessionId, "user_message", userData);
+          // Broadcast user message to other clients
+          const userEvent = JSON.stringify({ type: "user_message", sessionId: msg.sessionId, ...userData });
+          for (const client of wss.clients) {
+            if (client !== ws && client.readyState === WebSocket.OPEN) {
+              client.send(userEvent);
+            }
+          }
           bridge.prompt(msg.sessionId, msg.text, images).catch((err: Error) => {
             send(ws, { type: "error", message: err.message });
           });
