@@ -121,6 +121,7 @@ export class CopilotBridge extends EventEmitter {
       } satisfies AgentEvent);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
+      if (/cancel/i.test(message)) return; // Expected on cancel, not an error
       this.emit("event", { type: "error", message } satisfies AgentEvent);
     }
   }

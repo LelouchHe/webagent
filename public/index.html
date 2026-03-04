@@ -20,6 +20,8 @@
     --red: #f85149;
     --blue: #58a6ff;
     --radius: 4px;
+    --user-bg: #1e3a5f;
+    --code-bg: #161b22;
   }
   [data-theme="light"] {
     --bg: #ffffff;
@@ -32,6 +34,8 @@
     --yellow: #9a6700;
     --red: #cf222e;
     --blue: #0969da;
+    --user-bg: #ddf4ff;
+    --code-bg: #f6f8fa;
   }
   @media (prefers-color-scheme: light) {
     [data-theme="auto"] {
@@ -45,6 +49,8 @@
       --yellow: #9a6700;
       --red: #cf222e;
       --blue: #0969da;
+      --user-bg: #ddf4ff;
+      --code-bg: #f6f8fa;
     }
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -99,7 +105,7 @@
     overflow-wrap: break-word;
   }
   .msg.user {
-    background: #1e3a5f;
+    background: var(--user-bg);
     border-left: 3px solid var(--accent);
     border-radius: 0 var(--radius) var(--radius) 0;
     margin: 8px 0 4px 0;
@@ -114,7 +120,7 @@
     padding: 4px 14px;
   }
   .msg.assistant pre {
-    background: #0d1117;
+    background: var(--code-bg);
     padding: 10px;
     border-radius: 4px;
     overflow-x: auto;
