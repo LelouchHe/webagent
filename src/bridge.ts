@@ -175,8 +175,6 @@ export class CopilotBridge extends EventEmitter {
     const requestId = `perm_${++this.permissionCounter}`;
     const title = params.toolCall?.title ?? "Permission requested";
     const toolCallId = params.toolCall?.toolCallId ?? null;
-    console.log(`[bridge] permission: toolCallId=${toolCallId}, title=${title}`);
-
     this.emit("event", {
       type: "permission_request",
       requestId,
@@ -217,7 +215,6 @@ export class CopilotBridge extends EventEmitter {
         break;
 
       case "tool_call":
-        console.log(`[bridge] tool_call:`, JSON.stringify(update).slice(0, 500));
         this.emit("event", {
           type: "tool_call",
           sessionId,
@@ -229,7 +226,6 @@ export class CopilotBridge extends EventEmitter {
         break;
 
       case "tool_call_update":
-        console.log(`[bridge] tool_call_update:`, JSON.stringify(update).slice(0, 500));
         this.emit("event", {
           type: "tool_call_update",
           sessionId,
