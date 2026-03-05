@@ -49,6 +49,7 @@
 | `/cancel` | 取消当前回复 |
 | `/sessions` | 列出所有 session |
 | `/switch <title\|id>` | 切换到指定 session（标题或 ID 前缀匹配） |
+| `/delete <title\|id>` | 删除指定 session |
 | `/help` | 显示帮助 |
 
 ### 快捷键
