@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>>_</title>
 <link rel="icon" href="/icons/icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="/icons/icon-180.png">
@@ -304,7 +304,7 @@
   /* Input */
   #input-area {
     position: relative;
-    padding: 8px 16px;
+    padding: 8px 16px max(8px, env(safe-area-inset-bottom));
     background: var(--bg);
     border-top: 1px solid var(--border);
     display: flex;
