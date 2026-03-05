@@ -912,13 +912,12 @@ function handleEvent(msg) {
 
     case 'permission_resolved': {
       // Another client answered the permission — dismiss our buttons
-      if (msg.sessionId === sessionId) {
-        const el = document.querySelector(`.permission[data-request-id="${msg.requestId}"]`);
-        if (el) {
-          const title = el.querySelector('.title')?.textContent || '⚿';
-          const action = msg.denied ? 'denied' : msg.optionName || 'allowed';
-          el.innerHTML = `<span style="opacity:0.5">${escHtml(title)} — ${escHtml(action)}</span>`;
-        }
+      const permTarget = document.querySelector(`.permission[data-request-id="${msg.requestId}"]`);
+      if (msg.sessionId === sessionId && permTarget) {
+        const titleEl = permTarget.querySelector('.title');
+        const title = titleEl?.textContent || '⚿';
+        const action = msg.denied ? 'denied' : msg.optionName || 'allowed';
+        permTarget.innerHTML = `<span style="opacity:0.5">${escHtml(title)} — ${escHtml(action)}</span>`;
       }
       break;
     }

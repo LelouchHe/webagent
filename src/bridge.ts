@@ -21,7 +21,6 @@ export class CopilotBridge extends EventEmitter {
   private proc: ChildProcess | null = null;
   private conn: acp.ClientSideConnection | null = null;
   private permissionResolvers = new Map<string, (resp: acp.RequestPermissionResponse) => void>();
-  private permissionCounter = 0;
   private silentSessions = new Set<string>(); // Sessions that don't emit events
   private silentBuffers = new Map<string, string>(); // Text buffers for silent sessions
 
@@ -191,7 +190,7 @@ export class CopilotBridge extends EventEmitter {
   // --- ACP Client callbacks ---
 
   private handlePermission(params: acp.RequestPermissionRequest): Promise<acp.RequestPermissionResponse> {
-    const requestId = `perm_${++this.permissionCounter}`;
+    const requestId = crypto.randomUUID();
     const title = params.toolCall?.title ?? "Permission requested";
     const toolCallId = params.toolCall?.toolCallId ?? null;
     this.emit("event", {
