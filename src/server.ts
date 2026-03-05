@@ -1,5 +1,5 @@
 import { createServer } from "node:http";
-import { readFile, writeFile, mkdir } from "node:fs/promises";
+import { readFile, writeFile, mkdir, rm } from "node:fs/promises";
 import { join, extname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn, type ChildProcess } from "node:child_process";
@@ -376,6 +376,9 @@ wss.on("connection", (ws) => {
           store.deleteSession(msg.sessionId);
           liveSessions.delete(msg.sessionId);
           sessionHasTitle.delete(msg.sessionId);
+          // Clean up uploaded images
+          const imgDir = join(DATA_DIR, "images", msg.sessionId);
+          rm(imgDir, { recursive: true, force: true }).catch(() => {});
           send(ws, { type: "session_deleted", sessionId: msg.sessionId });
           console.log(`[session] deleted: ${msg.sessionId.slice(0, 8)}…`);
           break;
