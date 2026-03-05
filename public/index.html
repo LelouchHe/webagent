@@ -697,6 +697,7 @@ function connect() {
     const existingId = getHashSessionId();
     if (existingId) {
       // URL has a session — load its history and resume
+      resetSessionUI();
       const loaded = await loadHistory(existingId);
       if (loaded) {
         scrollToBottom();
@@ -711,6 +712,7 @@ function connect() {
       const sessions = await res.json();
       if (sessions.length > 0) {
         const last = sessions[0]; // sorted by last_active_at DESC
+        resetSessionUI();
         const loaded = await loadHistory(last.id);
         if (loaded) {
           scrollToBottom();
