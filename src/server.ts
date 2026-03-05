@@ -1,252 +1,89 @@
 import { createServer } from "node:http";
-import { readFile, writeFile, mkdir, rm } from "node:fs/promises";
-import { join, extname } from "node:path";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { spawn, type ChildProcess } from "node:child_process";
-import { WebSocketServer, WebSocket } from "ws";
+import { WebSocketServer } from "ws";
 import { CopilotBridge } from "./bridge.ts";
 import { Store } from "./store.ts";
-import type { AgentEvent } from "./bridge.ts";
+import { SessionManager } from "./session-manager.ts";
+import { TitleService } from "./title-service.ts";
+import { createRequestHandler } from "./routes.ts";
+import { setupWsHandler, broadcast } from "./ws-handler.ts";
+import type { AgentEvent } from "./types.ts";
 
 const PORT = parseInt(process.env.PORT ?? "6800", 10);
 const DATA_DIR = process.env.DATA_DIR ?? "data";
+const DEFAULT_CWD = process.env.DEFAULT_CWD ?? process.cwd();
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const PUBLIC_DIR = join(__dirname, "..", "public");
 
-/** Extract a human-readable message from any thrown value. */
-function errorMessage(err: unknown): string {
-  if (err instanceof Error) return err.message;
-  if (typeof err === "string") return err;
-  try {
-    return JSON.stringify(err);
-  } catch {
-    return String(err);
-  }
-}
-
-const MIME: Record<string, string> = {
-  ".html": "text/html",
-  ".js": "application/javascript",
-  ".css": "text/css",
-  ".json": "application/json",
-  ".svg": "image/svg+xml",
-  ".png": "image/png",
-  ".jpg": "image/jpeg",
-  ".jpeg": "image/jpeg",
-  ".gif": "image/gif",
-  ".webp": "image/webp",
-};
-
-// --- Store ---
+// --- Core dependencies ---
 
 const store = new Store(DATA_DIR);
 console.log(`[store] using ${DATA_DIR}/`);
 
-// --- HTTP server (static files + API) ---
+const sessions = new SessionManager(store, DEFAULT_CWD);
+const titleService = new TitleService(store, sessions, DEFAULT_CWD);
 
-const server = createServer(async (req, res) => {
-  const url = req.url ?? "/";
+let bridge: CopilotBridge | null = null;
 
-  // API routes
-  if (url.startsWith("/api/")) {
-    res.setHeader("Content-Type", "application/json");
+// --- HTTP + WebSocket servers ---
 
-    // GET /api/sessions
-    if (url === "/api/sessions" && req.method === "GET") {
-      res.end(JSON.stringify(store.listSessions()));
-      return;
-    }
-
-    // GET /api/sessions/:id/events?thinking=0|1
-    const eventsMatch = url.match(/^\/api\/sessions\/([^/]+)\/events(\?.*)?$/);
-    if (eventsMatch && req.method === "GET") {
-      const sessionId = decodeURIComponent(eventsMatch[1]);
-      const params = new URLSearchParams(eventsMatch[2]?.slice(1) ?? "");
-      const excludeThinking = params.get("thinking") === "0";
-      const session = store.getSession(sessionId);
-      if (!session) {
-        res.writeHead(404);
-        res.end(JSON.stringify({ error: "Session not found" }));
-        return;
-      }
-      const events = store.getEvents(sessionId, { excludeThinking });
-      res.end(JSON.stringify(events));
-      return;
-    }
-
-    // POST /api/images/:sessionId — upload image, returns { path, url }
-    const imgMatch = url.match(/^\/api\/images\/([^/]+)$/);
-    if (imgMatch && req.method === "POST") {
-      const sessionId = decodeURIComponent(imgMatch[1]);
-      const chunks: Buffer[] = [];
-      for await (const chunk of req) chunks.push(chunk as Buffer);
-      const body = JSON.parse(Buffer.concat(chunks).toString());
-      const { data, mimeType } = body as { data: string; mimeType: string };
-      const ext = mimeType.split("/")[1]?.replace("jpeg", "jpg") ?? "png";
-      const seq = Date.now();
-      const relPath = `images/${sessionId}/${seq}.${ext}`;
-      const absPath = join(DATA_DIR, relPath);
-      await mkdir(join(DATA_DIR, "images", sessionId), { recursive: true });
-      await writeFile(absPath, Buffer.from(data, "base64"));
-      const imgUrl = `/data/${relPath}`;
-      res.end(JSON.stringify({ path: relPath, url: imgUrl }));
-      return;
-    }
-
-    res.writeHead(404);
-    res.end(JSON.stringify({ error: "Not found" }));
-    return;
-  }
-
-  // Serve uploaded images: /data/images/...
-  if (url.startsWith("/data/images/")) {
-    const filePath = join(DATA_DIR, url.slice(6)); // strip "/data/"
-    if (!filePath.startsWith(join(DATA_DIR, "images"))) {
-      res.writeHead(403);
-      res.end("Forbidden");
-      return;
-    }
-    try {
-      const data = await readFile(filePath);
-      const ext = extname(filePath);
-      res.writeHead(200, {
-        "Content-Type": MIME[ext] ?? "application/octet-stream",
-        "Cache-Control": "public, max-age=31536000, immutable",
-      });
-      res.end(data);
-    } catch {
-      res.writeHead(404);
-      res.end("Not found");
-    }
-    return;
-  }
-
-  // Static files
-  const filePath = join(PUBLIC_DIR, url === "/" ? "/index.html" : url);
-
-  // Prevent path traversal
-  if (!filePath.startsWith(PUBLIC_DIR)) {
-    res.writeHead(403);
-    res.end("Forbidden");
-    return;
-  }
-
-  try {
-    const data = await readFile(filePath);
-    const ext = extname(filePath);
-    res.writeHead(200, { "Content-Type": MIME[ext] ?? "application/octet-stream" });
-    res.end(data);
-  } catch {
-    res.writeHead(404);
-    res.end("Not found");
-  }
-});
-
-// --- WebSocket server ---
-
+const server = createServer(createRequestHandler(store, PUBLIC_DIR, DATA_DIR));
 const wss = new WebSocketServer({ server });
 
-// One bridge per server (single copilot process, multiple sessions)
-let bridge: CopilotBridge | null = null;
-const liveSessions = new Set<string>(); // Sessions alive in current bridge
-const restoringSessions = new Set<string>(); // Sessions being restored (suppress events)
-const sessionHasTitle = new Set<string>(); // Sessions that already have a title
-let cachedModels: any = null; // Last known models info from bridge
-const DEFAULT_CWD = process.env.DEFAULT_CWD ?? process.cwd();
-const runningBashProcs = new Map<string, ChildProcess>(); // sessionId -> child process
+setupWsHandler({
+  wss,
+  store,
+  sessions,
+  titleService,
+  getBridge: () => bridge,
+  dataDir: DATA_DIR,
+});
 
-// Track current assistant message per session for aggregation
-const assistantBuffers = new Map<string, string>();
-const thinkingBuffers = new Map<string, string>();
-
-// Title generation: use a dedicated session with a fast model
-let titleSession: { id: string; ready: boolean } | null = null;
-const TITLE_MODEL = "claude-haiku-4.5";
-
-async function ensureTitleSession(): Promise<string | null> {
-  if (!bridge) return null;
-  if (titleSession?.ready) return titleSession.id;
-  try {
-    const id = await bridge.newSession(DEFAULT_CWD, { silent: true });
-    liveSessions.add(id);
-    await bridge.setModel(id, TITLE_MODEL).catch(() => {});
-    titleSession = { id, ready: true };
-    return id;
-  } catch {
-    return null;
-  }
-}
-
-async function generateTitle(userMessage: string, sessionId: string): Promise<void> {
-  try {
-    const tsId = await ensureTitleSession();
-    if (!tsId || !bridge) return;
-    const prompt = `Generate a short title (max 30 chars, no quotes) for a chat that starts with this message. Reply with ONLY the title, nothing else:\n\n${userMessage.slice(0, 500)}`;
-    const title = await bridge.promptForText(tsId, prompt);
-    if (title) {
-      const cleaned = title.replace(/^["']|["']$/g, "").trim().slice(0, 30);
-      if (cleaned) {
-        store.updateSessionTitle(sessionId, cleaned);
-        sessionHasTitle.add(sessionId);
-        broadcast({ type: "session_title_updated", sessionId, title: cleaned } as any);
-      }
-    }
-  } catch (err) {
-    console.error(`[title] generation failed:`, err);
-  }
-}
+// --- Bridge initialization ---
 
 async function initBridge(): Promise<CopilotBridge> {
   const b = new CopilotBridge();
 
   b.on("event", (event: AgentEvent) => {
-    // During session restore, ACP replays history — skip storage and broadcast
-    if (restoringSessions.has(event.sessionId)) return;
+    if (sessions.restoringSessions.has(event.sessionId)) return;
 
-    // Store aggregated events (not raw chunks)
     switch (event.type) {
       case "session_created":
-        // Capture current model from bridge's session info
-        if (event.models) {
-          cachedModels = event.models;
-        }
+        if (event.models) sessions.cachedModels = event.models;
         if (event.models?.currentModelId && event.sessionId) {
           store.updateSessionModel(event.sessionId, event.models.currentModelId);
         }
         break;
-      case "message_chunk": {
-        const buf = (assistantBuffers.get(event.sessionId) ?? "") + event.text;
-        assistantBuffers.set(event.sessionId, buf);
+      case "message_chunk":
+        sessions.appendAssistant(event.sessionId, event.text);
         break;
-      }
-      case "thought_chunk": {
-        const buf = (thinkingBuffers.get(event.sessionId) ?? "") + event.text;
-        thinkingBuffers.set(event.sessionId, buf);
+      case "thought_chunk":
+        sessions.appendThinking(event.sessionId, event.text);
         break;
-      }
       case "tool_call":
-        flushBuffers(event.sessionId);
+        sessions.flushBuffers(event.sessionId);
         store.saveEvent(event.sessionId, event.type, { id: event.id, title: event.title, kind: event.kind, rawInput: event.rawInput });
         break;
       case "tool_call_update":
         store.saveEvent(event.sessionId, event.type, { id: event.id, status: event.status, content: event.content });
         break;
       case "plan":
-        flushBuffers(event.sessionId);
+        sessions.flushBuffers(event.sessionId);
         store.saveEvent(event.sessionId, event.type, { entries: event.entries });
         break;
       case "permission_request":
-        flushBuffers(event.sessionId);
+        sessions.flushBuffers(event.sessionId);
         store.saveEvent(event.sessionId, event.type, {
           requestId: event.requestId, title: event.title, options: event.options,
         });
         break;
       case "prompt_done":
-        flushBuffers(event.sessionId);
+        sessions.flushBuffers(event.sessionId);
         store.saveEvent(event.sessionId, event.type, { stopReason: event.stopReason });
         break;
     }
-    broadcast(event);
+    broadcast(wss, event);
   });
 
   await b.start();
@@ -254,309 +91,11 @@ async function initBridge(): Promise<CopilotBridge> {
   return b;
 }
 
-function flushBuffers(sessionId: string): void {
-  const assistant = assistantBuffers.get(sessionId);
-  if (assistant) {
-    store.saveEvent(sessionId, "assistant_message", { text: assistant });
-    assistantBuffers.delete(sessionId);
-  }
-  const thinking = thinkingBuffers.get(sessionId);
-  if (thinking) {
-    store.saveEvent(sessionId, "thinking", { text: thinking });
-    thinkingBuffers.delete(sessionId);
-  }
-}
-
-function broadcast(event: AgentEvent, exclude?: WebSocket) {
-  const msg = JSON.stringify(event);
-  for (const client of wss.clients) {
-    if (client.readyState === WebSocket.OPEN && client !== exclude) {
-      client.send(msg);
-    }
-  }
-}
-
-function send(ws: WebSocket, event: AgentEvent) {
-  if (ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify(event));
-  }
-}
-
-wss.on("connection", (ws) => {
-  console.log(`[ws] client connected (total: ${wss.clients.size})`);
-
-  // Keepalive ping every 30s
-  const pingInterval = setInterval(() => {
-    if (ws.readyState === WebSocket.OPEN) ws.ping();
-  }, 30_000);
-
-  ws.on("message", async (raw) => {
-    let msg: any;
-    try {
-      msg = JSON.parse(raw.toString());
-    } catch {
-      send(ws, { type: "error", message: "Invalid JSON" });
-      return;
-    }
-
-    try {
-      switch (msg.type) {
-        case "new_session": {
-          if (!bridge) {
-            send(ws, { type: "error", message: "Agent not ready yet" });
-            return;
-          }
-          const cwd = msg.cwd ?? DEFAULT_CWD;
-          const sessionId = await bridge.newSession(cwd);
-          liveSessions.add(sessionId);
-          store.createSession(sessionId, cwd);
-          break;
-        }
-
-        case "resume_session": {
-          if (!bridge) {
-            send(ws, { type: "error", message: "Agent not ready yet" });
-            return;
-          }
-          if (!msg.sessionId) {
-            send(ws, { type: "error", message: "Missing sessionId" });
-            return;
-          }
-          const session = store.getSession(msg.sessionId);
-          if (!session) {
-            send(ws, { type: "error", message: "Session not found" });
-            return;
-          }
-          if (liveSessions.has(msg.sessionId)) {
-            // Session is alive in current bridge — just re-emit session_created
-            const models = cachedModels
-              ? { ...cachedModels, currentModelId: session.model || cachedModels.currentModelId }
-              : undefined;
-            send(ws, {
-              type: "session_created",
-              sessionId: msg.sessionId,
-              cwd: session.cwd,
-              title: session.title,
-              models,
-            } as AgentEvent);
-          } else {
-            // Session not in current bridge — try to restore via ACP
-            try {
-              restoringSessions.add(msg.sessionId);
-              const restored = await bridge.loadSession(msg.sessionId, session.cwd);
-              restoringSessions.delete(msg.sessionId);
-              liveSessions.add(msg.sessionId);
-              if (session.title) sessionHasTitle.add(msg.sessionId);
-              const models = restored.models || cachedModels;
-              if (models && session.model) {
-                models.currentModelId = session.model;
-              }
-              send(ws, {
-                type: "session_created",
-                sessionId: msg.sessionId,
-                cwd: session.cwd,
-                title: session.title,
-                models,
-              } as AgentEvent);
-              console.log(`[session] restored: ${msg.sessionId.slice(0, 8)}…`);
-            } catch (err) {
-              restoringSessions.delete(msg.sessionId);
-              console.error(`[session] restore failed:`, err);
-              send(ws, { type: "session_expired", sessionId: msg.sessionId });
-            }
-          }
-          break;
-        }
-
-        case "delete_session": {
-          if (!msg.sessionId) {
-            send(ws, { type: "error", message: "Missing sessionId" });
-            return;
-          }
-          store.deleteSession(msg.sessionId);
-          liveSessions.delete(msg.sessionId);
-          sessionHasTitle.delete(msg.sessionId);
-          // Clean up uploaded images
-          const imgDir = join(DATA_DIR, "images", msg.sessionId);
-          rm(imgDir, { recursive: true, force: true }).catch(() => {});
-          send(ws, { type: "session_deleted", sessionId: msg.sessionId });
-          console.log(`[session] deleted: ${msg.sessionId.slice(0, 8)}…`);
-          break;
-        }
-
-        case "prompt": {
-          if (!bridge) {
-            send(ws, { type: "error", message: "No active bridge" });
-            return;
-          }
-          if (!msg.sessionId || !msg.text) {
-            send(ws, { type: "error", message: "Missing sessionId or text" });
-            return;
-          }
-          const images = msg.images as Array<{ data: string; mimeType: string; path: string }> | undefined;
-          const userData = {
-            text: msg.text,
-            ...(images && { images: images.map((i: { path: string; mimeType: string }) => ({ path: i.path, mimeType: i.mimeType })) }),
-          };
-          store.saveEvent(msg.sessionId, "user_message", userData);
-          store.updateSessionLastActive(msg.sessionId);
-          // Generate title on first user message (non-blocking)
-          if (!sessionHasTitle.has(msg.sessionId)) {
-            sessionHasTitle.add(msg.sessionId); // prevent duplicate attempts
-            generateTitle(msg.text, msg.sessionId);
-          }
-          // Broadcast user message to other clients
-          const userEvent = JSON.stringify({ type: "user_message", sessionId: msg.sessionId, ...userData });
-          for (const client of wss.clients) {
-            if (client !== ws && client.readyState === WebSocket.OPEN) {
-              client.send(userEvent);
-            }
-          }
-          bridge.prompt(msg.sessionId, msg.text, images).catch((err: unknown) => {
-            send(ws, { type: "error", message: errorMessage(err) });
-          });
-          break;
-        }
-
-        case "permission_response": {
-          if (!bridge) return;
-          if (msg.denied) {
-            bridge.denyPermission(msg.requestId);
-          } else {
-            bridge.resolvePermission(msg.requestId, msg.optionId);
-          }
-          // Store the result for history replay
-          if (msg.sessionId) {
-            store.saveEvent(msg.sessionId, "permission_response", {
-              requestId: msg.requestId,
-              optionName: msg.optionName || "",
-              denied: !!msg.denied,
-            });
-          }
-          // Broadcast to other clients so they dismiss the permission UI
-          broadcast({
-            type: "permission_resolved",
-            sessionId: msg.sessionId,
-            requestId: msg.requestId,
-            optionName: msg.optionName || "",
-            denied: !!msg.denied,
-          } as any, ws);
-          break;
-        }
-
-        case "cancel": {
-          if (msg.sessionId) {
-            await bridge?.cancel(msg.sessionId);
-          }
-          break;
-        }
-
-        case "set_model": {
-          if (!bridge) {
-            send(ws, { type: "error", message: "Agent not ready yet" });
-            return;
-          }
-          if (!msg.sessionId || !msg.modelId) {
-            send(ws, { type: "error", message: "Missing sessionId or modelId" });
-            return;
-          }
-          try {
-            await bridge.setModel(msg.sessionId, msg.modelId);
-            store.updateSessionModel(msg.sessionId, msg.modelId);
-            send(ws, { type: "model_set", modelId: msg.modelId } as any);
-          } catch (err: unknown) {
-            send(ws, { type: "error", message: `Failed to set model: ${errorMessage(err)}` });
-          }
-          break;
-        }
-
-        case "bash_exec": {
-          if (!msg.sessionId || !msg.command) {
-            send(ws, { type: "error", message: "Missing sessionId or command" });
-            return;
-          }
-          if (runningBashProcs.has(msg.sessionId)) {
-            send(ws, { type: "error", message: "A bash command is already running in this session" });
-            return;
-          }
-          const session = store.getSession(msg.sessionId);
-          const cwd = session?.cwd ?? DEFAULT_CWD;
-          store.saveEvent(msg.sessionId, "bash_command", { command: msg.command });
-          // Broadcast to other clients
-          const bashUserEvent = JSON.stringify({
-            type: "bash_command", sessionId: msg.sessionId, command: msg.command,
-          });
-          for (const client of wss.clients) {
-            if (client !== ws && client.readyState === WebSocket.OPEN) {
-              client.send(bashUserEvent);
-            }
-          }
-
-          const child = spawn("bash", ["-c", msg.command], {
-            cwd,
-            env: { ...process.env, TERM: "dumb" },
-            stdio: ["ignore", "pipe", "pipe"],
-          });
-          runningBashProcs.set(msg.sessionId, child);
-          let output = "";
-
-          const onData = (stream: string) => (chunk: Buffer) => {
-            const text = chunk.toString();
-            output += text;
-            const ev = { type: "bash_output", sessionId: msg.sessionId, text, stream };
-            broadcast(ev as any);
-          };
-          child.stdout!.on("data", onData("stdout"));
-          child.stderr!.on("data", onData("stderr"));
-
-          child.on("close", (code, signal) => {
-            runningBashProcs.delete(msg.sessionId);
-            store.saveEvent(msg.sessionId, "bash_result", { output, code, signal });
-            broadcast({
-              type: "bash_done", sessionId: msg.sessionId, code, signal,
-            } as any);
-          });
-
-          child.on("error", (err) => {
-            runningBashProcs.delete(msg.sessionId);
-            const errMsg = errorMessage(err);
-            store.saveEvent(msg.sessionId, "bash_result", { output: errMsg, code: -1, signal: null });
-            broadcast({
-              type: "bash_done", sessionId: msg.sessionId, code: -1, signal: null, error: errMsg,
-            } as any);
-          });
-          break;
-        }
-
-        case "bash_cancel": {
-          if (!msg.sessionId) return;
-          const proc = runningBashProcs.get(msg.sessionId);
-          if (proc) {
-            proc.kill("SIGINT");
-          }
-          break;
-        }
-
-        default:
-          send(ws, { type: "error", message: `Unknown message type: ${msg.type}` });
-      }
-    } catch (err: unknown) {
-      send(ws, { type: "error", message: errorMessage(err) });
-    }
-  });
-
-  ws.on("close", () => {
-    clearInterval(pingInterval);
-    console.log(`[ws] client disconnected (total: ${wss.clients.size})`);
-  });
-});
-
 // --- Graceful shutdown ---
 
 async function shutdown() {
   console.log("\n[server] shutting down...");
-  for (const [, proc] of runningBashProcs) proc.kill("SIGKILL");
-  runningBashProcs.clear();
+  sessions.killAllBashProcs();
   wss.close();
   await bridge?.shutdown();
   store.close();
@@ -575,10 +114,7 @@ server.listen(PORT, "0.0.0.0", async () => {
   try {
     await initBridge();
     console.log(`[bridge] ready`);
-    // Populate sessionHasTitle from existing sessions
-    for (const s of store.listSessions()) {
-      if (s.title) sessionHasTitle.add(s.id);
-    }
+    sessions.hydrate();
   } catch (err) {
     console.error(`[bridge] failed to start:`, err);
   }

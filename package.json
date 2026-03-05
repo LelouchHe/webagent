@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
+    "test": "node --experimental-strip-types --test test/*.test.ts",
     "dev": "DATA_DIR=data-dev PORT=6801 node --experimental-strip-types --watch src/server.ts",
     "svc:restart": "launchctl kickstart -k gui/501/com.lelouch.agent-web",
     "svc:stop": "launchctl bootout gui/501/com.lelouch.agent-web",

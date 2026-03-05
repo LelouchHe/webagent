@@ -1,0 +1,137 @@
+import type { ChildProcess } from "node:child_process";
+import type { Store } from "./store.ts";
+import type { CopilotBridge } from "./bridge.ts";
+import type { AgentEvent } from "./types.ts";
+import type * as acp from "@agentclientprotocol/sdk";
+
+/**
+ * Centralizes all session-related state that was previously scattered
+ * across module-level variables in server.ts.
+ */
+export class SessionManager {
+  readonly liveSessions = new Set<string>();
+  readonly restoringSessions = new Set<string>();
+  readonly sessionHasTitle = new Set<string>();
+  readonly assistantBuffers = new Map<string, string>();
+  readonly thinkingBuffers = new Map<string, string>();
+  readonly runningBashProcs = new Map<string, ChildProcess>();
+
+  cachedModels: acp.ModelsInfo | null = null;
+
+  private store: Store;
+  private defaultCwd: string;
+
+  constructor(store: Store, defaultCwd: string) {
+    this.store = store;
+    this.defaultCwd = defaultCwd;
+  }
+
+  /** Populate sessionHasTitle from existing DB sessions on startup. */
+  hydrate(): void {
+    for (const s of this.store.listSessions()) {
+      if (s.title) this.sessionHasTitle.add(s.id);
+    }
+  }
+
+  /** Create a new session in both bridge and store. */
+  async createSession(bridge: CopilotBridge, cwd?: string): Promise<string> {
+    const sessionCwd = cwd ?? this.defaultCwd;
+    const sessionId = await bridge.newSession(sessionCwd);
+    this.liveSessions.add(sessionId);
+    this.store.createSession(sessionId, sessionCwd);
+    return sessionId;
+  }
+
+  /** Resume a session — returns event to send to the requesting client. */
+  async resumeSession(
+    bridge: CopilotBridge,
+    sessionId: string,
+  ): Promise<AgentEvent> {
+    const session = this.store.getSession(sessionId);
+    if (!session) throw new Error("Session not found");
+
+    if (this.liveSessions.has(sessionId)) {
+      const models = this.cachedModels
+        ? { ...this.cachedModels, currentModelId: session.model || this.cachedModels.currentModelId }
+        : undefined;
+      return {
+        type: "session_created",
+        sessionId,
+        cwd: session.cwd,
+        title: session.title,
+        models,
+      };
+    }
+
+    // Restore via ACP
+    this.restoringSessions.add(sessionId);
+    try {
+      const restored = await bridge.loadSession(sessionId, session.cwd);
+      this.liveSessions.add(sessionId);
+      if (session.title) this.sessionHasTitle.add(sessionId);
+      const models = restored.models || this.cachedModels;
+      if (models && session.model) {
+        models.currentModelId = session.model;
+      }
+      console.log(`[session] restored: ${sessionId.slice(0, 8)}…`);
+      return {
+        type: "session_created",
+        sessionId,
+        cwd: session.cwd,
+        title: session.title,
+        models,
+      };
+    } catch (err) {
+      console.error(`[session] restore failed:`, err);
+      throw err;
+    } finally {
+      this.restoringSessions.delete(sessionId);
+    }
+  }
+
+  /** Delete a session from store and clean up all state. */
+  deleteSession(sessionId: string): void {
+    this.store.deleteSession(sessionId);
+    this.liveSessions.delete(sessionId);
+    this.sessionHasTitle.delete(sessionId);
+    this.assistantBuffers.delete(sessionId);
+    this.thinkingBuffers.delete(sessionId);
+  }
+
+  /** Flush assistant/thinking buffers to store. */
+  flushBuffers(sessionId: string): void {
+    const assistant = this.assistantBuffers.get(sessionId);
+    if (assistant) {
+      this.store.saveEvent(sessionId, "assistant_message", { text: assistant });
+      this.assistantBuffers.delete(sessionId);
+    }
+    const thinking = this.thinkingBuffers.get(sessionId);
+    if (thinking) {
+      this.store.saveEvent(sessionId, "thinking", { text: thinking });
+      this.thinkingBuffers.delete(sessionId);
+    }
+  }
+
+  /** Append to assistant message buffer. */
+  appendAssistant(sessionId: string, text: string): void {
+    const buf = (this.assistantBuffers.get(sessionId) ?? "") + text;
+    this.assistantBuffers.set(sessionId, buf);
+  }
+
+  /** Append to thinking buffer. */
+  appendThinking(sessionId: string, text: string): void {
+    const buf = (this.thinkingBuffers.get(sessionId) ?? "") + text;
+    this.thinkingBuffers.set(sessionId, buf);
+  }
+
+  /** Get CWD for a session (falls back to default). */
+  getSessionCwd(sessionId: string): string {
+    return this.store.getSession(sessionId)?.cwd ?? this.defaultCwd;
+  }
+
+  /** Kill all running bash processes (for shutdown). */
+  killAllBashProcs(): void {
+    for (const [, proc] of this.runningBashProcs) proc.kill("SIGKILL");
+    this.runningBashProcs.clear();
+  }
+}

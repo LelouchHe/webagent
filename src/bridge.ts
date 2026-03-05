@@ -2,20 +2,7 @@ import { spawn, ChildProcess } from "node:child_process";
 import { Writable, Readable } from "node:stream";
 import { EventEmitter } from "node:events";
 import * as acp from "@agentclientprotocol/sdk";
-
-// Events emitted to WebSocket layer
-export type AgentEvent =
-  | { type: "connected"; agent: { name: string; version: string }; models: acp.ModelInfo[] }
-  | { type: "session_created"; sessionId: string; cwd?: string; title?: string | null; models?: acp.ModelsInfo }
-  | { type: "message_chunk"; sessionId: string; text: string }
-  | { type: "thought_chunk"; sessionId: string; text: string }
-  | { type: "tool_call"; sessionId: string; id: string; title: string; kind: string; rawInput?: unknown }
-  | { type: "tool_call_update"; sessionId: string; id: string; status: string; content?: unknown[] }
-  | { type: "plan"; sessionId: string; entries: unknown[] }
-  | { type: "permission_request"; requestId: string; sessionId: string; title: string; toolCallId?: string | null; options: acp.PermissionOption[] }
-  | { type: "prompt_done"; sessionId: string; stopReason: string }
-  | { type: "session_expired"; sessionId: string }
-  | { type: "error"; message: string };
+import type { AgentEvent } from "./types.ts";
 
 export class CopilotBridge extends EventEmitter {
   private proc: ChildProcess | null = null;

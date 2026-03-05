@@ -1,0 +1,63 @@
+import { z } from "zod/v4";
+import type * as acp from "@agentclientprotocol/sdk";
+
+// --- Agent events (server → client) ---
+
+export type AgentEvent =
+  | { type: "connected"; agent: { name: string; version: string }; models: acp.ModelInfo[] }
+  | { type: "session_created"; sessionId: string; cwd?: string; title?: string | null; models?: acp.ModelsInfo }
+  | { type: "message_chunk"; sessionId: string; text: string }
+  | { type: "thought_chunk"; sessionId: string; text: string }
+  | { type: "tool_call"; sessionId: string; id: string; title: string; kind: string; rawInput?: unknown }
+  | { type: "tool_call_update"; sessionId: string; id: string; status: string; content?: unknown[] }
+  | { type: "plan"; sessionId: string; entries: unknown[] }
+  | { type: "permission_request"; requestId: string; sessionId: string; title: string; toolCallId?: string | null; options: acp.PermissionOption[] }
+  | { type: "prompt_done"; sessionId: string; stopReason: string }
+  | { type: "session_expired"; sessionId: string }
+  | { type: "error"; message: string };
+
+// --- Inbound WS messages (client → server) ---
+
+const ImageSchema = z.object({
+  data: z.string(),
+  mimeType: z.string(),
+  path: z.string().optional(),
+});
+
+export const WsMessageSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("new_session"), cwd: z.string().optional() }),
+  z.object({ type: z.literal("resume_session"), sessionId: z.string() }),
+  z.object({ type: z.literal("delete_session"), sessionId: z.string() }),
+  z.object({
+    type: z.literal("prompt"),
+    sessionId: z.string(),
+    text: z.string(),
+    images: z.array(ImageSchema).optional(),
+  }),
+  z.object({
+    type: z.literal("permission_response"),
+    sessionId: z.string().optional(),
+    requestId: z.string(),
+    optionId: z.string().optional(),
+    optionName: z.string().optional(),
+    denied: z.boolean().optional(),
+  }),
+  z.object({ type: z.literal("cancel"), sessionId: z.string() }),
+  z.object({ type: z.literal("set_model"), sessionId: z.string(), modelId: z.string() }),
+  z.object({ type: z.literal("bash_exec"), sessionId: z.string(), command: z.string() }),
+  z.object({ type: z.literal("bash_cancel"), sessionId: z.string() }),
+]);
+
+export type WsMessage = z.infer<typeof WsMessageSchema>;
+
+// --- Utility ---
+
+export function errorMessage(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  if (typeof err === "string") return err;
+  try {
+    return JSON.stringify(err);
+  } catch {
+    return String(err);
+  }
+}
