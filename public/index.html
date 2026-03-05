@@ -874,6 +874,7 @@ function handleEvent(msg) {
       finishThinking();
       const permEl = document.createElement('div');
       permEl.className = 'permission';
+      permEl.dataset.requestId = msg.requestId;
       permEl.innerHTML = `<span class="title">⚿ ${escHtml(msg.title)}</span> `;
       msg.options.forEach(opt => {
         const btn = document.createElement('button');
@@ -884,8 +885,10 @@ function handleEvent(msg) {
           const isDeny = (opt.kind || '').includes('reject') || (opt.kind || '').includes('deny');
           ws.send(JSON.stringify({
             type: 'permission_response',
+            sessionId,
             requestId: msg.requestId,
             optionId: opt.optionId,
+            optionName: opt.name,
             denied: isDeny,
           }));
           permEl.innerHTML = `<span style="opacity:0.5">⚿ ${escHtml(msg.title)} — ${escHtml(opt.name)}</span>`;
@@ -894,6 +897,19 @@ function handleEvent(msg) {
       });
       messagesEl.appendChild(permEl);
       scrollToBottom();
+      break;
+    }
+
+    case 'permission_resolved': {
+      // Another client answered the permission — dismiss our buttons
+      if (msg.sessionId === sessionId) {
+        const el = document.querySelector(`.permission[data-request-id="${msg.requestId}"]`);
+        if (el) {
+          const title = el.querySelector('.title')?.textContent || '⚿';
+          const action = msg.denied ? 'denied' : msg.optionName || 'allowed';
+          el.innerHTML = `<span style="opacity:0.5">${escHtml(title)} — ${escHtml(action)}</span>`;
+        }
+      }
       break;
     }
 
