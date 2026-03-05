@@ -1,4 +1,4 @@
-# Agent Web
+# WebAgent
 
 通过浏览器远程使用 Copilot CLI 的 Web 应用，基于 ACP (Agent Client Protocol)。
 

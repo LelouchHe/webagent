@@ -25,7 +25,7 @@ export class Store {
 
   constructor(dataDir: string) {
     mkdirSync(dataDir, { recursive: true });
-    this.db = new Database(join(dataDir, "agent-web.db"));
+    this.db = new Database(join(dataDir, "webagent.db"));
     this.db.pragma("journal_mode = WAL");
     this.migrate();
   }

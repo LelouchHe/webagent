@@ -1,4 +1,4 @@
-# Agent Web
+# WebAgent
 
 通过浏览器远程使用 Copilot CLI 的 Web 应用，基于 ACP (Agent Client Protocol)。
 
@@ -111,12 +111,12 @@ npm run svc:restart   # 重启（改完代码后）
 npm run svc:stop      # 停止
 
 # 查看日志
-tail -f agent-web.log
+tail -f webagent.log
 ```
 
 首次安装：
 ```bash
-launchctl bootstrap gui/501 ~/Library/LaunchAgents/com.lelouch.agent-web.plist
+launchctl bootstrap gui/501 ~/Library/LaunchAgents/com.lelouch.webagent.plist
 ```
 
 ### 开发

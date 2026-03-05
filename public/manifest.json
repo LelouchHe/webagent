@@ -1,5 +1,5 @@
 {
-  "name": "Agent Web",
+  "name": "WebAgent",
   "short_name": ">_",
   "description": "Remote Copilot CLI via browser",
   "start_url": "/",

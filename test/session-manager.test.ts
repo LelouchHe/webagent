@@ -12,7 +12,7 @@ describe("SessionManager", () => {
   let tmpDir: string;
 
   beforeEach(() => {
-    tmpDir = mkdtempSync(join(tmpdir(), "agent-web-test-"));
+    tmpDir = mkdtempSync(join(tmpdir(), "webagent-test-"));
     store = new Store(tmpDir);
     sm = new SessionManager(store, "/default/cwd");
   });

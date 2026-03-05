@@ -36,7 +36,7 @@ describe("HTTP routes", () => {
   let port: number;
 
   beforeEach(async () => {
-    tmpDir = mkdtempSync(join(tmpdir(), "agent-web-routes-"));
+    tmpDir = mkdtempSync(join(tmpdir(), "webagent-routes-"));
     publicDir = join(tmpDir, "public");
     mkdirSync(publicDir);
     writeFileSync(join(publicDir, "index.html"), "<h1>Test</h1>");
