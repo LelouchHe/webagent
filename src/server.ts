@@ -337,7 +337,8 @@ wss.on("connection", (ws) => {
             try {
               restoringSessions.add(msg.sessionId);
               await bridge.loadSession(msg.sessionId, session.cwd);
-              restoringSessions.delete(msg.sessionId);
+              // Don't delete from restoringSessions yet — ACP may still send replay events
+              // Will be cleared when user sends first message to this session
               liveSessions.add(msg.sessionId);
               if (session.title) sessionHasTitle.add(msg.sessionId);
               send(ws, {
@@ -378,6 +379,8 @@ wss.on("connection", (ws) => {
             send(ws, { type: "error", message: "Missing sessionId or text" });
             return;
           }
+          // Clear restoring flag — user is now actively using this session
+          restoringSessions.delete(msg.sessionId);
           const images = msg.images as Array<{ data: string; mimeType: string; path: string }> | undefined;
           const userData = {
             text: msg.text,
