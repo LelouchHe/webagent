@@ -1272,9 +1272,8 @@ async function handleSlashCommand(text) {
 
     case '/model': {
       if (!arg) {
-        // No arg: show picker menu
-        inputEl.value = '/model ';
-        updateSlashMenu();
+        addSystem(`model: ${currentModel || 'unknown'}`);
+        addSystem('Type /model + space to pick from list');
         return true;
       }
       const query = arg.trim();
