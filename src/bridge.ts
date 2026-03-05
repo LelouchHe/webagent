@@ -79,7 +79,7 @@ export class CopilotBridge extends EventEmitter {
     return session.sessionId;
   }
 
-  async loadSession(sessionId: string, cwd: string): Promise<string> {
+  async loadSession(sessionId: string, cwd: string): Promise<{ sessionId: string; models?: acp.ModelsInfo }> {
     if (!this.conn) throw new Error("Not connected");
     const session = await this.conn.loadSession({ sessionId, cwd, mcpServers: [] });
     this.emit("event", {
@@ -88,7 +88,7 @@ export class CopilotBridge extends EventEmitter {
       cwd,
       models: session.models,
     } satisfies AgentEvent);
-    return session.sessionId;
+    return { sessionId: session.sessionId, models: session.models };
   }
 
   async setModel(sessionId: string, modelId: string): Promise<void> {

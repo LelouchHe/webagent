@@ -151,6 +151,7 @@ let bridge: CopilotBridge | null = null;
 const liveSessions = new Set<string>(); // Sessions alive in current bridge
 const restoringSessions = new Set<string>(); // Sessions being restored (suppress events)
 const sessionHasTitle = new Set<string>(); // Sessions that already have a title
+let cachedModels: any = null; // Last known models info from bridge
 const DEFAULT_CWD = process.env.DEFAULT_CWD ?? process.cwd();
 const runningBashProcs = new Map<string, ChildProcess>(); // sessionId -> child process
 
@@ -206,6 +207,9 @@ async function initBridge(): Promise<CopilotBridge> {
     switch (event.type) {
       case "session_created":
         // Capture current model from bridge's session info
+        if (event.models) {
+          cachedModels = event.models;
+        }
         if (event.models?.currentModelId && event.sessionId) {
           store.updateSessionModel(event.sessionId, event.models.currentModelId);
         }
@@ -325,26 +329,34 @@ wss.on("connection", (ws) => {
           }
           if (liveSessions.has(msg.sessionId)) {
             // Session is alive in current bridge — just re-emit session_created
+            const models = cachedModels
+              ? { ...cachedModels, currentModelId: session.model || cachedModels.currentModelId }
+              : undefined;
             send(ws, {
               type: "session_created",
               sessionId: msg.sessionId,
               cwd: session.cwd,
               title: session.title,
-              model: session.model,
+              models,
             } as AgentEvent);
           } else {
             // Session not in current bridge — try to restore via ACP
             try {
               restoringSessions.add(msg.sessionId);
-              await bridge.loadSession(msg.sessionId, session.cwd);
+              const restored = await bridge.loadSession(msg.sessionId, session.cwd);
               restoringSessions.delete(msg.sessionId);
               liveSessions.add(msg.sessionId);
               if (session.title) sessionHasTitle.add(msg.sessionId);
+              const models = restored.models || cachedModels;
+              if (models && session.model) {
+                models.currentModelId = session.model;
+              }
               send(ws, {
                 type: "session_created",
                 sessionId: msg.sessionId,
                 cwd: session.cwd,
                 title: session.title,
+                models,
               } as AgentEvent);
               console.log(`[session] restored: ${msg.sessionId.slice(0, 8)}…`);
             } catch (err) {
