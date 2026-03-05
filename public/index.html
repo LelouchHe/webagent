@@ -646,8 +646,18 @@ function replayEvent(type, data) {
     case 'permission_request': {
       const el = document.createElement('div');
       el.className = 'permission';
+      el.dataset.requestId = data.requestId;
       el.innerHTML = `<div class="title" style="opacity:0.5">⚿ ${escHtml(data.title)}</div>`;
       messagesEl.appendChild(el);
+      break;
+    }
+    case 'permission_response': {
+      const el = document.querySelector(`.permission[data-request-id="${data.requestId}"]`);
+      if (el) {
+        const title = el.querySelector('.title')?.textContent || '⚿';
+        const action = data.denied ? 'denied' : data.optionName || 'allowed';
+        el.innerHTML = `<span style="opacity:0.5">${escHtml(title)} — ${escHtml(action)}</span>`;
+      }
       break;
     }
     case 'bash_command': {

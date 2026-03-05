@@ -257,10 +257,10 @@ function flushBuffers(sessionId: string): void {
   }
 }
 
-function broadcast(event: AgentEvent) {
+function broadcast(event: AgentEvent, exclude?: WebSocket) {
   const msg = JSON.stringify(event);
   for (const client of wss.clients) {
-    if (client.readyState === WebSocket.OPEN) {
+    if (client.readyState === WebSocket.OPEN && client !== exclude) {
       client.send(msg);
     }
   }
@@ -402,6 +402,14 @@ wss.on("connection", (ws) => {
             bridge.denyPermission(msg.requestId);
           } else {
             bridge.resolvePermission(msg.requestId, msg.optionId);
+          }
+          // Store the result for history replay
+          if (msg.sessionId) {
+            store.saveEvent(msg.sessionId, "permission_response", {
+              requestId: msg.requestId,
+              optionName: msg.optionName || "",
+              denied: !!msg.denied,
+            });
           }
           // Broadcast to other clients so they dismiss the permission UI
           broadcast({
