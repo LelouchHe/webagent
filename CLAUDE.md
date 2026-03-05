@@ -34,10 +34,12 @@ npm run dev           # dev server on port 6801, uses data-dev/
 
 - **Single bridge**: One `CopilotBridge` instance per server, multiple sessions multiplexed over it.
 - **Session restore**: `bridge.loadSession()` restores ACP context after server restart. During restore, `restoringSessions` Set suppresses duplicate event storage/broadcast.
-- **Pre-warmed session**: A session is pre-created at startup for instant `/new`. Reused if CWD matches, otherwise new one created on demand.
+- **On-demand sessions**: No pre-warming. Sessions created on `/new`, auto-resumed on page open.
 - **Auto-resume**: Frontend auto-resumes last active session on page open (no hash → fetch `/api/sessions` → resume most recent).
 - **Event aggregation**: `message_chunk` / `thought_chunk` are buffered in memory, flushed to DB as full `assistant_message` / `thinking` on boundaries (tool_call, plan, prompt_done).
 - **Title generation**: Uses a dedicated silent session with fast model (Haiku), async and non-blocking.
+- **Multi-client broadcast**: Events broadcast to all WS clients. Permission responses, user messages, bash output sync across devices. `broadcast()` supports sender exclusion.
+- **PWA**: Minimal service worker (no offline cache), manifest.json, installable to home screen. Cloudflare Access needs bypass for `/manifest.json`, `/sw.js`, `/icons/*`.
 
 ## Frontend Conventions
 
