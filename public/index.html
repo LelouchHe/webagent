@@ -1272,10 +1272,9 @@ async function handleSlashCommand(text) {
 
     case '/model': {
       if (!arg) {
-        addSystem(`model: ${currentModel || 'unknown'}`);
-        if (availableModels.length) {
-          addSystem('Available: ' + availableModels.map(m => m.modelId).join(', '));
-        }
+        // No arg: show picker menu
+        inputEl.value = '/model ';
+        updateSlashMenu();
         return true;
       }
       const query = arg.trim();
@@ -1296,7 +1295,7 @@ async function handleSlashCommand(text) {
         return true;
       }
       ws.send(JSON.stringify({ type: 'set_model', sessionId, modelId: match.modelId }));
-      addSystem(`Switching to ${match.modelId}…`);
+      addSystem(`model → ${match.modelId}`);
       return true;
     }
 
@@ -1366,7 +1365,7 @@ inputEl.addEventListener('paste', async (e) => {
 const SLASH_COMMANDS = [
   { cmd: '/new',      args: '[cwd]',       desc: 'New session' },
   { cmd: '/cwd',      args: '',            desc: 'Show working directory' },
-  { cmd: '/model',    args: '[name]',      desc: 'Show or switch model' },
+  { cmd: '/model',    args: '[name]',      desc: 'Pick or switch model' },
   { cmd: '/cancel',   args: '',            desc: 'Cancel current response' },
   { cmd: '/sessions', args: '',            desc: 'List all sessions' },
   { cmd: '/switch',   args: '<title|id>',  desc: 'Switch to session' },
@@ -1377,7 +1376,7 @@ const SLASH_COMMANDS = [
 const slashMenu = $('#slash-menu');
 let slashIdx = -1;
 let slashFiltered = [];
-let slashMode = 'commands'; // 'commands', 'switch', or 'delete'
+let slashMode = 'commands'; // 'commands', 'switch', 'delete', or 'model'
 let cachedSessions = null;
 
 function updateSlashMenu() {
@@ -1388,6 +1387,14 @@ function updateSlashMenu() {
   if (switchMatch && !busy) {
     const query = text.slice(switchMatch[0].length).toLowerCase();
     fetchSessionsForMenu(query, switchMatch[1]);
+    return;
+  }
+
+  // /model — show model picker
+  const modelMatch = text.match(/^\/model /);
+  if (modelMatch && !busy) {
+    const query = text.slice(modelMatch[0].length).toLowerCase();
+    showModelMenu(query);
     return;
   }
 
@@ -1434,8 +1441,29 @@ async function fetchSessionsForMenu(query, mode = 'switch') {
   slashMenu.classList.add('active');
 }
 
+function showModelMenu(query) {
+  slashMode = 'model';
+  slashFiltered = availableModels.filter(m => {
+    if (!query) return true;
+    return m.modelId.toLowerCase().includes(query);
+  });
+  if (slashFiltered.length === 0) {
+    hideSlashMenu();
+    return;
+  }
+  slashIdx = 0;
+  renderSlashMenu();
+  slashMenu.classList.add('active');
+}
+
 function renderSlashMenu() {
-  if (slashMode === 'switch' || slashMode === 'delete') {
+  if (slashMode === 'model') {
+    const current = currentModel?.toLowerCase() || '';
+    slashMenu.innerHTML = slashFiltered.map((m, i) => {
+      const active = m.modelId.toLowerCase() === current ? ' *' : '';
+      return `<div class="slash-item${i === slashIdx ? ' selected' : ''}" data-idx="${i}"><span class="slash-cmd">${escHtml(m.modelId)}${active}</span></div>`;
+    }).join('');
+  } else if (slashMode === 'switch' || slashMode === 'delete') {
     slashMenu.innerHTML = slashFiltered.map((s, i) => {
       const label = s.title || s.id.slice(0, 8) + '…';
       const time = formatLocalTime(s.last_active_at || s.created_at);
@@ -1461,7 +1489,13 @@ function hideSlashMenu() {
 function selectSlashItem(idx) {
   if (idx < 0 || idx >= slashFiltered.length) return;
 
-  if (slashMode === 'switch') {
+  if (slashMode === 'model') {
+    const m = slashFiltered[idx];
+    inputEl.value = '';
+    hideSlashMenu();
+    ws.send(JSON.stringify({ type: 'set_model', sessionId, modelId: m.modelId }));
+    addSystem(`model → ${m.modelId}`);
+  } else if (slashMode === 'switch') {
     const s = slashFiltered[idx];
     inputEl.value = '';
     hideSlashMenu();
@@ -1480,8 +1514,8 @@ function selectSlashItem(idx) {
     inputEl.value = item.cmd + (item.args ? ' ' : '');
     hideSlashMenu();
     inputEl.focus();
-    // Trigger session picker for /switch and /delete
-    if (item.cmd === '/switch' || item.cmd === '/delete') updateSlashMenu();
+    // Trigger picker for /switch, /delete, and /model
+    if (item.cmd === '/switch' || item.cmd === '/delete' || item.cmd === '/model') updateSlashMenu();
   }
 }
 
