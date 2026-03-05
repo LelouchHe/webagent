@@ -755,6 +755,9 @@ function handleEvent(msg) {
         availableModels = msg.models.availableModels || [];
         currentModel = msg.models.currentModelId || null;
       }
+      if (msg.model && !currentModel) {
+        currentModel = msg.model;
+      }
       setHashSessionId(sessionId);
       updateSessionInfo(sessionId, sessionTitle);
       statusEl.textContent = 'connected';

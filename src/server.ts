@@ -204,6 +204,12 @@ async function initBridge(): Promise<CopilotBridge> {
 
     // Store aggregated events (not raw chunks)
     switch (event.type) {
+      case "session_created":
+        // Capture current model from bridge's session info
+        if (event.models?.currentModelId && event.sessionId) {
+          store.updateSessionModel(event.sessionId, event.models.currentModelId);
+        }
+        break;
       case "message_chunk": {
         const buf = (assistantBuffers.get(event.sessionId) ?? "") + event.text;
         assistantBuffers.set(event.sessionId, buf);
@@ -324,6 +330,7 @@ wss.on("connection", (ws) => {
               sessionId: msg.sessionId,
               cwd: session.cwd,
               title: session.title,
+              model: session.model,
             } as AgentEvent);
           } else {
             // Session not in current bridge — try to restore via ACP
@@ -440,6 +447,7 @@ wss.on("connection", (ws) => {
           }
           try {
             await bridge.setModel(msg.sessionId, msg.modelId);
+            store.updateSessionModel(msg.sessionId, msg.modelId);
             send(ws, { type: "model_set", modelId: msg.modelId } as any);
           } catch (err: unknown) {
             send(ws, { type: "error", message: `Failed to set model: ${errorMessage(err)}` });

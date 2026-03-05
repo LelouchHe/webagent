@@ -6,6 +6,7 @@ export interface SessionRow {
   id: string;
   cwd: string;
   title: string | null;
+  model: string | null;
   created_at: string;
   last_active_at: string;
 }
@@ -60,6 +61,9 @@ export class Store {
       // Backfill from created_at
       this.db.exec("UPDATE sessions SET last_active_at = created_at WHERE last_active_at IS NULL");
     }
+    if (!colNames.has("model")) {
+      this.db.exec("ALTER TABLE sessions ADD COLUMN model TEXT");
+    }
   }
 
   createSession(id: string, cwd: string): SessionRow {
@@ -86,6 +90,10 @@ export class Store {
 
   updateSessionLastActive(id: string): void {
     this.db.prepare("UPDATE sessions SET last_active_at = datetime('now') WHERE id = ?").run(id);
+  }
+
+  updateSessionModel(id: string, model: string): void {
+    this.db.prepare("UPDATE sessions SET model = ? WHERE id = ?").run(model, id);
   }
 
   saveEvent(sessionId: string, type: string, data: Record<string, unknown> = {}): EventRow {
