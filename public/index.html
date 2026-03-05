@@ -569,9 +569,9 @@ async function loadHistory(sid) {
     const res = await fetch(`/api/sessions/${sid}/events`);
     if (!res.ok) return false;
     const events = await res.json();
-    for (const ev of events) {
-      const data = JSON.parse(ev.data);
-      replayEvent(ev.type, data);
+    for (let i = 0; i < events.length; i++) {
+      const data = JSON.parse(events[i].data);
+      replayEvent(events[i].type, data, events, i);
     }
     return true;
   } catch {
@@ -579,7 +579,7 @@ async function loadHistory(sid) {
   }
 }
 
-function replayEvent(type, data) {
+function replayEvent(type, data, events, idx) {
   switch (type) {
     case 'user_message': {
       const el = addMessage('user', data.text);
@@ -653,7 +653,33 @@ function replayEvent(type, data) {
       const el = document.createElement('div');
       el.className = 'permission';
       el.dataset.requestId = data.requestId;
-      el.innerHTML = `<div class="title" style="opacity:0.5">⚿ ${escHtml(data.title)}</div>`;
+      el.innerHTML = `<span class="title" style="opacity:0.5">⚿ ${escHtml(data.title)}</span> `;
+      // Check if this permission was already resolved later in history
+      const wasResolved = events && events.slice(idx + 1).some(e =>
+        e.type === 'permission_response' && JSON.parse(e.data).requestId === data.requestId
+      );
+      if (!wasResolved && data.options) {
+        el.querySelector('.title').style.opacity = '1';
+        data.options.forEach(opt => {
+          const btn = document.createElement('button');
+          const isAllow = (opt.kind || '').includes('allow');
+          btn.className = isAllow ? 'allow' : 'deny';
+          btn.textContent = opt.name;
+          btn.onclick = () => {
+            const isDeny = (opt.kind || '').includes('reject') || (opt.kind || '').includes('deny');
+            ws.send(JSON.stringify({
+              type: 'permission_response',
+              sessionId,
+              requestId: data.requestId,
+              optionId: opt.optionId,
+              optionName: opt.name,
+              denied: isDeny,
+            }));
+            el.innerHTML = `<span style="opacity:0.5">⚿ ${escHtml(data.title)} — ${escHtml(opt.name)}</span>`;
+          };
+          el.appendChild(btn);
+        });
+      }
       messagesEl.appendChild(el);
       break;
     }
