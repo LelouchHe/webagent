@@ -149,6 +149,7 @@ const wss = new WebSocketServer({ server });
 // One bridge per server (single copilot process, multiple sessions)
 let bridge: CopilotBridge | null = null;
 const liveSessions = new Set<string>(); // Sessions alive in current bridge
+const sessionHasTitle = new Set<string>(); // Sessions that already have a title
 const DEFAULT_CWD = process.env.DEFAULT_CWD ?? process.cwd();
 const runningBashProcs = new Map<string, ChildProcess>(); // sessionId -> child process
 
@@ -171,6 +172,43 @@ async function prewarmSession(): Promise<void> {
 // Track current assistant message per session for aggregation
 const assistantBuffers = new Map<string, string>();
 const thinkingBuffers = new Map<string, string>();
+
+// Title generation: use a dedicated session with a fast model
+let titleSession: { id: string; ready: boolean } | null = null;
+const TITLE_MODEL = "claude-haiku-4.5";
+
+async function ensureTitleSession(): Promise<string | null> {
+  if (!bridge) return null;
+  if (titleSession?.ready) return titleSession.id;
+  try {
+    const id = await bridge.newSession(DEFAULT_CWD, { silent: true });
+    liveSessions.add(id);
+    await bridge.setModel(id, TITLE_MODEL).catch(() => {});
+    titleSession = { id, ready: true };
+    return id;
+  } catch {
+    return null;
+  }
+}
+
+async function generateTitle(userMessage: string, sessionId: string): Promise<void> {
+  try {
+    const tsId = await ensureTitleSession();
+    if (!tsId || !bridge) return;
+    const prompt = `Generate a short title (max 30 chars, no quotes) for a chat that starts with this message. Reply with ONLY the title, nothing else:\n\n${userMessage.slice(0, 500)}`;
+    const title = await bridge.promptForText(tsId, prompt);
+    if (title) {
+      const cleaned = title.replace(/^["']|["']$/g, "").trim().slice(0, 30);
+      if (cleaned) {
+        store.updateSessionTitle(sessionId, cleaned);
+        sessionHasTitle.add(sessionId);
+        broadcast({ type: "session_title_updated", sessionId, title: cleaned } as any);
+      }
+    }
+  } catch (err) {
+    console.error(`[title] generation failed:`, err);
+  }
+}
 
 async function initBridge(): Promise<CopilotBridge> {
   const b = new CopilotBridge();
@@ -306,6 +344,7 @@ wss.on("connection", (ws) => {
               type: "session_created",
               sessionId: msg.sessionId,
               cwd: session.cwd,
+              title: session.title,
             } as AgentEvent);
           } else {
             // Session not in current bridge — expired
@@ -330,6 +369,12 @@ wss.on("connection", (ws) => {
             ...(images && { images: images.map((i: { path: string; mimeType: string }) => ({ path: i.path, mimeType: i.mimeType })) }),
           };
           store.saveEvent(msg.sessionId, "user_message", userData);
+          store.updateSessionLastActive(msg.sessionId);
+          // Generate title on first user message (non-blocking)
+          if (!sessionHasTitle.has(msg.sessionId)) {
+            sessionHasTitle.add(msg.sessionId); // prevent duplicate attempts
+            generateTitle(msg.text, msg.sessionId);
+          }
           // Broadcast user message to other clients
           const userEvent = JSON.stringify({ type: "user_message", sessionId: msg.sessionId, ...userData });
           for (const client of wss.clients) {
@@ -483,6 +528,10 @@ server.listen(PORT, "0.0.0.0", async () => {
   try {
     await initBridge();
     console.log(`[bridge] ready`);
+    // Populate sessionHasTitle from existing sessions
+    for (const s of store.listSessions()) {
+      if (s.title) sessionHasTitle.add(s.id);
+    }
     await prewarmSession();
   } catch (err) {
     console.error(`[bridge] failed to start:`, err);

@@ -6,7 +6,7 @@ import * as acp from "@agentclientprotocol/sdk";
 // Events emitted to WebSocket layer
 export type AgentEvent =
   | { type: "connected"; agent: { name: string; version: string }; models: acp.ModelInfo[] }
-  | { type: "session_created"; sessionId: string; cwd?: string; models?: acp.ModelsInfo }
+  | { type: "session_created"; sessionId: string; cwd?: string; title?: string | null; models?: acp.ModelsInfo }
   | { type: "message_chunk"; sessionId: string; text: string }
   | { type: "thought_chunk"; sessionId: string; text: string }
   | { type: "tool_call"; sessionId: string; id: string; title: string; kind: string; rawInput?: unknown }
@@ -22,6 +22,8 @@ export class CopilotBridge extends EventEmitter {
   private conn: acp.ClientSideConnection | null = null;
   private permissionResolvers = new Map<string, (resp: acp.RequestPermissionResponse) => void>();
   private permissionCounter = 0;
+  private silentSessions = new Set<string>(); // Sessions that don't emit events
+  private silentBuffers = new Map<string, string>(); // Text buffers for silent sessions
 
   async start(): Promise<void> {
     this.proc = spawn("copilot", ["--acp"], {
@@ -64,15 +66,17 @@ export class CopilotBridge extends EventEmitter {
     } satisfies AgentEvent);
   }
 
-  async newSession(cwd: string): Promise<string> {
+  async newSession(cwd: string, opts?: { silent?: boolean }): Promise<string> {
     if (!this.conn) throw new Error("Not connected");
     const session = await this.conn.newSession({ cwd, mcpServers: [] });
-    this.emit("event", {
-      type: "session_created",
-      sessionId: session.sessionId,
-      cwd,
-      models: session.models,
-    } satisfies AgentEvent);
+    if (!opts?.silent) {
+      this.emit("event", {
+        type: "session_created",
+        sessionId: session.sessionId,
+        cwd,
+        models: session.models,
+      } satisfies AgentEvent);
+    }
     return session.sessionId;
   }
 
@@ -128,6 +132,20 @@ export class CopilotBridge extends EventEmitter {
 
   async cancel(sessionId: string): Promise<void> {
     await this.conn?.cancel({ sessionId });
+  }
+
+  /** Send a prompt and collect the full text response without emitting events. */
+  async promptForText(sessionId: string, text: string): Promise<string> {
+    if (!this.conn) throw new Error("Not connected");
+    this.silentSessions.add(sessionId);
+    this.silentBuffers.set(sessionId, "");
+    try {
+      await this.conn.prompt({ sessionId, prompt: [{ type: "text", text }] });
+      return this.silentBuffers.get(sessionId) ?? "";
+    } finally {
+      this.silentSessions.delete(sessionId);
+      this.silentBuffers.delete(sessionId);
+    }
   }
 
   resolvePermission(requestId: string, optionId: string): void {
@@ -193,6 +211,15 @@ export class CopilotBridge extends EventEmitter {
   private handleSessionUpdate(params: acp.SessionNotification): Promise<void> {
     const update = params.update;
     const sessionId = params.sessionId;
+
+    // Silent sessions: only buffer text, don't emit events
+    if (this.silentSessions.has(sessionId)) {
+      if (update.sessionUpdate === "agent_message_chunk" && update.content.type === "text") {
+        const buf = (this.silentBuffers.get(sessionId) ?? "") + update.content.text;
+        this.silentBuffers.set(sessionId, buf);
+      }
+      return Promise.resolve();
+    }
 
     switch (update.sessionUpdate) {
       case "agent_message_chunk":

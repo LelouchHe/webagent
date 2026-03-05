@@ -475,6 +475,7 @@ applyTheme(getTheme());
 let ws = null;
 let sessionId = null;
 let sessionCwd = null;
+let sessionTitle = null;
 let availableModels = [];
 let currentModel = null;
 let currentAssistantEl = null;
@@ -502,8 +503,9 @@ function setHashSessionId(id) {
   history.replaceState(null, '', `#${id}`);
 }
 
-function updateSessionInfo(id) {
-  sessionInfoEl.textContent = id ? id.slice(0, 8) + '…' : '';
+function updateSessionInfo(id, title) {
+  sessionInfoEl.textContent = title || (id ? id.slice(0, 8) + '…' : '');
+  document.title = title ? `${title} — >_` : '>_';
 }
 
 // --- History replay ---
@@ -673,16 +675,17 @@ function handleEvent(msg) {
     case 'session_created':
       sessionId = msg.sessionId;
       sessionCwd = msg.cwd || sessionCwd;
+      sessionTitle = msg.title || null;
       if (msg.models) {
         availableModels = msg.models.availableModels || [];
         currentModel = msg.models.currentModelId || null;
       }
       setHashSessionId(sessionId);
-      updateSessionInfo(sessionId);
+      updateSessionInfo(sessionId, sessionTitle);
       statusEl.textContent = 'connected';
       statusEl.className = 'status connected';
       if (messagesEl.children.length === 0) {
-        addSystem(`Session created: ${msg.sessionId.slice(0, 8)}…`);
+        addSystem(`Session created: ${sessionTitle || msg.sessionId.slice(0, 8) + '…'}`);
       }
       break;
 
@@ -885,6 +888,13 @@ function handleEvent(msg) {
       addSystem(`ok: Model: ${msg.modelId}`);
       break;
 
+    case 'session_title_updated':
+      if (msg.sessionId === sessionId) {
+        sessionTitle = msg.title;
+        updateSessionInfo(sessionId, sessionTitle);
+      }
+      break;
+
     case 'error':
       hideWaiting();
       finishThinking();
@@ -1069,7 +1079,9 @@ async function handleSlashCommand(text) {
         } else {
           for (const s of sessions) {
             const current = s.id === sessionId ? ' ← current' : '';
-            addSystem(`${s.id.slice(0, 8)}… | ${s.cwd} | ${s.created_at}${current}`);
+            const label = s.title || s.id.slice(0, 8) + '…';
+            const time = s.last_active_at || s.created_at;
+            addSystem(`${label} | ${s.cwd} | ${time}${current}`);
           }
         }
       } catch {
@@ -1080,13 +1092,17 @@ async function handleSlashCommand(text) {
 
     case '/switch': {
       if (!arg) {
-        addSystem('Usage: /switch <session-id-prefix>');
+        addSystem('Usage: /switch <title or id prefix>');
         return true;
       }
       try {
         const res = await fetch('/api/sessions');
         const sessions = await res.json();
-        const match = sessions.find(s => s.id.startsWith(arg));
+        const query = arg.toLowerCase();
+        const match = sessions.find(s =>
+          s.id.startsWith(arg) ||
+          (s.title && s.title.toLowerCase().includes(query))
+        );
         if (!match) {
           addSystem(`err: No session matching "${arg}"`);
           return true;
@@ -1116,7 +1132,7 @@ async function handleSlashCommand(text) {
       addSystem('/model [name] — Show or switch model');
       addSystem('/cancel — Cancel current response');
       addSystem('/sessions — List all sessions');
-      addSystem('/switch <id> — Switch to session (prefix match)');
+      addSystem('/switch <title|id> — Switch to session (title or id prefix match)');
       addSystem('/help — Show this help');
       return true;
 

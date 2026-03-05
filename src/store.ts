@@ -5,7 +5,9 @@ import { join } from "node:path";
 export interface SessionRow {
   id: string;
   cwd: string;
+  title: string | null;
   created_at: string;
+  last_active_at: string;
 }
 
 export interface EventRow {
@@ -32,7 +34,9 @@ export class Store {
       CREATE TABLE IF NOT EXISTS sessions (
         id TEXT PRIMARY KEY,
         cwd TEXT NOT NULL,
-        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        title TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        last_active_at TEXT NOT NULL DEFAULT (datetime('now'))
       );
       CREATE TABLE IF NOT EXISTS events (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -44,6 +48,18 @@ export class Store {
       );
       CREATE INDEX IF NOT EXISTS idx_events_session ON events(session_id, seq);
     `);
+
+    // Migrate existing tables: add columns if missing
+    const cols = this.db.prepare("PRAGMA table_info(sessions)").all() as Array<{ name: string }>;
+    const colNames = new Set(cols.map(c => c.name));
+    if (!colNames.has("title")) {
+      this.db.exec("ALTER TABLE sessions ADD COLUMN title TEXT");
+    }
+    if (!colNames.has("last_active_at")) {
+      this.db.exec("ALTER TABLE sessions ADD COLUMN last_active_at TEXT");
+      // Backfill from created_at
+      this.db.exec("UPDATE sessions SET last_active_at = created_at WHERE last_active_at IS NULL");
+    }
   }
 
   createSession(id: string, cwd: string): SessionRow {
@@ -52,7 +68,7 @@ export class Store {
   }
 
   listSessions(): SessionRow[] {
-    return this.db.prepare("SELECT * FROM sessions ORDER BY created_at DESC").all() as SessionRow[];
+    return this.db.prepare("SELECT * FROM sessions ORDER BY COALESCE(last_active_at, created_at) DESC").all() as SessionRow[];
   }
 
   getSession(id: string): SessionRow | undefined {
@@ -62,6 +78,14 @@ export class Store {
   deleteSession(id: string): void {
     this.db.prepare("DELETE FROM events WHERE session_id = ?").run(id);
     this.db.prepare("DELETE FROM sessions WHERE id = ?").run(id);
+  }
+
+  updateSessionTitle(id: string, title: string): void {
+    this.db.prepare("UPDATE sessions SET title = ? WHERE id = ?").run(title, id);
+  }
+
+  updateSessionLastActive(id: string): void {
+    this.db.prepare("UPDATE sessions SET last_active_at = datetime('now') WHERE id = ?").run(id);
   }
 
   saveEvent(sessionId: string, type: string, data: Record<string, unknown> = {}): EventRow {
