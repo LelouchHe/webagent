@@ -2,6 +2,7 @@ import { createServer } from "node:http";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { join, extname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { spawn, type ChildProcess } from "node:child_process";
 import { WebSocketServer, WebSocket } from "ws";
 import { CopilotBridge } from "./bridge.ts";
 import { Store } from "./store.ts";
@@ -149,6 +150,7 @@ const wss = new WebSocketServer({ server });
 let bridge: CopilotBridge | null = null;
 const liveSessions = new Set<string>(); // Sessions alive in current bridge
 const DEFAULT_CWD = process.env.DEFAULT_CWD ?? process.cwd();
+const runningBashProcs = new Map<string, ChildProcess>(); // sessionId -> child process
 
 // Pre-warmed session: created at startup so first client connects instantly
 let prewarmedSession: { id: string; cwd: string } | null = null;
@@ -376,6 +378,73 @@ wss.on("connection", (ws) => {
           break;
         }
 
+        case "bash_exec": {
+          if (!msg.sessionId || !msg.command) {
+            send(ws, { type: "error", message: "Missing sessionId or command" });
+            return;
+          }
+          if (runningBashProcs.has(msg.sessionId)) {
+            send(ws, { type: "error", message: "A bash command is already running in this session" });
+            return;
+          }
+          const session = store.getSession(msg.sessionId);
+          const cwd = session?.cwd ?? DEFAULT_CWD;
+          store.saveEvent(msg.sessionId, "bash_command", { command: msg.command });
+          // Broadcast to other clients
+          const bashUserEvent = JSON.stringify({
+            type: "bash_command", sessionId: msg.sessionId, command: msg.command,
+          });
+          for (const client of wss.clients) {
+            if (client !== ws && client.readyState === WebSocket.OPEN) {
+              client.send(bashUserEvent);
+            }
+          }
+
+          const child = spawn("bash", ["-c", msg.command], {
+            cwd,
+            env: { ...process.env, TERM: "dumb" },
+            stdio: ["ignore", "pipe", "pipe"],
+          });
+          runningBashProcs.set(msg.sessionId, child);
+          let output = "";
+
+          const onData = (stream: string) => (chunk: Buffer) => {
+            const text = chunk.toString();
+            output += text;
+            const ev = { type: "bash_output", sessionId: msg.sessionId, text, stream };
+            broadcast(ev as any);
+          };
+          child.stdout!.on("data", onData("stdout"));
+          child.stderr!.on("data", onData("stderr"));
+
+          child.on("close", (code, signal) => {
+            runningBashProcs.delete(msg.sessionId);
+            store.saveEvent(msg.sessionId, "bash_result", { output, code, signal });
+            broadcast({
+              type: "bash_done", sessionId: msg.sessionId, code, signal,
+            } as any);
+          });
+
+          child.on("error", (err) => {
+            runningBashProcs.delete(msg.sessionId);
+            const errMsg = errorMessage(err);
+            store.saveEvent(msg.sessionId, "bash_result", { output: errMsg, code: -1, signal: null });
+            broadcast({
+              type: "bash_done", sessionId: msg.sessionId, code: -1, signal: null, error: errMsg,
+            } as any);
+          });
+          break;
+        }
+
+        case "bash_cancel": {
+          if (!msg.sessionId) return;
+          const proc = runningBashProcs.get(msg.sessionId);
+          if (proc) {
+            proc.kill("SIGINT");
+          }
+          break;
+        }
+
         default:
           send(ws, { type: "error", message: `Unknown message type: ${msg.type}` });
       }
@@ -394,6 +463,8 @@ wss.on("connection", (ws) => {
 
 async function shutdown() {
   console.log("\n[server] shutting down...");
+  for (const [, proc] of runningBashProcs) proc.kill("SIGKILL");
+  runningBashProcs.clear();
   wss.close();
   await bridge?.shutdown();
   store.close();

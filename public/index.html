@@ -208,6 +208,25 @@
     cursor: pointer;
   }
 
+  /* Diff view for edit tool calls */
+  .diff-view {
+    margin: 4px 0 4px 16px;
+    padding: 6px 10px;
+    background: var(--code-bg);
+    border-radius: var(--radius);
+    font-size: 13px;
+    font-family: monospace;
+    white-space: pre-wrap;
+    word-break: break-all;
+    max-height: 300px;
+    overflow-y: auto;
+    line-height: 1.4;
+  }
+  .diff-view .diff-file { color: var(--blue); font-weight: bold; }
+  .diff-view .diff-hunk { color: var(--text-dim); }
+  .diff-view .diff-del { color: var(--red); }
+  .diff-view .diff-add { color: var(--green); }
+
   /* Plan */
   .plan {
     font-size: 15px;
@@ -241,6 +260,41 @@
   .permission button:hover { background: var(--surface); }
   .permission button.allow { border-color: var(--green); }
   .permission button.deny { border-color: var(--red); }
+
+  /* Bash command output */
+  .bash-block {
+    margin: 2px 0;
+    padding: 2px 14px;
+    font-size: 15px;
+  }
+  .bash-block .bash-cmd {
+    color: var(--green);
+    font-family: monospace;
+    font-size: 14px;
+    cursor: pointer;
+  }
+  .bash-block .bash-cmd::before { content: '$ '; color: var(--text-dim); }
+  .bash-block .bash-cmd.running { animation: pulse 1.5s ease-in-out infinite; }
+  .bash-block .bash-output {
+    margin: 4px 0 4px 0;
+    padding: 6px 10px;
+    background: var(--code-bg);
+    border-radius: var(--radius);
+    font-size: 13px;
+    font-family: monospace;
+    white-space: pre-wrap;
+    word-break: break-all;
+    max-height: 400px;
+    overflow-y: auto;
+    color: var(--text);
+    line-height: 1.4;
+    display: none;
+  }
+  .bash-block .bash-output.has-content { display: block; }
+  .bash-block .bash-output .stderr { color: var(--red); }
+  .bash-block .bash-exit { font-size: 13px; color: var(--text-dim); margin-left: 8px; }
+  .bash-block .bash-exit.ok { color: var(--green); }
+  .bash-block .bash-exit.fail { color: var(--red); }
 
   /* Input */
   #input-area {
@@ -507,6 +561,12 @@ function replayEvent(type, data) {
         label += `<span class="tc-detail">${escHtml(ri.path)}</span>`;
       }
       el.innerHTML = label;
+      const diffHtml = data.kind === 'edit' ? renderPatchDiff(ri) : null;
+      if (diffHtml) {
+        const details = document.createElement('details');
+        details.innerHTML = `<summary>diff</summary><div class="diff-view">${diffHtml}</div>`;
+        el.appendChild(details);
+      }
       const detail = el.querySelector('.tc-detail');
       if (detail) el.onclick = () => detail.classList.toggle('expanded');
       messagesEl.appendChild(el);
@@ -538,6 +598,25 @@ function replayEvent(type, data) {
       el.className = 'permission';
       el.innerHTML = `<div class="title" style="opacity:0.5">⚿ ${escHtml(data.title)}</div>`;
       messagesEl.appendChild(el);
+      break;
+    }
+    case 'bash_command': {
+      const el = addBashBlock(data.command, false);
+      // Tag it so bash_result can find the last one
+      el.id = 'bash-replay-pending';
+      break;
+    }
+    case 'bash_result': {
+      const el = document.getElementById('bash-replay-pending');
+      if (el) {
+        el.removeAttribute('id');
+        if (data.output) {
+          const out = el.querySelector('.bash-output');
+          out.textContent = data.output;
+          out.classList.add('has-content');
+        }
+        finishBash(el, data.code, data.signal);
+      }
       break;
     }
   }
@@ -573,6 +652,7 @@ function connect() {
     statusEl.className = 'status';
     finishThinking();
     finishAssistant();
+    if (currentBashEl) { finishBash(currentBashEl, null, 'disconnected'); }
     setBusy(false);
     setTimeout(connect, 3000);
   };
@@ -665,6 +745,13 @@ function handleEvent(msg) {
         label += `<span class="tc-detail">${escHtml(ri.path)}</span>`;
       }
       el.innerHTML = label;
+      // Render diff for edit tool calls
+      const diffHtml = msg.kind === 'edit' ? renderPatchDiff(ri) : null;
+      if (diffHtml) {
+        const details = document.createElement('details');
+        details.innerHTML = `<summary>diff</summary><div class="diff-view">${diffHtml}</div>`;
+        el.appendChild(details);
+      }
       const detail = el.querySelector('.tc-detail');
       if (detail) el.onclick = () => detail.classList.toggle('expanded');
       messagesEl.appendChild(el);
@@ -739,6 +826,43 @@ function handleEvent(msg) {
       });
       messagesEl.appendChild(permEl);
       scrollToBottom();
+      break;
+    }
+
+    case 'bash_command': {
+      // From another client
+      if (msg.sessionId === sessionId) {
+        addBashBlock(msg.command, true);
+        setBusy(true);
+      }
+      break;
+    }
+
+    case 'bash_output': {
+      if (msg.sessionId !== sessionId) break;
+      if (currentBashEl) {
+        const out = currentBashEl.querySelector('.bash-output');
+        if (msg.stream === 'stderr') {
+          const span = document.createElement('span');
+          span.className = 'stderr';
+          span.textContent = msg.text;
+          out.appendChild(span);
+        } else {
+          out.appendChild(document.createTextNode(msg.text));
+        }
+        out.classList.add('has-content');
+        out.scrollTop = out.scrollHeight;
+        scrollToBottom();
+      }
+      break;
+    }
+
+    case 'bash_done': {
+      if (msg.sessionId !== sessionId) break;
+      finishBash(currentBashEl, msg.code, msg.signal);
+      if (msg.error) addSystem(`err: ${msg.error}`);
+      setBusy(false);
+      inputEl.focus();
       break;
     }
 
@@ -829,6 +953,92 @@ function escHtml(s) {
   return d.innerHTML;
 }
 
+function renderPatchDiff(ri) {
+  // Case 1: patch string format (*** Begin Patch)
+  if (typeof ri === 'string' && ri.includes('*** Begin Patch')) {
+    const lines = ri.split('\n');
+    const html = [];
+    for (const line of lines) {
+      if (line.startsWith('*** Begin Patch') || line.startsWith('*** End Patch')) continue;
+      if (line.startsWith('*** Update File:') || line.startsWith('*** Add File:') || line.startsWith('*** Delete File:')) {
+        html.push(`<span class="diff-file">${escHtml(line)}</span>`);
+      } else if (line.startsWith('@@')) {
+        html.push(`<span class="diff-hunk">${escHtml(line)}</span>`);
+      } else if (line.startsWith('-')) {
+        html.push(`<span class="diff-del">${escHtml(line)}</span>`);
+      } else if (line.startsWith('+')) {
+        html.push(`<span class="diff-add">${escHtml(line)}</span>`);
+      } else {
+        html.push(escHtml(line));
+      }
+    }
+    return html.join('\n');
+  }
+  // Case 2: object with old_str / new_str (edit tool rawInput)
+  if (ri && typeof ri === 'object') {
+    const html = [];
+    if (ri.path) html.push(`<span class="diff-file">*** ${escHtml(ri.path)}</span>`);
+    if (ri.old_str != null) {
+      for (const line of String(ri.old_str).split('\n')) {
+        html.push(`<span class="diff-del">- ${escHtml(line)}</span>`);
+      }
+    }
+    if (ri.new_str != null) {
+      for (const line of String(ri.new_str).split('\n')) {
+        html.push(`<span class="diff-add">+ ${escHtml(line)}</span>`);
+      }
+    }
+    if (ri.file_text != null) {
+      html.push(`<span class="diff-add">+ (new file, ${ri.file_text.split('\n').length} lines)</span>`);
+    }
+    return html.length > (ri.path ? 1 : 0) ? html.join('\n') : null;
+  }
+  return null;
+}
+
+// --- Bash command UI ---
+
+let currentBashEl = null;
+
+function addBashBlock(command, running = false) {
+  const el = document.createElement('div');
+  el.className = 'bash-block';
+  el.innerHTML = `<span class="bash-cmd${running ? ' running' : ''}">${escHtml(command)}</span>` +
+    `<div class="bash-output"></div>`;
+  // Click command line to toggle output visibility
+  el.querySelector('.bash-cmd').onclick = () => {
+    const out = el.querySelector('.bash-output');
+    if (out.style.display === 'none') {
+      out.style.display = 'block';
+    } else if (out.classList.contains('has-content')) {
+      out.style.display = 'none';
+    }
+  };
+  messagesEl.appendChild(el);
+  scrollToBottom();
+  if (running) currentBashEl = el;
+  return el;
+}
+
+function finishBash(el, code, signal) {
+  if (!el) return;
+  const cmd = el.querySelector('.bash-cmd');
+  cmd.classList.remove('running');
+  let exitText = '';
+  if (signal) {
+    exitText = `[signal: ${signal}]`;
+  } else if (code !== 0 && code != null) {
+    exitText = `[exit: ${code}]`;
+  }
+  if (exitText) {
+    const span = document.createElement('span');
+    span.className = `bash-exit ${code === 0 ? 'ok' : 'fail'}`;
+    span.textContent = exitText;
+    cmd.after(span);
+  }
+  if (el === currentBashEl) currentBashEl = null;
+}
+
 // --- Slash commands ---
 
 async function handleSlashCommand(text) {
@@ -900,6 +1110,7 @@ async function handleSlashCommand(text) {
       return true;
 
     case '/help':
+      addSystem('!<command> — Run bash command');
       addSystem('/new [cwd] — New session');
       addSystem('/cwd — Show working directory');
       addSystem('/model [name] — Show or switch model');
@@ -1015,6 +1226,20 @@ function sendMessage() {
     return;
   }
 
+  // "!" bash command
+  if (text.startsWith('!') && pendingImages.length === 0) {
+    const command = text.slice(1).trim();
+    if (!command) return;
+    if (!sessionId) {
+      addSystem('warn: Session not ready yet, please wait…');
+      return;
+    }
+    addBashBlock(command, true);
+    ws.send(JSON.stringify({ type: 'bash_exec', sessionId, command }));
+    setBusy(true);
+    return;
+  }
+
   if (!sessionId) {
     addSystem('warn: Session not ready yet, please wait…');
     return;
@@ -1053,7 +1278,11 @@ function sendMessage() {
 
 function doCancel() {
   if (busy && ws) {
-    ws.send(JSON.stringify({ type: 'cancel', sessionId }));
+    if (currentBashEl) {
+      ws.send(JSON.stringify({ type: 'bash_cancel', sessionId }));
+    } else {
+      ws.send(JSON.stringify({ type: 'cancel', sessionId }));
+    }
     addSystem('^C');
   }
 }
