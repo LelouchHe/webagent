@@ -298,6 +298,7 @@
 
   /* Input */
   #input-area {
+    position: relative;
     padding: 8px 16px;
     background: var(--bg);
     border-top: 1px solid var(--border);
@@ -338,6 +339,36 @@
   #send-btn.cancel { color: var(--red); font-weight: bold; }
   #send-btn.cancel:hover { color: var(--text); }
   #input-prompt.busy { color: var(--yellow); }
+
+  /* Slash command autocomplete */
+  #slash-menu {
+    display: none;
+    position: absolute;
+    bottom: 100%;
+    left: 0;
+    right: 0;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-bottom: none;
+    max-height: 220px;
+    overflow-y: auto;
+    z-index: 10;
+  }
+  #slash-menu.active { display: block; }
+  .slash-item {
+    padding: 6px 14px;
+    cursor: pointer;
+    font-size: 15px;
+    display: flex;
+    gap: 12px;
+  }
+  .slash-item:hover, .slash-item.selected {
+    background: var(--accent);
+    color: #fff;
+  }
+  .slash-item .slash-cmd { font-weight: bold; min-width: 120px; }
+  .slash-item .slash-desc { color: var(--text-dim); }
+  .slash-item:hover .slash-desc, .slash-item.selected .slash-desc { color: rgba(255,255,255,0.8); }
 
   /* Image attach */
   #attach-btn {
@@ -408,6 +439,7 @@
 
 <div id="attach-preview"></div>
 <div id="input-area">
+  <div id="slash-menu"></div>
   <span id="input-prompt">❯ </span>
   <textarea id="input" rows="1" placeholder="Message or /help" autofocus></textarea>
   <button id="attach-btn" title="Attach image (^F)">^F</button>
@@ -1227,6 +1259,74 @@ inputEl.addEventListener('paste', async (e) => {
   }
 });
 
+// --- Slash command autocomplete ---
+
+const SLASH_COMMANDS = [
+  { cmd: '/new',      args: '[cwd]',       desc: 'New session' },
+  { cmd: '/cwd',      args: '',            desc: 'Show working directory' },
+  { cmd: '/model',    args: '[name]',      desc: 'Show or switch model' },
+  { cmd: '/cancel',   args: '',            desc: 'Cancel current response' },
+  { cmd: '/sessions', args: '',            desc: 'List all sessions' },
+  { cmd: '/switch',   args: '<title|id>',  desc: 'Switch to session' },
+  { cmd: '/help',     args: '',            desc: 'Show help' },
+];
+
+const slashMenu = $('#slash-menu');
+let slashIdx = -1;
+let slashFiltered = [];
+
+function updateSlashMenu() {
+  const text = inputEl.value;
+  // Only match when input starts with "/" and is still on the command part (no space yet)
+  if (!text.startsWith('/') || text.includes(' ') || busy) {
+    hideSlashMenu();
+    return;
+  }
+  const prefix = text.toLowerCase();
+  slashFiltered = SLASH_COMMANDS.filter(c => c.cmd.startsWith(prefix));
+  if (slashFiltered.length === 0) {
+    hideSlashMenu();
+    return;
+  }
+  slashIdx = 0;
+  renderSlashMenu();
+  slashMenu.classList.add('active');
+}
+
+function renderSlashMenu() {
+  slashMenu.innerHTML = slashFiltered.map((c, i) => {
+    const label = c.args ? `${c.cmd} ${c.args}` : c.cmd;
+    return `<div class="slash-item${i === slashIdx ? ' selected' : ''}" data-idx="${i}"><span class="slash-cmd">${escHtml(label)}</span><span class="slash-desc">${escHtml(c.desc)}</span></div>`;
+  }).join('');
+  const sel = slashMenu.querySelector('.selected');
+  if (sel) sel.scrollIntoView({ block: 'nearest' });
+}
+
+function hideSlashMenu() {
+  slashMenu.classList.remove('active');
+  slashIdx = -1;
+  slashFiltered = [];
+}
+
+function selectSlashItem(idx) {
+  if (idx >= 0 && idx < slashFiltered.length) {
+    const item = slashFiltered[idx];
+    // Insert the command; add trailing space if no args required
+    inputEl.value = item.cmd + (item.args ? ' ' : '');
+    hideSlashMenu();
+    inputEl.focus();
+  }
+}
+
+slashMenu.addEventListener('mousedown', (e) => {
+  // Prevent blur on input
+  e.preventDefault();
+  const item = e.target.closest('.slash-item');
+  if (item) selectSlashItem(Number(item.dataset.idx));
+});
+
+inputEl.addEventListener('input', () => updateSlashMenu());
+
 // --- Input ---
 
 function sendMessage() {
@@ -1305,8 +1405,34 @@ function doCancel() {
 
 sendBtn.onclick = () => busy ? doCancel() : sendMessage();
 inputEl.addEventListener('keydown', (e) => {
+  // Slash menu navigation
+  if (slashMenu.classList.contains('active')) {
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      slashIdx = (slashIdx + 1) % slashFiltered.length;
+      renderSlashMenu();
+      return;
+    }
+    if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      slashIdx = (slashIdx - 1 + slashFiltered.length) % slashFiltered.length;
+      renderSlashMenu();
+      return;
+    }
+    if (e.key === 'Tab') {
+      e.preventDefault();
+      selectSlashItem(slashIdx);
+      return;
+    }
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      hideSlashMenu();
+      return;
+    }
+  }
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault();
+    hideSlashMenu();
     if (busy) {
       doCancel();
     } else {
