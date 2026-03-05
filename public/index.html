@@ -522,6 +522,17 @@ let currentThinkingText = '';
 let busy = false;
 let pendingImages = []; // { data: base64, mimeType, previewUrl }
 
+function resetSessionUI() {
+  messagesEl.innerHTML = '';
+  currentAssistantEl = null;
+  currentAssistantText = '';
+  currentThinkingEl = null;
+  currentThinkingText = '';
+  pendingImages = [];
+  renderAttachPreview();
+  setBusy(false);
+}
+
 // --- Markdown ---
 marked.setOptions({ breaks: true, gfm: true });
 
@@ -932,7 +943,7 @@ function handleEvent(msg) {
       break;
 
     case 'session_expired':
-      messagesEl.innerHTML = '';
+      resetSessionUI();
       addSystem('warn: Previous session expired, created new one.');
       ws.send(JSON.stringify({ type: 'new_session' }));
       break;
@@ -1119,7 +1130,7 @@ async function handleSlashCommand(text) {
 
   switch (cmd) {
     case '/new': {
-      messagesEl.innerHTML = '';
+      resetSessionUI();
       addSystem('Creating new session…');
       const payload = { type: 'new_session', cwd: arg || sessionCwd };
       ws.send(JSON.stringify(payload));
@@ -1199,7 +1210,7 @@ async function handleSlashCommand(text) {
           addSystem(`err: No session matching "${arg}"`);
           return true;
         }
-        messagesEl.innerHTML = '';
+        resetSessionUI();
         await loadHistory(match.id);
         scrollToBottom();
         ws.send(JSON.stringify({ type: 'resume_session', sessionId: match.id }));
@@ -1429,7 +1440,7 @@ function selectSlashItem(idx) {
     const s = slashFiltered[idx];
     inputEl.value = '';
     hideSlashMenu();
-    messagesEl.innerHTML = '';
+    resetSessionUI();
     addSystem('Switching…');
     loadHistory(s.id).then(loaded => { if (loaded) scrollToBottom(); });
     ws.send(JSON.stringify({ type: 'resume_session', sessionId: s.id }));
