@@ -442,7 +442,7 @@
   <div id="slash-menu"></div>
   <span id="input-prompt">❯ </span>
   <textarea id="input" rows="1" placeholder="Message or /help" autofocus></textarea>
-  <button id="attach-btn" title="Attach image (^F)">^F</button>
+  <button id="attach-btn" title="Attach image (Ctrl+U)">^U</button>
   <button id="send-btn" title="Send (Enter)">↵</button>
   <input type="file" id="file-input" accept="image/*" multiple hidden>
 </div>
@@ -460,7 +460,7 @@ function setBusy(on) {
   busy = on;
   if (on) {
     sendBtn.textContent = '^C';
-    sendBtn.title = 'Cancel (^C)';
+    sendBtn.title = 'Cancel (Ctrl+C)';
     sendBtn.classList.add('cancel');
     promptEl.classList.add('busy');
   } else {
@@ -670,7 +670,7 @@ function connect() {
 
     const existingId = getHashSessionId();
     if (existingId) {
-      // Try to restore session — load chat history + resume copilot context
+      // URL has a session — load its history and resume
       const loaded = await loadHistory(existingId);
       if (loaded) {
         scrollToBottom();
@@ -678,6 +678,23 @@ function connect() {
       ws.send(JSON.stringify({ type: 'resume_session', sessionId: existingId }));
       return;
     }
+
+    // No session in URL — try to resume last active session
+    try {
+      const res = await fetch('/api/sessions');
+      const sessions = await res.json();
+      if (sessions.length > 0) {
+        const last = sessions[0]; // sorted by last_active_at DESC
+        const loaded = await loadHistory(last.id);
+        if (loaded) {
+          scrollToBottom();
+        }
+        ws.send(JSON.stringify({ type: 'resume_session', sessionId: last.id }));
+        return;
+      }
+    } catch {}
+
+    // No previous sessions — create new
     ws.send(JSON.stringify({ type: 'new_session' }));
   };
 
@@ -995,6 +1012,13 @@ function escHtml(s) {
   return d.innerHTML;
 }
 
+function formatLocalTime(utcStr) {
+  if (!utcStr) return '';
+  const d = new Date(utcStr.endsWith('Z') ? utcStr : utcStr + 'Z');
+  const pad = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
 function renderPatchDiff(ri) {
   // Case 1: patch string format (*** Begin Patch)
   if (typeof ri === 'string' && ri.includes('*** Begin Patch')) {
@@ -1092,8 +1116,7 @@ async function handleSlashCommand(text) {
     case '/new': {
       messagesEl.innerHTML = '';
       addSystem('Creating new session…');
-      const payload = { type: 'new_session' };
-      if (arg) payload.cwd = arg;
+      const payload = { type: 'new_session', cwd: arg || sessionCwd };
       ws.send(JSON.stringify(payload));
       return true;
     }
@@ -1109,15 +1132,47 @@ async function handleSlashCommand(text) {
         if (sessions.length === 0) {
           addSystem('No sessions.');
         } else {
-          for (const s of sessions) {
-            const current = s.id === sessionId ? ' ← current' : '';
+          for (const s of sessions.reverse()) {
+            const current = s.id === sessionId;
+            const prefix = current ? '*' : ' ';
             const label = s.title || s.id.slice(0, 8) + '…';
-            const time = s.last_active_at || s.created_at;
-            addSystem(`${label} | ${s.cwd} | ${time}${current}`);
+            const time = formatLocalTime(s.last_active_at || s.created_at);
+            const text = `${prefix} ${label}: ${s.cwd} (${time})`;
+            const el = document.createElement('div');
+            el.className = 'system-msg';
+            if (current) el.style.color = 'var(--green)';
+            el.textContent = text;
+            messagesEl.appendChild(el);
           }
+          scrollToBottom();
         }
       } catch {
         addSystem('err: Failed to fetch sessions');
+      }
+      return true;
+    }
+
+    case '/delete': {
+      if (!arg) {
+        addSystem('Usage: /delete <title or id prefix>');
+        return true;
+      }
+      try {
+        const res = await fetch('/api/sessions');
+        const sessions = await res.json();
+        const query = arg.toLowerCase();
+        const match = sessions.find(s =>
+          s.id !== sessionId &&
+          (s.id.startsWith(arg) || (s.title && s.title.toLowerCase().includes(query)))
+        );
+        if (!match) {
+          addSystem(`err: No session matching "${arg}"`);
+          return true;
+        }
+        ws.send(JSON.stringify({ type: 'delete_session', sessionId: match.id }));
+        addSystem(`Deleted: ${match.title || match.id.slice(0, 8) + '…'}`);
+      } catch {
+        addSystem('err: Failed to delete session');
       }
       return true;
     }
@@ -1165,7 +1220,13 @@ async function handleSlashCommand(text) {
       addSystem('/cancel — Cancel current response');
       addSystem('/sessions — List all sessions');
       addSystem('/switch <title|id> — Switch to session (title or id prefix match)');
+      addSystem('/delete <title|id> — Delete a session');
       addSystem('/help — Show this help');
+      addSystem('--- Shortcuts ---');
+      addSystem('Enter — Send message');
+      addSystem('Shift+Enter — New line');
+      addSystem('Ctrl+C — Cancel current response');
+      addSystem('Ctrl+U (^U) — Upload image');
       return true;
 
     case '/model': {
@@ -1268,20 +1329,33 @@ const SLASH_COMMANDS = [
   { cmd: '/cancel',   args: '',            desc: 'Cancel current response' },
   { cmd: '/sessions', args: '',            desc: 'List all sessions' },
   { cmd: '/switch',   args: '<title|id>',  desc: 'Switch to session' },
+  { cmd: '/delete',   args: '<title|id>',  desc: 'Delete a session' },
   { cmd: '/help',     args: '',            desc: 'Show help' },
 ];
 
 const slashMenu = $('#slash-menu');
 let slashIdx = -1;
 let slashFiltered = [];
+let slashMode = 'commands'; // 'commands', 'switch', or 'delete'
+let cachedSessions = null;
 
 function updateSlashMenu() {
   const text = inputEl.value;
+
+  // /switch or /delete — show session picker
+  const switchMatch = text.match(/^\/(switch|delete) /);
+  if (switchMatch && !busy) {
+    const query = text.slice(switchMatch[0].length).toLowerCase();
+    fetchSessionsForMenu(query, switchMatch[1]);
+    return;
+  }
+
   // Only match when input starts with "/" and is still on the command part (no space yet)
   if (!text.startsWith('/') || text.includes(' ') || busy) {
     hideSlashMenu();
     return;
   }
+  slashMode = 'commands';
   const prefix = text.toLowerCase();
   slashFiltered = SLASH_COMMANDS.filter(c => c.cmd.startsWith(prefix));
   if (slashFiltered.length === 0) {
@@ -1293,11 +1367,45 @@ function updateSlashMenu() {
   slashMenu.classList.add('active');
 }
 
+async function fetchSessionsForMenu(query, mode = 'switch') {
+  if (!cachedSessions) {
+    try {
+      const res = await fetch('/api/sessions');
+      cachedSessions = await res.json();
+      // Expire cache after 5s
+      setTimeout(() => { cachedSessions = null; }, 5000);
+    } catch { return; }
+  }
+  slashMode = mode;
+  const items = cachedSessions
+    .filter(s => s.id !== sessionId) // exclude current
+    .filter(s => {
+      if (!query) return true;
+      return (s.title && s.title.toLowerCase().includes(query)) || s.id.startsWith(query);
+    });
+  slashFiltered = items;
+  if (slashFiltered.length === 0) {
+    hideSlashMenu();
+    return;
+  }
+  slashIdx = 0;
+  renderSlashMenu();
+  slashMenu.classList.add('active');
+}
+
 function renderSlashMenu() {
-  slashMenu.innerHTML = slashFiltered.map((c, i) => {
-    const label = c.args ? `${c.cmd} ${c.args}` : c.cmd;
-    return `<div class="slash-item${i === slashIdx ? ' selected' : ''}" data-idx="${i}"><span class="slash-cmd">${escHtml(label)}</span><span class="slash-desc">${escHtml(c.desc)}</span></div>`;
-  }).join('');
+  if (slashMode === 'switch' || slashMode === 'delete') {
+    slashMenu.innerHTML = slashFiltered.map((s, i) => {
+      const label = s.title || s.id.slice(0, 8) + '…';
+      const time = formatLocalTime(s.last_active_at || s.created_at);
+      return `<div class="slash-item${i === slashIdx ? ' selected' : ''}" data-idx="${i}"><span class="slash-cmd">${escHtml(label)}</span><span class="slash-desc">${escHtml(s.cwd)} (${escHtml(time)})</span></div>`;
+    }).join('');
+  } else {
+    slashMenu.innerHTML = slashFiltered.map((c, i) => {
+      const label = c.args ? `${c.cmd} ${c.args}` : c.cmd;
+      return `<div class="slash-item${i === slashIdx ? ' selected' : ''}" data-idx="${i}"><span class="slash-cmd">${escHtml(label)}</span><span class="slash-desc">${escHtml(c.desc)}</span></div>`;
+    }).join('');
+  }
   const sel = slashMenu.querySelector('.selected');
   if (sel) sel.scrollIntoView({ block: 'nearest' });
 }
@@ -1306,15 +1414,33 @@ function hideSlashMenu() {
   slashMenu.classList.remove('active');
   slashIdx = -1;
   slashFiltered = [];
+  slashMode = 'commands';
 }
 
 function selectSlashItem(idx) {
-  if (idx >= 0 && idx < slashFiltered.length) {
+  if (idx < 0 || idx >= slashFiltered.length) return;
+
+  if (slashMode === 'switch') {
+    const s = slashFiltered[idx];
+    inputEl.value = '';
+    hideSlashMenu();
+    messagesEl.innerHTML = '';
+    addSystem('Switching…');
+    loadHistory(s.id).then(loaded => { if (loaded) scrollToBottom(); });
+    ws.send(JSON.stringify({ type: 'resume_session', sessionId: s.id }));
+  } else if (slashMode === 'delete') {
+    const s = slashFiltered[idx];
+    inputEl.value = '';
+    hideSlashMenu();
+    ws.send(JSON.stringify({ type: 'delete_session', sessionId: s.id }));
+    addSystem(`Deleted: ${s.title || s.id.slice(0, 8) + '…'}`);
+  } else {
     const item = slashFiltered[idx];
-    // Insert the command; add trailing space if no args required
     inputEl.value = item.cmd + (item.args ? ' ' : '');
     hideSlashMenu();
     inputEl.focus();
+    // Trigger session picker for /switch and /delete
+    if (item.cmd === '/switch' || item.cmd === '/delete') updateSlashMenu();
   }
 }
 
@@ -1433,11 +1559,24 @@ inputEl.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault();
     hideSlashMenu();
-    if (busy) {
-      doCancel();
-    } else {
+    if (!busy) {
       sendMessage();
     }
+    return;
+  }
+  // Ctrl+C to cancel
+  if (e.key === 'c' && (e.ctrlKey || e.metaKey) && !e.shiftKey) {
+    if (busy) {
+      e.preventDefault();
+      doCancel();
+      return;
+    }
+  }
+  // Ctrl+U to upload file
+  if (e.key === 'u' && (e.ctrlKey || e.metaKey) && !e.shiftKey) {
+    e.preventDefault();
+    fileInput.click();
+    return;
   }
 });
 

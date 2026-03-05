@@ -149,25 +149,10 @@ const wss = new WebSocketServer({ server });
 // One bridge per server (single copilot process, multiple sessions)
 let bridge: CopilotBridge | null = null;
 const liveSessions = new Set<string>(); // Sessions alive in current bridge
+const restoringSessions = new Set<string>(); // Sessions being restored (suppress events)
 const sessionHasTitle = new Set<string>(); // Sessions that already have a title
 const DEFAULT_CWD = process.env.DEFAULT_CWD ?? process.cwd();
 const runningBashProcs = new Map<string, ChildProcess>(); // sessionId -> child process
-
-// Pre-warmed session: created at startup so first client connects instantly
-let prewarmedSession: { id: string; cwd: string } | null = null;
-
-async function prewarmSession(): Promise<void> {
-  if (!bridge) return;
-  try {
-    const id = await bridge.newSession(DEFAULT_CWD);
-    liveSessions.add(id);
-    store.createSession(id, DEFAULT_CWD);
-    prewarmedSession = { id, cwd: DEFAULT_CWD };
-    console.log(`[bridge] prewarmed session: ${id.slice(0, 8)}…`);
-  } catch (err) {
-    console.error(`[bridge] prewarm failed:`, err);
-  }
-}
 
 // Track current assistant message per session for aggregation
 const assistantBuffers = new Map<string, string>();
@@ -214,6 +199,9 @@ async function initBridge(): Promise<CopilotBridge> {
   const b = new CopilotBridge();
 
   b.on("event", (event: AgentEvent) => {
+    // During session restore, ACP replays history — skip storage and broadcast
+    if (restoringSessions.has(event.sessionId)) return;
+
     // Store aggregated events (not raw chunks)
     switch (event.type) {
       case "message_chunk": {
@@ -309,18 +297,9 @@ wss.on("connection", (ws) => {
             return;
           }
           const cwd = msg.cwd ?? DEFAULT_CWD;
-          let sessionId: string;
-          if (prewarmedSession && (!msg.cwd || msg.cwd === DEFAULT_CWD)) {
-            // Use prewarmed session instantly
-            sessionId = prewarmedSession.id;
-            prewarmedSession = null;
-            // Prewarm next one in background
-            prewarmSession();
-          } else {
-            sessionId = await bridge.newSession(cwd);
-            liveSessions.add(sessionId);
-            store.createSession(sessionId, cwd);
-          }
+          const sessionId = await bridge.newSession(cwd);
+          liveSessions.add(sessionId);
+          store.createSession(sessionId, cwd);
           break;
         }
 
@@ -347,10 +326,39 @@ wss.on("connection", (ws) => {
               title: session.title,
             } as AgentEvent);
           } else {
-            // Session not in current bridge — expired
-            // TODO: try ACP loadSession once verified it works across restarts
-            send(ws, { type: "session_expired", sessionId: msg.sessionId });
+            // Session not in current bridge — try to restore via ACP
+            try {
+              restoringSessions.add(msg.sessionId);
+              await bridge.loadSession(msg.sessionId, session.cwd);
+              restoringSessions.delete(msg.sessionId);
+              liveSessions.add(msg.sessionId);
+              if (session.title) sessionHasTitle.add(msg.sessionId);
+              send(ws, {
+                type: "session_created",
+                sessionId: msg.sessionId,
+                cwd: session.cwd,
+                title: session.title,
+              } as AgentEvent);
+              console.log(`[session] restored: ${msg.sessionId.slice(0, 8)}…`);
+            } catch (err) {
+              restoringSessions.delete(msg.sessionId);
+              console.error(`[session] restore failed:`, err);
+              send(ws, { type: "session_expired", sessionId: msg.sessionId });
+            }
           }
+          break;
+        }
+
+        case "delete_session": {
+          if (!msg.sessionId) {
+            send(ws, { type: "error", message: "Missing sessionId" });
+            return;
+          }
+          store.deleteSession(msg.sessionId);
+          liveSessions.delete(msg.sessionId);
+          sessionHasTitle.delete(msg.sessionId);
+          send(ws, { type: "session_deleted", sessionId: msg.sessionId });
+          console.log(`[session] deleted: ${msg.sessionId.slice(0, 8)}…`);
           break;
         }
 
@@ -532,7 +540,6 @@ server.listen(PORT, "0.0.0.0", async () => {
     for (const s of store.listSessions()) {
       if (s.title) sessionHasTitle.add(s.id);
     }
-    await prewarmSession();
   } catch (err) {
     console.error(`[bridge] failed to start:`, err);
   }
