@@ -411,14 +411,14 @@ wss.on("connection", (ws) => {
               denied: !!msg.denied,
             });
           }
-          // Broadcast to ALL clients so they dismiss the permission UI
+          // Broadcast to other clients so they dismiss the permission UI
           broadcast({
             type: "permission_resolved",
             sessionId: msg.sessionId,
             requestId: msg.requestId,
             optionName: msg.optionName || "",
             denied: !!msg.denied,
-          } as any);
+          } as any, ws);
           break;
         }
 
