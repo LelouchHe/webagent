@@ -44,10 +44,9 @@ Type `/` to trigger an autocomplete menu (arrow keys to navigate, Tab to select,
 | Command | Description |
 |---|---|
 | `/new [cwd]` | Create new session (optionally specify working directory) |
-| `/cwd` | Show current working directory |
+| `/pwd` | Show current working directory |
 | `/model [name]` | View or switch model (fuzzy match, e.g. `/model opus`) |
 | `/cancel` | Cancel current response |
-| `/sessions` | List all sessions |
 | `/switch <title\|id>` | Switch to a session (match by title or ID prefix) |
 | `/delete <title\|id>` | Delete a session |
 | `/help` | Show help |
@@ -80,13 +79,21 @@ Type `/` to trigger an autocomplete menu (arrow keys to navigate, Tab to select,
 
 ```
 Browser ←WebSocket→ server.ts ←ACP→ copilot CLI
-                        ↕
-                    store.ts (SQLite)
+                     ├── routes.ts (HTTP handlers)
+                     ├── ws-handler.ts (WS dispatch)
+                     ├── session-manager.ts (state)
+                     ├── title-service.ts (auto-title)
+                     └── store.ts (SQLite)
 ```
 
-- **server.ts** — HTTP static files + WebSocket + image upload API
+- **server.ts** — HTTP/WebSocket server bootstrap
+- **routes.ts** — HTTP request handlers (static files, REST API, image upload)
+- **ws-handler.ts** — WebSocket message dispatch + broadcast
+- **session-manager.ts** — Session state management (live sessions, buffers, bash procs, model cache)
 - **bridge.ts** — ACP bridge, manages agent subprocess, handles permissions and file I/O
 - **store.ts** — SQLite persistence (sessions + events tables, WAL mode)
+- **title-service.ts** — Async session title generation (dedicated Haiku session)
+- **types.ts** — Shared types + Zod schemas for WS messages
 
 ## Prerequisites
 

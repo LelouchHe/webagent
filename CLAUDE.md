@@ -5,9 +5,14 @@ A web UI for any ACP-compatible agent, accessed remotely via the browser.
 Tech stack: Node.js + TypeScript (`--experimental-strip-types`), WebSocket (`ws`), SQLite (`better-sqlite3`), Zod validation.
 
 Core modules:
-- `server.ts` — HTTP/WebSocket server + image upload API
+- `server.ts` — HTTP/WebSocket server bootstrap
+- `routes.ts` — HTTP request handlers (static files, REST API, image upload)
+- `ws-handler.ts` — WebSocket message dispatch + broadcast
+- `session-manager.ts` — Session state (live sessions, buffers, bash procs, model cache)
 - `bridge.ts` — ACP bridge, manages agent subprocess
 - `store.ts` — SQLite persistence (sessions + events tables)
+- `title-service.ts` — Async session title generation (dedicated Haiku session)
+- `types.ts` — Shared types + Zod schemas for WS messages
 - `public/index.html` — single-file frontend (no build step)
 
 Production runs as a macOS launchd service (port 6800).
