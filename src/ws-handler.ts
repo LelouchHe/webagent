@@ -63,7 +63,7 @@ export function setupWsHandler(deps: WsHandlerDeps): void {
         switch (msg.type) {
           case "new_session": {
             if (!bridge) { send(ws, { type: "error", message: "Agent not ready yet" }); return; }
-            await sessions.createSession(bridge, msg.cwd);
+            await sessions.createSession(bridge, msg.cwd, msg.inheritFromSessionId);
             break;
           }
 

@@ -6,6 +6,8 @@ import type { CopilotBridge } from "./bridge.ts";
 import type { AgentEvent } from "./types.ts";
 import type * as acp from "@agentclientprotocol/sdk";
 
+type SessionBridge = Pick<CopilotBridge, "newSession" | "setModel" | "loadSession">;
+
 /**
  * Centralizes all session-related state that was previously scattered
  * across module-level variables in server.ts.
@@ -37,18 +39,24 @@ export class SessionManager {
     }
   }
 
-  /** Create a new session in both bridge and store, applying last-used model. */
-  async createSession(bridge: CopilotBridge, cwd?: string): Promise<string> {
+  /** Create a new session in both bridge and store, inheriting the source session's model. */
+  async createSession(
+    bridge: SessionBridge,
+    cwd?: string,
+    inheritFromSessionId?: string,
+  ): Promise<string> {
     const sessionCwd = cwd ?? this.defaultCwd;
+    const inheritedModel = inheritFromSessionId
+      ? this.store.getSession(inheritFromSessionId)?.model ?? null
+      : null;
     const sessionId = await bridge.newSession(sessionCwd);
     this.liveSessions.add(sessionId);
     this.store.createSession(sessionId, sessionCwd);
 
-    const defaultModel = this.store.getLastUsedModel();
-    if (defaultModel) {
+    if (inheritedModel) {
       try {
-        await bridge.setModel(sessionId, defaultModel);
-        this.store.updateSessionModel(sessionId, defaultModel);
+        await bridge.setModel(sessionId, inheritedModel);
+        this.store.updateSessionModel(sessionId, inheritedModel);
       } catch {
         // Model may no longer be available; ignore
       }
@@ -59,7 +67,7 @@ export class SessionManager {
 
   /** Resume a session — returns event to send to the requesting client. */
   async resumeSession(
-    bridge: CopilotBridge,
+    bridge: SessionBridge,
     sessionId: string,
   ): Promise<AgentEvent> {
     const session = this.store.getSession(sessionId);

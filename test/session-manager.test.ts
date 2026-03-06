@@ -53,6 +53,52 @@ describe("SessionManager", () => {
     });
   });
 
+  describe("createSession", () => {
+    it("inherits the model from the source session", async () => {
+      store.createSession("s1", "/x");
+      store.updateSessionModel("s1", "claude-sonnet-4.6");
+
+      const setModelCalls: Array<{ sessionId: string; modelId: string }> = [];
+      const bridge = {
+        async newSession(cwd: string) {
+          assert.equal(cwd, "/default/cwd");
+          return "s2";
+        },
+        async setModel(sessionId: string, modelId: string) {
+          setModelCalls.push({ sessionId, modelId });
+        },
+        async loadSession() {
+          throw new Error("loadSession should not be called");
+        },
+      };
+
+      await sm.createSession(bridge, undefined, "s1");
+
+      assert.deepEqual(setModelCalls, [{ sessionId: "s2", modelId: "claude-sonnet-4.6" }]);
+      assert.equal(store.getSession("s2")!.model, "claude-sonnet-4.6");
+    });
+
+    it("does not set a model when no source session is provided", async () => {
+      let setModelCalled = false;
+      const bridge = {
+        async newSession() {
+          return "s2";
+        },
+        async setModel() {
+          setModelCalled = true;
+        },
+        async loadSession() {
+          throw new Error("loadSession should not be called");
+        },
+      };
+
+      await sm.createSession(bridge);
+
+      assert.equal(setModelCalled, false);
+      assert.equal(store.getSession("s2")!.model, null);
+    });
+  });
+
   describe("buffer management", () => {
     it("appends and flushes assistant buffer", () => {
       store.createSession("s1", "/x");

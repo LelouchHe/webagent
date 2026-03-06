@@ -53,18 +53,6 @@ describe("Store", () => {
       assert.equal(store.getSession("s1")!.model, "claude-sonnet");
     });
 
-    it("getLastUsedModel returns model from most recently active session", () => {
-      store.createSession("s1", "/x");
-      store.updateSessionModel("s1", "claude-sonnet");
-
-      assert.equal(store.getLastUsedModel(), "claude-sonnet");
-    });
-
-    it("getLastUsedModel returns null when no model set", () => {
-      store.createSession("s1", "/x");
-      assert.equal(store.getLastUsedModel(), null);
-    });
-
     it("deletes session and its events", () => {
       store.createSession("s1", "/x");
       store.saveEvent("s1", "user_message", { text: "hi" });

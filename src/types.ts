@@ -27,7 +27,11 @@ const ImageSchema = z.object({
 });
 
 export const WsMessageSchema = z.discriminatedUnion("type", [
-  z.object({ type: z.literal("new_session"), cwd: z.string().optional() }),
+  z.object({
+    type: z.literal("new_session"),
+    cwd: z.string().optional(),
+    inheritFromSessionId: z.string().optional(),
+  }),
   z.object({ type: z.literal("resume_session"), sessionId: z.string() }),
   z.object({ type: z.literal("delete_session"), sessionId: z.string() }),
   z.object({

@@ -17,6 +17,17 @@ describe("WsMessageSchema", () => {
     }
   });
 
+  it("parses new_session with optional inheritFromSessionId", () => {
+    const result = WsMessageSchema.safeParse({
+      type: "new_session",
+      inheritFromSessionId: "s1",
+    });
+    assert.ok(result.success);
+    if (result.data.type === "new_session") {
+      assert.equal(result.data.inheritFromSessionId, "s1");
+    }
+  });
+
   it("parses prompt with images", () => {
     const result = WsMessageSchema.safeParse({
       type: "prompt",

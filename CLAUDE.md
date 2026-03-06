@@ -40,6 +40,7 @@ npm run dev           # dev server on port 6801, uses data-dev/
 - **Single bridge**: One bridge instance per server, multiple sessions multiplexed over it.
 - **Session restore**: `bridge.loadSession()` restores ACP context after server restart. During restore, `restoringSessions` Set suppresses duplicate event storage/broadcast.
 - **On-demand sessions**: No pre-warming. Sessions created on `/new`, auto-resumed on page open.
+- **Model inheritance**: A newly created session inherits the current session's saved model when available; restored sessions keep their own persisted model.
 - **Auto-resume**: Frontend auto-resumes last active session on page open (no hash → fetch `/api/sessions` → resume most recent).
 - **Event aggregation**: `message_chunk` / `thought_chunk` are buffered in memory, flushed to DB as full `assistant_message` / `thinking` on boundaries (tool_call, plan, prompt_done).
 - **Title generation**: Uses a dedicated silent session with fast model (Haiku), async and non-blocking.

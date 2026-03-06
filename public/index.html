@@ -539,6 +539,14 @@ let currentThinkingText = '';
 let busy = false;
 let pendingImages = []; // { data: base64, mimeType, previewUrl }
 
+function requestNewSession({ cwd, inheritFromSessionId = sessionId } = {}) {
+  const payload = { type: 'new_session' };
+  if (cwd) payload.cwd = cwd;
+  if (inheritFromSessionId) payload.inheritFromSessionId = inheritFromSessionId;
+  awaitingNewSession = true;
+  ws.send(JSON.stringify(payload));
+}
+
 function resetSessionUI() {
   messagesEl.innerHTML = '';
   currentAssistantEl = null;
@@ -764,8 +772,7 @@ function connect() {
     } catch {}
 
     // No previous sessions — create new
-    awaitingNewSession = true;
-    ws.send(JSON.stringify({ type: 'new_session' }));
+    requestNewSession();
   };
 
   ws.onclose = () => {
@@ -1036,8 +1043,7 @@ function handleEvent(msg) {
     case 'session_expired':
       resetSessionUI();
       addSystem('warn: Previous session expired, created new one.');
-      awaitingNewSession = true;
-      ws.send(JSON.stringify({ type: 'new_session' }));
+      requestNewSession();
       break;
 
     case 'model_set':
@@ -1224,9 +1230,7 @@ async function handleSlashCommand(text) {
     case '/new': {
       resetSessionUI();
       addSystem('Creating new session…');
-      const payload = { type: 'new_session', cwd: arg || sessionCwd };
-      awaitingNewSession = true;
-      ws.send(JSON.stringify(payload));
+      requestNewSession({ cwd: arg || sessionCwd });
       return true;
     }
 
