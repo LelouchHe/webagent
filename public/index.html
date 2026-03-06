@@ -1234,30 +1234,10 @@ async function handleSlashCommand(text) {
       addSystem(`📁 ${sessionCwd || 'unknown'}`);
       return true;
 
-    case '/sessions': {
-      try {
-        const res = await fetch('/api/sessions');
-        const sessions = await res.json();
-        if (sessions.length === 0) {
-          addSystem('No sessions.');
-        } else {
-          for (const s of sessions.reverse()) {
-            const current = s.id === sessionId;
-            const prefix = current ? '*' : ' ';
-            const label = s.title || s.id.slice(0, 8) + '…';
-            const time = formatLocalTime(s.last_active_at || s.created_at);
-            const text = `${prefix} ${label}: ${s.cwd} (${time})`;
-            const el = document.createElement('div');
-            el.className = 'system-msg';
-            if (current) el.style.color = 'var(--green)';
-            el.textContent = text;
-            messagesEl.appendChild(el);
-          }
-          scrollToBottom();
-        }
-      } catch {
-        addSystem('err: Failed to fetch sessions');
-      }
+    case '/sessions':
+      addSystem('Removed. Use /switch to see all sessions.');
+      return true;
+
       return true;
     }
 
@@ -1327,7 +1307,6 @@ async function handleSlashCommand(text) {
       addSystem('/pwd — Show working directory');
       addSystem('/model [name] — Show or switch model');
       addSystem('/cancel — Cancel current response');
-      addSystem('/sessions — List all sessions');
       addSystem('/switch <title|id> — Switch to session (title or id prefix match)');
       addSystem('/delete <title|id> — Delete a session');
       addSystem('/help — Show this help');
@@ -1436,7 +1415,6 @@ const SLASH_COMMANDS = [
   { cmd: '/model',    args: '[name]',      desc: 'Pick or switch model' },
   { cmd: '/new',      args: '[cwd]',       desc: 'New session' },
   { cmd: '/pwd',      args: '',            desc: 'Show working directory' },
-  { cmd: '/sessions', args: '',            desc: 'List all sessions' },
   { cmd: '/switch',   args: '<title|id>',  desc: 'Switch to session' },
 ];
 
@@ -1534,9 +1512,12 @@ function renderSlashMenu() {
     }).join('');
   } else if (slashMode === 'switch' || slashMode === 'delete') {
     slashMenu.innerHTML = slashFiltered.map((s, i) => {
+      const isCurrent = s.id === sessionId;
+      const prefix = isCurrent ? '* ' : '  ';
       const label = s.title || s.id.slice(0, 8) + '…';
       const time = formatLocalTime(s.last_active_at || s.created_at);
-      return `<div class="slash-item${i === slashIdx ? ' selected' : ''}" data-idx="${i}"><span class="slash-cmd">${escHtml(label)}</span><span class="slash-desc">${escHtml(s.cwd)} (${escHtml(time)})</span></div>`;
+      const style = isCurrent ? ' style="color:var(--green)"' : '';
+      return `<div class="slash-item${i === slashIdx ? ' selected' : ''}" data-idx="${i}"><span class="slash-cmd"${style}>${escHtml(prefix + label)}</span><span class="slash-desc">${escHtml(s.cwd)} (${escHtml(time)})</span></div>`;
     }).join('');
   } else {
     slashMenu.innerHTML = slashFiltered.map((c, i) => {
