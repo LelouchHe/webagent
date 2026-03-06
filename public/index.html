@@ -775,6 +775,11 @@ function connect() {
 }
 
 function handleEvent(msg) {
+  // Ignore events from other sessions (multi-client broadcast)
+  if (msg.sessionId && sessionId && msg.sessionId !== sessionId
+      && msg.type !== 'session_created' && msg.type !== 'session_deleted') {
+    return;
+  }
   switch (msg.type) {
     case 'connected':
       break;
