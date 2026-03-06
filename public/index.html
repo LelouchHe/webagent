@@ -519,6 +519,7 @@ let ws = null;
 let sessionId = null;
 let sessionCwd = null;
 let sessionTitle = null;
+let awaitingNewSession = false;
 let availableModels = [];
 let currentModel = null;
 let currentAssistantEl = null;
@@ -753,6 +754,7 @@ function connect() {
     } catch {}
 
     // No previous sessions — create new
+    awaitingNewSession = true;
     ws.send(JSON.stringify({ type: 'new_session' }));
   };
 
@@ -785,6 +787,11 @@ function handleEvent(msg) {
       break;
 
     case 'session_created':
+      // Only switch to the new session if this client requested it
+      if (!awaitingNewSession && sessionId && msg.sessionId !== sessionId) {
+        break;
+      }
+      awaitingNewSession = false;
       sessionId = msg.sessionId;
       sessionCwd = msg.cwd || sessionCwd;
       sessionTitle = msg.title || null;
@@ -1010,6 +1017,7 @@ function handleEvent(msg) {
     case 'session_expired':
       resetSessionUI();
       addSystem('warn: Previous session expired, created new one.');
+      awaitingNewSession = true;
       ws.send(JSON.stringify({ type: 'new_session' }));
       break;
 
@@ -1198,6 +1206,7 @@ async function handleSlashCommand(text) {
       resetSessionUI();
       addSystem('Creating new session…');
       const payload = { type: 'new_session', cwd: arg || sessionCwd };
+      awaitingNewSession = true;
       ws.send(JSON.stringify(payload));
       return true;
     }
