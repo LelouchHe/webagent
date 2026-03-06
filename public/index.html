@@ -1230,7 +1230,7 @@ async function handleSlashCommand(text) {
       return true;
     }
 
-    case '/cwd':
+    case '/pwd':
       addSystem(`📁 ${sessionCwd || 'unknown'}`);
       return true;
 
@@ -1324,7 +1324,7 @@ async function handleSlashCommand(text) {
     case '/help':
       addSystem('!<command> — Run bash command');
       addSystem('/new [cwd] — New session');
-      addSystem('/cwd — Show working directory');
+      addSystem('/pwd — Show working directory');
       addSystem('/model [name] — Show or switch model');
       addSystem('/cancel — Cancel current response');
       addSystem('/sessions — List all sessions');
@@ -1431,7 +1431,7 @@ inputEl.addEventListener('paste', async (e) => {
 
 const SLASH_COMMANDS = [
   { cmd: '/new',      args: '[cwd]',       desc: 'New session' },
-  { cmd: '/cwd',      args: '',            desc: 'Show working directory' },
+  { cmd: '/pwd',      args: '',            desc: 'Show working directory' },
   { cmd: '/model',    args: '[name]',      desc: 'Pick or switch model' },
   { cmd: '/cancel',   args: '',            desc: 'Cancel current response' },
   { cmd: '/sessions', args: '',            desc: 'List all sessions' },
