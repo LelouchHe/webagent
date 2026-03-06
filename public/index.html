@@ -316,6 +316,16 @@
     display: flex;
     align-items: center;
     gap: 4px;
+    transition: border-color .15s;
+  }
+  #input-area.bash-mode {
+    border-top-color: #e8872b;
+  }
+  #input-area.bash-mode #input-prompt {
+    color: #e8872b;
+  }
+  #input-area.bash-mode #input {
+    color: #e8872b;
   }
   #input-prompt {
     color: var(--green);
@@ -1583,7 +1593,10 @@ slashMenu.addEventListener('mousedown', (e) => {
   if (item) selectSlashItem(Number(item.dataset.idx));
 });
 
-inputEl.addEventListener('input', () => updateSlashMenu());
+inputEl.addEventListener('input', () => {
+  updateSlashMenu();
+  document.getElementById('input-area').classList.toggle('bash-mode', inputEl.value.startsWith('!'));
+});
 
 // --- Input ---
 
@@ -1594,6 +1607,7 @@ function sendMessage() {
 
   inputEl.value = '';
   inputEl.style.height = 'auto';
+  document.getElementById('input-area').classList.remove('bash-mode');
 
   if (text.startsWith('/') && pendingImages.length === 0) {
     handleSlashCommand(text);
