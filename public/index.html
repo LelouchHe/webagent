@@ -1238,9 +1238,6 @@ async function handleSlashCommand(text) {
       addSystem('Removed. Use /switch to see all sessions.');
       return true;
 
-      return true;
-    }
-
     case '/delete': {
       if (!arg) {
         addSystem('Usage: /delete <title or id prefix>');
@@ -1423,9 +1420,16 @@ let slashIdx = -1;
 let slashFiltered = [];
 let slashMode = 'commands'; // 'commands', 'switch', 'delete', or 'model'
 let cachedSessions = null;
+let slashDismissed = null; // input value when menu was dismissed via Escape
 
 function updateSlashMenu() {
   const text = inputEl.value;
+
+  // If menu was dismissed and input hasn't changed, don't reopen
+  if (slashDismissed !== null) {
+    if (text === slashDismissed) return;
+    slashDismissed = null;
+  }
 
   // /switch or /delete — show session picker
   const switchMatch = text.match(/^\/(switch|delete) /);
@@ -1471,7 +1475,6 @@ async function fetchSessionsForMenu(query, mode = 'switch') {
   }
   slashMode = mode;
   const items = cachedSessions
-    .filter(s => s.id !== sessionId) // exclude current
     .filter(s => {
       if (!query) return true;
       return (s.title && s.title.toLowerCase().includes(query)) || s.id.startsWith(query);
@@ -1534,6 +1537,7 @@ function hideSlashMenu() {
   slashIdx = -1;
   slashFiltered = [];
   slashMode = 'commands';
+  slashDismissed = inputEl.value;
 }
 
 function selectSlashItem(idx) {
