@@ -48,6 +48,10 @@ npm run dev           # dev server on port 6801, uses data-dev/
 - **Keyboard shortcuts** — `Ctrl+C` cancel, `Ctrl+U` upload. Enter only sends (never cancels).
 - **Theme** — dark/light/auto, persisted to localStorage.
 
+## Git Commit Tips
+
+- Avoid `!` in double-quoted commit messages — bash interprets it as history expansion and the command will hang. Use single quotes instead.
+
 ## Testing
 
 ```bash
