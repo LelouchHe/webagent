@@ -1686,13 +1686,6 @@ inputEl.addEventListener('keydown', (e) => {
       selectSlashItem(slashIdx);
       return;
     }
-    if (e.key === 'Escape') {
-      e.preventDefault();
-      e.stopPropagation();
-      hideSlashMenu();
-      inputEl.focus();
-      return;
-    }
   }
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault();
@@ -1718,11 +1711,12 @@ inputEl.addEventListener('keydown', (e) => {
   }
 });
 
-// Global Escape to dismiss slash menu (works even when input not focused)
+// Global Escape to dismiss slash menu
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && slashMenu.classList.contains('active')) {
     e.preventDefault();
     hideSlashMenu();
+    inputEl.focus();
   }
 });
 
