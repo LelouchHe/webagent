@@ -1527,8 +1527,10 @@ function renderSlashMenu() {
   if (slashMode === 'model') {
     const current = currentModel?.toLowerCase() || '';
     slashMenu.innerHTML = slashFiltered.map((m, i) => {
-      const active = m.modelId.toLowerCase() === current ? ' *' : '';
-      return `<div class="slash-item${i === slashIdx ? ' selected' : ''}" data-idx="${i}"><span class="slash-cmd">${escHtml(m.modelId)}${active}</span></div>`;
+      const isCurrent = m.modelId.toLowerCase() === current;
+      const prefix = isCurrent ? '* ' : '  ';
+      const style = isCurrent ? ' style="color:var(--green)"' : '';
+      return `<div class="slash-item${i === slashIdx ? ' selected' : ''}" data-idx="${i}"><span class="slash-cmd"${style}>${escHtml(prefix + m.modelId)}</span></div>`;
     }).join('');
   } else if (slashMode === 'switch' || slashMode === 'delete') {
     slashMenu.innerHTML = slashFiltered.map((s, i) => {
