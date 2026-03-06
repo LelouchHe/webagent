@@ -47,10 +47,12 @@ npm run dev           # dev server on port 6801, uses data-dev/
 - **Terminal aesthetic** — monospace fonts, `^C` / `^U` style button labels, `*` git-branch-style session markers.
 - **Keyboard shortcuts** — `Ctrl+C` cancel, `Ctrl+U` upload. Enter only sends (never cancels).
 - **Theme** — dark/light/auto, persisted to localStorage.
+- **Escape key** — `inputEl` keydown listener cannot reliably capture Escape (browser default behavior / IME may consume it first). Use `document.addEventListener('keydown', ...)` instead for Escape handling.
 
 ## Git Commit Tips
 
 - Avoid `!` in double-quoted commit messages — bash interprets it as history expansion and the command will hang. Use single quotes instead.
+- Don't commit until a feature/fix is fully working and verified. Avoid partial or incremental commits for incomplete changes.
 
 ## Testing
 
