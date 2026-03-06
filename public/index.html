@@ -1716,6 +1716,14 @@ inputEl.addEventListener('keydown', (e) => {
   }
 });
 
+// Global Escape to dismiss slash menu (works even when input not focused)
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && slashMenu.classList.contains('active')) {
+    e.preventDefault();
+    hideSlashMenu();
+  }
+});
+
 // Auto-resize textarea
 inputEl.addEventListener('input', () => {
   inputEl.style.height = 'auto';
