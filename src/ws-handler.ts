@@ -97,7 +97,9 @@ export function setupWsHandler(deps: WsHandlerDeps): void {
             // Generate title on first user message
             if (!sessions.sessionHasTitle.has(msg.sessionId)) {
               sessions.sessionHasTitle.add(msg.sessionId);
-              titleService.generate(bridge, msg.text, msg.sessionId);
+              titleService.generate(bridge, msg.text, msg.sessionId, (title) => {
+                broadcast(wss, { type: "session_title_updated", sessionId: msg.sessionId, title });
+              });
             }
             // Broadcast to other clients
             const userEvent = JSON.stringify({ type: "user_message", sessionId: msg.sessionId, ...userData });

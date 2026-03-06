@@ -18,8 +18,10 @@ export class TitleService {
   }
 
   /** Generate a title for the session (non-blocking, fire-and-forget). */
-  generate(bridge: CopilotBridge, userMessage: string, sessionId: string): void {
-    this._generate(bridge, userMessage, sessionId).catch((err) => {
+  generate(bridge: CopilotBridge, userMessage: string, sessionId: string, onTitle?: (title: string) => void): void {
+    this._generate(bridge, userMessage, sessionId).then((title) => {
+      if (title && onTitle) onTitle(title);
+    }).catch((err) => {
       console.error(`[title] generation failed:`, err);
     });
   }
@@ -41,7 +43,7 @@ export class TitleService {
 
     this.store.updateSessionTitle(sessionId, cleaned);
     this.sessions.sessionHasTitle.add(sessionId);
-    return cleaned as any; // Return cleaned title; caller uses broadcast callback
+    return cleaned;
   }
 
   /** Ensure the dedicated title session exists. Returns session ID or null. */

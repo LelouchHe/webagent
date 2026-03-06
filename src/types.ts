@@ -14,6 +14,7 @@ export type AgentEvent =
   | { type: "permission_request"; requestId: string; sessionId: string; title: string; toolCallId?: string | null; options: acp.PermissionOption[] }
   | { type: "prompt_done"; sessionId: string; stopReason: string }
   | { type: "session_deleted"; sessionId: string }
+  | { type: "session_title_updated"; sessionId: string; title: string }
   | { type: "session_expired"; sessionId: string }
   | { type: "error"; message: string };
 
