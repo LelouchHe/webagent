@@ -1,16 +1,16 @@
 # WebAgent
 
-通过浏览器远程使用 Copilot CLI 的 Web 应用，基于 ACP (Agent Client Protocol)。
+A web UI for any ACP-compatible agent, accessed remotely via the browser.
 
-技术栈：Node.js + TypeScript（`--experimental-strip-types`），WebSocket（`ws`）通信，SQLite（`better-sqlite3`）持久化，Zod 校验。
+Tech stack: Node.js + TypeScript (`--experimental-strip-types`), WebSocket (`ws`), SQLite (`better-sqlite3`), Zod validation.
 
-核心模块：
-- `server.ts` — HTTP/WebSocket 服务端 + 图片上传 API
-- `bridge.ts` — ACP 桥接，管理 Copilot CLI 子进程
-- `store.ts` — SQLite 数据持久化（sessions + events 表）
-- `public/index.html` — 单文件前端（无构建步骤）
+Core modules:
+- `server.ts` — HTTP/WebSocket server + image upload API
+- `bridge.ts` — ACP bridge, manages agent subprocess
+- `store.ts` — SQLite persistence (sessions + events tables)
+- `public/index.html` — single-file frontend (no build step)
 
-生产通过 macOS launchd 服务运行（端口 6800），支持 Cloudflare Tunnel 远程访问。
+Production runs as a macOS launchd service (port 6800).
 
 ## Service Management
 
@@ -32,14 +32,14 @@ npm run dev           # dev server on port 6801, uses data-dev/
 
 ## Architecture Notes
 
-- **Single bridge**: One `CopilotBridge` instance per server, multiple sessions multiplexed over it.
+- **Single bridge**: One bridge instance per server, multiple sessions multiplexed over it.
 - **Session restore**: `bridge.loadSession()` restores ACP context after server restart. During restore, `restoringSessions` Set suppresses duplicate event storage/broadcast.
 - **On-demand sessions**: No pre-warming. Sessions created on `/new`, auto-resumed on page open.
 - **Auto-resume**: Frontend auto-resumes last active session on page open (no hash → fetch `/api/sessions` → resume most recent).
 - **Event aggregation**: `message_chunk` / `thought_chunk` are buffered in memory, flushed to DB as full `assistant_message` / `thinking` on boundaries (tool_call, plan, prompt_done).
 - **Title generation**: Uses a dedicated silent session with fast model (Haiku), async and non-blocking.
 - **Multi-client broadcast**: Events broadcast to all WS clients. Permission responses, user messages, bash output sync across devices. `broadcast()` supports sender exclusion.
-- **PWA**: Minimal service worker (no offline cache), manifest.json, installable to home screen. Cloudflare Access needs bypass for `/manifest.json`, `/sw.js`, `/icons/*`.
+- **PWA**: Minimal service worker (no offline cache), manifest.json, installable to home screen.
 
 ## Frontend Conventions
 
@@ -47,3 +47,11 @@ npm run dev           # dev server on port 6801, uses data-dev/
 - **Terminal aesthetic** — monospace fonts, `^C` / `^U` style button labels, `*` git-branch-style session markers.
 - **Keyboard shortcuts** — `Ctrl+C` cancel, `Ctrl+U` upload. Enter only sends (never cancels).
 - **Theme** — dark/light/auto, persisted to localStorage.
+
+## Testing
+
+```bash
+npm test              # run all tests
+```
+
+When adding features or fixing bugs, check whether corresponding tests need to be added or updated.

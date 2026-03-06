@@ -1,6 +1,4 @@
 import { spawn } from "node:child_process";
-import { rm } from "node:fs/promises";
-import { join } from "node:path";
 import { WebSocket, WebSocketServer } from "ws";
 import { WsMessageSchema, errorMessage } from "./types.ts";
 import type { AgentEvent } from "./types.ts";
@@ -15,7 +13,6 @@ interface WsHandlerDeps {
   sessions: SessionManager;
   titleService: TitleService;
   getBridge: () => CopilotBridge | null;
-  dataDir: string;
 }
 
 export function broadcast(wss: WebSocketServer, event: AgentEvent, exclude?: WebSocket): void {
@@ -34,7 +31,7 @@ function send(ws: WebSocket, event: AgentEvent): void {
 }
 
 export function setupWsHandler(deps: WsHandlerDeps): void {
-  const { wss, store, sessions, titleService, getBridge, dataDir } = deps;
+  const { wss, store, sessions, titleService, getBridge } = deps;
 
   wss.on("connection", (ws) => {
     console.log(`[ws] client connected (total: ${wss.clients.size})`);
@@ -83,8 +80,6 @@ export function setupWsHandler(deps: WsHandlerDeps): void {
 
           case "delete_session": {
             sessions.deleteSession(msg.sessionId);
-            const imgDir = join(dataDir, "images", msg.sessionId);
-            rm(imgDir, { recursive: true, force: true }).catch(() => {});
             send(ws, { type: "session_deleted", sessionId: msg.sessionId } as any);
             console.log(`[session] deleted: ${msg.sessionId.slice(0, 8)}…`);
             break;

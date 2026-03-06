@@ -14,7 +14,7 @@ describe("SessionManager", () => {
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), "webagent-test-"));
     store = new Store(tmpDir);
-    sm = new SessionManager(store, "/default/cwd");
+    sm = new SessionManager(store, "/default/cwd", tmpDir);
   });
 
   afterEach(() => {

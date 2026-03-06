@@ -1,4 +1,6 @@
 import type { ChildProcess } from "node:child_process";
+import { rm } from "node:fs/promises";
+import { join } from "node:path";
 import type { Store } from "./store.ts";
 import type { CopilotBridge } from "./bridge.ts";
 import type { AgentEvent } from "./types.ts";
@@ -20,10 +22,12 @@ export class SessionManager {
 
   private store: Store;
   private defaultCwd: string;
+  private dataDir: string;
 
-  constructor(store: Store, defaultCwd: string) {
+  constructor(store: Store, defaultCwd: string, dataDir: string) {
     this.store = store;
     this.defaultCwd = defaultCwd;
+    this.dataDir = dataDir;
   }
 
   /** Populate sessionHasTitle from existing DB sessions on startup. */
@@ -33,12 +37,23 @@ export class SessionManager {
     }
   }
 
-  /** Create a new session in both bridge and store. */
+  /** Create a new session in both bridge and store, applying last-used model. */
   async createSession(bridge: CopilotBridge, cwd?: string): Promise<string> {
     const sessionCwd = cwd ?? this.defaultCwd;
     const sessionId = await bridge.newSession(sessionCwd);
     this.liveSessions.add(sessionId);
     this.store.createSession(sessionId, sessionCwd);
+
+    const defaultModel = this.store.getLastUsedModel();
+    if (defaultModel) {
+      try {
+        await bridge.setModel(sessionId, defaultModel);
+        this.store.updateSessionModel(sessionId, defaultModel);
+      } catch {
+        // Model may no longer be available; ignore
+      }
+    }
+
     return sessionId;
   }
 
@@ -89,13 +104,15 @@ export class SessionManager {
     }
   }
 
-  /** Delete a session from store and clean up all state. */
+  /** Delete a session from store and clean up all state (including images). */
   deleteSession(sessionId: string): void {
     this.store.deleteSession(sessionId);
     this.liveSessions.delete(sessionId);
     this.sessionHasTitle.delete(sessionId);
     this.assistantBuffers.delete(sessionId);
     this.thinkingBuffers.delete(sessionId);
+    // Remove uploaded images for this session
+    rm(join(this.dataDir, "images", sessionId), { recursive: true, force: true }).catch(() => {});
   }
 
   /** Flush assistant/thinking buffers to store. */

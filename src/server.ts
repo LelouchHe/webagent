@@ -21,7 +21,7 @@ const PUBLIC_DIR = join(__dirname, "..", "public");
 const store = new Store(DATA_DIR);
 console.log(`[store] using ${DATA_DIR}/`);
 
-const sessions = new SessionManager(store, DEFAULT_CWD);
+const sessions = new SessionManager(store, DEFAULT_CWD, DATA_DIR);
 const titleService = new TitleService(store, sessions, DEFAULT_CWD);
 
 let bridge: CopilotBridge | null = null;
@@ -37,7 +37,6 @@ setupWsHandler({
   sessions,
   titleService,
   getBridge: () => bridge,
-  dataDir: DATA_DIR,
 });
 
 // --- Bridge initialization ---

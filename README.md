@@ -1,137 +1,126 @@
 # WebAgent
 
-通过浏览器远程使用 Copilot CLI 的 Web 应用，基于 ACP (Agent Client Protocol)。
+A web UI for any ACP-compatible agent, accessed remotely via the browser.
 
-技术栈：Node.js + TypeScript（`--experimental-strip-types`，无需构建），WebSocket 实时通信，SQLite 持久化。
+Tech stack: Node.js + TypeScript (`--experimental-strip-types`, no build step), real-time WebSocket communication, SQLite persistence.
 
-## 功能
+## Features
 
-### 对话
+### Chat
 
-- 实时流式响应，支持 Markdown 渲染 + 代码高亮
-- Thinking 过程可折叠展示
-- 工具调用显示（状态动画、可展开详情、diff 渲染）
-- Agent 执行计划展示（待定 ○ / 进行中 ◉ / 完成 ●）
-- 敏感操作权限确认弹窗（Allow / Deny），跨设备同步
+- Real-time streaming responses with Markdown rendering + syntax highlighting
+- Collapsible thinking process display
+- Tool call display (status animation, expandable details, diff rendering)
+- Agent execution plan display (pending ○ / in-progress ◉ / done ●)
+- Permission confirmation dialog for sensitive operations (Allow / Deny), synced across devices
 
-### 图片
+### Images
 
-- 上传图片（按钮或 `^U` 快捷键）
-- 粘贴图片（Ctrl+V / Cmd+V）
-- 发送前预览 + 可移除，支持多图
-- 服务端存储，聊天中内联显示
+- Upload images (button or `^U` shortcut)
+- Paste images (Ctrl+V / Cmd+V)
+- Preview before sending + removable, supports multiple images
+- Server-side storage, displayed inline in chat
 
-### Bash 执行
+### Bash Execution
 
-- `!<command>` 直接执行 shell 命令
-- 实时输出流（stderr 红色显示）
-- 可折叠输出，显示退出码
-- 支持取消运行中的进程
+- `!<command>` to run shell commands directly
+- Real-time output streaming (stderr in red)
+- Collapsible output with exit code display
+- Cancel running processes
 
-### Session 管理
+### Session Management
 
-- 打开页面自动恢复上次 session，无需手动切换
-- 服务重启后通过 ACP `loadSession` 恢复 session 上下文，对话可继续
-- 自动生成标题（使用快速模型异步生成）
-- 历史 session 持久化（SQLite），重启不丢失
-- `/sessions` 列出所有 session（git branch 风格，`*` 绿色标记当前）
-- 切换 session 完整回放消息历史
+- Auto-resumes last session on page open, no manual switching needed
+- After server restart, restores session context via ACP `loadSession` so conversations can continue
+- Auto-generated titles (async, using a fast model)
+- Session history persisted in SQLite, survives restarts
+- `/sessions` lists all sessions (git-branch style, `*` marks current in green)
+- Switching sessions replays full message history
 
-### Slash 命令
+### Slash Commands
 
-输入 `/` 触发自动补全菜单（方向键导航，Tab 选择，Esc 关闭）。
+Type `/` to trigger an autocomplete menu (arrow keys to navigate, Tab to select, Esc to close).
 
-| 命令 | 作用 |
+| Command | Description |
 |---|---|
-| `/new [cwd]` | 新建 session（可选指定工作目录） |
-| `/cwd` | 显示当前工作目录 |
-| `/model [name]` | 查看或切换模型（支持模糊匹配，如 `/model opus`） |
-| `/cancel` | 取消当前回复 |
-| `/sessions` | 列出所有 session |
-| `/switch <title\|id>` | 切换到指定 session（标题或 ID 前缀匹配） |
-| `/delete <title\|id>` | 删除指定 session |
-| `/help` | 显示帮助 |
+| `/new [cwd]` | Create new session (optionally specify working directory) |
+| `/cwd` | Show current working directory |
+| `/model [name]` | View or switch model (fuzzy match, e.g. `/model opus`) |
+| `/cancel` | Cancel current response |
+| `/sessions` | List all sessions |
+| `/switch <title\|id>` | Switch to a session (match by title or ID prefix) |
+| `/delete <title\|id>` | Delete a session |
+| `/help` | Show help |
 
-### 快捷键
+### Keyboard Shortcuts
 
-| 快捷键 | 作用 |
+| Shortcut | Action |
 |---|---|
-| `Enter` | 发送消息 |
-| `Shift+Enter` | 换行 |
-| `Ctrl+C` | 取消当前回复 |
-| `Ctrl+U` | 上传图片 |
+| `Enter` | Send message |
+| `Shift+Enter` | New line |
+| `Ctrl+C` | Cancel current response |
+| `Ctrl+U` | Upload image |
 
-### 主题
+### Theme
 
-- 深色 / 浅色 / 跟随系统，点击 `◑` 切换
-- 终端风格 UI（等宽字体、`>_` logo）
-- 偏好保存到 localStorage
+- Dark / light / system, toggle with `◑`
+- Terminal-style UI (monospace font, `>_` logo)
+- Preference saved to localStorage
 
-### 其他
+### Other
 
-- PWA 支持（可安装到主屏幕）
-- WebSocket 自动重连（断线 3 秒重试）
-- 30 秒心跳保活
-- 输入框自动伸缩
-- 自动滚动到底部
-- 移动端适配
+- PWA support (installable to home screen)
+- WebSocket auto-reconnect (3s retry on disconnect)
+- 30s heartbeat keepalive
+- Auto-expanding input box
+- Auto-scroll to bottom
+- Mobile-friendly layout
 
-## 架构
+## Architecture
 
 ```
-浏览器 ←WebSocket→ server.ts ←ACP→ copilot CLI
+Browser ←WebSocket→ server.ts ←ACP→ copilot CLI
                         ↕
                     store.ts (SQLite)
 ```
 
-- **server.ts** — HTTP 静态文件 + WebSocket + 图片上传 API
-- **bridge.ts** — ACP 桥接，管理 Copilot CLI 子进程，处理权限、文件读写
-- **store.ts** — SQLite 持久化（sessions 表 + events 表，WAL 模式）
+- **server.ts** — HTTP static files + WebSocket + image upload API
+- **bridge.ts** — ACP bridge, manages agent subprocess, handles permissions and file I/O
+- **store.ts** — SQLite persistence (sessions + events tables, WAL mode)
 
-## 前置条件
+## Prerequisites
 
-- [fnm](https://github.com/Schniz/fnm) + Node.js 22.6+（需要 `--experimental-strip-types`）
-- [Copilot CLI](https://github.com/github/copilot-cli) 已安装并登录
+- [fnm](https://github.com/Schniz/fnm) + Node.js 22.6+ (requires `--experimental-strip-types`)
+- An ACP-compatible agent (e.g. [Copilot CLI](https://github.com/github/copilot-cli)) installed and authenticated
 
-## 安装
+## Install
 
 ```bash
 npm install
 ```
 
-## 运行
+## Run
 
-### 生产（launchd 服务）
+### Production (launchd service)
 
-服务通过 macOS launchd 管理，开机自启 + 崩溃自动重启，端口 6800。
+Managed by macOS launchd with auto-start on boot + auto-restart on crash, port 6800.
 
 ```bash
-npm run svc:status    # 查看状态
-npm run svc:restart   # 重启（改完代码后）
-npm run svc:stop      # 停止
+npm run svc:status    # check status
+npm run svc:restart   # restart (after code changes)
+npm run svc:stop      # stop
 
-# 查看日志
+# view logs
 tail -f webagent.log
 ```
 
-首次安装：
+First-time setup:
 ```bash
 launchctl bootstrap gui/501 ~/Library/LaunchAgents/com.lelouch.webagent.plist
 ```
 
-### 开发
+### Development
 
 ```bash
-npm run dev           # 端口 6801，使用 data-dev/，文件变更自动重启
+npm run dev           # port 6801, uses data-dev/, auto-restarts on file changes
 ```
-
-## 通过 Cloudflare Tunnel 远程访问
-
-在 cloudflared 的 ingress 配置中加入：
-
-```yaml
-- hostname: agent.yourdomain.com
-  service: http://host.docker.internal:6800
-```
-
-然后浏览器访问 `https://agent.yourdomain.com`。

@@ -96,6 +96,14 @@ export class Store {
     this.db.prepare("UPDATE sessions SET model = ? WHERE id = ?").run(model, id);
   }
 
+  /** Get the most recently used model across all sessions. */
+  getLastUsedModel(): string | null {
+    const row = this.db.prepare(
+      "SELECT model FROM sessions WHERE model IS NOT NULL ORDER BY last_active_at DESC LIMIT 1"
+    ).get() as { model: string } | undefined;
+    return row?.model ?? null;
+  }
+
   saveEvent(sessionId: string, type: string, data: Record<string, unknown> = {}): EventRow {
     const seq = (this.db.prepare(
       "SELECT COALESCE(MAX(seq), 0) + 1 AS next FROM events WHERE session_id = ?"
