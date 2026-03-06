@@ -55,3 +55,7 @@ npm test              # run all tests
 ```
 
 When adding features or fixing bugs, check whether corresponding tests need to be added or updated.
+
+## TODO
+
+- [ ] Add multi-client WS integration tests (e.g. two WS clients: verify `session_created` broadcast doesn't cause unintended session switching; test `awaitingNewSession` guard logic end-to-end)
