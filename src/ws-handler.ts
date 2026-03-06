@@ -80,7 +80,7 @@ export function setupWsHandler(deps: WsHandlerDeps): void {
 
           case "delete_session": {
             sessions.deleteSession(msg.sessionId);
-            send(ws, { type: "session_deleted", sessionId: msg.sessionId } as any);
+            broadcast(wss, { type: "session_deleted", sessionId: msg.sessionId });
             console.log(`[session] deleted: ${msg.sessionId.slice(0, 8)}…`);
             break;
           }

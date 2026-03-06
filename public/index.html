@@ -1014,6 +1014,15 @@ function handleEvent(msg) {
       inputEl.focus();
       break;
 
+    case 'session_deleted':
+      if (msg.sessionId === sessionId) {
+        addSystem('warn: This session has been deleted.');
+        inputEl.disabled = true;
+        sendBtn.disabled = true;
+        inputEl.placeholder = 'Session deleted';
+      }
+      break;
+
     case 'session_expired':
       resetSessionUI();
       addSystem('warn: Previous session expired, created new one.');
