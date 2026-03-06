@@ -1688,7 +1688,9 @@ inputEl.addEventListener('keydown', (e) => {
     }
     if (e.key === 'Escape') {
       e.preventDefault();
+      e.stopPropagation();
       hideSlashMenu();
+      inputEl.focus();
       return;
     }
   }
