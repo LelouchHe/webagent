@@ -1430,14 +1430,14 @@ inputEl.addEventListener('paste', async (e) => {
 // --- Slash command autocomplete ---
 
 const SLASH_COMMANDS = [
-  { cmd: '/new',      args: '[cwd]',       desc: 'New session' },
-  { cmd: '/pwd',      args: '',            desc: 'Show working directory' },
-  { cmd: '/model',    args: '[name]',      desc: 'Pick or switch model' },
   { cmd: '/cancel',   args: '',            desc: 'Cancel current response' },
-  { cmd: '/sessions', args: '',            desc: 'List all sessions' },
-  { cmd: '/switch',   args: '<title|id>',  desc: 'Switch to session' },
   { cmd: '/delete',   args: '<title|id>',  desc: 'Delete a session' },
   { cmd: '/help',     args: '',            desc: 'Show help' },
+  { cmd: '/model',    args: '[name]',      desc: 'Pick or switch model' },
+  { cmd: '/new',      args: '[cwd]',       desc: 'New session' },
+  { cmd: '/pwd',      args: '',            desc: 'Show working directory' },
+  { cmd: '/sessions', args: '',            desc: 'List all sessions' },
+  { cmd: '/switch',   args: '<title|id>',  desc: 'Switch to session' },
 ];
 
 const slashMenu = $('#slash-menu');
