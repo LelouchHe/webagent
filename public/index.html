@@ -1569,7 +1569,10 @@ function selectSlashItem(idx) {
     hideSlashMenu();
     inputEl.focus();
     // Trigger picker for /switch, /delete, and /model
-    if (item.cmd === '/switch' || item.cmd === '/delete' || item.cmd === '/model') updateSlashMenu();
+    if (item.cmd === '/switch' || item.cmd === '/delete' || item.cmd === '/model') {
+      slashDismissed = null;
+      updateSlashMenu();
+    }
   }
 }
 
