@@ -95,6 +95,26 @@ Browser ←WebSocket→ server.ts ←ACP→ copilot CLI
 - **title-service.ts** — Async session title generation (dedicated Haiku session)
 - **types.ts** — Shared types + Zod schemas for WS messages
 
+## ACP Scope and Current Limits
+
+WebAgent uses ACP for the core agent loop: session creation / restore, prompt turns, permission requests, streaming updates, model selection, and text file read/write.
+
+Current scope in this repo:
+
+- Session lifecycle goes through ACP (`newSession`, `loadSession`, `prompt`, `cancel`)
+- The UI renders a subset of ACP session updates: assistant text, thinking text, tool calls, tool call updates, and plans
+- Session history is persisted locally and restored after server restart
+
+Current limits:
+
+- MCP servers are not forwarded to the agent; sessions are created with an empty `mcpServers` list
+- ACP terminal APIs are not used; `!<command>` runs through the app's own local `bash` bridge instead of an ACP-managed terminal session
+- The web UI does not expose native CLI command surfaces such as `/plan`, `/fleet`, `/mcp`, `/agent`, `/skills`, or autopilot mode
+- Event handling is intentionally narrower than a native CLI client; only selected ACP updates are rendered/persisted, and the silent title-generation session suppresses normal UI events
+- Model switching depends on the agent's ACP implementation and currently uses the SDK's unstable session-model API
+
+In practice, this means WebAgent provides a browser UI for the core ACP chat/session workflow, but not the full product surface of direct Copilot CLI or Claude Code in a terminal.
+
 ## Prerequisites
 
 - [fnm](https://github.com/Schniz/fnm) + Node.js 22.6+ (requires `--experimental-strip-types`)

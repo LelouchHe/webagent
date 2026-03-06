@@ -46,6 +46,18 @@ npm run dev           # dev server on port 6801, uses data-dev/
 - **Multi-client broadcast**: Events broadcast to all WS clients. Permission responses, user messages, bash output sync across devices. `broadcast()` supports sender exclusion.
 - **PWA**: Minimal service worker (no offline cache), manifest.json, installable to home screen.
 
+## ACP Scope and Current Limits
+
+- **Core ACP surface only**: WebAgent currently relies on ACP for session lifecycle (`newSession`, `loadSession`, `prompt`, `cancel`), permission requests, session updates, model selection, and text file read/write.
+- **Narrow event mapping**: The UI/store layer only maps a subset of ACP updates today: assistant text, thinking text, tool calls, tool call updates, and plans.
+- **No MCP forwarding**: Sessions are created with `mcpServers: []`, so WebAgent does not currently pass user/editor MCP servers through to the agent.
+- **No ACP terminal integration**: Although the bridge advertises terminal capability, the app's `!<command>` path is implemented separately over WebSocket + local `bash`, not ACP `terminal/*`.
+- **Browser UI, not full CLI parity**: Direct CLI surfaces such as `/plan`, `/fleet`, `/mcp`, `/agent`, `/skills`, and autopilot mode are not mirrored as first-class WebAgent controls. The app only renders the ACP events it receives.
+- **Silent internal session**: Title generation uses a dedicated silent ACP session and intentionally suppresses normal event emission for that session.
+- **Agent-dependent model switching**: Model switching depends on agent support and currently goes through the SDK's unstable session-model API.
+
+Keep this distinction clear in docs and code discussions: some missing capabilities are ACP/product-specific, but several current gaps are implementation choices in this repo rather than hard protocol limits.
+
 ## Frontend Conventions
 
 - **Single HTML file** — all JS/CSS inline, no build tools.
