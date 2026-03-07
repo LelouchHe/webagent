@@ -145,7 +145,7 @@ body {
   border-left: 2px solid var(--border);
 }
 .thinking summary { cursor: pointer; }
-.thinking-content { cursor: pointer; }
+.thinking-content { cursor: default; }
 .thinking summary.active { animation: pulse 1.5s ease-in-out infinite; }
 
 /* Waiting indicator (after user sends, before first response) */
@@ -201,7 +201,7 @@ body {
   max-height: 200px;
   overflow-y: auto;
   color: var(--text);
-  cursor: pointer;
+  cursor: default;
 }
 
 /* Diff view for edit tool calls */
@@ -217,7 +217,7 @@ body {
   max-height: 300px;
   overflow-y: auto;
   line-height: 1.4;
-  cursor: pointer;
+  cursor: default;
 }
 .diff-view .diff-file { color: var(--blue); font-weight: bold; }
 .diff-view .diff-hunk { color: var(--text-dim); }
@@ -383,7 +383,9 @@ body {
 }
 #send-btn:hover { color: var(--text); }
 #send-btn.cancel { color: var(--red); font-weight: bold; }
-#send-btn.cancel:hover { color: var(--text); }
+#send-btn.cancel:hover,
+#send-btn.cancel:focus,
+#send-btn.cancel:active { color: var(--red); }
 #input-prompt.busy { font-size: 0; position: relative; }
 #input-prompt.busy::before {
   content: '⠋';

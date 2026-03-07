@@ -118,8 +118,15 @@ export class AgentBridge extends EventEmitter {
       } satisfies AgentEvent);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : (typeof err === "string" ? err : JSON.stringify(err));
-      if (/cancel/i.test(message)) return; // Expected on cancel, not an error
-      this.emit("event", { type: "error", message } satisfies AgentEvent);
+      if (/cancel/i.test(message)) {
+        this.emit("event", {
+          type: "prompt_done",
+          sessionId,
+          stopReason: "cancelled",
+        } satisfies AgentEvent);
+        return;
+      }
+      this.emit("event", { type: "error", sessionId, message } satisfies AgentEvent);
     }
   }
 

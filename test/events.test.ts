@@ -58,6 +58,32 @@ describe("events", () => {
         assert.equal(dom.messages.children.length, 1);
         assert.ok(dom.messages.children[0].textContent.includes("Session created"));
       });
+
+      it("restores busy state for an active agent session", () => {
+        state.awaitingNewSession = true;
+        events.handleEvent({
+          type: "session_created",
+          sessionId: "s1",
+          busyKind: "agent",
+          configOptions: [],
+        });
+        assert.equal(state.busy, true);
+        assert.equal(dom.sendBtn.textContent, "^C");
+      });
+
+      it("reattaches a running bash block for a busy bash session", () => {
+        events.replayEvent("bash_command", { command: "ls" }, [], 0);
+        state.awaitingNewSession = true;
+        events.handleEvent({
+          type: "session_created",
+          sessionId: "s1",
+          busyKind: "bash",
+          configOptions: [],
+        });
+        assert.equal(state.busy, true);
+        assert.ok(state.currentBashEl);
+        assert.ok(state.currentBashEl.querySelector(".bash-cmd").classList.contains("running"));
+      });
     });
 
     describe("user_message", () => {

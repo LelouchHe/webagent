@@ -20,6 +20,7 @@ export class SessionManager {
   readonly sessionHasTitle = new Set<string>();
   readonly assistantBuffers = new Map<string, string>();
   readonly thinkingBuffers = new Map<string, string>();
+  readonly activePrompts = new Set<string>();
   readonly runningBashProcs = new Map<string, ChildProcess>();
 
   cachedConfigOptions: ConfigOption[] = [];
@@ -92,6 +93,7 @@ export class SessionManager {
         cwd: session.cwd,
         title: session.title,
         configOptions,
+        busyKind: this.getBusyKind(sessionId) ?? undefined,
       };
     }
 
@@ -109,6 +111,7 @@ export class SessionManager {
         cwd: session.cwd,
         title: session.title,
         configOptions,
+        busyKind: this.getBusyKind(sessionId) ?? undefined,
       };
     } catch (err) {
       console.error(`[session] restore failed:`, err);
@@ -148,6 +151,8 @@ export class SessionManager {
     this.sessionHasTitle.delete(sessionId);
     this.assistantBuffers.delete(sessionId);
     this.thinkingBuffers.delete(sessionId);
+    this.activePrompts.delete(sessionId);
+    this.runningBashProcs.delete(sessionId);
     // Remove uploaded images for this session
     rm(join(this.dataDir, "images", sessionId), { recursive: true, force: true }).catch(() => {});
   }
@@ -181,6 +186,12 @@ export class SessionManager {
   /** Get CWD for a session (falls back to default). */
   getSessionCwd(sessionId: string): string {
     return this.store.getSession(sessionId)?.cwd ?? this.defaultCwd;
+  }
+
+  getBusyKind(sessionId: string): "agent" | "bash" | null {
+    if (this.runningBashProcs.has(sessionId)) return "bash";
+    if (this.activePrompts.has(sessionId)) return "agent";
+    return null;
   }
 
   /** Kill all running bash processes (for shutdown). */

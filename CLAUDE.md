@@ -116,7 +116,15 @@ Keep this distinction clear in docs and code discussions: some missing capabilit
 npm test              # run all tests
 ```
 
-When adding features or fixing bugs, check whether corresponding tests need to be added or updated.
+For any bug fix or new feature, follow full TDD by default:
+
+1. First study the existing test coverage and identify the right place to add or update tests.
+2. Add the test that captures the bug or desired behavior before changing implementation code.
+3. Run the relevant test(s) and confirm they fail for the expected reason.
+4. Only then change the implementation to make the test pass.
+5. Run the relevant tests again, then run the broader existing test suite (`npm test`) before considering the work done.
+
+Do not treat tests as an afterthought. A bug fix or feature is incomplete unless the corresponding automated test coverage is added or updated as part of the same change.
 
 ## TODO
 

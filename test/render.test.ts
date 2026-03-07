@@ -184,6 +184,19 @@ describe("render", () => {
     });
   });
 
+  describe("detail panel interactions", () => {
+    it("does not collapse an expanded panel when clicking its content", () => {
+      const details = globalThis.document.createElement("details");
+      details.open = true;
+      details.innerHTML = '<summary>diff</summary><div class="diff-view">content</div>';
+      dom.messages.appendChild(details);
+
+      details.querySelector(".diff-view").dispatchEvent(new globalThis.window.MouseEvent("click", { bubbles: true }));
+
+      assert.equal(details.open, true);
+    });
+  });
+
   describe("scrollToBottom", () => {
     it("keeps following when the user was already at the bottom", () => {
       setMessagesScrollMetrics({ scrollTop: 400, scrollHeight: 600, clientHeight: 200 });

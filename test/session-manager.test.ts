@@ -152,4 +152,17 @@ describe("SessionManager", () => {
       assert.equal(sm.getSessionCwd("nonexistent"), "/default/cwd");
     });
   });
+
+  describe("getBusyKind", () => {
+    it("reports agent busy sessions", () => {
+      sm.activePrompts.add("s1");
+      assert.equal(sm.getBusyKind("s1"), "agent");
+    });
+
+    it("prefers bash busy over agent busy", () => {
+      sm.activePrompts.add("s1");
+      sm.runningBashProcs.set("s1", {} as any);
+      assert.equal(sm.getBusyKind("s1"), "bash");
+    });
+  });
 });

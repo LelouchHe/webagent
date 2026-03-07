@@ -198,16 +198,3 @@ dom.themeBtn.onclick = () => {
   applyTheme(THEME_CYCLE[(THEME_CYCLE.indexOf(cur) + 1) % 3]);
 };
 applyTheme(getTheme());
-
-// --- Click-to-collapse for expanded details (thinking, tool output) ---
-
-dom.messages.addEventListener('click', (e) => {
-  const el = e.target.closest('.thinking-content, .tc-content, .diff-view');
-  if (el) {
-    const details = el.closest('details');
-    if (details && details.open) {
-      details.open = false;
-      e.stopPropagation();
-    }
-  }
-});

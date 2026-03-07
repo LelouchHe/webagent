@@ -110,6 +110,7 @@ export function setupWsHandler(deps: WsHandlerDeps): void {
                 client.send(userEvent);
               }
             }
+            sessions.activePrompts.add(msg.sessionId);
             bridge.prompt(msg.sessionId, msg.text, images).catch((err: unknown) => {
               send(ws, { type: "error", message: errorMessage(err) });
             });

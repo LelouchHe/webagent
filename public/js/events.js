@@ -188,6 +188,17 @@ export function handleEvent(msg) {
       updateSessionInfo(state.sessionId, state.sessionTitle);
       dom.status.textContent = 'connected';
       dom.status.className = 'status connected';
+      setBusy(Boolean(msg.busyKind));
+      if (msg.busyKind === 'bash') {
+        const pendingBashEl = document.getElementById('bash-replay-pending');
+        if (pendingBashEl) {
+          pendingBashEl.removeAttribute('id');
+          pendingBashEl.querySelector('.bash-cmd')?.classList.add('running');
+          state.currentBashEl = pendingBashEl;
+        }
+      } else {
+        state.currentBashEl = null;
+      }
       if (dom.messages.children.length === 0) {
         addSystem(`Session created: ${state.sessionTitle || msg.sessionId.slice(0, 8) + '…'}`);
       }

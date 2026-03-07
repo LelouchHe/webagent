@@ -16,7 +16,7 @@ export interface ConfigOption {
 
 export type AgentEvent =
   | { type: "connected"; agent: { name: string; version: string }; configOptions: ConfigOption[] }
-  | { type: "session_created"; sessionId: string; cwd?: string; title?: string | null; configOptions: ConfigOption[] }
+  | { type: "session_created"; sessionId: string; cwd?: string; title?: string | null; configOptions: ConfigOption[]; busyKind?: "agent" | "bash" }
   | { type: "config_option_update"; sessionId: string; configOptions: ConfigOption[] }
   | { type: "message_chunk"; sessionId: string; text: string }
   | { type: "thought_chunk"; sessionId: string; text: string }
@@ -28,7 +28,7 @@ export type AgentEvent =
   | { type: "session_deleted"; sessionId: string }
   | { type: "session_title_updated"; sessionId: string; title: string }
   | { type: "session_expired"; sessionId: string }
-  | { type: "error"; message: string };
+  | { type: "error"; message: string; sessionId?: string };
 
 // --- Inbound WS messages (client → server) ---
 
