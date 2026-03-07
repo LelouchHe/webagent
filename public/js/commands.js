@@ -93,6 +93,10 @@ export async function handleSlashCommand(text) {
           return true;
         }
         resetSessionUI();
+        state.sessionId = match.id;
+        state.sessionTitle = match.title || null;
+        setHashSessionId(match.id);
+        updateSessionInfo(match.id, match.title);
         await loadHistory(match.id);
         scrollToBottom(true);
         state.ws.send(JSON.stringify({ type: 'resume_session', sessionId: match.id }));

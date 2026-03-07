@@ -150,6 +150,10 @@ describe("commands", () => {
 
       assert.equal(handled, true);
       assert.deepEqual(fetchCalls, ["/api/sessions", "/api/sessions/target-1/events"]);
+      assert.equal(state.sessionId, "target-1");
+      assert.equal(state.sessionTitle, "Target Session");
+      assert.equal(globalThis.location.hash, "#target-1");
+      assert.equal(dom.sessionInfo.textContent, "Target Session");
       assert.deepEqual(JSON.parse(ws.sent[0]), {
         type: "resume_session",
         sessionId: "target-1",
