@@ -133,6 +133,7 @@ describe("state", () => {
       mod.state.currentAssistantEl = {};
       mod.state.currentAssistantText = "text";
       mod.state.pendingImages.push({ data: "x" });
+      mod.state.followMessages = false;
       mod.setBusy(true);
 
       mod.resetSessionUI();
@@ -141,6 +142,7 @@ describe("state", () => {
       assert.equal(mod.state.currentAssistantEl, null);
       assert.equal(mod.state.currentAssistantText, "");
       assert.equal(mod.state.pendingImages.length, 0);
+      assert.equal(mod.state.followMessages, true);
       assert.equal(mod.state.busy, false);
     });
   });

@@ -112,6 +112,9 @@ export async function handleSlashCommand(text) {
       return true;
 
     case '/help':
+    case '?':
+      addSystem('? — Show help');
+      addSystem('/help — Show help (alias)');
       addSystem('!<command> — Run bash command');
       for (const c of SLASH_COMMANDS) {
         const label = c.args ? `${c.cmd} ${c.args}` : c.cmd;
@@ -173,7 +176,6 @@ export async function handleSlashCommand(text) {
 const SLASH_COMMANDS = [
   { cmd: '/cancel',   args: '',            desc: 'Cancel current response' },
   { cmd: '/delete',   args: '<title|id>',  desc: 'Delete a session' },
-  { cmd: '/help',     args: '',            desc: 'Show help' },
   { cmd: '/mode',     args: '[name]',      desc: 'Pick or switch mode' },
   { cmd: '/model',    args: '[name]',      desc: 'Pick or switch model' },
   { cmd: '/new',      args: '[cwd]',       desc: 'New session' },

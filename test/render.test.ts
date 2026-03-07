@@ -7,6 +7,14 @@ describe("render", () => {
   let dom: any;
   let render: any;
 
+  function setMessagesScrollMetrics({ scrollTop, scrollHeight, clientHeight }: { scrollTop: number; scrollHeight: number; clientHeight: number; }) {
+    Object.defineProperties(dom.messages, {
+      scrollTop: { value: scrollTop, writable: true, configurable: true },
+      scrollHeight: { value: scrollHeight, configurable: true },
+      clientHeight: { value: clientHeight, configurable: true },
+    });
+  }
+
   before(async () => {
     setupDOM();
     const stateMod = await import("../public/js/state.js");
@@ -173,6 +181,40 @@ describe("render", () => {
       render.showWaiting();
       render.showWaiting();
       assert.equal(dom.messages.querySelectorAll("#waiting").length, 1);
+    });
+  });
+
+  describe("scrollToBottom", () => {
+    it("keeps following when the user was already at the bottom", () => {
+      setMessagesScrollMetrics({ scrollTop: 400, scrollHeight: 600, clientHeight: 200 });
+      dom.messages.dispatchEvent(new globalThis.window.Event("scroll"));
+
+      setMessagesScrollMetrics({ scrollTop: dom.messages.scrollTop, scrollHeight: 1400, clientHeight: 200 });
+      render.scrollToBottom();
+
+      assert.equal(dom.messages.scrollTop, 1400);
+      assert.equal(state.followMessages, true);
+    });
+
+    it("does not move the viewport when the user scrolled up", () => {
+      setMessagesScrollMetrics({ scrollTop: 120, scrollHeight: 600, clientHeight: 200 });
+      dom.messages.dispatchEvent(new globalThis.window.Event("scroll"));
+
+      setMessagesScrollMetrics({ scrollTop: dom.messages.scrollTop, scrollHeight: 1400, clientHeight: 200 });
+      render.scrollToBottom();
+
+      assert.equal(dom.messages.scrollTop, 120);
+      assert.equal(state.followMessages, false);
+    });
+
+    it("always scrolls when forced", () => {
+      setMessagesScrollMetrics({ scrollTop: 120, scrollHeight: 600, clientHeight: 200 });
+      state.followMessages = false;
+
+      render.scrollToBottom(true);
+
+      assert.equal(dom.messages.scrollTop, 600);
+      assert.equal(state.followMessages, true);
     });
   });
 

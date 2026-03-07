@@ -32,6 +32,7 @@ export const state = {
   busy: false,
   pendingImages: [],
   currentBashEl: null,
+  followMessages: true,
 };
 
 // --- Config helpers ---
@@ -84,6 +85,7 @@ export function resetSessionUI() {
   state.currentThinkingEl = null;
   state.currentThinkingText = '';
   state.pendingImages.length = 0;
+  state.followMessages = true;
   dom.attachPreview.innerHTML = '';
   dom.attachPreview.classList.remove('active');
   setBusy(false);

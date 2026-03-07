@@ -45,6 +45,18 @@ export function finishThinking() {
 }
 
 let waitingEl = null;
+const SCROLL_FOLLOW_THRESHOLD = 80;
+
+function isNearBottom(el) {
+  return el.scrollHeight - el.scrollTop - el.clientHeight < SCROLL_FOLLOW_THRESHOLD;
+}
+
+function updateScrollFollowState() {
+  state.followMessages = isNearBottom(dom.messages);
+}
+
+dom.messages.addEventListener('scroll', updateScrollFollowState);
+
 export function showWaiting() {
   hideWaiting();
   waitingEl = document.createElement('div');
@@ -59,9 +71,12 @@ export function hideWaiting() {
 
 export function scrollToBottom(force) {
   const el = dom.messages;
-  if (force) { el.scrollTop = el.scrollHeight; return; }
-  const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
-  if (nearBottom) el.scrollTop = el.scrollHeight;
+  if (force || state.followMessages) {
+    el.scrollTop = el.scrollHeight;
+    state.followMessages = true;
+    return;
+  }
+  state.followMessages = isNearBottom(el);
 }
 
 export function escHtml(s) {

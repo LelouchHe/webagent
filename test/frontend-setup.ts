@@ -7,7 +7,7 @@ const HTML = `
 <div id="header"><span id="session-info" class="status"></span><span id="status" class="status">disconnected</span><button id="theme-btn">x</button></div>
 <div id="messages"></div>
 <div id="attach-preview"></div>
-<div id="input-area"><div id="slash-menu"></div><span id="input-prompt">x</span><textarea id="input"></textarea><button id="attach-btn">x</button><button id="send-btn">x</button><input type="file" id="file-input" hidden></div>
+<div id="input-area"><div id="slash-menu"></div><span id="input-prompt">x</span><textarea id="input" placeholder="Message or ?"></textarea><button id="new-btn">+</button><button id="attach-btn">x</button><button id="send-btn">x</button><input type="file" id="file-input" hidden></div>
 `;
 
 let win: InstanceType<typeof Window> | null = null;
@@ -49,6 +49,7 @@ export function resetState(state: any, dom: any) {
   state.busy = false;
   state.pendingImages.length = 0;
   state.currentBashEl = null;
+  state.followMessages = true;
   // Reset DOM elements
   dom.messages.innerHTML = "";
   dom.status.textContent = "disconnected";
@@ -60,6 +61,7 @@ export function resetState(state: any, dom: any) {
   dom.sendBtn.textContent = "↵";
   dom.sendBtn.className = "";
   dom.prompt.className = "";
+  dom.newBtn.className = "";
   dom.attachPreview.innerHTML = "";
   dom.attachPreview.className = "";
   dom.slashMenu.innerHTML = "";

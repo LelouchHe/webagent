@@ -18,7 +18,7 @@ function sendMessage() {
   dom.inputArea.classList.remove('bash-mode');
   updateNewBtnVisibility();
 
-  if (text.startsWith('/') && state.pendingImages.length === 0) {
+  if ((text.startsWith('/') || text === '?' || text.startsWith('? ')) && state.pendingImages.length === 0) {
     handleSlashCommand(text);
     return;
   }
