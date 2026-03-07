@@ -133,40 +133,24 @@ class MockAgent implements Agent {
     }
 
     if (text.startsWith("E2E_PERMISSION")) {
-      const toolCallId = `tool-${++this.toolCallCounter}`;
-      const title = "Sensitive command";
-      await this.conn.sessionUpdate({
-        sessionId: params.sessionId,
-        update: {
-          sessionUpdate: "tool_call",
-          toolCallId,
-          title,
-          kind: "execute",
-          rawInput: { command: "echo sensitive" },
-        },
-      });
-      const permission = await this.conn.requestPermission({
-        sessionId: params.sessionId,
-        toolCall: {
-          toolCallId,
-          title,
-          kind: "execute",
-          status: "pending",
-          rawInput: { command: "echo sensitive" },
-        },
-        options: [
-          { optionId: "allow", kind: "allow_once", name: "Allow" },
-          { optionId: "deny", kind: "reject_once", name: "Deny" },
-        ],
-      });
-      await this.conn.sessionUpdate({
-        sessionId: params.sessionId,
-        update: {
-          sessionUpdate: "tool_call_update",
-          toolCallId,
-          status: permission.outcome.outcome === "selected" ? "completed" : "failed",
-        },
-      });
+      if (text.startsWith("E2E_PERMISSION_TWICE")) {
+        const first = await this.runPermissionStep(params.sessionId, "Sensitive command 1", "echo sensitive-1");
+        const second = await this.runPermissionStep(params.sessionId, "Sensitive command 2", "echo sensitive-2");
+        const granted = first.outcome.outcome === "selected" && second.outcome.outcome === "selected";
+        await this.conn.sessionUpdate({
+          sessionId: params.sessionId,
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            content: {
+              type: "text",
+              text: granted ? "Both permissions granted" : "A permission was denied",
+            },
+          },
+        });
+        return { stopReason: granted ? "end_turn" : "cancelled" };
+      }
+
+      const permission = await this.runPermissionStep(params.sessionId, "Sensitive command", "echo sensitive");
       await this.conn.sessionUpdate({
         sessionId: params.sessionId,
         update: {
@@ -192,6 +176,43 @@ class MockAgent implements Agent {
       },
     });
     return { stopReason: "end_turn" };
+  }
+
+  private async runPermissionStep(sessionId: string, title: string, command: string) {
+      const toolCallId = `tool-${++this.toolCallCounter}`;
+      await this.conn.sessionUpdate({
+        sessionId,
+        update: {
+          sessionUpdate: "tool_call",
+          toolCallId,
+          title,
+          kind: "execute",
+          rawInput: { command },
+        },
+      });
+      const permission = await this.conn.requestPermission({
+        sessionId,
+        toolCall: {
+          toolCallId,
+          title,
+          kind: "execute",
+          status: "pending",
+          rawInput: { command },
+        },
+        options: [
+          { optionId: "allow", kind: "allow_once", name: "Allow" },
+          { optionId: "deny", kind: "reject_once", name: "Deny" },
+        ],
+      });
+      await this.conn.sessionUpdate({
+        sessionId,
+        update: {
+          sessionUpdate: "tool_call_update",
+          toolCallId,
+          status: permission.outcome.outcome === "selected" ? "completed" : "failed",
+        },
+      });
+      return permission;
   }
 
   async cancel(params: CancelNotification): Promise<void> {
