@@ -1,4 +1,4 @@
-import type { CopilotBridge } from "./bridge.ts";
+import type { AgentBridge } from "./bridge.ts";
 import type { SessionManager } from "./session-manager.ts";
 import type { Store } from "./store.ts";
 
@@ -18,7 +18,7 @@ export class TitleService {
   }
 
   /** Generate a title for the session (non-blocking, fire-and-forget). */
-  generate(bridge: CopilotBridge, userMessage: string, sessionId: string, onTitle?: (title: string) => void): void {
+  generate(bridge: AgentBridge, userMessage: string, sessionId: string, onTitle?: (title: string) => void): void {
     this._generate(bridge, userMessage, sessionId).then((title) => {
       if (title && onTitle) onTitle(title);
     }).catch((err) => {
@@ -27,7 +27,7 @@ export class TitleService {
   }
 
   private async _generate(
-    bridge: CopilotBridge,
+    bridge: AgentBridge,
     userMessage: string,
     sessionId: string,
   ): Promise<void> {
@@ -47,7 +47,7 @@ export class TitleService {
   }
 
   /** Ensure the dedicated title session exists. Returns session ID or null. */
-  private async ensureTitleSession(bridge: CopilotBridge): Promise<string | null> {
+  private async ensureTitleSession(bridge: AgentBridge): Promise<string | null> {
     if (this.titleSessionId) return this.titleSessionId;
     try {
       const id = await bridge.newSession(this.defaultCwd, { silent: true });

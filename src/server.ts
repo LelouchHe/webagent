@@ -2,7 +2,7 @@ import { createServer } from "node:http";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer } from "ws";
-import { CopilotBridge } from "./bridge.ts";
+import { AgentBridge } from "./bridge.ts";
 import { Store } from "./store.ts";
 import { SessionManager } from "./session-manager.ts";
 import { TitleService } from "./title-service.ts";
@@ -24,7 +24,7 @@ console.log(`[store] using ${DATA_DIR}/`);
 const sessions = new SessionManager(store, DEFAULT_CWD, DATA_DIR);
 const titleService = new TitleService(store, sessions, DEFAULT_CWD);
 
-let bridge: CopilotBridge | null = null;
+let bridge: AgentBridge | null = null;
 
 // --- HTTP + WebSocket servers ---
 
@@ -41,8 +41,8 @@ setupWsHandler({
 
 // --- Bridge initialization ---
 
-async function initBridge(): Promise<CopilotBridge> {
-  const b = new CopilotBridge();
+async function initBridge(): Promise<AgentBridge> {
+  const b = new AgentBridge(AGENT_CMD);
 
   b.on("event", (event: AgentEvent) => {
     if (sessions.restoringSessions.has(event.sessionId)) return;
@@ -135,9 +135,11 @@ process.on("SIGTERM", shutdown);
 
 // --- Start ---
 
+const AGENT_CMD = process.env.AGENT_CMD ?? "copilot --acp";
+
 server.listen(PORT, "0.0.0.0", async () => {
   console.log(`[server] listening on http://localhost:${PORT}`);
-  console.log(`[bridge] starting copilot --acp...`);
+  console.log(`[bridge] starting: ${AGENT_CMD}...`);
   try {
     await initBridge();
     console.log(`[bridge] ready`);

@@ -4,20 +4,27 @@ import { EventEmitter } from "node:events";
 import * as acp from "@agentclientprotocol/sdk";
 import type { AgentEvent, ConfigOption } from "./types.ts";
 
-export class CopilotBridge extends EventEmitter {
+export class AgentBridge extends EventEmitter {
   private proc: ChildProcess | null = null;
   private conn: acp.ClientSideConnection | null = null;
   private permissionResolvers = new Map<string, (resp: acp.RequestPermissionResponse) => void>();
   private silentSessions = new Set<string>(); // Sessions that don't emit events
   private silentBuffers = new Map<string, string>(); // Text buffers for silent sessions
+  readonly agentCmd: string;
+
+  constructor(agentCmd?: string) {
+    super();
+    this.agentCmd = agentCmd ?? process.env.AGENT_CMD ?? "copilot --acp";
+  }
 
   async start(): Promise<void> {
-    this.proc = spawn("copilot", ["--acp"], {
+    const [cmd, ...args] = this.agentCmd.split(/\s+/);
+    this.proc = spawn(cmd, args, {
       stdio: ["pipe", "pipe", "inherit"],
     });
 
     if (!this.proc.stdin || !this.proc.stdout) {
-      throw new Error("Failed to start copilot --acp");
+      throw new Error(`Failed to start: ${this.agentCmd}`);
     }
 
     const input = Writable.toWeb(this.proc.stdin);

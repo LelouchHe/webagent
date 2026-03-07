@@ -40,6 +40,22 @@ Do NOT use `start.sh` directly.
 npm run dev           # dev server on port 6801, uses data-dev/
 ```
 
+## Environment Variables
+
+| Variable | Default | Description |
+|---|---|---|
+| `PORT` | `6800` | HTTP/WebSocket server port |
+| `DATA_DIR` | `data` | SQLite + uploads directory |
+| `DEFAULT_CWD` | `process.cwd()` | Working directory for new sessions |
+| `PUBLIC_DIR` | `dist` | Static assets directory |
+| `AGENT_CMD` | `copilot --acp` | ACP agent command (binary + args, space-separated) |
+
+To use a different ACP-compatible agent backend:
+
+```bash
+AGENT_CMD="my-agent --acp" npm run dev
+```
+
 ## Architecture Notes
 
 - **Single bridge**: One bridge instance per server, multiple sessions multiplexed over it.

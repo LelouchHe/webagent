@@ -2,10 +2,10 @@ import type { ChildProcess } from "node:child_process";
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import type { Store } from "./store.ts";
-import type { CopilotBridge } from "./bridge.ts";
+import type { AgentBridge } from "./bridge.ts";
 import type { AgentEvent, ConfigOption } from "./types.ts";
 
-type SessionBridge = Pick<CopilotBridge, "newSession" | "setConfigOption" | "loadSession">;
+type SessionBridge = Pick<AgentBridge, "newSession" | "setConfigOption" | "loadSession">;
 
 /** Known config option IDs that we persist per-session. */
 const PERSISTED_CONFIG_IDS = ["model", "mode", "reasoning_effort"] as const;

@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { WebSocket, WebSocketServer } from "ws";
 import { WsMessageSchema, errorMessage } from "./types.ts";
 import type { AgentEvent } from "./types.ts";
-import type { CopilotBridge } from "./bridge.ts";
+import type { AgentBridge } from "./bridge.ts";
 import type { Store } from "./store.ts";
 import type { SessionManager } from "./session-manager.ts";
 import type { TitleService } from "./title-service.ts";
@@ -12,7 +12,7 @@ interface WsHandlerDeps {
   store: Store;
   sessions: SessionManager;
   titleService: TitleService;
-  getBridge: () => CopilotBridge | null;
+  getBridge: () => AgentBridge | null;
 }
 
 export function broadcast(wss: WebSocketServer, event: AgentEvent, exclude?: WebSocket): void {
