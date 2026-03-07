@@ -315,11 +315,37 @@ body {
 #input-area.plan-mode {
   border-top: 2px solid var(--green);
 }
+#input-area.plan-mode::before {
+  content: 'plan';
+  position: absolute;
+  top: -7px;
+  left: 16px;
+  font-size: 10px;
+  line-height: 1;
+  padding: 0 4px;
+  background: var(--bg);
+  color: var(--green);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
 #input-area.plan-mode #input-prompt {
   color: var(--green);
 }
 #input-area.autopilot-mode {
   border-top: 2px solid var(--red);
+}
+#input-area.autopilot-mode::before {
+  content: 'autopilot';
+  position: absolute;
+  top: -7px;
+  left: 16px;
+  font-size: 10px;
+  line-height: 1;
+  padding: 0 4px;
+  background: var(--bg);
+  color: var(--red);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
 }
 #input-area.autopilot-mode #input-prompt {
   color: var(--red);
