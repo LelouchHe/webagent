@@ -356,6 +356,7 @@ body {
   font-weight: bold;
   user-select: none;
   line-height: 1.5;
+  cursor: pointer;
 }
 #input {
   flex: 1;
@@ -427,6 +428,18 @@ body {
 .slash-item:hover .slash-desc, .slash-item.selected .slash-desc { color: rgba(255,255,255,0.8); }
 
 /* Image attach */
+#new-btn {
+  background: transparent;
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 4px 10px;
+  font-size: 15px;
+  font-family: inherit;
+  cursor: pointer;
+}
+#new-btn:hover { color: var(--text); border-color: var(--text-dim); }
+#new-btn.hidden { display: none; }
 #attach-btn {
   background: transparent;
   color: var(--text-dim);

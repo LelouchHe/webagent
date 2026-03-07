@@ -9,6 +9,7 @@ export const dom = {
   prompt: $('#input-prompt'),
   status: $('#status'),
   sessionInfo: $('#session-info'),
+  newBtn: $('#new-btn'),
   attachBtn: $('#attach-btn'),
   fileInput: $('#file-input'),
   attachPreview: $('#attach-preview'),

@@ -1,6 +1,9 @@
 // User input handling: send, cancel, keyboard shortcuts
 
-import { state, dom, setBusy, sendCancel, requestNewSession } from './state.js';
+import {
+  state, dom, setBusy, sendCancel, requestNewSession, resetSessionUI,
+  getConfigOption, getConfigValue,
+} from './state.js';
 import { addMessage, addSystem, addBashBlock, showWaiting } from './render.js';
 import { handleSlashCommand, hideSlashMenu, handleSlashMenuKey } from './commands.js';
 import { renderAttachPreview } from './images.js';
@@ -115,6 +118,40 @@ document.addEventListener('keydown', (e) => {
     dom.input.focus();
   }
 });
+
+// Cycle mode helper
+function cycleMode() {
+  const opt = getConfigOption('mode');
+  if (!opt || !opt.options.length) return;
+  const idx = opt.options.findIndex(o => o.value === opt.currentValue);
+  const next = opt.options[(idx + 1) % opt.options.length];
+  state.ws.send(JSON.stringify({ type: 'set_config_option', sessionId: state.sessionId, configId: 'mode', value: next.value }));
+  addSystem(`Mode → ${next.name}`);
+}
+
+// Global Ctrl+M to cycle mode
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'm' && (e.ctrlKey || e.metaKey) && !e.shiftKey) {
+    e.preventDefault();
+    cycleMode();
+  }
+});
+
+// Click prompt indicator to cycle mode
+dom.prompt.addEventListener('click', cycleMode);
+
+// Click + to create new session
+dom.newBtn.addEventListener('click', () => {
+  resetSessionUI();
+  addSystem('Creating new session…');
+  requestNewSession({ cwd: state.sessionCwd });
+});
+
+// Hide + button when input has content
+function updateNewBtnVisibility() {
+  dom.newBtn.classList.toggle('hidden', dom.input.value.length > 0);
+}
+dom.input.addEventListener('input', updateNewBtnVisibility);
 
 // Auto-resize textarea
 dom.input.addEventListener('input', () => {

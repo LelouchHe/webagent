@@ -112,21 +112,14 @@ export async function handleSlashCommand(text) {
 
     case '/help':
       addSystem('!<command> — Run bash command');
-      addSystem('/new [cwd] — New session');
-      addSystem('/pwd — Show working directory');
-      addSystem('/model [name] — Show or switch model');
-      addSystem('/mode [name] — Show or switch mode (Agent/Plan/Autopilot)');
-      addSystem('/think [level] — Show or switch reasoning effort (low/medium/high)');
-      addSystem('/cancel — Cancel current response');
-      addSystem('/switch <title|id> — Switch to session (title or id prefix match)');
-      addSystem('/delete <title|id> — Delete a session');
-      addSystem('/prune — Delete all sessions except current');
-      addSystem('/help — Show this help');
+      for (const c of SLASH_COMMANDS) {
+        const label = c.args ? `${c.cmd} ${c.args}` : c.cmd;
+        addSystem(`${label} — ${c.desc}`);
+      }
       addSystem('--- Shortcuts ---');
-      addSystem('Enter — Send message');
-      addSystem('Shift+Enter — New line');
-      addSystem('Ctrl+C — Cancel current response');
-      addSystem('Ctrl+U (^U) — Upload image');
+      for (const s of SHORTCUTS) {
+        addSystem(`${s.key} — ${s.desc}`);
+      }
       return true;
 
     case '/model':
@@ -180,13 +173,21 @@ const SLASH_COMMANDS = [
   { cmd: '/cancel',   args: '',            desc: 'Cancel current response' },
   { cmd: '/delete',   args: '<title|id>',  desc: 'Delete a session' },
   { cmd: '/help',     args: '',            desc: 'Show help' },
-  { cmd: '/prune',    args: '',            desc: 'Delete all sessions except current' },
   { cmd: '/mode',     args: '[name]',      desc: 'Pick or switch mode' },
   { cmd: '/model',    args: '[name]',      desc: 'Pick or switch model' },
   { cmd: '/new',      args: '[cwd]',       desc: 'New session' },
+  { cmd: '/prune',    args: '',            desc: 'Delete all sessions except current' },
   { cmd: '/pwd',      args: '',            desc: 'Show working directory' },
   { cmd: '/switch',   args: '<title|id>',  desc: 'Switch to session' },
   { cmd: '/think',    args: '[level]',     desc: 'Pick or switch reasoning effort' },
+];
+
+const SHORTCUTS = [
+  { key: 'Enter',       desc: 'Send message' },
+  { key: 'Shift+Enter', desc: 'New line' },
+  { key: '^C',          desc: 'Cancel current response' },
+  { key: '^M',          desc: 'Cycle mode (Agent → Plan → Autopilot)' },
+  { key: '^U',          desc: 'Upload image' },
 ];
 
 let slashIdx = -1;

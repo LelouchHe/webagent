@@ -126,7 +126,10 @@ Type `/` to trigger an autocomplete menu (arrow keys to navigate, Tab to select,
 | `Enter` | Send message |
 | `Shift+Enter` | New line |
 | `Ctrl+C` | Cancel current response |
+| `Ctrl+M` | Cycle mode (Agent → Plan → Autopilot) |
 | `Ctrl+U` | Upload image |
+
+Tap the `❯` prompt indicator to cycle mode. Tap `+` to create a new session (hidden when input has content).
 
 ### Theme
 
