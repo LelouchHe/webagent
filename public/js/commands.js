@@ -3,6 +3,7 @@
 import {
   state, dom, setBusy, resetSessionUI, requestNewSession, sendCancel,
   getConfigOption, getConfigValue, setHashSessionId, updateSessionInfo,
+  updateNewBtnVisibility,
 } from './state.js';
 import { addSystem, addMessage, scrollToBottom, escHtml, formatLocalTime } from './render.js';
 import { loadHistory } from './events.js';
@@ -387,6 +388,10 @@ function selectSlashItem(idx) {
     dom.input.value = '';
     hideSlashMenu();
     resetSessionUI();
+    state.sessionId = s.id;
+    state.sessionTitle = s.title || null;
+    setHashSessionId(s.id);
+    updateSessionInfo(s.id, s.title);
     addSystem('Switching…');
     loadHistory(s.id).then(loaded => { if (loaded) scrollToBottom(true); });
     state.ws.send(JSON.stringify({ type: 'resume_session', sessionId: s.id }));
@@ -406,6 +411,7 @@ function selectSlashItem(idx) {
       updateSlashMenu();
     }
   }
+  updateNewBtnVisibility();
 }
 
 // Handle keyboard navigation within the slash menu

@@ -89,6 +89,10 @@ export function resetSessionUI() {
   setBusy(false);
 }
 
+export function updateNewBtnVisibility() {
+  dom.newBtn.classList.toggle('hidden', dom.input.value.length > 0);
+}
+
 // Send cancel without UI side-effect — callers add their own feedback
 export function sendCancel() {
   if (!state.busy || !state.ws) return false;

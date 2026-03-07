@@ -2,7 +2,7 @@
 
 import {
   state, dom, setBusy, sendCancel, requestNewSession, resetSessionUI,
-  getConfigOption, getConfigValue,
+  getConfigOption, getConfigValue, updateNewBtnVisibility,
 } from './state.js';
 import { addMessage, addSystem, addBashBlock, showWaiting } from './render.js';
 import { handleSlashCommand, hideSlashMenu, handleSlashMenuKey } from './commands.js';
@@ -16,6 +16,7 @@ function sendMessage() {
   dom.input.value = '';
   dom.input.style.height = 'auto';
   dom.inputArea.classList.remove('bash-mode');
+  updateNewBtnVisibility();
 
   if (text.startsWith('/') && state.pendingImages.length === 0) {
     handleSlashCommand(text);
@@ -148,10 +149,8 @@ dom.newBtn.addEventListener('click', () => {
 });
 
 // Hide + button when input has content
-function updateNewBtnVisibility() {
-  dom.newBtn.classList.toggle('hidden', dom.input.value.length > 0);
-}
 dom.input.addEventListener('input', updateNewBtnVisibility);
+dom.input.addEventListener('focus', updateNewBtnVisibility);
 
 // Auto-resize textarea
 dom.input.addEventListener('input', () => {
