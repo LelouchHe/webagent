@@ -37,6 +37,14 @@ describe("Store", () => {
       assert.equal(list[1].id, "new");
     });
 
+    it("stores last_active_at with fractional-second precision", () => {
+      store.createSession("s1", "/x");
+      store.updateSessionLastActive("s1");
+
+      const session = store.getSession("s1")!;
+      assert.match(session.last_active_at, /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}$/);
+    });
+
     it("returns undefined for non-existent session", () => {
       assert.equal(store.getSession("nope"), undefined);
     });

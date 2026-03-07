@@ -38,8 +38,8 @@ export class Store {
         id TEXT PRIMARY KEY,
         cwd TEXT NOT NULL,
         title TEXT,
-        created_at TEXT NOT NULL DEFAULT (datetime('now')),
-        last_active_at TEXT NOT NULL DEFAULT (datetime('now'))
+        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now')),
+        last_active_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now'))
       );
       CREATE TABLE IF NOT EXISTS events (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -47,7 +47,7 @@ export class Store {
         seq INTEGER NOT NULL,
         type TEXT NOT NULL,
         data TEXT NOT NULL DEFAULT '{}',
-        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now'))
       );
       CREATE INDEX IF NOT EXISTS idx_events_session ON events(session_id, seq);
     `);
@@ -97,7 +97,7 @@ export class Store {
   }
 
   updateSessionLastActive(id: string): void {
-    this.db.prepare("UPDATE sessions SET last_active_at = datetime('now') WHERE id = ?").run(id);
+    this.db.prepare("UPDATE sessions SET last_active_at = strftime('%Y-%m-%d %H:%M:%f', 'now') WHERE id = ?").run(id);
   }
 
   /** Update a config option value (model, mode, reasoning_effort) for a session. */
