@@ -126,6 +126,23 @@ class MockAgent implements Agent {
       .join(" ")
       .trim();
 
+    if (text.startsWith("E2E_SLOW_TOOL")) {
+      const toolCallId = `tool-${++this.toolCallCounter}`;
+      await this.conn.sessionUpdate({
+        sessionId: params.sessionId,
+        update: {
+          sessionUpdate: "tool_call",
+          toolCallId,
+          title: "Long-running tool",
+          kind: "execute",
+          rawInput: { command: "sleep 30" },
+        },
+      });
+      return await new Promise<PromptResponse>((resolve) => {
+        this.pendingPrompts.set(params.sessionId, { resolve });
+      });
+    }
+
     if (text.startsWith("E2E_SLOW")) {
       return await new Promise<PromptResponse>((resolve) => {
         this.pendingPrompts.set(params.sessionId, { resolve });

@@ -21,6 +21,25 @@ function finishPromptIfIdle() {
   state.pendingPromptDone = false;
 }
 
+function cancelPendingTurnUI() {
+  for (const id of state.pendingToolCallIds) {
+    const el = document.getElementById(`tc-${id}`);
+    if (!el) continue;
+    el.className = 'tool-call failed';
+    const iconSpan = el.querySelector('.icon');
+    if (iconSpan) iconSpan.textContent = '✗';
+  }
+  for (const requestId of state.pendingPermissionRequestIds) {
+    const permEl = document.querySelector(`.permission[data-request-id="${requestId}"]`);
+    if (!permEl) continue;
+    const titleEl = permEl.querySelector('.title');
+    const title = titleEl?.textContent || '⚿';
+    permEl.innerHTML = `<span style="opacity:0.5">${escHtml(title)} — cancelled</span>`;
+  }
+  state.pendingToolCallIds.clear();
+  state.pendingPermissionRequestIds.clear();
+}
+
 export async function loadHistory(sid) {
   try {
     const res = await fetch(`/api/sessions/${sid}/events`);
@@ -421,6 +440,9 @@ export function handleEvent(msg) {
     }
 
     case 'prompt_done':
+      if (msg.stopReason === 'cancelled') {
+        cancelPendingTurnUI();
+      }
       state.pendingPromptDone = true;
       finishPromptIfIdle();
       break;

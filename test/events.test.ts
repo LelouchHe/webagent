@@ -362,6 +362,40 @@ describe("events", () => {
         events.handleEvent({ type: "tool_call_update", id: "tc-pending", status: "completed" });
         assert.equal(state.busy, false);
       });
+
+      it("clears pending tool calls when the prompt is cancelled", () => {
+        state.busy = true;
+        events.handleEvent({
+          type: "tool_call",
+          id: "tc-cancelled",
+          kind: "execute",
+          title: "Run tests",
+          rawInput: { command: "npm test" },
+        });
+
+        events.handleEvent({ type: "prompt_done", stopReason: "cancelled" });
+
+        assert.equal(state.pendingToolCallIds.size, 0);
+        assert.equal(state.busy, false);
+      });
+
+      it("clears pending permissions when the prompt is cancelled", () => {
+        const ws = createMockWS();
+        state.ws = ws;
+        state.sessionId = "s1";
+        state.busy = true;
+        events.handleEvent({
+          type: "permission_request",
+          requestId: "perm-cancelled",
+          title: "Allow?",
+          options: [{ optionId: "allow", kind: "allow_once", name: "Allow" }],
+        });
+
+        events.handleEvent({ type: "prompt_done", stopReason: "cancelled" });
+
+        assert.equal(state.pendingPermissionRequestIds.size, 0);
+        assert.equal(state.busy, false);
+      });
     });
 
     describe("session_deleted", () => {
