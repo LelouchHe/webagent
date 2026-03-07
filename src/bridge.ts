@@ -86,9 +86,10 @@ export class AgentBridge extends EventEmitter {
     return { sessionId: session.sessionId, configOptions: (session as any).configOptions ?? [] };
   }
 
-  async setConfigOption(sessionId: string, configId: string, value: string): Promise<void> {
+  async setConfigOption(sessionId: string, configId: string, value: string): Promise<ConfigOption[]> {
     if (!this.conn) throw new Error("Not connected");
-    await this.conn.setSessionConfigOption({ sessionId, configId, value });
+    const result = await this.conn.setSessionConfigOption({ sessionId, configId, value });
+    return (result as any).configOptions ?? [];
   }
 
   async prompt(

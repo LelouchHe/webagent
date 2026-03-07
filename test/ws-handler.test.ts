@@ -114,6 +114,7 @@ function createHarness() {
     },
     async setConfigOption(sessionId: string, configId: string, value: string) {
       bridgeCalls.setConfigOption.push({ sessionId, configId, value });
+      return [{ id: configId, name: configId, currentValue: value, options: [] }];
     },
   };
 
@@ -295,6 +296,11 @@ describe("setupWsHandler", () => {
       type: "config_set",
       configId: "model",
       value: "claude-sonnet-4.6",
+    });
+    assert.deepEqual(JSON.parse(harness.peer.sent[0]), {
+      type: "config_option_update",
+      sessionId: "s1",
+      configOptions: [{ id: "model", name: "model", currentValue: "claude-sonnet-4.6", options: [] }],
     });
   });
 

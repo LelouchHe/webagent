@@ -173,9 +173,14 @@ export function setupWsHandler(deps: WsHandlerDeps): void {
           case "set_config_option": {
             if (!bridge) { send(ws, { type: "error", message: "Agent not ready yet" }); return; }
             try {
-              await bridge.setConfigOption(msg.sessionId, msg.configId, msg.value);
-              store.updateSessionConfig(msg.sessionId, msg.configId, msg.value);
+              const configOptions = await bridge.setConfigOption(msg.sessionId, msg.configId, msg.value);
+              for (const opt of configOptions) {
+                store.updateSessionConfig(msg.sessionId, opt.id, opt.currentValue);
+              }
               send(ws, { type: "config_set", configId: msg.configId, value: msg.value } as any);
+              if (configOptions.length) {
+                broadcast(wss, { type: "config_option_update", sessionId: msg.sessionId, configOptions }, ws);
+              }
             } catch (err: unknown) {
               send(ws, { type: "error", message: `Failed to set ${msg.configId}: ${errorMessage(err)}` });
             }

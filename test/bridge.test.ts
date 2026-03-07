@@ -252,6 +252,20 @@ describe("AgentBridge", () => {
     ]);
   });
 
+  it("returns updated config options from setConfigOption", async () => {
+    const bridge = new AgentBridge("fake-agent");
+
+    (bridge as any).conn = {
+      setSessionConfigOption: async () => ({
+        configOptions: [{ id: "model", name: "Model", currentValue: "mock-model-2", options: [] }],
+      }),
+    };
+
+    const result = await bridge.setConfigOption("s1", "model", "mock-model-2");
+
+    assert.deepEqual(result, [{ id: "model", name: "Model", currentValue: "mock-model-2", options: [] }]);
+  });
+
   it("reads and writes text files through ACP file callbacks", async () => {
     const bridge = new AgentBridge("fake-agent");
     const tmpDir = mkdtempSync(join(tmpdir(), "webagent-bridge-"));
