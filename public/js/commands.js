@@ -109,7 +109,7 @@ export async function handleSlashCommand(text) {
     case '/cancel':
       if (state.busy) {
         sendCancel();
-        addSystem('^C');
+        addSystem('^X');
       } else {
         addSystem('Nothing to cancel.');
       }
@@ -192,7 +192,7 @@ const SLASH_COMMANDS = [
 const SHORTCUTS = [
   { key: 'Enter',       desc: 'Send message' },
   { key: 'Shift+Enter', desc: 'New line' },
-  { key: '^C',          desc: 'Cancel current response' },
+  { key: '^X',          desc: 'Cancel current response' },
   { key: '^M',          desc: 'Cycle mode (Agent → Plan → Autopilot)' },
   { key: '^U',          desc: 'Upload image' },
 ];

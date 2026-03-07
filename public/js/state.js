@@ -61,8 +61,8 @@ export function updateModeUI() {
 export function setBusy(on) {
   state.busy = on;
   if (on) {
-    dom.sendBtn.textContent = '^C';
-    dom.sendBtn.title = 'Cancel (Ctrl+C)';
+    dom.sendBtn.textContent = '^X';
+    dom.sendBtn.title = 'Cancel (Ctrl+X)';
     dom.sendBtn.classList.add('cancel');
     dom.prompt.classList.add('busy');
   } else {
@@ -104,8 +104,7 @@ export function updateNewBtnVisibility() {
 // Send cancel without UI side-effect — callers add their own feedback
 export function sendCancel() {
   if (!state.busy || !state.ws) return false;
-  const type = state.currentBashEl ? 'bash_cancel' : 'cancel';
-  state.ws.send(JSON.stringify({ type, sessionId: state.sessionId }));
+  state.ws.send(JSON.stringify({ type: 'cancel', sessionId: state.sessionId }));
   return true;
 }
 

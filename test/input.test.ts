@@ -66,7 +66,7 @@ describe("input", () => {
       text: "hello",
     });
     assert.equal(state.busy, true);
-    assert.equal(dom.sendBtn.textContent, "^C");
+    assert.equal(dom.sendBtn.textContent, "^X");
     assert.equal(dom.input.value, "");
   });
 
@@ -129,20 +129,20 @@ describe("input", () => {
     });
   });
 
-  it("sends cancel on Ctrl+C while busy", () => {
+  it("sends cancel on global Ctrl+X while busy", () => {
     const ws = createMockWS();
     state.ws = ws;
     state.sessionId = "s1";
     state.busy = true;
 
-    const event = keydown("c", { ctrlKey: true });
+    const event = docKeydown("x", { ctrlKey: true });
 
     assert.equal(event.defaultPrevented, true);
     assert.deepEqual(JSON.parse(ws.sent[0]), {
       type: "cancel",
       sessionId: "s1",
     });
-    assert.ok(dom.messages.textContent.includes("^C"));
+    assert.ok(dom.messages.textContent.includes("^X"));
   });
 
   it("opens the file picker on Ctrl+U", () => {

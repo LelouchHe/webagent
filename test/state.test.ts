@@ -67,7 +67,7 @@ describe("state", () => {
     it("sets busy state and updates UI", () => {
       mod.setBusy(true);
       assert.equal(mod.state.busy, true);
-      assert.equal(mod.dom.sendBtn.textContent, "^C");
+      assert.equal(mod.dom.sendBtn.textContent, "^X");
       assert.ok(mod.dom.sendBtn.classList.contains("cancel"));
       assert.ok(mod.dom.prompt.classList.contains("busy"));
     });
@@ -161,7 +161,7 @@ describe("state", () => {
       assert.equal(msg.sessionId, "s1");
     });
 
-    it("sends bash_cancel when busy with bash", () => {
+    it("still sends global cancel when busy with bash", () => {
       const ws = createMockWS();
       mod.state.ws = ws;
       mod.state.busy = true;
@@ -170,7 +170,8 @@ describe("state", () => {
 
       assert.equal(mod.sendCancel(), true);
       const msg = JSON.parse(ws.sent[0]);
-      assert.equal(msg.type, "bash_cancel");
+      assert.equal(msg.type, "cancel");
+      assert.equal(msg.sessionId, "s1");
     });
 
     it("returns false when not busy", () => {

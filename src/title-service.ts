@@ -6,6 +6,8 @@ const TITLE_MODEL = "claude-haiku-4.5";
 
 export class TitleService {
   private titleSessionId: string | null = null;
+  private activeSourceSessions = new Set<string>();
+  private cancelledSourceSessions = new Set<string>();
   private defaultCwd: string;
 
   private store: Store;
@@ -31,19 +33,35 @@ export class TitleService {
     userMessage: string,
     sessionId: string,
   ): Promise<void> {
+    this.activeSourceSessions.add(sessionId);
     const tsId = await this.ensureTitleSession(bridge);
-    if (!tsId) return;
+    if (!tsId) {
+      this.activeSourceSessions.delete(sessionId);
+      this.cancelledSourceSessions.delete(sessionId);
+      return;
+    }
 
-    const prompt = `Generate a short title (max 30 chars, no quotes) for a chat that starts with this message. Reply with ONLY the title, nothing else:\n\n${userMessage.slice(0, 500)}`;
-    const title = await bridge.promptForText(tsId, prompt);
-    if (!title) return;
+    try {
+      const prompt = `Generate a short title (max 30 chars, no quotes) for a chat that starts with this message. Reply with ONLY the title, nothing else:\n\n${userMessage.slice(0, 500)}`;
+      const title = await bridge.promptForText(tsId, prompt);
+      if (!title || this.cancelledSourceSessions.has(sessionId)) return;
 
-    const cleaned = title.replace(/^["']|["']$/g, "").trim().slice(0, 30);
-    if (!cleaned) return;
+      const cleaned = title.replace(/^["']|["']$/g, "").trim().slice(0, 30);
+      if (!cleaned) return;
 
-    this.store.updateSessionTitle(sessionId, cleaned);
-    this.sessions.sessionHasTitle.add(sessionId);
-    return cleaned;
+      this.store.updateSessionTitle(sessionId, cleaned);
+      this.sessions.sessionHasTitle.add(sessionId);
+      return cleaned;
+    } finally {
+      this.activeSourceSessions.delete(sessionId);
+      this.cancelledSourceSessions.delete(sessionId);
+    }
+  }
+
+  async cancel(sessionId: string, bridge: AgentBridge): Promise<void> {
+    this.cancelledSourceSessions.add(sessionId);
+    if (!this.titleSessionId || !this.activeSourceSessions.has(sessionId)) return;
+    await bridge.cancel(this.titleSessionId);
   }
 
   /** Ensure the dedicated title session exists. Returns session ID or null. */

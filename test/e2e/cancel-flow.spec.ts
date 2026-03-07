@@ -7,10 +7,10 @@ test("an in-flight prompt can be cancelled from the UI", async ({ page }) => {
 
   await sendPrompt(page, "E2E_SLOW please wait until I cancel");
 
-  await expect(page.locator("#send-btn")).toHaveText("^C");
+  await expect(page.locator("#send-btn")).toHaveText("^X");
   await page.locator("#send-btn").click();
 
-  await expect(page.locator("#messages")).toContainText("^C");
+  await expect(page.locator("#messages")).toContainText("^X");
   await expect(page.locator("#send-btn")).toHaveText("↵");
   await expect(page.locator("#input")).toBeEnabled();
   await expect(page.locator(".msg.assistant")).toHaveCount(0);

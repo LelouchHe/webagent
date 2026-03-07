@@ -77,10 +77,14 @@ function createHarness() {
   };
 
   const titleServiceCalls: Array<{ text: string; sessionId: string }> = [];
+  const titleServiceCancelCalls: string[] = [];
   const titleService = {
     generate(_bridge: unknown, text: string, sessionId: string, onTitle: (title: string) => void) {
       titleServiceCalls.push({ text, sessionId });
       onTitle("Generated title");
+    },
+    cancel(sessionId: string) {
+      titleServiceCancelCalls.push(sessionId);
     },
   };
 
@@ -129,6 +133,7 @@ function createHarness() {
     storeCalls,
     sessions,
     titleServiceCalls,
+    titleServiceCancelCalls,
     bridgeCalls,
     bridge,
     sendMessage,
@@ -314,5 +319,22 @@ describe("setupWsHandler", () => {
     await harness.sendMessage({ type: "bash_cancel", sessionId: "s1" });
 
     assert.deepEqual(killSignals, ["SIGINT"]);
+  });
+
+  it("treats cancel as a global hard stop for the session", async () => {
+    const harness = createHarness();
+    const killSignals: string[] = [];
+    harness.sessions.runningBashProcs.set("s1", {
+      kill(signal: string) {
+        killSignals.push(signal);
+      },
+    });
+    closeSockets.push(() => harness.sender.emit("close"));
+
+    await harness.sendMessage({ type: "cancel", sessionId: "s1" });
+
+    assert.deepEqual(harness.bridgeCalls.cancel, ["s1"]);
+    assert.deepEqual(killSignals, ["SIGINT"]);
+    assert.deepEqual(harness.titleServiceCancelCalls, ["s1"]);
   });
 });

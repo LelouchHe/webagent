@@ -1,20 +1,20 @@
 import { test, expect } from "playwright/test";
 import { createNewSession, gotoConnected, sendPrompt } from "./helpers.ts";
 
-test("cancelling after a tool call clears busy state", async ({ page }) => {
+test("cancel interrupts a pending permission turn immediately", async ({ page }) => {
   await gotoConnected(page);
   await createNewSession(page);
 
-  await sendPrompt(page, "E2E_SLOW_TOOL cancel after tool call");
+  await sendPrompt(page, "E2E_PERMISSION please ask for permission");
 
-  await expect(page.locator(".tool-call").last()).toContainText("Long-running tool");
+  const permission = page.locator(".permission").last();
+  await expect(permission).toContainText("Sensitive command");
   await expect(page.locator("#send-btn")).toHaveText("^X");
 
   await page.locator("#send-btn").click();
 
   await expect(page.locator("#messages")).toContainText("^X");
-  await expect(page.locator(".tool-call").last()).toHaveClass(/failed/);
-  await expect(page.locator(".tool-call .icon").last()).toHaveText("✗");
+  await expect(permission).toContainText("cancelled");
   await expect(page.locator("#send-btn")).toHaveText("↵");
   await expect(page.locator("#input")).toBeEnabled();
 });

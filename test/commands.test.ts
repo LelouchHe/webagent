@@ -174,7 +174,7 @@ describe("commands", () => {
         type: "cancel",
         sessionId: "s1",
       });
-      assert.ok(messageLines().includes("^C"));
+      assert.ok(messageLines().includes("^X"));
     });
 
     it("reports the selected config value when no /model arg is given", async () => {

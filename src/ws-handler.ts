@@ -17,6 +17,19 @@ interface WsHandlerDeps {
   limits: Config["limits"];
 }
 
+function interruptBashProc(proc: ReturnType<SessionManager["runningBashProcs"]["get"]>): void {
+  if (!proc) return;
+  if (typeof proc.pid === "number") {
+    try {
+      process.kill(-proc.pid, "SIGINT");
+      return;
+    } catch {
+      // Fall through to direct child kill when the process is not a group leader.
+    }
+  }
+  proc.kill("SIGINT");
+}
+
 export function broadcast(wss: WebSocketServer, event: AgentEvent, exclude?: WebSocket): void {
   const msg = JSON.stringify(event);
   for (const client of wss.clients) {
@@ -142,6 +155,10 @@ export function setupWsHandler(deps: WsHandlerDeps): void {
           }
 
           case "cancel": {
+            interruptBashProc(sessions.runningBashProcs.get(msg.sessionId));
+            if (bridge) {
+              await titleService.cancel(msg.sessionId, bridge);
+            }
             await bridge?.cancel(msg.sessionId);
             break;
           }
@@ -177,6 +194,7 @@ export function setupWsHandler(deps: WsHandlerDeps): void {
 
             const child = spawn("bash", ["-c", msg.command], {
               cwd,
+              detached: true,
               env: { ...process.env, TERM: "dumb" },
               stdio: ["ignore", "pipe", "pipe"],
             });
@@ -218,8 +236,7 @@ export function setupWsHandler(deps: WsHandlerDeps): void {
           }
 
           case "bash_cancel": {
-            const proc = sessions.runningBashProcs.get(msg.sessionId);
-            if (proc) proc.kill("SIGINT");
+            interruptBashProc(sessions.runningBashProcs.get(msg.sessionId));
             break;
           }
         }

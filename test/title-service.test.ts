@@ -87,4 +87,33 @@ describe("TitleService", () => {
 
     assert.deepEqual(titles, ["Generated"]);
   });
+
+  it("cancels title generation only for the matching source session", async () => {
+    const store = { updateSessionTitle() {} };
+    const sessions = { sessionHasTitle: new Set<string>(), liveSessions: new Set<string>() };
+    const cancelCalls: string[] = [];
+    let releasePrompt: ((value: string) => void) | null = null;
+    const bridge = {
+      async newSession() { return "title-session"; },
+      async setConfigOption() {},
+      async promptForText() {
+        return await new Promise<string>((resolve) => {
+          releasePrompt = resolve;
+        });
+      },
+      async cancel(sessionId: string) {
+        cancelCalls.push(sessionId);
+        releasePrompt?.("");
+      },
+    };
+    const service = new TitleService(store as any, sessions as any, "/repo");
+
+    service.generate(bridge as any, "hello", "session-1");
+    await new Promise((resolve) => setImmediate(resolve));
+    service.cancel("session-2", bridge as any);
+    service.cancel("session-1", bridge as any);
+    await new Promise((resolve) => setImmediate(resolve));
+
+    assert.deepEqual(cancelCalls, ["title-session"]);
+  });
 });

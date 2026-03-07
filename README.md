@@ -92,6 +92,7 @@ agent_cmd = "my-agent --acp"
 - Real-time output streaming (stderr in red)
 - Collapsible output with exit code display
 - Cancel running processes
+- Cancel is session-scoped inside WebAgent: it stops the current ACP turn plus WebAgent-owned session work (like local `!` bash), but it cannot stop host-level tasks started outside the WebAgent server/runtime
 
 ### Session Management
 
@@ -125,7 +126,7 @@ Type `/` to trigger an autocomplete menu (arrow keys to navigate, Tab to select,
 |---|---|
 | `Enter` | Send message |
 | `Shift+Enter` | New line |
-| `Ctrl+C` | Cancel current response |
+| `Ctrl+X` | Cancel current response |
 | `Ctrl+M` | Cycle mode (Agent → Plan → Autopilot) |
 | `Ctrl+U` | Upload image |
 

@@ -74,7 +74,7 @@ function sendMessage() {
 }
 
 function doCancel() {
-  if (sendCancel()) addSystem('^C');
+  if (sendCancel()) addSystem('^X');
 }
 
 // --- Event listeners ---
@@ -95,14 +95,6 @@ dom.input.addEventListener('keydown', (e) => {
     }
     return;
   }
-  // Ctrl+C to cancel
-  if (e.key === 'c' && (e.ctrlKey || e.metaKey) && !e.shiftKey) {
-    if (state.busy) {
-      e.preventDefault();
-      doCancel();
-      return;
-    }
-  }
   // Ctrl+U to upload file
   if (e.key === 'u' && (e.ctrlKey || e.metaKey) && !e.shiftKey) {
     e.preventDefault();
@@ -113,6 +105,11 @@ dom.input.addEventListener('keydown', (e) => {
 
 // Global Escape to dismiss slash menu
 document.addEventListener('keydown', (e) => {
+  if (e.key === 'x' && (e.ctrlKey || e.metaKey) && !e.shiftKey && state.busy) {
+    e.preventDefault();
+    doCancel();
+    return;
+  }
   if (e.key === 'Escape' && dom.slashMenu.classList.contains('active')) {
     e.preventDefault();
     hideSlashMenu();

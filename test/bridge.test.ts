@@ -158,6 +158,37 @@ describe("AgentBridge", () => {
     assert.deepEqual(result, { outcome: { outcome: "selected", optionId: "allow" } });
   });
 
+  it("cancels pending permission requests for the targeted session", async () => {
+    const bridge = new AgentBridge("fake-agent");
+    const cancelCalls: any[] = [];
+
+    (bridge as any).conn = {
+      cancel: async (payload: any) => {
+        cancelCalls.push(payload);
+      },
+    };
+
+    const s1Permission = (bridge as any).handlePermission({
+      sessionId: "s1",
+      toolCall: { title: "Edit file", toolCallId: "tc-1" },
+      options: [{ optionId: "allow", kind: "allow_once", name: "Allow" }],
+    });
+    const s2Permission = (bridge as any).handlePermission({
+      sessionId: "s2",
+      toolCall: { title: "Delete file", toolCallId: "tc-2" },
+      options: [{ optionId: "deny", kind: "reject", name: "Deny" }],
+    });
+
+    await bridge.cancel("s1");
+
+    assert.deepEqual(await s1Permission, { outcome: { outcome: "cancelled" } });
+    assert.deepEqual(cancelCalls, [{ sessionId: "s1" }]);
+
+    const remainingRequestId = [...(bridge as any).permissionResolvers.keys()][0];
+    bridge.denyPermission(remainingRequestId);
+    assert.deepEqual(await s2Permission, { outcome: { outcome: "cancelled" } });
+  });
+
   it("translates ACP session updates into emitted events", async () => {
     const bridge = new AgentBridge("fake-agent");
     const events: any[] = [];

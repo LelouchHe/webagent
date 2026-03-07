@@ -8,6 +8,7 @@ export class AgentBridge extends EventEmitter {
   private proc: ChildProcess | null = null;
   private conn: acp.ClientSideConnection | null = null;
   private permissionResolvers = new Map<string, (resp: acp.RequestPermissionResponse) => void>();
+  private permissionRequestSessions = new Map<string, string>();
   private silentSessions = new Set<string>(); // Sessions that don't emit events
   private silentBuffers = new Map<string, string>(); // Text buffers for silent sessions
   readonly agentCmd: string;
@@ -131,6 +132,11 @@ export class AgentBridge extends EventEmitter {
   }
 
   async cancel(sessionId: string): Promise<void> {
+    for (const [requestId, requestSessionId] of this.permissionRequestSessions) {
+      if (requestSessionId === sessionId) {
+        this.denyPermission(requestId);
+      }
+    }
     await this.conn?.cancel({ sessionId });
   }
 
@@ -142,6 +148,12 @@ export class AgentBridge extends EventEmitter {
     try {
       await this.conn.prompt({ sessionId, prompt: [{ type: "text", text }] });
       return this.silentBuffers.get(sessionId) ?? "";
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : (typeof err === "string" ? err : JSON.stringify(err));
+      if (/cancel/i.test(message)) {
+        return "";
+      }
+      throw err;
     } finally {
       this.silentSessions.delete(sessionId);
       this.silentBuffers.delete(sessionId);
@@ -153,6 +165,7 @@ export class AgentBridge extends EventEmitter {
     if (resolve) {
       resolve({ outcome: { outcome: "selected", optionId } });
       this.permissionResolvers.delete(requestId);
+      this.permissionRequestSessions.delete(requestId);
     }
   }
 
@@ -161,6 +174,7 @@ export class AgentBridge extends EventEmitter {
     if (resolve) {
       resolve({ outcome: { outcome: "cancelled" } });
       this.permissionResolvers.delete(requestId);
+      this.permissionRequestSessions.delete(requestId);
     }
   }
 
@@ -170,6 +184,7 @@ export class AgentBridge extends EventEmitter {
       resolve({ outcome: { outcome: "cancelled" } });
     }
     this.permissionResolvers.clear();
+    this.permissionRequestSessions.clear();
 
     if (this.proc && this.proc.exitCode === null) {
       this.proc.kill();
@@ -198,6 +213,7 @@ export class AgentBridge extends EventEmitter {
     return new Promise((resolve) => {
       // Register resolver BEFORE emitting, so synchronous auto-approve can find it
       this.permissionResolvers.set(requestId, resolve);
+      this.permissionRequestSessions.set(requestId, params.sessionId);
       this.emit("event", {
         type: "permission_request",
         requestId,

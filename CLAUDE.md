@@ -84,6 +84,7 @@ agent_cmd = "my-agent --acp"
 - **Narrow event mapping**: The UI/store layer only maps a subset of ACP updates today: assistant text, thinking text, tool calls, tool call updates, and plans.
 - **No MCP forwarding**: Sessions are created with `mcpServers: []`, so WebAgent does not currently pass user/editor MCP servers through to the agent.
 - **No ACP terminal integration**: Although the bridge advertises terminal capability, the app's `!<command>` path is implemented separately over WebSocket + local `bash`, not ACP `terminal/*`.
+- **Session cancel, not host-task cancel**: ACP `cancel` only stops the current session prompt/turn. In this repo we extend that to the session's own local bash/permission/title work, but WebAgent still cannot cancel host-level tasks started outside the server's runtime (for example external Copilot CLI tool invocations or subprocesses it owns).
 - **Browser UI, not full CLI parity**: Direct CLI surfaces such as `/plan`, `/fleet`, `/mcp`, `/agent`, `/skills` are not mirrored as first-class WebAgent controls. The app only renders the ACP events it receives. Autopilot mode is supported via server-side auto-approval of permissions.
 - **Silent internal session**: Title generation uses a dedicated silent ACP session and intentionally suppresses normal event emission for that session.
 - **Agent-dependent model switching**: Model switching depends on agent support and currently goes through the SDK's unstable session-model API.
@@ -98,8 +99,8 @@ Keep this distinction clear in docs and code discussions: some missing capabilit
 - **No build step** — ES modules (`<script type="module">`) + external CSS, served directly by Node. No bundler.
 - **Build step for production** — `scripts/build.js` copies `public/` → `dist/`, appending a timestamp to JS/CSS filenames and rewriting imports/HTML references. Production serves from `dist/`; dev serves from `public/` directly.
 - **Module structure** — `public/js/state.js` (shared state + DOM refs), `render.js` (UI helpers + theme), `events.js` (WS event dispatch + history), `commands.js` (slash commands + autocomplete), `images.js` (attach/paste), `input.js` (send/keyboard), `connection.js` (WS lifecycle), `app.js` (boot entry).
-- **Terminal aesthetic** — monospace fonts, `^C` / `^U` style button labels, `*` git-branch-style session markers.
-- **Keyboard shortcuts** — `Ctrl+C` cancel, `Ctrl+U` upload. Enter only sends (never cancels).
+- **Terminal aesthetic** — monospace fonts, `^X` / `^U` style button labels, `*` git-branch-style session markers.
+- **Keyboard shortcuts** — `Ctrl+X` cancel, `Ctrl+U` upload. Enter only sends (never cancels).
 - **Theme** — dark/light/auto, persisted to localStorage.
 - **Escape key** — `inputEl` keydown listener cannot reliably capture Escape (browser default behavior / IME may consume it first). Use `document.addEventListener('keydown', ...)` instead for Escape handling.
 - **Prefer CSS for animations** — Use CSS `@keyframes` + pseudo-elements for UI animations (spinners, pulses) instead of JS `setInterval`. JS timers cause issues in test environments (JSDOM) by keeping the event loop alive.
