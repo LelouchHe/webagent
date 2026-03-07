@@ -2,7 +2,7 @@
 
 A web UI for any ACP-compatible agent, accessed remotely via the browser.
 
-Tech stack: Node.js + TypeScript (`--experimental-strip-types`), WebSocket (`ws`), SQLite (`better-sqlite3`), Zod validation.
+Tech stack: Node.js + TypeScript (`--experimental-strip-types`), real-time WebSocket communication (`ws`), SQLite persistence (`better-sqlite3`), Zod validation.
 
 Core modules:
 - `server.ts` — HTTP/WebSocket server bootstrap

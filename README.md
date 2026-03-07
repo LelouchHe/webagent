@@ -2,7 +2,71 @@
 
 A web UI for any ACP-compatible agent, accessed remotely via the browser.
 
-Tech stack: Node.js + TypeScript (`--experimental-strip-types`), real-time WebSocket communication, SQLite persistence.
+Tech stack: Node.js + TypeScript (`--experimental-strip-types`), real-time WebSocket communication (`ws`), SQLite persistence (`better-sqlite3`), Zod validation.
+
+## Prerequisites
+
+- Node.js 22.6+ (requires `--experimental-strip-types`)
+- An ACP-compatible agent (e.g. [Copilot CLI](https://github.com/github/copilot-cli)) installed and authenticated
+
+## Install
+
+```bash
+npm install
+npm run build         # build static assets (public/ → dist/)
+```
+
+## Run
+
+### Production (launchd service)
+
+Managed by macOS launchd with auto-start on boot + auto-restart on crash, port 6800.
+
+```bash
+npm run svc:status    # check status
+npm run svc:restart   # restart (after code changes)
+npm run svc:stop      # stop
+
+# view logs
+tail -f webagent.log
+```
+
+First-time setup:
+```bash
+launchctl bootstrap gui/501 ~/Library/LaunchAgents/com.lelouch.webagent.plist
+```
+
+### Development
+
+```bash
+npm run dev           # port 6801, uses data-dev/, auto-restarts on file changes
+```
+
+### Configuration
+
+Configuration is via TOML files, passed with `--config`:
+
+```bash
+node --experimental-strip-types src/server.ts --config config.toml
+```
+
+If no `--config` is provided, all settings use built-in defaults. See `config.toml` for production settings and `config.dev.toml` for development.
+
+| Key | Default | Description |
+|---|---|---|
+| `port` | `6800` | HTTP/WebSocket server port |
+| `data_dir` | `data` | SQLite + uploads directory |
+| `default_cwd` | `process.cwd()` | Working directory for new sessions |
+| `public_dir` | `dist` | Static assets directory |
+| `agent_cmd` | `copilot --acp` | ACP agent command (binary + args, space-separated) |
+| `limits.bash_output` | `1048576` (1 MB) | Max bash output stored in DB per command |
+| `limits.image_upload` | `10485760` (10 MB) | Max image upload size |
+
+To use a different ACP-compatible agent backend:
+
+```toml
+agent_cmd = "my-agent --acp"
+```
 
 ## Features
 
@@ -13,6 +77,7 @@ Tech stack: Node.js + TypeScript (`--experimental-strip-types`), real-time WebSo
 - Tool call display (status animation, expandable details, diff rendering)
 - Agent execution plan display (pending ○ / in-progress ◉ / done ●)
 - Permission confirmation dialog for sensitive operations (Allow / Deny), synced across devices; auto-approved in autopilot mode
+- Smart scroll: force-scrolls on load/switch/send, soft auto-scroll during streaming
 
 ### Images
 
@@ -74,8 +139,8 @@ Type `/` to trigger an autocomplete menu (arrow keys to navigate, Tab to select,
 - WebSocket auto-reconnect (3s retry on disconnect)
 - 30s heartbeat keepalive
 - Auto-expanding input box
-- Auto-scroll to bottom
 - Mobile-friendly layout
+- Multi-client broadcast (events synced across devices)
 
 ## Architecture
 
@@ -115,43 +180,7 @@ Current limits:
 - Autopilot mode is supported: permissions are auto-approved server-side using `allow_once`
 - Event handling is intentionally narrower than a native CLI client; only selected ACP updates are rendered/persisted, and the silent title-generation session suppresses normal UI events
 - Model switching depends on the agent's ACP implementation and currently uses the SDK's unstable session-model API
+- ACP does not expose context window usage, token counts, or remaining capacity
+- No method to compact or clear session context; only option is to create a new session
 
 In practice, this means WebAgent provides a browser UI for the core ACP chat/session workflow, but not the full product surface of direct Copilot CLI or Claude Code in a terminal.
-
-## Prerequisites
-
-- [fnm](https://github.com/Schniz/fnm) + Node.js 22.6+ (requires `--experimental-strip-types`)
-- An ACP-compatible agent (e.g. [Copilot CLI](https://github.com/github/copilot-cli)) installed and authenticated
-
-## Install
-
-```bash
-npm install
-npm run build         # build static assets (public/ → dist/)
-```
-
-## Run
-
-### Production (launchd service)
-
-Managed by macOS launchd with auto-start on boot + auto-restart on crash, port 6800.
-
-```bash
-npm run svc:status    # check status
-npm run svc:restart   # restart (after code changes)
-npm run svc:stop      # stop
-
-# view logs
-tail -f webagent.log
-```
-
-First-time setup:
-```bash
-launchctl bootstrap gui/501 ~/Library/LaunchAgents/com.lelouch.webagent.plist
-```
-
-### Development
-
-```bash
-npm run dev           # port 6801, uses data-dev/, auto-restarts on file changes
-```
