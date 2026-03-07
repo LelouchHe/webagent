@@ -5,6 +5,7 @@
   "scripts": {
     "build": "node scripts/build.js",
     "test": "node --experimental-strip-types --test test/*.test.ts",
+    "test:e2e": "playwright test",
     "dev": "node --experimental-strip-types --watch src/server.ts --config config.dev.toml",
     "dev:start": "node --experimental-strip-types src/server.ts --config config.dev.toml &",
     "dev:stop": "lsof -ti:6801 | xargs kill 2>/dev/null || true",
@@ -23,6 +24,7 @@
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^25.3.3",
     "@types/ws": "^8.18.1",
-    "happy-dom": "^20.8.3"
+    "happy-dom": "^20.8.3",
+    "playwright": "^1.58.2"
   }
 }

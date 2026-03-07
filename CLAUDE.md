@@ -109,6 +109,7 @@ Keep this distinction clear in docs and code discussions: some missing capabilit
 
 - Avoid `!` in double-quoted commit messages — bash interprets it as history expansion and the command will hang. Use single quotes instead.
 - Don't commit until a feature/fix is fully working and verified. Avoid partial or incremental commits for incomplete changes.
+- Once a feature or fix has reached a complete checkpoint, make a commit so the work stays traceable and easy to roll back. "Complete" means the full TDD cycle is done, the relevant tests pass, broader existing tests pass, and any required E2E coverage for that feature has been run and confirmed.
 
 ## Testing
 

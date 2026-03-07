@@ -12,6 +12,9 @@ logs/
 .pid
 
 coverage/
+playwright-report/
+test-results/
+test/e2e-data/
 
 .DS_Store
 Thumbs.db

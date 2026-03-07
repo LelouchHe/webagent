@@ -1,0 +1,8 @@
+port = 6802
+data_dir = "test/e2e-data"
+public_dir = "public"
+agent_cmd = "node --experimental-strip-types test/e2e/mock-agent.ts"
+
+[limits]
+bash_output = 1_048_576
+image_upload = 10_485_760
