@@ -2,7 +2,7 @@
 
 A web UI for any ACP-compatible agent, accessed remotely via the browser.
 
-Tech stack: Node.js + TypeScript (`--experimental-strip-types`, no build step), real-time WebSocket communication, SQLite persistence.
+Tech stack: Node.js + TypeScript (`--experimental-strip-types`), real-time WebSocket communication, SQLite persistence.
 
 ## Features
 
@@ -12,7 +12,7 @@ Tech stack: Node.js + TypeScript (`--experimental-strip-types`, no build step), 
 - Collapsible thinking process display
 - Tool call display (status animation, expandable details, diff rendering)
 - Agent execution plan display (pending ○ / in-progress ◉ / done ●)
-- Permission confirmation dialog for sensitive operations (Allow / Deny), synced across devices
+- Permission confirmation dialog for sensitive operations (Allow / Deny), synced across devices; auto-approved in autopilot mode
 
 ### Images
 
@@ -111,7 +111,8 @@ Current limits:
 
 - MCP servers are not forwarded to the agent; sessions are created with an empty `mcpServers` list
 - ACP terminal APIs are not used; `!<command>` runs through the app's own local `bash` bridge instead of an ACP-managed terminal session
-- The web UI does not expose native CLI command surfaces such as `/plan`, `/fleet`, `/mcp`, `/agent`, `/skills`, or autopilot mode
+- The web UI does not expose native CLI command surfaces such as `/plan`, `/fleet`, `/mcp`, `/agent`, or `/skills`
+- Autopilot mode is supported: permissions are auto-approved server-side using `allow_once`
 - Event handling is intentionally narrower than a native CLI client; only selected ACP updates are rendered/persisted, and the silent title-generation session suppresses normal UI events
 - Model switching depends on the agent's ACP implementation and currently uses the SDK's unstable session-model API
 
@@ -126,6 +127,7 @@ In practice, this means WebAgent provides a browser UI for the core ACP chat/ses
 
 ```bash
 npm install
+npm run build         # build static assets (public/ → dist/)
 ```
 
 ## Run
