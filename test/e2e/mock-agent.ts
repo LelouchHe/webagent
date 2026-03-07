@@ -24,6 +24,10 @@ type SessionState = {
   configOptions: SessionConfigOption[];
 };
 
+type PendingPrompt = {
+  resolve: (resp: PromptResponse) => void;
+};
+
 function createConfigOptions(): SessionConfigOption[] {
   return [
     {
@@ -65,6 +69,7 @@ class MockAgent implements Agent {
   private sessions = new Map<string, SessionState>();
   private conn: AgentSideConnection;
   private toolCallCounter = 0;
+  private pendingPrompts = new Map<string, PendingPrompt>();
 
   constructor(conn: AgentSideConnection) {
     this.conn = conn;
@@ -116,6 +121,12 @@ class MockAgent implements Agent {
       .map((part) => part.text)
       .join(" ")
       .trim();
+
+    if (text.startsWith("E2E_SLOW")) {
+      return await new Promise<PromptResponse>((resolve) => {
+        this.pendingPrompts.set(params.sessionId, { resolve });
+      });
+    }
 
     if (text.startsWith("E2E_PERMISSION")) {
       const toolCallId = `tool-${++this.toolCallCounter}`;
@@ -179,7 +190,12 @@ class MockAgent implements Agent {
     return { stopReason: "end_turn" };
   }
 
-  async cancel(_params: CancelNotification): Promise<void> {}
+  async cancel(params: CancelNotification): Promise<void> {
+    const pending = this.pendingPrompts.get(params.sessionId);
+    if (!pending) return;
+    this.pendingPrompts.delete(params.sessionId);
+    pending.resolve({ stopReason: "cancelled" });
+  }
 
   async authenticate(): Promise<void> {}
 }

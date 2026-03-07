@@ -140,6 +140,24 @@ describe("AgentBridge", () => {
     assert.deepEqual(denied, { outcome: { outcome: "cancelled" } });
   });
 
+  it("registers the permission resolver before emitting the request event", async () => {
+    const bridge = new AgentBridge("fake-agent");
+
+    bridge.on("event", (event) => {
+      if (event.type === "permission_request") {
+        bridge.resolvePermission(event.requestId, "allow");
+      }
+    });
+
+    const result = await (bridge as any).handlePermission({
+      sessionId: "s1",
+      toolCall: { title: "Auto-approved action", toolCallId: "tc-auto" },
+      options: [{ optionId: "allow", kind: "allow_once", name: "Allow" }],
+    });
+
+    assert.deepEqual(result, { outcome: { outcome: "selected", optionId: "allow" } });
+  });
+
   it("translates ACP session updates into emitted events", async () => {
     const bridge = new AgentBridge("fake-agent");
     const events: any[] = [];
