@@ -126,6 +126,12 @@ For any bug fix or new feature, follow full TDD by default:
 
 Do not treat tests as an afterthought. A bug fix or feature is incomplete unless the corresponding automated test coverage is added or updated as part of the same change.
 
+## Response Clarity
+
+- When a task or sub-task is actually finished, end with an explicit completion statement (for example: `Done.`, `This is fixed.`, `Build succeeded; you can refresh now.`, or `Tests passed; ready for the next step.`).
+- Do not end on process narration that sounds mid-stream (for example: `I'm running...`, `I'll verify...`, `I’m checking...`) without a follow-up conclusion in the same response.
+- If the UI may already be interactive again, make the current state explicit so the user knows whether work is complete, still running, or waiting on them.
+
 ## TODO
 
 - [ ] Add multi-client WS integration tests (e.g. two WS clients: verify `session_created` broadcast doesn't cause unintended session switching; test `awaitingNewSession` guard logic end-to-end)

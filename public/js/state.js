@@ -33,6 +33,9 @@ export const state = {
   pendingImages: [],
   currentBashEl: null,
   followMessages: true,
+  pendingToolCallIds: new Set(),
+  pendingPermissionRequestIds: new Set(),
+  pendingPromptDone: false,
 };
 
 // --- Config helpers ---
@@ -86,6 +89,9 @@ export function resetSessionUI() {
   state.currentThinkingText = '';
   state.pendingImages.length = 0;
   state.followMessages = true;
+  state.pendingToolCallIds.clear();
+  state.pendingPermissionRequestIds.clear();
+  state.pendingPromptDone = false;
   dom.attachPreview.innerHTML = '';
   dom.attachPreview.classList.remove('active');
   setBusy(false);

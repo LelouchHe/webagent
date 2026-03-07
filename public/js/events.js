@@ -10,6 +10,17 @@ import {
   formatLocalTime,
 } from './render.js';
 
+function finishPromptIfIdle() {
+  if (!state.pendingPromptDone) return;
+  if (state.pendingToolCallIds.size > 0 || state.pendingPermissionRequestIds.size > 0) return;
+  hideWaiting();
+  finishThinking();
+  finishAssistant();
+  setBusy(false);
+  dom.input.focus();
+  state.pendingPromptDone = false;
+}
+
 export async function loadHistory(sid) {
   try {
     const res = await fetch(`/api/sessions/${sid}/events`);
@@ -246,6 +257,8 @@ export function handleEvent(msg) {
       break;
 
     case 'tool_call': {
+      state.pendingToolCallIds.add(msg.id);
+      setBusy(true);
       hideWaiting();
       finishThinking();
       finishAssistant();
@@ -282,6 +295,9 @@ export function handleEvent(msg) {
 
     case 'tool_call_update': {
       const el = document.getElementById(`tc-${msg.id}`);
+      if (msg.status === 'completed' || msg.status === 'failed') {
+        state.pendingToolCallIds.delete(msg.id);
+      }
       if (el) {
         const statusIcon = msg.status === 'completed' ? '✓' : msg.status === 'failed' ? '✗' : '…';
         el.className = `tool-call ${msg.status}`;
@@ -303,6 +319,7 @@ export function handleEvent(msg) {
           }
         }
       }
+      finishPromptIfIdle();
       scrollToBottom();
       break;
     }
@@ -322,6 +339,8 @@ export function handleEvent(msg) {
     }
 
     case 'permission_request': {
+      state.pendingPermissionRequestIds.add(msg.requestId);
+      setBusy(true);
       finishThinking();
       const permEl = document.createElement('div');
       permEl.className = 'permission';
@@ -351,6 +370,7 @@ export function handleEvent(msg) {
     }
 
     case 'permission_resolved': {
+      state.pendingPermissionRequestIds.delete(msg.requestId);
       const permTarget = document.querySelector(`.permission[data-request-id="${msg.requestId}"]`);
       if (msg.sessionId === state.sessionId && permTarget) {
         const titleEl = permTarget.querySelector('.title');
@@ -358,6 +378,7 @@ export function handleEvent(msg) {
         const action = msg.denied ? 'denied' : msg.optionName || 'allowed';
         permTarget.innerHTML = `<span style="opacity:0.5">${escHtml(title)} — ${escHtml(action)}</span>`;
       }
+      finishPromptIfIdle();
       break;
     }
 
@@ -398,11 +419,8 @@ export function handleEvent(msg) {
     }
 
     case 'prompt_done':
-      hideWaiting();
-      finishThinking();
-      finishAssistant();
-      setBusy(false);
-      dom.input.focus();
+      state.pendingPromptDone = true;
+      finishPromptIfIdle();
       break;
 
     case 'session_deleted':
@@ -442,6 +460,9 @@ export function handleEvent(msg) {
       break;
 
     case 'error':
+      state.pendingToolCallIds.clear();
+      state.pendingPermissionRequestIds.clear();
+      state.pendingPromptDone = false;
       hideWaiting();
       finishThinking();
       finishAssistant();

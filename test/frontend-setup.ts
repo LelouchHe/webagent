@@ -50,6 +50,9 @@ export function resetState(state: any, dom: any) {
   state.pendingImages.length = 0;
   state.currentBashEl = null;
   state.followMessages = true;
+  state.pendingToolCallIds.clear();
+  state.pendingPermissionRequestIds.clear();
+  state.pendingPromptDone = false;
   // Reset DOM elements
   dom.messages.innerHTML = "";
   dom.status.textContent = "disconnected";

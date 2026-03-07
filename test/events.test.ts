@@ -325,6 +325,23 @@ describe("events", () => {
         assert.equal(state.currentAssistantEl, null);
         assert.equal(state.busy, false);
       });
+
+      it("does not clear busy until in-flight tool calls are completed", () => {
+        state.busy = true;
+        events.handleEvent({
+          type: "tool_call",
+          id: "tc-pending",
+          kind: "execute",
+          title: "Run tests",
+          rawInput: { command: "npm test" },
+        });
+
+        events.handleEvent({ type: "prompt_done" });
+        assert.equal(state.busy, true);
+
+        events.handleEvent({ type: "tool_call_update", id: "tc-pending", status: "completed" });
+        assert.equal(state.busy, false);
+      });
     });
 
     describe("session_deleted", () => {
