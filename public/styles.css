@@ -325,7 +325,7 @@ body {
   color: var(--red);
 }
 #input-prompt {
-  color: var(--green);
+  color: var(--text);
   font-weight: bold;
   user-select: none;
   line-height: 1.5;
@@ -356,7 +356,7 @@ body {
 #send-btn:hover { color: var(--text); }
 #send-btn.cancel { color: var(--red); font-weight: bold; }
 #send-btn.cancel:hover { color: var(--text); }
-#input-prompt.busy { color: var(--yellow); }
+#input-prompt.busy { animation: pulse 1.5s ease-in-out infinite; }
 
 /* Slash command autocomplete */
 #slash-menu {
