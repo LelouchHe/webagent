@@ -180,17 +180,18 @@ export class CopilotBridge extends EventEmitter {
     const requestId = crypto.randomUUID();
     const title = params.toolCall?.title ?? "Permission requested";
     const toolCallId = params.toolCall?.toolCallId ?? null;
-    this.emit("event", {
-      type: "permission_request",
-      requestId,
-      sessionId: params.sessionId,
-      title,
-      toolCallId,
-      options: params.options,
-    } satisfies AgentEvent);
 
     return new Promise((resolve) => {
+      // Register resolver BEFORE emitting, so synchronous auto-approve can find it
       this.permissionResolvers.set(requestId, resolve);
+      this.emit("event", {
+        type: "permission_request",
+        requestId,
+        sessionId: params.sessionId,
+        title,
+        toolCallId,
+        options: params.options,
+      } satisfies AgentEvent);
     });
   }
 
