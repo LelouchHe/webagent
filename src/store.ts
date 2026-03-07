@@ -7,6 +7,8 @@ export interface SessionRow {
   cwd: string;
   title: string | null;
   model: string | null;
+  mode: string | null;
+  reasoning_effort: string | null;
   created_at: string;
   last_active_at: string;
 }
@@ -64,6 +66,12 @@ export class Store {
     if (!colNames.has("model")) {
       this.db.exec("ALTER TABLE sessions ADD COLUMN model TEXT");
     }
+    if (!colNames.has("mode")) {
+      this.db.exec("ALTER TABLE sessions ADD COLUMN mode TEXT");
+    }
+    if (!colNames.has("reasoning_effort")) {
+      this.db.exec("ALTER TABLE sessions ADD COLUMN reasoning_effort TEXT");
+    }
   }
 
   createSession(id: string, cwd: string): SessionRow {
@@ -92,8 +100,11 @@ export class Store {
     this.db.prepare("UPDATE sessions SET last_active_at = datetime('now') WHERE id = ?").run(id);
   }
 
-  updateSessionModel(id: string, model: string): void {
-    this.db.prepare("UPDATE sessions SET model = ? WHERE id = ?").run(model, id);
+  /** Update a config option value (model, mode, reasoning_effort) for a session. */
+  updateSessionConfig(id: string, configId: string, value: string): void {
+    const column = ({ model: "model", mode: "mode", reasoning_effort: "reasoning_effort" } as Record<string, string>)[configId];
+    if (!column) return;
+    this.db.prepare(`UPDATE sessions SET ${column} = ? WHERE id = ?`).run(value, id);
   }
 
   saveEvent(sessionId: string, type: string, data: Record<string, unknown> = {}): EventRow {

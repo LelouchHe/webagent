@@ -77,11 +77,12 @@ describe("WsMessageSchema", () => {
     assert.ok(!result.success);
   });
 
-  it("parses set_model", () => {
+  it("parses set_config_option", () => {
     const result = WsMessageSchema.safeParse({
-      type: "set_model",
+      type: "set_config_option",
       sessionId: "s1",
-      modelId: "claude-sonnet-4",
+      configId: "model",
+      value: "claude-sonnet-4",
     });
     assert.ok(result.success);
   });

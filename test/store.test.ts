@@ -47,10 +47,22 @@ describe("Store", () => {
       assert.equal(store.getSession("s1")!.title, "My Title");
     });
 
-    it("updates model", () => {
+    it("updates config options (model, mode, reasoning_effort)", () => {
       store.createSession("s1", "/x");
-      store.updateSessionModel("s1", "claude-sonnet");
-      assert.equal(store.getSession("s1")!.model, "claude-sonnet");
+      store.updateSessionConfig("s1", "model", "claude-sonnet");
+      store.updateSessionConfig("s1", "mode", "plan");
+      store.updateSessionConfig("s1", "reasoning_effort", "high");
+      const s = store.getSession("s1")!;
+      assert.equal(s.model, "claude-sonnet");
+      assert.equal(s.mode, "plan");
+      assert.equal(s.reasoning_effort, "high");
+    });
+
+    it("ignores unknown config option ids", () => {
+      store.createSession("s1", "/x");
+      store.updateSessionConfig("s1", "unknown_thing", "value");
+      // Should not throw, just no-op
+      assert.equal(store.getSession("s1")!.model, null);
     });
 
     it("deletes session and its events", () => {

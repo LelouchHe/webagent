@@ -46,6 +46,8 @@ Type `/` to trigger an autocomplete menu (arrow keys to navigate, Tab to select,
 | `/new [cwd]` | Create new session (optionally specify working directory) |
 | `/pwd` | Show current working directory |
 | `/model [name]` | View or switch model (fuzzy match, e.g. `/model opus`) |
+| `/mode [name]` | View or switch mode (Agent / Plan / Autopilot) |
+| `/think [level]` | View or switch reasoning effort (low / medium / high) |
 | `/cancel` | Cancel current response |
 | `/switch <title\|id>` | Switch to a session (match by title or ID prefix) |
 | `/delete <title\|id>` | Delete a session |

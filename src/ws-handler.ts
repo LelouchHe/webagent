@@ -143,14 +143,14 @@ export function setupWsHandler(deps: WsHandlerDeps): void {
             break;
           }
 
-          case "set_model": {
+          case "set_config_option": {
             if (!bridge) { send(ws, { type: "error", message: "Agent not ready yet" }); return; }
             try {
-              await bridge.setModel(msg.sessionId, msg.modelId);
-              store.updateSessionModel(msg.sessionId, msg.modelId);
-              send(ws, { type: "model_set", modelId: msg.modelId } as any);
+              await bridge.setConfigOption(msg.sessionId, msg.configId, msg.value);
+              store.updateSessionConfig(msg.sessionId, msg.configId, msg.value);
+              send(ws, { type: "config_set", configId: msg.configId, value: msg.value } as any);
             } catch (err: unknown) {
-              send(ws, { type: "error", message: `Failed to set model: ${errorMessage(err)}` });
+              send(ws, { type: "error", message: `Failed to set ${msg.configId}: ${errorMessage(err)}` });
             }
             break;
           }

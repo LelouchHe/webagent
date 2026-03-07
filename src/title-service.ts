@@ -52,7 +52,7 @@ export class TitleService {
     try {
       const id = await bridge.newSession(this.defaultCwd, { silent: true });
       this.sessions.liveSessions.add(id);
-      await bridge.setModel(id, TITLE_MODEL).catch(() => {});
+      await bridge.setConfigOption(id, "model", TITLE_MODEL).catch(() => {});
       this.titleSessionId = id;
       return id;
     } catch {

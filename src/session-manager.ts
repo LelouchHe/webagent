@@ -3,10 +3,12 @@ import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import type { Store } from "./store.ts";
 import type { CopilotBridge } from "./bridge.ts";
-import type { AgentEvent } from "./types.ts";
-import type * as acp from "@agentclientprotocol/sdk";
+import type { AgentEvent, ConfigOption } from "./types.ts";
 
-type SessionBridge = Pick<CopilotBridge, "newSession" | "setModel" | "loadSession">;
+type SessionBridge = Pick<CopilotBridge, "newSession" | "setConfigOption" | "loadSession">;
+
+/** Known config option IDs that we persist per-session. */
+const PERSISTED_CONFIG_IDS = ["model", "mode", "reasoning_effort"] as const;
 
 /**
  * Centralizes all session-related state that was previously scattered
@@ -20,7 +22,7 @@ export class SessionManager {
   readonly thinkingBuffers = new Map<string, string>();
   readonly runningBashProcs = new Map<string, ChildProcess>();
 
-  cachedModels: acp.ModelsInfo | null = null;
+  cachedConfigOptions: ConfigOption[] = [];
 
   private store: Store;
   private defaultCwd: string;
@@ -39,26 +41,35 @@ export class SessionManager {
     }
   }
 
-  /** Create a new session in both bridge and store, inheriting the source session's model. */
+  /** Create a new session in both bridge and store, inheriting the source session's config. */
   async createSession(
     bridge: SessionBridge,
     cwd?: string,
     inheritFromSessionId?: string,
   ): Promise<string> {
     const sessionCwd = cwd ?? this.defaultCwd;
-    const inheritedModel = inheritFromSessionId
-      ? this.store.getSession(inheritFromSessionId)?.model ?? null
+    const sourceSession = inheritFromSessionId
+      ? this.store.getSession(inheritFromSessionId)
       : null;
     const sessionId = await bridge.newSession(sessionCwd);
     this.liveSessions.add(sessionId);
     this.store.createSession(sessionId, sessionCwd);
 
-    if (inheritedModel) {
-      try {
-        await bridge.setModel(sessionId, inheritedModel);
-        this.store.updateSessionModel(sessionId, inheritedModel);
-      } catch {
-        // Model may no longer be available; ignore
+    // Inherit config options from source session
+    if (sourceSession) {
+      const inherited: Array<{ configId: string; value: string | null }> = [
+        { configId: "model", value: sourceSession.model },
+        { configId: "mode", value: sourceSession.mode },
+        { configId: "reasoning_effort", value: sourceSession.reasoning_effort },
+      ];
+      for (const { configId, value } of inherited) {
+        if (!value) continue;
+        try {
+          await bridge.setConfigOption(sessionId, configId, value);
+          this.store.updateSessionConfig(sessionId, configId, value);
+        } catch {
+          // Option may no longer be available; ignore
+        }
       }
     }
 
@@ -74,15 +85,14 @@ export class SessionManager {
     if (!session) throw new Error("Session not found");
 
     if (this.liveSessions.has(sessionId)) {
-      const models = this.cachedModels
-        ? { ...this.cachedModels, currentModelId: session.model || this.cachedModels.currentModelId }
-        : undefined;
+      // Session already live — build configOptions with stored overrides
+      const configOptions = this.buildConfigOptions(session);
       return {
         type: "session_created",
         sessionId,
         cwd: session.cwd,
         title: session.title,
-        models,
+        configOptions,
       };
     }
 
@@ -92,17 +102,14 @@ export class SessionManager {
       const restored = await bridge.loadSession(sessionId, session.cwd);
       this.liveSessions.add(sessionId);
       if (session.title) this.sessionHasTitle.add(sessionId);
-      const models = restored.models || this.cachedModels;
-      if (models && session.model) {
-        models.currentModelId = session.model;
-      }
+      const configOptions = this.applyStoredConfig(restored.configOptions, session);
       console.log(`[session] restored: ${sessionId.slice(0, 8)}…`);
       return {
         type: "session_created",
         sessionId,
         cwd: session.cwd,
         title: session.title,
-        models,
+        configOptions,
       };
     } catch (err) {
       console.error(`[session] restore failed:`, err);
@@ -110,6 +117,29 @@ export class SessionManager {
     } finally {
       this.restoringSessions.delete(sessionId);
     }
+  }
+
+  /** Build configOptions from cache, overriding currentValue with stored session values. */
+  private buildConfigOptions(session: { model: string | null; mode: string | null; reasoning_effort: string | null }): ConfigOption[] {
+    return this.applyStoredConfig(this.cachedConfigOptions, session);
+  }
+
+  /** Override currentValue in configOptions with stored session values. */
+  private applyStoredConfig(
+    configOptions: ConfigOption[],
+    session: { model: string | null; mode: string | null; reasoning_effort: string | null },
+  ): ConfigOption[] {
+    if (!configOptions.length) return this.cachedConfigOptions;
+    const stored: Record<string, string | null> = {
+      model: session.model,
+      mode: session.mode,
+      reasoning_effort: session.reasoning_effort,
+    };
+    return configOptions.map((opt) => {
+      const override = stored[opt.id];
+      if (override) return { ...opt, currentValue: override };
+      return opt;
+    });
   }
 
   /** Delete a session from store and clean up all state (including images). */

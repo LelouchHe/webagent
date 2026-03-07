@@ -49,9 +49,15 @@ async function initBridge(): Promise<CopilotBridge> {
 
     switch (event.type) {
       case "session_created":
-        if (event.models) sessions.cachedModels = event.models;
-        if (event.models?.currentModelId && event.sessionId) {
-          store.updateSessionModel(event.sessionId, event.models.currentModelId);
+        if (event.configOptions?.length) sessions.cachedConfigOptions = event.configOptions;
+        for (const opt of event.configOptions ?? []) {
+          store.updateSessionConfig(event.sessionId, opt.id, opt.currentValue);
+        }
+        break;
+      case "config_option_update":
+        if (event.configOptions?.length) sessions.cachedConfigOptions = event.configOptions;
+        for (const opt of event.configOptions ?? []) {
+          store.updateSessionConfig(event.sessionId, opt.id, opt.currentValue);
         }
         break;
       case "message_chunk":

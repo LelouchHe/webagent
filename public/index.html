@@ -319,13 +319,25 @@
     transition: border-color .15s;
   }
   #input-area.bash-mode {
-    border-top-color: #e8872b;
+    border-top: 2px solid #e8872b;
   }
   #input-area.bash-mode #input-prompt {
     color: #e8872b;
   }
   #input-area.bash-mode #input {
     color: #e8872b;
+  }
+  #input-area.plan-mode {
+    border-top: 2px solid var(--green);
+  }
+  #input-area.plan-mode #input-prompt {
+    color: var(--green);
+  }
+  #input-area.autopilot-mode {
+    border-top: 2px solid var(--red);
+  }
+  #input-area.autopilot-mode #input-prompt {
+    color: var(--red);
   }
   #input-prompt {
     color: var(--green);
@@ -530,14 +542,32 @@ let sessionId = null;
 let sessionCwd = null;
 let sessionTitle = null;
 let awaitingNewSession = false;
-let availableModels = [];
-let currentModel = null;
+let configOptions = []; // Array of { id, name, category, currentValue, options: [{ value, name }] }
 let currentAssistantEl = null;
 let currentAssistantText = '';
 let currentThinkingEl = null;
 let currentThinkingText = '';
 let busy = false;
 let pendingImages = []; // { data: base64, mimeType, previewUrl }
+
+function getConfigOption(id) { return configOptions.find(o => o.id === id); }
+function getConfigValue(id) { return getConfigOption(id)?.currentValue ?? null; }
+function setConfigValue(id, value) {
+  const opt = getConfigOption(id);
+  if (opt) opt.currentValue = value;
+}
+function updateConfigOptions(newOptions) {
+  configOptions = newOptions;
+  updateModeUI();
+}
+
+function updateModeUI() {
+  const area = document.getElementById('input-area');
+  area.classList.remove('plan-mode', 'autopilot-mode');
+  const modeValue = getConfigValue('mode') || '';
+  if (modeValue.includes('#plan')) area.classList.add('plan-mode');
+  else if (modeValue.includes('#autopilot')) area.classList.add('autopilot-mode');
+}
 
 function requestNewSession({ cwd, inheritFromSessionId = sessionId } = {}) {
   const payload = { type: 'new_session' };
@@ -812,13 +842,7 @@ function handleEvent(msg) {
       sessionId = msg.sessionId;
       sessionCwd = msg.cwd || sessionCwd;
       sessionTitle = msg.title || null;
-      if (msg.models) {
-        availableModels = msg.models.availableModels || [];
-        currentModel = msg.models.currentModelId || null;
-      }
-      if (msg.model && !currentModel) {
-        currentModel = msg.model;
-      }
+      if (msg.configOptions?.length) updateConfigOptions(msg.configOptions);
       setHashSessionId(sessionId);
       updateSessionInfo(sessionId, sessionTitle);
       statusEl.textContent = 'connected';
@@ -1046,9 +1070,18 @@ function handleEvent(msg) {
       requestNewSession();
       break;
 
-    case 'model_set':
-      currentModel = msg.modelId;
-      addSystem(`ok: Model: ${msg.modelId}`);
+    case 'config_set': {
+      setConfigValue(msg.configId, msg.value);
+      const opt = getConfigOption(msg.configId);
+      const label = opt?.name || msg.configId;
+      const valueName = opt?.options.find(o => o.value === msg.value)?.name || msg.value;
+      addSystem(`ok: ${label}: ${valueName}`);
+      if (msg.configId === 'mode') updateModeUI();
+      break;
+    }
+
+    case 'config_option_update':
+      if (msg.configOptions?.length) updateConfigOptions(msg.configOptions);
       break;
 
     case 'session_title_updated':
@@ -1307,6 +1340,8 @@ async function handleSlashCommand(text) {
       addSystem('/new [cwd] — New session');
       addSystem('/pwd — Show working directory');
       addSystem('/model [name] — Show or switch model');
+      addSystem('/mode [name] — Show or switch mode (Agent/Plan/Autopilot)');
+      addSystem('/think [level] — Show or switch reasoning effort (low/medium/high)');
       addSystem('/cancel — Cancel current response');
       addSystem('/switch <title|id> — Switch to session (title or id prefix match)');
       addSystem('/delete <title|id> — Delete a session');
@@ -1318,31 +1353,43 @@ async function handleSlashCommand(text) {
       addSystem('Ctrl+U (^U) — Upload image');
       return true;
 
-    case '/model': {
+    case '/model':
+    case '/mode':
+    case '/think': {
+      const configMap = { '/model': 'model', '/mode': 'mode', '/think': 'reasoning_effort' };
+      const configId = configMap[cmd];
+      const opt = getConfigOption(configId);
       if (!arg) {
-        addSystem(`model: ${currentModel || 'unknown'}`);
-        addSystem('Type /model + space to pick from list');
+        const valueName = opt?.options.find(o => o.value === opt.currentValue)?.name || opt?.currentValue || 'unknown';
+        addSystem(`${opt?.name || configId}: ${valueName}`);
+        addSystem(`Type ${cmd} + space to pick from list`);
+        return true;
+      }
+      if (!opt) {
+        addSystem(`err: ${cmd.slice(1)} is not available.`);
         return true;
       }
       const query = arg.trim();
       const normalize = (s) => s.toLowerCase().replace(/[\s_]+/g, '-');
       const normalizedQuery = normalize(query);
-      let match = availableModels.find(m => normalize(m.modelId) === normalizedQuery);
+      let match = opt.options.find(o => normalize(o.value) === normalizedQuery || normalize(o.name) === normalizedQuery);
       if (!match) {
-        const matches = availableModels.filter(m => normalize(m.modelId).includes(normalizedQuery));
+        const matches = opt.options.filter(o =>
+          normalize(o.value).includes(normalizedQuery) || normalize(o.name).includes(normalizedQuery)
+        );
         if (matches.length === 1) {
           match = matches[0];
         } else if (matches.length > 1) {
-          addSystem(`err: Ambiguous model "${arg}". Try /model to see available models.`);
+          addSystem(`err: Ambiguous "${arg}". Type ${cmd} + space to see options.`);
           return true;
         }
       }
       if (!match) {
-        addSystem(`err: Unknown model "${arg}". Try /model to see available models.`);
+        addSystem(`err: Unknown "${arg}". Type ${cmd} + space to see options.`);
         return true;
       }
-      ws.send(JSON.stringify({ type: 'set_model', sessionId, modelId: match.modelId }));
-      addSystem(`model → ${match.modelId}`);
+      ws.send(JSON.stringify({ type: 'set_config_option', sessionId, configId, value: match.value }));
+      addSystem(`${opt.name} → ${match.name}`);
       return true;
     }
 
@@ -1413,16 +1460,19 @@ const SLASH_COMMANDS = [
   { cmd: '/cancel',   args: '',            desc: 'Cancel current response' },
   { cmd: '/delete',   args: '<title|id>',  desc: 'Delete a session' },
   { cmd: '/help',     args: '',            desc: 'Show help' },
+  { cmd: '/mode',     args: '[name]',      desc: 'Pick or switch mode' },
   { cmd: '/model',    args: '[name]',      desc: 'Pick or switch model' },
   { cmd: '/new',      args: '[cwd]',       desc: 'New session' },
   { cmd: '/pwd',      args: '',            desc: 'Show working directory' },
   { cmd: '/switch',   args: '<title|id>',  desc: 'Switch to session' },
+  { cmd: '/think',    args: '[level]',     desc: 'Pick or switch reasoning effort' },
 ];
 
 const slashMenu = $('#slash-menu');
 let slashIdx = -1;
 let slashFiltered = [];
-let slashMode = 'commands'; // 'commands', 'switch', 'delete', or 'model'
+let slashMode = 'commands'; // 'commands', 'switch', 'delete', or 'config'
+let slashConfigId = null; // which config option is being picked (e.g. 'model', 'mode', 'reasoning_effort')
 let cachedSessions = null;
 let slashDismissed = null; // input value when menu was dismissed via Escape
 
@@ -1443,11 +1493,13 @@ function updateSlashMenu() {
     return;
   }
 
-  // /model — show model picker
-  const modelMatch = text.match(/^\/model /);
-  if (modelMatch && !busy) {
-    const query = text.slice(modelMatch[0].length).toLowerCase();
-    showModelMenu(query);
+  // /model, /mode, /think — show config option picker
+  const configMatch = text.match(/^\/(model|mode|think) /);
+  if (configMatch && !busy) {
+    const configMap = { model: 'model', mode: 'mode', think: 'reasoning_effort' };
+    const configId = configMap[configMatch[1]];
+    const query = text.slice(configMatch[0].length).toLowerCase();
+    showConfigMenu(configId, query);
     return;
   }
 
@@ -1493,11 +1545,14 @@ async function fetchSessionsForMenu(query, mode = 'switch') {
   slashMenu.classList.add('active');
 }
 
-function showModelMenu(query) {
-  slashMode = 'model';
-  slashFiltered = availableModels.filter(m => {
+function showConfigMenu(configId, query) {
+  const opt = getConfigOption(configId);
+  if (!opt) { hideSlashMenu(); return; }
+  slashMode = 'config';
+  slashConfigId = configId;
+  slashFiltered = opt.options.filter(o => {
     if (!query) return true;
-    return m.modelId.toLowerCase().includes(query);
+    return o.value.toLowerCase().includes(query) || o.name.toLowerCase().includes(query);
   });
   if (slashFiltered.length === 0) {
     hideSlashMenu();
@@ -1509,13 +1564,13 @@ function showModelMenu(query) {
 }
 
 function renderSlashMenu() {
-  if (slashMode === 'model') {
-    const current = currentModel?.toLowerCase() || '';
-    slashMenu.innerHTML = slashFiltered.map((m, i) => {
-      const isCurrent = m.modelId.toLowerCase() === current;
+  if (slashMode === 'config') {
+    const current = getConfigValue(slashConfigId)?.toLowerCase() || '';
+    slashMenu.innerHTML = slashFiltered.map((o, i) => {
+      const isCurrent = o.value.toLowerCase() === current;
       const prefix = isCurrent ? '* ' : '  ';
       const style = isCurrent ? ' style="color:var(--green)"' : '';
-      return `<div class="slash-item${i === slashIdx ? ' selected' : ''}" data-idx="${i}"><span class="slash-cmd"${style}>${escHtml(prefix + m.modelId)}</span></div>`;
+      return `<div class="slash-item${i === slashIdx ? ' selected' : ''}" data-idx="${i}"><span class="slash-cmd"${style}>${escHtml(prefix + o.name)}</span></div>`;
     }).join('');
   } else if (slashMode === 'switch' || slashMode === 'delete') {
     slashMenu.innerHTML = slashFiltered.map((s, i) => {
@@ -1547,12 +1602,14 @@ function hideSlashMenu() {
 function selectSlashItem(idx) {
   if (idx < 0 || idx >= slashFiltered.length) return;
 
-  if (slashMode === 'model') {
-    const m = slashFiltered[idx];
+  if (slashMode === 'config') {
+    const o = slashFiltered[idx];
+    const configId = slashConfigId;
+    const opt = getConfigOption(configId);
     inputEl.value = '';
     hideSlashMenu();
-    ws.send(JSON.stringify({ type: 'set_model', sessionId, modelId: m.modelId }));
-    addSystem(`model → ${m.modelId}`);
+    ws.send(JSON.stringify({ type: 'set_config_option', sessionId, configId, value: o.value }));
+    addSystem(`${opt?.name || configId} → ${o.name}`);
   } else if (slashMode === 'switch') {
     const s = slashFiltered[idx];
     inputEl.value = '';
@@ -1572,8 +1629,8 @@ function selectSlashItem(idx) {
     inputEl.value = item.cmd + (item.args ? ' ' : '');
     hideSlashMenu();
     inputEl.focus();
-    // Trigger picker for /switch, /delete, and /model
-    if (item.cmd === '/switch' || item.cmd === '/delete' || item.cmd === '/model') {
+    // Trigger picker for commands that have submenus
+    if (['/switch', '/delete', '/model', '/mode', '/think'].includes(item.cmd)) {
       slashDismissed = null;
       updateSlashMenu();
     }

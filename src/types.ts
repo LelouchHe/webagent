@@ -1,11 +1,23 @@
 import { z } from "zod/v4";
 import type * as acp from "@agentclientprotocol/sdk";
 
+// --- Config option (subset of ACP SessionConfigOption we care about) ---
+
+export interface ConfigOption {
+  type: "select";
+  id: string;
+  name: string;
+  category?: string | null;
+  currentValue: string;
+  options: Array<{ value: string; name: string }>;
+}
+
 // --- Agent events (server → client) ---
 
 export type AgentEvent =
-  | { type: "connected"; agent: { name: string; version: string }; models: acp.ModelInfo[] }
-  | { type: "session_created"; sessionId: string; cwd?: string; title?: string | null; models?: acp.ModelsInfo }
+  | { type: "connected"; agent: { name: string; version: string }; configOptions: ConfigOption[] }
+  | { type: "session_created"; sessionId: string; cwd?: string; title?: string | null; configOptions: ConfigOption[] }
+  | { type: "config_option_update"; sessionId: string; configOptions: ConfigOption[] }
   | { type: "message_chunk"; sessionId: string; text: string }
   | { type: "thought_chunk"; sessionId: string; text: string }
   | { type: "tool_call"; sessionId: string; id: string; title: string; kind: string; rawInput?: unknown }
@@ -49,7 +61,7 @@ export const WsMessageSchema = z.discriminatedUnion("type", [
     denied: z.boolean().optional(),
   }),
   z.object({ type: z.literal("cancel"), sessionId: z.string() }),
-  z.object({ type: z.literal("set_model"), sessionId: z.string(), modelId: z.string() }),
+  z.object({ type: z.literal("set_config_option"), sessionId: z.string(), configId: z.string(), value: z.string() }),
   z.object({ type: z.literal("bash_exec"), sessionId: z.string(), command: z.string() }),
   z.object({ type: z.literal("bash_cancel"), sessionId: z.string() }),
 ]);

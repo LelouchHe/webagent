@@ -2,7 +2,7 @@ import { spawn, ChildProcess } from "node:child_process";
 import { Writable, Readable } from "node:stream";
 import { EventEmitter } from "node:events";
 import * as acp from "@agentclientprotocol/sdk";
-import type { AgentEvent } from "./types.ts";
+import type { AgentEvent, ConfigOption } from "./types.ts";
 
 export class CopilotBridge extends EventEmitter {
   private proc: ChildProcess | null = null;
@@ -48,7 +48,7 @@ export class CopilotBridge extends EventEmitter {
         name: agentInfo?.name ?? "unknown",
         version: agentInfo?.version ?? "?",
       },
-      models: [],
+      configOptions: [],
     } satisfies AgentEvent);
   }
 
@@ -60,27 +60,27 @@ export class CopilotBridge extends EventEmitter {
         type: "session_created",
         sessionId: session.sessionId,
         cwd,
-        models: session.models,
+        configOptions: (session as any).configOptions ?? [],
       } satisfies AgentEvent);
     }
     return session.sessionId;
   }
 
-  async loadSession(sessionId: string, cwd: string): Promise<{ sessionId: string; models?: acp.ModelsInfo }> {
+  async loadSession(sessionId: string, cwd: string): Promise<{ sessionId: string; configOptions: ConfigOption[] }> {
     if (!this.conn) throw new Error("Not connected");
     const session = await this.conn.loadSession({ sessionId, cwd, mcpServers: [] });
     this.emit("event", {
       type: "session_created",
       sessionId: session.sessionId,
       cwd,
-      models: session.models,
+      configOptions: (session as any).configOptions ?? [],
     } satisfies AgentEvent);
-    return { sessionId: session.sessionId, models: session.models };
+    return { sessionId: session.sessionId, configOptions: (session as any).configOptions ?? [] };
   }
 
-  async setModel(sessionId: string, modelId: string): Promise<void> {
+  async setConfigOption(sessionId: string, configId: string, value: string): Promise<void> {
     if (!this.conn) throw new Error("Not connected");
-    await this.conn.unstable_setSessionModel({ sessionId, modelId });
+    await this.conn.setSessionConfigOption({ sessionId, configId, value });
   }
 
   async prompt(
@@ -254,6 +254,14 @@ export class CopilotBridge extends EventEmitter {
           type: "plan",
           sessionId,
           entries: update.entries ?? [],
+        } satisfies AgentEvent);
+        break;
+
+      case "config_option_update":
+        this.emit("event", {
+          type: "config_option_update",
+          sessionId,
+          configOptions: (update as any).configOptions ?? [],
         } satisfies AgentEvent);
         break;
     }

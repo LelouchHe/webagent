@@ -54,18 +54,20 @@ describe("SessionManager", () => {
   });
 
   describe("createSession", () => {
-    it("inherits the model from the source session", async () => {
+    it("inherits config from the source session", async () => {
       store.createSession("s1", "/x");
-      store.updateSessionModel("s1", "claude-sonnet-4.6");
+      store.updateSessionConfig("s1", "model", "claude-sonnet-4.6");
+      store.updateSessionConfig("s1", "mode", "plan-mode");
+      store.updateSessionConfig("s1", "reasoning_effort", "high");
 
-      const setModelCalls: Array<{ sessionId: string; modelId: string }> = [];
+      const configCalls: Array<{ sessionId: string; configId: string; value: string }> = [];
       const bridge = {
         async newSession(cwd: string) {
           assert.equal(cwd, "/default/cwd");
           return "s2";
         },
-        async setModel(sessionId: string, modelId: string) {
-          setModelCalls.push({ sessionId, modelId });
+        async setConfigOption(sessionId: string, configId: string, value: string) {
+          configCalls.push({ sessionId, configId, value });
         },
         async loadSession() {
           throw new Error("loadSession should not be called");
@@ -74,18 +76,24 @@ describe("SessionManager", () => {
 
       await sm.createSession(bridge, undefined, "s1");
 
-      assert.deepEqual(setModelCalls, [{ sessionId: "s2", modelId: "claude-sonnet-4.6" }]);
+      assert.deepEqual(configCalls, [
+        { sessionId: "s2", configId: "model", value: "claude-sonnet-4.6" },
+        { sessionId: "s2", configId: "mode", value: "plan-mode" },
+        { sessionId: "s2", configId: "reasoning_effort", value: "high" },
+      ]);
       assert.equal(store.getSession("s2")!.model, "claude-sonnet-4.6");
+      assert.equal(store.getSession("s2")!.mode, "plan-mode");
+      assert.equal(store.getSession("s2")!.reasoning_effort, "high");
     });
 
-    it("does not set a model when no source session is provided", async () => {
-      let setModelCalled = false;
+    it("does not set config when no source session is provided", async () => {
+      let configCalled = false;
       const bridge = {
         async newSession() {
           return "s2";
         },
-        async setModel() {
-          setModelCalled = true;
+        async setConfigOption() {
+          configCalled = true;
         },
         async loadSession() {
           throw new Error("loadSession should not be called");
@@ -94,7 +102,7 @@ describe("SessionManager", () => {
 
       await sm.createSession(bridge);
 
-      assert.equal(setModelCalled, false);
+      assert.equal(configCalled, false);
       assert.equal(store.getSession("s2")!.model, null);
     });
   });
