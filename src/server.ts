@@ -14,7 +14,7 @@ const PORT = parseInt(process.env.PORT ?? "6800", 10);
 const DATA_DIR = process.env.DATA_DIR ?? "data";
 const DEFAULT_CWD = process.env.DEFAULT_CWD ?? process.cwd();
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
-const PUBLIC_DIR = join(__dirname, "..", "public");
+const PUBLIC_DIR = join(__dirname, "..", process.env.PUBLIC_DIR ?? "dist");
 
 // --- Core dependencies ---
 

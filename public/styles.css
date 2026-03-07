@@ -356,7 +356,18 @@ body {
 #send-btn:hover { color: var(--text); }
 #send-btn.cancel { color: var(--red); font-weight: bold; }
 #send-btn.cancel:hover { color: var(--text); }
-#input-prompt.busy { animation: pulse 1.5s ease-in-out infinite; }
+#input-prompt.busy { font-size: 0; position: relative; }
+#input-prompt.busy::before {
+  content: '⠋';
+  font-size: 16px;
+  animation: spinner 0.8s steps(1) infinite;
+}
+@keyframes spinner {
+  0%  { content: '⠋'; } 10% { content: '⠙'; } 20% { content: '⠹'; }
+  30% { content: '⠸'; } 40% { content: '⠼'; } 50% { content: '⠴'; }
+  60% { content: '⠦'; } 70% { content: '⠧'; } 80% { content: '⠇'; }
+  90% { content: '⠏'; }
+}
 
 /* Slash command autocomplete */
 #slash-menu {
