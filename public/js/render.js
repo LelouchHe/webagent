@@ -51,14 +51,17 @@ export function showWaiting() {
   waitingEl.id = 'waiting';
   waitingEl.innerHTML = '<span class="cursor">▌</span>';
   dom.messages.appendChild(waitingEl);
-  scrollToBottom();
+  scrollToBottom(true);
 }
 export function hideWaiting() {
   if (waitingEl) { waitingEl.remove(); waitingEl = null; }
 }
 
-export function scrollToBottom() {
-  dom.messages.scrollTop = dom.messages.scrollHeight;
+export function scrollToBottom(force) {
+  const el = dom.messages;
+  if (force) { el.scrollTop = el.scrollHeight; return; }
+  const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+  if (nearBottom) el.scrollTop = el.scrollHeight;
 }
 
 export function escHtml(s) {

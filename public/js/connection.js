@@ -18,7 +18,7 @@ export function connect() {
     if (existingId) {
       const loaded = await loadHistory(existingId);
       if (loaded) {
-        scrollToBottom();
+        scrollToBottom(true);
       }
       state.ws.send(JSON.stringify({ type: 'resume_session', sessionId: existingId }));
       return;
@@ -32,7 +32,7 @@ export function connect() {
         const last = sessions[0];
         const loaded = await loadHistory(last.id);
         if (loaded) {
-          scrollToBottom();
+          scrollToBottom(true);
         }
         state.ws.send(JSON.stringify({ type: 'resume_session', sessionId: last.id }));
         return;

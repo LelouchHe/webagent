@@ -74,7 +74,7 @@ export async function handleSlashCommand(text) {
         }
         resetSessionUI();
         await loadHistory(match.id);
-        scrollToBottom();
+        scrollToBottom(true);
         state.ws.send(JSON.stringify({ type: 'resume_session', sessionId: match.id }));
       } catch {
         addSystem('err: Failed to switch session');
@@ -366,7 +366,7 @@ function selectSlashItem(idx) {
     hideSlashMenu();
     resetSessionUI();
     addSystem('Switching…');
-    loadHistory(s.id).then(loaded => { if (loaded) scrollToBottom(); });
+    loadHistory(s.id).then(loaded => { if (loaded) scrollToBottom(true); });
     state.ws.send(JSON.stringify({ type: 'resume_session', sessionId: s.id }));
   } else if (slashMode === 'delete') {
     const s = slashFiltered[idx];
