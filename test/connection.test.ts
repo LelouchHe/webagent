@@ -10,6 +10,7 @@ describe("connection", () => {
   let originalSetTimeout: typeof globalThis.setTimeout;
   let fetchCalls: string[];
   let timeoutCalls: number[];
+  let timeoutFns: Function[];
 
   class MockWebSocket {
     static instances: MockWebSocket[] = [];
@@ -52,11 +53,13 @@ describe("connection", () => {
     resetState(state, dom);
     fetchCalls = [];
     timeoutCalls = [];
+    timeoutFns = [];
     MockWebSocket.instances.length = 0;
     globalThis.fetch = undefined as any;
     history.replaceState(null, "", "/");
     originalSetTimeout = globalThis.setTimeout;
     globalThis.setTimeout = ((fn: Function, ms?: number) => {
+      timeoutFns.push(fn);
       timeoutCalls.push(ms ?? 0);
       return 1 as any;
     }) as any;
@@ -145,5 +148,40 @@ describe("connection", () => {
     assert.equal(dom.status.textContent, "disconnected");
     assert.equal(state.busy, false);
     assert.deepEqual(timeoutCalls, [3000]);
+  });
+
+  it("reconnects and resumes the current hash session after close", async () => {
+    history.replaceState(null, "", "/#restored-session");
+    setFetch(async (url: string) => {
+      assert.equal(url, "/api/sessions/restored-session/events");
+      return {
+        ok: true,
+        json: async () => [{ type: "assistant_message", data: JSON.stringify({ text: "restored again" }) }],
+      };
+    });
+
+    connection.connect();
+    const firstWs = latestSocket();
+    await firstWs.onopen?.();
+    firstWs.onclose?.();
+
+    assert.deepEqual(timeoutCalls, [3000]);
+    assert.equal(timeoutFns.length, 1);
+
+    await timeoutFns[0]();
+    const secondWs = latestSocket();
+    await secondWs.onopen?.();
+
+    assert.equal(MockWebSocket.instances.length, 2);
+    assert.deepEqual(fetchCalls, [
+      "/api/sessions/restored-session/events",
+      "/api/sessions/restored-session/events",
+    ]);
+    assert.deepEqual(JSON.parse(secondWs.sent[0]), {
+      type: "resume_session",
+      sessionId: "restored-session",
+    });
+    assert.equal(dom.messages.querySelectorAll(".msg.assistant").length, 1);
+    assert.ok(dom.messages.textContent.includes("restored again"));
   });
 });

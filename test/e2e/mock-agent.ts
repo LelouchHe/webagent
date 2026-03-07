@@ -94,9 +94,13 @@ class MockAgent implements Agent {
   }
 
   async loadSession(params: LoadSessionRequest): Promise<LoadSessionResponse> {
-    const session = this.sessions.get(params.sessionId);
+    let session = this.sessions.get(params.sessionId);
     if (!session) {
-      throw new Error(`Unknown session: ${params.sessionId}`);
+      session = {
+        cwd: params.cwd,
+        configOptions: createConfigOptions(),
+      };
+      this.sessions.set(params.sessionId, session);
     }
     return {
       sessionId: params.sessionId,

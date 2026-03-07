@@ -1,6 +1,6 @@
 // WebSocket connection lifecycle
 
-import { state, dom, setBusy, getHashSessionId, requestNewSession } from './state.js';
+import { state, dom, setBusy, getHashSessionId, requestNewSession, resetSessionUI } from './state.js';
 import { addSystem, finishThinking, finishAssistant, finishBash, scrollToBottom } from './render.js';
 import { handleEvent, loadHistory } from './events.js';
 
@@ -16,6 +16,7 @@ export function connect() {
 
     const existingId = getHashSessionId();
     if (existingId) {
+      resetSessionUI();
       const loaded = await loadHistory(existingId);
       if (loaded) {
         scrollToBottom(true);
@@ -30,6 +31,7 @@ export function connect() {
       const sessions = await res.json();
       if (sessions.length > 0) {
         const last = sessions[0];
+        resetSessionUI();
         const loaded = await loadHistory(last.id);
         if (loaded) {
           scrollToBottom(true);
