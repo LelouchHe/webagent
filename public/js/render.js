@@ -177,8 +177,8 @@ applyTheme(getTheme());
 // --- Click-to-collapse for expanded details (thinking, tool output) ---
 
 dom.messages.addEventListener('click', (e) => {
-  const el = e.target;
-  if (el.classList.contains('thinking-content') || el.classList.contains('tc-content')) {
+  const el = e.target.closest('.thinking-content, .tc-content, .diff-view');
+  if (el) {
     const details = el.closest('details');
     if (details && details.open) {
       details.open = false;

@@ -217,6 +217,7 @@ body {
   max-height: 300px;
   overflow-y: auto;
   line-height: 1.4;
+  cursor: pointer;
 }
 .diff-view .diff-file { color: var(--blue); font-weight: bold; }
 .diff-view .diff-hunk { color: var(--text-dim); }
