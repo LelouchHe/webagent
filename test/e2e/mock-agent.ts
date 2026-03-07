@@ -36,7 +36,10 @@ function createConfigOptions(): SessionConfigOption[] {
       name: "Model",
       category: "model",
       currentValue: "mock-model",
-      options: [{ value: "mock-model", name: "Mock Model" }],
+      options: [
+        { value: "mock-model", name: "Mock Model" },
+        { value: "mock-model-2", name: "Mock Model 2" },
+      ],
     },
     {
       type: "select",
