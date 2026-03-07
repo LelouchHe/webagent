@@ -92,6 +92,7 @@ async function initBridge(): Promise<CopilotBridge> {
             store.saveEvent(event.sessionId, "permission_response", {
               requestId: event.requestId, optionName, denied: false,
             });
+            // Skip broadcasting the permission_request — send resolved directly
             broadcast(wss, {
               type: "permission_resolved",
               sessionId: event.sessionId,
@@ -99,6 +100,7 @@ async function initBridge(): Promise<CopilotBridge> {
               optionName,
               denied: false,
             } as any);
+            return;
           }
         }
         break;
