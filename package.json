@@ -20,6 +20,7 @@
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^25.3.3",
-    "@types/ws": "^8.18.1"
+    "@types/ws": "^8.18.1",
+    "happy-dom": "^20.8.3"
   }
 }
