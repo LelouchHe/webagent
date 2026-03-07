@@ -5,6 +5,8 @@
   "scripts": {
     "test": "node --experimental-strip-types --test test/*.test.ts",
     "dev": "DATA_DIR=data-dev PORT=6801 node --experimental-strip-types --watch src/server.ts",
+    "dev:start": "DATA_DIR=data-dev PORT=6801 node --experimental-strip-types src/server.ts &",
+    "dev:stop": "lsof -ti:6801 | xargs kill 2>/dev/null || true",
     "svc:restart": "launchctl kickstart -k gui/501/com.lelouch.webagent",
     "svc:stop": "launchctl bootout gui/501/com.lelouch.webagent",
     "svc:status": "launchctl print gui/501/com.lelouch.webagent"
