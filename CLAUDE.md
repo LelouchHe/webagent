@@ -24,10 +24,13 @@ Production runs as a macOS launchd service (port 6800).
 Use npm scripts for prod service control:
 
 ```bash
-npm run svc:restart   # restart prod
+npm run svc:restart   # restart prod (also rebuilds assets)
 npm run svc:stop      # stop prod
 npm run svc:status    # check status
+npm run build         # rebuild assets only (no restart needed for frontend-only changes)
 ```
+
+For frontend-only changes (CSS/JS/HTML), `npm run build` is sufficient — the server reads files on each request, and the new build stamp in filenames busts Cloudflare/browser cache. Server restart is only needed for backend (src/) changes.
 
 Do NOT use `start.sh` directly.
 
