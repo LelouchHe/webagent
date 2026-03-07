@@ -77,12 +77,32 @@ async function initBridge(): Promise<CopilotBridge> {
         sessions.flushBuffers(event.sessionId);
         store.saveEvent(event.sessionId, event.type, { entries: event.entries });
         break;
-      case "permission_request":
+      case "permission_request": {
         sessions.flushBuffers(event.sessionId);
         store.saveEvent(event.sessionId, event.type, {
           requestId: event.requestId, title: event.title, options: event.options,
         });
+        // Auto-approve permissions in autopilot mode (allow_once only to avoid persisting across mode switches)
+        const mode = store.getSession(event.sessionId)?.mode ?? "";
+        if (mode.includes("#autopilot")) {
+          const opt = event.options.find((o: any) => o.kind === "allow_once");
+          if (opt) {
+            b.resolvePermission(event.requestId, opt.optionId);
+            const optionName = opt.label ?? opt.optionId;
+            store.saveEvent(event.sessionId, "permission_response", {
+              requestId: event.requestId, optionName, denied: false,
+            });
+            broadcast(wss, {
+              type: "permission_resolved",
+              sessionId: event.sessionId,
+              requestId: event.requestId,
+              optionName,
+              denied: false,
+            } as any);
+          }
+        }
         break;
+      }
       case "prompt_done":
         sessions.flushBuffers(event.sessionId);
         store.saveEvent(event.sessionId, event.type, { stopReason: event.stopReason });
