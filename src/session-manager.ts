@@ -47,7 +47,7 @@ export class SessionManager {
     bridge: SessionBridge,
     cwd?: string,
     inheritFromSessionId?: string,
-  ): Promise<string> {
+  ): Promise<{ sessionId: string; configOptions: ConfigOption[] }> {
     const sessionCwd = cwd ?? this.defaultCwd;
     const sourceSession = inheritFromSessionId
       ? this.store.getSession(inheritFromSessionId)
@@ -73,7 +73,11 @@ export class SessionManager {
       }
     }
 
-    return sessionId;
+    const session = this.store.getSession(sessionId);
+    return {
+      sessionId,
+      configOptions: session ? this.buildConfigOptions(session) : [],
+    };
   }
 
   /** Resume a session — returns event to send to the requesting client. */

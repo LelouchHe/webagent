@@ -59,6 +59,11 @@ describe("SessionManager", () => {
       store.updateSessionConfig("s1", "model", "claude-sonnet-4.6");
       store.updateSessionConfig("s1", "mode", "plan-mode");
       store.updateSessionConfig("s1", "reasoning_effort", "high");
+      sm.cachedConfigOptions = [
+        { id: "model", name: "Model", currentValue: "mock-model", options: [] },
+        { id: "mode", name: "Mode", currentValue: "agent", options: [] },
+        { id: "reasoning_effort", name: "Reasoning", currentValue: "medium", options: [] },
+      ];
 
       const configCalls: Array<{ sessionId: string; configId: string; value: string }> = [];
       const bridge = {
@@ -74,13 +79,22 @@ describe("SessionManager", () => {
         },
       };
 
-      await sm.createSession(bridge, undefined, "s1");
+      const created = await sm.createSession(bridge, undefined, "s1");
 
       // mode is intentionally NOT inherited — new sessions always start in default (agent) mode
       assert.deepEqual(configCalls, [
         { sessionId: "s2", configId: "model", value: "claude-sonnet-4.6" },
         { sessionId: "s2", configId: "reasoning_effort", value: "high" },
       ]);
+      assert.equal(created.sessionId, "s2");
+      assert.deepEqual(
+        created.configOptions.map((opt) => ({ id: opt.id, currentValue: opt.currentValue })),
+        [
+          { id: "model", currentValue: "claude-sonnet-4.6" },
+          { id: "mode", currentValue: "agent" },
+          { id: "reasoning_effort", currentValue: "high" },
+        ],
+      );
       assert.equal(store.getSession("s2")!.model, "claude-sonnet-4.6");
       assert.equal(store.getSession("s2")!.mode, null);
       assert.equal(store.getSession("s2")!.reasoning_effort, "high");
@@ -100,9 +114,11 @@ describe("SessionManager", () => {
         },
       };
 
-      await sm.createSession(bridge);
+      const created = await sm.createSession(bridge);
 
       assert.equal(configCalled, false);
+      assert.equal(created.sessionId, "s2");
+      assert.deepEqual(created.configOptions, []);
       assert.equal(store.getSession("s2")!.model, null);
     });
   });

@@ -63,6 +63,10 @@ function createHarness() {
     deleteSessionCalls: [] as string[],
     async createSession(_bridge: unknown, cwd?: string, inheritFromSessionId?: string) {
       this.createSessionCalls.push({ cwd, inheritFromSessionId });
+      return {
+        sessionId: "created-session",
+        configOptions: [{ id: "model", name: "Model", currentValue: "mock-model-2", options: [] }],
+      };
     },
     async resumeSession(_bridge: unknown, sessionId: string) {
       this.resumeSessionCalls.push(sessionId);
@@ -174,6 +178,11 @@ describe("setupWsHandler", () => {
     assert.deepEqual(harness.sessions.createSessionCalls, [
       { cwd: "/repo", inheritFromSessionId: "s1" },
     ]);
+    assert.deepEqual(JSON.parse(harness.sender.sent[0]), {
+      type: "config_option_update",
+      sessionId: "created-session",
+      configOptions: [{ id: "model", name: "Model", currentValue: "mock-model-2", options: [] }],
+    });
   });
 
   it("returns the resume event for a valid session", async () => {
