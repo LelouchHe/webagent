@@ -76,13 +76,13 @@ describe("SessionManager", () => {
 
       await sm.createSession(bridge, undefined, "s1");
 
+      // mode is intentionally NOT inherited — new sessions always start in default (agent) mode
       assert.deepEqual(configCalls, [
         { sessionId: "s2", configId: "model", value: "claude-sonnet-4.6" },
-        { sessionId: "s2", configId: "mode", value: "plan-mode" },
         { sessionId: "s2", configId: "reasoning_effort", value: "high" },
       ]);
       assert.equal(store.getSession("s2")!.model, "claude-sonnet-4.6");
-      assert.equal(store.getSession("s2")!.mode, "plan-mode");
+      assert.equal(store.getSession("s2")!.mode, null);
       assert.equal(store.getSession("s2")!.reasoning_effort, "high");
     });
 

@@ -59,7 +59,6 @@ export class SessionManager {
     if (sourceSession) {
       const inherited: Array<{ configId: string; value: string | null }> = [
         { configId: "model", value: sourceSession.model },
-        { configId: "mode", value: sourceSession.mode },
         { configId: "reasoning_effort", value: sourceSession.reasoning_effort },
       ];
       for (const { configId, value } of inherited) {
