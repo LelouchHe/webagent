@@ -64,6 +64,7 @@ function createConfigOptions(): SessionConfigOption[] {
 class MockAgent implements Agent {
   private sessions = new Map<string, SessionState>();
   private conn: AgentSideConnection;
+  private toolCallCounter = 0;
 
   constructor(conn: AgentSideConnection) {
     this.conn = conn;
@@ -115,6 +116,59 @@ class MockAgent implements Agent {
       .map((part) => part.text)
       .join(" ")
       .trim();
+
+    if (text.startsWith("E2E_PERMISSION")) {
+      const toolCallId = `tool-${++this.toolCallCounter}`;
+      const title = "Sensitive command";
+      await this.conn.sessionUpdate({
+        sessionId: params.sessionId,
+        update: {
+          sessionUpdate: "tool_call",
+          toolCallId,
+          title,
+          kind: "execute",
+          rawInput: { command: "echo sensitive" },
+        },
+      });
+      const permission = await this.conn.requestPermission({
+        sessionId: params.sessionId,
+        toolCall: {
+          toolCallId,
+          title,
+          kind: "execute",
+          status: "pending",
+          rawInput: { command: "echo sensitive" },
+        },
+        options: [
+          { optionId: "allow", kind: "allow_once", name: "Allow" },
+          { optionId: "deny", kind: "reject_once", name: "Deny" },
+        ],
+      });
+      await this.conn.sessionUpdate({
+        sessionId: params.sessionId,
+        update: {
+          sessionUpdate: "tool_call_update",
+          toolCallId,
+          status: permission.outcome.outcome === "selected" ? "completed" : "failed",
+        },
+      });
+      await this.conn.sessionUpdate({
+        sessionId: params.sessionId,
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          content: {
+            type: "text",
+            text: permission.outcome.outcome === "selected"
+              ? "Permission granted"
+              : "Permission denied",
+          },
+        },
+      });
+      return {
+        stopReason: permission.outcome.outcome === "selected" ? "end_turn" : "cancelled",
+      };
+    }
+
     await this.conn.sessionUpdate({
       sessionId: params.sessionId,
       update: {

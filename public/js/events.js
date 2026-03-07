@@ -361,7 +361,9 @@ export function handleEvent(msg) {
             optionName: opt.name,
             denied: isDeny,
           }));
+          state.pendingPermissionRequestIds.delete(msg.requestId);
           permEl.innerHTML = `<span style="opacity:0.5">⚿ ${escHtml(msg.title)} — ${escHtml(opt.name)}</span>`;
+          finishPromptIfIdle();
         };
         permEl.appendChild(btn);
       });

@@ -1,10 +1,10 @@
 import { test, expect } from "playwright/test";
+import { currentSessionId, gotoConnected } from "./helpers.ts";
 
-test("first visit auto-creates a session and reaches connected state", async ({ page }) => {
-  await page.goto("/");
+test("app boots into a connected usable session", async ({ page }) => {
+  await gotoConnected(page);
 
-  await expect(page.locator("#status")).toHaveText("connected");
+  await expect.poll(() => currentSessionId(page)).not.toBe("");
   await expect(page.locator("#session-info")).not.toHaveText("");
-  await expect(page.locator("#messages")).toContainText("Session created:");
   await expect(page.locator("#input")).toBeEnabled();
 });

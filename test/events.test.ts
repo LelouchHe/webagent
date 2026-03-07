@@ -258,6 +258,26 @@ describe("events", () => {
         assert.equal(msg.requestId, "perm2");
         assert.equal(msg.denied, false);
       });
+
+      it("clears local pending permission state after the user responds", () => {
+        const ws = createMockWS();
+        state.ws = ws;
+        state.sessionId = "s1";
+        state.busy = true;
+        events.handleEvent({
+          type: "permission_request",
+          requestId: "perm-local",
+          title: "Allow?",
+          options: [{ optionId: "allow", kind: "allow_once", name: "Allow" }],
+        });
+
+        const btn = dom.messages.querySelector(".permission button");
+        btn.click();
+        events.handleEvent({ type: "prompt_done" });
+
+        assert.equal(state.pendingPermissionRequestIds.has("perm-local"), false);
+        assert.equal(state.busy, false);
+      });
     });
 
     describe("permission_resolved", () => {
