@@ -6,7 +6,7 @@ import {
 } from './state.js';
 import {
   addMessage, addSystem, finishAssistant, finishThinking, hideWaiting,
-  scrollToBottom, renderMd, escHtml, renderPatchDiff, addBashBlock, finishBash,
+  scrollToBottom, renderMd, escHtml, renderPatchDiff, addBashBlock, finishBash, appendMessageElement,
   formatLocalTime,
 } from './render.js';
 
@@ -46,7 +46,7 @@ export function replayEvent(type, data, events, idx) {
       const el = document.createElement('details');
       el.className = 'thinking';
       el.innerHTML = `<summary>⠿ thought</summary><div class="thinking-content">${escHtml(data.text)}</div>`;
-      dom.messages.appendChild(el);
+      appendMessageElement(el);
       break;
     }
     case 'tool_call': {
@@ -76,7 +76,7 @@ export function replayEvent(type, data, events, idx) {
           detail.classList.toggle('expanded');
         });
       }
-      dom.messages.appendChild(el);
+      appendMessageElement(el);
       break;
     }
     case 'tool_call_update': {
@@ -97,7 +97,7 @@ export function replayEvent(type, data, events, idx) {
           const s = { pending: '○', in_progress: '◉', completed: '●' }[e.status] || '?';
           return `<div class="plan-entry">${s} ${escHtml(e.content)}</div>`;
         }).join('');
-      dom.messages.appendChild(el);
+      appendMessageElement(el);
       break;
     }
     case 'permission_request': {
@@ -131,7 +131,7 @@ export function replayEvent(type, data, events, idx) {
           el.appendChild(btn);
         });
       }
-      dom.messages.appendChild(el);
+      appendMessageElement(el);
       break;
     }
     case 'permission_response': {
@@ -227,7 +227,7 @@ export function handleEvent(msg) {
         state.currentThinkingEl.className = 'thinking';
         state.currentThinkingEl.innerHTML = '<summary class="active">⠿ thinking...</summary><div class="thinking-content"></div>';
         state.currentThinkingText = '';
-        dom.messages.appendChild(state.currentThinkingEl);
+        appendMessageElement(state.currentThinkingEl);
       }
       state.currentThinkingText += msg.text;
       state.currentThinkingEl.querySelector('.thinking-content').textContent = state.currentThinkingText;
@@ -265,8 +265,7 @@ export function handleEvent(msg) {
           detail.classList.toggle('expanded');
         });
       }
-      dom.messages.appendChild(el);
-      scrollToBottom();
+      appendMessageElement(el);
       break;
     }
 
@@ -307,8 +306,7 @@ export function handleEvent(msg) {
           const s = { pending: '○', in_progress: '◉', completed: '●' }[e.status] || '?';
           return `<div class="plan-entry">${s} ${escHtml(e.content)}</div>`;
         }).join('');
-      dom.messages.appendChild(el);
-      scrollToBottom();
+      appendMessageElement(el);
       break;
     }
 
@@ -337,8 +335,7 @@ export function handleEvent(msg) {
         };
         permEl.appendChild(btn);
       });
-      dom.messages.appendChild(permEl);
-      scrollToBottom();
+      appendMessageElement(permEl);
       break;
     }
 

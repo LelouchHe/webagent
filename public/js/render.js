@@ -15,8 +15,7 @@ export function addMessage(role, text) {
   const el = document.createElement('div');
   el.className = `msg ${role}`;
   el.innerHTML = role === 'user' ? escHtml(text).replace(/\n/g, '<br>') : renderMd(text);
-  dom.messages.appendChild(el);
-  scrollToBottom();
+  appendMessageElement(el);
   return el;
 }
 
@@ -24,8 +23,7 @@ export function addSystem(text) {
   const el = document.createElement('div');
   el.className = 'system-msg';
   el.textContent = text;
-  dom.messages.appendChild(el);
-  scrollToBottom();
+  appendMessageElement(el);
 }
 
 export function finishAssistant() {
@@ -57,13 +55,23 @@ function updateScrollFollowState() {
 
 dom.messages.addEventListener('scroll', updateScrollFollowState);
 
+function shouldFollowNewContent() {
+  return state.followMessages || isNearBottom(dom.messages);
+}
+
+export function appendMessageElement(el, force = false) {
+  const shouldFollow = force || shouldFollowNewContent();
+  dom.messages.appendChild(el);
+  scrollToBottom(shouldFollow);
+  return el;
+}
+
 export function showWaiting() {
   hideWaiting();
   waitingEl = document.createElement('div');
   waitingEl.id = 'waiting';
   waitingEl.innerHTML = '<span class="cursor">▌</span>';
-  dom.messages.appendChild(waitingEl);
-  scrollToBottom(true);
+  appendMessageElement(waitingEl, true);
 }
 export function hideWaiting() {
   if (waitingEl) { waitingEl.remove(); waitingEl = null; }
@@ -150,8 +158,7 @@ export function addBashBlock(command, running = false) {
       out.style.display = 'none';
     }
   };
-  dom.messages.appendChild(el);
-  scrollToBottom();
+  appendMessageElement(el);
   if (running) state.currentBashEl = el;
   return el;
 }

@@ -232,6 +232,16 @@ describe("render", () => {
       assert.ok(el.querySelector(".bash-cmd").classList.contains("running"));
       assert.equal(state.currentBashEl, el);
     });
+
+    it("recomputes follow state from the pre-append position", () => {
+      state.followMessages = false;
+      setMessagesScrollMetrics({ scrollTop: 400, scrollHeight: 600, clientHeight: 200 });
+
+      render.addBashBlock("npm test", true);
+
+      assert.equal(dom.messages.scrollTop, 600);
+      assert.equal(state.followMessages, true);
+    });
   });
 
   describe("finishBash", () => {
