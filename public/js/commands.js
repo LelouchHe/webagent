@@ -55,6 +55,25 @@ export async function handleSlashCommand(text) {
       return true;
     }
 
+    case '/prune': {
+      try {
+        const res = await fetch('/api/sessions');
+        const sessions = await res.json();
+        const toDelete = sessions.filter(s => s.id !== state.sessionId);
+        if (toDelete.length === 0) {
+          addSystem('No other sessions to prune.');
+          return true;
+        }
+        for (const s of toDelete) {
+          state.ws.send(JSON.stringify({ type: 'delete_session', sessionId: s.id }));
+        }
+        addSystem(`Pruned ${toDelete.length} session(s).`);
+      } catch {
+        addSystem('err: Failed to prune sessions');
+      }
+      return true;
+    }
+
     case '/switch': {
       if (!arg) {
         addSystem('Usage: /switch <title or id prefix>');
@@ -101,6 +120,7 @@ export async function handleSlashCommand(text) {
       addSystem('/cancel — Cancel current response');
       addSystem('/switch <title|id> — Switch to session (title or id prefix match)');
       addSystem('/delete <title|id> — Delete a session');
+      addSystem('/prune — Delete all sessions except current');
       addSystem('/help — Show this help');
       addSystem('--- Shortcuts ---');
       addSystem('Enter — Send message');
@@ -160,6 +180,7 @@ const SLASH_COMMANDS = [
   { cmd: '/cancel',   args: '',            desc: 'Cancel current response' },
   { cmd: '/delete',   args: '<title|id>',  desc: 'Delete a session' },
   { cmd: '/help',     args: '',            desc: 'Show help' },
+  { cmd: '/prune',    args: '',            desc: 'Delete all sessions except current' },
   { cmd: '/mode',     args: '[name]',      desc: 'Pick or switch mode' },
   { cmd: '/model',    args: '[name]',      desc: 'Pick or switch model' },
   { cmd: '/new',      args: '[cwd]',       desc: 'New session' },

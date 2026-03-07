@@ -116,6 +116,7 @@ Type `/` to trigger an autocomplete menu (arrow keys to navigate, Tab to select,
 | `/cancel` | Cancel current response |
 | `/switch <title\|id>` | Switch to a session (match by title or ID prefix) |
 | `/delete <title\|id>` | Delete a session |
+| `/prune` | Delete all sessions except current |
 | `/help` | Show help |
 
 ### Keyboard Shortcuts
