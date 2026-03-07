@@ -70,7 +70,12 @@ export function replayEvent(type, data, events, idx) {
         el.appendChild(details);
       }
       const detail = el.querySelector('.tc-detail');
-      if (detail) el.onclick = () => detail.classList.toggle('expanded');
+      if (detail) {
+        el.addEventListener('click', (e) => {
+          if (e.target.closest('details')) return;
+          detail.classList.toggle('expanded');
+        });
+      }
       dom.messages.appendChild(el);
       break;
     }
@@ -253,7 +258,13 @@ export function handleEvent(msg) {
         el.appendChild(details);
       }
       const detail = el.querySelector('.tc-detail');
-      if (detail) el.onclick = () => detail.classList.toggle('expanded');
+      if (detail) {
+        el.addEventListener('click', (e) => {
+          // Don't toggle tc-detail when clicking inside a <details> element
+          if (e.target.closest('details')) return;
+          detail.classList.toggle('expanded');
+        });
+      }
       dom.messages.appendChild(el);
       scrollToBottom();
       break;
