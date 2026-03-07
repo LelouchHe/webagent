@@ -1,0 +1,23 @@
+# WebAgent production configuration
+
+# HTTP/WebSocket server port
+port = 6800
+
+# SQLite + uploads directory
+data_dir = "data"
+
+# Working directory for new sessions
+default_cwd = "/Users/lelouch/mine/space"
+
+# Static assets directory
+public_dir = "dist"
+
+# ACP agent command (binary + args, space-separated)
+agent_cmd = "copilot --acp"
+
+[limits]
+# Max bash output stored in DB per command (bytes, default 1 MB)
+bash_output = 1_048_576
+
+# Max image upload size (bytes, default 10 MB)
+image_upload = 10_485_760

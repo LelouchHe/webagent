@@ -1,0 +1,10 @@
+# WebAgent development configuration
+
+port = 6801
+data_dir = "data-dev"
+public_dir = "public"
+agent_cmd = "copilot --acp"
+
+[limits]
+bash_output = 1_048_576
+image_upload = 10_485_760

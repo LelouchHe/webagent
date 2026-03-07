@@ -22,6 +22,7 @@ export function setupDOM() {
   globalThis.HTMLElement = win.HTMLElement as any;
   globalThis.WebSocket = (win.WebSocket ?? class MockWS {}) as any;
   globalThis.marked = { setOptions: () => {}, parse: (t: string) => `<p>${t}</p>` } as any;
+  globalThis.DOMPurify = { sanitize: (html: string) => html.replace(/<script[\s\S]*?<\/script>/gi, "") } as any;
 
   win.document.body.innerHTML = HTML;
 }

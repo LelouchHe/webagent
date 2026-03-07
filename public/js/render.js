@@ -6,7 +6,7 @@ import { dom, state } from './state.js';
 marked.setOptions({ breaks: true, gfm: true });
 
 export function renderMd(text) {
-  return marked.parse(text);
+  return DOMPurify.sanitize(marked.parse(text));
 }
 
 // --- Message helpers ---
@@ -14,7 +14,7 @@ export function renderMd(text) {
 export function addMessage(role, text) {
   const el = document.createElement('div');
   el.className = `msg ${role}`;
-  el.innerHTML = role === 'user' ? escHtml(text).replace(/\n/g, '<br>') : renderMd(text);
+  el.innerHTML = renderMd(text);
   dom.messages.appendChild(el);
   scrollToBottom();
   return el;

@@ -12,9 +12,9 @@ export class AgentBridge extends EventEmitter {
   private silentBuffers = new Map<string, string>(); // Text buffers for silent sessions
   readonly agentCmd: string;
 
-  constructor(agentCmd?: string) {
+  constructor(agentCmd: string) {
     super();
-    this.agentCmd = agentCmd ?? process.env.AGENT_CMD ?? "copilot --acp";
+    this.agentCmd = agentCmd;
   }
 
   async start(): Promise<void> {

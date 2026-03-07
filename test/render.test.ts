@@ -97,12 +97,18 @@ describe("render", () => {
   });
 
   describe("addMessage", () => {
-    it("adds user message with escaped HTML", () => {
+    it("adds user message with sanitized HTML", () => {
       const el = render.addMessage("user", "<script>alert(1)</script>");
       assert.ok(el.classList.contains("msg"));
       assert.ok(el.classList.contains("user"));
       assert.ok(!el.innerHTML.includes("<script>"));
       assert.equal(dom.messages.children.length, 1);
+    });
+
+    it("adds user message with markdown rendering", () => {
+      const el = render.addMessage("user", "hello **world**");
+      assert.ok(el.classList.contains("user"));
+      assert.ok(el.innerHTML.includes("<p>"));
     });
 
     it("adds assistant message with markdown", () => {

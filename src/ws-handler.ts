@@ -6,6 +6,7 @@ import type { AgentBridge } from "./bridge.ts";
 import type { Store } from "./store.ts";
 import type { SessionManager } from "./session-manager.ts";
 import type { TitleService } from "./title-service.ts";
+import type { Config } from "./config.ts";
 
 interface WsHandlerDeps {
   wss: WebSocketServer;
@@ -13,6 +14,7 @@ interface WsHandlerDeps {
   sessions: SessionManager;
   titleService: TitleService;
   getBridge: () => AgentBridge | null;
+  limits: Config["limits"];
 }
 
 export function broadcast(wss: WebSocketServer, event: AgentEvent, exclude?: WebSocket): void {
@@ -31,7 +33,7 @@ function send(ws: WebSocket, event: AgentEvent): void {
 }
 
 export function setupWsHandler(deps: WsHandlerDeps): void {
-  const { wss, store, sessions, titleService, getBridge } = deps;
+  const { wss, store, sessions, titleService, getBridge, limits } = deps;
 
   wss.on("connection", (ws) => {
     console.log(`[ws] client connected (total: ${wss.clients.size})`);
@@ -179,10 +181,20 @@ export function setupWsHandler(deps: WsHandlerDeps): void {
             });
             sessions.runningBashProcs.set(msg.sessionId, child);
             let output = "";
+            let outputTruncated = false;
 
             const onData = (stream: string) => (chunk: Buffer) => {
               const text = chunk.toString();
-              output += text;
+              if (!outputTruncated) {
+                output += text;
+                if (output.length > limits.bash_output) {
+                  output = output.slice(-limits.bash_output);
+                  outputTruncated = true;
+                }
+              } else {
+                // Keep only the tail within the limit
+                output = (output + text).slice(-limits.bash_output);
+              }
               broadcast(wss, { type: "bash_output", sessionId: msg.sessionId, text, stream } as any);
             };
             child.stdout!.on("data", onData("stdout"));
@@ -190,7 +202,8 @@ export function setupWsHandler(deps: WsHandlerDeps): void {
 
             child.on("close", (code, signal) => {
               sessions.runningBashProcs.delete(msg.sessionId);
-              store.saveEvent(msg.sessionId, "bash_result", { output, code, signal });
+              const stored = outputTruncated ? "[truncated]\n" + output : output;
+              store.saveEvent(msg.sessionId, "bash_result", { output: stored, code, signal });
               broadcast(wss, { type: "bash_done", sessionId: msg.sessionId, code, signal } as any);
             });
 

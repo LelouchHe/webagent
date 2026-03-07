@@ -42,7 +42,10 @@ describe("HTTP routes", () => {
     writeFileSync(join(publicDir, "index.html"), "<h1>Test</h1>");
 
     store = new Store(tmpDir);
-    const handler = createRequestHandler(store, publicDir, tmpDir);
+    const handler = createRequestHandler(store, publicDir, tmpDir, {
+      bash_output: 1_048_576,
+      image_upload: 10_485_760,
+    });
     server = http.createServer(handler);
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     port = (server.address() as { port: number }).port;

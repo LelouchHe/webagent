@@ -2,6 +2,9 @@ import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { join, extname } from "node:path";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Store } from "./store.ts";
+import type { Config } from "./config.ts";
+
+const SAFE_ID = /^[a-zA-Z0-9_-]+$/;
 
 const MIME: Record<string, string> = {
   ".html": "text/html",
@@ -16,7 +19,7 @@ const MIME: Record<string, string> = {
   ".webp": "image/webp",
 };
 
-export function createRequestHandler(store: Store, publicDir: string, dataDir: string) {
+export function createRequestHandler(store: Store, publicDir: string, dataDir: string, limits: Config["limits"]) {
   return async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     const url = req.url ?? "/";
 
@@ -51,10 +54,38 @@ export function createRequestHandler(store: Store, publicDir: string, dataDir: s
       const imgMatch = url.match(/^\/api\/images\/([^/]+)$/);
       if (imgMatch && req.method === "POST") {
         const sessionId = decodeURIComponent(imgMatch[1]);
+        if (!SAFE_ID.test(sessionId)) {
+          res.writeHead(400);
+          res.end(JSON.stringify({ error: "Invalid session ID" }));
+          return;
+        }
+        // Enforce upload size limit
+        const contentLength = parseInt(req.headers["content-length"] ?? "0", 10);
+        if (contentLength > limits.image_upload) {
+          res.writeHead(413);
+          res.end(JSON.stringify({ error: "Upload too large" }));
+          return;
+        }
         const chunks: Buffer[] = [];
-        for await (const chunk of req) chunks.push(chunk as Buffer);
-        const body = JSON.parse(Buffer.concat(chunks).toString());
-        const { data, mimeType } = body as { data: string; mimeType: string };
+        let totalSize = 0;
+        for await (const chunk of req) {
+          totalSize += (chunk as Buffer).length;
+          if (totalSize > limits.image_upload) {
+            res.writeHead(413);
+            res.end(JSON.stringify({ error: "Upload too large" }));
+            return;
+          }
+          chunks.push(chunk as Buffer);
+        }
+        let body: { data: string; mimeType: string };
+        try {
+          body = JSON.parse(Buffer.concat(chunks).toString());
+        } catch {
+          res.writeHead(400);
+          res.end(JSON.stringify({ error: "Invalid JSON" }));
+          return;
+        }
+        const { data, mimeType } = body;
         const ext = mimeType.split("/")[1]?.replace("jpeg", "jpg") ?? "png";
         const seq = Date.now();
         const relPath = `images/${sessionId}/${seq}.${ext}`;

@@ -37,23 +37,33 @@ Do NOT use `start.sh` directly.
 ## Development
 
 ```bash
-npm run dev           # dev server on port 6801, uses data-dev/
+npm run dev           # dev server on port 6801, uses config.dev.toml
 ```
 
-## Environment Variables
+## Configuration
 
-| Variable | Default | Description |
+Configuration is via TOML files, passed with `--config`:
+
+```bash
+node --experimental-strip-types src/server.ts --config config.toml
+```
+
+If no `--config` is provided, all settings use built-in defaults. See `config.toml` for production settings and `config.dev.toml` for development.
+
+| Key | Default | Description |
 |---|---|---|
-| `PORT` | `6800` | HTTP/WebSocket server port |
-| `DATA_DIR` | `data` | SQLite + uploads directory |
-| `DEFAULT_CWD` | `process.cwd()` | Working directory for new sessions |
-| `PUBLIC_DIR` | `dist` | Static assets directory |
-| `AGENT_CMD` | `copilot --acp` | ACP agent command (binary + args, space-separated) |
+| `port` | `6800` | HTTP/WebSocket server port |
+| `data_dir` | `data` | SQLite + uploads directory |
+| `default_cwd` | `process.cwd()` | Working directory for new sessions |
+| `public_dir` | `dist` | Static assets directory |
+| `agent_cmd` | `copilot --acp` | ACP agent command (binary + args, space-separated) |
+| `limits.bash_output` | `1048576` (1 MB) | Max bash output stored in DB per command |
+| `limits.image_upload` | `10485760` (10 MB) | Max image upload size |
 
 To use a different ACP-compatible agent backend:
 
-```bash
-AGENT_CMD="my-agent --acp" npm run dev
+```toml
+agent_cmd = "my-agent --acp"
 ```
 
 ## Architecture Notes

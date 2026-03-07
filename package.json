@@ -5,8 +5,8 @@
   "scripts": {
     "build": "node scripts/build.js",
     "test": "node --experimental-strip-types --test test/*.test.ts",
-    "dev": "PUBLIC_DIR=public DATA_DIR=data-dev PORT=6801 node --experimental-strip-types --watch src/server.ts",
-    "dev:start": "PUBLIC_DIR=public DATA_DIR=data-dev PORT=6801 node --experimental-strip-types src/server.ts &",
+    "dev": "node --experimental-strip-types --watch src/server.ts --config config.dev.toml",
+    "dev:start": "node --experimental-strip-types src/server.ts --config config.dev.toml &",
     "dev:stop": "lsof -ti:6801 | xargs kill 2>/dev/null || true",
     "svc:restart": "launchctl kickstart -k gui/501/com.lelouch.webagent",
     "svc:stop": "launchctl bootout gui/501/com.lelouch.webagent",
@@ -15,6 +15,7 @@
   "dependencies": {
     "@agentclientprotocol/sdk": "^0.14.1",
     "better-sqlite3": "^12.6.2",
+    "smol-toml": "^1.6.0",
     "ws": "^8.19.0",
     "zod": "^4.3.6"
   },
