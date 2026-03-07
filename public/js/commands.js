@@ -183,6 +183,14 @@ function updateSlashMenu() {
     slashDismissed = null;
   }
 
+  // /new — show path picker
+  const newMatch = text.match(/^\/new /);
+  if (newMatch && !state.busy) {
+    const query = text.slice(newMatch[0].length).toLowerCase();
+    fetchPathsForMenu(query);
+    return;
+  }
+
   // /switch or /delete — show session picker
   const switchMatch = text.match(/^\/(switch|delete) /);
   if (switchMatch && !state.busy) {
@@ -241,6 +249,37 @@ async function fetchSessionsForMenu(query, mode = 'switch') {
   dom.slashMenu.classList.add('active');
 }
 
+async function fetchPathsForMenu(query) {
+  if (!cachedSessions) {
+    try {
+      const res = await fetch('/api/sessions');
+      cachedSessions = await res.json();
+      setTimeout(() => { cachedSessions = null; }, 5000);
+    } catch { return; }
+  }
+  slashMode = 'new';
+  // Deduplicate paths, keeping the most recent last_active_at for each
+  const pathMap = new Map();
+  for (const s of cachedSessions) {
+    const existing = pathMap.get(s.cwd);
+    if (!existing || (s.last_active_at || s.created_at) > (existing.time)) {
+      pathMap.set(s.cwd, { cwd: s.cwd, time: s.last_active_at || s.created_at });
+    }
+  }
+  let items = [...pathMap.values()].sort((a, b) => b.time.localeCompare(a.time));
+  if (query) {
+    items = items.filter(p => p.cwd.toLowerCase().includes(query));
+  }
+  slashFiltered = items;
+  if (slashFiltered.length === 0) {
+    hideSlashMenu();
+    return;
+  }
+  slashIdx = 0;
+  renderSlashMenu();
+  dom.slashMenu.classList.add('active');
+}
+
 function showConfigMenu(configId, query) {
   const opt = getConfigOption(configId);
   if (!opt) { hideSlashMenu(); return; }
@@ -260,7 +299,15 @@ function showConfigMenu(configId, query) {
 }
 
 function renderSlashMenu() {
-  if (slashMode === 'config') {
+  if (slashMode === 'new') {
+    const currentCwd = (state.sessionCwd || '').toLowerCase();
+    dom.slashMenu.innerHTML = slashFiltered.map((p, i) => {
+      const isCurrent = p.cwd.toLowerCase() === currentCwd;
+      const prefix = isCurrent ? '* ' : '  ';
+      const style = isCurrent ? ' style="color:var(--green)"' : '';
+      return `<div class="slash-item${i === slashIdx ? ' selected' : ''}" data-idx="${i}"><span class="slash-cmd"${style}>${escHtml(prefix + p.cwd)}</span></div>`;
+    }).join('');
+  } else if (slashMode === 'config') {
     const current = getConfigValue(slashConfigId)?.toLowerCase() || '';
     dom.slashMenu.innerHTML = slashFiltered.map((o, i) => {
       const isCurrent = o.value.toLowerCase() === current;
@@ -298,7 +345,14 @@ export function hideSlashMenu() {
 function selectSlashItem(idx) {
   if (idx < 0 || idx >= slashFiltered.length) return;
 
-  if (slashMode === 'config') {
+  if (slashMode === 'new') {
+    const p = slashFiltered[idx];
+    dom.input.value = '';
+    hideSlashMenu();
+    resetSessionUI();
+    addSystem('Creating new session…');
+    requestNewSession({ cwd: p.cwd });
+  } else if (slashMode === 'config') {
     const o = slashFiltered[idx];
     const configId = slashConfigId;
     const opt = getConfigOption(configId);
@@ -325,7 +379,7 @@ function selectSlashItem(idx) {
     dom.input.value = item.cmd + (item.args ? ' ' : '');
     hideSlashMenu();
     dom.input.focus();
-    if (['/switch', '/delete', '/model', '/mode', '/think'].includes(item.cmd)) {
+    if (['/new', '/switch', '/delete', '/model', '/mode', '/think'].includes(item.cmd)) {
       slashDismissed = null;
       updateSlashMenu();
     }
