@@ -14,7 +14,7 @@ export function renderMd(text) {
 export function addMessage(role, text) {
   const el = document.createElement('div');
   el.className = `msg ${role}`;
-  el.innerHTML = renderMd(text);
+  el.innerHTML = role === 'user' ? escHtml(text).replace(/\n/g, '<br>') : renderMd(text);
   dom.messages.appendChild(el);
   scrollToBottom();
   return el;
