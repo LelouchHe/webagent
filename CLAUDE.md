@@ -78,6 +78,9 @@ AGENT_CMD="my-agent --acp" npm run dev
 - **Silent internal session**: Title generation uses a dedicated silent ACP session and intentionally suppresses normal event emission for that session.
 - **Agent-dependent model switching**: Model switching depends on agent support and currently goes through the SDK's unstable session-model API.
 
+- **No context visibility**: ACP does not expose context window usage, token counts, or remaining capacity. The agent's context state is a black box — no way to query how full the context is.
+- **No compact/clear**: ACP has no method to compact, summarize, or clear session context. The only way to reset context is to create a new session. `unstable_forkSession` exists but is experimental.
+
 Keep this distinction clear in docs and code discussions: some missing capabilities are ACP/product-specific, but several current gaps are implementation choices in this repo rather than hard protocol limits.
 
 ## Frontend Conventions
