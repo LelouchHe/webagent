@@ -13,7 +13,9 @@ Core modules:
 - `store.ts` — SQLite persistence (sessions + events tables)
 - `title-service.ts` — Async session title generation (dedicated Haiku session)
 - `types.ts` — Shared types + Zod schemas for WS messages
-- `public/index.html` — single-file frontend (no build step)
+- `public/index.html` — HTML shell (imports CSS + JS modules)
+- `public/styles.css` — all CSS
+- `public/js/` — frontend ES modules (state, render, events, commands, images, input, connection, app)
 
 Production runs as a macOS launchd service (port 6800).
 
@@ -61,7 +63,8 @@ Keep this distinction clear in docs and code discussions: some missing capabilit
 
 ## Frontend Conventions
 
-- **Single HTML file** — all JS/CSS inline, no build tools.
+- **No build step** — ES modules (`<script type="module">`) + external CSS, served directly by Node. No bundler.
+- **Module structure** — `public/js/state.js` (shared state + DOM refs), `render.js` (UI helpers + theme), `events.js` (WS event dispatch + history), `commands.js` (slash commands + autocomplete), `images.js` (attach/paste), `input.js` (send/keyboard), `connection.js` (WS lifecycle), `app.js` (boot entry).
 - **Terminal aesthetic** — monospace fonts, `^C` / `^U` style button labels, `*` git-branch-style session markers.
 - **Keyboard shortcuts** — `Ctrl+C` cancel, `Ctrl+U` upload. Enter only sends (never cancels).
 - **Theme** — dark/light/auto, persisted to localStorage.

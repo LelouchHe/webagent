@@ -1,0 +1,123 @@
+// User input handling: send, cancel, keyboard shortcuts
+
+import { state, dom, setBusy, sendCancel, requestNewSession } from './state.js';
+import { addMessage, addSystem, addBashBlock, showWaiting } from './render.js';
+import { handleSlashCommand, hideSlashMenu, handleSlashMenuKey } from './commands.js';
+import { renderAttachPreview } from './images.js';
+
+function sendMessage() {
+  const text = dom.input.value.trim();
+  if (!text && state.pendingImages.length === 0) return;
+  if (state.busy) return;
+
+  dom.input.value = '';
+  dom.input.style.height = 'auto';
+  dom.inputArea.classList.remove('bash-mode');
+
+  if (text.startsWith('/') && state.pendingImages.length === 0) {
+    handleSlashCommand(text);
+    return;
+  }
+
+  // "!" bash command
+  if (text.startsWith('!') && state.pendingImages.length === 0) {
+    const command = text.slice(1).trim();
+    if (!command) return;
+    if (!state.sessionId) {
+      addSystem('warn: Session not ready yet, please wait…');
+      return;
+    }
+    addBashBlock(command, true);
+    state.ws.send(JSON.stringify({ type: 'bash_exec', sessionId: state.sessionId, command }));
+    setBusy(true);
+    return;
+  }
+
+  if (!state.sessionId) {
+    addSystem('warn: Session not ready yet, please wait…');
+    return;
+  }
+
+  // Show user message with image thumbnails
+  const msgEl = addMessage('user', text || '(image)');
+  for (const img of state.pendingImages) {
+    const imgEl = document.createElement('img');
+    imgEl.className = 'user-image';
+    imgEl.src = img.previewUrl;
+    msgEl.appendChild(imgEl);
+  }
+
+  // Upload images to server, then send prompt
+  const images = state.pendingImages.slice();
+  state.pendingImages.length = 0;
+  renderAttachPreview();
+
+  if (images.length > 0) {
+    Promise.all(images.map(img =>
+      fetch(`/api/images/${state.sessionId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ data: img.data, mimeType: img.mimeType }),
+      }).then(r => r.json()).then(j => ({ data: img.data, mimeType: img.mimeType, path: j.path }))
+    )).then(uploaded => {
+      state.ws.send(JSON.stringify({ type: 'prompt', sessionId: state.sessionId, text: text || 'What is in this image?', images: uploaded }));
+    });
+  } else {
+    state.ws.send(JSON.stringify({ type: 'prompt', sessionId: state.sessionId, text }));
+  }
+  setBusy(true);
+  showWaiting();
+}
+
+function doCancel() {
+  if (sendCancel()) addSystem('^C');
+}
+
+// --- Event listeners ---
+
+dom.sendBtn.onclick = () => state.busy ? doCancel() : sendMessage();
+
+dom.input.addEventListener('keydown', (e) => {
+  // Slash menu navigation
+  if (handleSlashMenuKey(e)) {
+    e.preventDefault();
+    return;
+  }
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    hideSlashMenu();
+    if (!state.busy) {
+      sendMessage();
+    }
+    return;
+  }
+  // Ctrl+C to cancel
+  if (e.key === 'c' && (e.ctrlKey || e.metaKey) && !e.shiftKey) {
+    if (state.busy) {
+      e.preventDefault();
+      doCancel();
+      return;
+    }
+  }
+  // Ctrl+U to upload file
+  if (e.key === 'u' && (e.ctrlKey || e.metaKey) && !e.shiftKey) {
+    e.preventDefault();
+    dom.fileInput.click();
+    return;
+  }
+});
+
+// Global Escape to dismiss slash menu
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && dom.slashMenu.classList.contains('active')) {
+    e.preventDefault();
+    hideSlashMenu();
+    dom.input.focus();
+  }
+});
+
+// Auto-resize textarea
+dom.input.addEventListener('input', () => {
+  dom.input.style.height = 'auto';
+  dom.input.style.height = Math.min(dom.input.scrollHeight, 200) + 'px';
+});
