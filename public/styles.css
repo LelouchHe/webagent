@@ -65,15 +65,25 @@ body {
   padding: 6px 16px;
   background: var(--surface);
   border-bottom: 1px solid var(--border);
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr) minmax(0, 1fr);
   align-items: center;
   gap: 12px;
   font-size: 15px;
 }
 #header .logo { font-weight: bold; color: var(--green); }
-#header .status { color: var(--text-dim); margin-left: auto; }
+.header-side {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+}
+.header-left { justify-content: flex-start; }
+.header-right {
+  justify-content: flex-end;
+  gap: 12px;
+}
+#header .status { color: var(--text-dim); }
 #status {
-  margin-left: 8px;
   width: 12px;
   height: 12px;
   display: inline-block;
@@ -109,6 +119,8 @@ body {
   text-overflow: ellipsis;
   white-space: nowrap;
   min-width: 0;
+  width: 100%;
+  text-align: center;
 }
 #theme-btn {
   background: transparent;
@@ -120,6 +132,23 @@ body {
   padding: 2px 6px;
 }
 #theme-btn:hover { color: var(--text); }
+@media (max-width: 640px) {
+  #header {
+    display: flex;
+    gap: 8px;
+  }
+  .header-left,
+  .header-right {
+    flex: 0 0 auto;
+  }
+  .header-right {
+    margin-left: auto;
+  }
+  #session-info {
+    flex: 1 1 auto;
+    text-align: left;
+  }
+}
 
 /* Messages */
 #messages {

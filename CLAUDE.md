@@ -117,9 +117,12 @@ Keep this distinction clear in docs and code discussions: some missing capabilit
 ## Testing
 
 ```bash
-npm test              # run all tests
-npm run test:e2e      # run Playwright browser E2E
+npm test                                   # run all tests
+npm run test:e2e                          # run Playwright browser E2E
+npm run test:e2e -- test/e2e/foo.spec.ts # run a specific Playwright spec via the npm script
 ```
+
+Prefer npm scripts over calling tool binaries directly. For targeted Playwright runs, pass file paths or extra Playwright args after `--` instead of using `npx playwright ...` directly.
 
 For any bug fix or new feature, follow full TDD by default:
 

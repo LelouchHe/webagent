@@ -18,10 +18,14 @@
 <body>
 
 <div id="header">
-  <span class="logo">>_</span>
+  <div class="header-side header-left">
+    <span class="logo">>_</span>
+  </div>
   <span id="session-info" class="status"></span>
-  <span id="status" class="status-dot is-disconnected" data-state="disconnected" role="status" aria-live="polite" aria-label="disconnected" title="disconnected"></span>
-  <button id="theme-btn" title="Toggle theme">◑</button>
+  <div class="header-side header-right">
+    <span id="status" class="status-dot is-disconnected" data-state="disconnected" role="status" aria-live="polite" aria-label="disconnected" title="disconnected"></span>
+    <button id="theme-btn" title="Toggle theme">◑</button>
+  </div>
 </div>
 
 <div id="messages"></div>

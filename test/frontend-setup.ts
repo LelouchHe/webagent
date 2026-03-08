@@ -4,7 +4,7 @@
 import { Window } from "happy-dom";
 
 const HTML = `
-<div id="header"><span id="session-info" class="status"></span><span id="status" class="status-dot is-disconnected" data-state="disconnected" role="status" aria-live="polite" aria-label="disconnected" title="disconnected"></span><button id="theme-btn">x</button></div>
+<div id="header"><div class="header-side header-left"><span class="logo">>_</span></div><span id="session-info" class="status"></span><div class="header-side header-right"><span id="status" class="status-dot is-disconnected" data-state="disconnected" role="status" aria-live="polite" aria-label="disconnected" title="disconnected"></span><button id="theme-btn">x</button></div></div>
 <div id="messages"></div>
 <div id="attach-preview"></div>
 <div id="input-area"><div id="slash-menu"></div><span id="input-prompt">x</span><textarea id="input" placeholder="Message or ?"></textarea><button id="new-btn">+</button><button id="attach-btn">x</button><button id="send-btn">x</button><input type="file" id="file-input" hidden></div>
