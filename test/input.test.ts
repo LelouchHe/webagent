@@ -5,6 +5,7 @@ import { setupDOM, teardownDOM, resetState, createMockWS } from "./frontend-setu
 describe("input", () => {
   let state: any;
   let dom: any;
+  let setBusy: any;
   let inputModule: any;
   let fetchCalls: Array<{ url: string; init?: any }>;
 
@@ -13,6 +14,7 @@ describe("input", () => {
     const stateMod = await import("../public/js/state.js");
     state = stateMod.state;
     dom = stateMod.dom;
+    setBusy = stateMod.setBusy;
     await import("../public/js/render.js");
     await import("../public/js/events.js");
     await import("../public/js/commands.js");
@@ -111,6 +113,44 @@ describe("input", () => {
 
     assert.equal(ws.sent.length, 0);
     assert.equal(dom.input.value, "hello");
+  });
+
+  it("send button shows ↵ when typing a command while busy", () => {
+    state.busy = true;
+    setBusy(true);
+    dom.input.value = "/switch";
+    dom.input.dispatchEvent(new globalThis.window.Event("input"));
+
+    assert.equal(dom.sendBtn.textContent, "↵");
+    assert.ok(!dom.sendBtn.classList.contains("cancel"));
+  });
+
+  it("send button reverts to ^X when command is cleared while busy", () => {
+    state.busy = true;
+    setBusy(true);
+    dom.input.value = "/switch";
+    dom.input.dispatchEvent(new globalThis.window.Event("input"));
+    assert.equal(dom.sendBtn.textContent, "↵");
+
+    dom.input.value = "";
+    dom.input.dispatchEvent(new globalThis.window.Event("input"));
+    assert.equal(dom.sendBtn.textContent, "^X");
+    assert.ok(dom.sendBtn.classList.contains("cancel"));
+  });
+
+  it("send button executes command instead of cancel while busy", () => {
+    const ws = createMockWS();
+    state.ws = ws;
+    state.sessionId = "s1";
+    state.sessionCwd = "/test";
+    state.busy = true;
+    setBusy(true);
+    dom.input.value = "/pwd";
+
+    clickSend();
+
+    assert.ok(dom.messages.textContent.includes("/test"));
+    assert.equal(dom.input.value, "");
   });
 
   it("warns instead of sending when the session is not ready", () => {

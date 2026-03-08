@@ -17,6 +17,7 @@ function sendMessage() {
     dom.input.value = '';
     dom.input.style.height = 'auto';
     updateNewBtnVisibility();
+    syncSendBtn();
     handleSlashCommand(text);
     return;
   }
@@ -88,7 +89,33 @@ function doCancel() {
 
 // --- Event listeners ---
 
-dom.sendBtn.onclick = () => state.busy ? doCancel() : sendMessage();
+/** True when the input contains a slash command or bang-bash that can bypass busy. */
+function inputHasCommand() {
+  const text = dom.input.value.trim();
+  return text.startsWith('/') || text.startsWith('!') || text === '?' || text.startsWith('? ');
+}
+
+/** Update the send button label to reflect whether the input has a command. */
+function syncSendBtn() {
+  if (!state.busy) return;
+  if (inputHasCommand()) {
+    dom.sendBtn.textContent = '↵';
+    dom.sendBtn.title = 'Send (Enter)';
+    dom.sendBtn.classList.remove('cancel');
+  } else {
+    dom.sendBtn.textContent = '^X';
+    dom.sendBtn.title = 'Cancel (Ctrl+X)';
+    dom.sendBtn.classList.add('cancel');
+  }
+}
+
+dom.sendBtn.onclick = () => {
+  if (state.busy && !inputHasCommand()) {
+    doCancel();
+  } else {
+    sendMessage();
+  }
+};
 
 dom.input.addEventListener('keydown', (e) => {
   // Slash menu navigation
@@ -152,8 +179,8 @@ dom.newBtn.addEventListener('click', () => {
   requestNewSession({ cwd: state.sessionCwd });
 });
 
-// Hide + button when input has content
-dom.input.addEventListener('input', updateNewBtnVisibility);
+// Hide + button when input has content; sync send button label
+dom.input.addEventListener('input', () => { updateNewBtnVisibility(); syncSendBtn(); });
 dom.input.addEventListener('focus', updateNewBtnVisibility);
 
 // Auto-resize textarea
