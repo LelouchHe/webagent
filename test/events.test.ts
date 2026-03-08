@@ -279,6 +279,22 @@ describe("events", () => {
         assert.equal(state.pendingPermissionRequestIds.has("perm-local"), false);
         assert.equal(state.busy, false);
       });
+
+      it("preserves title after user clicks a permission button", () => {
+        const ws = createMockWS();
+        state.ws = ws;
+        state.sessionId = "s1";
+        events.handleEvent({
+          type: "permission_request",
+          requestId: "perm-click",
+          title: "Execute npm install",
+          options: [{ optionId: "allow", kind: "allow_once", name: "Allow once" }],
+        });
+        dom.messages.querySelector(".permission button").click();
+        const perm = dom.messages.querySelector(".permission");
+        assert.ok(perm.textContent.includes("Execute npm install"));
+        assert.ok(perm.textContent.includes("Allow once"));
+      });
     });
 
     describe("permission_resolved", () => {
@@ -300,6 +316,26 @@ describe("events", () => {
         const perm = dom.messages.querySelector(".permission");
         assert.equal(perm.querySelectorAll("button").length, 0);
         assert.ok(perm.textContent.includes("Allow"));
+      });
+
+      it("preserves original title after permission_resolved", () => {
+        state.sessionId = "s1";
+        events.handleEvent({
+          type: "permission_request",
+          requestId: "perm-title",
+          title: "Run dangerous command",
+          options: [{ optionId: "allow", kind: "allow_once", name: "Allow once" }],
+        });
+        events.handleEvent({
+          type: "permission_resolved",
+          sessionId: "s1",
+          requestId: "perm-title",
+          optionName: "Allow once",
+          denied: false,
+        });
+        const perm = dom.messages.querySelector(".permission");
+        assert.ok(perm.textContent.includes("Run dangerous command"));
+        assert.ok(perm.textContent.includes("Allow once"));
       });
     });
 
@@ -521,6 +557,18 @@ describe("events", () => {
       const perm = dom.messages.querySelector(".permission");
       // Already resolved — no buttons should be present
       assert.equal(perm.querySelectorAll("button").length, 0);
+    });
+
+    it("preserves permission title through full replay cycle", () => {
+      const evts = [
+        { type: "permission_request", data: JSON.stringify({ requestId: "p2", title: "Run rm -rf", options: [{ optionId: "a", kind: "allow", name: "Allow once" }] }) },
+        { type: "permission_response", data: JSON.stringify({ requestId: "p2", denied: false, optionName: "Allow once" }) },
+      ];
+      events.replayEvent("permission_request", JSON.parse(evts[0].data), evts, 0);
+      events.replayEvent("permission_response", JSON.parse(evts[1].data), evts, 1);
+      const perm = dom.messages.querySelector(".permission");
+      assert.ok(perm.textContent.includes("Run rm -rf"), "title should be preserved");
+      assert.ok(perm.textContent.includes("Allow once"), "action should be shown");
     });
   });
 
