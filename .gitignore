@@ -22,5 +22,3 @@ Thumbs.db
 *.tsbuildinfo
 data-dev/
 data/
-start.sh
-config.macmini.toml
