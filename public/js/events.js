@@ -185,6 +185,7 @@ export function replayEvent(type, data, events, idx) {
       const el = document.createElement('div');
       el.className = 'permission';
       el.dataset.requestId = data.requestId;
+      el.dataset.title = data.title || '';
       el.innerHTML = `<span class="title" style="opacity:0.5">⚿ ${escHtml(data.title)}</span> `;
       // Check if this permission was already resolved later in history
       const wasResolved = events && events.slice(idx + 1).some(e =>
@@ -218,7 +219,7 @@ export function replayEvent(type, data, events, idx) {
     case 'permission_response': {
       const el = document.querySelector(`.permission[data-request-id="${data.requestId}"]`);
       if (el) {
-        const title = el.querySelector('.title')?.textContent || '⚿';
+        const title = el.dataset.title ? `⚿ ${el.dataset.title}` : '⚿';
         const action = data.denied ? 'denied' : data.optionName || 'allowed';
         el.innerHTML = `<span style="opacity:0.5">${escHtml(title)} — ${escHtml(action)}</span>`;
       }
@@ -414,6 +415,7 @@ export function handleEvent(msg) {
       const permEl = document.createElement('div');
       permEl.className = 'permission';
       permEl.dataset.requestId = msg.requestId;
+      permEl.dataset.title = msg.title || '';
       permEl.innerHTML = `<span class="title">⚿ ${escHtml(msg.title)}</span> `;
       msg.options.forEach(opt => {
         const btn = document.createElement('button');
@@ -446,8 +448,7 @@ export function handleEvent(msg) {
       state.pendingPermissionRequestIds.delete(msg.requestId);
       const permTarget = document.querySelector(`.permission[data-request-id="${msg.requestId}"]`);
       if (msg.sessionId === state.sessionId && permTarget) {
-        const titleEl = permTarget.querySelector('.title');
-        const title = titleEl?.textContent || '⚿';
+        const title = permTarget.dataset.title ? `⚿ ${permTarget.dataset.title}` : '⚿';
         const action = msg.denied ? 'denied' : msg.optionName || 'allowed';
         permTarget.innerHTML = `<span style="opacity:0.5">${escHtml(title)} — ${escHtml(action)}</span>`;
       }
