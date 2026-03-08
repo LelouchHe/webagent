@@ -6,9 +6,6 @@ port = 6800
 # SQLite + uploads directory
 data_dir = "data"
 
-# Working directory for new sessions
-default_cwd = "/Users/lelouch/mine/space"
-
 # Static assets directory
 public_dir = "dist"
 

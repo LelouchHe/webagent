@@ -17,22 +17,18 @@ Core modules:
 - `public/styles.css` — all CSS
 - `public/js/` — frontend ES modules (state, render, events, commands, images, input, connection, app)
 
-Production runs as a macOS launchd service (port 6800).
+The default runtime configuration uses port 6800.
 
-## Service Management
+## Build and Run
 
-Use npm scripts for prod service control:
+Use the normal app commands:
 
 ```bash
-npm run svc:restart   # restart prod (also rebuilds assets)
-npm run svc:stop      # stop prod
-npm run svc:status    # check status
 npm run build         # rebuild assets only (no restart needed for frontend-only changes)
+npm start             # run with config.toml
 ```
 
-For frontend-only changes (CSS/JS/HTML), `npm run build` is sufficient — the server reads files on each request, and the new build stamp in filenames busts Cloudflare/browser cache. Server restart is only needed for backend (src/) changes.
-
-Do NOT use `start.sh` directly.
+For frontend-only changes (CSS/JS/HTML), `npm run build` is sufficient — the server reads files on each request, and the new build stamp in filenames busts Cloudflare/browser cache. If backend (src/) changes are involved, restart the process using whatever service manager or workflow the environment already uses.
 
 ## Development
 

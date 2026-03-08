@@ -9,24 +9,24 @@ Tech stack: Node.js + TypeScript (`--experimental-strip-types`), real-time WebSo
 <table>
   <tr>
     <td width="50%">
-      <img src="images/overview-chat.png" alt="Desktop chat overview" />
+      <img src="docs/images/overview-chat.png" alt="Desktop chat overview" />
       <br />
       <sub>Streaming chat in the terminal-style desktop layout.</sub>
     </td>
     <td width="50%">
-      <img src="images/plan-busy.png" alt="Plan mode while busy" />
+      <img src="docs/images/plan-busy.png" alt="Plan mode while busy" />
       <br />
       <sub>Plan mode highlighted while a turn is still running.</sub>
     </td>
   </tr>
   <tr>
     <td width="50%">
-      <img src="images/permission-dialog.png" alt="Permission request dialog" />
+      <img src="docs/images/permission-dialog.png" alt="Permission request dialog" />
       <br />
       <sub>Permission prompts stay inline in the conversation flow.</sub>
     </td>
     <td width="50%">
-      <img src="images/bash-output.png" alt="Inline bash command output" />
+      <img src="docs/images/bash-output.png" alt="Inline bash command output" />
       <br />
       <sub><code>!&lt;command&gt;</code> output streams directly into the session.</sub>
     </td>
@@ -34,7 +34,7 @@ Tech stack: Node.js + TypeScript (`--experimental-strip-types`), real-time WebSo
 </table>
 
 <p align="center">
-  <img src="images/mobile-autopilot.png" alt="Mobile autopilot mode" width="320" />
+  <img src="docs/images/mobile-autopilot.png" alt="Mobile autopilot mode" width="320" />
   <br />
   <sub>Compact mobile layout with mode highlighting and terminal-style action keys.</sub>
 </p>
@@ -53,29 +53,21 @@ npm run build         # build static assets (public/ → dist/)
 
 ## Run
 
-### Production (launchd service)
-
-Managed by macOS launchd with auto-start on boot + auto-restart on crash, port 6800.
+### Default config
 
 ```bash
-npm run svc:status    # check status
-npm run svc:restart   # restart (after code changes)
-npm run svc:stop      # stop
-
-# view logs
-tail -f webagent.log
+npm start
 ```
 
-First-time setup:
-```bash
-launchctl bootstrap gui/501 ~/Library/LaunchAgents/com.lelouch.webagent.plist
-```
+This starts the app on port 6800 using `data/` and serves static assets from `dist/`.
 
 ### Development
 
 ```bash
 npm run dev           # port 6801, uses data-dev/, auto-restarts on file changes
 ```
+
+How you keep the process running in the background is intentionally left to your own environment and preferred process manager.
 
 ### Configuration
 
@@ -85,7 +77,7 @@ Configuration is via TOML files, passed with `--config`:
 node --experimental-strip-types src/server.ts --config config.toml
 ```
 
-If no `--config` is provided, all settings use built-in defaults. See `config.toml` for production settings and `config.dev.toml` for development.
+If no `--config` is provided, all settings use built-in defaults. See `config.toml` for the checked-in default settings and `config.dev.toml` for development.
 
 | Key | Default | Description |
 |---|---|---|
