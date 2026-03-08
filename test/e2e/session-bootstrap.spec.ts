@@ -54,3 +54,35 @@ test("mobile header lets the title use remaining space instead of forcing center
   expect(layout.textAlign).toBe("left");
   expect(layout.flexGrow).toBe("1");
 });
+
+test("input action buttons use a consistent keycap layout", async ({ page }) => {
+  await gotoConnected(page);
+  await expect(page.locator("#new-btn")).toHaveText("new");
+
+  const styles = await page.evaluate(() => {
+    const ids = ["new-btn", "attach-btn", "send-btn"] as const;
+    return ids.map((id) => {
+      const el = document.getElementById(id);
+      if (!el) throw new Error(`Missing ${id}`);
+      const style = getComputedStyle(el);
+      return {
+        id,
+        width: style.width,
+        height: style.height,
+        borderTopWidth: style.borderTopWidth,
+        borderTopStyle: style.borderTopStyle,
+        borderRadius: style.borderRadius,
+      };
+    });
+  });
+
+  expect(styles[0].width).toBe(styles[1].width);
+  expect(styles[1].width).toBe(styles[2].width);
+  expect(styles[0].height).toBe(styles[1].height);
+  expect(styles[1].height).toBe(styles[2].height);
+  expect(styles[0].borderRadius).toBe(styles[1].borderRadius);
+  expect(styles[1].borderRadius).toBe(styles[2].borderRadius);
+  expect(styles[0].borderTopWidth).toBe(styles[1].borderTopWidth);
+  expect(styles[1].borderTopWidth).toBe(styles[2].borderTopWidth);
+  expect(styles[2].borderTopStyle).toBe("solid");
+});
