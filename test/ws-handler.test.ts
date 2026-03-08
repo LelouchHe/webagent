@@ -264,7 +264,7 @@ describe("setupWsHandler", () => {
     ]);
   });
 
-  it("stores denied permission responses and broadcasts resolution to other clients", async () => {
+  it("stores denied permission responses and broadcasts resolution to all clients", async () => {
     const harness = createHarness();
     closeSockets.push(() => harness.sender.emit("close"));
 
@@ -286,14 +286,9 @@ describe("setupWsHandler", () => {
         denied: true,
       },
     }]);
-    assert.equal(harness.sender.sent.length, 0);
-    assert.deepEqual(JSON.parse(harness.peer.sent[0]), {
-      type: "permission_resolved",
-      sessionId: "s1",
-      requestId: "req-1",
-      optionName: "Deny",
-      denied: true,
-    });
+    const resolved = { type: "permission_resolved", sessionId: "s1", requestId: "req-1", optionName: "Deny", denied: true };
+    assert.deepEqual(JSON.parse(harness.sender.sent[0]), resolved);
+    assert.deepEqual(JSON.parse(harness.peer.sent[0]), resolved);
   });
 
   it("persists config changes and responds with config_set", async () => {

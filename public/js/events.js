@@ -422,14 +422,16 @@ export function handleEvent(msg) {
         btn.textContent = opt.name;
         btn.onclick = () => {
           const isDeny = (opt.kind || '').includes('reject') || (opt.kind || '').includes('deny');
-          state.ws.send(JSON.stringify({
-            type: 'permission_response',
-            sessionId: state.sessionId,
-            requestId: msg.requestId,
-            optionId: opt.optionId,
-            optionName: opt.name,
-            denied: isDeny,
-          }));
+          try {
+            state.ws.send(JSON.stringify({
+              type: 'permission_response',
+              sessionId: state.sessionId,
+              requestId: msg.requestId,
+              optionId: opt.optionId,
+              optionName: opt.name,
+              denied: isDeny,
+            }));
+          } catch { /* connection may be broken; cleanup still runs */ }
           state.pendingPermissionRequestIds.delete(msg.requestId);
           permEl.innerHTML = `<span style="opacity:0.5">⚿ ${escHtml(msg.title)} — ${escHtml(opt.name)}</span>`;
           finishPromptIfIdle();

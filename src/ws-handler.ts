@@ -156,7 +156,7 @@ export function setupWsHandler(deps: WsHandlerDeps): void {
               requestId: msg.requestId,
               optionName: msg.optionName || "",
               denied: !!msg.denied,
-            } as any, ws);
+            } as any);
             break;
           }
 
