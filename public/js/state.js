@@ -36,6 +36,7 @@ export const state = {
   pendingToolCallIds: new Set(),
   pendingPermissionRequestIds: new Set(),
   pendingPromptDone: false,
+  lastEventSeq: 0,
 };
 
 const CONNECTION_STATUS_CLASSES = {
@@ -106,6 +107,7 @@ export function resetSessionUI() {
   state.pendingToolCallIds.clear();
   state.pendingPermissionRequestIds.clear();
   state.pendingPromptDone = false;
+  state.lastEventSeq = 0;
   dom.attachPreview.innerHTML = '';
   dom.attachPreview.classList.remove('active');
   setBusy(false);

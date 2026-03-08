@@ -115,6 +115,32 @@ describe("Store", () => {
       store.createSession("s1", "/x");
       assert.deepEqual(store.getEvents("s1"), []);
     });
+
+    it("filters events by afterSeq", () => {
+      store.createSession("s1", "/x");
+      store.saveEvent("s1", "user_message", { text: "a" });
+      store.saveEvent("s1", "assistant_message", { text: "b" });
+      store.saveEvent("s1", "user_message", { text: "c" });
+
+      const after1 = store.getEvents("s1", { afterSeq: 1 });
+      assert.equal(after1.length, 2);
+      assert.equal(after1[0].seq, 2);
+      assert.equal(after1[1].seq, 3);
+
+      const after3 = store.getEvents("s1", { afterSeq: 3 });
+      assert.equal(after3.length, 0);
+    });
+
+    it("combines afterSeq with excludeThinking", () => {
+      store.createSession("s1", "/x");
+      store.saveEvent("s1", "user_message", { text: "a" });
+      store.saveEvent("s1", "thinking", { text: "hmm" });
+      store.saveEvent("s1", "assistant_message", { text: "b" });
+
+      const events = store.getEvents("s1", { afterSeq: 1, excludeThinking: true });
+      assert.equal(events.length, 1);
+      assert.equal(events[0].type, "assistant_message");
+    });
   });
 
   describe("migration", () => {

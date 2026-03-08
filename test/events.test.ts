@@ -523,4 +523,96 @@ describe("events", () => {
       assert.equal(perm.querySelectorAll("button").length, 0);
     });
   });
+
+  describe("loadHistory", () => {
+    it("sets lastEventSeq and sync boundary from loaded events", async () => {
+      const fakeEvents = [
+        { seq: 1, type: "user_message", data: JSON.stringify({ text: "hi" }) },
+        { seq: 2, type: "assistant_message", data: JSON.stringify({ text: "hello" }) },
+      ];
+      globalThis.fetch = (() => Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve(fakeEvents),
+      })) as any;
+
+      const loaded = await events.loadHistory("s1");
+      assert.equal(loaded, true);
+      assert.equal(state.lastEventSeq, 2);
+      assert.equal(dom.messages.children.length, 2);
+      assert.ok(dom.messages.lastElementChild.hasAttribute("data-sync-boundary"));
+    });
+  });
+
+  describe("loadNewEvents", () => {
+    it("appends new events without clearing existing DOM", async () => {
+      // Simulate existing DOM from loadHistory
+      events.replayEvent("user_message", { text: "old" }, [], 0);
+      state.lastEventSeq = 1;
+      dom.messages.lastElementChild.setAttribute("data-sync-boundary", "");
+
+      const newEvents = [
+        { seq: 2, type: "assistant_message", data: JSON.stringify({ text: "new reply" }) },
+      ];
+      globalThis.fetch = ((url: string) => {
+        assert.ok(url.includes("after_seq=1"));
+        return Promise.resolve({ ok: true, json: () => Promise.resolve(newEvents) });
+      }) as any;
+
+      const result = await events.loadNewEvents("s1");
+      assert.equal(result, true);
+      assert.equal(state.lastEventSeq, 2);
+      // Old message preserved + new message appended
+      assert.equal(dom.messages.children.length, 2);
+      assert.ok(dom.messages.children[0].textContent.includes("old"));
+      assert.ok(dom.messages.children[1].textContent.includes("new reply"));
+      // Boundary moved to last element
+      assert.ok(dom.messages.lastElementChild.hasAttribute("data-sync-boundary"));
+    });
+
+    it("removes post-boundary live elements before replaying", async () => {
+      // Simulate: loadHistory rendered 1 event, then live event added 1 more
+      events.replayEvent("user_message", { text: "from-db" }, [], 0);
+      state.lastEventSeq = 1;
+      dom.messages.lastElementChild.setAttribute("data-sync-boundary", "");
+
+      // Simulate a live-added element (after the boundary)
+      const liveEl = globalThis.document.createElement("div");
+      liveEl.textContent = "live-streamed";
+      dom.messages.appendChild(liveEl);
+      assert.equal(dom.messages.children.length, 2);
+
+      // New events from server include both the completed version of the live event
+      // and a new event
+      const newEvents = [
+        { seq: 2, type: "assistant_message", data: JSON.stringify({ text: "full reply" }) },
+        { seq: 3, type: "user_message", data: JSON.stringify({ text: "follow up" }) },
+      ];
+      globalThis.fetch = (() => Promise.resolve({
+        ok: true, json: () => Promise.resolve(newEvents),
+      })) as any;
+
+      await events.loadNewEvents("s1");
+
+      // from-db (preserved) + full reply + follow up
+      assert.equal(dom.messages.children.length, 3);
+      assert.ok(dom.messages.children[0].textContent.includes("from-db"));
+      assert.ok(dom.messages.children[1].textContent.includes("full reply"));
+      assert.equal(state.lastEventSeq, 3);
+    });
+
+    it("returns true with no DOM changes when there are no new events", async () => {
+      events.replayEvent("user_message", { text: "msg" }, [], 0);
+      state.lastEventSeq = 1;
+      dom.messages.lastElementChild.setAttribute("data-sync-boundary", "");
+
+      globalThis.fetch = (() => Promise.resolve({
+        ok: true, json: () => Promise.resolve([]),
+      })) as any;
+
+      const result = await events.loadNewEvents("s1");
+      assert.equal(result, true);
+      assert.equal(dom.messages.children.length, 1);
+      assert.equal(state.lastEventSeq, 1);
+    });
+  });
 });

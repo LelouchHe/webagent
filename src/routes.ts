@@ -39,13 +39,15 @@ export function createRequestHandler(store: Store, publicDir: string, dataDir: s
         const sessionId = decodeURIComponent(eventsMatch[1]);
         const params = new URLSearchParams(eventsMatch[2]?.slice(1) ?? "");
         const excludeThinking = params.get("thinking") === "0";
+        const afterSeqRaw = params.get("after_seq");
+        const afterSeq = afterSeqRaw != null ? Number(afterSeqRaw) : undefined;
         const session = store.getSession(sessionId);
         if (!session) {
           res.writeHead(404);
           res.end(JSON.stringify({ error: "Session not found" }));
           return;
         }
-        const events = store.getEvents(sessionId, { excludeThinking });
+        const events = store.getEvents(sessionId, { excludeThinking, afterSeq });
         res.end(JSON.stringify(events));
         return;
       }

@@ -84,7 +84,7 @@ describe("connection", () => {
       assert.equal(url, "/api/sessions/hash-session/events");
       return {
         ok: true,
-        json: async () => [{ type: "assistant_message", data: JSON.stringify({ text: "restored" }) }],
+        json: async () => [{ seq: 1, type: "assistant_message", data: JSON.stringify({ text: "restored" }) }],
       };
     });
 
@@ -99,6 +99,7 @@ describe("connection", () => {
       sessionId: "hash-session",
     });
     assert.ok(dom.messages.textContent.includes("restored"));
+    assert.equal(state.lastEventSeq, 1);
   });
 
   it("resumes the most recent session when there is no hash", async () => {
@@ -157,7 +158,7 @@ describe("connection", () => {
       assert.equal(url, "/api/sessions/restored-session/events");
       return {
         ok: true,
-        json: async () => [{ type: "assistant_message", data: JSON.stringify({ text: "restored again" }) }],
+        json: async () => [{ seq: 1, type: "assistant_message", data: JSON.stringify({ text: "restored again" }) }],
       };
     });
 
@@ -184,5 +185,80 @@ describe("connection", () => {
     });
     assert.equal(dom.messages.querySelectorAll(".msg.assistant").length, 1);
     assert.ok(dom.messages.textContent.includes("restored again"));
+  });
+
+  it("uses incremental sync on reconnect when sessionId matches hash", async () => {
+    // Simulate an already-loaded session
+    history.replaceState(null, "", "/#incr-session");
+    state.sessionId = "incr-session";
+    state.lastEventSeq = 2;
+
+    // Existing DOM content from previous loadHistory
+    const existingEl = globalThis.document.createElement("div");
+    existingEl.className = "msg user";
+    existingEl.textContent = "old message";
+    existingEl.setAttribute("data-sync-boundary", "");
+    dom.messages.appendChild(existingEl);
+
+    // Simulate a live-added element (post-boundary)
+    const liveEl = globalThis.document.createElement("div");
+    liveEl.className = "msg assistant";
+    liveEl.textContent = "partial stream";
+    dom.messages.appendChild(liveEl);
+
+    setFetch(async (url: string) => {
+      assert.ok(url.includes("after_seq=2"), `Expected after_seq=2 in URL, got: ${url}`);
+      return {
+        ok: true,
+        json: async () => [
+          { seq: 3, type: "assistant_message", data: JSON.stringify({ text: "full reply" }) },
+        ],
+      };
+    });
+
+    connection.connect();
+    const ws = latestSocket();
+    await ws.onopen?.();
+
+    // Should NOT have wiped the old message
+    assert.ok(dom.messages.children[0].textContent.includes("old message"));
+    // Live "partial stream" replaced by the DB version "full reply"
+    assert.equal(dom.messages.children.length, 2);
+    assert.ok(dom.messages.children[1].textContent.includes("full reply"));
+    // Used incremental fetch, not full history
+    assert.equal(fetchCalls.length, 1);
+    assert.ok(fetchCalls[0].includes("after_seq=2"));
+    assert.equal(state.lastEventSeq, 3);
+    // Still sent resume_session
+    assert.deepEqual(JSON.parse(ws.sent[0]), {
+      type: "resume_session",
+      sessionId: "incr-session",
+    });
+  });
+
+  it("skips DOM changes when no new events on incremental reconnect", async () => {
+    history.replaceState(null, "", "/#idle-session");
+    state.sessionId = "idle-session";
+    state.lastEventSeq = 5;
+
+    const existingEl = globalThis.document.createElement("div");
+    existingEl.className = "msg assistant";
+    existingEl.textContent = "preserved content";
+    existingEl.setAttribute("data-sync-boundary", "");
+    dom.messages.appendChild(existingEl);
+
+    setFetch(async () => ({
+      ok: true,
+      json: async () => [],
+    }));
+
+    connection.connect();
+    const ws = latestSocket();
+    await ws.onopen?.();
+
+    // DOM unchanged
+    assert.equal(dom.messages.children.length, 1);
+    assert.ok(dom.messages.textContent.includes("preserved content"));
+    assert.equal(state.lastEventSeq, 5);
   });
 });

@@ -91,6 +91,19 @@ describe("HTTP routes", () => {
     assert.equal(events.length, 1);
   });
 
+  it("GET /api/sessions/:id/events?after_seq=N returns only new events", async () => {
+    store.createSession("s1", "/x");
+    store.saveEvent("s1", "user_message", { text: "a" });
+    store.saveEvent("s1", "assistant_message", { text: "b" });
+    store.saveEvent("s1", "user_message", { text: "c" });
+
+    const res = await makeRequest(port, "GET", "/api/sessions/s1/events?after_seq=1");
+    assert.equal(res.status, 200);
+    const events = JSON.parse(res.body);
+    assert.equal(events.length, 2);
+    assert.equal(events[0].seq, 2);
+  });
+
   it("returns 404 for unknown API routes", async () => {
     const res = await makeRequest(port, "GET", "/api/unknown");
     assert.equal(res.status, 404);

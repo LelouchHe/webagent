@@ -50,6 +50,56 @@ export async function loadHistory(sid) {
       const data = JSON.parse(events[i].data);
       replayEvent(events[i].type, data, events, i);
     }
+    if (events.length) {
+      state.lastEventSeq = events[events.length - 1].seq;
+    }
+    setSyncBoundary();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Mark the last DOM child as the sync boundary for incremental reconnect. */
+function setSyncBoundary() {
+  const prev = dom.messages.querySelector('[data-sync-boundary]');
+  if (prev) prev.removeAttribute('data-sync-boundary');
+  const last = dom.messages.lastElementChild;
+  if (last) last.setAttribute('data-sync-boundary', '');
+}
+
+/**
+ * Fetch only events added since the last sync point and replay them.
+ * Returns true if new events were applied (or none needed), false on error.
+ */
+export async function loadNewEvents(sid) {
+  try {
+    const url = `/api/sessions/${sid}/events?after_seq=${state.lastEventSeq}`;
+    const res = await fetch(url);
+    if (!res.ok) return false;
+    const events = await res.json();
+    if (events.length === 0) return true;
+
+    // Remove DOM elements added after the sync boundary (live-rendered content
+    // that may overlap with the new DB events).
+    const boundary = dom.messages.querySelector('[data-sync-boundary]');
+    if (boundary) {
+      while (boundary.nextElementSibling) boundary.nextElementSibling.remove();
+    }
+
+    // Clean up any in-progress streaming state left over from before disconnect
+    state.currentAssistantEl = null;
+    state.currentAssistantText = '';
+    state.currentThinkingEl = null;
+    state.currentThinkingText = '';
+    state.currentBashEl = null;
+
+    for (let i = 0; i < events.length; i++) {
+      const data = JSON.parse(events[i].data);
+      replayEvent(events[i].type, data, events, i);
+    }
+    state.lastEventSeq = events[events.length - 1].seq;
+    setSyncBoundary();
     return true;
   } catch {
     return false;

@@ -120,13 +120,18 @@ export class Store {
       .get(sessionId, seq) as EventRow;
   }
 
-  getEvents(sessionId: string, opts?: { excludeThinking?: boolean }): EventRow[] {
+  getEvents(sessionId: string, opts?: { excludeThinking?: boolean; afterSeq?: number }): EventRow[] {
     let query = "SELECT * FROM events WHERE session_id = ?";
+    const params: unknown[] = [sessionId];
+    if (opts?.afterSeq != null) {
+      query += " AND seq > ?";
+      params.push(opts.afterSeq);
+    }
     if (opts?.excludeThinking) {
       query += " AND type != 'thinking'";
     }
     query += " ORDER BY seq";
-    return this.db.prepare(query).all(sessionId) as EventRow[];
+    return this.db.prepare(query).all(...params) as EventRow[];
   }
 
   close(): void {

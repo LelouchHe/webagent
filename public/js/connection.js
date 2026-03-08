@@ -2,7 +2,7 @@
 
 import { state, setBusy, getHashSessionId, requestNewSession, resetSessionUI, setConnectionStatus } from './state.js';
 import { addSystem, finishThinking, finishAssistant, finishBash, scrollToBottom } from './render.js';
-import { handleEvent, loadHistory } from './events.js';
+import { handleEvent, loadHistory, loadNewEvents } from './events.js';
 
 export function connect() {
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -13,6 +13,16 @@ export function connect() {
     setConnectionStatus('connecting', 'session loading');
 
     const existingId = getHashSessionId();
+
+    // Incremental reconnect: same session still in memory — skip DOM wipe
+    if (existingId && existingId === state.sessionId) {
+      await loadNewEvents(existingId);
+      scrollToBottom(false);
+      state.ws.send(JSON.stringify({ type: 'resume_session', sessionId: existingId }));
+      return;
+    }
+
+    // Full load: different session in hash, or first connect to a hash
     if (existingId) {
       resetSessionUI();
       const loaded = await loadHistory(existingId);
