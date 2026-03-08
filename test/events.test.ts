@@ -446,6 +446,12 @@ describe("events", () => {
         assert.equal(state.busy, false);
         assert.ok(dom.messages.querySelector(".system-msg").textContent.includes("Something broke"));
       });
+
+      it("clears awaitingNewSession so the UI is not stuck", () => {
+        state.awaitingNewSession = true;
+        events.handleEvent({ type: "error", message: "Directory does not exist: /bad" });
+        assert.equal(state.awaitingNewSession, false);
+      });
     });
 
     describe("event filtering", () => {

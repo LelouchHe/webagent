@@ -1,5 +1,6 @@
 import type { ChildProcess } from "node:child_process";
 import { rm } from "node:fs/promises";
+import { stat } from "node:fs/promises";
 import { join } from "node:path";
 import type { Store } from "./store.ts";
 import type { AgentBridge } from "./bridge.ts";
@@ -49,6 +50,12 @@ export class SessionManager {
     inheritFromSessionId?: string,
   ): Promise<{ sessionId: string; configOptions: ConfigOption[] }> {
     const sessionCwd = cwd ?? this.defaultCwd;
+    try {
+      const info = await stat(sessionCwd);
+      if (!info.isDirectory()) throw new Error("not a directory");
+    } catch {
+      throw new Error(`Directory does not exist: ${sessionCwd}`);
+    }
     const sourceSession = inheritFromSessionId
       ? this.store.getSession(inheritFromSessionId)
       : null;

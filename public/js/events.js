@@ -484,6 +484,7 @@ export function handleEvent(msg) {
       break;
 
     case 'error':
+      state.awaitingNewSession = false;
       state.pendingToolCallIds.clear();
       state.pendingPermissionRequestIds.clear();
       state.pendingPromptDone = false;

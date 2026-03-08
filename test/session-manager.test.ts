@@ -14,7 +14,7 @@ describe("SessionManager", () => {
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), "webagent-test-"));
     store = new Store(tmpDir);
-    sm = new SessionManager(store, "/default/cwd", tmpDir);
+    sm = new SessionManager(store, tmpDir, tmpDir);
   });
 
   afterEach(() => {
@@ -68,7 +68,7 @@ describe("SessionManager", () => {
       const configCalls: Array<{ sessionId: string; configId: string; value: string }> = [];
       const bridge = {
         async newSession(cwd: string) {
-          assert.equal(cwd, "/default/cwd");
+          assert.equal(cwd, tmpDir);
           return "s2";
         },
         async setConfigOption(sessionId: string, configId: string, value: string) {
@@ -121,6 +121,19 @@ describe("SessionManager", () => {
       assert.deepEqual(created.configOptions, []);
       assert.equal(store.getSession("s2")!.model, null);
     });
+
+    it("rejects a non-existent cwd", async () => {
+      const bridge = {
+        async newSession() { return "s2"; },
+        async setConfigOption() {},
+        async loadSession() { throw new Error("should not be called"); },
+      };
+
+      await assert.rejects(
+        () => sm.createSession(bridge, "/no/such/path"),
+        { message: "Directory does not exist: /no/such/path" },
+      );
+    });
   });
 
   describe("buffer management", () => {
@@ -165,7 +178,7 @@ describe("SessionManager", () => {
     });
 
     it("returns default cwd when session not found", () => {
-      assert.equal(sm.getSessionCwd("nonexistent"), "/default/cwd");
+      assert.equal(sm.getSessionCwd("nonexistent"), tmpDir);
     });
   });
 
