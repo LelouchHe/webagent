@@ -87,6 +87,32 @@ describe("input", () => {
     assert.ok(dom.messages.textContent.includes("echo hello"));
   });
 
+  it("allows slash commands while busy", () => {
+    const ws = createMockWS();
+    state.ws = ws;
+    state.sessionId = "s1";
+    state.busy = true;
+    dom.input.value = "/pwd";
+
+    keydown("Enter");
+
+    assert.ok(dom.messages.textContent.includes("s1") || dom.messages.textContent.includes("unknown"));
+    assert.equal(dom.input.value, "");
+  });
+
+  it("blocks regular messages while busy", () => {
+    const ws = createMockWS();
+    state.ws = ws;
+    state.sessionId = "s1";
+    state.busy = true;
+    dom.input.value = "hello";
+
+    keydown("Enter");
+
+    assert.equal(ws.sent.length, 0);
+    assert.equal(dom.input.value, "hello");
+  });
+
   it("warns instead of sending when the session is not ready", () => {
     const ws = createMockWS();
     state.ws = ws;

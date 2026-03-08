@@ -214,7 +214,7 @@ function updateSlashMenu() {
 
   // /new — show path picker
   const newMatch = text.match(/^\/new /);
-  if (newMatch && !state.busy) {
+  if (newMatch) {
     const query = text.slice(newMatch[0].length).toLowerCase();
     fetchPathsForMenu(query);
     return;
@@ -222,7 +222,7 @@ function updateSlashMenu() {
 
   // /switch or /delete — show session picker
   const switchMatch = text.match(/^\/(switch|delete) /);
-  if (switchMatch && !state.busy) {
+  if (switchMatch) {
     const query = text.slice(switchMatch[0].length).toLowerCase();
     fetchSessionsForMenu(query, switchMatch[1]);
     return;
@@ -230,7 +230,7 @@ function updateSlashMenu() {
 
   // /model, /mode, /think — show config option picker
   const configMatch = text.match(/^\/(model|mode|think) /);
-  if (configMatch && !state.busy) {
+  if (configMatch) {
     const configMap = { model: 'model', mode: 'mode', think: 'reasoning_effort' };
     const configId = configMap[configMatch[1]];
     const query = text.slice(configMatch[0].length).toLowerCase();
@@ -238,7 +238,7 @@ function updateSlashMenu() {
     return;
   }
 
-  if (!text.startsWith('/') || text.includes(' ') || state.busy) {
+  if (!text.startsWith('/') || text.includes(' ')) {
     hideSlashMenu();
     return;
   }

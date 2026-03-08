@@ -11,19 +11,16 @@ import { renderAttachPreview } from './images.js';
 function sendMessage() {
   const text = dom.input.value.trim();
   if (!text && state.pendingImages.length === 0) return;
-  if (state.busy) return;
 
-  dom.input.value = '';
-  dom.input.style.height = 'auto';
-  dom.inputArea.classList.remove('bash-mode');
-  updateNewBtnVisibility();
-
+  // Slash commands and bash always go through, even while busy
   if ((text.startsWith('/') || text === '?' || text.startsWith('? ')) && state.pendingImages.length === 0) {
+    dom.input.value = '';
+    dom.input.style.height = 'auto';
+    updateNewBtnVisibility();
     handleSlashCommand(text);
     return;
   }
 
-  // "!" bash command
   if (text.startsWith('!') && state.pendingImages.length === 0) {
     const command = text.slice(1).trim();
     if (!command) return;
@@ -31,11 +28,23 @@ function sendMessage() {
       addSystem('warn: Session not ready yet, please wait…');
       return;
     }
+    dom.input.value = '';
+    dom.input.style.height = 'auto';
+    dom.inputArea.classList.remove('bash-mode');
+    updateNewBtnVisibility();
     addBashBlock(command, true);
     state.ws.send(JSON.stringify({ type: 'bash_exec', sessionId: state.sessionId, command }));
     setBusy(true);
     return;
   }
+
+  // Regular messages require agent to be idle
+  if (state.busy) return;
+
+  dom.input.value = '';
+  dom.input.style.height = 'auto';
+  dom.inputArea.classList.remove('bash-mode');
+  updateNewBtnVisibility();
 
   if (!state.sessionId) {
     addSystem('warn: Session not ready yet, please wait…');
@@ -90,9 +99,7 @@ dom.input.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault();
     hideSlashMenu();
-    if (!state.busy) {
-      sendMessage();
-    }
+    sendMessage();
     return;
   }
   // Ctrl+U to upload file
