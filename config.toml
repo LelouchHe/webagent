@@ -1,15 +1,19 @@
 # WebAgent production configuration
 
-# HTTP/WebSocket server port
+# HTTP/WebSocket server port (default: 6800)
 port = 6800
 
-# SQLite + uploads directory
+# SQLite + uploads directory (default: "data")
 data_dir = "data"
 
-# Static assets directory
+# Default working directory for new sessions (default: process.cwd()).
+# Leave this commented out to use the process working directory.
+# default_cwd = "/path/to/your/workspace"
+
+# Static assets directory (default: "dist")
 public_dir = "dist"
 
-# ACP agent command (binary + args, space-separated)
+# ACP agent command (binary + args, space-separated) (default: "copilot --acp")
 agent_cmd = "copilot --acp"
 
 [limits]
