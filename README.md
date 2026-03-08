@@ -4,6 +4,41 @@ A web UI for any ACP-compatible agent, accessed remotely via the browser.
 
 Tech stack: Node.js + TypeScript (`--experimental-strip-types`), real-time WebSocket communication (`ws`), SQLite persistence (`better-sqlite3`), Zod validation.
 
+## Screenshots
+
+<table>
+  <tr>
+    <td width="50%">
+      <img src="images/overview-chat.png" alt="Desktop chat overview" />
+      <br />
+      <sub>Streaming chat in the terminal-style desktop layout.</sub>
+    </td>
+    <td width="50%">
+      <img src="images/plan-busy.png" alt="Plan mode while busy" />
+      <br />
+      <sub>Plan mode highlighted while a turn is still running.</sub>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%">
+      <img src="images/permission-dialog.png" alt="Permission request dialog" />
+      <br />
+      <sub>Permission prompts stay inline in the conversation flow.</sub>
+    </td>
+    <td width="50%">
+      <img src="images/bash-output.png" alt="Inline bash command output" />
+      <br />
+      <sub><code>!&lt;command&gt;</code> output streams directly into the session.</sub>
+    </td>
+  </tr>
+</table>
+
+<p align="center">
+  <img src="images/mobile-autopilot.png" alt="Mobile autopilot mode" width="320" />
+  <br />
+  <sub>Compact mobile layout with mode highlighting and terminal-style action keys.</sub>
+</p>
+
 ## Prerequisites
 
 - Node.js 22.6+ (requires `--experimental-strip-types`)
@@ -130,7 +165,7 @@ Type `/` to trigger an autocomplete menu (arrow keys to navigate, Tab to select,
 | `Ctrl+M` | Cycle mode (Agent → Plan → Autopilot) |
 | `Ctrl+U` | Upload image |
 
-Tap the `❯` prompt indicator to cycle mode. Tap `+` to create a new session (hidden when input has content).
+Tap the `❯` prompt indicator to cycle mode. Tap `new` to create a new session (hidden when input has content).
 
 ### Theme
 
