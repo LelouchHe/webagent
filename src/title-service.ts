@@ -21,6 +21,7 @@ export class TitleService {
 
   /** Generate a title for the session (non-blocking, fire-and-forget). */
   generate(bridge: AgentBridge, userMessage: string, sessionId: string, onTitle?: (title: string) => void): void {
+    if (this.sessions.sessionHasTitle.has(sessionId) || this.activeSourceSessions.has(sessionId)) return;
     this._generate(bridge, userMessage, sessionId).then((title) => {
       if (title && onTitle) onTitle(title);
     }).catch((err) => {

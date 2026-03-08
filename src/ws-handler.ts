@@ -116,9 +116,8 @@ export function setupWsHandler(deps: WsHandlerDeps): void {
             };
             store.saveEvent(msg.sessionId, "user_message", userData);
             store.updateSessionLastActive(msg.sessionId);
-            // Generate title on first user message
+            // Generate title once the session actually gets one; canceled/failed attempts can retry later.
             if (!sessions.sessionHasTitle.has(msg.sessionId)) {
-              sessions.sessionHasTitle.add(msg.sessionId);
               titleService.generate(bridge, msg.text, msg.sessionId, (title) => {
                 broadcast(wss, { type: "session_title_updated", sessionId: msg.sessionId, title });
               });

@@ -118,6 +118,7 @@ Keep this distinction clear in docs and code discussions: some missing capabilit
 
 ```bash
 npm test              # run all tests
+npm run test:e2e      # run Playwright browser E2E
 ```
 
 For any bug fix or new feature, follow full TDD by default:
@@ -129,6 +130,8 @@ For any bug fix or new feature, follow full TDD by default:
 5. Run the relevant tests again, then run the broader existing test suite (`npm test`) before considering the work done.
 
 Do not treat tests as an afterthought. A bug fix or feature is incomplete unless the corresponding automated test coverage is added or updated as part of the same change.
+
+- Keep `TEST_SCENARIOS.md` in sync when the suite meaningfully expands or when the documented coverage boundaries change, so future review does not require reverse-engineering intent from test names alone.
 
 ## Response Clarity
 

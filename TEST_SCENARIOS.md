@@ -33,7 +33,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
 
 - `test/ws-handler.test.ts`
   - new session / resume session routing
-  - user prompt persistence + title generation trigger
+  - user prompt persistence + title generation trigger / retry after a canceled title attempt
   - permission response persistence + broadcast
   - config changes persisted and broadcast to peer clients
   - bash execution guard when one command is already running
@@ -62,6 +62,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - setup failure handling
   - callback emission only when a title is produced
   - cancellation of in-flight title generation for the matching source session
+  - in-flight title-generation deduplication and retry after cancellation
 
 ### Frontend state and UI event flow
 

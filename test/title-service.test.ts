@@ -116,4 +116,37 @@ describe("TitleService", () => {
 
     assert.deepEqual(cancelCalls, ["title-session"]);
   });
+
+  it("deduplicates in-flight title generation and allows retry after cancellation", async () => {
+    const store = { updateSessionTitle() { throw new Error("should not be called"); } };
+    const sessions = { sessionHasTitle: new Set<string>(), liveSessions: new Set<string>() };
+    const promptCalls: string[] = [];
+    let releasePrompt: ((value: string) => void) | null = null;
+    const bridge = {
+      async newSession() { return "title-session"; },
+      async setConfigOption() {},
+      async promptForText() {
+        promptCalls.push("prompt");
+        return await new Promise<string>((resolve) => {
+          releasePrompt = resolve;
+        });
+      },
+      async cancel() {
+        releasePrompt?.("");
+      },
+    };
+    const service = new TitleService(store as any, sessions as any, "/repo");
+
+    service.generate(bridge as any, "hello", "session-1");
+    await new Promise((resolve) => setImmediate(resolve));
+    service.generate(bridge as any, "hello again", "session-1");
+    await new Promise((resolve) => setImmediate(resolve));
+    await service.cancel("session-1", bridge as any);
+    await new Promise((resolve) => setImmediate(resolve));
+    service.generate(bridge as any, "third try", "session-1");
+    await new Promise((resolve) => setImmediate(resolve));
+
+    assert.deepEqual(promptCalls, ["prompt", "prompt"]);
+    assert.equal(sessions.sessionHasTitle.has("session-1"), false);
+  });
 });

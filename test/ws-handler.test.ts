@@ -24,7 +24,7 @@ function createMockSocket() {
   };
 }
 
-function createHarness() {
+function createHarness(options: { titleGenerator?: "success" | "pending" } = {}) {
   const sender = createMockSocket();
   const peer = createMockSocket();
   const wss = {
@@ -85,6 +85,8 @@ function createHarness() {
   const titleService = {
     generate(_bridge: unknown, text: string, sessionId: string, onTitle: (title: string) => void) {
       titleServiceCalls.push({ text, sessionId });
+      if (options.titleGenerator === "pending") return;
+      sessions.sessionHasTitle.add(sessionId);
       onTitle("Generated title");
     },
     cancel(sessionId: string) {
@@ -237,6 +239,29 @@ describe("setupWsHandler", () => {
       text: "hello world",
       images: [{ path: "img.png", mimeType: "image/png" }],
     });
+  });
+
+  it("retries title generation after a canceled attempt when the user sends another message", async () => {
+    const harness = createHarness({ titleGenerator: "pending" });
+    closeSockets.push(() => harness.sender.emit("close"));
+
+    await harness.sendMessage({
+      type: "prompt",
+      sessionId: "s1",
+      text: "hello world",
+    });
+    await harness.sendMessage({ type: "cancel", sessionId: "s1" });
+    await harness.sendMessage({
+      type: "prompt",
+      sessionId: "s1",
+      text: "hello again",
+    });
+
+    assert.equal(harness.sessions.sessionHasTitle.has("s1"), false);
+    assert.deepEqual(harness.titleServiceCalls, [
+      { text: "hello world", sessionId: "s1" },
+      { text: "hello again", sessionId: "s1" },
+    ]);
   });
 
   it("stores denied permission responses and broadcasts resolution to other clients", async () => {

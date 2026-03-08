@@ -147,6 +147,17 @@ Tap the `❯` prompt indicator to cycle mode. Tap `+` to create a new session (h
 - Mobile-friendly layout
 - Multi-client broadcast (events synced across devices)
 
+## Testing
+
+```bash
+npm test              # unit + integration
+npm run test:e2e      # Playwright browser E2E
+```
+
+- `TEST_SCENARIOS.md` is the scenario-level coverage map for the current suite.
+- Use it when reviewing what is already protected before adding new tests or auditing gaps.
+- The E2E suite now covers session lifecycle, reconnect/restart recovery, permissions, cancel flows, bash lifecycle, media persistence, slash-menu UX, config persistence/inheritance, and multi-client config behavior.
+
 ## Architecture
 
 ```
