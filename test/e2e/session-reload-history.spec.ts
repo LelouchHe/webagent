@@ -1,5 +1,5 @@
 import { test, expect } from "playwright/test";
-import { createNewSession, currentSessionId, gotoConnected, sendPrompt } from "./helpers.ts";
+import { createNewSession, currentSessionId, expectConnectionStatus, gotoConnected, sendPrompt } from "./helpers.ts";
 
 test("reloading preserves the current session and replays message history", async ({ page }) => {
   await gotoConnected(page);
@@ -12,7 +12,7 @@ test("reloading preserves the current session and replays message history", asyn
   await page.reload();
 
   await expect.poll(() => currentSessionId(page)).toBe(sessionId);
-  await expect(page.locator("#status")).toHaveText("connected");
+  await expectConnectionStatus(page, "connected");
   await expect(page.locator(".msg.user").last()).toHaveText("persist this conversation");
   await expect(page.locator(".msg.assistant").last()).toContainText("Echo: persist this conversation");
 });

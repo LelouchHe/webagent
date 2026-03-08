@@ -145,7 +145,8 @@ describe("connection", () => {
 
     ws.onclose?.();
 
-    assert.equal(dom.status.textContent, "disconnected");
+    assert.equal(dom.status.dataset.state, "disconnected");
+    assert.equal(dom.status.getAttribute("aria-label"), "disconnected");
     assert.equal(state.busy, false);
     assert.deepEqual(timeoutCalls, [3000]);
   });

@@ -1,8 +1,18 @@
 import { expect, type Page } from "playwright/test";
 
+export async function expectConnectionStatus(
+  page: Page,
+  status: "connected" | "connecting" | "disconnected",
+  options?: { timeout?: number },
+): Promise<void> {
+  const indicator = page.locator("#status");
+  await expect(indicator).toHaveAttribute("data-state", status, options);
+  await expect(indicator).toHaveAttribute("aria-label", new RegExp(`^${status}$`, "i"), options);
+}
+
 export async function gotoConnected(page: Page, path = "/"): Promise<void> {
   await page.goto(path);
-  await expect(page.locator("#status")).toHaveText("connected");
+  await expectConnectionStatus(page, "connected");
   await expect(page.locator("#input")).toBeEnabled();
 }
 
@@ -14,7 +24,7 @@ export async function createNewSession(page: Page): Promise<string> {
   const previousId = await currentSessionId(page);
   await page.locator("#new-btn").click();
   await expect.poll(() => currentSessionId(page)).not.toBe(previousId);
-  await expect(page.locator("#status")).toHaveText("connected");
+  await expectConnectionStatus(page, "connected");
   return currentSessionId(page);
 }
 

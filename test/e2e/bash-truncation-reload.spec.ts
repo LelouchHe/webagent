@@ -58,7 +58,7 @@ async function stopServer(child: ChildProcess): Promise<void> {
 
 async function gotoConnected(page: Page, url: string): Promise<void> {
   await page.goto(url);
-  await expect(page.locator("#status")).toHaveText("connected");
+  await expect(page.locator("#status")).toHaveAttribute("data-state", "connected");
   await expect(page.locator("#input")).toBeEnabled();
 }
 

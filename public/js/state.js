@@ -38,6 +38,20 @@ export const state = {
   pendingPromptDone: false,
 };
 
+const CONNECTION_STATUS_CLASSES = {
+  disconnected: 'is-disconnected',
+  connecting: 'is-connecting',
+  connected: 'is-connected',
+};
+
+export function setConnectionStatus(status, label = status) {
+  dom.status.textContent = '';
+  dom.status.className = `status-dot ${CONNECTION_STATUS_CLASSES[status]}`;
+  dom.status.dataset.state = status;
+  dom.status.setAttribute('aria-label', label);
+  dom.status.setAttribute('title', label);
+}
+
 // --- Config helpers ---
 
 export function getConfigOption(id) { return state.configOptions.find(o => o.id === id); }
@@ -123,3 +137,5 @@ export function updateSessionInfo(id, title) {
   dom.sessionInfo.textContent = title || (id ? id.slice(0, 8) + '…' : '');
   document.title = title || '>_';
 }
+
+setConnectionStatus('disconnected');

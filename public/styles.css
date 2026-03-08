@@ -72,8 +72,38 @@ body {
 }
 #header .logo { font-weight: bold; color: var(--green); }
 #header .status { color: var(--text-dim); margin-left: auto; }
-#header .status.connected { color: var(--green); }
-#header .status.connecting { color: var(--yellow); }
+#status {
+  margin-left: 8px;
+  width: 12px;
+  height: 12px;
+  display: inline-block;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background: transparent;
+}
+#status.is-disconnected {
+  background: var(--red);
+  border-color: var(--red);
+}
+#status.is-connected {
+  background: var(--green);
+  border-color: var(--green);
+}
+#status.is-connecting {
+  border-color: var(--yellow);
+  animation: status-pulse 1.2s ease-in-out infinite;
+}
+@keyframes status-pulse {
+  0%, 100% {
+    background: transparent;
+    opacity: 0.9;
+  }
+  50% {
+    background: var(--yellow);
+    opacity: 1;
+  }
+}
 #session-info {
   overflow: hidden;
   text-overflow: ellipsis;

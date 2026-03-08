@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn, type ChildProcess } from "node:child_process";
-import { createNewSession, currentSessionId, sendPrompt } from "./helpers.ts";
+import { createNewSession, currentSessionId, expectConnectionStatus, sendPrompt } from "./helpers.ts";
 
 const RESTART_PORT = 6803;
 
@@ -58,7 +58,7 @@ async function stopServer(child: ChildProcess): Promise<void> {
 
 async function gotoConnected(page: Page, url: string): Promise<void> {
   await page.goto(url);
-  await expect(page.locator("#status")).toHaveText("connected");
+  await expectConnectionStatus(page, "connected");
   await expect(page.locator("#input")).toBeEnabled();
 }
 
@@ -93,11 +93,11 @@ test("server restart restores the same session without duplicating history", asy
     await stopServer(server);
     server = null;
 
-    await expect(page.locator("#status")).toHaveText("disconnected");
+    await expectConnectionStatus(page, "disconnected");
 
     server = await startServer(configPath);
 
-    await expect(page.locator("#status")).toHaveText("connected", { timeout: 15_000 });
+    await expectConnectionStatus(page, "connected", { timeout: 15_000 });
     await expect.poll(() => currentSessionId(page)).toBe(sessionId);
     await expect(page.locator(".msg.user")).toHaveCount(1);
     await expect(page.locator(".msg.assistant")).toHaveCount(1);

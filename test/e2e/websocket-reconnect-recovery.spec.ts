@@ -1,5 +1,5 @@
 import { test, expect } from "playwright/test";
-import { createNewSession, currentSessionId, gotoConnected, sendPrompt } from "./helpers.ts";
+import { createNewSession, currentSessionId, expectConnectionStatus, gotoConnected, sendPrompt } from "./helpers.ts";
 
 test("websocket reconnect keeps the same session without duplicating history", async ({ page }) => {
   await page.addInitScript(() => {
@@ -22,8 +22,8 @@ test("websocket reconnect keeps the same session without duplicating history", a
   const sessionId = await currentSessionId(page);
   await page.evaluate(() => (window as any).__latestWebSocket.close());
 
-  await expect(page.locator("#status")).toHaveText("disconnected");
-  await expect(page.locator("#status")).toHaveText("connected", { timeout: 15_000 });
+  await expectConnectionStatus(page, "disconnected");
+  await expectConnectionStatus(page, "connected", { timeout: 15_000 });
   await expect.poll(() => currentSessionId(page)).toBe(sessionId);
   await expect(page.locator(".msg.user")).toHaveCount(1);
   await expect(page.locator(".msg.assistant")).toHaveCount(1);

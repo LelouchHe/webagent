@@ -3,6 +3,7 @@
 import {
   state, dom, setBusy, setConfigValue, getConfigOption, updateConfigOptions,
   updateModeUI, resetSessionUI, requestNewSession, setHashSessionId, updateSessionInfo,
+  setConnectionStatus,
 } from './state.js';
 import {
   addMessage, addSystem, finishAssistant, finishThinking, hideWaiting,
@@ -216,8 +217,7 @@ export function handleEvent(msg) {
       if (msg.configOptions?.length) updateConfigOptions(msg.configOptions);
       setHashSessionId(state.sessionId);
       updateSessionInfo(state.sessionId, state.sessionTitle);
-      dom.status.textContent = 'connected';
-      dom.status.className = 'status connected';
+      setConnectionStatus('connected', 'connected');
       setBusy(Boolean(msg.busyKind));
       if (msg.busyKind === 'bash') {
         const pendingBashEl = document.getElementById('bash-replay-pending');

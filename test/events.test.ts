@@ -35,7 +35,8 @@ describe("events", () => {
         assert.equal(state.sessionCwd, "/home");
         assert.equal(state.sessionTitle, "Test Session");
         assert.equal(state.awaitingNewSession, false);
-        assert.equal(dom.status.textContent, "connected");
+        assert.equal(dom.status.dataset.state, "connected");
+        assert.equal(dom.status.getAttribute("aria-label"), "connected");
       });
 
       it("ignores session_created from other clients when not awaiting", () => {

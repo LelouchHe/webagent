@@ -1,18 +1,16 @@
 // WebSocket connection lifecycle
 
-import { state, dom, setBusy, getHashSessionId, requestNewSession, resetSessionUI } from './state.js';
+import { state, setBusy, getHashSessionId, requestNewSession, resetSessionUI, setConnectionStatus } from './state.js';
 import { addSystem, finishThinking, finishAssistant, finishBash, scrollToBottom } from './render.js';
 import { handleEvent, loadHistory } from './events.js';
 
 export function connect() {
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  dom.status.textContent = 'connecting…';
-  dom.status.className = 'status connecting';
+  setConnectionStatus('connecting', 'connecting');
   state.ws = new WebSocket(`${proto}//${location.host}`);
 
   state.ws.onopen = async () => {
-    dom.status.textContent = 'session loading…';
-    dom.status.className = 'status connecting';
+    setConnectionStatus('connecting', 'session loading');
 
     const existingId = getHashSessionId();
     if (existingId) {
@@ -46,8 +44,7 @@ export function connect() {
   };
 
   state.ws.onclose = () => {
-    dom.status.textContent = 'disconnected';
-    dom.status.className = 'status';
+    setConnectionStatus('disconnected', 'disconnected');
     finishThinking();
     finishAssistant();
     if (state.currentBashEl) { finishBash(state.currentBashEl, null, 'disconnected'); }
