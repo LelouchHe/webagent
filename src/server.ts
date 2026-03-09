@@ -45,7 +45,7 @@ async function initBridge(): Promise<AgentBridge> {
   const b = new AgentBridge(config.agent_cmd);
 
   b.on("event", (event: AgentEvent) => {
-    if ("sessionId" in event && sessions.restoringSessions.has(event.sessionId)) return;
+    if ("sessionId" in event && event.sessionId && sessions.restoringSessions.has(event.sessionId)) return;
 
     switch (event.type) {
       case "connected":

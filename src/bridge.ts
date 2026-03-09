@@ -277,7 +277,7 @@ export class AgentBridge extends EventEmitter {
           sessionId,
           id: update.toolCallId ?? "",
           status: update.status ?? "",
-          content: update.content,
+          content: update.content ?? undefined,
         } satisfies AgentEvent);
         break;
 

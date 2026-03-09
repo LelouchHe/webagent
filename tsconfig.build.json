@@ -9,7 +9,7 @@
     "sourceMap": false,
     "rewriteRelativeImportExtensions": true,
     "verbatimModuleSyntax": true,
-    "strict": false,
+    "strict": true,
     "skipLibCheck": true,
     "noEmitOnError": true
   },
