@@ -45,7 +45,24 @@ Tech stack: Node.js + TypeScript (`--experimental-strip-types`), real-time WebSo
 ## Prerequisites
 
 - Node.js 22.6+ (requires `--experimental-strip-types`)
-- An ACP-compatible agent (e.g. [Copilot CLI](https://github.com/github/copilot-cli)) installed and authenticated
+- An ACP-compatible agent installed and authenticated
+
+### ACP-Compatible Agents
+
+WebAgent works with any agent that implements the [Agent Client Protocol](https://agentclientprotocol.com/). Some options:
+
+| Agent | Command | Notes |
+|---|---|---|
+| [Copilot CLI](https://github.com/github/copilot-cli) | `copilot --acp` | Default. GitHub's AI pair programmer |
+| [Claude Code](https://docs.anthropic.com/en/docs/agents/claude-code) | `claude --acp` | Anthropic's coding agent |
+| [Gemini CLI](https://github.com/google-gemini/gemini-cli) | `gemini --acp` | Google's Gemini models |
+| [OpenCode](https://opencode.ai/) | `opencode --acp` | Open-source, extensible |
+
+See the [ACP Registry](https://agentclientprotocol.com/get-started/agents) for the full list. To use a different agent, set `agent_cmd` in your config:
+
+```toml
+agent_cmd = "claude --acp"
+```
 
 ## Install
 
