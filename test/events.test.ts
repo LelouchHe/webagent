@@ -853,6 +853,35 @@ describe("events", () => {
       assert.equal(state.replayInProgress, false);
       assert.deepEqual(state.replayQueue, []);
     });
+
+    it("removes orphaned post-boundary elements even when no new events exist", async () => {
+      // Simulate: loadHistory rendered 1 event, then live streaming added an element
+      events.replayEvent("user_message", { text: "from-db" }, [], 0);
+      state.lastEventSeq = 1;
+      dom.messages.lastElementChild.setAttribute("data-sync-boundary", "");
+
+      // Simulate a live-streamed assistant element (added after boundary during streaming)
+      const liveEl = globalThis.document.createElement("div");
+      liveEl.className = "msg assistant";
+      liveEl.textContent = "partial stream content";
+      dom.messages.appendChild(liveEl);
+      assert.equal(dom.messages.children.length, 2);
+
+      // Simulate disconnect: finishAssistant clears state but not DOM
+      state.currentAssistantEl = null;
+      state.currentAssistantText = "";
+
+      // Reconnect: loadNewEvents returns empty (buffer not flushed yet)
+      globalThis.fetch = (() => Promise.resolve({
+        ok: true, json: () => Promise.resolve([]),
+      })) as any;
+
+      await events.loadNewEvents("s1");
+
+      // The orphaned post-boundary element should have been removed
+      assert.equal(dom.messages.children.length, 1);
+      assert.ok(dom.messages.children[0].textContent.includes("from-db"));
+    });
   });
 
   describe("replay queue (dedup on reconnect)", () => {

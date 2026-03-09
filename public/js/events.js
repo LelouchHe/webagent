@@ -85,21 +85,23 @@ export async function loadNewEvents(sid) {
     const res = await fetch(url);
     if (!res.ok) return false;
     const events = await res.json();
-    if (events.length === 0) return true;
 
-    // Remove DOM elements added after the sync boundary (live-rendered content
-    // that may overlap with the new DB events).
+    // Always remove DOM elements added after the sync boundary (live-rendered
+    // content that may be orphaned or overlap with new DB events), and reset
+    // in-progress streaming state.  This must run even when the event list is
+    // empty so that partially-streamed elements left over from a disconnect
+    // don't stay in the DOM.
     const boundary = dom.messages.querySelector('[data-sync-boundary]');
     if (boundary) {
       while (boundary.nextElementSibling) boundary.nextElementSibling.remove();
     }
-
-    // Clean up any in-progress streaming state left over from before disconnect
     state.currentAssistantEl = null;
     state.currentAssistantText = '';
     state.currentThinkingEl = null;
     state.currentThinkingText = '';
     state.currentBashEl = null;
+
+    if (events.length === 0) return true;
 
     for (let i = 0; i < events.length; i++) {
       const data = JSON.parse(events[i].data);
