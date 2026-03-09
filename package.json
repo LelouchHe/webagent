@@ -1,8 +1,36 @@
 {
-  "name": "webagent",
+  "name": "@lelouchhe/webagent",
   "version": "0.1.0",
+  "description": "A terminal-style web UI for ACP-compatible agents",
   "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/LelouchHe/webagent.git"
+  },
+  "homepage": "https://github.com/LelouchHe/webagent#readme",
+  "keywords": [
+    "acp",
+    "agent",
+    "web-ui",
+    "copilot",
+    "chat",
+    "websocket"
+  ],
+  "engines": {
+    "node": ">=22.6.0"
+  },
+  "bin": {
+    "webagent": "bin/webagent.mjs"
+  },
+  "files": [
+    "bin/",
+    "src/",
+    "dist/",
+    "config.toml"
+  ],
   "scripts": {
+    "prepublishOnly": "npm run build",
     "build": "node scripts/build.js",
     "start": "node --experimental-strip-types src/server.ts --config config.toml",
     "test": "node --experimental-strip-types --test test/*.test.ts",

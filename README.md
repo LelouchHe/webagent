@@ -1,6 +1,6 @@
 # WebAgent
 
-A web UI for any ACP-compatible agent, accessed remotely via the browser.
+A terminal-style web UI for ACP-compatible agents.
 
 Tech stack: Node.js + TypeScript (`--experimental-strip-types`), real-time WebSocket communication (`ws`), SQLite persistence (`better-sqlite3`), Zod validation.
 
@@ -47,19 +47,33 @@ Tech stack: Node.js + TypeScript (`--experimental-strip-types`), real-time WebSo
 ## Install
 
 ```bash
-npm install
-npm run build         # build static assets (public/ → dist/)
+npm install -g @lelouchhe/webagent
+```
+
+Or run directly with npx:
+
+```bash
+npx @lelouchhe/webagent
 ```
 
 ## Run
 
-### Default config
-
 ```bash
-npm start
+webagent                             # start with defaults (port 6800)
+webagent --config /path/to/config.toml   # start with custom config
 ```
 
-This starts the app on port 6800 using `data/` and serves static assets from `dist/`.
+Data (SQLite database, uploaded images) is stored in `./data/` relative to your current working directory by default.
+
+### From source
+
+```bash
+git clone https://github.com/LelouchHe/webagent.git
+cd webagent
+npm install
+npm run build         # build static assets (public/ → dist/)
+npm start             # start on port 6800
+```
 
 ### Development
 
@@ -74,7 +88,7 @@ How you keep the process running in the background is intentionally left to your
 Configuration is via TOML files, passed with `--config`:
 
 ```bash
-node --experimental-strip-types src/server.ts --config config.toml
+webagent --config config.toml
 ```
 
 If no `--config` is provided, all settings use built-in defaults. See `config.toml` for the checked-in default settings and `config.dev.toml` for development.
