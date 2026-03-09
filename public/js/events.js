@@ -320,6 +320,9 @@ export function handleEvent(msg) {
       setHashSessionId(state.sessionId);
       updateSessionInfo(state.sessionId, state.sessionTitle);
       setConnectionStatus('connected', 'connected');
+      dom.input.disabled = false;
+      dom.sendBtn.disabled = false;
+      dom.input.placeholder = '';
       setBusy(Boolean(msg.busyKind));
       if (msg.busyKind === 'bash') {
         const pendingBashEl = document.getElementById('bash-replay-pending');

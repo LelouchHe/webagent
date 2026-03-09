@@ -628,6 +628,23 @@ describe("events", () => {
         events.handleEvent({ type: "session_deleted", sessionId: "s2" });
         assert.equal(dom.input.disabled, false);
       });
+
+      it("re-enables input when a new session is created after deletion", () => {
+        state.sessionId = "s1";
+        events.handleEvent({ type: "session_deleted", sessionId: "s1" });
+        assert.equal(dom.input.disabled, true);
+
+        // User creates a new session
+        state.awaitingNewSession = true;
+        events.handleEvent({
+          type: "session_created",
+          sessionId: "s2",
+          cwd: "/home",
+        });
+        assert.equal(dom.input.disabled, false);
+        assert.equal(dom.sendBtn.disabled, false);
+        assert.notEqual(dom.input.placeholder, "Session deleted");
+      });
     });
 
     describe("config_set", () => {

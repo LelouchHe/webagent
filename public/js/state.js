@@ -116,8 +116,13 @@ export function resetSessionUI() {
   state.turnEnded = false;
   state._cancelTimerId = null;
   state.lastEventSeq = 0;
+  state.replayInProgress = false;
+  state.replayQueue = [];
   dom.attachPreview.innerHTML = '';
   dom.attachPreview.classList.remove('active');
+  dom.input.disabled = false;
+  dom.sendBtn.disabled = false;
+  dom.input.placeholder = '';
   setBusy(false);
 }
 

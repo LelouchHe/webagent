@@ -145,6 +145,18 @@ describe("state", () => {
       assert.equal(mod.state.followMessages, true);
       assert.equal(mod.state.busy, false);
     });
+
+    it("re-enables input and send button after session deletion", () => {
+      mod.dom.input.disabled = true;
+      mod.dom.sendBtn.disabled = true;
+      mod.dom.input.placeholder = "Session deleted";
+
+      mod.resetSessionUI();
+
+      assert.equal(mod.dom.input.disabled, false);
+      assert.equal(mod.dom.sendBtn.disabled, false);
+      assert.notEqual(mod.dom.input.placeholder, "Session deleted");
+    });
   });
 
   describe("sendCancel", () => {
