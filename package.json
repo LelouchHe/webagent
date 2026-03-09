@@ -25,12 +25,12 @@
   },
   "files": [
     "bin/",
-    "src/",
+    "lib/",
     "dist/",
     "config.toml"
   ],
   "scripts": {
-    "prepublishOnly": "npm run build",
+    "prepublishOnly": "npm run build && npx tsc -p tsconfig.build.json",
     "build": "node scripts/build.js",
     "start": "node --experimental-strip-types src/server.ts --config config.toml",
     "test": "node --experimental-strip-types --test test/*.test.ts",
@@ -51,6 +51,7 @@
     "@types/node": "^25.3.3",
     "@types/ws": "^8.18.1",
     "happy-dom": "^20.8.3",
-    "playwright": "^1.58.2"
+    "playwright": "^1.58.2",
+    "typescript": "^5.9.3"
   }
 }

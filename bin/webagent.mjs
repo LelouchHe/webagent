@@ -5,11 +5,11 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const server = join(__dirname, "..", "src", "server.ts");
+const server = join(__dirname, "..", "lib", "server.js");
 
 const child = spawn(
   process.execPath,
-  ["--experimental-strip-types", server, ...process.argv.slice(2)],
+  [server, ...process.argv.slice(2)],
   { stdio: "inherit" },
 );
 
