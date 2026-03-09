@@ -58,6 +58,9 @@ export function connect() {
     finishThinking();
     finishAssistant();
     if (state.currentBashEl) { finishBash(state.currentBashEl, null, 'disconnected'); }
+    state.pendingToolCallIds.clear();
+    state.pendingPermissionRequestIds.clear();
+    state.pendingPromptDone = false;
     setBusy(false);
     setTimeout(connect, 3000);
   };

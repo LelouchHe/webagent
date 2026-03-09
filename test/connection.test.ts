@@ -143,12 +143,18 @@ describe("connection", () => {
     const ws = latestSocket();
     state.busy = true;
     state.currentBashEl = render.addBashBlock("echo hi", true);
+    state.pendingToolCallIds.add("tc-orphan");
+    state.pendingPermissionRequestIds.add("perm-orphan");
+    state.pendingPromptDone = true;
 
     ws.onclose?.();
 
     assert.equal(dom.status.dataset.state, "disconnected");
     assert.equal(dom.status.getAttribute("aria-label"), "disconnected");
     assert.equal(state.busy, false);
+    assert.equal(state.pendingToolCallIds.size, 0);
+    assert.equal(state.pendingPermissionRequestIds.size, 0);
+    assert.equal(state.pendingPromptDone, false);
     assert.deepEqual(timeoutCalls, [3000]);
   });
 

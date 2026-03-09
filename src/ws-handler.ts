@@ -34,14 +34,14 @@ export function broadcast(wss: WebSocketServer, event: AgentEvent, exclude?: Web
   const msg = JSON.stringify(event);
   for (const client of wss.clients) {
     if (client.readyState === WebSocket.OPEN && client !== exclude) {
-      client.send(msg);
+      try { client.send(msg); } catch { /* client gone mid-send */ }
     }
   }
 }
 
 function send(ws: WebSocket, event: AgentEvent): void {
   if (ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify(event));
+    try { ws.send(JSON.stringify(event)); } catch { /* client gone mid-send */ }
   }
 }
 
