@@ -61,6 +61,7 @@ export function connect() {
     state.pendingToolCallIds.clear();
     state.pendingPermissionRequestIds.clear();
     state.pendingPromptDone = false;
+    state.turnEnded = false;
     setBusy(false);
     setTimeout(connect, 3000);
   };

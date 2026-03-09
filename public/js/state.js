@@ -36,6 +36,7 @@ export const state = {
   pendingToolCallIds: new Set(),
   pendingPermissionRequestIds: new Set(),
   pendingPromptDone: false,
+  turnEnded: false,
   lastEventSeq: 0,
 };
 
@@ -107,6 +108,7 @@ export function resetSessionUI() {
   state.pendingToolCallIds.clear();
   state.pendingPermissionRequestIds.clear();
   state.pendingPromptDone = false;
+  state.turnEnded = false;
   state.lastEventSeq = 0;
   dom.attachPreview.innerHTML = '';
   dom.attachPreview.classList.remove('active');

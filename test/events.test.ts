@@ -435,6 +435,96 @@ describe("events", () => {
       });
     });
 
+    describe("late events after prompt_done", () => {
+      it("ignores tool_call arriving after prompt_done (race condition)", () => {
+        state.busy = true;
+        events.handleEvent({
+          type: "tool_call",
+          id: "tc-early",
+          kind: "execute",
+          title: "Run cmd",
+          rawInput: { command: "ls" },
+        });
+
+        // prompt_done with cancel clears pending and sets busy=false
+        events.handleEvent({ type: "prompt_done", stopReason: "cancelled" });
+        assert.equal(state.busy, false);
+
+        // A late tool_call arrives after the turn has ended
+        events.handleEvent({
+          type: "tool_call",
+          id: "tc-late",
+          kind: "read",
+          title: "Read file",
+          rawInput: { path: "file.ts" },
+        });
+
+        // Should NOT re-set busy
+        assert.equal(state.busy, false);
+        assert.equal(state.pendingToolCallIds.size, 0);
+      });
+
+      it("ignores permission_request arriving after prompt_done", () => {
+        const ws = createMockWS();
+        state.ws = ws;
+        state.sessionId = "s1";
+        state.busy = true;
+
+        events.handleEvent({ type: "prompt_done", stopReason: "cancelled" });
+        assert.equal(state.busy, false);
+
+        // A late permission_request arrives after the turn has ended
+        events.handleEvent({
+          type: "permission_request",
+          requestId: "perm-late",
+          title: "Allow?",
+          options: [{ optionId: "allow", kind: "allow_once", name: "Allow" }],
+        });
+
+        // Should NOT re-set busy
+        assert.equal(state.busy, false);
+        assert.equal(state.pendingPermissionRequestIds.size, 0);
+      });
+
+      it("resets turnEnded flag on next user_message", () => {
+        state.busy = true;
+        events.handleEvent({ type: "prompt_done" });
+        assert.equal(state.busy, false);
+
+        // New turn starts
+        state.sessionId = "s1";
+        events.handleEvent({ type: "user_message", sessionId: "s1", text: "hello" });
+
+        // tool_call in the new turn should work normally
+        events.handleEvent({
+          type: "tool_call",
+          id: "tc-new-turn",
+          kind: "execute",
+          title: "Run",
+          rawInput: { command: "ls" },
+        });
+        assert.equal(state.busy, true);
+        assert.equal(state.pendingToolCallIds.size, 1);
+      });
+
+      it("ignores late tool_call after normal (non-cancel) prompt_done", () => {
+        state.busy = true;
+        events.handleEvent({ type: "prompt_done", stopReason: "end_turn" });
+        assert.equal(state.busy, false);
+
+        events.handleEvent({
+          type: "tool_call",
+          id: "tc-stale",
+          kind: "read",
+          title: "Stale read",
+          rawInput: { path: "x.ts" },
+        });
+
+        assert.equal(state.busy, false);
+        assert.equal(state.pendingToolCallIds.size, 0);
+      });
+    });
+
     describe("session_deleted", () => {
       it("disables input for current session", () => {
         state.sessionId = "s1";

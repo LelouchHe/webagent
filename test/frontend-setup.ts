@@ -53,6 +53,7 @@ export function resetState(state: any, dom: any) {
   state.pendingToolCallIds.clear();
   state.pendingPermissionRequestIds.clear();
   state.pendingPromptDone = false;
+  state.turnEnded = false;
   state.lastEventSeq = 0;
   // Reset DOM elements
   dom.messages.innerHTML = "";

@@ -286,6 +286,7 @@ export function handleEvent(msg) {
       break;
 
     case 'user_message': {
+      state.turnEnded = false;
       if (msg.sessionId === state.sessionId) {
         const el = addMessage('user', msg.text);
         if (msg.images) {
@@ -327,6 +328,7 @@ export function handleEvent(msg) {
       break;
 
     case 'tool_call': {
+      if (state.turnEnded) break;
       state.pendingToolCallIds.add(msg.id);
       setBusy(true);
       hideWaiting();
@@ -409,6 +411,7 @@ export function handleEvent(msg) {
     }
 
     case 'permission_request': {
+      if (state.turnEnded) break;
       state.pendingPermissionRequestIds.add(msg.requestId);
       setBusy(true);
       finishThinking();
@@ -496,6 +499,7 @@ export function handleEvent(msg) {
       if (msg.stopReason === 'cancelled') {
         cancelPendingTurnUI();
       }
+      state.turnEnded = true;
       state.pendingPromptDone = true;
       finishPromptIfIdle();
       break;
