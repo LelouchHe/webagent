@@ -170,11 +170,21 @@ export class SessionManager {
 
   /** Flush assistant/thinking buffers to store. */
   flushBuffers(sessionId: string): void {
+    this.flushAssistantBuffer(sessionId);
+    this.flushThinkingBuffer(sessionId);
+  }
+
+  /** Flush only the assistant message buffer to store. */
+  flushAssistantBuffer(sessionId: string): void {
     const assistant = this.assistantBuffers.get(sessionId);
     if (assistant) {
       this.store.saveEvent(sessionId, "assistant_message", { text: assistant });
       this.assistantBuffers.delete(sessionId);
     }
+  }
+
+  /** Flush only the thinking buffer to store. */
+  flushThinkingBuffer(sessionId: string): void {
     const thinking = this.thinkingBuffers.get(sessionId);
     if (thinking) {
       this.store.saveEvent(sessionId, "thinking", { text: thinking });

@@ -180,6 +180,10 @@ export function replayEvent(type, data, events, idx) {
         const iconSpan = el.querySelector('.icon');
         if (iconSpan) iconSpan.textContent = statusIcon;
       }
+      // Clear pending state so prompt_done can finish after reconnect replay
+      if (data.status === 'completed' || data.status === 'failed') {
+        state.pendingToolCallIds.delete(data.id);
+      }
       break;
     }
     case 'plan': {
@@ -255,6 +259,12 @@ export function replayEvent(type, data, events, idx) {
       }
       break;
     }
+    case 'prompt_done':
+      state.pendingToolCallIds.clear();
+      state.pendingPermissionRequestIds.clear();
+      state.pendingPromptDone = false;
+      setBusy(false);
+      break;
   }
 }
 

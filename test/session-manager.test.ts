@@ -169,6 +169,36 @@ describe("SessionManager", () => {
       sm.flushBuffers("s1"); // should not throw
       assert.deepEqual(store.getEvents("s1"), []);
     });
+
+    it("flushAssistantBuffer saves only the assistant buffer", () => {
+      store.createSession("s1", "/x");
+      sm.appendAssistant("s1", "Hello");
+      sm.appendThinking("s1", "hmm");
+
+      sm.flushAssistantBuffer("s1");
+
+      // Assistant saved, thinking still buffered
+      assert.ok(!sm.assistantBuffers.has("s1"));
+      assert.equal(sm.thinkingBuffers.get("s1"), "hmm");
+      const events = store.getEvents("s1");
+      assert.equal(events.length, 1);
+      assert.equal(events[0].type, "assistant_message");
+    });
+
+    it("flushThinkingBuffer saves only the thinking buffer", () => {
+      store.createSession("s1", "/x");
+      sm.appendAssistant("s1", "Hello");
+      sm.appendThinking("s1", "hmm");
+
+      sm.flushThinkingBuffer("s1");
+
+      // Thinking saved, assistant still buffered
+      assert.ok(!sm.thinkingBuffers.has("s1"));
+      assert.equal(sm.assistantBuffers.get("s1"), "Hello");
+      const events = store.getEvents("s1");
+      assert.equal(events.length, 1);
+      assert.equal(events[0].type, "thinking");
+    });
   });
 
   describe("getSessionCwd", () => {

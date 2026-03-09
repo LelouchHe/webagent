@@ -64,9 +64,11 @@ async function initBridge(): Promise<AgentBridge> {
         }
         break;
       case "message_chunk":
+        sessions.flushThinkingBuffer(event.sessionId);
         sessions.appendAssistant(event.sessionId, event.text);
         break;
       case "thought_chunk":
+        sessions.flushAssistantBuffer(event.sessionId);
         sessions.appendThinking(event.sessionId, event.text);
         break;
       case "tool_call":

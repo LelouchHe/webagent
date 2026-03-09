@@ -884,6 +884,40 @@ describe("events", () => {
     });
   });
 
+  describe("loadNewEvents clears pending state from replayed events", () => {
+    it("clears pendingToolCallIds for tool_call_updates replayed from DB", async () => {
+      // Simulate: live session had a tool_call that was added to pendingToolCallIds
+      events.replayEvent("user_message", { text: "hi" }, [], 0);
+      state.lastEventSeq = 1;
+      dom.messages.lastElementChild.setAttribute("data-sync-boundary", "");
+
+      // Simulate a tool_call received via live WS before disconnect
+      state.sessionId = "s1";
+      state.pendingToolCallIds.add("tc-live");
+      const tcEl = globalThis.document.createElement("div");
+      tcEl.className = "tool-call";
+      tcEl.id = "tc-tc-live";
+      tcEl.innerHTML = '<span class="icon">run</span> Do something';
+      dom.messages.appendChild(tcEl);
+
+      // Now reconnect — loadNewEvents replays tool_call_update from DB
+      const newEvents = [
+        { seq: 2, type: "tool_call_update", data: JSON.stringify({ id: "tc-live", status: "completed" }) },
+        { seq: 3, type: "prompt_done", data: JSON.stringify({ stopReason: "end_turn" }) },
+      ];
+      globalThis.fetch = (() => Promise.resolve({
+        ok: true, json: () => Promise.resolve(newEvents),
+      })) as any;
+
+      await events.loadNewEvents("s1");
+
+      // The pending tool call should be cleared so prompt_done can finish
+      assert.equal(state.pendingToolCallIds.size, 0);
+      // busy should be false (prompt_done could call finishPromptIfIdle)
+      assert.equal(state.busy, false);
+    });
+  });
+
   describe("replay queue (dedup on reconnect)", () => {
     it("queues WS events arriving during loadHistory and drains after", async () => {
       const fakeEvents = [
