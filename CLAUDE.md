@@ -55,6 +55,7 @@ If no `--config` is provided, all settings use built-in defaults. See `config.to
 | `agent_cmd` | `copilot --acp` | ACP agent command (binary + args, space-separated) |
 | `limits.bash_output` | `1048576` (1 MB) | Max bash output stored in DB per command |
 | `limits.image_upload` | `10485760` (10 MB) | Max image upload size |
+| `limits.cancel_timeout` | `10000` (10s) | Cancel timeout in ms; 0 disables |
 
 To use a different ACP-compatible agent backend:
 

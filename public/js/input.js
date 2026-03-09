@@ -8,6 +8,9 @@ import { addMessage, addSystem, addBashBlock, showWaiting } from './render.js';
 import { handleSlashCommand, hideSlashMenu, handleSlashMenuKey, updateSlashMenu } from './commands.js';
 import { renderAttachPreview } from './images.js';
 
+// Wire up cancel-timeout feedback (state.js cannot import render.js directly)
+state._onCancelTimeout = () => addSystem('warn: Agent not responding to cancel');
+
 function sendMessage() {
   const text = dom.input.value.trim();
   if (!text && state.pendingImages.length === 0) return;

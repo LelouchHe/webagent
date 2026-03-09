@@ -8,3 +8,4 @@ agent_cmd = "copilot --acp"
 [limits]
 bash_output = 1_048_576
 image_upload = 10_485_760
+cancel_timeout = 10_000

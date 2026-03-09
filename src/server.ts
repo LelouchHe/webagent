@@ -48,6 +48,9 @@ async function initBridge(): Promise<AgentBridge> {
     if (sessions.restoringSessions.has(event.sessionId)) return;
 
     switch (event.type) {
+      case "connected":
+        event.cancelTimeout = config.limits.cancel_timeout;
+        break;
       case "session_created":
         if (event.configOptions?.length) sessions.cachedConfigOptions = event.configOptions;
         for (const opt of event.configOptions ?? []) {

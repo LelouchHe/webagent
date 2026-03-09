@@ -3,7 +3,7 @@
 import {
   state, dom, setBusy, setConfigValue, getConfigOption, updateConfigOptions,
   updateModeUI, resetSessionUI, requestNewSession, setHashSessionId, updateSessionInfo,
-  setConnectionStatus,
+  setConnectionStatus, clearCancelTimer,
 } from './state.js';
 import {
   addMessage, addSystem, finishAssistant, finishThinking, hideWaiting,
@@ -254,6 +254,7 @@ export function handleEvent(msg) {
   }
   switch (msg.type) {
     case 'connected':
+      if (msg.cancelTimeout != null) state.cancelTimeout = msg.cancelTimeout;
       break;
 
     case 'session_created':
@@ -496,6 +497,7 @@ export function handleEvent(msg) {
     }
 
     case 'prompt_done':
+      clearCancelTimer();
       if (msg.stopReason === 'cancelled') {
         cancelPendingTurnUI();
       }

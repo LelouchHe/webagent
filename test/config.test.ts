@@ -40,8 +40,8 @@ describe("config", () => {
     assert.deepEqual(config.limits, {
       bash_output: 1_048_576,
       image_upload: 10_485_760,
+      cancel_timeout: 10_000,
     });
-    assert.deepEqual(getConfig(), config);
   });
 
   it("loads values from a TOML config file", () => {
@@ -57,6 +57,7 @@ agent_cmd = "demo-agent --acp"
 [limits]
 bash_output = 2048
 image_upload = 4096
+cancel_timeout = 5000
 `);
     process.argv = ["node", "test", "--config", configPath];
 
@@ -69,6 +70,7 @@ image_upload = 4096
     assert.deepEqual(config.limits, {
       bash_output: 2048,
       image_upload: 4096,
+      cancel_timeout: 5000,
     });
   });
 

@@ -525,6 +525,96 @@ describe("events", () => {
       });
     });
 
+    describe("cancel timeout", () => {
+      function withMockTimers(fn: (ctx: { timeoutFns: Function[]; timeoutDelays: number[]; clearedIds: number[] }) => void) {
+        const origSet = globalThis.setTimeout;
+        const origClear = globalThis.clearTimeout;
+        const timeoutFns: Function[] = [];
+        const timeoutDelays: number[] = [];
+        const clearedIds: number[] = [];
+        let nextId = 100;
+        globalThis.setTimeout = ((f: Function, ms?: number) => {
+          timeoutFns.push(f);
+          timeoutDelays.push(ms ?? 0);
+          return nextId++ as any;
+        }) as any;
+        globalThis.clearTimeout = ((id: number) => {
+          clearedIds.push(id);
+        }) as any;
+        try {
+          fn({ timeoutFns, timeoutDelays, clearedIds });
+        } finally {
+          globalThis.setTimeout = origSet;
+          globalThis.clearTimeout = origClear;
+        }
+      }
+
+      it("starts a cancel timeout after sendCancel", () => {
+        withMockTimers(({ timeoutFns, timeoutDelays }) => {
+          const ws = createMockWS();
+          state.ws = ws;
+          state.sessionId = "s1";
+          state.busy = true;
+          state.cancelTimeout = 10_000;
+
+          stateMod.sendCancel();
+
+          assert.ok(timeoutFns.length > 0, "should have scheduled a timeout");
+          assert.equal(timeoutDelays[0], 10_000);
+        });
+      });
+
+      it("cancel timeout fires and resets busy with warning", () => {
+        withMockTimers(({ timeoutFns }) => {
+          const ws = createMockWS();
+          state.ws = ws;
+          state.sessionId = "s1";
+          state.busy = true;
+          state.cancelTimeout = 5000;
+          state._onCancelTimeout = () => render.addSystem("warn: Agent not responding to cancel");
+
+          stateMod.sendCancel();
+
+          // Fire the timeout callback
+          timeoutFns[0]();
+
+          assert.equal(state.busy, false);
+          assert.ok(dom.messages.textContent.includes("not responding"));
+        });
+      });
+
+      it("prompt_done clears the cancel timeout", () => {
+        withMockTimers(({ clearedIds }) => {
+          const ws = createMockWS();
+          state.ws = ws;
+          state.sessionId = "s1";
+          state.busy = true;
+          state.cancelTimeout = 10_000;
+
+          stateMod.sendCancel();
+
+          // prompt_done arrives before timeout fires
+          events.handleEvent({ type: "prompt_done", stopReason: "cancelled" });
+
+          assert.ok(clearedIds.length > 0, "should have cleared the timeout");
+        });
+      });
+
+      it("does not start timeout when cancelTimeout is 0", () => {
+        withMockTimers(({ timeoutFns }) => {
+          const ws = createMockWS();
+          state.ws = ws;
+          state.sessionId = "s1";
+          state.busy = true;
+          state.cancelTimeout = 0;
+
+          stateMod.sendCancel();
+
+          assert.equal(timeoutFns.length, 0, "should not schedule a timeout when disabled");
+        });
+      });
+    });
+
     describe("session_deleted", () => {
       it("disables input for current session", () => {
         state.sessionId = "s1";

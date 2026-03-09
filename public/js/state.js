@@ -37,6 +37,9 @@ export const state = {
   pendingPermissionRequestIds: new Set(),
   pendingPromptDone: false,
   turnEnded: false,
+  cancelTimeout: 10_000,
+  _cancelTimerId: null,
+  _onCancelTimeout: null,
   lastEventSeq: 0,
 };
 
@@ -109,6 +112,7 @@ export function resetSessionUI() {
   state.pendingPermissionRequestIds.clear();
   state.pendingPromptDone = false;
   state.turnEnded = false;
+  state._cancelTimerId = null;
   state.lastEventSeq = 0;
   dom.attachPreview.innerHTML = '';
   dom.attachPreview.classList.remove('active');
@@ -119,11 +123,31 @@ export function updateNewBtnVisibility() {
   dom.newBtn.classList.toggle('hidden', dom.input.value.length > 0);
 }
 
-// Send cancel without UI side-effect — callers add their own feedback
+// Send cancel without UI side-effect — callers add their own feedback.
+// If state.cancelTimeout > 0, arms a timer that calls onCancelTimeout() when
+// the agent fails to acknowledge the cancel in time.
 export function sendCancel() {
   if (!state.busy || !state.ws) return false;
   state.ws.send(JSON.stringify({ type: 'cancel', sessionId: state.sessionId }));
+  clearCancelTimer();
+  if (state.cancelTimeout > 0) {
+    state._cancelTimerId = setTimeout(() => {
+      state._cancelTimerId = null;
+      if (state.busy) {
+        state.turnEnded = true;
+        setBusy(false);
+        state._onCancelTimeout?.();
+      }
+    }, state.cancelTimeout);
+  }
   return true;
+}
+
+export function clearCancelTimer() {
+  if (state._cancelTimerId != null) {
+    clearTimeout(state._cancelTimerId);
+    state._cancelTimerId = null;
+  }
 }
 
 // --- Hash routing ---

@@ -12,9 +12,11 @@ const ConfigSchema = z.object({
   limits: z.object({
     bash_output: z.number().int().positive().default(1_048_576),   // 1 MB
     image_upload: z.number().int().positive().default(10_485_760), // 10 MB
+    cancel_timeout: z.number().int().nonnegative().default(10_000), // 10s; 0 disables
   }).default({
     bash_output: 1_048_576,
     image_upload: 10_485_760,
+    cancel_timeout: 10_000,
   }),
 });
 

@@ -15,7 +15,7 @@ export interface ConfigOption {
 // --- Agent events (server → client) ---
 
 export type AgentEvent =
-  | { type: "connected"; agent: { name: string; version: string }; configOptions: ConfigOption[] }
+  | { type: "connected"; agent: { name: string; version: string }; configOptions: ConfigOption[]; cancelTimeout?: number }
   | { type: "session_created"; sessionId: string; cwd?: string; title?: string | null; configOptions: ConfigOption[]; busyKind?: "agent" | "bash" }
   | { type: "config_option_update"; sessionId: string; configOptions: ConfigOption[] }
   | { type: "message_chunk"; sessionId: string; text: string }

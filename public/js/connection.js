@@ -1,6 +1,6 @@
 // WebSocket connection lifecycle
 
-import { state, setBusy, getHashSessionId, requestNewSession, resetSessionUI, setConnectionStatus } from './state.js';
+import { state, setBusy, getHashSessionId, requestNewSession, resetSessionUI, setConnectionStatus, clearCancelTimer } from './state.js';
 import { addSystem, finishThinking, finishAssistant, finishBash, scrollToBottom } from './render.js';
 import { handleEvent, loadHistory, loadNewEvents } from './events.js';
 
@@ -62,6 +62,7 @@ export function connect() {
     state.pendingPermissionRequestIds.clear();
     state.pendingPromptDone = false;
     state.turnEnded = false;
+    clearCancelTimer();
     setBusy(false);
     setTimeout(connect, 3000);
   };
