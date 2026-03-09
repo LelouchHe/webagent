@@ -523,6 +523,48 @@ describe("events", () => {
         assert.equal(state.busy, false);
         assert.equal(state.pendingToolCallIds.size, 0);
       });
+
+      it("does not drop new-turn events when sender never receives user_message echo", () => {
+        // Simulate: turn 1 ends normally
+        state.sessionId = "s1";
+        state.busy = true;
+        events.handleEvent({ type: "prompt_done", stopReason: "end_turn" });
+        assert.equal(state.turnEnded, true);
+
+        // User sends a new prompt via input.js (setBusy + WS send).
+        // The server does NOT echo user_message back to the sender —
+        // only to other clients — so handleEvent('user_message') never
+        // fires on this client.  turnEnded stays true.
+        //
+        // Agent responds with message_chunk first (normal flow):
+        events.handleEvent({ type: "message_chunk", text: "Let me " });
+        // message_chunk should implicitly clear turnEnded
+        assert.equal(state.turnEnded, false);
+
+        // Then agent sends tool_call
+        events.handleEvent({
+          type: "tool_call",
+          id: "tc-new",
+          kind: "execute",
+          title: "Run",
+          rawInput: { command: "ls" },
+        });
+
+        assert.equal(state.pendingToolCallIds.has("tc-new"), true, "tool_call should not be dropped");
+        assert.ok(document.getElementById("tc-tc-new"), "tool_call element should exist");
+
+        // Same for permission_request
+        events.handleEvent({
+          type: "permission_request",
+          requestId: "perm-new",
+          title: "Allow?",
+          options: [{ optionId: "allow", kind: "allow_once", name: "Allow" }],
+        });
+        assert.ok(
+          document.querySelector('.permission[data-request-id="perm-new"]'),
+          "permission_request should not be dropped",
+        );
+      });
     });
 
     describe("cancel timeout", () => {

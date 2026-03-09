@@ -72,6 +72,19 @@ describe("input", () => {
     assert.equal(dom.input.value, "");
   });
 
+  it("resets turnEnded when sending a new prompt", () => {
+    const ws = createMockWS();
+    state.ws = ws;
+    state.sessionId = "s1";
+    state.turnEnded = true;
+    dom.input.value = "next question";
+
+    clickSend();
+
+    assert.equal(state.turnEnded, false, "turnEnded should be cleared on send");
+    assert.equal(state.busy, true);
+  });
+
   it("routes bang-prefixed input to bash execution", () => {
     const ws = createMockWS();
     state.ws = ws;

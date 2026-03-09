@@ -82,6 +82,7 @@ function sendMessage() {
   } else {
     state.ws.send(JSON.stringify({ type: 'prompt', sessionId: state.sessionId, text }));
   }
+  state.turnEnded = false;
   setBusy(true);
   showWaiting();
 }
