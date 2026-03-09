@@ -1,5 +1,8 @@
 # WebAgent
 
+[![CI](https://github.com/LelouchHe/webagent/actions/workflows/ci.yml/badge.svg)](https://github.com/LelouchHe/webagent/actions/workflows/ci.yml)
+[![npm](https://img.shields.io/npm/v/@lelouchhe/webagent)](https://www.npmjs.com/package/@lelouchhe/webagent)
+
 A terminal-style web UI for ACP-compatible agents.
 
 Tech stack: Node.js + TypeScript (`--experimental-strip-types`), real-time WebSocket communication (`ws`), SQLite persistence (`better-sqlite3`), Zod validation.

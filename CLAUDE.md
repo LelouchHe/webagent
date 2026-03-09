@@ -1,6 +1,6 @@
 # WebAgent
 
-A web UI for any ACP-compatible agent, accessed remotely via the browser.
+A terminal-style web UI for ACP-compatible agents.
 
 Tech stack: Node.js + TypeScript (`--experimental-strip-types`), real-time WebSocket communication (`ws`), SQLite persistence (`better-sqlite3`), Zod validation.
 
@@ -138,6 +138,22 @@ Do not treat tests as an afterthought. A bug fix or feature is incomplete unless
 - When a task or sub-task is actually finished, end with an explicit completion statement (for example: `Done.`, `This is fixed.`, `Build succeeded; you can refresh now.`, or `Tests passed; ready for the next step.`).
 - Do not end on process narration that sounds mid-stream (for example: `I'm running...`, `I'll verify...`, `I’m checking...`) without a follow-up conclusion in the same response.
 - If the UI may already be interactive again, make the current state explicit so the user knows whether work is complete, still running, or waiting on them.
+
+## Publishing
+
+Published to npm as `@lelouchhe/webagent`. CI and release are handled by GitHub Actions:
+
+- **CI** (`.github/workflows/ci.yml`): Runs `npm test` + Playwright E2E on every push to `main` and on PRs.
+- **Publish** (`.github/workflows/publish.yml`): Triggers on `v*` tag push. Builds `dist/` and publishes to npm with provenance.
+
+Release workflow:
+
+```bash
+npm version patch      # or minor / major — bumps version, creates commit + tag
+git push --follow-tags # pushes commit + tag, triggers publish workflow
+```
+
+Requires `NPM_TOKEN` secret in GitHub repo settings (npmjs.com → Granular Access Token → Read and write on `@lelouchhe/webagent`).
 
 ## TODO
 
