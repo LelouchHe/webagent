@@ -204,7 +204,7 @@ let slashConfigId = null;
 let cachedSessions = null;
 let slashDismissed = null;
 
-function updateSlashMenu() {
+export function updateSlashMenu() {
   const text = dom.input.value;
 
   if (slashDismissed !== null) {

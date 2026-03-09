@@ -1,11 +1,11 @@
 // User input handling: send, cancel, keyboard shortcuts
 
 import {
-  state, dom, setBusy, sendCancel, requestNewSession, resetSessionUI,
+  state, dom, setBusy, sendCancel,
   getConfigOption, getConfigValue, updateNewBtnVisibility,
 } from './state.js';
 import { addMessage, addSystem, addBashBlock, showWaiting } from './render.js';
-import { handleSlashCommand, hideSlashMenu, handleSlashMenuKey } from './commands.js';
+import { handleSlashCommand, hideSlashMenu, handleSlashMenuKey, updateSlashMenu } from './commands.js';
 import { renderAttachPreview } from './images.js';
 
 function sendMessage() {
@@ -172,11 +172,13 @@ document.addEventListener('keydown', (e) => {
 // Click prompt indicator to cycle mode
 dom.prompt.addEventListener('click', cycleMode);
 
-// Click + to create new session
+// Click + to fill /new into input and show path menu
 dom.newBtn.addEventListener('click', () => {
-  resetSessionUI();
-  addSystem('Creating new session…');
-  requestNewSession({ cwd: state.sessionCwd });
+  dom.input.value = '/new ';
+  updateNewBtnVisibility();
+  syncSendBtn();
+  updateSlashMenu();
+  dom.input.focus();
 });
 
 // Hide + button when input has content; sync send button label
