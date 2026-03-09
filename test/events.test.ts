@@ -842,5 +842,163 @@ describe("events", () => {
       assert.equal(dom.messages.children.length, 1);
       assert.equal(state.lastEventSeq, 1);
     });
+
+    it("clears replayInProgress even when returning early for empty events", async () => {
+      state.lastEventSeq = 1;
+      globalThis.fetch = (() => Promise.resolve({
+        ok: true, json: () => Promise.resolve([]),
+      })) as any;
+
+      await events.loadNewEvents("s1");
+      assert.equal(state.replayInProgress, false);
+      assert.deepEqual(state.replayQueue, []);
+    });
+  });
+
+  describe("replay queue (dedup on reconnect)", () => {
+    it("queues WS events arriving during loadHistory and drains after", async () => {
+      const fakeEvents = [
+        { seq: 1, type: "user_message", data: JSON.stringify({ text: "hi" }) },
+      ];
+
+      let resolveFetch: Function;
+      globalThis.fetch = (() => new Promise(r => { resolveFetch = r; })) as any;
+
+      state.sessionId = "s1";
+      const historyPromise = events.loadHistory("s1");
+
+      // While fetch is in-flight, simulate a WS event arriving
+      assert.equal(state.replayInProgress, true);
+      events.handleEvent({ type: "message_chunk", sessionId: "s1", text: "hello" });
+      assert.equal(state.replayQueue.length, 1);
+      // It should NOT have created a DOM element yet
+      assert.equal(dom.messages.children.length, 0);
+
+      // Now resolve the fetch
+      resolveFetch!({ ok: true, json: () => Promise.resolve(fakeEvents) });
+      await historyPromise;
+
+      // After drain: history replay created user_message, queue drained message_chunk
+      assert.equal(state.replayInProgress, false);
+      assert.equal(dom.messages.children.length, 2);
+      assert.ok(dom.messages.children[0].textContent.includes("hi"));
+      // message_chunk creates an assistant element
+      assert.ok(dom.messages.children[1].classList.contains("assistant"));
+    });
+
+    it("deduplicates tool_call events that were both replayed and queued", async () => {
+      const fakeEvents = [
+        { seq: 1, type: "tool_call", data: JSON.stringify({ id: "tc1", title: "Read file", kind: "read", rawInput: {} }) },
+      ];
+
+      let resolveFetch: Function;
+      globalThis.fetch = (() => new Promise(r => { resolveFetch = r; })) as any;
+
+      state.sessionId = "s1";
+      const historyPromise = events.loadHistory("s1");
+
+      // Simulate the same tool_call arriving via WS while replay is in-flight
+      events.handleEvent({
+        type: "tool_call", sessionId: "s1", id: "tc1", title: "Read file", kind: "read", rawInput: {},
+      });
+      assert.equal(state.replayQueue.length, 1);
+
+      resolveFetch!({ ok: true, json: () => Promise.resolve(fakeEvents) });
+      await historyPromise;
+
+      // Only one tool_call element should exist (deduped)
+      const toolCalls = dom.messages.querySelectorAll("#tc-tc1");
+      assert.equal(toolCalls.length, 1);
+    });
+
+    it("deduplicates permission_request events that were both replayed and queued", async () => {
+      const fakeEvents = [
+        {
+          seq: 1,
+          type: "permission_request",
+          data: JSON.stringify({
+            requestId: "perm1",
+            title: "Run command",
+            options: [{ optionId: "o1", name: "Allow", kind: "allow_once" }],
+          }),
+        },
+        {
+          seq: 2,
+          type: "permission_response",
+          data: JSON.stringify({ requestId: "perm1", optionName: "Allow", denied: false }),
+        },
+      ];
+
+      let resolveFetch: Function;
+      globalThis.fetch = (() => new Promise(r => { resolveFetch = r; })) as any;
+
+      state.sessionId = "s1";
+      const historyPromise = events.loadHistory("s1");
+
+      // Same permission_request arrives via WS
+      events.handleEvent({
+        type: "permission_request", sessionId: "s1", requestId: "perm1",
+        title: "Run command", options: [{ optionId: "o1", name: "Allow", kind: "allow_once" }],
+      });
+
+      resolveFetch!({ ok: true, json: () => Promise.resolve(fakeEvents) });
+      await historyPromise;
+
+      const perms = dom.messages.querySelectorAll('.permission[data-request-id="perm1"]');
+      assert.equal(perms.length, 1);
+    });
+
+    it("lets non-duplicate queued events through after replay", async () => {
+      const fakeEvents = [
+        { seq: 1, type: "user_message", data: JSON.stringify({ text: "hi" }) },
+      ];
+
+      let resolveFetch: Function;
+      globalThis.fetch = (() => new Promise(r => { resolveFetch = r; })) as any;
+
+      state.sessionId = "s1";
+      const historyPromise = events.loadHistory("s1");
+
+      // A tool_call for a NEW id that isn't in the history
+      events.handleEvent({
+        type: "tool_call", sessionId: "s1", id: "tc-new", title: "New tool", kind: "execute", rawInput: {},
+      });
+
+      resolveFetch!({ ok: true, json: () => Promise.resolve(fakeEvents) });
+      await historyPromise;
+
+      // user_message from history + new tool_call from queue
+      assert.equal(dom.messages.children.length, 2);
+      assert.ok(document.getElementById("tc-tc-new"));
+    });
+
+    it("queues events during loadNewEvents and drains after", async () => {
+      // Set up existing DOM from a prior load
+      events.replayEvent("user_message", { text: "old" }, [], 0);
+      state.lastEventSeq = 1;
+      dom.messages.lastElementChild.setAttribute("data-sync-boundary", "");
+
+      const newEvents = [
+        { seq: 2, type: "tool_call", data: JSON.stringify({ id: "tc2", title: "Edit", kind: "edit", rawInput: {} }) },
+      ];
+
+      let resolveFetch: Function;
+      globalThis.fetch = (() => new Promise(r => { resolveFetch = r; })) as any;
+
+      state.sessionId = "s1";
+      const promise = events.loadNewEvents("s1");
+
+      // Duplicate tool_call arrives via WS
+      events.handleEvent({
+        type: "tool_call", sessionId: "s1", id: "tc2", title: "Edit", kind: "edit", rawInput: {},
+      });
+
+      resolveFetch!({ ok: true, json: () => Promise.resolve(newEvents) });
+      await promise;
+
+      // Only one tc-tc2 element
+      assert.equal(dom.messages.querySelectorAll("#tc-tc2").length, 1);
+      assert.equal(state.replayInProgress, false);
+    });
   });
 });

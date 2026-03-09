@@ -41,6 +41,8 @@ export const state = {
   _cancelTimerId: null,
   _onCancelTimeout: null,
   lastEventSeq: 0,
+  replayInProgress: false,
+  replayQueue: [],
 };
 
 const CONNECTION_STATUS_CLASSES = {

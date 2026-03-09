@@ -42,6 +42,8 @@ function cancelPendingTurnUI() {
 }
 
 export async function loadHistory(sid) {
+  state.replayInProgress = true;
+  state.replayQueue = [];
   try {
     const res = await fetch(`/api/sessions/${sid}/events`);
     if (!res.ok) return false;
@@ -57,6 +59,9 @@ export async function loadHistory(sid) {
     return true;
   } catch {
     return false;
+  } finally {
+    state.replayInProgress = false;
+    drainReplayQueue();
   }
 }
 
@@ -73,6 +78,8 @@ function setSyncBoundary() {
  * Returns true if new events were applied (or none needed), false on error.
  */
 export async function loadNewEvents(sid) {
+  state.replayInProgress = true;
+  state.replayQueue = [];
   try {
     const url = `/api/sessions/${sid}/events?after_seq=${state.lastEventSeq}`;
     const res = await fetch(url);
@@ -103,6 +110,9 @@ export async function loadNewEvents(sid) {
     return true;
   } catch {
     return false;
+  } finally {
+    state.replayInProgress = false;
+    drainReplayQueue();
   }
 }
 
@@ -246,7 +256,35 @@ export function replayEvent(type, data, events, idx) {
   }
 }
 
+/** Process queued WS events, skipping any that duplicate content already in the DOM. */
+function drainReplayQueue() {
+  const queue = state.replayQueue;
+  state.replayQueue = [];
+  for (const msg of queue) {
+    if (isDuplicateOfReplay(msg)) continue;
+    handleEvent(msg);
+  }
+}
+
+/** Check whether a queued WS event duplicates an element already rendered by replay. */
+function isDuplicateOfReplay(msg) {
+  switch (msg.type) {
+    case 'tool_call':
+      return !!document.getElementById(`tc-${msg.id}`);
+    case 'permission_request':
+      return !!document.querySelector(`.permission[data-request-id="${msg.requestId}"]`);
+    default:
+      return false;
+  }
+}
+
 export function handleEvent(msg) {
+  // Queue events that arrive while history replay is in progress to avoid duplicates
+  if (state.replayInProgress) {
+    state.replayQueue.push(msg);
+    return;
+  }
+
   // Ignore events from other sessions (multi-client broadcast)
   if (msg.sessionId && state.sessionId && msg.sessionId !== state.sessionId
       && msg.type !== 'session_created' && msg.type !== 'session_deleted') {

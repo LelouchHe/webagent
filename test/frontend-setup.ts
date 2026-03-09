@@ -57,6 +57,8 @@ export function resetState(state: any, dom: any) {
   state.cancelTimeout = 10_000;
   state._cancelTimerId = null;
   state.lastEventSeq = 0;
+  state.replayInProgress = false;
+  state.replayQueue = [];
   // Reset DOM elements
   dom.messages.innerHTML = "";
   dom.status.textContent = "";
