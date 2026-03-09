@@ -45,7 +45,7 @@ async function initBridge(): Promise<AgentBridge> {
   const b = new AgentBridge(config.agent_cmd);
 
   b.on("event", (event: AgentEvent) => {
-    if (sessions.restoringSessions.has(event.sessionId)) return;
+    if ("sessionId" in event && sessions.restoringSessions.has(event.sessionId)) return;
 
     switch (event.type) {
       case "connected":
@@ -93,7 +93,7 @@ async function initBridge(): Promise<AgentBridge> {
           const opt = event.options.find((o: any) => o.kind === "allow_once");
           if (opt) {
             b.resolvePermission(event.requestId, opt.optionId);
-            const optionName = opt.label ?? opt.optionId;
+            const optionName = (opt as any).label ?? opt.optionId;
             store.saveEvent(event.sessionId, "permission_response", {
               requestId: event.requestId, optionName, denied: false,
             });

@@ -33,7 +33,7 @@ export class TitleService {
     bridge: AgentBridge,
     userMessage: string,
     sessionId: string,
-  ): Promise<void> {
+  ): Promise<string | undefined> {
     this.activeSourceSessions.add(sessionId);
     const tsId = await this.ensureTitleSession(bridge);
     if (!tsId) {

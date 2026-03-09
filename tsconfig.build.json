@@ -11,7 +11,7 @@
     "verbatimModuleSyntax": true,
     "strict": false,
     "skipLibCheck": true,
-    "noEmitOnError": false
+    "noEmitOnError": true
   },
   "include": ["src"]
 }
