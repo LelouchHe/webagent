@@ -176,7 +176,7 @@ agent_cmd = "my-agent --acp"
 - After server restart, restores session context via ACP `loadSession` so conversations can continue
 - Auto-generated titles (async, using a fast model)
 - Session history persisted in SQLite, survives restarts
-- `/sessions` lists all sessions (git-branch style, `*` marks current in green)
+- `/switch` lists all sessions (git-branch style, `*` marks current in green)
 - Switching sessions replays full message history
 
 ### Slash Commands
@@ -203,7 +203,8 @@ Commands with submenus (`/model`, `/mode`, `/think`, `/notify`, `/switch`, `/del
 | `/switch <title\|id>` | Switch to a session (match by title or ID prefix) |
 | `/delete <title\|id>` | Delete a session |
 | `/prune` | Delete all sessions except current |
-| `/help` | Show help |
+
+Type `?` for inline help listing all commands and shortcuts.
 
 ### Keyboard Shortcuts
 
@@ -252,16 +253,20 @@ Browser ←WebSocket→ server.ts ←ACP→ copilot CLI
                      ├── ws-handler.ts (WS dispatch)
                      ├── session-manager.ts (state)
                      ├── title-service.ts (auto-title)
+                     ├── push-service.ts (Web Push)
+                     ├── daemon.ts (background service)
                      └── store.ts (SQLite)
 ```
 
 - **server.ts** — HTTP/WebSocket server bootstrap
-- **routes.ts** — HTTP request handlers (static files, REST API, image upload)
-- **ws-handler.ts** — WebSocket message dispatch + broadcast
+- **routes.ts** — HTTP request handlers (static files, REST API, image upload, push subscription)
+- **ws-handler.ts** — WebSocket message dispatch + broadcast + visibility tracking
 - **session-manager.ts** — Session state management (live sessions, buffers, bash procs, model cache)
 - **bridge.ts** — ACP bridge, manages agent subprocess, handles permissions and file I/O
-- **store.ts** — SQLite persistence (sessions + events tables, WAL mode)
+- **store.ts** — SQLite persistence (sessions, events, push subscriptions; WAL mode)
 - **title-service.ts** — Async session title generation (dedicated Haiku session)
+- **push-service.ts** — Web Push notifications (VAPID keys, subscriptions, visibility-gated delivery)
+- **daemon.ts** — Background service management (start/stop/status/restart) with supervisor
 - **types.ts** — Shared types + Zod schemas for WS messages
 
 ## ACP Scope and Current Limits
