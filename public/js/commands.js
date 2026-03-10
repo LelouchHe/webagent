@@ -506,6 +506,50 @@ export function hideSlashMenu() {
   slashDismissed = dom.input.value;
 }
 
+// Tab: fill input only, never execute
+function tabCompleteSlashItem(idx) {
+  if (idx < 0 || idx >= slashFiltered.length) return;
+
+  if (slashMode === 'commands') {
+    const item = slashFiltered[idx];
+    dom.input.value = item.cmd + (item.args ? ' ' : '');
+    hideSlashMenu();
+    dom.input.focus();
+    if (['/new', '/switch', '/delete', '/model', '/mode', '/think', '/notify'].includes(item.cmd)) {
+      slashDismissed = null;
+      updateSlashMenu();
+    }
+  } else if (slashMode === 'config') {
+    const o = slashFiltered[idx];
+    const configCmd = { model: '/model', mode: '/mode', reasoning_effort: '/think' }[slashConfigId] || `/${slashConfigId}`;
+    dom.input.value = `${configCmd} ${o.name}`;
+    hideSlashMenu();
+    dom.input.focus();
+  } else if (slashMode === 'notify') {
+    const o = slashFiltered[idx];
+    dom.input.value = `/notify ${o.value}`;
+    hideSlashMenu();
+    dom.input.focus();
+  } else if (slashMode === 'new') {
+    const p = slashFiltered[idx];
+    dom.input.value = `/new ${p.cwd}`;
+    hideSlashMenu();
+    dom.input.focus();
+  } else if (slashMode === 'switch') {
+    const s = slashFiltered[idx];
+    dom.input.value = `/switch ${s.title || s.id}`;
+    hideSlashMenu();
+    dom.input.focus();
+  } else if (slashMode === 'delete') {
+    const s = slashFiltered[idx];
+    dom.input.value = `/delete ${s.title || s.id}`;
+    hideSlashMenu();
+    dom.input.focus();
+  }
+  updateNewBtnVisibility();
+}
+
+// Click: fill input AND execute (equivalent to tab + enter)
 function selectSlashItem(idx) {
   if (idx < 0 || idx >= slashFiltered.length) return;
 
@@ -576,7 +620,7 @@ export function handleSlashMenuKey(e) {
     return true;
   }
   if (e.key === 'Tab') {
-    selectSlashItem(slashIdx);
+    tabCompleteSlashItem(slashIdx);
     return true;
   }
   return false;

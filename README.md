@@ -181,7 +181,15 @@ agent_cmd = "my-agent --acp"
 
 ### Slash Commands
 
-Type `/` to trigger an autocomplete menu (arrow keys to navigate, Tab to select, Esc to close).
+Type `/` to trigger an autocomplete menu with arrow keys to navigate, Esc to close.
+
+| Key | In menu | Without menu |
+|---|---|---|
+| `Tab` | Fill selected item into input | — |
+| `Enter` | Send current input | Send current input |
+| Click/Tap | Fill and send (Tab + Enter) | — |
+
+Commands with submenus (`/model`, `/mode`, `/think`, `/notify`, `/switch`, `/delete`, `/new`) show a picker after typing the command and a space. Tab completes the selection into the input so you can review or edit before pressing Enter to send.
 
 | Command | Description |
 |---|---|

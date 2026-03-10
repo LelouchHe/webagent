@@ -112,7 +112,7 @@ Keep this distinction clear in docs and code discussions: some missing capabilit
 - **Build step for production** — `scripts/build.js` copies `public/` → `dist/`, appending a timestamp to JS/CSS filenames and rewriting imports/HTML references. Production serves from `dist/`; dev serves from `public/` directly.
 - **Module structure** — `public/js/state.js` (shared state + DOM refs), `render.js` (UI helpers + theme), `events.js` (WS event dispatch + history), `commands.js` (slash commands + autocomplete), `images.js` (attach/paste), `input.js` (send/keyboard), `connection.js` (WS lifecycle), `app.js` (boot entry).
 - **Terminal aesthetic** — monospace fonts, `^X` / `^U` style button labels, `*` git-branch-style session markers.
-- **Keyboard shortcuts** — `Ctrl+X` cancel, `Ctrl+U` upload. Enter only sends (never cancels).
+- **Keyboard shortcuts** — `Ctrl+X` cancel, `Ctrl+U` upload. Enter always sends input (never cancels, never selects menu item). Tab fills menu selection into input without executing. Click/tap on menu item = fill + send.
 - **Theme** — dark/light/auto, persisted to localStorage.
 - **Escape key** — `inputEl` keydown listener cannot reliably capture Escape (browser default behavior / IME may consume it first). Use `document.addEventListener('keydown', ...)` instead for Escape handling.
 - **Prefer CSS for animations** — Use CSS `@keyframes` + pseudo-elements for UI animations (spinners, pulses) instead of JS `setInterval`. JS timers cause issues in test environments (JSDOM) by keeping the event loop alive.
