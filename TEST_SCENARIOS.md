@@ -1,6 +1,6 @@
 # Test Scenarios
 
-Last updated: 2026-03-08
+Last updated: 2026-03-09
 
 This file is a scenario-level map of the current automated test suite.
 It is intentionally higher-level than raw test names so we can review coverage,
@@ -31,6 +31,14 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - ACP session update event translation
   - ACP text file read/write callbacks
 
+- `test/event-handler.test.ts` (server-event-handler)
+  - event routing: message_chunk, thought_chunk, tool_call, prompt_done, session_created, error
+  - thinking↔assistant buffer flush transitions
+  - restoring-session event suppression
+  - autopilot auto-approval with allow_once
+  - autopilot fallback when no allow_once option exists
+  - normal permission_request broadcast in non-autopilot mode
+
 - `test/ws-handler.test.ts`
   - new session / resume session routing
   - user prompt persistence + title generation trigger / retry after a canceled title attempt
@@ -39,6 +47,10 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - bash execution guard when one command is already running
   - bash cancellation forwarding
   - session-wide cancel as a hard stop for WebAgent-owned work
+  - session deletion with broadcast notification
+  - bash command success path with output streaming
+  - bash command stderr capture
+  - broadcast: open/closed client handling, sender exclusion, error tolerance
 
 - `test/session-manager.test.ts`
   - session title hydration
@@ -113,7 +125,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
 
 - `test/routes.test.ts`
   - static file / API route basics
-  - image upload endpoint behavior
+  - image upload: valid PNG, size limit enforcement, non-image MIME rejection, empty body, missing content-type, session association
 
 - `test/render.test.ts`
   - markdown / diff / bash block render helpers
