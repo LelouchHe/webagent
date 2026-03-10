@@ -17,8 +17,15 @@ interface WsHandlerDeps {
   limits: Config["limits"];
 }
 
+const IS_WIN = process.platform === "win32";
+
 function interruptBashProc(proc: ReturnType<SessionManager["runningBashProcs"]["get"]>): void {
   if (!proc) return;
+  if (IS_WIN && typeof proc.pid === "number") {
+    // Windows: kill entire process tree since there are no process groups
+    spawn("taskkill", ["/T", "/F", "/PID", String(proc.pid)]).unref();
+    return;
+  }
   if (typeof proc.pid === "number") {
     try {
       process.kill(-proc.pid, "SIGINT");
@@ -203,9 +210,11 @@ export function setupWsHandler(deps: WsHandlerDeps): void {
               }
             }
 
-            const child = spawn("bash", ["-c", msg.command], {
+            const shell = IS_WIN ? (process.env.COMSPEC || "cmd.exe") : (process.env.SHELL || "bash");
+            const shellArgs = IS_WIN ? ["/s", "/c", msg.command] : ["-c", msg.command];
+            const child = spawn(shell, shellArgs, {
               cwd,
-              detached: true,
+              detached: !IS_WIN,
               env: { ...process.env, TERM: "dumb" },
               stdio: ["ignore", "pipe", "pipe"],
             });
