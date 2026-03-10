@@ -24,6 +24,24 @@ describe("push — /notify command", () => {
     resetState(state, dom);
     (globalThis as any).Notification = { permission: "default", requestPermission: async () => "default" };
     globalThis.fetch = (() => Promise.resolve({ ok: true, json: () => Promise.resolve({ publicKey: "test-key" }) })) as any;
+    // Mock pushManager with subscription tracking
+    let activeSub: any = null;
+    const mockPushManager = {
+      getSubscription: async () => activeSub,
+      subscribe: async () => {
+        activeSub = {
+          endpoint: "https://mock-push/endpoint",
+          toJSON: () => ({ endpoint: "https://mock-push/endpoint", keys: { p256dh: "k1", auth: "k2" } }),
+          unsubscribe: async () => { activeSub = null; return true; },
+        };
+        return activeSub;
+      },
+    };
+    Object.defineProperty(globalThis, "navigator", {
+      value: { serviceWorker: { ready: Promise.resolve({ pushManager: mockPushManager }) } },
+      writable: true,
+      configurable: true,
+    });
   });
 
   function messageLines(): string[] {
@@ -84,6 +102,48 @@ describe("push — /notify command", () => {
     const lines = messageLines();
     assert.ok(lines.some((l: string) => l.includes("off") || l.includes("disabled")),
       `expected off message, got: ${lines}`);
+  });
+
+  it("/notify shows off after /notify off even when permission is granted", async () => {
+    state.ws = createMockWS();
+    state.sessionId = "s1";
+    (globalThis as any).Notification = {
+      permission: "granted",
+      requestPermission: async () => "granted",
+    };
+
+    // Enable first
+    await commands.handleSlashCommand("/notify on");
+    dom.messages.innerHTML = "";
+
+    // Disable
+    await commands.handleSlashCommand("/notify off");
+    dom.messages.innerHTML = "";
+
+    // Check status — should be off, not enabled
+    await commands.handleSlashCommand("/notify");
+    const lines = messageLines();
+    assert.ok(lines.some((l: string) => l.includes("off")),
+      `expected off status after disable, got: ${lines}`);
+  });
+
+  it("/notify on re-subscribes after previous /notify off", async () => {
+    state.ws = createMockWS();
+    state.sessionId = "s1";
+    (globalThis as any).Notification = {
+      permission: "granted",
+      requestPermission: async () => "granted",
+    };
+
+    // Enable, disable, re-enable
+    await commands.handleSlashCommand("/notify on");
+    await commands.handleSlashCommand("/notify off");
+    dom.messages.innerHTML = "";
+    await commands.handleSlashCommand("/notify on");
+
+    const lines = messageLines();
+    assert.ok(lines.some((l: string) => l.includes("enabled")),
+      `expected enabled after re-subscribe, got: ${lines}`);
   });
 });
 

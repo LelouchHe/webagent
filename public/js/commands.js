@@ -59,6 +59,15 @@ function urlBase64ToUint8Array(base64String) {
   return arr;
 }
 
+async function hasActiveSubscription() {
+  try {
+    const reg = await navigator.serviceWorker?.ready;
+    if (!reg) return false;
+    const sub = await reg.pushManager.getSubscription();
+    return sub !== null;
+  } catch { return false; }
+}
+
 // --- Slash command execution ---
 
 export async function handleSlashCommand(text) {
@@ -230,22 +239,20 @@ export async function handleSlashCommand(text) {
       const sub = arg.toLowerCase();
 
       if (sub === 'on') {
-        if (Notification.permission === 'granted') {
-          await subscribePush();
-          addSystem('notify: already enabled');
-          return true;
-        }
         if (Notification.permission === 'denied') {
           addSystem('notify: blocked — allow in browser site settings to enable');
           return true;
         }
-        const result = await Notification.requestPermission();
-        if (result === 'granted') {
-          await subscribePush();
-          addSystem('notify: enabled');
-        } else {
-          addSystem('notify: blocked — allow in browser site settings to enable');
+        if (Notification.permission !== 'granted') {
+          const result = await Notification.requestPermission();
+          if (result !== 'granted') {
+            addSystem('notify: blocked — allow in browser site settings to enable');
+            return true;
+          }
         }
+        const alreadyActive = await hasActiveSubscription();
+        await subscribePush();
+        addSystem(alreadyActive ? 'notify: already enabled' : 'notify: enabled');
         return true;
       }
 
@@ -255,12 +262,12 @@ export async function handleSlashCommand(text) {
         return true;
       }
 
-      // No argument — show status
+      // No argument — show status based on actual subscription
       const perm = Notification.permission;
-      if (perm === 'granted') {
-        addSystem('notify: enabled');
-      } else if (perm === 'denied') {
+      if (perm === 'denied') {
         addSystem('notify: blocked — allow in browser site settings to enable');
+      } else if (perm === 'granted' && await hasActiveSubscription()) {
+        addSystem('notify: enabled');
       } else {
         addSystem('notify: off — use /notify on to enable');
       }
