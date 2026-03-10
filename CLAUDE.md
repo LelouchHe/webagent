@@ -133,6 +133,13 @@ Do not treat tests as an afterthought. A bug fix or feature is incomplete unless
 
 - Keep `TEST_SCENARIOS.md` in sync when the suite meaningfully expands or when the documented coverage boundaries change, so future review does not require reverse-engineering intent from test names alone.
 
+### Lessons
+
+- **Behavior changes must update all callers** — When changing a UI element's behavior (e.g. a button going from direct action to filling a command), search for ALL test helpers and E2E specs that depend on that behavior, not just the closest unit test. A single missed caller can silently break dozens of downstream tests.
+- **Flaky tests are usually real bugs** — Don't dismiss intermittent failures as test fragility. Event ordering races (e.g. `prompt_done` arriving before `permission_resolved`) are real production bugs that tests happen to expose under timing pressure.
+- **Optimistic UI and server broadcasts must agree** — When a client action triggers both an optimistic DOM update and a server broadcast back to the same client, the two must produce identical text/state. Mismatches (e.g. "Deny" vs "denied") cause flaky assertions and confusing UX.
+- **E2E helpers should use the most stable path** — Shared test helpers (like `createNewSession`) should use the most direct, UI-independent code path (e.g. slash command) rather than simulating complex UI flows (button click → menu → submit). Reserve UI-specific interaction testing for dedicated specs.
+
 ## Response Clarity
 
 - When a task or sub-task is actually finished, end with an explicit completion statement (for example: `Done.`, `This is fixed.`, `Build succeeded; you can refresh now.`, or `Tests passed; ready for the next step.`).

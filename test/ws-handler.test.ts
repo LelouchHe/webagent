@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { WebSocket } from "ws";
-import { setupWsHandler } from "../src/ws-handler.ts";
+import { setupWsHandler, broadcast } from "../src/ws-handler.ts";
 
 function createMockSocket() {
   const handlers = new Map<string, Function>();
@@ -371,5 +371,136 @@ describe("setupWsHandler", () => {
     assert.deepEqual(harness.bridgeCalls.cancel, ["s1"]);
     assert.deepEqual(killSignals, ["SIGINT"]);
     assert.deepEqual(harness.titleServiceCancelCalls, ["s1"]);
+  });
+
+  it("deletes a session and broadcasts session_deleted to all clients", async () => {
+    const harness = createHarness();
+    closeSockets.push(() => harness.sender.emit("close"));
+
+    await harness.sendMessage({ type: "delete_session", sessionId: "s1" });
+
+    assert.deepEqual(harness.sessions.deleteSessionCalls, ["s1"]);
+    const broadcast = JSON.parse(harness.peer.sent[0]);
+    assert.equal(broadcast.type, "session_deleted");
+    assert.equal(broadcast.sessionId, "s1");
+  });
+
+  it("executes a bash command and broadcasts output and completion", async () => {
+    const harness = createHarness();
+    closeSockets.push(() => harness.sender.emit("close"));
+
+    await harness.sendMessage({
+      type: "bash_exec",
+      sessionId: "s1",
+      command: "echo hello",
+    });
+
+    // bash_command should be saved to store immediately
+    assert.equal(harness.storeCalls.saveEvent[0].type, "bash_command");
+    assert.deepEqual(harness.storeCalls.saveEvent[0].data, { command: "echo hello" });
+
+    // bash_command broadcast to peer (not sender)
+    const cmdBroadcast = JSON.parse(harness.peer.sent[0]);
+    assert.equal(cmdBroadcast.type, "bash_command");
+    assert.equal(cmdBroadcast.command, "echo hello");
+
+    // Wait for the child process to finish
+    await new Promise<void>((resolve) => {
+      const check = () => {
+        if (!harness.sessions.runningBashProcs.has("s1")) return resolve();
+        setTimeout(check, 20);
+      };
+      check();
+    });
+
+    // bash_result saved with output
+    const resultEvent = harness.storeCalls.saveEvent.find((e) => e.type === "bash_result");
+    assert.ok(resultEvent, "bash_result event should be saved");
+    assert.match((resultEvent!.data as any).output, /hello/);
+    assert.equal((resultEvent!.data as any).code, 0);
+
+    // bash_output and bash_done broadcast to all clients
+    const peerMessages = harness.peer.sent.map((s) => JSON.parse(s));
+    assert.ok(peerMessages.some((m: any) => m.type === "bash_output" && m.text.includes("hello")));
+    assert.ok(peerMessages.some((m: any) => m.type === "bash_done" && m.code === 0));
+  });
+
+  it("captures stderr output from bash commands", async () => {
+    const harness = createHarness();
+    closeSockets.push(() => harness.sender.emit("close"));
+
+    await harness.sendMessage({
+      type: "bash_exec",
+      sessionId: "s1",
+      command: "echo oops >&2",
+    });
+
+    await new Promise<void>((resolve) => {
+      const check = () => {
+        if (!harness.sessions.runningBashProcs.has("s1")) return resolve();
+        setTimeout(check, 20);
+      };
+      check();
+    });
+
+    const peerMessages = harness.peer.sent.map((s) => JSON.parse(s));
+    assert.ok(peerMessages.some((m: any) => m.type === "bash_output" && m.stream === "stderr" && m.text.includes("oops")));
+  });
+});
+
+describe("broadcast", () => {
+  it("sends to all open clients", () => {
+    const sent: string[][] = [[], []];
+    const clients = [
+      { readyState: WebSocket.OPEN, send(d: string) { sent[0].push(d); } },
+      { readyState: WebSocket.OPEN, send(d: string) { sent[1].push(d); } },
+    ];
+    const wss = { clients: new Set(clients) };
+
+    broadcast(wss as any, { type: "test_event" } as any);
+
+    assert.equal(sent[0].length, 1);
+    assert.equal(sent[1].length, 1);
+    assert.deepEqual(JSON.parse(sent[0][0]), { type: "test_event" });
+  });
+
+  it("skips closed clients", () => {
+    const sent: string[] = [];
+    const clients = [
+      { readyState: WebSocket.OPEN, send(d: string) { sent.push(d); } },
+      { readyState: WebSocket.CLOSED, send() { throw new Error("should not be called"); } },
+    ];
+    const wss = { clients: new Set(clients) };
+
+    broadcast(wss as any, { type: "test_event" } as any);
+
+    assert.equal(sent.length, 1);
+  });
+
+  it("excludes the specified client", () => {
+    const sent: string[][] = [[], []];
+    const clients = [
+      { readyState: WebSocket.OPEN, send(d: string) { sent[0].push(d); } },
+      { readyState: WebSocket.OPEN, send(d: string) { sent[1].push(d); } },
+    ];
+    const wss = { clients: new Set(clients) };
+
+    broadcast(wss as any, { type: "test_event" } as any, clients[0] as any);
+
+    assert.equal(sent[0].length, 0);
+    assert.equal(sent[1].length, 1);
+  });
+
+  it("tolerates send errors from disconnected clients", () => {
+    const sent: string[] = [];
+    const clients = [
+      { readyState: WebSocket.OPEN, send() { throw new Error("connection reset"); } },
+      { readyState: WebSocket.OPEN, send(d: string) { sent.push(d); } },
+    ];
+    const wss = { clients: new Set(clients) };
+
+    broadcast(wss as any, { type: "test_event" } as any);
+
+    assert.equal(sent.length, 1);
   });
 });
