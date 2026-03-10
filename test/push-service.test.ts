@@ -1,6 +1,6 @@
 import { describe, it, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync, chmodSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Store } from "../src/store.ts";
@@ -125,6 +125,18 @@ describe("PushService", () => {
       const key2 = svc2.getPublicKey();
 
       assert.equal(key1, key2, "public key should persist across restarts");
+    });
+
+    it("enforces 0600 permissions when loading existing keys", () => {
+      // Create keys
+      new PushService(store, tmpDir, "mailto:test@localhost");
+      const filePath = join(tmpDir, "vapid.json");
+      // Loosen permissions
+      chmodSync(filePath, 0o644);
+      assert.equal(statSync(filePath).mode & 0o777, 0o644);
+      // Re-load — should fix permissions
+      new PushService(store, tmpDir, "mailto:test@localhost");
+      assert.equal(statSync(filePath).mode & 0o777, 0o600);
     });
 
     it("getPublicKey returns the VAPID public key", () => {

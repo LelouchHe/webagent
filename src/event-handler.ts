@@ -102,9 +102,6 @@ export function handleAgentEvent(
     const eventData: Record<string, unknown> = {};
     if (event.type === "permission_request") {
       eventData.description = event.title;
-    } else if (event.type === "bash_done" && "code" in event) {
-      // Extract command from the most recent bash_command event
-      eventData.exitCode = (event as any).code;
     }
     if (pushService.maybeNotify(event.sessionId, session?.title ?? null, event.type, eventData)) {
       const notification = pushService.formatNotification(

@@ -36,6 +36,7 @@ export class PushService {
   private loadOrGenerateKeys(dataDir: string): VapidKeys {
     const filePath = join(dataDir, VAPID_FILE);
     if (existsSync(filePath)) {
+      chmodSync(filePath, 0o600);
       const keys = JSON.parse(readFileSync(filePath, "utf8")) as VapidKeys;
       console.log("[push] loaded VAPID keys");
       return keys;

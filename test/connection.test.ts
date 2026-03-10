@@ -94,7 +94,8 @@ describe("connection", () => {
 
     assert.equal(ws.url, "ws://localhost:6801");
     assert.deepEqual(fetchCalls, ["/api/sessions/hash-session/events"]);
-    assert.deepEqual(JSON.parse(ws.sent[0]), {
+    assert.deepEqual(JSON.parse(ws.sent[0]), { type: "visibility", visible: true });
+    assert.deepEqual(JSON.parse(ws.sent[1]), {
       type: "resume_session",
       sessionId: "hash-session",
     });
@@ -118,7 +119,8 @@ describe("connection", () => {
     await ws.onopen?.();
 
     assert.deepEqual(fetchCalls, ["/api/sessions", "/api/sessions/recent-session/events"]);
-    assert.deepEqual(JSON.parse(ws.sent[0]), {
+    assert.deepEqual(JSON.parse(ws.sent[0]), { type: "visibility", visible: true });
+    assert.deepEqual(JSON.parse(ws.sent[1]), {
       type: "resume_session",
       sessionId: "recent-session",
     });
@@ -135,7 +137,8 @@ describe("connection", () => {
     await ws.onopen?.();
 
     assert.equal(state.awaitingNewSession, true);
-    assert.deepEqual(JSON.parse(ws.sent[0]), { type: "new_session" });
+    assert.deepEqual(JSON.parse(ws.sent[0]), { type: "visibility", visible: true });
+    assert.deepEqual(JSON.parse(ws.sent[1]), { type: "new_session" });
   });
 
   it("marks the UI disconnected and schedules reconnect on close", () => {
@@ -185,7 +188,8 @@ describe("connection", () => {
       "/api/sessions/restored-session/events",
       "/api/sessions/restored-session/events",
     ]);
-    assert.deepEqual(JSON.parse(secondWs.sent[0]), {
+    assert.deepEqual(JSON.parse(secondWs.sent[0]), { type: "visibility", visible: true });
+    assert.deepEqual(JSON.parse(secondWs.sent[1]), {
       type: "resume_session",
       sessionId: "restored-session",
     });
@@ -235,8 +239,9 @@ describe("connection", () => {
     assert.equal(fetchCalls.length, 1);
     assert.ok(fetchCalls[0].includes("after_seq=2"));
     assert.equal(state.lastEventSeq, 3);
-    // Still sent resume_session
-    assert.deepEqual(JSON.parse(ws.sent[0]), {
+    // Still sent resume_session (after initial visibility)
+    assert.deepEqual(JSON.parse(ws.sent[0]), { type: "visibility", visible: true });
+    assert.deepEqual(JSON.parse(ws.sent[1]), {
       type: "resume_session",
       sessionId: "incr-session",
     });

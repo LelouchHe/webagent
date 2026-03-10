@@ -62,8 +62,8 @@ export function setupWsHandler(deps: WsHandlerDeps): void {
     const clientId = `ws-${nextClientId++}`;
     console.log(`[ws] client connected (total: ${wss.clients.size})`);
 
-    // Default new clients to visible (they're opening the page)
-    pushService?.setClientVisibility(clientId, true);
+    // Track client for push notification visibility — actual state sent by client
+    // (no default assumed; client sends visibility message in onopen)
 
     const pingInterval = setInterval(() => {
       if (ws.readyState === WebSocket.OPEN) ws.ping();
@@ -251,6 +251,15 @@ export function setupWsHandler(deps: WsHandlerDeps): void {
               const stored = outputTruncated ? "[truncated]\n" + output : output;
               store.saveEvent(msg.sessionId, "bash_result", { output: stored, code, signal });
               broadcast(wss, { type: "bash_done", sessionId: msg.sessionId, code, signal } as any);
+              // Push notification for bash completion
+              if (pushService) {
+                const session = store.getSession(msg.sessionId);
+                const eventData = { command: msg.command, exitCode: code };
+                if (pushService.maybeNotify(msg.sessionId, session?.title ?? null, "bash_done", eventData)) {
+                  const notification = pushService.formatNotification(msg.sessionId, session?.title ?? null, "bash_done", eventData);
+                  pushService.sendToAll(notification).catch(err => console.error("[push] failed to send:", err));
+                }
+              }
             });
 
             child.on("error", (err) => {

@@ -11,6 +11,8 @@ export function connect() {
 
   state.ws.onopen = async () => {
     setConnectionStatus('connecting', 'session loading');
+    // Report actual visibility to server for push notification gating
+    state.ws.send(JSON.stringify({ type: 'visibility', visible: !document.hidden }));
 
     const existingId = getHashSessionId();
 
