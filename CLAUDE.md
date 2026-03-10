@@ -12,6 +12,7 @@ Core modules:
 - `bridge.ts` — ACP bridge, manages agent subprocess
 - `store.ts` — SQLite persistence (sessions + events tables)
 - `title-service.ts` — Async session title generation (dedicated Haiku session)
+- `push-service.ts` — Web Push notifications (VAPID keys, subscriptions, visibility-gated delivery)
 - `daemon.ts` — Background service management (start/stop/status/restart) with supervisor
 - `types.ts` — Shared types + Zod schemas for WS messages
 - `public/index.html` — HTML shell (imports CSS + JS modules)
@@ -75,6 +76,7 @@ agent_cmd = "my-agent --acp"
 - **Title generation**: Uses a dedicated silent session with fast model (Haiku), async and non-blocking.
 - **Multi-client broadcast**: Events broadcast to all WS clients. Permission responses, user messages, bash output sync across devices. `broadcast()` supports sender exclusion.
 - **PWA**: Minimal service worker (no offline cache), manifest.json, installable to home screen.
+- **Web Push**: VAPID-based push notifications via `web-push`. Only fires when no WS client is visible (zero clients or all backgrounded). 5-minute per-session merge window prevents spam. Subscriptions stored in SQLite; stale endpoints (410 Gone) auto-cleaned. Notifiable events: `permission_request`, `prompt_done`, `bash_done`.
 
 ## ACP Client Extensions
 
@@ -115,6 +117,7 @@ Keep this distinction clear in docs and code discussions: some missing capabilit
 - **Escape key** — `inputEl` keydown listener cannot reliably capture Escape (browser default behavior / IME may consume it first). Use `document.addEventListener('keydown', ...)` instead for Escape handling.
 - **Prefer CSS for animations** — Use CSS `@keyframes` + pseudo-elements for UI animations (spinners, pulses) instead of JS `setInterval`. JS timers cause issues in test environments (JSDOM) by keeping the event loop alive.
 - **Autopilot mode** — In autopilot mode, permissions are auto-approved server-side (`allow_once` only, not `allow_always`, to avoid persisting across mode switches). New sessions always start in agent mode (mode is not inherited).
+- **Push notifications** — `/notify` slash command with on/off submenu. First `prompt_done` triggers a one-time tip (localStorage-gated). Permission denied state shows manual-settings guidance. Service worker handles push display + notificationclick → session navigation.
 
 ## Git Commit Tips
 

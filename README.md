@@ -136,6 +136,7 @@ If no `--config` is provided, all settings use built-in defaults. See `config.to
 | `limits.bash_output` | `1048576` (1 MB) | Max bash output stored in DB per command |
 | `limits.image_upload` | `10485760` (10 MB) | Max image upload size |
 | `limits.cancel_timeout` | `10000` (10s) | Cancel timeout in ms; 0 disables |
+| `push.vapid_subject` | `mailto:webagent@localhost` | VAPID subject for Web Push (email or URL) |
 
 To use a different ACP-compatible agent backend:
 
@@ -189,6 +190,7 @@ Type `/` to trigger an autocomplete menu (arrow keys to navigate, Tab to select,
 | `/model [name]` | View or switch model (fuzzy match, e.g. `/model opus`) |
 | `/mode [name]` | View or switch mode (Agent / Plan / Autopilot) |
 | `/think [level]` | View or switch reasoning effort (low / medium / high) |
+| `/notify [on\|off]` | Toggle push notifications for background alerts |
 | `/cancel` | Cancel current response |
 | `/switch <title\|id>` | Switch to a session (match by title or ID prefix) |
 | `/delete <title\|id>` | Delete a session |
@@ -216,6 +218,7 @@ Tap the `❯` prompt indicator to cycle mode. Tap `new` to create a new session 
 ### Other
 
 - PWA support (installable to home screen)
+- Web Push notifications — background alerts when no browser tab is visible (use `/notify on`)
 - WebSocket auto-reconnect (3s retry on disconnect)
 - 30s heartbeat keepalive
 - Auto-expanding input box
