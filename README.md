@@ -101,7 +101,20 @@ npm start             # start on port 6800
 npm run dev           # port 6801, uses data-dev/, auto-restarts on file changes
 ```
 
-How you keep the process running in the background is intentionally left to your own environment and preferred process manager.
+### Service management
+
+WebAgent includes a built-in daemon with crash recovery:
+
+```bash
+webagent start --config config.toml   # start as background daemon
+webagent stop                          # stop the daemon
+webagent restart                       # atomic restart (Unix) / stop+start (Windows)
+webagent status                        # show running state
+```
+
+The daemon writes a PID file (`webagent.pid`) and log file (`webagent.log`) in the current directory. Run all commands from the same directory.
+
+For auto-start on boot, see [docs/autostart.md](docs/autostart.md) (launchd, systemd, crontab, and Windows Task Scheduler examples).
 
 ### Configuration
 

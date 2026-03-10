@@ -12,6 +12,7 @@ Core modules:
 - `bridge.ts` — ACP bridge, manages agent subprocess
 - `store.ts` — SQLite persistence (sessions + events tables)
 - `title-service.ts` — Async session title generation (dedicated Haiku session)
+- `daemon.ts` — Background service management (start/stop/status/restart) with supervisor
 - `types.ts` — Shared types + Zod schemas for WS messages
 - `public/index.html` — HTML shell (imports CSS + JS modules)
 - `public/styles.css` — all CSS
