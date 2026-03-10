@@ -11,6 +11,29 @@ import {
   formatLocalTime,
 } from './render.js';
 
+const NOTIFY_TIP_KEY = 'webagent_notify_tip_shown';
+const NOTIFY_TIP_DENIED_KEY = 'webagent_notify_tip_denied_shown';
+
+function showNotifyTip() {
+  if (typeof Notification === 'undefined') return;
+  if (state.replayInProgress) return;
+
+  const perm = Notification.permission;
+  if (perm === 'granted') return; // already enabled
+
+  if (perm === 'denied') {
+    if (localStorage.getItem(NOTIFY_TIP_DENIED_KEY)) return;
+    localStorage.setItem(NOTIFY_TIP_DENIED_KEY, '1');
+    addSystem('tip: notifications are blocked — allow in browser site settings to enable');
+    return;
+  }
+
+  // permission === 'default'
+  if (localStorage.getItem(NOTIFY_TIP_KEY)) return;
+  localStorage.setItem(NOTIFY_TIP_KEY, '1');
+  addSystem('tip: use /notify to enable background notifications');
+}
+
 function finishPromptIfIdle() {
   if (!state.pendingPromptDone) return;
   if (state.pendingToolCallIds.size > 0 || state.pendingPermissionRequestIds.size > 0) return;
@@ -19,6 +42,7 @@ function finishPromptIfIdle() {
   finishAssistant();
   setBusy(false);
   state.pendingPromptDone = false;
+  showNotifyTip();
 }
 
 function cancelPendingTurnUI() {

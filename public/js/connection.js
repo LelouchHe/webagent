@@ -74,3 +74,11 @@ export function connect() {
     handleEvent(msg);
   };
 }
+
+// --- Visibility reporting for push notifications ---
+
+document.addEventListener('visibilitychange', () => {
+  if (state.ws && state.ws.readyState === 1) {
+    state.ws.send(JSON.stringify({ type: 'visibility', visible: !document.hidden }));
+  }
+});

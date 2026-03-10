@@ -8,6 +8,57 @@ import {
 import { addSystem, addMessage, scrollToBottom, escHtml, formatLocalTime } from './render.js';
 import { loadHistory } from './events.js';
 
+// --- Push notification helpers ---
+
+async function subscribePush() {
+  try {
+    const reg = await navigator.serviceWorker?.ready;
+    if (!reg) return;
+    const res = await fetch('/api/push/vapid-key');
+    if (!res.ok) return;
+    const { publicKey } = await res.json();
+    const sub = await reg.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlBase64ToUint8Array(publicKey),
+    });
+    const json = sub.toJSON();
+    await fetch('/api/push/subscribe', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ endpoint: json.endpoint, keys: json.keys }),
+    });
+  } catch (err) {
+    console.error('[push] subscribe failed:', err);
+  }
+}
+
+async function unsubscribePush() {
+  try {
+    const reg = await navigator.serviceWorker?.ready;
+    if (!reg) return;
+    const sub = await reg.pushManager.getSubscription();
+    if (!sub) return;
+    const endpoint = sub.endpoint;
+    await sub.unsubscribe();
+    await fetch('/api/push/unsubscribe', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ endpoint }),
+    });
+  } catch (err) {
+    console.error('[push] unsubscribe failed:', err);
+  }
+}
+
+function urlBase64ToUint8Array(base64String) {
+  const padding = '='.repeat((4 - base64String.length % 4) % 4);
+  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const raw = atob(base64);
+  const arr = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) arr[i] = raw.charCodeAt(i);
+  return arr;
+}
+
 // --- Slash command execution ---
 
 export async function handleSlashCommand(text) {
@@ -170,6 +221,52 @@ export async function handleSlashCommand(text) {
       return true;
     }
 
+    case '/notify': {
+      if (typeof Notification === 'undefined') {
+        addSystem('err: notifications not supported in this browser');
+        return true;
+      }
+
+      const sub = arg.toLowerCase();
+
+      if (sub === 'on') {
+        if (Notification.permission === 'granted') {
+          await subscribePush();
+          addSystem('notify: already enabled');
+          return true;
+        }
+        if (Notification.permission === 'denied') {
+          addSystem('notify: blocked — allow in browser site settings to enable');
+          return true;
+        }
+        const result = await Notification.requestPermission();
+        if (result === 'granted') {
+          await subscribePush();
+          addSystem('notify: enabled');
+        } else {
+          addSystem('notify: blocked — allow in browser site settings to enable');
+        }
+        return true;
+      }
+
+      if (sub === 'off') {
+        await unsubscribePush();
+        addSystem('notify: disabled');
+        return true;
+      }
+
+      // No argument — show status
+      const perm = Notification.permission;
+      if (perm === 'granted') {
+        addSystem('notify: enabled');
+      } else if (perm === 'denied') {
+        addSystem('notify: blocked — allow in browser site settings to enable');
+      } else {
+        addSystem('notify: off — use /notify on to enable');
+      }
+      return true;
+    }
+
     default:
       return false;
   }
@@ -183,6 +280,7 @@ const SLASH_COMMANDS = [
   { cmd: '/mode',     args: '[name]',      desc: 'Pick or switch mode' },
   { cmd: '/model',    args: '[name]',      desc: 'Pick or switch model' },
   { cmd: '/new',      args: '[cwd]',       desc: 'New session' },
+  { cmd: '/notify',   args: '[on|off]',    desc: 'Toggle background notifications' },
   { cmd: '/prune',    args: '',            desc: 'Delete all sessions except current' },
   { cmd: '/pwd',      args: '',            desc: 'Show working directory' },
   { cmd: '/switch',   args: '<title|id>',  desc: 'Switch to session' },
@@ -235,6 +333,14 @@ export function updateSlashMenu() {
     const configId = configMap[configMatch[1]];
     const query = text.slice(configMatch[0].length).toLowerCase();
     showConfigMenu(configId, query);
+    return;
+  }
+
+  // /notify — show on/off picker
+  const notifyMatch = text.match(/^\/notify /);
+  if (notifyMatch) {
+    const query = text.slice(notifyMatch[0].length).toLowerCase();
+    showNotifyMenu(query);
     return;
   }
 
@@ -327,6 +433,26 @@ function showConfigMenu(configId, query) {
   dom.slashMenu.classList.add('active');
 }
 
+const NOTIFY_OPTIONS = [
+  { value: 'on',  name: 'on',  desc: 'Enable background notifications' },
+  { value: 'off', name: 'off', desc: 'Disable background notifications' },
+];
+
+function showNotifyMenu(query) {
+  slashMode = 'notify';
+  slashFiltered = NOTIFY_OPTIONS.filter(o => {
+    if (!query) return true;
+    return o.value.includes(query) || o.name.includes(query);
+  });
+  if (slashFiltered.length === 0) {
+    hideSlashMenu();
+    return;
+  }
+  slashIdx = 0;
+  renderSlashMenu();
+  dom.slashMenu.classList.add('active');
+}
+
 function renderSlashMenu() {
   if (slashMode === 'new') {
     const currentCwd = (state.sessionCwd || '').toLowerCase();
@@ -343,6 +469,15 @@ function renderSlashMenu() {
       const prefix = isCurrent ? '* ' : '  ';
       const style = isCurrent ? ' style="color:var(--green)"' : '';
       return `<div class="slash-item${i === slashIdx ? ' selected' : ''}" data-idx="${i}"><span class="slash-cmd"${style}>${escHtml(prefix + o.name)}</span></div>`;
+    }).join('');
+  } else if (slashMode === 'notify') {
+    const perm = typeof Notification !== 'undefined' ? Notification.permission : 'unsupported';
+    const currentVal = perm === 'granted' ? 'on' : 'off';
+    dom.slashMenu.innerHTML = slashFiltered.map((o, i) => {
+      const isCurrent = o.value === currentVal;
+      const prefix = isCurrent ? '* ' : '  ';
+      const style = isCurrent ? ' style="color:var(--green)"' : '';
+      return `<div class="slash-item${i === slashIdx ? ' selected' : ''}" data-idx="${i}"><span class="slash-cmd"${style}>${escHtml(prefix + o.name)}</span><span class="slash-desc">${escHtml(o.desc)}</span></div>`;
     }).join('');
   } else if (slashMode === 'switch' || slashMode === 'delete') {
     dom.slashMenu.innerHTML = slashFiltered.map((s, i) => {
@@ -407,12 +542,19 @@ function selectSlashItem(idx) {
     hideSlashMenu();
     state.ws.send(JSON.stringify({ type: 'delete_session', sessionId: s.id }));
     addSystem(`Deleted: ${s.title || s.id.slice(0, 8) + '…'}`);
+  } else if (slashMode === 'notify') {
+    const o = slashFiltered[idx];
+    dom.input.value = `/notify ${o.value}`;
+    hideSlashMenu();
+    // Trigger command execution by simulating send
+    handleSlashCommand(dom.input.value);
+    dom.input.value = '';
   } else {
     const item = slashFiltered[idx];
     dom.input.value = item.cmd + (item.args ? ' ' : '');
     hideSlashMenu();
     dom.input.focus();
-    if (['/new', '/switch', '/delete', '/model', '/mode', '/think'].includes(item.cmd)) {
+    if (['/new', '/switch', '/delete', '/model', '/mode', '/think', '/notify'].includes(item.cmd)) {
       slashDismissed = null;
       updateSlashMenu();
     }
