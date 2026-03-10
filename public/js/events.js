@@ -18,7 +18,6 @@ function finishPromptIfIdle() {
   finishThinking();
   finishAssistant();
   setBusy(false);
-  dom.input.focus();
   state.pendingPromptDone = false;
 }
 
@@ -547,7 +546,6 @@ export function handleEvent(msg) {
       finishBash(state.currentBashEl, msg.code, msg.signal);
       if (msg.error) addSystem(`err: ${msg.error}`);
       setBusy(false);
-      dom.input.focus();
       break;
     }
 
