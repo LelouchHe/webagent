@@ -32,7 +32,7 @@ function cancelPendingTurnUI() {
   }
   for (const requestId of state.pendingPermissionRequestIds) {
     const permEl = document.querySelector(`.permission[data-request-id="${requestId}"]`);
-    if (!permEl) continue;
+    if (!permEl || !permEl.querySelector('button')) continue;
     const titleEl = permEl.querySelector('.title');
     const title = titleEl?.textContent || '⚿';
     permEl.innerHTML = `<span style="opacity:0.5">${escHtml(title)} — cancelled</span>`;
@@ -236,7 +236,7 @@ export function replayEvent(type, data, events, idx) {
       const el = document.querySelector(`.permission[data-request-id="${data.requestId}"]`);
       if (el) {
         const title = el.dataset.title ? `⚿ ${el.dataset.title}` : '⚿';
-        const action = data.denied ? 'denied' : data.optionName || 'allowed';
+        const action = data.optionName || (data.denied ? 'denied' : 'allowed');
         el.innerHTML = `<span style="opacity:0.5">${escHtml(title)} — ${escHtml(action)}</span>`;
       }
       break;
@@ -508,7 +508,7 @@ export function handleEvent(msg) {
       const permTarget = document.querySelector(`.permission[data-request-id="${msg.requestId}"]`);
       if (msg.sessionId === state.sessionId && permTarget) {
         const title = permTarget.dataset.title ? `⚿ ${permTarget.dataset.title}` : '⚿';
-        const action = msg.denied ? 'denied' : msg.optionName || 'allowed';
+        const action = msg.optionName || (msg.denied ? 'denied' : 'allowed');
         permTarget.innerHTML = `<span style="opacity:0.5">${escHtml(title)} — ${escHtml(action)}</span>`;
       }
       finishPromptIfIdle();
