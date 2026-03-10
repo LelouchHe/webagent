@@ -217,7 +217,8 @@ export class SessionManager {
 
   /** Kill all running bash processes (for shutdown). */
   killAllBashProcs(): void {
-    for (const [, proc] of this.runningBashProcs) proc.kill("SIGKILL");
+    const forceSignal = process.platform === "win32" ? undefined : "SIGKILL";
+    for (const [, proc] of this.runningBashProcs) proc.kill(forceSignal);
     this.runningBashProcs.clear();
   }
 }

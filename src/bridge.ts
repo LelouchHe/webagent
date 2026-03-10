@@ -191,7 +191,7 @@ export class AgentBridge extends EventEmitter {
       this.proc.kill();
       await new Promise<void>((resolve) => {
         const timer = setTimeout(() => {
-          this.proc?.kill("SIGKILL");
+          this.proc?.kill(process.platform === "win32" ? undefined : "SIGKILL");
           resolve();
         }, 5000);
         this.proc?.on("exit", () => {

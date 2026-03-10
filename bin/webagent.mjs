@@ -13,7 +13,10 @@ const child = spawn(
   { stdio: "inherit" },
 );
 
-for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"]) {
+const signals = process.platform === "win32"
+  ? ["SIGINT", "SIGTERM"]
+  : ["SIGINT", "SIGTERM", "SIGHUP"];
+for (const sig of signals) {
   process.on(sig, () => child.kill(sig));
 }
 
