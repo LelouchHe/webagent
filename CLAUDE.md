@@ -75,12 +75,24 @@ agent_cmd = "my-agent --acp"
 - **Multi-client broadcast**: Events broadcast to all WS clients. Permission responses, user messages, bash output sync across devices. `broadcast()` supports sender exclusion.
 - **PWA**: Minimal service worker (no offline cache), manifest.json, installable to home screen.
 
+## ACP Client Extensions
+
+ACP parameters like `mcpServers`, `terminal`, and `fs` are **client-to-agent capability injections** — the client offers extra capabilities on top of the agent's own baseline. The agent (CLI) retains all its native abilities regardless of what the client provides.
+
+| Parameter | What it means | WebAgent currently provides |
+|---|---|---|
+| `clientCapabilities.terminal` | "I can act as your terminal" — agent can ask the client to run shell commands | `true` — declared but not wired to ACP `terminal/*`; the app's `!<command>` runs via its own local bash bridge instead |
+| `clientCapabilities.fs` | "I can read/write files for you" — agent can ask the client to access the filesystem | `{ readTextFile: true, writeTextFile: true }` — fully implemented |
+| `mcpServers` | "Here are additional MCP servers for you to use" — agent connects to these on top of its own configured servers | `[]` — no extra MCP servers from the client; the agent's own MCP config (e.g. GitHub MCP) still works |
+
+Passing `mcpServers: []` does **not** disable MCP — it means the client isn't providing extras. The agent loads its own MCP servers independently. Same pattern as `terminal`: declaring the capability is an offer, not a requirement for the agent to function.
+
+**Future extension point**: To give the agent access to MCP servers it doesn't natively have (e.g. project-specific tools, non-project-directory services), add them to the `mcpServers` array in `config.toml` and forward through `newSession`/`loadSession`.
+
 ## ACP Scope and Current Limits
 
 - **Core ACP surface only**: WebAgent currently relies on ACP for session lifecycle (`newSession`, `loadSession`, `prompt`, `cancel`), permission requests, session updates, model selection, and text file read/write.
 - **Narrow event mapping**: The UI/store layer only maps a subset of ACP updates today: assistant text, thinking text, tool calls, tool call updates, and plans.
-- **No MCP forwarding**: Sessions are created with `mcpServers: []`, so WebAgent does not currently pass user/editor MCP servers through to the agent.
-- **No ACP terminal integration**: Although the bridge advertises terminal capability, the app's `!<command>` path is implemented separately over WebSocket + local `bash`, not ACP `terminal/*`.
 - **Session cancel, not host-task cancel**: ACP `cancel` only stops the current session prompt/turn. In this repo we extend that to the session's own local bash/permission/title work, but WebAgent still cannot cancel host-level tasks started outside the server's runtime (for example external Copilot CLI tool invocations or subprocesses it owns).
 - **Browser UI, not full CLI parity**: Direct CLI surfaces such as `/plan`, `/fleet`, `/mcp`, `/agent`, `/skills` are not mirrored as first-class WebAgent controls. The app only renders the ACP events it receives. Autopilot mode is supported via server-side auto-approval of permissions.
 - **Silent internal session**: Title generation uses a dedicated silent ACP session and intentionally suppresses normal event emission for that session.
