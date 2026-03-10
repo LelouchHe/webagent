@@ -1,6 +1,6 @@
 {
   "name": "@lelouchhe/webagent",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "A terminal-style web UI for ACP-compatible agents",
   "type": "module",
   "license": "MIT",
