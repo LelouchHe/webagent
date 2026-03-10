@@ -22,7 +22,8 @@ export async function currentSessionId(page: Page): Promise<string> {
 
 export async function createNewSession(page: Page): Promise<string> {
   const previousId = await currentSessionId(page);
-  await page.locator("#new-btn").click();
+  await page.locator("#input").fill("/new");
+  await page.locator("#input").press("Enter");
   await expect.poll(() => currentSessionId(page)).not.toBe(previousId);
   await expectConnectionStatus(page, "connected");
   return currentSessionId(page);

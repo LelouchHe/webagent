@@ -11,8 +11,7 @@ test("creating a new session in one tab does not switch another tab away", async
   await gotoConnected(pageB, `/#${originalSessionId}`);
   await expect.poll(() => currentSessionId(pageB)).toBe(originalSessionId);
 
-  await pageA.locator("#new-btn").click();
-  await expect.poll(() => currentSessionId(pageA)).not.toBe(originalSessionId);
+  await createNewSession(pageA);
 
   await expect.poll(() => currentSessionId(pageB)).toBe(originalSessionId);
   await sendPrompt(pageB, "still on the original session");

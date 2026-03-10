@@ -15,7 +15,7 @@ export function connect() {
     const existingId = getHashSessionId();
 
     // Incremental reconnect: same session still in memory — skip DOM wipe
-    if (existingId && existingId === state.sessionId) {
+    if (existingId && existingId === state.sessionId && state.lastEventSeq > 0) {
       await loadNewEvents(existingId);
       scrollToBottom(false);
       state.ws.send(JSON.stringify({ type: 'resume_session', sessionId: existingId }));
