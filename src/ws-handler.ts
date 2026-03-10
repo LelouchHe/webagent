@@ -7,6 +7,7 @@ import type { Store } from "./store.ts";
 import type { SessionManager } from "./session-manager.ts";
 import type { TitleService } from "./title-service.ts";
 import type { Config } from "./config.ts";
+import type { PushService } from "./push-service.ts";
 
 interface WsHandlerDeps {
   wss: WebSocketServer;
@@ -15,6 +16,7 @@ interface WsHandlerDeps {
   titleService: TitleService;
   getBridge: () => AgentBridge | null;
   limits: Config["limits"];
+  pushService?: PushService;
 }
 
 const IS_WIN = process.platform === "win32";
@@ -53,10 +55,15 @@ function send(ws: WebSocket, event: AgentEvent): void {
 }
 
 export function setupWsHandler(deps: WsHandlerDeps): void {
-  const { wss, store, sessions, titleService, getBridge, limits } = deps;
+  const { wss, store, sessions, titleService, getBridge, limits, pushService } = deps;
+  let nextClientId = 1;
 
   wss.on("connection", (ws) => {
+    const clientId = `ws-${nextClientId++}`;
     console.log(`[ws] client connected (total: ${wss.clients.size})`);
+
+    // Default new clients to visible (they're opening the page)
+    pushService?.setClientVisibility(clientId, true);
 
     const pingInterval = setInterval(() => {
       if (ws.readyState === WebSocket.OPEN) ws.ping();
@@ -259,6 +266,11 @@ export function setupWsHandler(deps: WsHandlerDeps): void {
             interruptBashProc(sessions.runningBashProcs.get(msg.sessionId));
             break;
           }
+
+          case "visibility": {
+            pushService?.setClientVisibility(clientId, msg.visible);
+            break;
+          }
         }
       } catch (err: unknown) {
         send(ws, { type: "error", message: errorMessage(err) });
@@ -267,6 +279,7 @@ export function setupWsHandler(deps: WsHandlerDeps): void {
 
     ws.on("close", () => {
       clearInterval(pingInterval);
+      pushService?.removeClient(clientId);
       console.log(`[ws] client disconnected (total: ${wss.clients.size})`);
     });
   });

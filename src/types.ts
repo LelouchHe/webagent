@@ -64,6 +64,7 @@ export const WsMessageSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("set_config_option"), sessionId: z.string(), configId: z.string(), value: z.string() }),
   z.object({ type: z.literal("bash_exec"), sessionId: z.string(), command: z.string() }),
   z.object({ type: z.literal("bash_cancel"), sessionId: z.string() }),
+  z.object({ type: z.literal("visibility"), visible: z.boolean() }),
 ]);
 
 export type WsMessage = z.infer<typeof WsMessageSchema>;

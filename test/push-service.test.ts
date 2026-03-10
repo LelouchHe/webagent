@@ -195,6 +195,75 @@ describe("PushService", () => {
       assert.equal(svc.shouldNotify("s2"), true);
     });
   });
+
+  describe("visibility tracking", () => {
+    it("starts with no visible clients", () => {
+      const svc = new PushService(store, tmpDir, "mailto:test@localhost");
+      assert.equal(svc.hasVisibleClient(), false);
+    });
+
+    it("tracks client visibility", () => {
+      const svc = new PushService(store, tmpDir, "mailto:test@localhost");
+      const clientId = "ws-1";
+
+      svc.setClientVisibility(clientId, true);
+      assert.equal(svc.hasVisibleClient(), true);
+
+      svc.setClientVisibility(clientId, false);
+      assert.equal(svc.hasVisibleClient(), false);
+    });
+
+    it("returns true if any client is visible", () => {
+      const svc = new PushService(store, tmpDir, "mailto:test@localhost");
+      svc.setClientVisibility("ws-1", false);
+      svc.setClientVisibility("ws-2", true);
+
+      assert.equal(svc.hasVisibleClient(), true);
+    });
+
+    it("removes client on disconnect", () => {
+      const svc = new PushService(store, tmpDir, "mailto:test@localhost");
+      svc.setClientVisibility("ws-1", true);
+      svc.removeClient("ws-1");
+
+      assert.equal(svc.hasVisibleClient(), false);
+    });
+  });
+
+  describe("maybeNotify", () => {
+    it("returns false when a client is visible", () => {
+      const svc = new PushService(store, tmpDir, "mailto:test@localhost");
+      svc.setClientVisibility("ws-1", true);
+
+      const result = svc.maybeNotify("s1", "Title", "prompt_done", {});
+      assert.equal(result, false);
+    });
+
+    it("returns true and records when no client is visible", () => {
+      const svc = new PushService(store, tmpDir, "mailto:test@localhost");
+      // No clients → not visible
+
+      const result = svc.maybeNotify("s1", "Title", "prompt_done", {});
+      assert.equal(result, true);
+      // Should now be in merge window
+      assert.equal(svc.shouldNotify("s1"), false);
+    });
+
+    it("returns false when within merge window", () => {
+      const svc = new PushService(store, tmpDir, "mailto:test@localhost");
+      svc.recordNotification("s1");
+
+      const result = svc.maybeNotify("s1", "Title", "prompt_done", {});
+      assert.equal(result, false);
+    });
+
+    it("returns false for non-notifiable event types", () => {
+      const svc = new PushService(store, tmpDir, "mailto:test@localhost");
+
+      const result = svc.maybeNotify("s1", "Title", "message_chunk", {});
+      assert.equal(result, false);
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------

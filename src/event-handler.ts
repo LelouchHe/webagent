@@ -2,6 +2,7 @@ import type { WebSocketServer } from "ws";
 import type { AgentBridge } from "./bridge.ts";
 import type { Store } from "./store.ts";
 import type { SessionManager } from "./session-manager.ts";
+import type { PushService } from "./push-service.ts";
 import type { AgentEvent } from "./types.ts";
 import { broadcast } from "./ws-handler.ts";
 
@@ -16,6 +17,7 @@ export function handleAgentEvent(
   wss: WebSocketServer,
   bridge: AgentBridge,
   config: EventHandlerConfig,
+  pushService?: PushService,
 ): void {
   if ("sessionId" in event && event.sessionId && sessions.restoringSessions.has(event.sessionId)) return;
 
@@ -93,4 +95,24 @@ export function handleAgentEvent(
       break;
   }
   broadcast(wss, event);
+
+  // Push notification check (after broadcast so WS clients get the event first)
+  if (pushService && "sessionId" in event && event.sessionId) {
+    const session = store.getSession(event.sessionId);
+    const eventData: Record<string, unknown> = {};
+    if (event.type === "permission_request") {
+      eventData.description = event.title;
+    } else if (event.type === "bash_done" && "code" in event) {
+      // Extract command from the most recent bash_command event
+      eventData.exitCode = (event as any).code;
+    }
+    if (pushService.maybeNotify(event.sessionId, session?.title ?? null, event.type, eventData)) {
+      const notification = pushService.formatNotification(
+        event.sessionId, session?.title ?? null, event.type, eventData,
+      );
+      pushService.sendToAll(notification).catch((err) => {
+        console.error("[push] failed to send:", err);
+      });
+    }
+  }
 }

@@ -21,6 +21,7 @@ export class PushService {
   private store: Store;
   private vapidKeys: VapidKeys;
   private lastPush = new Map<string, number>(); // sessionId → timestamp
+  private clientVisibility = new Map<string, boolean>(); // clientId → visible
 
   constructor(store: Store, dataDir: string, vapidSubject: string) {
     this.store = store;
@@ -95,6 +96,49 @@ export class PushService {
 
   recordNotification(sessionId: string): void {
     this.lastPush.set(sessionId, Date.now());
+  }
+
+  // ---------------------------------------------------------------------------
+  // Client visibility tracking
+  // ---------------------------------------------------------------------------
+
+  setClientVisibility(clientId: string, visible: boolean): void {
+    this.clientVisibility.set(clientId, visible);
+  }
+
+  removeClient(clientId: string): void {
+    this.clientVisibility.delete(clientId);
+  }
+
+  hasVisibleClient(): boolean {
+    for (const visible of this.clientVisibility.values()) {
+      if (visible) return true;
+    }
+    return false;
+  }
+
+  // ---------------------------------------------------------------------------
+  // High-level: decide whether to push, and if so, send
+  // ---------------------------------------------------------------------------
+
+  private static NOTIFIABLE = new Set(["permission_request", "prompt_done", "bash_done"]);
+
+  /**
+   * Check if this event should trigger a push notification.
+   * Returns true if a notification was queued (caller should then call sendToAll).
+   */
+  maybeNotify(
+    sessionId: string,
+    sessionTitle: string | null,
+    eventType: string,
+    eventData: Record<string, unknown>,
+  ): boolean {
+    if (!PushService.NOTIFIABLE.has(eventType)) return false;
+    if (this.hasVisibleClient()) return false;
+    if (!this.shouldNotify(sessionId)) return false;
+
+    this.recordNotification(sessionId);
+    return true;
   }
 
   // ---------------------------------------------------------------------------
