@@ -18,6 +18,12 @@ const ConfigSchema = z.object({
     image_upload: 10_485_760,
     cancel_timeout: 10_000,
   }),
+
+  push: z.object({
+    vapid_subject: z.string().default("mailto:webagent@localhost"),
+  }).default({
+    vapid_subject: "mailto:webagent@localhost",
+  }),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;

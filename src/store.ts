@@ -22,6 +22,14 @@ export interface EventRow {
   created_at: string;
 }
 
+export interface SubscriptionRow {
+  id: number;
+  endpoint: string;
+  auth: string;
+  p256dh: string;
+  created_at: string;
+}
+
 export class Store {
   private db: Database.Database;
 
@@ -50,6 +58,13 @@ export class Store {
         created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now'))
       );
       CREATE INDEX IF NOT EXISTS idx_events_session ON events(session_id, seq);
+      CREATE TABLE IF NOT EXISTS push_subscriptions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        endpoint TEXT NOT NULL UNIQUE,
+        auth TEXT NOT NULL,
+        p256dh TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now'))
+      );
     `);
 
     // Migrate existing tables: add columns if missing
@@ -132,6 +147,24 @@ export class Store {
     }
     query += " ORDER BY seq";
     return this.db.prepare(query).all(...params) as EventRow[];
+  }
+
+  // --- Push subscriptions ---
+
+  saveSubscription(endpoint: string, auth: string, p256dh: string): void {
+    this.db.prepare(
+      `INSERT INTO push_subscriptions (endpoint, auth, p256dh)
+       VALUES (?, ?, ?)
+       ON CONFLICT(endpoint) DO UPDATE SET auth = excluded.auth, p256dh = excluded.p256dh`,
+    ).run(endpoint, auth, p256dh);
+  }
+
+  removeSubscription(endpoint: string): void {
+    this.db.prepare("DELETE FROM push_subscriptions WHERE endpoint = ?").run(endpoint);
+  }
+
+  getAllSubscriptions(): SubscriptionRow[] {
+    return this.db.prepare("SELECT * FROM push_subscriptions").all() as SubscriptionRow[];
   }
 
   close(): void {

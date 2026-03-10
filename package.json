@@ -41,8 +41,10 @@
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "^0.14.1",
+    "@types/web-push": "^3.6.4",
     "better-sqlite3": "^12.6.2",
     "smol-toml": "^1.6.0",
+    "web-push": "^3.6.7",
     "ws": "^8.19.0",
     "zod": "^4.3.6"
   },
