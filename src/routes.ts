@@ -3,6 +3,7 @@ import { join, extname } from "node:path";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Store } from "./store.ts";
 import type { Config } from "./config.ts";
+import type { PushService } from "./push-service.ts";
 
 const SAFE_ID = /^[a-zA-Z0-9_-]+$/;
 
@@ -19,7 +20,7 @@ const MIME: Record<string, string> = {
   ".webp": "image/webp",
 };
 
-export function createRequestHandler(store: Store, publicDir: string, dataDir: string, limits: Config["limits"]) {
+export function createRequestHandler(store: Store, publicDir: string, dataDir: string, limits: Config["limits"], pushService?: PushService) {
   return async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     const url = req.url ?? "/";
 
@@ -96,6 +97,71 @@ export function createRequestHandler(store: Store, publicDir: string, dataDir: s
         await writeFile(absPath, Buffer.from(data, "base64"));
         const imgUrl = `/data/${relPath}`;
         res.end(JSON.stringify({ path: relPath, url: imgUrl }));
+        return;
+      }
+
+      // --- Push notification routes ---
+
+      // GET /api/push/vapid-key
+      if (url === "/api/push/vapid-key" && req.method === "GET") {
+        if (!pushService) {
+          res.writeHead(404);
+          res.end(JSON.stringify({ error: "Push not configured" }));
+          return;
+        }
+        res.end(JSON.stringify({ publicKey: pushService.getPublicKey() }));
+        return;
+      }
+
+      // POST /api/push/subscribe
+      if (url === "/api/push/subscribe" && req.method === "POST") {
+        if (!pushService) {
+          res.writeHead(404);
+          res.end(JSON.stringify({ error: "Push not configured" }));
+          return;
+        }
+        const chunks: Buffer[] = [];
+        for await (const chunk of req) chunks.push(chunk as Buffer);
+        let body: { endpoint?: string; keys?: { auth?: string; p256dh?: string } };
+        try {
+          body = JSON.parse(Buffer.concat(chunks).toString());
+        } catch {
+          res.writeHead(400);
+          res.end(JSON.stringify({ error: "Invalid JSON" }));
+          return;
+        }
+        if (!body.endpoint || !body.keys?.auth || !body.keys?.p256dh) {
+          res.writeHead(400);
+          res.end(JSON.stringify({ error: "Missing endpoint or keys (auth, p256dh)" }));
+          return;
+        }
+        store.saveSubscription(body.endpoint, body.keys.auth, body.keys.p256dh);
+        res.writeHead(201);
+        res.end(JSON.stringify({ ok: true }));
+        return;
+      }
+
+      // POST /api/push/unsubscribe
+      if (url === "/api/push/unsubscribe" && req.method === "POST") {
+        if (!pushService) {
+          res.writeHead(404);
+          res.end(JSON.stringify({ error: "Push not configured" }));
+          return;
+        }
+        const chunks: Buffer[] = [];
+        for await (const chunk of req) chunks.push(chunk as Buffer);
+        let body: { endpoint?: string };
+        try {
+          body = JSON.parse(Buffer.concat(chunks).toString());
+        } catch {
+          res.writeHead(400);
+          res.end(JSON.stringify({ error: "Invalid JSON" }));
+          return;
+        }
+        if (body.endpoint) {
+          store.removeSubscription(body.endpoint);
+        }
+        res.end(JSON.stringify({ ok: true }));
         return;
       }
 

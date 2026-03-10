@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Store } from "../src/store.ts";
 import { createRequestHandler } from "../src/routes.ts";
+import { PushService } from "../src/push-service.ts";
 
 function makeRequest(
   port: number,
@@ -198,5 +199,117 @@ describe("Image upload", () => {
     const res = await makeRequest(port, "POST", "/api/images/s1", payload);
     assert.equal(res.status, 200);
     assert.ok(JSON.parse(res.body).url.endsWith(".jpg"));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Push API routes
+// ---------------------------------------------------------------------------
+
+describe("Push API routes", () => {
+  let store: Store;
+  let pushService: PushService;
+  let tmpDir: string;
+  let publicDir: string;
+  let server: http.Server;
+  let port: number;
+
+  beforeEach(async () => {
+    tmpDir = mkdtempSync(join(tmpdir(), "webagent-push-routes-"));
+    publicDir = join(tmpDir, "public");
+    mkdirSync(publicDir);
+    writeFileSync(join(publicDir, "index.html"), "<h1>Test</h1>");
+
+    store = new Store(tmpDir);
+    pushService = new PushService(store, tmpDir, "mailto:test@localhost");
+    const handler = createRequestHandler(store, publicDir, tmpDir, {
+      bash_output: 1_048_576,
+      image_upload: 10_485_760,
+      cancel_timeout: 10_000,
+    }, pushService);
+    server = http.createServer(handler);
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    port = (server.address() as { port: number }).port;
+  });
+
+  afterEach(async () => {
+    store.close();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("GET /api/push/vapid-key returns the public key", async () => {
+    const res = await makeRequest(port, "GET", "/api/push/vapid-key");
+    assert.equal(res.status, 200);
+    const body = JSON.parse(res.body);
+    assert.ok(body.publicKey);
+    assert.equal(body.publicKey, pushService.getPublicKey());
+  });
+
+  it("POST /api/push/subscribe saves a subscription", async () => {
+    const payload = JSON.stringify({
+      endpoint: "https://push.example.com/1",
+      keys: { auth: "auth123", p256dh: "p256dh123" },
+    });
+    const res = await makeRequest(port, "POST", "/api/push/subscribe", payload, {
+      "Content-Type": "application/json",
+    });
+    assert.equal(res.status, 201);
+
+    const subs = store.getAllSubscriptions();
+    assert.equal(subs.length, 1);
+    assert.equal(subs[0].endpoint, "https://push.example.com/1");
+    assert.equal(subs[0].auth, "auth123");
+  });
+
+  it("POST /api/push/subscribe rejects invalid body", async () => {
+    const res = await makeRequest(port, "POST", "/api/push/subscribe", "bad json", {
+      "Content-Type": "application/json",
+    });
+    assert.equal(res.status, 400);
+  });
+
+  it("POST /api/push/subscribe rejects missing fields", async () => {
+    const payload = JSON.stringify({ endpoint: "https://push.example.com/1" });
+    const res = await makeRequest(port, "POST", "/api/push/subscribe", payload, {
+      "Content-Type": "application/json",
+    });
+    assert.equal(res.status, 400);
+  });
+
+  it("POST /api/push/unsubscribe removes a subscription", async () => {
+    store.saveSubscription("https://push.example.com/1", "a", "b");
+
+    const payload = JSON.stringify({ endpoint: "https://push.example.com/1" });
+    const res = await makeRequest(port, "POST", "/api/push/unsubscribe", payload, {
+      "Content-Type": "application/json",
+    });
+    assert.equal(res.status, 200);
+    assert.equal(store.getAllSubscriptions().length, 0);
+  });
+
+  it("POST /api/push/unsubscribe is a no-op for unknown endpoint", async () => {
+    const payload = JSON.stringify({ endpoint: "https://push.example.com/unknown" });
+    const res = await makeRequest(port, "POST", "/api/push/unsubscribe", payload, {
+      "Content-Type": "application/json",
+    });
+    assert.equal(res.status, 200);
+  });
+
+  it("GET /api/push/vapid-key returns 404 when no push service", async () => {
+    // Create handler without pushService
+    const handler2 = createRequestHandler(store, publicDir, tmpDir, {
+      bash_output: 1_048_576,
+      image_upload: 10_485_760,
+      cancel_timeout: 10_000,
+    });
+    const server2 = http.createServer(handler2);
+    await new Promise<void>((resolve) => server2.listen(0, "127.0.0.1", resolve));
+    const port2 = (server2.address() as { port: number }).port;
+
+    const res = await makeRequest(port2, "GET", "/api/push/vapid-key");
+    assert.equal(res.status, 404);
+
+    await new Promise<void>((resolve) => server2.close(() => resolve()));
   });
 });
