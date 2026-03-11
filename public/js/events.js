@@ -2,7 +2,7 @@
 
 import {
   state, dom, setBusy, setConfigValue, getConfigOption, updateConfigOptions,
-  updateModeUI, resetSessionUI, requestNewSession, setHashSessionId, updateSessionInfo,
+  updateModeUI, updateStatusBar, resetSessionUI, requestNewSession, setHashSessionId, updateSessionInfo,
   setConnectionStatus, clearCancelTimer,
 } from './state.js';
 import {
@@ -391,6 +391,7 @@ export function handleEvent(msg) {
       if (dom.messages.children.length === 0) {
         addSystem(`Session created: ${state.sessionTitle || msg.sessionId.slice(0, 8) + '…'}`);
       }
+      updateStatusBar();
       break;
 
     case 'user_message': {
@@ -663,6 +664,7 @@ export function handleEvent(msg) {
       const valueName = opt?.options.find(o => o.value === msg.value)?.name || msg.value;
       addSystem(`ok: ${label}: ${valueName}`);
       if (msg.configId === 'mode') updateModeUI();
+      updateStatusBar();
       break;
     }
 

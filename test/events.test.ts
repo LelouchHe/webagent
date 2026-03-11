@@ -962,6 +962,128 @@ describe("events", () => {
     });
   });
 
+    describe("status_bar", () => {
+      it("shows mode, model, and cwd after session_created", () => {
+        state.awaitingNewSession = true;
+        events.handleEvent({
+          type: "session_created",
+          sessionId: "s1",
+          cwd: "/home/user/project",
+          configOptions: [
+            { id: "model", name: "Model", currentValue: "claude-sonnet", options: [] },
+            { id: "mode", name: "Mode", currentValue: "agent", options: [] },
+          ],
+        });
+        const text = dom.statusBar.textContent;
+        assert.ok(text.includes("agent"), "should show mode");
+        assert.ok(text.includes("claude-sonnet"), "should show model");
+        assert.ok(text.includes("/home/user/project"), "should show cwd");
+      });
+
+      it("shows 'agent' as default mode when mode config is absent", () => {
+        state.awaitingNewSession = true;
+        events.handleEvent({
+          type: "session_created",
+          sessionId: "s1",
+          cwd: "/home",
+          configOptions: [],
+        });
+        assert.ok(dom.statusBar.textContent.includes("agent"));
+      });
+
+      it("shows 'plan' when mode includes #plan", () => {
+        state.awaitingNewSession = true;
+        events.handleEvent({
+          type: "session_created",
+          sessionId: "s1",
+          cwd: "/home",
+          configOptions: [
+            { id: "mode", name: "Mode", currentValue: "agent#plan", options: [] },
+          ],
+        });
+        assert.ok(dom.statusBar.textContent.includes("plan"));
+      });
+
+      it("shows 'autopilot' when mode includes #autopilot", () => {
+        state.awaitingNewSession = true;
+        events.handleEvent({
+          type: "session_created",
+          sessionId: "s1",
+          cwd: "/home",
+          configOptions: [
+            { id: "mode", name: "Mode", currentValue: "agent#autopilot", options: [] },
+          ],
+        });
+        assert.ok(dom.statusBar.textContent.includes("autopilot"));
+      });
+
+      it("renders full cwd in a dedicated span with CSS truncation class", () => {
+        state.awaitingNewSession = true;
+        events.handleEvent({
+          type: "session_created",
+          sessionId: "s1",
+          cwd: "/Users/lelouch/mine/code/webagent",
+          configOptions: [],
+        });
+        const cwdSpan = dom.statusBar.querySelector(".status-cwd");
+        assert.ok(cwdSpan, "should have a .status-cwd span");
+        assert.equal(cwdSpan.textContent, "/Users/lelouch/mine/code/webagent");
+      });
+
+      it("shows short cwd without truncation", () => {
+        state.awaitingNewSession = true;
+        events.handleEvent({
+          type: "session_created",
+          sessionId: "s1",
+          cwd: "/home/user",
+          configOptions: [],
+        });
+        assert.ok(dom.statusBar.textContent.includes("/home/user"));
+      });
+
+      it("updates when config_set changes model", () => {
+        state.sessionId = "s1";
+        state.configOptions = [
+          { id: "model", name: "Model", currentValue: "old-model", options: [{ value: "new-model", name: "New" }] },
+        ];
+        events.handleEvent({ type: "config_set", configId: "model", value: "new-model" });
+        assert.ok(dom.statusBar.textContent.includes("new-model"));
+      });
+
+      it("updates when config_set changes mode", () => {
+        state.sessionId = "s1";
+        state.configOptions = [
+          { id: "mode", name: "Mode", currentValue: "agent", options: [{ value: "agent#plan", name: "Plan" }] },
+        ];
+        events.handleEvent({ type: "config_set", configId: "mode", value: "agent#plan" });
+        assert.ok(dom.statusBar.textContent.includes("plan"));
+      });
+
+      it("updates on config_option_update", () => {
+        state.sessionId = "s1";
+        events.handleEvent({
+          type: "config_option_update",
+          configOptions: [
+            { id: "model", name: "Model", currentValue: "new-model", options: [] },
+          ],
+        });
+        assert.ok(dom.statusBar.textContent.includes("new-model"));
+      });
+
+      it("cleared by resetSessionUI", () => {
+        state.awaitingNewSession = true;
+        events.handleEvent({
+          type: "session_created",
+          sessionId: "s1",
+          cwd: "/home",
+          configOptions: [{ id: "model", name: "Model", currentValue: "test", options: [] }],
+        });
+        assert.ok(dom.statusBar.textContent.length > 0, "precondition: not empty");
+        stateMod.resetSessionUI();
+        assert.equal(dom.statusBar.textContent, "");
+      });
+    });
+
   describe("replayEvent", () => {
     it("replays user_message", () => {
       events.replayEvent("user_message", { text: "hello" }, [], 0);

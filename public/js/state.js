@@ -16,6 +16,7 @@ export const dom = {
   themeBtn: $('#theme-btn'),
   slashMenu: $('#slash-menu'),
   inputArea: $('#input-area'),
+  statusBar: $('#status-bar'),
 };
 
 export const state = {
@@ -72,6 +73,7 @@ export function setConfigValue(id, value) {
 export function updateConfigOptions(newOptions) {
   state.configOptions = newOptions;
   updateModeUI();
+  updateStatusBar();
 }
 
 export function updateModeUI() {
@@ -79,6 +81,28 @@ export function updateModeUI() {
   const modeValue = getConfigValue('mode') || '';
   if (modeValue.includes('#plan')) dom.inputArea.classList.add('plan-mode');
   else if (modeValue.includes('#autopilot')) dom.inputArea.classList.add('autopilot-mode');
+}
+
+export function updateStatusBar() {
+  if (!dom.statusBar) return;
+  const modeValue = getConfigValue('mode') || '';
+  let mode = 'agent';
+  if (modeValue.includes('#plan')) mode = 'plan';
+  else if (modeValue.includes('#autopilot')) mode = 'autopilot';
+  const model = getConfigValue('model');
+  const cwd = state.sessionCwd || '';
+  const sep = ' \u00b7 ';
+  const fixed = mode + (model ? sep + model : '');
+  dom.statusBar.textContent = '';
+  const fixedSpan = document.createElement('span');
+  fixedSpan.textContent = fixed + (cwd ? sep : '');
+  dom.statusBar.appendChild(fixedSpan);
+  if (cwd) {
+    const cwdSpan = document.createElement('span');
+    cwdSpan.className = 'status-cwd';
+    cwdSpan.textContent = cwd;
+    dom.statusBar.appendChild(cwdSpan);
+  }
 }
 
 export function setBusy(on) {
@@ -128,6 +152,7 @@ export function resetSessionUI() {
   dom.sendBtn.disabled = false;
   dom.input.placeholder = '';
   setBusy(false);
+  if (dom.statusBar) dom.statusBar.textContent = '';
 }
 
 export function updateNewBtnVisibility() {

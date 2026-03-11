@@ -8,6 +8,7 @@ const HTML = `
 <div id="messages"></div>
 <div id="attach-preview"></div>
 <div id="input-area"><div id="slash-menu"></div><span id="input-prompt">x</span><textarea id="input" placeholder="Message or ?"></textarea><button id="new-btn" class="input-btn">new</button><button id="attach-btn" class="input-btn">x</button><button id="send-btn" class="input-btn">x</button><input type="file" id="file-input" hidden></div>
+<div id="status-bar"></div>
 `;
 
 let win: InstanceType<typeof Window> | null = null;
@@ -81,6 +82,7 @@ export function resetState(state: any, dom: any) {
   dom.slashMenu.innerHTML = "";
   dom.slashMenu.className = "";
   dom.inputArea.className = "";
+  if (dom.statusBar) dom.statusBar.textContent = "";
 }
 
 /** Create a mock WebSocket that records sent messages */
