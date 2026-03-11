@@ -812,6 +812,133 @@ describe("events", () => {
       });
     });
 
+    describe("cross-client turn boundary (cancel + new prompt)", () => {
+      // NOTE: Use assert.ok(x === null) instead of assert.equal(x, null) when x might
+      // be a DOM element — assert.equal tries to serialize DOM nodes for error messages,
+      // which can hang happy-dom's event loop.
+
+      it("user_message finalises in-progress assistant streaming (message ordering)", () => {
+        state.sessionId = "s1";
+
+        // Old prompt is streaming assistant text
+        events.handleEvent({ type: "message_chunk", text: "old response " });
+        assert.ok(state.currentAssistantEl, "should have an active assistant element");
+
+        // Another client sends a new message (broadcast arrives)
+        events.handleEvent({ type: "user_message", sessionId: "s1", text: "new question" });
+
+        // The old assistant element should be finalised
+        assert.ok(state.currentAssistantEl === null, "currentAssistantEl should be null after user_message");
+        assert.equal(state.currentAssistantText, "", "currentAssistantText should be cleared");
+
+        // New message_chunk should create a fresh element BELOW the user message
+        events.handleEvent({ type: "message_chunk", text: "new response" });
+
+        // DOM order: old assistant, user bubble, new assistant
+        const children = [...dom.messages.children];
+        assert.equal(children.length, 3);
+        assert.ok(children[0].classList.contains("assistant"), "first child should be old assistant");
+        assert.ok(children[1].classList.contains("user"), "second child should be user message");
+        assert.ok(children[2].classList.contains("assistant"), "third child should be new assistant");
+      });
+
+      it("user_message finalises in-progress thinking element", () => {
+        state.sessionId = "s1";
+
+        // Old prompt is streaming thinking
+        events.handleEvent({ type: "thought_chunk", text: "thinking..." });
+        assert.ok(state.currentThinkingEl, "should have an active thinking element");
+
+        // Another client sends a new message
+        events.handleEvent({ type: "user_message", sessionId: "s1", text: "new question" });
+
+        // Thinking element should be finalised
+        assert.ok(state.currentThinkingEl === null, "currentThinkingEl should be null");
+        assert.equal(state.currentThinkingText, "", "currentThinkingText should be cleared");
+      });
+
+      it("stale prompt_done(cancelled) does not clobber new turn state (stuck busy)", () => {
+        state.sessionId = "s1";
+
+        // New turn starts: another client sent a message
+        events.handleEvent({ type: "user_message", sessionId: "s1", text: "new question" });
+        assert.equal(state.turnEnded, false);
+
+        // Agent starts responding to the new prompt
+        events.handleEvent({ type: "message_chunk", text: "response " });
+
+        // Agent sends a tool_call for the new prompt
+        events.handleEvent({
+          type: "tool_call",
+          id: "tc-new",
+          kind: "execute",
+          title: "Run",
+          rawInput: { command: "ls" },
+        });
+        assert.equal(state.busy, true);
+        assert.equal(state.pendingToolCallIds.size, 1);
+
+        // Stale prompt_done(cancelled) from the old prompt arrives late
+        events.handleEvent({ type: "prompt_done", stopReason: "cancelled" });
+
+        // The new turn's tool call should NOT be cleared
+        assert.ok(state.pendingToolCallIds.has("tc-new"),
+          "stale cancel should not clear new turn pending tool calls");
+        assert.equal(state.busy, true,
+          "stale cancel should not clear busy for the new turn");
+      });
+
+      it("stale prompt_done(cancelled) does not prevent new prompt_done from clearing busy", () => {
+        state.sessionId = "s1";
+
+        // New turn starts
+        events.handleEvent({ type: "user_message", sessionId: "s1", text: "question" });
+        events.handleEvent({
+          type: "tool_call",
+          id: "tc-a",
+          kind: "execute",
+          title: "Run",
+          rawInput: { command: "ls" },
+        });
+
+        // Stale prompt_done(cancelled) from old turn arrives
+        events.handleEvent({ type: "prompt_done", stopReason: "cancelled" });
+
+        // Tool call completes
+        events.handleEvent({ type: "tool_call_update", id: "tc-a", status: "completed" });
+
+        // The real prompt_done for the new turn arrives
+        events.handleEvent({ type: "prompt_done", stopReason: "end_turn" });
+
+        // Busy should be cleared
+        assert.equal(state.busy, false,
+          "new prompt_done should clear busy even after a stale cancel");
+        assert.equal(state.pendingPromptDone, false);
+      });
+
+      it("valid cancel on current turn still works normally", () => {
+        state.sessionId = "s1";
+
+        // Turn starts (user sent message locally, no user_message event on sender)
+        events.handleEvent({ type: "message_chunk", text: "response" });
+        events.handleEvent({
+          type: "tool_call",
+          id: "tc-x",
+          kind: "execute",
+          title: "Run",
+          rawInput: { command: "ls" },
+        });
+        assert.equal(state.busy, true);
+
+        // User cancels the current turn
+        events.handleEvent({ type: "prompt_done", stopReason: "cancelled" });
+
+        // Should clear pending state and busy (valid cancel for current turn)
+        assert.equal(state.pendingToolCallIds.size, 0);
+        assert.equal(state.busy, false);
+      });
+    });
+
     describe("event filtering", () => {
       it("ignores events from other sessions", () => {
         state.sessionId = "s1";

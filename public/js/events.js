@@ -377,6 +377,7 @@ export function handleEvent(msg) {
       dom.sendBtn.disabled = false;
       dom.input.placeholder = '';
       setBusy(Boolean(msg.busyKind));
+      state.newTurnStarted = false;
       if (msg.busyKind === 'bash') {
         const pendingBashEl = document.getElementById('bash-replay-pending');
         if (pendingBashEl) {
@@ -393,6 +394,12 @@ export function handleEvent(msg) {
       break;
 
     case 'user_message': {
+      // A new turn is starting (from another client's broadcast).
+      // Finalise any in-progress streaming from the previous turn so
+      // subsequent message_chunks create a fresh element BELOW this bubble.
+      finishThinking();
+      finishAssistant();
+      state.newTurnStarted = true;
       state.turnEnded = false;
       if (msg.sessionId === state.sessionId) {
         const el = addMessage('user', msg.text);
@@ -613,8 +620,18 @@ export function handleEvent(msg) {
       break;
     }
 
-    case 'prompt_done':
+    case 'prompt_done': {
       clearCancelTimer();
+      if (msg.stopReason === 'cancelled' && state.newTurnStarted) {
+        // This prompt_done belongs to a previous turn — a new turn has already
+        // started (signaled by user_message from another client).  Don't clobber
+        // the current turn's pending state; just tidy up leftover streaming elements.
+        state.newTurnStarted = false;
+        finishThinking();
+        finishAssistant();
+        break;
+      }
+      state.newTurnStarted = false;
       if (msg.stopReason === 'cancelled') {
         cancelPendingTurnUI();
       }
@@ -622,6 +639,7 @@ export function handleEvent(msg) {
       state.pendingPromptDone = true;
       finishPromptIfIdle();
       break;
+    }
 
     case 'session_deleted':
       if (msg.sessionId === state.sessionId) {

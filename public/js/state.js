@@ -37,6 +37,7 @@ export const state = {
   pendingPermissionRequestIds: new Set(),
   pendingPromptDone: false,
   turnEnded: false,
+  newTurnStarted: false,
   cancelTimeout: 10_000,
   _cancelTimerId: null,
   _onCancelTimeout: null,
@@ -116,6 +117,7 @@ export function resetSessionUI() {
   state.unconfirmedPermissions.clear();
   state.pendingPromptDone = false;
   state.turnEnded = false;
+  state.newTurnStarted = false;
   state._cancelTimerId = null;
   state.lastEventSeq = 0;
   state.replayInProgress = false;

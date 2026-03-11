@@ -54,6 +54,7 @@ export function resetState(state: any, dom: any) {
   state.pendingPermissionRequestIds.clear();
   state.pendingPromptDone = false;
   state.turnEnded = false;
+  state.newTurnStarted = false;
   state.cancelTimeout = 10_000;
   state._cancelTimerId = null;
   state.lastEventSeq = 0;
