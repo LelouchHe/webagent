@@ -124,15 +124,6 @@ Keep this distinction clear in docs and code discussions: some missing capabilit
 - **Bottom status bar** — There is a small read-only status bar below `#input-area`. Its purpose is to use the old bottom spacing for useful context, visually separate the input row from the bottom edge/home-indicator area, and show `model · cwd` without adding more buttons. Mode still belongs on the input row itself (`plan` / `autopilot` label + color), not in the status bar.
 - **iOS PWA safe area / keyboard overlap** — The bottom home indicator on notch iPhones can overlap fixed/flex bottom bars in standalone PWA mode. In practice, a large `viewport-fit=cover` + `env(safe-area-inset-bottom)` treatment caused worse regressions here (for example the header being pushed into the system status area), so this app currently prefers modest fixed bottom spacing on the status bar instead of full safe-area padding. Also note that on iOS standalone PWAs the bottom status bar may intermittently sit above the keyboard or be hidden behind it depending on whether WebKit updates the visual viewport during focus; treat that as a likely platform/WebKit issue rather than something CSS alone can reliably eliminate (see also WebKit viewport/keyboard bugs such as #292603).
 
-## Git Commit Tips
-
-- Avoid `!` in double-quoted commit messages — bash interprets it as history expansion and the command will hang. Use single quotes instead.
-- Don't commit until a feature/fix is fully working and verified. Avoid partial or incremental commits for incomplete changes.
-- Once a feature or fix has reached a complete checkpoint, make a commit so the work stays traceable and easy to roll back. "Complete" means the full TDD cycle is done, the relevant tests pass, broader existing tests pass, and any required E2E coverage for that feature has been run and confirmed.
-- Keep commits tightly scoped: each commit should capture one coherent, fully verified piece of work. Prefer multiple smaller complete commits over bundling unrelated fixes, tests, and refactors together.
-- Write commit messages with enough context to make later log review useful: the subject should say what changed, and the body should briefly capture the problem and the fix/approach. Avoid overly terse messages that hide why the change was needed, especially for bug fixes and test additions.
-- **Before every push**: run both `npm test` AND `npm run test:e2e` and confirm all pass. No exceptions — a push with failing tests breaks CI and blocks the pipeline.
-
 ## Testing
 
 ```bash
@@ -140,35 +131,6 @@ npm test                                   # run all tests
 npm run test:e2e                          # run Playwright browser E2E
 npm run test:e2e -- test/e2e/foo.spec.ts # run a specific Playwright spec via the npm script
 ```
-
-Prefer npm scripts over calling tool binaries directly. For targeted Playwright runs, pass file paths or extra Playwright args after `--` instead of using `npx playwright ...` directly.
-
-For any bug fix or new feature, follow full TDD by default:
-
-1. First study the existing test coverage and identify the right place to add or update tests.
-2. Add the test that captures the bug or desired behavior before changing implementation code.
-3. Run the relevant test(s) and confirm they fail for the expected reason.
-4. Only then change the implementation to make the test pass.
-5. Run the relevant tests again, then run the broader existing test suite (`npm test`) before considering the work done.
-
-Do not treat tests as an afterthought. A bug fix or feature is incomplete unless the corresponding automated test coverage is added or updated as part of the same change.
-
-- Keep `TEST_SCENARIOS.md` in sync when the suite meaningfully expands or when the documented coverage boundaries change, so future review does not require reverse-engineering intent from test names alone.
-
-### Lessons
-
-- **Behavior changes must update all callers** — When changing a UI element's behavior (e.g. a button going from direct action to filling a command), search for ALL test helpers and E2E specs that depend on that behavior, not just the closest unit test. A single missed caller can silently break dozens of downstream tests.
-- **Flaky tests are usually real bugs** — Don't dismiss intermittent failures as test fragility. Event ordering races (e.g. `prompt_done` arriving before `permission_resolved`) are real production bugs that tests happen to expose under timing pressure.
-- **Optimistic UI and server broadcasts must agree** — When a client action triggers both an optimistic DOM update and a server broadcast back to the same client, the two must produce identical text/state. Mismatches (e.g. "Deny" vs "denied") cause flaky assertions and confusing UX.
-- **E2E helpers should use the most stable path** — Shared test helpers (like `createNewSession`) should use the most direct, UI-independent code path (e.g. slash command) rather than simulating complex UI flows (button click → menu → submit). Reserve UI-specific interaction testing for dedicated specs.
-- **Guard ws.send() with readyState check** — The WebSocket can close at any moment (network drop, server restart). All `ws.send()` calls must check `readyState === OPEN` first. Without this, optimistic DOM updates (e.g. user message added before send) will vanish on reconnect because the server never received them. Use a shared `wsReady()` helper; show a warning instead of silently losing data.
-- **Optimistic actions need reconnect retry** — When the client performs an optimistic UI update and sends a WS message (e.g. permission Allow), the WS may drop before delivery. Track unconfirmed actions locally (`state.unconfirmedPermissions`) and resend after reconnect if the DB replay still shows them as pending. Also dedup live events by ID to prevent duplicates from bridge session restore.
-
-## Response Clarity
-
-- When a task or sub-task is actually finished, end with an explicit completion statement (for example: `Done.`, `This is fixed.`, `Build succeeded; you can refresh now.`, or `Tests passed; ready for the next step.`).
-- Do not end on process narration that sounds mid-stream (for example: `I'm running...`, `I'll verify...`, `I’m checking...`) without a follow-up conclusion in the same response.
-- If the UI may already be interactive again, make the current state explicit so the user knows whether work is complete, still running, or waiting on them.
 
 ## Publishing
 
