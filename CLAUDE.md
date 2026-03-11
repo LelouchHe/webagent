@@ -118,6 +118,8 @@ Keep this distinction clear in docs and code discussions: some missing capabilit
 - **Prefer CSS for animations** — Use CSS `@keyframes` + pseudo-elements for UI animations (spinners, pulses) instead of JS `setInterval`. JS timers cause issues in test environments (JSDOM) by keeping the event loop alive.
 - **Autopilot mode** — In autopilot mode, permissions are auto-approved server-side (`allow_once` only, not `allow_always`, to avoid persisting across mode switches). New sessions always start in agent mode (mode is not inherited).
 - **Push notifications** — `/notify` slash command with on/off submenu. First `prompt_done` triggers a one-time tip (localStorage-gated). Permission denied state shows manual-settings guidance. Service worker handles push display + notificationclick → session navigation.
+- **iOS Safari / PWA keyboard** — iOS requires `.focus()` to originate from a synchronous user gesture (tap, click, keydown) for the virtual keyboard to appear. Calling `.focus()` from async callbacks (WebSocket `onmessage`, `setTimeout`, Promise `.then()`) puts the textarea into a "focused but no keyboard" state where subsequent taps also fail. The HTML `autofocus` attribute triggers this on page load. **Rule: never call `.focus()` outside a direct user gesture handler; never use `autofocus` on mobile-targeted inputs.**
+- **iOS PWA safe area** — The bottom home indicator on notch iPhones can overlap fixed/flex bottom bars in standalone PWA mode. The standard fix is `viewport-fit=cover` in the viewport meta tag + `padding-bottom: env(safe-area-inset-bottom)` on the bottom bar element. However, as of iOS 18 this may not work reliably in all PWA scenarios — some cases appear to be OS-level bugs (see WebKit #279904). Do not add `padding-bottom` to `body`/`html` for safe-area — it causes clipping in standalone mode.
 
 ## Git Commit Tips
 
@@ -156,6 +158,7 @@ Do not treat tests as an afterthought. A bug fix or feature is incomplete unless
 - **Flaky tests are usually real bugs** — Don't dismiss intermittent failures as test fragility. Event ordering races (e.g. `prompt_done` arriving before `permission_resolved`) are real production bugs that tests happen to expose under timing pressure.
 - **Optimistic UI and server broadcasts must agree** — When a client action triggers both an optimistic DOM update and a server broadcast back to the same client, the two must produce identical text/state. Mismatches (e.g. "Deny" vs "denied") cause flaky assertions and confusing UX.
 - **E2E helpers should use the most stable path** — Shared test helpers (like `createNewSession`) should use the most direct, UI-independent code path (e.g. slash command) rather than simulating complex UI flows (button click → menu → submit). Reserve UI-specific interaction testing for dedicated specs.
+- **Guard ws.send() with readyState check** — The WebSocket can close at any moment (network drop, server restart). All `ws.send()` calls must check `readyState === OPEN` first. Without this, optimistic DOM updates (e.g. user message added before send) will vanish on reconnect because the server never received them. Use a shared `wsReady()` helper; show a warning instead of silently losing data.
 
 ## Response Clarity
 
