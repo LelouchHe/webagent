@@ -4,7 +4,6 @@ import { join } from "node:path";
 import type { Store } from "./store.ts";
 
 const VAPID_FILE = "vapid.json";
-const MERGE_WINDOW_MS = 5 * 60 * 1000; // 5 minutes
 
 interface VapidKeys {
   publicKey: string;
@@ -20,7 +19,6 @@ export interface PushNotification {
 export class PushService {
   private store: Store;
   private vapidKeys: VapidKeys;
-  private lastPush = new Map<string, number>(); // sessionId → timestamp
   private clientVisibility = new Map<string, boolean>(); // clientId → visible
 
   constructor(store: Store, dataDir: string, vapidSubject: string) {
@@ -86,20 +84,6 @@ export class PushService {
   }
 
   // ---------------------------------------------------------------------------
-  // Merge window
-  // ---------------------------------------------------------------------------
-
-  shouldNotify(sessionId: string): boolean {
-    const last = this.lastPush.get(sessionId);
-    if (last == null) return true;
-    return Date.now() - last >= MERGE_WINDOW_MS;
-  }
-
-  recordNotification(sessionId: string): void {
-    this.lastPush.set(sessionId, Date.now());
-  }
-
-  // ---------------------------------------------------------------------------
   // Client visibility tracking
   // ---------------------------------------------------------------------------
 
@@ -136,9 +120,7 @@ export class PushService {
   ): boolean {
     if (!PushService.NOTIFIABLE.has(eventType)) return false;
     if (this.hasVisibleClient()) return false;
-    if (!this.shouldNotify(sessionId)) return false;
 
-    this.recordNotification(sessionId);
     return true;
   }
 

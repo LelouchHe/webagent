@@ -76,7 +76,7 @@ agent_cmd = "my-agent --acp"
 - **Title generation**: Uses a dedicated silent session with fast model (Haiku), async and non-blocking.
 - **Multi-client broadcast**: Events broadcast to all WS clients. Permission responses, user messages, bash output sync across devices. `broadcast()` supports sender exclusion.
 - **PWA**: Minimal service worker (no offline cache), manifest.json, installable to home screen.
-- **Web Push**: VAPID-based push notifications via `web-push`. Only fires when no WS client is visible (zero clients or all backgrounded). 5-minute per-session merge window prevents spam. Subscriptions stored in SQLite; stale endpoints (410 Gone) auto-cleaned. Notifiable events: `permission_request`, `prompt_done`, `bash_done`.
+- **Web Push**: VAPID-based push notifications via `web-push`. Only fires when no WS client is visible (zero clients or all backgrounded). Subscriptions stored in SQLite; stale endpoints (410 Gone) auto-cleaned. Notifiable events: `permission_request`, `prompt_done`, `bash_done`.
 
 ## ACP Client Extensions
 

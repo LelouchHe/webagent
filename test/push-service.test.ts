@@ -187,27 +187,6 @@ describe("PushService", () => {
     });
   });
 
-  describe("shouldNotify (merge window)", () => {
-    it("allows first notification for a session", () => {
-      const svc = new PushService(store, tmpDir, "mailto:test@localhost");
-      assert.equal(svc.shouldNotify("s1"), true);
-    });
-
-    it("suppresses notification within merge window", () => {
-      const svc = new PushService(store, tmpDir, "mailto:test@localhost");
-      svc.recordNotification("s1");
-
-      assert.equal(svc.shouldNotify("s1"), false);
-    });
-
-    it("allows notification for different sessions independently", () => {
-      const svc = new PushService(store, tmpDir, "mailto:test@localhost");
-      svc.recordNotification("s1");
-
-      assert.equal(svc.shouldNotify("s2"), true);
-    });
-  });
-
   describe("visibility tracking", () => {
     it("starts with no visible clients", () => {
       const svc = new PushService(store, tmpDir, "mailto:test@localhost");
@@ -251,22 +230,19 @@ describe("PushService", () => {
       assert.equal(result, false);
     });
 
-    it("returns true and records when no client is visible", () => {
+    it("returns true when no client is visible", () => {
       const svc = new PushService(store, tmpDir, "mailto:test@localhost");
-      // No clients → not visible
 
       const result = svc.maybeNotify("s1", "Title", "prompt_done", {});
       assert.equal(result, true);
-      // Should now be in merge window
-      assert.equal(svc.shouldNotify("s1"), false);
     });
 
-    it("returns false when within merge window", () => {
+    it("returns true for repeated events (no merge window)", () => {
       const svc = new PushService(store, tmpDir, "mailto:test@localhost");
-      svc.recordNotification("s1");
 
-      const result = svc.maybeNotify("s1", "Title", "prompt_done", {});
-      assert.equal(result, false);
+      assert.equal(svc.maybeNotify("s1", "Title", "prompt_done", {}), true);
+      assert.equal(svc.maybeNotify("s1", "Title", "permission_request", {}), true);
+      assert.equal(svc.maybeNotify("s1", "Title", "prompt_done", {}), true);
     });
 
     it("returns false for non-notifiable event types", () => {
