@@ -85,23 +85,21 @@ export function updateModeUI() {
 
 export function updateStatusBar() {
   if (!dom.statusBar) return;
-  const modeValue = getConfigValue('mode') || '';
-  let mode = 'agent';
-  if (modeValue.includes('#plan')) mode = 'plan';
-  else if (modeValue.includes('#autopilot')) mode = 'autopilot';
   const model = getConfigValue('model');
   const cwd = state.sessionCwd || '';
-  const sep = ' \u00b7 ';
-  const fixed = mode + (model ? sep + model : '');
   dom.statusBar.textContent = '';
-  const fixedSpan = document.createElement('span');
-  fixedSpan.textContent = fixed + (cwd ? sep : '');
-  dom.statusBar.appendChild(fixedSpan);
+  const parts = [];
+  if (model) parts.push(model);
   if (cwd) {
+    if (model) {
+      dom.statusBar.appendChild(document.createTextNode(model + ' \u00b7 '));
+    }
     const cwdSpan = document.createElement('span');
     cwdSpan.className = 'status-cwd';
     cwdSpan.textContent = cwd;
     dom.statusBar.appendChild(cwdSpan);
+  } else if (model) {
+    dom.statusBar.textContent = model;
   }
 }
 

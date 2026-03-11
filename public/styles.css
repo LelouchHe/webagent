@@ -412,7 +412,7 @@ body {
 }
 #status-bar {
   display: flex;
-  padding: 2px 16px 4px;
+  padding: 0 16px 10px;
   background: var(--bg);
   color: var(--text-dim);
   font-size: 11px;
@@ -420,16 +420,14 @@ body {
   white-space: nowrap;
   user-select: none;
 }
+#status-bar::before {
+  content: '\200b';
+}
 #status-bar .status-cwd {
   overflow: hidden;
   text-overflow: ellipsis;
   direction: rtl;
   text-align: left;
-}
-@supports (padding: env(safe-area-inset-bottom)) {
-  #status-bar {
-    padding-bottom: max(4px, env(safe-area-inset-bottom));
-  }
 }
 #input-prompt {
   color: var(--text);
