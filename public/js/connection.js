@@ -2,7 +2,7 @@
 
 import { state, setBusy, getHashSessionId, requestNewSession, resetSessionUI, setConnectionStatus, clearCancelTimer } from './state.js';
 import { addSystem, finishThinking, finishAssistant, finishBash, scrollToBottom } from './render.js';
-import { handleEvent, loadHistory, loadNewEvents } from './events.js';
+import { handleEvent, loadHistory, loadNewEvents, retryUnconfirmedPermissions } from './events.js';
 
 export function connect() {
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -19,6 +19,7 @@ export function connect() {
     // Incremental reconnect: same session still in memory — skip DOM wipe
     if (existingId && existingId === state.sessionId && state.lastEventSeq > 0) {
       await loadNewEvents(existingId);
+      retryUnconfirmedPermissions();
       scrollToBottom(false);
       state.ws.send(JSON.stringify({ type: 'resume_session', sessionId: existingId }));
       return;

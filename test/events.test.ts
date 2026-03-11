@@ -280,6 +280,66 @@ describe("events", () => {
         assert.equal(state.busy, false);
       });
 
+      it("skips duplicate permission_request with same requestId", () => {
+        events.handleEvent({
+          type: "permission_request",
+          requestId: "perm-dup",
+          title: "Allow file write?",
+          options: [{ optionId: "allow", kind: "allow_once", name: "Allow" }],
+        });
+        // Send a second permission_request with the same requestId
+        events.handleEvent({
+          type: "permission_request",
+          requestId: "perm-dup",
+          title: "Allow file write?",
+          options: [{ optionId: "allow", kind: "allow_once", name: "Allow" }],
+        });
+        const perms = dom.messages.querySelectorAll('.permission[data-request-id="perm-dup"]');
+        assert.equal(perms.length, 1, "should not create duplicate permission element");
+      });
+
+      it("skips duplicate permission_request even if already resolved", () => {
+        const ws = createMockWS();
+        state.ws = ws;
+        state.sessionId = "s1";
+        events.handleEvent({
+          type: "permission_request",
+          requestId: "perm-dup2",
+          title: "Allow?",
+          options: [{ optionId: "allow", kind: "allow_once", name: "Allow" }],
+        });
+        // User clicks Allow (optimistic update)
+        dom.messages.querySelector(".permission button").click();
+        // A duplicate permission_request arrives (e.g. from bridge restore)
+        events.handleEvent({
+          type: "permission_request",
+          requestId: "perm-dup2",
+          title: "Allow?",
+          options: [{ optionId: "allow", kind: "allow_once", name: "Allow" }],
+        });
+        const perms = dom.messages.querySelectorAll('.permission[data-request-id="perm-dup2"]');
+        assert.equal(perms.length, 1, "should not create duplicate after resolution");
+        assert.equal(perms[0].querySelectorAll("button").length, 0, "should stay resolved");
+      });
+
+      it("tracks unconfirmed permission response after Allow click", () => {
+        const ws = createMockWS();
+        state.ws = ws;
+        state.sessionId = "s1";
+        events.handleEvent({
+          type: "permission_request",
+          requestId: "perm-track",
+          title: "Allow?",
+          options: [{ optionId: "allow", kind: "allow_once", name: "Allow" }],
+        });
+        dom.messages.querySelector(".permission button").click();
+        assert.ok(state.unconfirmedPermissions instanceof Map);
+        assert.ok(state.unconfirmedPermissions.has("perm-track"), "should track unconfirmed response");
+        const entry = state.unconfirmedPermissions.get("perm-track");
+        assert.equal(entry.optionId, "allow");
+        assert.equal(entry.optionName, "Allow");
+      });
+
       it("preserves title after user clicks a permission button", () => {
         const ws = createMockWS();
         state.ws = ws;
@@ -336,6 +396,29 @@ describe("events", () => {
         const perm = dom.messages.querySelector(".permission");
         assert.ok(perm.textContent.includes("Run dangerous command"));
         assert.ok(perm.textContent.includes("Allow once"));
+      });
+
+      it("clears unconfirmed permission on permission_resolved", () => {
+        const ws = createMockWS();
+        state.ws = ws;
+        state.sessionId = "s1";
+        events.handleEvent({
+          type: "permission_request",
+          requestId: "perm-conf",
+          title: "Allow?",
+          options: [{ optionId: "allow", kind: "allow_once", name: "Allow" }],
+        });
+        dom.messages.querySelector(".permission button").click();
+        assert.ok(state.unconfirmedPermissions.has("perm-conf"));
+        events.handleEvent({
+          type: "permission_resolved",
+          sessionId: "s1",
+          requestId: "perm-conf",
+          optionName: "Allow",
+          denied: false,
+        });
+        assert.equal(state.unconfirmedPermissions.has("perm-conf"), false,
+          "should clear unconfirmed after server confirms");
       });
     });
 
@@ -1121,6 +1204,93 @@ describe("events", () => {
       // Only one tc-tc2 element
       assert.equal(dom.messages.querySelectorAll("#tc-tc2").length, 1);
       assert.equal(state.replayInProgress, false);
+    });
+  });
+
+  describe("retryUnconfirmedPermissions", () => {
+    it("resends response for a still-pending permission after reconnect", () => {
+      const ws = createMockWS();
+      state.ws = ws;
+      state.sessionId = "s1";
+
+      // Simulate a permission that was responded to but never confirmed
+      state.unconfirmedPermissions.set("perm-retry", {
+        sessionId: "s1",
+        optionId: "allow",
+        optionName: "Allow Once",
+        denied: false,
+      });
+
+      // Create a pending permission element in DOM (as if replayed from DB without response)
+      const el = document.createElement("div");
+      el.className = "permission";
+      el.dataset.requestId = "perm-retry";
+      el.dataset.title = "Execute ls";
+      el.innerHTML = '<span class="title">⚿ Execute ls</span> ';
+      const btn = document.createElement("button");
+      btn.textContent = "Allow Once";
+      el.appendChild(btn);
+      dom.messages.appendChild(el);
+
+      events.retryUnconfirmedPermissions();
+
+      // Should have resent the permission_response
+      assert.equal(ws.sent.length, 1);
+      const msg = JSON.parse(ws.sent[0]);
+      assert.equal(msg.type, "permission_response");
+      assert.equal(msg.requestId, "perm-retry");
+      assert.equal(msg.optionId, "allow");
+      // Should have optimistically resolved the UI
+      assert.equal(el.querySelectorAll("button").length, 0);
+      assert.ok(el.textContent.includes("Execute ls"));
+      assert.ok(el.textContent.includes("Allow Once"));
+      // Should have cleaned up
+      assert.equal(state.unconfirmedPermissions.has("perm-retry"), false);
+    });
+
+    it("skips already-resolved permission", () => {
+      const ws = createMockWS();
+      state.ws = ws;
+      state.sessionId = "s1";
+
+      state.unconfirmedPermissions.set("perm-ok", {
+        sessionId: "s1",
+        optionId: "allow",
+        optionName: "Allow",
+        denied: false,
+      });
+
+      // Create a resolved permission element (no buttons)
+      const el = document.createElement("div");
+      el.className = "permission";
+      el.dataset.requestId = "perm-ok";
+      el.innerHTML = '<span style="opacity:0.5">⚿ Allow? — Allow</span>';
+      dom.messages.appendChild(el);
+
+      events.retryUnconfirmedPermissions();
+
+      // No WS messages sent — already resolved
+      assert.equal(ws.sent.length, 0);
+      assert.equal(state.unconfirmedPermissions.has("perm-ok"), false);
+    });
+
+    it("cleans up when permission element no longer exists", () => {
+      const ws = createMockWS();
+      state.ws = ws;
+      state.sessionId = "s1";
+
+      state.unconfirmedPermissions.set("perm-gone", {
+        sessionId: "s1",
+        optionId: "allow",
+        optionName: "Allow",
+        denied: false,
+      });
+
+      // No matching element in DOM
+      events.retryUnconfirmedPermissions();
+
+      assert.equal(ws.sent.length, 0);
+      assert.equal(state.unconfirmedPermissions.has("perm-gone"), false);
     });
   });
 });

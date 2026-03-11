@@ -43,6 +43,7 @@ export const state = {
   lastEventSeq: 0,
   replayInProgress: false,
   replayQueue: [],
+  unconfirmedPermissions: new Map(),
 };
 
 const CONNECTION_STATUS_CLASSES = {
@@ -112,6 +113,7 @@ export function resetSessionUI() {
   state.followMessages = true;
   state.pendingToolCallIds.clear();
   state.pendingPermissionRequestIds.clear();
+  state.unconfirmedPermissions.clear();
   state.pendingPromptDone = false;
   state.turnEnded = false;
   state._cancelTimerId = null;

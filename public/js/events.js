@@ -141,6 +141,36 @@ export async function loadNewEvents(sid) {
   }
 }
 
+/**
+ * Resend permission responses that were sent optimistically but never confirmed
+ * by the server (e.g. WS dropped before delivery). Call after loadNewEvents/loadHistory
+ * on reconnect.
+ */
+export function retryUnconfirmedPermissions() {
+  for (const [requestId, response] of state.unconfirmedPermissions) {
+    const el = document.querySelector(`.permission[data-request-id="${requestId}"]`);
+    if (!el || !el.querySelector('button')) {
+      // Element gone or already resolved — clean up
+      state.unconfirmedPermissions.delete(requestId);
+      continue;
+    }
+    // Still pending in DOM — resend and optimistically resolve
+    if (state.ws && state.ws.readyState === 1) {
+      state.ws.send(JSON.stringify({
+        type: 'permission_response',
+        sessionId: response.sessionId,
+        requestId,
+        optionId: response.optionId,
+        optionName: response.optionName,
+        denied: response.denied,
+      }));
+    }
+    const title = el.dataset.title ? `⚿ ${escHtml(el.dataset.title)}` : '⚿';
+    el.innerHTML = `<span style="opacity:0.5">${title} — ${escHtml(response.optionName)}</span>`;
+    state.unconfirmedPermissions.delete(requestId);
+  }
+}
+
 export function replayEvent(type, data, events, idx) {
   switch (type) {
     case 'user_message': {
@@ -491,6 +521,8 @@ export function handleEvent(msg) {
 
     case 'permission_request': {
       if (state.turnEnded) break;
+      // Dedup: skip if a permission element with this requestId already exists (e.g. bridge restore)
+      if (document.querySelector(`.permission[data-request-id="${msg.requestId}"]`)) break;
       state.pendingPermissionRequestIds.add(msg.requestId);
       setBusy(true);
       finishThinking();
@@ -517,6 +549,13 @@ export function handleEvent(msg) {
             }));
           } catch { /* connection may be broken; cleanup still runs */ }
           state.pendingPermissionRequestIds.delete(msg.requestId);
+          // Track for retry on reconnect (cleared when server confirms via permission_resolved)
+          state.unconfirmedPermissions.set(msg.requestId, {
+            sessionId: state.sessionId,
+            optionId: opt.optionId,
+            optionName: opt.name,
+            denied: isDeny,
+          });
           permEl.innerHTML = `<span style="opacity:0.5">⚿ ${escHtml(msg.title)} — ${escHtml(opt.name)}</span>`;
           finishPromptIfIdle();
         };
@@ -528,6 +567,7 @@ export function handleEvent(msg) {
 
     case 'permission_resolved': {
       state.pendingPermissionRequestIds.delete(msg.requestId);
+      state.unconfirmedPermissions.delete(msg.requestId);
       const permTarget = document.querySelector(`.permission[data-request-id="${msg.requestId}"]`);
       if (msg.sessionId === state.sessionId && permTarget) {
         const title = permTarget.dataset.title ? `⚿ ${permTarget.dataset.title}` : '⚿';

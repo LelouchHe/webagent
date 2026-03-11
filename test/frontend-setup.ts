@@ -59,6 +59,7 @@ export function resetState(state: any, dom: any) {
   state.lastEventSeq = 0;
   state.replayInProgress = false;
   state.replayQueue = [];
+  if (state.unconfirmedPermissions) state.unconfirmedPermissions.clear();
   // Reset DOM elements
   dom.messages.innerHTML = "";
   dom.status.textContent = "";

@@ -161,6 +161,7 @@ Do not treat tests as an afterthought. A bug fix or feature is incomplete unless
 - **Optimistic UI and server broadcasts must agree** — When a client action triggers both an optimistic DOM update and a server broadcast back to the same client, the two must produce identical text/state. Mismatches (e.g. "Deny" vs "denied") cause flaky assertions and confusing UX.
 - **E2E helpers should use the most stable path** — Shared test helpers (like `createNewSession`) should use the most direct, UI-independent code path (e.g. slash command) rather than simulating complex UI flows (button click → menu → submit). Reserve UI-specific interaction testing for dedicated specs.
 - **Guard ws.send() with readyState check** — The WebSocket can close at any moment (network drop, server restart). All `ws.send()` calls must check `readyState === OPEN` first. Without this, optimistic DOM updates (e.g. user message added before send) will vanish on reconnect because the server never received them. Use a shared `wsReady()` helper; show a warning instead of silently losing data.
+- **Optimistic actions need reconnect retry** — When the client performs an optimistic UI update and sends a WS message (e.g. permission Allow), the WS may drop before delivery. Track unconfirmed actions locally (`state.unconfirmedPermissions`) and resend after reconnect if the DB replay still shows them as pending. Also dedup live events by ID to prevent duplicates from bridge session restore.
 
 ## Response Clarity
 
