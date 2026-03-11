@@ -77,6 +77,8 @@ agent_cmd = "my-agent --acp"
 - **Multi-client broadcast**: Events broadcast to all WS clients. Permission responses, user messages, bash output sync across devices. `broadcast()` supports sender exclusion.
 - **PWA**: Minimal service worker (no offline cache), manifest.json, installable to home screen.
 - **Web Push**: VAPID-based push notifications via `web-push`. Only fires when no WS client is visible (zero clients or all backgrounded). Subscriptions stored in SQLite; stale endpoints (410 Gone) auto-cleaned. Notifiable events: `permission_request`, `prompt_done`, `bash_done`.
+  - **iOS (Safari/PWA)**: Must be installed to home screen (Add to Home Screen) — Safari tabs don't support Push API. Apple's push service (`web.push.apple.com`) rejects `mailto:` VAPID subjects with localhost or invalid-looking domains (`403 BadJwtToken`). Use a real-looking email like `mailto:noreply@example.com`. Changing VAPID subject requires deleting `{data_dir}/vapid.json` to regenerate keys, then all clients must re-subscribe (`/notify off` → `/notify on`).
+  - **iOS PWA quirks**: Push only works when installed to home screen (not Safari tabs). Apple's push service (`web.push.apple.com`) rejects VAPID subjects with `localhost` domains (`403 BadJwtToken`) — use a real-looking email like `mailto:noreply@example.com`. When changing `push.vapid_subject`, delete `data/vapid.json` to regenerate keys, then have all clients re-subscribe (`/notify off` → `/notify on`).
 
 ## ACP Client Extensions
 

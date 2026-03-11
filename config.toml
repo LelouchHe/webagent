@@ -26,3 +26,6 @@ image_upload = 10_485_760
 # Cancel timeout (ms, default 10s). After sending cancel, if the agent
 # does not respond within this time the UI resets to idle. Set to 0 to disable.
 cancel_timeout = 10_000
+
+[push]
+vapid_subject = "mailto:noreply@example.com"
