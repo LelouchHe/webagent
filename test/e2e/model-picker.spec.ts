@@ -9,6 +9,7 @@ test("/model picker can switch the selected model", async ({ page }) => {
   await expect(page.locator("#slash-menu.active .slash-item")).toHaveCount(2);
   await page.locator("#input").press("ArrowDown");
   await page.locator("#input").press("Tab");
+  await page.locator("#input").press("Enter");
 
   await expect(page.locator("#messages")).toContainText("Model → Mock Model 2");
   await page.locator("#input").fill("/model");

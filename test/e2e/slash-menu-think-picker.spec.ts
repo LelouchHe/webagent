@@ -10,6 +10,7 @@ test("slash-menu /think picker can switch reasoning effort", async ({ page }) =>
   await page.locator("#input").press("ArrowDown");
   await page.locator("#input").press("ArrowDown");
   await page.locator("#input").press("Tab");
+  await page.locator("#input").press("Enter");
 
   await expect(page.locator("#messages")).toContainText("Reasoning → High");
   await page.locator("#input").fill("/think");
