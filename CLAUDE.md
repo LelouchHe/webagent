@@ -126,6 +126,7 @@ Keep this distinction clear in docs and code discussions: some missing capabilit
 - Once a feature or fix has reached a complete checkpoint, make a commit so the work stays traceable and easy to roll back. "Complete" means the full TDD cycle is done, the relevant tests pass, broader existing tests pass, and any required E2E coverage for that feature has been run and confirmed.
 - Keep commits tightly scoped: each commit should capture one coherent, fully verified piece of work. Prefer multiple smaller complete commits over bundling unrelated fixes, tests, and refactors together.
 - Write commit messages with enough context to make later log review useful: the subject should say what changed, and the body should briefly capture the problem and the fix/approach. Avoid overly terse messages that hide why the change was needed, especially for bug fixes and test additions.
+- **Before every push**: run both `npm test` AND `npm run test:e2e` and confirm all pass. No exceptions — a push with failing tests breaks CI and blocks the pipeline.
 
 ## Testing
 
