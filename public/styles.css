@@ -355,7 +355,7 @@ body {
 /* Input */
 #input-area {
   position: relative;
-  padding: 8px 16px 20px;
+  padding: 8px 16px calc(20px + env(safe-area-inset-bottom, 0px));
   background: var(--bg);
   border-top: 1px solid var(--border);
   display: flex;
