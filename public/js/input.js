@@ -8,6 +8,10 @@ import { addMessage, addSystem, addBashBlock, showWaiting } from './render.js';
 import { handleSlashCommand, hideSlashMenu, handleSlashMenuKey, updateSlashMenu } from './commands.js';
 import { renderAttachPreview } from './images.js';
 
+function wsReady() {
+  return state.ws && state.ws.readyState === 1;
+}
+
 // Wire up cancel-timeout feedback (state.js cannot import render.js directly)
 state._onCancelTimeout = () => addSystem('warn: Agent not responding to cancel');
 
@@ -30,6 +34,10 @@ function sendMessage() {
     if (!command) return;
     if (!state.sessionId) {
       addSystem('warn: Session not ready yet, please wait…');
+      return;
+    }
+    if (!wsReady()) {
+      addSystem('warn: Not connected, please retry');
       return;
     }
     dom.input.value = '';
@@ -55,6 +63,11 @@ function sendMessage() {
     return;
   }
 
+  if (!wsReady()) {
+    addSystem('warn: Not connected, please retry');
+    return;
+  }
+
   // Show user message with image thumbnails
   const msgEl = addMessage('user', text || '(image)');
   for (const img of state.pendingImages) {
@@ -77,6 +90,12 @@ function sendMessage() {
         body: JSON.stringify({ data: img.data, mimeType: img.mimeType }),
       }).then(r => r.json()).then(j => ({ data: img.data, mimeType: img.mimeType, path: j.path }))
     )).then(uploaded => {
+      if (!wsReady()) {
+        msgEl.remove();
+        addSystem('warn: Not connected, please retry');
+        setBusy(false);
+        return;
+      }
       state.ws.send(JSON.stringify({ type: 'prompt', sessionId: state.sessionId, text: text || 'What is in this image?', images: uploaded }));
     });
   } else {

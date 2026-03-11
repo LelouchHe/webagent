@@ -272,4 +272,52 @@ describe("input", () => {
     assert.strictEqual(dom.input.value, "/new ");
     assert.strictEqual(document.activeElement, dom.input);
   });
+
+  it("does not send prompt when ws is not open and shows warning", () => {
+    const ws = createMockWS();
+    ws.readyState = 3; // WebSocket.CLOSED
+    state.ws = ws;
+    state.sessionId = "s1";
+    dom.input.value = "hello";
+
+    clickSend();
+
+    assert.equal(ws.sent.length, 0, "should not send when disconnected");
+    assert.ok(dom.messages.textContent.includes("Not connected"), "should warn user");
+    assert.equal(state.busy, false, "should not enter busy state");
+  });
+
+  it("does not send bash command when ws is not open", () => {
+    const ws = createMockWS();
+    ws.readyState = 3; // WebSocket.CLOSED
+    state.ws = ws;
+    state.sessionId = "s1";
+    dom.input.value = "!echo hi";
+
+    clickSend();
+
+    assert.equal(ws.sent.length, 0, "should not send bash when disconnected");
+    assert.ok(dom.messages.textContent.includes("Not connected"), "should warn user");
+    assert.equal(state.busy, false, "should not enter busy state");
+  });
+
+  it("does not send prompt with images when ws is not open", async () => {
+    const ws = createMockWS();
+    ws.readyState = 3; // WebSocket.CLOSED
+    state.ws = ws;
+    state.sessionId = "s1";
+    state.pendingImages.push({
+      data: "abc123",
+      mimeType: "image/png",
+      previewUrl: "data:image/png;base64,abc123",
+    });
+    setFetch(async () => ({ json: async () => ({ path: "uploads/image.png" }) }));
+
+    clickSend();
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+
+    assert.equal(ws.sent.length, 0, "should not send when disconnected");
+    assert.equal(state.busy, false, "should not enter busy state");
+  });
 });
