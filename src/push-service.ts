@@ -4,6 +4,8 @@ import { join } from "node:path";
 import type { Store } from "./store.ts";
 
 const VAPID_FILE = "vapid.json";
+/** Remove a subscription after this many consecutive send failures. */
+const MAX_CONSECUTIVE_FAILURES = 5;
 
 interface VapidKeys {
   publicKey: string;
@@ -20,6 +22,8 @@ export class PushService {
   private store: Store;
   private vapidKeys: VapidKeys;
   private clientVisibility = new Map<string, boolean>(); // clientId → visible
+  /** endpoint → consecutive failure count (absent or 0 = healthy) */
+  private failureCounts = new Map<string, number>();
 
   constructor(store: Store, dataDir: string, vapidSubject: string) {
     this.store = store;
@@ -136,7 +140,7 @@ export class PushService {
 
     const results = await Promise.allSettled(
       subs.map((sub) =>
-        webpush.sendNotification(
+        this.sendOne(
           { endpoint: sub.endpoint, keys: { auth: sub.auth, p256dh: sub.p256dh } },
           payload,
         ),
@@ -145,16 +149,36 @@ export class PushService {
 
     for (let i = 0; i < results.length; i++) {
       const result = results[i];
-      if (result.status === "rejected") {
+      const endpoint = subs[i].endpoint;
+      if (result.status === "fulfilled") {
+        this.failureCounts.delete(endpoint);
+      } else {
         const err = result.reason as { statusCode?: number };
         if (err.statusCode === 410) {
-          // Subscription expired — clean up
-          this.store.removeSubscription(subs[i].endpoint);
-          console.log(`[push] removed expired subscription: ${subs[i].endpoint}`);
+          // Subscription expired — clean up immediately
+          this.store.removeSubscription(endpoint);
+          this.failureCounts.delete(endpoint);
+          console.log(`[push] removed expired subscription (410): ${endpoint.slice(0, 60)}…`);
         } else {
-          console.error(`[push] send failed for ${subs[i].endpoint}:`, result.reason);
+          const count = (this.failureCounts.get(endpoint) ?? 0) + 1;
+          if (count >= MAX_CONSECUTIVE_FAILURES) {
+            this.store.removeSubscription(endpoint);
+            this.failureCounts.delete(endpoint);
+            console.log(`[push] removed subscription after ${count} consecutive failures: ${endpoint.slice(0, 60)}…`);
+          } else {
+            this.failureCounts.set(endpoint, count);
+            console.error(`[push] send failed (${count}/${MAX_CONSECUTIVE_FAILURES}) for ${endpoint.slice(0, 60)}…:`, result.reason);
+          }
         }
       }
     }
+  }
+
+  /** Send a single push notification. Extracted for testability. */
+  protected sendOne(
+    sub: { endpoint: string; keys: { auth: string; p256dh: string } },
+    payload: string,
+  ): Promise<webpush.SendResult> {
+    return webpush.sendNotification(sub, payload);
   }
 }
