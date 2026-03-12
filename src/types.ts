@@ -53,6 +53,14 @@ export interface StoredEvent {
   created_at: string;
 }
 
+/** Pending permission request tracked in memory. */
+export interface PendingPermission {
+  requestId: string;
+  sessionId: string;
+  title: string;
+  options: Array<{ optionId: string; label: string }>;
+}
+
 // --- Agent events (server → client) ---
 
 export type AgentEvent =

@@ -26,7 +26,7 @@ const MIME: Record<string, string> = {
 export interface RequestHandlerDeps {
   store: Store;
   sessions?: SessionManager;
-  getBridge?: () => (Pick<AgentBridge, "newSession" | "setConfigOption" | "loadSession"> | null);
+  getBridge?: () => (Pick<AgentBridge, "newSession" | "setConfigOption" | "loadSession" | "cancel" | "prompt" | "resolvePermission" | "denyPermission"> | null);
   publicDir: string;
   dataDir: string;
   limits: Pick<Config["limits"], "bash_output" | "image_upload"> & Partial<Pick<Config["limits"], "cancel_timeout">>;
@@ -79,6 +79,55 @@ export function createRequestHandler(
         const params = new URLSearchParams(url.split("?")[1] ?? "");
         const source = params.get("source") ?? undefined;
         res.end(JSON.stringify(store.listSessions(source ? { source } : undefined)));
+        return;
+      }
+
+      // --- GET /api/config ---
+      if (url === "/api/config" && req.method === "GET") {
+        json(res, 200, {
+          configOptions: sessions?.cachedConfigOptions ?? [],
+          cancelTimeout: deps.limits.cancel_timeout ?? 0,
+        });
+        return;
+      }
+
+      // --- POST /api/sessions/:id/cancel ---
+      const cancelMatch = url.match(/^\/api\/sessions\/([^/]+)\/cancel\/?$/);
+      if (cancelMatch && req.method === "POST") {
+        const sessionId = decodeURIComponent(cancelMatch[1]);
+        const session = store.getSession(sessionId);
+        if (!session) { json(res, 404, { error: "Session not found" }); return; }
+        const bridge = getBridge?.();
+        if (!bridge) { json(res, 503, { error: "Agent not ready yet" }); return; }
+
+        // Kill running bash process if any
+        const proc = sessions?.runningBashProcs.get(sessionId);
+        if (proc) {
+          try { proc.kill(); } catch { /* already dead */ }
+          sessions!.runningBashProcs.delete(sessionId);
+        }
+        // Cancel agent prompt
+        if (sessions?.activePrompts.has(sessionId)) {
+          await bridge.cancel(sessionId);
+          sessions.activePrompts.delete(sessionId);
+        }
+        json(res, 200, { ok: true });
+        return;
+      }
+
+      // --- GET /api/sessions/:id/status ---
+      const statusMatch = url.match(/^\/api\/sessions\/([^/]+)\/status\/?$/);
+      if (statusMatch && req.method === "GET") {
+        const sessionId = decodeURIComponent(statusMatch[1]);
+        const session = store.getSession(sessionId);
+        if (!session) { json(res, 404, { error: "Session not found" }); return; }
+        const busyKind = sessions?.getBusyKind(sessionId) ?? null;
+        const pendingPerms = sessions?.getPendingPermissions(sessionId) ?? [];
+        json(res, 200, {
+          busy: busyKind != null,
+          busyKind,
+          pendingPermissions: pendingPerms,
+        });
         return;
       }
 
