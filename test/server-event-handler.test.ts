@@ -7,6 +7,7 @@ import { WebSocket } from "ws";
 import { Store } from "../src/store.ts";
 import { SessionManager } from "../src/session-manager.ts";
 import { handleAgentEvent } from "../src/event-handler.ts";
+import type { AgentEvent } from "../src/types.ts";
 
 function createMockWss() {
   const sent: string[] = [];
@@ -15,6 +16,14 @@ function createMockWss() {
     send(d: string) { sent.push(d); },
   };
   return { wss: { clients: new Set([client]) } as any, sent };
+}
+
+function createMockSseManager() {
+  const broadcasted: AgentEvent[] = [];
+  return {
+    sseManager: { broadcast(event: AgentEvent) { broadcasted.push(event); } },
+    broadcasted,
+  };
 }
 
 function createMockBridge() {
@@ -261,5 +270,65 @@ describe("handleAgentEvent", () => {
     // Should broadcast permission_request for manual handling
     const msg = JSON.parse(sent[0]);
     assert.equal(msg.type, "permission_request");
+  });
+
+  // --- SSE broadcast integration ---
+
+  it("broadcasts events to SseManager when provided", () => {
+    store.createSession("s1", "/tmp");
+    const { wss, sent } = createMockWss();
+    const { bridge } = createMockBridge();
+    const { sseManager, broadcasted } = createMockSseManager();
+
+    handleAgentEvent(
+      { type: "message_chunk", sessionId: "s1", text: "hello" } as any,
+      sessions, store, wss, bridge, { cancelTimeout: 10000 }, undefined, sseManager as any,
+    );
+
+    // Should broadcast to both WS and SSE
+    assert.equal(sent.length, 1);
+    assert.equal(broadcasted.length, 1);
+    assert.deepEqual(broadcasted[0], { type: "message_chunk", sessionId: "s1", text: "hello" });
+  });
+
+  it("does not fail when SseManager is not provided", () => {
+    store.createSession("s1", "/tmp");
+    const { wss, sent } = createMockWss();
+    const { bridge } = createMockBridge();
+
+    // No sseManager arg — should work as before
+    handleAgentEvent(
+      { type: "message_chunk", sessionId: "s1", text: "hello" } as any,
+      sessions, store, wss, bridge, { cancelTimeout: 10000 },
+    );
+
+    assert.equal(sent.length, 1);
+  });
+
+  it("broadcasts autopilot permission events to SSE", () => {
+    store.createSession("s1", "/tmp");
+    store.updateSessionConfig("s1", "mode", "agent#autopilot");
+    const { wss } = createMockWss();
+    const { bridge } = createMockBridge();
+    const { sseManager, broadcasted } = createMockSseManager();
+
+    handleAgentEvent(
+      {
+        type: "permission_request",
+        sessionId: "s1",
+        requestId: "req1",
+        title: "Run command",
+        options: [
+          { optionId: "allow_once", kind: "allow_once", label: "Allow once" },
+          { optionId: "deny", kind: "deny", label: "Deny" },
+        ],
+      } as any,
+      sessions, store, wss, bridge, { cancelTimeout: 10000 }, undefined, sseManager as any,
+    );
+
+    // Autopilot: broadcasts permission_request + permission_resolved to SSE
+    assert.equal(broadcasted.length, 2);
+    assert.equal(broadcasted[0].type, "permission_request");
+    assert.equal(broadcasted[1].type, "permission_resolved");
   });
 });
