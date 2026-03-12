@@ -1,4 +1,5 @@
 import { readFile, writeFile, mkdir } from "node:fs/promises";
+import { spawn } from "node:child_process";
 import { join, extname } from "node:path";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { Store } from "./store.ts";
@@ -6,7 +7,22 @@ import type { SessionManager } from "./session-manager.ts";
 import type { AgentBridge } from "./bridge.ts";
 import type { Config } from "./config.ts";
 import type { PushService } from "./push-service.ts";
+import { errorMessage } from "./types.ts";
 import type { AgentEvent } from "./types.ts";
+
+const IS_WIN = process.platform === "win32";
+
+function interruptBashProc(proc: ReturnType<Map<string, import("node:child_process").ChildProcess>["prototype"]["get"]>): void {
+  if (!proc) return;
+  if (IS_WIN && typeof proc.pid === "number") {
+    spawn("taskkill", ["/T", "/F", "/PID", String(proc.pid)]).unref();
+    return;
+  }
+  if (typeof proc.pid === "number") {
+    try { process.kill(-proc.pid, "SIGINT"); return; } catch { /* fallthrough */ }
+  }
+  proc.kill("SIGINT");
+}
 
 const SAFE_ID = /^[a-zA-Z0-9_-]+$/;
 
@@ -240,6 +256,84 @@ export function createRequestHandler(
         const afterSeq = afterSeqRaw != null ? Number(afterSeqRaw) : undefined;
         const events = store.getEvents(sessionId, { excludeThinking, afterSeq });
         json(res, 200, events);
+        return;
+      }
+
+      // --- POST /api/sessions/:id/bash ---
+      const bashMatch = url.match(/^\/api\/sessions\/([^/]+)\/bash\/?$/);
+      if (bashMatch && req.method === "POST") {
+        const sessionId = decodeURIComponent(bashMatch[1]);
+        const session = store.getSession(sessionId);
+        if (!session) { json(res, 404, { error: "Session not found" }); return; }
+        if (!sessions) { json(res, 503, { error: "Session manager not available" }); return; }
+        if (sessions.runningBashProcs.has(sessionId)) {
+          json(res, 409, { error: "A bash command is already running in this session" });
+          return;
+        }
+
+        let body: { command?: string };
+        try { body = JSON.parse(await readBody(req)); } catch { json(res, 400, { error: "Invalid JSON" }); return; }
+        if (!body.command) { json(res, 400, { error: "Missing required field: command" }); return; }
+
+        const cwd = sessions.getSessionCwd(sessionId);
+        store.saveEvent(sessionId, "bash_command", { command: body.command });
+        broadcast?.({ type: "bash_command", sessionId, command: body.command } as AgentEvent);
+
+        const shell = IS_WIN ? (process.env.COMSPEC || "cmd.exe") : (process.env.SHELL || "bash");
+        const shellArgs = IS_WIN ? ["/s", "/c", body.command] : ["-c", body.command];
+        const child = spawn(shell, shellArgs, {
+          cwd,
+          detached: !IS_WIN,
+          env: { ...process.env, TERM: "dumb" },
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+        sessions.runningBashProcs.set(sessionId, child);
+        let output = "";
+        let outputTruncated = false;
+        const limit = deps.limits.bash_output;
+
+        const onData = (stream: string) => (chunk: Buffer) => {
+          const text = chunk.toString();
+          if (!outputTruncated) {
+            output += text;
+            if (output.length > limit) {
+              output = output.slice(-limit);
+              outputTruncated = true;
+            }
+          } else {
+            output = (output + text).slice(-limit);
+          }
+          broadcast?.({ type: "bash_output", sessionId, text, stream } as AgentEvent);
+        };
+        child.stdout!.on("data", onData("stdout"));
+        child.stderr!.on("data", onData("stderr"));
+
+        child.on("close", (code, signal) => {
+          sessions!.runningBashProcs.delete(sessionId);
+          const stored = outputTruncated ? "[truncated]\n" + output : output;
+          store.saveEvent(sessionId, "bash_result", { output: stored, code, signal });
+          broadcast?.({ type: "bash_done", sessionId, code, signal } as AgentEvent);
+        });
+
+        child.on("error", (err) => {
+          sessions!.runningBashProcs.delete(sessionId);
+          const errMsg = errorMessage(err);
+          store.saveEvent(sessionId, "bash_result", { output: errMsg, code: -1, signal: null });
+          broadcast?.({ type: "bash_done", sessionId, code: -1, signal: null, error: errMsg } as AgentEvent);
+        });
+
+        json(res, 202, { status: "accepted" });
+        return;
+      }
+
+      // --- POST /api/sessions/:id/bash/cancel ---
+      const bashCancelMatch = url.match(/^\/api\/sessions\/([^/]+)\/bash\/cancel\/?$/);
+      if (bashCancelMatch && req.method === "POST") {
+        const sessionId = decodeURIComponent(bashCancelMatch[1]);
+        const session = store.getSession(sessionId);
+        if (!session) { json(res, 404, { error: "Session not found" }); return; }
+        interruptBashProc(sessions?.runningBashProcs.get(sessionId));
+        json(res, 200, { ok: true });
         return;
       }
 
