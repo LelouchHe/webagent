@@ -52,9 +52,10 @@ describe("slash menu — Tab vs Click behavior", () => {
     assert.equal(messageLines().length, 0, "Tab should not execute the command");
   });
 
-  it("Tab on notify submenu fills input with /notify <option> without executing", () => {
+  it("Tab on notify submenu fills input with /notify <option> without executing", async () => {
     dom.input.value = "/notify ";
     commands.updateSlashMenu();
+    await new Promise(r => setTimeout(r, 10));
     assert.ok(dom.slashMenu.classList.contains("active"), "notify submenu should be active");
 
     const handled = commands.handleSlashMenuKey(makeTabEvent());
@@ -109,6 +110,7 @@ describe("slash menu — Tab vs Click behavior", () => {
   it("click on notify submenu item executes the command", async () => {
     dom.input.value = "/notify ";
     commands.updateSlashMenu();
+    await new Promise(r => setTimeout(r, 10));
     assert.ok(dom.slashMenu.classList.contains("active"));
 
     // Simulate click on first item

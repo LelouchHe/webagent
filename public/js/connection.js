@@ -36,7 +36,23 @@ export function connect() {
       return;
     }
 
-    // No session in URL — create new
+    // No session in URL — try to resume last active session
+    try {
+      const res = await fetch('/api/sessions');
+      const sessions = await res.json();
+      if (sessions.length > 0) {
+        const last = sessions[0];
+        resetSessionUI();
+        const loaded = await loadHistory(last.id);
+        if (loaded) {
+          scrollToBottom(true);
+        }
+        state.ws.send(JSON.stringify({ type: 'resume_session', sessionId: last.id }));
+        return;
+      }
+    } catch {}
+
+    // No previous sessions — create new
     requestNewSession();
   };
 

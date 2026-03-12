@@ -308,6 +308,7 @@ let slashMode = 'commands';
 let slashConfigId = null;
 let cachedSessions = null;
 let slashDismissed = null;
+let notifyActive = false;
 
 export function updateSlashMenu() {
   const text = dom.input.value;
@@ -445,7 +446,7 @@ const NOTIFY_OPTIONS = [
   { value: 'off', name: 'off', desc: 'Disable background notifications' },
 ];
 
-function showNotifyMenu(query) {
+async function showNotifyMenu(query) {
   slashMode = 'notify';
   slashFiltered = NOTIFY_OPTIONS.filter(o => {
     if (!query) return true;
@@ -455,7 +456,10 @@ function showNotifyMenu(query) {
     hideSlashMenu();
     return;
   }
-  slashIdx = 0;
+  notifyActive = await hasActiveSubscription();
+  const currentValue = notifyActive ? 'on' : 'off';
+  const idx = slashFiltered.findIndex(o => o.value === currentValue);
+  slashIdx = idx >= 0 ? idx : 0;
   renderSlashMenu();
   dom.slashMenu.classList.add('active');
 }
@@ -478,8 +482,7 @@ function renderSlashMenu() {
       return `<div class="slash-item${i === slashIdx ? ' selected' : ''}" data-idx="${i}"><span class="slash-cmd"${style}>${escHtml(prefix + o.name)}</span></div>`;
     }).join('');
   } else if (slashMode === 'notify') {
-    const perm = typeof Notification !== 'undefined' ? Notification.permission : 'unsupported';
-    const currentVal = perm === 'granted' ? 'on' : 'off';
+    const currentVal = notifyActive ? 'on' : 'off';
     dom.slashMenu.innerHTML = slashFiltered.map((o, i) => {
       const isCurrent = o.value === currentVal;
       const prefix = isCurrent ? '* ' : '  ';
