@@ -12,7 +12,7 @@ import {
   formatLocalTime,
 } from './render.ts';
 import { TOOL_ICONS, DEFAULT_TOOL_ICON, PLAN_STATUS_ICONS } from '../../src/shared/constants.ts';
-import type { AgentEvent } from '../../src/types.ts';
+import type { AgentEvent, PlanEntry, StoredEvent } from '../../src/types.ts';
 
 const NOTIFY_TIP_KEY = 'webagent_notify_tip_shown';
 const NOTIFY_TIP_DENIED_KEY = 'webagent_notify_tip_denied_shown';
@@ -174,7 +174,7 @@ export function retryUnconfirmedPermissions() {
   }
 }
 
-export function replayEvent(type: string, data: any, events: any[], idx: number) {
+export function replayEvent(type: string, data: Record<string, any>, events: StoredEvent[], idx: number) {
   switch (type) {
     case 'user_message': {
       const el = addMessage('user', data.text);
@@ -245,7 +245,7 @@ export function replayEvent(type: string, data: any, events: any[], idx: number)
       const el = document.createElement('div');
       el.className = 'plan';
       el.innerHTML = '<div class="plan-title">― plan</div>' +
-        (data.entries || []).map((e: any) => {
+        (data.entries || []).map((e: PlanEntry) => {
           const s = PLAN_STATUS_ICONS[e.status] || '?';
           return `<div class="plan-entry">${s} ${escHtml(e.content)}</div>`;
         }).join('');
@@ -345,7 +345,7 @@ function isDuplicateOfReplay(msg) {
   }
 }
 
-export function handleEvent(msg: any) {
+export function handleEvent(msg: AgentEvent) {
   // Queue events that arrive while history replay is in progress to avoid duplicates
   if (state.replayInProgress) {
     state.replayQueue.push(msg);
@@ -520,7 +520,7 @@ export function handleEvent(msg: any) {
       const el = document.createElement('div');
       el.className = 'plan';
       el.innerHTML = '<div class="plan-title">― plan</div>' +
-        msg.entries.map((e: any) => {
+        msg.entries.map((e: PlanEntry) => {
           const s = PLAN_STATUS_ICONS[e.status] || '?';
           return `<div class="plan-entry">${s} ${escHtml(e.content)}</div>`;
         }).join('');

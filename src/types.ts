@@ -12,6 +12,46 @@ export interface ConfigOption {
   options: Array<{ value: string; name: string }>;
 }
 
+// --- Shared interfaces used by both frontend and backend ---
+
+export interface PlanEntry {
+  status: string;
+  content: string;
+}
+
+/** rawInput payload attached to tool_call events. */
+export type RawInput =
+  | string
+  | {
+      path?: string;
+      command?: string;
+      old_str?: string | null;
+      new_str?: string | null;
+      file_text?: string | null;
+    };
+
+/** Session summary returned by GET /api/sessions. */
+export interface SessionSummary {
+  id: string;
+  cwd: string;
+  title: string | null;
+  model: string | null;
+  mode: string | null;
+  reasoning_effort: string | null;
+  created_at: string;
+  last_active_at: string;
+}
+
+/** Stored event row returned by GET /api/sessions/:id/events. */
+export interface StoredEvent {
+  id: number;
+  session_id: string;
+  seq: number;
+  type: string;
+  data: string;
+  created_at: string;
+}
+
 // --- Agent events (server → client) ---
 
 export type AgentEvent =
@@ -20,9 +60,9 @@ export type AgentEvent =
   | { type: "config_option_update"; sessionId: string; configOptions: ConfigOption[] }
   | { type: "message_chunk"; sessionId: string; text: string }
   | { type: "thought_chunk"; sessionId: string; text: string }
-  | { type: "tool_call"; sessionId: string; id: string; title: string; kind: string; rawInput?: unknown }
+  | { type: "tool_call"; sessionId: string; id: string; title: string; kind: string; rawInput?: RawInput }
   | { type: "tool_call_update"; sessionId: string; id: string; status: string; content?: unknown[] }
-  | { type: "plan"; sessionId: string; entries: unknown[] }
+  | { type: "plan"; sessionId: string; entries: PlanEntry[] }
   | { type: "permission_request"; requestId: string; sessionId: string; title: string; toolCallId?: string | null; options: acp.PermissionOption[] }
   | { type: "prompt_done"; sessionId: string; stopReason: string }
   | { type: "session_deleted"; sessionId: string }
@@ -35,7 +75,12 @@ export type AgentEvent =
   | { type: "config_set"; configId: string; value: string }
   | { type: "bash_command"; sessionId: string; command: string }
   | { type: "bash_output"; sessionId: string; text: string; stream: string }
-  | { type: "bash_done"; sessionId: string; code: number | null; signal: string | null; error?: string };
+  | { type: "bash_done"; sessionId: string; code: number | null; signal: string | null; error?: string }
+  // Replay-only events (stored in DB, not sent live over WS)
+  | { type: "assistant_message"; sessionId?: string; text: string }
+  | { type: "thinking"; sessionId?: string; text: string }
+  | { type: "bash_result"; sessionId?: string; output: string; code: number | null; signal: string | null }
+  | { type: "permission_response"; sessionId?: string; requestId: string; optionName: string; denied: boolean };
 
 // --- Inbound WS messages (client → server) ---
 

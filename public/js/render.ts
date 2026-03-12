@@ -2,6 +2,8 @@
 
 import { dom, state } from './state.ts';
 
+import type { RawInput } from '../../src/types.ts';
+
 // --- Markdown ---
 marked.setOptions({ breaks: true, gfm: true });
 
@@ -101,7 +103,7 @@ export function formatLocalTime(utcStr: string): string {
   return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-export function renderPatchDiff(ri: any): string | null {
+export function renderPatchDiff(ri: RawInput | undefined): string | null {
   // Case 1: patch string format (*** Begin Patch)
   if (typeof ri === 'string' && ri.includes('*** Begin Patch')) {
     const lines = ri.split('\n');

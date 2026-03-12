@@ -7,6 +7,7 @@ import {
 } from './state.ts';
 import { addSystem, addMessage, scrollToBottom, escHtml, formatLocalTime } from './render.ts';
 import { loadHistory } from './events.ts';
+import type { SessionSummary } from '../../src/types.ts';
 
 // --- Push notification helpers ---
 
@@ -281,7 +282,13 @@ export async function handleSlashCommand(text: string): Promise<boolean> {
 
 // --- Slash command autocomplete ---
 
-const SLASH_COMMANDS = [
+interface SlashCommand { cmd: string; args: string; desc: string }
+interface NotifyOption { value: string; name: string; desc: string }
+interface PathItem { cwd: string; time: string }
+
+type SlashItem = SlashCommand | SessionSummary | PathItem | NotifyOption | { value: string; name: string };
+
+const SLASH_COMMANDS: SlashCommand[] = [
   { cmd: '/cancel',   args: '',            desc: 'Cancel current response' },
   { cmd: '/delete',   args: '<title|id>',  desc: 'Delete a session' },
   { cmd: '/mode',     args: '[name]',      desc: 'Pick or switch mode' },
@@ -303,10 +310,10 @@ const SHORTCUTS = [
 ];
 
 let slashIdx = -1;
-let slashFiltered: any[] = [];
+let slashFiltered: SlashItem[] = [];
 let slashMode = 'commands';
 let slashConfigId: string | null = null;
-let cachedSessions: any[] | null = null;
+let cachedSessions: SessionSummary[] | null = null;
 let slashDismissed: string | null = null;
 let notifyActive = false;
 
@@ -441,7 +448,7 @@ function showConfigMenu(configId: string, query: string) {
   dom.slashMenu.classList.add('active');
 }
 
-const NOTIFY_OPTIONS = [
+const NOTIFY_OPTIONS: NotifyOption[] = [
   { value: 'on',  name: 'on',  desc: 'Enable background notifications' },
   { value: 'off', name: 'off', desc: 'Disable background notifications' },
 ];
