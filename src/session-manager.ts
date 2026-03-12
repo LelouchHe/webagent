@@ -4,7 +4,7 @@ import { stat } from "node:fs/promises";
 import { join } from "node:path";
 import type { Store } from "./store.ts";
 import type { AgentBridge } from "./bridge.ts";
-import type { AgentEvent, ConfigOption } from "./types.ts";
+import type { AgentEvent, ConfigOption, PendingPermission } from "./types.ts";
 
 type SessionBridge = Pick<AgentBridge, "newSession" | "setConfigOption" | "loadSession">;
 
@@ -26,6 +26,8 @@ export class SessionManager {
   readonly thinkingBuffers = new Map<string, string>();
   readonly activePrompts = new Set<string>();
   readonly runningBashProcs = new Map<string, ChildProcess>();
+  /** Pending permission requests keyed by requestId. */
+  readonly pendingPermissions = new Map<string, PendingPermission>();
 
   cachedConfigOptions: ConfigOption[] = [];
 
@@ -51,6 +53,7 @@ export class SessionManager {
     bridge: SessionBridge,
     cwd?: string,
     inheritFromSessionId?: string,
+    source: string = "auto",
   ): Promise<{ sessionId: string; configOptions: ConfigOption[] }> {
     const sessionCwd = cwd ?? this.defaultCwd;
     try {
@@ -70,7 +73,7 @@ export class SessionManager {
       : null;
     const sessionId = await bridge.newSession(sessionCwd);
     this.liveSessions.add(sessionId);
-    this.store.createSession(sessionId, sessionCwd);
+    this.store.createSession(sessionId, sessionCwd, source);
 
     // Inherit config options from source session
     if (sourceSession) {
@@ -173,6 +176,10 @@ export class SessionManager {
     this.thinkingBuffers.delete(sessionId);
     this.activePrompts.delete(sessionId);
     this.runningBashProcs.delete(sessionId);
+    // Clean pending permissions for this session
+    for (const [reqId, perm] of this.pendingPermissions) {
+      if (perm.sessionId === sessionId) this.pendingPermissions.delete(reqId);
+    }
     // Remove uploaded images for this session
     rm(join(this.dataDir, "images", sessionId), { recursive: true, force: true }).catch(() => {});
   }
@@ -222,6 +229,12 @@ export class SessionManager {
     if (this.runningBashProcs.has(sessionId)) return "bash";
     if (this.activePrompts.has(sessionId)) return "agent";
     return null;
+  }
+
+  /** Get pending permission requests for a session (or all sessions if no id). */
+  getPendingPermissions(sessionId?: string): PendingPermission[] {
+    const perms = [...this.pendingPermissions.values()];
+    return sessionId ? perms.filter(p => p.sessionId === sessionId) : perms;
   }
 
   /** Kill all running bash processes (for shutdown). */

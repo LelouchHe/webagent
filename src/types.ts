@@ -38,6 +38,7 @@ export interface SessionSummary {
   model: string | null;
   mode: string | null;
   reasoning_effort: string | null;
+  source: string;
   created_at: string;
   last_active_at: string;
 }
@@ -50,6 +51,14 @@ export interface StoredEvent {
   type: string;
   data: string;
   created_at: string;
+}
+
+/** Pending permission request tracked in memory. */
+export interface PendingPermission {
+  requestId: string;
+  sessionId: string;
+  title: string;
+  options: Array<{ optionId: string; label: string }>;
 }
 
 // --- Agent events (server → client) ---

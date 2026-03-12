@@ -9,6 +9,7 @@ export interface SessionRow {
   model: string | null;
   mode: string | null;
   reasoning_effort: string | null;
+  source: string;
   created_at: string;
   last_active_at: string;
 }
@@ -87,14 +88,20 @@ export class Store {
     if (!colNames.has("reasoning_effort")) {
       this.db.exec("ALTER TABLE sessions ADD COLUMN reasoning_effort TEXT");
     }
+    if (!colNames.has("source")) {
+      this.db.exec("ALTER TABLE sessions ADD COLUMN source TEXT NOT NULL DEFAULT 'auto'");
+    }
   }
 
-  createSession(id: string, cwd: string): SessionRow {
-    this.db.prepare("INSERT INTO sessions (id, cwd) VALUES (?, ?)").run(id, cwd);
+  createSession(id: string, cwd: string, source: string = "auto"): SessionRow {
+    this.db.prepare("INSERT INTO sessions (id, cwd, source) VALUES (?, ?, ?)").run(id, cwd, source);
     return this.db.prepare("SELECT * FROM sessions WHERE id = ?").get(id) as SessionRow;
   }
 
-  listSessions(): SessionRow[] {
+  listSessions(opts?: { source?: string }): SessionRow[] {
+    if (opts?.source) {
+      return this.db.prepare("SELECT * FROM sessions WHERE source = ? ORDER BY COALESCE(last_active_at, created_at) DESC").all(opts.source) as SessionRow[];
+    }
     return this.db.prepare("SELECT * FROM sessions ORDER BY COALESCE(last_active_at, created_at) DESC").all() as SessionRow[];
   }
 
