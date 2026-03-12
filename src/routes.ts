@@ -512,6 +512,48 @@ export function createRequestHandler(
         return;
       }
 
+      // POST /api/prompt — quick one-shot prompt (create temp session + send)
+      if (url === "/api/prompt" && req.method === "POST") {
+        if (!sessions || !getBridge) {
+          res.writeHead(503);
+          res.end(JSON.stringify({ error: "Agent not available" }));
+          return;
+        }
+        const bridge = getBridge();
+        if (!bridge) {
+          res.writeHead(503);
+          res.end(JSON.stringify({ error: "Agent not available" }));
+          return;
+        }
+
+        let body: Record<string, unknown>;
+        try {
+          body = JSON.parse(await readBody(req));
+        } catch {
+          res.writeHead(400);
+          res.end(JSON.stringify({ error: "Invalid JSON" }));
+          return;
+        }
+
+        const text = body.text as string | undefined;
+        if (!text || typeof text !== "string") {
+          res.writeHead(400);
+          res.end(JSON.stringify({ error: "Missing required field: text" }));
+          return;
+        }
+
+        const cwd = (body.cwd as string) || undefined;
+        const { sessionId } = await sessions.createSession(bridge, cwd, undefined, "auto");
+        const streamUrl = `/api/sessions/${sessionId}/events/stream`;
+
+        res.writeHead(202);
+        res.end(JSON.stringify({ sessionId, streamUrl }));
+
+        // Fire-and-forget: send the prompt asynchronously
+        bridge.prompt(sessionId, text).catch(() => {});
+        return;
+      }
+
       // --- SSE stream endpoints ---
 
       // GET /api/events/stream — global SSE stream
