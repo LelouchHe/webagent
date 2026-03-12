@@ -78,10 +78,15 @@ export function connect() {
   };
 }
 
-// --- Visibility reporting for push notifications ---
+// --- Visibility reporting + event sync ---
 
 document.addEventListener('visibilitychange', () => {
   if (state.ws && state.ws.readyState === 1) {
     state.ws.send(JSON.stringify({ type: 'visibility', visible: !document.hidden }));
+    // Sync missed events when returning from background (iOS can keep the WS
+    // "open" while suspending event delivery, silently losing server messages)
+    if (!document.hidden && state.sessionId && state.lastEventSeq > 0 && !state.replayInProgress) {
+      loadNewEvents(state.sessionId).then(() => scrollToBottom(false));
+    }
   }
 });

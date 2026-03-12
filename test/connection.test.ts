@@ -38,6 +38,7 @@ describe("connection", () => {
   }
 
   before(async () => {
+    originalSetTimeout = globalThis.setTimeout;
     setupDOM();
     globalThis.WebSocket = MockWebSocket as any;
     const stateMod = await import("../public/js/state.ts");
@@ -57,7 +58,6 @@ describe("connection", () => {
     MockWebSocket.instances.length = 0;
     globalThis.fetch = undefined as any;
     history.replaceState(null, "", "/");
-    originalSetTimeout = globalThis.setTimeout;
     globalThis.setTimeout = ((fn: Function, ms?: number) => {
       timeoutFns.push(fn);
       timeoutCalls.push(ms ?? 0);
@@ -245,6 +245,47 @@ describe("connection", () => {
       type: "resume_session",
       sessionId: "incr-session",
     });
+  });
+
+  it("syncs missed events on visibilitychange hidden→visible (WS still open)", async () => {
+    // Set up a loaded session with a mock WS (without calling connect)
+    state.sessionId = "vis-session";
+    state.lastEventSeq = 3;
+    const mockWs = new MockWebSocket("ws://localhost:6801");
+    state.ws = mockWs;
+
+    const existingEl = globalThis.document.createElement("div");
+    existingEl.className = "msg assistant";
+    existingEl.textContent = "before background";
+    existingEl.setAttribute("data-sync-boundary", "");
+    dom.messages.appendChild(existingEl);
+
+    setFetch(async (url: string) => {
+      assert.ok(url.includes("after_seq=3"), `Expected after_seq=3, got: ${url}`);
+      return {
+        ok: true,
+        json: async () => [
+          { seq: 4, type: "assistant_message", data: JSON.stringify({ text: "missed while backgrounded" }) },
+        ],
+      };
+    });
+
+    // Simulate visibilitychange: hidden → visible
+    Object.defineProperty(globalThis.document, "hidden", { value: false, configurable: true });
+    const event = new (globalThis.window as any).Event("visibilitychange");
+    globalThis.document.dispatchEvent(event);
+
+    // Wait for the async loadNewEvents to complete
+    await new Promise((r) => originalSetTimeout(r, 50));
+
+    assert.equal(fetchCalls.length, 1);
+    assert.ok(fetchCalls[0].includes("after_seq=3"));
+    // The missed message should now appear
+    assert.ok(dom.messages.textContent.includes("missed while backgrounded"));
+    assert.equal(state.lastEventSeq, 4);
+    // Should have sent visibility report
+    const sent = JSON.parse(mockWs.sent[0]);
+    assert.deepEqual(sent, { type: "visibility", visible: true });
   });
 
   it("skips DOM changes when no new events on incremental reconnect", async () => {
