@@ -252,6 +252,91 @@ describe("PushService", () => {
       assert.equal(result, false);
     });
   });
+
+  describe("sendToAll — consecutive failure cleanup", () => {
+    type Outcome = "ok" | "fail" | "gone";
+
+    class TestPushService extends PushService {
+      outcomes = new Map<string, Outcome>();
+      protected override sendOne(
+        sub: { endpoint: string; keys: { auth: string; p256dh: string } },
+        _payload: string,
+      ): Promise<any> {
+        const outcome = this.outcomes.get(sub.endpoint) ?? "ok";
+        if (outcome === "gone") {
+          const err = new Error("Gone") as Error & { statusCode: number };
+          err.statusCode = 410;
+          return Promise.reject(err);
+        }
+        if (outcome === "fail") {
+          const err = new Error("Unexpected response") as Error & { statusCode: number };
+          err.statusCode = 403;
+          return Promise.reject(err);
+        }
+        return Promise.resolve({ statusCode: 201, body: "", headers: {} });
+      }
+    }
+
+    it("removes subscription after 5 consecutive failures", async () => {
+      const svc = new TestPushService(store, tmpDir, "mailto:test@localhost");
+      store.saveSubscription("https://push.example.com/bad", "a", "b");
+      store.saveSubscription("https://push.example.com/good", "c", "d");
+
+      svc.outcomes.set("https://push.example.com/bad", "fail");
+      svc.outcomes.set("https://push.example.com/good", "ok");
+
+      const notification = { title: "T", body: "B", data: { sessionId: "s1" } };
+
+      // Failures 1-4: subscription should still exist
+      for (let i = 0; i < 4; i++) {
+        await svc.sendToAll(notification);
+      }
+      assert.equal(store.getAllSubscriptions().length, 2, "should keep sub before threshold");
+
+      // Failure 5: subscription should be removed
+      await svc.sendToAll(notification);
+      const remaining = store.getAllSubscriptions();
+      assert.equal(remaining.length, 1);
+      assert.equal(remaining[0].endpoint, "https://push.example.com/good");
+    });
+
+    it("resets failure count on successful send", async () => {
+      const svc = new TestPushService(store, tmpDir, "mailto:test@localhost");
+      store.saveSubscription("https://push.example.com/flaky", "a", "b");
+
+      svc.outcomes.set("https://push.example.com/flaky", "fail");
+      const notification = { title: "T", body: "B", data: { sessionId: "s1" } };
+
+      // 4 failures
+      for (let i = 0; i < 4; i++) {
+        await svc.sendToAll(notification);
+      }
+
+      // One success resets the counter
+      svc.outcomes.set("https://push.example.com/flaky", "ok");
+      await svc.sendToAll(notification);
+
+      // 4 more failures — should NOT hit threshold (reset to 0 + 4 = 4 < 5)
+      svc.outcomes.set("https://push.example.com/flaky", "fail");
+      for (let i = 0; i < 4; i++) {
+        await svc.sendToAll(notification);
+      }
+
+      assert.equal(store.getAllSubscriptions().length, 1, "should still exist after reset + 4 failures");
+    });
+
+    it("still removes 410 Gone immediately", async () => {
+      const svc = new TestPushService(store, tmpDir, "mailto:test@localhost");
+      store.saveSubscription("https://push.example.com/gone", "a", "b");
+
+      svc.outcomes.set("https://push.example.com/gone", "gone");
+
+      const notification = { title: "T", body: "B", data: { sessionId: "s1" } };
+      await svc.sendToAll(notification);
+
+      assert.equal(store.getAllSubscriptions().length, 0, "410 should remove immediately");
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------
