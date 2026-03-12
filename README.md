@@ -5,7 +5,7 @@
 
 A terminal-style web UI for ACP-compatible agents.
 
-Tech stack: Node.js + TypeScript (`--experimental-strip-types`), real-time WebSocket communication (`ws`), SQLite persistence (`better-sqlite3`), Zod validation.
+Tech stack: Node.js + TypeScript (`--experimental-strip-types`), real-time WebSocket communication (`ws`), SQLite persistence (`better-sqlite3`), Zod validation, esbuild (frontend bundling).
 
 ## Screenshots
 
@@ -91,14 +91,14 @@ Data (SQLite database, uploaded images) is stored in `./data/` relative to your 
 git clone https://github.com/LelouchHe/webagent.git
 cd webagent
 npm install
-npm run build         # build static assets (public/ → dist/)
+npm run build         # bundle frontend TS → dist/ (esbuild)
 npm start             # start on port 6800
 ```
 
 ### Development
 
 ```bash
-npm run dev           # port 6801, uses data-dev/, auto-restarts on file changes
+npm run dev           # port 6801, esbuild watch + server auto-restart on file changes
 ```
 
 ### Service management
@@ -268,6 +268,8 @@ Browser ←WebSocket→ server.ts ←ACP→ copilot CLI
 - **push-service.ts** — Web Push notifications (VAPID keys, subscriptions, visibility-gated delivery)
 - **daemon.ts** — Background service management (start/stop/status/restart) with supervisor
 - **types.ts** — Shared types + Zod schemas for WS messages
+- **shared/constants.ts** — Constants shared between frontend and backend (tool icons, plan status icons)
+- **public/js/*.ts** — Frontend TypeScript source, bundled by esbuild into a single `dist/js/app.[hash].js`
 
 ## ACP Scope and Current Limits
 
