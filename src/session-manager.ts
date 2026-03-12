@@ -51,6 +51,7 @@ export class SessionManager {
     bridge: SessionBridge,
     cwd?: string,
     inheritFromSessionId?: string,
+    source: string = "auto",
   ): Promise<{ sessionId: string; configOptions: ConfigOption[] }> {
     const sessionCwd = cwd ?? this.defaultCwd;
     try {
@@ -70,7 +71,7 @@ export class SessionManager {
       : null;
     const sessionId = await bridge.newSession(sessionCwd);
     this.liveSessions.add(sessionId);
-    this.store.createSession(sessionId, sessionCwd);
+    this.store.createSession(sessionId, sessionCwd, source);
 
     // Inherit config options from source session
     if (sourceSession) {

@@ -38,6 +38,7 @@ export interface SessionSummary {
   model: string | null;
   mode: string | null;
   reasoning_effort: string | null;
+  source: string;
   created_at: string;
   last_active_at: string;
 }
