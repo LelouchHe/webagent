@@ -131,6 +131,58 @@ export function createRequestHandler(
         return;
       }
 
+      // --- POST /api/sessions/:id/messages ---
+      const messagesMatch = url.match(/^\/api\/sessions\/([^/]+)\/messages\/?(\?.*)?$/);
+      if (messagesMatch && req.method === "POST") {
+        const sessionId = decodeURIComponent(messagesMatch[1]);
+        const session = store.getSession(sessionId);
+        if (!session) { json(res, 404, { error: "Session not found" }); return; }
+        const bridge = getBridge?.();
+        if (!bridge) { json(res, 503, { error: "Agent not ready yet" }); return; }
+        if (!sessions) { json(res, 503, { error: "Session manager not available" }); return; }
+
+        // Check if session is busy
+        const busyKind = sessions.getBusyKind(sessionId);
+        if (busyKind) {
+          json(res, 409, { error: "Session is busy", busyKind });
+          return;
+        }
+
+        let body: { text?: string; images?: Array<{ data: string; mimeType: string }> };
+        try { body = JSON.parse(await readBody(req)); } catch { json(res, 400, { error: "Invalid JSON" }); return; }
+        if (!body.text) { json(res, 400, { error: "Missing required field: text" }); return; }
+
+        // Store user_message event and update last_active_at
+        store.saveEvent(sessionId, "user_message", { text: body.text, images: body.images });
+        store.updateSessionLastActive(sessionId);
+        broadcast?.({ type: "user_message", sessionId, text: body.text, images: body.images } as AgentEvent);
+
+        // Fire prompt asynchronously (don't await — response is 202)
+        sessions.activePrompts.add(sessionId);
+        bridge.prompt(sessionId, body.text, body.images).catch((err: unknown) => {
+          console.error(`[prompt] error for ${sessionId}:`, err);
+        }).finally(() => {
+          sessions!.activePrompts.delete(sessionId);
+        });
+
+        json(res, 202, { status: "accepted" });
+        return;
+      }
+
+      // --- GET /api/sessions/:id/messages ---
+      if (messagesMatch && req.method === "GET") {
+        const sessionId = decodeURIComponent(messagesMatch[1]);
+        const session = store.getSession(sessionId);
+        if (!session) { json(res, 404, { error: "Session not found" }); return; }
+        const params = new URLSearchParams(messagesMatch[2]?.slice(1) ?? "");
+        const excludeThinking = params.get("thinking") === "0";
+        const afterSeqRaw = params.get("after_seq");
+        const afterSeq = afterSeqRaw != null ? Number(afterSeqRaw) : undefined;
+        const events = store.getEvents(sessionId, { excludeThinking, afterSeq });
+        json(res, 200, events);
+        return;
+      }
+
       // --- Session CRUD: /api/sessions/:id ---
       const sessionIdMatch = url.match(/^\/api\/sessions\/([^/?]+)\/?(\?.*)?$/);
       if (sessionIdMatch) {
