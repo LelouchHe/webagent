@@ -91,6 +91,66 @@ export function createRequestHandler(
         return;
       }
 
+      // --- Permissions ---
+      // GET /api/permissions/pending
+      if (url.startsWith("/api/permissions/pending") && req.method === "GET") {
+        const params = new URLSearchParams(url.split("?")[1] ?? "");
+        const sessionId = params.get("sessionId") ?? undefined;
+        const perms = sessions?.getPendingPermissions(sessionId) ?? [];
+        json(res, 200, perms);
+        return;
+      }
+
+      // GET /api/permissions/:requestId
+      const permGetMatch = url.match(/^\/api\/permissions\/([^/?]+)\/?$/);
+      if (permGetMatch && req.method === "GET") {
+        const requestId = decodeURIComponent(permGetMatch[1]);
+        const perm = sessions?.pendingPermissions.get(requestId);
+        if (!perm) { json(res, 404, { error: "Permission not found" }); return; }
+        json(res, 200, { ...perm, status: "pending" });
+        return;
+      }
+
+      // POST /api/permissions/:requestId
+      if (permGetMatch && req.method === "POST") {
+        const requestId = decodeURIComponent(permGetMatch[1]);
+        const perm = sessions?.pendingPermissions.get(requestId);
+        if (!perm) { json(res, 404, { error: "Permission not found" }); return; }
+        const bridge = getBridge?.();
+        if (!bridge) { json(res, 503, { error: "Agent not ready yet" }); return; }
+
+        let body: { optionId?: string; denied?: boolean };
+        try { body = JSON.parse(await readBody(req)); } catch { json(res, 400, { error: "Invalid JSON" }); return; }
+        if (!body.optionId && !body.denied) { json(res, 400, { error: "Provide optionId or denied:true" }); return; }
+
+        const denied = !!body.denied;
+        const optionId = body.optionId ?? "deny";
+        const optionName = perm.options.find(o => o.optionId === optionId)?.label ?? optionId;
+
+        if (denied) {
+          await bridge.denyPermission(requestId);
+        } else {
+          await bridge.resolvePermission(requestId, optionId);
+        }
+
+        sessions!.pendingPermissions.delete(requestId);
+
+        // Store event and broadcast
+        store.saveEvent(perm.sessionId, "permission_response", {
+          requestId, optionId, optionName, denied,
+        });
+        broadcast?.({
+          type: "permission_resolved",
+          sessionId: perm.sessionId,
+          requestId,
+          optionName,
+          denied,
+        } as AgentEvent);
+
+        json(res, 200, { ok: true });
+        return;
+      }
+
       // --- POST /api/sessions/:id/cancel ---
       const cancelMatch = url.match(/^\/api\/sessions\/([^/]+)\/cancel\/?$/);
       if (cancelMatch && req.method === "POST") {
