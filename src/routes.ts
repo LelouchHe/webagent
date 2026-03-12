@@ -549,8 +549,11 @@ export function createRequestHandler(
         res.writeHead(202);
         res.end(JSON.stringify({ sessionId, streamUrl }));
 
-        // Fire-and-forget: send the prompt asynchronously
-        bridge.prompt(sessionId, text).catch(() => {});
+        // Fire-and-forget: send the prompt asynchronously, tracking busy state
+        sessions.activePrompts.add(sessionId);
+        bridge.prompt(sessionId, text)
+          .catch(() => {})
+          .finally(() => sessions.activePrompts.delete(sessionId));
         return;
       }
 
@@ -610,7 +613,11 @@ export function createRequestHandler(
           if (!isNaN(afterSeq)) {
             const events = store.getEvents(sessionId, { afterSeq });
             for (const evt of events) {
-              sseManager.sendEvent(client, { type: evt.type, ...JSON.parse(evt.data) } as unknown as AgentEvent, evt.seq);
+              try {
+                sseManager.sendEvent(client, { type: evt.type, ...JSON.parse(evt.data) } as unknown as AgentEvent, evt.seq);
+              } catch {
+                // Skip malformed event data
+              }
             }
           }
         }
