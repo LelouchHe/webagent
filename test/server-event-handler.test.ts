@@ -189,13 +189,16 @@ describe("handleAgentEvent", () => {
     // Bridge should resolve with allow_once
     assert.deepEqual(calls.resolvePermission, [{ requestId: "req1", optionId: "allow_once" }]);
 
-    // Should broadcast permission_resolved, NOT permission_request
-    assert.equal(sent.length, 1);
-    const msg = JSON.parse(sent[0]);
-    assert.equal(msg.type, "permission_resolved");
-    assert.equal(msg.requestId, "req1");
-    assert.equal(msg.denied, false);
-    assert.equal(msg.optionName, "Allow once");
+    // Should broadcast permission_request then permission_resolved
+    assert.equal(sent.length, 2);
+    const first = JSON.parse(sent[0]);
+    assert.equal(first.type, "permission_request");
+    assert.equal(first.requestId, "req1");
+    const second = JSON.parse(sent[1]);
+    assert.equal(second.type, "permission_resolved");
+    assert.equal(second.requestId, "req1");
+    assert.equal(second.denied, false);
+    assert.equal(second.optionName, "Allow once");
 
     // Should save both permission_request and permission_response to store
     const events = store.getEvents("s1");

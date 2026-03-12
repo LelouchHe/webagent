@@ -71,6 +71,8 @@ export function handleAgentEvent(
           store.saveEvent(event.sessionId, "permission_response", {
             requestId: event.requestId, optionName, denied: false,
           });
+          // Broadcast both so the frontend can render then collapse the permission card
+          broadcast(wss, event);
           broadcast(wss, {
             type: "permission_resolved",
             sessionId: event.sessionId,
