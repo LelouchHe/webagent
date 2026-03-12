@@ -56,6 +56,7 @@ describe("SessionManager", () => {
   describe("createSession", () => {
     it("inherits config from the source session", async () => {
       store.createSession("s1", "/x");
+      store.saveEvent("s1", "user_message", { text: "hi" });
       store.updateSessionConfig("s1", "model", "claude-sonnet-4.6");
       store.updateSessionConfig("s1", "mode", "plan-mode");
       store.updateSessionConfig("s1", "reasoning_effort", "high");

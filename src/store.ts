@@ -107,6 +107,20 @@ export class Store {
     this.db.prepare("DELETE FROM sessions WHERE id = ?").run(id);
   }
 
+  /** Delete sessions that have zero events, excluding the given IDs. Returns count deleted. */
+  deleteEmptySessions(excludeIds: Set<string>): number {
+    const empties = this.db.prepare(`
+      SELECT s.id FROM sessions s
+      LEFT JOIN events e ON e.session_id = s.id
+      WHERE e.id IS NULL
+    `).all() as Array<{ id: string }>;
+    const toDelete = empties.filter(r => !excludeIds.has(r.id));
+    if (toDelete.length === 0) return 0;
+    const del = this.db.prepare("DELETE FROM sessions WHERE id = ?");
+    for (const r of toDelete) del.run(r.id);
+    return toDelete.length;
+  }
+
   updateSessionTitle(id: string, title: string): void {
     this.db.prepare("UPDATE sessions SET title = ? WHERE id = ?").run(title, id);
   }

@@ -56,6 +56,11 @@ export class SessionManager {
     } catch {
       throw new Error(`Directory does not exist: ${sessionCwd}`);
     }
+
+    // Clean up empty sessions (no events) before creating a new one
+    const cleaned = this.store.deleteEmptySessions(this.liveSessions);
+    if (cleaned > 0) console.log(`[session] cleaned ${cleaned} empty session(s)`);
+
     const sourceSession = inheritFromSessionId
       ? this.store.getSession(inheritFromSessionId)
       : null;

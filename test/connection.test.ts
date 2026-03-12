@@ -103,40 +103,13 @@ describe("connection", () => {
     assert.equal(state.lastEventSeq, 1);
   });
 
-  it("resumes the most recent session when there is no hash", async () => {
-    setFetch(async (url: string) => {
-      if (url === "/api/sessions") {
-        return { json: async () => [{ id: "recent-session" }] };
-      }
-      if (url === "/api/sessions/recent-session/events") {
-        return { ok: true, json: async () => [] };
-      }
-      throw new Error(`Unexpected fetch: ${url}`);
-    });
-
-    connection.connect();
-    const ws = latestSocket();
-    await ws.onopen?.();
-
-    assert.deepEqual(fetchCalls, ["/api/sessions", "/api/sessions/recent-session/events"]);
-    assert.deepEqual(JSON.parse(ws.sent[0]), { type: "visibility", visible: true });
-    assert.deepEqual(JSON.parse(ws.sent[1]), {
-      type: "resume_session",
-      sessionId: "recent-session",
-    });
-  });
-
-  it("creates a new session when no previous session exists", async () => {
-    setFetch(async (url: string) => {
-      assert.equal(url, "/api/sessions");
-      return { json: async () => [] };
-    });
-
+  it("creates a new session when there is no hash", async () => {
     connection.connect();
     const ws = latestSocket();
     await ws.onopen?.();
 
     assert.equal(state.awaitingNewSession, true);
+    assert.deepEqual(fetchCalls, []);
     assert.deepEqual(JSON.parse(ws.sent[0]), { type: "visibility", visible: true });
     assert.deepEqual(JSON.parse(ws.sent[1]), { type: "new_session" });
   });
