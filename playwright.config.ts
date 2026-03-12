@@ -10,7 +10,7 @@ export default defineConfig({
     headless: true,
   },
   webServer: {
-    command: "rm -rf test/e2e-data && mkdir -p test/e2e-data && node --experimental-strip-types src/server.ts --config test/e2e/config.e2e.toml",
+    command: "rm -rf test/e2e-data && mkdir -p test/e2e-data && node scripts/build.js --dev && node --experimental-strip-types src/server.ts --config test/e2e/config.e2e.toml",
     url: "http://127.0.0.1:6802",
     reuseExistingServer: false,
     timeout: 30_000,

@@ -1,13 +1,13 @@
 // Boot entry point — imports all modules and starts the app
 
-import './render.js';    // theme, click-to-collapse listeners
-import './commands.js';  // slash menu listeners
-import './images.js';    // attach/paste listeners
-import './input.js';     // keyboard/send listeners
-import { connect } from './connection.js';
-import { state, setHashSessionId, resetSessionUI, updateSessionInfo } from './state.js';
-import { loadHistory } from './events.js';
-import { addSystem, scrollToBottom } from './render.js';
+import './render.ts';    // theme, click-to-collapse listeners
+import './commands.ts';  // slash menu listeners
+import './images.ts';    // attach/paste listeners
+import './input.ts';     // keyboard/send listeners
+import { connect } from './connection.ts';
+import { state, setHashSessionId, resetSessionUI, updateSessionInfo } from './state.ts';
+import { loadHistory } from './events.ts';
+import { addSystem, scrollToBottom } from './render.ts';
 
 connect();
 

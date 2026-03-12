@@ -79,7 +79,7 @@ export function handleAgentEvent(
             requestId: event.requestId,
             optionName,
             denied: false,
-          } as any);
+          });
           return;
         }
       }

@@ -73,7 +73,7 @@ test("reloaded bash history uses the truncated stored tail when output exceeds t
     await writeFile(configPath, [
       `port = ${TRUNC_PORT}`,
       `data_dir = "${dataDir}"`,
-      `public_dir = "public"`,
+      `public_dir = "dist-dev"`,
       `agent_cmd = "node --experimental-strip-types test/e2e/mock-agent.ts"`,
       "",
       "[limits]",

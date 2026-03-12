@@ -170,7 +170,7 @@ export function setupWsHandler(deps: WsHandlerDeps): void {
               requestId: msg.requestId,
               optionName: msg.optionName || "",
               denied: !!msg.denied,
-            } as any);
+            });
             break;
           }
 
@@ -190,7 +190,7 @@ export function setupWsHandler(deps: WsHandlerDeps): void {
               for (const opt of configOptions) {
                 store.updateSessionConfig(msg.sessionId, opt.id, opt.currentValue);
               }
-              send(ws, { type: "config_set", configId: msg.configId, value: msg.value } as any);
+              send(ws, { type: "config_set", configId: msg.configId, value: msg.value });
               if (configOptions.length) {
                 broadcast(wss, { type: "config_option_update", sessionId: msg.sessionId, configOptions }, ws);
               }
@@ -241,7 +241,7 @@ export function setupWsHandler(deps: WsHandlerDeps): void {
                 // Keep only the tail within the limit
                 output = (output + text).slice(-limits.bash_output);
               }
-              broadcast(wss, { type: "bash_output", sessionId: msg.sessionId, text, stream } as any);
+              broadcast(wss, { type: "bash_output", sessionId: msg.sessionId, text, stream });
             };
             child.stdout!.on("data", onData("stdout"));
             child.stderr!.on("data", onData("stderr"));
@@ -250,7 +250,7 @@ export function setupWsHandler(deps: WsHandlerDeps): void {
               sessions.runningBashProcs.delete(msg.sessionId);
               const stored = outputTruncated ? "[truncated]\n" + output : output;
               store.saveEvent(msg.sessionId, "bash_result", { output: stored, code, signal });
-              broadcast(wss, { type: "bash_done", sessionId: msg.sessionId, code, signal } as any);
+              broadcast(wss, { type: "bash_done", sessionId: msg.sessionId, code, signal });
               // Push notification for bash completion
               if (pushService) {
                 const session = store.getSession(msg.sessionId);
@@ -266,7 +266,7 @@ export function setupWsHandler(deps: WsHandlerDeps): void {
               sessions.runningBashProcs.delete(msg.sessionId);
               const errMsg = errorMessage(err);
               store.saveEvent(msg.sessionId, "bash_result", { output: errMsg, code: -1, signal: null });
-              broadcast(wss, { type: "bash_done", sessionId: msg.sessionId, code: -1, signal: null, error: errMsg } as any);
+              broadcast(wss, { type: "bash_done", sessionId: msg.sessionId, code: -1, signal: null, error: errMsg });
             });
             break;
           }

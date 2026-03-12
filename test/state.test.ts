@@ -7,7 +7,7 @@ describe("state", () => {
 
   before(async () => {
     setupDOM();
-    mod = await import("../public/js/state.js");
+    mod = await import("../public/js/state.ts");
   });
   after(() => teardownDOM());
   beforeEach(() => resetState(mod.state, mod.dom));

@@ -1,5 +1,5 @@
 // Shared setup for frontend module tests.
-// Sets up a happy-dom browser environment so public/js/*.js modules can be imported.
+// Sets up a happy-dom browser environment so public/js/*.ts modules can be imported.
 
 import { Window } from "happy-dom";
 

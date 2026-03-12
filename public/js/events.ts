@@ -4,12 +4,15 @@ import {
   state, dom, setBusy, setConfigValue, getConfigOption, updateConfigOptions,
   updateModeUI, updateStatusBar, resetSessionUI, requestNewSession, setHashSessionId, updateSessionInfo,
   setConnectionStatus, clearCancelTimer,
-} from './state.js';
+} from './state.ts';
+import type { ConfigOption } from './state.ts';
 import {
   addMessage, addSystem, finishAssistant, finishThinking, hideWaiting,
   scrollToBottom, renderMd, escHtml, renderPatchDiff, addBashBlock, finishBash, appendMessageElement,
   formatLocalTime,
-} from './render.js';
+} from './render.ts';
+import { TOOL_ICONS, DEFAULT_TOOL_ICON, PLAN_STATUS_ICONS } from '../../src/shared/constants.ts';
+import type { AgentEvent } from '../../src/types.ts';
 
 const NOTIFY_TIP_KEY = 'webagent_notify_tip_shown';
 const NOTIFY_TIP_DENIED_KEY = 'webagent_notify_tip_denied_shown';
@@ -64,7 +67,7 @@ function cancelPendingTurnUI() {
   state.pendingPermissionRequestIds.clear();
 }
 
-export async function loadHistory(sid) {
+export async function loadHistory(sid: string): Promise<boolean> {
   state.replayInProgress = true;
   state.replayQueue = [];
   try {
@@ -100,7 +103,7 @@ function setSyncBoundary() {
  * Fetch only events added since the last sync point and replay them.
  * Returns true if new events were applied (or none needed), false on error.
  */
-export async function loadNewEvents(sid) {
+export async function loadNewEvents(sid: string): Promise<boolean> {
   state.replayInProgress = true;
   state.replayQueue = [];
   try {
@@ -156,7 +159,7 @@ export function retryUnconfirmedPermissions() {
     }
     // Still pending in DOM — resend and optimistically resolve
     if (state.ws && state.ws.readyState === 1) {
-      state.ws.send(JSON.stringify({
+      state.ws!.send(JSON.stringify({
         type: 'permission_response',
         sessionId: response.sessionId,
         requestId,
@@ -171,7 +174,7 @@ export function retryUnconfirmedPermissions() {
   }
 }
 
-export function replayEvent(type, data, events, idx) {
+export function replayEvent(type: string, data: any, events: any[], idx: number) {
   switch (type) {
     case 'user_message': {
       const el = addMessage('user', data.text);
@@ -196,8 +199,7 @@ export function replayEvent(type, data, events, idx) {
       break;
     }
     case 'tool_call': {
-      const icons = { read: 'cat', edit: 'edit', execute: 'exec', search: 'find', delete: 'rm' };
-      const icon = icons[data.kind] || 'run';
+      const icon = TOOL_ICONS[data.kind] || DEFAULT_TOOL_ICON;
       const el = document.createElement('div');
       el.className = 'tool-call';
       el.id = `tc-${data.id}`;
@@ -243,8 +245,8 @@ export function replayEvent(type, data, events, idx) {
       const el = document.createElement('div');
       el.className = 'plan';
       el.innerHTML = '<div class="plan-title">― plan</div>' +
-        (data.entries || []).map(e => {
-          const s = { pending: '○', in_progress: '◉', completed: '●' }[e.status] || '?';
+        (data.entries || []).map((e: any) => {
+          const s = PLAN_STATUS_ICONS[e.status] || '?';
           return `<div class="plan-entry">${s} ${escHtml(e.content)}</div>`;
         }).join('');
       appendMessageElement(el);
@@ -269,7 +271,7 @@ export function replayEvent(type, data, events, idx) {
           btn.textContent = opt.name;
           btn.onclick = () => {
             const isDeny = (opt.kind || '').includes('reject') || (opt.kind || '').includes('deny');
-            state.ws.send(JSON.stringify({
+            state.ws!.send(JSON.stringify({
               type: 'permission_response',
               sessionId: state.sessionId,
               requestId: data.requestId,
@@ -343,7 +345,7 @@ function isDuplicateOfReplay(msg) {
   }
 }
 
-export function handleEvent(msg) {
+export function handleEvent(msg: any) {
   // Queue events that arrive while history replay is in progress to avoid duplicates
   if (state.replayInProgress) {
     state.replayQueue.push(msg);
@@ -451,8 +453,7 @@ export function handleEvent(msg) {
       hideWaiting();
       finishThinking();
       finishAssistant();
-      const icons = { read: 'cat', edit: 'edit', execute: 'exec', search: 'find', delete: 'rm' };
-      const icon = icons[msg.kind] || 'run';
+      const icon = TOOL_ICONS[msg.kind] || DEFAULT_TOOL_ICON;
       const el = document.createElement('div');
       el.className = 'tool-call';
       el.id = `tc-${msg.id}`;
@@ -519,8 +520,8 @@ export function handleEvent(msg) {
       const el = document.createElement('div');
       el.className = 'plan';
       el.innerHTML = '<div class="plan-title">― plan</div>' +
-        msg.entries.map(e => {
-          const s = { pending: '○', in_progress: '◉', completed: '●' }[e.status] || '?';
+        msg.entries.map((e: any) => {
+          const s = PLAN_STATUS_ICONS[e.status] || '?';
           return `<div class="plan-entry">${s} ${escHtml(e.content)}</div>`;
         }).join('');
       appendMessageElement(el);
@@ -547,7 +548,7 @@ export function handleEvent(msg) {
         btn.onclick = () => {
           const isDeny = (opt.kind || '').includes('reject') || (opt.kind || '').includes('deny');
           try {
-            state.ws.send(JSON.stringify({
+            state.ws!.send(JSON.stringify({
               type: 'permission_response',
               sessionId: state.sessionId,
               requestId: msg.requestId,

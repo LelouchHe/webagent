@@ -2,7 +2,7 @@
 
 port = 6801
 data_dir = "data-dev"
-public_dir = "public"
+public_dir = "dist-dev"
 agent_cmd = "copilot --acp"
 
 [limits]

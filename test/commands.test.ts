@@ -10,11 +10,11 @@ describe("commands", () => {
 
   before(async () => {
     setupDOM();
-    const stateMod = await import("../public/js/state.js");
+    const stateMod = await import("../public/js/state.ts");
     state = stateMod.state;
     dom = stateMod.dom;
-    await import("../public/js/render.js");
-    commands = await import("../public/js/commands.js");
+    await import("../public/js/render.ts");
+    commands = await import("../public/js/commands.ts");
   });
 
   after(() => teardownDOM());
