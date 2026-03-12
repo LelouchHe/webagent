@@ -11,6 +11,9 @@ type SessionBridge = Pick<AgentBridge, "newSession" | "setConfigOption" | "loadS
 /** Known config option IDs that we persist per-session. */
 const PERSISTED_CONFIG_IDS = ["model", "mode", "reasoning_effort"] as const;
 
+/** Minimum age (seconds) before an empty session is eligible for cleanup. */
+const EMPTY_SESSION_MIN_AGE_S = 60;
+
 /**
  * Centralizes all session-related state that was previously scattered
  * across module-level variables in server.ts.
@@ -57,9 +60,10 @@ export class SessionManager {
       throw new Error(`Directory does not exist: ${sessionCwd}`);
     }
 
-    // Clean up empty sessions (no events) before creating a new one
-    const cleaned = this.store.deleteEmptySessions(this.liveSessions);
-    if (cleaned > 0) console.log(`[session] cleaned ${cleaned} empty session(s)`);
+    // Clean up empty sessions (no events) older than the threshold
+    const cleaned = this.store.deleteEmptySessions(EMPTY_SESSION_MIN_AGE_S);
+    for (const id of cleaned) this.liveSessions.delete(id);
+    if (cleaned.length > 0) console.log(`[session] cleaned ${cleaned.length} empty session(s)`);
 
     const sourceSession = inheritFromSessionId
       ? this.store.getSession(inheritFromSessionId)

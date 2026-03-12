@@ -135,6 +135,55 @@ describe("SessionManager", () => {
         { message: "Directory does not exist: /no/such/path" },
       );
     });
+
+    it("cleans up old empty sessions and removes them from liveSessions", async () => {
+      // Create an empty session and mark it as live (simulating a prior createSession)
+      store.createSession("empty-old", "/x");
+      sm.liveSessions.add("empty-old");
+      // Backdate created_at so it's older than the threshold
+      store["db"].prepare(
+        "UPDATE sessions SET created_at = strftime('%Y-%m-%d %H:%M:%f', 'now', '-120 seconds') WHERE id = ?",
+      ).run("empty-old");
+
+      // Create a session with events — should not be cleaned
+      store.createSession("has-events", "/x");
+      store.saveEvent("has-events", "user_message", { text: "hi" });
+      sm.liveSessions.add("has-events");
+
+      let nextId = 0;
+      const bridge = {
+        async newSession() { return `new-${nextId++}`; },
+        async setConfigOption() {},
+        async loadSession() { throw new Error("should not be called"); },
+      };
+
+      await sm.createSession(bridge);
+
+      // empty-old should be gone from both DB and liveSessions
+      assert.equal(store.getSession("empty-old"), undefined);
+      assert.ok(!sm.liveSessions.has("empty-old"));
+      // has-events should still exist
+      assert.ok(store.getSession("has-events"));
+      assert.ok(sm.liveSessions.has("has-events"));
+    });
+
+    it("does not clean recently created empty sessions", async () => {
+      // Create an empty session that's fresh (just now)
+      store.createSession("fresh-empty", "/x");
+      sm.liveSessions.add("fresh-empty");
+
+      const bridge = {
+        async newSession() { return "new-1"; },
+        async setConfigOption() {},
+        async loadSession() { throw new Error("should not be called"); },
+      };
+
+      await sm.createSession(bridge);
+
+      // fresh-empty should still exist (too young to clean)
+      assert.ok(store.getSession("fresh-empty"));
+      assert.ok(sm.liveSessions.has("fresh-empty"));
+    });
   });
 
   describe("buffer management", () => {

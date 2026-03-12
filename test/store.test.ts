@@ -143,6 +143,52 @@ describe("Store", () => {
     });
   });
 
+  describe("deleteEmptySessions", () => {
+    it("deletes old empty sessions and returns their IDs", () => {
+      store.createSession("empty-old", "/a");
+      store.createSession("has-events", "/b");
+      store.saveEvent("has-events", "user_message", { text: "hi" });
+
+      // With minAgeS=0, all empty sessions are eligible
+      const deleted = store.deleteEmptySessions(0);
+      assert.deepEqual(deleted, ["empty-old"]);
+      assert.equal(store.getSession("empty-old"), undefined);
+      assert.ok(store.getSession("has-events")); // preserved
+    });
+
+    it("skips empty sessions younger than minAgeS", () => {
+      store.createSession("fresh-empty", "/a");
+
+      // With a large minAgeS, the just-created session is too young
+      const deleted = store.deleteEmptySessions(3600);
+      assert.deepEqual(deleted, []);
+      assert.ok(store.getSession("fresh-empty")); // still there
+    });
+
+    it("deletes multiple old empty sessions", () => {
+      store.createSession("e1", "/a");
+      store.createSession("e2", "/b");
+      store.createSession("e3", "/c");
+      store.saveEvent("e2", "user_message", { text: "hi" });
+
+      const deleted = store.deleteEmptySessions(0);
+      assert.equal(deleted.length, 2);
+      assert.ok(deleted.includes("e1"));
+      assert.ok(deleted.includes("e3"));
+      assert.equal(store.getSession("e1"), undefined);
+      assert.equal(store.getSession("e3"), undefined);
+      assert.ok(store.getSession("e2")); // has events, kept
+    });
+
+    it("returns empty array when no empty sessions exist", () => {
+      store.createSession("s1", "/a");
+      store.saveEvent("s1", "user_message", { text: "hi" });
+
+      const deleted = store.deleteEmptySessions(0);
+      assert.deepEqual(deleted, []);
+    });
+  });
+
   describe("migration", () => {
     it("is idempotent — opening same DB twice works", () => {
       store.createSession("s1", "/x");
