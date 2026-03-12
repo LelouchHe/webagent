@@ -4,6 +4,7 @@ import { join, extname } from "node:path";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { Store } from "./store.ts";
 import type { SessionManager } from "./session-manager.ts";
+import type { SseManager } from "./sse-manager.ts";
 import type { AgentBridge } from "./bridge.ts";
 import type { Config } from "./config.ts";
 import type { PushService } from "./push-service.ts";
@@ -42,6 +43,7 @@ const MIME: Record<string, string> = {
 export interface RequestHandlerDeps {
   store: Store;
   sessions?: SessionManager;
+  sseManager?: SseManager;
   getBridge?: () => (Pick<AgentBridge, "newSession" | "setConfigOption" | "loadSession" | "cancel" | "prompt" | "resolvePermission" | "denyPermission"> | null);
   publicDir: string;
   dataDir: string;
@@ -507,6 +509,106 @@ export function createRequestHandler(
         }
         const events = store.getEvents(sessionId, { excludeThinking, afterSeq });
         res.end(JSON.stringify(events));
+        return;
+      }
+
+      // --- SSE stream endpoints ---
+
+      // GET /api/events/stream — global SSE stream
+      if (url.startsWith("/api/events/stream") && req.method === "GET") {
+        if (!deps.sseManager) { res.writeHead(501); res.end(JSON.stringify({ error: "SSE not available" })); return; }
+        const sseManager = deps.sseManager;
+        const clientId = sseManager.generateClientId();
+
+        res.writeHead(200, {
+          "Content-Type": "text/event-stream",
+          "Cache-Control": "no-cache",
+          "Connection": "keep-alive",
+        });
+
+        const client: import("./sse-manager.ts").SseClient = { id: clientId, res };
+        sseManager.add(client);
+
+        // Send connected event
+        sseManager.sendEvent(client, { type: "connected", clientId } as unknown as AgentEvent);
+        return;
+      }
+
+      // GET /api/sessions/:id/events/stream — per-session SSE stream
+      const sseSessionMatch = url.match(/^\/api\/sessions\/([^/]+)\/events\/stream(\?.*)?$/);
+      if (sseSessionMatch && req.method === "GET") {
+        if (!deps.sseManager) { res.writeHead(501); res.end(JSON.stringify({ error: "SSE not available" })); return; }
+        const sseManager = deps.sseManager;
+        const sessionId = decodeURIComponent(sseSessionMatch[1]);
+
+        const session = store.getSession(sessionId);
+        if (!session) {
+          res.writeHead(404);
+          res.end(JSON.stringify({ error: "Session not found" }));
+          return;
+        }
+
+        const clientId = sseManager.generateClientId();
+        res.writeHead(200, {
+          "Content-Type": "text/event-stream",
+          "Cache-Control": "no-cache",
+          "Connection": "keep-alive",
+        });
+
+        const client: import("./sse-manager.ts").SseClient = { id: clientId, res, sessionId };
+        sseManager.add(client);
+
+        // Send connected event
+        sseManager.sendEvent(client, { type: "connected", clientId } as unknown as AgentEvent);
+
+        // Replay events from Last-Event-ID if provided
+        const lastEventId = req.headers["last-event-id"];
+        if (lastEventId) {
+          const afterSeq = parseInt(lastEventId as string, 10);
+          if (!isNaN(afterSeq)) {
+            const events = store.getEvents(sessionId, { afterSeq });
+            for (const evt of events) {
+              sseManager.sendEvent(client, { type: evt.type, ...JSON.parse(evt.data) } as unknown as AgentEvent, evt.seq);
+            }
+          }
+        }
+        return;
+      }
+
+      // POST /api/clients/:clientId/visibility
+      const visMatch = url.match(/^\/api\/clients\/([^/]+)\/visibility$/);
+      if (visMatch && req.method === "POST") {
+        if (!deps.sseManager) { res.writeHead(501); res.end(JSON.stringify({ error: "SSE not available" })); return; }
+        const sseManager = deps.sseManager;
+        const clientId = decodeURIComponent(visMatch[1]);
+
+        if (!sseManager.clients.has(clientId)) {
+          res.writeHead(404);
+          res.end(JSON.stringify({ error: "Client not found" }));
+          return;
+        }
+
+        let body: Record<string, unknown>;
+        try {
+          body = JSON.parse(await readBody(req));
+        } catch {
+          res.writeHead(400);
+          res.end(JSON.stringify({ error: "Invalid JSON" }));
+          return;
+        }
+
+        if (typeof body.visible !== "boolean") {
+          res.writeHead(400);
+          res.end(JSON.stringify({ error: "Missing or invalid 'visible' field" }));
+          return;
+        }
+
+        // If push service is available, update visibility
+        if (deps.pushService) {
+          deps.pushService.setClientVisibility?.(clientId, body.visible as boolean);
+        }
+
+        res.end(JSON.stringify({ ok: true }));
         return;
       }
 
