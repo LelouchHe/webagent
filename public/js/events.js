@@ -417,7 +417,7 @@ export function handleEvent(msg) {
     }
 
     case 'message_chunk':
-      state.turnEnded = false;
+      if (state.turnEnded) break;
       hideWaiting();
       finishThinking();
       if (!state.currentAssistantEl) {
@@ -430,7 +430,7 @@ export function handleEvent(msg) {
       break;
 
     case 'thought_chunk':
-      state.turnEnded = false;
+      if (state.turnEnded) break;
       hideWaiting();
       if (!state.currentThinkingEl) {
         state.currentThinkingEl = document.createElement('details');

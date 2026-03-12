@@ -615,14 +615,14 @@ describe("events", () => {
         assert.equal(state.turnEnded, true);
 
         // User sends a new prompt via input.js (setBusy + WS send).
+        // input.js:104 sets turnEnded = false before any agent events arrive.
         // The server does NOT echo user_message back to the sender —
-        // only to other clients — so handleEvent('user_message') never
-        // fires on this client.  turnEnded stays true.
-        //
+        // only to other clients.
+        state.turnEnded = false; // input.js:104
+        state.busy = true;      // input.js:105 (setBusy(true))
+
         // Agent responds with message_chunk first (normal flow):
         events.handleEvent({ type: "message_chunk", text: "Let me " });
-        // message_chunk should implicitly clear turnEnded
-        assert.equal(state.turnEnded, false);
 
         // Then agent sends tool_call
         events.handleEvent({
@@ -736,6 +736,51 @@ describe("events", () => {
           stateMod.sendCancel();
 
           assert.equal(timeoutFns.length, 0, "should not schedule a timeout when disabled");
+        });
+      });
+
+      it("agent events after cancel timeout do not re-set busy", () => {
+        withMockTimers(({ timeoutFns }) => {
+          const ws = createMockWS();
+          state.ws = ws;
+          state.sessionId = "s1";
+          state.busy = true;
+          state.cancelTimeout = 10_000;
+
+          stateMod.sendCancel();
+
+          // Fire the cancel timeout
+          timeoutFns[0]();
+          assert.equal(state.busy, false, "cancel timeout should clear busy");
+          assert.equal(state.turnEnded, true, "cancel timeout should set turnEnded");
+
+          // Agent keeps streaming (didn't acknowledge cancel)
+          events.handleEvent({ type: "message_chunk", text: "still going " });
+          assert.equal(state.turnEnded, true, "message_chunk should NOT reset turnEnded after cancel timeout");
+          assert.equal(state.busy, false, "message_chunk should not set busy");
+
+          events.handleEvent({ type: "thought_chunk", text: "thinking..." });
+          assert.equal(state.turnEnded, true, "thought_chunk should NOT reset turnEnded after cancel timeout");
+
+          // tool_call should be blocked by turnEnded guard
+          events.handleEvent({
+            type: "tool_call",
+            id: "tc-stale",
+            kind: "execute",
+            title: "Run",
+            rawInput: { command: "ls" },
+          });
+          assert.equal(state.busy, false, "tool_call should not re-set busy after cancel timeout");
+          assert.equal(state.pendingToolCallIds.size, 0, "tool_call should be dropped");
+
+          // permission_request should also be blocked
+          events.handleEvent({
+            type: "permission_request",
+            requestId: "perm-stale",
+            title: "Allow?",
+            options: [{ optionId: "allow", kind: "allow_once", name: "Allow" }],
+          });
+          assert.equal(state.busy, false, "permission_request should not re-set busy after cancel timeout");
         });
       });
     });
