@@ -3,13 +3,13 @@
 import {
   state, dom, setBusy, sendCancel,
   getConfigOption, getConfigValue, updateNewBtnVisibility,
-} from './state.js';
-import { addMessage, addSystem, addBashBlock, showWaiting } from './render.js';
-import { handleSlashCommand, hideSlashMenu, handleSlashMenuKey, updateSlashMenu } from './commands.js';
-import { renderAttachPreview } from './images.js';
+} from './state.ts';
+import { addMessage, addSystem, addBashBlock, showWaiting } from './render.ts';
+import { handleSlashCommand, hideSlashMenu, handleSlashMenuKey, updateSlashMenu } from './commands.ts';
+import { renderAttachPreview } from './images.ts';
 
-function wsReady() {
-  return state.ws && state.ws.readyState === 1;
+function wsReady(): boolean {
+  return state.ws !== null && state.ws.readyState === 1;
 }
 
 // Wire up cancel-timeout feedback (state.js cannot import render.js directly)
@@ -45,7 +45,7 @@ function sendMessage() {
     dom.inputArea.classList.remove('bash-mode');
     updateNewBtnVisibility();
     addBashBlock(command, true);
-    state.ws.send(JSON.stringify({ type: 'bash_exec', sessionId: state.sessionId, command }));
+    state.ws!.send(JSON.stringify({ type: 'bash_exec', sessionId: state.sessionId, command }));
     setBusy(true);
     return;
   }
@@ -96,10 +96,10 @@ function sendMessage() {
         setBusy(false);
         return;
       }
-      state.ws.send(JSON.stringify({ type: 'prompt', sessionId: state.sessionId, text: text || 'What is in this image?', images: uploaded }));
+      state.ws!.send(JSON.stringify({ type: 'prompt', sessionId: state.sessionId, text: text || 'What is in this image?', images: uploaded }));
     });
   } else {
-    state.ws.send(JSON.stringify({ type: 'prompt', sessionId: state.sessionId, text }));
+    state.ws!.send(JSON.stringify({ type: 'prompt', sessionId: state.sessionId, text }));
   }
   state.turnEnded = false;
   setBusy(true);
@@ -113,7 +113,7 @@ function doCancel() {
 // --- Event listeners ---
 
 /** True when the input contains a slash command or bang-bash that can bypass busy. */
-function inputHasCommand() {
+function inputHasCommand(): boolean {
   const text = dom.input.value.trim();
   return text.startsWith('/') || text.startsWith('!') || text === '?' || text.startsWith('? ');
 }
@@ -180,7 +180,7 @@ function cycleMode() {
   if (!opt || !opt.options.length) return;
   const idx = opt.options.findIndex(o => o.value === opt.currentValue);
   const next = opt.options[(idx + 1) % opt.options.length];
-  state.ws.send(JSON.stringify({ type: 'set_config_option', sessionId: state.sessionId, configId: 'mode', value: next.value }));
+  state.ws!.send(JSON.stringify({ type: 'set_config_option', sessionId: state.sessionId, configId: 'mode', value: next.value }));
   addSystem(`Mode → ${next.name}`);
 }
 

@@ -11,11 +11,11 @@ describe("events", () => {
 
   before(async () => {
     setupDOM();
-    stateMod = await import("../public/js/state.js");
+    stateMod = await import("../public/js/state.ts");
     state = stateMod.state;
     dom = stateMod.dom;
-    render = await import("../public/js/render.js");
-    events = await import("../public/js/events.js");
+    render = await import("../public/js/render.ts");
+    events = await import("../public/js/events.ts");
   });
   after(() => teardownDOM());
   beforeEach(() => resetState(state, dom));

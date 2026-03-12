@@ -40,11 +40,11 @@ describe("connection", () => {
   before(async () => {
     setupDOM();
     globalThis.WebSocket = MockWebSocket as any;
-    const stateMod = await import("../public/js/state.js");
+    const stateMod = await import("../public/js/state.ts");
     state = stateMod.state;
     dom = stateMod.dom;
-    render = await import("../public/js/render.js");
-    connection = await import("../public/js/connection.js");
+    render = await import("../public/js/render.ts");
+    connection = await import("../public/js/connection.ts");
   });
 
   after(() => teardownDOM());

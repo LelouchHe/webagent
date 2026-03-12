@@ -1,60 +1,79 @@
 // Shared state, DOM refs, config helpers, routing, session management
 
-const $ = (s) => document.querySelector(s);
+import type { ConfigOption, AgentEvent } from '../../src/types.ts';
+
+export type { ConfigOption };
+
+interface PendingImage {
+  data: string;
+  mimeType: string;
+  previewUrl: string;
+}
+
+interface UnconfirmedPermission {
+  sessionId: string;
+  optionId: string;
+  optionName: string;
+  denied: boolean;
+}
+
+const $ = <T extends HTMLElement>(s: string) => document.querySelector<T>(s)!;
 
 export const dom = {
-  messages: $('#messages'),
-  input: $('#input'),
-  sendBtn: $('#send-btn'),
-  prompt: $('#input-prompt'),
-  status: $('#status'),
-  sessionInfo: $('#session-info'),
-  newBtn: $('#new-btn'),
-  attachBtn: $('#attach-btn'),
-  fileInput: $('#file-input'),
-  attachPreview: $('#attach-preview'),
-  themeBtn: $('#theme-btn'),
-  slashMenu: $('#slash-menu'),
-  inputArea: $('#input-area'),
-  statusBar: $('#status-bar'),
+  messages: $<HTMLDivElement>('#messages'),
+  input: $<HTMLTextAreaElement>('#input'),
+  sendBtn: $<HTMLButtonElement>('#send-btn'),
+  prompt: $<HTMLSpanElement>('#input-prompt'),
+  status: $<HTMLSpanElement>('#status'),
+  sessionInfo: $<HTMLSpanElement>('#session-info'),
+  newBtn: $<HTMLButtonElement>('#new-btn'),
+  attachBtn: $<HTMLButtonElement>('#attach-btn'),
+  fileInput: $<HTMLInputElement>('#file-input'),
+  attachPreview: $<HTMLDivElement>('#attach-preview'),
+  themeBtn: $<HTMLButtonElement>('#theme-btn'),
+  slashMenu: $<HTMLDivElement>('#slash-menu'),
+  inputArea: $<HTMLDivElement>('#input-area'),
+  statusBar: $<HTMLDivElement>('#status-bar'),
 };
 
 export const state = {
-  ws: null,
-  sessionId: null,
-  sessionCwd: null,
-  sessionTitle: null,
+  ws: null as WebSocket | null,
+  sessionId: null as string | null,
+  sessionCwd: null as string | null,
+  sessionTitle: null as string | null,
   awaitingNewSession: false,
-  configOptions: [],
-  currentAssistantEl: null,
+  configOptions: [] as ConfigOption[],
+  currentAssistantEl: null as HTMLElement | null,
   currentAssistantText: '',
-  currentThinkingEl: null,
+  currentThinkingEl: null as HTMLElement | null,
   currentThinkingText: '',
   busy: false,
-  pendingImages: [],
-  currentBashEl: null,
+  pendingImages: [] as PendingImage[],
+  currentBashEl: null as HTMLElement | null,
   followMessages: true,
-  pendingToolCallIds: new Set(),
-  pendingPermissionRequestIds: new Set(),
+  pendingToolCallIds: new Set<string>(),
+  pendingPermissionRequestIds: new Set<string>(),
   pendingPromptDone: false,
   turnEnded: false,
   newTurnStarted: false,
   cancelTimeout: 10_000,
-  _cancelTimerId: null,
-  _onCancelTimeout: null,
+  _cancelTimerId: null as ReturnType<typeof setTimeout> | null,
+  _onCancelTimeout: null as (() => void) | null,
   lastEventSeq: 0,
   replayInProgress: false,
-  replayQueue: [],
-  unconfirmedPermissions: new Map(),
+  replayQueue: [] as AgentEvent[],
+  unconfirmedPermissions: new Map<string, UnconfirmedPermission>(),
 };
 
-const CONNECTION_STATUS_CLASSES = {
+type ConnectionStatus = 'disconnected' | 'connecting' | 'connected';
+
+const CONNECTION_STATUS_CLASSES: Record<ConnectionStatus, string> = {
   disconnected: 'is-disconnected',
   connecting: 'is-connecting',
   connected: 'is-connected',
 };
 
-export function setConnectionStatus(status, label = status) {
+export function setConnectionStatus(status: ConnectionStatus, label: string = status) {
   dom.status.textContent = '';
   dom.status.className = `status-dot ${CONNECTION_STATUS_CLASSES[status]}`;
   dom.status.dataset.state = status;
@@ -64,13 +83,13 @@ export function setConnectionStatus(status, label = status) {
 
 // --- Config helpers ---
 
-export function getConfigOption(id) { return state.configOptions.find(o => o.id === id); }
-export function getConfigValue(id) { return getConfigOption(id)?.currentValue ?? null; }
-export function setConfigValue(id, value) {
+export function getConfigOption(id: string) { return state.configOptions.find(o => o.id === id); }
+export function getConfigValue(id: string) { return getConfigOption(id)?.currentValue ?? null; }
+export function setConfigValue(id: string, value: string) {
   const opt = getConfigOption(id);
   if (opt) opt.currentValue = value;
 }
-export function updateConfigOptions(newOptions) {
+export function updateConfigOptions(newOptions: ConfigOption[]) {
   state.configOptions = newOptions;
   updateModeUI();
   updateStatusBar();
@@ -88,8 +107,6 @@ export function updateStatusBar() {
   const model = getConfigValue('model');
   const cwd = state.sessionCwd || '';
   dom.statusBar.textContent = '';
-  const parts = [];
-  if (model) parts.push(model);
   if (cwd) {
     if (model) {
       dom.statusBar.appendChild(document.createTextNode(model + ' \u00b7 '));
@@ -103,7 +120,7 @@ export function updateStatusBar() {
   }
 }
 
-export function setBusy(on) {
+export function setBusy(on: boolean) {
   state.busy = on;
   if (on) {
     dom.sendBtn.textContent = '^X';
@@ -118,12 +135,12 @@ export function setBusy(on) {
   }
 }
 
-export function requestNewSession({ cwd, inheritFromSessionId = state.sessionId } = {}) {
-  const payload = { type: 'new_session' };
+export function requestNewSession({ cwd, inheritFromSessionId = state.sessionId }: { cwd?: string; inheritFromSessionId?: string | null } = {}) {
+  const payload: Record<string, string> = { type: 'new_session' };
   if (cwd) payload.cwd = cwd;
   if (inheritFromSessionId) payload.inheritFromSessionId = inheritFromSessionId;
   state.awaitingNewSession = true;
-  state.ws.send(JSON.stringify(payload));
+  state.ws!.send(JSON.stringify(payload));
 }
 
 export function resetSessionUI() {
@@ -186,16 +203,16 @@ export function clearCancelTimer() {
 
 // --- Hash routing ---
 
-export function getHashSessionId() {
+export function getHashSessionId(): string | null {
   const h = location.hash.slice(1);
   return h || null;
 }
 
-export function setHashSessionId(id) {
+export function setHashSessionId(id: string) {
   history.replaceState(null, '', `#${id}`);
 }
 
-export function updateSessionInfo(id, title) {
+export function updateSessionInfo(id: string | null, title: string | null) {
   dom.sessionInfo.textContent = title || (id ? id.slice(0, 8) + '…' : '');
   document.title = title || '>_';
 }

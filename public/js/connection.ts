@@ -1,8 +1,8 @@
 // WebSocket connection lifecycle
 
-import { state, setBusy, getHashSessionId, requestNewSession, resetSessionUI, setConnectionStatus, clearCancelTimer } from './state.js';
-import { addSystem, finishThinking, finishAssistant, finishBash, scrollToBottom } from './render.js';
-import { handleEvent, loadHistory, loadNewEvents, retryUnconfirmedPermissions } from './events.js';
+import { state, setBusy, getHashSessionId, requestNewSession, resetSessionUI, setConnectionStatus, clearCancelTimer } from './state.ts';
+import { addSystem, finishThinking, finishAssistant, finishBash, scrollToBottom } from './render.ts';
+import { handleEvent, loadHistory, loadNewEvents, retryUnconfirmedPermissions } from './events.ts';
 
 export function connect() {
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -12,7 +12,7 @@ export function connect() {
   state.ws.onopen = async () => {
     setConnectionStatus('connecting', 'session loading');
     // Report actual visibility to server for push notification gating
-    state.ws.send(JSON.stringify({ type: 'visibility', visible: !document.hidden }));
+    state.ws!.send(JSON.stringify({ type: 'visibility', visible: !document.hidden }));
 
     const existingId = getHashSessionId();
 
@@ -21,7 +21,7 @@ export function connect() {
       await loadNewEvents(existingId);
       retryUnconfirmedPermissions();
       scrollToBottom(false);
-      state.ws.send(JSON.stringify({ type: 'resume_session', sessionId: existingId }));
+      state.ws!.send(JSON.stringify({ type: 'resume_session', sessionId: existingId }));
       return;
     }
 
@@ -32,7 +32,7 @@ export function connect() {
       if (loaded) {
         scrollToBottom(true);
       }
-      state.ws.send(JSON.stringify({ type: 'resume_session', sessionId: existingId }));
+      state.ws!.send(JSON.stringify({ type: 'resume_session', sessionId: existingId }));
       return;
     }
 
@@ -47,7 +47,7 @@ export function connect() {
         if (loaded) {
           scrollToBottom(true);
         }
-        state.ws.send(JSON.stringify({ type: 'resume_session', sessionId: last.id }));
+        state.ws!.send(JSON.stringify({ type: 'resume_session', sessionId: last.id }));
         return;
       }
     } catch {}
@@ -70,9 +70,9 @@ export function connect() {
     setTimeout(connect, 3000);
   };
 
-  state.ws.onerror = () => state.ws.close();
+  state.ws.onerror = () => state.ws!.close();
 
-  state.ws.onmessage = (e) => {
+  state.ws.onmessage = (e: MessageEvent) => {
     const msg = JSON.parse(e.data);
     handleEvent(msg);
   };

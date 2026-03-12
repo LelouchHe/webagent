@@ -11,15 +11,15 @@ describe("input", () => {
 
   before(async () => {
     setupDOM();
-    const stateMod = await import("../public/js/state.js");
+    const stateMod = await import("../public/js/state.ts");
     state = stateMod.state;
     dom = stateMod.dom;
     setBusy = stateMod.setBusy;
-    await import("../public/js/render.js");
-    await import("../public/js/events.js");
-    await import("../public/js/commands.js");
-    await import("../public/js/images.js");
-    inputModule = await import("../public/js/input.js");
+    await import("../public/js/render.ts");
+    await import("../public/js/events.ts");
+    await import("../public/js/commands.ts");
+    await import("../public/js/images.ts");
+    inputModule = await import("../public/js/input.ts");
     void inputModule;
   });
 

@@ -21,10 +21,10 @@ describe("images", () => {
   before(async () => {
     setupDOM();
     globalThis.FileReader = MockFileReader as any;
-    const stateMod = await import("../public/js/state.js");
+    const stateMod = await import("../public/js/state.ts");
     state = stateMod.state;
     dom = stateMod.dom;
-    images = await import("../public/js/images.js");
+    images = await import("../public/js/images.ts");
   });
 
   after(() => teardownDOM());

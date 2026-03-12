@@ -2,7 +2,7 @@
 
 A terminal-style web UI for ACP-compatible agents.
 
-Tech stack: Node.js + TypeScript (`--experimental-strip-types`), real-time WebSocket communication (`ws`), SQLite persistence (`better-sqlite3`), Zod validation.
+Tech stack: Node.js + TypeScript (`--experimental-strip-types`), real-time WebSocket communication (`ws`), SQLite persistence (`better-sqlite3`), Zod validation, esbuild (frontend bundling).
 
 Core modules:
 - `server.ts` — HTTP/WebSocket server bootstrap
@@ -15,9 +15,10 @@ Core modules:
 - `push-service.ts` — Web Push notifications (VAPID keys, subscriptions, visibility-gated delivery)
 - `daemon.ts` — Background service management (start/stop/status/restart) with supervisor
 - `types.ts` — Shared types + Zod schemas for WS messages
-- `public/index.html` — HTML shell (imports CSS + JS modules)
+- `shared/constants.ts` — Constants shared between frontend and backend (tool icons, plan status icons)
+- `public/index.html` — HTML shell (imports CSS + bundled JS)
 - `public/styles.css` — all CSS
-- `public/js/` — frontend ES modules (state, render, events, commands, images, input, connection, app)
+- `public/js/` — frontend TypeScript source (state, render, events, commands, images, input, connection, app), bundled via esbuild
 
 The default runtime configuration uses port 6800.
 
@@ -30,7 +31,7 @@ npm run build         # rebuild assets only (no restart needed for frontend-only
 npm start             # run with config.toml
 ```
 
-For frontend-only changes (CSS/JS/HTML), `npm run build` is sufficient — the server reads files on each request, and the new build stamp in filenames busts Cloudflare/browser cache. If backend (src/) changes are involved, restart the process using whatever service manager or workflow the environment already uses.
+For frontend-only changes (CSS/TS/HTML), `npm run build` is sufficient — the server reads files on each request, and content-hashed filenames bust Cloudflare/browser cache. If backend (src/) changes are involved, restart the process using whatever service manager or workflow the environment already uses.
 
 ## Development
 
@@ -112,9 +113,9 @@ Keep this distinction clear in docs and code discussions: some missing capabilit
 
 ## Frontend Conventions
 
-- **No build step** — ES modules (`<script type="module">`) + external CSS, served directly by Node. No bundler.
-- **Build step for production** — `scripts/build.js` copies `public/` → `dist/`, appending a timestamp to JS/CSS filenames and rewriting imports/HTML references. Production serves from `dist/`; dev serves from `public/` directly.
-- **Module structure** — `public/js/state.js` (shared state + DOM refs), `render.js` (UI helpers + theme), `events.js` (WS event dispatch + history), `commands.js` (slash commands + autocomplete), `images.js` (attach/paste), `input.js` (send/keyboard), `connection.js` (WS lifecycle), `app.js` (boot entry).
+- **esbuild bundling** — Frontend source is TypeScript in `public/js/*.ts`. `scripts/build.js` bundles via esbuild into a single `dist/js/app.[hash].js` (minified, content-hashed). CSS is also content-hashed. Dev mode (`--dev`) outputs to `dist-dev/` without minification or hashing; `--watch` adds live rebuild.
+- **Module structure** — `public/js/state.ts` (shared state + DOM refs), `render.ts` (UI helpers + theme), `events.ts` (WS event dispatch + history), `commands.ts` (slash commands + autocomplete), `images.ts` (attach/paste), `input.ts` (send/keyboard), `connection.ts` (WS lifecycle), `app.ts` (boot entry).
+- **Shared code** — Frontend imports types (`AgentEvent`, `ConfigOption`) from `src/types.ts` and constants (`TOOL_ICONS`, `PLAN_STATUS_ICONS`) from `src/shared/constants.ts`. esbuild resolves these cross-directory imports at bundle time.
 - **Terminal aesthetic** — monospace fonts, `^X` / `^U` style button labels, `*` git-branch-style session markers.
 - **Keyboard shortcuts** — `Ctrl+X` cancel, `Ctrl+U` upload. Enter always sends input (never cancels, never selects menu item). Tab fills menu selection into input without executing. Click/tap on menu item = fill + send.
 - **Theme** — dark/light/auto, persisted to localStorage.

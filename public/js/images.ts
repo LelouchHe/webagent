@@ -1,19 +1,25 @@
 // Image attach, preview, and paste handling
 
-import { state, dom } from './state.js';
+import { state, dom } from './state.ts';
 
-function readFileAsBase64(file) {
+interface PendingImage {
+  data: string;
+  mimeType: string;
+  previewUrl: string;
+}
+
+function readFileAsBase64(file: File): Promise<PendingImage> {
   return new Promise((resolve) => {
     const reader = new FileReader();
     reader.onload = () => {
-      const base64 = reader.result.split(',')[1];
-      resolve({ data: base64, mimeType: file.type, previewUrl: reader.result });
+      const base64 = (reader.result as string).split(',')[1];
+      resolve({ data: base64, mimeType: file.type, previewUrl: reader.result as string });
     };
     reader.readAsDataURL(file);
   });
 }
 
-function addPendingImage(img) {
+function addPendingImage(img: PendingImage) {
   state.pendingImages.push(img);
   renderAttachPreview();
   dom.input.focus();
@@ -30,10 +36,10 @@ export function renderAttachPreview() {
     const thumb = document.createElement('span');
     thumb.className = 'attach-thumb';
     thumb.innerHTML = `<img src="${img.previewUrl}"><button class="remove">×</button>`;
-    thumb.querySelector('.remove').onclick = () => {
+    thumb.querySelector('.remove')!.addEventListener('click', () => {
       state.pendingImages.splice(i, 1);
       renderAttachPreview();
-    };
+    });
     dom.attachPreview.appendChild(thumb);
   });
 }
@@ -42,17 +48,17 @@ export function renderAttachPreview() {
 
 dom.attachBtn.onclick = () => dom.fileInput.click();
 dom.fileInput.onchange = async () => {
-  for (const f of dom.fileInput.files) {
+  for (const f of dom.fileInput.files!) {
     if (f.type.startsWith('image/')) addPendingImage(await readFileAsBase64(f));
   }
   dom.fileInput.value = '';
 };
 
-dom.input.addEventListener('paste', async (e) => {
-  for (const item of e.clipboardData.items) {
+dom.input.addEventListener('paste', async (e: ClipboardEvent) => {
+  for (const item of e.clipboardData!.items) {
     if (item.type.startsWith('image/')) {
       e.preventDefault();
-      addPendingImage(await readFileAsBase64(item.getAsFile()));
+      addPendingImage(await readFileAsBase64(item.getAsFile()!));
     }
   }
 });

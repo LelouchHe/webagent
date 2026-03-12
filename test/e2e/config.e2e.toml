@@ -1,6 +1,6 @@
 port = 6802
 data_dir = "test/e2e-data"
-public_dir = "public"
+public_dir = "dist-dev"
 agent_cmd = "node --experimental-strip-types test/e2e/mock-agent.ts"
 
 [limits]

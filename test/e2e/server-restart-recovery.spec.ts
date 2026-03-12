@@ -73,7 +73,7 @@ test("server restart restores the same session without duplicating history", asy
     await writeFile(configPath, [
       `port = ${RESTART_PORT}`,
       `data_dir = "${dataDir}"`,
-      `public_dir = "public"`,
+      `public_dir = "dist-dev"`,
       `agent_cmd = "node --experimental-strip-types test/e2e/mock-agent.ts"`,
       "",
       "[limits]",

@@ -1,17 +1,19 @@
 // Rendering functions, theme, markdown, bash UI
 
-import { dom, state } from './state.js';
+import { dom, state } from './state.ts';
+
+import type { RawInput } from '../../src/types.ts';
 
 // --- Markdown ---
 marked.setOptions({ breaks: true, gfm: true });
 
-export function renderMd(text) {
+export function renderMd(text: string): string {
   return DOMPurify.sanitize(marked.parse(text));
 }
 
 // --- Message helpers ---
 
-export function addMessage(role, text) {
+export function addMessage(role: string, text: string): HTMLDivElement {
   const el = document.createElement('div');
   el.className = `msg ${role}`;
   el.innerHTML = role === 'user' ? escHtml(text).replace(/\n/g, '<br>') : renderMd(text);
@@ -19,11 +21,12 @@ export function addMessage(role, text) {
   return el;
 }
 
-export function addSystem(text) {
+export function addSystem(text: string): HTMLDivElement {
   const el = document.createElement('div');
   el.className = 'system-msg';
   el.textContent = text;
   appendMessageElement(el);
+  return el;
 }
 
 export function finishAssistant() {
@@ -33,7 +36,7 @@ export function finishAssistant() {
 
 export function finishThinking() {
   if (state.currentThinkingEl) {
-    const sum = state.currentThinkingEl.querySelector('summary');
+    const sum = state.currentThinkingEl.querySelector('summary')!;
     sum.textContent = '⠿ thought';
     sum.classList.remove('active');
     sum.style.animation = 'none';
@@ -42,10 +45,10 @@ export function finishThinking() {
   }
 }
 
-let waitingEl = null;
+let waitingEl: HTMLDivElement | null = null;
 const SCROLL_FOLLOW_THRESHOLD = 80;
 
-function isNearBottom(el) {
+function isNearBottom(el: HTMLElement): boolean {
   return el.scrollHeight - el.scrollTop - el.clientHeight < SCROLL_FOLLOW_THRESHOLD;
 }
 
@@ -55,11 +58,11 @@ function updateScrollFollowState() {
 
 dom.messages.addEventListener('scroll', updateScrollFollowState);
 
-function shouldFollowNewContent() {
+function shouldFollowNewContent(): boolean {
   return state.followMessages || isNearBottom(dom.messages);
 }
 
-export function appendMessageElement(el, force = false) {
+export function appendMessageElement(el: HTMLElement, force = false): HTMLElement {
   const shouldFollow = force || shouldFollowNewContent();
   dom.messages.appendChild(el);
   scrollToBottom(shouldFollow);
@@ -77,7 +80,7 @@ export function hideWaiting() {
   if (waitingEl) { waitingEl.remove(); waitingEl = null; }
 }
 
-export function scrollToBottom(force) {
+export function scrollToBottom(force?: boolean) {
   const el = dom.messages;
   if (force || state.followMessages) {
     el.scrollTop = el.scrollHeight;
@@ -87,24 +90,24 @@ export function scrollToBottom(force) {
   state.followMessages = isNearBottom(el);
 }
 
-export function escHtml(s) {
+export function escHtml(s: string): string {
   const d = document.createElement('div');
   d.textContent = s;
   return d.innerHTML;
 }
 
-export function formatLocalTime(utcStr) {
+export function formatLocalTime(utcStr: string): string {
   if (!utcStr) return '';
   const d = new Date(utcStr.endsWith('Z') ? utcStr : utcStr + 'Z');
-  const pad = n => String(n).padStart(2, '0');
+  const pad = (n: number) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-export function renderPatchDiff(ri) {
+export function renderPatchDiff(ri: RawInput | undefined): string | null {
   // Case 1: patch string format (*** Begin Patch)
   if (typeof ri === 'string' && ri.includes('*** Begin Patch')) {
     const lines = ri.split('\n');
-    const html = [];
+    const html: string[] = [];
     for (const line of lines) {
       if (line.startsWith('*** Begin Patch') || line.startsWith('*** End Patch')) continue;
       if (line.startsWith('*** Update File:') || line.startsWith('*** Add File:') || line.startsWith('*** Delete File:')) {
@@ -123,7 +126,7 @@ export function renderPatchDiff(ri) {
   }
   // Case 2: object with old_str / new_str (edit tool rawInput)
   if (ri && typeof ri === 'object') {
-    const html = [];
+    const html: string[] = [];
     if (ri.path) html.push(`<span class="diff-file">*** ${escHtml(ri.path)}</span>`);
     if (ri.old_str != null) {
       for (const line of String(ri.old_str).split('\n')) {
@@ -145,27 +148,27 @@ export function renderPatchDiff(ri) {
 
 // --- Bash command UI ---
 
-export function addBashBlock(command, running = false) {
+export function addBashBlock(command: string, running = false): HTMLDivElement {
   const el = document.createElement('div');
   el.className = 'bash-block';
   el.innerHTML = `<span class="bash-cmd${running ? ' running' : ''}">${escHtml(command)}</span>` +
     `<div class="bash-output"></div>`;
-  el.querySelector('.bash-cmd').onclick = () => {
-    const out = el.querySelector('.bash-output');
+  el.querySelector('.bash-cmd')!.addEventListener('click', () => {
+    const out = el.querySelector('.bash-output') as HTMLElement;
     if (out.style.display === 'none') {
       out.style.display = 'block';
     } else if (out.classList.contains('has-content')) {
       out.style.display = 'none';
     }
-  };
+  });
   appendMessageElement(el);
   if (running) state.currentBashEl = el;
   return el;
 }
 
-export function finishBash(el, code, signal) {
+export function finishBash(el: HTMLElement | null, code: number | null, signal: string | null) {
   if (!el) return;
-  const cmd = el.querySelector('.bash-cmd');
+  const cmd = el.querySelector('.bash-cmd')!;
   cmd.classList.remove('running');
   let exitText = '';
   if (signal) {
@@ -184,10 +187,10 @@ export function finishBash(el, code, signal) {
 
 // --- Theme ---
 
-const THEME_ICONS = { auto: '◑', light: '☀', dark: '☾' };
-const THEME_CYCLE = ['auto', 'light', 'dark'];
-function getTheme() { return localStorage.getItem('theme') || 'auto'; }
-function applyTheme(t) {
+const THEME_ICONS: Record<string, string> = { auto: '◑', light: '☀', dark: '☾' };
+const THEME_CYCLE = ['auto', 'light', 'dark'] as const;
+function getTheme(): string { return localStorage.getItem('theme') || 'auto'; }
+function applyTheme(t: string) {
   document.documentElement.setAttribute('data-theme', t);
   dom.themeBtn.textContent = THEME_ICONS[t];
   dom.themeBtn.title = `Theme: ${t}`;
@@ -195,6 +198,6 @@ function applyTheme(t) {
 }
 dom.themeBtn.onclick = () => {
   const cur = getTheme();
-  applyTheme(THEME_CYCLE[(THEME_CYCLE.indexOf(cur) + 1) % 3]);
+  applyTheme(THEME_CYCLE[(THEME_CYCLE.indexOf(cur as typeof THEME_CYCLE[number]) + 1) % 3]);
 };
 applyTheme(getTheme());
