@@ -20,6 +20,9 @@ if ('serviceWorker' in navigator) {
     if (e.data?.type === 'navigate' && e.data.sessionId) {
       const targetId = e.data.sessionId;
       if (state.sessionId === targetId) return; // already there
+      // Set hash immediately so any concurrent initSession (from SSE reconnect
+      // or visibilitychange) picks up the correct target session
+      history.replaceState(null, '', `#${targetId}`);
       resetSessionUI();
       state.sessionId = null;
       addSystem('Switching…');
@@ -36,7 +39,11 @@ if ('serviceWorker' in navigator) {
           busyKind: session.busyKind,
         });
         if (loaded) scrollToBottom(true);
-      }).catch(() => {});
+      }).catch(() => {
+        resetSessionUI();
+        state.sessionId = null;
+        addSystem('err: Failed to switch session');
+      });
     }
   });
 }
