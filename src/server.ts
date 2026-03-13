@@ -29,6 +29,7 @@ const pushService = new PushService(store, config.data_dir, config.push.vapid_su
 console.log(`[push] VAPID public key ready`);
 
 const sseManager = new SseManager();
+sseManager.startHeartbeat();
 
 let bridge: AgentBridge | null = null;
 
@@ -73,6 +74,7 @@ async function initBridge(): Promise<AgentBridge> {
 
 async function shutdown() {
   console.log("\n[server] shutting down...");
+  sseManager.stopHeartbeat();
   sessions.killAllBashProcs();
   wss.close();
   await bridge?.shutdown();

@@ -331,4 +331,25 @@ describe("SSE REST API", () => {
       assert.equal(res.status, 400);
     });
   });
+
+  describe("heartbeat", () => {
+    it("sends periodic heartbeat comments to connected SSE clients", async () => {
+      // Use a short heartbeat interval for testing
+      const fastSse = new SseManager(50);
+      const chunks: string[] = [];
+      const fakeRes = {
+        writableEnded: false,
+        write(data: string) { chunks.push(data); return true; },
+        on() {},
+      } as any;
+      fastSse.add({ id: "hb-1", res: fakeRes });
+      fastSse.startHeartbeat();
+      // Wait for at least one heartbeat
+      await new Promise(r => setTimeout(r, 120));
+      fastSse.stopHeartbeat();
+      const heartbeats = chunks.filter(c => c.includes(": heartbeat"));
+      assert.ok(heartbeats.length >= 1, `expected at least 1 heartbeat, got ${heartbeats.length}`);
+      assert.equal(heartbeats[0], ": heartbeat\n\n");
+    });
+  });
 });

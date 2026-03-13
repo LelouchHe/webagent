@@ -14,6 +14,31 @@ export interface SseClient {
  */
 export class SseManager {
   readonly clients = new Map<string, SseClient>();
+  private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+  private readonly heartbeatInterval: number;
+
+  constructor(heartbeatMs = 20_000) {
+    this.heartbeatInterval = heartbeatMs;
+  }
+
+  /** Start the periodic heartbeat. Call once after construction. */
+  startHeartbeat(): void {
+    if (this.heartbeatTimer) return;
+    this.heartbeatTimer = setInterval(() => {
+      for (const client of this.clients.values()) {
+        if (!client.res.writableEnded) client.res.write(": heartbeat\n\n");
+      }
+    }, this.heartbeatInterval);
+    this.heartbeatTimer.unref();
+  }
+
+  /** Stop the heartbeat (e.g. on shutdown). */
+  stopHeartbeat(): void {
+    if (this.heartbeatTimer) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = null;
+    }
+  }
 
   /** Generate a unique client ID. */
   generateClientId(): string {
