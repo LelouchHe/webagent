@@ -992,6 +992,21 @@ describe("events", () => {
         events.handleEvent({ type: "session_created", sessionId: "s2" });
         assert.equal(state.sessionId, "s2");
       });
+
+      it("drops non-lifecycle events when sessionId is null (mid-switch)", () => {
+        state.sessionId = null;
+        events.handleEvent({ type: "user_message", sessionId: "s1", text: "leaked" });
+        events.handleEvent({ type: "message_chunk", sessionId: "s1", text: "leaked" });
+        assert.equal(dom.messages.children.length, 0);
+        assert.equal(state.currentAssistantEl, null);
+      });
+
+      it("allows session_created when sessionId is null (mid-switch)", () => {
+        state.sessionId = null;
+        state.awaitingNewSession = true;
+        events.handleEvent({ type: "session_created", sessionId: "new-s" });
+        assert.equal(state.sessionId, "new-s");
+      });
     });
   });
 

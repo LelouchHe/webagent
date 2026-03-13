@@ -453,10 +453,13 @@ export function handleEvent(msg: AgentEvent) {
     return;
   }
 
-   // Ignore events from other sessions (multi-client broadcast)
-  if (msg.sessionId && state.sessionId && msg.sessionId !== state.sessionId
-      && msg.type !== 'session_created' && msg.type !== 'session_deleted') {
-    return;
+   // Ignore events from other sessions (multi-client broadcast).
+   // When sessionId is null (mid-switch), drop session-specific events
+   // to prevent old-session events from leaking into the new session's DOM.
+  if (msg.sessionId && msg.type !== 'session_created' && msg.type !== 'session_deleted') {
+    if (!state.sessionId || msg.sessionId !== state.sessionId) {
+      return;
+    }
   }
   switch (msg.type) {
     case 'connected':
