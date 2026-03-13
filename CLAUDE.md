@@ -77,11 +77,15 @@ agent_cmd = "my-agent --acp"
 - **Title generation**: Uses a dedicated silent session with fast model (Haiku), async and non-blocking.
 - **Multi-client broadcast**: Events broadcast to all WS clients. Permission responses, user messages, bash output sync across devices. `broadcast()` supports sender exclusion.
 - **PWA**: Minimal service worker (no offline cache), manifest.json, installable to home screen.
-- **Web Push**: VAPID-based push notifications via `web-push`. Only fires when no WS client is visible (zero clients or all backgrounded). Subscriptions stored in SQLite. Notifiable events: `permission_request`, `prompt_done`, `bash_done`.
+- **Web Push**: VAPID-based push notifications via `web-push`. Per-subscription visibility filtering: each push endpoint is associated with its SSE client IDs, and only endpoints with no visible client receive push. Subscriptions stored in SQLite. Notifiable events: `permission_request`, `prompt_done`, `bash_done`.
+  - **Per-subscription visibility**: Each SSE client registers its push endpoint via `/api/push/register-client` on connect. `sendToAll()` checks per-endpoint whether any mapped client is visible — visible endpoints are skipped, others receive push. This means a visible desktop tab only suppresses its own device's push, not other devices.
   - **Subscription cleanup**: Stale endpoints are auto-removed in two ways: (1) 410 Gone responses are removed immediately; (2) any other error that occurs 5 consecutive times removes the subscription (`MAX_CONSECUTIVE_FAILURES` in `push-service.ts`). A single successful send resets the counter. This prevents expired tokens (e.g. WNS returning 403) from spamming logs indefinitely.
   - **Troubleshooting lost notifications**: If a client stops receiving push notifications, run `/notify off` then `/notify on` to re-subscribe with a fresh endpoint. Old endpoints may have been auto-cleaned after repeated failures.
-  - **iOS (Safari/PWA)**: Must be installed to home screen (Add to Home Screen) — Safari tabs don't support Push API. Apple's push service (`web.push.apple.com`) rejects `mailto:` VAPID subjects with localhost or invalid-looking domains (`403 BadJwtToken`). Use a real-looking email like `mailto:noreply@example.com`. Changing VAPID subject requires deleting `{data_dir}/vapid.json` to regenerate keys, then all clients must re-subscribe (`/notify off` → `/notify on`).
-  - **iOS PWA quirks**: Push only works when installed to home screen (not Safari tabs). Apple's push service (`web.push.apple.com`) rejects VAPID subjects with `localhost` domains (`403 BadJwtToken`) — use a real-looking email like `mailto:noreply@example.com`. When changing `push.vapid_subject`, delete `data/vapid.json` to regenerate keys, then have all clients re-subscribe (`/notify off` → `/notify on`).
+  - **Activating push on a new device**:
+    1. **iOS**: Install PWA to home screen (Add to Home Screen) — Safari tabs don't support Push API.
+    2. Open the app and type `/notify on`. The browser will prompt for notification permission — allow it.
+    3. If notifications stop working after a server update or VAPID key change, re-install the PWA (delete from home screen, re-add), then `/notify on` again. Simply toggling `/notify off` → `/notify on` may not be enough if the Service Worker cache is stale.
+  - **iOS PWA quirks**: Apple's push service (`web.push.apple.com`) rejects VAPID subjects with `localhost` domains (`403 BadJwtToken`) — use a real-looking email like `mailto:noreply@example.com`. When changing `push.vapid_subject`, delete `data/vapid.json` to regenerate keys, then all clients must re-subscribe.
 
 ## ACP Client Extensions
 
