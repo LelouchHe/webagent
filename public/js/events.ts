@@ -11,6 +11,7 @@ import {
   scrollToBottom, renderMd, escHtml, renderPatchDiff, addBashBlock, finishBash, appendMessageElement,
   formatLocalTime,
 } from './render.ts';
+import * as api from './api.ts';
 import { TOOL_ICONS, DEFAULT_TOOL_ICON, PLAN_STATUS_ICONS } from '../../src/shared/constants.ts';
 import type { AgentEvent, PlanEntry, StoredEvent } from '../../src/types.ts';
 
@@ -157,16 +158,11 @@ export function retryUnconfirmedPermissions() {
       state.unconfirmedPermissions.delete(requestId);
       continue;
     }
-    // Still pending in DOM — resend and optimistically resolve
-    if (state.ws && state.ws.readyState === 1) {
-      state.ws!.send(JSON.stringify({
-        type: 'permission_response',
-        sessionId: response.sessionId,
-        requestId,
-        optionId: response.optionId,
-        optionName: response.optionName,
-        denied: response.denied,
-      }));
+    // Still pending in DOM — resend via REST and optimistically resolve
+    if (response.denied) {
+      api.denyPermission(requestId).catch(() => {});
+    } else {
+      api.resolvePermission(requestId, response.optionId).catch(() => {});
     }
     const title = el.dataset.title ? `⚿ ${escHtml(el.dataset.title)}` : '⚿';
     el.innerHTML = `<span style="opacity:0.5">${title} — ${escHtml(response.optionName)}</span>`;
@@ -271,14 +267,11 @@ export function replayEvent(type: string, data: Record<string, any>, events: Sto
           btn.textContent = opt.name;
           btn.onclick = () => {
             const isDeny = (opt.kind || '').includes('reject') || (opt.kind || '').includes('deny');
-            state.ws!.send(JSON.stringify({
-              type: 'permission_response',
-              sessionId: state.sessionId,
-              requestId: data.requestId,
-              optionId: opt.optionId,
-              optionName: opt.name,
-              denied: isDeny,
-            }));
+            if (isDeny) {
+              api.denyPermission(data.requestId).catch(() => {});
+            } else {
+              api.resolvePermission(data.requestId, opt.optionId).catch(() => {});
+            }
             el.innerHTML = `<span style="opacity:0.5">⚿ ${escHtml(data.title)} — ${escHtml(opt.name)}</span>`;
           };
           el.appendChild(btn);
@@ -555,16 +548,11 @@ export function handleEvent(msg: AgentEvent) {
         btn.textContent = opt.name;
         btn.onclick = () => {
           const isDeny = (opt.kind || '').includes('reject') || (opt.kind || '').includes('deny');
-          try {
-            state.ws!.send(JSON.stringify({
-              type: 'permission_response',
-              sessionId: state.sessionId,
-              requestId: msg.requestId,
-              optionId: opt.optionId,
-              optionName: opt.name,
-              denied: isDeny,
-            }));
-          } catch { /* connection may be broken; cleanup still runs */ }
+          if (isDeny) {
+            api.denyPermission(msg.requestId).catch(() => {});
+          } else {
+            api.resolvePermission(msg.requestId, opt.optionId).catch(() => {});
+          }
           state.pendingPermissionRequestIds.delete(msg.requestId);
           // Track for retry on reconnect (cleared when server confirms via permission_resolved)
           state.unconfirmedPermissions.set(msg.requestId, {

@@ -63,12 +63,19 @@ export function handleAgentEvent(
       store.saveEvent(event.sessionId, event.type, {
         requestId: event.requestId, title: event.title, options: event.options,
       });
+      sessions.pendingPermissions.set(event.requestId, {
+        requestId: event.requestId,
+        sessionId: event.sessionId,
+        title: event.title,
+        options: event.options.map((o: any) => ({ optionId: o.optionId, label: o.label ?? o.name ?? o.optionId })),
+      });
       // Auto-approve permissions in autopilot mode (allow_once only to avoid persisting across mode switches)
       const mode = store.getSession(event.sessionId)?.mode ?? "";
       if (mode.includes("#autopilot")) {
         const opt = event.options.find((o: any) => o.kind === "allow_once");
         if (opt) {
           bridge.resolvePermission(event.requestId, opt.optionId);
+          sessions.pendingPermissions.delete(event.requestId);
           const optionName = (opt as any).label ?? opt.optionId;
           store.saveEvent(event.sessionId, "permission_response", {
             requestId: event.requestId, optionName, denied: false,

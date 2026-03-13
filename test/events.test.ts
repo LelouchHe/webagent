@@ -1,6 +1,6 @@
 import { describe, it, before, after, beforeEach } from "node:test";
 import assert from "node:assert/strict";
-import { setupDOM, teardownDOM, resetState, createMockWS } from "./frontend-setup.ts";
+import { setupDOM, teardownDOM, resetState } from "./frontend-setup.ts";
 
 describe("events", () => {
   let state: any;
@@ -8,6 +8,14 @@ describe("events", () => {
   let render: any;
   let events: any;
   let stateMod: any;
+  let fetchCalls: Array<{ url: string; init?: any }>;
+
+  function setFetch(handler: (url: string, init?: any) => Promise<any> | any) {
+    (globalThis as any).fetch = async (url: string, init?: any) => {
+      fetchCalls.push({ url, init });
+      return handler(url, init);
+    };
+  }
 
   before(async () => {
     setupDOM();
@@ -18,7 +26,11 @@ describe("events", () => {
     events = await import("../public/js/events.ts");
   });
   after(() => teardownDOM());
-  beforeEach(() => resetState(state, dom));
+  beforeEach(() => {
+    resetState(state, dom);
+    fetchCalls = [];
+    setFetch(() => ({ ok: true, json: async () => ({}), text: async () => '{}' }));
+  });
 
   describe("handleEvent", () => {
     describe("session_created", () => {
@@ -242,8 +254,6 @@ describe("events", () => {
       });
 
       it("sends permission response on button click", () => {
-        const ws = createMockWS();
-        state.ws = ws;
         state.sessionId = "s1";
         events.handleEvent({
           type: "permission_request",
@@ -253,16 +263,13 @@ describe("events", () => {
         });
         const btn = dom.messages.querySelector(".permission button");
         btn.click();
-        assert.equal(ws.sent.length, 1);
-        const msg = JSON.parse(ws.sent[0]);
-        assert.equal(msg.type, "permission_response");
-        assert.equal(msg.requestId, "perm2");
-        assert.equal(msg.denied, false);
+        const call = fetchCalls.find(c => c.url.includes("/api/permissions/perm2") && c.init?.method === "POST");
+        assert.ok(call, "expected a POST to /api/permissions/perm2");
+        const body = JSON.parse(call!.init.body);
+        assert.equal(body.optionId, "allow");
       });
 
       it("clears local pending permission state after the user responds", () => {
-        const ws = createMockWS();
-        state.ws = ws;
         state.sessionId = "s1";
         state.busy = true;
         events.handleEvent({
@@ -299,8 +306,6 @@ describe("events", () => {
       });
 
       it("skips duplicate permission_request even if already resolved", () => {
-        const ws = createMockWS();
-        state.ws = ws;
         state.sessionId = "s1";
         events.handleEvent({
           type: "permission_request",
@@ -323,8 +328,6 @@ describe("events", () => {
       });
 
       it("tracks unconfirmed permission response after Allow click", () => {
-        const ws = createMockWS();
-        state.ws = ws;
         state.sessionId = "s1";
         events.handleEvent({
           type: "permission_request",
@@ -341,8 +344,6 @@ describe("events", () => {
       });
 
       it("preserves title after user clicks a permission button", () => {
-        const ws = createMockWS();
-        state.ws = ws;
         state.sessionId = "s1";
         events.handleEvent({
           type: "permission_request",
@@ -399,8 +400,6 @@ describe("events", () => {
       });
 
       it("clears unconfirmed permission on permission_resolved", () => {
-        const ws = createMockWS();
-        state.ws = ws;
         state.sessionId = "s1";
         events.handleEvent({
           type: "permission_request",
@@ -500,8 +499,6 @@ describe("events", () => {
       });
 
       it("clears pending permissions when the prompt is cancelled", () => {
-        const ws = createMockWS();
-        state.ws = ws;
         state.sessionId = "s1";
         state.busy = true;
         events.handleEvent({
@@ -548,8 +545,6 @@ describe("events", () => {
       });
 
       it("ignores permission_request arriving after prompt_done", () => {
-        const ws = createMockWS();
-        state.ws = ws;
         state.sessionId = "s1";
         state.busy = true;
 
@@ -676,8 +671,6 @@ describe("events", () => {
 
       it("starts a cancel timeout after sendCancel", () => {
         withMockTimers(({ timeoutFns, timeoutDelays }) => {
-          const ws = createMockWS();
-          state.ws = ws;
           state.sessionId = "s1";
           state.busy = true;
           state.cancelTimeout = 10_000;
@@ -691,8 +684,6 @@ describe("events", () => {
 
       it("cancel timeout fires and resets busy with warning", () => {
         withMockTimers(({ timeoutFns }) => {
-          const ws = createMockWS();
-          state.ws = ws;
           state.sessionId = "s1";
           state.busy = true;
           state.cancelTimeout = 5000;
@@ -710,8 +701,6 @@ describe("events", () => {
 
       it("prompt_done clears the cancel timeout", () => {
         withMockTimers(({ clearedIds }) => {
-          const ws = createMockWS();
-          state.ws = ws;
           state.sessionId = "s1";
           state.busy = true;
           state.cancelTimeout = 10_000;
@@ -727,8 +716,6 @@ describe("events", () => {
 
       it("does not start timeout when cancelTimeout is 0", () => {
         withMockTimers(({ timeoutFns }) => {
-          const ws = createMockWS();
-          state.ws = ws;
           state.sessionId = "s1";
           state.busy = true;
           state.cancelTimeout = 0;
@@ -741,8 +728,6 @@ describe("events", () => {
 
       it("agent events after cancel timeout do not re-set busy", () => {
         withMockTimers(({ timeoutFns }) => {
-          const ws = createMockWS();
-          state.ws = ws;
           state.sessionId = "s1";
           state.busy = true;
           state.cancelTimeout = 10_000;
@@ -1455,8 +1440,6 @@ describe("events", () => {
 
   describe("retryUnconfirmedPermissions", () => {
     it("resends response for a still-pending permission after reconnect", () => {
-      const ws = createMockWS();
-      state.ws = ws;
       state.sessionId = "s1";
 
       // Simulate a permission that was responded to but never confirmed
@@ -1480,23 +1463,20 @@ describe("events", () => {
 
       events.retryUnconfirmedPermissions();
 
-      // Should have resent the permission_response
-      assert.equal(ws.sent.length, 1);
-      const msg = JSON.parse(ws.sent[0]);
-      assert.equal(msg.type, "permission_response");
-      assert.equal(msg.requestId, "perm-retry");
-      assert.equal(msg.optionId, "allow");
+      // Should have sent a REST call to resolve the permission
+      const call = fetchCalls.find(c => c.url.includes("/api/permissions/perm-retry") && c.init?.method === "POST");
+      assert.ok(call, "expected POST to /api/permissions/perm-retry");
+      const body = JSON.parse(call!.init.body);
+      assert.equal(body.optionId, "allow");
       // Should have optimistically resolved the UI
       assert.equal(el.querySelectorAll("button").length, 0);
-      assert.ok(el.textContent.includes("Execute ls"));
-      assert.ok(el.textContent.includes("Allow Once"));
+      assert.ok(el.textContent!.includes("Execute ls"));
+      assert.ok(el.textContent!.includes("Allow Once"));
       // Should have cleaned up
       assert.equal(state.unconfirmedPermissions.has("perm-retry"), false);
     });
 
     it("skips already-resolved permission", () => {
-      const ws = createMockWS();
-      state.ws = ws;
       state.sessionId = "s1";
 
       state.unconfirmedPermissions.set("perm-ok", {
@@ -1515,14 +1495,13 @@ describe("events", () => {
 
       events.retryUnconfirmedPermissions();
 
-      // No WS messages sent — already resolved
-      assert.equal(ws.sent.length, 0);
+      // No permission REST calls — already resolved
+      const permCalls = fetchCalls.filter(c => c.url.includes("/api/permissions/"));
+      assert.equal(permCalls.length, 0);
       assert.equal(state.unconfirmedPermissions.has("perm-ok"), false);
     });
 
     it("cleans up when permission element no longer exists", () => {
-      const ws = createMockWS();
-      state.ws = ws;
       state.sessionId = "s1";
 
       state.unconfirmedPermissions.set("perm-gone", {
@@ -1535,7 +1514,8 @@ describe("events", () => {
       // No matching element in DOM
       events.retryUnconfirmedPermissions();
 
-      assert.equal(ws.sent.length, 0);
+      const permCalls = fetchCalls.filter(c => c.url.includes("/api/permissions/"));
+      assert.equal(permCalls.length, 0);
       assert.equal(state.unconfirmedPermissions.has("perm-gone"), false);
     });
   });

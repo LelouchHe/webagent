@@ -108,6 +108,14 @@ describe("api module", () => {
     assert.equal(body.optionId, "allow_once");
   });
 
+  it("denyPermission sends POST /api/permissions/:requestId with denied flag", async () => {
+    await api.denyPermission("req2");
+    assert.equal(fetchCalls[0].url, "/api/permissions/req2");
+    assert.equal(fetchCalls[0].init?.method, "POST");
+    const body = JSON.parse(fetchCalls[0].init?.body as string);
+    assert.equal(body.denied, true);
+  });
+
   // --- Config ---
 
   it("setConfig sends PATCH /api/sessions/:id", async () => {

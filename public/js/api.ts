@@ -74,6 +74,10 @@ export function resolvePermission(requestId: string, optionId: string): Promise<
   return post("/api/permissions/" + requestId, { optionId });
 }
 
+export function denyPermission(requestId: string): Promise<void> {
+  return post("/api/permissions/" + requestId, { denied: true });
+}
+
 // --- Config ---
 
 export function setConfig(sessionId: string, configId: string, value: string): Promise<void> {
