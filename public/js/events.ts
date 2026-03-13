@@ -15,6 +15,15 @@ import * as api from './api.ts';
 import { TOOL_ICONS, DEFAULT_TOOL_ICON, PLAN_STATUS_ICONS } from '../../src/shared/constants.ts';
 import type { AgentEvent, PlanEntry, StoredEvent } from '../../src/types.ts';
 
+// During replay, elements live in a detached DocumentFragment (no getElementById).
+// These helpers search the fragment first, then fall back to the live DOM.
+function replayById(id: string): HTMLElement | null {
+  return (state.replayTarget?.querySelector(`[id="${id}"]`) ?? document.getElementById(id)) as HTMLElement | null;
+}
+function replayQuery(sel: string): Element | null {
+  return state.replayTarget?.querySelector(sel) ?? document.querySelector(sel);
+}
+
 const NOTIFY_TIP_KEY = 'webagent_notify_tip_shown';
 const NOTIFY_TIP_DENIED_KEY = 'webagent_notify_tip_denied_shown';
 
@@ -75,10 +84,21 @@ export async function loadHistory(sid: string): Promise<boolean> {
     const res = await fetch(`/api/sessions/${sid}/events`);
     if (!res.ok) return false;
     const events = await res.json();
+
+    // Batch DOM operations: render into an offscreen fragment, then append once
+    const fragment = document.createDocumentFragment();
+    state.replayTarget = fragment;
     for (let i = 0; i < events.length; i++) {
       const data = JSON.parse(events[i].data);
       replayEvent(events[i].type, data, events, i);
     }
+    state.replayTarget = null;
+
+    // Hide container to avoid layout during append, then show
+    dom.messages.style.display = 'none';
+    dom.messages.appendChild(fragment);
+    dom.messages.style.display = '';
+
     if (events.length) {
       state.lastEventSeq = events[events.length - 1].seq;
     }
@@ -87,6 +107,7 @@ export async function loadHistory(sid: string): Promise<boolean> {
   } catch {
     return false;
   } finally {
+    state.replayTarget = null;
     state.replayInProgress = false;
     drainReplayQueue();
   }
@@ -130,16 +151,23 @@ export async function loadNewEvents(sid: string): Promise<boolean> {
 
     if (events.length === 0) return true;
 
+    // Batch DOM operations into a fragment to avoid per-element reflow
+    const fragment = document.createDocumentFragment();
+    state.replayTarget = fragment;
     for (let i = 0; i < events.length; i++) {
       const data = JSON.parse(events[i].data);
       replayEvent(events[i].type, data, events, i);
     }
+    state.replayTarget = null;
+    dom.messages.appendChild(fragment);
+
     state.lastEventSeq = events[events.length - 1].seq;
     setSyncBoundary();
     return true;
   } catch {
     return false;
   } finally {
+    state.replayTarget = null;
     state.replayInProgress = false;
     drainReplayQueue();
   }
@@ -224,7 +252,7 @@ export function replayEvent(type: string, data: Record<string, any>, events: Sto
       break;
     }
     case 'tool_call_update': {
-      const el = document.getElementById(`tc-${data.id}`);
+      const el = replayById(`tc-${data.id}`);
       if (el) {
         const statusIcon = data.status === 'completed' ? '✓' : data.status === 'failed' ? '✗' : '…';
         el.className = `tool-call ${data.status}`;
@@ -281,7 +309,7 @@ export function replayEvent(type: string, data: Record<string, any>, events: Sto
       break;
     }
     case 'permission_response': {
-      const el = document.querySelector(`.permission[data-request-id="${data.requestId}"]`);
+      const el = replayQuery(`.permission[data-request-id="${data.requestId}"]`);
       if (el) {
         const title = el.dataset.title ? `⚿ ${el.dataset.title}` : '⚿';
         const action = data.optionName || (data.denied ? 'denied' : 'allowed');
@@ -295,7 +323,7 @@ export function replayEvent(type: string, data: Record<string, any>, events: Sto
       break;
     }
     case 'bash_result': {
-      const el = document.getElementById('bash-replay-pending');
+      const el = replayById('bash-replay-pending');
       if (el) {
         el.removeAttribute('id');
         if (data.output) {

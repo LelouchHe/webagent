@@ -66,6 +66,7 @@ export const state = {
   _onCancelTimeout: null as (() => void) | null,
   lastEventSeq: 0,
   replayInProgress: false,
+  replayTarget: null as DocumentFragment | null,
   replayQueue: [] as AgentEvent[],
   unconfirmedPermissions: new Map<string, UnconfirmedPermission>(),
 };
