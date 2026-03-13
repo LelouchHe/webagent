@@ -1,6 +1,7 @@
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { join, extname } from "node:path";
+import { gzipSync } from "node:zlib";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { Store } from "./store.ts";
 import type { SessionManager } from "./session-manager.ts";
@@ -51,10 +52,21 @@ function readBody(req: IncomingMessage): Promise<string> {
   });
 }
 
-/** Send a JSON response. */
-function json(res: ServerResponse, status: number, data: unknown): void {
-  res.writeHead(status, { "Content-Type": "application/json" });
-  res.end(JSON.stringify(data));
+/** Send a JSON response, gzip-compressed when the client supports it. */
+function json(res: ServerResponse, status: number, data: unknown, req?: IncomingMessage): void {
+  const body = JSON.stringify(data);
+  if (req && body.length > 1024 && (req.headers["accept-encoding"] || "").includes("gzip")) {
+    const compressed = gzipSync(body);
+    res.writeHead(status, {
+      "Content-Type": "application/json",
+      "Content-Encoding": "gzip",
+      "Content-Length": compressed.length,
+    });
+    res.end(compressed);
+  } else {
+    res.writeHead(status, { "Content-Type": "application/json" });
+    res.end(body);
+  }
 }
 
 export function createRequestHandler(deps: RequestHandlerDeps): (req: IncomingMessage, res: ServerResponse) => Promise<void>;
@@ -250,7 +262,7 @@ export function createRequestHandler(
         const afterSeqRaw = params.get("after_seq");
         const afterSeq = afterSeqRaw != null ? Number(afterSeqRaw) : undefined;
         const events = store.getEvents(sessionId, { excludeThinking, afterSeq });
-        json(res, 200, events);
+        json(res, 200, events, req);
         return;
       }
 
@@ -386,7 +398,7 @@ export function createRequestHandler(
             configOptions,
             busy: sessions?.getBusyKind(sessionId) != null,
             busyKind: sessions?.getBusyKind(sessionId) ?? null,
-          });
+          }, req);
           return;
         }
 
@@ -519,7 +531,7 @@ export function createRequestHandler(
           return;
         }
         const events = store.getEvents(sessionId, { excludeThinking, afterSeq });
-        res.end(JSON.stringify(events));
+        json(res, 200, events, req);
         return;
       }
 
