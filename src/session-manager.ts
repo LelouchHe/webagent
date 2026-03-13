@@ -231,6 +231,23 @@ export class SessionManager {
     return null;
   }
 
+  /**
+   * If the session's last turn was interrupted (user_message without prompt_done),
+   * auto-retry by prompting the agent to continue. Returns true if retrying.
+   */
+  autoRetryIfNeeded(bridge: Pick<AgentBridge, "prompt">, sessionId: string): boolean {
+    if (this.activePrompts.has(sessionId)) return false;
+    if (!this.store.hasInterruptedTurn(sessionId)) return false;
+
+    console.log(`[session] auto-retrying interrupted turn for ${sessionId.slice(0, 8)}…`);
+    this.activePrompts.add(sessionId);
+    bridge.prompt(sessionId, "Continue your previous response — it was interrupted mid-way.").catch((err: unknown) => {
+      console.error(`[session] auto-retry failed for ${sessionId.slice(0, 8)}…:`, err);
+      this.activePrompts.delete(sessionId);
+    });
+    return true;
+  }
+
   /** Get pending permission requests for a session (or all sessions if no id). */
   getPendingPermissions(sessionId?: string): PendingPermission[] {
     const perms = [...this.pendingPermissions.values()];

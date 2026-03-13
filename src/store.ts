@@ -170,6 +170,20 @@ export class Store {
     return this.db.prepare(query).all(...params) as EventRow[];
   }
 
+  /** Check if the most recent agent turn was interrupted (user_message without a following prompt_done). */
+  hasInterruptedTurn(sessionId: string): boolean {
+    const row = this.db.prepare(`
+      SELECT 1 FROM events
+      WHERE session_id = ? AND type = 'user_message'
+        AND seq > COALESCE(
+          (SELECT MAX(seq) FROM events WHERE session_id = ? AND type = 'prompt_done'),
+          0
+        )
+      LIMIT 1
+    `).get(sessionId, sessionId);
+    return !!row;
+  }
+
   // --- Push subscriptions ---
 
   saveSubscription(endpoint: string, auth: string, p256dh: string): void {

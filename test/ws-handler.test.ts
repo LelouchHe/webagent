@@ -55,6 +55,7 @@ function createHarness(options: { titleGenerator?: "success" | "pending" } = {})
   };
 
   const sessions = {
+    liveSessions: new Set<string>(),
     sessionHasTitle: new Set<string>(),
     activePrompts: new Set<string>(),
     runningBashProcs: new Map<string, any>(),
@@ -71,6 +72,9 @@ function createHarness(options: { titleGenerator?: "success" | "pending" } = {})
     async resumeSession(_bridge: unknown, sessionId: string) {
       this.resumeSessionCalls.push(sessionId);
       return { type: "session_created", sessionId };
+    },
+    autoRetryIfNeeded(_bridge: unknown, _sessionId: string) {
+      return false;
     },
     deleteSession(sessionId: string) {
       this.deleteSessionCalls.push(sessionId);

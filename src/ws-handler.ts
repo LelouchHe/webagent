@@ -109,7 +109,12 @@ export function setupWsHandler(deps: WsHandlerDeps): void {
           case "resume_session": {
             if (!bridge) { send(ws, { type: "error", message: "Agent not ready yet" }); return; }
             try {
+              const wasLive = sessions.liveSessions.has(msg.sessionId);
               const event = await sessions.resumeSession(bridge, msg.sessionId);
+              // On restore (not already live), auto-retry if the last turn was interrupted
+              if (!wasLive && event.type === "session_created" && sessions.autoRetryIfNeeded(bridge, msg.sessionId)) {
+                event.busyKind = "agent";
+              }
               send(ws, event);
             } catch {
               send(ws, { type: "session_expired", sessionId: msg.sessionId });

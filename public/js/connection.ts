@@ -139,4 +139,9 @@ document.addEventListener('visibilitychange', () => {
   if (state.clientId) {
     api.postVisibility(state.clientId, !document.hidden).catch(() => {});
   }
+  // Sync missed events when returning from background (iOS can keep connections
+  // alive while suspending event delivery, silently losing server messages)
+  if (!document.hidden && state.sessionId && state.lastEventSeq > 0 && !state.replayInProgress) {
+    loadNewEvents(state.sessionId).then(() => scrollToBottom(false));
+  }
 });

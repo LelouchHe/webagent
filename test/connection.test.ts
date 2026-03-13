@@ -10,6 +10,7 @@ describe("connection", () => {
   let fetchCalls: Array<{ url: string; init?: RequestInit }>;
   let timeoutCalls: number[];
   let timeoutFns: Function[];
+  let originalSetTimeout: typeof globalThis.setTimeout;
 
   class MockEventSource {
     static instances: MockEventSource[] = [];
@@ -46,6 +47,7 @@ describe("connection", () => {
   }
 
   before(async () => {
+    originalSetTimeout = globalThis.setTimeout;
     setupDOM();
     globalThis.EventSource = MockEventSource as any;
     globalThis.WebSocket = MockWebSocket as any;
@@ -257,6 +259,47 @@ describe("connection", () => {
     assert.equal(dom.messages.children.length, 2);
     assert.ok(dom.messages.children[1].textContent.includes("full reply"));
     assert.equal(state.lastEventSeq, 3);
+  });
+
+  it("syncs missed events on visibilitychange hidden→visible", async () => {
+    state.sessionId = "vis-session";
+    state.clientId = "cl-vis";
+    state.lastEventSeq = 3;
+
+    const existingEl = globalThis.document.createElement("div");
+    existingEl.className = "msg assistant";
+    existingEl.textContent = "before background";
+    existingEl.setAttribute("data-sync-boundary", "");
+    dom.messages.appendChild(existingEl);
+
+    setFetch(async (url: string) => {
+      if (url.includes("/visibility")) return mockResponse({});
+      if (url.includes("after_seq=3")) {
+        return {
+          ok: true,
+          json: async () => [
+            { seq: 4, type: "assistant_message", data: JSON.stringify({ text: "missed while backgrounded" }) },
+          ],
+        };
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+
+    // Simulate visibilitychange: hidden → visible
+    Object.defineProperty(globalThis.document, "hidden", { value: false, configurable: true });
+    const event = new (globalThis.window as any).Event("visibilitychange");
+    globalThis.document.dispatchEvent(event);
+
+    // Wait for the async loadNewEvents to complete
+    await new Promise((r) => originalSetTimeout(r, 50));
+
+    // Should have sent visibility report via REST
+    assert.ok(fetchCalls.some(c => c.url.includes("/visibility")), "should POST visibility");
+    // Should have fetched missed events
+    assert.ok(fetchCalls.some(c => c.url.includes("after_seq=3")), "should fetch new events");
+    // The missed message should now appear
+    assert.ok(dom.messages.textContent.includes("missed while backgrounded"));
+    assert.equal(state.lastEventSeq, 4);
   });
 
   it("skips DOM changes when no new events on incremental reconnect", async () => {

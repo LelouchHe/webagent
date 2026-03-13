@@ -368,7 +368,8 @@ export function createRequestHandler(
             return;
           }
           // Auto-resume if not live
-          if (sessions && getBridge && !sessions.liveSessions.has(sessionId)) {
+          const wasLive = sessions?.liveSessions.has(sessionId) ?? true;
+          if (sessions && getBridge && !wasLive) {
             const bridge = getBridge();
             if (bridge) {
               try {
@@ -388,6 +389,14 @@ export function createRequestHandler(
             });
             return opts;
           })() : [];
+          // On restore (not already live), auto-retry if the last turn was interrupted
+          let busyKind = sessions?.getBusyKind(sessionId) ?? null;
+          if (!wasLive && sessions && getBridge) {
+            const bridge = getBridge();
+            if (bridge && sessions.autoRetryIfNeeded(bridge, sessionId)) {
+              busyKind = "agent";
+            }
+          }
           json(res, 200, {
             id: session.id,
             cwd: session.cwd,
@@ -396,8 +405,8 @@ export function createRequestHandler(
             model: session.model,
             mode: session.mode,
             configOptions,
-            busy: sessions?.getBusyKind(sessionId) != null,
-            busyKind: sessions?.getBusyKind(sessionId) ?? null,
+            busy: busyKind != null,
+            busyKind,
           }, req);
           return;
         }
