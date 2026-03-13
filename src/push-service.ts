@@ -65,7 +65,7 @@ export class PushService {
     eventType: string,
     eventData: Record<string, unknown>,
   ): PushNotification {
-    const title = sessionTitle ? `WebAgent · ${sessionTitle}` : "WebAgent";
+    const title = sessionTitle || "WebAgent";
     let body: string;
 
     switch (eventType) {

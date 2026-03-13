@@ -155,7 +155,7 @@ describe("PushService", () => {
         description: "Execute rm -rf node_modules",
       });
 
-      assert.equal(n.title, "WebAgent · My Session");
+      assert.equal(n.title, "My Session");
       assert.ok(n.body.includes("⚿"));
       assert.ok(n.body.includes("Execute rm -rf node_modules"));
       assert.equal(n.data.sessionId, "session-1");
