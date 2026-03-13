@@ -77,6 +77,19 @@ function cancelPendingTurnUI() {
   state.pendingPermissionRequestIds.clear();
 }
 
+/** Mark any leftover pending tool calls as completed when the turn ends normally. */
+function completePendingTurnUI() {
+  for (const id of state.pendingToolCallIds) {
+    const el = document.getElementById(`tc-${id}`);
+    if (!el) continue;
+    el.className = 'tool-call completed';
+    const iconSpan = el.querySelector('.icon');
+    if (iconSpan) iconSpan.textContent = '✓';
+  }
+  state.pendingToolCallIds.clear();
+  state.pendingPermissionRequestIds.clear();
+}
+
 export async function loadHistory(sid: string): Promise<boolean> {
   state.replayInProgress = true;
   state.replayQueue = [];
@@ -660,6 +673,11 @@ export function handleEvent(msg: AgentEvent) {
       state.newTurnStarted = false;
       if (msg.stopReason === 'cancelled') {
         cancelPendingTurnUI();
+      } else {
+        // prompt_done is authoritative: the agent's turn is over. Any tool calls
+        // or permissions still in pending sets won't receive further updates —
+        // mark them completed and clear the sets so the spinner stops.
+        completePendingTurnUI();
       }
       state.turnEnded = true;
       state.pendingPromptDone = true;

@@ -39,6 +39,7 @@ const server = createServer(createRequestHandler({
   store,
   sessions,
   sseManager,
+  titleService,
   getBridge: () => bridge,
   publicDir: PUBLIC_DIR,
   dataDir: config.data_dir,

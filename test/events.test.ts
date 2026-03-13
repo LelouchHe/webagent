@@ -465,7 +465,7 @@ describe("events", () => {
         assert.equal(state.busy, false);
       });
 
-      it("does not clear busy until in-flight tool calls are completed", () => {
+      it("clears busy on prompt_done even with in-flight tool calls", () => {
         state.busy = true;
         events.handleEvent({
           type: "tool_call",
@@ -475,9 +475,12 @@ describe("events", () => {
           rawInput: { command: "npm test" },
         });
 
+        // prompt_done is authoritative — clears pending sets and stops spinner
         events.handleEvent({ type: "prompt_done" });
-        assert.equal(state.busy, true);
+        assert.equal(state.busy, false);
+        assert.equal(state.pendingToolCallIds.size, 0);
 
+        // Late tool_call_update is harmless
         events.handleEvent({ type: "tool_call_update", id: "tc-pending", status: "completed" });
         assert.equal(state.busy, false);
       });

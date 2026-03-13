@@ -9,6 +9,7 @@ import type { SseManager } from "./sse-manager.ts";
 import type { AgentBridge } from "./bridge.ts";
 import type { Config } from "./config.ts";
 import type { PushService } from "./push-service.ts";
+import type { TitleService } from "./title-service.ts";
 import { errorMessage } from "./types.ts";
 import type { AgentEvent } from "./types.ts";
 import { interruptBashProc } from "./ws-handler.ts";
@@ -34,6 +35,7 @@ export interface RequestHandlerDeps {
   store: Store;
   sessions?: SessionManager;
   sseManager?: SseManager;
+  titleService?: TitleService;
   getBridge?: () => (Pick<AgentBridge, "newSession" | "setConfigOption" | "loadSession" | "cancel" | "prompt" | "resolvePermission" | "denyPermission"> | null);
   publicDir: string;
   dataDir: string;
@@ -84,7 +86,7 @@ export function createRequestHandler(
     ? { store: storeOrDeps, publicDir: publicDir!, dataDir: dataDir!, limits: limits!, pushService }
     : storeOrDeps as RequestHandlerDeps;
 
-  const { store, sessions, getBridge, broadcast, sseManager } = deps;
+  const { store, sessions, getBridge, broadcast, sseManager, titleService } = deps;
 
   return async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     const url = req.url ?? "/";
@@ -239,6 +241,15 @@ export function createRequestHandler(
         const userMsgEvent = { type: "user_message", sessionId, text: body.text, images: body.images } as AgentEvent;
         broadcast?.(userMsgEvent);
         sseManager?.broadcast(userMsgEvent);
+
+        // Generate title (fire-and-forget)
+        if (titleService && sessions && !sessions.sessionHasTitle.has(sessionId)) {
+          titleService.generate(bridge as AgentBridge, body.text, sessionId, (title) => {
+            const titleEvent = { type: "session_title_updated", sessionId, title } as AgentEvent;
+            broadcast?.(titleEvent);
+            sseManager?.broadcast(titleEvent);
+          });
+        }
 
         // Fire prompt asynchronously (don't await — response is 202)
         sessions.activePrompts.add(sessionId);
@@ -583,6 +594,14 @@ export function createRequestHandler(
 
         // Fire-and-forget: send the prompt asynchronously, tracking busy state
         sessions.activePrompts.add(sessionId);
+        // Generate title (fire-and-forget)
+        if (titleService && !sessions.sessionHasTitle.has(sessionId)) {
+          titleService.generate(bridge as AgentBridge, text, sessionId, (title) => {
+            const titleEvent = { type: "session_title_updated", sessionId, title } as AgentEvent;
+            broadcast?.(titleEvent);
+            sseManager?.broadcast(titleEvent);
+          });
+        }
         bridge.prompt(sessionId, text)
           .catch(() => {})
           .finally(() => sessions.activePrompts.delete(sessionId));

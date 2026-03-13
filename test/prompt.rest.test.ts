@@ -271,4 +271,70 @@ describe("Prompt REST API", () => {
       assert.equal(res.status, 404);
     });
   });
+
+  describe("title generation via REST prompt", () => {
+    it("triggers title generation for untitled session", async () => {
+      let generatedTitle: { bridge: unknown; text: string; sessionId: string; cb?: Function } | null = null;
+      const mockTitleService = {
+        generate(bridge: unknown, text: string, sessionId: string, onTitle?: (title: string) => void) {
+          generatedTitle = { bridge, text, sessionId, cb: onTitle };
+          if (onTitle) onTitle("Test Title");
+        },
+      };
+      const titleBroadcast: AgentEvent[] = [];
+      const handler = createRequestHandler({
+        store,
+        sessions,
+        getBridge: () => mockBridge,
+        titleService: mockTitleService as any,
+        publicDir,
+        dataDir: tmpDir,
+        limits: { bash_output: 1024, image_upload: 1024 },
+        broadcast: (event: AgentEvent) => titleBroadcast.push(event),
+      });
+      const srv = http.createServer(handler);
+      await new Promise<void>((r) => srv.listen(0, "127.0.0.1", r));
+      const p = (srv.address() as { port: number }).port;
+
+      const sessionId = await createSession();
+      await makeRequest(p, "POST", `/api/sessions/${sessionId}/messages`,
+        JSON.stringify({ text: "hello world" }));
+
+      assert.ok(generatedTitle, "titleService.generate should have been called");
+      assert.equal(generatedTitle!.text, "hello world");
+      assert.equal(generatedTitle!.sessionId, sessionId);
+      const titleEvent = titleBroadcast.find((e: any) => e.type === "session_title_updated");
+      assert.ok(titleEvent, "session_title_updated should be broadcast");
+
+      await new Promise<void>((r) => srv.close(() => r()));
+    });
+
+    it("skips title generation for session that already has a title", async () => {
+      let generateCalled = false;
+      const mockTitleService = {
+        generate() { generateCalled = true; },
+      };
+      const handler = createRequestHandler({
+        store,
+        sessions,
+        getBridge: () => mockBridge,
+        titleService: mockTitleService as any,
+        publicDir,
+        dataDir: tmpDir,
+        limits: { bash_output: 1024, image_upload: 1024 },
+      });
+      const srv = http.createServer(handler);
+      await new Promise<void>((r) => srv.listen(0, "127.0.0.1", r));
+      const p = (srv.address() as { port: number }).port;
+
+      const sessionId = await createSession();
+      sessions.sessionHasTitle.add(sessionId);
+      await makeRequest(p, "POST", `/api/sessions/${sessionId}/messages`,
+        JSON.stringify({ text: "hello" }));
+
+      assert.ok(!generateCalled, "titleService.generate should NOT be called for titled session");
+
+      await new Promise<void>((r) => srv.close(() => r()));
+    });
+  });
 });
