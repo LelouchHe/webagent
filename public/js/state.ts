@@ -1,6 +1,7 @@
 // Shared state, DOM refs, config helpers, routing, session management
 
 import type { ConfigOption, AgentEvent } from '../../src/types.ts';
+import * as api from './api.ts';
 
 export type { ConfigOption };
 
@@ -37,7 +38,8 @@ export const dom = {
 };
 
 export const state = {
-  ws: null as WebSocket | null,
+  eventSource: null as EventSource | null,
+  clientId: null as string | null,
   sessionId: null as string | null,
   sessionCwd: null as string | null,
   sessionTitle: null as string | null,
@@ -56,11 +58,15 @@ export const state = {
   pendingPromptDone: false,
   turnEnded: false,
   newTurnStarted: false,
+  // Set by sendPrompt to suppress the SSE echo of our own user_message
+  // (SSE broadcasts to all clients including the sender, unlike WS which excluded sender)
+  sentMessageForSession: null as string | null,
   cancelTimeout: 10_000,
   _cancelTimerId: null as ReturnType<typeof setTimeout> | null,
   _onCancelTimeout: null as (() => void) | null,
   lastEventSeq: 0,
   replayInProgress: false,
+  replayTarget: null as DocumentFragment | null,
   replayQueue: [] as AgentEvent[],
   unconfirmedPermissions: new Map<string, UnconfirmedPermission>(),
 };
@@ -136,11 +142,8 @@ export function setBusy(on: boolean) {
 }
 
 export function requestNewSession({ cwd, inheritFromSessionId = state.sessionId }: { cwd?: string; inheritFromSessionId?: string | null } = {}) {
-  const payload: Record<string, string> = { type: 'new_session' };
-  if (cwd) payload.cwd = cwd;
-  if (inheritFromSessionId) payload.inheritFromSessionId = inheritFromSessionId;
   state.awaitingNewSession = true;
-  state.ws!.send(JSON.stringify(payload));
+  api.createSession({ cwd, inheritFromSessionId }).catch(() => {});
 }
 
 export function resetSessionUI() {
@@ -178,8 +181,8 @@ export function updateNewBtnVisibility() {
 // If state.cancelTimeout > 0, arms a timer that calls onCancelTimeout() when
 // the agent fails to acknowledge the cancel in time.
 export function sendCancel() {
-  if (!state.busy || !state.ws) return false;
-  state.ws.send(JSON.stringify({ type: 'cancel', sessionId: state.sessionId }));
+  if (!state.busy || !state.sessionId) return false;
+  api.cancelSession(state.sessionId).catch(() => {});
   clearCancelTimer();
   if (state.cancelTimeout > 0) {
     state._cancelTimerId = setTimeout(() => {

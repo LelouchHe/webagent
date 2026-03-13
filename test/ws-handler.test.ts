@@ -507,4 +507,19 @@ describe("broadcast", () => {
 
     assert.equal(sent.length, 1);
   });
+
+  it("also broadcasts to sseManager when provided", () => {
+    const sseBroadcasted: unknown[] = [];
+    const sseManager = { broadcast(event: unknown) { sseBroadcasted.push(event); } };
+    const clients = [
+      { readyState: WebSocket.OPEN, send() {} },
+    ];
+    const wss = { clients: new Set(clients) };
+    const event = { type: "bash_output", sessionId: "s1", text: "hi", stream: "stdout" };
+
+    broadcast(wss as any, event as any, undefined, sseManager as any);
+
+    assert.equal(sseBroadcasted.length, 1);
+    assert.deepEqual(sseBroadcasted[0], event);
+  });
 });

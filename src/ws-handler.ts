@@ -8,6 +8,7 @@ import type { SessionManager } from "./session-manager.ts";
 import type { TitleService } from "./title-service.ts";
 import type { Config } from "./config.ts";
 import type { PushService } from "./push-service.ts";
+import type { SseManager } from "./sse-manager.ts";
 
 interface WsHandlerDeps {
   wss: WebSocketServer;
@@ -17,11 +18,12 @@ interface WsHandlerDeps {
   getBridge: () => AgentBridge | null;
   limits: Config["limits"];
   pushService?: PushService;
+  sseManager?: SseManager;
 }
 
 const IS_WIN = process.platform === "win32";
 
-function interruptBashProc(proc: ReturnType<SessionManager["runningBashProcs"]["get"]>): void {
+export function interruptBashProc(proc: ReturnType<SessionManager["runningBashProcs"]["get"]>): void {
   if (!proc) return;
   if (IS_WIN && typeof proc.pid === "number") {
     // Windows: kill entire process tree since there are no process groups
@@ -39,13 +41,14 @@ function interruptBashProc(proc: ReturnType<SessionManager["runningBashProcs"]["
   proc.kill("SIGINT");
 }
 
-export function broadcast(wss: WebSocketServer, event: AgentEvent, exclude?: WebSocket): void {
+export function broadcast(wss: WebSocketServer, event: AgentEvent, exclude?: WebSocket, sseManager?: SseManager): void {
   const msg = JSON.stringify(event);
   for (const client of wss.clients) {
     if (client.readyState === WebSocket.OPEN && client !== exclude) {
       try { client.send(msg); } catch { /* client gone mid-send */ }
     }
   }
+  if (sseManager) sseManager.broadcast(event);
 }
 
 function send(ws: WebSocket, event: AgentEvent): void {
@@ -55,7 +58,7 @@ function send(ws: WebSocket, event: AgentEvent): void {
 }
 
 export function setupWsHandler(deps: WsHandlerDeps): void {
-  const { wss, store, sessions, titleService, getBridge, limits, pushService } = deps;
+  const { wss, store, sessions, titleService, getBridge, limits, pushService, sseManager } = deps;
   let nextClientId = 1;
 
   wss.on("connection", (ws) => {
@@ -121,7 +124,7 @@ export function setupWsHandler(deps: WsHandlerDeps): void {
 
           case "delete_session": {
             sessions.deleteSession(msg.sessionId);
-            broadcast(wss, { type: "session_deleted", sessionId: msg.sessionId });
+            broadcast(wss, { type: "session_deleted", sessionId: msg.sessionId }, undefined, sseManager);
             console.log(`[session] deleted: ${msg.sessionId.slice(0, 8)}…`);
             break;
           }
@@ -138,16 +141,18 @@ export function setupWsHandler(deps: WsHandlerDeps): void {
             // Generate title once the session actually gets one; canceled/failed attempts can retry later.
             if (!sessions.sessionHasTitle.has(msg.sessionId)) {
               titleService.generate(bridge, msg.text, msg.sessionId, (title) => {
-                broadcast(wss, { type: "session_title_updated", sessionId: msg.sessionId, title });
+                broadcast(wss, { type: "session_title_updated", sessionId: msg.sessionId, title }, undefined, sseManager);
               });
             }
             // Broadcast to other clients
-            const userEvent = JSON.stringify({ type: "user_message", sessionId: msg.sessionId, ...userData });
+            const userEventObj = { type: "user_message", sessionId: msg.sessionId, ...userData } as AgentEvent;
+            const userEvent = JSON.stringify(userEventObj);
             for (const client of wss.clients) {
               if (client !== ws && client.readyState === WebSocket.OPEN) {
                 client.send(userEvent);
               }
             }
+            if (sseManager) sseManager.broadcast(userEventObj);
             sessions.activePrompts.add(msg.sessionId);
             bridge.prompt(msg.sessionId, msg.text, images).catch((err: unknown) => {
               send(ws, { type: "error", message: errorMessage(err) });
@@ -175,7 +180,7 @@ export function setupWsHandler(deps: WsHandlerDeps): void {
               requestId: msg.requestId,
               optionName: msg.optionName || "",
               denied: !!msg.denied,
-            });
+            }, undefined, sseManager);
             break;
           }
 
@@ -196,8 +201,11 @@ export function setupWsHandler(deps: WsHandlerDeps): void {
                 store.updateSessionConfig(msg.sessionId, opt.id, opt.currentValue);
               }
               send(ws, { type: "config_set", configId: msg.configId, value: msg.value });
+              // Also broadcast config_set to SSE clients (WS direct send doesn't
+              // reach the sender's SSE connection in dual-mode)
+              sseManager?.broadcast({ type: "config_set", configId: msg.configId, value: msg.value } as AgentEvent);
               if (configOptions.length) {
-                broadcast(wss, { type: "config_option_update", sessionId: msg.sessionId, configOptions }, ws);
+                broadcast(wss, { type: "config_option_update", sessionId: msg.sessionId, configOptions }, ws, sseManager);
               }
             } catch (err: unknown) {
               send(ws, { type: "error", message: `Failed to set ${msg.configId}: ${errorMessage(err)}` });
@@ -246,7 +254,7 @@ export function setupWsHandler(deps: WsHandlerDeps): void {
                 // Keep only the tail within the limit
                 output = (output + text).slice(-limits.bash_output);
               }
-              broadcast(wss, { type: "bash_output", sessionId: msg.sessionId, text, stream });
+              broadcast(wss, { type: "bash_output", sessionId: msg.sessionId, text, stream }, undefined, sseManager);
             };
             child.stdout!.on("data", onData("stdout"));
             child.stderr!.on("data", onData("stderr"));
@@ -255,7 +263,7 @@ export function setupWsHandler(deps: WsHandlerDeps): void {
               sessions.runningBashProcs.delete(msg.sessionId);
               const stored = outputTruncated ? "[truncated]\n" + output : output;
               store.saveEvent(msg.sessionId, "bash_result", { output: stored, code, signal });
-              broadcast(wss, { type: "bash_done", sessionId: msg.sessionId, code, signal });
+              broadcast(wss, { type: "bash_done", sessionId: msg.sessionId, code, signal }, undefined, sseManager);
               // Push notification for bash completion
               if (pushService) {
                 const session = store.getSession(msg.sessionId);
@@ -271,7 +279,7 @@ export function setupWsHandler(deps: WsHandlerDeps): void {
               sessions.runningBashProcs.delete(msg.sessionId);
               const errMsg = errorMessage(err);
               store.saveEvent(msg.sessionId, "bash_result", { output: errMsg, code: -1, signal: null });
-              broadcast(wss, { type: "bash_done", sessionId: msg.sessionId, code: -1, signal: null, error: errMsg });
+              broadcast(wss, { type: "bash_done", sessionId: msg.sessionId, code: -1, signal: null, error: errMsg }, undefined, sseManager);
             });
             break;
           }

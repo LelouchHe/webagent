@@ -11,8 +11,18 @@ import {
   scrollToBottom, renderMd, escHtml, renderPatchDiff, addBashBlock, finishBash, appendMessageElement,
   formatLocalTime,
 } from './render.ts';
+import * as api from './api.ts';
 import { TOOL_ICONS, DEFAULT_TOOL_ICON, PLAN_STATUS_ICONS } from '../../src/shared/constants.ts';
 import type { AgentEvent, PlanEntry, StoredEvent } from '../../src/types.ts';
+
+// During replay, elements live in a detached DocumentFragment (no getElementById).
+// These helpers search the fragment first, then fall back to the live DOM.
+function replayById(id: string): HTMLElement | null {
+  return (state.replayTarget?.querySelector(`[id="${id}"]`) ?? document.getElementById(id)) as HTMLElement | null;
+}
+function replayQuery(sel: string): Element | null {
+  return state.replayTarget?.querySelector(sel) ?? document.querySelector(sel);
+}
 
 const NOTIFY_TIP_KEY = 'webagent_notify_tip_shown';
 const NOTIFY_TIP_DENIED_KEY = 'webagent_notify_tip_denied_shown';
@@ -74,10 +84,21 @@ export async function loadHistory(sid: string): Promise<boolean> {
     const res = await fetch(`/api/sessions/${sid}/events`);
     if (!res.ok) return false;
     const events = await res.json();
+
+    // Batch DOM operations: render into an offscreen fragment, then append once
+    const fragment = document.createDocumentFragment();
+    state.replayTarget = fragment;
     for (let i = 0; i < events.length; i++) {
       const data = JSON.parse(events[i].data);
       replayEvent(events[i].type, data, events, i);
     }
+    state.replayTarget = null;
+
+    // Hide container to avoid layout during append, then show
+    dom.messages.style.display = 'none';
+    dom.messages.appendChild(fragment);
+    dom.messages.style.display = '';
+
     if (events.length) {
       state.lastEventSeq = events[events.length - 1].seq;
     }
@@ -86,6 +107,7 @@ export async function loadHistory(sid: string): Promise<boolean> {
   } catch {
     return false;
   } finally {
+    state.replayTarget = null;
     state.replayInProgress = false;
     drainReplayQueue();
   }
@@ -129,16 +151,23 @@ export async function loadNewEvents(sid: string): Promise<boolean> {
 
     if (events.length === 0) return true;
 
+    // Batch DOM operations into a fragment to avoid per-element reflow
+    const fragment = document.createDocumentFragment();
+    state.replayTarget = fragment;
     for (let i = 0; i < events.length; i++) {
       const data = JSON.parse(events[i].data);
       replayEvent(events[i].type, data, events, i);
     }
+    state.replayTarget = null;
+    dom.messages.appendChild(fragment);
+
     state.lastEventSeq = events[events.length - 1].seq;
     setSyncBoundary();
     return true;
   } catch {
     return false;
   } finally {
+    state.replayTarget = null;
     state.replayInProgress = false;
     drainReplayQueue();
   }
@@ -157,16 +186,11 @@ export function retryUnconfirmedPermissions() {
       state.unconfirmedPermissions.delete(requestId);
       continue;
     }
-    // Still pending in DOM — resend and optimistically resolve
-    if (state.ws && state.ws.readyState === 1) {
-      state.ws!.send(JSON.stringify({
-        type: 'permission_response',
-        sessionId: response.sessionId,
-        requestId,
-        optionId: response.optionId,
-        optionName: response.optionName,
-        denied: response.denied,
-      }));
+    // Still pending in DOM — resend via REST and optimistically resolve
+    if (response.denied) {
+      api.denyPermission(requestId).catch(() => {});
+    } else {
+      api.resolvePermission(requestId, response.optionId).catch(() => {});
     }
     const title = el.dataset.title ? `⚿ ${escHtml(el.dataset.title)}` : '⚿';
     el.innerHTML = `<span style="opacity:0.5">${title} — ${escHtml(response.optionName)}</span>`;
@@ -228,7 +252,7 @@ export function replayEvent(type: string, data: Record<string, any>, events: Sto
       break;
     }
     case 'tool_call_update': {
-      const el = document.getElementById(`tc-${data.id}`);
+      const el = replayById(`tc-${data.id}`);
       if (el) {
         const statusIcon = data.status === 'completed' ? '✓' : data.status === 'failed' ? '✗' : '…';
         el.className = `tool-call ${data.status}`;
@@ -271,14 +295,11 @@ export function replayEvent(type: string, data: Record<string, any>, events: Sto
           btn.textContent = opt.name;
           btn.onclick = () => {
             const isDeny = (opt.kind || '').includes('reject') || (opt.kind || '').includes('deny');
-            state.ws!.send(JSON.stringify({
-              type: 'permission_response',
-              sessionId: state.sessionId,
-              requestId: data.requestId,
-              optionId: opt.optionId,
-              optionName: opt.name,
-              denied: isDeny,
-            }));
+            if (isDeny) {
+              api.denyPermission(data.requestId).catch(() => {});
+            } else {
+              api.resolvePermission(data.requestId, opt.optionId).catch(() => {});
+            }
             el.innerHTML = `<span style="opacity:0.5">⚿ ${escHtml(data.title)} — ${escHtml(opt.name)}</span>`;
           };
           el.appendChild(btn);
@@ -288,7 +309,7 @@ export function replayEvent(type: string, data: Record<string, any>, events: Sto
       break;
     }
     case 'permission_response': {
-      const el = document.querySelector(`.permission[data-request-id="${data.requestId}"]`);
+      const el = replayQuery(`.permission[data-request-id="${data.requestId}"]`);
       if (el) {
         const title = el.dataset.title ? `⚿ ${el.dataset.title}` : '⚿';
         const action = data.optionName || (data.denied ? 'denied' : 'allowed');
@@ -302,7 +323,7 @@ export function replayEvent(type: string, data: Record<string, any>, events: Sto
       break;
     }
     case 'bash_result': {
-      const el = document.getElementById('bash-replay-pending');
+      const el = replayById('bash-replay-pending');
       if (el) {
         el.removeAttribute('id');
         if (data.output) {
@@ -348,11 +369,12 @@ function isDuplicateOfReplay(msg) {
 export function handleEvent(msg: AgentEvent) {
   // Queue events that arrive while history replay is in progress to avoid duplicates
   if (state.replayInProgress) {
+    console.log('[handleEvent-DEBUG] QUEUED (replayInProgress):', msg.type);
     state.replayQueue.push(msg);
     return;
   }
 
-  // Ignore events from other sessions (multi-client broadcast)
+   // Ignore events from other sessions (multi-client broadcast)
   if (msg.sessionId && state.sessionId && msg.sessionId !== state.sessionId
       && msg.type !== 'session_created' && msg.type !== 'session_deleted') {
     return;
@@ -397,6 +419,13 @@ export function handleEvent(msg: AgentEvent) {
       break;
 
     case 'user_message': {
+      // SSE broadcasts to all clients including the sender (unlike WS which
+      // excluded the sender). Detect our own echo and skip it — we already
+      // rendered the message and set busy in sendPrompt().
+      if (state.sentMessageForSession === msg.sessionId) {
+        state.sentMessageForSession = null;
+        break;
+      }
       // A new turn is starting (from another client's broadcast).
       // Finalise any in-progress streaming from the previous turn so
       // subsequent message_chunks create a fresh element BELOW this bubble.
@@ -547,16 +576,11 @@ export function handleEvent(msg: AgentEvent) {
         btn.textContent = opt.name;
         btn.onclick = () => {
           const isDeny = (opt.kind || '').includes('reject') || (opt.kind || '').includes('deny');
-          try {
-            state.ws!.send(JSON.stringify({
-              type: 'permission_response',
-              sessionId: state.sessionId,
-              requestId: msg.requestId,
-              optionId: opt.optionId,
-              optionName: opt.name,
-              denied: isDeny,
-            }));
-          } catch { /* connection may be broken; cleanup still runs */ }
+          if (isDeny) {
+            api.denyPermission(msg.requestId).catch(() => {});
+          } else {
+            api.resolvePermission(msg.requestId, opt.optionId).catch(() => {});
+          }
           state.pendingPermissionRequestIds.delete(msg.requestId);
           // Track for retry on reconnect (cleared when server confirms via permission_resolved)
           state.unconfirmedPermissions.set(msg.requestId, {

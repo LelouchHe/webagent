@@ -1,6 +1,7 @@
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { join, extname } from "node:path";
+import { gzipSync } from "node:zlib";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { Store } from "./store.ts";
 import type { SessionManager } from "./session-manager.ts";
@@ -10,20 +11,9 @@ import type { Config } from "./config.ts";
 import type { PushService } from "./push-service.ts";
 import { errorMessage } from "./types.ts";
 import type { AgentEvent } from "./types.ts";
+import { interruptBashProc } from "./ws-handler.ts";
 
 const IS_WIN = process.platform === "win32";
-
-function interruptBashProc(proc: ReturnType<Map<string, import("node:child_process").ChildProcess>["prototype"]["get"]>): void {
-  if (!proc) return;
-  if (IS_WIN && typeof proc.pid === "number") {
-    spawn("taskkill", ["/T", "/F", "/PID", String(proc.pid)]).unref();
-    return;
-  }
-  if (typeof proc.pid === "number") {
-    try { process.kill(-proc.pid, "SIGINT"); return; } catch { /* fallthrough */ }
-  }
-  proc.kill("SIGINT");
-}
 
 const SAFE_ID = /^[a-zA-Z0-9_-]+$/;
 
@@ -62,10 +52,21 @@ function readBody(req: IncomingMessage): Promise<string> {
   });
 }
 
-/** Send a JSON response. */
-function json(res: ServerResponse, status: number, data: unknown): void {
-  res.writeHead(status, { "Content-Type": "application/json" });
-  res.end(JSON.stringify(data));
+/** Send a JSON response, gzip-compressed when the client supports it. */
+function json(res: ServerResponse, status: number, data: unknown, req?: IncomingMessage): void {
+  const body = JSON.stringify(data);
+  if (req && body.length > 1024 && (req.headers["accept-encoding"] || "").includes("gzip")) {
+    const compressed = gzipSync(body);
+    res.writeHead(status, {
+      "Content-Type": "application/json",
+      "Content-Encoding": "gzip",
+      "Content-Length": compressed.length,
+    });
+    res.end(compressed);
+  } else {
+    res.writeHead(status, { "Content-Type": "application/json" });
+    res.end(body);
+  }
 }
 
 export function createRequestHandler(deps: RequestHandlerDeps): (req: IncomingMessage, res: ServerResponse) => Promise<void>;
@@ -83,7 +84,7 @@ export function createRequestHandler(
     ? { store: storeOrDeps, publicDir: publicDir!, dataDir: dataDir!, limits: limits!, pushService }
     : storeOrDeps as RequestHandlerDeps;
 
-  const { store, sessions, getBridge, broadcast } = deps;
+  const { store, sessions, getBridge, broadcast, sseManager } = deps;
 
   return async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     const url = req.url ?? "/";
@@ -157,13 +158,15 @@ export function createRequestHandler(
         store.saveEvent(perm.sessionId, "permission_response", {
           requestId, optionId, optionName, denied,
         });
-        broadcast?.({
+        const permEvent = {
           type: "permission_resolved",
           sessionId: perm.sessionId,
           requestId,
           optionName,
           denied,
-        } as AgentEvent);
+        } as AgentEvent;
+        broadcast?.(permEvent);
+        sseManager?.broadcast(permEvent);
 
         json(res, 200, { ok: true });
         return;
@@ -181,7 +184,7 @@ export function createRequestHandler(
         // Kill running bash process if any
         const proc = sessions?.runningBashProcs.get(sessionId);
         if (proc) {
-          try { proc.kill(); } catch { /* already dead */ }
+          interruptBashProc(proc);
           sessions!.runningBashProcs.delete(sessionId);
         }
         // Cancel agent prompt
@@ -233,7 +236,9 @@ export function createRequestHandler(
         // Store user_message event and update last_active_at
         store.saveEvent(sessionId, "user_message", { text: body.text, images: body.images });
         store.updateSessionLastActive(sessionId);
-        broadcast?.({ type: "user_message", sessionId, text: body.text, images: body.images } as AgentEvent);
+        const userMsgEvent = { type: "user_message", sessionId, text: body.text, images: body.images } as AgentEvent;
+        broadcast?.(userMsgEvent);
+        sseManager?.broadcast(userMsgEvent);
 
         // Fire prompt asynchronously (don't await — response is 202)
         sessions.activePrompts.add(sessionId);
@@ -257,7 +262,7 @@ export function createRequestHandler(
         const afterSeqRaw = params.get("after_seq");
         const afterSeq = afterSeqRaw != null ? Number(afterSeqRaw) : undefined;
         const events = store.getEvents(sessionId, { excludeThinking, afterSeq });
-        json(res, 200, events);
+        json(res, 200, events, req);
         return;
       }
 
@@ -279,7 +284,9 @@ export function createRequestHandler(
 
         const cwd = sessions.getSessionCwd(sessionId);
         store.saveEvent(sessionId, "bash_command", { command: body.command });
-        broadcast?.({ type: "bash_command", sessionId, command: body.command } as AgentEvent);
+        const bashCmdEvent = { type: "bash_command", sessionId, command: body.command } as AgentEvent;
+        broadcast?.(bashCmdEvent);
+        sseManager?.broadcast(bashCmdEvent);
 
         const shell = IS_WIN ? (process.env.COMSPEC || "cmd.exe") : (process.env.SHELL || "bash");
         const shellArgs = IS_WIN ? ["/s", "/c", body.command] : ["-c", body.command];
@@ -305,7 +312,9 @@ export function createRequestHandler(
           } else {
             output = (output + text).slice(-limit);
           }
-          broadcast?.({ type: "bash_output", sessionId, text, stream } as AgentEvent);
+          const bashOutEvent = { type: "bash_output", sessionId, text, stream } as AgentEvent;
+          broadcast?.(bashOutEvent);
+          sseManager?.broadcast(bashOutEvent);
         };
         child.stdout!.on("data", onData("stdout"));
         child.stderr!.on("data", onData("stderr"));
@@ -314,14 +323,18 @@ export function createRequestHandler(
           sessions!.runningBashProcs.delete(sessionId);
           const stored = outputTruncated ? "[truncated]\n" + output : output;
           store.saveEvent(sessionId, "bash_result", { output: stored, code, signal });
-          broadcast?.({ type: "bash_done", sessionId, code, signal } as AgentEvent);
+          const bashDoneEvent = { type: "bash_done", sessionId, code, signal } as AgentEvent;
+          broadcast?.(bashDoneEvent);
+          sseManager?.broadcast(bashDoneEvent);
         });
 
         child.on("error", (err) => {
           sessions!.runningBashProcs.delete(sessionId);
           const errMsg = errorMessage(err);
           store.saveEvent(sessionId, "bash_result", { output: errMsg, code: -1, signal: null });
-          broadcast?.({ type: "bash_done", sessionId, code: -1, signal: null, error: errMsg } as AgentEvent);
+          const bashErrEvent = { type: "bash_done", sessionId, code: -1, signal: null, error: errMsg } as AgentEvent;
+          broadcast?.(bashErrEvent);
+          sseManager?.broadcast(bashErrEvent);
         });
 
         json(res, 202, { status: "accepted" });
@@ -355,7 +368,8 @@ export function createRequestHandler(
             return;
           }
           // Auto-resume if not live
-          if (sessions && getBridge && !sessions.liveSessions.has(sessionId)) {
+          const wasLive = sessions?.liveSessions.has(sessionId) ?? true;
+          if (sessions && getBridge && !wasLive) {
             const bridge = getBridge();
             if (bridge) {
               try {
@@ -375,6 +389,14 @@ export function createRequestHandler(
             });
             return opts;
           })() : [];
+          // On restore (not already live), auto-retry if the last turn was interrupted
+          let busyKind = sessions?.getBusyKind(sessionId) ?? null;
+          if (!wasLive && sessions && getBridge) {
+            const bridge = getBridge();
+            if (bridge && sessions.autoRetryIfNeeded(bridge, sessionId)) {
+              busyKind = "agent";
+            }
+          }
           json(res, 200, {
             id: session.id,
             cwd: session.cwd,
@@ -383,9 +405,9 @@ export function createRequestHandler(
             model: session.model,
             mode: session.mode,
             configOptions,
-            busy: sessions?.getBusyKind(sessionId) != null,
-            busyKind: sessions?.getBusyKind(sessionId) ?? null,
-          });
+            busy: busyKind != null,
+            busyKind,
+          }, req);
           return;
         }
 
@@ -402,6 +424,7 @@ export function createRequestHandler(
             store.deleteSession(sessionId);
           }
           broadcast?.({ type: "session_deleted", sessionId } as AgentEvent);
+          sseManager?.broadcast({ type: "session_deleted", sessionId } as AgentEvent);
           res.writeHead(204);
           res.end();
           return;
@@ -438,6 +461,8 @@ export function createRequestHandler(
               store.updateSessionConfig(sessionId, opt.id, opt.currentValue);
             }
             broadcast?.({ type: "config_option_update", sessionId, configOptions } as AgentEvent);
+            sseManager?.broadcast({ type: "config_option_update", sessionId, configOptions } as AgentEvent);
+            sseManager?.broadcast({ type: "config_set", sessionId, configId, value: body[configId] } as AgentEvent);
             json(res, 200, { configOptions });
           } catch (err) {
             json(res, 500, { error: `Failed to set ${configId}: ${err instanceof Error ? err.message : String(err)}` });
@@ -468,13 +493,20 @@ export function createRequestHandler(
         try {
           const { sessionId, configOptions } = await sessions.createSession(bridge, body.cwd, body.inheritFromSessionId, source);
           const session = store.getSession(sessionId);
-          broadcast?.({
+          const sessionCreatedEvent = {
             type: "session_created",
             sessionId,
             cwd: session?.cwd,
             title: session?.title,
             configOptions,
-          } as AgentEvent);
+          } as AgentEvent;
+          broadcast?.(sessionCreatedEvent);
+          sseManager?.broadcast(sessionCreatedEvent);
+          // ACP's session_created event fires before inheritance runs, so
+          // broadcast final configOptions so SSE clients get the inherited values.
+          if (configOptions.length) {
+            sseManager?.broadcast({ type: "config_option_update", sessionId, configOptions } as AgentEvent);
+          }
           json(res, 201, {
             id: sessionId,
             cwd: session?.cwd ?? body.cwd,
@@ -508,7 +540,7 @@ export function createRequestHandler(
           return;
         }
         const events = store.getEvents(sessionId, { excludeThinking, afterSeq });
-        res.end(JSON.stringify(events));
+        json(res, 200, events, req);
         return;
       }
 

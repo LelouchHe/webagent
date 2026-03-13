@@ -5,9 +5,10 @@ import './commands.ts';  // slash menu listeners
 import './images.ts';    // attach/paste listeners
 import './input.ts';     // keyboard/send listeners
 import { connect } from './connection.ts';
-import { state, setHashSessionId, resetSessionUI, updateSessionInfo } from './state.ts';
-import { loadHistory } from './events.ts';
+import { state, resetSessionUI } from './state.ts';
+import { loadHistory, handleEvent } from './events.ts';
 import { addSystem, scrollToBottom } from './render.ts';
+import * as api from './api.ts';
 
 connect();
 
@@ -20,15 +21,22 @@ if ('serviceWorker' in navigator) {
       const targetId = e.data.sessionId;
       if (state.sessionId === targetId) return; // already there
       resetSessionUI();
-      state.sessionId = targetId;
-      state.sessionTitle = null;
-      setHashSessionId(targetId);
-      updateSessionInfo(targetId, null);
+      state.sessionId = null;
       addSystem('Switching…');
-      loadHistory(targetId).then(loaded => { if (loaded) scrollToBottom(true); });
-      if (state.ws && state.ws.readyState === 1) {
-        state.ws.send(JSON.stringify({ type: 'resume_session', sessionId: targetId }));
-      }
+      Promise.all([
+        api.getSession(targetId) as Promise<Record<string, unknown>>,
+        loadHistory(targetId),
+      ]).then(([session, loaded]) => {
+        handleEvent({
+          type: 'session_created',
+          sessionId: session.id as string,
+          cwd: session.cwd as string,
+          title: session.title as string | null,
+          configOptions: session.configOptions,
+          busyKind: session.busyKind,
+        });
+        if (loaded) scrollToBottom(true);
+      }).catch(() => {});
     }
   });
 }

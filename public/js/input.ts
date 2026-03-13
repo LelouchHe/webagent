@@ -2,14 +2,15 @@
 
 import {
   state, dom, setBusy, sendCancel,
-  getConfigOption, getConfigValue, updateNewBtnVisibility,
+  getConfigOption, getConfigValue, updateNewBtnVisibility, updateModeUI,
 } from './state.ts';
 import { addMessage, addSystem, addBashBlock, showWaiting } from './render.ts';
 import { handleSlashCommand, hideSlashMenu, handleSlashMenuKey, updateSlashMenu } from './commands.ts';
 import { renderAttachPreview } from './images.ts';
+import * as api from './api.ts';
 
-function wsReady(): boolean {
-  return state.ws !== null && state.ws.readyState === 1;
+function isConnected(): boolean {
+  return state.clientId !== null;
 }
 
 // Wire up cancel-timeout feedback (state.js cannot import render.js directly)
@@ -36,7 +37,7 @@ function sendMessage() {
       addSystem('warn: Session not ready yet, please wait…');
       return;
     }
-    if (!wsReady()) {
+    if (!isConnected()) {
       addSystem('warn: Not connected, please retry');
       return;
     }
@@ -45,7 +46,7 @@ function sendMessage() {
     dom.inputArea.classList.remove('bash-mode');
     updateNewBtnVisibility();
     addBashBlock(command, true);
-    state.ws!.send(JSON.stringify({ type: 'bash_exec', sessionId: state.sessionId, command }));
+    api.execBash(state.sessionId!, command).catch(() => {});
     setBusy(true);
     return;
   }
@@ -63,7 +64,7 @@ function sendMessage() {
     return;
   }
 
-  if (!wsReady()) {
+  if (!isConnected()) {
     addSystem('warn: Not connected, please retry');
     return;
   }
@@ -77,7 +78,7 @@ function sendMessage() {
     msgEl.appendChild(imgEl);
   }
 
-  // Upload images to server, then send prompt
+  // Upload images to server, then send prompt via REST
   const images = state.pendingImages.slice();
   state.pendingImages.length = 0;
   renderAttachPreview();
@@ -90,18 +91,19 @@ function sendMessage() {
         body: JSON.stringify({ data: img.data, mimeType: img.mimeType }),
       }).then(r => r.json()).then(j => ({ data: img.data, mimeType: img.mimeType, path: j.path }))
     )).then(uploaded => {
-      if (!wsReady()) {
+      if (!isConnected()) {
         msgEl.remove();
         addSystem('warn: Not connected, please retry');
         setBusy(false);
         return;
       }
-      state.ws!.send(JSON.stringify({ type: 'prompt', sessionId: state.sessionId, text: text || 'What is in this image?', images: uploaded }));
+      api.sendMessage(state.sessionId!, text || 'What is in this image?', uploaded.map(u => ({ data: u.data, mimeType: u.mimeType, path: u.path }))).catch(() => {});
     });
   } else {
-    state.ws!.send(JSON.stringify({ type: 'prompt', sessionId: state.sessionId, text }));
+    api.sendMessage(state.sessionId!, text).catch(() => {});
   }
   state.turnEnded = false;
+  state.sentMessageForSession = state.sessionId;
   setBusy(true);
   showWaiting();
 }
@@ -180,8 +182,10 @@ function cycleMode() {
   if (!opt || !opt.options.length) return;
   const idx = opt.options.findIndex(o => o.value === opt.currentValue);
   const next = opt.options[(idx + 1) % opt.options.length];
-  state.ws!.send(JSON.stringify({ type: 'set_config_option', sessionId: state.sessionId, configId: 'mode', value: next.value }));
+  opt.currentValue = next.value;
+  api.setConfig(state.sessionId!, 'mode', next.value).catch(() => {});
   addSystem(`Mode → ${next.name}`);
+  updateModeUI();
 }
 
 // Global Ctrl+M to cycle mode

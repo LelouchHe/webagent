@@ -351,4 +351,77 @@ describe("Session REST API", () => {
       assert.equal(JSON.parse(res.body).length, 2);
     });
   });
+
+  describe("gzip compression", () => {
+    function makeRawRequest(
+      port: number,
+      method: string,
+      path: string,
+      extraHeaders?: Record<string, string>,
+    ): Promise<{ status: number; headers: http.IncomingHttpHeaders; rawBody: Buffer }> {
+      return new Promise((resolve, reject) => {
+        const req = http.request(
+          { hostname: "127.0.0.1", port, path, method, headers: { "Content-Type": "application/json", ...extraHeaders } },
+          (res) => {
+            const chunks: Buffer[] = [];
+            res.on("data", (chunk: Buffer) => chunks.push(chunk));
+            res.on("end", () => resolve({ status: res.statusCode!, headers: res.headers, rawBody: Buffer.concat(chunks) }));
+          },
+        );
+        req.on("error", reject);
+        req.end();
+      });
+    }
+
+    it("returns gzip-compressed events when Accept-Encoding includes gzip", async () => {
+      // Create session and add enough events to exceed 1KB threshold
+      const createRes = await makeRequest(port, "POST", "/api/sessions", "{}");
+      const sessionId = JSON.parse(createRes.body).id;
+      const longText = "A".repeat(2000);
+      store.saveEvent(sessionId, "assistant_message", { text: longText });
+
+      const res = await makeRawRequest(port, "GET", `/api/sessions/${sessionId}/events`, {
+        "Accept-Encoding": "gzip",
+      });
+
+      assert.equal(res.status, 200);
+      assert.equal(res.headers["content-encoding"], "gzip");
+      // Gzipped body should be smaller than uncompressed
+      const uncompressed = await makeRawRequest(port, "GET", `/api/sessions/${sessionId}/events`);
+      assert.ok(res.rawBody.length < uncompressed.rawBody.length, "gzipped response should be smaller");
+
+      // Verify it decompresses to valid JSON
+      const { gunzipSync } = await import("node:zlib");
+      const decompressed = gunzipSync(res.rawBody);
+      const events = JSON.parse(decompressed.toString());
+      assert.ok(Array.isArray(events));
+      assert.ok(events.length >= 1);
+    });
+
+    it("returns uncompressed when Accept-Encoding is absent", async () => {
+      const createRes = await makeRequest(port, "POST", "/api/sessions", "{}");
+      const sessionId = JSON.parse(createRes.body).id;
+      store.saveEvent(sessionId, "assistant_message", { text: "B".repeat(2000) });
+
+      const res = await makeRawRequest(port, "GET", `/api/sessions/${sessionId}/events`);
+
+      assert.equal(res.status, 200);
+      assert.equal(res.headers["content-encoding"], undefined);
+      const events = JSON.parse(res.rawBody.toString());
+      assert.ok(Array.isArray(events));
+    });
+
+    it("skips gzip for small responses under 1KB", async () => {
+      const createRes = await makeRequest(port, "POST", "/api/sessions", "{}");
+      const sessionId = JSON.parse(createRes.body).id;
+      store.saveEvent(sessionId, "assistant_message", { text: "tiny" });
+
+      const res = await makeRawRequest(port, "GET", `/api/sessions/${sessionId}/events`, {
+        "Accept-Encoding": "gzip",
+      });
+
+      assert.equal(res.status, 200);
+      assert.equal(res.headers["content-encoding"], undefined, "should not gzip small payloads");
+    });
+  });
 });

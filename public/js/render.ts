@@ -63,6 +63,11 @@ function shouldFollowNewContent(): boolean {
 }
 
 export function appendMessageElement(el: HTMLElement, force = false): HTMLElement {
+  // During replay, append to the offscreen fragment to avoid per-element reflow
+  if (state.replayTarget) {
+    state.replayTarget.appendChild(el);
+    return el;
+  }
   const shouldFollow = force || shouldFollowNewContent();
   dom.messages.appendChild(el);
   scrollToBottom(shouldFollow);
