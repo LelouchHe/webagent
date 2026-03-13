@@ -41,6 +41,10 @@ export const state = {
   eventSource: null as EventSource | null,
   clientId: null as string | null,
   sessionId: null as string | null,
+  // Monotonic counter incremented by user-initiated session switches (notification
+  // click, /switch). initSession() captures the value before async work and bails
+  // out if it changed, preventing stale reconnects from overriding deliberate switches.
+  sessionSwitchGen: 0,
   sessionCwd: null as string | null,
   sessionTitle: null as string | null,
   awaitingNewSession: false,

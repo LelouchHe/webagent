@@ -302,6 +302,36 @@ describe("connection", () => {
     assert.equal(state.lastEventSeq, 4);
   });
 
+  it("aborts session resume when sessionSwitchGen changes mid-flight", async () => {
+    history.replaceState(null, "", "/#session-a");
+
+    let resolveSessionA!: () => void;
+    const sessionADeferred = new Promise<void>(r => { resolveSessionA = r; });
+
+    setFetch(async (url: string) => {
+      if (url.includes("/visibility")) return mockResponse({});
+      if (url === "/api/sessions/session-a") {
+        await sessionADeferred;
+        return mockResponse(sessionResponse("session-a"));
+      }
+      if (url === "/api/sessions/session-a/events") return mockResponse([]);
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+
+    connection.connect();
+    await flush(5);
+
+    // Simulate a user-initiated session switch (notification click, /switch)
+    state.sessionSwitchGen++;
+
+    // Let the stale session-a fetch resolve
+    resolveSessionA();
+    await flush();
+
+    // The stale initSession should have aborted — session-a NOT activated
+    assert.notEqual(state.sessionId, "session-a");
+  });
+
   it("skips DOM changes when no new events on incremental reconnect", async () => {
     history.replaceState(null, "", "/#idle-session");
     state.sessionId = "idle-session";

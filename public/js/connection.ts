@@ -53,12 +53,14 @@ export function connect() {
 
 async function initSession() {
   setConnectionStatus('connecting', 'session loading');
+  const gen = state.sessionSwitchGen;
 
   const existingId = getHashSessionId();
 
   // Incremental reconnect: same session still in memory — skip DOM wipe
   if (existingId && existingId === state.sessionId && state.lastEventSeq > 0) {
-    await resumeAndLoad(existingId, true);
+    await resumeAndLoad(existingId, true, gen);
+    if (gen !== state.sessionSwitchGen) return;
     retryUnconfirmedPermissions();
     scrollToBottom(false);
     return;
@@ -67,7 +69,8 @@ async function initSession() {
   // Full load: different session in hash, or first connect to a hash
   if (existingId) {
     resetSessionUI();
-    await resumeAndLoad(existingId, false);
+    await resumeAndLoad(existingId, false, gen);
+    if (gen !== state.sessionSwitchGen) return;
     scrollToBottom(true);
     return;
   }
@@ -75,23 +78,27 @@ async function initSession() {
   // No session in URL — try to resume last active session
   try {
     const sessions = await api.listSessions() as Array<{ id: string }>;
+    if (gen !== state.sessionSwitchGen) return;
     if (sessions.length > 0) {
       resetSessionUI();
-      await resumeAndLoad(sessions[0].id, false);
+      await resumeAndLoad(sessions[0].id, false, gen);
+      if (gen !== state.sessionSwitchGen) return;
       scrollToBottom(true);
       return;
     }
   } catch {}
 
+  if (gen !== state.sessionSwitchGen) return;
   // No previous sessions — create new
   requestNewSession();
 }
 
-async function resumeAndLoad(sessionId: string, incremental: boolean) {
+async function resumeAndLoad(sessionId: string, incremental: boolean, gen: number) {
   if (incremental) {
     // Incremental: need session details first (for config), then catch-up events
     try {
       const session = await api.getSession(sessionId) as Record<string, unknown>;
+      if (gen !== state.sessionSwitchGen) return;
       handleEvent({
         type: 'session_created',
         sessionId: session.id as string,
@@ -101,11 +108,13 @@ async function resumeAndLoad(sessionId: string, incremental: boolean) {
         busyKind: session.busyKind,
       });
     } catch {
+      if (gen !== state.sessionSwitchGen) return;
       resetSessionUI();
       addSystem('warn: Previous session expired, created new one.');
       requestNewSession();
       return;
     }
+    if (gen !== state.sessionSwitchGen) return;
     await loadNewEvents(sessionId);
   } else {
     // Full load: fetch session details and history in parallel
@@ -117,11 +126,13 @@ async function resumeAndLoad(sessionId: string, incremental: boolean) {
         api.getSession(sessionId) as Promise<Record<string, unknown>>,
         historyPromise,
       ]);
+      if (gen !== state.sessionSwitchGen) return;
       session = s;
       if (!loaded) {
         addSystem('warn: Failed to load history.');
       }
     } catch {
+      if (gen !== state.sessionSwitchGen) return;
       resetSessionUI();
       addSystem('warn: Previous session expired, created new one.');
       requestNewSession();

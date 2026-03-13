@@ -20,6 +20,8 @@ if ('serviceWorker' in navigator) {
     if (e.data?.type === 'navigate' && e.data.sessionId) {
       const targetId = e.data.sessionId;
       if (state.sessionId === targetId) return; // already there
+      state.sessionSwitchGen++;
+      const gen = state.sessionSwitchGen;
       // Set hash immediately so any concurrent initSession (from SSE reconnect
       // or visibilitychange) picks up the correct target session
       history.replaceState(null, '', `#${targetId}`);
@@ -30,6 +32,7 @@ if ('serviceWorker' in navigator) {
         api.getSession(targetId) as Promise<Record<string, unknown>>,
         loadHistory(targetId),
       ]).then(([session, loaded]) => {
+        if (gen !== state.sessionSwitchGen) return;
         handleEvent({
           type: 'session_created',
           sessionId: session.id as string,

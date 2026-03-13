@@ -156,12 +156,15 @@ export async function handleSlashCommand(text: string): Promise<boolean> {
           addSystem(`err: No session matching "${arg}"`);
           return true;
         }
+        state.sessionSwitchGen++;
+        const gen = state.sessionSwitchGen;
         resetSessionUI();
         state.sessionId = null;
         const [session] = await Promise.all([
           api.getSession(match.id) as Promise<Record<string, unknown>>,
           loadHistory(match.id),
         ]);
+        if (gen !== state.sessionSwitchGen) return true;
         handleEvent({
           type: 'session_created',
           sessionId: session.id as string,

@@ -40,6 +40,7 @@ export function resetState(state: any, dom: any) {
   state.eventSource = null;
   state.clientId = null;
   state.sessionId = null;
+  state.sessionSwitchGen = 0;
   state.sessionCwd = null;
   state.sessionTitle = null;
   state.awaitingNewSession = false;
