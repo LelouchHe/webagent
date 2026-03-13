@@ -3,10 +3,11 @@
 import {
   state, dom, setBusy, resetSessionUI, requestNewSession, sendCancel,
   getConfigOption, getConfigValue, setHashSessionId, updateSessionInfo,
-  updateNewBtnVisibility,
+  updateNewBtnVisibility, updateModeUI, updateStatusBar,
 } from './state.ts';
 import { addSystem, addMessage, scrollToBottom, escHtml, formatLocalTime } from './render.ts';
 import { loadHistory } from './events.ts';
+import * as api from './api.ts';
 import type { SessionSummary } from '../../src/types.ts';
 
 // --- Push notification helpers ---
@@ -109,7 +110,7 @@ export async function handleSlashCommand(text: string): Promise<boolean> {
           addSystem(`err: No session matching "${arg}"`);
           return true;
         }
-        state.ws!.send(JSON.stringify({ type: 'delete_session', sessionId: match.id }));
+        api.deleteSession(match.id).catch(() => {});
         cachedSessions = null;
         addSystem(`Deleted: ${match.title || match.id.slice(0, 8) + '…'}`);
       } catch {
@@ -128,7 +129,7 @@ export async function handleSlashCommand(text: string): Promise<boolean> {
           return true;
         }
         for (const s of toDelete) {
-          state.ws!.send(JSON.stringify({ type: 'delete_session', sessionId: s.id }));
+          api.deleteSession(s.id).catch(() => {});
         }
         cachedSessions = null;
         addSystem(`Pruned ${toDelete.length} session(s).`);
@@ -162,7 +163,7 @@ export async function handleSlashCommand(text: string): Promise<boolean> {
         updateSessionInfo(match.id, match.title);
         await loadHistory(match.id);
         scrollToBottom(true);
-        state.ws!.send(JSON.stringify({ type: 'resume_session', sessionId: match.id }));
+        api.getSession(match.id).catch(() => {});
       } catch {
         addSystem('err: Failed to switch session');
       }
@@ -228,8 +229,11 @@ export async function handleSlashCommand(text: string): Promise<boolean> {
         addSystem(`err: Unknown "${arg}". Type ${cmd} + space to see options.`);
         return true;
       }
-      state.ws!.send(JSON.stringify({ type: 'set_config_option', sessionId: state.sessionId, configId, value: match.value }));
+      opt.currentValue = match.value;
+      updateModeUI();
+      updateStatusBar();
       addSystem(`${opt.name} → ${match.name}`);
+      await api.setConfig(state.sessionId!, configId, match.value).catch(() => {});
       return true;
     }
 
@@ -569,7 +573,7 @@ function tabCompleteSlashItem(idx: number) {
 }
 
 // Click: fill input AND execute (equivalent to tab + enter)
-function selectSlashItem(idx: number) {
+async function selectSlashItem(idx: number) {
   if (idx < 0 || idx >= slashFiltered.length) return;
 
   if (slashMode === 'new') {
@@ -585,8 +589,11 @@ function selectSlashItem(idx: number) {
     const opt = getConfigOption(configId);
     dom.input.value = '';
     hideSlashMenu();
-    state.ws!.send(JSON.stringify({ type: 'set_config_option', sessionId: state.sessionId, configId, value: o.value }));
+    if (opt) opt.currentValue = o.value;
+    updateModeUI();
+    updateStatusBar();
     addSystem(`${opt?.name || configId} → ${o.name}`);
+    await api.setConfig(state.sessionId!, configId, o.value).catch(() => {});
   } else if (slashMode === 'switch') {
     const s = slashFiltered[idx];
     dom.input.value = '';
@@ -598,12 +605,12 @@ function selectSlashItem(idx: number) {
     updateSessionInfo(s.id, s.title);
     addSystem('Switching…');
     loadHistory(s.id).then(loaded => { if (loaded) scrollToBottom(true); });
-    state.ws!.send(JSON.stringify({ type: 'resume_session', sessionId: s.id }));
+    api.getSession(s.id).catch(() => {});
   } else if (slashMode === 'delete') {
     const s = slashFiltered[idx];
     dom.input.value = '';
     hideSlashMenu();
-    state.ws!.send(JSON.stringify({ type: 'delete_session', sessionId: s.id }));
+    api.deleteSession(s.id).catch(() => {});
     addSystem(`Deleted: ${s.title || s.id.slice(0, 8) + '…'}`);
   } else if (slashMode === 'notify') {
     const o = slashFiltered[idx];

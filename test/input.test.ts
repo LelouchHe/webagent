@@ -253,8 +253,7 @@ describe("input", () => {
     const call = fetchCalls.find(c => c.url.includes("/api/sessions/s1") && c.init?.method === "PATCH");
     assert.ok(call, "expected a PATCH config call");
     const body = JSON.parse(call!.init?.body);
-    assert.equal(body.configId, "mode");
-    assert.equal(body.value, "chat#plan");
+    assert.equal(body.mode, "chat#plan");
     assert.ok(dom.messages.textContent.includes("Mode → Plan"));
   });
 

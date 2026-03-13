@@ -80,7 +80,7 @@ export function setConfig(sessionId: string, configId: string, value: string): P
   return request("/api/sessions/" + sessionId, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ configId, value }),
+    body: JSON.stringify({ [configId]: value }),
   });
 }
 

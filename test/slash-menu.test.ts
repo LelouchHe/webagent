@@ -1,11 +1,12 @@
 import { describe, it, before, after, beforeEach } from "node:test";
 import assert from "node:assert/strict";
-import { setupDOM, teardownDOM, resetState, createMockWS } from "./frontend-setup.ts";
+import { setupDOM, teardownDOM, resetState } from "./frontend-setup.ts";
 
 describe("slash menu — Tab vs Click behavior", () => {
   let state: any;
   let dom: any;
   let commands: any;
+  let fetchCalls: Array<{ url: string; init?: any }>;
 
   before(async () => {
     setupDOM();
@@ -22,8 +23,12 @@ describe("slash menu — Tab vs Click behavior", () => {
   beforeEach(() => {
     resetState(state, dom);
     (globalThis as any).Notification = { permission: "default", requestPermission: async () => "default" };
-    globalThis.fetch = (() => Promise.resolve({ ok: true, json: () => Promise.resolve({ publicKey: "test-key" }) })) as any;
-    state.ws = createMockWS();
+    fetchCalls = [];
+    globalThis.fetch = ((url: string, init?: any) => {
+      fetchCalls.push({ url, init });
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({ publicKey: "test-key" }) });
+    }) as any;
+    state.clientId = "cl-1";
     state.sessionId = "s1";
   });
 
@@ -83,10 +88,9 @@ describe("slash menu — Tab vs Click behavior", () => {
       dom.input.value.startsWith("/model "),
       `input should have /model <name>, got: "${dom.input.value}"`,
     );
-    // No WS message sent (no execution)
-    const ws = state.ws;
-    const configMsgs = ws.sent.filter((s: string) => JSON.parse(s).type === "set_config_option");
-    assert.equal(configMsgs.length, 0, "Tab should not send config change");
+    // No REST PATCH sent (no execution)
+    const patchCall = fetchCalls.find(c => c.init?.method === "PATCH");
+    assert.equal(patchCall, undefined, "Tab should not send config change");
   });
 
   it("Tab on config submenu uses option name not value", () => {
@@ -141,9 +145,10 @@ describe("slash menu — Tab vs Click behavior", () => {
     const mouseEvent = new (globalThis.window as any).MouseEvent("mousedown", { bubbles: true });
     item.dispatchEvent(mouseEvent);
 
-    // Should have sent a config change
-    const ws = state.ws;
-    const configMsgs = ws.sent.filter((s: string) => JSON.parse(s).type === "set_config_option");
-    assert.equal(configMsgs.length, 1, "click should execute config change");
+    // Should have sent a config change via REST PATCH
+    const patchCall = fetchCalls.find(c => c.url === "/api/sessions/s1" && c.init?.method === "PATCH");
+    assert.ok(patchCall, "click should execute config change via REST");
+    const body = JSON.parse(patchCall!.init.body);
+    assert.equal(body.model, "opus");
   });
 });

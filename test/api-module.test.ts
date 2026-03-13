@@ -115,8 +115,7 @@ describe("api module", () => {
     assert.equal(fetchCalls[0].url, "/api/sessions/s1");
     assert.equal(fetchCalls[0].init?.method, "PATCH");
     const body = JSON.parse(fetchCalls[0].init?.body as string);
-    assert.equal(body.configId, "model");
-    assert.equal(body.value, "gpt-4");
+    assert.equal(body.model, "gpt-4");
   });
 
   // --- Bash ---
