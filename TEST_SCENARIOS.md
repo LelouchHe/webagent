@@ -112,7 +112,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - history replay for all major stored event types
 
 - `test/commands.test.ts`
-  - `/new`, `/pwd`, `/switch`, `/delete`, `/prune`, `/cancel`
+  - `/new`, `/pwd`, `/switch`, `/exit`, `/prune`, `/cancel`
   - `/model`, `/mode`, `/think` query / fuzzy match / ambiguity handling
   - help output and shortcut listing
 
@@ -203,7 +203,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - deleting the current session disables peer clients correctly
 
 - `session-delete-command.spec.ts`
-  - `/delete` removes the targeted session
+  - `/exit` deletes current session and switches to previous
 
 - `session-prune-command.spec.ts`
   - `/prune` removes all non-current sessions

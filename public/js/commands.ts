@@ -93,31 +93,52 @@ export async function handleSlashCommand(text: string): Promise<boolean> {
       addSystem('Removed. Use /switch to see all sessions.');
       return true;
 
-    case '/delete': {
-      if (!arg) {
-        addSystem('Usage: /delete <title or id prefix>');
+    case '/exit': {
+      if (!state.sessionId) {
+        addSystem('warn: No active session');
         return true;
       }
+      const exitId = state.sessionId;
       try {
-        const res = await fetch('/api/sessions');
-        const sessions = await res.json();
-        const query = arg.toLowerCase();
-        const match = sessions.find(s =>
-          s.id !== state.sessionId &&
-          (s.id.startsWith(arg) || (s.title && s.title.toLowerCase().includes(query)))
-        );
-        if (!match) {
-          addSystem(`err: No session matching "${arg}"`);
-          return true;
-        }
-        api.deleteSession(match.id).catch(() => {});
+        const sessions = await api.listSessions() as SessionSummary[];
+        const next = sessions.find(s => s.id !== exitId);
+        if (state.busy) sendCancel();
+        api.deleteSession(exitId).catch(() => {});
         cachedSessions = null;
-        addSystem(`Deleted: ${match.title || match.id.slice(0, 8) + '…'}`);
+        if (next) {
+          state.sessionSwitchGen++;
+          const gen = state.sessionSwitchGen;
+          resetSessionUI();
+          state.sessionId = null;
+          const [session] = await Promise.all([
+            api.getSession(next.id) as Promise<Record<string, unknown>>,
+            loadHistory(next.id),
+          ]);
+          if (gen !== state.sessionSwitchGen) return true;
+          handleEvent({
+            type: 'session_created',
+            sessionId: session.id as string,
+            cwd: session.cwd as string,
+            title: session.title as string | null,
+            configOptions: session.configOptions,
+            busyKind: session.busyKind,
+          });
+          scrollToBottom(true);
+        } else {
+          resetSessionUI();
+          state.sessionId = null;
+          addSystem('Creating new session…');
+          requestNewSession({ inheritFromSessionId: null });
+        }
       } catch {
-        addSystem('err: Failed to delete session');
+        addSystem('err: Failed to exit session');
       }
       return true;
     }
+
+    case '/delete':
+      addSystem('Removed. Use /exit to close current session, /prune to delete all others.');
+      return true;
 
     case '/prune': {
       try {
@@ -309,7 +330,7 @@ type SlashItem = SlashCommand | SessionSummary | PathItem | NotifyOption | { val
 
 const SLASH_COMMANDS: SlashCommand[] = [
   { cmd: '/cancel',   args: '',            desc: 'Cancel current response' },
-  { cmd: '/delete',   args: '<title|id>',  desc: 'Delete a session' },
+  { cmd: '/exit',     args: '',            desc: 'Close current session' },
   { cmd: '/mode',     args: '[name]',      desc: 'Pick or switch mode' },
   { cmd: '/model',    args: '[name]',      desc: 'Pick or switch model' },
   { cmd: '/new',      args: '[cwd]',       desc: 'New session' },
@@ -352,11 +373,11 @@ export function updateSlashMenu() {
     return;
   }
 
-  // /switch or /delete — show session picker
-  const switchMatch = text.match(/^\/(switch|delete) /);
+  // /switch — show session picker
+  const switchMatch = text.match(/^\/switch /);
   if (switchMatch) {
     const query = text.slice(switchMatch[0].length).toLowerCase();
-    fetchSessionsForMenu(query, switchMatch[1]);
+    fetchSessionsForMenu(query, 'switch');
     return;
   }
 
@@ -515,7 +536,7 @@ function renderSlashMenu() {
       const style = isCurrent ? ' style="color:var(--green)"' : '';
       return `<div class="slash-item${i === slashIdx ? ' selected' : ''}" data-idx="${i}"><span class="slash-cmd"${style}>${escHtml(prefix + o.name)}</span><span class="slash-desc">${escHtml(o.desc)}</span></div>`;
     }).join('');
-  } else if (slashMode === 'switch' || slashMode === 'delete') {
+  } else if (slashMode === 'switch') {
     dom.slashMenu.innerHTML = slashFiltered.map((s, i) => {
       const isCurrent = s.id === state.sessionId;
       const prefix = isCurrent ? '* ' : '  ';
@@ -551,7 +572,7 @@ function tabCompleteSlashItem(idx: number) {
     dom.input.value = item.cmd + (item.args ? ' ' : '');
     hideSlashMenu();
     dom.input.focus();
-    if (['/new', '/switch', '/delete', '/model', '/mode', '/think', '/notify'].includes(item.cmd)) {
+    if (['/new', '/switch', '/model', '/mode', '/think', '/notify'].includes(item.cmd)) {
       slashDismissed = null;
       updateSlashMenu();
     }
@@ -574,11 +595,6 @@ function tabCompleteSlashItem(idx: number) {
   } else if (slashMode === 'switch') {
     const s = slashFiltered[idx];
     dom.input.value = `/switch ${s.title || s.id}`;
-    hideSlashMenu();
-    dom.input.focus();
-  } else if (slashMode === 'delete') {
-    const s = slashFiltered[idx];
-    dom.input.value = `/delete ${s.title || s.id}`;
     hideSlashMenu();
     dom.input.focus();
   }
@@ -632,12 +648,6 @@ async function selectSlashItem(idx: number) {
       state.sessionId = null;
       addSystem('err: Failed to switch session');
     });
-  } else if (slashMode === 'delete') {
-    const s = slashFiltered[idx];
-    dom.input.value = '';
-    hideSlashMenu();
-    api.deleteSession(s.id).catch(() => {});
-    addSystem(`Deleted: ${s.title || s.id.slice(0, 8) + '…'}`);
   } else if (slashMode === 'notify') {
     const o = slashFiltered[idx];
     dom.input.value = `/notify ${o.value}`;
@@ -650,7 +660,7 @@ async function selectSlashItem(idx: number) {
     dom.input.value = item.cmd + (item.args ? ' ' : '');
     hideSlashMenu();
     dom.input.focus();
-    if (['/new', '/switch', '/delete', '/model', '/mode', '/think', '/notify'].includes(item.cmd)) {
+    if (['/new', '/switch', '/model', '/mode', '/think', '/notify'].includes(item.cmd)) {
       slashDismissed = null;
       updateSlashMenu();
     }

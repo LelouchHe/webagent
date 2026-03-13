@@ -189,7 +189,7 @@ Type `/` to trigger an autocomplete menu with arrow keys to navigate, Esc to clo
 | `Enter` | Send current input | Send current input |
 | Click/Tap | Fill and send (Tab + Enter) | — |
 
-Commands with submenus (`/model`, `/mode`, `/think`, `/notify`, `/switch`, `/delete`, `/new`) show a picker after typing the command and a space. Tab completes the selection into the input so you can review or edit before pressing Enter to send.
+Commands with submenus (`/model`, `/mode`, `/think`, `/notify`, `/switch`, `/new`) show a picker after typing the command and a space. Tab completes the selection into the input so you can review or edit before pressing Enter to send.
 
 | Command | Description |
 |---|---|
@@ -201,7 +201,7 @@ Commands with submenus (`/model`, `/mode`, `/think`, `/notify`, `/switch`, `/del
 | `/notify [on\|off]` | Toggle push notifications for background alerts |
 | `/cancel` | Cancel current response |
 | `/switch <title\|id>` | Switch to a session (match by title or ID prefix) |
-| `/delete <title\|id>` | Delete a session |
+| `/exit` | Close current session (delete + switch to previous) |
 | `/prune` | Delete all sessions except current |
 
 Type `?` for inline help listing all commands and shortcuts.

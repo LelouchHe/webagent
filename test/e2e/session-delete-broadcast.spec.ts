@@ -1,19 +1,22 @@
 import { test, expect } from "playwright/test";
 import { createNewSession, currentSessionId, gotoConnected, sendPrompt } from "./helpers.ts";
 
-test("deleting a session disables input in other tabs viewing it", async ({ browser }) => {
+test("/exit broadcasts session_deleted to other tabs viewing the same session", async ({ browser }) => {
   const pageA = await browser.newPage();
   const pageB = await browser.newPage();
 
   await gotoConnected(pageA);
-  const deletedSessionId = await createNewSession(pageA);
+  // Create a session that pageB will watch
+  const watchedSessionId = await createNewSession(pageA);
 
-  await gotoConnected(pageB, `/#${deletedSessionId}`);
-  await expect.poll(() => currentSessionId(pageB)).toBe(deletedSessionId);
+  // pageB opens the same session
+  await gotoConnected(pageB, `/#${watchedSessionId}`);
+  await expect.poll(() => currentSessionId(pageB)).toBe(watchedSessionId);
 
-  await createNewSession(pageA);
-  await sendPrompt(pageA, `/delete ${deletedSessionId.slice(0, 8)}`);
+  // pageA exits (deletes) the watched session
+  await sendPrompt(pageA, "/exit");
 
+  // pageB should see the deleted warning
   await expect(pageB.locator("#messages")).toContainText("warn: This session has been deleted.");
   await expect(pageB.locator("#input")).toBeDisabled();
   await expect(pageB.locator("#send-btn")).toBeDisabled();

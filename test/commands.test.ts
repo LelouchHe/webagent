@@ -83,28 +83,57 @@ describe("commands", () => {
       assert.ok(lines.includes("? — Show help"));
     });
 
-    it("deletes a matching non-current session", async () => {
+    it("exits current session — deletes it and switches to MRU", async () => {
       state.clientId = "cl-1";
       state.sessionId = "current";
+      const configOptions = [{ type: "select", id: "model", name: "Model", currentValue: "gpt-4", options: [] }];
+      const sessionList = [
+        { id: "current", title: "Current Session" },
+        { id: "mru-456", title: "MRU Session" },
+      ];
+      const mruDetail = { id: "mru-456", cwd: "/home", title: "MRU Session", configOptions, busyKind: null };
       setFetch(async (url: string, init?: any) => {
-        if (url === "/api/sessions" && (!init || init.method !== "DELETE")) {
-          return {
-            json: async () => [
-              { id: "current", title: "Current Session" },
-              { id: "other-123", title: "Other Session" },
-            ],
-          };
-        }
-        // DELETE /api/sessions/other-123
-        return { ok: true, json: async () => ({}) };
+        const body = (data: any) => {
+          const json = JSON.stringify(data);
+          return { ok: true, status: 200, json: async () => data, text: async () => json };
+        };
+        if (url === "/api/sessions" && (!init?.method || init.method === "GET")) return body(sessionList);
+        if (url === "/api/sessions/current" && init?.method === "DELETE") return body({});
+        if (url === "/api/sessions/mru-456") return body(mruDetail);
+        if (url.includes("/api/sessions/mru-456/events")) return body([]);
+        return body({});
       });
 
-      const handled = await commands.handleSlashCommand("/delete other");
+      const handled = await commands.handleSlashCommand("/exit");
 
       assert.equal(handled, true);
-      const deleteCall = fetchCalls.find(c => c.url === "/api/sessions/other-123" && c.init?.method === "DELETE");
-      assert.ok(deleteCall, "expected a DELETE call for other-123");
-      assert.ok(messageLines().includes("Deleted: Other Session"));
+      const deleteCall = fetchCalls.find(c => c.url === "/api/sessions/current" && c.init?.method === "DELETE");
+      assert.ok(deleteCall, "expected DELETE for current session");
+      assert.equal(state.sessionId, "mru-456");
+    });
+
+    it("exits last session — deletes it and creates a new one", async () => {
+      state.clientId = "cl-1";
+      state.sessionId = "only-one";
+      setFetch(async (url: string, init?: any) => {
+        const body = (data: any) => {
+          const json = JSON.stringify(data);
+          return { ok: true, status: 200, json: async () => data, text: async () => json };
+        };
+        if (url === "/api/sessions" && (!init?.method || init.method === "GET")) {
+          return body([{ id: "only-one", title: "Only Session" }]);
+        }
+        if (url === "/api/sessions/only-one" && init?.method === "DELETE") return body({});
+        if (url === "/api/sessions" && init?.method === "POST") return body({ id: "new-1" });
+        return body({});
+      });
+
+      const handled = await commands.handleSlashCommand("/exit");
+
+      assert.equal(handled, true);
+      const deleteCall = fetchCalls.find(c => c.url === "/api/sessions/only-one" && c.init?.method === "DELETE");
+      assert.ok(deleteCall, "expected DELETE for the only session");
+      assert.equal(state.awaitingNewSession, true);
     });
 
     it("prunes every session except the current one", async () => {
