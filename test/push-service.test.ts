@@ -219,30 +219,57 @@ describe("PushService", () => {
 
       assert.equal(svc.hasVisibleClient(), false);
     });
+
+    it("removeClient also clears endpoint mapping", () => {
+      const svc = new PushService(store, tmpDir, "mailto:test@localhost");
+      svc.registerClient("ws-1", "https://push.example.com/1");
+      svc.setClientVisibility("ws-1", true);
+      assert.equal(svc.isEndpointVisible("https://push.example.com/1"), true);
+
+      svc.removeClient("ws-1");
+      assert.equal(svc.isEndpointVisible("https://push.example.com/1"), false);
+    });
+  });
+
+  describe("per-subscription visibility", () => {
+    it("endpoint is not visible when no client is registered", () => {
+      const svc = new PushService(store, tmpDir, "mailto:test@localhost");
+      assert.equal(svc.isEndpointVisible("https://push.example.com/1"), false);
+    });
+
+    it("endpoint is visible when a registered client is visible", () => {
+      const svc = new PushService(store, tmpDir, "mailto:test@localhost");
+      svc.registerClient("ws-1", "https://push.example.com/1");
+      svc.setClientVisibility("ws-1", true);
+      assert.equal(svc.isEndpointVisible("https://push.example.com/1"), true);
+    });
+
+    it("endpoint is not visible when registered client is hidden", () => {
+      const svc = new PushService(store, tmpDir, "mailto:test@localhost");
+      svc.registerClient("ws-1", "https://push.example.com/1");
+      svc.setClientVisibility("ws-1", false);
+      assert.equal(svc.isEndpointVisible("https://push.example.com/1"), false);
+    });
+
+    it("multiple clients on different endpoints have independent visibility", () => {
+      const svc = new PushService(store, tmpDir, "mailto:test@localhost");
+      svc.registerClient("ws-1", "https://push.example.com/desktop");
+      svc.registerClient("ws-2", "https://push.example.com/phone");
+      svc.setClientVisibility("ws-1", true);
+      svc.setClientVisibility("ws-2", false);
+
+      assert.equal(svc.isEndpointVisible("https://push.example.com/desktop"), true);
+      assert.equal(svc.isEndpointVisible("https://push.example.com/phone"), false);
+    });
   });
 
   describe("maybeNotify", () => {
-    it("returns false when a client is visible", () => {
-      const svc = new PushService(store, tmpDir, "mailto:test@localhost");
-      svc.setClientVisibility("ws-1", true);
-
-      const result = svc.maybeNotify("s1", "Title", "prompt_done", {});
-      assert.equal(result, false);
-    });
-
-    it("returns true when no client is visible", () => {
-      const svc = new PushService(store, tmpDir, "mailto:test@localhost");
-
-      const result = svc.maybeNotify("s1", "Title", "prompt_done", {});
-      assert.equal(result, true);
-    });
-
-    it("returns true for repeated events (no merge window)", () => {
+    it("returns true for notifiable event types", () => {
       const svc = new PushService(store, tmpDir, "mailto:test@localhost");
 
       assert.equal(svc.maybeNotify("s1", "Title", "prompt_done", {}), true);
       assert.equal(svc.maybeNotify("s1", "Title", "permission_request", {}), true);
-      assert.equal(svc.maybeNotify("s1", "Title", "prompt_done", {}), true);
+      assert.equal(svc.maybeNotify("s1", "Title", "bash_done", {}), true);
     });
 
     it("returns false for non-notifiable event types", () => {
@@ -335,6 +362,51 @@ describe("PushService", () => {
       await svc.sendToAll(notification);
 
       assert.equal(store.getAllSubscriptions().length, 0, "410 should remove immediately");
+    });
+
+    it("skips endpoints with a visible client and sends to others", async () => {
+      const svc = new TestPushService(store, tmpDir, "mailto:test@localhost");
+      store.saveSubscription("https://push.example.com/desktop", "a", "b");
+      store.saveSubscription("https://push.example.com/phone", "c", "d");
+
+      // Desktop client is visible, phone has no connected client
+      svc.registerClient("ws-1", "https://push.example.com/desktop");
+      svc.setClientVisibility("ws-1", true);
+
+      svc.outcomes.set("https://push.example.com/desktop", "ok");
+      svc.outcomes.set("https://push.example.com/phone", "ok");
+
+      const sent: string[] = [];
+      const origSendOne = svc.outcomes; // track which endpoints were called
+      const realSendOne = TestPushService.prototype.sendOne;
+      (svc as any).sendOne = function(sub: any, payload: string) {
+        sent.push(sub.endpoint);
+        return realSendOne.call(svc, sub, payload);
+      };
+
+      const notification = { title: "T", body: "B", data: { sessionId: "s1" } };
+      await svc.sendToAll(notification);
+
+      assert.deepEqual(sent, ["https://push.example.com/phone"],
+        "should only send to phone (desktop client is visible)");
+    });
+
+    it("sends to all endpoints when no client is registered", async () => {
+      const svc = new TestPushService(store, tmpDir, "mailto:test@localhost");
+      store.saveSubscription("https://push.example.com/a", "a", "b");
+      store.saveSubscription("https://push.example.com/b", "c", "d");
+
+      const sent: string[] = [];
+      const realSendOne = TestPushService.prototype.sendOne;
+      (svc as any).sendOne = function(sub: any, payload: string) {
+        sent.push(sub.endpoint);
+        return realSendOne.call(svc, sub, payload);
+      };
+
+      const notification = { title: "T", body: "B", data: { sessionId: "s1" } };
+      await svc.sendToAll(notification);
+
+      assert.equal(sent.length, 2, "should send to both when no clients registered");
     });
   });
 });

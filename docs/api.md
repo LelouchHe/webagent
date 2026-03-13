@@ -518,6 +518,18 @@ Remove a push subscription.
 
 **Response** `200`: `{ "ok": true }`
 
+#### `POST /api/push/register-client`
+
+Associate an SSE client with a push subscription endpoint. Used for per-subscription visibility filtering — only endpoints with no visible clients receive push notifications. Called automatically on SSE reconnect.
+
+**Request body:**
+
+```json
+{ "clientId": "abc123", "endpoint": "https://fcm.googleapis.com/fcm/send/..." }
+```
+
+**Response** `200`: `{ "ok": true }`
+
 ---
 
 ### One-Shot Prompt

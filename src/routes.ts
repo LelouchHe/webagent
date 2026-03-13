@@ -810,7 +810,7 @@ export function createRequestHandler(
         }
         const chunks: Buffer[] = [];
         for await (const chunk of req) chunks.push(chunk as Buffer);
-        let body: { endpoint?: string; keys?: { auth?: string; p256dh?: string } };
+        let body: { endpoint?: string; keys?: { auth?: string; p256dh?: string }; clientId?: string };
         try {
           body = JSON.parse(Buffer.concat(chunks).toString());
         } catch {
@@ -824,7 +824,38 @@ export function createRequestHandler(
           return;
         }
         store.saveSubscription(body.endpoint, body.keys.auth, body.keys.p256dh);
+        if (body.clientId && deps.pushService) {
+          deps.pushService.registerClient(body.clientId, body.endpoint);
+        }
         res.writeHead(201);
+        res.end(JSON.stringify({ ok: true }));
+        return;
+      }
+
+      // POST /api/push/register-client — associate clientId with push endpoint
+      if (url === "/api/push/register-client" && req.method === "POST") {
+        if (!deps.pushService) {
+          res.writeHead(404);
+          res.end(JSON.stringify({ error: "Push not configured" }));
+          return;
+        }
+        const chunks: Buffer[] = [];
+        for await (const chunk of req) chunks.push(chunk as Buffer);
+        let body: { clientId?: string; endpoint?: string };
+        try {
+          body = JSON.parse(Buffer.concat(chunks).toString());
+        } catch {
+          res.writeHead(400);
+          res.end(JSON.stringify({ error: "Invalid JSON" }));
+          return;
+        }
+        if (!body.clientId || !body.endpoint) {
+          res.writeHead(400);
+          res.end(JSON.stringify({ error: "Missing clientId or endpoint" }));
+          return;
+        }
+        deps.pushService.registerClient(body.clientId, body.endpoint);
+        res.writeHead(200);
         res.end(JSON.stringify({ ok: true }));
         return;
       }

@@ -16,9 +16,15 @@ export class SseManager {
   readonly clients = new Map<string, SseClient>();
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private readonly heartbeatInterval: number;
+  private onRemoveCallback: ((clientId: string) => void) | null = null;
 
   constructor(heartbeatMs = 20_000) {
     this.heartbeatInterval = heartbeatMs;
+  }
+
+  /** Register a callback invoked when a client disconnects. */
+  onRemove(cb: (clientId: string) => void): void {
+    this.onRemoveCallback = cb;
   }
 
   /** Start the periodic heartbeat. Call once after construction. */
@@ -54,6 +60,7 @@ export class SseManager {
   /** Remove a client by ID. */
   remove(id: string): void {
     this.clients.delete(id);
+    this.onRemoveCallback?.(id);
   }
 
   /** Send an SSE event to a single client. */

@@ -29,6 +29,7 @@ const pushService = new PushService(store, config.data_dir, config.push.vapid_su
 console.log(`[push] VAPID public key ready`);
 
 const sseManager = new SseManager();
+sseManager.onRemove((clientId) => pushService.removeClient(clientId));
 sseManager.startHeartbeat();
 
 let bridge: AgentBridge | null = null;

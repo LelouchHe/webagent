@@ -22,6 +22,7 @@ export class PushService {
   private store: Store;
   private vapidKeys: VapidKeys;
   private clientVisibility = new Map<string, boolean>(); // clientId → visible
+  private clientEndpoints = new Map<string, string>(); // clientId → push endpoint
   /** endpoint → consecutive failure count (absent or 0 = healthy) */
   private failureCounts = new Map<string, number>();
 
@@ -95,13 +96,26 @@ export class PushService {
     this.clientVisibility.set(clientId, visible);
   }
 
+  registerClient(clientId: string, endpoint: string): void {
+    this.clientEndpoints.set(clientId, endpoint);
+  }
+
   removeClient(clientId: string): void {
     this.clientVisibility.delete(clientId);
+    this.clientEndpoints.delete(clientId);
   }
 
   hasVisibleClient(): boolean {
     for (const visible of this.clientVisibility.values()) {
       if (visible) return true;
+    }
+    return false;
+  }
+
+  /** Check if a specific endpoint has at least one visible client. */
+  isEndpointVisible(endpoint: string): boolean {
+    for (const [clientId, ep] of this.clientEndpoints) {
+      if (ep === endpoint && this.clientVisibility.get(clientId)) return true;
     }
     return false;
   }
@@ -114,7 +128,8 @@ export class PushService {
 
   /**
    * Check if this event should trigger a push notification.
-   * Returns true if a notification was queued (caller should then call sendToAll).
+   * Returns true if a notification should be sent (caller should then call sendToAll).
+   * Per-subscription visibility filtering happens inside sendToAll.
    */
   maybeNotify(
     sessionId: string,
@@ -123,7 +138,6 @@ export class PushService {
     eventData: Record<string, unknown>,
   ): boolean {
     if (!PushService.NOTIFIABLE.has(eventType)) return false;
-    if (this.hasVisibleClient()) return false;
 
     return true;
   }
@@ -138,8 +152,12 @@ export class PushService {
 
     const payload = JSON.stringify(notification);
 
+    // Per-subscription visibility: skip endpoints that have a visible client
+    const targets = subs.filter((sub) => !this.isEndpointVisible(sub.endpoint));
+    if (targets.length === 0) return;
+
     const results = await Promise.allSettled(
-      subs.map((sub) =>
+      targets.map((sub) =>
         this.sendOne(
           { endpoint: sub.endpoint, keys: { auth: sub.auth, p256dh: sub.p256dh } },
           payload,
@@ -149,7 +167,7 @@ export class PushService {
 
     for (let i = 0; i < results.length; i++) {
       const result = results[i];
-      const endpoint = subs[i].endpoint;
+      const endpoint = targets[i].endpoint;
       if (result.status === "fulfilled") {
         this.failureCounts.delete(endpoint);
       } else {

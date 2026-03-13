@@ -27,7 +27,7 @@ async function subscribePush() {
     await fetch('/api/push/subscribe', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ endpoint: json.endpoint, keys: json.keys }),
+      body: JSON.stringify({ endpoint: json.endpoint, keys: json.keys, clientId: state.clientId }),
     });
   } catch (err) {
     console.error('[push] subscribe failed:', err);

@@ -5,6 +5,22 @@ import { addSystem, finishThinking, finishAssistant, finishBash, scrollToBottom 
 import { handleEvent, loadHistory, loadNewEvents, retryUnconfirmedPermissions } from './events.ts';
 import * as api from './api.ts';
 
+/** If the browser has an active push subscription, tell the server which
+ *  clientId owns it so per-subscription visibility filtering works. */
+async function registerPushEndpoint(clientId: string) {
+  try {
+    const reg = await navigator.serviceWorker?.ready;
+    if (!reg) return;
+    const sub = await reg.pushManager.getSubscription();
+    if (!sub) return;
+    await fetch('/api/push/register-client', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ clientId, endpoint: sub.endpoint }),
+    });
+  } catch { /* best-effort */ }
+}
+
 export function connect() {
   setConnectionStatus('connecting', 'connecting');
 
@@ -17,6 +33,9 @@ export function connect() {
     if (msg.type === 'connected') {
       state.clientId = msg.clientId;
       api.postVisibility(msg.clientId, !document.hidden).catch(() => {});
+      // Re-register push endpoint for the new clientId so per-subscription
+      // visibility filtering works across reconnects
+      registerPushEndpoint(msg.clientId);
       return;
     }
     handleEvent(msg);
