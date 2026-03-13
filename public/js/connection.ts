@@ -8,7 +8,7 @@ import * as api from './api.ts';
 export function connect() {
   setConnectionStatus('connecting', 'connecting');
 
-  // SSE for receiving server events
+  // SSE for receiving server events (background — does not block page load)
   const es = new EventSource('/api/events/stream');
   state.eventSource = es;
 
@@ -17,7 +17,6 @@ export function connect() {
     if (msg.type === 'connected') {
       state.clientId = msg.clientId;
       api.postVisibility(msg.clientId, !document.hidden).catch(() => {});
-      await initSession();
       return;
     }
     handleEvent(msg);
@@ -28,6 +27,9 @@ export function connect() {
     cleanup();
     setTimeout(connect, 3000);
   };
+
+  // Load session immediately via REST — parallel with SSE connection
+  initSession();
 }
 
 async function initSession() {
@@ -67,10 +69,45 @@ async function initSession() {
 }
 
 async function resumeAndLoad(sessionId: string, incremental: boolean) {
-  try {
-    const session = await api.getSession(sessionId) as Record<string, unknown>;
-    // Clear old sessionId for full loads so handleEvent's session_created guard passes
-    if (!incremental) state.sessionId = null;
+  if (incremental) {
+    // Incremental: need session details first (for config), then catch-up events
+    try {
+      const session = await api.getSession(sessionId) as Record<string, unknown>;
+      handleEvent({
+        type: 'session_created',
+        sessionId: session.id as string,
+        cwd: session.cwd as string,
+        title: session.title as string | null,
+        configOptions: session.configOptions,
+        busyKind: session.busyKind,
+      });
+    } catch {
+      resetSessionUI();
+      addSystem('warn: Previous session expired, created new one.');
+      requestNewSession();
+      return;
+    }
+    await loadNewEvents(sessionId);
+  } else {
+    // Full load: fetch session details and history in parallel
+    state.sessionId = null;
+    const historyPromise = loadHistory(sessionId);
+    let session: Record<string, unknown>;
+    try {
+      const [s, loaded] = await Promise.all([
+        api.getSession(sessionId) as Promise<Record<string, unknown>>,
+        historyPromise,
+      ]);
+      session = s;
+      if (!loaded) {
+        addSystem('warn: Failed to load history.');
+      }
+    } catch {
+      resetSessionUI();
+      addSystem('warn: Previous session expired, created new one.');
+      requestNewSession();
+      return;
+    }
     handleEvent({
       type: 'session_created',
       sessionId: session.id as string,
@@ -79,18 +116,6 @@ async function resumeAndLoad(sessionId: string, incremental: boolean) {
       configOptions: session.configOptions,
       busyKind: session.busyKind,
     });
-  } catch {
-    // Session not found / expired — warn and create a fresh one
-    resetSessionUI();
-    addSystem('warn: Previous session expired, created new one.');
-    requestNewSession();
-    return;
-  }
-
-  if (incremental) {
-    await loadNewEvents(sessionId);
-  } else {
-    await loadHistory(sessionId);
   }
 }
 

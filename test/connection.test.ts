@@ -100,6 +100,11 @@ describe("connection", () => {
     return { id, cwd: "/tmp", title: null, configOptions: [], busyKind: null, ...overrides };
   }
 
+  /** Flush microtask queue so fire-and-forget async (initSession) completes. */
+  async function flush(n = 10) {
+    for (let i = 0; i < n; i++) await Promise.resolve();
+  }
+
   it("resumes the session from the URL hash on connect", async () => {
     history.replaceState(null, "", "/#hash-session");
     setFetch(async (url: string) => {
@@ -113,7 +118,10 @@ describe("connection", () => {
     connection.connect();
     const es = latestES();
     assert.equal(es.url, "/api/events/stream");
-    await fireConnected(es, "cl-test");
+    // initSession runs immediately (parallel with SSE), flush to let it complete
+    await flush();
+    // SSE connected arrives — sets clientId only
+    fireConnected(es, "cl-test");
 
     assert.equal(state.clientId, "cl-test");
     assert.equal(state.sessionId, "hash-session");
@@ -134,7 +142,7 @@ describe("connection", () => {
     });
 
     connection.connect();
-    await fireConnected(latestES(), "cl-2");
+    await flush();
 
     const urls = fetchCalls.map(c => c.url);
     assert.ok(urls.some(u => u === "/api/sessions"));
@@ -151,7 +159,7 @@ describe("connection", () => {
     });
 
     connection.connect();
-    await fireConnected(latestES(), "cl-3");
+    await flush();
 
     assert.equal(state.awaitingNewSession, true);
   });
@@ -196,24 +204,22 @@ describe("connection", () => {
       throw new Error(`Unexpected fetch: ${url}`);
     });
 
-    // First connect
+    // First connect — initSession runs immediately
     connection.connect();
-    const firstES = latestES();
-    await fireConnected(firstES, "cl-1");
+    await flush();
     assert.equal(state.sessionId, "restored-session");
     assert.equal(state.lastEventSeq, 1);
 
     // Disconnect
+    const firstES = latestES();
     firstES.onerror?.();
     assert.deepEqual(timeoutCalls, [3000]);
 
-    // Reconnect — takes incremental path since sessionId matches hash
+    // Reconnect — initSession runs immediately (incremental path)
     timeoutFns[0]();
-    const secondES = latestES();
-    await fireConnected(secondES, "cl-2");
+    await flush();
 
     assert.equal(MockEventSource.instances.length, 2);
-    assert.equal(state.clientId, "cl-2");
     assert.equal(state.sessionId, "restored-session");
     assert.equal(state.lastEventSeq, 2);
   });
@@ -245,7 +251,7 @@ describe("connection", () => {
     });
 
     connection.connect();
-    await fireConnected(latestES(), "cl-incr");
+    await flush();
 
     assert.ok(dom.messages.children[0].textContent.includes("old message"));
     assert.equal(dom.messages.children.length, 2);
@@ -272,7 +278,7 @@ describe("connection", () => {
     });
 
     connection.connect();
-    await fireConnected(latestES(), "cl-idle");
+    await flush();
 
     assert.equal(dom.messages.children.length, 1);
     assert.ok(dom.messages.textContent.includes("preserved content"));
