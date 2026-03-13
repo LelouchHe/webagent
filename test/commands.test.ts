@@ -139,6 +139,7 @@ describe("commands", () => {
     it("switches to a matching session and loads history", async () => {
       state.clientId = "cl-1";
       state.sessionId = "current";
+      const configOptions = [{ type: "select", id: "model", name: "Model", currentValue: "gpt-4", options: [] }];
       setFetch(async (url: string) => {
         if (url === "/api/sessions") {
           return {
@@ -152,7 +153,7 @@ describe("commands", () => {
           };
         }
         if (url === "/api/sessions/target-1") {
-          const data = { id: "target-1", cwd: "/tmp", title: "Target Session", configOptions: [], busyKind: null };
+          const data = { id: "target-1", cwd: "/home/user", title: "Target Session", configOptions, busyKind: null };
           return {
             ok: true,
             json: async () => data,
@@ -167,13 +168,15 @@ describe("commands", () => {
       assert.equal(handled, true);
       assert.ok(fetchCalls.some(c => c.url === "/api/sessions"), "should list sessions");
       assert.ok(fetchCalls.some(c => c.url === "/api/sessions/target-1/events"), "should load events");
-      // resume_session is now done via REST GET /api/sessions/:id (auto-resume)
       assert.ok(fetchCalls.some(c => c.url === "/api/sessions/target-1" && (!c.init || !c.init.method || c.init.method === "GET")), "should GET session to trigger auto-resume");
       assert.equal(state.sessionId, "target-1");
       assert.equal(state.sessionTitle, "Target Session");
       assert.equal(globalThis.location.hash, "#target-1");
       assert.equal(dom.sessionInfo.textContent, "Target Session");
       assert.ok(dom.messages.textContent.includes("history item"));
+      // Status bar should show model and cwd after switch
+      assert.ok(dom.statusBar.textContent.includes("gpt-4"), "status bar should show model");
+      assert.ok(dom.statusBar.textContent.includes("/home/user"), "status bar should show cwd");
     });
 
     it("sends cancel when /cancel is used while busy", async () => {
