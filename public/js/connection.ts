@@ -28,13 +28,6 @@ export function connect() {
     cleanup();
     setTimeout(connect, 3000);
   };
-
-  // Passive WebSocket for un-migrated send callers (input.ts, commands.ts, events.ts)
-  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const ws = new WebSocket(`${proto}//${location.host}`);
-  state.ws = ws;
-  ws.onerror = () => {};
-  ws.onclose = () => { if (state.ws === ws) state.ws = null; };
 }
 
 async function initSession() {
@@ -114,7 +107,6 @@ function cleanup() {
   state.turnEnded = false;
   clearCancelTimer();
   setBusy(false);
-  if (state.ws) { state.ws.close(); state.ws = null; }
 }
 
 // Visibility reporting via REST (replaces WS visibility message)

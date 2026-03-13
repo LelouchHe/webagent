@@ -38,7 +38,6 @@ export const dom = {
 };
 
 export const state = {
-  ws: null as WebSocket | null,
   eventSource: null as EventSource | null,
   clientId: null as string | null,
   sessionId: null as string | null,

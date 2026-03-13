@@ -1,6 +1,6 @@
 import { describe, it, before, after, beforeEach } from "node:test";
 import assert from "node:assert/strict";
-import { setupDOM, teardownDOM, resetState, createMockWS } from "./frontend-setup.ts";
+import { setupDOM, teardownDOM, resetState } from "./frontend-setup.ts";
 
 describe("push — /notify command", () => {
   let state: any;
@@ -49,7 +49,6 @@ describe("push — /notify command", () => {
   }
 
   it("/notify is a recognized command", async () => {
-    state.ws = createMockWS();
     state.sessionId = "s1";
 
     const handled = await commands.handleSlashCommand("/notify");
@@ -57,7 +56,6 @@ describe("push — /notify command", () => {
   });
 
   it("/notify shows current permission state", async () => {
-    state.ws = createMockWS();
     state.sessionId = "s1";
     (globalThis as any).Notification = { permission: "default" };
 
@@ -68,7 +66,6 @@ describe("push — /notify command", () => {
   });
 
   it("/notify on triggers permission request when default", async () => {
-    state.ws = createMockWS();
     state.sessionId = "s1";
     let permRequested = false;
     (globalThis as any).Notification = {
@@ -81,7 +78,6 @@ describe("push — /notify command", () => {
   });
 
   it("/notify on shows denied message when permission denied", async () => {
-    state.ws = createMockWS();
     state.sessionId = "s1";
     (globalThis as any).Notification = {
       permission: "default",
@@ -95,7 +91,6 @@ describe("push — /notify command", () => {
   });
 
   it("/notify off shows confirmation", async () => {
-    state.ws = createMockWS();
     state.sessionId = "s1";
 
     await commands.handleSlashCommand("/notify off");
@@ -105,7 +100,6 @@ describe("push — /notify command", () => {
   });
 
   it("/notify shows off after /notify off even when permission is granted", async () => {
-    state.ws = createMockWS();
     state.sessionId = "s1";
     (globalThis as any).Notification = {
       permission: "granted",
@@ -128,7 +122,6 @@ describe("push — /notify command", () => {
   });
 
   it("/notify on re-subscribes after previous /notify off", async () => {
-    state.ws = createMockWS();
     state.sessionId = "s1";
     (globalThis as any).Notification = {
       permission: "granted",

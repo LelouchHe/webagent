@@ -1,6 +1,6 @@
 import { after, before, beforeEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { setupDOM, teardownDOM, resetState, createMockWS } from "./frontend-setup.ts";
+import { setupDOM, teardownDOM, resetState } from "./frontend-setup.ts";
 
 describe("input", () => {
   let state: any;

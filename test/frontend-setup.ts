@@ -37,7 +37,6 @@ export function teardownDOM() {
 
 /** Reset all mutable state to defaults (call in beforeEach) */
 export function resetState(state: any, dom: any) {
-  state.ws = null;
   state.eventSource = null;
   state.clientId = null;
   state.sessionId = null;
@@ -88,13 +87,3 @@ export function resetState(state: any, dom: any) {
   if (dom.statusBar) dom.statusBar.textContent = "";
 }
 
-/** Create a mock WebSocket that records sent messages */
-export function createMockWS() {
-  const sent: string[] = [];
-  return {
-    sent,
-    send(data: string) { sent.push(data); },
-    close() {},
-    readyState: 1,
-  };
-}

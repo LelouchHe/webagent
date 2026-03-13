@@ -26,9 +26,8 @@ if ('serviceWorker' in navigator) {
       updateSessionInfo(targetId, null);
       addSystem('Switching…');
       loadHistory(targetId).then(loaded => { if (loaded) scrollToBottom(true); });
-      if (state.ws && state.ws.readyState === 1) {
-        state.ws.send(JSON.stringify({ type: 'resume_session', sessionId: targetId }));
-      }
+      // Trigger auto-resume on the server so the bridge re-loads this session's ACP context
+      fetch(`/api/sessions/${targetId}`).catch(() => {});
     }
   });
 }
