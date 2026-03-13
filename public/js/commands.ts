@@ -172,6 +172,9 @@ export async function handleSlashCommand(text: string): Promise<boolean> {
         });
         scrollToBottom(true);
       } catch {
+        // Clean up partial state from failed switch
+        resetSessionUI();
+        state.sessionId = null;
         addSystem('err: Failed to switch session');
       }
       return true;
@@ -621,7 +624,11 @@ async function selectSlashItem(idx: number) {
         busyKind: session.busyKind,
       });
       if (loaded) scrollToBottom(true);
-    }).catch(() => addSystem('err: Failed to switch session'));
+    }).catch(() => {
+      resetSessionUI();
+      state.sessionId = null;
+      addSystem('err: Failed to switch session');
+    });
   } else if (slashMode === 'delete') {
     const s = slashFiltered[idx];
     dom.input.value = '';

@@ -170,6 +170,11 @@ export function resetSessionUI() {
   dom.sendBtn.disabled = false;
   dom.input.placeholder = '';
   setBusy(false);
+  // Clear session metadata so stale title/model don't linger on switch failure
+  state.sessionTitle = null;
+  state.sessionCwd = null;
+  state.configOptions = [];
+  updateSessionInfo(null, null);
   if (dom.statusBar) dom.statusBar.textContent = '';
 }
 

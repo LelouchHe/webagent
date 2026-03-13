@@ -28,6 +28,8 @@ export class SessionManager {
   readonly runningBashProcs = new Map<string, ChildProcess>();
   /** Pending permission requests keyed by requestId. */
   readonly pendingPermissions = new Map<string, PendingPermission>();
+  /** Deduplicates concurrent resume calls for the same session. */
+  private pendingResumes = new Map<string, Promise<void>>();
 
   cachedConfigOptions: ConfigOption[] = [];
 
@@ -142,6 +144,24 @@ export class SessionManager {
     } finally {
       this.restoringSessions.delete(sessionId);
     }
+  }
+
+  /**
+   * Ensure a session is resumed (live in ACP). Deduplicates concurrent calls.
+   * Unlike resumeSession(), this is fire-and-forget safe — callers that only
+   * need the session alive (but not the event payload) can await this.
+   */
+  async ensureResumed(bridge: SessionBridge, sessionId: string): Promise<void> {
+    if (this.liveSessions.has(sessionId)) return;
+
+    const existing = this.pendingResumes.get(sessionId);
+    if (existing) return existing;
+
+    const p = this.resumeSession(bridge, sessionId)
+      .then(() => {})
+      .finally(() => this.pendingResumes.delete(sessionId));
+    this.pendingResumes.set(sessionId, p);
+    return p;
   }
 
   /** Build configOptions from cache, overriding currentValue with stored session values. */

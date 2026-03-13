@@ -171,6 +171,22 @@ describe("state", () => {
       assert.equal(mod.dom.sendBtn.disabled, false);
       assert.notEqual(mod.dom.input.placeholder, "Session deleted");
     });
+
+    it("clears session title and metadata", () => {
+      mod.state.sessionTitle = "Old Title";
+      mod.state.sessionCwd = "/old/path";
+      mod.state.configOptions = [{ id: "model", name: "Model", currentValue: "x", options: [] }];
+      mod.dom.sessionInfo.textContent = "Old Title";
+      document.title = "Old Title";
+
+      mod.resetSessionUI();
+
+      assert.equal(mod.state.sessionTitle, null);
+      assert.equal(mod.state.sessionCwd, null);
+      assert.deepEqual(mod.state.configOptions, []);
+      assert.equal(mod.dom.sessionInfo.textContent, "");
+      assert.equal(document.title, ">_");
+    });
   });
 
   describe("sendCancel", () => {

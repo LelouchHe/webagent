@@ -345,4 +345,85 @@ describe("SessionManager", () => {
       assert.ok(!sm.activePrompts.has("s1"));
     });
   });
+
+  describe("ensureResumed", () => {
+    it("is a no-op when session is already live", async () => {
+      store.createSession("s1", "/x");
+      sm.liveSessions.add("s1");
+
+      let loadCalled = false;
+      const bridge = {
+        async newSession() { return ""; },
+        async setConfigOption() {},
+        async loadSession() { loadCalled = true; return { sessionId: "s1", configOptions: [] }; },
+      };
+
+      await sm.ensureResumed(bridge, "s1");
+      assert.equal(loadCalled, false);
+    });
+
+    it("calls loadSession for non-live sessions", async () => {
+      store.createSession("s1", "/x");
+      sm.cachedConfigOptions = [
+        { id: "model", name: "Model", currentValue: "m", options: [] },
+      ];
+
+      let loadCalled = false;
+      const bridge = {
+        async newSession() { return ""; },
+        async setConfigOption() {},
+        async loadSession() { loadCalled = true; return { sessionId: "s1", configOptions: [] }; },
+      };
+
+      await sm.ensureResumed(bridge, "s1");
+      assert.equal(loadCalled, true);
+      assert.ok(sm.liveSessions.has("s1"));
+    });
+
+    it("deduplicates concurrent resume calls", async () => {
+      store.createSession("s1", "/x");
+      sm.cachedConfigOptions = [];
+
+      let loadCount = 0;
+      let resolveLoad: (() => void) | undefined;
+      const bridge = {
+        async newSession() { return ""; },
+        async setConfigOption() {},
+        loadSession() {
+          loadCount++;
+          return new Promise<{ sessionId: string; configOptions: never[] }>((resolve) => {
+            resolveLoad = () => resolve({ sessionId: "s1", configOptions: [] });
+          });
+        },
+      };
+
+      // Fire two concurrent calls
+      const p1 = sm.ensureResumed(bridge, "s1");
+      const p2 = sm.ensureResumed(bridge, "s1");
+
+      // Only one loadSession call should have been made
+      assert.equal(loadCount, 1);
+
+      resolveLoad!();
+      await Promise.all([p1, p2]);
+      assert.ok(sm.liveSessions.has("s1"));
+    });
+
+    it("propagates errors to all waiters", async () => {
+      store.createSession("s1", "/x");
+
+      const bridge = {
+        async newSession() { return ""; },
+        async setConfigOption() {},
+        async loadSession() { throw new Error("ACP timeout"); },
+      };
+
+      const p1 = sm.ensureResumed(bridge, "s1");
+      const p2 = sm.ensureResumed(bridge, "s1");
+
+      await assert.rejects(p1, { message: "ACP timeout" });
+      await assert.rejects(p2, { message: "ACP timeout" });
+      assert.ok(!sm.liveSessions.has("s1"));
+    });
+  });
 });

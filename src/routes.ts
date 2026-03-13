@@ -224,6 +224,14 @@ export function createRequestHandler(
         if (!bridge) { json(res, 503, { error: "Agent not ready yet" }); return; }
         if (!sessions) { json(res, 503, { error: "Session manager not available" }); return; }
 
+        // Ensure session is live in ACP before prompting (awaits in-flight resume)
+        try {
+          await sessions.ensureResumed(bridge, sessionId);
+        } catch (err) {
+          json(res, 500, { error: `Failed to resume session: ${err instanceof Error ? err.message : String(err)}` });
+          return;
+        }
+
         // Check if session is busy
         const busyKind = sessions.getBusyKind(sessionId);
         if (busyKind) {
@@ -378,16 +386,29 @@ export function createRequestHandler(
             json(res, 404, { error: "Session not found" });
             return;
           }
-          // Auto-resume if not live
+          // Start resume in background (non-blocking) so the client gets metadata fast
           const wasLive = sessions?.liveSessions.has(sessionId) ?? true;
           if (sessions && getBridge && !wasLive) {
             const bridge = getBridge();
             if (bridge) {
-              try {
-                await sessions.resumeSession(bridge, sessionId);
-              } catch (err) {
-                json(res, 500, { error: `Failed to resume session: ${err instanceof Error ? err.message : String(err)}` });
-                return;
+              const resumePromise = sessions.ensureResumed(bridge, sessionId);
+              // Auto-retry if the last turn was interrupted (must wait for resume)
+              const hasInterrupted = store.hasInterruptedTurn(sessionId);
+              if (hasInterrupted) {
+                // Optimistically mark busy so concurrent POST sees the session as active
+                sessions.activePrompts.add(sessionId);
+                resumePromise.then(() => {
+                  if (!sessions!.autoRetryIfNeeded(bridge, sessionId)) {
+                    // Retry not needed after all — release the optimistic lock
+                    sessions!.activePrompts.delete(sessionId);
+                  }
+                }).catch(() => {
+                  sessions!.activePrompts.delete(sessionId);
+                });
+              } else {
+                resumePromise.catch((err) => {
+                  console.error(`[session] background resume failed for ${sessionId.slice(0, 8)}…:`, err);
+                });
               }
             }
           }
@@ -400,14 +421,7 @@ export function createRequestHandler(
             });
             return opts;
           })() : [];
-          // On restore (not already live), auto-retry if the last turn was interrupted
-          let busyKind = sessions?.getBusyKind(sessionId) ?? null;
-          if (!wasLive && sessions && getBridge) {
-            const bridge = getBridge();
-            if (bridge && sessions.autoRetryIfNeeded(bridge, sessionId)) {
-              busyKind = "agent";
-            }
-          }
+          const busyKind = sessions?.getBusyKind(sessionId) ?? null;
           json(res, 200, {
             id: session.id,
             cwd: session.cwd,
