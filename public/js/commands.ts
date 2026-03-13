@@ -6,7 +6,7 @@ import {
   updateNewBtnVisibility, updateModeUI, updateStatusBar,
 } from './state.ts';
 import { addSystem, addMessage, scrollToBottom, escHtml, formatLocalTime } from './render.ts';
-import { loadHistory } from './events.ts';
+import { loadHistory, handleEvent } from './events.ts';
 import * as api from './api.ts';
 import type { SessionSummary } from '../../src/types.ts';
 
@@ -157,13 +157,20 @@ export async function handleSlashCommand(text: string): Promise<boolean> {
           return true;
         }
         resetSessionUI();
-        state.sessionId = match.id;
-        state.sessionTitle = match.title || null;
-        setHashSessionId(match.id);
-        updateSessionInfo(match.id, match.title);
-        await loadHistory(match.id);
+        state.sessionId = null;
+        const [session] = await Promise.all([
+          api.getSession(match.id) as Promise<Record<string, unknown>>,
+          loadHistory(match.id),
+        ]);
+        handleEvent({
+          type: 'session_created',
+          sessionId: session.id as string,
+          cwd: session.cwd as string,
+          title: session.title as string | null,
+          configOptions: session.configOptions,
+          busyKind: session.busyKind,
+        });
         scrollToBottom(true);
-        api.getSession(match.id).catch(() => {});
       } catch {
         addSystem('err: Failed to switch session');
       }
@@ -599,13 +606,22 @@ async function selectSlashItem(idx: number) {
     dom.input.value = '';
     hideSlashMenu();
     resetSessionUI();
-    state.sessionId = s.id;
-    state.sessionTitle = s.title || null;
-    setHashSessionId(s.id);
-    updateSessionInfo(s.id, s.title);
+    state.sessionId = null;
     addSystem('Switching…');
-    loadHistory(s.id).then(loaded => { if (loaded) scrollToBottom(true); });
-    api.getSession(s.id).catch(() => {});
+    Promise.all([
+      api.getSession(s.id) as Promise<Record<string, unknown>>,
+      loadHistory(s.id),
+    ]).then(([session, loaded]) => {
+      handleEvent({
+        type: 'session_created',
+        sessionId: session.id as string,
+        cwd: session.cwd as string,
+        title: session.title as string | null,
+        configOptions: session.configOptions,
+        busyKind: session.busyKind,
+      });
+      if (loaded) scrollToBottom(true);
+    }).catch(() => addSystem('err: Failed to switch session'));
   } else if (slashMode === 'delete') {
     const s = slashFiltered[idx];
     dom.input.value = '';

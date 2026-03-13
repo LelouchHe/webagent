@@ -152,9 +152,11 @@ describe("commands", () => {
           };
         }
         if (url === "/api/sessions/target-1") {
+          const data = { id: "target-1", cwd: "/tmp", title: "Target Session", configOptions: [], busyKind: null };
           return {
             ok: true,
-            json: async () => ({ id: "target-1", title: "Target Session" }),
+            json: async () => data,
+            text: async () => JSON.stringify(data),
           };
         }
         throw new Error(`Unexpected fetch: ${url}`);
