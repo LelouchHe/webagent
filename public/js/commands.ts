@@ -136,10 +136,6 @@ export async function handleSlashCommand(text: string): Promise<boolean> {
       return true;
     }
 
-    case '/delete':
-      addSystem('Removed. Use /exit to close current session, /prune to delete all others.');
-      return true;
-
     case '/prune': {
       try {
         const res = await fetch('/api/sessions');
