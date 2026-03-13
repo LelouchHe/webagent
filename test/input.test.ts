@@ -209,18 +209,18 @@ describe("input", () => {
   });
 
   it("sends cancel on global Ctrl+X while busy", () => {
-    const ws = createMockWS();
-    state.ws = ws;
+    setFetch(() => ({ ok: true, json: async () => ({}) }));
     state.sessionId = "s1";
     state.busy = true;
 
     const event = docKeydown("x", { ctrlKey: true });
 
     assert.equal(event.defaultPrevented, true);
-    assert.deepEqual(JSON.parse(ws.sent[0]), {
-      type: "cancel",
-      sessionId: "s1",
-    });
+    // sendCancel now uses REST POST /api/sessions/:id/cancel
+    const cancelCall = fetchCalls.find(c => c.url.includes("/cancel"));
+    assert.ok(cancelCall, "expected a cancel fetch call");
+    assert.equal(cancelCall!.url, "/api/sessions/s1/cancel");
+    assert.equal(cancelCall!.init?.method, "POST");
     assert.ok(dom.messages.textContent.includes("^X"));
   });
 

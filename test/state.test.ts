@@ -107,23 +107,37 @@ describe("state", () => {
   });
 
   describe("requestNewSession", () => {
-    it("sends new_session message with defaults", () => {
-      const ws = createMockWS();
-      mod.state.ws = ws;
+    it("creates a session via REST with inherited sessionId", async () => {
+      const calls: Array<{ url: string; init?: RequestInit }> = [];
+      globalThis.fetch = (async (url: string, init?: RequestInit) => {
+        calls.push({ url, init });
+        return { ok: true, text: async () => "{}", json: async () => ({}) };
+      }) as any;
+
       mod.state.sessionId = "existing-id";
       mod.requestNewSession();
       assert.equal(mod.state.awaitingNewSession, true);
-      const msg = JSON.parse(ws.sent[0]);
-      assert.equal(msg.type, "new_session");
-      assert.equal(msg.inheritFromSessionId, "existing-id");
+      await new Promise(r => setTimeout(r, 0));
+
+      assert.equal(calls.length, 1);
+      assert.equal(calls[0].url, "/api/sessions");
+      assert.equal(calls[0].init?.method, "POST");
+      const body = JSON.parse(calls[0].init?.body as string);
+      assert.equal(body.inheritFromSessionId, "existing-id");
     });
 
-    it("sends new_session message with custom cwd", () => {
-      const ws = createMockWS();
-      mod.state.ws = ws;
+    it("creates a session with custom cwd", async () => {
+      const calls: Array<{ url: string; init?: RequestInit }> = [];
+      globalThis.fetch = (async (url: string, init?: RequestInit) => {
+        calls.push({ url, init });
+        return { ok: true, text: async () => "{}", json: async () => ({}) };
+      }) as any;
+
       mod.requestNewSession({ cwd: "/tmp" });
-      const msg = JSON.parse(ws.sent[0]);
-      assert.equal(msg.cwd, "/tmp");
+      await new Promise(r => setTimeout(r, 0));
+
+      const body = JSON.parse(calls[0].init?.body as string);
+      assert.equal(body.cwd, "/tmp");
     });
   });
 
@@ -160,34 +174,44 @@ describe("state", () => {
   });
 
   describe("sendCancel", () => {
-    it("sends cancel when busy and no bash", () => {
-      const ws = createMockWS();
-      mod.state.ws = ws;
+    it("sends cancel via REST when busy", async () => {
+      const calls: Array<{ url: string; init?: RequestInit }> = [];
+      globalThis.fetch = (async (url: string, init?: RequestInit) => {
+        calls.push({ url, init });
+        return { ok: true, text: async () => "", json: async () => ({}) };
+      }) as any;
+
       mod.state.busy = true;
       mod.state.sessionId = "s1";
       mod.state.currentBashEl = null;
 
       assert.equal(mod.sendCancel(), true);
-      const msg = JSON.parse(ws.sent[0]);
-      assert.equal(msg.type, "cancel");
-      assert.equal(msg.sessionId, "s1");
+      await new Promise(r => setTimeout(r, 0));
+
+      assert.equal(calls.length, 1);
+      assert.equal(calls[0].url, "/api/sessions/s1/cancel");
+      assert.equal(calls[0].init?.method, "POST");
     });
 
-    it("still sends global cancel when busy with bash", () => {
-      const ws = createMockWS();
-      mod.state.ws = ws;
+    it("sends cancel when busy with bash", async () => {
+      const calls: Array<{ url: string; init?: RequestInit }> = [];
+      globalThis.fetch = (async (url: string, init?: RequestInit) => {
+        calls.push({ url, init });
+        return { ok: true, text: async () => "", json: async () => ({}) };
+      }) as any;
+
       mod.state.busy = true;
       mod.state.sessionId = "s1";
       mod.state.currentBashEl = {};
 
       assert.equal(mod.sendCancel(), true);
-      const msg = JSON.parse(ws.sent[0]);
-      assert.equal(msg.type, "cancel");
-      assert.equal(msg.sessionId, "s1");
+      await new Promise(r => setTimeout(r, 0));
+
+      assert.equal(calls[0].url, "/api/sessions/s1/cancel");
     });
 
     it("returns false when not busy", () => {
-      mod.state.ws = createMockWS();
+      mod.state.sessionId = "s1";
       mod.state.busy = false;
       assert.equal(mod.sendCancel(), false);
     });

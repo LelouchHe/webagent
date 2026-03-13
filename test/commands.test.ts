@@ -6,7 +6,7 @@ describe("commands", () => {
   let state: any;
   let dom: any;
   let commands: any;
-  let fetchCalls: string[];
+  let fetchCalls: Array<{ url: string; init?: any }>;
 
   before(async () => {
     setupDOM();
@@ -26,7 +26,7 @@ describe("commands", () => {
 
   function setFetch(handler: (url: string, init?: any) => Promise<any> | any) {
     globalThis.fetch = (async (url: string, init?: any) => {
-      fetchCalls.push(url);
+      fetchCalls.push({ url, init });
       return handler(url, init);
     }) as any;
   }
@@ -37,20 +37,21 @@ describe("commands", () => {
 
   describe("handleSlashCommand", () => {
     it("creates a new session using the provided cwd", async () => {
-      const ws = createMockWS();
-      state.ws = ws;
+      setFetch(() => ({ ok: true, json: async () => ({ id: "new-1" }), text: async () => '{"id":"new-1"}' }));
       state.sessionId = "current-session";
       state.sessionCwd = "/current";
 
       const handled = await commands.handleSlashCommand("/new /tmp/project");
+      await new Promise(r => setTimeout(r, 0)); // flush microtask (fire-and-forget)
 
       assert.equal(handled, true);
       assert.equal(state.awaitingNewSession, true);
-      assert.deepEqual(JSON.parse(ws.sent[0]), {
-        type: "new_session",
-        cwd: "/tmp/project",
-        inheritFromSessionId: "current-session",
-      });
+      // requestNewSession now uses REST POST /api/sessions
+      const createCall = fetchCalls.find(c => c.url === "/api/sessions" && c.init?.method === "POST");
+      assert.ok(createCall, "expected POST /api/sessions");
+      const body = JSON.parse(createCall!.init.body);
+      assert.equal(body.cwd, "/tmp/project");
+      assert.equal(body.inheritFromSessionId, "current-session");
       assert.ok(messageLines().includes("Creating new session…"));
     });
 
@@ -96,7 +97,7 @@ describe("commands", () => {
       const handled = await commands.handleSlashCommand("/delete other");
 
       assert.equal(handled, true);
-      assert.deepEqual(fetchCalls, ["/api/sessions"]);
+      assert.deepEqual(fetchCalls.map(c => c.url), ["/api/sessions"]);
       assert.deepEqual(JSON.parse(ws.sent[0]), {
         type: "delete_session",
         sessionId: "other-123",
@@ -149,7 +150,7 @@ describe("commands", () => {
       const handled = await commands.handleSlashCommand("/switch target");
 
       assert.equal(handled, true);
-      assert.deepEqual(fetchCalls, ["/api/sessions", "/api/sessions/target-1/events"]);
+      assert.deepEqual(fetchCalls.map(c => c.url), ["/api/sessions", "/api/sessions/target-1/events"]);
       assert.equal(state.sessionId, "target-1");
       assert.equal(state.sessionTitle, "Target Session");
       assert.equal(globalThis.location.hash, "#target-1");
@@ -162,18 +163,19 @@ describe("commands", () => {
     });
 
     it("sends cancel when /cancel is used while busy", async () => {
-      const ws = createMockWS();
-      state.ws = ws;
+      setFetch(() => ({ ok: true, json: async () => ({}), text: async () => '{}' }));
       state.sessionId = "s1";
       state.busy = true;
 
       const handled = await commands.handleSlashCommand("/cancel");
+      await new Promise(r => setTimeout(r, 0)); // flush microtask (fire-and-forget)
 
       assert.equal(handled, true);
-      assert.deepEqual(JSON.parse(ws.sent[0]), {
-        type: "cancel",
-        sessionId: "s1",
-      });
+      // sendCancel now uses REST POST /api/sessions/:id/cancel
+      const cancelCall = fetchCalls.find(c => c.url.includes("/cancel"));
+      assert.ok(cancelCall, "expected a cancel fetch call");
+      assert.equal(cancelCall!.url, "/api/sessions/s1/cancel");
+      assert.equal(cancelCall!.init?.method, "POST");
       assert.ok(messageLines().includes("^X"));
     });
 

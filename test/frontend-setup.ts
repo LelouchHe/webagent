@@ -38,6 +38,8 @@ export function teardownDOM() {
 /** Reset all mutable state to defaults (call in beforeEach) */
 export function resetState(state: any, dom: any) {
   state.ws = null;
+  state.eventSource = null;
+  state.clientId = null;
   state.sessionId = null;
   state.sessionCwd = null;
   state.sessionTitle = null;
@@ -56,6 +58,7 @@ export function resetState(state: any, dom: any) {
   state.pendingPromptDone = false;
   state.turnEnded = false;
   state.newTurnStarted = false;
+  state.sentMessageForSession = null;
   state.cancelTimeout = 10_000;
   state._cancelTimerId = null;
   state.lastEventSeq = 0;

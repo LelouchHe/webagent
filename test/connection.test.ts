@@ -7,38 +7,47 @@ describe("connection", () => {
   let dom: any;
   let render: any;
   let connection: any;
-  let originalSetTimeout: typeof globalThis.setTimeout;
-  let fetchCalls: string[];
+  let fetchCalls: Array<{ url: string; init?: RequestInit }>;
   let timeoutCalls: number[];
   let timeoutFns: Function[];
 
+  class MockEventSource {
+    static instances: MockEventSource[] = [];
+    static CONNECTING = 0;
+    static OPEN = 1;
+    static CLOSED = 2;
+    url: string;
+    readyState = MockEventSource.OPEN;
+    onopen: ((this: any) => any) | null = null;
+    onmessage: ((this: any, event: { data: string }) => any) | null = null;
+    onerror: ((this: any) => any) | null = null;
+    constructor(url: string) {
+      this.url = url;
+      MockEventSource.instances.push(this);
+    }
+    close() { this.readyState = MockEventSource.CLOSED; }
+  }
+
   class MockWebSocket {
     static instances: MockWebSocket[] = [];
-    static OPEN = 1;
     url: string;
-    readyState = MockWebSocket.OPEN;
     sent: string[] = [];
-    onopen?: () => unknown;
-    onclose?: () => unknown;
-    onerror?: () => unknown;
-    onmessage?: (event: { data: string }) => unknown;
-
+    readyState = 1;
+    onopen: (() => void) | null = null;
+    onclose: (() => void) | null = null;
+    onerror: (() => void) | null = null;
+    onmessage: ((event: { data: string }) => any) | null = null;
     constructor(url: string) {
       this.url = url;
       MockWebSocket.instances.push(this);
     }
-
-    send(data: string) {
-      this.sent.push(data);
-    }
-
-    close() {
-      this.onclose?.();
-    }
+    send(data: string) { this.sent.push(data); }
+    close() { this.onclose?.(); }
   }
 
   before(async () => {
     setupDOM();
+    globalThis.EventSource = MockEventSource as any;
     globalThis.WebSocket = MockWebSocket as any;
     const stateMod = await import("../public/js/state.ts");
     state = stateMod.state;
@@ -54,10 +63,10 @@ describe("connection", () => {
     fetchCalls = [];
     timeoutCalls = [];
     timeoutFns = [];
+    MockEventSource.instances.length = 0;
     MockWebSocket.instances.length = 0;
     globalThis.fetch = undefined as any;
     history.replaceState(null, "", "/");
-    originalSetTimeout = globalThis.setTimeout;
     globalThis.setTimeout = ((fn: Function, ms?: number) => {
       timeoutFns.push(fn);
       timeoutCalls.push(ms ?? 0);
@@ -65,186 +74,183 @@ describe("connection", () => {
     }) as any;
   });
 
-  function setFetch(handler: (url: string) => Promise<any> | any) {
-    globalThis.fetch = (async (url: string) => {
-      fetchCalls.push(url);
-      return handler(url);
+  function mockResponse(data: any) {
+    const body = JSON.stringify(data);
+    return { ok: true, status: 200, json: async () => data, text: async () => body };
+  }
+
+  function setFetch(handler: (url: string, init?: RequestInit) => Promise<any> | any) {
+    globalThis.fetch = (async (url: string, init?: RequestInit) => {
+      fetchCalls.push({ url, init });
+      return handler(url, init);
     }) as any;
   }
 
-  function latestSocket() {
-    const ws = MockWebSocket.instances.at(-1);
-    assert.ok(ws);
-    return ws;
+  function latestES() {
+    const es = MockEventSource.instances.at(-1);
+    assert.ok(es, "Expected an EventSource instance");
+    return es;
+  }
+
+  function fireConnected(es: InstanceType<typeof MockEventSource>, clientId: string) {
+    return es.onmessage?.({ data: JSON.stringify({ type: "connected", clientId }) });
+  }
+
+  function sessionResponse(id: string, overrides?: Record<string, unknown>) {
+    return { id, cwd: "/tmp", title: null, configOptions: [], busyKind: null, ...overrides };
   }
 
   it("resumes the session from the URL hash on connect", async () => {
     history.replaceState(null, "", "/#hash-session");
     setFetch(async (url: string) => {
-      assert.equal(url, "/api/sessions/hash-session/events");
-      return {
-        ok: true,
-        json: async () => [{ seq: 1, type: "assistant_message", data: JSON.stringify({ text: "restored" }) }],
-      };
+      if (url.includes("/visibility")) return mockResponse({});
+      if (url === "/api/sessions/hash-session") return mockResponse(sessionResponse("hash-session"));
+      if (url === "/api/sessions/hash-session/events")
+        return mockResponse([{ seq: 1, type: "assistant_message", data: JSON.stringify({ text: "restored" }) }]);
+      throw new Error(`Unexpected fetch: ${url}`);
     });
 
     connection.connect();
-    const ws = latestSocket();
-    await ws.onopen?.();
+    const es = latestES();
+    assert.equal(es.url, "/api/events/stream");
+    await fireConnected(es, "cl-test");
 
-    assert.equal(ws.url, "ws://localhost:6801");
-    assert.deepEqual(fetchCalls, ["/api/sessions/hash-session/events"]);
-    assert.deepEqual(JSON.parse(ws.sent[0]), { type: "visibility", visible: true });
-    assert.deepEqual(JSON.parse(ws.sent[1]), {
-      type: "resume_session",
-      sessionId: "hash-session",
-    });
+    assert.equal(state.clientId, "cl-test");
+    assert.equal(state.sessionId, "hash-session");
+    const urls = fetchCalls.map(c => c.url);
+    assert.ok(urls.some(u => u === "/api/sessions/hash-session"));
+    assert.ok(urls.some(u => u === "/api/sessions/hash-session/events"));
     assert.ok(dom.messages.textContent.includes("restored"));
     assert.equal(state.lastEventSeq, 1);
   });
 
   it("resumes the most recent session when there is no hash", async () => {
     setFetch(async (url: string) => {
-      if (url === "/api/sessions") {
-        return { json: async () => [{ id: "recent-session" }] };
-      }
-      if (url === "/api/sessions/recent-session/events") {
-        return { ok: true, json: async () => [] };
-      }
+      if (url.includes("/visibility")) return mockResponse({});
+      if (url === "/api/sessions") return mockResponse([{ id: "recent-session" }]);
+      if (url === "/api/sessions/recent-session") return mockResponse(sessionResponse("recent-session"));
+      if (url === "/api/sessions/recent-session/events") return mockResponse([]);
       throw new Error(`Unexpected fetch: ${url}`);
     });
 
     connection.connect();
-    const ws = latestSocket();
-    await ws.onopen?.();
+    await fireConnected(latestES(), "cl-2");
 
-    assert.deepEqual(fetchCalls, ["/api/sessions", "/api/sessions/recent-session/events"]);
-    assert.deepEqual(JSON.parse(ws.sent[0]), { type: "visibility", visible: true });
-    assert.deepEqual(JSON.parse(ws.sent[1]), {
-      type: "resume_session",
-      sessionId: "recent-session",
-    });
+    const urls = fetchCalls.map(c => c.url);
+    assert.ok(urls.some(u => u === "/api/sessions"));
+    assert.ok(urls.some(u => u === "/api/sessions/recent-session"));
+    assert.equal(state.sessionId, "recent-session");
   });
 
   it("creates a new session when no previous session exists", async () => {
-    setFetch(async (url: string) => {
-      assert.equal(url, "/api/sessions");
-      return { json: async () => [] };
+    setFetch(async (url: string, init?: RequestInit) => {
+      if (url.includes("/visibility")) return mockResponse({});
+      if (url === "/api/sessions" && (!init?.method || init.method === "GET")) return mockResponse([]);
+      if (url === "/api/sessions" && init?.method === "POST") return mockResponse({ id: "new-1" });
+      throw new Error(`Unexpected fetch: ${url} ${init?.method}`);
     });
 
     connection.connect();
-    const ws = latestSocket();
-    await ws.onopen?.();
+    await fireConnected(latestES(), "cl-3");
 
     assert.equal(state.awaitingNewSession, true);
-    assert.deepEqual(JSON.parse(ws.sent[0]), { type: "visibility", visible: true });
-    assert.deepEqual(JSON.parse(ws.sent[1]), { type: "new_session" });
   });
 
-  it("marks the UI disconnected and schedules reconnect on close", () => {
+  it("marks the UI disconnected and schedules reconnect on SSE error", () => {
+    setFetch(async () => mockResponse({}));
     connection.connect();
-    const ws = latestSocket();
+    const es = latestES();
     state.busy = true;
     state.currentBashEl = render.addBashBlock("echo hi", true);
     state.pendingToolCallIds.add("tc-orphan");
     state.pendingPermissionRequestIds.add("perm-orphan");
     state.pendingPromptDone = true;
+    state.clientId = "cl-old";
 
-    ws.onclose?.();
+    es.onerror?.();
 
+    assert.equal(es.readyState, MockEventSource.CLOSED);
     assert.equal(dom.status.dataset.state, "disconnected");
     assert.equal(dom.status.getAttribute("aria-label"), "disconnected");
     assert.equal(state.busy, false);
     assert.equal(state.pendingToolCallIds.size, 0);
     assert.equal(state.pendingPermissionRequestIds.size, 0);
     assert.equal(state.pendingPromptDone, false);
+    assert.equal(state.clientId, null);
+    assert.equal(state.eventSource, null);
     assert.deepEqual(timeoutCalls, [3000]);
   });
 
-  it("reconnects and resumes the current hash session after close", async () => {
+  it("reconnects and resumes the current hash session after error", async () => {
     history.replaceState(null, "", "/#restored-session");
+    let eventsFetchCount = 0;
     setFetch(async (url: string) => {
-      assert.equal(url, "/api/sessions/restored-session/events");
-      return {
-        ok: true,
-        json: async () => [{ seq: 1, type: "assistant_message", data: JSON.stringify({ text: "restored again" }) }],
-      };
+      if (url.includes("/visibility")) return mockResponse({});
+      if (url === "/api/sessions/restored-session") return mockResponse(sessionResponse("restored-session"));
+      if (url.includes("/api/sessions/restored-session/events")) {
+        eventsFetchCount++;
+        if (eventsFetchCount === 1)
+          return mockResponse([{ seq: 1, type: "assistant_message", data: JSON.stringify({ text: "first load" }) }]);
+        return mockResponse([{ seq: 2, type: "assistant_message", data: JSON.stringify({ text: "after reconnect" }) }]);
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
     });
 
+    // First connect
     connection.connect();
-    const firstWs = latestSocket();
-    await firstWs.onopen?.();
-    firstWs.onclose?.();
+    const firstES = latestES();
+    await fireConnected(firstES, "cl-1");
+    assert.equal(state.sessionId, "restored-session");
+    assert.equal(state.lastEventSeq, 1);
 
+    // Disconnect
+    firstES.onerror?.();
     assert.deepEqual(timeoutCalls, [3000]);
-    assert.equal(timeoutFns.length, 1);
 
-    await timeoutFns[0]();
-    const secondWs = latestSocket();
-    await secondWs.onopen?.();
+    // Reconnect — takes incremental path since sessionId matches hash
+    timeoutFns[0]();
+    const secondES = latestES();
+    await fireConnected(secondES, "cl-2");
 
-    assert.equal(MockWebSocket.instances.length, 2);
-    assert.deepEqual(fetchCalls, [
-      "/api/sessions/restored-session/events",
-      "/api/sessions/restored-session/events",
-    ]);
-    assert.deepEqual(JSON.parse(secondWs.sent[0]), { type: "visibility", visible: true });
-    assert.deepEqual(JSON.parse(secondWs.sent[1]), {
-      type: "resume_session",
-      sessionId: "restored-session",
-    });
-    assert.equal(dom.messages.querySelectorAll(".msg.assistant").length, 1);
-    assert.ok(dom.messages.textContent.includes("restored again"));
+    assert.equal(MockEventSource.instances.length, 2);
+    assert.equal(state.clientId, "cl-2");
+    assert.equal(state.sessionId, "restored-session");
+    assert.equal(state.lastEventSeq, 2);
   });
 
   it("uses incremental sync on reconnect when sessionId matches hash", async () => {
-    // Simulate an already-loaded session
     history.replaceState(null, "", "/#incr-session");
     state.sessionId = "incr-session";
     state.lastEventSeq = 2;
 
-    // Existing DOM content from previous loadHistory
     const existingEl = globalThis.document.createElement("div");
     existingEl.className = "msg user";
     existingEl.textContent = "old message";
     existingEl.setAttribute("data-sync-boundary", "");
     dom.messages.appendChild(existingEl);
 
-    // Simulate a live-added element (post-boundary)
     const liveEl = globalThis.document.createElement("div");
     liveEl.className = "msg assistant";
     liveEl.textContent = "partial stream";
     dom.messages.appendChild(liveEl);
 
     setFetch(async (url: string) => {
-      assert.ok(url.includes("after_seq=2"), `Expected after_seq=2 in URL, got: ${url}`);
-      return {
-        ok: true,
-        json: async () => [
-          { seq: 3, type: "assistant_message", data: JSON.stringify({ text: "full reply" }) },
-        ],
-      };
+      if (url.includes("/visibility")) return mockResponse({});
+      if (url === "/api/sessions/incr-session") return mockResponse(sessionResponse("incr-session"));
+      if (url.includes("/api/sessions/incr-session/events")) {
+        assert.ok(url.includes("after_seq=2"), `Expected after_seq=2 in URL, got: ${url}`);
+        return mockResponse([{ seq: 3, type: "assistant_message", data: JSON.stringify({ text: "full reply" }) }]);
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
     });
 
     connection.connect();
-    const ws = latestSocket();
-    await ws.onopen?.();
+    await fireConnected(latestES(), "cl-incr");
 
-    // Should NOT have wiped the old message
     assert.ok(dom.messages.children[0].textContent.includes("old message"));
-    // Live "partial stream" replaced by the DB version "full reply"
     assert.equal(dom.messages.children.length, 2);
     assert.ok(dom.messages.children[1].textContent.includes("full reply"));
-    // Used incremental fetch, not full history
-    assert.equal(fetchCalls.length, 1);
-    assert.ok(fetchCalls[0].includes("after_seq=2"));
     assert.equal(state.lastEventSeq, 3);
-    // Still sent resume_session (after initial visibility)
-    assert.deepEqual(JSON.parse(ws.sent[0]), { type: "visibility", visible: true });
-    assert.deepEqual(JSON.parse(ws.sent[1]), {
-      type: "resume_session",
-      sessionId: "incr-session",
-    });
   });
 
   it("skips DOM changes when no new events on incremental reconnect", async () => {
@@ -258,16 +264,16 @@ describe("connection", () => {
     existingEl.setAttribute("data-sync-boundary", "");
     dom.messages.appendChild(existingEl);
 
-    setFetch(async () => ({
-      ok: true,
-      json: async () => [],
-    }));
+    setFetch(async (url: string) => {
+      if (url.includes("/visibility")) return mockResponse({});
+      if (url === "/api/sessions/idle-session") return mockResponse(sessionResponse("idle-session"));
+      if (url.includes("/api/sessions/idle-session/events")) return mockResponse([]);
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
 
     connection.connect();
-    const ws = latestSocket();
-    await ws.onopen?.();
+    await fireConnected(latestES(), "cl-idle");
 
-    // DOM unchanged
     assert.equal(dom.messages.children.length, 1);
     assert.ok(dom.messages.textContent.includes("preserved content"));
     assert.equal(state.lastEventSeq, 5);

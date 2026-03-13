@@ -151,6 +151,7 @@ describe("push — visibility reporting", () => {
   let state: any;
   let dom: any;
   let connection: any;
+  let fetchCalls: Array<{ url: string; init?: any }>;
 
   before(async () => {
     setupDOM();
@@ -166,23 +167,27 @@ describe("push — visibility reporting", () => {
 
   beforeEach(() => {
     resetState(state, dom);
+    fetchCalls = [];
+    globalThis.fetch = (async (url: string, init?: any) => {
+      fetchCalls.push({ url, init });
+      return { ok: true, json: async () => ({}) };
+    }) as any;
   });
 
   it("sends visibility message when document visibility changes", () => {
-    const ws = createMockWS();
-    state.ws = ws;
+    state.clientId = "cl-test";
 
     // Simulate visibilitychange
     Object.defineProperty(document, "hidden", { value: true, configurable: true });
     const event = new (globalThis.window as any).Event("visibilitychange");
     document.dispatchEvent(event);
 
-    const visMsgs = ws.sent.filter((s: string) => {
-      const m = JSON.parse(s);
-      return m.type === "visibility";
-    });
-    assert.equal(visMsgs.length, 1);
-    assert.deepEqual(JSON.parse(visMsgs[0]), { type: "visibility", visible: false });
+    const visCall = fetchCalls.find(c => c.url.includes("/visibility"));
+    assert.ok(visCall, "expected a visibility fetch call");
+    assert.equal(visCall!.url, "/api/clients/cl-test/visibility");
+    assert.equal(visCall!.init?.method, "POST");
+    const body = JSON.parse(visCall!.init?.body);
+    assert.equal(body.visible, false);
 
     // Restore
     Object.defineProperty(document, "hidden", { value: false, configurable: true });

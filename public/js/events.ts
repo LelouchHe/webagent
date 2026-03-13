@@ -348,11 +348,12 @@ function isDuplicateOfReplay(msg) {
 export function handleEvent(msg: AgentEvent) {
   // Queue events that arrive while history replay is in progress to avoid duplicates
   if (state.replayInProgress) {
+    console.log('[handleEvent-DEBUG] QUEUED (replayInProgress):', msg.type);
     state.replayQueue.push(msg);
     return;
   }
 
-  // Ignore events from other sessions (multi-client broadcast)
+   // Ignore events from other sessions (multi-client broadcast)
   if (msg.sessionId && state.sessionId && msg.sessionId !== state.sessionId
       && msg.type !== 'session_created' && msg.type !== 'session_deleted') {
     return;
@@ -397,6 +398,13 @@ export function handleEvent(msg: AgentEvent) {
       break;
 
     case 'user_message': {
+      // SSE broadcasts to all clients including the sender (unlike WS which
+      // excluded the sender). Detect our own echo and skip it — we already
+      // rendered the message and set busy in sendPrompt().
+      if (state.sentMessageForSession === msg.sessionId) {
+        state.sentMessageForSession = null;
+        break;
+      }
       // A new turn is starting (from another client's broadcast).
       // Finalise any in-progress streaming from the previous turn so
       // subsequent message_chunks create a fresh element BELOW this bubble.

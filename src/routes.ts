@@ -10,20 +10,9 @@ import type { Config } from "./config.ts";
 import type { PushService } from "./push-service.ts";
 import { errorMessage } from "./types.ts";
 import type { AgentEvent } from "./types.ts";
+import { interruptBashProc } from "./ws-handler.ts";
 
 const IS_WIN = process.platform === "win32";
-
-function interruptBashProc(proc: ReturnType<Map<string, import("node:child_process").ChildProcess>["prototype"]["get"]>): void {
-  if (!proc) return;
-  if (IS_WIN && typeof proc.pid === "number") {
-    spawn("taskkill", ["/T", "/F", "/PID", String(proc.pid)]).unref();
-    return;
-  }
-  if (typeof proc.pid === "number") {
-    try { process.kill(-proc.pid, "SIGINT"); return; } catch { /* fallthrough */ }
-  }
-  proc.kill("SIGINT");
-}
 
 const SAFE_ID = /^[a-zA-Z0-9_-]+$/;
 
@@ -83,7 +72,7 @@ export function createRequestHandler(
     ? { store: storeOrDeps, publicDir: publicDir!, dataDir: dataDir!, limits: limits!, pushService }
     : storeOrDeps as RequestHandlerDeps;
 
-  const { store, sessions, getBridge, broadcast } = deps;
+  const { store, sessions, getBridge, broadcast, sseManager } = deps;
 
   return async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     const url = req.url ?? "/";
@@ -181,7 +170,7 @@ export function createRequestHandler(
         // Kill running bash process if any
         const proc = sessions?.runningBashProcs.get(sessionId);
         if (proc) {
-          try { proc.kill(); } catch { /* already dead */ }
+          interruptBashProc(proc);
           sessions!.runningBashProcs.delete(sessionId);
         }
         // Cancel agent prompt
@@ -475,6 +464,11 @@ export function createRequestHandler(
             title: session?.title,
             configOptions,
           } as AgentEvent);
+          // ACP's session_created event fires before inheritance runs, so
+          // broadcast final configOptions so SSE clients get the inherited values.
+          if (configOptions.length) {
+            sseManager?.broadcast({ type: "config_option_update", sessionId, configOptions } as AgentEvent);
+          }
           json(res, 201, {
             id: sessionId,
             cwd: session?.cwd ?? body.cwd,

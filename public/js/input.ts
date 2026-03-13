@@ -102,6 +102,7 @@ function sendMessage() {
     state.ws!.send(JSON.stringify({ type: 'prompt', sessionId: state.sessionId, text }));
   }
   state.turnEnded = false;
+  state.sentMessageForSession = state.sessionId;
   setBusy(true);
   showWaiting();
 }

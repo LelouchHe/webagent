@@ -54,6 +54,7 @@ setupWsHandler({
   getBridge: () => bridge,
   limits: config.limits,
   pushService,
+  sseManager,
 });
 
 async function initBridge(): Promise<AgentBridge> {
