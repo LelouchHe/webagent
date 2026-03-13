@@ -56,7 +56,7 @@ export function getSession(id: string): Promise<Record<string, unknown>> {
 
 // --- Prompt ---
 
-export function sendMessage(sessionId: string, text: string, images?: Array<{ url: string }>): Promise<unknown> {
+export function sendMessage(sessionId: string, text: string, images?: Array<{ data: string; mimeType: string; path?: string }>): Promise<unknown> {
   const body: Record<string, unknown> = { text };
   if (images?.length) body.images = images;
   return post("/api/sessions/" + sessionId + "/messages", body);

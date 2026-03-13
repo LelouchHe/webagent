@@ -146,13 +146,15 @@ export function createRequestHandler(
         store.saveEvent(perm.sessionId, "permission_response", {
           requestId, optionId, optionName, denied,
         });
-        broadcast?.({
+        const permEvent = {
           type: "permission_resolved",
           sessionId: perm.sessionId,
           requestId,
           optionName,
           denied,
-        } as AgentEvent);
+        } as AgentEvent;
+        broadcast?.(permEvent);
+        sseManager?.broadcast(permEvent);
 
         json(res, 200, { ok: true });
         return;
@@ -222,7 +224,9 @@ export function createRequestHandler(
         // Store user_message event and update last_active_at
         store.saveEvent(sessionId, "user_message", { text: body.text, images: body.images });
         store.updateSessionLastActive(sessionId);
-        broadcast?.({ type: "user_message", sessionId, text: body.text, images: body.images } as AgentEvent);
+        const userMsgEvent = { type: "user_message", sessionId, text: body.text, images: body.images } as AgentEvent;
+        broadcast?.(userMsgEvent);
+        sseManager?.broadcast(userMsgEvent);
 
         // Fire prompt asynchronously (don't await — response is 202)
         sessions.activePrompts.add(sessionId);
@@ -268,7 +272,9 @@ export function createRequestHandler(
 
         const cwd = sessions.getSessionCwd(sessionId);
         store.saveEvent(sessionId, "bash_command", { command: body.command });
-        broadcast?.({ type: "bash_command", sessionId, command: body.command } as AgentEvent);
+        const bashCmdEvent = { type: "bash_command", sessionId, command: body.command } as AgentEvent;
+        broadcast?.(bashCmdEvent);
+        sseManager?.broadcast(bashCmdEvent);
 
         const shell = IS_WIN ? (process.env.COMSPEC || "cmd.exe") : (process.env.SHELL || "bash");
         const shellArgs = IS_WIN ? ["/s", "/c", body.command] : ["-c", body.command];
@@ -294,7 +300,9 @@ export function createRequestHandler(
           } else {
             output = (output + text).slice(-limit);
           }
-          broadcast?.({ type: "bash_output", sessionId, text, stream } as AgentEvent);
+          const bashOutEvent = { type: "bash_output", sessionId, text, stream } as AgentEvent;
+          broadcast?.(bashOutEvent);
+          sseManager?.broadcast(bashOutEvent);
         };
         child.stdout!.on("data", onData("stdout"));
         child.stderr!.on("data", onData("stderr"));
@@ -303,14 +311,18 @@ export function createRequestHandler(
           sessions!.runningBashProcs.delete(sessionId);
           const stored = outputTruncated ? "[truncated]\n" + output : output;
           store.saveEvent(sessionId, "bash_result", { output: stored, code, signal });
-          broadcast?.({ type: "bash_done", sessionId, code, signal } as AgentEvent);
+          const bashDoneEvent = { type: "bash_done", sessionId, code, signal } as AgentEvent;
+          broadcast?.(bashDoneEvent);
+          sseManager?.broadcast(bashDoneEvent);
         });
 
         child.on("error", (err) => {
           sessions!.runningBashProcs.delete(sessionId);
           const errMsg = errorMessage(err);
           store.saveEvent(sessionId, "bash_result", { output: errMsg, code: -1, signal: null });
-          broadcast?.({ type: "bash_done", sessionId, code: -1, signal: null, error: errMsg } as AgentEvent);
+          const bashErrEvent = { type: "bash_done", sessionId, code: -1, signal: null, error: errMsg } as AgentEvent;
+          broadcast?.(bashErrEvent);
+          sseManager?.broadcast(bashErrEvent);
         });
 
         json(res, 202, { status: "accepted" });
@@ -391,6 +403,7 @@ export function createRequestHandler(
             store.deleteSession(sessionId);
           }
           broadcast?.({ type: "session_deleted", sessionId } as AgentEvent);
+          sseManager?.broadcast({ type: "session_deleted", sessionId } as AgentEvent);
           res.writeHead(204);
           res.end();
           return;
@@ -427,6 +440,8 @@ export function createRequestHandler(
               store.updateSessionConfig(sessionId, opt.id, opt.currentValue);
             }
             broadcast?.({ type: "config_option_update", sessionId, configOptions } as AgentEvent);
+            sseManager?.broadcast({ type: "config_option_update", sessionId, configOptions } as AgentEvent);
+            sseManager?.broadcast({ type: "config_set", sessionId, configId, value: body[configId] } as AgentEvent);
             json(res, 200, { configOptions });
           } catch (err) {
             json(res, 500, { error: `Failed to set ${configId}: ${err instanceof Error ? err.message : String(err)}` });
@@ -457,13 +472,15 @@ export function createRequestHandler(
         try {
           const { sessionId, configOptions } = await sessions.createSession(bridge, body.cwd, body.inheritFromSessionId, source);
           const session = store.getSession(sessionId);
-          broadcast?.({
+          const sessionCreatedEvent = {
             type: "session_created",
             sessionId,
             cwd: session?.cwd,
             title: session?.title,
             configOptions,
-          } as AgentEvent);
+          } as AgentEvent;
+          broadcast?.(sessionCreatedEvent);
+          sseManager?.broadcast(sessionCreatedEvent);
           // ACP's session_created event fires before inheritance runs, so
           // broadcast final configOptions so SSE clients get the inherited values.
           if (configOptions.length) {

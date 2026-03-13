@@ -55,27 +55,27 @@ describe("input", () => {
   }
 
   it("sends prompts for normal messages and enters busy state", () => {
-    const ws = createMockWS();
-    state.ws = ws;
+    setFetch(() => ({ ok: true, json: async () => ({ status: "accepted" }), text: async () => '{"status":"accepted"}' }));
     state.sessionId = "s1";
+    state.clientId = "cl-1";
     dom.input.value = "hello";
 
     clickSend();
 
-    assert.deepEqual(JSON.parse(ws.sent[0]), {
-      type: "prompt",
-      sessionId: "s1",
-      text: "hello",
-    });
+    const call = fetchCalls.find(c => c.url.includes("/messages"));
+    assert.ok(call, "expected a messages fetch call");
+    assert.equal(call!.url, "/api/sessions/s1/messages");
+    assert.equal(call!.init?.method, "POST");
+    assert.deepEqual(JSON.parse(call!.init?.body), { text: "hello" });
     assert.equal(state.busy, true);
     assert.equal(dom.sendBtn.textContent, "^X");
     assert.equal(dom.input.value, "");
   });
 
   it("resets turnEnded when sending a new prompt", () => {
-    const ws = createMockWS();
-    state.ws = ws;
+    setFetch(() => ({ ok: true, json: async () => ({}), text: async () => '{}' }));
     state.sessionId = "s1";
+    state.clientId = "cl-1";
     state.turnEnded = true;
     dom.input.value = "next question";
 
@@ -86,26 +86,25 @@ describe("input", () => {
   });
 
   it("routes bang-prefixed input to bash execution", () => {
-    const ws = createMockWS();
-    state.ws = ws;
+    setFetch(() => ({ ok: true, json: async () => ({}), text: async () => '{}' }));
     state.sessionId = "s1";
+    state.clientId = "cl-1";
     dom.input.value = "!echo hello";
 
     clickSend();
 
-    assert.deepEqual(JSON.parse(ws.sent[0]), {
-      type: "bash_exec",
-      sessionId: "s1",
-      command: "echo hello",
-    });
+    const call = fetchCalls.find(c => c.url.includes("/bash"));
+    assert.ok(call, "expected a bash fetch call");
+    assert.equal(call!.url, "/api/sessions/s1/bash");
+    assert.equal(call!.init?.method, "POST");
+    assert.deepEqual(JSON.parse(call!.init?.body), { command: "echo hello" });
     assert.equal(state.busy, true);
     assert.ok(dom.messages.textContent.includes("echo hello"));
   });
 
   it("allows slash commands while busy", () => {
-    const ws = createMockWS();
-    state.ws = ws;
     state.sessionId = "s1";
+    state.clientId = "cl-1";
     state.busy = true;
     dom.input.value = "/pwd";
 
@@ -116,15 +115,14 @@ describe("input", () => {
   });
 
   it("blocks regular messages while busy", () => {
-    const ws = createMockWS();
-    state.ws = ws;
     state.sessionId = "s1";
+    state.clientId = "cl-1";
     state.busy = true;
     dom.input.value = "hello";
 
     keydown("Enter");
 
-    assert.equal(ws.sent.length, 0);
+    assert.equal(fetchCalls.length, 0);
     assert.equal(dom.input.value, "hello");
   });
 
@@ -152,10 +150,9 @@ describe("input", () => {
   });
 
   it("send button executes command instead of cancel while busy", () => {
-    const ws = createMockWS();
-    state.ws = ws;
     state.sessionId = "s1";
     state.sessionCwd = "/test";
+    state.clientId = "cl-1";
     state.busy = true;
     setBusy(true);
     dom.input.value = "/pwd";
@@ -167,45 +164,46 @@ describe("input", () => {
   });
 
   it("warns instead of sending when the session is not ready", () => {
-    const ws = createMockWS();
-    state.ws = ws;
+    state.clientId = "cl-1";
     dom.input.value = "hello";
 
     clickSend();
 
-    assert.equal(ws.sent.length, 0);
+    assert.equal(fetchCalls.length, 0);
     assert.ok(dom.messages.textContent.includes("warn: Session not ready yet"));
   });
 
   it("uploads pending images before sending the prompt", async () => {
-    const ws = createMockWS();
-    state.ws = ws;
     state.sessionId = "s1";
+    state.clientId = "cl-1";
     state.pendingImages.push({
       data: "abc123",
       mimeType: "image/png",
       previewUrl: "data:image/png;base64,abc123",
     });
     setFetch(async (url: string) => {
-      assert.equal(url, "/api/images/s1");
-      return { json: async () => ({ path: "uploads/image.png" }) };
+      if (url.includes("/api/images/")) {
+        return { ok: true, json: async () => ({ path: "uploads/image.png" }), text: async () => '{"path":"uploads/image.png"}' };
+      }
+      // sendMessage call
+      return { ok: true, json: async () => ({}), text: async () => '{}' };
     });
 
     clickSend();
     await new Promise((resolve) => setImmediate(resolve));
     await new Promise((resolve) => setImmediate(resolve));
 
-    assert.equal(fetchCalls.length, 1);
-    assert.deepEqual(JSON.parse(ws.sent[0]), {
-      type: "prompt",
-      sessionId: "s1",
-      text: "What is in this image?",
-      images: [{
-        data: "abc123",
-        mimeType: "image/png",
-        path: "uploads/image.png",
-      }],
-    });
+    const imageCall = fetchCalls.find(c => c.url.includes("/api/images/"));
+    assert.ok(imageCall, "expected an image upload call");
+    const msgCall = fetchCalls.find(c => c.url.includes("/messages"));
+    assert.ok(msgCall, "expected a messages call");
+    const body = JSON.parse(msgCall!.init?.body);
+    assert.equal(body.text, "What is in this image?");
+    assert.deepEqual(body.images, [{
+      data: "abc123",
+      mimeType: "image/png",
+      path: "uploads/image.png",
+    }]);
   });
 
   it("sends cancel on global Ctrl+X while busy", () => {
@@ -235,9 +233,9 @@ describe("input", () => {
   });
 
   it("cycles mode on Ctrl+M", () => {
-    const ws = createMockWS();
-    state.ws = ws;
+    setFetch(() => ({ ok: true, json: async () => ({}), text: async () => '{}' }));
     state.sessionId = "s1";
+    state.clientId = "cl-1";
     state.configOptions = [{
       id: "mode",
       name: "Mode",
@@ -252,12 +250,11 @@ describe("input", () => {
     const event = docKeydown("m", { ctrlKey: true });
 
     assert.equal(event.defaultPrevented, true);
-    assert.deepEqual(JSON.parse(ws.sent[0]), {
-      type: "set_config_option",
-      sessionId: "s1",
-      configId: "mode",
-      value: "chat#plan",
-    });
+    const call = fetchCalls.find(c => c.url.includes("/api/sessions/s1") && c.init?.method === "PATCH");
+    assert.ok(call, "expected a PATCH config call");
+    const body = JSON.parse(call!.init?.body);
+    assert.equal(body.configId, "mode");
+    assert.equal(body.value, "chat#plan");
     assert.ok(dom.messages.textContent.includes("Mode → Plan"));
   });
 
@@ -273,51 +270,47 @@ describe("input", () => {
     assert.strictEqual(document.activeElement, dom.input);
   });
 
-  it("does not send prompt when ws is not open and shows warning", () => {
-    const ws = createMockWS();
-    ws.readyState = 3; // WebSocket.CLOSED
-    state.ws = ws;
+  it("does not send prompt when not connected and shows warning", () => {
     state.sessionId = "s1";
+    // clientId is null → not connected
     dom.input.value = "hello";
 
     clickSend();
 
-    assert.equal(ws.sent.length, 0, "should not send when disconnected");
+    assert.equal(fetchCalls.length, 0, "should not send when disconnected");
     assert.ok(dom.messages.textContent.includes("Not connected"), "should warn user");
     assert.equal(state.busy, false, "should not enter busy state");
   });
 
-  it("does not send bash command when ws is not open", () => {
-    const ws = createMockWS();
-    ws.readyState = 3; // WebSocket.CLOSED
-    state.ws = ws;
+  it("does not send bash command when not connected", () => {
     state.sessionId = "s1";
+    // clientId is null → not connected
     dom.input.value = "!echo hi";
 
     clickSend();
 
-    assert.equal(ws.sent.length, 0, "should not send bash when disconnected");
+    assert.equal(fetchCalls.length, 0, "should not send bash when disconnected");
     assert.ok(dom.messages.textContent.includes("Not connected"), "should warn user");
     assert.equal(state.busy, false, "should not enter busy state");
   });
 
-  it("does not send prompt with images when ws is not open", async () => {
-    const ws = createMockWS();
-    ws.readyState = 3; // WebSocket.CLOSED
-    state.ws = ws;
+  it("does not send prompt with images when not connected", async () => {
     state.sessionId = "s1";
+    // clientId is null → not connected
     state.pendingImages.push({
       data: "abc123",
       mimeType: "image/png",
       previewUrl: "data:image/png;base64,abc123",
     });
-    setFetch(async () => ({ json: async () => ({ path: "uploads/image.png" }) }));
+    setFetch(async () => ({ ok: true, json: async () => ({ path: "uploads/image.png" }), text: async () => '{"path":"uploads/image.png"}' }));
 
     clickSend();
     await new Promise((resolve) => setImmediate(resolve));
     await new Promise((resolve) => setImmediate(resolve));
 
-    assert.equal(ws.sent.length, 0, "should not send when disconnected");
+    // Image upload may still fire, but the prompt should not
+    const msgCall = fetchCalls.find(c => c.url.includes("/messages"));
+    assert.ok(!msgCall, "should not send message when disconnected");
     assert.equal(state.busy, false, "should not enter busy state");
   });
 });

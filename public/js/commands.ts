@@ -110,6 +110,7 @@ export async function handleSlashCommand(text: string): Promise<boolean> {
           return true;
         }
         state.ws!.send(JSON.stringify({ type: 'delete_session', sessionId: match.id }));
+        cachedSessions = null;
         addSystem(`Deleted: ${match.title || match.id.slice(0, 8) + '…'}`);
       } catch {
         addSystem('err: Failed to delete session');
@@ -129,6 +130,7 @@ export async function handleSlashCommand(text: string): Promise<boolean> {
         for (const s of toDelete) {
           state.ws!.send(JSON.stringify({ type: 'delete_session', sessionId: s.id }));
         }
+        cachedSessions = null;
         addSystem(`Pruned ${toDelete.length} session(s).`);
       } catch {
         addSystem('err: Failed to prune sessions');
