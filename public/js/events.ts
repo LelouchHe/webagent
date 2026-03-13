@@ -625,6 +625,11 @@ export function handleEvent(msg: AgentEvent) {
     }
 
     case 'bash_command': {
+      // Suppress SSE echo of our own bash command (we already rendered it in input.ts)
+      if (state.sentBashForSession === msg.sessionId) {
+        state.sentBashForSession = null;
+        break;
+      }
       if (msg.sessionId === state.sessionId) {
         addBashBlock(msg.command, true);
         setBusy(true);

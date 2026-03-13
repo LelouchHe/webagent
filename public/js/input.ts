@@ -46,6 +46,7 @@ function sendMessage() {
     dom.inputArea.classList.remove('bash-mode');
     updateNewBtnVisibility();
     addBashBlock(command, true);
+    state.sentBashForSession = state.sessionId;
     api.execBash(state.sessionId!, command).catch(() => {});
     setBusy(true);
     return;

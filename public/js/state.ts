@@ -61,6 +61,8 @@ export const state = {
   // Set by sendPrompt to suppress the SSE echo of our own user_message
   // (SSE broadcasts to all clients including the sender, unlike WS which excluded sender)
   sentMessageForSession: null as string | null,
+  // Set by bash input to suppress the SSE echo of our own bash_command
+  sentBashForSession: null as string | null,
   cancelTimeout: 10_000,
   _cancelTimerId: null as ReturnType<typeof setTimeout> | null,
   _onCancelTimeout: null as (() => void) | null,
