@@ -204,4 +204,48 @@ describe("Store", () => {
       store = new Store(tmpDir);
     });
   });
+
+  describe("hasInterruptedTurn", () => {
+    it("returns false for session with no events", () => {
+      store.createSession("s1", "/x");
+      assert.equal(store.hasInterruptedTurn("s1"), false);
+    });
+
+    it("returns true when user_message has no following prompt_done", () => {
+      store.createSession("s1", "/x");
+      store.saveEvent("s1", "user_message", { text: "hello" });
+      store.saveEvent("s1", "assistant_message", { text: "partial..." });
+      assert.equal(store.hasInterruptedTurn("s1"), true);
+    });
+
+    it("returns false when prompt_done follows user_message", () => {
+      store.createSession("s1", "/x");
+      store.saveEvent("s1", "user_message", { text: "hello" });
+      store.saveEvent("s1", "assistant_message", { text: "full response" });
+      store.saveEvent("s1", "prompt_done", { stopReason: "end_turn" });
+      assert.equal(store.hasInterruptedTurn("s1"), false);
+    });
+
+    it("detects interrupted turn after a completed turn", () => {
+      store.createSession("s1", "/x");
+      // First turn — completed
+      store.saveEvent("s1", "user_message", { text: "first" });
+      store.saveEvent("s1", "assistant_message", { text: "reply" });
+      store.saveEvent("s1", "prompt_done", { stopReason: "end_turn" });
+      // Second turn — interrupted
+      store.saveEvent("s1", "user_message", { text: "second" });
+      store.saveEvent("s1", "assistant_message", { text: "partial..." });
+      assert.equal(store.hasInterruptedTurn("s1"), true);
+    });
+
+    it("returns false when only non-prompt events follow prompt_done", () => {
+      store.createSession("s1", "/x");
+      store.saveEvent("s1", "user_message", { text: "hello" });
+      store.saveEvent("s1", "prompt_done", { stopReason: "end_turn" });
+      // Bash command (not a prompt turn)
+      store.saveEvent("s1", "bash_command", { command: "ls" });
+      store.saveEvent("s1", "bash_result", { output: "file.txt", code: 0, signal: null });
+      assert.equal(store.hasInterruptedTurn("s1"), false);
+    });
+  });
 });

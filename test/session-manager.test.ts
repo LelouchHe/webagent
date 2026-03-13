@@ -274,4 +274,75 @@ describe("SessionManager", () => {
       assert.equal(sm.getBusyKind("s1"), "bash");
     });
   });
+
+  describe("autoRetryIfNeeded", () => {
+    it("returns false when session has no interrupted turn", () => {
+      store.createSession("s1", "/x");
+      store.saveEvent("s1", "user_message", { text: "hello" });
+      store.saveEvent("s1", "assistant_message", { text: "response" });
+      store.saveEvent("s1", "prompt_done", { stopReason: "end_turn" });
+
+      const promptCalls: string[] = [];
+      const bridge = {
+        async prompt(sessionId: string, text: string) { promptCalls.push(text); },
+      };
+
+      assert.equal(sm.autoRetryIfNeeded(bridge, "s1"), false);
+      assert.equal(promptCalls.length, 0);
+      assert.ok(!sm.activePrompts.has("s1"));
+    });
+
+    it("auto-retries when turn was interrupted", () => {
+      store.createSession("s1", "/x");
+      store.saveEvent("s1", "user_message", { text: "hello" });
+      store.saveEvent("s1", "assistant_message", { text: "partial..." });
+
+      const promptCalls: Array<{ sessionId: string; text: string }> = [];
+      const bridge = {
+        async prompt(sessionId: string, text: string) { promptCalls.push({ sessionId, text }); },
+      };
+
+      assert.equal(sm.autoRetryIfNeeded(bridge, "s1"), true);
+      assert.ok(sm.activePrompts.has("s1"));
+      assert.equal(promptCalls.length, 1);
+      assert.equal(promptCalls[0].sessionId, "s1");
+      assert.ok(promptCalls[0].text.includes("interrupted"));
+    });
+
+    it("skips if session is already actively prompting", () => {
+      store.createSession("s1", "/x");
+      store.saveEvent("s1", "user_message", { text: "hello" });
+      // No prompt_done — interrupted turn
+      sm.activePrompts.add("s1");
+
+      const promptCalls: string[] = [];
+      const bridge = {
+        async prompt(_sid: string, text: string) { promptCalls.push(text); },
+      };
+
+      assert.equal(sm.autoRetryIfNeeded(bridge, "s1"), false);
+      assert.equal(promptCalls.length, 0);
+    });
+
+    it("cleans up activePrompts on prompt failure", async () => {
+      store.createSession("s1", "/x");
+      store.saveEvent("s1", "user_message", { text: "hello" });
+
+      let rejectPrompt: (err: Error) => void;
+      const bridge = {
+        prompt(_sid: string, _text: string) {
+          return new Promise<void>((_resolve, reject) => { rejectPrompt = reject; });
+        },
+      };
+
+      assert.equal(sm.autoRetryIfNeeded(bridge, "s1"), true);
+      assert.ok(sm.activePrompts.has("s1"));
+
+      // Simulate prompt failure
+      rejectPrompt!(new Error("agent died"));
+      // Allow microtask queue to process the .catch()
+      await new Promise(resolve => setTimeout(resolve, 10));
+      assert.ok(!sm.activePrompts.has("s1"));
+    });
+  });
 });
