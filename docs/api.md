@@ -275,20 +275,28 @@ Retrieve stored events for a session (history). This is the primary history endp
 | `thinking` | query | `"0"` or `"1"` | Set to `"0"` to exclude thinking events |
 | `after_seq` | query | number | Return only events with `seq > after_seq` (incremental sync) |
 
-**Response** `200`: Array of `StoredEvent` (defined in `src/types.ts`)
+**Response** `200`: Envelope containing events array and streaming status.
 
 ```json
-[
-  {
-    "id": 1,
-    "session_id": "abc-123",
-    "seq": 1,
-    "type": "user_message",
-    "data": "{\"text\":\"Hello\"}",
-    "created_at": "2025-01-15 10:31:00.000"
+{
+  "events": [
+    {
+      "id": 1,
+      "session_id": "abc-123",
+      "seq": 1,
+      "type": "user_message",
+      "data": "{\"text\":\"Hello\"}",
+      "created_at": "2025-01-15 10:31:00.000"
+    }
+  ],
+  "streaming": {
+    "thinking": false,
+    "assistant": false
   }
-]
+}
 ```
+
+The `streaming` flags indicate whether unflushed buffers were present when the request was made. If `true`, the corresponding buffer was flushed into the event list and the frontend should keep the last element open for continued live streaming (to avoid duplicate thinking/assistant blocks on reconnect).
 
 > **Note:** The `data` field is a JSON string that must be parsed by the client. The shape of the parsed object depends on the `type`. See [SSE Event Reference](#sse-event-reference).
 

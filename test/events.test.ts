@@ -1439,6 +1439,83 @@ describe("events", () => {
       assert.equal(dom.messages.querySelectorAll("#tc-tc2").length, 1);
       assert.equal(state.replayInProgress, false);
     });
+
+    it("deduplicates thought_chunk events when streaming.thinking is signaled", async () => {
+      // Simulate: agent is mid-thinking, events API flushed the buffer
+      const fakeEvents = [
+        { seq: 1, type: "user_message", data: JSON.stringify({ text: "hi" }) },
+        { seq: 2, type: "thinking", data: JSON.stringify({ text: "partial thought" }) },
+      ];
+      const response = { events: fakeEvents, streaming: { thinking: true, assistant: false } };
+
+      let resolveFetch: Function;
+      globalThis.fetch = (() => new Promise(r => { resolveFetch = r; })) as any;
+
+      state.sessionId = "s1";
+      const historyPromise = events.loadHistory("s1");
+
+      // thought_chunk arrives via SSE while replay is in-flight (duplicate content)
+      events.handleEvent({ type: "thought_chunk", sessionId: "s1", text: "partial thought" });
+      assert.equal(state.replayQueue.length, 1);
+
+      resolveFetch!({ ok: true, json: () => Promise.resolve(response) });
+      await historyPromise;
+
+      // Should have exactly ONE thinking element (not two)
+      const thinkingEls = dom.messages.querySelectorAll(".thinking");
+      assert.equal(thinkingEls.length, 1);
+      // The element should be primed for continued streaming
+      assert.ok(state.currentThinkingEl, "currentThinkingEl should be primed");
+      assert.equal(state.currentThinkingText, "partial thought");
+    });
+
+    it("deduplicates message_chunk events when streaming.assistant is signaled", async () => {
+      const fakeEvents = [
+        { seq: 1, type: "user_message", data: JSON.stringify({ text: "hi" }) },
+        { seq: 2, type: "assistant_message", data: JSON.stringify({ text: "hello" }) },
+      ];
+      const response = { events: fakeEvents, streaming: { thinking: false, assistant: true } };
+
+      let resolveFetch: Function;
+      globalThis.fetch = (() => new Promise(r => { resolveFetch = r; })) as any;
+
+      state.sessionId = "s1";
+      const historyPromise = events.loadHistory("s1");
+
+      events.handleEvent({ type: "message_chunk", sessionId: "s1", text: "hello" });
+
+      resolveFetch!({ ok: true, json: () => Promise.resolve(response) });
+      await historyPromise;
+
+      // One user message + one assistant message (not duplicated)
+      const assistantEls = dom.messages.querySelectorAll(".msg.assistant");
+      assert.equal(assistantEls.length, 1);
+      assert.ok(state.currentAssistantEl, "currentAssistantEl should be primed");
+    });
+
+    it("allows new thought_chunk through when no streaming was signaled", async () => {
+      // Non-streaming case: agent starts thinking AFTER replay finishes
+      const fakeEvents = [
+        { seq: 1, type: "user_message", data: JSON.stringify({ text: "hi" }) },
+      ];
+
+      let resolveFetch: Function;
+      globalThis.fetch = (() => new Promise(r => { resolveFetch = r; })) as any;
+
+      state.sessionId = "s1";
+      const historyPromise = events.loadHistory("s1");
+
+      events.handleEvent({ type: "thought_chunk", sessionId: "s1", text: "new thought" });
+
+      resolveFetch!({ ok: true, json: () => Promise.resolve(fakeEvents) });
+      await historyPromise;
+
+      // No streaming signal → thought_chunk should create a new thinking element
+      const thinkingEls = dom.messages.querySelectorAll(".thinking");
+      assert.equal(thinkingEls.length, 1);
+      assert.ok(state.currentThinkingEl);
+      assert.equal(state.currentThinkingText, "new thought");
+    });
   });
 
   describe("retryUnconfirmedPermissions", () => {

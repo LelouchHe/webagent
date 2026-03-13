@@ -90,13 +90,24 @@ function completePendingTurnUI() {
   state.pendingPermissionRequestIds.clear();
 }
 
+/** Normalize events API response: supports both the new {events, streaming} envelope and legacy array. */
+function normalizeEventsResponse(body: unknown): { events: StoredEvent[]; streaming: { thinking: boolean; assistant: boolean } } {
+  if (Array.isArray(body)) return { events: body, streaming: { thinking: false, assistant: false } };
+  const obj = body as Record<string, unknown>;
+  return {
+    events: (obj.events ?? []) as StoredEvent[],
+    streaming: (obj.streaming ?? { thinking: false, assistant: false }) as { thinking: boolean; assistant: boolean },
+  };
+}
+
 export async function loadHistory(sid: string): Promise<boolean> {
   state.replayInProgress = true;
   state.replayQueue = [];
   try {
     const res = await fetch(`/api/sessions/${sid}/events`);
     if (!res.ok) return false;
-    const events = await res.json();
+    const body = await res.json();
+    const { events, streaming } = normalizeEventsResponse(body);
 
     // Batch DOM operations: render into an offscreen fragment, then append once
     const fragment = document.createDocumentFragment();
@@ -116,6 +127,7 @@ export async function loadHistory(sid: string): Promise<boolean> {
       state.lastEventSeq = events[events.length - 1].seq;
     }
     setSyncBoundary();
+    primeStreamingState(events, streaming);
     return true;
   } catch {
     return false;
@@ -123,6 +135,48 @@ export async function loadHistory(sid: string): Promise<boolean> {
     state.replayTarget = null;
     state.replayInProgress = false;
     drainReplayQueue();
+  }
+}
+
+/**
+ * After replay, if the backend signaled that thinking/assistant buffers were
+ * actively streaming, convert the last replayed element into a live-streaming
+ * element so incoming thought_chunk / message_chunk events append to it instead
+ * of creating duplicates.
+ */
+function primeStreamingState(events: StoredEvent[], streaming: { thinking: boolean; assistant: boolean }) {
+  if (streaming.thinking && events.length) {
+    // Find the last thinking event — it was the flushed buffer
+    for (let i = events.length - 1; i >= 0; i--) {
+      if (events[i].type === 'thinking') {
+        const data = JSON.parse(events[i].data);
+        // Find the corresponding DOM element (last .thinking in messages)
+        const allThinking = dom.messages.querySelectorAll('.thinking');
+        const el = allThinking[allThinking.length - 1] as HTMLDetailsElement | undefined;
+        if (el) {
+          state.currentThinkingEl = el;
+          state.currentThinkingText = data.text;
+          // Mark as active (still streaming)
+          const sum = el.querySelector('summary');
+          if (sum) { sum.textContent = '⠿ thinking...'; sum.classList.add('active'); }
+        }
+        break;
+      }
+    }
+  }
+  if (streaming.assistant && events.length) {
+    for (let i = events.length - 1; i >= 0; i--) {
+      if (events[i].type === 'assistant_message') {
+        const data = JSON.parse(events[i].data);
+        const allMsg = dom.messages.querySelectorAll('.msg.assistant');
+        const el = allMsg[allMsg.length - 1] as HTMLDivElement | undefined;
+        if (el) {
+          state.currentAssistantEl = el;
+          state.currentAssistantText = data.text;
+        }
+        break;
+      }
+    }
   }
 }
 
@@ -145,7 +199,8 @@ export async function loadNewEvents(sid: string): Promise<boolean> {
     const url = `/api/sessions/${sid}/events?after_seq=${state.lastEventSeq}`;
     const res = await fetch(url);
     if (!res.ok) return false;
-    const events = await res.json();
+    const body = await res.json();
+    const { events, streaming } = normalizeEventsResponse(body);
 
     // Always remove DOM elements added after the sync boundary (live-rendered
     // content that may be orphaned or overlap with new DB events), and reset
@@ -162,7 +217,10 @@ export async function loadNewEvents(sid: string): Promise<boolean> {
     state.currentThinkingText = '';
     state.currentBashEl = null;
 
-    if (events.length === 0) return true;
+    if (events.length === 0) {
+      primeStreamingState(events, streaming);
+      return true;
+    }
 
     // Batch DOM operations into a fragment to avoid per-element reflow
     const fragment = document.createDocumentFragment();
@@ -176,6 +234,7 @@ export async function loadNewEvents(sid: string): Promise<boolean> {
 
     state.lastEventSeq = events[events.length - 1].seq;
     setSyncBoundary();
+    primeStreamingState(events, streaming);
     return true;
   } catch {
     return false;
@@ -368,12 +427,19 @@ function drainReplayQueue() {
 }
 
 /** Check whether a queued WS event duplicates an element already rendered by replay. */
-function isDuplicateOfReplay(msg) {
+function isDuplicateOfReplay(msg: AgentEvent): boolean {
   switch (msg.type) {
     case 'tool_call':
       return !!document.getElementById(`tc-${msg.id}`);
     case 'permission_request':
       return !!document.querySelector(`.permission[data-request-id="${msg.requestId}"]`);
+    // Streaming chunks were flushed to DB by the events endpoint, so the
+    // content is already rendered.  The live currentThinkingEl / currentAssistantEl
+    // was primed by primeStreamingState — new chunks will append to it.
+    case 'thought_chunk':
+      return !!state.currentThinkingEl;
+    case 'message_chunk':
+      return !!state.currentAssistantEl;
     default:
       return false;
   }

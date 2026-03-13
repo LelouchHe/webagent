@@ -393,9 +393,9 @@ describe("Session REST API", () => {
       // Verify it decompresses to valid JSON
       const { gunzipSync } = await import("node:zlib");
       const decompressed = gunzipSync(res.rawBody);
-      const events = JSON.parse(decompressed.toString());
-      assert.ok(Array.isArray(events));
-      assert.ok(events.length >= 1);
+      const body = JSON.parse(decompressed.toString());
+      assert.ok(Array.isArray(body.events));
+      assert.ok(body.events.length >= 1);
     });
 
     it("returns uncompressed when Accept-Encoding is absent", async () => {
@@ -407,8 +407,8 @@ describe("Session REST API", () => {
 
       assert.equal(res.status, 200);
       assert.equal(res.headers["content-encoding"], undefined);
-      const events = JSON.parse(res.rawBody.toString());
-      assert.ok(Array.isArray(events));
+      const body = JSON.parse(res.rawBody.toString());
+      assert.ok(Array.isArray(body.events));
     });
 
     it("skips gzip for small responses under 1KB", async () => {
@@ -422,6 +422,52 @@ describe("Session REST API", () => {
 
       assert.equal(res.status, 200);
       assert.equal(res.headers["content-encoding"], undefined, "should not gzip small payloads");
+    });
+  });
+
+  describe("streaming buffer flush on events endpoint", () => {
+    it("flushes pending thinking buffer and signals streaming", async () => {
+      const createRes = await makeRequest(port, "POST", "/api/sessions", "{}");
+      const sessionId = JSON.parse(createRes.body).id;
+      // Simulate agent mid-thinking: buffer has unflushed content
+      sessions.appendThinking(sessionId, "partial thought");
+
+      const res = await makeRequest(port, "GET", `/api/sessions/${sessionId}/events`);
+      const body = JSON.parse(res.body);
+      assert.equal(body.streaming.thinking, true);
+      assert.equal(body.streaming.assistant, false);
+      // The flushed thinking event should be in the events list
+      const thinkingEvt = body.events.find((e: { type: string }) => e.type === "thinking");
+      assert.ok(thinkingEvt, "should include flushed thinking event");
+      const data = JSON.parse(thinkingEvt.data);
+      assert.equal(data.text, "partial thought");
+      // Buffer should be empty after flush
+      assert.equal(sessions.thinkingBuffers.has(sessionId), false);
+    });
+
+    it("flushes pending assistant buffer and signals streaming", async () => {
+      const createRes = await makeRequest(port, "POST", "/api/sessions", "{}");
+      const sessionId = JSON.parse(createRes.body).id;
+      sessions.appendAssistant(sessionId, "partial reply");
+
+      const res = await makeRequest(port, "GET", `/api/sessions/${sessionId}/events`);
+      const body = JSON.parse(res.body);
+      assert.equal(body.streaming.thinking, false);
+      assert.equal(body.streaming.assistant, true);
+      const msgEvt = body.events.find((e: { type: string }) => e.type === "assistant_message");
+      assert.ok(msgEvt, "should include flushed assistant_message event");
+      assert.equal(sessions.assistantBuffers.has(sessionId), false);
+    });
+
+    it("returns streaming false when no buffers are pending", async () => {
+      const createRes = await makeRequest(port, "POST", "/api/sessions", "{}");
+      const sessionId = JSON.parse(createRes.body).id;
+      store.saveEvent(sessionId, "user_message", { text: "hi" });
+
+      const res = await makeRequest(port, "GET", `/api/sessions/${sessionId}/events`);
+      const body = JSON.parse(res.body);
+      assert.equal(body.streaming.thinking, false);
+      assert.equal(body.streaming.assistant, false);
     });
   });
 });

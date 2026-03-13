@@ -564,8 +564,23 @@ export function createRequestHandler(
           res.end(JSON.stringify({ error: "Session not found" }));
           return;
         }
+        // Flush pending buffers so their content becomes part of the event list.
+        // Track whether each buffer was non-empty so the frontend can keep the
+        // last thinking/assistant element "open" for continued live streaming.
+        let streamingThinking = false;
+        let streamingAssistant = false;
+        if (sessions) {
+          if (sessions.thinkingBuffers.has(sessionId)) {
+            streamingThinking = true;
+            sessions.flushThinkingBuffer(sessionId);
+          }
+          if (sessions.assistantBuffers.has(sessionId)) {
+            streamingAssistant = true;
+            sessions.flushAssistantBuffer(sessionId);
+          }
+        }
         const events = store.getEvents(sessionId, { excludeThinking, afterSeq });
-        json(res, 200, events, req);
+        json(res, 200, { events, streaming: { thinking: streamingThinking, assistant: streamingAssistant } }, req);
         return;
       }
 
