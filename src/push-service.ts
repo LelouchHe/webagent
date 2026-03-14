@@ -127,14 +127,13 @@ export class PushService {
   }
 
   /**
-   * Check if a specific endpoint has a visible client viewing the given session.
+   * Check if any client (across all endpoints) is visible and viewing the given session.
    * A client with no session set does not suppress any session's push.
+   * Used for global suppression: if any client sees this session, all endpoints are skipped.
    */
-  isEndpointVisibleForSession(endpoint: string, sessionId: string): boolean {
-    for (const [clientId, ep] of this.clientEndpoints) {
-      if (ep === endpoint
-        && this.clientVisibility.get(clientId)
-        && this.clientSessions.get(clientId) === sessionId) return true;
+  isSessionVisibleToAnyClient(sessionId: string): boolean {
+    for (const [clientId, visible] of this.clientVisibility) {
+      if (visible && this.clientSessions.get(clientId) === sessionId) return true;
     }
     return false;
   }
@@ -171,12 +170,11 @@ export class PushService {
 
     const payload = JSON.stringify(notification);
 
-    // Per-subscription visibility: skip endpoints where a visible client is viewing this session
-    const targets = subs.filter((sub) => !this.isEndpointVisibleForSession(sub.endpoint, notification.data.sessionId));
-    if (targets.length === 0) return;
+    // Global visibility: if any client is viewing this session, suppress all push
+    if (this.isSessionVisibleToAnyClient(notification.data.sessionId)) return;
 
     const results = await Promise.allSettled(
-      targets.map((sub) =>
+      subs.map((sub) =>
         this.sendOne(
           { endpoint: sub.endpoint, keys: { auth: sub.auth, p256dh: sub.p256dh } },
           payload,
@@ -186,7 +184,7 @@ export class PushService {
 
     for (let i = 0; i < results.length; i++) {
       const result = results[i];
-      const endpoint = targets[i].endpoint;
+      const endpoint = subs[i].endpoint;
       if (result.status === "fulfilled") {
         this.failureCounts.delete(endpoint);
       } else {

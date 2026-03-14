@@ -263,15 +263,15 @@ describe("PushService", () => {
     });
   });
 
-  describe("per-session visibility", () => {
-    it("setClientSession tracks which session a client is viewing", () => {
+  describe("global session visibility (isSessionVisibleToAnyClient)", () => {
+    it("returns true when a visible client is viewing the session", () => {
       const svc = new PushService(store, tmpDir, "mailto:test@localhost");
       svc.registerClient("cl-1", "https://push.example.com/1");
       svc.setClientVisibility("cl-1", true);
       svc.setClientSession("cl-1", "session-A");
 
-      assert.equal(svc.isEndpointVisibleForSession("https://push.example.com/1", "session-A"), true);
-      assert.equal(svc.isEndpointVisibleForSession("https://push.example.com/1", "session-B"), false);
+      assert.equal(svc.isSessionVisibleToAnyClient("session-A"), true);
+      assert.equal(svc.isSessionVisibleToAnyClient("session-B"), false);
     });
 
     it("client with no session does not suppress any session", () => {
@@ -280,7 +280,7 @@ describe("PushService", () => {
       svc.setClientVisibility("cl-1", true);
       // No setClientSession call
 
-      assert.equal(svc.isEndpointVisibleForSession("https://push.example.com/1", "session-A"), false);
+      assert.equal(svc.isSessionVisibleToAnyClient("session-A"), false);
     });
 
     it("hidden client does not suppress even for its own session", () => {
@@ -289,10 +289,23 @@ describe("PushService", () => {
       svc.setClientVisibility("cl-1", false);
       svc.setClientSession("cl-1", "session-A");
 
-      assert.equal(svc.isEndpointVisibleForSession("https://push.example.com/1", "session-A"), false);
+      assert.equal(svc.isSessionVisibleToAnyClient("session-A"), false);
     });
 
-    it("two clients on same endpoint viewing different sessions", () => {
+    it("two clients on different endpoints — one viewing suppresses globally", () => {
+      const svc = new PushService(store, tmpDir, "mailto:test@localhost");
+      svc.registerClient("cl-1", "https://push.example.com/desktop");
+      svc.registerClient("cl-2", "https://push.example.com/phone");
+      svc.setClientVisibility("cl-1", true);
+      svc.setClientVisibility("cl-2", false);
+      svc.setClientSession("cl-1", "session-A");
+
+      // Desktop viewing session-A → globally visible
+      assert.equal(svc.isSessionVisibleToAnyClient("session-A"), true);
+      assert.equal(svc.isSessionVisibleToAnyClient("session-B"), false);
+    });
+
+    it("two clients viewing different sessions — each suppresses its own", () => {
       const svc = new PushService(store, tmpDir, "mailto:test@localhost");
       svc.registerClient("cl-1", "https://push.example.com/shared");
       svc.registerClient("cl-2", "https://push.example.com/shared");
@@ -301,9 +314,9 @@ describe("PushService", () => {
       svc.setClientSession("cl-1", "session-A");
       svc.setClientSession("cl-2", "session-B");
 
-      assert.equal(svc.isEndpointVisibleForSession("https://push.example.com/shared", "session-A"), true);
-      assert.equal(svc.isEndpointVisibleForSession("https://push.example.com/shared", "session-B"), true);
-      assert.equal(svc.isEndpointVisibleForSession("https://push.example.com/shared", "session-C"), false);
+      assert.equal(svc.isSessionVisibleToAnyClient("session-A"), true);
+      assert.equal(svc.isSessionVisibleToAnyClient("session-B"), true);
+      assert.equal(svc.isSessionVisibleToAnyClient("session-C"), false);
     });
 
     it("removeClient clears session mapping", () => {
@@ -311,10 +324,10 @@ describe("PushService", () => {
       svc.registerClient("cl-1", "https://push.example.com/1");
       svc.setClientVisibility("cl-1", true);
       svc.setClientSession("cl-1", "session-A");
-      assert.equal(svc.isEndpointVisibleForSession("https://push.example.com/1", "session-A"), true);
+      assert.equal(svc.isSessionVisibleToAnyClient("session-A"), true);
 
       svc.removeClient("cl-1");
-      assert.equal(svc.isEndpointVisibleForSession("https://push.example.com/1", "session-A"), false);
+      assert.equal(svc.isSessionVisibleToAnyClient("session-A"), false);
     });
 
     it("session switch updates which session is suppressed", () => {
@@ -323,13 +336,13 @@ describe("PushService", () => {
       svc.setClientVisibility("cl-1", true);
       svc.setClientSession("cl-1", "session-A");
 
-      assert.equal(svc.isEndpointVisibleForSession("https://push.example.com/1", "session-A"), true);
-      assert.equal(svc.isEndpointVisibleForSession("https://push.example.com/1", "session-B"), false);
+      assert.equal(svc.isSessionVisibleToAnyClient("session-A"), true);
+      assert.equal(svc.isSessionVisibleToAnyClient("session-B"), false);
 
       // User switches to session B
       svc.setClientSession("cl-1", "session-B");
-      assert.equal(svc.isEndpointVisibleForSession("https://push.example.com/1", "session-A"), false);
-      assert.equal(svc.isEndpointVisibleForSession("https://push.example.com/1", "session-B"), true);
+      assert.equal(svc.isSessionVisibleToAnyClient("session-A"), false);
+      assert.equal(svc.isSessionVisibleToAnyClient("session-B"), true);
     });
   });
 
@@ -434,7 +447,7 @@ describe("PushService", () => {
       assert.equal(store.getAllSubscriptions().length, 0, "410 should remove immediately");
     });
 
-    it("skips endpoints with a visible client viewing the same session", async () => {
+    it("suppresses all endpoints when any client views the session", async () => {
       const svc = new TestPushService(store, tmpDir, "mailto:test@localhost");
       store.saveSubscription("https://push.example.com/desktop", "a", "b");
       store.saveSubscription("https://push.example.com/phone", "c", "d");
@@ -454,12 +467,12 @@ describe("PushService", () => {
         return realSendOne.call(svc, sub, payload);
       };
 
-      // Notification for session-A — desktop should be skipped (user is viewing it)
+      // Notification for session-A — ALL endpoints suppressed (user is viewing it on desktop)
       await svc.sendToAll({ title: "T", body: "B", data: { sessionId: "session-A" } });
-      assert.deepEqual(sent, ["https://push.example.com/phone"],
-        "should only send to phone for session-A");
+      assert.deepEqual(sent, [],
+        "should suppress all endpoints for session-A (global visibility)");
 
-      // Notification for session-B — desktop should NOT be skipped (user is viewing different session)
+      // Notification for session-B — both endpoints should fire (no one is viewing it)
       sent.length = 0;
       await svc.sendToAll({ title: "T", body: "B", data: { sessionId: "session-B" } });
       assert.deepEqual(sent.sort(), [
