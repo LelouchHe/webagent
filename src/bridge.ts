@@ -2,7 +2,7 @@ import { spawn, ChildProcess } from "node:child_process";
 import { Writable, Readable } from "node:stream";
 import { EventEmitter } from "node:events";
 import * as acp from "@agentclientprotocol/sdk";
-import type { AgentEvent, ConfigOption } from "./types.ts";
+import type { AgentEvent, ConfigOption, RawInput } from "./types.ts";
 
 export class AgentBridge extends EventEmitter {
   private proc: ChildProcess | null = null;
@@ -267,7 +267,7 @@ export class AgentBridge extends EventEmitter {
           id: update.toolCallId ?? "",
           title: update.title ?? "",
           kind: update.kind ?? "unknown",
-          rawInput: update.rawInput,
+          rawInput: update.rawInput as RawInput | undefined,
         } satisfies AgentEvent);
         break;
 

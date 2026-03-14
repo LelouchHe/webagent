@@ -82,7 +82,7 @@ export function createRequestHandler(
 ): (req: IncomingMessage, res: ServerResponse) => Promise<void> {
   // Normalize to deps object (support legacy positional args)
   const deps: RequestHandlerDeps = (storeOrDeps instanceof Store)
-    ? { store: storeOrDeps, publicDir: publicDir!, dataDir: dataDir!, limits: limits!, pushService }
+    ? { store: storeOrDeps, publicDir: publicDir!, dataDir: dataDir!, limits: limits!, pushService } as RequestHandlerDeps
     : storeOrDeps as RequestHandlerDeps;
 
   const { store, sessions, getBridge, sseManager, titleService } = deps;
