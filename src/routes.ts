@@ -728,7 +728,7 @@ export function createRequestHandler(
         // If push service is available, update visibility and session
         if (deps.pushService) {
           deps.pushService.setClientVisibility(clientId, body.visible as boolean);
-          if (typeof body.sessionId === "string") {
+          if (typeof body.sessionId === "string" && body.sessionId) {
             deps.pushService.setClientSession(clientId, body.sessionId);
           }
         }
