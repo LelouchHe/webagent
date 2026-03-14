@@ -85,10 +85,26 @@ export function hideWaiting() {
   if (waitingEl) { waitingEl.remove(); waitingEl = null; }
 }
 
+let scrollRafPending = false;
+
 export function scrollToBottom(force?: boolean) {
   const el = dom.messages;
   if (force || state.followMessages) {
-    el.scrollTop = el.scrollHeight;
+    // Coalesce multiple scroll requests into a single rAF to avoid
+    // redundant synchronous layout reflows (e.g. after replaying
+    // thousands of events into the DOM).
+    if (typeof requestAnimationFrame === 'function') {
+      if (!scrollRafPending) {
+        scrollRafPending = true;
+        requestAnimationFrame(() => {
+          scrollRafPending = false;
+          el.scrollTop = el.scrollHeight;
+        });
+      }
+    } else {
+      // JSDOM / test environment — scroll synchronously
+      el.scrollTop = el.scrollHeight;
+    }
     state.followMessages = true;
     return;
   }
