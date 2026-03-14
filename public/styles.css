@@ -572,3 +572,11 @@ body {
   display: block;
   margin-top: 4px;
 }
+
+/* History pagination sentinel */
+.history-sentinel {
+  text-align: center;
+  padding: 8px;
+  opacity: 0.5;
+  font-size: 0.85em;
+}

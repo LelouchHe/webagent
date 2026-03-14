@@ -156,18 +156,40 @@ export class Store {
       .get(sessionId, seq) as EventRow;
   }
 
-  getEvents(sessionId: string, opts?: { excludeThinking?: boolean; afterSeq?: number }): EventRow[] {
-    let query = "SELECT * FROM events WHERE session_id = ?";
+  getEvents(sessionId: string, opts?: { excludeThinking?: boolean; afterSeq?: number; beforeSeq?: number; limit?: number }): EventRow[] {
+    const hasLimit = opts?.limit != null && opts.limit > 0;
+    const conditions = ["session_id = ?"];
     const params: unknown[] = [sessionId];
     if (opts?.afterSeq != null) {
-      query += " AND seq > ?";
+      conditions.push("seq > ?");
       params.push(opts.afterSeq);
     }
+    if (opts?.beforeSeq != null) {
+      conditions.push("seq < ?");
+      params.push(opts.beforeSeq);
+    }
+    if (opts?.excludeThinking) {
+      conditions.push("type != 'thinking'");
+    }
+    const where = conditions.join(" AND ");
+
+    if (hasLimit) {
+      // Fetch the last N matching rows: subquery orders DESC with LIMIT,
+      // outer query re-orders ASC so the page is in chronological order.
+      const sql = `SELECT * FROM (SELECT * FROM events WHERE ${where} ORDER BY seq DESC LIMIT ?) ORDER BY seq`;
+      params.push(opts!.limit);
+      return this.db.prepare(sql).all(...params) as EventRow[];
+    }
+    return this.db.prepare(`SELECT * FROM events WHERE ${where} ORDER BY seq`).all(...params) as EventRow[];
+  }
+
+  getEventCount(sessionId: string, opts?: { excludeThinking?: boolean }): number {
+    let query = "SELECT COUNT(*) as count FROM events WHERE session_id = ?";
+    const params: unknown[] = [sessionId];
     if (opts?.excludeThinking) {
       query += " AND type != 'thinking'";
     }
-    query += " ORDER BY seq";
-    return this.db.prepare(query).all(...params) as EventRow[];
+    return (this.db.prepare(query).get(...params) as { count: number }).count;
   }
 
   /** Check if the most recent agent turn was interrupted (user_message without a following prompt_done). */

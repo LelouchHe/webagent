@@ -550,7 +550,7 @@ export function createRequestHandler(
         return;
       }
 
-      // GET /api/sessions/:id/events?thinking=0|1
+      // GET /api/sessions/:id/events?thinking=0|1&limit=N&before=SEQ&after_seq=SEQ
       const eventsMatch = url.match(/^\/api\/sessions\/([^/]+)\/events(\?.*)?$/);
       if (eventsMatch && req.method === "GET") {
         const sessionId = decodeURIComponent(eventsMatch[1]);
@@ -558,6 +558,10 @@ export function createRequestHandler(
         const excludeThinking = params.get("thinking") === "0";
         const afterSeqRaw = params.get("after_seq");
         const afterSeq = afterSeqRaw != null ? Number(afterSeqRaw) : undefined;
+        const beforeRaw = params.get("before");
+        const beforeSeq = beforeRaw != null ? Number(beforeRaw) : undefined;
+        const limitRaw = params.get("limit");
+        const limit = limitRaw != null ? Math.max(1, Math.min(10000, Number(limitRaw))) : undefined;
         const session = store.getSession(sessionId);
         if (!session) {
           res.writeHead(404);
@@ -579,8 +583,20 @@ export function createRequestHandler(
             sessions.flushAssistantBuffer(sessionId);
           }
         }
-        const events = store.getEvents(sessionId, { excludeThinking, afterSeq });
-        json(res, 200, { events, streaming: { thinking: streamingThinking, assistant: streamingAssistant } }, req);
+        const events = store.getEvents(sessionId, { excludeThinking, afterSeq, beforeSeq, limit });
+        const envelope: Record<string, unknown> = {
+          events,
+          streaming: { thinking: streamingThinking, assistant: streamingAssistant },
+        };
+        if (limit != null) {
+          const total = store.getEventCount(sessionId, { excludeThinking });
+          const hasMore = events.length > 0
+            ? (store.getEvents(sessionId, { excludeThinking, beforeSeq: events[0].seq, limit: 1 }).length > 0)
+            : false;
+          envelope.total = total;
+          envelope.hasMore = hasMore;
+        }
+        json(res, 200, envelope, req);
         return;
       }
 

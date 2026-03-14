@@ -3,7 +3,7 @@
 import {
   state, dom, setBusy, setConfigValue, getConfigOption, updateConfigOptions,
   updateModeUI, updateStatusBar, resetSessionUI, requestNewSession, setHashSessionId, updateSessionInfo,
-  setConnectionStatus, clearCancelTimer,
+  setConnectionStatus, clearCancelTimer, onSessionReset,
 } from './state.ts';
 import type { ConfigOption } from './state.ts';
 import {
@@ -90,24 +90,33 @@ function completePendingTurnUI() {
   state.pendingPermissionRequestIds.clear();
 }
 
-/** Normalize events API response: supports both the new {events, streaming} envelope and legacy array. */
-function normalizeEventsResponse(body: unknown): { events: StoredEvent[]; streaming: { thinking: boolean; assistant: boolean } } {
+/** Normalize events API response: supports both the new {events, streaming, total, hasMore} envelope and legacy array. */
+function normalizeEventsResponse(body: unknown): {
+  events: StoredEvent[];
+  streaming: { thinking: boolean; assistant: boolean };
+  total?: number;
+  hasMore?: boolean;
+} {
   if (Array.isArray(body)) return { events: body, streaming: { thinking: false, assistant: false } };
   const obj = body as Record<string, unknown>;
   return {
     events: (obj.events ?? []) as StoredEvent[],
     streaming: (obj.streaming ?? { thinking: false, assistant: false }) as { thinking: boolean; assistant: boolean },
+    total: typeof obj.total === 'number' ? obj.total : undefined,
+    hasMore: typeof obj.hasMore === 'boolean' ? obj.hasMore : undefined,
   };
 }
+
+const HISTORY_PAGE_SIZE = 200;
 
 export async function loadHistory(sid: string): Promise<boolean> {
   state.replayInProgress = true;
   state.replayQueue = [];
   try {
-    const res = await fetch(`/api/sessions/${sid}/events`);
+    const res = await fetch(`/api/sessions/${sid}/events?limit=${HISTORY_PAGE_SIZE}`);
     if (!res.ok) return false;
     const body = await res.json();
-    const { events, streaming } = normalizeEventsResponse(body);
+    const { events, streaming, hasMore } = normalizeEventsResponse(body);
 
     // Batch DOM operations: render into an offscreen fragment, then append once.
     // ReplayIndex provides O(1) element lookup, replacing querySelector on the fragment.
@@ -127,7 +136,14 @@ export async function loadHistory(sid: string): Promise<boolean> {
 
     if (events.length) {
       state.lastEventSeq = events[events.length - 1].seq;
+      state.oldestLoadedSeq = events[0].seq;
     }
+    state.hasMoreHistory = hasMore === true;
+
+    if (state.hasMoreHistory) {
+      installHistorySentinel();
+    }
+
     setSyncBoundary();
     primeStreamingState(events, streaming);
     return true;
@@ -245,6 +261,92 @@ export async function loadNewEvents(sid: string): Promise<boolean> {
     state.replayTarget = null;
     state.replayInProgress = false;
     drainReplayQueue();
+  }
+}
+
+// --- History pagination: sentinel + lazy loading ---
+
+let historySentinelObserver: IntersectionObserver | null = null;
+
+function installHistorySentinel() {
+  removeHistorySentinel();
+  const sentinel = document.createElement('div');
+  sentinel.id = 'history-sentinel';
+  sentinel.className = 'history-sentinel';
+  sentinel.textContent = '↑ loading…';
+  dom.messages.prepend(sentinel);
+
+  if (typeof IntersectionObserver === 'function') {
+    historySentinelObserver = new IntersectionObserver((entries) => {
+      if (entries[0]?.isIntersecting && !state.loadingOlderEvents && state.hasMoreHistory && state.sessionId) {
+        loadOlderEvents(state.sessionId);
+      }
+    }, { root: dom.messages, rootMargin: '200px 0px 0px 0px' });
+    historySentinelObserver.observe(sentinel);
+  }
+}
+
+function removeHistorySentinel() {
+  if (historySentinelObserver) {
+    historySentinelObserver.disconnect();
+    historySentinelObserver = null;
+  }
+  document.getElementById('history-sentinel')?.remove();
+}
+
+// Clean up observer on session reset to avoid leaking across session switches
+onSessionReset(removeHistorySentinel);
+
+export async function loadOlderEvents(sid: string): Promise<boolean> {
+  if (state.loadingOlderEvents || !state.hasMoreHistory || state.oldestLoadedSeq <= 0) return false;
+  state.loadingOlderEvents = true;
+  try {
+    const res = await fetch(`/api/sessions/${sid}/events?limit=${HISTORY_PAGE_SIZE}&before=${state.oldestLoadedSeq}`);
+    if (!res.ok) return false;
+    // Bail out if the user switched sessions while the fetch was in-flight
+    if (sid !== state.sessionId) return false;
+    const body = await res.json();
+    const { events, hasMore } = normalizeEventsResponse(body);
+
+    if (events.length === 0) {
+      state.hasMoreHistory = false;
+      removeHistorySentinel();
+      return true;
+    }
+
+    // Render into a fragment
+    const fragment = document.createDocumentFragment();
+    const ri = createReplayIndex(events);
+    state.replayTarget = fragment;
+    for (let i = 0; i < events.length; i++) {
+      const data = JSON.parse(events[i].data);
+      replayEvent(events[i].type, data, events, i, ri);
+    }
+    state.replayTarget = null;
+
+    // Prepend to DOM while preserving scroll position
+    const container = dom.messages;
+    const prevScrollHeight = container.scrollHeight;
+    const sentinel = document.getElementById('history-sentinel');
+    if (sentinel) {
+      sentinel.after(fragment);
+    } else {
+      container.prepend(fragment);
+    }
+    container.scrollTop += (container.scrollHeight - prevScrollHeight);
+
+    state.oldestLoadedSeq = events[0].seq;
+    state.hasMoreHistory = hasMore === true;
+
+    if (!state.hasMoreHistory) {
+      removeHistorySentinel();
+    }
+
+    return true;
+  } catch {
+    return false;
+  } finally {
+    state.loadingOlderEvents = false;
   }
 }
 

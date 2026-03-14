@@ -107,6 +107,67 @@ describe("HTTP routes", () => {
     assert.equal(body.events[0].seq, 2);
   });
 
+  it("GET /api/sessions/:id/events?limit=N returns latest N events in ASC order", async () => {
+    store.createSession("s1", "/x");
+    for (let i = 0; i < 5; i++) store.saveEvent("s1", "user_message", { text: `msg-${i}` });
+
+    const res = await makeRequest(port, "GET", "/api/sessions/s1/events?limit=3");
+    assert.equal(res.status, 200);
+    const body = JSON.parse(res.body);
+    assert.equal(body.events.length, 3);
+    // Should be the last 3, in ascending order
+    assert.equal(body.events[0].seq, 3);
+    assert.equal(body.events[1].seq, 4);
+    assert.equal(body.events[2].seq, 5);
+    assert.equal(body.total, 5);
+    assert.equal(body.hasMore, true);
+  });
+
+  it("GET /api/sessions/:id/events?limit=N&before=SEQ paginates backwards", async () => {
+    store.createSession("s1", "/x");
+    for (let i = 0; i < 10; i++) store.saveEvent("s1", "user_message", { text: `msg-${i}` });
+
+    // Get the latest 3
+    const res1 = await makeRequest(port, "GET", "/api/sessions/s1/events?limit=3");
+    const body1 = JSON.parse(res1.body);
+    assert.equal(body1.events[0].seq, 8);
+    assert.equal(body1.hasMore, true);
+
+    // Get 3 before seq 8
+    const res2 = await makeRequest(port, "GET", "/api/sessions/s1/events?limit=3&before=8");
+    const body2 = JSON.parse(res2.body);
+    assert.equal(body2.events.length, 3);
+    assert.equal(body2.events[0].seq, 5);
+    assert.equal(body2.events[2].seq, 7);
+    assert.equal(body2.hasMore, true);
+
+    // Get 3 before seq 5
+    const res3 = await makeRequest(port, "GET", "/api/sessions/s1/events?limit=3&before=5");
+    const body3 = JSON.parse(res3.body);
+    assert.equal(body3.events.length, 3);
+    assert.equal(body3.events[0].seq, 2);
+    assert.equal(body3.events[2].seq, 4);
+    assert.equal(body3.hasMore, true);
+
+    // Get remaining before seq 2
+    const res4 = await makeRequest(port, "GET", "/api/sessions/s1/events?limit=3&before=2");
+    const body4 = JSON.parse(res4.body);
+    assert.equal(body4.events.length, 1);
+    assert.equal(body4.events[0].seq, 1);
+    assert.equal(body4.hasMore, false);
+  });
+
+  it("GET /api/sessions/:id/events without limit omits total/hasMore (backward compat)", async () => {
+    store.createSession("s1", "/x");
+    store.saveEvent("s1", "user_message", { text: "a" });
+
+    const res = await makeRequest(port, "GET", "/api/sessions/s1/events");
+    const body = JSON.parse(res.body);
+    assert.equal(body.events.length, 1);
+    assert.equal(body.total, undefined);
+    assert.equal(body.hasMore, undefined);
+  });
+
   it("returns 404 for unknown API routes", async () => {
     const res = await makeRequest(port, "GET", "/api/unknown");
     assert.equal(res.status, 404);

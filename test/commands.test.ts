@@ -175,7 +175,7 @@ describe("commands", () => {
             json: async () => [{ id: "target-1", title: "Target Session" }],
           };
         }
-        if (url === "/api/sessions/target-1/events") {
+        if (url.startsWith("/api/sessions/target-1/events")) {
           return {
             ok: true,
             json: async () => [{ type: "assistant_message", data: JSON.stringify({ text: "history item" }) }],
@@ -196,7 +196,7 @@ describe("commands", () => {
 
       assert.equal(handled, true);
       assert.ok(fetchCalls.some(c => c.url === "/api/sessions"), "should list sessions");
-      assert.ok(fetchCalls.some(c => c.url === "/api/sessions/target-1/events"), "should load events");
+      assert.ok(fetchCalls.some(c => c.url.startsWith("/api/sessions/target-1/events")), "should load events");
       assert.ok(fetchCalls.some(c => c.url === "/api/sessions/target-1" && (!c.init || !c.init.method || c.init.method === "GET")), "should GET session to trigger auto-resume");
       assert.equal(state.sessionId, "target-1");
       assert.equal(state.sessionTitle, "Target Session");

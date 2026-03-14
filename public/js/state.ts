@@ -71,6 +71,10 @@ export const state = {
   _cancelTimerId: null as ReturnType<typeof setTimeout> | null,
   _onCancelTimeout: null as (() => void) | null,
   lastEventSeq: 0,
+  // Pagination state for lazy-loading older events
+  oldestLoadedSeq: 0,
+  hasMoreHistory: false,
+  loadingOlderEvents: false,
   replayInProgress: false,
   replayTarget: null as DocumentFragment | null,
   replayQueue: [] as AgentEvent[],
@@ -152,7 +156,12 @@ export function requestNewSession({ cwd, inheritFromSessionId = state.sessionId 
   api.createSession({ cwd, inheritFromSessionId }).catch(() => {});
 }
 
+// Modules can register cleanup functions to run on session reset (avoids circular imports)
+const resetHooks: (() => void)[] = [];
+export function onSessionReset(hook: () => void) { resetHooks.push(hook); }
+
 export function resetSessionUI() {
+  for (const hook of resetHooks) hook();
   dom.messages.innerHTML = '';
   state.currentAssistantEl = null;
   state.currentAssistantText = '';
@@ -168,6 +177,9 @@ export function resetSessionUI() {
   state.newTurnStarted = false;
   state._cancelTimerId = null;
   state.lastEventSeq = 0;
+  state.oldestLoadedSeq = 0;
+  state.hasMoreHistory = false;
+  state.loadingOlderEvents = false;
   state.replayInProgress = false;
   state.replayQueue = [];
   dom.attachPreview.innerHTML = '';

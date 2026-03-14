@@ -274,8 +274,10 @@ Retrieve stored events for a session (history). This is the primary history endp
 |---|---|---|---|
 | `thinking` | query | `"0"` or `"1"` | Set to `"0"` to exclude thinking events |
 | `after_seq` | query | number | Return only events with `seq > after_seq` (incremental sync) |
+| `limit` | query | number | Return at most N events (latest N, in ASC order). When omitted, returns all events (backward compat). Max 10000. |
+| `before` | query | number | Return only events with `seq < before` (cursor for pagination). Combine with `limit` to paginate backwards. |
 
-**Response** `200`: Envelope containing events array and streaming status.
+**Response** `200`: Envelope containing events array and streaming status. When `limit` is provided, `total` and `hasMore` are included.
 
 ```json
 {
@@ -292,8 +294,25 @@ Retrieve stored events for a session (history). This is the primary history endp
   "streaming": {
     "thinking": false,
     "assistant": false
-  }
+  },
+  "total": 7157,
+  "hasMore": true
 }
+```
+
+| Field | Present | Description |
+|---|---|---|
+| `events` | always | Array of stored events, ordered by `seq` ASC |
+| `streaming` | always | Whether thinking/assistant buffers were flushed (see below) |
+| `total` | when `limit` provided | Total event count for the session (respects `thinking` filter) |
+| `hasMore` | when `limit` provided | Whether there are older events before the returned page |
+
+**Pagination example:**
+```
+GET /api/sessions/:id/events?limit=200           → latest 200 events
+GET /api/sessions/:id/events?limit=200&before=50 → 200 events before seq 50
+GET /api/sessions/:id/events?after_seq=7000      → all events after seq 7000 (incremental sync, no limit)
+```
 ```
 
 The `streaming` flags indicate whether unflushed buffers were present when the request was made. If `true`, the corresponding buffer was flushed into the event list and the frontend should keep the last element open for continued live streaming (to avoid duplicate thinking/assistant blocks on reconnect).

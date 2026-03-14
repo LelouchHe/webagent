@@ -112,7 +112,7 @@ describe("connection", () => {
     setFetch(async (url: string) => {
       if (url.includes("/visibility")) return mockResponse({});
       if (url === "/api/sessions/hash-session") return mockResponse(sessionResponse("hash-session"));
-      if (url === "/api/sessions/hash-session/events")
+      if (url.startsWith("/api/sessions/hash-session/events"))
         return mockResponse([{ seq: 1, type: "assistant_message", data: JSON.stringify({ text: "restored" }) }]);
       throw new Error(`Unexpected fetch: ${url}`);
     });
@@ -129,7 +129,7 @@ describe("connection", () => {
     assert.equal(state.sessionId, "hash-session");
     const urls = fetchCalls.map(c => c.url);
     assert.ok(urls.some(u => u === "/api/sessions/hash-session"));
-    assert.ok(urls.some(u => u === "/api/sessions/hash-session/events"));
+    assert.ok(urls.some(u => u.startsWith("/api/sessions/hash-session/events")));
     assert.ok(dom.messages.textContent.includes("restored"));
     assert.equal(state.lastEventSeq, 1);
   });
@@ -139,7 +139,7 @@ describe("connection", () => {
       if (url.includes("/visibility")) return mockResponse({});
       if (url === "/api/sessions") return mockResponse([{ id: "recent-session" }]);
       if (url === "/api/sessions/recent-session") return mockResponse(sessionResponse("recent-session"));
-      if (url === "/api/sessions/recent-session/events") return mockResponse([]);
+      if (url.startsWith("/api/sessions/recent-session/events")) return mockResponse([]);
       throw new Error(`Unexpected fetch: ${url}`);
     });
 
@@ -314,7 +314,7 @@ describe("connection", () => {
         await sessionADeferred;
         return mockResponse(sessionResponse("session-a"));
       }
-      if (url === "/api/sessions/session-a/events") return mockResponse([]);
+      if (url.startsWith("/api/sessions/session-a/events")) return mockResponse([]);
       throw new Error(`Unexpected fetch: ${url}`);
     });
 

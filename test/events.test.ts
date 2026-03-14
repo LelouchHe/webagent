@@ -1160,6 +1160,130 @@ describe("events", () => {
       assert.equal(dom.messages.children.length, 2);
       assert.ok(dom.messages.lastElementChild.hasAttribute("data-sync-boundary"));
     });
+
+    it("sends limit parameter in fetch URL", async () => {
+      let capturedUrl = "";
+      globalThis.fetch = ((url: string) => {
+        capturedUrl = url;
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ events: [], streaming: { thinking: false, assistant: false } }),
+        });
+      }) as any;
+
+      await events.loadHistory("s1");
+      assert.ok(capturedUrl.includes("limit="), "should include limit param");
+    });
+
+    it("sets pagination state from paginated response", async () => {
+      const fakeEvents = [
+        { seq: 50, type: "user_message", data: JSON.stringify({ text: "hi" }) },
+        { seq: 51, type: "assistant_message", data: JSON.stringify({ text: "hello" }) },
+      ];
+      globalThis.fetch = (() => Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({
+          events: fakeEvents,
+          streaming: { thinking: false, assistant: false },
+          total: 100,
+          hasMore: true,
+        }),
+      })) as any;
+
+      await events.loadHistory("s1");
+      assert.equal(state.lastEventSeq, 51);
+      assert.equal(state.oldestLoadedSeq, 50);
+      assert.equal(state.hasMoreHistory, true);
+    });
+
+    it("sets hasMoreHistory=false when all events fit in one page", async () => {
+      const fakeEvents = [
+        { seq: 1, type: "user_message", data: JSON.stringify({ text: "only" }) },
+      ];
+      globalThis.fetch = (() => Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({
+          events: fakeEvents,
+          streaming: { thinking: false, assistant: false },
+          total: 1,
+          hasMore: false,
+        }),
+      })) as any;
+
+      await events.loadHistory("s1");
+      assert.equal(state.hasMoreHistory, false);
+      assert.equal(state.oldestLoadedSeq, 1);
+    });
+  });
+
+  describe("loadOlderEvents", () => {
+    it("prepends older events and updates pagination state", async () => {
+      // Set up initial state as if loadHistory loaded events 5-6
+      state.oldestLoadedSeq = 5;
+      state.hasMoreHistory = true;
+      state.sessionId = "s1";
+      events.replayEvent("user_message", { text: "msg-5" }, [], 0);
+      events.replayEvent("assistant_message", { text: "msg-6" }, [], 0);
+
+      const olderEvents = [
+        { seq: 3, type: "user_message", data: JSON.stringify({ text: "msg-3" }) },
+        { seq: 4, type: "assistant_message", data: JSON.stringify({ text: "msg-4" }) },
+      ];
+      globalThis.fetch = ((url: string) => {
+        assert.ok(url.includes("before=5"), "should use before cursor");
+        assert.ok(url.includes("limit="), "should include limit");
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({
+            events: olderEvents,
+            streaming: { thinking: false, assistant: false },
+            total: 6,
+            hasMore: true,
+          }),
+        });
+      }) as any;
+
+      const result = await events.loadOlderEvents("s1");
+      assert.equal(result, true);
+      assert.equal(state.oldestLoadedSeq, 3);
+      assert.equal(state.hasMoreHistory, true);
+      // Should have 4 children: 2 prepended + 2 original
+      assert.equal(dom.messages.children.length, 4);
+    });
+
+    it("removes sentinel and sets hasMoreHistory=false when no more events", async () => {
+      state.oldestLoadedSeq = 3;
+      state.hasMoreHistory = true;
+      state.sessionId = "s1";
+      events.replayEvent("user_message", { text: "existing" }, [], 0);
+
+      globalThis.fetch = (() => Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({
+          events: [{ seq: 1, type: "user_message", data: JSON.stringify({ text: "first" }) }],
+          streaming: { thinking: false, assistant: false },
+          hasMore: false,
+        }),
+      })) as any;
+
+      await events.loadOlderEvents("s1");
+      assert.equal(state.hasMoreHistory, false);
+      assert.equal(state.oldestLoadedSeq, 1);
+    });
+
+    it("returns false when no more history", async () => {
+      state.hasMoreHistory = false;
+      const result = await events.loadOlderEvents("s1");
+      assert.equal(result, false);
+    });
+
+    it("prevents concurrent loads", async () => {
+      state.oldestLoadedSeq = 10;
+      state.hasMoreHistory = true;
+      state.loadingOlderEvents = true;
+      const result = await events.loadOlderEvents("s1");
+      assert.equal(result, false);
+    });
   });
 
   describe("loadNewEvents", () => {
