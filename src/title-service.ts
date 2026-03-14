@@ -47,6 +47,9 @@ export class TitleService {
       const title = await bridge.promptForText(tsId, prompt);
       if (!title || this.cancelledSourceSessions.has(sessionId)) return;
 
+      // User may have set a title while generation was in flight
+      if (this.sessions.sessionHasTitle.has(sessionId)) return;
+
       const cleaned = title.replace(/^["']|["']$/g, "").trim().slice(0, 30);
       if (!cleaned) return;
 

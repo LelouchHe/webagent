@@ -149,4 +149,41 @@ describe("TitleService", () => {
     assert.deepEqual(promptCalls, ["prompt", "prompt"]);
     assert.equal(sessions.sessionHasTitle.has("session-1"), false);
   });
+
+  it("skips overwriting when user sets title while generation is in flight", async () => {
+    const titleUpdates: Array<{ sessionId: string; title: string }> = [];
+    const store = {
+      updateSessionTitle(sessionId: string, title: string) {
+        titleUpdates.push({ sessionId, title });
+      },
+    };
+    const sessions = { sessionHasTitle: new Set<string>(), liveSessions: new Set<string>() };
+    let releasePrompt: ((value: string) => void) | null = null;
+    const bridge = {
+      async newSession() { return "title-session"; },
+      async setConfigOption() {},
+      async promptForText() {
+        return await new Promise<string>((resolve) => {
+          releasePrompt = resolve;
+        });
+      },
+    };
+    const service = new TitleService(store as any, sessions as any, "/repo");
+
+    // Start generation
+    const titles: string[] = [];
+    service.generate(bridge as any, "hello", "session-1", (t) => titles.push(t));
+    await new Promise((resolve) => setImmediate(resolve));
+
+    // User manually sets title while generation is in flight
+    sessions.sessionHasTitle.add("session-1");
+
+    // Now release the prompt with a generated title
+    releasePrompt?.("Auto Title");
+    await new Promise((resolve) => setImmediate(resolve));
+
+    // The auto-generated title should NOT have been stored
+    assert.deepEqual(titleUpdates, []);
+    assert.deepEqual(titles, []);
+  });
 });

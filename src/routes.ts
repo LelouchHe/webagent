@@ -383,6 +383,9 @@ export function createRequestHandler(deps: RequestHandlerDeps): (req: IncomingMe
         try { body = JSON.parse(await readBody(req)); } catch { json(res, 400, { error: "Invalid JSON" }); return; }
         if (!body.value) { json(res, 400, { error: "Missing required field: value" }); return; }
         store.updateSessionTitle(sessionId, body.value);
+        if (sessions) sessions.sessionHasTitle.add(sessionId);
+        const bridge = getBridge?.();
+        if (titleService && bridge) titleService.cancel(sessionId, bridge as AgentBridge);
         const titleEvent = { type: "session_title_updated", sessionId, title: body.value } as AgentEvent;
         sseManager.broadcast(titleEvent);
         json(res, 200, { title: body.value });
