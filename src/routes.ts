@@ -104,6 +104,7 @@ export function createRequestHandler(
             events_stream: "/api/v1/events/stream",
             prompt: "/api/v1/prompt",
             push: "/api/v1/push",
+            clients: "/api/v1/clients",
           },
         });
         return;
