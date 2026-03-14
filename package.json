@@ -30,10 +30,10 @@
     "config.toml"
   ],
   "scripts": {
-    "prepublishOnly": "npm run build && npx tsc -p tsconfig.build.json",
+    "prepublishOnly": "npm run build && npm test",
     "build": "node scripts/build.js",
     "start": "node --experimental-strip-types src/server.ts --config config.toml",
-    "test": "node --experimental-strip-types --test test/*.test.ts",
+    "test": "npx tsc -p tsconfig.build.json && node --experimental-strip-types --test test/*.test.ts",
     "test:e2e": "playwright test",
     "dev": "node scripts/build.js --watch & node --experimental-strip-types --watch src/server.ts --config config.dev.toml",
     "dev:start": "node scripts/build.js --dev && node --experimental-strip-types src/server.ts --config config.dev.toml &",
