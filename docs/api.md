@@ -561,7 +561,7 @@ Remove a push subscription.
 
 #### `POST /api/v1/push/register-client`
 
-Associate an SSE client with a push subscription endpoint. Used for per-subscription visibility filtering — only endpoints with no visible clients receive push notifications. Called automatically on SSE reconnect.
+Associate an SSE client with a push subscription endpoint. Used for per-session visibility filtering — only endpoints whose visible clients are not viewing the notification's session receive push. Called automatically on SSE reconnect.
 
 **Request body:**
 
@@ -603,13 +603,18 @@ The client should connect to the `streamUrl` SSE endpoint to receive the agent's
 
 #### `POST /api/v1/clients/:clientId/visibility`
 
-Report client visibility state (foreground/background). Used by the push notification service to determine whether to send push notifications.
+Report client visibility state (foreground/background) and which session the client is viewing. Used by the push notification service for per-session suppression: push is only suppressed when a visible client is viewing the same session as the notification.
 
 **Request body:**
 
 ```json
-{ "visible": true }
+{ "visible": true, "sessionId": "optional-session-id" }
 ```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `visible` | boolean | yes | Whether the client is in the foreground |
+| `sessionId` | string | no | The session the client is currently viewing. When provided, updates the server's session tracking for this client. A visible client with no session set does not suppress any push. |
 
 **Response** `200`: `{ "ok": true }`
 

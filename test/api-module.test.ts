@@ -152,6 +152,20 @@ describe("api module", () => {
     assert.equal(body.visible, true);
   });
 
+  it("postVisibility includes sessionId when provided", async () => {
+    await api.postVisibility("cl-abc", true, "session-123");
+    const body = JSON.parse(fetchCalls[0].init?.body as string);
+    assert.equal(body.visible, true);
+    assert.equal(body.sessionId, "session-123");
+  });
+
+  it("postVisibility omits sessionId when undefined", async () => {
+    await api.postVisibility("cl-abc", false);
+    const body = JSON.parse(fetchCalls[0].init?.body as string);
+    assert.equal(body.visible, false);
+    assert.equal(body.sessionId, undefined);
+  });
+
   // --- Status ---
 
   it("getStatus sends GET /api/v1/sessions/:id/status", async () => {

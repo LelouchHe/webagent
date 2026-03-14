@@ -23,6 +23,7 @@ export class PushService {
   private vapidKeys: VapidKeys;
   private clientVisibility = new Map<string, boolean>(); // clientId → visible
   private clientEndpoints = new Map<string, string>(); // clientId → push endpoint
+  private clientSessions = new Map<string, string>(); // clientId → currently viewed sessionId
   /** endpoint → consecutive failure count (absent or 0 = healthy) */
   private failureCounts = new Map<string, number>();
 
@@ -96,6 +97,10 @@ export class PushService {
     this.clientVisibility.set(clientId, visible);
   }
 
+  setClientSession(clientId: string, sessionId: string): void {
+    this.clientSessions.set(clientId, sessionId);
+  }
+
   registerClient(clientId: string, endpoint: string): void {
     this.clientEndpoints.set(clientId, endpoint);
   }
@@ -103,6 +108,7 @@ export class PushService {
   removeClient(clientId: string): void {
     this.clientVisibility.delete(clientId);
     this.clientEndpoints.delete(clientId);
+    this.clientSessions.delete(clientId);
   }
 
   hasVisibleClient(): boolean {
@@ -116,6 +122,19 @@ export class PushService {
   isEndpointVisible(endpoint: string): boolean {
     for (const [clientId, ep] of this.clientEndpoints) {
       if (ep === endpoint && this.clientVisibility.get(clientId)) return true;
+    }
+    return false;
+  }
+
+  /**
+   * Check if a specific endpoint has a visible client viewing the given session.
+   * A client with no session set does not suppress any session's push.
+   */
+  isEndpointVisibleForSession(endpoint: string, sessionId: string): boolean {
+    for (const [clientId, ep] of this.clientEndpoints) {
+      if (ep === endpoint
+        && this.clientVisibility.get(clientId)
+        && this.clientSessions.get(clientId) === sessionId) return true;
     }
     return false;
   }
@@ -152,8 +171,8 @@ export class PushService {
 
     const payload = JSON.stringify(notification);
 
-    // Per-subscription visibility: skip endpoints that have a visible client
-    const targets = subs.filter((sub) => !this.isEndpointVisible(sub.endpoint));
+    // Per-subscription visibility: skip endpoints where a visible client is viewing this session
+    const targets = subs.filter((sub) => !this.isEndpointVisibleForSession(sub.endpoint, notification.data.sessionId));
     if (targets.length === 0) return;
 
     const results = await Promise.allSettled(

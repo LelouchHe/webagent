@@ -725,9 +725,12 @@ export function createRequestHandler(
           return;
         }
 
-        // If push service is available, update visibility
+        // If push service is available, update visibility and session
         if (deps.pushService) {
-          deps.pushService.setClientVisibility?.(clientId, body.visible as boolean);
+          deps.pushService.setClientVisibility(clientId, body.visible as boolean);
+          if (typeof body.sessionId === "string") {
+            deps.pushService.setClientSession(clientId, body.sessionId);
+          }
         }
 
         json(res, 200, { ok: true });

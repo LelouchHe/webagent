@@ -622,6 +622,10 @@ export function handleEvent(msg: AgentEvent) {
       state.sessionTitle = msg.title || null;
       if (msg.configOptions?.length) updateConfigOptions(msg.configOptions);
       setHashSessionId(state.sessionId);
+      // Report which session this client is now viewing (for per-session push suppression)
+      if (state.clientId) {
+        api.postVisibility(state.clientId, !document.hidden, state.sessionId).catch(() => {});
+      }
       updateSessionInfo(state.sessionId, state.sessionTitle);
       setConnectionStatus('connected', 'connected');
       dom.input.disabled = false;

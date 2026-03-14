@@ -325,6 +325,19 @@ describe("SSE REST API", () => {
       const res = await makeRequest(port, "POST", `/api/v1/clients/${clientId}/visibility`, "bad");
       assert.equal(res.status, 400);
     });
+
+    it("accepts optional sessionId in visibility update", async () => {
+      const sse = openSse(port, "/api/v1/events/stream");
+      sseCleanups.push(sse.close);
+      await sse.response;
+      await waitFor(() => sse.events.length >= 1);
+      const clientId = JSON.parse(sse.events[0]).clientId;
+
+      const res = await makeRequest(port, "POST", `/api/v1/clients/${clientId}/visibility`,
+        JSON.stringify({ visible: true, sessionId: "session-123" }));
+      assert.equal(res.status, 200);
+      assert.deepEqual(JSON.parse(res.body), { ok: true });
+    });
   });
 
   describe("heartbeat", () => {

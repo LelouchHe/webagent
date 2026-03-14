@@ -101,8 +101,10 @@ export function cancelBash(sessionId: string): Promise<void> {
 
 // --- Visibility ---
 
-export function postVisibility(clientId: string, visible: boolean): Promise<void> {
-  return post("/api/v1/clients/" + clientId + "/visibility", { visible });
+export function postVisibility(clientId: string, visible: boolean, sessionId?: string): Promise<void> {
+  const body: Record<string, unknown> = { visible };
+  if (sessionId) body.sessionId = sessionId;
+  return post("/api/v1/clients/" + clientId + "/visibility", body);
 }
 
 // --- Status ---

@@ -32,7 +32,7 @@ export function connect() {
     const msg = JSON.parse(e.data);
     if (msg.type === 'connected') {
       state.clientId = msg.clientId;
-      api.postVisibility(msg.clientId, !document.hidden).catch(() => {});
+      api.postVisibility(msg.clientId, !document.hidden, state.sessionId ?? undefined).catch(() => {});
       // Re-register push endpoint for the new clientId so per-subscription
       // visibility filtering works across reconnects
       registerPushEndpoint(msg.clientId);
@@ -167,7 +167,7 @@ function cleanup() {
 // Visibility reporting via REST (replaces WS visibility message)
 document.addEventListener('visibilitychange', () => {
   if (state.clientId) {
-    api.postVisibility(state.clientId, !document.hidden).catch(() => {});
+    api.postVisibility(state.clientId, !document.hidden, state.sessionId ?? undefined).catch(() => {});
   }
   // Sync missed events when returning from background (iOS can keep connections
   // alive while suspending event delivery, silently losing server messages)

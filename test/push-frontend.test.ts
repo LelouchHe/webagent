@@ -169,6 +169,7 @@ describe("push — visibility reporting", () => {
 
   it("sends visibility message when document visibility changes", () => {
     state.clientId = "cl-test";
+    state.sessionId = "sess-abc";
 
     // Simulate visibilitychange
     Object.defineProperty(document, "hidden", { value: true, configurable: true });
@@ -181,6 +182,7 @@ describe("push — visibility reporting", () => {
     assert.equal(visCall!.init?.method, "POST");
     const body = JSON.parse(visCall!.init?.body);
     assert.equal(body.visible, false);
+    assert.equal(body.sessionId, "sess-abc", "should include sessionId in visibility report");
 
     // Restore
     Object.defineProperty(document, "hidden", { value: false, configurable: true });
