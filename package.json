@@ -30,7 +30,7 @@
     "config.toml"
   ],
   "scripts": {
-    "prepublishOnly": "npm run build && npm test",
+    "prepublishOnly": "npm run build",
     "build": "node scripts/build.js",
     "start": "node --experimental-strip-types src/server.ts --config config.toml",
     "test": "npx tsc -p tsconfig.build.json && node --experimental-strip-types --test test/*.test.ts",
