@@ -39,19 +39,6 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - autopilot fallback when no allow_once option exists
   - normal permission_request broadcast in non-autopilot mode
 
-- `test/ws-handler.test.ts`
-  - new session / resume session routing
-  - user prompt persistence + title generation trigger / retry after a canceled title attempt
-  - permission response persistence + broadcast
-  - config changes persisted and broadcast to peer clients
-  - bash execution guard when one command is already running
-  - bash cancellation forwarding
-  - session-wide cancel as a hard stop for WebAgent-owned work
-  - session deletion with broadcast notification
-  - bash command success path with output streaming
-  - bash command stderr capture
-  - broadcast: open/closed client handling, sender exclusion, error tolerance
-
 - `test/session-manager.test.ts`
   - session title hydration
   - session deletion cleanup
@@ -213,8 +200,8 @@ spot gaps, and decide what still needs to be added without reading every spec.
 - `auto-resume-last-session.spec.ts`
   - root page resumes the most recently active session
 
-- `websocket-reconnect-recovery.spec.ts`
-  - WebSocket reconnect restores the active session without duplicate replay
+- `sse-reconnect-recovery.spec.ts`
+  - SSE reconnect restores the active session without duplicate replay
 
 - `server-restart-recovery.spec.ts`
   - full server restart restores session context and history

@@ -1,14 +1,12 @@
 import { createServer } from "node:http";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { WebSocketServer } from "ws";
 import { loadConfig } from "./config.ts";
 import { AgentBridge } from "./bridge.ts";
 import { Store } from "./store.ts";
 import { SessionManager } from "./session-manager.ts";
 import { TitleService } from "./title-service.ts";
 import { createRequestHandler } from "./routes.ts";
-import { setupWsHandler, broadcast } from "./ws-handler.ts";
 import { handleAgentEvent } from "./event-handler.ts";
 import { PushService } from "./push-service.ts";
 import { SseManager } from "./sse-manager.ts";
@@ -34,7 +32,7 @@ sseManager.startHeartbeat();
 
 let bridge: AgentBridge | null = null;
 
-// --- HTTP + WebSocket servers ---
+// --- HTTP server ---
 
 const server = createServer(createRequestHandler({
   store,
@@ -47,24 +45,12 @@ const server = createServer(createRequestHandler({
   limits: config.limits,
   pushService,
 }));
-const wss = new WebSocketServer({ server });
-
-setupWsHandler({
-  wss,
-  store,
-  sessions,
-  titleService,
-  getBridge: () => bridge,
-  limits: config.limits,
-  pushService,
-  sseManager,
-});
 
 async function initBridge(): Promise<AgentBridge> {
   const b = new AgentBridge(config.agent_cmd);
 
   b.on("event", (event: AgentEvent) => {
-    handleAgentEvent(event, sessions, store, wss, b, { cancelTimeout: config.limits.cancel_timeout }, pushService, sseManager);
+    handleAgentEvent(event, sessions, store, b, { cancelTimeout: config.limits.cancel_timeout }, sseManager, pushService);
   });
 
   await b.start();
@@ -78,7 +64,6 @@ async function shutdown() {
   console.log("\n[server] shutting down...");
   sseManager.stopHeartbeat();
   sessions.killAllBashProcs();
-  wss.close();
   await bridge?.shutdown();
   store.close();
   server.close();

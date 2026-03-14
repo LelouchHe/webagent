@@ -1,4 +1,3 @@
-import { z } from "zod/v4";
 import type * as acp from "@agentclientprotocol/sdk";
 
 // --- Config option (subset of ACP SessionConfigOption we care about) ---
@@ -85,50 +84,11 @@ export type AgentEvent =
   | { type: "bash_command"; sessionId: string; command: string }
   | { type: "bash_output"; sessionId: string; text: string; stream: string }
   | { type: "bash_done"; sessionId: string; code: number | null; signal: string | null; error?: string }
-  // Replay-only events (stored in DB, not sent live over WS)
+  // Replay-only events (stored in DB, not sent live)
   | { type: "assistant_message"; sessionId?: string; text: string }
   | { type: "thinking"; sessionId?: string; text: string }
   | { type: "bash_result"; sessionId?: string; output: string; code: number | null; signal: string | null }
   | { type: "permission_response"; sessionId?: string; requestId: string; optionName: string; denied: boolean };
-
-// --- Inbound WS messages (client → server) ---
-
-const ImageSchema = z.object({
-  data: z.string(),
-  mimeType: z.string(),
-  path: z.string().optional(),
-});
-
-export const WsMessageSchema = z.discriminatedUnion("type", [
-  z.object({
-    type: z.literal("new_session"),
-    cwd: z.string().optional(),
-    inheritFromSessionId: z.string().optional(),
-  }),
-  z.object({ type: z.literal("resume_session"), sessionId: z.string() }),
-  z.object({ type: z.literal("delete_session"), sessionId: z.string() }),
-  z.object({
-    type: z.literal("prompt"),
-    sessionId: z.string(),
-    text: z.string(),
-    images: z.array(ImageSchema).optional(),
-  }),
-  z.object({
-    type: z.literal("permission_response"),
-    sessionId: z.string().optional(),
-    requestId: z.string(),
-    optionId: z.string().optional(),
-    optionName: z.string().optional(),
-    denied: z.boolean().optional(),
-  }),
-  z.object({ type: z.literal("cancel"), sessionId: z.string() }),
-  z.object({ type: z.literal("set_config_option"), sessionId: z.string(), configId: z.string(), value: z.string() }),
-  z.object({ type: z.literal("bash_exec"), sessionId: z.string(), command: z.string() }),
-  z.object({ type: z.literal("bash_cancel"), sessionId: z.string() }),
-  z.object({ type: z.literal("visibility"), visible: z.boolean() }),
-]);
-
-export type WsMessage = z.infer<typeof WsMessageSchema>;
 
 // --- Utility ---
 

@@ -12,7 +12,7 @@ import type { PushService } from "./push-service.ts";
 import type { TitleService } from "./title-service.ts";
 import { errorMessage } from "./types.ts";
 import type { AgentEvent } from "./types.ts";
-import { interruptBashProc } from "./ws-handler.ts";
+import { interruptBashProc } from "./session-manager.ts";
 
 const IS_WIN = process.platform === "win32";
 
@@ -34,14 +34,13 @@ const MIME: Record<string, string> = {
 export interface RequestHandlerDeps {
   store: Store;
   sessions?: SessionManager;
-  sseManager?: SseManager;
+  sseManager: SseManager;
   titleService?: TitleService;
   getBridge?: () => (Pick<AgentBridge, "newSession" | "setConfigOption" | "loadSession" | "cancel" | "prompt" | "resolvePermission" | "denyPermission"> | null);
   publicDir: string;
   dataDir: string;
   limits: Pick<Config["limits"], "bash_output" | "image_upload"> & Partial<Pick<Config["limits"], "cancel_timeout">>;
   pushService?: PushService;
-  broadcast?: (event: AgentEvent) => void;
 }
 
 /** Read the full request body as a string. */
@@ -86,7 +85,7 @@ export function createRequestHandler(
     ? { store: storeOrDeps, publicDir: publicDir!, dataDir: dataDir!, limits: limits!, pushService }
     : storeOrDeps as RequestHandlerDeps;
 
-  const { store, sessions, getBridge, broadcast, sseManager, titleService } = deps;
+  const { store, sessions, getBridge, sseManager, titleService } = deps;
 
   return async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     const url = req.url ?? "/";
@@ -176,8 +175,7 @@ export function createRequestHandler(
           optionName,
           denied,
         } as AgentEvent;
-        broadcast?.(permEvent);
-        sseManager?.broadcast(permEvent);
+        sseManager.broadcast(permEvent);
 
         json(res, 200, { ok: true });
         return;
@@ -256,15 +254,13 @@ export function createRequestHandler(
         store.saveEvent(sessionId, "user_message", { text: body.text, images: body.images });
         store.updateSessionLastActive(sessionId);
         const userMsgEvent = { type: "user_message", sessionId, text: body.text, images: body.images } as AgentEvent;
-        broadcast?.(userMsgEvent);
-        sseManager?.broadcast(userMsgEvent);
+        sseManager.broadcast(userMsgEvent);
 
         // Generate title (fire-and-forget)
         if (titleService && sessions && !sessions.sessionHasTitle.has(sessionId)) {
           titleService.generate(bridge as AgentBridge, body.text, sessionId, (title) => {
             const titleEvent = { type: "session_title_updated", sessionId, title } as AgentEvent;
-            broadcast?.(titleEvent);
-            sseManager?.broadcast(titleEvent);
+            sseManager.broadcast(titleEvent);
           });
         }
 
@@ -299,8 +295,7 @@ export function createRequestHandler(
         const cwd = sessions.getSessionCwd(sessionId);
         store.saveEvent(sessionId, "bash_command", { command: body.command });
         const bashCmdEvent = { type: "bash_command", sessionId, command: body.command } as AgentEvent;
-        broadcast?.(bashCmdEvent);
-        sseManager?.broadcast(bashCmdEvent);
+        sseManager.broadcast(bashCmdEvent);
 
         const shell = IS_WIN ? (process.env.COMSPEC || "cmd.exe") : (process.env.SHELL || "bash");
         const shellArgs = IS_WIN ? ["/s", "/c", body.command] : ["-c", body.command];
@@ -327,8 +322,7 @@ export function createRequestHandler(
             output = (output + text).slice(-limit);
           }
           const bashOutEvent = { type: "bash_output", sessionId, text, stream } as AgentEvent;
-          broadcast?.(bashOutEvent);
-          sseManager?.broadcast(bashOutEvent);
+          sseManager.broadcast(bashOutEvent);
         };
         child.stdout!.on("data", onData("stdout"));
         child.stderr!.on("data", onData("stderr"));
@@ -338,8 +332,7 @@ export function createRequestHandler(
           const stored = outputTruncated ? "[truncated]\n" + output : output;
           store.saveEvent(sessionId, "bash_result", { output: stored, code, signal });
           const bashDoneEvent = { type: "bash_done", sessionId, code, signal } as AgentEvent;
-          broadcast?.(bashDoneEvent);
-          sseManager?.broadcast(bashDoneEvent);
+          sseManager.broadcast(bashDoneEvent);
         });
 
         child.on("error", (err) => {
@@ -347,8 +340,7 @@ export function createRequestHandler(
           const errMsg = errorMessage(err);
           store.saveEvent(sessionId, "bash_result", { output: errMsg, code: -1, signal: null });
           const bashErrEvent = { type: "bash_done", sessionId, code: -1, signal: null, error: errMsg } as AgentEvent;
-          broadcast?.(bashErrEvent);
-          sseManager?.broadcast(bashErrEvent);
+          sseManager.broadcast(bashErrEvent);
         });
 
         json(res, 202, { status: "accepted" });
@@ -384,9 +376,8 @@ export function createRequestHandler(
           for (const opt of configOptions) {
             store.updateSessionConfig(sessionId, opt.id, opt.currentValue);
           }
-          broadcast?.({ type: "config_option_update", sessionId, configOptions } as AgentEvent);
-          sseManager?.broadcast({ type: "config_option_update", sessionId, configOptions } as AgentEvent);
-          sseManager?.broadcast({ type: "config_set", sessionId, configId, value: body.value } as AgentEvent);
+          sseManager.broadcast({ type: "config_option_update", sessionId, configOptions } as AgentEvent);
+          sseManager.broadcast({ type: "config_set", sessionId, configId, value: body.value } as AgentEvent);
           json(res, 200, { configOptions });
         } catch (err) {
           json(res, 500, { error: `Failed to set ${configId}: ${err instanceof Error ? err.message : String(err)}` });
@@ -405,8 +396,7 @@ export function createRequestHandler(
         if (!body.value) { json(res, 400, { error: "Missing required field: value" }); return; }
         store.updateSessionTitle(sessionId, body.value);
         const titleEvent = { type: "session_title_updated", sessionId, title: body.value } as AgentEvent;
-        broadcast?.(titleEvent);
-        sseManager?.broadcast(titleEvent);
+        sseManager.broadcast(titleEvent);
         json(res, 200, { title: body.value });
         return;
       }
@@ -488,8 +478,7 @@ export function createRequestHandler(
           } else {
             store.deleteSession(sessionId);
           }
-          broadcast?.({ type: "session_deleted", sessionId } as AgentEvent);
-          sseManager?.broadcast({ type: "session_deleted", sessionId } as AgentEvent);
+          sseManager.broadcast({ type: "session_deleted", sessionId } as AgentEvent);
           res.writeHead(204);
           res.end();
           return;
@@ -525,12 +514,11 @@ export function createRequestHandler(
             title: session?.title,
             configOptions,
           } as AgentEvent;
-          broadcast?.(sessionCreatedEvent);
-          sseManager?.broadcast(sessionCreatedEvent);
+          sseManager.broadcast(sessionCreatedEvent);
           // ACP's session_created event fires before inheritance runs, so
           // broadcast final configOptions so SSE clients get the inherited values.
           if (configOptions.length) {
-            sseManager?.broadcast({ type: "config_option_update", sessionId, configOptions } as AgentEvent);
+            sseManager.broadcast({ type: "config_option_update", sessionId, configOptions } as AgentEvent);
           }
           json(res, 201, {
             id: sessionId,
@@ -637,8 +625,7 @@ export function createRequestHandler(
         if (titleService && !sessions.sessionHasTitle.has(sessionId)) {
           titleService.generate(bridge as AgentBridge, text, sessionId, (title) => {
             const titleEvent = { type: "session_title_updated", sessionId, title } as AgentEvent;
-            broadcast?.(titleEvent);
-            sseManager?.broadcast(titleEvent);
+            sseManager.broadcast(titleEvent);
           });
         }
         bridge.prompt(sessionId, text)

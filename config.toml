@@ -1,6 +1,6 @@
 # WebAgent production configuration
 
-# HTTP/WebSocket server port (default: 6800)
+# HTTP server port (default: 6800)
 port = 6800
 
 # SQLite + uploads directory (default: "data")

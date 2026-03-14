@@ -5,7 +5,7 @@
 
 A terminal-style web UI for ACP-compatible agents.
 
-Tech stack: Node.js + TypeScript (`--experimental-strip-types`), real-time WebSocket communication (`ws`), SQLite persistence (`better-sqlite3`), Zod validation, esbuild (frontend bundling).
+Tech stack: Node.js + TypeScript (`--experimental-strip-types`), REST + SSE real-time communication, SQLite persistence (`better-sqlite3`), Zod validation, esbuild (frontend bundling).
 
 ## Screenshots
 
@@ -128,7 +128,7 @@ If no `--config` is provided, all settings use built-in defaults. See `config.to
 
 | Key | Default | Description |
 |---|---|---|
-| `port` | `6800` | HTTP/WebSocket server port |
+| `port` | `6800` | HTTP server port |
 | `data_dir` | `data` | SQLite + uploads directory |
 | `default_cwd` | `process.cwd()` | Working directory for new sessions |
 | `public_dir` | `dist` | Static assets directory |
@@ -228,7 +228,7 @@ Tap the `❯` prompt indicator to cycle mode. Tap `new` to create a new session 
 
 - PWA support (installable to home screen)
 - Web Push notifications — background alerts when no browser tab is visible (use `/notify on`)
-- WebSocket auto-reconnect (3s retry on disconnect)
+- SSE auto-reconnect (3s retry on disconnect)
 - 30s heartbeat keepalive
 - Auto-expanding input box
 - Mobile-friendly layout
@@ -248,26 +248,26 @@ npm run test:e2e      # Playwright browser E2E
 ## Architecture
 
 ```
-Browser ←WebSocket→ server.ts ←ACP→ copilot CLI
-                     ├── routes.ts (HTTP handlers)
-                     ├── ws-handler.ts (WS dispatch)
-                     ├── session-manager.ts (state)
-                     ├── title-service.ts (auto-title)
-                     ├── push-service.ts (Web Push)
-                     ├── daemon.ts (background service)
-                     └── store.ts (SQLite)
+Browser ←REST+SSE→ server.ts ←ACP→ copilot CLI
+                    ├── routes.ts (HTTP handlers)
+                    ├── event-handler.ts (ACP event routing)
+                    ├── session-manager.ts (state)
+                    ├── title-service.ts (auto-title)
+                    ├── push-service.ts (Web Push)
+                    ├── daemon.ts (background service)
+                    └── store.ts (SQLite)
 ```
 
-- **server.ts** — HTTP/WebSocket server bootstrap
+- **server.ts** — HTTP server bootstrap
 - **routes.ts** — HTTP request handlers (static files, REST API, image upload, push subscription)
-- **ws-handler.ts** — WebSocket message dispatch + broadcast + visibility tracking
+- **event-handler.ts** — ACP event routing + SSE broadcast
 - **session-manager.ts** — Session state management (live sessions, buffers, bash procs, model cache)
 - **bridge.ts** — ACP bridge, manages agent subprocess, handles permissions and file I/O
 - **store.ts** — SQLite persistence (sessions, events, push subscriptions; WAL mode)
 - **title-service.ts** — Async session title generation (dedicated Haiku session)
 - **push-service.ts** — Web Push notifications (VAPID keys, subscriptions, visibility-gated delivery)
 - **daemon.ts** — Background service management (start/stop/status/restart) with supervisor
-- **types.ts** — Shared types + Zod schemas for WS messages
+- **types.ts** — Shared types + Zod schemas
 - **shared/constants.ts** — Constants shared between frontend and backend (tool icons, plan status icons)
 - **public/js/*.ts** — Frontend TypeScript source, bundled by esbuild into a single `dist/js/app.[hash].js`
 

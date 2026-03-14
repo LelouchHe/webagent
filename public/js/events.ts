@@ -1,4 +1,4 @@
-// WebSocket event handling and history replay
+// Event handling and history replay
 
 import {
   state, dom, setBusy, setConfigValue, getConfigOption, updateConfigOptions,

@@ -81,7 +81,7 @@ describe("Session REST API", () => {
       publicDir,
       dataDir: tmpDir,
       limits: { bash_output: 1_048_576, image_upload: 10_485_760, cancel_timeout: 10_000 },
-      broadcast: (event: AgentEvent) => { broadcastEvents.push(event); },
+      sseManager: { broadcast: (event: AgentEvent) => { broadcastEvents.push(event); } } as any,
     });
     server = http.createServer(handler);
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -165,6 +165,7 @@ describe("Session REST API", () => {
         getBridge: () => null,
         publicDir, dataDir: tmpDir,
         limits: { bash_output: 1_048_576, image_upload: 10_485_760, cancel_timeout: 10_000 },
+        sseManager: { broadcast() {} } as any,
       });
       const s2 = http.createServer(handler);
       await new Promise<void>((resolve) => s2.listen(0, "127.0.0.1", resolve));
@@ -309,6 +310,7 @@ describe("Session REST API", () => {
         getBridge: () => null,
         publicDir, dataDir: tmpDir,
         limits: { bash_output: 1_048_576, image_upload: 10_485_760, cancel_timeout: 10_000 },
+        sseManager: { broadcast() {} } as any,
       });
       const s2 = http.createServer(handler);
       await new Promise<void>((resolve) => s2.listen(0, "127.0.0.1", resolve));

@@ -1,5 +1,5 @@
 // Minimal service worker for PWA installability + push notifications.
-// No offline caching — app requires WebSocket connection.
+// No offline caching — app requires SSE connection.
 
 self.addEventListener('install', () => self.skipWaiting());
 self.addEventListener('activate', (e) => e.waitUntil(self.clients.claim()));

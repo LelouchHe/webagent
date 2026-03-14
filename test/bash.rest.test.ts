@@ -62,6 +62,7 @@ describe("Bash REST API", () => {
   let port: number;
   let mockBridge: ReturnType<typeof createMockBridge>;
   let broadcastEvents: AgentEvent[];
+  let mockSseManager: { broadcast: (event: AgentEvent) => void };
 
   beforeEach(async () => {
     tmpDir = mkdtempSync(join(tmpdir(), "webagent-bash-"));
@@ -73,15 +74,16 @@ describe("Bash REST API", () => {
     sessions = new SessionManager(store, tmpDir, tmpDir);
     mockBridge = createMockBridge();
     broadcastEvents = [];
+    mockSseManager = { broadcast: (event: AgentEvent) => broadcastEvents.push(event) };
 
     const handler = createRequestHandler({
       store,
       sessions,
+      sseManager: mockSseManager as any,
       getBridge: () => mockBridge,
       publicDir,
       dataDir: tmpDir,
       limits: { bash_output: 1024, image_upload: 1024 },
-      broadcast: (event: AgentEvent) => broadcastEvents.push(event),
     });
     server = http.createServer(handler);
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));

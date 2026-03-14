@@ -80,7 +80,7 @@ describe("Permissions REST API", () => {
       publicDir,
       dataDir: tmpDir,
       limits: { bash_output: 1024, image_upload: 1024 },
-      broadcast: (event: AgentEvent) => broadcastEvents.push(event),
+      sseManager: { broadcast: (event: AgentEvent) => broadcastEvents.push(event) } as any,
     });
     server = http.createServer(handler);
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -242,6 +242,7 @@ describe("Permissions REST API", () => {
         store, sessions, getBridge: () => null,
         publicDir, dataDir: tmpDir,
         limits: { bash_output: 1024, image_upload: 1024 },
+        sseManager: { broadcast() {} } as any,
       });
       const srv = http.createServer(handler);
       await new Promise<void>((r) => srv.listen(0, "127.0.0.1", r));

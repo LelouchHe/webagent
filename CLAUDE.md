@@ -2,12 +2,12 @@
 
 A terminal-style web UI for ACP-compatible agents.
 
-Tech stack: Node.js + TypeScript (`--experimental-strip-types`), real-time WebSocket communication (`ws`), SQLite persistence (`better-sqlite3`), Zod validation, esbuild (frontend bundling).
+Tech stack: Node.js + TypeScript (`--experimental-strip-types`), REST + SSE real-time communication, SQLite persistence (`better-sqlite3`), Zod validation, esbuild (frontend bundling).
 
 Core modules:
-- `server.ts` — HTTP/WebSocket server bootstrap
+- `server.ts` — HTTP server bootstrap
 - `routes.ts` — HTTP request handlers (static files, REST API, image upload)
-- `ws-handler.ts` — WebSocket message dispatch + broadcast
+- `event-handler.ts` — ACP event routing + SSE broadcast
 - `session-manager.ts` — Session state (live sessions, buffers, bash procs, model cache)
 - `bridge.ts` — ACP bridge, manages agent subprocess
 - `store.ts` — SQLite persistence (sessions + events tables)
@@ -51,7 +51,7 @@ If no `--config` is provided, all settings use built-in defaults. See `config.to
 
 | Key | Default | Description |
 |---|---|---|
-| `port` | `6800` | HTTP/WebSocket server port |
+| `port` | `6800` | HTTP server port |
 | `data_dir` | `data` | SQLite + uploads directory |
 | `default_cwd` | `process.cwd()` | Working directory for new sessions |
 | `public_dir` | `dist` | Static assets directory |
@@ -127,7 +127,7 @@ Keep this distinction clear in docs and code discussions: some missing capabilit
 - **Prefer CSS for animations** — Use CSS `@keyframes` + pseudo-elements for UI animations (spinners, pulses) instead of JS `setInterval`. JS timers cause issues in test environments (JSDOM) by keeping the event loop alive.
 - **Autopilot mode** — In autopilot mode, permissions are auto-approved server-side (`allow_once` only, not `allow_always`, to avoid persisting across mode switches). New sessions always start in agent mode (mode is not inherited).
 - **Push notifications** — `/notify` slash command with on/off submenu. First `prompt_done` triggers a one-time tip (localStorage-gated). Permission denied state shows manual-settings guidance. Service worker handles push display + notificationclick → session navigation.
-- **iOS Safari / PWA keyboard** — iOS requires `.focus()` to originate from a synchronous user gesture (tap, click, keydown) for the virtual keyboard to appear. Calling `.focus()` from async callbacks (WebSocket `onmessage`, `setTimeout`, Promise `.then()`) puts the textarea into a "focused but no keyboard" state where subsequent taps also fail. The HTML `autofocus` attribute triggers this on page load. **Rule: never call `.focus()` outside a direct user gesture handler; never use `autofocus` on mobile-targeted inputs.**
+- **iOS Safari / PWA keyboard** — iOS requires `.focus()` to originate from a synchronous user gesture (tap, click, keydown) for the virtual keyboard to appear. Calling `.focus()` from async callbacks (`setTimeout`, Promise `.then()`) puts the textarea into a "focused but no keyboard" state where subsequent taps also fail. The HTML `autofocus` attribute triggers this on page load. **Rule: never call `.focus()` outside a direct user gesture handler; never use `autofocus` on mobile-targeted inputs.**
 - **Bottom status bar** — There is a small read-only status bar below `#input-area`. Its purpose is to use the old bottom spacing for useful context, visually separate the input row from the bottom edge/home-indicator area, and show `model · cwd` without adding more buttons. Mode still belongs on the input row itself (`plan` / `autopilot` label + color), not in the status bar.
 - **iOS PWA safe area / keyboard overlap** — The bottom home indicator on notch iPhones can overlap fixed/flex bottom bars in standalone PWA mode. In practice, a large `viewport-fit=cover` + `env(safe-area-inset-bottom)` treatment caused worse regressions here (for example the header being pushed into the system status area), so this app currently prefers modest fixed bottom spacing on the status bar instead of full safe-area padding. Also note that on iOS standalone PWAs the bottom status bar may intermittently sit above the keyboard or be hidden behind it depending on whether WebKit updates the visual viewport during focus; treat that as a likely platform/WebKit issue rather than something CSS alone can reliably eliminate (see also WebKit viewport/keyboard bugs such as #292603).
 

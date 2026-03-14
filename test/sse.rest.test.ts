@@ -106,7 +106,6 @@ describe("SSE REST API", () => {
   let server: http.Server;
   let port: number;
   let mockBridge: ReturnType<typeof createMockBridge>;
-  let broadcastFn: (event: AgentEvent) => void;
   const sseCleanups: Array<() => void> = [];
 
   beforeEach(async () => {
@@ -128,10 +127,6 @@ describe("SSE REST API", () => {
       dataDir: tmpDir,
       limits: { bash_output: 1024, image_upload: 1024 },
       sseManager,
-      broadcast: (event: AgentEvent) => {
-        broadcastFn?.(event);
-        sseManager.broadcast(event);
-      },
     });
     server = http.createServer(handler);
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));

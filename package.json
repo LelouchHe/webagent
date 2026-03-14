@@ -15,7 +15,7 @@
     "web-ui",
     "copilot",
     "chat",
-    "websocket"
+    "sse"
   ],
   "engines": {
     "node": ">=22.6.0"
@@ -45,13 +45,11 @@
     "better-sqlite3": "^12.6.2",
     "smol-toml": "^1.6.0",
     "web-push": "^3.6.7",
-    "ws": "^8.19.0",
     "zod": "^4.3.6"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^25.3.3",
-    "@types/ws": "^8.18.1",
     "esbuild": "^0.27.3",
     "happy-dom": "^20.8.3",
     "playwright": "^1.58.2",

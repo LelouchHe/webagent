@@ -1,11 +1,9 @@
-import type { WebSocketServer } from "ws";
 import type { AgentBridge } from "./bridge.ts";
 import type { Store } from "./store.ts";
 import type { SessionManager } from "./session-manager.ts";
 import type { PushService } from "./push-service.ts";
 import type { SseManager } from "./sse-manager.ts";
 import type { AgentEvent } from "./types.ts";
-import { broadcast } from "./ws-handler.ts";
 
 export interface EventHandlerConfig {
   cancelTimeout: number;
@@ -15,11 +13,10 @@ export function handleAgentEvent(
   event: AgentEvent,
   sessions: SessionManager,
   store: Store,
-  wss: WebSocketServer,
   bridge: AgentBridge,
   config: EventHandlerConfig,
+  sseManager: SseManager,
   pushService?: PushService,
-  sseManager?: SseManager,
 ): void {
   if ("sessionId" in event && event.sessionId && sessions.restoringSessions.has(event.sessionId)) return;
 
@@ -81,8 +78,7 @@ export function handleAgentEvent(
             requestId: event.requestId, optionName, denied: false,
           });
           // Broadcast both so the frontend can render then collapse the permission card
-          broadcast(wss, event);
-          sseManager?.broadcast(event);
+          sseManager.broadcast(event);
           const resolvedEvent = {
             type: "permission_resolved" as const,
             sessionId: event.sessionId,
@@ -90,8 +86,7 @@ export function handleAgentEvent(
             optionName,
             denied: false,
           };
-          broadcast(wss, resolvedEvent);
-          sseManager?.broadcast(resolvedEvent);
+          sseManager.broadcast(resolvedEvent);
           return;
         }
       }
@@ -108,10 +103,9 @@ export function handleAgentEvent(
       }
       break;
   }
-  broadcast(wss, event);
-  sseManager?.broadcast(event);
+  sseManager.broadcast(event);
 
-  // Push notification check (after broadcast so WS clients get the event first)
+  // Push notification check (after broadcast so clients get the event first)
   if (pushService && "sessionId" in event && event.sessionId) {
     const session = store.getSession(event.sessionId);
     const eventData: Record<string, unknown> = {};

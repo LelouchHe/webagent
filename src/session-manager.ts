@@ -1,10 +1,31 @@
 import type { ChildProcess } from "node:child_process";
+import { spawn } from "node:child_process";
 import { rm } from "node:fs/promises";
 import { stat } from "node:fs/promises";
 import { join } from "node:path";
 import type { Store } from "./store.ts";
 import type { AgentBridge } from "./bridge.ts";
 import type { AgentEvent, ConfigOption, PendingPermission } from "./types.ts";
+
+const IS_WIN = process.platform === "win32";
+
+export function interruptBashProc(proc: ReturnType<SessionManager["runningBashProcs"]["get"]>): void {
+  if (!proc) return;
+  if (IS_WIN && typeof proc.pid === "number") {
+    // Windows: kill entire process tree since there are no process groups
+    spawn("taskkill", ["/T", "/F", "/PID", String(proc.pid)]).unref();
+    return;
+  }
+  if (typeof proc.pid === "number") {
+    try {
+      process.kill(-proc.pid, "SIGINT");
+      return;
+    } catch {
+      // Fall through to direct child kill when the process is not a group leader.
+    }
+  }
+  proc.kill("SIGINT");
+}
 
 type SessionBridge = Pick<AgentBridge, "newSession" | "setConfigOption" | "loadSession">;
 
