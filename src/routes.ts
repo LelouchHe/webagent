@@ -70,21 +70,7 @@ function json(res: ServerResponse, status: number, data: unknown, req?: Incoming
   }
 }
 
-export function createRequestHandler(deps: RequestHandlerDeps): (req: IncomingMessage, res: ServerResponse) => Promise<void>;
-/** @deprecated Use object form instead. */
-export function createRequestHandler(store: Store, publicDir: string, dataDir: string, limits: RequestHandlerDeps["limits"], pushService?: PushService): (req: IncomingMessage, res: ServerResponse) => Promise<void>;
-export function createRequestHandler(
-  storeOrDeps: Store | RequestHandlerDeps,
-  publicDir?: string,
-  dataDir?: string,
-  limits?: RequestHandlerDeps["limits"],
-  pushService?: PushService,
-): (req: IncomingMessage, res: ServerResponse) => Promise<void> {
-  // Normalize to deps object (support legacy positional args)
-  const deps: RequestHandlerDeps = (storeOrDeps instanceof Store)
-    ? { store: storeOrDeps, publicDir: publicDir!, dataDir: dataDir!, limits: limits!, pushService } as RequestHandlerDeps
-    : storeOrDeps as RequestHandlerDeps;
-
+export function createRequestHandler(deps: RequestHandlerDeps): (req: IncomingMessage, res: ServerResponse) => Promise<void> {
   const { store, sessions, getBridge, sseManager, titleService } = deps;
 
   return async (req: IncomingMessage, res: ServerResponse): Promise<void> => {

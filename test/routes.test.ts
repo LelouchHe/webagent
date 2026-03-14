@@ -44,10 +44,10 @@ describe("HTTP routes", () => {
     writeFileSync(join(publicDir, "index.html"), "<h1>Test</h1>");
 
     store = new Store(tmpDir);
-    const handler = createRequestHandler(store, publicDir, tmpDir, {
+    const handler = createRequestHandler({ store, publicDir, dataDir: tmpDir, limits: {
       bash_output: 1_048_576,
       image_upload: 10_485_760,
-    });
+    }});
     server = http.createServer(handler);
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     port = (server.address() as { port: number }).port;
@@ -194,10 +194,10 @@ describe("Image upload", () => {
     writeFileSync(join(publicDir, "index.html"), "<h1>Test</h1>");
 
     store = new Store(tmpDir);
-    const handler = createRequestHandler(store, publicDir, tmpDir, {
+    const handler = createRequestHandler({ store, publicDir, dataDir: tmpDir, limits: {
       bash_output: 1_048_576,
       image_upload: UPLOAD_LIMIT,
-    });
+    }});
     server = http.createServer(handler);
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     port = (server.address() as { port: number }).port;
@@ -284,11 +284,11 @@ describe("Push API routes", () => {
 
     store = new Store(tmpDir);
     pushService = new PushService(store, tmpDir, "mailto:test@localhost");
-    const handler = createRequestHandler(store, publicDir, tmpDir, {
+    const handler = createRequestHandler({ store, publicDir, dataDir: tmpDir, limits: {
       bash_output: 1_048_576,
       image_upload: 10_485_760,
       cancel_timeout: 10_000,
-    }, pushService);
+    }, pushService });
     server = http.createServer(handler);
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     port = (server.address() as { port: number }).port;
@@ -360,11 +360,11 @@ describe("Push API routes", () => {
 
   it("GET /api/v1/push/vapid-key returns 404 when no push service", async () => {
     // Create handler without pushService
-    const handler2 = createRequestHandler(store, publicDir, tmpDir, {
+    const handler2 = createRequestHandler({ store, publicDir, dataDir: tmpDir, limits: {
       bash_output: 1_048_576,
       image_upload: 10_485_760,
       cancel_timeout: 10_000,
-    });
+    }});
     const server2 = http.createServer(handler2);
     await new Promise<void>((resolve) => server2.listen(0, "127.0.0.1", resolve));
     const port2 = (server2.address() as { port: number }).port;
