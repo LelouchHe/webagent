@@ -214,7 +214,7 @@ export async function loadNewEvents(sid: string): Promise<boolean> {
   state.replayInProgress = true;
   state.replayQueue = [];
   try {
-    const url = `/api/sessions/${sid}/events?after_seq=${state.lastEventSeq}`;
+    const url = `/api/sessions/${sid}/events?after=${state.lastEventSeq}`;
     const res = await fetch(url);
     if (!res.ok) return false;
     const body = await res.json();

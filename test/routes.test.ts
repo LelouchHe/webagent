@@ -94,13 +94,13 @@ describe("HTTP routes", () => {
     assert.deepEqual(body.streaming, { thinking: false, assistant: false });
   });
 
-  it("GET /api/sessions/:id/events?after_seq=N returns only new events", async () => {
+  it("GET /api/sessions/:id/events?after=N returns only new events", async () => {
     store.createSession("s1", "/x");
     store.saveEvent("s1", "user_message", { text: "a" });
     store.saveEvent("s1", "assistant_message", { text: "b" });
     store.saveEvent("s1", "user_message", { text: "c" });
 
-    const res = await makeRequest(port, "GET", "/api/sessions/s1/events?after_seq=1");
+    const res = await makeRequest(port, "GET", "/api/sessions/s1/events?after=1");
     assert.equal(res.status, 200);
     const body = JSON.parse(res.body);
     assert.equal(body.events.length, 2);

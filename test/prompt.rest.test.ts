@@ -252,7 +252,7 @@ describe("Prompt REST API", () => {
       assert.ok(!events.some((e: any) => e.type === "thinking"));
     });
 
-    it("supports after_seq pagination", async () => {
+    it("supports after pagination", async () => {
       const sessionId = await createSession();
       store.saveEvent(sessionId, "user_message", { text: "first" });
       store.saveEvent(sessionId, "user_message", { text: "second" });
@@ -260,7 +260,7 @@ describe("Prompt REST API", () => {
       const allEvents = store.getEvents(sessionId);
       const firstSeq = allEvents[0].seq;
 
-      const res = await makeRequest(port, "GET", `/api/sessions/${sessionId}/messages?after_seq=${firstSeq}`);
+      const res = await makeRequest(port, "GET", `/api/sessions/${sessionId}/messages?after=${firstSeq}`);
       const events = JSON.parse(res.body);
       assert.equal(events.length, 1);
       assert.equal(JSON.parse(events[0].data).text, "second");

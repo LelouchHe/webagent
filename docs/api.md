@@ -273,7 +273,7 @@ Retrieve stored events for a session (history). This is the primary history endp
 | Parameter | In | Type | Description |
 |---|---|---|---|
 | `thinking` | query | `"0"` or `"1"` | Set to `"0"` to exclude thinking events |
-| `after_seq` | query | number | Return only events with `seq > after_seq` (incremental sync) |
+| `after` | query | number | Return only events with `seq > after` (incremental sync) |
 | `limit` | query | number | Return at most N events (latest N, in ASC order). When omitted, returns all events (backward compat). Max 10000. |
 | `before` | query | number | Return only events with `seq < before` (cursor for pagination). Combine with `limit` to paginate backwards. |
 
@@ -311,7 +311,7 @@ Retrieve stored events for a session (history). This is the primary history endp
 ```
 GET /api/sessions/:id/events?limit=200           → latest 200 events
 GET /api/sessions/:id/events?limit=200&before=50 → 200 events before seq 50
-GET /api/sessions/:id/events?after_seq=7000      → all events after seq 7000 (incremental sync, no limit)
+GET /api/sessions/:id/events?after=7000      → all events after seq 7000 (incremental sync, no limit)
 ```
 ```
 

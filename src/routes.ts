@@ -278,8 +278,8 @@ export function createRequestHandler(
         if (!session) { json(res, 404, { error: "Session not found" }); return; }
         const params = new URLSearchParams(messagesMatch[2]?.slice(1) ?? "");
         const excludeThinking = params.get("thinking") === "0";
-        const afterSeqRaw = params.get("after_seq");
-        const afterSeq = afterSeqRaw != null ? Number(afterSeqRaw) : undefined;
+        const afterRaw = params.get("after");
+        const afterSeq = afterRaw != null ? Number(afterRaw) : undefined;
         const events = store.getEvents(sessionId, { excludeThinking, afterSeq });
         json(res, 200, events, req);
         return;
@@ -550,14 +550,14 @@ export function createRequestHandler(
         return;
       }
 
-      // GET /api/sessions/:id/events?thinking=0|1&limit=N&before=SEQ&after_seq=SEQ
+      // GET /api/sessions/:id/events?thinking=0|1&limit=N&before=SEQ&after=SEQ
       const eventsMatch = url.match(/^\/api\/sessions\/([^/]+)\/events(\?.*)?$/);
       if (eventsMatch && req.method === "GET") {
         const sessionId = decodeURIComponent(eventsMatch[1]);
         const params = new URLSearchParams(eventsMatch[2]?.slice(1) ?? "");
         const excludeThinking = params.get("thinking") === "0";
-        const afterSeqRaw = params.get("after_seq");
-        const afterSeq = afterSeqRaw != null ? Number(afterSeqRaw) : undefined;
+        const afterRaw = params.get("after");
+        const afterSeq = afterRaw != null ? Number(afterRaw) : undefined;
         const beforeRaw = params.get("before");
         const beforeSeq = beforeRaw != null ? Number(beforeRaw) : undefined;
         const limitRaw = params.get("limit");

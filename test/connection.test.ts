@@ -246,7 +246,7 @@ describe("connection", () => {
       if (url.includes("/visibility")) return mockResponse({});
       if (url === "/api/sessions/incr-session") return mockResponse(sessionResponse("incr-session"));
       if (url.includes("/api/sessions/incr-session/events")) {
-        assert.ok(url.includes("after_seq=2"), `Expected after_seq=2 in URL, got: ${url}`);
+        assert.ok(url.includes("after=2"), `Expected after=2 in URL, got: ${url}`);
         return mockResponse([{ seq: 3, type: "assistant_message", data: JSON.stringify({ text: "full reply" }) }]);
       }
       throw new Error(`Unexpected fetch: ${url}`);
@@ -274,7 +274,7 @@ describe("connection", () => {
 
     setFetch(async (url: string) => {
       if (url.includes("/visibility")) return mockResponse({});
-      if (url.includes("after_seq=3")) {
+      if (url.includes("after=3")) {
         return {
           ok: true,
           json: async () => [
@@ -296,7 +296,7 @@ describe("connection", () => {
     // Should have sent visibility report via REST
     assert.ok(fetchCalls.some(c => c.url.includes("/visibility")), "should POST visibility");
     // Should have fetched missed events
-    assert.ok(fetchCalls.some(c => c.url.includes("after_seq=3")), "should fetch new events");
+    assert.ok(fetchCalls.some(c => c.url.includes("after=3")), "should fetch new events");
     // The missed message should now appear
     assert.ok(dom.messages.textContent.includes("missed while backgrounded"));
     assert.equal(state.lastEventSeq, 4);

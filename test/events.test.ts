@@ -1297,7 +1297,7 @@ describe("events", () => {
         { seq: 2, type: "assistant_message", data: JSON.stringify({ text: "new reply" }) },
       ];
       globalThis.fetch = ((url: string) => {
-        assert.ok(url.includes("after_seq=1"));
+        assert.ok(url.includes("after=1"));
         return Promise.resolve({ ok: true, json: () => Promise.resolve(newEvents) });
       }) as any;
 

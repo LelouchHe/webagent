@@ -181,7 +181,7 @@ For **incremental reconnects** (same session, SSE dropped):
 ```
 api.getSession(sessionId)        // get config/title/busy state
 → handleEvent({ type: 'session_created', ... })
-→ loadNewEvents(sessionId)       // GET /events?after_seq=N
+→ loadNewEvents(sessionId)       // GET /events?after=N
 ```
 
 This parallel loading means history rendering starts as soon as the event data arrives, without waiting for session resume.
@@ -269,7 +269,7 @@ During replay, `state.replayInProgress = true` and live SSE events are queued in
 `loadNewEvents()` fetches only events after the last known sequence:
 
 ```
-GET /api/sessions/:id/events?after_seq=42
+GET /api/sessions/:id/events?after=42
         │
         ▼
   1. Remove DOM elements after sync boundary
