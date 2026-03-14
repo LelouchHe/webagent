@@ -233,14 +233,15 @@ export function createRequestHandler(deps: RequestHandlerDeps): (req: IncomingMe
           return;
         }
 
-        let body: { text?: string; images?: Array<{ data: string; mimeType: string }> };
+        let body: { text?: string; images?: Array<{ data: string; mimeType: string; path?: string }> };
         try { body = JSON.parse(await readBody(req)); } catch { json(res, 400, { error: "Invalid JSON" }); return; }
         if (!body.text) { json(res, 400, { error: "Missing required field: text" }); return; }
 
-        // Store user_message event and update last_active_at
-        store.saveEvent(sessionId, "user_message", { text: body.text, images: body.images });
+        // Store user_message event (strip base64 data, keep only path + mimeType)
+        const storedImages = body.images?.map(i => ({ path: i.path, mimeType: i.mimeType }));
+        store.saveEvent(sessionId, "user_message", { text: body.text, ...(storedImages?.length && { images: storedImages }) });
         store.updateSessionLastActive(sessionId);
-        const userMsgEvent = { type: "user_message", sessionId, text: body.text, images: body.images } as AgentEvent;
+        const userMsgEvent = { type: "user_message", sessionId, text: body.text, images: storedImages } as AgentEvent;
         sseManager.broadcast(userMsgEvent);
 
         // Generate title (fire-and-forget)
