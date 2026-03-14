@@ -147,7 +147,7 @@ export class PushService {
   /**
    * Check if this event should trigger a push notification.
    * Returns true if a notification should be sent (caller should then call sendToAll).
-   * Per-subscription visibility filtering happens inside sendToAll.
+   * Global session visibility suppression happens inside sendToAll.
    */
   maybeNotify(
     sessionId: string,
