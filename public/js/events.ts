@@ -109,12 +109,14 @@ export async function loadHistory(sid: string): Promise<boolean> {
     const body = await res.json();
     const { events, streaming } = normalizeEventsResponse(body);
 
-    // Batch DOM operations: render into an offscreen fragment, then append once
+    // Batch DOM operations: render into an offscreen fragment, then append once.
+    // ReplayIndex provides O(1) element lookup, replacing querySelector on the fragment.
     const fragment = document.createDocumentFragment();
+    const ri = createReplayIndex(events);
     state.replayTarget = fragment;
     for (let i = 0; i < events.length; i++) {
       const data = JSON.parse(events[i].data);
-      replayEvent(events[i].type, data, events, i);
+      replayEvent(events[i].type, data, events, i, ri);
     }
     state.replayTarget = null;
 
@@ -224,10 +226,11 @@ export async function loadNewEvents(sid: string): Promise<boolean> {
 
     // Batch DOM operations into a fragment to avoid per-element reflow
     const fragment = document.createDocumentFragment();
+    const ri = createReplayIndex(events);
     state.replayTarget = fragment;
     for (let i = 0; i < events.length; i++) {
       const data = JSON.parse(events[i].data);
-      replayEvent(events[i].type, data, events, i);
+      replayEvent(events[i].type, data, events, i, ri);
     }
     state.replayTarget = null;
     dom.messages.appendChild(fragment);
@@ -270,7 +273,32 @@ export function retryUnconfirmedPermissions() {
   }
 }
 
-export function replayEvent(type: string, data: Record<string, any>, events: StoredEvent[], idx: number) {
+/**
+ * Replay index: O(1) element lookup during replay, replacing querySelector on
+ * the growing DocumentFragment.  Created once per loadHistory/loadNewEvents call
+ * and passed through the replay loop.  When null (live events), falls back to
+ * querySelector/getElementById in the live DOM.
+ */
+interface ReplayIndex {
+  toolCalls: Map<string, HTMLElement>;
+  permissions: Map<string, HTMLElement>;
+  resolvedPermissions: Set<string>;
+  currentBashEl: HTMLElement | null;
+}
+
+function createReplayIndex(events: StoredEvent[]): ReplayIndex {
+  // Pre-scan for resolved permission requestIds so permission_request can
+  // check resolution status without forward-scanning the events array.
+  const resolvedPermissions = new Set<string>();
+  for (const e of events) {
+    if (e.type === 'permission_response') {
+      resolvedPermissions.add(JSON.parse(e.data).requestId);
+    }
+  }
+  return { toolCalls: new Map(), permissions: new Map(), resolvedPermissions, currentBashEl: null };
+}
+
+export function replayEvent(type: string, data: Record<string, any>, events: StoredEvent[], idx: number, ri?: ReplayIndex) {
   switch (type) {
     case 'user_message': {
       const el = addMessage('user', data.text);
@@ -300,14 +328,14 @@ export function replayEvent(type: string, data: Record<string, any>, events: Sto
       el.className = 'tool-call';
       el.id = `tc-${data.id}`;
       let label = `<span class="icon">${icon}</span> ${escHtml(data.title)}`;
-      const ri = data.rawInput;
-      if (ri && ri.command) {
-        label += `<span class="tc-detail">$ ${escHtml(ri.command)}</span>`;
-      } else if (ri && ri.path) {
-        label += `<span class="tc-detail">${escHtml(ri.path)}</span>`;
+      const rawInput = data.rawInput;
+      if (rawInput && rawInput.command) {
+        label += `<span class="tc-detail">$ ${escHtml(rawInput.command)}</span>`;
+      } else if (rawInput && rawInput.path) {
+        label += `<span class="tc-detail">${escHtml(rawInput.path)}</span>`;
       }
       el.innerHTML = label;
-      const diffHtml = data.kind === 'edit' ? renderPatchDiff(ri) : null;
+      const diffHtml = data.kind === 'edit' ? renderPatchDiff(rawInput) : null;
       if (diffHtml) {
         const details = document.createElement('details');
         details.innerHTML = `<summary>diff</summary><div class="diff-view">${diffHtml}</div>`;
@@ -321,10 +349,11 @@ export function replayEvent(type: string, data: Record<string, any>, events: Sto
         });
       }
       appendMessageElement(el);
+      if (ri) ri.toolCalls.set(data.id, el);
       break;
     }
     case 'tool_call_update': {
-      const el = replayById(`tc-${data.id}`);
+      const el = ri ? ri.toolCalls.get(data.id) : replayById(`tc-${data.id}`);
       if (el) {
         const statusIcon = data.status === 'completed' ? '✓' : data.status === 'failed' ? '✗' : '…';
         el.className = `tool-call ${data.status}`;
@@ -354,13 +383,16 @@ export function replayEvent(type: string, data: Record<string, any>, events: Sto
       el.dataset.requestId = data.requestId;
       el.dataset.title = data.title || '';
       el.innerHTML = `<span class="title" style="opacity:0.5">⚿ ${escHtml(data.title)}</span> `;
-      // Check if this permission was already resolved later in history
-      const wasResolved = events && events.slice(idx + 1).some(e =>
-        e.type === 'permission_response' && JSON.parse(e.data).requestId === data.requestId
-      );
+      // During replay, check the pre-built set to see if a later permission_response
+      // already resolved this request (avoids forward-scanning the events array).
+      const wasResolved = ri
+        ? ri.resolvedPermissions.has(data.requestId)
+        : events && events.slice(idx + 1).some(e =>
+            e.type === 'permission_response' && JSON.parse(e.data).requestId === data.requestId
+          );
       if (!wasResolved && data.options) {
-        el.querySelector('.title').style.opacity = '1';
-        data.options.forEach(opt => {
+        el.querySelector('.title')!.style.opacity = '1';
+        data.options.forEach((opt: Record<string, any>) => {
           const btn = document.createElement('button');
           const isAllow = (opt.kind || '').includes('allow');
           btn.className = isAllow ? 'allow' : 'deny';
@@ -378,12 +410,16 @@ export function replayEvent(type: string, data: Record<string, any>, events: Sto
         });
       }
       appendMessageElement(el);
+      // Store after append so permission_response can find it
+      if (ri) ri.permissions.set(data.requestId, el);
       break;
     }
     case 'permission_response': {
-      const el = replayQuery(`.permission[data-request-id="${data.requestId}"]`);
+      const el = ri
+        ? ri.permissions.get(data.requestId) as HTMLElement | undefined
+        : replayQuery(`.permission[data-request-id="${data.requestId}"]`);
       if (el) {
-        const title = el.dataset.title ? `⚿ ${el.dataset.title}` : '⚿';
+        const title = (el as HTMLElement).dataset.title ? `⚿ ${(el as HTMLElement).dataset.title}` : '⚿';
         const action = data.optionName || (data.denied ? 'denied' : 'allowed');
         el.innerHTML = `<span style="opacity:0.5">${escHtml(title)} — ${escHtml(action)}</span>`;
       }
@@ -391,19 +427,26 @@ export function replayEvent(type: string, data: Record<string, any>, events: Sto
     }
     case 'bash_command': {
       const el = addBashBlock(data.command, false);
-      el.id = 'bash-replay-pending';
+      if (ri) {
+        ri.currentBashEl = el;
+      } else {
+        el.id = 'bash-replay-pending';
+      }
       break;
     }
     case 'bash_result': {
-      const el = replayById('bash-replay-pending');
+      const el = ri ? ri.currentBashEl : replayById('bash-replay-pending');
       if (el) {
-        el.removeAttribute('id');
+        if (!ri) el.removeAttribute('id');
         if (data.output) {
           const out = el.querySelector('.bash-output');
-          out.textContent = data.output;
-          out.classList.add('has-content');
+          if (out) {
+            out.textContent = data.output;
+            out.classList.add('has-content');
+          }
         }
         finishBash(el, data.code, data.signal);
+        if (ri) ri.currentBashEl = null;
       }
       break;
     }
