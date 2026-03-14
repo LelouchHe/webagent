@@ -186,7 +186,7 @@ export function resetSessionUI() {
   dom.attachPreview.classList.remove('active');
   dom.input.disabled = false;
   dom.sendBtn.disabled = false;
-  dom.input.placeholder = '';
+  dom.input.placeholder = 'Message or ?';
   setBusy(false);
   // Clear session metadata so stale title/model don't linger on switch failure
   state.sessionTitle = null;

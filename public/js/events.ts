@@ -630,7 +630,7 @@ export function handleEvent(msg: AgentEvent) {
       setConnectionStatus('connected', 'connected');
       dom.input.disabled = false;
       dom.sendBtn.disabled = false;
-      dom.input.placeholder = '';
+      dom.input.placeholder = 'Message or ?';
       setBusy(Boolean(msg.busyKind));
       state.newTurnStarted = false;
       if (msg.busyKind === 'bash') {
