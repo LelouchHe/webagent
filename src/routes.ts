@@ -908,29 +908,6 @@ export function createRequestHandler(
       return;
     }
 
-    // Legacy: serves old image paths stored in events
-    if (url.startsWith("/data/images/")) {
-      const filePath = join(deps.dataDir, url.slice(6)); // strip "/data/"
-      if (!filePath.startsWith(join(deps.dataDir, "images"))) {
-        res.writeHead(403);
-        res.end("Forbidden");
-        return;
-      }
-      try {
-        const data = await readFile(filePath);
-        const ext = extname(filePath);
-        res.writeHead(200, {
-          "Content-Type": MIME[ext] ?? "application/octet-stream",
-          "Cache-Control": "public, max-age=31536000, immutable",
-        });
-        res.end(data);
-      } catch {
-        res.writeHead(404);
-        res.end("Not found");
-      }
-      return;
-    }
-
     // --- Static files ---
     const filePath = join(deps.publicDir, url === "/" ? "/index.html" : url);
     if (!filePath.startsWith(deps.publicDir)) {

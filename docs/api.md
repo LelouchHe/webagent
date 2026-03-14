@@ -509,8 +509,6 @@ Retrieve a previously uploaded image. Responses are immutably cached (`Cache-Con
 
 **Errors:** `403` (path traversal), `404` (not found)
 
-> **Legacy compat:** Old image URLs stored in events use the `/data/images/:sessionId/:file` path. These continue to work — the server maps them to the same on-disk files.
-
 ---
 
 ### Push Notifications
