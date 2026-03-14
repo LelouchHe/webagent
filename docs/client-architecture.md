@@ -88,7 +88,7 @@ All frontend source lives in `public/js/*.ts`. esbuild bundles it into a single 
 | **`connection.ts`** | SSE + REST connection lifecycle, parallel init, visibility sync | `connect()` |
 | **`events.ts`** | Event dispatch (live + replay), history loading, permission responses | `handleEvent()`, `loadHistory()`, `loadNewEvents()` |
 | **`input.ts`** | User input: send messages, cancel, keyboard shortcuts, mode cycling | — |
-| **`commands.ts`** | Slash command parsing, menu UI, `/switch`, `/new`, `/exit`, `/model`, `/mode`, `/notify` | `handleSlashCommand()`, `hideSlashMenu()` |
+| **`commands.ts`** | Slash command parsing, menu UI, `/switch`, `/new`, `/exit`, `/rename`, `/model`, `/mode`, `/notify` | `handleSlashCommand()`, `hideSlashMenu()` |
 | **`images.ts`** | Image attach (click/drag/paste), preview, upload to server | `renderAttachPreview()` |
 | **`render.ts`** | DOM helpers: add messages, markdown rendering, theme, scroll, tool call display | `addMessage()`, `addSystem()`, `scrollToBottom()`, `renderMd()` |
 | **`api.ts`** | REST client — typed `fetch` wrappers for every server endpoint | `createSession()`, `sendMessage()`, `cancelSession()`, etc. |
@@ -365,6 +365,7 @@ Uses `res.text()` + `JSON.parse()` instead of `res.json()` to handle empty bodie
 | `resolvePermission(sessionId, requestId, optionId)` | POST | `/api/v1/sessions/:id/permissions/:reqId` |
 | `denyPermission(sessionId, requestId)` | POST | `/api/v1/sessions/:id/permissions/:reqId` |
 | `setConfig(sessionId, configId, value)` | PUT | `/api/v1/sessions/:id/{model,mode,reasoning-effort}` |
+| `setTitle(sessionId, title)` | PUT | `/api/v1/sessions/:id/title` |
 | `execBash(sessionId, command)` | POST | `/api/v1/sessions/:id/bash` |
 | `cancelBash(sessionId)` | POST | `/api/v1/sessions/:id/bash/cancel` |
 | `postVisibility(clientId, visible)` | POST | `/api/v1/clients/:clientId/visibility` |
@@ -460,6 +461,7 @@ Triggered by `/` prefix in input. Handled in `commands.ts`.
 | `/switch [query]` | `api.listSessions()` + `api.getSession()` + `loadHistory()` | Switch to another session |
 | `/new [path]` | `api.createSession()` | Create new session |
 | `/exit` | `api.deleteSession()` + session switch | Close current session, switch to MRU |
+| `/rename <title>` | `api.setTitle(sessionId, title)` | Rename current session |
 | `/model [name]` | `api.setConfig(sessionId, 'model', value)` | Switch model |
 | `/mode [name]` | `api.setConfig(sessionId, 'mode', value)` | Switch mode |
 | `/think [level]` | `api.setConfig(sessionId, 'reasoning_effort', value)` | Set reasoning effort |

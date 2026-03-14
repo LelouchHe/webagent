@@ -287,5 +287,51 @@ describe("commands", () => {
       assert.equal(putCall, undefined, "should not send a PUT call for ambiguous match");
       assert.ok(messageLines().includes('err: Ambiguous "sonnet". Type /model + space to see options.'));
     });
+
+    describe("/rename", () => {
+      it("shows usage when no argument given", async () => {
+        state.sessionId = "s1";
+        state.sessionTitle = "Old Title";
+
+        const handled = await commands.handleSlashCommand("/rename");
+
+        assert.equal(handled, true);
+        assert.ok(messageLines().some(l => l.includes("Old Title")));
+        assert.ok(messageLines().some(l => l.includes("Usage")));
+      });
+
+      it("shows error when no active session", async () => {
+        const handled = await commands.handleSlashCommand("/rename New Title");
+
+        assert.equal(handled, true);
+        assert.ok(messageLines().some(l => l.includes("No active session")));
+      });
+
+      it("calls PUT /api/v1/sessions/:id/title with the new title", async () => {
+        setFetch(() => ({ ok: true, json: async () => ({ title: "New Title" }), text: async () => '{"title":"New Title"}' }));
+        state.sessionId = "s1";
+
+        const handled = await commands.handleSlashCommand("/rename New Title");
+        await new Promise(r => setTimeout(r, 0));
+
+        assert.equal(handled, true);
+        const putCall = fetchCalls.find(c => c.url.includes("/title") && c.init?.method === "PUT");
+        assert.ok(putCall, "expected a PUT call to /title");
+        assert.equal(putCall!.url, "/api/v1/sessions/s1/title");
+        const body = JSON.parse(putCall!.init.body);
+        assert.equal(body.value, "New Title");
+        assert.ok(messageLines().some(l => l.includes("Renamed")));
+      });
+
+      it("shows error on fetch failure", async () => {
+        setFetch(() => { throw new Error("network"); });
+        state.sessionId = "s1";
+
+        const handled = await commands.handleSlashCommand("/rename Bad");
+
+        assert.equal(handled, true);
+        assert.ok(messageLines().some(l => l.includes("Failed to rename")));
+      });
+    });
   });
 });

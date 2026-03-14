@@ -89,6 +89,14 @@ export function setConfig(sessionId: string, configId: string, value: string): P
   });
 }
 
+export function setTitle(sessionId: string, title: string): Promise<void> {
+  return request("/api/v1/sessions/" + sessionId + "/title", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ value: title }),
+  });
+}
+
 // --- Bash ---
 
 export function execBash(sessionId: string, command: string): Promise<unknown> {

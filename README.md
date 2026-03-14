@@ -201,6 +201,7 @@ Commands with submenus (`/model`, `/mode`, `/think`, `/notify`, `/switch`, `/new
 | `/notify [on\|off]` | Toggle push notifications for background alerts |
 | `/cancel` | Cancel current response |
 | `/switch <title\|id>` | Switch to a session (match by title or ID prefix) |
+| `/rename <new title>` | Rename current session |
 | `/exit` | Close current session (delete + switch to previous) |
 | `/prune` | Delete all sessions except current |
 

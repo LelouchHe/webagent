@@ -89,6 +89,25 @@ export async function handleSlashCommand(text: string): Promise<boolean> {
       addSystem(`📁 ${state.sessionCwd || 'unknown'}`);
       return true;
 
+    case '/rename': {
+      if (!state.sessionId) {
+        addSystem('err: No active session');
+        return true;
+      }
+      if (!arg) {
+        addSystem(`Current: ${state.sessionTitle || '(untitled)'}`);
+        addSystem('Usage: /rename <new title>');
+        return true;
+      }
+      try {
+        await api.setTitle(state.sessionId, arg);
+        addSystem(`Renamed → ${arg}`);
+      } catch {
+        addSystem('err: Failed to rename session');
+      }
+      return true;
+    }
+
     case '/sessions':
       addSystem('Removed. Use /switch to see all sessions.');
       return true;
@@ -333,6 +352,7 @@ const SLASH_COMMANDS: SlashCommand[] = [
   { cmd: '/notify',   args: '[on|off]',    desc: 'Toggle background notifications' },
   { cmd: '/prune',    args: '',            desc: 'Delete all sessions except current' },
   { cmd: '/pwd',      args: '',            desc: 'Show working directory' },
+  { cmd: '/rename',   args: '<new title>', desc: 'Rename current session' },
   { cmd: '/switch',   args: '<title|id>',  desc: 'Switch to session' },
   { cmd: '/think',    args: '[level]',     desc: 'Pick or switch reasoning effort' },
 ];
