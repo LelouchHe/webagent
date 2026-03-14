@@ -183,7 +183,7 @@ describe("input", () => {
     });
     setFetch(async (url: string) => {
       if (url.includes("/api/v1/sessions/") && url.includes("/images")) {
-        return { ok: true, json: async () => ({ path: "uploads/image.png" }), text: async () => '{"path":"uploads/image.png"}' };
+        return { ok: true, json: async () => ({ url: "/api/v1/sessions/s1/images/image.png" }), text: async () => '{"url":"/api/v1/sessions/s1/images/image.png"}' };
       }
       // sendMessage call
       return { ok: true, json: async () => ({}), text: async () => '{}' };
@@ -202,7 +202,7 @@ describe("input", () => {
     assert.deepEqual(body.images, [{
       data: "abc123",
       mimeType: "image/png",
-      path: "uploads/image.png",
+      path: "/api/v1/sessions/s1/images/image.png",
     }]);
   });
 
@@ -301,7 +301,7 @@ describe("input", () => {
       mimeType: "image/png",
       previewUrl: "data:image/png;base64,abc123",
     });
-    setFetch(async () => ({ ok: true, json: async () => ({ path: "uploads/image.png" }), text: async () => '{"path":"uploads/image.png"}' }));
+    setFetch(async () => ({ ok: true, json: async () => ({ url: "/api/v1/sessions/s1/images/image.png" }), text: async () => '{"url":"/api/v1/sessions/s1/images/image.png"}' }));
 
     clickSend();
     await new Promise((resolve) => setImmediate(resolve));

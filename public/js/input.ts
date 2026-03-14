@@ -90,7 +90,7 @@ function sendMessage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ data: img.data, mimeType: img.mimeType }),
-      }).then(r => r.json()).then(j => ({ data: img.data, mimeType: img.mimeType, path: j.path }))
+      }).then(r => r.json()).then(j => ({ data: img.data, mimeType: img.mimeType, path: j.url }))
     )).then(uploaded => {
       if (!isConnected()) {
         msgEl.remove();

@@ -30,5 +30,5 @@ test("uploaded images are sent and restored in reloaded history", async ({ page 
   await expect(page.locator(".msg.user")).toContainText(["describe this image"]);
   const restoredImage = page.locator(".msg.user .user-image").last();
   await expect(restoredImage).toBeVisible();
-  await expect(restoredImage).toHaveAttribute("src", /\/data\/images\//);
+  await expect(restoredImage).toHaveAttribute("src", /\/api\/v1\/sessions\/[^/]+\/images\//);
 });

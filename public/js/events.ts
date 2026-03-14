@@ -408,7 +408,7 @@ export function replayEvent(type: string, data: Record<string, any>, events: Sto
         for (const img of data.images) {
           const imgEl = document.createElement('img');
           imgEl.className = 'user-image';
-          imgEl.src = `/data/${img.path}`;
+          imgEl.src = img.path;
           el.appendChild(imgEl);
         }
       }
@@ -670,7 +670,7 @@ export function handleEvent(msg: AgentEvent) {
           for (const img of msg.images) {
             const imgEl = document.createElement('img');
             imgEl.className = 'user-image';
-            imgEl.src = `/data/${img.path}`;
+            imgEl.src = img.path;
             el.appendChild(imgEl);
           }
         }
