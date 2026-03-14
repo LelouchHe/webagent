@@ -241,6 +241,10 @@ export async function handleSlashCommand(text: string): Promise<boolean> {
       for (const s of SHORTCUTS) {
         addSystem(`${s.key} — ${s.desc}`);
       }
+      addSystem('--- Tips ---');
+      for (const t of TIPS) {
+        addSystem(t.text);
+      }
       return true;
 
     case '/model':
@@ -363,6 +367,10 @@ const SHORTCUTS = [
   { key: '^X',          desc: 'Cancel current response' },
   { key: '^M',          desc: 'Cycle mode (Agent → Plan → Autopilot)' },
   { key: '^U',          desc: 'Upload image' },
+];
+
+const TIPS = [
+  { text: 'Tap ❯ prompt to cycle mode' },
 ];
 
 let slashIdx = -1;
