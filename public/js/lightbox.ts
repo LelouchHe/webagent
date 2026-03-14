@@ -18,17 +18,12 @@ function open(src: string) {
   img.src = src;
   scale = 1;
   img.style.transform = '';
-  // Force reflow before adding active class so transition fires
-  overlay.offsetHeight;
   overlay.classList.add('active');
 }
 
 function close() {
   overlay.classList.remove('active');
-  // Clear src after transition completes
-  overlay.addEventListener('transitionend', () => {
-    if (!isOpen()) img.src = '';
-  }, { once: true });
+  img.src = '';
 }
 
 // Event delegation — any img.user-image inside #messages

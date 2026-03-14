@@ -579,17 +579,15 @@ body {
   position: fixed;
   inset: 0;
   z-index: 9999;
-  background: rgba(0, 0, 0, 0);
+  background: rgba(0, 0, 0, 0.85);
   display: flex;
   align-items: center;
   justify-content: center;
   cursor: zoom-out;
-  transition: background 0.2s ease, visibility 0.2s;
   visibility: hidden;
   pointer-events: none;
 }
 #lightbox-overlay.active {
-  background: rgba(0, 0, 0, 0.85);
   visibility: visible;
   pointer-events: auto;
 }
@@ -598,7 +596,6 @@ body {
   max-height: 90vh;
   border-radius: 6px;
   cursor: default;
-  transition: transform 0.1s ease;
 }
 
 /* History pagination sentinel */
