@@ -147,7 +147,7 @@ describe("SSE REST API", () => {
   });
 
   async function createSession(): Promise<string> {
-    const res = await makeRequest(port, "POST", "/api/sessions", JSON.stringify({ cwd: tmpDir }));
+    const res = await makeRequest(port, "POST", "/api/v1/sessions", JSON.stringify({ cwd: tmpDir }));
     return JSON.parse(res.body).id;
   }
 
@@ -162,7 +162,7 @@ describe("SSE REST API", () => {
 
     it("tracks client count", async () => {
       assert.equal(sseManager.size, 0);
-      const sse = openSse(port, "/api/events/stream");
+      const sse = openSse(port, "/api/v1/events/stream");
       sseCleanups.push(sse.close);
       await sse.response;
       await waitFor(() => sseManager.size === 1);
@@ -170,7 +170,7 @@ describe("SSE REST API", () => {
     });
 
     it("removes client on connection close", async () => {
-      const sse = openSse(port, "/api/events/stream");
+      const sse = openSse(port, "/api/v1/events/stream");
       sseCleanups.push(sse.close);
       await sse.response;
       await waitFor(() => sseManager.size === 1);
@@ -179,9 +179,9 @@ describe("SSE REST API", () => {
     });
   });
 
-  describe("GET /api/events/stream (global)", () => {
+  describe("GET /api/v1/events/stream (global)", () => {
     it("returns SSE headers", async () => {
-      const sse = openSse(port, "/api/events/stream");
+      const sse = openSse(port, "/api/v1/events/stream");
       sseCleanups.push(sse.close);
       const res = await sse.response;
       assert.equal(res.statusCode, 200);
@@ -191,7 +191,7 @@ describe("SSE REST API", () => {
     });
 
     it("sends connected event with clientId", async () => {
-      const sse = openSse(port, "/api/events/stream");
+      const sse = openSse(port, "/api/v1/events/stream");
       sseCleanups.push(sse.close);
       await sse.response;
       await waitFor(() => sse.events.length >= 1);
@@ -206,7 +206,7 @@ describe("SSE REST API", () => {
       const id1 = await createSession();
       const id2 = await createSession();
 
-      const sse = openSse(port, "/api/events/stream");
+      const sse = openSse(port, "/api/v1/events/stream");
       sseCleanups.push(sse.close);
       await sse.response;
       await waitFor(() => sse.events.length >= 1); // connected event
@@ -222,12 +222,12 @@ describe("SSE REST API", () => {
     });
   });
 
-  describe("GET /api/sessions/:id/events/stream (per-session)", () => {
+  describe("GET /api/v1/sessions/:id/events/stream (per-session)", () => {
     it("only receives events for its session", async () => {
       const id1 = await createSession();
       const id2 = await createSession();
 
-      const sse = openSse(port, `/api/sessions/${id1}/events/stream`);
+      const sse = openSse(port, `/api/v1/sessions/${id1}/events/stream`);
       sseCleanups.push(sse.close);
       await sse.response;
       await waitFor(() => sse.events.length >= 1);
@@ -246,7 +246,7 @@ describe("SSE REST API", () => {
     });
 
     it("returns 404 for unknown session", async () => {
-      const res = await makeRequest(port, "GET", "/api/sessions/nonexistent/events/stream");
+      const res = await makeRequest(port, "GET", "/api/v1/sessions/nonexistent/events/stream");
       assert.equal(res.status, 404);
     });
 
@@ -259,7 +259,7 @@ describe("SSE REST API", () => {
       store.saveEvent(id, "user_message", { text: "msg2" });
 
       // Connect with Last-Event-ID pointing to evt2's seq
-      const sse = openSse(port, `/api/sessions/${id}/events/stream`, { lastEventId: String(evt2.seq) });
+      const sse = openSse(port, `/api/v1/sessions/${id}/events/stream`, { lastEventId: String(evt2.seq) });
       sseCleanups.push(sse.close);
       await sse.response;
       await waitFor(() => sse.events.length >= 2); // connected + 1 replayed event
@@ -275,7 +275,7 @@ describe("SSE REST API", () => {
       const evt1 = store.saveEvent(id, "user_message", { text: "test" });
 
       // Use Last-Event-ID=0 to get all events replayed with id: field
-      const sse = openSse(port, `/api/sessions/${id}/events/stream`, { lastEventId: "0" });
+      const sse = openSse(port, `/api/v1/sessions/${id}/events/stream`, { lastEventId: "0" });
       sseCleanups.push(sse.close);
       await sse.response;
       await waitFor(() => sse.rawChunks.length >= 1);
@@ -286,9 +286,9 @@ describe("SSE REST API", () => {
     });
   });
 
-  describe("POST /api/clients/:clientId/visibility", () => {
+  describe("POST /api/v1/clients/:clientId/visibility", () => {
     it("updates client visibility", async () => {
-      const sse = openSse(port, "/api/events/stream");
+      const sse = openSse(port, "/api/v1/events/stream");
       sseCleanups.push(sse.close);
       await sse.response;
       await waitFor(() => sse.events.length >= 1);
@@ -296,38 +296,38 @@ describe("SSE REST API", () => {
       const connected = JSON.parse(sse.events[0]);
       const clientId = connected.clientId;
 
-      const res = await makeRequest(port, "POST", `/api/clients/${clientId}/visibility`,
+      const res = await makeRequest(port, "POST", `/api/v1/clients/${clientId}/visibility`,
         JSON.stringify({ visible: true }));
       assert.equal(res.status, 200);
       assert.deepEqual(JSON.parse(res.body), { ok: true });
     });
 
     it("returns 404 for unknown clientId", async () => {
-      const res = await makeRequest(port, "POST", "/api/clients/unknown/visibility",
+      const res = await makeRequest(port, "POST", "/api/v1/clients/unknown/visibility",
         JSON.stringify({ visible: true }));
       assert.equal(res.status, 404);
     });
 
     it("returns 400 for missing visible field", async () => {
-      const sse = openSse(port, "/api/events/stream");
+      const sse = openSse(port, "/api/v1/events/stream");
       sseCleanups.push(sse.close);
       await sse.response;
       await waitFor(() => sse.events.length >= 1);
       const clientId = JSON.parse(sse.events[0]).clientId;
 
-      const res = await makeRequest(port, "POST", `/api/clients/${clientId}/visibility`,
+      const res = await makeRequest(port, "POST", `/api/v1/clients/${clientId}/visibility`,
         JSON.stringify({}));
       assert.equal(res.status, 400);
     });
 
     it("returns 400 for invalid JSON", async () => {
-      const sse = openSse(port, "/api/events/stream");
+      const sse = openSse(port, "/api/v1/events/stream");
       sseCleanups.push(sse.close);
       await sse.response;
       await waitFor(() => sse.events.length >= 1);
       const clientId = JSON.parse(sse.events[0]).clientId;
 
-      const res = await makeRequest(port, "POST", `/api/clients/${clientId}/visibility`, "bad");
+      const res = await makeRequest(port, "POST", `/api/v1/clients/${clientId}/visibility`, "bad");
       assert.equal(res.status, 400);
     });
   });

@@ -62,9 +62,9 @@ describe("input", () => {
 
     clickSend();
 
-    const call = fetchCalls.find(c => c.url.includes("/messages"));
-    assert.ok(call, "expected a messages fetch call");
-    assert.equal(call!.url, "/api/sessions/s1/messages");
+    const call = fetchCalls.find(c => c.url.includes("/prompt"));
+    assert.ok(call, "expected a prompt fetch call");
+    assert.equal(call!.url, "/api/v1/sessions/s1/prompt");
     assert.equal(call!.init?.method, "POST");
     assert.deepEqual(JSON.parse(call!.init?.body), { text: "hello" });
     assert.equal(state.busy, true);
@@ -95,7 +95,7 @@ describe("input", () => {
 
     const call = fetchCalls.find(c => c.url.includes("/bash"));
     assert.ok(call, "expected a bash fetch call");
-    assert.equal(call!.url, "/api/sessions/s1/bash");
+    assert.equal(call!.url, "/api/v1/sessions/s1/bash");
     assert.equal(call!.init?.method, "POST");
     assert.deepEqual(JSON.parse(call!.init?.body), { command: "echo hello" });
     assert.equal(state.busy, true);
@@ -182,7 +182,7 @@ describe("input", () => {
       previewUrl: "data:image/png;base64,abc123",
     });
     setFetch(async (url: string) => {
-      if (url.includes("/api/images/")) {
+      if (url.includes("/api/v1/sessions/") && url.includes("/images")) {
         return { ok: true, json: async () => ({ path: "uploads/image.png" }), text: async () => '{"path":"uploads/image.png"}' };
       }
       // sendMessage call
@@ -193,10 +193,10 @@ describe("input", () => {
     await new Promise((resolve) => setImmediate(resolve));
     await new Promise((resolve) => setImmediate(resolve));
 
-    const imageCall = fetchCalls.find(c => c.url.includes("/api/images/"));
+    const imageCall = fetchCalls.find(c => c.url.includes("/api/v1/sessions/") && c.url.includes("/images"));
     assert.ok(imageCall, "expected an image upload call");
-    const msgCall = fetchCalls.find(c => c.url.includes("/messages"));
-    assert.ok(msgCall, "expected a messages call");
+    const msgCall = fetchCalls.find(c => c.url.includes("/prompt"));
+    assert.ok(msgCall, "expected a prompt call");
     const body = JSON.parse(msgCall!.init?.body);
     assert.equal(body.text, "What is in this image?");
     assert.deepEqual(body.images, [{
@@ -214,10 +214,10 @@ describe("input", () => {
     const event = docKeydown("x", { ctrlKey: true });
 
     assert.equal(event.defaultPrevented, true);
-    // sendCancel now uses REST POST /api/sessions/:id/cancel
+    // sendCancel now uses REST POST /api/v1/sessions/:id/cancel
     const cancelCall = fetchCalls.find(c => c.url.includes("/cancel"));
     assert.ok(cancelCall, "expected a cancel fetch call");
-    assert.equal(cancelCall!.url, "/api/sessions/s1/cancel");
+    assert.equal(cancelCall!.url, "/api/v1/sessions/s1/cancel");
     assert.equal(cancelCall!.init?.method, "POST");
     assert.ok(dom.messages.textContent.includes("^X"));
   });
@@ -250,10 +250,10 @@ describe("input", () => {
     const event = docKeydown("m", { ctrlKey: true });
 
     assert.equal(event.defaultPrevented, true);
-    const call = fetchCalls.find(c => c.url.includes("/api/sessions/s1") && c.init?.method === "PATCH");
-    assert.ok(call, "expected a PATCH config call");
+    const call = fetchCalls.find(c => c.url.includes("/api/v1/sessions/s1/mode") && c.init?.method === "PUT");
+    assert.ok(call, "expected a PUT config call");
     const body = JSON.parse(call!.init?.body);
-    assert.equal(body.mode, "chat#plan");
+    assert.equal(body.value, "chat#plan");
     assert.ok(dom.messages.textContent.includes("Mode → Plan"));
   });
 
@@ -308,7 +308,7 @@ describe("input", () => {
     await new Promise((resolve) => setImmediate(resolve));
 
     // Image upload may still fire, but the prompt should not
-    const msgCall = fetchCalls.find(c => c.url.includes("/messages"));
+    const msgCall = fetchCalls.find(c => c.url.includes("/prompt"));
     assert.ok(!msgCall, "should not send message when disconnected");
     assert.equal(state.busy, false, "should not enter busy state");
   });

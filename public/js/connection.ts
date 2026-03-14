@@ -13,7 +13,7 @@ async function registerPushEndpoint(clientId: string) {
     if (!reg) return;
     const sub = await reg.pushManager.getSubscription();
     if (!sub) return;
-    await fetch('/api/push/register-client', {
+    await fetch('/api/v1/push/register-client', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ clientId, endpoint: sub.endpoint }),
@@ -25,7 +25,7 @@ export function connect() {
   setConnectionStatus('connecting', 'connecting');
 
   // SSE for receiving server events (background — does not block page load)
-  const es = new EventSource('/api/events/stream');
+  const es = new EventSource('/api/v1/events/stream');
   state.eventSource = es;
 
   es.onmessage = async (e: MessageEvent) => {

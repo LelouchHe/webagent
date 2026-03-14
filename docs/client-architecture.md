@@ -61,13 +61,13 @@ WebAgent is a terminal-style web UI for ACP-compatible agents. This document des
 │                                               │
 │  ┌─────────────────────────────────────────┐  │
 │  │           EventSource (SSE)             │  │
-│  │     GET /api/events/stream              │  │
+│  │     GET /api/v1/events/stream            │  │
 │  └─────────────────────────────────────────┘  │
 │  ┌─────────────────────────────────────────┐  │
 │  │            fetch (REST)                 │  │
-│  │  POST /api/sessions/:id/messages        │  │
-│  │  GET /api/sessions/:id/events           │  │
-│  │  PATCH /api/sessions/:id                │  │
+│  │  POST /api/v1/sessions/:id/prompt       │  │
+│  │  GET /api/v1/sessions/:id/events       │  │
+│  │  PUT /api/v1/sessions/:id/model        │  │
 │  │  ...                                    │  │
 │  └─────────────────────────────────────────┘  │
 └──────────────────────────────────────────────┘
@@ -142,7 +142,7 @@ The module imports trigger side effects (event listeners, theme initialization).
 
 ```
 connect()
-  ├── new EventSource('/api/events/stream')   // background
+  ├── new EventSource('/api/v1/events/stream')   // background
   └── initSession()                            // parallel REST calls
 ```
 
@@ -172,7 +172,7 @@ For **full loads** (new session or first visit):
 ```
 Promise.all([
   api.getSession(sessionId),    // auto-resumes in ACP if needed
-  loadHistory(sessionId),        // GET /api/sessions/:id/events
+  loadHistory(sessionId),        // GET /api/v1/sessions/:id/events
 ])
 → handleEvent({ type: 'session_created', ... })
 ```
@@ -213,14 +213,14 @@ User types text + Enter
   input.ts: sendMessage()
         │
         ├── Show user message in DOM (optimistic)
-        ├── Upload images if any: POST /api/images/:sessionId
-        ├── api.sendMessage(): POST /api/sessions/:id/messages
+        ├── Upload images if any: POST /api/v1/sessions/:id/images
+        ├── api.sendMessage(): POST /api/v1/sessions/:id/prompt
         ├── setBusy(true)
         ├── showWaiting()
         └── state.sentMessageForSession = sessionId  // for echo suppression
 ```
 
-The `POST /messages` returns `202` immediately. The agent's response arrives as SSE events.
+The `POST /api/v1/sessions/:id/prompt` returns `202` immediately. The agent's response arrives as SSE events.
 
 ### Receiving Events
 
@@ -246,7 +246,7 @@ EventSource.onmessage
 `loadHistory()` fetches all stored events and replays them through `replayEvent()`:
 
 ```
-GET /api/sessions/:id/events
+GET /api/v1/sessions/:id/events
         │
         ▼
   for each event:
@@ -269,7 +269,7 @@ During replay, `state.replayInProgress = true` and live SSE events are queued in
 `loadNewEvents()` fetches only events after the last known sequence:
 
 ```
-GET /api/sessions/:id/events?after=42
+GET /api/v1/sessions/:id/events?after=42
         │
         ▼
   1. Remove DOM elements after sync boundary
@@ -356,19 +356,19 @@ Uses `res.text()` + `JSON.parse()` instead of `res.json()` to handle empty bodie
 
 | Function | Method | Endpoint |
 |---|---|---|
-| `createSession(opts?)` | POST | `/api/sessions` |
-| `deleteSession(id)` | DELETE | `/api/sessions/:id` |
-| `listSessions()` | GET | `/api/sessions` |
-| `getSession(id)` | GET | `/api/sessions/:id` |
-| `sendMessage(sessionId, text, images?)` | POST | `/api/sessions/:id/messages` |
-| `cancelSession(sessionId)` | POST | `/api/sessions/:id/cancel` |
-| `resolvePermission(requestId, optionId)` | POST | `/api/permissions/:requestId` |
-| `denyPermission(requestId)` | POST | `/api/permissions/:requestId` |
-| `setConfig(sessionId, configId, value)` | PATCH | `/api/sessions/:id` |
-| `execBash(sessionId, command)` | POST | `/api/sessions/:id/bash` |
-| `cancelBash(sessionId)` | POST | `/api/sessions/:id/bash/cancel` |
-| `postVisibility(clientId, visible)` | POST | `/api/clients/:clientId/visibility` |
-| `getStatus(sessionId)` | GET | `/api/sessions/:id/status` |
+| `createSession(opts?)` | POST | `/api/v1/sessions` |
+| `deleteSession(id)` | DELETE | `/api/v1/sessions/:id` |
+| `listSessions()` | GET | `/api/v1/sessions` |
+| `getSession(id)` | GET | `/api/v1/sessions/:id` |
+| `sendMessage(sessionId, text, images?)` | POST | `/api/v1/sessions/:id/prompt` |
+| `cancelSession(sessionId)` | POST | `/api/v1/sessions/:id/cancel` |
+| `resolvePermission(sessionId, requestId, optionId)` | POST | `/api/v1/sessions/:id/permissions/:reqId` |
+| `denyPermission(sessionId, requestId)` | POST | `/api/v1/sessions/:id/permissions/:reqId` |
+| `setConfig(sessionId, configId, value)` | PUT | `/api/v1/sessions/:id/{model,mode,reasoning-effort}` |
+| `execBash(sessionId, command)` | POST | `/api/v1/sessions/:id/bash` |
+| `cancelBash(sessionId)` | POST | `/api/v1/sessions/:id/bash/cancel` |
+| `postVisibility(clientId, visible)` | POST | `/api/v1/clients/:clientId/visibility` |
+| `getStatus(sessionId)` | GET | `/api/v1/sessions/:id/status` |
 
 ---
 
@@ -439,7 +439,7 @@ This prevents the user's own message from appearing twice.
    a. api.resolvePermission(requestId, optionId)  // or denyPermission
    b. Update DOM optimistically (collapse card)
    c. Track in state.unconfirmedPermissions
-5. Server: POST /api/permissions/:requestId
+5. Server: POST /api/v1/sessions/:id/permissions/:reqId
    a. bridge.resolvePermission() or bridge.denyPermission()
    b. Broadcast permission_resolved
 6. Client receives permission_resolved
@@ -464,7 +464,7 @@ Triggered by `/` prefix in input. Handled in `commands.ts`.
 | `/mode [name]` | `api.setConfig(sessionId, 'mode', value)` | Switch mode |
 | `/think [level]` | `api.setConfig(sessionId, 'reasoning_effort', value)` | Set reasoning effort |
 | `/compact` | `api.sendMessage(sessionId, '/compact')` | Send as prompt (agent handles) |
-| `/notify [on\|off]` | Push API + `/api/push/subscribe` | Manage push notifications |
+| `/notify [on\|off]` | Push API + `/api/v1/push/subscribe` | Manage push notifications |
 | `/clear` | — | Clear the DOM (no API call) |
 | `/? [query]` | — | Search sessions by title |
 
@@ -610,7 +610,7 @@ This eliminates the serial dependency chain that existed with WebSocket-only arc
 
 ### Global SSE Stream
 
-The client connects to `/api/events/stream` (global), not per-session. This means:
+The client connects to `/api/v1/events/stream` (global), not per-session. This means:
 - No reconnect needed on session switch
 - Multi-client broadcast works naturally (see other clients' session changes)
 - One connection per browser tab, regardless of session switches

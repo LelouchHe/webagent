@@ -16,7 +16,7 @@ async function subscribePush() {
   try {
     const reg = await navigator.serviceWorker?.ready;
     if (!reg) return;
-    const res = await fetch('/api/push/vapid-key');
+    const res = await fetch('/api/v1/push/vapid-key');
     if (!res.ok) return;
     const { publicKey } = await res.json();
     const sub = await reg.pushManager.subscribe({
@@ -24,7 +24,7 @@ async function subscribePush() {
       applicationServerKey: urlBase64ToUint8Array(publicKey),
     });
     const json = sub.toJSON();
-    await fetch('/api/push/subscribe', {
+    await fetch('/api/v1/push/subscribe', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ endpoint: json.endpoint, keys: json.keys, clientId: state.clientId }),
@@ -42,7 +42,7 @@ async function unsubscribePush() {
     if (!sub) return;
     const endpoint = sub.endpoint;
     await sub.unsubscribe();
-    await fetch('/api/push/unsubscribe', {
+    await fetch('/api/v1/push/unsubscribe', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ endpoint }),
@@ -138,7 +138,7 @@ export async function handleSlashCommand(text: string): Promise<boolean> {
 
     case '/prune': {
       try {
-        const res = await fetch('/api/sessions');
+        const res = await fetch('/api/v1/sessions');
         const sessions = await res.json();
         const toDelete = sessions.filter(s => s.id !== state.sessionId);
         if (toDelete.length === 0) {
@@ -162,7 +162,7 @@ export async function handleSlashCommand(text: string): Promise<boolean> {
         return true;
       }
       try {
-        const res = await fetch('/api/sessions');
+        const res = await fetch('/api/v1/sessions');
         const sessions = await res.json();
         const query = arg.toLowerCase();
         const match = sessions.find(s =>
@@ -414,7 +414,7 @@ export function updateSlashMenu() {
 async function fetchSessionsForMenu(query: string, mode = 'switch') {
   if (!cachedSessions) {
     try {
-      const res = await fetch('/api/sessions');
+      const res = await fetch('/api/v1/sessions');
       cachedSessions = await res.json();
       setTimeout(() => { cachedSessions = null; }, 5000);
     } catch { return; }
@@ -438,7 +438,7 @@ async function fetchSessionsForMenu(query: string, mode = 'switch') {
 async function fetchPathsForMenu(query: string) {
   if (!cachedSessions) {
     try {
-      const res = await fetch('/api/sessions');
+      const res = await fetch('/api/v1/sessions');
       cachedSessions = await res.json();
       setTimeout(() => { cachedSessions = null; }, 5000);
     } catch { return; }

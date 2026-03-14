@@ -46,9 +46,9 @@ describe("commands", () => {
 
       assert.equal(handled, true);
       assert.equal(state.awaitingNewSession, true);
-      // requestNewSession now uses REST POST /api/sessions
-      const createCall = fetchCalls.find(c => c.url === "/api/sessions" && c.init?.method === "POST");
-      assert.ok(createCall, "expected POST /api/sessions");
+      // requestNewSession now uses REST POST /api/v1/sessions
+      const createCall = fetchCalls.find(c => c.url === "/api/v1/sessions" && c.init?.method === "POST");
+      assert.ok(createCall, "expected POST /api/v1/sessions");
       const body = JSON.parse(createCall!.init.body);
       assert.equal(body.cwd, "/tmp/project");
       assert.equal(body.inheritFromSessionId, "current-session");
@@ -97,17 +97,17 @@ describe("commands", () => {
           const json = JSON.stringify(data);
           return { ok: true, status: 200, json: async () => data, text: async () => json };
         };
-        if (url === "/api/sessions" && (!init?.method || init.method === "GET")) return body(sessionList);
-        if (url === "/api/sessions/current" && init?.method === "DELETE") return body({});
-        if (url === "/api/sessions/mru-456") return body(mruDetail);
-        if (url.includes("/api/sessions/mru-456/events")) return body([]);
+        if (url === "/api/v1/sessions" && (!init?.method || init.method === "GET")) return body(sessionList);
+        if (url === "/api/v1/sessions/current" && init?.method === "DELETE") return body({});
+        if (url === "/api/v1/sessions/mru-456") return body(mruDetail);
+        if (url.includes("/api/v1/sessions/mru-456/events")) return body([]);
         return body({});
       });
 
       const handled = await commands.handleSlashCommand("/exit");
 
       assert.equal(handled, true);
-      const deleteCall = fetchCalls.find(c => c.url === "/api/sessions/current" && c.init?.method === "DELETE");
+      const deleteCall = fetchCalls.find(c => c.url === "/api/v1/sessions/current" && c.init?.method === "DELETE");
       assert.ok(deleteCall, "expected DELETE for current session");
       assert.equal(state.sessionId, "mru-456");
     });
@@ -120,18 +120,18 @@ describe("commands", () => {
           const json = JSON.stringify(data);
           return { ok: true, status: 200, json: async () => data, text: async () => json };
         };
-        if (url === "/api/sessions" && (!init?.method || init.method === "GET")) {
+        if (url === "/api/v1/sessions" && (!init?.method || init.method === "GET")) {
           return body([{ id: "only-one", title: "Only Session" }]);
         }
-        if (url === "/api/sessions/only-one" && init?.method === "DELETE") return body({});
-        if (url === "/api/sessions" && init?.method === "POST") return body({ id: "new-1" });
+        if (url === "/api/v1/sessions/only-one" && init?.method === "DELETE") return body({});
+        if (url === "/api/v1/sessions" && init?.method === "POST") return body({ id: "new-1" });
         return body({});
       });
 
       const handled = await commands.handleSlashCommand("/exit");
 
       assert.equal(handled, true);
-      const deleteCall = fetchCalls.find(c => c.url === "/api/sessions/only-one" && c.init?.method === "DELETE");
+      const deleteCall = fetchCalls.find(c => c.url === "/api/v1/sessions/only-one" && c.init?.method === "DELETE");
       assert.ok(deleteCall, "expected DELETE for the only session");
       assert.equal(state.awaitingNewSession, true);
     });
@@ -140,7 +140,7 @@ describe("commands", () => {
       state.clientId = "cl-1";
       state.sessionId = "keep";
       setFetch(async (url: string, init?: any) => {
-        if (url === "/api/sessions" && (!init || init.method !== "DELETE")) {
+        if (url === "/api/v1/sessions" && (!init || init.method !== "DELETE")) {
           return {
             json: async () => [
               { id: "keep", title: "Keep" },
@@ -159,8 +159,8 @@ describe("commands", () => {
       const deleteCalls = fetchCalls.filter(c => c.init?.method === "DELETE");
       assert.equal(deleteCalls.length, 2);
       assert.deepEqual(deleteCalls.map(c => c.url).sort(), [
-        "/api/sessions/drop-1",
-        "/api/sessions/drop-2",
+        "/api/v1/sessions/drop-1",
+        "/api/v1/sessions/drop-2",
       ]);
       assert.ok(messageLines().includes("Pruned 2 session(s)."));
     });
@@ -170,18 +170,18 @@ describe("commands", () => {
       state.sessionId = "current";
       const configOptions = [{ type: "select", id: "model", name: "Model", currentValue: "gpt-4", options: [] }];
       setFetch(async (url: string) => {
-        if (url === "/api/sessions") {
+        if (url === "/api/v1/sessions") {
           return {
             json: async () => [{ id: "target-1", title: "Target Session" }],
           };
         }
-        if (url.startsWith("/api/sessions/target-1/events")) {
+        if (url.startsWith("/api/v1/sessions/target-1/events")) {
           return {
             ok: true,
             json: async () => [{ type: "assistant_message", data: JSON.stringify({ text: "history item" }) }],
           };
         }
-        if (url === "/api/sessions/target-1") {
+        if (url === "/api/v1/sessions/target-1") {
           const data = { id: "target-1", cwd: "/home/user", title: "Target Session", configOptions, busyKind: null };
           return {
             ok: true,
@@ -195,9 +195,9 @@ describe("commands", () => {
       const handled = await commands.handleSlashCommand("/switch target");
 
       assert.equal(handled, true);
-      assert.ok(fetchCalls.some(c => c.url === "/api/sessions"), "should list sessions");
-      assert.ok(fetchCalls.some(c => c.url.startsWith("/api/sessions/target-1/events")), "should load events");
-      assert.ok(fetchCalls.some(c => c.url === "/api/sessions/target-1" && (!c.init || !c.init.method || c.init.method === "GET")), "should GET session to trigger auto-resume");
+      assert.ok(fetchCalls.some(c => c.url === "/api/v1/sessions"), "should list sessions");
+      assert.ok(fetchCalls.some(c => c.url.startsWith("/api/v1/sessions/target-1/events")), "should load events");
+      assert.ok(fetchCalls.some(c => c.url === "/api/v1/sessions/target-1" && (!c.init || !c.init.method || c.init.method === "GET")), "should GET session to trigger auto-resume");
       assert.equal(state.sessionId, "target-1");
       assert.equal(state.sessionTitle, "Target Session");
       assert.equal(globalThis.location.hash, "#target-1");
@@ -217,10 +217,10 @@ describe("commands", () => {
       await new Promise(r => setTimeout(r, 0)); // flush microtask (fire-and-forget)
 
       assert.equal(handled, true);
-      // sendCancel now uses REST POST /api/sessions/:id/cancel
+      // sendCancel now uses REST POST /api/v1/sessions/:id/cancel
       const cancelCall = fetchCalls.find(c => c.url.includes("/cancel"));
       assert.ok(cancelCall, "expected a cancel fetch call");
-      assert.equal(cancelCall!.url, "/api/sessions/s1/cancel");
+      assert.equal(cancelCall!.url, "/api/v1/sessions/s1/cancel");
       assert.equal(cancelCall!.init?.method, "POST");
       assert.ok(messageLines().includes("^X"));
     });
@@ -260,10 +260,10 @@ describe("commands", () => {
       const handled = await commands.handleSlashCommand("/model sonnet");
 
       assert.equal(handled, true);
-      const patchCall = fetchCalls.find(c => c.url === "/api/sessions/s1" && c.init?.method === "PATCH");
-      assert.ok(patchCall, "expected a PATCH call");
-      const body = JSON.parse(patchCall!.init.body);
-      assert.equal(body.model, "claude-sonnet-4.6");
+      const putCall = fetchCalls.find(c => c.url === "/api/v1/sessions/s1/model" && c.init?.method === "PUT");
+      assert.ok(putCall, "expected a PUT call");
+      const body = JSON.parse(putCall!.init.body);
+      assert.equal(body.value, "claude-sonnet-4.6");
       assert.ok(messageLines().includes("Model → Claude Sonnet 4.6"));
     });
 
@@ -283,8 +283,8 @@ describe("commands", () => {
       const handled = await commands.handleSlashCommand("/model sonnet");
 
       assert.equal(handled, true);
-      const patchCall = fetchCalls.find(c => c.init?.method === "PATCH");
-      assert.equal(patchCall, undefined, "should not send a PATCH call for ambiguous match");
+      const putCall = fetchCalls.find(c => c.init?.method === "PUT");
+      assert.equal(putCall, undefined, "should not send a PUT call for ambiguous match");
       assert.ok(messageLines().includes('err: Ambiguous "sonnet". Type /model + space to see options.'));
     });
   });

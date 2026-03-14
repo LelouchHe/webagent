@@ -99,14 +99,14 @@ describe("Bash REST API", () => {
   });
 
   async function createSession(): Promise<string> {
-    const res = await makeRequest(port, "POST", "/api/sessions", JSON.stringify({ cwd: tmpDir }));
+    const res = await makeRequest(port, "POST", "/api/v1/sessions", JSON.stringify({ cwd: tmpDir }));
     return JSON.parse(res.body).id;
   }
 
-  describe("POST /api/sessions/:id/bash", () => {
+  describe("POST /api/v1/sessions/:id/bash", () => {
     it("accepts a command and returns 202", async () => {
       const id = await createSession();
-      const res = await makeRequest(port, "POST", `/api/sessions/${id}/bash`,
+      const res = await makeRequest(port, "POST", `/api/v1/sessions/${id}/bash`,
         JSON.stringify({ command: "echo hello" }));
       assert.equal(res.status, 202);
       assert.deepEqual(JSON.parse(res.body), { status: "accepted" });
@@ -116,7 +116,7 @@ describe("Bash REST API", () => {
 
     it("stores bash_command event", async () => {
       const id = await createSession();
-      await makeRequest(port, "POST", `/api/sessions/${id}/bash`,
+      await makeRequest(port, "POST", `/api/v1/sessions/${id}/bash`,
         JSON.stringify({ command: "echo stored" }));
       await waitFor(() => !sessions.runningBashProcs.has(id));
 
@@ -129,7 +129,7 @@ describe("Bash REST API", () => {
     it("broadcasts bash_command event", async () => {
       const id = await createSession();
       broadcastEvents = [];
-      await makeRequest(port, "POST", `/api/sessions/${id}/bash`,
+      await makeRequest(port, "POST", `/api/v1/sessions/${id}/bash`,
         JSON.stringify({ command: "echo bc" }));
 
       const cmdEvt = broadcastEvents.find((e: any) => e.type === "bash_command");
@@ -141,7 +141,7 @@ describe("Bash REST API", () => {
     it("broadcasts bash_output and bash_done events", async () => {
       const id = await createSession();
       broadcastEvents = [];
-      await makeRequest(port, "POST", `/api/sessions/${id}/bash`,
+      await makeRequest(port, "POST", `/api/v1/sessions/${id}/bash`,
         JSON.stringify({ command: "echo hello_world" }));
       await waitFor(() => !sessions.runningBashProcs.has(id));
 
@@ -157,7 +157,7 @@ describe("Bash REST API", () => {
 
     it("stores bash_result event on completion", async () => {
       const id = await createSession();
-      await makeRequest(port, "POST", `/api/sessions/${id}/bash`,
+      await makeRequest(port, "POST", `/api/v1/sessions/${id}/bash`,
         JSON.stringify({ command: "echo result_test" }));
       await waitFor(() => !sessions.runningBashProcs.has(id));
 
@@ -171,56 +171,56 @@ describe("Bash REST API", () => {
 
     it("reports session as busy with bash", async () => {
       const id = await createSession();
-      await makeRequest(port, "POST", `/api/sessions/${id}/bash`,
+      await makeRequest(port, "POST", `/api/v1/sessions/${id}/bash`,
         JSON.stringify({ command: "sleep 5" }));
 
       // Check status shows busy
-      const statusRes = await makeRequest(port, "GET", `/api/sessions/${id}/status`);
+      const statusRes = await makeRequest(port, "GET", `/api/v1/sessions/${id}/status`);
       const status = JSON.parse(statusRes.body);
       assert.equal(status.busy, true);
       assert.equal(status.busyKind, "bash");
 
       // Cancel so afterEach cleanup isn't needed
-      await makeRequest(port, "POST", `/api/sessions/${id}/bash/cancel`);
+      await makeRequest(port, "POST", `/api/v1/sessions/${id}/bash/cancel`);
       await waitFor(() => !sessions.runningBashProcs.has(id));
     });
 
     it("returns 409 when bash is already running", async () => {
       const id = await createSession();
-      await makeRequest(port, "POST", `/api/sessions/${id}/bash`,
+      await makeRequest(port, "POST", `/api/v1/sessions/${id}/bash`,
         JSON.stringify({ command: "sleep 5" }));
 
-      const res = await makeRequest(port, "POST", `/api/sessions/${id}/bash`,
+      const res = await makeRequest(port, "POST", `/api/v1/sessions/${id}/bash`,
         JSON.stringify({ command: "echo second" }));
       assert.equal(res.status, 409);
 
-      await makeRequest(port, "POST", `/api/sessions/${id}/bash/cancel`);
+      await makeRequest(port, "POST", `/api/v1/sessions/${id}/bash/cancel`);
       await waitFor(() => !sessions.runningBashProcs.has(id));
     });
 
     it("returns 404 for unknown session", async () => {
-      const res = await makeRequest(port, "POST", "/api/sessions/nonexistent/bash",
+      const res = await makeRequest(port, "POST", "/api/v1/sessions/nonexistent/bash",
         JSON.stringify({ command: "echo hi" }));
       assert.equal(res.status, 404);
     });
 
     it("returns 400 for missing command", async () => {
       const id = await createSession();
-      const res = await makeRequest(port, "POST", `/api/sessions/${id}/bash`,
+      const res = await makeRequest(port, "POST", `/api/v1/sessions/${id}/bash`,
         JSON.stringify({}));
       assert.equal(res.status, 400);
     });
 
     it("returns 400 for invalid JSON", async () => {
       const id = await createSession();
-      const res = await makeRequest(port, "POST", `/api/sessions/${id}/bash`, "not json");
+      const res = await makeRequest(port, "POST", `/api/v1/sessions/${id}/bash`, "not json");
       assert.equal(res.status, 400);
     });
 
     it("handles non-zero exit code", async () => {
       const id = await createSession();
       broadcastEvents = [];
-      await makeRequest(port, "POST", `/api/sessions/${id}/bash`,
+      await makeRequest(port, "POST", `/api/v1/sessions/${id}/bash`,
         JSON.stringify({ command: "exit 42" }));
       await waitFor(() => !sessions.runningBashProcs.has(id));
 
@@ -230,16 +230,16 @@ describe("Bash REST API", () => {
     });
   });
 
-  describe("POST /api/sessions/:id/bash/cancel", () => {
+  describe("POST /api/v1/sessions/:id/bash/cancel", () => {
     it("kills a running bash process", async () => {
       const id = await createSession();
-      await makeRequest(port, "POST", `/api/sessions/${id}/bash`,
+      await makeRequest(port, "POST", `/api/v1/sessions/${id}/bash`,
         JSON.stringify({ command: "sleep 60" }));
 
       // Verify it's running
       assert.ok(sessions.runningBashProcs.has(id));
 
-      const res = await makeRequest(port, "POST", `/api/sessions/${id}/bash/cancel`);
+      const res = await makeRequest(port, "POST", `/api/v1/sessions/${id}/bash/cancel`);
       assert.equal(res.status, 200);
       assert.deepEqual(JSON.parse(res.body), { ok: true });
 
@@ -248,12 +248,12 @@ describe("Bash REST API", () => {
 
     it("returns 200 even when no bash is running (idempotent)", async () => {
       const id = await createSession();
-      const res = await makeRequest(port, "POST", `/api/sessions/${id}/bash/cancel`);
+      const res = await makeRequest(port, "POST", `/api/v1/sessions/${id}/bash/cancel`);
       assert.equal(res.status, 200);
     });
 
     it("returns 404 for unknown session", async () => {
-      const res = await makeRequest(port, "POST", "/api/sessions/nonexistent/bash/cancel");
+      const res = await makeRequest(port, "POST", "/api/v1/sessions/nonexistent/bash/cancel");
       assert.equal(res.status, 404);
     });
   });

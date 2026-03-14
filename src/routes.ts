@@ -92,19 +92,34 @@ export function createRequestHandler(
     const url = req.url ?? "/";
 
     // --- API routes ---
-    if (url.startsWith("/api/")) {
+    if (url === "/api/v1" || url.startsWith("/api/v1/")) {
       res.setHeader("Content-Type", "application/json");
 
-      // GET /api/sessions
-      if (url.startsWith("/api/sessions") && !url.slice("/api/sessions".length).match(/^\//) && req.method === "GET") {
+      // GET /api/v1 — discovery endpoint
+      if (url === "/api/v1" && req.method === "GET") {
+        json(res, 200, {
+          version: "v1",
+          endpoints: {
+            sessions: "/api/v1/sessions",
+            config: "/api/v1/config",
+            events_stream: "/api/v1/events/stream",
+            prompt: "/api/v1/prompt",
+            push: "/api/v1/push",
+          },
+        });
+        return;
+      }
+
+      // GET /api/v1/sessions
+      if (url.startsWith("/api/v1/sessions") && !url.slice("/api/v1/sessions".length).match(/^\//) && req.method === "GET") {
         const params = new URLSearchParams(url.split("?")[1] ?? "");
         const source = params.get("source") ?? undefined;
         res.end(JSON.stringify(store.listSessions(source ? { source } : undefined)));
         return;
       }
 
-      // --- GET /api/config ---
-      if (url === "/api/config" && req.method === "GET") {
+      // --- GET /api/v1/config ---
+      if (url === "/api/v1/config" && req.method === "GET") {
         json(res, 200, {
           configOptions: sessions?.cachedConfigOptions ?? [],
           cancelTimeout: deps.limits.cancel_timeout ?? 0,
@@ -112,31 +127,25 @@ export function createRequestHandler(
         return;
       }
 
-      // --- Permissions ---
-      // GET /api/permissions/pending
-      if (url.startsWith("/api/permissions/pending") && req.method === "GET") {
-        const params = new URLSearchParams(url.split("?")[1] ?? "");
-        const sessionId = params.get("sessionId") ?? undefined;
+      // --- Permissions (session-scoped) ---
+
+      // GET /api/v1/sessions/:id/permissions
+      const permListMatch = url.match(/^\/api\/v1\/sessions\/([^/]+)\/permissions\/?(\?.*)?$/);
+      if (permListMatch && req.method === "GET") {
+        const sessionId = decodeURIComponent(permListMatch[1]);
         const perms = sessions?.getPendingPermissions(sessionId) ?? [];
         json(res, 200, perms);
         return;
       }
 
-      // GET /api/permissions/:requestId
-      const permGetMatch = url.match(/^\/api\/permissions\/([^/?]+)\/?$/);
-      if (permGetMatch && req.method === "GET") {
-        const requestId = decodeURIComponent(permGetMatch[1]);
+      // POST /api/v1/sessions/:id/permissions/:reqId
+      const permActionMatch = url.match(/^\/api\/v1\/sessions\/([^/]+)\/permissions\/([^/?]+)\/?$/);
+      if (permActionMatch && req.method === "POST") {
+        const sessionId = decodeURIComponent(permActionMatch[1]);
+        const requestId = decodeURIComponent(permActionMatch[2]);
         const perm = sessions?.pendingPermissions.get(requestId);
         if (!perm) { json(res, 404, { error: "Permission not found" }); return; }
-        json(res, 200, { ...perm, status: "pending" });
-        return;
-      }
-
-      // POST /api/permissions/:requestId
-      if (permGetMatch && req.method === "POST") {
-        const requestId = decodeURIComponent(permGetMatch[1]);
-        const perm = sessions?.pendingPermissions.get(requestId);
-        if (!perm) { json(res, 404, { error: "Permission not found" }); return; }
+        if (perm.sessionId !== sessionId) { json(res, 400, { error: "Session ID mismatch" }); return; }
         const bridge = getBridge?.();
         if (!bridge) { json(res, 503, { error: "Agent not ready yet" }); return; }
 
@@ -174,8 +183,8 @@ export function createRequestHandler(
         return;
       }
 
-      // --- POST /api/sessions/:id/cancel ---
-      const cancelMatch = url.match(/^\/api\/sessions\/([^/]+)\/cancel\/?$/);
+      // --- POST /api/v1/sessions/:id/cancel ---
+      const cancelMatch = url.match(/^\/api\/v1\/sessions\/([^/]+)\/cancel\/?$/);
       if (cancelMatch && req.method === "POST") {
         const sessionId = decodeURIComponent(cancelMatch[1]);
         const session = store.getSession(sessionId);
@@ -198,8 +207,8 @@ export function createRequestHandler(
         return;
       }
 
-      // --- GET /api/sessions/:id/status ---
-      const statusMatch = url.match(/^\/api\/sessions\/([^/]+)\/status\/?$/);
+      // --- GET /api/v1/sessions/:id/status ---
+      const statusMatch = url.match(/^\/api\/v1\/sessions\/([^/]+)\/status\/?$/);
       if (statusMatch && req.method === "GET") {
         const sessionId = decodeURIComponent(statusMatch[1]);
         const session = store.getSession(sessionId);
@@ -214,10 +223,10 @@ export function createRequestHandler(
         return;
       }
 
-      // --- POST /api/sessions/:id/messages ---
-      const messagesMatch = url.match(/^\/api\/sessions\/([^/]+)\/messages\/?(\?.*)?$/);
-      if (messagesMatch && req.method === "POST") {
-        const sessionId = decodeURIComponent(messagesMatch[1]);
+      // --- POST /api/v1/sessions/:id/prompt ---
+      const promptMatch = url.match(/^\/api\/v1\/sessions\/([^/]+)\/prompt\/?(\?.*)?$/);
+      if (promptMatch && req.method === "POST") {
+        const sessionId = decodeURIComponent(promptMatch[1]);
         const session = store.getSession(sessionId);
         if (!session) { json(res, 404, { error: "Session not found" }); return; }
         const bridge = getBridge?.();
@@ -271,22 +280,8 @@ export function createRequestHandler(
         return;
       }
 
-      // --- GET /api/sessions/:id/messages ---
-      if (messagesMatch && req.method === "GET") {
-        const sessionId = decodeURIComponent(messagesMatch[1]);
-        const session = store.getSession(sessionId);
-        if (!session) { json(res, 404, { error: "Session not found" }); return; }
-        const params = new URLSearchParams(messagesMatch[2]?.slice(1) ?? "");
-        const excludeThinking = params.get("thinking") === "0";
-        const afterRaw = params.get("after");
-        const afterSeq = afterRaw != null ? Number(afterRaw) : undefined;
-        const events = store.getEvents(sessionId, { excludeThinking, afterSeq });
-        json(res, 200, events, req);
-        return;
-      }
-
-      // --- POST /api/sessions/:id/bash ---
-      const bashMatch = url.match(/^\/api\/sessions\/([^/]+)\/bash\/?$/);
+      // --- POST /api/v1/sessions/:id/bash ---
+      const bashMatch = url.match(/^\/api\/v1\/sessions\/([^/]+)\/bash\/?$/);
       if (bashMatch && req.method === "POST") {
         const sessionId = decodeURIComponent(bashMatch[1]);
         const session = store.getSession(sessionId);
@@ -360,8 +355,8 @@ export function createRequestHandler(
         return;
       }
 
-      // --- POST /api/sessions/:id/bash/cancel ---
-      const bashCancelMatch = url.match(/^\/api\/sessions\/([^/]+)\/bash\/cancel\/?$/);
+      // --- POST /api/v1/sessions/:id/bash/cancel ---
+      const bashCancelMatch = url.match(/^\/api\/v1\/sessions\/([^/]+)\/bash\/cancel\/?$/);
       if (bashCancelMatch && req.method === "POST") {
         const sessionId = decodeURIComponent(bashCancelMatch[1]);
         const session = store.getSession(sessionId);
@@ -371,15 +366,60 @@ export function createRequestHandler(
         return;
       }
 
-      // --- Session CRUD: /api/sessions/:id ---
-      const sessionIdMatch = url.match(/^\/api\/sessions\/([^/?]+)\/?(\?.*)?$/);
+      // --- PUT /api/v1/sessions/:id/{model,mode,reasoning-effort} ---
+      const configPutMatch = url.match(/^\/api\/v1\/sessions\/([^/]+)\/(model|mode|reasoning-effort)\/?$/);
+      if (configPutMatch && req.method === "PUT") {
+        const sessionId = decodeURIComponent(configPutMatch[1]);
+        const configPath = configPutMatch[2];
+        const configId = configPath === "reasoning-effort" ? "reasoning_effort" : configPath;
+        const session = store.getSession(sessionId);
+        if (!session) { json(res, 404, { error: "Session not found" }); return; }
+        const bridge = getBridge?.();
+        if (!bridge) { json(res, 503, { error: "Agent not ready yet" }); return; }
+        let body: { value?: string };
+        try { body = JSON.parse(await readBody(req)); } catch { json(res, 400, { error: "Invalid JSON" }); return; }
+        if (!body.value) { json(res, 400, { error: "Missing required field: value" }); return; }
+        try {
+          const configOptions = await bridge.setConfigOption(sessionId, configId, body.value);
+          for (const opt of configOptions) {
+            store.updateSessionConfig(sessionId, opt.id, opt.currentValue);
+          }
+          broadcast?.({ type: "config_option_update", sessionId, configOptions } as AgentEvent);
+          sseManager?.broadcast({ type: "config_option_update", sessionId, configOptions } as AgentEvent);
+          sseManager?.broadcast({ type: "config_set", sessionId, configId, value: body.value } as AgentEvent);
+          json(res, 200, { configOptions });
+        } catch (err) {
+          json(res, 500, { error: `Failed to set ${configId}: ${err instanceof Error ? err.message : String(err)}` });
+        }
+        return;
+      }
+
+      // --- PUT /api/v1/sessions/:id/title ---
+      const titlePutMatch = url.match(/^\/api\/v1\/sessions\/([^/]+)\/title\/?$/);
+      if (titlePutMatch && req.method === "PUT") {
+        const sessionId = decodeURIComponent(titlePutMatch[1]);
+        const session = store.getSession(sessionId);
+        if (!session) { json(res, 404, { error: "Session not found" }); return; }
+        let body: { value?: string };
+        try { body = JSON.parse(await readBody(req)); } catch { json(res, 400, { error: "Invalid JSON" }); return; }
+        if (!body.value) { json(res, 400, { error: "Missing required field: value" }); return; }
+        store.updateSessionTitle(sessionId, body.value);
+        const titleEvent = { type: "session_title_updated", sessionId, title: body.value } as AgentEvent;
+        broadcast?.(titleEvent);
+        sseManager?.broadcast(titleEvent);
+        json(res, 200, { title: body.value });
+        return;
+      }
+
+      // --- Session CRUD: /api/v1/sessions/:id ---
+      const sessionIdMatch = url.match(/^\/api\/v1\/sessions\/([^/?]+)\/?(\?.*)?$/);
       if (sessionIdMatch) {
         const sessionId = decodeURIComponent(sessionIdMatch[1]);
 
-        // POST /api/sessions (create) — handled below since :id would match "sessions" literally
-        // This match is for /api/sessions/:id only (not /api/sessions)
+        // POST /api/v1/sessions (create) — handled below since :id would match "sessions" literally
+        // This match is for /api/v1/sessions/:id only (not /api/sessions)
 
-        // GET /api/sessions/:id
+        // GET /api/v1/sessions/:id
         if (req.method === "GET") {
           const session = store.getSession(sessionId);
           if (!session) {
@@ -436,7 +476,7 @@ export function createRequestHandler(
           return;
         }
 
-        // DELETE /api/sessions/:id
+        // DELETE /api/v1/sessions/:id
         if (req.method === "DELETE") {
           const session = store.getSession(sessionId);
           if (!session) {
@@ -454,50 +494,10 @@ export function createRequestHandler(
           res.end();
           return;
         }
-
-        // PATCH /api/sessions/:id
-        if (req.method === "PATCH") {
-          const session = store.getSession(sessionId);
-          if (!session) {
-            json(res, 404, { error: "Session not found" });
-            return;
-          }
-          const bridge = getBridge?.();
-          if (!bridge) {
-            json(res, 503, { error: "Agent not ready yet" });
-            return;
-          }
-          let body: Record<string, string>;
-          try {
-            body = JSON.parse(await readBody(req));
-          } catch {
-            json(res, 400, { error: "Invalid JSON" });
-            return;
-          }
-          // Expect exactly one of: model, mode, reasoning_effort
-          const configId = Object.keys(body).find(k => ["model", "mode", "reasoning_effort"].includes(k));
-          if (!configId || !body[configId]) {
-            json(res, 400, { error: "Expected one of: model, mode, reasoning_effort" });
-            return;
-          }
-          try {
-            const configOptions = await bridge.setConfigOption(sessionId, configId, body[configId]);
-            for (const opt of configOptions) {
-              store.updateSessionConfig(sessionId, opt.id, opt.currentValue);
-            }
-            broadcast?.({ type: "config_option_update", sessionId, configOptions } as AgentEvent);
-            sseManager?.broadcast({ type: "config_option_update", sessionId, configOptions } as AgentEvent);
-            sseManager?.broadcast({ type: "config_set", sessionId, configId, value: body[configId] } as AgentEvent);
-            json(res, 200, { configOptions });
-          } catch (err) {
-            json(res, 500, { error: `Failed to set ${configId}: ${err instanceof Error ? err.message : String(err)}` });
-          }
-          return;
-        }
       }
 
-      // POST /api/sessions (create new session)
-      if (url === "/api/sessions" && req.method === "POST") {
+      // POST /api/v1/sessions (create new session)
+      if (url === "/api/v1/sessions" && req.method === "POST") {
         const bridge = getBridge?.();
         if (!bridge) {
           json(res, 503, { error: "Agent not ready yet" });
@@ -550,8 +550,8 @@ export function createRequestHandler(
         return;
       }
 
-      // GET /api/sessions/:id/events?thinking=0|1&limit=N&before=SEQ&after=SEQ
-      const eventsMatch = url.match(/^\/api\/sessions\/([^/]+)\/events(\?.*)?$/);
+      // GET /api/v1/sessions/:id/events?thinking=0|1&limit=N&before=SEQ&after=SEQ
+      const eventsMatch = url.match(/^\/api\/v1\/sessions\/([^/]+)\/events(\?.*)?$/);
       if (eventsMatch && req.method === "GET") {
         const sessionId = decodeURIComponent(eventsMatch[1]);
         const params = new URLSearchParams(eventsMatch[2]?.slice(1) ?? "");
@@ -564,8 +564,7 @@ export function createRequestHandler(
         const limit = limitRaw != null ? Math.max(1, Math.min(10000, Number(limitRaw))) : undefined;
         const session = store.getSession(sessionId);
         if (!session) {
-          res.writeHead(404);
-          res.end(JSON.stringify({ error: "Session not found" }));
+          json(res, 404, { error: "Session not found" });
           return;
         }
         // Flush pending buffers so their content becomes part of the event list.
@@ -600,17 +599,15 @@ export function createRequestHandler(
         return;
       }
 
-      // POST /api/prompt — quick one-shot prompt (create temp session + send)
-      if (url === "/api/prompt" && req.method === "POST") {
+      // POST /api/v1/prompt — quick one-shot prompt (create temp session + send)
+      if (url === "/api/v1/prompt" && req.method === "POST") {
         if (!sessions || !getBridge) {
-          res.writeHead(503);
-          res.end(JSON.stringify({ error: "Agent not available" }));
+          json(res, 503, { error: "Agent not available" });
           return;
         }
         const bridge = getBridge();
         if (!bridge) {
-          res.writeHead(503);
-          res.end(JSON.stringify({ error: "Agent not available" }));
+          json(res, 503, { error: "Agent not available" });
           return;
         }
 
@@ -618,24 +615,21 @@ export function createRequestHandler(
         try {
           body = JSON.parse(await readBody(req));
         } catch {
-          res.writeHead(400);
-          res.end(JSON.stringify({ error: "Invalid JSON" }));
+          json(res, 400, { error: "Invalid JSON" });
           return;
         }
 
         const text = body.text as string | undefined;
         if (!text || typeof text !== "string") {
-          res.writeHead(400);
-          res.end(JSON.stringify({ error: "Missing required field: text" }));
+          json(res, 400, { error: "Missing required field: text" });
           return;
         }
 
         const cwd = (body.cwd as string) || undefined;
         const { sessionId } = await sessions.createSession(bridge, cwd, undefined, "auto");
-        const streamUrl = `/api/sessions/${sessionId}/events/stream`;
+        const streamUrl = `/api/v1/sessions/${sessionId}/events/stream`;
 
-        res.writeHead(202);
-        res.end(JSON.stringify({ sessionId, streamUrl }));
+        json(res, 202, { sessionId, streamUrl });
 
         // Fire-and-forget: send the prompt asynchronously, tracking busy state
         sessions.activePrompts.add(sessionId);
@@ -655,9 +649,9 @@ export function createRequestHandler(
 
       // --- SSE stream endpoints ---
 
-      // GET /api/events/stream — global SSE stream
-      if (url.startsWith("/api/events/stream") && req.method === "GET") {
-        if (!deps.sseManager) { res.writeHead(501); res.end(JSON.stringify({ error: "SSE not available" })); return; }
+      // GET /api/v1/events/stream — global SSE stream
+      if (url.startsWith("/api/v1/events/stream") && req.method === "GET") {
+        if (!deps.sseManager) { json(res, 501, { error: "SSE not available" }); return; }
         const sseManager = deps.sseManager;
         const clientId = sseManager.generateClientId();
 
@@ -675,17 +669,16 @@ export function createRequestHandler(
         return;
       }
 
-      // GET /api/sessions/:id/events/stream — per-session SSE stream
-      const sseSessionMatch = url.match(/^\/api\/sessions\/([^/]+)\/events\/stream(\?.*)?$/);
+      // GET /api/v1/sessions/:id/events/stream — per-session SSE stream
+      const sseSessionMatch = url.match(/^\/api\/v1\/sessions\/([^/]+)\/events\/stream(\?.*)?$/);
       if (sseSessionMatch && req.method === "GET") {
-        if (!deps.sseManager) { res.writeHead(501); res.end(JSON.stringify({ error: "SSE not available" })); return; }
+        if (!deps.sseManager) { json(res, 501, { error: "SSE not available" }); return; }
         const sseManager = deps.sseManager;
         const sessionId = decodeURIComponent(sseSessionMatch[1]);
 
         const session = store.getSession(sessionId);
         if (!session) {
-          res.writeHead(404);
-          res.end(JSON.stringify({ error: "Session not found" }));
+          json(res, 404, { error: "Session not found" });
           return;
         }
 
@@ -720,16 +713,15 @@ export function createRequestHandler(
         return;
       }
 
-      // POST /api/clients/:clientId/visibility
-      const visMatch = url.match(/^\/api\/clients\/([^/]+)\/visibility$/);
+      // POST /api/v1/clients/:clientId/visibility
+      const visMatch = url.match(/^\/api\/v1\/clients\/([^/]+)\/visibility$/);
       if (visMatch && req.method === "POST") {
-        if (!deps.sseManager) { res.writeHead(501); res.end(JSON.stringify({ error: "SSE not available" })); return; }
+        if (!deps.sseManager) { json(res, 501, { error: "SSE not available" }); return; }
         const sseManager = deps.sseManager;
         const clientId = decodeURIComponent(visMatch[1]);
 
         if (!sseManager.clients.has(clientId)) {
-          res.writeHead(404);
-          res.end(JSON.stringify({ error: "Client not found" }));
+          json(res, 404, { error: "Client not found" });
           return;
         }
 
@@ -737,14 +729,12 @@ export function createRequestHandler(
         try {
           body = JSON.parse(await readBody(req));
         } catch {
-          res.writeHead(400);
-          res.end(JSON.stringify({ error: "Invalid JSON" }));
+          json(res, 400, { error: "Invalid JSON" });
           return;
         }
 
         if (typeof body.visible !== "boolean") {
-          res.writeHead(400);
-          res.end(JSON.stringify({ error: "Missing or invalid 'visible' field" }));
+          json(res, 400, { error: "Missing or invalid 'visible' field" });
           return;
         }
 
@@ -753,24 +743,24 @@ export function createRequestHandler(
           deps.pushService.setClientVisibility?.(clientId, body.visible as boolean);
         }
 
-        res.end(JSON.stringify({ ok: true }));
+        json(res, 200, { ok: true });
         return;
       }
 
-      // POST /api/images/:sessionId
-      const imgMatch = url.match(/^\/api\/images\/([^/]+)$/);
-      if (imgMatch && req.method === "POST") {
-        const sessionId = decodeURIComponent(imgMatch[1]);
+      // --- Images (session-scoped) ---
+
+      // POST /api/v1/sessions/:id/images
+      const imgUploadMatch = url.match(/^\/api\/v1\/sessions\/([^/]+)\/images\/?$/);
+      if (imgUploadMatch && req.method === "POST") {
+        const sessionId = decodeURIComponent(imgUploadMatch[1]);
         if (!SAFE_ID.test(sessionId)) {
-          res.writeHead(400);
-          res.end(JSON.stringify({ error: "Invalid session ID" }));
+          json(res, 400, { error: "Invalid session ID" });
           return;
         }
         // Enforce upload size limit
         const contentLength = parseInt(req.headers["content-length"] ?? "0", 10);
         if (contentLength > deps.limits.image_upload) {
-          res.writeHead(413);
-          res.end(JSON.stringify({ error: "Upload too large" }));
+          json(res, 413, { error: "Upload too large" });
           return;
         }
         const chunks: Buffer[] = [];
@@ -778,8 +768,7 @@ export function createRequestHandler(
         for await (const chunk of req) {
           totalSize += (chunk as Buffer).length;
           if (totalSize > deps.limits.image_upload) {
-            res.writeHead(413);
-            res.end(JSON.stringify({ error: "Upload too large" }));
+            json(res, 413, { error: "Upload too large" });
             return;
           }
           chunks.push(chunk as Buffer);
@@ -788,40 +777,64 @@ export function createRequestHandler(
         try {
           body = JSON.parse(Buffer.concat(chunks).toString());
         } catch {
-          res.writeHead(400);
-          res.end(JSON.stringify({ error: "Invalid JSON" }));
+          json(res, 400, { error: "Invalid JSON" });
           return;
         }
         const { data, mimeType } = body;
         const ext = mimeType.split("/")[1]?.replace("jpeg", "jpg") ?? "png";
         const seq = Date.now();
-        const relPath = `images/${sessionId}/${seq}.${ext}`;
+        const fileName = `${seq}.${ext}`;
+        const relPath = `images/${sessionId}/${fileName}`;
         const absPath = join(deps.dataDir, relPath);
         await mkdir(join(deps.dataDir, "images", sessionId), { recursive: true });
         await writeFile(absPath, Buffer.from(data, "base64"));
-        const imgUrl = `/data/${relPath}`;
-        res.end(JSON.stringify({ path: relPath, url: imgUrl }));
+        const imgUrl = `/api/v1/sessions/${sessionId}/images/${fileName}`;
+        json(res, 200, { path: relPath, url: imgUrl });
+        return;
+      }
+
+      // GET /api/v1/sessions/:id/images/:file
+      const imgGetMatch = url.match(/^\/api\/v1\/sessions\/([^/]+)\/images\/([^/?]+)\/?$/);
+      if (imgGetMatch && req.method === "GET") {
+        const sessionId = decodeURIComponent(imgGetMatch[1]);
+        const file = decodeURIComponent(imgGetMatch[2]);
+        const filePath = join(deps.dataDir, "images", sessionId, file);
+        if (!filePath.startsWith(join(deps.dataDir, "images"))) {
+          res.writeHead(403);
+          res.end("Forbidden");
+          return;
+        }
+        try {
+          const fileData = await readFile(filePath);
+          const ext = extname(filePath);
+          res.writeHead(200, {
+            "Content-Type": MIME[ext] ?? "application/octet-stream",
+            "Cache-Control": "public, max-age=31536000, immutable",
+          });
+          res.end(fileData);
+        } catch {
+          res.writeHead(404);
+          res.end("Not found");
+        }
         return;
       }
 
       // --- Push notification routes ---
 
-      // GET /api/push/vapid-key
-      if (url === "/api/push/vapid-key" && req.method === "GET") {
+      // GET /api/v1/push/vapid-key
+      if (url === "/api/v1/push/vapid-key" && req.method === "GET") {
         if (!deps.pushService) {
-          res.writeHead(404);
-          res.end(JSON.stringify({ error: "Push not configured" }));
+          json(res, 404, { error: "Push not configured" });
           return;
         }
-        res.end(JSON.stringify({ publicKey: deps.pushService.getPublicKey() }));
+        json(res, 200, { publicKey: deps.pushService.getPublicKey() });
         return;
       }
 
-      // POST /api/push/subscribe
-      if (url === "/api/push/subscribe" && req.method === "POST") {
+      // POST /api/v1/push/subscribe
+      if (url === "/api/v1/push/subscribe" && req.method === "POST") {
         if (!deps.pushService) {
-          res.writeHead(404);
-          res.end(JSON.stringify({ error: "Push not configured" }));
+          json(res, 404, { error: "Push not configured" });
           return;
         }
         const chunks: Buffer[] = [];
@@ -830,29 +843,25 @@ export function createRequestHandler(
         try {
           body = JSON.parse(Buffer.concat(chunks).toString());
         } catch {
-          res.writeHead(400);
-          res.end(JSON.stringify({ error: "Invalid JSON" }));
+          json(res, 400, { error: "Invalid JSON" });
           return;
         }
         if (!body.endpoint || !body.keys?.auth || !body.keys?.p256dh) {
-          res.writeHead(400);
-          res.end(JSON.stringify({ error: "Missing endpoint or keys (auth, p256dh)" }));
+          json(res, 400, { error: "Missing endpoint or keys (auth, p256dh)" });
           return;
         }
         store.saveSubscription(body.endpoint, body.keys.auth, body.keys.p256dh);
         if (body.clientId && deps.pushService) {
           deps.pushService.registerClient(body.clientId, body.endpoint);
         }
-        res.writeHead(201);
-        res.end(JSON.stringify({ ok: true }));
+        json(res, 201, { ok: true });
         return;
       }
 
-      // POST /api/push/register-client — associate clientId with push endpoint
-      if (url === "/api/push/register-client" && req.method === "POST") {
+      // POST /api/v1/push/register-client — associate clientId with push endpoint
+      if (url === "/api/v1/push/register-client" && req.method === "POST") {
         if (!deps.pushService) {
-          res.writeHead(404);
-          res.end(JSON.stringify({ error: "Push not configured" }));
+          json(res, 404, { error: "Push not configured" });
           return;
         }
         const chunks: Buffer[] = [];
@@ -861,26 +870,22 @@ export function createRequestHandler(
         try {
           body = JSON.parse(Buffer.concat(chunks).toString());
         } catch {
-          res.writeHead(400);
-          res.end(JSON.stringify({ error: "Invalid JSON" }));
+          json(res, 400, { error: "Invalid JSON" });
           return;
         }
         if (!body.clientId || !body.endpoint) {
-          res.writeHead(400);
-          res.end(JSON.stringify({ error: "Missing clientId or endpoint" }));
+          json(res, 400, { error: "Missing clientId or endpoint" });
           return;
         }
         deps.pushService.registerClient(body.clientId, body.endpoint);
-        res.writeHead(200);
-        res.end(JSON.stringify({ ok: true }));
+        json(res, 200, { ok: true });
         return;
       }
 
-      // POST /api/push/unsubscribe
-      if (url === "/api/push/unsubscribe" && req.method === "POST") {
+      // POST /api/v1/push/unsubscribe
+      if (url === "/api/v1/push/unsubscribe" && req.method === "POST") {
         if (!deps.pushService) {
-          res.writeHead(404);
-          res.end(JSON.stringify({ error: "Push not configured" }));
+          json(res, 404, { error: "Push not configured" });
           return;
         }
         const chunks: Buffer[] = [];
@@ -889,23 +894,21 @@ export function createRequestHandler(
         try {
           body = JSON.parse(Buffer.concat(chunks).toString());
         } catch {
-          res.writeHead(400);
-          res.end(JSON.stringify({ error: "Invalid JSON" }));
+          json(res, 400, { error: "Invalid JSON" });
           return;
         }
         if (body.endpoint) {
           store.removeSubscription(body.endpoint);
         }
-        res.end(JSON.stringify({ ok: true }));
+        json(res, 200, { ok: true });
         return;
       }
 
-      res.writeHead(404);
-      res.end(JSON.stringify({ error: "Not found" }));
+      json(res, 404, { error: "Not found" });
       return;
     }
 
-    // --- Serve uploaded images: /data/images/... ---
+    // Legacy: serves old image paths stored in events
     if (url.startsWith("/data/images/")) {
       const filePath = join(deps.dataDir, url.slice(6)); // strip "/data/"
       if (!filePath.startsWith(join(deps.dataDir, "images"))) {

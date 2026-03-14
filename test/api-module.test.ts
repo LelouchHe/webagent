@@ -31,12 +31,12 @@ describe("api module", () => {
 
   // --- Session CRUD ---
 
-  it("createSession sends POST /api/sessions with correct body", async () => {
+  it("createSession sends POST /api/v1/sessions with correct body", async () => {
     const data = { id: "s1", cwd: "/tmp" };
     fetchResponse = { status: 201, ok: true, json: () => Promise.resolve(data), text: () => Promise.resolve(JSON.stringify(data)) };
     const result = await api.createSession({ cwd: "/tmp", inheritFromSessionId: "s0" });
     assert.equal(fetchCalls.length, 1);
-    assert.equal(fetchCalls[0].url, "/api/sessions");
+    assert.equal(fetchCalls[0].url, "/api/v1/sessions");
     assert.equal(fetchCalls[0].init?.method, "POST");
     const body = JSON.parse(fetchCalls[0].init?.body as string);
     assert.equal(body.cwd, "/tmp");
@@ -52,31 +52,31 @@ describe("api module", () => {
     assert.equal(body.inheritFromSessionId, undefined);
   });
 
-  it("deleteSession sends DELETE /api/sessions/:id", async () => {
+  it("deleteSession sends DELETE /api/v1/sessions/:id", async () => {
     await api.deleteSession("s1");
-    assert.equal(fetchCalls[0].url, "/api/sessions/s1");
+    assert.equal(fetchCalls[0].url, "/api/v1/sessions/s1");
     assert.equal(fetchCalls[0].init?.method, "DELETE");
   });
 
-  it("listSessions sends GET /api/sessions", async () => {
+  it("listSessions sends GET /api/v1/sessions", async () => {
     fetchResponse = { status: 200, ok: true, json: () => Promise.resolve([]), text: () => Promise.resolve("[]") };
     await api.listSessions();
-    assert.equal(fetchCalls[0].url, "/api/sessions");
+    assert.equal(fetchCalls[0].url, "/api/v1/sessions");
     assert.equal(fetchCalls[0].init, undefined); // GET, no init
   });
 
-  it("getSession sends GET /api/sessions/:id", async () => {
+  it("getSession sends GET /api/v1/sessions/:id", async () => {
     fetchResponse = { status: 200, ok: true, json: () => Promise.resolve({ id: "s1" }), text: () => Promise.resolve('{"id":"s1"}') };
     await api.getSession("s1");
-    assert.equal(fetchCalls[0].url, "/api/sessions/s1");
+    assert.equal(fetchCalls[0].url, "/api/v1/sessions/s1");
   });
 
   // --- Prompt ---
 
-  it("sendMessage sends POST /api/sessions/:id/messages", async () => {
+  it("sendMessage sends POST /api/v1/sessions/:id/prompt", async () => {
     fetchResponse = { status: 202, ok: true, json: () => Promise.resolve({}), text: () => Promise.resolve("") };
     await api.sendMessage("s1", "hello", [{ url: "data:image/png;base64,abc" }]);
-    assert.equal(fetchCalls[0].url, "/api/sessions/s1/messages");
+    assert.equal(fetchCalls[0].url, "/api/v1/sessions/s1/prompt");
     assert.equal(fetchCalls[0].init?.method, "POST");
     const body = JSON.parse(fetchCalls[0].init?.body as string);
     assert.equal(body.text, "hello");
@@ -92,25 +92,25 @@ describe("api module", () => {
 
   // --- Cancel ---
 
-  it("cancelSession sends POST /api/sessions/:id/cancel", async () => {
+  it("cancelSession sends POST /api/v1/sessions/:id/cancel", async () => {
     await api.cancelSession("s1");
-    assert.equal(fetchCalls[0].url, "/api/sessions/s1/cancel");
+    assert.equal(fetchCalls[0].url, "/api/v1/sessions/s1/cancel");
     assert.equal(fetchCalls[0].init?.method, "POST");
   });
 
   // --- Permissions ---
 
-  it("resolvePermission sends POST /api/permissions/:requestId", async () => {
-    await api.resolvePermission("req1", "allow_once");
-    assert.equal(fetchCalls[0].url, "/api/permissions/req1");
+  it("resolvePermission sends POST /api/v1/sessions/:id/permissions/:requestId", async () => {
+    await api.resolvePermission("s1", "req1", "allow_once");
+    assert.equal(fetchCalls[0].url, "/api/v1/sessions/s1/permissions/req1");
     assert.equal(fetchCalls[0].init?.method, "POST");
     const body = JSON.parse(fetchCalls[0].init?.body as string);
     assert.equal(body.optionId, "allow_once");
   });
 
-  it("denyPermission sends POST /api/permissions/:requestId with denied flag", async () => {
-    await api.denyPermission("req2");
-    assert.equal(fetchCalls[0].url, "/api/permissions/req2");
+  it("denyPermission sends POST /api/v1/sessions/:id/permissions/:requestId with denied flag", async () => {
+    await api.denyPermission("s1", "req2");
+    assert.equal(fetchCalls[0].url, "/api/v1/sessions/s1/permissions/req2");
     assert.equal(fetchCalls[0].init?.method, "POST");
     const body = JSON.parse(fetchCalls[0].init?.body as string);
     assert.equal(body.denied, true);
@@ -118,35 +118,35 @@ describe("api module", () => {
 
   // --- Config ---
 
-  it("setConfig sends PATCH /api/sessions/:id", async () => {
+  it("setConfig sends PUT /api/v1/sessions/:id/:configId", async () => {
     await api.setConfig("s1", "model", "gpt-4");
-    assert.equal(fetchCalls[0].url, "/api/sessions/s1");
-    assert.equal(fetchCalls[0].init?.method, "PATCH");
+    assert.equal(fetchCalls[0].url, "/api/v1/sessions/s1/model");
+    assert.equal(fetchCalls[0].init?.method, "PUT");
     const body = JSON.parse(fetchCalls[0].init?.body as string);
-    assert.equal(body.model, "gpt-4");
+    assert.equal(body.value, "gpt-4");
   });
 
   // --- Bash ---
 
-  it("execBash sends POST /api/sessions/:id/bash", async () => {
+  it("execBash sends POST /api/v1/sessions/:id/bash", async () => {
     await api.execBash("s1", "ls -la");
-    assert.equal(fetchCalls[0].url, "/api/sessions/s1/bash");
+    assert.equal(fetchCalls[0].url, "/api/v1/sessions/s1/bash");
     assert.equal(fetchCalls[0].init?.method, "POST");
     const body = JSON.parse(fetchCalls[0].init?.body as string);
     assert.equal(body.command, "ls -la");
   });
 
-  it("cancelBash sends POST /api/sessions/:id/bash/cancel", async () => {
+  it("cancelBash sends POST /api/v1/sessions/:id/bash/cancel", async () => {
     await api.cancelBash("s1");
-    assert.equal(fetchCalls[0].url, "/api/sessions/s1/bash/cancel");
+    assert.equal(fetchCalls[0].url, "/api/v1/sessions/s1/bash/cancel");
     assert.equal(fetchCalls[0].init?.method, "POST");
   });
 
   // --- Visibility ---
 
-  it("postVisibility sends POST /api/clients/:clientId/visibility", async () => {
+  it("postVisibility sends POST /api/v1/clients/:clientId/visibility", async () => {
     await api.postVisibility("cl-abc", true);
-    assert.equal(fetchCalls[0].url, "/api/clients/cl-abc/visibility");
+    assert.equal(fetchCalls[0].url, "/api/v1/clients/cl-abc/visibility");
     assert.equal(fetchCalls[0].init?.method, "POST");
     const body = JSON.parse(fetchCalls[0].init?.body as string);
     assert.equal(body.visible, true);
@@ -154,10 +154,10 @@ describe("api module", () => {
 
   // --- Status ---
 
-  it("getStatus sends GET /api/sessions/:id/status", async () => {
+  it("getStatus sends GET /api/v1/sessions/:id/status", async () => {
     fetchResponse = { status: 200, ok: true, json: () => Promise.resolve({ busy: false }), text: () => Promise.resolve("") };
     await api.getStatus("s1");
-    assert.equal(fetchCalls[0].url, "/api/sessions/s1/status");
+    assert.equal(fetchCalls[0].url, "/api/v1/sessions/s1/status");
   });
 
   // --- Error handling ---

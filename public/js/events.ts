@@ -113,7 +113,7 @@ export async function loadHistory(sid: string): Promise<boolean> {
   state.replayInProgress = true;
   state.replayQueue = [];
   try {
-    const res = await fetch(`/api/sessions/${sid}/events?limit=${HISTORY_PAGE_SIZE}`);
+    const res = await fetch(`/api/v1/sessions/${sid}/events?limit=${HISTORY_PAGE_SIZE}`);
     if (!res.ok) return false;
     const body = await res.json();
     const { events, streaming, hasMore } = normalizeEventsResponse(body);
@@ -214,7 +214,7 @@ export async function loadNewEvents(sid: string): Promise<boolean> {
   state.replayInProgress = true;
   state.replayQueue = [];
   try {
-    const url = `/api/sessions/${sid}/events?after=${state.lastEventSeq}`;
+    const url = `/api/v1/sessions/${sid}/events?after=${state.lastEventSeq}`;
     const res = await fetch(url);
     if (!res.ok) return false;
     const body = await res.json();
@@ -301,7 +301,7 @@ export async function loadOlderEvents(sid: string): Promise<boolean> {
   if (state.loadingOlderEvents || !state.hasMoreHistory || state.oldestLoadedSeq <= 0) return false;
   state.loadingOlderEvents = true;
   try {
-    const res = await fetch(`/api/sessions/${sid}/events?limit=${HISTORY_PAGE_SIZE}&before=${state.oldestLoadedSeq}`);
+    const res = await fetch(`/api/v1/sessions/${sid}/events?limit=${HISTORY_PAGE_SIZE}&before=${state.oldestLoadedSeq}`);
     if (!res.ok) return false;
     // Bail out if the user switched sessions while the fetch was in-flight
     if (sid !== state.sessionId) return false;
@@ -365,9 +365,9 @@ export function retryUnconfirmedPermissions() {
     }
     // Still pending in DOM — resend via REST and optimistically resolve
     if (response.denied) {
-      api.denyPermission(requestId).catch(() => {});
+      api.denyPermission(response.sessionId, requestId).catch(() => {});
     } else {
-      api.resolvePermission(requestId, response.optionId).catch(() => {});
+      api.resolvePermission(response.sessionId, requestId, response.optionId).catch(() => {});
     }
     const title = el.dataset.title ? `⚿ ${escHtml(el.dataset.title)}` : '⚿';
     el.innerHTML = `<span style="opacity:0.5">${title} — ${escHtml(response.optionName)}</span>`;
@@ -502,9 +502,9 @@ export function replayEvent(type: string, data: Record<string, any>, events: Sto
           btn.onclick = () => {
             const isDeny = (opt.kind || '').includes('reject') || (opt.kind || '').includes('deny');
             if (isDeny) {
-              api.denyPermission(data.requestId).catch(() => {});
+              api.denyPermission(state.sessionId!, data.requestId).catch(() => {});
             } else {
-              api.resolvePermission(data.requestId, opt.optionId).catch(() => {});
+              api.resolvePermission(state.sessionId!, data.requestId, opt.optionId).catch(() => {});
             }
             el.innerHTML = `<span style="opacity:0.5">⚿ ${escHtml(data.title)} — ${escHtml(opt.name)}</span>`;
           };
@@ -804,9 +804,9 @@ export function handleEvent(msg: AgentEvent) {
         btn.onclick = () => {
           const isDeny = (opt.kind || '').includes('reject') || (opt.kind || '').includes('deny');
           if (isDeny) {
-            api.denyPermission(msg.requestId).catch(() => {});
+            api.denyPermission(state.sessionId!, msg.requestId).catch(() => {});
           } else {
-            api.resolvePermission(msg.requestId, opt.optionId).catch(() => {});
+            api.resolvePermission(state.sessionId!, msg.requestId, opt.optionId).catch(() => {});
           }
           state.pendingPermissionRequestIds.delete(msg.requestId);
           // Track for retry on reconnect (cleared when server confirms via permission_resolved)

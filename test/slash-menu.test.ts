@@ -88,9 +88,9 @@ describe("slash menu — Tab vs Click behavior", () => {
       dom.input.value.startsWith("/model "),
       `input should have /model <name>, got: "${dom.input.value}"`,
     );
-    // No REST PATCH sent (no execution)
-    const patchCall = fetchCalls.find(c => c.init?.method === "PATCH");
-    assert.equal(patchCall, undefined, "Tab should not send config change");
+    // No REST PUT sent (no execution)
+    const putCall = fetchCalls.find(c => c.init?.method === "PUT");
+    assert.equal(putCall, undefined, "Tab should not send config change");
   });
 
   it("Tab on config submenu uses option name not value", () => {
@@ -145,10 +145,10 @@ describe("slash menu — Tab vs Click behavior", () => {
     const mouseEvent = new (globalThis.window as any).MouseEvent("mousedown", { bubbles: true });
     item.dispatchEvent(mouseEvent);
 
-    // Should have sent a config change via REST PATCH
-    const patchCall = fetchCalls.find(c => c.url === "/api/sessions/s1" && c.init?.method === "PATCH");
-    assert.ok(patchCall, "click should execute config change via REST");
-    const body = JSON.parse(patchCall!.init.body);
-    assert.equal(body.model, "opus");
+    // Should have sent a config change via REST PUT
+    const putCall = fetchCalls.find(c => c.url === "/api/v1/sessions/s1/model" && c.init?.method === "PUT");
+    assert.ok(putCall, "click should execute config change via REST");
+    const body = JSON.parse(putCall!.init.body);
+    assert.equal(body.value, "opus");
   });
 });

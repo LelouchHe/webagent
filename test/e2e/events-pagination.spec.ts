@@ -13,7 +13,7 @@ test("events API supports pagination with limit and before params", async ({ pag
   const sessionId = await currentSessionId(page);
 
   // Fetch with limit — should return latest N events with pagination metadata
-  const res = await page.request.get(`/api/sessions/${sessionId}/events?limit=4`);
+  const res = await page.request.get(`/api/v1/sessions/${sessionId}/events?limit=4`);
   expect(res.ok()).toBe(true);
   const body = await res.json();
 
@@ -28,7 +28,7 @@ test("events API supports pagination with limit and before params", async ({ pag
   // If hasMore, fetch older page using before cursor
   if (body.hasMore) {
     const firstSeq = body.events[0].seq;
-    const res2 = await page.request.get(`/api/sessions/${sessionId}/events?limit=4&before=${firstSeq}`);
+    const res2 = await page.request.get(`/api/v1/sessions/${sessionId}/events?limit=4&before=${firstSeq}`);
     expect(res2.ok()).toBe(true);
     const body2 = await res2.json();
     // All events should be before firstSeq
@@ -44,7 +44,7 @@ test("events API without limit returns all events (backward compat)", async ({ p
   await expect(page.locator(".msg.assistant").last()).toContainText("Echo: compat test");
 
   const sessionId = await currentSessionId(page);
-  const res = await page.request.get(`/api/sessions/${sessionId}/events`);
+  const res = await page.request.get(`/api/v1/sessions/${sessionId}/events`);
   expect(res.ok()).toBe(true);
   const body = await res.json();
 

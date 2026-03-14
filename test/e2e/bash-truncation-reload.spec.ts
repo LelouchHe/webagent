@@ -40,7 +40,7 @@ async function startServer(configPath: string): Promise<ChildProcess> {
       }
     });
   });
-  await waitForHealthy(`http://127.0.0.1:${TRUNC_PORT}/api/sessions`);
+  await waitForHealthy(`http://127.0.0.1:${TRUNC_PORT}/api/v1/sessions`);
   return child;
 }
 

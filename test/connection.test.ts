@@ -111,15 +111,15 @@ describe("connection", () => {
     history.replaceState(null, "", "/#hash-session");
     setFetch(async (url: string) => {
       if (url.includes("/visibility")) return mockResponse({});
-      if (url === "/api/sessions/hash-session") return mockResponse(sessionResponse("hash-session"));
-      if (url.startsWith("/api/sessions/hash-session/events"))
+      if (url === "/api/v1/sessions/hash-session") return mockResponse(sessionResponse("hash-session"));
+      if (url.startsWith("/api/v1/sessions/hash-session/events"))
         return mockResponse([{ seq: 1, type: "assistant_message", data: JSON.stringify({ text: "restored" }) }]);
       throw new Error(`Unexpected fetch: ${url}`);
     });
 
     connection.connect();
     const es = latestES();
-    assert.equal(es.url, "/api/events/stream");
+    assert.equal(es.url, "/api/v1/events/stream");
     // initSession runs immediately (parallel with SSE), flush to let it complete
     await flush();
     // SSE connected arrives — sets clientId only
@@ -128,8 +128,8 @@ describe("connection", () => {
     assert.equal(state.clientId, "cl-test");
     assert.equal(state.sessionId, "hash-session");
     const urls = fetchCalls.map(c => c.url);
-    assert.ok(urls.some(u => u === "/api/sessions/hash-session"));
-    assert.ok(urls.some(u => u.startsWith("/api/sessions/hash-session/events")));
+    assert.ok(urls.some(u => u === "/api/v1/sessions/hash-session"));
+    assert.ok(urls.some(u => u.startsWith("/api/v1/sessions/hash-session/events")));
     assert.ok(dom.messages.textContent.includes("restored"));
     assert.equal(state.lastEventSeq, 1);
   });
@@ -137,9 +137,9 @@ describe("connection", () => {
   it("resumes the most recent session when there is no hash", async () => {
     setFetch(async (url: string) => {
       if (url.includes("/visibility")) return mockResponse({});
-      if (url === "/api/sessions") return mockResponse([{ id: "recent-session" }]);
-      if (url === "/api/sessions/recent-session") return mockResponse(sessionResponse("recent-session"));
-      if (url.startsWith("/api/sessions/recent-session/events")) return mockResponse([]);
+      if (url === "/api/v1/sessions") return mockResponse([{ id: "recent-session" }]);
+      if (url === "/api/v1/sessions/recent-session") return mockResponse(sessionResponse("recent-session"));
+      if (url.startsWith("/api/v1/sessions/recent-session/events")) return mockResponse([]);
       throw new Error(`Unexpected fetch: ${url}`);
     });
 
@@ -147,16 +147,16 @@ describe("connection", () => {
     await flush();
 
     const urls = fetchCalls.map(c => c.url);
-    assert.ok(urls.some(u => u === "/api/sessions"));
-    assert.ok(urls.some(u => u === "/api/sessions/recent-session"));
+    assert.ok(urls.some(u => u === "/api/v1/sessions"));
+    assert.ok(urls.some(u => u === "/api/v1/sessions/recent-session"));
     assert.equal(state.sessionId, "recent-session");
   });
 
   it("creates a new session when no previous session exists", async () => {
     setFetch(async (url: string, init?: RequestInit) => {
       if (url.includes("/visibility")) return mockResponse({});
-      if (url === "/api/sessions" && (!init?.method || init.method === "GET")) return mockResponse([]);
-      if (url === "/api/sessions" && init?.method === "POST") return mockResponse({ id: "new-1" });
+      if (url === "/api/v1/sessions" && (!init?.method || init.method === "GET")) return mockResponse([]);
+      if (url === "/api/v1/sessions" && init?.method === "POST") return mockResponse({ id: "new-1" });
       throw new Error(`Unexpected fetch: ${url} ${init?.method}`);
     });
 
@@ -196,8 +196,8 @@ describe("connection", () => {
     let eventsFetchCount = 0;
     setFetch(async (url: string) => {
       if (url.includes("/visibility")) return mockResponse({});
-      if (url === "/api/sessions/restored-session") return mockResponse(sessionResponse("restored-session"));
-      if (url.includes("/api/sessions/restored-session/events")) {
+      if (url === "/api/v1/sessions/restored-session") return mockResponse(sessionResponse("restored-session"));
+      if (url.includes("/api/v1/sessions/restored-session/events")) {
         eventsFetchCount++;
         if (eventsFetchCount === 1)
           return mockResponse([{ seq: 1, type: "assistant_message", data: JSON.stringify({ text: "first load" }) }]);
@@ -244,8 +244,8 @@ describe("connection", () => {
 
     setFetch(async (url: string) => {
       if (url.includes("/visibility")) return mockResponse({});
-      if (url === "/api/sessions/incr-session") return mockResponse(sessionResponse("incr-session"));
-      if (url.includes("/api/sessions/incr-session/events")) {
+      if (url === "/api/v1/sessions/incr-session") return mockResponse(sessionResponse("incr-session"));
+      if (url.includes("/api/v1/sessions/incr-session/events")) {
         assert.ok(url.includes("after=2"), `Expected after=2 in URL, got: ${url}`);
         return mockResponse([{ seq: 3, type: "assistant_message", data: JSON.stringify({ text: "full reply" }) }]);
       }
@@ -310,11 +310,11 @@ describe("connection", () => {
 
     setFetch(async (url: string) => {
       if (url.includes("/visibility")) return mockResponse({});
-      if (url === "/api/sessions/session-a") {
+      if (url === "/api/v1/sessions/session-a") {
         await sessionADeferred;
         return mockResponse(sessionResponse("session-a"));
       }
-      if (url.startsWith("/api/sessions/session-a/events")) return mockResponse([]);
+      if (url.startsWith("/api/v1/sessions/session-a/events")) return mockResponse([]);
       throw new Error(`Unexpected fetch: ${url}`);
     });
 
@@ -345,8 +345,8 @@ describe("connection", () => {
 
     setFetch(async (url: string) => {
       if (url.includes("/visibility")) return mockResponse({});
-      if (url === "/api/sessions/idle-session") return mockResponse(sessionResponse("idle-session"));
-      if (url.includes("/api/sessions/idle-session/events")) return mockResponse([]);
+      if (url === "/api/v1/sessions/idle-session") return mockResponse(sessionResponse("idle-session"));
+      if (url.includes("/api/v1/sessions/idle-session/events")) return mockResponse([]);
       throw new Error(`Unexpected fetch: ${url}`);
     });
 

@@ -93,11 +93,11 @@ describe("Operations REST API", () => {
 
   // Helper to create a session and return its ID
   async function createSession(): Promise<string> {
-    const res = await makeRequest(port, "POST", "/api/sessions", JSON.stringify({ cwd: tmpDir }));
+    const res = await makeRequest(port, "POST", "/api/v1/sessions", JSON.stringify({ cwd: tmpDir }));
     return JSON.parse(res.body).id;
   }
 
-  describe("POST /api/sessions/:id/cancel", () => {
+  describe("POST /api/v1/sessions/:id/cancel", () => {
     it("cancels an active prompt", async () => {
       const sessionId = await createSession();
       sessions.activePrompts.add(sessionId);
@@ -105,7 +105,7 @@ describe("Operations REST API", () => {
       let cancelCalled = false;
       mockBridge.cancel = async () => { cancelCalled = true; };
 
-      const res = await makeRequest(port, "POST", `/api/sessions/${sessionId}/cancel`);
+      const res = await makeRequest(port, "POST", `/api/v1/sessions/${sessionId}/cancel`);
       assert.equal(res.status, 200);
       assert.deepEqual(JSON.parse(res.body), { ok: true });
       assert.ok(cancelCalled);
@@ -122,20 +122,20 @@ describe("Operations REST API", () => {
       fakeProc.stderr = new EventEmitter();
       sessions.runningBashProcs.set(sessionId, fakeProc);
 
-      const res = await makeRequest(port, "POST", `/api/sessions/${sessionId}/cancel`);
+      const res = await makeRequest(port, "POST", `/api/v1/sessions/${sessionId}/cancel`);
       assert.equal(res.status, 200);
       assert.ok(killed);
     });
 
     it("returns 200 even when session is idle (idempotent)", async () => {
       const sessionId = await createSession();
-      const res = await makeRequest(port, "POST", `/api/sessions/${sessionId}/cancel`);
+      const res = await makeRequest(port, "POST", `/api/v1/sessions/${sessionId}/cancel`);
       assert.equal(res.status, 200);
       assert.deepEqual(JSON.parse(res.body), { ok: true });
     });
 
     it("returns 404 for unknown session", async () => {
-      const res = await makeRequest(port, "POST", "/api/sessions/nonexistent/cancel");
+      const res = await makeRequest(port, "POST", "/api/v1/sessions/nonexistent/cancel");
       assert.equal(res.status, 404);
     });
 
@@ -152,16 +152,16 @@ describe("Operations REST API", () => {
       await new Promise<void>((r) => srv.listen(0, "127.0.0.1", r));
       const p = (srv.address() as { port: number }).port;
 
-      const res = await makeRequest(p, "POST", `/api/sessions/${sessionId}/cancel`);
+      const res = await makeRequest(p, "POST", `/api/v1/sessions/${sessionId}/cancel`);
       assert.equal(res.status, 503);
       await new Promise<void>((r) => srv.close(() => r()));
     });
   });
 
-  describe("GET /api/sessions/:id/status", () => {
+  describe("GET /api/v1/sessions/:id/status", () => {
     it("returns idle status when no active work", async () => {
       const sessionId = await createSession();
-      const res = await makeRequest(port, "GET", `/api/sessions/${sessionId}/status`);
+      const res = await makeRequest(port, "GET", `/api/v1/sessions/${sessionId}/status`);
       assert.equal(res.status, 200);
       const body = JSON.parse(res.body);
       assert.equal(body.busy, false);
@@ -173,7 +173,7 @@ describe("Operations REST API", () => {
       const sessionId = await createSession();
       sessions.activePrompts.add(sessionId);
 
-      const res = await makeRequest(port, "GET", `/api/sessions/${sessionId}/status`);
+      const res = await makeRequest(port, "GET", `/api/v1/sessions/${sessionId}/status`);
       const body = JSON.parse(res.body);
       assert.equal(body.busy, true);
       assert.equal(body.busyKind, "agent");
@@ -188,24 +188,24 @@ describe("Operations REST API", () => {
       fakeProc.stderr = new EventEmitter();
       sessions.runningBashProcs.set(sessionId, fakeProc);
 
-      const res = await makeRequest(port, "GET", `/api/sessions/${sessionId}/status`);
+      const res = await makeRequest(port, "GET", `/api/v1/sessions/${sessionId}/status`);
       const body = JSON.parse(res.body);
       assert.equal(body.busy, true);
       assert.equal(body.busyKind, "bash");
     });
 
     it("returns 404 for unknown session", async () => {
-      const res = await makeRequest(port, "GET", "/api/sessions/nonexistent/status");
+      const res = await makeRequest(port, "GET", "/api/v1/sessions/nonexistent/status");
       assert.equal(res.status, 404);
     });
   });
 
-  describe("GET /api/config", () => {
+  describe("GET /api/v1/config", () => {
     it("returns configOptions and cancelTimeout", async () => {
       // Create a session to populate cachedConfigOptions
       await createSession();
 
-      const res = await makeRequest(port, "GET", "/api/config");
+      const res = await makeRequest(port, "GET", "/api/v1/config");
       assert.equal(res.status, 200);
       const body = JSON.parse(res.body);
       assert.ok(Array.isArray(body.configOptions));
@@ -213,7 +213,7 @@ describe("Operations REST API", () => {
     });
 
     it("returns empty configOptions when no sessions exist", async () => {
-      const res = await makeRequest(port, "GET", "/api/config");
+      const res = await makeRequest(port, "GET", "/api/v1/config");
       assert.equal(res.status, 200);
       const body = JSON.parse(res.body);
       assert.deepEqual(body.configOptions, []);

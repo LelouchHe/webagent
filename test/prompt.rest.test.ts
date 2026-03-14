@@ -96,14 +96,14 @@ describe("Prompt REST API", () => {
   });
 
   async function createSession(): Promise<string> {
-    const res = await makeRequest(port, "POST", "/api/sessions", JSON.stringify({ cwd: tmpDir }));
+    const res = await makeRequest(port, "POST", "/api/v1/sessions", JSON.stringify({ cwd: tmpDir }));
     return JSON.parse(res.body).id;
   }
 
-  describe("POST /api/sessions/:id/messages", () => {
+  describe("POST /api/v1/sessions/:id/prompt", () => {
     it("accepts a prompt and returns 202", async () => {
       const sessionId = await createSession();
-      const res = await makeRequest(port, "POST", `/api/sessions/${sessionId}/messages`,
+      const res = await makeRequest(port, "POST", `/api/v1/sessions/${sessionId}/prompt`,
         JSON.stringify({ text: "hello" }));
       assert.equal(res.status, 202);
       assert.deepEqual(JSON.parse(res.body), { status: "accepted" });
@@ -111,7 +111,7 @@ describe("Prompt REST API", () => {
 
     it("calls bridge.prompt with correct args", async () => {
       const sessionId = await createSession();
-      await makeRequest(port, "POST", `/api/sessions/${sessionId}/messages`,
+      await makeRequest(port, "POST", `/api/v1/sessions/${sessionId}/prompt`,
         JSON.stringify({ text: "hello world" }));
       assert.equal(mockBridge.lastPromptArgs?.sessionId, sessionId);
       assert.equal(mockBridge.lastPromptArgs?.text, "hello world");
@@ -119,7 +119,7 @@ describe("Prompt REST API", () => {
 
     it("stores user_message event", async () => {
       const sessionId = await createSession();
-      await makeRequest(port, "POST", `/api/sessions/${sessionId}/messages`,
+      await makeRequest(port, "POST", `/api/v1/sessions/${sessionId}/prompt`,
         JSON.stringify({ text: "hello" }));
       const events = store.getEvents(sessionId);
       const userMsg = events.find(e => e.type === "user_message");
@@ -130,7 +130,7 @@ describe("Prompt REST API", () => {
     it("broadcasts user_message event", async () => {
       const sessionId = await createSession();
       broadcastEvents = [];
-      await makeRequest(port, "POST", `/api/sessions/${sessionId}/messages`,
+      await makeRequest(port, "POST", `/api/v1/sessions/${sessionId}/prompt`,
         JSON.stringify({ text: "hello" }));
       const userMsg = broadcastEvents.find((e: any) => e.type === "user_message");
       assert.ok(userMsg);
@@ -141,7 +141,7 @@ describe("Prompt REST API", () => {
       const before = store.getSession(sessionId)!.last_active_at;
       // Small delay to ensure timestamp difference
       await new Promise(r => setTimeout(r, 10));
-      await makeRequest(port, "POST", `/api/sessions/${sessionId}/messages`,
+      await makeRequest(port, "POST", `/api/v1/sessions/${sessionId}/prompt`,
         JSON.stringify({ text: "hello" }));
       const after = store.getSession(sessionId)!.last_active_at;
       assert.ok(after >= before);
@@ -154,14 +154,14 @@ describe("Prompt REST API", () => {
         // Check that activePrompts was set before prompt completes
         assert.ok(sessions.activePrompts.has(sessionId));
       };
-      await makeRequest(port, "POST", `/api/sessions/${sessionId}/messages`,
+      await makeRequest(port, "POST", `/api/v1/sessions/${sessionId}/prompt`,
         JSON.stringify({ text: "hello" }));
     });
 
     it("returns 409 when session is busy with agent", async () => {
       const sessionId = await createSession();
       sessions.activePrompts.add(sessionId);
-      const res = await makeRequest(port, "POST", `/api/sessions/${sessionId}/messages`,
+      const res = await makeRequest(port, "POST", `/api/v1/sessions/${sessionId}/prompt`,
         JSON.stringify({ text: "hello" }));
       assert.equal(res.status, 409);
       const body = JSON.parse(res.body);
@@ -176,28 +176,28 @@ describe("Prompt REST API", () => {
       fakeProc.pid = 1; fakeProc.kill = () => true;
       fakeProc.stdout = new EventEmitter(); fakeProc.stderr = new EventEmitter();
       sessions.runningBashProcs.set(sessionId, fakeProc);
-      const res = await makeRequest(port, "POST", `/api/sessions/${sessionId}/messages`,
+      const res = await makeRequest(port, "POST", `/api/v1/sessions/${sessionId}/prompt`,
         JSON.stringify({ text: "hello" }));
       assert.equal(res.status, 409);
       assert.equal(JSON.parse(res.body).busyKind, "bash");
     });
 
     it("returns 404 for unknown session", async () => {
-      const res = await makeRequest(port, "POST", "/api/sessions/nonexistent/messages",
+      const res = await makeRequest(port, "POST", "/api/v1/sessions/nonexistent/prompt",
         JSON.stringify({ text: "hello" }));
       assert.equal(res.status, 404);
     });
 
     it("returns 400 for missing text", async () => {
       const sessionId = await createSession();
-      const res = await makeRequest(port, "POST", `/api/sessions/${sessionId}/messages`,
+      const res = await makeRequest(port, "POST", `/api/v1/sessions/${sessionId}/prompt`,
         JSON.stringify({}));
       assert.equal(res.status, 400);
     });
 
     it("returns 400 for invalid JSON", async () => {
       const sessionId = await createSession();
-      const res = await makeRequest(port, "POST", `/api/sessions/${sessionId}/messages`, "not json");
+      const res = await makeRequest(port, "POST", `/api/v1/sessions/${sessionId}/prompt`, "not json");
       assert.equal(res.status, 400);
     });
 
@@ -211,7 +211,7 @@ describe("Prompt REST API", () => {
       await new Promise<void>((r) => srv.listen(0, "127.0.0.1", r));
       const p = (srv.address() as { port: number }).port;
       const sessionId = await createSession();
-      const res = await makeRequest(p, "POST", `/api/sessions/${sessionId}/messages`,
+      const res = await makeRequest(p, "POST", `/api/v1/sessions/${sessionId}/prompt`,
         JSON.stringify({ text: "hello" }));
       assert.equal(res.status, 503);
       await new Promise<void>((r) => srv.close(() => r()));
@@ -219,25 +219,25 @@ describe("Prompt REST API", () => {
 
     it("accepts images alongside text", async () => {
       const sessionId = await createSession();
-      const res = await makeRequest(port, "POST", `/api/sessions/${sessionId}/messages`,
+      const res = await makeRequest(port, "POST", `/api/v1/sessions/${sessionId}/prompt`,
         JSON.stringify({ text: "describe this", images: [{ data: "base64data", mimeType: "image/png" }] }));
       assert.equal(res.status, 202);
       assert.deepEqual(mockBridge.lastPromptArgs?.images, [{ data: "base64data", mimeType: "image/png" }]);
     });
   });
 
-  describe("GET /api/sessions/:id/messages", () => {
+  describe("GET /api/v1/sessions/:id/events", () => {
     it("returns session events", async () => {
       const sessionId = await createSession();
       store.saveEvent(sessionId, "user_message", { text: "hello" });
       store.saveEvent(sessionId, "assistant_message", { text: "hi there" });
 
-      const res = await makeRequest(port, "GET", `/api/sessions/${sessionId}/messages`);
+      const res = await makeRequest(port, "GET", `/api/v1/sessions/${sessionId}/events`);
       assert.equal(res.status, 200);
-      const events = JSON.parse(res.body);
-      assert.equal(events.length, 2);
-      assert.equal(events[0].type, "user_message");
-      assert.equal(events[1].type, "assistant_message");
+      const body = JSON.parse(res.body);
+      assert.equal(body.events.length, 2);
+      assert.equal(body.events[0].type, "user_message");
+      assert.equal(body.events[1].type, "assistant_message");
     });
 
     it("supports thinking filter", async () => {
@@ -246,10 +246,10 @@ describe("Prompt REST API", () => {
       store.saveEvent(sessionId, "thinking", { text: "hmm..." });
       store.saveEvent(sessionId, "assistant_message", { text: "hi" });
 
-      const res = await makeRequest(port, "GET", `/api/sessions/${sessionId}/messages?thinking=0`);
-      const events = JSON.parse(res.body);
-      assert.equal(events.length, 2);
-      assert.ok(!events.some((e: any) => e.type === "thinking"));
+      const res = await makeRequest(port, "GET", `/api/v1/sessions/${sessionId}/events?thinking=0`);
+      const body = JSON.parse(res.body);
+      assert.equal(body.events.length, 2);
+      assert.ok(!body.events.some((e: any) => e.type === "thinking"));
     });
 
     it("supports after pagination", async () => {
@@ -260,14 +260,14 @@ describe("Prompt REST API", () => {
       const allEvents = store.getEvents(sessionId);
       const firstSeq = allEvents[0].seq;
 
-      const res = await makeRequest(port, "GET", `/api/sessions/${sessionId}/messages?after=${firstSeq}`);
-      const events = JSON.parse(res.body);
-      assert.equal(events.length, 1);
-      assert.equal(JSON.parse(events[0].data).text, "second");
+      const res = await makeRequest(port, "GET", `/api/v1/sessions/${sessionId}/events?after=${firstSeq}`);
+      const body = JSON.parse(res.body);
+      assert.equal(body.events.length, 1);
+      assert.equal(JSON.parse(body.events[0].data).text, "second");
     });
 
     it("returns 404 for unknown session", async () => {
-      const res = await makeRequest(port, "GET", "/api/sessions/nonexistent/messages");
+      const res = await makeRequest(port, "GET", "/api/v1/sessions/nonexistent/events");
       assert.equal(res.status, 404);
     });
   });
@@ -297,7 +297,7 @@ describe("Prompt REST API", () => {
       const p = (srv.address() as { port: number }).port;
 
       const sessionId = await createSession();
-      await makeRequest(p, "POST", `/api/sessions/${sessionId}/messages`,
+      await makeRequest(p, "POST", `/api/v1/sessions/${sessionId}/prompt`,
         JSON.stringify({ text: "hello world" }));
 
       assert.ok(generatedTitle, "titleService.generate should have been called");
@@ -329,7 +329,7 @@ describe("Prompt REST API", () => {
 
       const sessionId = await createSession();
       sessions.sessionHasTitle.add(sessionId);
-      await makeRequest(p, "POST", `/api/sessions/${sessionId}/messages`,
+      await makeRequest(p, "POST", `/api/v1/sessions/${sessionId}/prompt`,
         JSON.stringify({ text: "hello" }));
 
       assert.ok(!generateCalled, "titleService.generate should NOT be called for titled session");

@@ -72,13 +72,13 @@ agent_cmd = "my-agent --acp"
 - **Session restore**: `bridge.loadSession()` restores ACP context after server restart. During restore, `restoringSessions` Set suppresses duplicate event storage/broadcast.
 - **On-demand sessions**: No pre-warming. Sessions created on `/new`, auto-resumed on page open.
 - **Model inheritance**: A newly created session inherits the current session's saved model when available; restored sessions keep their own persisted model. Mode is NOT inherited — new sessions always start in agent mode.
-- **Auto-resume**: Frontend auto-resumes last active session on page open (no hash → fetch `/api/sessions` → resume most recent).
+- **Auto-resume**: Frontend auto-resumes last active session on page open (no hash → fetch `/api/v1/sessions` → resume most recent).
 - **Event aggregation**: `message_chunk` / `thought_chunk` are buffered in memory, flushed to DB as full `assistant_message` / `thinking` on boundaries (tool_call, plan, prompt_done).
 - **Title generation**: Uses a dedicated silent session with fast model (Haiku), async and non-blocking.
 - **Multi-client broadcast**: Events broadcast to all WS clients. Permission responses, user messages, bash output sync across devices. `broadcast()` supports sender exclusion.
 - **PWA**: Minimal service worker (no offline cache), manifest.json, installable to home screen.
 - **Web Push**: VAPID-based push notifications via `web-push`. Per-subscription visibility filtering: each push endpoint is associated with its SSE client IDs, and only endpoints with no visible client receive push. Subscriptions stored in SQLite. Notifiable events: `permission_request`, `prompt_done`, `bash_done`.
-  - **Per-subscription visibility**: Each SSE client registers its push endpoint via `/api/push/register-client` on connect. `sendToAll()` checks per-endpoint whether any mapped client is visible — visible endpoints are skipped, others receive push. This means a visible desktop tab only suppresses its own device's push, not other devices.
+  - **Per-subscription visibility**: Each SSE client registers its push endpoint via `/api/v1/push/register-client` on connect. `sendToAll()` checks per-endpoint whether any mapped client is visible — visible endpoints are skipped, others receive push. This means a visible desktop tab only suppresses its own device's push, not other devices.
   - **Subscription cleanup**: Stale endpoints are auto-removed in two ways: (1) 410 Gone responses are removed immediately; (2) any other error that occurs 5 consecutive times removes the subscription (`MAX_CONSECUTIVE_FAILURES` in `push-service.ts`). A single successful send resets the counter. This prevents expired tokens (e.g. WNS returning 403) from spamming logs indefinitely.
   - **Troubleshooting lost notifications**: If a client stops receiving push notifications, run `/notify off` then `/notify on` to re-subscribe with a fresh endpoint. Old endpoints may have been auto-cleaned after repeated failures.
   - **Activating push on a new device**:

@@ -120,7 +120,7 @@ describe("state", () => {
       await new Promise(r => setTimeout(r, 0));
 
       assert.equal(calls.length, 1);
-      assert.equal(calls[0].url, "/api/sessions");
+      assert.equal(calls[0].url, "/api/v1/sessions");
       assert.equal(calls[0].init?.method, "POST");
       const body = JSON.parse(calls[0].init?.body as string);
       assert.equal(body.inheritFromSessionId, "existing-id");
@@ -205,7 +205,7 @@ describe("state", () => {
       await new Promise(r => setTimeout(r, 0));
 
       assert.equal(calls.length, 1);
-      assert.equal(calls[0].url, "/api/sessions/s1/cancel");
+      assert.equal(calls[0].url, "/api/v1/sessions/s1/cancel");
       assert.equal(calls[0].init?.method, "POST");
     });
 
@@ -223,7 +223,7 @@ describe("state", () => {
       assert.equal(mod.sendCancel(), true);
       await new Promise(r => setTimeout(r, 0));
 
-      assert.equal(calls[0].url, "/api/sessions/s1/cancel");
+      assert.equal(calls[0].url, "/api/v1/sessions/s1/cancel");
     });
 
     it("returns false when not busy", () => {

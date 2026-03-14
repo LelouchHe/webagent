@@ -263,8 +263,8 @@ describe("events", () => {
         });
         const btn = dom.messages.querySelector(".permission button");
         btn.click();
-        const call = fetchCalls.find(c => c.url.includes("/api/permissions/perm2") && c.init?.method === "POST");
-        assert.ok(call, "expected a POST to /api/permissions/perm2");
+        const call = fetchCalls.find(c => c.url.includes("/api/v1/sessions/s1/permissions/perm2") && c.init?.method === "POST");
+        assert.ok(call, "expected a POST to /api/v1/sessions/s1/permissions/perm2");
         const body = JSON.parse(call!.init.body);
         assert.equal(body.optionId, "allow");
       });
@@ -1683,8 +1683,8 @@ describe("events", () => {
       events.retryUnconfirmedPermissions();
 
       // Should have sent a REST call to resolve the permission
-      const call = fetchCalls.find(c => c.url.includes("/api/permissions/perm-retry") && c.init?.method === "POST");
-      assert.ok(call, "expected POST to /api/permissions/perm-retry");
+      const call = fetchCalls.find(c => c.url.includes("/api/v1/sessions/s1/permissions/perm-retry") && c.init?.method === "POST");
+      assert.ok(call, "expected POST to /api/v1/sessions/s1/permissions/perm-retry");
       const body = JSON.parse(call!.init.body);
       assert.equal(body.optionId, "allow");
       // Should have optimistically resolved the UI
@@ -1715,7 +1715,7 @@ describe("events", () => {
       events.retryUnconfirmedPermissions();
 
       // No permission REST calls — already resolved
-      const permCalls = fetchCalls.filter(c => c.url.includes("/api/permissions/"));
+      const permCalls = fetchCalls.filter(c => c.url.includes("/api/v1/sessions/s1/permissions/"));
       assert.equal(permCalls.length, 0);
       assert.equal(state.unconfirmedPermissions.has("perm-ok"), false);
     });
@@ -1733,7 +1733,7 @@ describe("events", () => {
       // No matching element in DOM
       events.retryUnconfirmedPermissions();
 
-      const permCalls = fetchCalls.filter(c => c.url.includes("/api/permissions/"));
+      const permCalls = fetchCalls.filter(c => c.url.includes("/api/v1/sessions/s1/permissions/"));
       assert.equal(permCalls.length, 0);
       assert.equal(state.unconfirmedPermissions.has("perm-gone"), false);
     });

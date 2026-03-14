@@ -13,6 +13,7 @@ WebAgent exposes a **REST + SSE** API for managing agent sessions, sending promp
 - [Overview](#overview)
 - [Conventions](#conventions)
 - [REST Endpoints](#rest-endpoints)
+  - [Discovery](#discovery)
   - [Sessions](#sessions)
   - [Messages](#messages)
   - [Permissions](#permissions)
@@ -53,7 +54,7 @@ WebAgent exposes a **REST + SSE** API for managing agent sessions, sending promp
 - **SQLite** for persistence (sessions, events, push subscriptions)
 - **ACP** (Agent Client Protocol) connects the server to the agent backend
 
-All endpoints are under `/api/`. Static files are served from the configured `public_dir`.
+All endpoints are under `/api/v1/`. Static files are served from the configured `public_dir`.
 
 ## Conventions
 
@@ -71,9 +72,32 @@ All endpoints are under `/api/`. Static files are served from the configured `pu
 
 ## REST Endpoints
 
+### Discovery
+
+#### `GET /api/v1`
+
+API discovery endpoint. Returns the API version and top-level endpoint paths.
+
+**Response** `200`:
+
+```json
+{
+  "version": "v1",
+  "endpoints": {
+    "sessions": "/api/v1/sessions",
+    "config": "/api/v1/config",
+    "events_stream": "/api/v1/events/stream",
+    "prompt": "/api/v1/prompt",
+    "push": "/api/v1/push"
+  }
+}
+```
+
+---
+
 ### Sessions
 
-#### `GET /api/sessions`
+#### `GET /api/v1/sessions`
 
 List all sessions, ordered by `last_active_at` descending.
 
@@ -101,7 +125,7 @@ List all sessions, ordered by `last_active_at` descending.
 
 ---
 
-#### `POST /api/sessions`
+#### `POST /api/v1/sessions`
 
 Create a new session. Optionally inherits model and reasoning_effort from another session.
 
@@ -134,7 +158,7 @@ Create a new session. Optionally inherits model and reasoning_effort from anothe
 
 ---
 
-#### `GET /api/sessions/:id`
+#### `GET /api/v1/sessions/:id`
 
 Get session details. **Auto-resumes** the session in the ACP agent if it's not already live (e.g., after server restart). Also **auto-retries interrupted turns** (see [Auto-Retry](#auto-retry-interrupted-turns)).
 
@@ -164,7 +188,7 @@ Get session details. **Auto-resumes** the session in the ACP agent if it's not a
 
 ---
 
-#### `DELETE /api/sessions/:id`
+#### `DELETE /api/v1/sessions/:id`
 
 Delete a session and all its events, images, and in-memory state.
 
@@ -174,26 +198,14 @@ Delete a session and all its events, images, and in-memory state.
 
 ---
 
-#### `PATCH /api/sessions/:id`
+#### `PUT /api/v1/sessions/:id/{model,mode,reasoning-effort}`
 
 Update a session's config option (model, mode, or reasoning_effort).
 
-**Request body:** Exactly one key-value pair:
+**Request body:**
 
 ```json
-{ "model": "claude-sonnet-4-20250514" }
-```
-
-or
-
-```json
-{ "mode": "agent#plan" }
-```
-
-or
-
-```json
-{ "reasoning_effort": "high" }
+{ "value": "claude-sonnet-4-20250514" }
 ```
 
 **Response** `200`:
@@ -211,7 +223,31 @@ or
 
 ---
 
-#### `GET /api/sessions/:id/status`
+#### `PUT /api/v1/sessions/:id/title`
+
+Update a session's title.
+
+**Request body:**
+
+```json
+{ "value": "My session title" }
+```
+
+**Response** `200`:
+
+```json
+{ "title": "My session title" }
+```
+
+**Side effects:**
+- Broadcasts `session_title_updated` to all SSE clients
+- Persists the title to SQLite
+
+**Errors:** `400` (missing value), `404` (unknown session)
+
+---
+
+#### `GET /api/v1/sessions/:id/status`
 
 Get the busy state and pending permissions for a session.
 
@@ -239,7 +275,7 @@ Get the busy state and pending permissions for a session.
 
 ### Messages
 
-#### `POST /api/sessions/:id/messages`
+#### `POST /api/v1/sessions/:id/prompt`
 
 Send a user prompt to the agent. Returns immediately; the agent's response streams via SSE.
 
@@ -266,7 +302,7 @@ Send a user prompt to the agent. Returns immediately; the agent's response strea
 
 ---
 
-#### `GET /api/sessions/:id/messages`
+#### `GET /api/v1/sessions/:id/events`
 
 Retrieve stored events for a session (history). This is the primary history endpoint used during page load.
 
@@ -309,9 +345,9 @@ Retrieve stored events for a session (history). This is the primary history endp
 
 **Pagination example:**
 ```
-GET /api/sessions/:id/events?limit=200           → latest 200 events
-GET /api/sessions/:id/events?limit=200&before=50 → 200 events before seq 50
-GET /api/sessions/:id/events?after=7000      → all events after seq 7000 (incremental sync, no limit)
+GET /api/v1/sessions/:id/events?limit=200           → latest 200 events
+GET /api/v1/sessions/:id/events?limit=200&before=50 → 200 events before seq 50
+GET /api/v1/sessions/:id/events?after=7000      → all events after seq 7000 (incremental sync, no limit)
 ```
 ```
 
@@ -325,39 +361,15 @@ The `streaming` flags indicate whether unflushed buffers were present when the r
 
 ### Permissions
 
-#### `GET /api/permissions/pending`
+#### `GET /api/v1/sessions/:id/permissions`
 
-List all pending permission requests.
-
-| Parameter | In | Type | Description |
-|---|---|---|---|
-| `sessionId` | query | string | Optional. Filter by session |
+List all pending permission requests for a session.
 
 **Response** `200`: Array of `PendingPermission` (defined in `src/types.ts`)
 
 ---
 
-#### `GET /api/permissions/:requestId`
-
-Get a specific pending permission request.
-
-**Response** `200`:
-
-```json
-{
-  "requestId": "perm-123",
-  "sessionId": "abc-123",
-  "title": "Run command: ls",
-  "options": [...],
-  "status": "pending"
-}
-```
-
-**Errors:** `404` (permission not found or already resolved)
-
----
-
-#### `POST /api/permissions/:requestId`
+#### `POST /api/v1/sessions/:id/permissions/:reqId`
 
 Resolve a pending permission request (approve or deny).
 
@@ -390,7 +402,7 @@ Resolve a pending permission request (approve or deny).
 
 ### Config
 
-#### `GET /api/config`
+#### `GET /api/v1/config`
 
 Get server configuration and available config options.
 
@@ -412,7 +424,7 @@ Get server configuration and available config options.
 
 ### Bash
 
-#### `POST /api/sessions/:id/bash`
+#### `POST /api/v1/sessions/:id/bash`
 
 Execute a shell command in the session's working directory. Returns immediately; output streams via SSE events (`bash_output`, `bash_done`).
 
@@ -437,7 +449,7 @@ Execute a shell command in the session's working directory. Returns immediately;
 
 ---
 
-#### `POST /api/sessions/:id/bash/cancel`
+#### `POST /api/v1/sessions/:id/bash/cancel`
 
 Kill the running bash process in a session.
 
@@ -449,7 +461,7 @@ Kill the running bash process in a session.
 
 ---
 
-#### `POST /api/sessions/:id/cancel`
+#### `POST /api/v1/sessions/:id/cancel`
 
 Cancel the active agent prompt and/or bash process in a session.
 
@@ -463,7 +475,7 @@ Cancel the active agent prompt and/or bash process in a session.
 
 ### Images
 
-#### `POST /api/images/:sessionId`
+#### `POST /api/v1/sessions/:id/images`
 
 Upload an image (base64-encoded) for use in prompts.
 
@@ -481,7 +493,7 @@ Upload an image (base64-encoded) for use in prompts.
 ```json
 {
   "path": "images/abc-123/1705312260000.png",
-  "url": "/data/images/abc-123/1705312260000.png"
+  "url": "/api/v1/sessions/abc-123/images/1705312260000.png"
 }
 ```
 
@@ -489,11 +501,23 @@ Upload an image (base64-encoded) for use in prompts.
 
 ---
 
+#### `GET /api/v1/sessions/:id/images/:file`
+
+Retrieve a previously uploaded image. Responses are immutably cached (`Cache-Control: public, max-age=31536000, immutable`).
+
+**Response** `200`: Image binary with appropriate `Content-Type`.
+
+**Errors:** `403` (path traversal), `404` (not found)
+
+> **Legacy compat:** Old image URLs stored in events use the `/data/images/:sessionId/:file` path. These continue to work — the server maps them to the same on-disk files.
+
+---
+
 ### Push Notifications
 
 VAPID-based Web Push for background notifications. See `src/push-service.ts`.
 
-#### `GET /api/push/vapid-key`
+#### `GET /api/v1/push/vapid-key`
 
 Get the server's VAPID public key for push subscription.
 
@@ -505,7 +529,7 @@ Get the server's VAPID public key for push subscription.
 
 ---
 
-#### `POST /api/push/subscribe`
+#### `POST /api/v1/push/subscribe`
 
 Register a push subscription.
 
@@ -525,7 +549,7 @@ Register a push subscription.
 
 ---
 
-#### `POST /api/push/unsubscribe`
+#### `POST /api/v1/push/unsubscribe`
 
 Remove a push subscription.
 
@@ -537,7 +561,7 @@ Remove a push subscription.
 
 **Response** `200`: `{ "ok": true }`
 
-#### `POST /api/push/register-client`
+#### `POST /api/v1/push/register-client`
 
 Associate an SSE client with a push subscription endpoint. Used for per-subscription visibility filtering — only endpoints with no visible clients receive push notifications. Called automatically on SSE reconnect.
 
@@ -553,7 +577,7 @@ Associate an SSE client with a push subscription endpoint. Used for per-subscrip
 
 ### One-Shot Prompt
 
-#### `POST /api/prompt`
+#### `POST /api/v1/prompt`
 
 Create a temporary session and send a prompt in one call. Useful for programmatic/API-only use.
 
@@ -569,7 +593,7 @@ Create a temporary session and send a prompt in one call. Useful for programmati
 ```json
 {
   "sessionId": "new-session-id",
-  "streamUrl": "/api/sessions/new-session-id/events/stream"
+  "streamUrl": "/api/v1/sessions/new-session-id/events/stream"
 }
 ```
 
@@ -579,7 +603,7 @@ The client should connect to the `streamUrl` SSE endpoint to receive the agent's
 
 ### Visibility
 
-#### `POST /api/clients/:clientId/visibility`
+#### `POST /api/v1/clients/:clientId/visibility`
 
 Report client visibility state (foreground/background). Used by the push notification service to determine whether to send push notifications.
 
@@ -597,7 +621,7 @@ Report client visibility state (foreground/background). Used by the push notific
 
 ### SSE Streams
 
-#### `GET /api/events/stream`
+#### `GET /api/v1/events/stream`
 
 **Global SSE stream.** Receives all events from all sessions. This is the primary stream used by the WebAgent frontend.
 
@@ -619,7 +643,7 @@ data: {"type":"message_chunk","sessionId":"abc-123","text":"Hello"}
 
 ---
 
-#### `GET /api/sessions/:id/events/stream`
+#### `GET /api/v1/sessions/:id/events/stream`
 
 **Per-session SSE stream.** Only receives events for the specified session. Supports `Last-Event-ID` header for reconnection replay.
 
@@ -671,7 +695,7 @@ These events are streamed in real-time via SSE as the agent works.
 
 ### Replay-Only Events
 
-These are **aggregated** events stored in the database. They appear in `GET /messages` and `GET /events` responses but are never sent live over SSE. Live equivalents are the `_chunk` variants.
+These are **aggregated** events stored in the database. They appear in `GET /api/v1/sessions/:id/events` responses but are never sent live over SSE. Live equivalents are the `_chunk` variants.
 
 | Type | Key Fields | Description |
 |---|---|---|
@@ -702,7 +726,7 @@ This means:
 ### Session Lifecycle
 
 ```
-                    POST /api/sessions
+                    POST /api/v1/sessions
                           │
                           ▼
               ┌──── createSession() ────┐
@@ -719,7 +743,8 @@ This means:
       (active session)        (server restart)
               │                       │
               ▼                       ▼
-    POST /messages          GET /api/sessions/:id
+    POST /api/v1/sessions   GET /api/v1/sessions/:id
+    /:id/prompt
     SSE live events              │
                                  ▼
                         ┌── resumeSession() ──┐
@@ -756,8 +781,8 @@ Events are stored in the `events` table with auto-incrementing `seq` numbers per
 
 The `SseManager` class (`src/sse-manager.ts`) manages all SSE connections:
 
-- **Global clients** (`/api/events/stream`): `sessionId` is `undefined`, receives all events
-- **Per-session clients** (`/api/sessions/:id/events/stream`): only receives events for that session
+- **Global clients** (`/api/v1/events/stream`): `sessionId` is `undefined`, receives all events
+- **Per-session clients** (`/api/v1/sessions/:id/events/stream`): only receives events for that session
 - **Broadcast logic**: iterates all clients; skips per-session clients whose `sessionId` doesn't match
 - **Heartbeat**: `: heartbeat\n\n` every 20s (SSE comment, silently ignored by `EventSource` per spec). Prevents Cloudflare HTTP/3 (QUIC) and other proxies from closing idle connections. Timer uses `.unref()` to not block Node.js process exit.
 - **Auto-reconnect with replay**: Per-session streams support `Last-Event-ID` header. On reconnect, the server replays all events after the given seq from the database.
@@ -770,9 +795,8 @@ The `json()` helper in `src/routes.ts` compresses responses when:
 2. The response body is > 1024 bytes
 
 Applied to large-payload endpoints:
-- `GET /api/sessions/:id` (session details with configOptions)
-- `GET /api/sessions/:id/messages` (event history)
-- `GET /api/sessions/:id/events` (event history, alternate path)
+- `GET /api/v1/sessions/:id` (session details with configOptions)
+- `GET /api/v1/sessions/:id/events` (event history)
 
 Uses `gzipSync` from `node:zlib` for simplicity (synchronous, single-threaded server).
 

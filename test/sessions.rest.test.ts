@@ -94,11 +94,11 @@ describe("Session REST API", () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  // --- POST /api/sessions ---
+  // --- POST /api/v1/sessions ---
 
-  describe("POST /api/sessions", () => {
+  describe("POST /api/v1/sessions", () => {
     it("creates a session with default cwd", async () => {
-      const res = await makeRequest(port, "POST", "/api/sessions", "{}");
+      const res = await makeRequest(port, "POST", "/api/v1/sessions", "{}");
       assert.equal(res.status, 201);
       const body = JSON.parse(res.body);
       assert.equal(body.id, "mock-session-1");
@@ -108,7 +108,7 @@ describe("Session REST API", () => {
     });
 
     it("creates a session with custom cwd", async () => {
-      const res = await makeRequest(port, "POST", "/api/sessions", JSON.stringify({ cwd: tmpDir }));
+      const res = await makeRequest(port, "POST", "/api/v1/sessions", JSON.stringify({ cwd: tmpDir }));
       assert.equal(res.status, 201);
       const body = JSON.parse(res.body);
       assert.equal(body.cwd, tmpDir);
@@ -116,10 +116,10 @@ describe("Session REST API", () => {
 
     it("creates a session inheriting from another", async () => {
       // Create first session to inherit from
-      const res1 = await makeRequest(port, "POST", "/api/sessions", "{}");
+      const res1 = await makeRequest(port, "POST", "/api/v1/sessions", "{}");
       const s1 = JSON.parse(res1.body);
 
-      const res2 = await makeRequest(port, "POST", "/api/sessions",
+      const res2 = await makeRequest(port, "POST", "/api/v1/sessions",
         JSON.stringify({ inheritFromSessionId: s1.id }));
       assert.equal(res2.status, 201);
       const s2 = JSON.parse(res2.body);
@@ -127,7 +127,7 @@ describe("Session REST API", () => {
     });
 
     it("creates a session with source field", async () => {
-      const res = await makeRequest(port, "POST", "/api/sessions",
+      const res = await makeRequest(port, "POST", "/api/v1/sessions",
         JSON.stringify({ source: "user" }));
       assert.equal(res.status, 201);
       const body = JSON.parse(res.body);
@@ -135,25 +135,25 @@ describe("Session REST API", () => {
     });
 
     it("defaults source to auto", async () => {
-      const res = await makeRequest(port, "POST", "/api/sessions", "{}");
+      const res = await makeRequest(port, "POST", "/api/v1/sessions", "{}");
       assert.equal(res.status, 201);
       const body = JSON.parse(res.body);
       assert.equal(body.source, "auto");
     });
 
     it("broadcasts session_created event", async () => {
-      await makeRequest(port, "POST", "/api/sessions", "{}");
+      await makeRequest(port, "POST", "/api/v1/sessions", "{}");
       const created = broadcastEvents.find(e => e.type === "session_created");
       assert.ok(created, "should broadcast session_created");
     });
 
     it("returns 400 for invalid JSON", async () => {
-      const res = await makeRequest(port, "POST", "/api/sessions", "not-json");
+      const res = await makeRequest(port, "POST", "/api/v1/sessions", "not-json");
       assert.equal(res.status, 400);
     });
 
     it("returns 400 for invalid cwd", async () => {
-      const res = await makeRequest(port, "POST", "/api/sessions",
+      const res = await makeRequest(port, "POST", "/api/v1/sessions",
         JSON.stringify({ cwd: "/nonexistent/path/12345" }));
       assert.equal(res.status, 400);
     });
@@ -170,21 +170,21 @@ describe("Session REST API", () => {
       await new Promise<void>((resolve) => s2.listen(0, "127.0.0.1", resolve));
       const p2 = (s2.address() as { port: number }).port;
 
-      const res = await makeRequest(p2, "POST", "/api/sessions", "{}");
+      const res = await makeRequest(p2, "POST", "/api/v1/sessions", "{}");
       assert.equal(res.status, 503);
 
       await new Promise<void>((resolve) => s2.close(() => resolve()));
     });
   });
 
-  // --- GET /api/sessions/:id ---
+  // --- GET /api/v1/sessions/:id ---
 
-  describe("GET /api/sessions/:id", () => {
+  describe("GET /api/v1/sessions/:id", () => {
     it("returns session detail for existing session", async () => {
-      const createRes = await makeRequest(port, "POST", "/api/sessions", "{}");
+      const createRes = await makeRequest(port, "POST", "/api/v1/sessions", "{}");
       const { id } = JSON.parse(createRes.body);
 
-      const res = await makeRequest(port, "GET", `/api/sessions/${id}`);
+      const res = await makeRequest(port, "GET", `/api/v1/sessions/${id}`);
       assert.equal(res.status, 200);
       const body = JSON.parse(res.body);
       assert.equal(body.id, id);
@@ -195,7 +195,7 @@ describe("Session REST API", () => {
     });
 
     it("returns 404 for unknown session", async () => {
-      const res = await makeRequest(port, "GET", "/api/sessions/nonexistent");
+      const res = await makeRequest(port, "GET", "/api/v1/sessions/nonexistent");
       assert.equal(res.status, 404);
     });
 
@@ -203,7 +203,7 @@ describe("Session REST API", () => {
       // Create a session directly in store (not in liveSessions)
       store.createSession("stored-only", tmpDir);
 
-      const res = await makeRequest(port, "GET", "/api/sessions/stored-only");
+      const res = await makeRequest(port, "GET", "/api/v1/sessions/stored-only");
       assert.equal(res.status, 200);
       const body = JSON.parse(res.body);
       assert.equal(body.id, "stored-only");
@@ -212,14 +212,14 @@ describe("Session REST API", () => {
     });
   });
 
-  // --- DELETE /api/sessions/:id ---
+  // --- DELETE /api/v1/sessions/:id ---
 
-  describe("DELETE /api/sessions/:id", () => {
+  describe("DELETE /api/v1/sessions/:id", () => {
     it("deletes an existing session", async () => {
-      const createRes = await makeRequest(port, "POST", "/api/sessions", "{}");
+      const createRes = await makeRequest(port, "POST", "/api/v1/sessions", "{}");
       const { id } = JSON.parse(createRes.body);
 
-      const res = await makeRequest(port, "DELETE", `/api/sessions/${id}`);
+      const res = await makeRequest(port, "DELETE", `/api/v1/sessions/${id}`);
       assert.equal(res.status, 204);
       assert.equal(res.body, "");
 
@@ -228,11 +228,11 @@ describe("Session REST API", () => {
     });
 
     it("broadcasts session_deleted event", async () => {
-      const createRes = await makeRequest(port, "POST", "/api/sessions", "{}");
+      const createRes = await makeRequest(port, "POST", "/api/v1/sessions", "{}");
       const { id } = JSON.parse(createRes.body);
       broadcastEvents.length = 0;
 
-      await makeRequest(port, "DELETE", `/api/sessions/${id}`);
+      await makeRequest(port, "DELETE", `/api/v1/sessions/${id}`);
       const deleted = broadcastEvents.find(e => e.type === "session_deleted");
       assert.ok(deleted, "should broadcast session_deleted");
       if (deleted?.type === "session_deleted") {
@@ -241,64 +241,64 @@ describe("Session REST API", () => {
     });
 
     it("returns 404 for unknown session", async () => {
-      const res = await makeRequest(port, "DELETE", "/api/sessions/nonexistent");
+      const res = await makeRequest(port, "DELETE", "/api/v1/sessions/nonexistent");
       assert.equal(res.status, 404);
     });
   });
 
-  // --- PATCH /api/sessions/:id ---
+  // --- PUT /api/v1/sessions/:id/:configId ---
 
-  describe("PATCH /api/sessions/:id", () => {
+  describe("PUT /api/v1/sessions/:id/:configId", () => {
     it("updates model config", async () => {
-      const createRes = await makeRequest(port, "POST", "/api/sessions", "{}");
+      const createRes = await makeRequest(port, "POST", "/api/v1/sessions", "{}");
       const { id } = JSON.parse(createRes.body);
 
-      const res = await makeRequest(port, "PATCH", `/api/sessions/${id}`,
-        JSON.stringify({ model: "claude-haiku" }));
+      const res = await makeRequest(port, "PUT", `/api/v1/sessions/${id}/model`,
+        JSON.stringify({ value: "claude-haiku" }));
       assert.equal(res.status, 200);
       const body = JSON.parse(res.body);
       assert.ok(Array.isArray(body.configOptions));
     });
 
     it("updates mode config", async () => {
-      const createRes = await makeRequest(port, "POST", "/api/sessions", "{}");
+      const createRes = await makeRequest(port, "POST", "/api/v1/sessions", "{}");
       const { id } = JSON.parse(createRes.body);
 
-      const res = await makeRequest(port, "PATCH", `/api/sessions/${id}`,
-        JSON.stringify({ mode: "agent#autopilot" }));
+      const res = await makeRequest(port, "PUT", `/api/v1/sessions/${id}/mode`,
+        JSON.stringify({ value: "agent#autopilot" }));
       assert.equal(res.status, 200);
     });
 
     it("broadcasts config_option_update", async () => {
-      const createRes = await makeRequest(port, "POST", "/api/sessions", "{}");
+      const createRes = await makeRequest(port, "POST", "/api/v1/sessions", "{}");
       const { id } = JSON.parse(createRes.body);
       broadcastEvents.length = 0;
 
-      await makeRequest(port, "PATCH", `/api/sessions/${id}`,
-        JSON.stringify({ model: "claude-haiku" }));
+      await makeRequest(port, "PUT", `/api/v1/sessions/${id}/model`,
+        JSON.stringify({ value: "claude-haiku" }));
       const update = broadcastEvents.find(e => e.type === "config_option_update");
       assert.ok(update, "should broadcast config_option_update");
     });
 
     it("returns 404 for unknown session", async () => {
-      const res = await makeRequest(port, "PATCH", "/api/sessions/nonexistent",
-        JSON.stringify({ model: "x" }));
+      const res = await makeRequest(port, "PUT", "/api/v1/sessions/nonexistent/model",
+        JSON.stringify({ value: "x" }));
       assert.equal(res.status, 404);
     });
 
     it("returns 400 for empty body", async () => {
-      const createRes = await makeRequest(port, "POST", "/api/sessions", "{}");
+      const createRes = await makeRequest(port, "POST", "/api/v1/sessions", "{}");
       const { id } = JSON.parse(createRes.body);
 
-      const res = await makeRequest(port, "PATCH", `/api/sessions/${id}`, "{}");
+      const res = await makeRequest(port, "PUT", `/api/v1/sessions/${id}/model`, "{}");
       assert.equal(res.status, 400);
     });
 
     it("returns 400 for invalid JSON", async () => {
-      const createRes = await makeRequest(port, "POST", "/api/sessions", "{}");
+      const createRes = await makeRequest(port, "POST", "/api/v1/sessions", "{}");
       const { id } = JSON.parse(createRes.body);
 
-      const res = await makeRequest(port, "PATCH", `/api/sessions/${id}`, "not-json");
+      const res = await makeRequest(port, "PUT", `/api/v1/sessions/${id}/model`, "not-json");
       assert.equal(res.status, 400);
     });
 
@@ -314,40 +314,40 @@ describe("Session REST API", () => {
       await new Promise<void>((resolve) => s2.listen(0, "127.0.0.1", resolve));
       const p2 = (s2.address() as { port: number }).port;
 
-      const res = await makeRequest(p2, "PATCH", "/api/sessions/no-bridge",
-        JSON.stringify({ model: "x" }));
+      const res = await makeRequest(p2, "PUT", "/api/v1/sessions/no-bridge/model",
+        JSON.stringify({ value: "x" }));
       assert.equal(res.status, 503);
 
       await new Promise<void>((resolve) => s2.close(() => resolve()));
     });
   });
 
-  // --- GET /api/sessions with source filter ---
+  // --- GET /api/v1/sessions with source filter ---
 
-  describe("GET /api/sessions?source=", () => {
+  describe("GET /api/v1/sessions?source=", () => {
     it("filters sessions by source", async () => {
-      await makeRequest(port, "POST", "/api/sessions", JSON.stringify({ source: "user" }));
-      await makeRequest(port, "POST", "/api/sessions", JSON.stringify({ source: "auto" }));
+      await makeRequest(port, "POST", "/api/v1/sessions", JSON.stringify({ source: "user" }));
+      await makeRequest(port, "POST", "/api/v1/sessions", JSON.stringify({ source: "auto" }));
 
-      const allRes = await makeRequest(port, "GET", "/api/sessions");
+      const allRes = await makeRequest(port, "GET", "/api/v1/sessions");
       assert.equal(JSON.parse(allRes.body).length, 2);
 
-      const userRes = await makeRequest(port, "GET", "/api/sessions?source=user");
+      const userRes = await makeRequest(port, "GET", "/api/v1/sessions?source=user");
       const userSessions = JSON.parse(userRes.body);
       assert.equal(userSessions.length, 1);
       assert.equal(userSessions[0].source, "user");
 
-      const autoRes = await makeRequest(port, "GET", "/api/sessions?source=auto");
+      const autoRes = await makeRequest(port, "GET", "/api/v1/sessions?source=auto");
       const autoSessions = JSON.parse(autoRes.body);
       assert.equal(autoSessions.length, 1);
       assert.equal(autoSessions[0].source, "auto");
     });
 
     it("returns all sessions without source filter", async () => {
-      await makeRequest(port, "POST", "/api/sessions", JSON.stringify({ source: "user" }));
-      await makeRequest(port, "POST", "/api/sessions", "{}");
+      await makeRequest(port, "POST", "/api/v1/sessions", JSON.stringify({ source: "user" }));
+      await makeRequest(port, "POST", "/api/v1/sessions", "{}");
 
-      const res = await makeRequest(port, "GET", "/api/sessions");
+      const res = await makeRequest(port, "GET", "/api/v1/sessions");
       assert.equal(JSON.parse(res.body).length, 2);
     });
   });
@@ -375,19 +375,19 @@ describe("Session REST API", () => {
 
     it("returns gzip-compressed events when Accept-Encoding includes gzip", async () => {
       // Create session and add enough events to exceed 1KB threshold
-      const createRes = await makeRequest(port, "POST", "/api/sessions", "{}");
+      const createRes = await makeRequest(port, "POST", "/api/v1/sessions", "{}");
       const sessionId = JSON.parse(createRes.body).id;
       const longText = "A".repeat(2000);
       store.saveEvent(sessionId, "assistant_message", { text: longText });
 
-      const res = await makeRawRequest(port, "GET", `/api/sessions/${sessionId}/events`, {
+      const res = await makeRawRequest(port, "GET", `/api/v1/sessions/${sessionId}/events`, {
         "Accept-Encoding": "gzip",
       });
 
       assert.equal(res.status, 200);
       assert.equal(res.headers["content-encoding"], "gzip");
       // Gzipped body should be smaller than uncompressed
-      const uncompressed = await makeRawRequest(port, "GET", `/api/sessions/${sessionId}/events`);
+      const uncompressed = await makeRawRequest(port, "GET", `/api/v1/sessions/${sessionId}/events`);
       assert.ok(res.rawBody.length < uncompressed.rawBody.length, "gzipped response should be smaller");
 
       // Verify it decompresses to valid JSON
@@ -399,11 +399,11 @@ describe("Session REST API", () => {
     });
 
     it("returns uncompressed when Accept-Encoding is absent", async () => {
-      const createRes = await makeRequest(port, "POST", "/api/sessions", "{}");
+      const createRes = await makeRequest(port, "POST", "/api/v1/sessions", "{}");
       const sessionId = JSON.parse(createRes.body).id;
       store.saveEvent(sessionId, "assistant_message", { text: "B".repeat(2000) });
 
-      const res = await makeRawRequest(port, "GET", `/api/sessions/${sessionId}/events`);
+      const res = await makeRawRequest(port, "GET", `/api/v1/sessions/${sessionId}/events`);
 
       assert.equal(res.status, 200);
       assert.equal(res.headers["content-encoding"], undefined);
@@ -412,11 +412,11 @@ describe("Session REST API", () => {
     });
 
     it("skips gzip for small responses under 1KB", async () => {
-      const createRes = await makeRequest(port, "POST", "/api/sessions", "{}");
+      const createRes = await makeRequest(port, "POST", "/api/v1/sessions", "{}");
       const sessionId = JSON.parse(createRes.body).id;
       store.saveEvent(sessionId, "assistant_message", { text: "tiny" });
 
-      const res = await makeRawRequest(port, "GET", `/api/sessions/${sessionId}/events`, {
+      const res = await makeRawRequest(port, "GET", `/api/v1/sessions/${sessionId}/events`, {
         "Accept-Encoding": "gzip",
       });
 
@@ -427,12 +427,12 @@ describe("Session REST API", () => {
 
   describe("streaming buffer flush on events endpoint", () => {
     it("flushes pending thinking buffer and signals streaming", async () => {
-      const createRes = await makeRequest(port, "POST", "/api/sessions", "{}");
+      const createRes = await makeRequest(port, "POST", "/api/v1/sessions", "{}");
       const sessionId = JSON.parse(createRes.body).id;
       // Simulate agent mid-thinking: buffer has unflushed content
       sessions.appendThinking(sessionId, "partial thought");
 
-      const res = await makeRequest(port, "GET", `/api/sessions/${sessionId}/events`);
+      const res = await makeRequest(port, "GET", `/api/v1/sessions/${sessionId}/events`);
       const body = JSON.parse(res.body);
       assert.equal(body.streaming.thinking, true);
       assert.equal(body.streaming.assistant, false);
@@ -446,11 +446,11 @@ describe("Session REST API", () => {
     });
 
     it("flushes pending assistant buffer and signals streaming", async () => {
-      const createRes = await makeRequest(port, "POST", "/api/sessions", "{}");
+      const createRes = await makeRequest(port, "POST", "/api/v1/sessions", "{}");
       const sessionId = JSON.parse(createRes.body).id;
       sessions.appendAssistant(sessionId, "partial reply");
 
-      const res = await makeRequest(port, "GET", `/api/sessions/${sessionId}/events`);
+      const res = await makeRequest(port, "GET", `/api/v1/sessions/${sessionId}/events`);
       const body = JSON.parse(res.body);
       assert.equal(body.streaming.thinking, false);
       assert.equal(body.streaming.assistant, true);
@@ -460,11 +460,11 @@ describe("Session REST API", () => {
     });
 
     it("returns streaming false when no buffers are pending", async () => {
-      const createRes = await makeRequest(port, "POST", "/api/sessions", "{}");
+      const createRes = await makeRequest(port, "POST", "/api/v1/sessions", "{}");
       const sessionId = JSON.parse(createRes.body).id;
       store.saveEvent(sessionId, "user_message", { text: "hi" });
 
-      const res = await makeRequest(port, "GET", `/api/sessions/${sessionId}/events`);
+      const res = await makeRequest(port, "GET", `/api/v1/sessions/${sessionId}/events`);
       const body = JSON.parse(res.body);
       assert.equal(body.streaming.thinking, false);
       assert.equal(body.streaming.assistant, false);

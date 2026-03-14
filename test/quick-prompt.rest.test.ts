@@ -91,16 +91,16 @@ describe("Quick Prompt REST API", () => {
   });
 
   it("creates a session and returns 202 with sessionId and streamUrl", async () => {
-    const res = await makeRequest(port, "POST", "/api/prompt",
+    const res = await makeRequest(port, "POST", "/api/v1/prompt",
       JSON.stringify({ text: "analyze this" }));
     assert.equal(res.status, 202);
     const body = JSON.parse(res.body);
     assert.ok(body.sessionId);
-    assert.equal(body.streamUrl, `/api/sessions/${body.sessionId}/events/stream`);
+    assert.equal(body.streamUrl, `/api/v1/sessions/${body.sessionId}/events/stream`);
   });
 
   it("sends the prompt to the bridge", async () => {
-    const res = await makeRequest(port, "POST", "/api/prompt",
+    const res = await makeRequest(port, "POST", "/api/v1/prompt",
       JSON.stringify({ text: "do something" }));
     const body = JSON.parse(res.body);
 
@@ -113,7 +113,7 @@ describe("Quick Prompt REST API", () => {
 
   it("uses provided cwd for the session", async () => {
     const customCwd = tmpDir;
-    const res = await makeRequest(port, "POST", "/api/prompt",
+    const res = await makeRequest(port, "POST", "/api/v1/prompt",
       JSON.stringify({ text: "test", cwd: customCwd }));
     const body = JSON.parse(res.body);
     const session = store.getSession(body.sessionId);
@@ -121,7 +121,7 @@ describe("Quick Prompt REST API", () => {
   });
 
   it("marks the session source as auto", async () => {
-    const res = await makeRequest(port, "POST", "/api/prompt",
+    const res = await makeRequest(port, "POST", "/api/v1/prompt",
       JSON.stringify({ text: "test" }));
     const body = JSON.parse(res.body);
     const session = store.getSession(body.sessionId);
@@ -129,14 +129,14 @@ describe("Quick Prompt REST API", () => {
   });
 
   it("returns 400 when text is missing", async () => {
-    const res = await makeRequest(port, "POST", "/api/prompt",
+    const res = await makeRequest(port, "POST", "/api/v1/prompt",
       JSON.stringify({ cwd: tmpDir }));
     assert.equal(res.status, 400);
     assert.ok(JSON.parse(res.body).error.includes("text"));
   });
 
   it("returns 400 for invalid JSON", async () => {
-    const res = await makeRequest(port, "POST", "/api/prompt", "not json");
+    const res = await makeRequest(port, "POST", "/api/v1/prompt", "not json");
     assert.equal(res.status, 400);
   });
 
@@ -156,7 +156,7 @@ describe("Quick Prompt REST API", () => {
     const noBridgePort = (noBridgeServer.address() as { port: number }).port;
 
     try {
-      const res = await makeRequest(noBridgePort, "POST", "/api/prompt",
+      const res = await makeRequest(noBridgePort, "POST", "/api/v1/prompt",
         JSON.stringify({ text: "test" }));
       assert.equal(res.status, 503);
     } finally {

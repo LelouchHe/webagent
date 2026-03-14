@@ -39,19 +39,19 @@ export function createSession(opts?: { cwd?: string; inheritFromSessionId?: stri
   const body: Record<string, unknown> = {};
   if (opts?.cwd) body.cwd = opts.cwd;
   if (opts?.inheritFromSessionId) body.inheritFromSessionId = opts.inheritFromSessionId;
-  return post("/api/sessions", body);
+  return post("/api/v1/sessions", body);
 }
 
 export function deleteSession(id: string): Promise<void> {
-  return request("/api/sessions/" + id, { method: "DELETE" });
+  return request("/api/v1/sessions/" + id, { method: "DELETE" });
 }
 
 export function listSessions(): Promise<unknown[]> {
-  return request("/api/sessions");
+  return request("/api/v1/sessions");
 }
 
 export function getSession(id: string): Promise<Record<string, unknown>> {
-  return request("/api/sessions/" + id);
+  return request("/api/v1/sessions/" + id);
 }
 
 // --- Prompt ---
@@ -59,53 +59,54 @@ export function getSession(id: string): Promise<Record<string, unknown>> {
 export function sendMessage(sessionId: string, text: string, images?: Array<{ data: string; mimeType: string; path?: string }>): Promise<unknown> {
   const body: Record<string, unknown> = { text };
   if (images?.length) body.images = images;
-  return post("/api/sessions/" + sessionId + "/messages", body);
+  return post("/api/v1/sessions/" + sessionId + "/prompt", body);
 }
 
 // --- Cancel ---
 
 export function cancelSession(sessionId: string): Promise<void> {
-  return post("/api/sessions/" + sessionId + "/cancel", {});
+  return post("/api/v1/sessions/" + sessionId + "/cancel", {});
 }
 
 // --- Permissions ---
 
-export function resolvePermission(requestId: string, optionId: string): Promise<void> {
-  return post("/api/permissions/" + requestId, { optionId });
+export function resolvePermission(sessionId: string, requestId: string, optionId: string): Promise<void> {
+  return post("/api/v1/sessions/" + sessionId + "/permissions/" + requestId, { optionId });
 }
 
-export function denyPermission(requestId: string): Promise<void> {
-  return post("/api/permissions/" + requestId, { denied: true });
+export function denyPermission(sessionId: string, requestId: string): Promise<void> {
+  return post("/api/v1/sessions/" + sessionId + "/permissions/" + requestId, { denied: true });
 }
 
 // --- Config ---
 
 export function setConfig(sessionId: string, configId: string, value: string): Promise<void> {
-  return request("/api/sessions/" + sessionId, {
-    method: "PATCH",
+  const urlId = configId.replace(/_/g, "-");
+  return request("/api/v1/sessions/" + sessionId + "/" + urlId, {
+    method: "PUT",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ [configId]: value }),
+    body: JSON.stringify({ value }),
   });
 }
 
 // --- Bash ---
 
 export function execBash(sessionId: string, command: string): Promise<unknown> {
-  return post("/api/sessions/" + sessionId + "/bash", { command });
+  return post("/api/v1/sessions/" + sessionId + "/bash", { command });
 }
 
 export function cancelBash(sessionId: string): Promise<void> {
-  return post("/api/sessions/" + sessionId + "/bash/cancel", {});
+  return post("/api/v1/sessions/" + sessionId + "/bash/cancel", {});
 }
 
 // --- Visibility ---
 
 export function postVisibility(clientId: string, visible: boolean): Promise<void> {
-  return post("/api/clients/" + clientId + "/visibility", { visible });
+  return post("/api/v1/clients/" + clientId + "/visibility", { visible });
 }
 
 // --- Status ---
 
 export function getStatus(sessionId: string): Promise<Record<string, unknown>> {
-  return request("/api/sessions/" + sessionId + "/status");
+  return request("/api/v1/sessions/" + sessionId + "/status");
 }

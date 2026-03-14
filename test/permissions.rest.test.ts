@@ -94,7 +94,7 @@ describe("Permissions REST API", () => {
   });
 
   async function createSession(): Promise<string> {
-    const res = await makeRequest(port, "POST", "/api/sessions", JSON.stringify({ cwd: tmpDir }));
+    const res = await makeRequest(port, "POST", "/api/v1/sessions", JSON.stringify({ cwd: tmpDir }));
     return JSON.parse(res.body).id;
   }
 
@@ -113,19 +113,20 @@ describe("Permissions REST API", () => {
     return perm;
   }
 
-  describe("GET /api/permissions/pending", () => {
+  describe("GET /api/v1/sessions/:id/permissions", () => {
     it("returns empty array when no pending permissions", async () => {
-      const res = await makeRequest(port, "GET", "/api/permissions/pending");
+      const sessionId = await createSession();
+      const res = await makeRequest(port, "GET", `/api/v1/sessions/${sessionId}/permissions`);
       assert.equal(res.status, 200);
       assert.deepEqual(JSON.parse(res.body), []);
     });
 
-    it("returns all pending permissions", async () => {
+    it("returns all pending permissions for a session", async () => {
       const sessionId = await createSession();
       addPendingPermission(sessionId, "perm-1");
       addPendingPermission(sessionId, "perm-2");
 
-      const res = await makeRequest(port, "GET", "/api/permissions/pending");
+      const res = await makeRequest(port, "GET", `/api/v1/sessions/${sessionId}/permissions`);
       assert.equal(res.status, 200);
       const perms = JSON.parse(res.body);
       assert.equal(perms.length, 2);
@@ -133,46 +134,25 @@ describe("Permissions REST API", () => {
       assert.equal(perms[1].requestId, "perm-2");
     });
 
-    it("filters by sessionId query param", async () => {
+    it("returns only permissions for the requested session", async () => {
       const s1 = await createSession();
       const s2 = await createSession();
       addPendingPermission(s1, "perm-1");
       addPendingPermission(s2, "perm-2");
 
-      const res = await makeRequest(port, "GET", `/api/permissions/pending?sessionId=${s1}`);
+      const res = await makeRequest(port, "GET", `/api/v1/sessions/${s1}/permissions`);
       const perms = JSON.parse(res.body);
       assert.equal(perms.length, 1);
       assert.equal(perms[0].requestId, "perm-1");
     });
   });
 
-  describe("GET /api/permissions/:requestId", () => {
-    it("returns pending permission details", async () => {
-      const sessionId = await createSession();
-      addPendingPermission(sessionId, "perm-1");
-
-      const res = await makeRequest(port, "GET", "/api/permissions/perm-1");
-      assert.equal(res.status, 200);
-      const body = JSON.parse(res.body);
-      assert.equal(body.requestId, "perm-1");
-      assert.equal(body.sessionId, sessionId);
-      assert.equal(body.status, "pending");
-      assert.equal(body.title, "Run bash: npm test");
-      assert.ok(Array.isArray(body.options));
-    });
-
-    it("returns 404 for unknown requestId", async () => {
-      const res = await makeRequest(port, "GET", "/api/permissions/nonexistent");
-      assert.equal(res.status, 404);
-    });
-  });
-
-  describe("POST /api/permissions/:requestId", () => {
+  describe("POST /api/v1/sessions/:id/permissions/:reqId", () => {
     it("approves a permission with optionId", async () => {
       const sessionId = await createSession();
       addPendingPermission(sessionId, "perm-1");
 
-      const res = await makeRequest(port, "POST", "/api/permissions/perm-1",
+      const res = await makeRequest(port, "POST", `/api/v1/sessions/${sessionId}/permissions/perm-1`,
         JSON.stringify({ optionId: "allow_once" }));
       assert.equal(res.status, 200);
       assert.deepEqual(JSON.parse(res.body), { ok: true });
@@ -185,7 +165,7 @@ describe("Permissions REST API", () => {
       const sessionId = await createSession();
       addPendingPermission(sessionId, "perm-1");
 
-      const res = await makeRequest(port, "POST", "/api/permissions/perm-1",
+      const res = await makeRequest(port, "POST", `/api/v1/sessions/${sessionId}/permissions/perm-1`,
         JSON.stringify({ denied: true }));
       assert.equal(res.status, 200);
       assert.equal(mockBridge.lastDeny, "perm-1");
@@ -196,7 +176,7 @@ describe("Permissions REST API", () => {
       const sessionId = await createSession();
       addPendingPermission(sessionId, "perm-1");
 
-      await makeRequest(port, "POST", "/api/permissions/perm-1",
+      await makeRequest(port, "POST", `/api/v1/sessions/${sessionId}/permissions/perm-1`,
         JSON.stringify({ optionId: "allow_once" }));
       const events = store.getEvents(sessionId);
       const permEvent = events.find(e => e.type === "permission_response");
@@ -211,14 +191,15 @@ describe("Permissions REST API", () => {
       addPendingPermission(sessionId, "perm-1");
       broadcastEvents = [];
 
-      await makeRequest(port, "POST", "/api/permissions/perm-1",
+      await makeRequest(port, "POST", `/api/v1/sessions/${sessionId}/permissions/perm-1`,
         JSON.stringify({ optionId: "allow_once" }));
       const resolved = broadcastEvents.find((e: any) => e.type === "permission_resolved");
       assert.ok(resolved);
     });
 
     it("returns 404 for unknown requestId", async () => {
-      const res = await makeRequest(port, "POST", "/api/permissions/nonexistent",
+      const sessionId = await createSession();
+      const res = await makeRequest(port, "POST", `/api/v1/sessions/${sessionId}/permissions/nonexistent`,
         JSON.stringify({ optionId: "allow_once" }));
       assert.equal(res.status, 404);
     });
@@ -227,7 +208,7 @@ describe("Permissions REST API", () => {
       const sessionId = await createSession();
       addPendingPermission(sessionId, "perm-1");
 
-      const res = await makeRequest(port, "POST", "/api/permissions/perm-1",
+      const res = await makeRequest(port, "POST", `/api/v1/sessions/${sessionId}/permissions/perm-1`,
         JSON.stringify({}));
       assert.equal(res.status, 400);
     });
@@ -236,7 +217,7 @@ describe("Permissions REST API", () => {
       const sessionId = await createSession();
       addPendingPermission(sessionId, "perm-1");
 
-      const res = await makeRequest(port, "POST", "/api/permissions/perm-1", "not json");
+      const res = await makeRequest(port, "POST", `/api/v1/sessions/${sessionId}/permissions/perm-1`, "not json");
       assert.equal(res.status, 400);
     });
 
@@ -245,10 +226,10 @@ describe("Permissions REST API", () => {
       // A second POST should return 404 since it's gone.
       const sessionId = await createSession();
       addPendingPermission(sessionId, "perm-1");
-      await makeRequest(port, "POST", "/api/permissions/perm-1",
+      await makeRequest(port, "POST", `/api/v1/sessions/${sessionId}/permissions/perm-1`,
         JSON.stringify({ optionId: "allow_once" }));
 
-      const res = await makeRequest(port, "POST", "/api/permissions/perm-1",
+      const res = await makeRequest(port, "POST", `/api/v1/sessions/${sessionId}/permissions/perm-1`,
         JSON.stringify({ optionId: "allow_once" }));
       assert.equal(res.status, 404);
     });
@@ -266,7 +247,7 @@ describe("Permissions REST API", () => {
       await new Promise<void>((r) => srv.listen(0, "127.0.0.1", r));
       const p = (srv.address() as { port: number }).port;
 
-      const res = await makeRequest(p, "POST", "/api/permissions/perm-1",
+      const res = await makeRequest(p, "POST", `/api/v1/sessions/${sessionId}/permissions/perm-1`,
         JSON.stringify({ optionId: "allow_once" }));
       assert.equal(res.status, 503);
       await new Promise<void>((r) => srv.close(() => r()));

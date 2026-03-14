@@ -177,7 +177,7 @@ describe("push — visibility reporting", () => {
 
     const visCall = fetchCalls.find(c => c.url.includes("/visibility"));
     assert.ok(visCall, "expected a visibility fetch call");
-    assert.equal(visCall!.url, "/api/clients/cl-test/visibility");
+    assert.equal(visCall!.url, "/api/v1/clients/cl-test/visibility");
     assert.equal(visCall!.init?.method, "POST");
     const body = JSON.parse(visCall!.init?.body);
     assert.equal(body.visible, false);

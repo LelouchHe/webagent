@@ -30,7 +30,7 @@ export type RawInput =
       file_text?: string | null;
     };
 
-/** Session summary returned by GET /api/sessions. */
+/** Session summary returned by GET /api/v1/sessions. */
 export interface SessionSummary {
   id: string;
   cwd: string;
@@ -43,7 +43,7 @@ export interface SessionSummary {
   last_active_at: string;
 }
 
-/** Stored event row returned by GET /api/sessions/:id/events. */
+/** Stored event row returned by GET /api/v1/sessions/:id/events. */
 export interface StoredEvent {
   id: number;
   session_id: string;

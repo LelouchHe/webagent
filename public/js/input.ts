@@ -86,7 +86,7 @@ function sendMessage() {
 
   if (images.length > 0) {
     Promise.all(images.map(img =>
-      fetch(`/api/images/${state.sessionId}`, {
+      fetch(`/api/v1/sessions/${state.sessionId}/images`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ data: img.data, mimeType: img.mimeType }),

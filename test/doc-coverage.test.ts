@@ -22,13 +22,13 @@ describe("doc coverage", () => {
 
   // Extract endpoint paths from route comments and URL patterns in routes.ts.
   // Matches patterns like:
-  //   // GET /api/sessions
-  //   // POST /api/sessions/:id/messages
-  //   // PATCH /api/sessions/:id
+  //   // GET /api/v1/sessions
+  //   // POST /api/v1/sessions/:id/messages
+  //   // PATCH /api/v1/sessions/:id
   const commentRoutes = [...routesSrc.matchAll(/\/\/\s*---?\s*(GET|POST|PUT|PATCH|DELETE)\s+(\/api\/\S+)/g)]
     .map(m => ({ method: m[1], path: m[2].replace(/\s*---.*$/, "") }));
 
-  // Also find routes from url === "/api/..." patterns
+  // Also find routes from url === "/api/v1/..." patterns
   const literalRoutes = [...routesSrc.matchAll(/url\s*===\s*"(\/api\/[^"]+)"\s*&&\s*req\.method\s*===\s*"(\w+)"/g)]
     .map(m => ({ method: m[2], path: m[1] }));
 
@@ -53,7 +53,7 @@ describe("doc coverage", () => {
 
       // For the doc, we check the path appears (with any param names)
       const pathParts = pathFragment.split("/").filter(Boolean);
-      // Build a pattern: /api/sessions/:id/messages → should match /api/sessions/:id/messages
+      // Build a pattern: /api/v1/sessions/:id/messages → should match /api/v1/sessions/:id/messages
       // We check the static parts are present near the method name
       const staticParts = pathParts.filter(p => p !== ":");
       const methodInDoc = apiDoc.includes(`\`${route.method} /${staticParts.join("/")}`);
