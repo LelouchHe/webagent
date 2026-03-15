@@ -144,6 +144,15 @@ To use a different ACP-compatible agent backend:
 agent_cmd = "my-agent --acp"
 ```
 
+### Upgrading the agent CLI
+
+WebAgent spawns the agent as a child process (e.g. `copilot --acp`). When the agent releases a new version, the running process still uses the old binary. To pick up the update:
+
+1. Update the agent CLI (e.g. `copilot update`, `npm update -g`, etc.)
+2. Restart WebAgent — the new process will spawn the updated agent
+
+You can verify versions after restart via `GET /api/v1/version` or the `?` help command in the UI.
+
 ## Features
 
 ### Chat
