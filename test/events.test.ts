@@ -211,6 +211,27 @@ describe("events", () => {
         assert.ok(el.classList.contains("failed"));
         assert.equal(el.querySelector(".icon").textContent, "✗");
       });
+
+      it("shows task_complete summary directly without collapsed details", () => {
+        events.handleEvent({ type: "tool_call", id: "tc-done", kind: "task_complete", title: "Task complete", rawInput: { summary: "Fixed the login bug" } });
+        events.handleEvent({
+          type: "tool_call_update", id: "tc-done", status: "completed",
+          content: [{ type: "text", content: { text: "Fixed the login bug" } }],
+        });
+        const el = globalThis.document.getElementById("tc-tc-done");
+        assert.ok(el.classList.contains("completed"));
+        // Summary should be visible directly, not inside a collapsed <details>
+        assert.ok(!el.querySelector("details"), "task_complete should not use collapsed details");
+        const summary = el.querySelector(".tc-summary");
+        assert.ok(summary, "should have a .tc-summary element");
+        assert.ok(summary.textContent.includes("Fixed the login bug"));
+      });
+
+      it("uses ✔ icon for task_complete kind", () => {
+        events.handleEvent({ type: "tool_call", id: "tc-done2", kind: "task_complete", title: "Task complete", rawInput: {} });
+        const el = globalThis.document.getElementById("tc-tc-done2");
+        assert.equal(el.querySelector(".icon").textContent, "✔");
+      });
     });
 
     describe("plan", () => {
@@ -1109,6 +1130,20 @@ describe("events", () => {
       events.replayEvent("tool_call_update", { id: "t1", status: "completed" }, [], 1);
       const el = globalThis.document.getElementById("tc-t1");
       assert.ok(el.classList.contains("completed"));
+    });
+
+    it("replays task_complete with visible summary", () => {
+      events.replayEvent("tool_call", { id: "t-tc", kind: "task_complete", title: "Task complete", rawInput: {} }, [], 0);
+      events.replayEvent("tool_call_update", {
+        id: "t-tc", status: "completed",
+        content: [{ type: "text", content: { text: "Deployed to prod" } }],
+      }, [], 1);
+      const el = globalThis.document.getElementById("tc-t-tc");
+      assert.ok(el.classList.contains("completed"));
+      assert.ok(!el.querySelector("details"), "task_complete should not use collapsed details during replay");
+      const summary = el.querySelector(".tc-summary");
+      assert.ok(summary, "should have visible .tc-summary during replay");
+      assert.ok(summary.textContent.includes("Deployed to prod"));
     });
 
     it("replays bash_command and bash_result", () => {

@@ -429,6 +429,7 @@ export function replayEvent(type: string, data: Record<string, any>, events: Sto
       const el = document.createElement('div');
       el.className = 'tool-call';
       el.id = `tc-${data.id}`;
+      el.dataset.kind = data.kind;
       let label = `<span class="icon">${icon}</span> ${escHtml(data.title)}`;
       const rawInput = data.rawInput;
       if (rawInput && rawInput.command) {
@@ -461,6 +462,28 @@ export function replayEvent(type: string, data: Record<string, any>, events: Sto
         el.className = `tool-call ${data.status}`;
         const iconSpan = el.querySelector('.icon');
         if (iconSpan) iconSpan.textContent = statusIcon;
+        if (data.content && data.content.length && !el.querySelector('details') && !el.querySelector('.tc-summary')) {
+          const text = data.content
+            .map((c: any) => {
+              if (c.type === 'terminal') return `[terminal ${c.terminalId}]`;
+              if (c.content?.text) return c.content.text;
+              if (Array.isArray(c.content)) return c.content.map((cc: any) => cc.text || '').join('');
+              return '';
+            })
+            .filter(Boolean).join('\n');
+          if (text) {
+            if (el.dataset.kind === 'task_complete') {
+              const div = document.createElement('div');
+              div.className = 'tc-summary';
+              div.textContent = text;
+              el.appendChild(div);
+            } else {
+              const details = document.createElement('details');
+              details.innerHTML = `<summary>output</summary><div class="tc-content">${escHtml(text)}</div>`;
+              el.appendChild(details);
+            }
+          }
+        }
       }
       // Clear pending state so prompt_done can finish after reconnect replay
       if (data.status === 'completed' || data.status === 'failed') {
@@ -717,6 +740,7 @@ export function handleEvent(msg: AgentEvent) {
       const el = document.createElement('div');
       el.className = 'tool-call';
       el.id = `tc-${msg.id}`;
+      el.dataset.kind = msg.kind;
       let label = `<span class="icon">${icon}</span> ${escHtml(msg.title)}`;
       const ri = msg.rawInput;
       if (ri && ri.command) {
@@ -753,7 +777,7 @@ export function handleEvent(msg: AgentEvent) {
         el.className = `tool-call ${msg.status}`;
         const iconSpan = el.querySelector('.icon');
         if (iconSpan) iconSpan.textContent = statusIcon;
-        if (msg.content && msg.content.length && !el.querySelector('details')) {
+        if (msg.content && msg.content.length && !el.querySelector('details') && !el.querySelector('.tc-summary')) {
           const text = msg.content
             .map(c => {
               if (c.type === 'terminal') return `[terminal ${c.terminalId}]`;
@@ -763,9 +787,16 @@ export function handleEvent(msg: AgentEvent) {
             })
             .filter(Boolean).join('\n');
           if (text) {
-            const details = document.createElement('details');
-            details.innerHTML = `<summary>output</summary><div class="tc-content">${escHtml(text)}</div>`;
-            el.appendChild(details);
+            if (el.dataset.kind === 'task_complete') {
+              const div = document.createElement('div');
+              div.className = 'tc-summary';
+              div.textContent = text;
+              el.appendChild(div);
+            } else {
+              const details = document.createElement('details');
+              details.innerHTML = `<summary>output</summary><div class="tc-content">${escHtml(text)}</div>`;
+              el.appendChild(details);
+            }
           }
         }
       }

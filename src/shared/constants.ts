@@ -2,6 +2,7 @@
 
 // --- Tool call kind → display icon ---
 export const TOOL_ICONS: Record<string, string> = {
+  task_complete: "✔",
   read: "cat",
   edit: "edit",
   execute: "exec",

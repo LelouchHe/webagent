@@ -262,6 +262,11 @@ body {
   color: var(--text);
   cursor: default;
 }
+.tool-call .tc-summary {
+  margin: 4px 0 4px 16px;
+  font-size: 14px;
+  color: var(--text);
+}
 
 /* Diff view for edit tool calls */
 .diff-view {
