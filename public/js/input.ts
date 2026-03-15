@@ -2,7 +2,7 @@
 
 import {
   state, dom, setBusy, sendCancel,
-  getConfigOption, getConfigValue, updateNewBtnVisibility, updateModeUI,
+  getConfigOption, getConfigValue, updateModeUI,
 } from './state.ts';
 import { addMessage, addSystem, addBashBlock, showWaiting } from './render.ts';
 import { handleSlashCommand, hideSlashMenu, handleSlashMenuKey, updateSlashMenu } from './commands.ts';
@@ -24,7 +24,6 @@ function sendMessage() {
   if ((text.startsWith('/') || text === '?' || text.startsWith('? ')) && state.pendingImages.length === 0) {
     dom.input.value = '';
     dom.input.style.height = 'auto';
-    updateNewBtnVisibility();
     syncSendBtn();
     handleSlashCommand(text);
     return;
@@ -44,7 +43,6 @@ function sendMessage() {
     dom.input.value = '';
     dom.input.style.height = 'auto';
     dom.inputArea.classList.remove('bash-mode');
-    updateNewBtnVisibility();
     addBashBlock(command, true);
     state.sentBashForSession = state.sessionId;
     api.execBash(state.sessionId!, command).catch(() => {});
@@ -58,7 +56,6 @@ function sendMessage() {
   dom.input.value = '';
   dom.input.style.height = 'auto';
   dom.inputArea.classList.remove('bash-mode');
-  updateNewBtnVisibility();
 
   if (!state.sessionId) {
     addSystem('warn: Session not ready yet, please wait…');
@@ -200,18 +197,7 @@ document.addEventListener('keydown', (e) => {
 // Click prompt indicator to cycle mode
 dom.prompt.addEventListener('click', cycleMode);
 
-// Click + to fill /new into input and show path menu
-dom.newBtn.addEventListener('click', () => {
-  dom.input.value = '/new ';
-  updateNewBtnVisibility();
-  syncSendBtn();
-  updateSlashMenu();
-  dom.input.focus();
-});
-
-// Hide + button when input has content; sync send button label
-dom.input.addEventListener('input', () => { updateNewBtnVisibility(); syncSendBtn(); });
-dom.input.addEventListener('focus', updateNewBtnVisibility);
+dom.input.addEventListener('input', syncSendBtn);
 
 // Auto-resize textarea
 dom.input.addEventListener('input', () => {

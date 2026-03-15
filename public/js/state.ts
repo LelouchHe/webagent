@@ -27,7 +27,6 @@ export const dom = {
   prompt: $<HTMLSpanElement>('#input-prompt'),
   status: $<HTMLSpanElement>('#status'),
   sessionInfo: $<HTMLSpanElement>('#session-info'),
-  newBtn: $<HTMLButtonElement>('#new-btn'),
   attachBtn: $<HTMLButtonElement>('#attach-btn'),
   fileInput: $<HTMLInputElement>('#file-input'),
   attachPreview: $<HTMLDivElement>('#attach-preview'),
@@ -194,10 +193,6 @@ export function resetSessionUI() {
   state.configOptions = [];
   updateSessionInfo(null, null);
   if (dom.statusBar) dom.statusBar.textContent = '';
-}
-
-export function updateNewBtnVisibility() {
-  dom.newBtn.classList.toggle('hidden', dom.input.value.length > 0);
 }
 
 // Send cancel without UI side-effect — callers add their own feedback.

@@ -257,18 +257,6 @@ describe("input", () => {
     assert.ok(dom.messages.textContent.includes("Mode → Plan"));
   });
 
-  it("fills /new into input from the plus button", async () => {
-    state.sessionId = "current";
-    state.sessionCwd = "/repo";
-    dom.input.value = "some existing text";
-    // fetch is undefined (beforeEach default) — fetchPathsForMenu hits catch, no timer leak
-
-    dom.newBtn.click();
-
-    assert.strictEqual(dom.input.value, "/new ");
-    assert.strictEqual(document.activeElement, dom.input);
-  });
-
   it("does not send prompt when not connected and shows warning", () => {
     state.sessionId = "s1";
     // clientId is null → not connected

@@ -3,7 +3,7 @@
 import {
   state, dom, setBusy, resetSessionUI, requestNewSession, sendCancel,
   getConfigOption, getConfigValue, setHashSessionId, updateSessionInfo,
-  updateNewBtnVisibility, updateModeUI, updateStatusBar,
+  updateModeUI, updateStatusBar,
 } from './state.ts';
 import { addSystem, addMessage, scrollToBottom, escHtml, formatLocalTime } from './render.ts';
 import { loadHistory, handleEvent } from './events.ts';
@@ -622,7 +622,6 @@ function tabCompleteSlashItem(idx: number) {
     hideSlashMenu();
     dom.input.focus();
   }
-  updateNewBtnVisibility();
 }
 
 // Click: fill input AND execute (equivalent to tab + enter)
@@ -689,7 +688,6 @@ async function selectSlashItem(idx: number) {
       updateSlashMenu();
     }
   }
-  updateNewBtnVisibility();
 }
 
 // Handle keyboard navigation within the slash menu

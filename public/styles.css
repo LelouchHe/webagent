@@ -471,10 +471,6 @@ body {
   color: var(--text);
   border-color: var(--text-dim);
 }
-#new-btn {
-  font-size: 11px;
-  letter-spacing: 0.2px;
-}
 #send-btn.cancel {
   color: var(--red);
   border-color: var(--red);
@@ -530,7 +526,6 @@ body {
 .slash-item:hover .slash-desc, .slash-item.selected .slash-desc { color: rgba(255,255,255,0.8); }
 
 /* Image attach */
-#new-btn.hidden { display: none; }
 #attach-preview {
   display: none;
   padding: 4px 16px;
