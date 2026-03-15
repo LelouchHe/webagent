@@ -89,8 +89,8 @@ export function createRequestHandler(deps: RequestHandlerDeps): (req: IncomingMe
             config: "/api/v1/config",
             events_stream: "/api/v1/events/stream",
             prompt: "/api/v1/prompt",
-            push: "/api/v1/push",
-            clients: "/api/v1/clients",
+            push: "/api/beta/push",
+            clients: "/api/beta/clients",
           },
         });
         return;
@@ -691,43 +691,6 @@ export function createRequestHandler(deps: RequestHandlerDeps): (req: IncomingMe
         return;
       }
 
-      // POST /api/v1/clients/:clientId/visibility
-      const visMatch = url.match(/^\/api\/v1\/clients\/([^/]+)\/visibility$/);
-      if (visMatch && req.method === "POST") {
-        if (!deps.sseManager) { json(res, 501, { error: "SSE not available" }); return; }
-        const sseManager = deps.sseManager;
-        const clientId = decodeURIComponent(visMatch[1]);
-
-        if (!sseManager.clients.has(clientId)) {
-          json(res, 404, { error: "Client not found" });
-          return;
-        }
-
-        let body: Record<string, unknown>;
-        try {
-          body = JSON.parse(await readBody(req));
-        } catch {
-          json(res, 400, { error: "Invalid JSON" });
-          return;
-        }
-
-        if (typeof body.visible !== "boolean") {
-          json(res, 400, { error: "Missing or invalid 'visible' field" });
-          return;
-        }
-
-        // If push service is available, update visibility and session
-        if (deps.pushService) {
-          deps.pushService.setClientVisibility(clientId, body.visible as boolean);
-          if (typeof body.sessionId === "string" && body.sessionId) {
-            deps.pushService.setClientSession(clientId, body.sessionId);
-          }
-        }
-
-        json(res, 200, { ok: true });
-        return;
-      }
-
       // --- Images (session-scoped) ---
 
       // POST /api/v1/sessions/:id/images
@@ -800,10 +763,55 @@ export function createRequestHandler(deps: RequestHandlerDeps): (req: IncomingMe
         return;
       }
 
+      json(res, 404, { error: "Not found" });
+      return;
+    }
+
+    // --- Beta API routes ---
+    if (url.startsWith("/api/beta/")) {
+      res.setHeader("Content-Type", "application/json");
+
+      // POST /api/beta/clients/:clientId/visibility
+      const visMatch = url.match(/^\/api\/beta\/clients\/([^/]+)\/visibility$/);
+      if (visMatch && req.method === "POST") {
+        if (!deps.sseManager) { json(res, 501, { error: "SSE not available" }); return; }
+        const sseManager = deps.sseManager;
+        const clientId = decodeURIComponent(visMatch[1]);
+
+        if (!sseManager.clients.has(clientId)) {
+          json(res, 404, { error: "Client not found" });
+          return;
+        }
+
+        let body: Record<string, unknown>;
+        try {
+          body = JSON.parse(await readBody(req));
+        } catch {
+          json(res, 400, { error: "Invalid JSON" });
+          return;
+        }
+
+        if (typeof body.visible !== "boolean") {
+          json(res, 400, { error: "Missing or invalid 'visible' field" });
+          return;
+        }
+
+        // If push service is available, update visibility and session
+        if (deps.pushService) {
+          deps.pushService.setClientVisibility(clientId, body.visible as boolean);
+          if (typeof body.sessionId === "string" && body.sessionId) {
+            deps.pushService.setClientSession(clientId, body.sessionId);
+          }
+        }
+
+        json(res, 200, { ok: true });
+        return;
+      }
+
       // --- Push notification routes ---
 
-      // GET /api/v1/push/vapid-key
-      if (url === "/api/v1/push/vapid-key" && req.method === "GET") {
+      // GET /api/beta/push/vapid-key
+      if (url === "/api/beta/push/vapid-key" && req.method === "GET") {
         if (!deps.pushService) {
           json(res, 404, { error: "Push not configured" });
           return;
@@ -812,8 +820,8 @@ export function createRequestHandler(deps: RequestHandlerDeps): (req: IncomingMe
         return;
       }
 
-      // POST /api/v1/push/subscribe
-      if (url === "/api/v1/push/subscribe" && req.method === "POST") {
+      // POST /api/beta/push/subscribe
+      if (url === "/api/beta/push/subscribe" && req.method === "POST") {
         if (!deps.pushService) {
           json(res, 404, { error: "Push not configured" });
           return;
@@ -839,8 +847,8 @@ export function createRequestHandler(deps: RequestHandlerDeps): (req: IncomingMe
         return;
       }
 
-      // POST /api/v1/push/register-client — associate clientId with push endpoint
-      if (url === "/api/v1/push/register-client" && req.method === "POST") {
+      // POST /api/beta/push/register-client — associate clientId with push endpoint
+      if (url === "/api/beta/push/register-client" && req.method === "POST") {
         if (!deps.pushService) {
           json(res, 404, { error: "Push not configured" });
           return;
@@ -863,8 +871,8 @@ export function createRequestHandler(deps: RequestHandlerDeps): (req: IncomingMe
         return;
       }
 
-      // POST /api/v1/push/unsubscribe
-      if (url === "/api/v1/push/unsubscribe" && req.method === "POST") {
+      // POST /api/beta/push/unsubscribe
+      if (url === "/api/beta/push/unsubscribe" && req.method === "POST") {
         if (!deps.pushService) {
           json(res, 404, { error: "Push not configured" });
           return;

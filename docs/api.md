@@ -20,10 +20,11 @@ WebAgent exposes a **REST + SSE** API for managing agent sessions, sending promp
   - [Config](#config)
   - [Bash](#bash)
   - [Images](#images)
-  - [Push Notifications](#push-notifications)
   - [One-Shot Prompt](#one-shot-prompt)
-  - [Visibility](#visibility)
   - [SSE Streams](#sse-streams)
+- [Beta Endpoints (`/api/beta/`)](#beta-endpoints-apibeta)
+  - [Push Notifications](#push-notifications)
+  - [Client Visibility](#client-visibility)
 - [SSE Event Reference](#sse-event-reference)
   - [Live Events](#live-events)
   - [Replay-Only Events](#replay-only-events)
@@ -54,7 +55,7 @@ WebAgent exposes a **REST + SSE** API for managing agent sessions, sending promp
 - **SQLite** for persistence (sessions, events, push subscriptions)
 - **ACP** (Agent Client Protocol) connects the server to the agent backend
 
-All endpoints are under `/api/v1/`. Static files are served from the configured `public_dir`.
+All stable endpoints are under `/api/v1/`. Beta endpoints (subject to change) are under `/api/beta/`. Static files are served from the configured `public_dir`.
 
 ## Conventions
 
@@ -88,7 +89,8 @@ API discovery endpoint. Returns the API version and top-level endpoint paths.
     "config": "/api/v1/config",
     "events_stream": "/api/v1/events/stream",
     "prompt": "/api/v1/prompt",
-    "push": "/api/v1/push"
+    "push": "/api/beta/push",
+    "clients": "/api/beta/clients"
   }
 }
 ```
@@ -511,68 +513,6 @@ Retrieve a previously uploaded image. Responses are immutably cached (`Cache-Con
 
 ---
 
-### Push Notifications
-
-VAPID-based Web Push for background notifications. See `src/push-service.ts`.
-
-#### `GET /api/v1/push/vapid-key`
-
-Get the server's VAPID public key for push subscription.
-
-**Response** `200`:
-
-```json
-{ "publicKey": "BLbF..." }
-```
-
----
-
-#### `POST /api/v1/push/subscribe`
-
-Register a push subscription.
-
-**Request body:**
-
-```json
-{
-  "endpoint": "https://fcm.googleapis.com/fcm/send/...",
-  "keys": {
-    "auth": "...",
-    "p256dh": "..."
-  }
-}
-```
-
-**Response** `201`: `{ "ok": true }`
-
----
-
-#### `POST /api/v1/push/unsubscribe`
-
-Remove a push subscription.
-
-**Request body:**
-
-```json
-{ "endpoint": "https://fcm.googleapis.com/fcm/send/..." }
-```
-
-**Response** `200`: `{ "ok": true }`
-
-#### `POST /api/v1/push/register-client`
-
-Associate an SSE client with a push subscription endpoint. Used for per-session visibility filtering — only endpoints whose visible clients are not viewing the notification's session receive push. Called automatically on SSE reconnect.
-
-**Request body:**
-
-```json
-{ "clientId": "abc123", "endpoint": "https://fcm.googleapis.com/fcm/send/..." }
-```
-
-**Response** `200`: `{ "ok": true }`
-
----
-
 ### One-Shot Prompt
 
 #### `POST /api/v1/prompt`
@@ -596,29 +536,6 @@ Create a temporary session and send a prompt in one call. Useful for programmati
 ```
 
 The client should connect to the `streamUrl` SSE endpoint to receive the agent's response.
-
----
-
-### Visibility
-
-#### `POST /api/v1/clients/:clientId/visibility`
-
-Report client visibility state (foreground/background) and which session the client is viewing. Used by the push notification service for per-session suppression: push is only suppressed when a visible client is viewing the same session as the notification.
-
-**Request body:**
-
-```json
-{ "visible": true, "sessionId": "optional-session-id" }
-```
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `visible` | boolean | yes | Whether the client is in the foreground |
-| `sessionId` | string | no | The session the client is currently viewing. When provided, updates the server's session tracking for this client. A visible client with no session set does not suppress any push. |
-
-**Response** `200`: `{ "ok": true }`
-
-**Errors:** `404` (client not found)
 
 ---
 
@@ -662,6 +579,100 @@ Events include an `id` field (the seq number) for automatic reconnection:
 id: 42
 data: {"type":"message_chunk","sessionId":"abc-123","text":"Hello"}
 ```
+
+---
+
+## Beta Endpoints (`/api/beta/`)
+
+These endpoints are under `/api/beta/` because their design is not yet stable. Specifically:
+
+- **Web Push** is inherently browser-specific (VAPID, Service Workers, Push API) and doesn't generalize well to non-browser clients. The subscription model, VAPID key management, and endpoint lifecycle are all tied to browser push services (FCM, WNS, APNs).
+- **Client visibility** depends on the browser's Page Visibility API, which has known reliability issues — iOS PWA visibility state can be stale, background tabs may not fire events consistently, and different browsers behave differently during multitasking.
+
+These APIs work and are used in production, but may be redesigned or replaced when we have a better abstraction for cross-client notifications. Breaking changes are possible without a major version bump.
+
+### Push Notifications
+
+VAPID-based Web Push for background notifications. See `src/push-service.ts`.
+
+#### `GET /api/beta/push/vapid-key`
+
+Get the server's VAPID public key for push subscription.
+
+**Response** `200`:
+
+```json
+{ "publicKey": "BLbF..." }
+```
+
+---
+
+#### `POST /api/beta/push/subscribe`
+
+Register a push subscription.
+
+**Request body:**
+
+```json
+{
+  "endpoint": "https://fcm.googleapis.com/fcm/send/...",
+  "keys": {
+    "auth": "...",
+    "p256dh": "..."
+  }
+}
+```
+
+**Response** `201`: `{ "ok": true }`
+
+---
+
+#### `POST /api/beta/push/unsubscribe`
+
+Remove a push subscription.
+
+**Request body:**
+
+```json
+{ "endpoint": "https://fcm.googleapis.com/fcm/send/..." }
+```
+
+**Response** `200`: `{ "ok": true }`
+
+#### `POST /api/beta/push/register-client`
+
+Associate an SSE client with a push subscription endpoint. Used for per-session visibility filtering — only endpoints whose visible clients are not viewing the notification's session receive push. Called automatically on SSE reconnect.
+
+**Request body:**
+
+```json
+{ "clientId": "abc123", "endpoint": "https://fcm.googleapis.com/fcm/send/..." }
+```
+
+**Response** `200`: `{ "ok": true }`
+
+---
+
+### Client Visibility
+
+#### `POST /api/beta/clients/:clientId/visibility`
+
+Report client visibility state (foreground/background) and which session the client is viewing. Used by the push notification service for per-session suppression: push is only suppressed when a visible client is viewing the same session as the notification.
+
+**Request body:**
+
+```json
+{ "visible": true, "sessionId": "optional-session-id" }
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `visible` | boolean | yes | Whether the client is in the foreground |
+| `sessionId` | string | no | The session the client is currently viewing. When provided, updates the server's session tracking for this client. A visible client with no session set does not suppress any push. |
+
+**Response** `200`: `{ "ok": true }`
+
+**Errors:** `404` (client not found)
 
 ---
 

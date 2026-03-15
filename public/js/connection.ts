@@ -13,7 +13,7 @@ async function registerPushEndpoint(clientId: string) {
     if (!reg) return;
     const sub = await reg.pushManager.getSubscription();
     if (!sub) return;
-    await fetch('/api/v1/push/register-client', {
+    await fetch('/api/beta/push/register-client', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ clientId, endpoint: sub.endpoint }),

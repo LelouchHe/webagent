@@ -300,20 +300,20 @@ describe("Push API routes", () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("GET /api/v1/push/vapid-key returns the public key", async () => {
-    const res = await makeRequest(port, "GET", "/api/v1/push/vapid-key");
+  it("GET /api/beta/push/vapid-key returns the public key", async () => {
+    const res = await makeRequest(port, "GET", "/api/beta/push/vapid-key");
     assert.equal(res.status, 200);
     const body = JSON.parse(res.body);
     assert.ok(body.publicKey);
     assert.equal(body.publicKey, pushService.getPublicKey());
   });
 
-  it("POST /api/v1/push/subscribe saves a subscription", async () => {
+  it("POST /api/beta/push/subscribe saves a subscription", async () => {
     const payload = JSON.stringify({
       endpoint: "https://push.example.com/1",
       keys: { auth: "auth123", p256dh: "p256dh123" },
     });
-    const res = await makeRequest(port, "POST", "/api/v1/push/subscribe", payload, {
+    const res = await makeRequest(port, "POST", "/api/beta/push/subscribe", payload, {
       "Content-Type": "application/json",
     });
     assert.equal(res.status, 201);
@@ -324,41 +324,41 @@ describe("Push API routes", () => {
     assert.equal(subs[0].auth, "auth123");
   });
 
-  it("POST /api/v1/push/subscribe rejects invalid body", async () => {
-    const res = await makeRequest(port, "POST", "/api/v1/push/subscribe", "bad json", {
+  it("POST /api/beta/push/subscribe rejects invalid body", async () => {
+    const res = await makeRequest(port, "POST", "/api/beta/push/subscribe", "bad json", {
       "Content-Type": "application/json",
     });
     assert.equal(res.status, 400);
   });
 
-  it("POST /api/v1/push/subscribe rejects missing fields", async () => {
+  it("POST /api/beta/push/subscribe rejects missing fields", async () => {
     const payload = JSON.stringify({ endpoint: "https://push.example.com/1" });
-    const res = await makeRequest(port, "POST", "/api/v1/push/subscribe", payload, {
+    const res = await makeRequest(port, "POST", "/api/beta/push/subscribe", payload, {
       "Content-Type": "application/json",
     });
     assert.equal(res.status, 400);
   });
 
-  it("POST /api/v1/push/unsubscribe removes a subscription", async () => {
+  it("POST /api/beta/push/unsubscribe removes a subscription", async () => {
     store.saveSubscription("https://push.example.com/1", "a", "b");
 
     const payload = JSON.stringify({ endpoint: "https://push.example.com/1" });
-    const res = await makeRequest(port, "POST", "/api/v1/push/unsubscribe", payload, {
+    const res = await makeRequest(port, "POST", "/api/beta/push/unsubscribe", payload, {
       "Content-Type": "application/json",
     });
     assert.equal(res.status, 200);
     assert.equal(store.getAllSubscriptions().length, 0);
   });
 
-  it("POST /api/v1/push/unsubscribe is a no-op for unknown endpoint", async () => {
+  it("POST /api/beta/push/unsubscribe is a no-op for unknown endpoint", async () => {
     const payload = JSON.stringify({ endpoint: "https://push.example.com/unknown" });
-    const res = await makeRequest(port, "POST", "/api/v1/push/unsubscribe", payload, {
+    const res = await makeRequest(port, "POST", "/api/beta/push/unsubscribe", payload, {
       "Content-Type": "application/json",
     });
     assert.equal(res.status, 200);
   });
 
-  it("GET /api/v1/push/vapid-key returns 404 when no push service", async () => {
+  it("GET /api/beta/push/vapid-key returns 404 when no push service", async () => {
     // Create handler without pushService
     const handler2 = createRequestHandler({ store, publicDir, dataDir: tmpDir, limits: {
       bash_output: 1_048_576,
@@ -369,7 +369,7 @@ describe("Push API routes", () => {
     await new Promise<void>((resolve) => server2.listen(0, "127.0.0.1", resolve));
     const port2 = (server2.address() as { port: number }).port;
 
-    const res = await makeRequest(port2, "GET", "/api/v1/push/vapid-key");
+    const res = await makeRequest(port2, "GET", "/api/beta/push/vapid-key");
     assert.equal(res.status, 404);
 
     await new Promise<void>((resolve) => server2.close(() => resolve()));

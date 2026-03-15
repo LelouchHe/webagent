@@ -281,7 +281,7 @@ describe("SSE REST API", () => {
     });
   });
 
-  describe("POST /api/v1/clients/:clientId/visibility", () => {
+  describe("POST /api/beta/clients/:clientId/visibility", () => {
     it("updates client visibility", async () => {
       const sse = openSse(port, "/api/v1/events/stream");
       sseCleanups.push(sse.close);
@@ -291,14 +291,14 @@ describe("SSE REST API", () => {
       const connected = JSON.parse(sse.events[0]);
       const clientId = connected.clientId;
 
-      const res = await makeRequest(port, "POST", `/api/v1/clients/${clientId}/visibility`,
+      const res = await makeRequest(port, "POST", `/api/beta/clients/${clientId}/visibility`,
         JSON.stringify({ visible: true }));
       assert.equal(res.status, 200);
       assert.deepEqual(JSON.parse(res.body), { ok: true });
     });
 
     it("returns 404 for unknown clientId", async () => {
-      const res = await makeRequest(port, "POST", "/api/v1/clients/unknown/visibility",
+      const res = await makeRequest(port, "POST", "/api/beta/clients/unknown/visibility",
         JSON.stringify({ visible: true }));
       assert.equal(res.status, 404);
     });
@@ -310,7 +310,7 @@ describe("SSE REST API", () => {
       await waitFor(() => sse.events.length >= 1);
       const clientId = JSON.parse(sse.events[0]).clientId;
 
-      const res = await makeRequest(port, "POST", `/api/v1/clients/${clientId}/visibility`,
+      const res = await makeRequest(port, "POST", `/api/beta/clients/${clientId}/visibility`,
         JSON.stringify({}));
       assert.equal(res.status, 400);
     });
@@ -322,7 +322,7 @@ describe("SSE REST API", () => {
       await waitFor(() => sse.events.length >= 1);
       const clientId = JSON.parse(sse.events[0]).clientId;
 
-      const res = await makeRequest(port, "POST", `/api/v1/clients/${clientId}/visibility`, "bad");
+      const res = await makeRequest(port, "POST", `/api/beta/clients/${clientId}/visibility`, "bad");
       assert.equal(res.status, 400);
     });
 
@@ -333,7 +333,7 @@ describe("SSE REST API", () => {
       await waitFor(() => sse.events.length >= 1);
       const clientId = JSON.parse(sse.events[0]).clientId;
 
-      const res = await makeRequest(port, "POST", `/api/v1/clients/${clientId}/visibility`,
+      const res = await makeRequest(port, "POST", `/api/beta/clients/${clientId}/visibility`,
         JSON.stringify({ visible: true, sessionId: "session-123" }));
       assert.equal(res.status, 200);
       assert.deepEqual(JSON.parse(res.body), { ok: true });

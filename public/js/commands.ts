@@ -16,7 +16,7 @@ async function subscribePush() {
   try {
     const reg = await navigator.serviceWorker?.ready;
     if (!reg) return;
-    const res = await fetch('/api/v1/push/vapid-key');
+    const res = await fetch('/api/beta/push/vapid-key');
     if (!res.ok) return;
     const { publicKey } = await res.json();
     const sub = await reg.pushManager.subscribe({
@@ -24,7 +24,7 @@ async function subscribePush() {
       applicationServerKey: urlBase64ToUint8Array(publicKey),
     });
     const json = sub.toJSON();
-    await fetch('/api/v1/push/subscribe', {
+    await fetch('/api/beta/push/subscribe', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ endpoint: json.endpoint, keys: json.keys, clientId: state.clientId }),
@@ -42,7 +42,7 @@ async function unsubscribePush() {
     if (!sub) return;
     const endpoint = sub.endpoint;
     await sub.unsubscribe();
-    await fetch('/api/v1/push/unsubscribe', {
+    await fetch('/api/beta/push/unsubscribe', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ endpoint }),

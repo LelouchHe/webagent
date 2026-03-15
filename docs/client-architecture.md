@@ -400,7 +400,7 @@ Uses `res.text()` + `JSON.parse()` instead of `res.json()` to handle empty bodie
 | `setTitle(sessionId, title)` | PUT | `/api/v1/sessions/:id/title` |
 | `execBash(sessionId, command)` | POST | `/api/v1/sessions/:id/bash` |
 | `cancelBash(sessionId)` | POST | `/api/v1/sessions/:id/bash/cancel` |
-| `postVisibility(clientId, visible)` | POST | `/api/v1/clients/:clientId/visibility` |
+| `postVisibility(clientId, visible)` | POST | `/api/beta/clients/:clientId/visibility` |
 | `getStatus(sessionId)` | GET | `/api/v1/sessions/:id/status` |
 
 ---
@@ -498,7 +498,7 @@ Triggered by `/` prefix in input. Handled in `commands.ts`.
 | `/mode [name]` | `api.setConfig(sessionId, 'mode', value)` | Switch mode |
 | `/think [level]` | `api.setConfig(sessionId, 'reasoning_effort', value)` | Set reasoning effort |
 | `/compact` | `api.sendMessage(sessionId, '/compact')` | Send as prompt (agent handles) |
-| `/notify [on\|off]` | Push API + `/api/v1/push/subscribe` | Manage push notifications |
+| `/notify [on\|off]` | Push API + `/api/beta/push/subscribe` | Manage push notifications |
 | `/clear` | — | Clear the DOM (no API call) |
 | `/? [query]` | — | Search sessions by title |
 

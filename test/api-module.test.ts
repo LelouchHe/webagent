@@ -144,9 +144,9 @@ describe("api module", () => {
 
   // --- Visibility ---
 
-  it("postVisibility sends POST /api/v1/clients/:clientId/visibility", async () => {
+  it("postVisibility sends POST /api/beta/clients/:clientId/visibility", async () => {
     await api.postVisibility("cl-abc", true);
-    assert.equal(fetchCalls[0].url, "/api/v1/clients/cl-abc/visibility");
+    assert.equal(fetchCalls[0].url, "/api/beta/clients/cl-abc/visibility");
     assert.equal(fetchCalls[0].init?.method, "POST");
     const body = JSON.parse(fetchCalls[0].init?.body as string);
     assert.equal(body.visible, true);
