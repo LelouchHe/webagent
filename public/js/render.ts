@@ -160,7 +160,9 @@ export function renderPatchDiff(ri: RawInput | undefined): string | null {
       }
     }
     if (ri.file_text != null) {
-      html.push(`<span class="diff-add">+ (new file, ${ri.file_text.split('\n').length} lines)</span>`);
+      for (const line of String(ri.file_text).split('\n')) {
+        html.push(`<span class="diff-add">+ ${escHtml(line)}</span>`);
+      }
     }
     return html.length > (ri.path ? 1 : 0) ? html.join('\n') : null;
   }

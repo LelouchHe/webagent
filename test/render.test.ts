@@ -93,10 +93,12 @@ describe("render", () => {
       assert.ok(html.includes('class="diff-add"'));
     });
 
-    it("renders object with file_text (new file)", () => {
+    it("renders object with file_text (new file) showing all lines", () => {
       const ri = { path: "new.ts", file_text: "line1\nline2\nline3" };
       const html = render.renderPatchDiff(ri);
-      assert.ok(html.includes("new file, 3 lines"));
+      assert.ok(html!.includes('class="diff-add">+ line1</span>'));
+      assert.ok(html!.includes('class="diff-add">+ line2</span>'));
+      assert.ok(html!.includes('class="diff-add">+ line3</span>'));
     });
 
     it("returns null for object with only path", () => {
