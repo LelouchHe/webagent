@@ -188,6 +188,65 @@ class MockAgent implements Agent {
       };
     }
 
+    if (text.startsWith("E2E_TOOL_EDIT")) {
+      const toolCallId = `tool-${++this.toolCallCounter}`;
+      await this.conn.sessionUpdate({
+        sessionId: params.sessionId,
+        update: {
+          sessionUpdate: "tool_call",
+          toolCallId,
+          title: "Edit File",
+          kind: "edit",
+          rawInput: {
+            path: "src/server.ts",
+            old_str: 'const PORT = 3000;\nconst HOST = "localhost";',
+            new_str: 'const PORT = parseInt(process.env.PORT || "8080");\nconst HOST = "0.0.0.0";',
+          },
+        },
+      });
+      await this.conn.sessionUpdate({
+        sessionId: params.sessionId,
+        update: { sessionUpdate: "tool_call_update", toolCallId, status: "completed" },
+      });
+      await this.conn.sessionUpdate({
+        sessionId: params.sessionId,
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: "Updated the server config to use environment variables." },
+        },
+      });
+      return { stopReason: "end_turn" };
+    }
+
+    if (text.startsWith("E2E_TOOL_CREATE")) {
+      const toolCallId = `tool-${++this.toolCallCounter}`;
+      await this.conn.sessionUpdate({
+        sessionId: params.sessionId,
+        update: {
+          sessionUpdate: "tool_call",
+          toolCallId,
+          title: "Create File",
+          kind: "edit",
+          rawInput: {
+            path: "src/config.ts",
+            file_text: 'export interface Config {\n  port: number;\n  host: string;\n  dataDir: string;\n}\n\nexport const defaults: Config = {\n  port: 8080,\n  host: "0.0.0.0",\n  dataDir: "./data",\n};\n',
+          },
+        },
+      });
+      await this.conn.sessionUpdate({
+        sessionId: params.sessionId,
+        update: { sessionUpdate: "tool_call_update", toolCallId, status: "completed" },
+      });
+      await this.conn.sessionUpdate({
+        sessionId: params.sessionId,
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: "Created the config module with default values." },
+        },
+      });
+      return { stopReason: "end_turn" };
+    }
+
     await this.conn.sessionUpdate({
       sessionId: params.sessionId,
       update: {
