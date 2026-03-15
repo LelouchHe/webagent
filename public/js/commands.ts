@@ -164,9 +164,7 @@ export async function handleSlashCommand(text: string): Promise<boolean> {
           addSystem('No other sessions to prune.');
           return true;
         }
-        for (const s of toDelete) {
-          api.deleteSession(s.id).catch(() => {});
-        }
+        await Promise.all(toDelete.map(s => api.deleteSession(s.id).catch(() => {})));
         cachedSessions = null;
         addSystem(`Pruned ${toDelete.length} session(s).`);
       } catch {
