@@ -202,17 +202,35 @@ When the browser tab goes hidden/visible:
 
 ### Push Notification Reliability
 
-Push suppression depends on accurate visibility state on the server. Several scenarios can cause the server's view to become stale, leading to missed or incorrectly suppressed notifications:
+Push suppression depends on accurate visibility state on the server. The server checks visibility **once** at event time — if the state is stale, the push opportunity is lost with no retroactive delivery.
 
-| Scenario | What happens | Impact | Mitigation |
-|---|---|---|---|
-| **iOS app suspend** (swipe to home) | `visibilitychange` fires but `fetch(visible=false)` is killed by iOS before reaching server | Server keeps stale `visible=true` → push suppressed | Use `navigator.sendBeacon()` for hidden reports (not yet implemented) |
-| **iOS notification/control center** | No `visibilitychange` event fires | Server still thinks client is visible → push suppressed | None available — browser doesn't expose this |
-| **iOS kills PWA process** | No JS events fire; SSE TCP stays open until heartbeat fails (~20s) | Stale `visible=true` during heartbeat window → push suppressed | Heartbeat detection (20s); no faster option |
-| **Network switch (WiFi→cellular)** | SSE silently breaks; neither side detects immediately | Same as above — stale state until heartbeat | Heartbeat detection (20s) |
-| **Server restart** | All in-memory visibility state lost | No clients tracked = no suppression = push fires normally | Safe by default |
+The fundamental limitation: `visibilitychange` only tracks **tab switching**, not whether the user is actually looking at the screen. There is no browser API equivalent to native OS attention tracking (`NSUserActivity`, `WindowAttentionState`, etc.).
 
-Key design constraint: push is checked **once** at event time. If visibility state is stale at that moment, the push opportunity is lost — there is no retroactive push when stale clients are eventually cleaned up.
+**Mobile (iOS PWA):**
+
+| Scenario | What happens | Fixable? |
+|---|---|---|
+| Swipe to home / switch app | `visibilitychange` fires but `fetch(visible=false)` killed by iOS before reaching server → stale `visible=true` | `navigator.sendBeacon()` (not yet implemented) |
+| Notification center / control center | No `visibilitychange` fires | No — browser doesn't expose this |
+| iOS terminates PWA process | No JS events; SSE stays open until heartbeat fails (~20s) | No — heartbeat already at 20s |
+| Network switch (WiFi→cellular) | SSE silently breaks; stale state until heartbeat detects | No — same as above |
+
+**Desktop (Chrome / Firefox / Safari):**
+
+| Scenario | What happens | Fixable? |
+|---|---|---|
+| Switch tab | `visibilitychange` fires reliably, `fetch` completes | Works correctly ✅ |
+| Minimize window | Chrome macOS: no `visibilitychange`; Firefox: fires | No — browser-dependent |
+| Lock screen | No `visibilitychange` fires | No |
+| Another window covers browser | No `visibilitychange` fires | No |
+| Close laptop lid / sleep | No `visibilitychange`; SSE breaks, heartbeat detects (~20s) | No — heartbeat already at 20s |
+| Close tab / browser | `visibilitychange` fires but `fetch` may not complete before unload | `navigator.sendBeacon()` (not yet implemented) |
+
+**General:**
+
+| Scenario | What happens | Fixable? |
+|---|---|---|
+| Server restart | In-memory visibility state lost; no clients = no suppression | Safe by default ✅ |
 
 ---
 
