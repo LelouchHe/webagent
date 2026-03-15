@@ -1,6 +1,6 @@
 # Test Scenarios
 
-Last updated: 2026-03-09
+Last updated: 2025-07-25
 
 This file is a scenario-level map of the current automated test suite.
 It is intentionally higher-level than raw test names so we can review coverage,
@@ -17,6 +17,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - config persistence / inheritance / sync
   - bash execution lifecycle
   - slash command and picker UX
+  - REST API surface (sessions, prompt, bash, permissions, ops, SSE, push)
 
 ## Unit / Integration Scenarios
 
@@ -31,7 +32,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - ACP session update event translation
   - ACP text file read/write callbacks
 
-- `test/event-handler.test.ts` (server-event-handler)
+- `test/server-event-handler.test.ts`
   - event routing: message_chunk, thought_chunk, tool_call, prompt_done, session_created, error
   - thinking↔assistant buffer flush transitions
   - restoring-session event suppression
@@ -47,12 +48,18 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - returned config options for inherited sessions
   - assistant / thinking buffer flush behavior
   - busy-kind reporting
+  - cwd lookup fallback
+  - auto-retry of interrupted turns
+  - deduplicated resume (ensureResumed)
 
 - `test/store.test.ts`
   - session creation / deletion / updates
   - config persistence
   - title persistence
   - fractional-second `last_active_at` precision for stable ordering
+  - deleteEmptySessions age gating
+  - hasInterruptedTurn detection
+  - migration idempotency
 
 - `test/title-service.test.ts`
   - silent title-session creation
@@ -62,6 +69,67 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - callback emission only when a title is produced
   - cancellation of in-flight title generation for the matching source session
   - in-flight title-generation deduplication and retry after cancellation
+  - user-set title wins over in-flight generation
+
+- `test/daemon.test.ts`
+  - subcommand recognition
+  - `resolveArgs` config-path resolution
+  - PID file round-trip / stale cleanup / corrupt handling
+  - supervisor lifecycle: PID file write, SIGTERM exit, SIGHUP restart
+
+### REST API layer
+
+- `test/sessions.test.ts`
+  - session CRUD (create / get / delete / list)
+  - config update (model, mode) and broadcast
+  - source filter on session list
+  - gzip compression for events endpoint
+  - streaming buffer flush on events endpoint
+  - auto-resume of non-live sessions
+  - input validation and bridge-not-ready errors
+
+- `test/prompt.test.ts`
+  - prompt acceptance and bridge forwarding
+  - user_message storage and broadcast
+  - last_active_at update and active-prompt tracking
+  - busy-state conflict (409) for agent and bash
+  - events endpoint: listing, thinking filter, after pagination
+  - title generation trigger for untitled sessions
+  - image support in prompts
+  - input validation and bridge-not-ready errors
+
+- `test/bash.test.ts`
+  - bash command execution and event storage / broadcast
+  - bash output streaming and completion
+  - bash cancel (kill) and idempotent cancel
+  - busy-state reporting during bash
+  - conflict (409) for concurrent bash
+  - non-zero exit code handling
+  - input validation and unknown-session errors
+
+- `test/permissions.test.ts`
+  - pending permission listing and session scoping
+  - permission approval / denial with event storage and broadcast
+  - idempotent resolution for already-resolved permissions
+  - input validation and bridge-not-ready errors
+
+- `test/ops.test.ts`
+  - cancel: active prompt, running bash, idle session (idempotent)
+  - status: idle / busy-agent / busy-bash
+  - `GET /api/v1/config` endpoint
+  - bridge-not-ready error handling
+
+- `test/sse.test.ts`
+  - SSE client ID generation and tracking
+  - global SSE stream (connected event, broadcast from all sessions)
+  - per-session SSE stream (session filtering, Last-Event-ID replay)
+  - `POST /api/beta/clients/:clientId/visibility` (update, sessionId, validation)
+  - heartbeat delivery
+
+- `test/quick-prompt.test.ts`
+  - session creation and prompt forwarding
+  - custom cwd and source=auto marking
+  - input validation and bridge-not-ready errors
 
 ### Frontend state and UI event flow
 
@@ -70,8 +138,8 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - config helpers
   - busy-state button / prompt UI
   - mode-class updates
-  - new-session request payloads
-  - reset-session cleanup
+  - new-session request payloads (with custom cwd)
+  - reset-session cleanup (messages, input, title, metadata)
   - global session cancel payloads
   - hash routing and session info updates
 
@@ -82,49 +150,100 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - global `Ctrl+X` cancel
   - `Ctrl+U` upload
   - `Ctrl+M` mode cycle
-  - `+` button new-session flow
+  - slash command bypass while busy
+  - send-button label switching (↵ vs ^X) while busy
+  - not-connected and not-ready warnings
 
 - `test/events.test.ts`
   - session creation / busy-state restoration
   - user / assistant / thinking rendering
   - tool-call render and completion state
+  - task_complete summary rendering (visible, not collapsed) with ✔ icon
   - plan render
   - permission request / response / resolution handling
   - bash command / output / completion handling
   - prompt completion rules
   - cancelled-turn cleanup for tool calls and permissions
+  - late-event suppression after prompt_done (tool_call, permission_request)
+  - cancel timeout firing and warning
   - config update application
   - session deletion and title update handling
   - cross-session event filtering
-  - history replay for all major stored event types
+  - history replay for all major stored event types (incl. task_complete with visible summary)
+  - paginated loadHistory (limit param, hasMoreHistory)
+  - loadOlderEvents prepend and sentinel removal
+  - loadNewEvents incremental sync and orphan cleanup
+  - replay queue: dedup on reconnect for tool_call, permission_request, thought_chunk, message_chunk
+  - retryUnconfirmedPermissions after reconnect
 
 - `test/commands.test.ts`
-  - `/new`, `/pwd`, `/switch`, `/exit`, `/prune`, `/cancel`
+  - `/new`, `/pwd`, `/switch`, `/exit`, `/prune`, `/cancel`, `/rename`
   - `/model`, `/mode`, `/think` query / fuzzy match / ambiguity handling
   - help output and shortcut listing
+  - version display in `?` / help command
 
 - `test/connection.test.ts`
   - hash-based session resume
   - last-session auto-resume
+  - new-session creation when no previous session exists
   - reconnect behavior without duplicate history replay
+  - incremental sync on reconnect when session matches
+  - visibility-change sync (hidden→visible)
+  - session-switch abort on generation change
+  - no-op sync when no new events
 
 ### Supporting frontend / backend modules
 
 - `test/routes.test.ts`
   - static file / API route basics
-  - image upload: valid PNG, size limit enforcement, non-image MIME rejection, empty body, missing content-type, session association
+  - events endpoint: limit/before pagination, backward-compat without limit
+  - image upload: valid PNG, size limit enforcement, non-image MIME rejection, invalid session, JPEG normalization
+  - push API routes (`/api/beta/push/*`): VAPID key, subscribe, unsubscribe, validation, no-push-service fallback
 
 - `test/render.test.ts`
-  - markdown / diff / bash block render helpers
+  - HTML escaping
+  - local time formatting
+  - patch diff rendering (patch string, old_str/new_str, new file full content)
+  - message and system message rendering
+  - assistant / thinking finish helpers
+  - waiting indicator lifecycle
+  - detail panel click-through (no collapse on content click)
+  - scroll-to-bottom follow / manual / forced modes
+  - bash block creation and running state
 
 - `test/images.test.ts`
   - attach preview and image-management behavior
+  - file picker and paste handling
+
+- `test/api-module.test.ts`
+  - frontend API client: all REST endpoints (sessions, prompt, cancel, permissions, bash, config, visibility, status)
+  - error handling (ApiError, non-JSON responses)
+
+- `test/slash-menu.test.ts`
+  - Tab fills input without executing (top-level, notify submenu, config submenu)
+  - Tab uses option name not value for config items
+  - click on submenu item executes the command
+
+- `test/push-frontend.test.ts`
+  - `/notify` command: current state, on/off toggling, permission handling
+  - visibility reporting on document visibility change
+
+- `test/push-service.test.ts`
+  - push_subscriptions store: save, upsert, remove, migration
+  - VAPID key generation, loading, and permissions
+  - notification formatting (permission_request, prompt_done, bash_done, fallback title)
+  - visibility tracking: client registration, per-subscription, global session suppression
+  - maybeNotify event-type filtering
+  - sendToAll: consecutive failure cleanup, 410 Gone removal, session-based suppression
+
+- `test/doc-coverage.test.ts`
+  - staleness guard: asserts all endpoints in routes.ts are documented in docs/api.md
 
 - `test/config.test.ts`
-  - config parsing / defaults
+  - config parsing / defaults / invalid-file handling
 
 - `test/types.test.ts`
-  - WS message validation
+  - errorMessage helper (Error, string, object, null)
 
 ## Playwright E2E Scenarios
 
@@ -209,10 +328,15 @@ spot gaps, and decide what still needs to be added without reading every spec.
 - `expired-session-recovery.spec.ts`
   - expired hash session falls back to a new session with a warning
 
-### Image persistence
+### Image handling
 
 - `image-upload-reload.spec.ts`
   - uploaded images are sent and restored after reload
+
+- `image-lightbox.spec.ts`
+  - clicking an image opens the lightbox overlay
+  - backdrop click and Escape close the lightbox
+  - mouse wheel zooms the lightbox image
 
 ### Slash menu and picker UX
 
@@ -282,6 +406,22 @@ spot gaps, and decide what still needs to be added without reading every spec.
 
 - `multi-client-autopilot-sync.spec.ts`
   - autopilot behavior syncs across two clients after one client changes mode
+
+### API pagination
+
+- `events-pagination.spec.ts`
+  - events API supports limit/before pagination
+  - backward-compat: no limit returns all events
+
+### Session status bar
+
+- `switch-status-bar.spec.ts`
+  - status bar shows model and cwd after switching sessions
+
+### Screenshots
+
+- `screenshots.spec.ts`
+  - capture desktop chat, slash menu, permission, and mobile screenshots
 
 ## Known Boundary
 
