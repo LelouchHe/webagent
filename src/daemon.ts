@@ -118,7 +118,7 @@ async function cmdStart(pidFile: string, logFile: string, args: string[]): Promi
   const child = spawn(
     process.execPath,
     [daemonJs, "__supervisor", ...resolved],
-    { detached: true, stdio: ["ignore", log, log], cwd: process.cwd() },
+    { detached: true, stdio: ["ignore", log, log], cwd: process.cwd(), windowsHide: true },
   );
   child.unref();
   closeSync(log);
