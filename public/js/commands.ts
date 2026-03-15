@@ -229,7 +229,11 @@ export async function handleSlashCommand(text: string): Promise<boolean> {
       return true;
 
     case '/help':
-    case '?':
+    case '?': {
+      const parts: string[] = [];
+      if (state.serverVersion) parts.push(`WebAgent ${state.serverVersion}`);
+      if (state.agentName && state.agentVersion) parts.push(`${state.agentName} ${state.agentVersion}`);
+      if (parts.length) addSystem(parts.join(' · '));
       addSystem('? — Show help');
       addSystem('/help — Show help (alias)');
       addSystem('!<command> — Run bash command');
@@ -246,6 +250,7 @@ export async function handleSlashCommand(text: string): Promise<boolean> {
         addSystem(t.text);
       }
       return true;
+    }
 
     case '/model':
     case '/mode':

@@ -13,6 +13,16 @@ import * as api from './api.ts';
 
 connect();
 
+// Fetch version info (non-blocking)
+fetch('/api/v1/version').then(r => r.json()).then((v: Record<string, unknown>) => {
+  if (typeof v.server === 'string') state.serverVersion = v.server;
+  const agent = v.agent as Record<string, string> | null;
+  if (agent) {
+    state.agentName = agent.name ?? null;
+    state.agentVersion = agent.version ?? null;
+  }
+}).catch(() => {});
+
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('/sw.js');
 

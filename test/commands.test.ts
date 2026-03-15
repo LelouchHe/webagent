@@ -75,6 +75,21 @@ describe("commands", () => {
       assert.ok(!lines.includes("/help — Show help"));
     });
 
+    it("shows version line when versions are available", async () => {
+      state.serverVersion = "0.1.10";
+      state.agentName = "Copilot CLI";
+      state.agentVersion = "1.0.5";
+      await commands.handleSlashCommand("?");
+      const lines = messageLines();
+      assert.ok(lines.includes("WebAgent 0.1.10 · Copilot CLI 1.0.5"));
+    });
+
+    it("omits version line when no versions are set", async () => {
+      await commands.handleSlashCommand("?");
+      const lines = messageLines();
+      assert.ok(!lines.some(l => l.includes("WebAgent")));
+    });
+
     it("still accepts /help for backwards compatibility", async () => {
       const handled = await commands.handleSlashCommand("/help");
 

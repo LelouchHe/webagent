@@ -1,4 +1,5 @@
 import { createServer } from "node:http";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadConfig } from "./config.ts";
@@ -15,6 +16,10 @@ import type { AgentEvent } from "./types.ts";
 const config = loadConfig();
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const PUBLIC_DIR = join(__dirname, "..", config.public_dir);
+const PKG_VERSION = (() => {
+  try { return JSON.parse(readFileSync(join(__dirname, "..", "package.json"), "utf-8")).version ?? "unknown"; }
+  catch { return "unknown"; }
+})() as string;
 
 // --- Core dependencies ---
 
@@ -44,6 +49,7 @@ const server = createServer(createRequestHandler({
   dataDir: config.data_dir,
   limits: config.limits,
   pushService,
+  serverVersion: PKG_VERSION,
 }));
 
 async function initBridge(): Promise<AgentBridge> {

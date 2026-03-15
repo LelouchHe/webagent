@@ -67,6 +67,9 @@ export const state = {
   // Set by bash input to suppress the SSE echo of our own bash_command
   sentBashForSession: null as string | null,
   cancelTimeout: 10_000,
+  serverVersion: null as string | null,
+  agentName: null as string | null,
+  agentVersion: null as string | null,
   _cancelTimerId: null as ReturnType<typeof setTimeout> | null,
   _onCancelTimeout: null as (() => void) | null,
   lastEventSeq: 0,

@@ -41,6 +41,7 @@ export interface RequestHandlerDeps {
   dataDir: string;
   limits: Pick<Config["limits"], "bash_output" | "image_upload"> & Partial<Pick<Config["limits"], "cancel_timeout">>;
   pushService?: PushService;
+  serverVersion?: string;
 }
 
 /** Read the full request body as a string. */
@@ -109,6 +110,15 @@ export function createRequestHandler(deps: RequestHandlerDeps): (req: IncomingMe
         json(res, 200, {
           configOptions: sessions?.cachedConfigOptions ?? [],
           cancelTimeout: deps.limits.cancel_timeout ?? 0,
+        });
+        return;
+      }
+
+      // GET /api/v1/version
+      if (url === "/api/v1/version" && req.method === "GET") {
+        json(res, 200, {
+          server: deps.serverVersion ?? "unknown",
+          agent: sessions?.agentInfo ?? null,
         });
         return;
       }

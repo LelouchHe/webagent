@@ -23,6 +23,7 @@ export function handleAgentEvent(
   switch (event.type) {
     case "connected":
       event.cancelTimeout = config.cancelTimeout;
+      if (event.agent) sessions.agentInfo = event.agent;
       break;
     case "session_created":
       if (event.configOptions?.length) sessions.cachedConfigOptions = event.configOptions;

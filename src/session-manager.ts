@@ -53,6 +53,7 @@ export class SessionManager {
   private pendingResumes = new Map<string, Promise<void>>();
 
   cachedConfigOptions: ConfigOption[] = [];
+  agentInfo: { name: string; version: string } | null = null;
 
   private store: Store;
   private defaultCwd: string;

@@ -60,6 +60,9 @@ export function resetState(state: any, dom: any) {
   state.newTurnStarted = false;
   state.sentMessageForSession = null;
   state.cancelTimeout = 10_000;
+  state.serverVersion = null;
+  state.agentName = null;
+  state.agentVersion = null;
   state._cancelTimerId = null;
   state.lastEventSeq = 0;
   state.replayInProgress = false;

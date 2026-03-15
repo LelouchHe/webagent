@@ -18,6 +18,7 @@ WebAgent exposes a **REST + SSE** API for managing agent sessions, sending promp
   - [Messages](#messages)
   - [Permissions](#permissions)
   - [Config](#config)
+  - [Version](#version)
   - [Bash](#bash)
   - [Images](#images)
   - [One-Shot Prompt](#one-shot-prompt)
@@ -421,6 +422,30 @@ Get server configuration and available config options.
 |---|---|---|
 | `configOptions` | `ConfigOption[]` | Available config options from the ACP agent (model, mode, reasoning_effort) |
 | `cancelTimeout` | number | Cancel timeout in ms (from `limits.cancel_timeout` config). `0` = disabled |
+
+---
+
+### Version
+
+#### `GET /api/v1/version`
+
+Get server and agent version information.
+
+**Response** `200`:
+
+```json
+{
+  "server": "0.1.10",
+  "agent": { "name": "Copilot CLI", "version": "1.0.5" }
+}
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `server` | string | WebAgent server version (from `package.json`) |
+| `agent` | object \| null | Agent backend info. `null` if bridge hasn't connected yet |
+| `agent.name` | string | Agent name reported via ACP |
+| `agent.version` | string | Agent version reported via ACP |
 
 ---
 
