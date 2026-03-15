@@ -1,10 +1,10 @@
 /**
  * Capture README screenshots using Playwright + mock server.
  *
- * Run:  npx playwright test test/e2e/screenshots.spec.ts
+ * Run:  npm run screenshots
  */
 import { test, expect } from "playwright/test";
-import { gotoConnected, createNewSession, sendPrompt } from "./helpers.ts";
+import { gotoConnected, createNewSession, sendPrompt } from "../test/e2e/helpers.ts";
 
 const DESKTOP = { width: 1280, height: 800 };
 const MOBILE = { width: 375, height: 812 };

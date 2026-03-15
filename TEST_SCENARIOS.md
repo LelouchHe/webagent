@@ -418,9 +418,9 @@ spot gaps, and decide what still needs to be added without reading every spec.
 - `switch-status-bar.spec.ts`
   - status bar shows model and cwd after switching sessions
 
-### Screenshots
+### Screenshots (separate script, not in E2E suite)
 
-- `screenshots.spec.ts`
+- `scripts/screenshots.spec.ts` — run via `npm run screenshots`
   - capture desktop chat, slash menu, permission, and mobile screenshots
 
 ## Known Boundary
