@@ -200,6 +200,20 @@ When the browser tab goes hidden/visible:
 - **Hidden:** `api.postVisibility(clientId, false)` — server stops sending push notifications
 - **Visible:** `api.postVisibility(clientId, true)` + `loadNewEvents()` — catches up on any events missed while backgrounded (important for iOS PWA which can suspend event delivery)
 
+### Push Notification Reliability
+
+Push suppression depends on accurate visibility state on the server. Several scenarios can cause the server's view to become stale, leading to missed or incorrectly suppressed notifications:
+
+| Scenario | What happens | Impact | Mitigation |
+|---|---|---|---|
+| **iOS app suspend** (swipe to home) | `visibilitychange` fires but `fetch(visible=false)` is killed by iOS before reaching server | Server keeps stale `visible=true` → push suppressed | Use `navigator.sendBeacon()` for hidden reports (not yet implemented) |
+| **iOS notification/control center** | No `visibilitychange` event fires | Server still thinks client is visible → push suppressed | None available — browser doesn't expose this |
+| **iOS kills PWA process** | No JS events fire; SSE TCP stays open until heartbeat fails (~20s) | Stale `visible=true` during heartbeat window → push suppressed | Heartbeat detection (20s); no faster option |
+| **Network switch (WiFi→cellular)** | SSE silently breaks; neither side detects immediately | Same as above — stale state until heartbeat | Heartbeat detection (20s) |
+| **Server restart** | All in-memory visibility state lost | No clients tracked = no suppression = push fires normally | Safe by default |
+
+Key design constraint: push is checked **once** at event time. If visibility state is stale at that moment, the push opportunity is lost — there is no retroactive push when stale clients are eventually cleaned up.
+
 ---
 
 ## Data Flow
