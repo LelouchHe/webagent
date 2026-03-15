@@ -12,7 +12,7 @@
 ## Images
 
 - Upload images (button or `^U` shortcut)
-- Paste images (Ctrl+V / Cmd+V)
+- Paste images from clipboard
 - Preview before sending + removable, supports multiple images
 - Server-side storage, displayed inline in chat
 
@@ -67,7 +67,7 @@ Type `?` for inline help listing all commands and shortcuts.
 |---|---|
 | `Enter` | Send message |
 | `Shift+Enter` | New line |
-| `Ctrl+X` | Cancel current response |
+| `Ctrl+C` | Cancel current response (native copy when text is selected) |
 | `Ctrl+M` | Cycle mode (Agent → Plan → Autopilot) |
 | `Ctrl+U` | Upload image |
 

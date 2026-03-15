@@ -67,7 +67,7 @@ describe("state", () => {
     it("sets busy state and updates UI", () => {
       mod.setBusy(true);
       assert.equal(mod.state.busy, true);
-      assert.equal(mod.dom.sendBtn.textContent, "^X");
+      assert.equal(mod.dom.sendBtn.textContent, "^C");
       assert.ok(mod.dom.sendBtn.classList.contains("cancel"));
       assert.ok(mod.dom.prompt.classList.contains("busy"));
     });

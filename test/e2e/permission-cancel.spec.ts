@@ -9,11 +9,11 @@ test("cancel interrupts a pending permission turn immediately", async ({ page })
 
   const permission = page.locator(".permission").last();
   await expect(permission).toContainText("Sensitive command");
-  await expect(page.locator("#send-btn")).toHaveText("^X");
+  await expect(page.locator("#send-btn")).toHaveText("^C");
 
   await page.locator("#send-btn").click();
 
-  await expect(page.locator("#messages")).toContainText("^X");
+  await expect(page.locator("#messages")).toContainText("^C");
   await expect(permission).toContainText("cancelled");
   await expect(page.locator("#send-btn")).toHaveText("↵");
   await expect(page.locator("#input")).toBeEnabled();

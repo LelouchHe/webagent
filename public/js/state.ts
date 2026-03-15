@@ -141,8 +141,8 @@ export function updateStatusBar() {
 export function setBusy(on: boolean) {
   state.busy = on;
   if (on) {
-    dom.sendBtn.textContent = '^X';
-    dom.sendBtn.title = 'Cancel (Ctrl+X)';
+    dom.sendBtn.textContent = '^C';
+    dom.sendBtn.title = 'Cancel (Ctrl+C)';
     dom.sendBtn.classList.add('cancel');
     dom.prompt.classList.add('busy');
   } else {

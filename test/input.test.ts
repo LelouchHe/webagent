@@ -68,7 +68,7 @@ describe("input", () => {
     assert.equal(call!.init?.method, "POST");
     assert.deepEqual(JSON.parse(call!.init?.body), { text: "hello" });
     assert.equal(state.busy, true);
-    assert.equal(dom.sendBtn.textContent, "^X");
+    assert.equal(dom.sendBtn.textContent, "^C");
     assert.equal(dom.input.value, "");
   });
 
@@ -136,7 +136,7 @@ describe("input", () => {
     assert.ok(!dom.sendBtn.classList.contains("cancel"));
   });
 
-  it("send button reverts to ^X when command is cleared while busy", () => {
+  it("send button reverts to ^C when command is cleared while busy", () => {
     state.busy = true;
     setBusy(true);
     dom.input.value = "/switch";
@@ -145,7 +145,7 @@ describe("input", () => {
 
     dom.input.value = "";
     dom.input.dispatchEvent(new globalThis.window.Event("input"));
-    assert.equal(dom.sendBtn.textContent, "^X");
+    assert.equal(dom.sendBtn.textContent, "^C");
     assert.ok(dom.sendBtn.classList.contains("cancel"));
   });
 
@@ -206,20 +206,47 @@ describe("input", () => {
     }]);
   });
 
-  it("sends cancel on global Ctrl+X while busy", () => {
+  it("sends cancel on global Ctrl+C while busy and no selection", () => {
     setFetch(() => ({ ok: true, json: async () => ({}) }));
     state.sessionId = "s1";
     state.busy = true;
 
-    const event = docKeydown("x", { ctrlKey: true });
+    const event = docKeydown("c", { ctrlKey: true });
 
     assert.equal(event.defaultPrevented, true);
-    // sendCancel now uses REST POST /api/v1/sessions/:id/cancel
     const cancelCall = fetchCalls.find(c => c.url.includes("/cancel"));
     assert.ok(cancelCall, "expected a cancel fetch call");
     assert.equal(cancelCall!.url, "/api/v1/sessions/s1/cancel");
     assert.equal(cancelCall!.init?.method, "POST");
-    assert.ok(dom.messages.textContent.includes("^X"));
+    assert.ok(dom.messages.textContent.includes("^C"));
+  });
+
+  it("Ctrl+C allows native copy when text is selected in textarea", () => {
+    state.busy = true;
+    dom.input.value = "some text";
+    dom.input.selectionStart = 0;
+    dom.input.selectionEnd = 4;
+
+    const event = docKeydown("c", { ctrlKey: true });
+
+    assert.equal(event.defaultPrevented, false, "should not prevent default when textarea has selection");
+  });
+
+  it("Ctrl+C allows native copy when text is selected on the page", () => {
+    state.busy = true;
+    const div = globalThis.document.createElement("div");
+    div.textContent = "page content";
+    globalThis.document.body.appendChild(div);
+    const range = globalThis.document.createRange();
+    range.selectNodeContents(div);
+    globalThis.window.getSelection()!.removeAllRanges();
+    globalThis.window.getSelection()!.addRange(range);
+
+    const event = docKeydown("c", { ctrlKey: true });
+
+    assert.equal(event.defaultPrevented, false, "should not prevent default when page has selection");
+    globalThis.document.body.removeChild(div);
+    globalThis.window.getSelection()!.removeAllRanges();
   });
 
   it("opens the file picker on Ctrl+U", () => {

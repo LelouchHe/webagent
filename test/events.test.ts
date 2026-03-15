@@ -81,7 +81,7 @@ describe("events", () => {
           configOptions: [],
         });
         assert.equal(state.busy, true);
-        assert.equal(dom.sendBtn.textContent, "^X");
+        assert.equal(dom.sendBtn.textContent, "^C");
       });
 
       it("reattaches a running bash block for a busy bash session", () => {

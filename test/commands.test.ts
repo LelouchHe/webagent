@@ -237,7 +237,7 @@ describe("commands", () => {
       assert.ok(cancelCall, "expected a cancel fetch call");
       assert.equal(cancelCall!.url, "/api/v1/sessions/s1/cancel");
       assert.equal(cancelCall!.init?.method, "POST");
-      assert.ok(messageLines().includes("^X"));
+      assert.ok(messageLines().includes("^C"));
     });
 
     it("reports the selected config value when no /model arg is given", async () => {

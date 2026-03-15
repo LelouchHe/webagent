@@ -107,7 +107,7 @@ function sendMessage() {
 }
 
 function doCancel() {
-  if (sendCancel()) addSystem('^X');
+  if (sendCancel()) addSystem('^C');
 }
 
 // --- Event listeners ---
@@ -126,8 +126,8 @@ function syncSendBtn() {
     dom.sendBtn.title = 'Send (Enter)';
     dom.sendBtn.classList.remove('cancel');
   } else {
-    dom.sendBtn.textContent = '^X';
-    dom.sendBtn.title = 'Cancel (Ctrl+X)';
+    dom.sendBtn.textContent = '^C';
+    dom.sendBtn.title = 'Cancel (Ctrl+C)';
     dom.sendBtn.classList.add('cancel');
   }
 }
@@ -162,10 +162,15 @@ dom.input.addEventListener('keydown', (e) => {
 
 // Global Escape to dismiss slash menu
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'x' && (e.ctrlKey || e.metaKey) && !e.shiftKey && state.busy) {
-    e.preventDefault();
-    doCancel();
-    return;
+  // Ctrl+C: cancel when busy and nothing selected, otherwise native copy
+  if (e.key === 'c' && (e.ctrlKey || e.metaKey) && !e.shiftKey && state.busy) {
+    const hasSelection = window.getSelection()?.toString()
+      || dom.input.selectionStart !== dom.input.selectionEnd;
+    if (!hasSelection) {
+      e.preventDefault();
+      doCancel();
+      return;
+    }
   }
   if (e.key === 'Escape' && dom.slashMenu.classList.contains('active')) {
     e.preventDefault();

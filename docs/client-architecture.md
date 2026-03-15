@@ -587,7 +587,7 @@ Updated by `updateStatusBar()` in `state.ts`, called from:
 ### Busy State
 
 When `setBusy(true)`:
-- Send button changes to `^X` (cancel)
+- Send button changes to `^C` (cancel)
 - Prompt indicator shows busy animation
 - Regular messages are blocked (slash/bash commands still allowed)
 

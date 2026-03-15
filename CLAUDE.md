@@ -121,8 +121,8 @@ Keep this distinction clear in docs and code discussions: some missing capabilit
 - **esbuild bundling** — Frontend source is TypeScript in `public/js/*.ts`. `scripts/build.js` bundles via esbuild into a single `dist/js/app.[hash].js` (minified, content-hashed). CSS is also content-hashed. Dev mode (`--dev`) outputs to `dist-dev/` without minification or hashing; `--watch` adds live rebuild.
 - **Module structure** — `public/js/state.ts` (shared state + DOM refs), `render.ts` (UI helpers + theme), `events.ts` (WS event dispatch + history), `commands.ts` (slash commands + autocomplete), `images.ts` (attach/paste), `input.ts` (send/keyboard), `connection.ts` (WS lifecycle), `app.ts` (boot entry).
 - **Shared code** — Frontend imports types (`AgentEvent`, `ConfigOption`) from `src/types.ts` and constants (`TOOL_ICONS`, `PLAN_STATUS_ICONS`) from `src/shared/constants.ts`. esbuild resolves these cross-directory imports at bundle time.
-- **Terminal aesthetic** — monospace fonts, `^X` / `^U` style button labels, `*` git-branch-style session markers.
-- **Keyboard shortcuts** — `Ctrl+X` cancel, `Ctrl+U` upload. Enter always sends input (never cancels, never selects menu item). Tab fills menu selection into input without executing. Click/tap on menu item = fill + send.
+- **Terminal aesthetic** — monospace fonts, `^C` / `^U` style button labels, `*` git-branch-style session markers.
+- **Keyboard shortcuts** — `Ctrl+C` cancel (smart: native copy when text selected), `Ctrl+U` upload. Enter always sends input (never cancels, never selects menu item). Tab fills menu selection into input without executing. Click/tap on menu item = fill + send.
 - **Theme** — dark/light/auto, persisted to localStorage.
 - **Escape key** — `inputEl` keydown listener cannot reliably capture Escape (browser default behavior / IME may consume it first). Use `document.addEventListener('keydown', ...)` instead for Escape handling.
 - **Prefer CSS for animations** — Use CSS `@keyframes` + pseudo-elements for UI animations (spinners, pulses) instead of JS `setInterval`. JS timers cause issues in test environments (JSDOM) by keeping the event loop alive.

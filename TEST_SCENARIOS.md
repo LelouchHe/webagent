@@ -147,11 +147,11 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - normal prompt send flow
   - `!` bash routing
   - image upload send flow
-  - global `Ctrl+X` cancel
+  - global `Ctrl+C` cancel (smart: skips when text selected)
   - `Ctrl+U` upload
   - `Ctrl+M` mode cycle
   - slash command bypass while busy
-  - send-button label switching (↵ vs ^X) while busy
+  - send-button label switching (↵ vs ^C) while busy
   - not-connected and not-ready warnings
 
 - `test/events.test.ts`
