@@ -246,7 +246,7 @@ function runSupervisor(serverArgs: string[]): void {
 
   function spawnServer(): void {
     lastStart = Date.now();
-    child = spawn(process.execPath, [serverJs, ...serverArgs], { stdio: "inherit" });
+    child = spawn(process.execPath, [serverJs, ...serverArgs], { stdio: "inherit", windowsHide: true });
     child.on("exit", onChildExit);
   }
 
