@@ -1118,11 +1118,38 @@ describe("events", () => {
       assert.ok(dom.messages.children[0].classList.contains("assistant"));
     });
 
+    it("merges consecutive assistant_messages into one bubble", () => {
+      events.replayEvent("assistant_message", { text: "Hello " }, [], 0);
+      events.replayEvent("assistant_message", { text: "world" }, [], 1);
+      const msgs = dom.messages.querySelectorAll(".msg.assistant");
+      assert.equal(msgs.length, 1, "should merge into a single bubble");
+      assert.ok(msgs[0].innerHTML.includes("Hello"));
+      assert.ok(msgs[0].innerHTML.includes("world"));
+    });
+
+    it("does not merge assistant_messages separated by other events", () => {
+      events.replayEvent("assistant_message", { text: "first" }, [], 0);
+      events.replayEvent("thinking", { text: "hmm" }, [], 1);
+      events.replayEvent("assistant_message", { text: "second" }, [], 2);
+      const msgs = dom.messages.querySelectorAll(".msg.assistant");
+      assert.equal(msgs.length, 2, "should remain separate bubbles");
+    });
+
     it("replays thinking", () => {
       events.replayEvent("thinking", { text: "thoughts" }, [], 0);
       const thinking = dom.messages.querySelector(".thinking");
       assert.ok(thinking);
       assert.equal(thinking.querySelector("summary").textContent, "⠿ thought");
+    });
+
+    it("merges consecutive thinking blocks into one", () => {
+      events.replayEvent("thinking", { text: "part one" }, [], 0);
+      events.replayEvent("thinking", { text: "part two" }, [], 1);
+      const thinkings = dom.messages.querySelectorAll(".thinking");
+      assert.equal(thinkings.length, 1, "should merge into a single thinking block");
+      const content = thinkings[0].querySelector(".thinking-content").textContent;
+      assert.ok(content.includes("part one"));
+      assert.ok(content.includes("part two"));
     });
 
     it("replays tool_call and tool_call_update", () => {

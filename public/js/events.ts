@@ -414,10 +414,33 @@ export function replayEvent(type: string, data: Record<string, any>, events: Sto
       }
       break;
     }
-    case 'assistant_message':
-      addMessage('assistant', data.text);
+    case 'assistant_message': {
+      // Merge consecutive assistant messages into one bubble (buffer flushes can split them)
+      const container = state.replayTarget || dom.messages;
+      const lastChild = container.lastElementChild as HTMLElement | null;
+      if (lastChild && lastChild.classList.contains('msg') && lastChild.classList.contains('assistant')) {
+        // Re-render with combined text by extracting existing text and appending
+        const existing = lastChild.getAttribute('data-raw') || '';
+        const combined = existing + data.text;
+        lastChild.setAttribute('data-raw', combined);
+        lastChild.innerHTML = renderMd(combined);
+        break;
+      }
+      const el = addMessage('assistant', data.text);
+      el.setAttribute('data-raw', data.text);
       break;
+    }
     case 'thinking': {
+      // Merge consecutive thinking blocks into one (buffer flushes can split them)
+      const container = state.replayTarget || dom.messages;
+      const lastChild = container.lastElementChild as HTMLElement | null;
+      if (lastChild && lastChild.classList.contains('thinking')) {
+        const content = lastChild.querySelector('.thinking-content');
+        if (content) {
+          content.textContent += '\n' + data.text;
+          break;
+        }
+      }
       const el = document.createElement('details');
       el.className = 'thinking';
       el.innerHTML = `<summary>⠿ thought</summary><div class="thinking-content">${escHtml(data.text)}</div>`;
