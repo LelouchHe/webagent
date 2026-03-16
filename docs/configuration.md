@@ -11,7 +11,7 @@ These agents have built-in ACP and work directly with `agent_cmd`:
 | Agent | Command | Notes |
 |---|---|---|
 | [Copilot CLI](https://github.com/github/copilot-cli) | `copilot --acp` | Default. GitHub's AI pair programmer |
-| [Gemini CLI](https://github.com/google-gemini/gemini-cli) | `gemini --acp` | Google's Gemini models (also `--experimental-acp`) |
+| [Gemini CLI](https://github.com/google-gemini/gemini-cli) | `gemini --experimental-acp` | Google's Gemini models (experimental flag, no stable `--acp` yet) |
 | [OpenCode](https://opencode.ai/) | `opencode acp` | Open-source, extensible (note: subcommand, not flag) |
 
 ### Via ACP adapter
@@ -20,12 +20,12 @@ These agents do not have a native `--acp` flag. Use a community adapter that wra
 
 | Agent | Adapter | Install |
 |---|---|---|
-| [Claude Code](https://docs.anthropic.com/en/docs/agents/claude-code) | [`@zed-industries/claude-code-acp`](https://www.npmjs.com/package/@zed-industries/claude-code-acp) | `npm i -g @zed-industries/claude-code-acp` |
+| [Claude Code](https://docs.anthropic.com/en/docs/agents/claude-code) | [`@zed-industries/claude-agent-acp`](https://www.npmjs.com/package/@zed-industries/claude-agent-acp) | `npm i -g @zed-industries/claude-agent-acp` |
 
 To use Claude Code with WebAgent via the adapter:
 
 ```toml
-agent_cmd = "claude-code-acp"
+agent_cmd = "claude-agent-acp"
 ```
 
 See the [ACP Registry](https://agentclientprotocol.com/get-started/registry) for the full list of agents and adapters.
