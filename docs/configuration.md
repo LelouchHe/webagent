@@ -2,16 +2,33 @@
 
 ## ACP-Compatible Agents
 
-WebAgent works with any agent that implements the [Agent Client Protocol](https://agentclientprotocol.com/). Some options:
+WebAgent works with any agent that implements the [Agent Client Protocol](https://agentclientprotocol.com/). Not all coding CLIs support ACP natively — some require a wrapper or adapter.
+
+### Native ACP support
+
+These agents have built-in ACP and work directly with `agent_cmd`:
 
 | Agent | Command | Notes |
 |---|---|---|
 | [Copilot CLI](https://github.com/github/copilot-cli) | `copilot --acp` | Default. GitHub's AI pair programmer |
-| [Claude Code](https://docs.anthropic.com/en/docs/agents/claude-code) | `claude --acp` | Anthropic's coding agent |
-| [Gemini CLI](https://github.com/google-gemini/gemini-cli) | `gemini --acp` | Google's Gemini models |
-| [OpenCode](https://opencode.ai/) | `opencode --acp` | Open-source, extensible |
+| [Gemini CLI](https://github.com/google-gemini/gemini-cli) | `gemini --acp` | Google's Gemini models (also `--experimental-acp`) |
+| [OpenCode](https://opencode.ai/) | `opencode acp` | Open-source, extensible (note: subcommand, not flag) |
 
-See the [ACP Registry](https://agentclientprotocol.com/get-started/agents) for the full list.
+### Via ACP adapter
+
+These agents do not have a native `--acp` flag. Use a community adapter that wraps the CLI into an ACP-compatible process:
+
+| Agent | Adapter | Install |
+|---|---|---|
+| [Claude Code](https://docs.anthropic.com/en/docs/agents/claude-code) | [`@zed-industries/claude-code-acp`](https://www.npmjs.com/package/@zed-industries/claude-code-acp) | `npm i -g @zed-industries/claude-code-acp` |
+
+To use Claude Code with WebAgent via the adapter:
+
+```toml
+agent_cmd = "claude-code-acp"
+```
+
+See the [ACP Registry](https://agentclientprotocol.com/get-started/registry) for the full list of agents and adapters.
 
 ## Configuration
 

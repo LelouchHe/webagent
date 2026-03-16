@@ -30,3 +30,7 @@ Passing `mcpServers: []` does **not** disable MCP — the agent loads its own co
 - No method to compact or clear session context; only option is to create a new session
 
 In practice, this means WebAgent provides a browser UI for the core ACP chat/session workflow, but not the full product surface of direct Copilot CLI or Claude Code in a terminal.
+
+## Agent Compatibility
+
+Not all coding CLIs support ACP natively. See [Configuration — ACP-Compatible Agents](configuration.md#acp-compatible-agents) for which agents work out of the box and which need an adapter.
