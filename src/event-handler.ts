@@ -80,14 +80,13 @@ export function handleAgentEvent(
           });
           // Broadcast both so the frontend can render then collapse the permission card
           sseManager.broadcast(event);
-          const resolvedEvent = {
-            type: "permission_resolved" as const,
+          sseManager.broadcast({
+            type: "permission_response" as const,
             sessionId: event.sessionId,
             requestId: event.requestId,
             optionName,
             denied: false,
-          };
-          sseManager.broadcast(resolvedEvent);
+          });
           return;
         }
       }

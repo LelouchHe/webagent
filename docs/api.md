@@ -396,7 +396,7 @@ Resolve a pending permission request (approve or deny).
 
 **Side effects:**
 - Stores `permission_response` event
-- Broadcasts `permission_resolved` to all SSE clients
+- Broadcasts `permission_response` to all SSE clients
 - Removes from pending permissions map
 
 **Errors:** `404` (not found), `400` (missing optionId or denied), `503` (agent not ready)
@@ -724,7 +724,7 @@ These events are streamed in real-time via SSE as the agent works.
 | `tool_call_update` | `sessionId`, `id`, `status`, `content?` | Tool call status changed (`completed`, `failed`) |
 | `plan` | `sessionId`, `entries` | Agent plan update. Each entry: `{ status, content }` |
 | `permission_request` | `requestId`, `sessionId`, `title`, `options` | Agent needs permission to proceed |
-| `permission_resolved` | `requestId`, `sessionId`, `optionName`, `denied` | Permission was resolved (server-generated) |
+| `permission_response` | `requestId`, `sessionId`, `optionName`, `denied` | Permission was resolved (server-generated) |
 | `prompt_done` | `sessionId`, `stopReason` | Agent turn complete |
 | `error` | `message`, `sessionId?` | Error occurred |
 | `user_message` | `sessionId`, `text`, `images?` | User message broadcast (for multi-client sync) |
@@ -741,7 +741,6 @@ These are **aggregated** events stored in the database. They appear in `GET /api
 | `assistant_message` | `text` | Complete assistant message (aggregated from `message_chunk`s) |
 | `thinking` | `text` | Complete thinking block (aggregated from `thought_chunk`s) |
 | `bash_result` | `output`, `code`, `signal` | Aggregated bash output (replaces live `bash_output` chunks) |
-| `permission_response` | `requestId`, `optionName`, `denied` | Stored record of permission resolution |
 
 ### Event Aggregation
 
@@ -852,7 +851,7 @@ When a session's mode includes `#autopilot`, the server auto-approves permission
 1. Permission request arrives from agent
 2. Check session mode in DB
 3. If autopilot, find the `allow_once` option and resolve immediately
-4. Broadcast both `permission_request` and `permission_resolved` so clients can render the collapsed state
+4. Broadcast both `permission_request` and `permission_response` so clients can render the collapsed state
 
 ---
 

@@ -474,8 +474,8 @@ This prevents the user's own message from appearing twice.
    c. Track in state.unconfirmedPermissions
 5. Server: POST /api/v1/sessions/:id/permissions/:reqId
    a. bridge.resolvePermission() or bridge.denyPermission()
-   b. Broadcast permission_resolved
-6. Client receives permission_resolved
+   b. Broadcast permission_response
+6. Client receives permission_response
    a. Remove from unconfirmedPermissions
    b. Update DOM (idempotent — already collapsed)
 ```

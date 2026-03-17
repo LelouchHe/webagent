@@ -186,14 +186,14 @@ describe("Permissions REST API", () => {
       assert.equal(data.optionId, "allow_once");
     });
 
-    it("broadcasts permission_resolved event", async () => {
+    it("broadcasts permission_response event", async () => {
       const sessionId = await createSession();
       addPendingPermission(sessionId, "perm-1");
       broadcastEvents = [];
 
       await makeRequest(port, "POST", `/api/v1/sessions/${sessionId}/permissions/perm-1`,
         JSON.stringify({ optionId: "allow_once" }));
-      const resolved = broadcastEvents.find((e: any) => e.type === "permission_resolved");
+      const resolved = broadcastEvents.find((e: any) => e.type === "permission_response");
       assert.ok(resolved);
     });
 

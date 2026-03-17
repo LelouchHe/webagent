@@ -379,7 +379,7 @@ describe("events", () => {
       });
     });
 
-    describe("permission_resolved", () => {
+    describe("permission_response (live)", () => {
       it("dismisses permission buttons from another client", () => {
         state.sessionId = "s1";
         events.handleEvent({
@@ -389,7 +389,7 @@ describe("events", () => {
           options: [{ optionId: "allow", kind: "allow_once", name: "Allow" }],
         });
         events.handleEvent({
-          type: "permission_resolved",
+          type: "permission_response",
           sessionId: "s1",
           requestId: "perm3",
           optionName: "Allow",
@@ -400,7 +400,7 @@ describe("events", () => {
         assert.ok(perm.textContent.includes("Allow"));
       });
 
-      it("preserves original title after permission_resolved", () => {
+      it("preserves original title after permission_response", () => {
         state.sessionId = "s1";
         events.handleEvent({
           type: "permission_request",
@@ -409,7 +409,7 @@ describe("events", () => {
           options: [{ optionId: "allow", kind: "allow_once", name: "Allow once" }],
         });
         events.handleEvent({
-          type: "permission_resolved",
+          type: "permission_response",
           sessionId: "s1",
           requestId: "perm-title",
           optionName: "Allow once",
@@ -420,7 +420,7 @@ describe("events", () => {
         assert.ok(perm.textContent.includes("Allow once"));
       });
 
-      it("clears unconfirmed permission on permission_resolved", () => {
+      it("clears unconfirmed permission on permission_response", () => {
         state.sessionId = "s1";
         events.handleEvent({
           type: "permission_request",
@@ -431,7 +431,7 @@ describe("events", () => {
         dom.messages.querySelector(".permission button").click();
         assert.ok(state.unconfirmedPermissions.has("perm-conf"));
         events.handleEvent({
-          type: "permission_resolved",
+          type: "permission_response",
           sessionId: "s1",
           requestId: "perm-conf",
           optionName: "Allow",

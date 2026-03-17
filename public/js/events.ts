@@ -867,7 +867,7 @@ export function handleEvent(msg: AgentEvent) {
             api.resolvePermission(state.sessionId!, msg.requestId, opt.optionId).catch(() => {});
           }
           state.pendingPermissionRequestIds.delete(msg.requestId);
-          // Track for retry on reconnect (cleared when server confirms via permission_resolved)
+          // Track for retry on reconnect (cleared when server confirms via permission_response)
           state.unconfirmedPermissions.set(msg.requestId, {
             sessionId: state.sessionId,
             optionId: opt.optionId,
@@ -883,7 +883,7 @@ export function handleEvent(msg: AgentEvent) {
       break;
     }
 
-    case 'permission_resolved': {
+    case 'permission_response': {
       state.pendingPermissionRequestIds.delete(msg.requestId);
       state.unconfirmedPermissions.delete(msg.requestId);
       const permTarget = document.querySelector(`.permission[data-request-id="${msg.requestId}"]`);

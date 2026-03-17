@@ -188,11 +188,11 @@ describe("handleAgentEvent", () => {
     // Bridge should resolve with allow_once
     assert.deepEqual(calls.resolvePermission, [{ requestId: "req1", optionId: "allow_once" }]);
 
-    // Should broadcast permission_request then permission_resolved via SSE
+    // Should broadcast permission_request then permission_response via SSE
     assert.equal(broadcasted.length, 2);
     assert.equal(broadcasted[0].type, "permission_request");
     assert.equal((broadcasted[0] as any).requestId, "req1");
-    assert.equal(broadcasted[1].type, "permission_resolved");
+    assert.equal(broadcasted[1].type, "permission_response");
     assert.equal((broadcasted[1] as any).requestId, "req1");
     assert.equal((broadcasted[1] as any).denied, false);
     assert.equal((broadcasted[1] as any).optionName, "Allow once");

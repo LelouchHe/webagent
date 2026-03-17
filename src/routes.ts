@@ -161,18 +161,14 @@ export function createRequestHandler(deps: RequestHandlerDeps): (req: IncomingMe
 
         sessions!.pendingPermissions.delete(requestId);
 
-        // Store event and broadcast
-        store.saveEvent(perm.sessionId, "permission_response", {
-          requestId, optionId, optionName, denied,
-        });
-        const permEvent = {
-          type: "permission_resolved",
+        // Store event and broadcast (same type so SSE drops are recoverable via sync)
+        const permEventData = { requestId, optionName, denied };
+        store.saveEvent(perm.sessionId, "permission_response", { ...permEventData, optionId });
+        sseManager.broadcast({
+          type: "permission_response",
           sessionId: perm.sessionId,
-          requestId,
-          optionName,
-          denied,
-        } as AgentEvent;
-        sseManager.broadcast(permEvent);
+          ...permEventData,
+        } as AgentEvent);
 
         json(res, 200, { ok: true });
         return;
