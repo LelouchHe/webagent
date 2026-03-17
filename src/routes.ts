@@ -89,7 +89,7 @@ export function createRequestHandler(deps: RequestHandlerDeps): (req: IncomingMe
             sessions: "/api/v1/sessions",
             config: "/api/v1/config",
             events_stream: "/api/v1/events/stream",
-            prompt: "/api/v1/prompt",
+            prompt: "/api/beta/prompt",
             push: "/api/beta/push",
             clients: "/api/beta/clients",
           },
@@ -588,53 +588,6 @@ export function createRequestHandler(deps: RequestHandlerDeps): (req: IncomingMe
         return;
       }
 
-      // POST /api/v1/prompt — quick one-shot prompt (create temp session + send)
-      if (url === "/api/v1/prompt" && req.method === "POST") {
-        if (!sessions || !getBridge) {
-          json(res, 503, { error: "Agent not available" });
-          return;
-        }
-        const bridge = getBridge();
-        if (!bridge) {
-          json(res, 503, { error: "Agent not available" });
-          return;
-        }
-
-        let body: Record<string, unknown>;
-        try {
-          body = JSON.parse(await readBody(req));
-        } catch {
-          json(res, 400, { error: "Invalid JSON" });
-          return;
-        }
-
-        const text = body.text as string | undefined;
-        if (!text || typeof text !== "string") {
-          json(res, 400, { error: "Missing required field: text" });
-          return;
-        }
-
-        const cwd = (body.cwd as string) || undefined;
-        const { sessionId } = await sessions.createSession(bridge, cwd, undefined, "auto");
-        const streamUrl = `/api/v1/sessions/${sessionId}/events/stream`;
-
-        json(res, 202, { sessionId, streamUrl });
-
-        // Fire-and-forget: send the prompt asynchronously, tracking busy state
-        sessions.activePrompts.add(sessionId);
-        // Generate title (fire-and-forget)
-        if (titleService && !sessions.sessionHasTitle.has(sessionId)) {
-          titleService.generate(bridge as AgentBridge, text, sessionId, (title) => {
-            const titleEvent = { type: "session_title_updated", sessionId, title } as AgentEvent;
-            sseManager.broadcast(titleEvent);
-          });
-        }
-        bridge.prompt(sessionId, text)
-          .catch(() => {})
-          .finally(() => sessions.activePrompts.delete(sessionId));
-        return;
-      }
-
       // --- SSE stream endpoints ---
 
       // GET /api/v1/events/stream — global SSE stream
@@ -780,6 +733,53 @@ export function createRequestHandler(deps: RequestHandlerDeps): (req: IncomingMe
     // --- Beta API routes ---
     if (url.startsWith("/api/beta/")) {
       res.setHeader("Content-Type", "application/json");
+
+      // POST /api/beta/prompt — quick one-shot prompt (create temp session + send)
+      if (url === "/api/beta/prompt" && req.method === "POST") {
+        if (!sessions || !getBridge) {
+          json(res, 503, { error: "Agent not available" });
+          return;
+        }
+        const bridge = getBridge();
+        if (!bridge) {
+          json(res, 503, { error: "Agent not available" });
+          return;
+        }
+
+        let body: Record<string, unknown>;
+        try {
+          body = JSON.parse(await readBody(req));
+        } catch {
+          json(res, 400, { error: "Invalid JSON" });
+          return;
+        }
+
+        const text = body.text as string | undefined;
+        if (!text || typeof text !== "string") {
+          json(res, 400, { error: "Missing required field: text" });
+          return;
+        }
+
+        const cwd = (body.cwd as string) || undefined;
+        const { sessionId } = await sessions.createSession(bridge, cwd, undefined, "auto");
+        const streamUrl = `/api/v1/sessions/${sessionId}/events/stream`;
+
+        json(res, 202, { sessionId, streamUrl });
+
+        // Fire-and-forget: send the prompt asynchronously, tracking busy state
+        sessions.activePrompts.add(sessionId);
+        // Generate title (fire-and-forget)
+        if (titleService && !sessions.sessionHasTitle.has(sessionId)) {
+          titleService.generate(bridge as AgentBridge, text, sessionId, (title) => {
+            const titleEvent = { type: "session_title_updated", sessionId, title } as AgentEvent;
+            sseManager.broadcast(titleEvent);
+          });
+        }
+        bridge.prompt(sessionId, text)
+          .catch(() => {})
+          .finally(() => sessions.activePrompts.delete(sessionId));
+        return;
+      }
 
       // POST /api/beta/clients/:clientId/visibility
       const visMatch = url.match(/^\/api\/beta\/clients\/([^/]+)\/visibility$/);

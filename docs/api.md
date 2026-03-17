@@ -21,9 +21,9 @@ WebAgent exposes a **REST + SSE** API for managing agent sessions, sending promp
   - [Version](#version)
   - [Bash](#bash)
   - [Images](#images)
-  - [One-Shot Prompt](#one-shot-prompt)
   - [SSE Streams](#sse-streams)
 - [Beta Endpoints (`/api/beta/`)](#beta-endpoints-apibeta)
+  - [One-Shot Prompt](#one-shot-prompt)
   - [Push Notifications](#push-notifications)
   - [Client Visibility](#client-visibility)
 - [SSE Event Reference](#sse-event-reference)
@@ -89,7 +89,7 @@ API discovery endpoint. Returns the API version and top-level endpoint paths.
     "sessions": "/api/v1/sessions",
     "config": "/api/v1/config",
     "events_stream": "/api/v1/events/stream",
-    "prompt": "/api/v1/prompt",
+    "prompt": "/api/beta/prompt",
     "push": "/api/beta/push",
     "clients": "/api/beta/clients"
   }
@@ -538,32 +538,6 @@ Retrieve a previously uploaded image. Responses are immutably cached (`Cache-Con
 
 ---
 
-### One-Shot Prompt
-
-#### `POST /api/v1/prompt`
-
-Create a temporary session and send a prompt in one call. Useful for programmatic/API-only use.
-
-**Request body:**
-
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `text` | string | Yes | The prompt text |
-| `cwd` | string | No | Working directory for the session |
-
-**Response** `202`:
-
-```json
-{
-  "sessionId": "new-session-id",
-  "streamUrl": "/api/v1/sessions/new-session-id/events/stream"
-}
-```
-
-The client should connect to the `streamUrl` SSE endpoint to receive the agent's response.
-
----
-
 ### SSE Streams
 
 #### `GET /api/v1/events/stream`
@@ -615,6 +589,32 @@ These endpoints are under `/api/beta/` because their design is not yet stable. S
 - **Client visibility** depends on the browser's Page Visibility API, which has known reliability issues — iOS PWA visibility state can be stale, background tabs may not fire events consistently, and different browsers behave differently during multitasking.
 
 These APIs work and are used in production, but may be redesigned or replaced when we have a better abstraction for cross-client notifications. Breaking changes are possible without a major version bump.
+
+### One-Shot Prompt
+
+#### `POST /api/beta/prompt`
+
+Create a temporary session and send a prompt in one call. Useful for programmatic/API-only use. This endpoint is in beta because the response format and options (e.g. synchronous wait mode) may change.
+
+**Request body:**
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `text` | string | Yes | The prompt text |
+| `cwd` | string | No | Working directory for the session |
+
+**Response** `202`:
+
+```json
+{
+  "sessionId": "new-session-id",
+  "streamUrl": "/api/v1/sessions/new-session-id/events/stream"
+}
+```
+
+The client should connect to the `streamUrl` SSE endpoint to receive the agent's response.
+
+---
 
 ### Push Notifications
 
