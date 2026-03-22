@@ -109,9 +109,10 @@ async function resumeAndLoad(sessionId: string, incremental: boolean, gen: numbe
       });
     } catch {
       if (gen !== state.sessionSwitchGen) return;
+      const expiredCwd = state.sessionCwd;
       resetSessionUI();
       addSystem('warn: Previous session expired, created new one.');
-      requestNewSession();
+      requestNewSession({ cwd: expiredCwd || undefined });
       return;
     }
     if (gen !== state.sessionSwitchGen) return;
@@ -133,9 +134,10 @@ async function resumeAndLoad(sessionId: string, incremental: boolean, gen: numbe
       }
     } catch {
       if (gen !== state.sessionSwitchGen) return;
+      const expiredCwd2 = state.sessionCwd;
       resetSessionUI();
       addSystem('warn: Previous session expired, created new one.');
-      requestNewSession();
+      requestNewSession({ cwd: expiredCwd2 || undefined });
       return;
     }
     handleEvent({

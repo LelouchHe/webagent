@@ -971,11 +971,13 @@ export function handleEvent(msg: AgentEvent) {
       }
       break;
 
-    case 'session_expired':
+    case 'session_expired': {
+      const cwd = state.sessionCwd;
       resetSessionUI();
       addSystem('warn: Previous session expired, created new one.');
-      requestNewSession();
+      requestNewSession({ cwd: cwd || undefined });
       break;
+    }
 
     case 'config_set': {
       setConfigValue(msg.configId, msg.value);

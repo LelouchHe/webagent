@@ -55,6 +55,21 @@ describe("commands", () => {
       assert.ok(messageLines().includes("Creating new session…"));
     });
 
+    it("inherits current session cwd when /new has no argument", async () => {
+      setFetch(() => ({ ok: true, json: async () => ({ id: "new-2" }), text: async () => '{"id":"new-2"}' }));
+      state.sessionId = "current-session";
+      state.sessionCwd = "/my/project";
+
+      const handled = await commands.handleSlashCommand("/new");
+      await new Promise(r => setTimeout(r, 0));
+
+      assert.equal(handled, true);
+      const createCall = fetchCalls.find(c => c.url === "/api/v1/sessions" && c.init?.method === "POST");
+      assert.ok(createCall, "expected POST /api/v1/sessions");
+      const body = JSON.parse(createCall!.init.body);
+      assert.equal(body.cwd, "/my/project", "should inherit cwd from current session");
+    });
+
     it("shows the current working directory for /pwd", async () => {
       state.sessionCwd = "/repo";
 

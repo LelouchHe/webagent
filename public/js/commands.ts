@@ -79,9 +79,10 @@ export async function handleSlashCommand(text: string): Promise<boolean> {
 
   switch (cmd) {
     case '/new': {
+      const cwd = arg || state.sessionCwd;
       resetSessionUI();
       addSystem('Creating new session…');
-      requestNewSession({ cwd: arg || state.sessionCwd });
+      requestNewSession({ cwd: cwd || undefined });
       return true;
     }
 
@@ -144,10 +145,11 @@ export async function handleSlashCommand(text: string): Promise<boolean> {
           });
           scrollToBottom(true);
         } else {
+          const exitCwd = state.sessionCwd;
           resetSessionUI();
           state.sessionId = null;
           addSystem('Creating new session…');
-          requestNewSession({ inheritFromSessionId: null });
+          requestNewSession({ cwd: exitCwd || undefined, inheritFromSessionId: null });
         }
       } catch {
         addSystem('err: Failed to exit session');
