@@ -6,10 +6,16 @@ import './images.ts';    // attach/paste listeners
 import './lightbox.ts';  // click-to-enlarge image viewer
 import './input.ts';     // keyboard/send listeners
 import { connect } from './connection.ts';
-import { state, resetSessionUI } from './state.ts';
+import { state, dom, resetSessionUI } from './state.ts';
 import { loadHistory, handleEvent } from './events.ts';
-import { addSystem, scrollToBottom } from './render.ts';
+import { addSystem, scrollToBottom, onThemeChange } from './render.ts';
+import { handleCopyClick, onThemeChange as hljsThemeChange } from './highlight.ts';
 import * as api from './api.ts';
+
+// Code block copy button (event delegation)
+dom.messages.addEventListener('click', handleCopyClick);
+// Swap hljs theme CSS when app theme changes
+onThemeChange(hljsThemeChange);
 
 connect();
 

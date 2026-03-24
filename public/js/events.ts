@@ -13,6 +13,7 @@ import {
 } from './render.ts';
 import * as api from './api.ts';
 import { TOOL_ICONS, DEFAULT_TOOL_ICON, PLAN_STATUS_ICONS } from '../../src/shared/constants.ts';
+import { enhanceCodeBlocks } from './highlight.ts';
 import type { AgentEvent, PlanEntry, StoredEvent } from '../../src/types.ts';
 
 // During replay, elements live in a detached DocumentFragment (no getElementById).
@@ -424,10 +425,12 @@ export function replayEvent(type: string, data: Record<string, any>, events: Sto
         const combined = existing + data.text;
         lastChild.setAttribute('data-raw', combined);
         lastChild.innerHTML = renderMd(combined);
+        enhanceCodeBlocks(lastChild);
         break;
       }
       const el = addMessage('assistant', data.text);
       el.setAttribute('data-raw', data.text);
+      enhanceCodeBlocks(el);
       break;
     }
     case 'thinking': {
@@ -884,13 +887,18 @@ export function handleEvent(msg: AgentEvent) {
     }
 
     case 'permission_response': {
+      console.log('[PERM-DEBUG] permission_response received:', msg.requestId, 'sessionId:', msg.sessionId, 'state.sessionId:', state.sessionId);
       state.pendingPermissionRequestIds.delete(msg.requestId);
       state.unconfirmedPermissions.delete(msg.requestId);
       const permTarget = document.querySelector(`.permission[data-request-id="${msg.requestId}"]`);
+      console.log('[PERM-DEBUG] permTarget found:', !!permTarget, 'sessionMatch:', msg.sessionId === state.sessionId);
       if (msg.sessionId === state.sessionId && permTarget) {
         const title = permTarget.dataset.title ? `⚿ ${permTarget.dataset.title}` : '⚿';
         const action = msg.optionName || (msg.denied ? 'denied' : 'allowed');
         permTarget.innerHTML = `<span style="opacity:0.5">${escHtml(title)} — ${escHtml(action)}</span>`;
+        console.log('[PERM-DEBUG] DOM updated successfully');
+      } else {
+        console.log('[PERM-DEBUG] DOM NOT updated — check failed');
       }
       finishPromptIfIdle();
       break;

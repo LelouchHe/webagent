@@ -218,7 +218,12 @@ function applyTheme(t: string) {
   dom.themeBtn.textContent = THEME_ICONS[t];
   dom.themeBtn.title = `Theme: ${t}`;
   localStorage.setItem('theme', t);
+  // Notify listeners (e.g. hljs theme swap)
+  for (const cb of themeChangeCallbacks) cb();
 }
+
+const themeChangeCallbacks: Array<() => void> = [];
+export function onThemeChange(cb: () => void) { themeChangeCallbacks.push(cb); }
 dom.themeBtn.onclick = () => {
   const cur = getTheme();
   applyTheme(THEME_CYCLE[(THEME_CYCLE.indexOf(cur as typeof THEME_CYCLE[number]) + 1) % 3]);
