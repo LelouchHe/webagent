@@ -135,6 +135,52 @@ describe("events", () => {
         assert.equal(state.currentAssistantText, "hello world");
         assert.equal(dom.messages.children.length, 1);
       });
+
+      it("enhances streamed code blocks when the stream finishes", async () => {
+        const originalParse = globalThis.marked.parse;
+        const originalAppendChild = document.head.appendChild.bind(document.head);
+        let sawHljsScript = false;
+
+        globalThis.marked.parse = () => '<pre><code class="language-js">const x = 1;</code></pre>';
+        (globalThis as any).hljs = undefined;
+
+        document.head.appendChild = ((node: Node) => {
+          const result = originalAppendChild(node);
+          if ((node as Element).nodeName === "SCRIPT") {
+            sawHljsScript = true;
+            queueMicrotask(() => {
+              (globalThis as any).hljs = {
+                highlightElement(code: HTMLElement) {
+                  code.dataset.highlighted = "yes";
+                },
+              };
+              (node as HTMLScriptElement).onload?.(new Event("load"));
+            });
+          }
+          return result;
+        }) as typeof document.head.appendChild;
+
+        try {
+          events.handleEvent({ type: "message_chunk", text: "```js\nconst " });
+          events.handleEvent({ type: "message_chunk", text: "x = 1;\n```" });
+
+          assert.equal(
+            dom.messages.querySelector(".code-block-wrapper"),
+            null,
+            "streaming chunks should not keep rebuilding code wrappers",
+          );
+
+          events.handleEvent({ type: "prompt_done", stopReason: "end_turn" });
+          await new Promise(resolve => setTimeout(resolve, 0));
+
+          const wrapper = dom.messages.querySelector(".code-block-wrapper");
+          assert.ok(wrapper, "expected streamed code block to be wrapped when streaming finishes");
+          assert.equal(sawHljsScript, true, "expected completed streamed code block to trigger hljs lazy load");
+        } finally {
+          globalThis.marked.parse = originalParse;
+          document.head.appendChild = originalAppendChild;
+        }
+      });
     });
 
     describe("thought_chunk", () => {

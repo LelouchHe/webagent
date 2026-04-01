@@ -1,6 +1,7 @@
 // Rendering functions, theme, markdown, bash UI
 
 import { dom, state } from './state.ts';
+import { enhanceCodeBlocks } from './highlight.ts';
 
 import type { RawInput } from '../../src/types.ts';
 
@@ -30,8 +31,12 @@ export function addSystem(text: string): HTMLDivElement {
 }
 
 export function finishAssistant() {
+  const assistantEl = state.currentAssistantEl;
   state.currentAssistantEl = null;
   state.currentAssistantText = '';
+  if (assistantEl && typeof assistantEl.querySelector === 'function') {
+    void enhanceCodeBlocks(assistantEl);
+  }
 }
 
 export function finishThinking() {
