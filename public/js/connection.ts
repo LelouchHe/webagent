@@ -30,13 +30,13 @@ export function connect() {
 
   es.onmessage = async (e: MessageEvent) => {
     const msg = JSON.parse(e.data);
-    if (msg.type === 'connected') {
+    // SSE initial handshake: server assigns clientId (no agent field)
+    if (msg.type === 'connected' && msg.clientId) {
       state.clientId = msg.clientId;
       api.postVisibility(msg.clientId, !document.hidden, state.sessionId ?? undefined).catch(() => {});
-      // Re-register push endpoint for the new clientId so per-subscription
-      // visibility filtering works across reconnects
       registerPushEndpoint(msg.clientId);
-      return;
+      // Bridge-originated connected events also carry agent info — pass through
+      if (!msg.agent) return;
     }
     handleEvent(msg);
   };
