@@ -1846,4 +1846,45 @@ describe("events", () => {
       assert.equal(state.unconfirmedPermissions.has("perm-gone"), false);
     });
   });
+
+  describe("agent reload events", () => {
+    it("agent_reloading sets busy and shows system message", () => {
+      state.sessionId = "s1";
+      events.handleEvent({ type: "agent_reloading" });
+
+      assert.equal(state.busy, true);
+      assert.equal(state.agentReloading, true);
+      const msgs = [...dom.messages.children].map((el: any) => el.textContent);
+      assert.ok(msgs.some(m => m.includes("reloading")));
+    });
+
+    it("connected after agent_reloading shows reloaded message and clears busy", () => {
+      state.sessionId = "s1";
+      state.agentReloading = true;
+      state.busy = true;
+
+      events.handleEvent({
+        type: "connected",
+        agent: { name: "mock-agent", version: "2.0" },
+        configOptions: [],
+      });
+
+      assert.equal(state.agentReloading, false);
+      assert.equal(state.busy, false);
+      const msgs = [...dom.messages.children].map((el: any) => el.textContent);
+      assert.ok(msgs.some(m => m.includes("reloaded")));
+    });
+
+    it("agent_reloading_failed shows error and clears busy", () => {
+      state.sessionId = "s1";
+      state.agentReloading = true;
+      state.busy = true;
+
+      events.handleEvent({ type: "agent_reloading_failed", error: "broken binary" });
+
+      assert.equal(state.busy, false);
+      const msgs = [...dom.messages.children].map((el: any) => el.textContent);
+      assert.ok(msgs.some(m => m.includes("broken binary")));
+    });
+  });
 });

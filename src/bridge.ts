@@ -3,6 +3,9 @@ import { Writable, Readable } from "node:stream";
 import { EventEmitter } from "node:events";
 import * as acp from "@agentclientprotocol/sdk";
 import type { AgentEvent, ConfigOption, RawInput } from "./types.ts";
+import type { SessionManager } from "./session-manager.ts";
+import type { TitleService } from "./title-service.ts";
+import { interruptBashProc } from "./session-manager.ts";
 
 export class AgentBridge extends EventEmitter {
   private proc: ChildProcess | null = null;
@@ -12,6 +15,7 @@ export class AgentBridge extends EventEmitter {
   private silentSessions = new Set<string>(); // Sessions that don't emit events
   private silentBuffers = new Map<string, string>(); // Text buffers for silent sessions
   readonly agentCmd: string;
+  reloading = false;
 
   constructor(agentCmd: string) {
     super();
@@ -176,6 +180,72 @@ export class AgentBridge extends EventEmitter {
       resolve({ outcome: { outcome: "cancelled" } });
       this.permissionResolvers.delete(requestId);
       this.permissionRequestSessions.delete(requestId);
+    }
+  }
+
+  /**
+   * Restart the agent subprocess. Cancels all active work, cleans up state,
+   * shuts down the old process, and starts a new one. Sessions are restored
+   * lazily via ensureResumed() on next user interaction.
+   */
+  async restart(sessions: SessionManager, titleService: TitleService): Promise<void> {
+    if (this.reloading) throw new Error("Already reloading");
+    this.reloading = true;
+    this.emit("event", { type: "agent_reloading" } satisfies AgentEvent);
+    console.log("[bridge] reloading agent...");
+
+    try {
+      // 1. Cancel all active prompts + kill bash procs
+      for (const sessionId of [...sessions.activePrompts]) {
+        const proc = sessions.runningBashProcs.get(sessionId);
+        if (proc) {
+          interruptBashProc(proc);
+          sessions.runningBashProcs.delete(sessionId);
+        }
+        try { await this.cancel(sessionId); } catch { /* best-effort */ }
+      }
+
+      // 2. Flush buffers to persist partial content
+      for (const sessionId of sessions.liveSessions) {
+        sessions.flushBuffers(sessionId);
+      }
+
+      // 3. Clean up SessionManager state
+      sessions.pendingPermissions.clear();
+      sessions.activePrompts.clear();
+
+      // 4. Invalidate title service session
+      titleService.invalidate();
+
+      // 5. Clear liveSessions so ensureResumed() will re-register on next access
+      sessions.liveSessions.clear();
+
+      // 6. Shutdown old process
+      await this.shutdown();
+
+      // 7. Start new process with retry (exponential backoff, max 3 attempts)
+      let lastError: unknown;
+      for (let i = 0; i < 3; i++) {
+        try {
+          await this.start();
+          lastError = null;
+          break;
+        } catch (err) {
+          lastError = err;
+          console.error(`[bridge] start attempt ${i + 1} failed:`, err);
+          if (i < 2) await new Promise((r) => setTimeout(r, 1000 * 2 ** i));
+        }
+      }
+
+      if (lastError || !this.conn) {
+        const msg = lastError instanceof Error ? lastError.message : String(lastError);
+        this.emit("event", { type: "agent_reloading_failed", error: msg } satisfies AgentEvent);
+        throw lastError;
+      }
+
+      console.log("[bridge] agent reloaded successfully");
+    } finally {
+      this.reloading = false;
     }
   }
 

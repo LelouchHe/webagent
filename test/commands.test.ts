@@ -363,5 +363,29 @@ describe("commands", () => {
         assert.ok(messageLines().some(l => l.includes("Failed to rename")));
       });
     });
+
+    describe("/reload", () => {
+      it("calls POST /api/v1/bridge/reload and shows system message", async () => {
+        setFetch(() => ({ ok: true, json: async () => ({ ok: true }), text: async () => '{"ok":true}' }));
+
+        const handled = await commands.handleSlashCommand("/reload");
+        await new Promise(r => setTimeout(r, 0));
+
+        assert.equal(handled, true);
+        const reloadCall = fetchCalls.find(c => c.url === "/api/v1/bridge/reload" && c.init?.method === "POST");
+        assert.ok(reloadCall, "expected POST /api/v1/bridge/reload");
+        assert.ok(messageLines().some(l => l.includes("Reloading")));
+      });
+
+      it("shows error on reload failure", async () => {
+        setFetch(() => ({ ok: false, status: 500, json: async () => ({ error: "agent crashed" }), text: async () => '{"error":"agent crashed"}' }));
+
+        const handled = await commands.handleSlashCommand("/reload");
+        await new Promise(r => setTimeout(r, 0));
+
+        assert.equal(handled, true);
+        assert.ok(messageLines().some(l => l.includes("agent crashed") || l.includes("Failed")));
+      });
+    });
   });
 });

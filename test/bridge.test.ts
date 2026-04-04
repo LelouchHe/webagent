@@ -277,4 +277,159 @@ describe("AgentBridge", () => {
 
     assert.deepEqual(result, { content: "hello file" });
   });
+
+  describe("restart()", () => {
+    function createMockSessions() {
+      return {
+        liveSessions: new Set(["s1", "s2"]),
+        restoringSessions: new Set<string>(),
+        activePrompts: new Set(["s1"]),
+        runningBashProcs: new Map<string, any>(),
+        pendingPermissions: new Map([["req1", { requestId: "req1", sessionId: "s1", title: "test", options: [] }]]),
+        assistantBuffers: new Map([["s1", "partial text"]]),
+        thinkingBuffers: new Map([["s1", "partial thought"]]),
+        flushBuffers(sessionId: string) {
+          this.assistantBuffers.delete(sessionId);
+          this.thinkingBuffers.delete(sessionId);
+        },
+        sessionHasTitle: new Set<string>(),
+        cachedConfigOptions: [],
+        agentInfo: null as any,
+      };
+    }
+
+    function createMockTitleService() {
+      let invalidated = false;
+      return {
+        invalidate() { invalidated = true; },
+        get wasInvalidated() { return invalidated; },
+      };
+    }
+
+    it("emits agent_reloading, cleans state, and reconnects", async () => {
+      const bridge = new AgentBridge("fake-agent");
+      const events: any[] = [];
+      bridge.on("event", (e: any) => events.push(e));
+
+      // Stub conn for cancel
+      let cancelCalled = false;
+      (bridge as any).conn = {
+        cancel: async () => { cancelCalled = true; },
+      };
+
+      const sessions = createMockSessions();
+      const titleService = createMockTitleService();
+
+      // Stub start() to simulate successful restart
+      let startCalls = 0;
+      (bridge as any).start = async () => {
+        startCalls++;
+        (bridge as any).conn = {}; // simulate connected
+        bridge.emit("event", {
+          type: "connected",
+          agent: { name: "mock", version: "2.0" },
+          configOptions: [],
+        });
+      };
+
+      await bridge.restart(sessions as any, titleService as any);
+
+      // Should have emitted agent_reloading first
+      assert.equal(events[0].type, "agent_reloading");
+
+      // State should be cleaned
+      assert.equal(sessions.liveSessions.size, 0, "liveSessions should be cleared");
+      assert.equal(sessions.activePrompts.size, 0, "activePrompts should be cleared");
+      assert.equal(sessions.pendingPermissions.size, 0, "pendingPermissions should be cleared");
+      assert.equal(sessions.assistantBuffers.size, 0, "assistantBuffers should be flushed");
+      assert.equal(sessions.thinkingBuffers.size, 0, "thinkingBuffers should be flushed");
+
+      // Title service should be invalidated
+      assert.ok(titleService.wasInvalidated);
+
+      // Cancel should have been called for active prompts
+      assert.ok(cancelCalled);
+
+      // Start should have been called
+      assert.equal(startCalls, 1);
+
+      // Reloading flag should be cleared
+      assert.equal(bridge.reloading, false);
+    });
+
+    it("rejects concurrent restart calls", async () => {
+      const bridge = new AgentBridge("fake-agent");
+      (bridge as any).conn = { cancel: async () => {} };
+
+      const sessions = createMockSessions();
+      const titleService = createMockTitleService();
+
+      (bridge as any).start = async () => {
+        (bridge as any).conn = {};
+        bridge.emit("event", { type: "connected", agent: { name: "mock", version: "1.0" }, configOptions: [] });
+      };
+
+      // Start first restart but make it slow
+      let resolveStart: () => void;
+      (bridge as any).start = () => new Promise<void>((r) => { resolveStart = r; });
+
+      const p1 = bridge.restart(sessions as any, titleService as any);
+
+      await assert.rejects(
+        () => bridge.restart(sessions as any, titleService as any),
+        /Already reloading/,
+      );
+
+      // Clean up: resolve the pending start
+      (bridge as any).conn = {};
+      resolveStart!();
+      await p1;
+    });
+
+    it("retries start() on failure with backoff", async () => {
+      const bridge = new AgentBridge("fake-agent");
+      const events: any[] = [];
+      bridge.on("event", (e: any) => events.push(e));
+
+      (bridge as any).conn = { cancel: async () => {} };
+
+      const sessions = createMockSessions();
+      const titleService = createMockTitleService();
+
+      let attempt = 0;
+      (bridge as any).start = async () => {
+        attempt++;
+        if (attempt < 3) throw new Error(`fail-${attempt}`);
+        (bridge as any).conn = {};
+        bridge.emit("event", { type: "connected", agent: { name: "mock", version: "1.0" }, configOptions: [] });
+      };
+
+      await bridge.restart(sessions as any, titleService as any);
+
+      assert.equal(attempt, 3);
+      assert.equal(bridge.reloading, false);
+    });
+
+    it("emits agent_reloading_failed when all start attempts fail", async () => {
+      const bridge = new AgentBridge("fake-agent");
+      const events: any[] = [];
+      bridge.on("event", (e: any) => events.push(e));
+
+      (bridge as any).conn = { cancel: async () => {} };
+
+      const sessions = createMockSessions();
+      const titleService = createMockTitleService();
+
+      (bridge as any).start = async () => {
+        throw new Error("broken");
+      };
+
+      await assert.rejects(() => bridge.restart(sessions as any, titleService as any));
+
+      const failEvent = events.find((e: any) => e.type === "agent_reloading_failed");
+      assert.ok(failEvent, "should emit agent_reloading_failed");
+      assert.equal(failEvent.error, "broken");
+      assert.equal(bridge.reloading, false, "reloading flag should be cleared on failure");
+    });
+  });
 });

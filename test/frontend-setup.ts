@@ -68,6 +68,7 @@ export function resetState(state: any, dom: any) {
   state.replayInProgress = false;
   state.replayQueue = [];
   if (state.unconfirmedPermissions) state.unconfirmedPermissions.clear();
+  state.agentReloading = false;
   // Reset DOM elements
   dom.messages.innerHTML = "";
   dom.status.textContent = "";

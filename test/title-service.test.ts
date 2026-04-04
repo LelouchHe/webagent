@@ -186,4 +186,31 @@ describe("TitleService", () => {
     assert.deepEqual(titleUpdates, []);
     assert.deepEqual(titles, []);
   });
+
+  it("invalidate() clears the cached title session so next generate creates a new one", async () => {
+    const store = { updateSessionTitle() {} };
+    const sessions = { sessionHasTitle: new Set<string>(), liveSessions: new Set<string>() };
+    let newSessionCalls = 0;
+    const bridge = {
+      async newSession() { newSessionCalls++; return `title-session-${newSessionCalls}`; },
+      async setConfigOption() {},
+      async promptForText() { return "Title"; },
+    };
+    const service = new TitleService(store as any, sessions as any, "/repo");
+
+    // First generation creates a title session
+    await (service as any)._generate(bridge, "hello", "session-1");
+    assert.equal(newSessionCalls, 1);
+
+    // Second generation reuses the cached session
+    sessions.sessionHasTitle.clear(); // allow re-generation
+    await (service as any)._generate(bridge, "hello", "session-2");
+    assert.equal(newSessionCalls, 1, "should reuse cached session");
+
+    // After invalidate(), next generation creates a new session
+    service.invalidate();
+    sessions.sessionHasTitle.clear();
+    await (service as any)._generate(bridge, "hello", "session-3");
+    assert.equal(newSessionCalls, 2, "should create new session after invalidate");
+  });
 });

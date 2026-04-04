@@ -81,6 +81,7 @@ export const state = {
   replayTarget: null as DocumentFragment | null,
   replayQueue: [] as AgentEvent[],
   unconfirmedPermissions: new Map<string, UnconfirmedPermission>(),
+  agentReloading: false,
 };
 
 type ConnectionStatus = 'disconnected' | 'connecting' | 'connected';

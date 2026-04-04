@@ -500,6 +500,36 @@ Cancel the active agent prompt and/or bash process in a session.
 
 ---
 
+### Bridge
+
+#### `POST /api/v1/bridge/reload`
+
+Restart the agent subprocess without restarting the server. Cancels all active prompts, flushes buffers, and re-spawns the agent process. Sessions are restored lazily on next user interaction.
+
+Use this after upgrading the CLI binary to pick up new features, skills, and MCP configurations.
+
+Broadcasts `agent_reloading` SSE event on start, then a `connected` event on success (with updated agent info), or `agent_reloading_failed` on failure.
+
+**Response** `200`:
+
+```json
+{ "ok": true }
+```
+
+**Response** `409` (already reloading):
+
+```json
+{ "error": "Already reloading" }
+```
+
+**Response** `500` (restart failed after retries):
+
+```json
+{ "error": "<error message>" }
+```
+
+---
+
 ### Images
 
 #### `POST /api/v1/sessions/:id/images`

@@ -658,6 +658,14 @@ export function handleEvent(msg: AgentEvent) {
   switch (msg.type) {
     case 'connected':
       if (msg.cancelTimeout != null) state.cancelTimeout = msg.cancelTimeout;
+      if (state.agentReloading) {
+        state.agentReloading = false;
+        const name = msg.agent?.name ?? '';
+        const ver = msg.agent?.version ?? '';
+        const label = name && ver ? `${name} ${ver}` : 'Agent';
+        addSystem(`${label} reloaded.`);
+        setBusy(false);
+      }
       break;
 
     case 'session_created':
@@ -1007,6 +1015,17 @@ export function handleEvent(msg: AgentEvent) {
         state.sessionTitle = msg.title;
         updateSessionInfo(state.sessionId, state.sessionTitle);
       }
+      break;
+
+    case 'agent_reloading':
+      state.agentReloading = true;
+      addSystem('Agent reloading…');
+      setBusy(true);
+      break;
+
+    case 'agent_reloading_failed':
+      addSystem(`err: Agent reload failed: ${msg.error}`);
+      setBusy(false);
       break;
 
     case 'error':

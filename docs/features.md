@@ -58,6 +58,7 @@ Commands with submenus (`/model`, `/mode`, `/think`, `/notify`, `/switch`, `/new
 | `/rename <new title>` | Rename current session |
 | `/exit` | Close current session (delete + switch to previous) |
 | `/prune` | Delete all sessions except current |
+| `/reload` | Reload agent subprocess (pick up CLI upgrades, new skills) |
 
 Type `?` for inline help listing all commands and shortcuts.
 

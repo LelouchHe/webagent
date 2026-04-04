@@ -68,6 +68,11 @@ export class TitleService {
     await bridge.cancel(this.titleSessionId);
   }
 
+  /** Clear the cached title session ID (e.g. after agent reload). */
+  invalidate(): void {
+    this.titleSessionId = null;
+  }
+
   /** Ensure the dedicated title session exists. Returns session ID or null. */
   private async ensureTitleSession(bridge: AgentBridge): Promise<string | null> {
     if (this.titleSessionId) return this.titleSessionId;

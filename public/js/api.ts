@@ -120,3 +120,9 @@ export function postVisibility(clientId: string, visible: boolean, sessionId?: s
 export function getStatus(sessionId: string): Promise<Record<string, unknown>> {
   return request("/api/v1/sessions/" + sessionId + "/status");
 }
+
+// --- Bridge ---
+
+export function reloadAgent(): Promise<void> {
+  return post("/api/v1/bridge/reload", {});
+}

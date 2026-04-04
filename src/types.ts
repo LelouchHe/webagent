@@ -84,6 +84,9 @@ export type AgentEvent =
   | { type: "bash_command"; sessionId: string; command: string }
   | { type: "bash_output"; sessionId: string; text: string; stream: string }
   | { type: "bash_done"; sessionId: string; code: number | null; signal: string | null; error?: string }
+  // Server lifecycle events (no sessionId)
+  | { type: "agent_reloading" }
+  | { type: "agent_reloading_failed"; error: string }
   // Replay-only events (stored in DB, not sent live)
   | { type: "assistant_message"; sessionId?: string; text: string }
   | { type: "thinking"; sessionId?: string; text: string }

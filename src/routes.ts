@@ -36,7 +36,7 @@ export interface RequestHandlerDeps {
   sessions?: SessionManager;
   sseManager: SseManager;
   titleService?: TitleService;
-  getBridge?: () => (Pick<AgentBridge, "newSession" | "setConfigOption" | "loadSession" | "cancel" | "prompt" | "resolvePermission" | "denyPermission"> | null);
+  getBridge?: () => (Pick<AgentBridge, "newSession" | "setConfigOption" | "loadSession" | "cancel" | "prompt" | "resolvePermission" | "denyPermission" | "restart" | "reloading"> | null);
   publicDir: string;
   dataDir: string;
   limits: Pick<Config["limits"], "bash_output" | "image_upload"> & Partial<Pick<Config["limits"], "cancel_timeout">>;
@@ -120,6 +120,20 @@ export function createRequestHandler(deps: RequestHandlerDeps): (req: IncomingMe
           server: deps.serverVersion ?? "unknown",
           agent: sessions?.agentInfo ?? null,
         });
+        return;
+      }
+
+      // --- POST /api/v1/bridge/reload ---
+      if (url === "/api/v1/bridge/reload" && req.method === "POST") {
+        const bridge = getBridge?.();
+        if (!bridge) { json(res, 503, { error: "Agent not ready yet" }); return; }
+        if (bridge.reloading) { json(res, 409, { error: "Already reloading" }); return; }
+        try {
+          await bridge.restart(sessions!, titleService!);
+          json(res, 200, { ok: true });
+        } catch (err: unknown) {
+          json(res, 500, { error: errorMessage(err) });
+        }
         return;
       }
 

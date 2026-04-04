@@ -375,3 +375,97 @@ describe("Push API routes", () => {
     await new Promise<void>((resolve) => server2.close(() => resolve()));
   });
 });
+
+describe("POST /api/v1/bridge/reload", () => {
+  let store: Store;
+  let tmpDir: string;
+  let publicDir: string;
+  let server: http.Server;
+  let port: number;
+  let broadcastEvents: any[];
+  let mockBridge: any;
+
+  beforeEach(async () => {
+    tmpDir = mkdtempSync(join(tmpdir(), "webagent-reload-"));
+    publicDir = join(tmpDir, "public");
+    mkdirSync(publicDir);
+    writeFileSync(join(publicDir, "index.html"), "<h1>Test</h1>");
+    store = new Store(tmpDir);
+    broadcastEvents = [];
+    mockBridge = {
+      reloading: false,
+      restart: async () => {},
+      newSession: async () => "s1",
+      loadSession: async () => ({ configOptions: [] }),
+      setConfigOption: async () => [],
+      cancel: async () => {},
+      prompt: async () => {},
+      resolvePermission: () => {},
+      denyPermission: () => {},
+    };
+
+    const handler = createRequestHandler({
+      store,
+      publicDir,
+      dataDir: tmpDir,
+      limits: { bash_output: 1024, image_upload: 1024 },
+      getBridge: () => mockBridge,
+      sseManager: { broadcast: (event: any) => broadcastEvents.push(event) } as any,
+    });
+    server = http.createServer(handler);
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    port = (server.address() as { port: number }).port;
+  });
+
+  afterEach(async () => {
+    store.close();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("returns 200 on successful reload", async () => {
+    let restartCalled = false;
+    mockBridge.restart = async () => { restartCalled = true; };
+
+    const res = await makeRequest(port, "POST", "/api/v1/bridge/reload");
+    assert.equal(res.status, 200);
+    const body = JSON.parse(res.body);
+    assert.equal(body.ok, true);
+    assert.ok(restartCalled);
+  });
+
+  it("returns 500 when restart fails", async () => {
+    mockBridge.restart = async () => { throw new Error("agent crashed"); };
+
+    const res = await makeRequest(port, "POST", "/api/v1/bridge/reload");
+    assert.equal(res.status, 500);
+    const body = JSON.parse(res.body);
+    assert.ok(body.error.includes("agent crashed"));
+  });
+
+  it("returns 409 when already reloading", async () => {
+    mockBridge.reloading = true;
+
+    const res = await makeRequest(port, "POST", "/api/v1/bridge/reload");
+    assert.equal(res.status, 409);
+  });
+
+  it("returns 503 when bridge is not available", async () => {
+    const handler = createRequestHandler({
+      store,
+      publicDir,
+      dataDir: tmpDir,
+      limits: { bash_output: 1024, image_upload: 1024 },
+      getBridge: () => null,
+      sseManager: { broadcast: () => {} } as any,
+    });
+    const server2 = http.createServer(handler);
+    await new Promise<void>((resolve) => server2.listen(0, "127.0.0.1", resolve));
+    const port2 = (server2.address() as { port: number }).port;
+
+    const res = await makeRequest(port2, "POST", "/api/v1/bridge/reload");
+    assert.equal(res.status, 503);
+
+    await new Promise<void>((resolve) => server2.close(() => resolve()));
+  });
+});

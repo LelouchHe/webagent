@@ -228,6 +228,16 @@ export async function handleSlashCommand(text: string): Promise<boolean> {
       }
       return true;
 
+    case '/reload': {
+      addSystem('Reloading agent…');
+      api.reloadAgent().then(() => {
+        // connected event from bridge will signal completion
+      }).catch((err) => {
+        addSystem(`err: ${err instanceof Error ? err.message : 'Failed to reload agent'}`);
+      });
+      return true;
+    }
+
     case '/help':
     case '?': {
       const parts: string[] = [];
@@ -361,6 +371,7 @@ const SLASH_COMMANDS: SlashCommand[] = [
   { cmd: '/notify',   args: '[on|off]',    desc: 'Toggle background notifications' },
   { cmd: '/prune',    args: '',            desc: 'Delete all sessions except current' },
   { cmd: '/pwd',      args: '',            desc: 'Show working directory' },
+  { cmd: '/reload',   args: '',            desc: 'Reload agent (pick up CLI upgrades)' },
   { cmd: '/rename',   args: '<new title>', desc: 'Rename current session' },
   { cmd: '/switch',   args: '<title|id>',  desc: 'Switch to session' },
   { cmd: '/think',    args: '[level]',     desc: 'Pick or switch reasoning effort' },
