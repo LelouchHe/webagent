@@ -98,6 +98,10 @@ describe("connection", () => {
     return es.onmessage?.({ data: JSON.stringify({ type: "connected", clientId }) });
   }
 
+  function fireBridgeConnected(es: InstanceType<typeof MockEventSource>, agent: { name: string; version: string }) {
+    return es.onmessage?.({ data: JSON.stringify({ type: "connected", agent, cancelTimeout: 10000 }) });
+  }
+
   function sessionResponse(id: string, overrides?: Record<string, unknown>) {
     return { id, cwd: "/tmp", title: null, configOptions: [], busyKind: null, ...overrides };
   }
@@ -356,5 +360,32 @@ describe("connection", () => {
     assert.equal(dom.messages.children.length, 1);
     assert.ok(dom.messages.textContent.includes("preserved content"));
     assert.equal(state.lastEventSeq, 5);
+  });
+
+  it("passes bridge connected event (with agent) through to handleEvent", async () => {
+    history.replaceState(null, "", "/#reload-session");
+    setFetch(async (url: string) => {
+      if (url.includes("/visibility")) return mockResponse({});
+      if (url === "/api/v1/sessions/reload-session") return mockResponse(sessionResponse("reload-session"));
+      if (url.startsWith("/api/v1/sessions/reload-session/events")) return mockResponse([]);
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+
+    connection.connect();
+    const es = latestES();
+    await flush();
+
+    // SSE handshake
+    fireConnected(es, "cl-reload");
+    assert.equal(state.clientId, "cl-reload");
+
+    // Simulate reload in progress
+    state.agentReloading = true;
+
+    // Bridge connected event (has agent, no clientId) — must reach handleEvent
+    fireBridgeConnected(es, { name: "copilot", version: "2.0" });
+
+    assert.equal(state.agentReloading, false, "handleEvent should have cleared agentReloading");
+    assert.ok(dom.messages.textContent.includes("copilot 2.0 reloaded"), "should show reloaded message");
   });
 });
