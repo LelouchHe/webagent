@@ -69,6 +69,7 @@ agent_cmd = "my-agent --acp"
 ## Architecture Notes
 
 - **Single bridge**: One bridge instance per server, multiple sessions multiplexed over it.
+- **Agent reload**: `bridge.restart()` kills and re-spawns the agent subprocess without restarting the server. Cancels active prompts, flushes buffers, cleans up state, invalidates title session. Sessions restore lazily via `ensureResumed()`. Triggered by `/reload` slash command or `POST /api/v1/bridge/reload`. Retries start 3× with exponential backoff.
 - **Session restore**: `bridge.loadSession()` restores ACP context after server restart. During restore, `restoringSessions` Set suppresses duplicate event storage/broadcast.
 - **On-demand sessions**: No pre-warming. Sessions created on `/new`, auto-resumed on page open.
 - **Model inheritance**: A newly created session inherits the current session's saved model when available; restored sessions keep their own persisted model. Mode is NOT inherited — new sessions always start in agent mode.
