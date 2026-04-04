@@ -214,7 +214,11 @@ export class AgentBridge extends EventEmitter {
       sessions.pendingPermissions.clear();
       sessions.activePrompts.clear();
 
-      // 4. Invalidate title service session
+      // 4. Clean up bridge-side silent session state
+      this.silentSessions.clear();
+      this.silentBuffers.clear();
+
+      // 5. Invalidate title service session
       titleService.invalidate();
 
       // 5. Clear liveSessions so ensureResumed() will re-register on next access
@@ -258,16 +262,17 @@ export class AgentBridge extends EventEmitter {
     this.permissionRequestSessions.clear();
 
     if (this.proc && this.proc.exitCode === null) {
-      this.proc.kill();
+      const proc = this.proc;
       await new Promise<void>((resolve) => {
         const timer = setTimeout(() => {
-          this.proc?.kill(process.platform === "win32" ? undefined : "SIGKILL");
+          proc.kill(process.platform === "win32" ? undefined : "SIGKILL");
           resolve();
         }, 5000);
-        this.proc?.on("exit", () => {
+        proc.on("exit", () => {
           clearTimeout(timer);
           resolve();
         });
+        proc.kill();
       });
     }
     this.proc = null;
