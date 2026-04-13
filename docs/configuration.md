@@ -81,3 +81,11 @@ WebAgent spawns the agent as a child process (e.g. `copilot --acp`). When the ag
 2. Restart WebAgent — the new process will spawn the updated agent
 
 You can verify versions after restart via `GET /api/v1/version` or the `?` help command in the UI.
+
+## Troubleshooting: Agent Shell Environment
+
+The agent (Copilot CLI) runs its bash tool in a bash session that does **not** source user shell config files (`~/.bashrc`, `~/.zprofile`, `~/.zshrc`, etc.). Instead, the agent's bash sessions inherit the environment of the **parent process** — i.e. the WebAgent server.
+
+If tools like `docker`, `node`, or other CLI programs work in your terminal but not through the agent, it means the WebAgent server process was started without those entries in its PATH.
+
+**Fix**: Ensure the WebAgent startup script (e.g. `run.sh` in the service directory) sets up the required PATH and tool initialization before launching the server. A convenient pattern is to maintain a `~/.bashrc` with environment-only setup (no aliases or interactive config) and `source ~/.bashrc` at the top of the startup script. Restart the service after changes.
