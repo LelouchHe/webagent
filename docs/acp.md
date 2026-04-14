@@ -64,43 +64,75 @@ ACP approach (horizontal, agent-agnostic):
                            → ... any ACP agent
 ```
 
-### What the SDKs provide that ACP does not
+### ACP limitations
 
-Vendor SDKs expose deeper integration with their specific agent runtime:
+ACP is a protocol-level abstraction. The trade-off for agent-agnosticism is a thinner surface:
 
-- **Context visibility** — some SDKs surface token counts, context usage, and remaining capacity. ACP treats the agent's context as a black box.
-- **Context management** — SDKs may offer compact, summarize, or fork-session operations. ACP has no method to compact or clear context; the only reset path is creating a new session.
-- **CLI lifecycle management** — SDKs auto-bundle the CLI binary, handle version checks, and manage the process lifecycle. WebAgent spawns the CLI manually and handles restart/reload itself.
-- **Authentication flows** — SDKs provide built-in OAuth, BYOK (bring your own key), and environment variable auth. WebAgent relies on whatever auth the CLI already has configured.
-- **Agent-specific features** — hooks, custom skills, fleet/cloud delegation, and other vendor-specific capabilities are exposed through the SDK API but may not surface through ACP events.
-- **Streaming granularity** — SDKs may offer richer streaming events (e.g., per-token callbacks, cost tracking) beyond what ACP session updates provide.
+**Protocol gaps:**
 
-### What ACP provides that vendor SDKs do not
+- **Context visibility** — no token counts, context usage, or remaining capacity. The agent's context is a black box.
+- **Context management** — no compact, summarize, or fork-session operations. The only reset path is creating a new session.
+- **Cost / usage tracking** — no token usage or cost-per-request data. Users cannot tell how much a prompt costs.
+- **Capability discovery** — `initialize` returns agent name/version but not what tools, models, or features the agent supports. WebAgent's `configOptions` relies on undocumented fields (`(session as any).configOptions`).
+- **Model discovery** — no standard method to query available models. Currently uses the SDK's unstable session-model API.
+- **Progress / phase signals** — no structured "thinking", "searching", "editing" stage indicators. Only raw streaming chunks; phase information depends on agent-specific event content.
+- **Error semantics** — agent errors have no structured classification (rate limit vs. model error vs. tool failure). All failures are opaque.
+- **Session portability** — switching agents means abandoning existing sessions. No export/import of session state across different agent backends.
+- **Permission granularity** — binary allow/deny only. No scoped permissions ("allow reads in this directory") or conditional approval.
+- **Agent behavior configuration** — beyond capability declarations, the client cannot set temperature, system prompt, safety settings, or other agent parameters.
+- **Streaming backpressure** — no flow control when the agent outputs faster than the client can process. WebAgent mitigates this with `limits.bash_output` but the protocol has no mechanism for it.
 
-- **Agent swappability** — change `agent_cmd` in config to switch agents without code changes. SDKs require rewriting integration code to switch vendors.
-- **Protocol-level interop** — ACP is backed by the Linux Foundation (Agentic AI Foundation) alongside MCP and A2A. It is the same protocol used by Zed, JetBrains, and other editors for multi-agent support.
-- **No vendor lock-in** — WebAgent's session management, permission UI, event routing, and persistence are all independent of the agent. Switching from Copilot to Claude Code is a one-line config change.
-- **Custom client capabilities** — WebAgent implements its own file read/write, bash execution, and permission flows on the client side, giving full control over what the agent can do.
+**Practical pain points:**
+
+- **Event schema variance** — different agents may emit different structures for the same concept (e.g., tool call metadata). WebAgent maps only a defensive subset to stay cross-agent compatible.
+- **Testing difficulty** — no standard mock agent. Integration tests require a real agent process with auth and network access, or a custom NDJSON mock.
+- **CLI lifecycle is DIY** — spawning, restarting, health-checking, and version management are all the client's responsibility.
+
+### Vendor SDK limitations
+
+SDKs offer deeper integration but come with their own costs:
+
+**Architecture constraints:**
+
+- **Single-agent lock-in** — each SDK only drives its own CLI. Supporting multiple agents in one app means integrating multiple SDKs, each with its own process management, auth, and session state — essentially re-inventing ACP.
+- **CLI version coupling** — SDKs bundle or pin specific CLI versions. New CLI features require waiting for a matching SDK release. The Copilot SDK docs explicitly warn "you must ensure version compatibility."
+- **Heavy dependency** — SDKs pull in the entire CLI binary. `@github/copilot-sdk` includes the full Copilot CLI. Compare with `@agentclientprotocol/sdk` which is a lightweight protocol library.
+- **Customization ceiling** — SDKs provide opinionated APIs for permissions, events, and sessions. Building custom UX (WebAgent's permission UI, multi-client broadcast, SQLite persistence) means fighting the SDK's design choices.
+- **No web UI story** — SDKs target programmatic embedding, not UI. Session rendering, event dispatch, and multi-client sync still need to be built from scratch on top.
+
+**Operational constraints:**
+
+- **Multi-user complexity** — built-in auth works for single-user local apps but becomes complex server-side. Copilot SDK's scaling guide covers CLI-per-user isolation and token forwarding. WebAgent's one-bridge-many-sessions model is simpler.
+- **Debugging through a wrapper** — SDK manages CLI process lifecycle, adding indirection when things go wrong. ACP gives direct access to the raw stdin/stdout stream.
+- **SDK release dependency** — bugs in the SDK require waiting for a vendor fix. With ACP, protocol-level issues can often be worked around client-side.
+- **Testing still needs real CLI** — SDK makes mocking the client easier, but integration tests still require a real CLI process with auth and API quota.
+
+**Fundamental limits (shared with ACP):**
+
+- **Agent behavior is still opaque** — even with SDKs, the core agent loop (planning, tool selection, execution strategy) is a black box. SDKs add more knobs (model selection, tool configuration) but the difference from ACP is degree, not kind.
 
 ### Trade-off summary
 
 | | Vendor SDK | WebAgent (ACP) |
 |---|---|---|
 | Agent support | Single vendor only | Any ACP-compatible agent |
+| Multi-agent in one app | Requires multiple SDK integrations | One protocol, swap `agent_cmd` |
 | Setup effort | Low (SDK manages CLI) | Medium (manual CLI + config) |
-| Context/compact | Available (vendor-dependent) | Not available |
+| Context visibility/compact | Available (vendor-dependent) | Not available (protocol gap) |
+| Cost / token tracking | Available | Not available |
 | Auth handling | Built-in | Relies on CLI's own auth |
 | Depth of integration | Deep (vendor-specific features) | Protocol surface only |
+| Customization freedom | Constrained by SDK opinions | Full control |
 | Vendor lock-in | Yes | No |
-| Multi-language | Yes (per SDK) | N/A (WebAgent is the client) |
+| Dependency weight | Heavy (bundles CLI binary) | Light (protocol library only) |
 | Ecosystem alignment | Vendor ecosystem | ACP / Zed / JetBrains ecosystem |
 
 ### When to use which
 
 - **Use a vendor SDK** if you are building an app tightly coupled to one specific agent and need deep integration with its runtime (context management, auth flows, cost tracking, agent-specific hooks).
-- **Use ACP (WebAgent's approach)** if you want a single UI that works across agents, or if agent swappability matters more than depth of integration with any one vendor.
+- **Use ACP (WebAgent's approach)** if you want a single UI that works across agents, value customization freedom, or if agent swappability matters more than depth of integration with any one vendor.
 
-In practice, the main pain point of the ACP approach is the lack of context visibility and management — there is no way to know how full the context window is, no way to compact it, and no way to fork or summarize a session. These are protocol-level gaps in ACP itself, not implementation gaps in WebAgent.
+The core trade-off: SDKs give you **depth** (more knobs, more data, tighter integration) at the cost of **breadth** (single vendor). ACP gives you **breadth** (any agent, full UX control) at the cost of **depth** (thinner protocol surface, less visibility into agent internals).
 
 ## Agent Compatibility
 
