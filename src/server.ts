@@ -13,6 +13,16 @@ import { PushService } from "./push-service.ts";
 import { SseManager } from "./sse-manager.ts";
 import type { AgentEvent } from "./types.ts";
 
+// Prefix all console output with HH:MM:SS timestamps
+for (const method of ["log", "error", "warn"] as const) {
+  const orig = console[method].bind(console);
+  console[method] = (...args: unknown[]) => {
+    const t = new Date();
+    const ts = `${String(t.getHours()).padStart(2, "0")}:${String(t.getMinutes()).padStart(2, "0")}:${String(t.getSeconds()).padStart(2, "0")}`;
+    orig(ts, ...args);
+  };
+}
+
 const config = loadConfig();
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const PUBLIC_DIR = join(__dirname, "..", config.public_dir);
