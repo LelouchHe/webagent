@@ -47,7 +47,7 @@ Commands with submenus (`/model`, `/mode`, `/think`, `/notify`, `/switch`, `/new
 
 | Command | Description |
 |---|---|
-| `/new [cwd]` | Create new session (optionally specify working directory) |
+| `/new [cwd]` | Create new session — shows recent paths picker (paths persist across session exits, auto-cleaned by TTL) |
 | `/pwd` | Show current working directory |
 | `/model [name]` | View or switch model (fuzzy match, e.g. `/model opus`) |
 | `/mode [name]` | View or switch mode (Agent / Plan / Autopilot) |
