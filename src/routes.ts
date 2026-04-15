@@ -120,7 +120,7 @@ export function createRequestHandler(deps: RequestHandlerDeps): (req: IncomingMe
       if (url.startsWith("/api/v1/paths") && req.method === "GET") {
         const params = new URLSearchParams(url.split("?")[1] ?? "");
         const limitParam = params.get("limit");
-        const limit = limitParam != null ? parseInt(limitParam, 10) : 0;
+        const limit = limitParam != null ? Math.max(0, parseInt(limitParam, 10)) : 0;
         const ttlDays = deps.limits.recent_paths_ttl ?? 30;
         const paths = store.listRecentPaths({
           limit: isNaN(limit) ? 0 : limit,
