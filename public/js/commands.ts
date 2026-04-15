@@ -245,7 +245,6 @@ export async function handleSlashCommand(text: string): Promise<boolean> {
       if (state.agentName && state.agentVersion) parts.push(`${state.agentName} ${state.agentVersion}`);
       if (parts.length) addSystem(parts.join(' · '));
       addSystem('? — Show help');
-      addSystem('/help — Show help (alias)');
       addSystem('!<command> — Run bash command');
       for (const c of SLASH_COMMANDS) {
         const label = c.args ? `${c.cmd} ${c.args}` : c.cmd;
@@ -365,6 +364,7 @@ type SlashItem = SlashCommand | SessionSummary | PathItem | NotifyOption | { val
 const SLASH_COMMANDS: SlashCommand[] = [
   { cmd: '/cancel',   args: '',            desc: 'Cancel current response' },
   { cmd: '/exit',     args: '',            desc: 'Close current session' },
+  { cmd: '/help',     args: '',            desc: 'Show help (or type ?)' },
   { cmd: '/mode',     args: '[name]',      desc: 'Pick or switch mode' },
   { cmd: '/model',    args: '[name]',      desc: 'Pick or switch model' },
   { cmd: '/new',      args: '[cwd]',       desc: 'New session' },

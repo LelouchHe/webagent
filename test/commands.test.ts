@@ -79,15 +79,14 @@ describe("commands", () => {
       assert.ok(messageLines().includes("📁 /repo"));
     });
 
-    it("shows help for ? and advertises /help as an alias", async () => {
+    it("shows help for ? and lists /help in commands", async () => {
       const handled = await commands.handleSlashCommand("?");
 
       assert.equal(handled, true);
       const lines = messageLines();
       assert.ok(lines.includes("? — Show help"));
-      assert.ok(lines.includes("/help — Show help (alias)"));
+      assert.ok(lines.includes("/help — Show help (or type ?)"));
       assert.ok(lines.includes("!<command> — Run bash command"));
-      assert.ok(!lines.includes("/help — Show help"));
     });
 
     it("shows version line when versions are available", async () => {
