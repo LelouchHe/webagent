@@ -18,6 +18,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const PID_FILE = "webagent.pid";
 const LOG_FILE = "webagent.log";
+const LOG_MAX_LINES = 5_000;
 const RESTART_DELAY_INITIAL = 1_000;
 const RESTART_DELAY_MAX = 30_000;
 const STABLE_THRESHOLD_MS = 60_000;
@@ -113,6 +114,17 @@ async function cmdStart(pidFile: string, logFile: string, args: string[]): Promi
 
   const resolved = resolveArgs(args);
   const daemonJs = join(__dirname, "daemon.js");
+
+  // Truncate log to last LOG_MAX_LINES before starting
+  if (existsSync(logFile)) {
+    try {
+      const lines = readFileSync(logFile, "utf-8").split("\n");
+      if (lines.length > LOG_MAX_LINES) {
+        writeFileSync(logFile, lines.slice(-LOG_MAX_LINES).join("\n"));
+      }
+    } catch { /* best-effort */ }
+  }
+
   const log = openSync(logFile, "a");
 
   const child = spawn(
