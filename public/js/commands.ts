@@ -130,6 +130,7 @@ export async function handleSlashCommand(text: string): Promise<boolean> {
           const gen = state.sessionSwitchGen;
           resetSessionUI();
           state.sessionId = null;
+          setHashSessionId(next.id);
           const [session] = await Promise.all([
             api.getSession(next.id) as Promise<Record<string, unknown>>,
             loadHistory(next.id),

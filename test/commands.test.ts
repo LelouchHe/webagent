@@ -141,6 +141,41 @@ describe("commands", () => {
       assert.equal(state.sessionId, "mru-456");
     });
 
+    it("exits current session — updates URL hash before async load to prevent SSE reconnect race", async () => {
+      state.clientId = "cl-1";
+      state.sessionId = "current";
+      location.hash = "#current";
+      const configOptions = [{ type: "select", id: "model", name: "Model", currentValue: "gpt-4", options: [] }];
+      const sessionList = [
+        { id: "current", title: "Current Session" },
+        { id: "mru-456", title: "MRU Session" },
+      ];
+      const mruDetail = { id: "mru-456", cwd: "/home", title: "MRU Session", configOptions, busyKind: null };
+
+      let hashDuringAsyncLoad: string | null = null;
+      setFetch(async (url: string, init?: any) => {
+        const body = (data: any) => {
+          const json = JSON.stringify(data);
+          return { ok: true, status: 200, json: async () => data, text: async () => json };
+        };
+        if (url === "/api/v1/sessions" && (!init?.method || init.method === "GET")) return body(sessionList);
+        if (url === "/api/v1/sessions/current" && init?.method === "DELETE") return body({});
+        if (url === "/api/v1/sessions/mru-456" && (!init?.method || init.method === "GET")) {
+          // Capture the hash at the point where the async load happens.
+          // If SSE reconnects here, initSession() reads location.hash to decide which session to load.
+          hashDuringAsyncLoad = location.hash;
+          return body(mruDetail);
+        }
+        if (url.includes("/api/v1/sessions/mru-456/events")) return body([]);
+        return body({});
+      });
+
+      await commands.handleSlashCommand("/exit");
+
+      assert.equal(hashDuringAsyncLoad, "#mru-456",
+        "URL hash must point to next session before async load, otherwise SSE reconnect loads the deleted session");
+    });
+
     it("exits last session — deletes it and creates a new one", async () => {
       state.clientId = "cl-1";
       state.sessionId = "only-one";
