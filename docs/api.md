@@ -429,7 +429,7 @@ Get server configuration and available config options.
 
 ### Recent Paths
 
-#### `GET /api/v1/paths`
+#### `GET /api/v1/recent-paths`
 
 List recent working directory paths, sorted by last used (most recent first). Paths are recorded on each prompt, keeping `last_used_at` up to date. Stale paths are cleaned up based on the `limits.recent_paths_ttl` config.
 

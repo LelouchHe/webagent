@@ -178,10 +178,10 @@ describe("HTTP routes", () => {
     assert.equal(res.status, 404);
   });
 
-  it("GET /api/v1/paths returns recent paths", async () => {
+  it("GET /api/v1/recent-paths returns recent paths", async () => {
     store.touchRecentPath("/projects/a");
     store.touchRecentPath("/projects/b");
-    const res = await makeRequest(port, "GET", "/api/v1/paths");
+    const res = await makeRequest(port, "GET", "/api/v1/recent-paths");
     assert.equal(res.status, 200);
     const paths = JSON.parse(res.body);
     assert.equal(paths.length, 2);
@@ -190,18 +190,18 @@ describe("HTTP routes", () => {
     assert.deepEqual(cwds, ["/projects/a", "/projects/b"]);
   });
 
-  it("GET /api/v1/paths?limit=N respects limit", async () => {
+  it("GET /api/v1/recent-paths?limit=N respects limit", async () => {
     store.touchRecentPath("/a");
     store.touchRecentPath("/b");
     store.touchRecentPath("/c");
-    const res = await makeRequest(port, "GET", "/api/v1/paths?limit=2");
+    const res = await makeRequest(port, "GET", "/api/v1/recent-paths?limit=2");
     assert.equal(res.status, 200);
     const paths = JSON.parse(res.body);
     assert.equal(paths.length, 2);
   });
 
-  it("GET /api/v1/paths returns empty array when no paths", async () => {
-    const res = await makeRequest(port, "GET", "/api/v1/paths");
+  it("GET /api/v1/recent-paths returns empty array when no paths", async () => {
+    const res = await makeRequest(port, "GET", "/api/v1/recent-paths");
     assert.equal(res.status, 200);
     assert.deepEqual(JSON.parse(res.body), []);
   });

@@ -87,7 +87,7 @@ export function createRequestHandler(deps: RequestHandlerDeps): (req: IncomingMe
           version: "v1",
           endpoints: {
             sessions: "/api/v1/sessions",
-            paths: "/api/v1/paths",
+            paths: "/api/v1/recent-paths",
             config: "/api/v1/config",
             events_stream: "/api/v1/events/stream",
             prompt: "/api/beta/prompt",
@@ -116,8 +116,8 @@ export function createRequestHandler(deps: RequestHandlerDeps): (req: IncomingMe
         return;
       }
 
-      // GET /api/v1/paths
-      if (url.startsWith("/api/v1/paths") && req.method === "GET") {
+      // GET /api/v1/recent-paths
+      if (url.startsWith("/api/v1/recent-paths") && req.method === "GET") {
         const params = new URLSearchParams(url.split("?")[1] ?? "");
         const limitParam = params.get("limit");
         const limit = limitParam != null ? Math.max(0, parseInt(limitParam, 10)) : 0;

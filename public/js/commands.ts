@@ -485,7 +485,7 @@ async function fetchPathsForMenu(query: string) {
   if (!cachedPaths) {
     try {
       const limit = state.recentPathsLimit || 0;
-      const url = limit > 0 ? `/api/v1/paths?limit=${limit}` : '/api/v1/paths';
+      const url = limit > 0 ? `/api/v1/recent-paths?limit=${limit}` : '/api/v1/recent-paths';
       const res = await fetch(url);
       cachedPaths = (await res.json()).map((p: { cwd: string; last_used_at: string }) => ({ cwd: p.cwd, time: p.last_used_at }));
       setTimeout(() => { cachedPaths = null; }, 5000);
