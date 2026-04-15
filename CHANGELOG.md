@@ -4,6 +4,23 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/), and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.3.0] - 2026-04-15
+
+### Added
+
+- Recent paths for `/new` menu — tracks session working directories with LRU cleanup. New config options: `limits.recent_paths` (max shown, default 10) and `limits.recent_paths_ttl` (days before auto-cleanup, default 30)
+- `GET /api/v1/recent-paths` endpoint — returns recent working directories, supports `?limit=N`
+- `/help` slash command (also shown as `?` shortcut hint)
+- HH:MM:SS timestamps in server console output; daemon truncates logs on start
+
+### Fixed
+
+- `/exit` sometimes created a new session instead of switching to an existing one — URL hash still pointed to the deleted session during async load, causing SSE reconnects to 404 and fall back to session creation
+
+### Changed
+
+- TOC coverage guard for `docs/api.md`
+
 ## [0.2.6] - 2026-04-03
 
 ### Added
@@ -245,6 +262,7 @@ Initial release of WebAgent — a terminal-style web UI for ACP-compatible agent
 - **CI/CD**: GitHub Actions for CI (unit + E2E tests) and npm publishing on tag push
 - **npm package**: Published as `@lelouchhe/webagent`
 
+[0.3.0]: https://github.com/LelouchHe/webagent/compare/v0.2.6...v0.3.0
 [0.2.6]: https://github.com/LelouchHe/webagent/compare/v0.2.5...v0.2.6
 [0.2.5]: https://github.com/LelouchHe/webagent/compare/v0.2.4...v0.2.5
 [0.2.4]: https://github.com/LelouchHe/webagent/compare/v0.2.3...v0.2.4
