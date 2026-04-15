@@ -431,7 +431,7 @@ Get server configuration and available config options.
 
 #### `GET /api/v1/paths`
 
-List recent working directory paths, sorted by last used (most recent first). Paths are automatically recorded when a session receives its first prompt. Stale paths are cleaned up based on the `limits.recent_paths_ttl` config.
+List recent working directory paths, sorted by last used (most recent first). Paths are recorded on each prompt, keeping `last_used_at` up to date. Stale paths are cleaned up based on the `limits.recent_paths_ttl` config.
 
 **Query parameters:**
 

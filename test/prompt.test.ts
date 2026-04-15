@@ -147,7 +147,7 @@ describe("Prompt REST API", () => {
       assert.ok(after >= before);
     });
 
-    it("touches recent path on first prompt", async () => {
+    it("touches recent path on prompt", async () => {
       const sessionId = await createSession();
       assert.equal(store.listRecentPaths().length, 0);
       await makeRequest(port, "POST", `/api/v1/sessions/${sessionId}/prompt`,

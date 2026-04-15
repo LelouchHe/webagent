@@ -186,7 +186,7 @@ describe("HTTP routes", () => {
     const paths = JSON.parse(res.body);
     assert.equal(paths.length, 2);
     // Both paths present (order may vary when timestamps are identical)
-    const cwds = paths.map((p: any) => p.cwd).sort();
+    const cwds = paths.map((p: { cwd: string }) => p.cwd).sort();
     assert.deepEqual(cwds, ["/projects/a", "/projects/b"]);
   });
 
