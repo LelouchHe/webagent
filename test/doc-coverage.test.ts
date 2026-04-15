@@ -3,6 +3,17 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
+/** Convert a markdown heading to a GitHub-style anchor slug. */
+function toAnchor(heading: string): string {
+  return heading
+    .toLowerCase()
+    .replace(/`/g, "")
+    .replace(/[^\w\s-]/g, "")
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
+}
+
 /**
  * Staleness guard: Ensures docs/api.md covers all REST endpoints defined in routes.ts.
  *
@@ -63,6 +74,46 @@ describe("doc coverage", () => {
       assert.ok(
         methodInDoc || fullPathInDoc,
         `Endpoint "${key}" not found in docs/api.md. Update the docs to include this endpoint.`,
+      );
+    });
+  }
+});
+
+describe("api.md TOC coverage", () => {
+  const apiDoc = readFileSync(join(ROOT, "docs/api.md"), "utf-8");
+  const lines = apiDoc.split("\n");
+
+  // Find TOC boundaries
+  const tocStart = lines.findIndex(l => /^## Table of Contents/.test(l));
+  const tocEnd = lines.findIndex((l, i) => i > tocStart && /^---/.test(l));
+  const tocSection = lines.slice(tocStart, tocEnd).join("\n");
+
+  // Extract all TOC anchor links
+  const tocAnchors = new Set(
+    [...tocSection.matchAll(/\(#([^)]+)\)/g)].map(m => m[1]),
+  );
+
+  // Extract all headings after TOC (## and deeper), skipping TOC itself
+  const headings: { level: number; text: string; anchor: string }[] = [];
+  for (let i = tocEnd + 1; i < lines.length; i++) {
+    const m = lines[i].match(/^(#{2,})\s+(.+)$/);
+    if (m) {
+      headings.push({ level: m[1].length, text: m[2], anchor: toAnchor(m[2]) });
+    }
+  }
+
+  // Only check ## and ### headings (h2/h3) — h4 endpoints are covered by parent sections
+  const sectionHeadings = headings.filter(h => h.level <= 3);
+
+  it("should find headings in the document", () => {
+    assert.ok(sectionHeadings.length >= 10, `Expected ≥10 section headings, found ${sectionHeadings.length}`);
+  });
+
+  for (const h of sectionHeadings) {
+    it(`TOC should link to "${h.text}"`, () => {
+      assert.ok(
+        tocAnchors.has(h.anchor),
+        `Heading "${h.text}" (anchor: #${h.anchor}) not found in Table of Contents. Update the TOC.`,
       );
     });
   }

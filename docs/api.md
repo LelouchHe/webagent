@@ -18,8 +18,10 @@ WebAgent exposes a **REST + SSE** API for managing agent sessions, sending promp
   - [Messages](#messages)
   - [Permissions](#permissions)
   - [Config](#config)
+  - [Recent Paths](#recent-paths)
   - [Version](#version)
   - [Bash](#bash)
+  - [Bridge](#bridge)
   - [Images](#images)
   - [SSE Streams](#sse-streams)
 - [Beta Endpoints (`/api/beta/`)](#beta-endpoints-apibeta)
@@ -29,7 +31,7 @@ WebAgent exposes a **REST + SSE** API for managing agent sessions, sending promp
 - [SSE Event Reference](#sse-event-reference)
   - [Live Events](#live-events)
   - [Replay-Only Events](#replay-only-events)
-  - [Server-Generated Events](#server-generated-events)
+  - [Event Aggregation](#event-aggregation)
 - [Implementation Details](#implementation-details)
   - [Session Lifecycle](#session-lifecycle)
   - [Event Storage and Aggregation](#event-storage-and-aggregation)
@@ -38,6 +40,9 @@ WebAgent exposes a **REST + SSE** API for managing agent sessions, sending promp
   - [Auto-Retry Interrupted Turns](#auto-retry-interrupted-turns)
   - [Autopilot Mode](#autopilot-mode)
 - [Database Schema](#database-schema)
+  - [`sessions`](#sessions-1)
+  - [`events`](#events)
+  - [`push_subscriptions`](#push_subscriptions)
 
 ---
 
