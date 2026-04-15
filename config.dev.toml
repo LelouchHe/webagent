@@ -9,3 +9,5 @@ agent_cmd = "copilot --acp"
 bash_output = 1_048_576
 image_upload = 10_485_760
 cancel_timeout = 10_000
+recent_paths = 10
+recent_paths_ttl = 30

@@ -658,6 +658,7 @@ export function handleEvent(msg: AgentEvent) {
   switch (msg.type) {
     case 'connected':
       if (msg.cancelTimeout != null) state.cancelTimeout = msg.cancelTimeout;
+      if (msg.recentPathsLimit != null) state.recentPathsLimit = msg.recentPathsLimit;
       if (state.agentReloading) {
         state.agentReloading = false;
         const name = msg.agent?.name ?? '';

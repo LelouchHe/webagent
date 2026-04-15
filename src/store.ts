@@ -91,6 +91,25 @@ export class Store {
     if (!colNames.has("source")) {
       this.db.exec("ALTER TABLE sessions ADD COLUMN source TEXT NOT NULL DEFAULT 'auto'");
     }
+
+    // recent_paths: LRU path list for /new menu
+    const rpExists = this.db.prepare(
+      "SELECT 1 FROM sqlite_master WHERE type='table' AND name='recent_paths'"
+    ).get();
+    if (!rpExists) {
+      this.db.exec(`
+        CREATE TABLE recent_paths (
+          cwd TEXT PRIMARY KEY,
+          last_used_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now'))
+        );
+      `);
+      // Backfill from existing sessions
+      this.db.exec(`
+        INSERT OR IGNORE INTO recent_paths (cwd, last_used_at)
+        SELECT cwd, MAX(COALESCE(last_active_at, created_at))
+        FROM sessions GROUP BY cwd;
+      `);
+    }
   }
 
   createSession(id: string, cwd: string, source: string = "auto"): SessionRow {
@@ -222,6 +241,38 @@ export class Store {
 
   getAllSubscriptions(): SubscriptionRow[] {
     return this.db.prepare("SELECT * FROM push_subscriptions").all() as SubscriptionRow[];
+  }
+
+  // --- Recent paths ---
+
+  touchRecentPath(cwd: string): void {
+    this.db.prepare(
+      `INSERT INTO recent_paths (cwd, last_used_at)
+       VALUES (?, strftime('%Y-%m-%d %H:%M:%f', 'now'))
+       ON CONFLICT(cwd) DO UPDATE SET last_used_at = strftime('%Y-%m-%d %H:%M:%f', 'now')`,
+    ).run(cwd);
+  }
+
+  listRecentPaths(opts?: { limit?: number; ttlDays?: number }): Array<{ cwd: string; last_used_at: string }> {
+    const ttl = opts?.ttlDays ?? 0;
+    if (ttl > 0) {
+      this.db.prepare(
+        "DELETE FROM recent_paths WHERE last_used_at < strftime('%Y-%m-%d %H:%M:%f', 'now', ?)"
+      ).run(`-${ttl} days`);
+    }
+    const limit = opts?.limit;
+    if (limit && limit > 0) {
+      return this.db.prepare(
+        "SELECT cwd, last_used_at FROM recent_paths ORDER BY last_used_at DESC LIMIT ?"
+      ).all(limit) as Array<{ cwd: string; last_used_at: string }>;
+    }
+    return this.db.prepare(
+      "SELECT cwd, last_used_at FROM recent_paths ORDER BY last_used_at DESC"
+    ).all() as Array<{ cwd: string; last_used_at: string }>;
+  }
+
+  deleteRecentPath(cwd: string): void {
+    this.db.prepare("DELETE FROM recent_paths WHERE cwd = ?").run(cwd);
   }
 
   close(): void {

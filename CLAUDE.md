@@ -59,6 +59,8 @@ If no `--config` is provided, all settings use built-in defaults. See `config.to
 | `limits.bash_output` | `1048576` (1 MB) | Max bash output stored in DB per command |
 | `limits.image_upload` | `10485760` (10 MB) | Max image upload size |
 | `limits.cancel_timeout` | `10000` (10s) | Cancel timeout in ms; 0 disables |
+| `limits.recent_paths` | `10` | Max recent paths shown in `/new` menu; 0 = show all |
+| `limits.recent_paths_ttl` | `30` | Days to keep unused paths before auto-cleanup; 0 = keep forever |
 
 To use a different ACP-compatible agent backend:
 

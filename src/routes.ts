@@ -39,7 +39,7 @@ export interface RequestHandlerDeps {
   getBridge?: () => (Pick<AgentBridge, "newSession" | "setConfigOption" | "loadSession" | "cancel" | "prompt" | "resolvePermission" | "denyPermission" | "restart" | "reloading"> | null);
   publicDir: string;
   dataDir: string;
-  limits: Pick<Config["limits"], "bash_output" | "image_upload"> & Partial<Pick<Config["limits"], "cancel_timeout">>;
+  limits: Pick<Config["limits"], "bash_output" | "image_upload"> & Partial<Pick<Config["limits"], "cancel_timeout" | "recent_paths" | "recent_paths_ttl">>;
   pushService?: PushService;
   serverVersion?: string;
 }
@@ -87,6 +87,7 @@ export function createRequestHandler(deps: RequestHandlerDeps): (req: IncomingMe
           version: "v1",
           endpoints: {
             sessions: "/api/v1/sessions",
+            paths: "/api/v1/paths",
             config: "/api/v1/config",
             events_stream: "/api/v1/events/stream",
             prompt: "/api/beta/prompt",
@@ -110,7 +111,22 @@ export function createRequestHandler(deps: RequestHandlerDeps): (req: IncomingMe
         json(res, 200, {
           configOptions: sessions?.cachedConfigOptions ?? [],
           cancelTimeout: deps.limits.cancel_timeout ?? 0,
+          recentPathsLimit: deps.limits.recent_paths ?? 10,
         });
+        return;
+      }
+
+      // GET /api/v1/paths
+      if (url.startsWith("/api/v1/paths") && req.method === "GET") {
+        const params = new URLSearchParams(url.split("?")[1] ?? "");
+        const limitParam = params.get("limit");
+        const limit = limitParam != null ? parseInt(limitParam, 10) : 0;
+        const ttlDays = deps.limits.recent_paths_ttl ?? 30;
+        const paths = store.listRecentPaths({
+          limit: isNaN(limit) ? 0 : limit,
+          ttlDays,
+        });
+        json(res, 200, paths);
         return;
       }
 
@@ -261,6 +277,7 @@ export function createRequestHandler(deps: RequestHandlerDeps): (req: IncomingMe
         const storedImages = body.images?.map(i => ({ path: i.path, mimeType: i.mimeType }));
         store.saveEvent(sessionId, "user_message", { text: body.text, ...(storedImages?.length && { images: storedImages }) });
         store.updateSessionLastActive(sessionId);
+        store.touchRecentPath(session.cwd);
         const userMsgEvent = { type: "user_message", sessionId, text: body.text, images: storedImages } as AgentEvent;
         sseManager.broadcast(userMsgEvent);
 

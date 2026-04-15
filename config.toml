@@ -27,5 +27,11 @@ image_upload = 10_485_760
 # does not respond within this time the UI resets to idle. Set to 0 to disable.
 cancel_timeout = 10_000
 
+# Max recent paths shown in /new menu (default 10, 0 = show all)
+recent_paths = 10
+
+# Days to keep unused paths before auto-cleanup (default 30, 0 = keep forever)
+recent_paths_ttl = 30
+
 [push]
 vapid_subject = "mailto:noreply@example.com"

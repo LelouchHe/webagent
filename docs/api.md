@@ -414,7 +414,8 @@ Get server configuration and available config options.
 ```json
 {
   "configOptions": [...],
-  "cancelTimeout": 10000
+  "cancelTimeout": 10000,
+  "recentPathsLimit": 10
 }
 ```
 
@@ -422,6 +423,30 @@ Get server configuration and available config options.
 |---|---|---|
 | `configOptions` | `ConfigOption[]` | Available config options from the ACP agent (model, mode, reasoning_effort) |
 | `cancelTimeout` | number | Cancel timeout in ms (from `limits.cancel_timeout` config). `0` = disabled |
+| `recentPathsLimit` | number | Max recent paths to show in `/new` menu (from `limits.recent_paths` config). `0` = show all |
+
+---
+
+### Recent Paths
+
+#### `GET /api/v1/paths`
+
+List recent working directory paths, sorted by last used (most recent first). Paths are automatically recorded when a session receives its first prompt. Stale paths are cleaned up based on the `limits.recent_paths_ttl` config.
+
+**Query parameters:**
+
+| Param | Type | Default | Description |
+|---|---|---|---|
+| `limit` | number | `0` (all) | Max paths to return. `0` = return all |
+
+**Response** `200`:
+
+```json
+[
+  { "cwd": "/projects/webagent", "last_used_at": "2025-04-15 10:30:00.000" },
+  { "cwd": "/projects/other", "last_used_at": "2025-04-14 08:00:00.000" }
+]
+```
 
 ---
 

@@ -82,6 +82,7 @@ export const state = {
   replayQueue: [] as AgentEvent[],
   unconfirmedPermissions: new Map<string, UnconfirmedPermission>(),
   agentReloading: false,
+  recentPathsLimit: 10,
 };
 
 type ConnectionStatus = 'disconnected' | 'connecting' | 'connected';

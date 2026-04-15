@@ -7,6 +7,7 @@ import type { AgentEvent } from "./types.ts";
 
 export interface EventHandlerConfig {
   cancelTimeout: number;
+  recentPathsLimit: number;
 }
 
 export function handleAgentEvent(
@@ -23,6 +24,7 @@ export function handleAgentEvent(
   switch (event.type) {
     case "connected":
       event.cancelTimeout = config.cancelTimeout;
+      event.recentPathsLimit = config.recentPathsLimit;
       if (event.agent) sessions.agentInfo = event.agent;
       break;
     case "session_created":

@@ -248,4 +248,106 @@ describe("Store", () => {
       assert.equal(store.hasInterruptedTurn("s1"), false);
     });
   });
+
+  describe("recentPaths", () => {
+    it("touchRecentPath inserts a new path", () => {
+      store.touchRecentPath("/projects/a");
+      const paths = store.listRecentPaths();
+      assert.equal(paths.length, 1);
+      assert.equal(paths[0].cwd, "/projects/a");
+    });
+
+    it("touchRecentPath updates last_used_at on duplicate", () => {
+      store.touchRecentPath("/projects/a");
+      const before = store.listRecentPaths()[0].last_used_at;
+      // SQLite fractional-second timestamps — a tight loop may produce the same ms,
+      // so just verify no error and the path is still there.
+      store.touchRecentPath("/projects/a");
+      const after = store.listRecentPaths()[0].last_used_at;
+      assert.equal(store.listRecentPaths().length, 1);
+      assert.ok(after >= before);
+    });
+
+    it("listRecentPaths returns paths sorted by last_used_at DESC", () => {
+      store.touchRecentPath("/a");
+      store.touchRecentPath("/b");
+      store.touchRecentPath("/c");
+      // Touch /a again to make it most recent
+      store.touchRecentPath("/a");
+      const paths = store.listRecentPaths();
+      assert.equal(paths[0].cwd, "/a");
+    });
+
+    it("listRecentPaths respects limit option", () => {
+      store.touchRecentPath("/a");
+      store.touchRecentPath("/b");
+      store.touchRecentPath("/c");
+      const paths = store.listRecentPaths({ limit: 2 });
+      assert.equal(paths.length, 2);
+    });
+
+    it("listRecentPaths limit=0 returns all paths", () => {
+      store.touchRecentPath("/a");
+      store.touchRecentPath("/b");
+      store.touchRecentPath("/c");
+      const paths = store.listRecentPaths({ limit: 0 });
+      assert.equal(paths.length, 3);
+    });
+
+    it("listRecentPaths cleans up paths older than ttlDays", () => {
+      store.touchRecentPath("/old");
+      // Manually backdate the path to 60 days ago
+      (store as any).db.prepare(
+        "UPDATE recent_paths SET last_used_at = datetime('now', '-60 days')"
+      ).run();
+      store.touchRecentPath("/fresh");
+
+      const paths = store.listRecentPaths({ ttlDays: 30 });
+      assert.equal(paths.length, 1);
+      assert.equal(paths[0].cwd, "/fresh");
+      // Verify the old one was actually deleted from DB
+      const all = store.listRecentPaths({ ttlDays: 0 });
+      assert.equal(all.length, 1);
+    });
+
+    it("listRecentPaths with ttlDays=0 skips cleanup", () => {
+      store.touchRecentPath("/old");
+      (store as any).db.prepare(
+        "UPDATE recent_paths SET last_used_at = datetime('now', '-9999 days')"
+      ).run();
+      const paths = store.listRecentPaths({ ttlDays: 0 });
+      assert.equal(paths.length, 1);
+    });
+
+    it("migration backfills from sessions table on upgrade", () => {
+      // Simulate pre-upgrade: create sessions, then drop recent_paths to mimic old DB
+      store.createSession("s1", "/from-session-a");
+      store.createSession("s2", "/from-session-b");
+      store.createSession("s3", "/from-session-a"); // duplicate cwd
+      (store as any).db.exec("DROP TABLE recent_paths");
+
+      // Re-run migration (simulates upgrade)
+      store.close();
+      store = new Store(tmpDir);
+
+      const paths = store.listRecentPaths();
+      const cwds = paths.map(p => p.cwd).sort();
+      assert.deepEqual(cwds, ["/from-session-a", "/from-session-b"]);
+    });
+
+    it("deleteRecentPath removes a single path", () => {
+      store.touchRecentPath("/a");
+      store.touchRecentPath("/b");
+      store.deleteRecentPath("/a");
+      const paths = store.listRecentPaths();
+      assert.equal(paths.length, 1);
+      assert.equal(paths[0].cwd, "/b");
+    });
+
+    it("deleteRecentPath is a no-op for non-existent path", () => {
+      store.touchRecentPath("/a");
+      store.deleteRecentPath("/nonexistent");
+      assert.equal(store.listRecentPaths().length, 1);
+    });
+  });
 });

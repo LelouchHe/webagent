@@ -147,6 +147,16 @@ describe("Prompt REST API", () => {
       assert.ok(after >= before);
     });
 
+    it("touches recent path on first prompt", async () => {
+      const sessionId = await createSession();
+      assert.equal(store.listRecentPaths().length, 0);
+      await makeRequest(port, "POST", `/api/v1/sessions/${sessionId}/prompt`,
+        JSON.stringify({ text: "hello" }));
+      const paths = store.listRecentPaths();
+      assert.equal(paths.length, 1);
+      assert.equal(paths[0].cwd, tmpDir);
+    });
+
     it("marks session as active prompt", async () => {
       const sessionId = await createSession();
       // Mock prompt that doesn't resolve immediately

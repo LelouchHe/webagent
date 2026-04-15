@@ -56,7 +56,10 @@ async function initBridge(): Promise<AgentBridge> {
   const b = new AgentBridge(config.agent_cmd);
 
   b.on("event", (event: AgentEvent) => {
-    handleAgentEvent(event, sessions, store, b, { cancelTimeout: config.limits.cancel_timeout }, sseManager, pushService);
+    handleAgentEvent(event, sessions, store, b, {
+      cancelTimeout: config.limits.cancel_timeout,
+      recentPathsLimit: config.limits.recent_paths,
+    }, sseManager, pushService);
   });
 
   await b.start();

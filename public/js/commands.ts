@@ -479,24 +479,20 @@ async function fetchSessionsForMenu(query: string, mode = 'switch') {
   dom.slashMenu.classList.add('active');
 }
 
+let cachedPaths: PathItem[] | null = null;
+
 async function fetchPathsForMenu(query: string) {
-  if (!cachedSessions) {
+  if (!cachedPaths) {
     try {
-      const res = await fetch('/api/v1/sessions');
-      cachedSessions = await res.json();
-      setTimeout(() => { cachedSessions = null; }, 5000);
+      const limit = state.recentPathsLimit || 0;
+      const url = limit > 0 ? `/api/v1/paths?limit=${limit}` : '/api/v1/paths';
+      const res = await fetch(url);
+      cachedPaths = (await res.json()).map((p: any) => ({ cwd: p.cwd, time: p.last_used_at }));
+      setTimeout(() => { cachedPaths = null; }, 5000);
     } catch { return; }
   }
   slashMode = 'new';
-  // Deduplicate paths, keeping the most recent last_active_at for each
-  const pathMap = new Map();
-  for (const s of cachedSessions) {
-    const existing = pathMap.get(s.cwd);
-    if (!existing || (s.last_active_at || s.created_at) > (existing.time)) {
-      pathMap.set(s.cwd, { cwd: s.cwd, time: s.last_active_at || s.created_at });
-    }
-  }
-  let items = [...pathMap.values()].sort((a, b) => b.time.localeCompare(a.time));
+  let items = cachedPaths!;
   if (query) {
     items = items.filter(p => p.cwd.toLowerCase().includes(query));
   }

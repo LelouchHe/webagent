@@ -41,6 +41,8 @@ describe("config", () => {
       bash_output: 1_048_576,
       image_upload: 10_485_760,
       cancel_timeout: 10_000,
+      recent_paths: 10,
+      recent_paths_ttl: 30,
     });
   });
 
@@ -58,6 +60,8 @@ agent_cmd = "demo-agent --acp"
 bash_output = 2048
 image_upload = 4096
 cancel_timeout = 5000
+recent_paths = 20
+recent_paths_ttl = 60
 `);
     process.argv = ["node", "test", "--config", configPath];
 
@@ -71,6 +75,8 @@ cancel_timeout = 5000
       bash_output: 2048,
       image_upload: 4096,
       cancel_timeout: 5000,
+      recent_paths: 20,
+      recent_paths_ttl: 60,
     });
   });
 

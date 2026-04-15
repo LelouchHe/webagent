@@ -13,10 +13,14 @@ const ConfigSchema = z.object({
     bash_output: z.number().int().positive().default(1_048_576),   // 1 MB
     image_upload: z.number().int().positive().default(10_485_760), // 10 MB
     cancel_timeout: z.number().int().nonnegative().default(10_000), // 10s; 0 disables
+    recent_paths: z.number().int().nonnegative().default(10),       // /new menu display limit; 0 = show all
+    recent_paths_ttl: z.number().int().nonnegative().default(30),   // days before auto-cleanup; 0 = keep forever
   }).default({
     bash_output: 1_048_576,
     image_upload: 10_485_760,
     cancel_timeout: 10_000,
+    recent_paths: 10,
+    recent_paths_ttl: 30,
   }),
 
   push: z.object({
