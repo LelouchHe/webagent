@@ -150,13 +150,6 @@ Published to npm as `@lelouchhe/webagent`. CI and release are handled by GitHub 
 - **CI** (`.github/workflows/ci.yml`): Runs `npm test` + Playwright E2E on every push to `main` and on PRs.
 - **Publish** (`.github/workflows/publish.yml`): Triggers on `v*` tag push. Builds `dist/` and publishes to npm with provenance.
 
-Release workflow:
-
-```bash
-npm version patch      # or minor / major — bumps version, creates commit + tag
-git push --follow-tags # pushes commit + tag, triggers publish workflow
-```
-
 Requires `NPM_TOKEN` secret in GitHub repo settings (npmjs.com → Granular Access Token → Read and write on `@lelouchhe/webagent`).
 
 ## TODO
