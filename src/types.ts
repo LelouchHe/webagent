@@ -93,6 +93,50 @@ export type AgentEvent =
   | { type: "bash_result"; sessionId?: string; output: string; code: number | null; signal: string | null }
   | { type: "permission_response"; sessionId?: string; requestId: string; optionName: string; denied: boolean };
 
+// --- Event interpreter types (used by public/js/event-interpreter.ts) ---
+
+export interface ToolCallView {
+  icon: string;
+  title: string;
+  detail?: string;
+  detailPrefix?: string;
+  showDiff: boolean;
+}
+
+export interface StatusIconResult {
+  icon: string;
+  className: string;
+}
+
+export interface PermissionClassification {
+  cssClass: 'allow' | 'deny';
+  apiAction: 'resolve' | 'deny';
+}
+
+export interface DiffLine {
+  kind: 'file' | 'hunk' | 'add' | 'del' | 'context';
+  text: string;
+}
+
+export interface PlanEntryView {
+  symbol: string;
+  content: string;
+}
+
+/** Content item from ACP tool_call_update events. */
+export interface ToolContentItem {
+  type?: string;
+  terminalId?: string;
+  content?: { text?: string } | Array<{ text?: string }>;
+}
+
+export interface NormalizedEventsResponse {
+  events: StoredEvent[];
+  streaming: { thinking: boolean; assistant: boolean };
+  total?: number;
+  hasMore?: boolean;
+}
+
 // --- Utility ---
 
 export function errorMessage(err: unknown): string {
