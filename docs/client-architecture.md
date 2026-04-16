@@ -28,6 +28,7 @@ WebAgent is a terminal-style web UI for ACP-compatible agents. This document des
   - [Event Deduplication](#event-deduplication)
   - [Replay Queue](#replay-queue)
   - [Self-Echo Suppression](#self-echo-suppression)
+  - [Event Interpretation Layer](#event-interpretation-layer)
 - [Permission Flow](#permission-flow)
 - [Slash Commands](#slash-commands)
 - [Bash Execution](#bash-execution)
@@ -87,22 +88,25 @@ All frontend source lives in `public/js/*.ts`. esbuild bundles it into a single 
 | **`state.ts`** | Shared state singleton, DOM refs (`dom`), config helpers, routing, cancel logic | `state`, `dom`, `setBusy()`, `requestNewSession()`, `resetSessionUI()`, `setConnectionStatus()` |
 | **`connection.ts`** | SSE + REST connection lifecycle, parallel init, visibility sync | `connect()` |
 | **`events.ts`** | Event dispatch (live + replay), history loading, permission responses | `handleEvent()`, `loadHistory()`, `loadNewEvents()` |
+| **`event-interpreter.ts`** | Pure data transformation for ACP events — zero DOM dependency | `interpretToolCall()`, `classifyPermissionOption()`, `parseDiff()`, etc. |
+| **`constants.ts`** | Display constants (tool icons, plan status icons) | `TOOL_ICONS`, `PLAN_STATUS_ICONS` |
 | **`input.ts`** | User input: send messages, cancel, keyboard shortcuts, mode cycling | — |
 | **`commands.ts`** | Slash command parsing, menu UI, `/switch`, `/new`, `/exit`, `/rename`, `/model`, `/mode`, `/notify` | `handleSlashCommand()`, `hideSlashMenu()` |
 | **`images.ts`** | Image attach (click/drag/paste), preview, upload to server | `renderAttachPreview()` |
-| **`render.ts`** | DOM helpers: add messages, markdown rendering, theme, scroll, tool call display | `addMessage()`, `addSystem()`, `scrollToBottom()`, `renderMd()` |
+| **`render.ts`** | DOM helpers: add messages, markdown rendering, theme, scroll, diff HTML generation | `addMessage()`, `addSystem()`, `scrollToBottom()`, `renderMd()` |
 | **`api.ts`** | REST client — typed `fetch` wrappers for every server endpoint | `createSession()`, `sendMessage()`, `cancelSession()`, etc. |
 
 **Dependency graph** (arrows = imports):
 
 ```
 app.ts
-  ├── connection.ts → state, render, events, api
-  ├── events.ts     → state, render, api, types, constants
-  ├── input.ts      → state, render, commands, images, api
-  ├── commands.ts   → state, render, events, api
-  ├── images.ts     → state, render
-  └── render.ts     → state
+  ├── connection.ts        → state, render, events, api
+  ├── events.ts            → state, render, api, event-interpreter, types
+  ├── event-interpreter.ts → constants, types  (ZERO DOM dependency)
+  ├── input.ts             → state, render, commands, images, api
+  ├── commands.ts          → state, render, events, api
+  ├── images.ts            → state, render
+  └── render.ts            → state, event-interpreter
 ```
 
 **Cross-directory imports:** The frontend imports types (`AgentEvent`, `ConfigOption`, `StoredEvent`) from `src/types.ts`. Display constants (`TOOL_ICONS`, `PLAN_STATUS_ICONS`) live in `public/js/constants.ts` alongside other frontend modules. esbuild resolves cross-directory type imports at bundle time.
@@ -460,6 +464,36 @@ if (state.sentMessageForSession === msg.sessionId) {
 
 This prevents the user's own message from appearing twice.
 
+### Event Interpretation Layer
+
+`event-interpreter.ts` is a set of pure functions that transform raw ACP event data into display-ready view models. It has **zero DOM dependency** and is tested under plain Node.js (no happy-dom).
+
+```
+ACP event (JSON)
+    ↓
+event-interpreter.ts  — pure data transformation
+    ↓
+View models (typed objects)
+    ↓
+events.ts / render.ts — DOM creation
+```
+
+Both `replayEvent()` and `handleEvent()` call the same interpreter functions, eliminating data-preparation duplication between the two paths. DOM creation remains separate because the two paths have different context (e.g. replay renders resolved permissions as dimmed, live renders buttons).
+
+| Function | Input | Output |
+|---|---|---|
+| `interpretToolCall(kind, title, rawInput)` | Tool call fields | `{ icon, title, detail?, detailPrefix?, showDiff }` |
+| `extractToolCallContent(content)` | ACP content array (3 formats) | Plain text string |
+| `getStatusIcon(status)` | Status string | `{ icon, className }` |
+| `classifyPermissionOption(kind)` | Option kind string | `{ cssClass: 'allow'\|'deny', apiAction: 'resolve'\|'deny' }` |
+| `resolvePermissionLabel(optionName?, denied?)` | Response fields | Display label string |
+| `formatPlanEntries(entries)` | Plan entries | `{ symbol, content }[]` |
+| `parseDiff(rawInput)` | RawInput | `DiffLine[]` (structured, unescaped) |
+| `normalizeEventsResponse(body)` | API response | Normalized envelope |
+| `isPromptIdle(promptDone, toolCalls, permissions)` | Pending counts | Boolean |
+
+Note: `classifyPermissionOption` returns two independent classifications — `cssClass` and `apiAction` are not a simple binary. A kind like `"escalate"` would get `cssClass: 'deny'` (not allow) but `apiAction: 'resolve'` (not deny). This preserves the asymmetric semantics of the original inline code.
+
 ---
 
 ## Permission Flow
@@ -569,12 +603,12 @@ When a turn boundary occurs (`tool_call`, `plan`, `prompt_done`), the streaming 
 
 ### Tool Calls
 
-Each tool call gets a `<div id="tc-{id}" class="tool-call">` with an icon from `TOOL_ICONS`. Status updates change the class and icon:
-- Pending: tool icon
+Each tool call gets a `<div id="tc-{id}" class="tool-call">` with an icon derived from `interpretToolCall()`. Status updates use `getStatusIcon()` to change the class and icon:
+- Pending: tool kind icon (e.g. `cat`, `edit`, `exec`)
 - Completed: ✓
 - Failed: ✗
 
-Edit tool calls render a diff view. Command tool calls show the command string.
+Edit tool calls render a diff view via `parseDiff()` (structured data) → `renderPatchDiff()` (HTML). Command tool calls show the command string.
 
 ### Status Bar
 

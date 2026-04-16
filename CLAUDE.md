@@ -16,6 +16,7 @@ Core modules:
 - `daemon.ts` — Background service management (start/stop/status/restart) with supervisor
 - `types.ts` — Shared types + Zod schemas for WS messages
 - `public/js/constants.ts` — Display constants (tool icons, plan status icons)
+- `public/js/event-interpreter.ts` — Pure ACP event data transformation (zero DOM dependency)
 - `public/index.html` — HTML shell (imports CSS + bundled JS)
 - `public/styles.css` — all CSS
 - `public/js/` — frontend TypeScript source (state, render, events, commands, images, input, connection, app), bundled via esbuild
