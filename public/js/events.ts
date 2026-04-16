@@ -16,6 +16,45 @@ import { TOOL_ICONS, DEFAULT_TOOL_ICON, PLAN_STATUS_ICONS } from '../../src/shar
 import { enhanceCodeBlocks } from './highlight.ts';
 import type { AgentEvent, PlanEntry, StoredEvent } from '../../src/types.ts';
 
+/**
+ * When the current session is gone (expired, deleted), try to switch to the
+ * next available session. Creates a new session only if no others exist.
+ * Shared by resumeAndLoad error recovery, session_deleted handler, and /exit.
+ */
+export async function fallbackToNextSession(expiredId: string | null, cwd?: string): Promise<void> {
+  state.sessionSwitchGen++;
+  const gen = state.sessionSwitchGen;
+  try {
+    const sessions = await api.listSessions() as Array<{ id: string }>;
+    if (gen !== state.sessionSwitchGen) return;
+    const next = sessions.find(s => s.id !== expiredId);
+    if (next) {
+      resetSessionUI();
+      state.sessionId = null;
+      setHashSessionId(next.id);
+      const [session, loaded] = await Promise.all([
+        api.getSession(next.id) as Promise<Record<string, unknown>>,
+        loadHistory(next.id),
+      ]);
+      if (gen !== state.sessionSwitchGen) return;
+      handleEvent({
+        type: 'session_created',
+        sessionId: session.id as string,
+        cwd: session.cwd as string,
+        title: session.title as string | null,
+        configOptions: session.configOptions,
+        busyKind: session.busyKind,
+      });
+      if (loaded) scrollToBottom(true);
+      return;
+    }
+  } catch { /* fall through to create new */ }
+  if (gen !== state.sessionSwitchGen) return;
+  resetSessionUI();
+  state.sessionId = null;
+  requestNewSession({ cwd: cwd || undefined });
+}
+
 // During replay, elements live in a detached DocumentFragment (no getElementById).
 // These helpers search the fragment first, then fall back to the live DOM.
 function replayById(id: string): HTMLElement | null {
@@ -981,18 +1020,12 @@ export function handleEvent(msg: AgentEvent) {
 
     case 'session_deleted':
       if (msg.sessionId === state.sessionId) {
-        addSystem('warn: This session has been deleted.');
-        dom.input.disabled = true;
-        dom.sendBtn.disabled = true;
-        dom.input.placeholder = 'Session deleted';
+        fallbackToNextSession(msg.sessionId, state.sessionCwd || undefined);
       }
       break;
 
     case 'session_expired': {
-      const cwd = state.sessionCwd;
-      resetSessionUI();
-      addSystem('warn: Previous session expired, created new one.');
-      requestNewSession({ cwd: cwd || undefined });
+      fallbackToNextSession(state.sessionId, state.sessionCwd || undefined);
       break;
     }
 

@@ -2,11 +2,11 @@
 
 import {
   state, dom, setBusy, resetSessionUI, requestNewSession, sendCancel,
-  getConfigOption, getConfigValue, setHashSessionId, updateSessionInfo,
+  getConfigOption, getConfigValue, updateSessionInfo,
   updateModeUI, updateStatusBar,
 } from './state.ts';
 import { addSystem, addMessage, scrollToBottom, escHtml, formatLocalTime } from './render.ts';
-import { loadHistory, handleEvent } from './events.ts';
+import { loadHistory, handleEvent, fallbackToNextSession } from './events.ts';
 import * as api from './api.ts';
 import type { SessionSummary } from '../../src/types.ts';
 
@@ -120,38 +120,10 @@ export async function handleSlashCommand(text: string): Promise<boolean> {
       }
       const exitId = state.sessionId;
       try {
-        const sessions = await api.listSessions() as SessionSummary[];
-        const next = sessions.find(s => s.id !== exitId);
         if (state.busy) sendCancel();
         api.deleteSession(exitId).catch(() => {});
         cachedSessions = null;
-        if (next) {
-          state.sessionSwitchGen++;
-          const gen = state.sessionSwitchGen;
-          resetSessionUI();
-          state.sessionId = null;
-          setHashSessionId(next.id);
-          const [session] = await Promise.all([
-            api.getSession(next.id) as Promise<Record<string, unknown>>,
-            loadHistory(next.id),
-          ]);
-          if (gen !== state.sessionSwitchGen) return true;
-          handleEvent({
-            type: 'session_created',
-            sessionId: session.id as string,
-            cwd: session.cwd as string,
-            title: session.title as string | null,
-            configOptions: session.configOptions,
-            busyKind: session.busyKind,
-          });
-          scrollToBottom(true);
-        } else {
-          const exitCwd = state.sessionCwd;
-          resetSessionUI();
-          state.sessionId = null;
-          addSystem('Creating new session…');
-          requestNewSession({ cwd: exitCwd || undefined, inheritFromSessionId: null });
-        }
+        await fallbackToNextSession(exitId, state.sessionCwd || undefined);
       } catch {
         addSystem('err: Failed to exit session');
       }

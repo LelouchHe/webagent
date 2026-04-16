@@ -841,34 +841,44 @@ describe("events", () => {
     });
 
     describe("session_deleted", () => {
-      it("disables input for current session", () => {
+      it("auto-switches to next session when current is deleted", async () => {
         state.sessionId = "s1";
+        const nextSession = { id: "s2", cwd: "/tmp", title: "Next", configOptions: [], busyKind: null };
+        setFetch(async (url: string, init?: any) => {
+          if (url === "/api/v1/sessions" && (!init?.method || init.method === "GET"))
+            return { ok: true, text: async () => JSON.stringify([{ id: "s2" }]) };
+          if (url === "/api/v1/sessions/s2")
+            return { ok: true, text: async () => JSON.stringify(nextSession) };
+          if (url.startsWith("/api/v1/sessions/s2/events"))
+            return { ok: true, text: async () => '[]' };
+          return { ok: true, text: async () => '{}' };
+        });
+
         events.handleEvent({ type: "session_deleted", sessionId: "s1" });
-        assert.equal(dom.input.disabled, true);
-        assert.equal(dom.sendBtn.disabled, true);
+        for (let i = 0; i < 30; i++) await Promise.resolve();
+        assert.equal(state.sessionId, "s2");
+        assert.equal(dom.input.disabled, false);
+      });
+
+      it("creates new session when current is deleted and no others exist", async () => {
+        state.sessionId = "s1";
+        setFetch(async (url: string, init?: any) => {
+          if (url === "/api/v1/sessions" && (!init?.method || init.method === "GET"))
+            return { ok: true, text: async () => '[]' };
+          if (url === "/api/v1/sessions" && init?.method === "POST")
+            return { ok: true, text: async () => JSON.stringify({ id: "new-1" }) };
+          return { ok: true, text: async () => '{}' };
+        });
+
+        events.handleEvent({ type: "session_deleted", sessionId: "s1" });
+        for (let i = 0; i < 30; i++) await Promise.resolve();
+        assert.equal(state.awaitingNewSession, true);
       });
 
       it("ignores deletion of other sessions", () => {
         state.sessionId = "s1";
         events.handleEvent({ type: "session_deleted", sessionId: "s2" });
         assert.equal(dom.input.disabled, false);
-      });
-
-      it("re-enables input when a new session is created after deletion", () => {
-        state.sessionId = "s1";
-        events.handleEvent({ type: "session_deleted", sessionId: "s1" });
-        assert.equal(dom.input.disabled, true);
-
-        // User creates a new session
-        state.awaitingNewSession = true;
-        events.handleEvent({
-          type: "session_created",
-          sessionId: "s2",
-          cwd: "/home",
-        });
-        assert.equal(dom.input.disabled, false);
-        assert.equal(dom.sendBtn.disabled, false);
-        assert.notEqual(dom.input.placeholder, "Session deleted");
       });
     });
 

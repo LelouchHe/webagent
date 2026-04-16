@@ -156,6 +156,46 @@ describe("connection", () => {
     assert.equal(state.sessionId, "recent-session");
   });
 
+  it("falls back to next existing session when hash session is expired", async () => {
+    history.replaceState(null, "", "/#expired-session");
+    setFetch(async (url: string, init?: RequestInit) => {
+      if (url.includes("/visibility")) return mockResponse({});
+      // The expired session returns 404
+      if (url === "/api/v1/sessions/expired-session") return { ok: false, status: 404, json: async () => ({ error: "not found" }) };
+      if (url.startsWith("/api/v1/sessions/expired-session/events")) return mockResponse([]);
+      // listSessions returns another available session
+      if (url === "/api/v1/sessions" && (!init?.method || init.method === "GET")) return mockResponse([{ id: "fallback-session" }]);
+      if (url === "/api/v1/sessions/fallback-session") return mockResponse(sessionResponse("fallback-session", { title: "Fallback" }));
+      if (url.startsWith("/api/v1/sessions/fallback-session/events")) return mockResponse([]);
+      throw new Error(`Unexpected fetch: ${url} ${init?.method}`);
+    });
+
+    connection.connect();
+    await flush(30);
+
+    // Should have switched to the fallback session, not created a new one
+    assert.equal(state.sessionId, "fallback-session");
+    assert.equal(state.awaitingNewSession, false);
+  });
+
+  it("creates new session when hash session is expired and no other sessions exist", async () => {
+    history.replaceState(null, "", "/#expired-session");
+    setFetch(async (url: string, init?: RequestInit) => {
+      if (url.includes("/visibility")) return mockResponse({});
+      if (url === "/api/v1/sessions/expired-session") return { ok: false, status: 404, json: async () => ({ error: "not found" }) };
+      if (url.startsWith("/api/v1/sessions/expired-session/events")) return mockResponse([]);
+      // No other sessions available
+      if (url === "/api/v1/sessions" && (!init?.method || init.method === "GET")) return mockResponse([]);
+      if (url === "/api/v1/sessions" && init?.method === "POST") return mockResponse({ id: "new-1" });
+      throw new Error(`Unexpected fetch: ${url} ${init?.method}`);
+    });
+
+    connection.connect();
+    await flush(30);
+
+    assert.equal(state.awaitingNewSession, true);
+  });
+
   it("creates a new session when no previous session exists", async () => {
     setFetch(async (url: string, init?: RequestInit) => {
       if (url.includes("/visibility")) return mockResponse({});

@@ -2,7 +2,7 @@
 
 import { state, setBusy, getHashSessionId, requestNewSession, resetSessionUI, setConnectionStatus, clearCancelTimer } from './state.ts';
 import { addSystem, finishThinking, finishAssistant, finishBash, scrollToBottom } from './render.ts';
-import { handleEvent, loadHistory, loadNewEvents, retryUnconfirmedPermissions } from './events.ts';
+import { handleEvent, loadHistory, loadNewEvents, retryUnconfirmedPermissions, fallbackToNextSession } from './events.ts';
 import * as api from './api.ts';
 
 /** If the browser has an active push subscription, tell the server which
@@ -109,10 +109,7 @@ async function resumeAndLoad(sessionId: string, incremental: boolean, gen: numbe
       });
     } catch {
       if (gen !== state.sessionSwitchGen) return;
-      const expiredCwd = state.sessionCwd;
-      resetSessionUI();
-      addSystem('warn: Previous session expired, created new one.');
-      requestNewSession({ cwd: expiredCwd || undefined });
+      await fallbackToNextSession(sessionId, state.sessionCwd || undefined);
       return;
     }
     if (gen !== state.sessionSwitchGen) return;
@@ -134,10 +131,7 @@ async function resumeAndLoad(sessionId: string, incremental: boolean, gen: numbe
       }
     } catch {
       if (gen !== state.sessionSwitchGen) return;
-      const expiredCwd2 = state.sessionCwd;
-      resetSessionUI();
-      addSystem('warn: Previous session expired, created new one.');
-      requestNewSession({ cwd: expiredCwd2 || undefined });
+      await fallbackToNextSession(sessionId, state.sessionCwd || undefined);
       return;
     }
     handleEvent({
