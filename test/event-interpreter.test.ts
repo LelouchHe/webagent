@@ -316,6 +316,13 @@ describe('normalizeEventsResponse', () => {
     assert.equal(result.streaming.assistant, false);
     assert.equal(result.hasMore, undefined);
   });
+
+  it('filters non-number total and non-boolean hasMore', () => {
+    const body = { events: [], streaming: { thinking: false, assistant: false }, total: '10', hasMore: null };
+    const result = normalizeEventsResponse(body);
+    assert.equal(result.total, undefined);
+    assert.equal(result.hasMore, undefined);
+  });
 });
 
 // --- isPromptIdle ---

@@ -132,8 +132,8 @@ export function normalizeEventsResponse(body: unknown): NormalizedEventsResponse
   return {
     events: (envelope.events || []) as StoredEvent[],
     streaming: (envelope.streaming || { thinking: false, assistant: false }) as { thinking: boolean; assistant: boolean },
-    total: envelope.total as number | undefined,
-    hasMore: envelope.hasMore as boolean | undefined,
+    total: typeof envelope.total === 'number' ? envelope.total : undefined,
+    hasMore: typeof envelope.hasMore === 'boolean' ? envelope.hasMore : undefined,
   };
 }
 
