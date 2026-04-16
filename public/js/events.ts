@@ -12,7 +12,7 @@ import {
   formatLocalTime,
 } from './render.ts';
 import * as api from './api.ts';
-import { TOOL_ICONS, DEFAULT_TOOL_ICON, PLAN_STATUS_ICONS } from '../../src/shared/constants.ts';
+import { TOOL_ICONS, DEFAULT_TOOL_ICON, PLAN_STATUS_ICONS } from './constants.ts';
 import { enhanceCodeBlocks } from './highlight.ts';
 import type { AgentEvent, PlanEntry, StoredEvent } from '../../src/types.ts';
 

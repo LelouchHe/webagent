@@ -15,7 +15,7 @@ Core modules:
 - `push-service.ts` — Web Push notifications (VAPID keys, subscriptions, visibility-gated delivery)
 - `daemon.ts` — Background service management (start/stop/status/restart) with supervisor
 - `types.ts` — Shared types + Zod schemas for WS messages
-- `shared/constants.ts` — Constants shared between frontend and backend (tool icons, plan status icons)
+- `public/js/constants.ts` — Display constants (tool icons, plan status icons)
 - `public/index.html` — HTML shell (imports CSS + bundled JS)
 - `public/styles.css` — all CSS
 - `public/js/` — frontend TypeScript source (state, render, events, commands, images, input, connection, app), bundled via esbuild
@@ -123,7 +123,7 @@ Keep this distinction clear in docs and code discussions: some missing capabilit
 
 - **esbuild bundling** — Frontend source is TypeScript in `public/js/*.ts`. `scripts/build.js` bundles via esbuild into a single `dist/js/app.[hash].js` (minified, content-hashed). CSS is also content-hashed. Dev mode (`--dev`) outputs to `dist-dev/` without minification or hashing; `--watch` adds live rebuild.
 - **Module structure** — `public/js/state.ts` (shared state + DOM refs), `render.ts` (UI helpers + theme), `events.ts` (WS event dispatch + history), `commands.ts` (slash commands + autocomplete), `images.ts` (attach/paste), `input.ts` (send/keyboard), `connection.ts` (WS lifecycle), `app.ts` (boot entry).
-- **Shared code** — Frontend imports types (`AgentEvent`, `ConfigOption`) from `src/types.ts` and constants (`TOOL_ICONS`, `PLAN_STATUS_ICONS`) from `src/shared/constants.ts`. esbuild resolves these cross-directory imports at bundle time.
+- **Shared code** — Frontend imports types (`AgentEvent`, `ConfigOption`) from `src/types.ts`. Display constants (`TOOL_ICONS`, `PLAN_STATUS_ICONS`) live in `public/js/constants.ts` alongside other frontend modules. esbuild resolves cross-directory type imports at bundle time.
 - **Terminal aesthetic** — monospace fonts, `^C` / `^U` style button labels, `*` git-branch-style session markers.
 - **Keyboard shortcuts** — `Ctrl+C` cancel (smart: native copy when text selected), `Ctrl+U` upload. Enter always sends input (never cancels, never selects menu item). Tab fills menu selection into input without executing. Click/tap on menu item = fill + send.
 - **Theme** — dark/light/auto, persisted to localStorage.

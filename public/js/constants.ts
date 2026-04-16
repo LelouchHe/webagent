@@ -1,4 +1,4 @@
-// Shared constants used by both frontend and backend.
+// Display constants for the frontend UI.
 
 // --- Tool call kind → display icon ---
 export const TOOL_ICONS: Record<string, string> = {

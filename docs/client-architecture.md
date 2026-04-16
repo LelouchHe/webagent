@@ -105,7 +105,7 @@ app.ts
   └── render.ts     → state
 ```
 
-**Cross-directory imports:** The frontend imports types (`AgentEvent`, `ConfigOption`, `StoredEvent`) from `src/types.ts` and constants (`TOOL_ICONS`, `PLAN_STATUS_ICONS`) from `src/shared/constants.ts`. esbuild resolves these at bundle time.
+**Cross-directory imports:** The frontend imports types (`AgentEvent`, `ConfigOption`, `StoredEvent`) from `src/types.ts`. Display constants (`TOOL_ICONS`, `PLAN_STATUS_ICONS`) live in `public/js/constants.ts` alongside other frontend modules. esbuild resolves cross-directory type imports at bundle time.
 
 ---
 
