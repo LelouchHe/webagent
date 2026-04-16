@@ -12,9 +12,13 @@ import {
   formatLocalTime,
 } from './render.ts';
 import * as api from './api.ts';
-import { TOOL_ICONS, DEFAULT_TOOL_ICON, PLAN_STATUS_ICONS } from './constants.ts';
+import {
+  interpretToolCall, extractToolCallContent, getStatusIcon,
+  classifyPermissionOption, resolvePermissionLabel, formatPlanEntries,
+  parseDiff, normalizeEventsResponse, isPromptIdle,
+} from './event-interpreter.ts';
 import { enhanceCodeBlocks } from './highlight.ts';
-import type { AgentEvent, PlanEntry, StoredEvent } from '../../src/types.ts';
+import type { AgentEvent, StoredEvent } from '../../src/types.ts';
 
 /**
  * When the current session is gone (expired, deleted), try to switch to the
@@ -88,8 +92,7 @@ function showNotifyTip() {
 }
 
 function finishPromptIfIdle() {
-  if (!state.pendingPromptDone) return;
-  if (state.pendingToolCallIds.size > 0 || state.pendingPermissionRequestIds.size > 0) return;
+  if (!isPromptIdle(state.pendingPromptDone, state.pendingToolCallIds.size, state.pendingPermissionRequestIds.size)) return;
   hideWaiting();
   finishThinking();
   finishAssistant();
@@ -128,23 +131,6 @@ function completePendingTurnUI() {
   }
   state.pendingToolCallIds.clear();
   state.pendingPermissionRequestIds.clear();
-}
-
-/** Normalize events API response: supports both the new {events, streaming, total, hasMore} envelope and legacy array. */
-function normalizeEventsResponse(body: unknown): {
-  events: StoredEvent[];
-  streaming: { thinking: boolean; assistant: boolean };
-  total?: number;
-  hasMore?: boolean;
-} {
-  if (Array.isArray(body)) return { events: body, streaming: { thinking: false, assistant: false } };
-  const obj = body as Record<string, unknown>;
-  return {
-    events: (obj.events ?? []) as StoredEvent[],
-    streaming: (obj.streaming ?? { thinking: false, assistant: false }) as { thinking: boolean; assistant: boolean },
-    total: typeof obj.total === 'number' ? obj.total : undefined,
-    hasMore: typeof obj.hasMore === 'boolean' ? obj.hasMore : undefined,
-  };
 }
 
 const HISTORY_PAGE_SIZE = 200;
@@ -490,24 +476,23 @@ export function replayEvent(type: string, data: Record<string, any>, events: Sto
       break;
     }
     case 'tool_call': {
-      const icon = TOOL_ICONS[data.kind] || DEFAULT_TOOL_ICON;
+      const tc = interpretToolCall(data.kind, data.title, data.rawInput);
       const el = document.createElement('div');
       el.className = 'tool-call';
       el.id = `tc-${data.id}`;
       el.dataset.kind = data.kind;
-      let label = `<span class="icon">${icon}</span> ${escHtml(data.title)}`;
-      const rawInput = data.rawInput;
-      if (rawInput && rawInput.command) {
-        label += `<span class="tc-detail">$ ${escHtml(rawInput.command)}</span>`;
-      } else if (rawInput && rawInput.path) {
-        label += `<span class="tc-detail">${escHtml(rawInput.path)}</span>`;
+      let label = `<span class="icon">${tc.icon}</span> ${escHtml(tc.title)}`;
+      if (tc.detail) {
+        label += `<span class="tc-detail">${tc.detailPrefix || ''}${escHtml(tc.detail)}</span>`;
       }
       el.innerHTML = label;
-      const diffHtml = data.kind === 'edit' ? renderPatchDiff(rawInput) : null;
-      if (diffHtml) {
-        const details = document.createElement('details');
-        details.innerHTML = `<summary>diff</summary><div class="diff-view">${diffHtml}</div>`;
-        el.appendChild(details);
+      if (tc.showDiff) {
+        const diffHtml = renderPatchDiff(data.rawInput);
+        if (diffHtml) {
+          const details = document.createElement('details');
+          details.innerHTML = `<summary>diff</summary><div class="diff-view">${diffHtml}</div>`;
+          el.appendChild(details);
+        }
       }
       const detail = el.querySelector('.tc-detail');
       if (detail) {
@@ -523,19 +508,12 @@ export function replayEvent(type: string, data: Record<string, any>, events: Sto
     case 'tool_call_update': {
       const el = ri ? ri.toolCalls.get(data.id) : replayById(`tc-${data.id}`);
       if (el) {
-        const statusIcon = data.status === 'completed' ? '✓' : data.status === 'failed' ? '✗' : '…';
-        el.className = `tool-call ${data.status}`;
+        const si = getStatusIcon(data.status);
+        el.className = si.className;
         const iconSpan = el.querySelector('.icon');
-        if (iconSpan) iconSpan.textContent = statusIcon;
+        if (iconSpan) iconSpan.textContent = si.icon;
         if (data.content && data.content.length && !el.querySelector('details') && !el.querySelector('.tc-summary')) {
-          const text = data.content
-            .map((c: any) => {
-              if (c.type === 'terminal') return `[terminal ${c.terminalId}]`;
-              if (c.content?.text) return c.content.text;
-              if (Array.isArray(c.content)) return c.content.map((cc: any) => cc.text || '').join('');
-              return '';
-            })
-            .filter(Boolean).join('\n');
+          const text = extractToolCallContent(data.content);
           if (text) {
             if (el.dataset.kind === 'task_complete') {
               const div = document.createElement('div');
@@ -559,11 +537,9 @@ export function replayEvent(type: string, data: Record<string, any>, events: Sto
     case 'plan': {
       const el = document.createElement('div');
       el.className = 'plan';
+      const planViews = formatPlanEntries(data.entries || []);
       el.innerHTML = '<div class="plan-title">― plan</div>' +
-        (data.entries || []).map((e: PlanEntry) => {
-          const s = PLAN_STATUS_ICONS[e.status] || '?';
-          return `<div class="plan-entry">${s} ${escHtml(e.content)}</div>`;
-        }).join('');
+        planViews.map(pv => `<div class="plan-entry">${pv.symbol} ${escHtml(pv.content)}</div>`).join('');
       appendMessageElement(el);
       break;
     }
@@ -584,12 +560,11 @@ export function replayEvent(type: string, data: Record<string, any>, events: Sto
         el.querySelector('.title')!.style.opacity = '1';
         data.options.forEach((opt: Record<string, any>) => {
           const btn = document.createElement('button');
-          const isAllow = (opt.kind || '').includes('allow');
-          btn.className = isAllow ? 'allow' : 'deny';
+          const perm = classifyPermissionOption(opt.kind || '');
+          btn.className = perm.cssClass;
           btn.textContent = opt.name;
           btn.onclick = () => {
-            const isDeny = (opt.kind || '').includes('reject') || (opt.kind || '').includes('deny');
-            if (isDeny) {
+            if (perm.apiAction === 'deny') {
               api.denyPermission(state.sessionId!, data.requestId).catch(() => {});
             } else {
               api.resolvePermission(state.sessionId!, data.requestId, opt.optionId).catch(() => {});
@@ -610,7 +585,7 @@ export function replayEvent(type: string, data: Record<string, any>, events: Sto
         : replayQuery(`.permission[data-request-id="${data.requestId}"]`);
       if (el) {
         const title = (el as HTMLElement).dataset.title ? `⚿ ${(el as HTMLElement).dataset.title}` : '⚿';
-        const action = data.optionName || (data.denied ? 'denied' : 'allowed');
+        const action = resolvePermissionLabel(data.optionName, data.denied);
         el.innerHTML = `<span style="opacity:0.5">${escHtml(title)} — ${escHtml(action)}</span>`;
       }
       break;
@@ -810,24 +785,23 @@ export function handleEvent(msg: AgentEvent) {
       hideWaiting();
       finishThinking();
       finishAssistant();
-      const icon = TOOL_ICONS[msg.kind] || DEFAULT_TOOL_ICON;
+      const tc = interpretToolCall(msg.kind, msg.title, msg.rawInput);
       const el = document.createElement('div');
       el.className = 'tool-call';
       el.id = `tc-${msg.id}`;
       el.dataset.kind = msg.kind;
-      let label = `<span class="icon">${icon}</span> ${escHtml(msg.title)}`;
-      const ri = msg.rawInput;
-      if (ri && ri.command) {
-        label += `<span class="tc-detail">$ ${escHtml(ri.command)}</span>`;
-      } else if (ri && ri.path) {
-        label += `<span class="tc-detail">${escHtml(ri.path)}</span>`;
+      let label = `<span class="icon">${tc.icon}</span> ${escHtml(tc.title)}`;
+      if (tc.detail) {
+        label += `<span class="tc-detail">${tc.detailPrefix || ''}${escHtml(tc.detail)}</span>`;
       }
       el.innerHTML = label;
-      const diffHtml = msg.kind === 'edit' ? renderPatchDiff(ri) : null;
-      if (diffHtml) {
-        const details = document.createElement('details');
-        details.innerHTML = `<summary>diff</summary><div class="diff-view">${diffHtml}</div>`;
-        el.appendChild(details);
+      if (tc.showDiff) {
+        const diffHtml = renderPatchDiff(msg.rawInput);
+        if (diffHtml) {
+          const details = document.createElement('details');
+          details.innerHTML = `<summary>diff</summary><div class="diff-view">${diffHtml}</div>`;
+          el.appendChild(details);
+        }
       }
       const detail = el.querySelector('.tc-detail');
       if (detail) {
@@ -847,19 +821,12 @@ export function handleEvent(msg: AgentEvent) {
         state.pendingToolCallIds.delete(msg.id);
       }
       if (el) {
-        const statusIcon = msg.status === 'completed' ? '✓' : msg.status === 'failed' ? '✗' : '…';
-        el.className = `tool-call ${msg.status}`;
+        const si = getStatusIcon(msg.status);
+        el.className = si.className;
         const iconSpan = el.querySelector('.icon');
-        if (iconSpan) iconSpan.textContent = statusIcon;
+        if (iconSpan) iconSpan.textContent = si.icon;
         if (msg.content && msg.content.length && !el.querySelector('details') && !el.querySelector('.tc-summary')) {
-          const text = msg.content
-            .map(c => {
-              if (c.type === 'terminal') return `[terminal ${c.terminalId}]`;
-              if (c.content?.text) return c.content.text;
-              if (Array.isArray(c.content)) return c.content.map(cc => cc.text || '').join('');
-              return '';
-            })
-            .filter(Boolean).join('\n');
+          const text = extractToolCallContent(msg.content);
           if (text) {
             if (el.dataset.kind === 'task_complete') {
               const div = document.createElement('div');
@@ -884,11 +851,9 @@ export function handleEvent(msg: AgentEvent) {
       finishAssistant();
       const el = document.createElement('div');
       el.className = 'plan';
+      const planViews = formatPlanEntries(msg.entries);
       el.innerHTML = '<div class="plan-title">― plan</div>' +
-        msg.entries.map((e: PlanEntry) => {
-          const s = PLAN_STATUS_ICONS[e.status] || '?';
-          return `<div class="plan-entry">${s} ${escHtml(e.content)}</div>`;
-        }).join('');
+        planViews.map(pv => `<div class="plan-entry">${pv.symbol} ${escHtml(pv.content)}</div>`).join('');
       appendMessageElement(el);
       break;
     }
@@ -907,12 +872,11 @@ export function handleEvent(msg: AgentEvent) {
       permEl.innerHTML = `<span class="title">⚿ ${escHtml(msg.title)}</span> `;
       msg.options.forEach(opt => {
         const btn = document.createElement('button');
-        const isAllow = (opt.kind || '').includes('allow');
-        btn.className = isAllow ? 'allow' : 'deny';
+        const perm = classifyPermissionOption(opt.kind || '');
+        btn.className = perm.cssClass;
         btn.textContent = opt.name;
         btn.onclick = () => {
-          const isDeny = (opt.kind || '').includes('reject') || (opt.kind || '').includes('deny');
-          if (isDeny) {
+          if (perm.apiAction === 'deny') {
             api.denyPermission(state.sessionId!, msg.requestId).catch(() => {});
           } else {
             api.resolvePermission(state.sessionId!, msg.requestId, opt.optionId).catch(() => {});
@@ -923,7 +887,7 @@ export function handleEvent(msg: AgentEvent) {
             sessionId: state.sessionId,
             optionId: opt.optionId,
             optionName: opt.name,
-            denied: isDeny,
+            denied: perm.apiAction === 'deny',
           });
           permEl.innerHTML = `<span style="opacity:0.5">⚿ ${escHtml(msg.title)} — ${escHtml(opt.name)}</span>`;
           finishPromptIfIdle();
@@ -942,7 +906,7 @@ export function handleEvent(msg: AgentEvent) {
       console.log('[PERM-DEBUG] permTarget found:', !!permTarget, 'sessionMatch:', msg.sessionId === state.sessionId);
       if (msg.sessionId === state.sessionId && permTarget) {
         const title = permTarget.dataset.title ? `⚿ ${permTarget.dataset.title}` : '⚿';
-        const action = msg.optionName || (msg.denied ? 'denied' : 'allowed');
+        const action = resolvePermissionLabel(msg.optionName, msg.denied);
         permTarget.innerHTML = `<span style="opacity:0.5">${escHtml(title)} — ${escHtml(action)}</span>`;
         console.log('[PERM-DEBUG] DOM updated successfully');
       } else {
