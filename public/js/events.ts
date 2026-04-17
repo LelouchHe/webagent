@@ -1,4 +1,14 @@
 // Event handling and history replay
+//
+// DOM data-attribute contracts used by the reconnect/replay system:
+//   data-raw           — DB content snapshot. Set during replay, never updated by
+//                        live chunks. Used by revert logic and post-merge to restore
+//                        or combine elements without reading innerHTML.
+//   data-primed        — Marks an element adopted by primeStreamingState for continued
+//                        live streaming. Cleared by finishAssistant/finishThinking on
+//                        normal completion, or by the revert step in loadNewEvents.
+//   data-sync-boundary — Marks the last DOM child after replay. loadNewEvents removes
+//                        everything after it, then replays incremental events.
 
 import {
   state, dom, setBusy, setConfigValue, getConfigOption, updateConfigOptions,
@@ -268,6 +278,8 @@ async function _loadNewEventsImpl(sid: string): Promise<boolean> {
     const url = `/api/v1/sessions/${sid}/events?after=${state.lastEventSeq}`;
     const res = await fetch(url);
     if (!res.ok) return false;
+    // Guard: if session switched while fetch was in-flight, discard stale results
+    if (state.sessionId && sid !== state.sessionId) return false;
     const body = await res.json();
     const { events, streaming } = normalizeEventsResponse(body);
 

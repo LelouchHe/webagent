@@ -1800,6 +1800,74 @@ describe("events", () => {
 
       await Promise.all([p1, p2]);
     });
+
+    it("reverts both thinking and assistant when both are primed simultaneously", async () => {
+      const historyEvents = [
+        { seq: 1, type: "thinking", data: JSON.stringify({ text: "thought" }) },
+        { seq: 2, type: "assistant_message", data: JSON.stringify({ text: "reply" }) },
+      ];
+      const histResponse = { events: historyEvents, streaming: { thinking: true, assistant: true } };
+      globalThis.fetch = (() => Promise.resolve({
+        ok: true, json: () => Promise.resolve(histResponse),
+      })) as any;
+      await events.loadHistory("s1");
+
+      assert.ok(state.currentThinkingEl, "thinking should be primed");
+      assert.ok(state.currentAssistantEl, "assistant should be primed");
+      assert.ok(dom.messages.querySelector(".thinking").hasAttribute("data-primed"));
+      assert.ok(dom.messages.querySelector(".msg.assistant").hasAttribute("data-primed"));
+
+      // Simulate live streaming grew both elements
+      state.currentThinkingText = "thought extended";
+      state.currentThinkingEl.querySelector(".thinking-content").textContent = "thought extended";
+      state.currentAssistantText = "reply extended";
+      state.currentAssistantEl.innerHTML = "<p>reply extended</p>";
+
+      // Server returns flushed tail for assistant only (thinking → assistant → tail)
+      const newEvents = [
+        { seq: 3, type: "assistant_message", data: JSON.stringify({ text: " extended" }) },
+      ];
+      globalThis.fetch = (() => Promise.resolve({
+        ok: true, json: () => Promise.resolve(newEvents),
+      })) as any;
+      state.sessionId = "s1";
+      await events.loadNewEvents("s1");
+
+      // Both primed elements should have been reverted to DB content
+      const thinkings = dom.messages.querySelectorAll(".thinking");
+      const assistants = dom.messages.querySelectorAll(".msg.assistant");
+      assert.equal(thinkings.length, 1, "should not duplicate thinking");
+      assert.equal(assistants.length, 1, "should not duplicate assistant");
+      // Thinking reverted to original DB content
+      assert.equal(thinkings[0].querySelector(".thinking-content").textContent, "thought");
+      // Assistant merged: reverted "reply" + new " extended"
+      assert.ok(assistants[0].textContent.includes("reply"));
+      assert.ok(assistants[0].textContent.includes("extended"));
+    });
+
+    it("loadNewEvents discards results when session switched during fetch", async () => {
+      events.replayEvent("user_message", { text: "msg" }, [], 0);
+      state.lastEventSeq = 1;
+      state.sessionId = "s1";
+      dom.messages.lastElementChild.setAttribute("data-sync-boundary", "");
+
+      let resolveFetch: Function;
+      globalThis.fetch = (() => new Promise(r => { resolveFetch = r; })) as any;
+
+      const promise = events.loadNewEvents("s1");
+
+      // Session switches while fetch is in-flight
+      state.sessionId = "s2";
+
+      resolveFetch!({ ok: true, json: () => Promise.resolve([
+        { seq: 2, type: "assistant_message", data: JSON.stringify({ text: "stale" }) },
+      ]) });
+
+      const result = await promise;
+      assert.equal(result, false, "should return false when session switched");
+      // DOM should not have the stale event
+      assert.equal(dom.messages.querySelectorAll(".msg.assistant").length, 0);
+    });
   });
 
   describe("loadNewEvents clears pending state from replayed events", () => {
