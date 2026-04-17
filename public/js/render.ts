@@ -36,6 +36,7 @@ export function finishAssistant() {
   state.currentAssistantEl = null;
   state.currentAssistantText = '';
   if (assistantEl && typeof assistantEl.querySelector === 'function') {
+    assistantEl.removeAttribute('data-primed');
     void enhanceCodeBlocks(assistantEl);
   }
 }
@@ -46,6 +47,7 @@ export function finishThinking() {
     sum.textContent = '⠿ thought';
     sum.classList.remove('active');
     sum.style.animation = 'none';
+    state.currentThinkingEl.removeAttribute('data-primed');
     state.currentThinkingEl = null;
     state.currentThinkingText = '';
   }

@@ -1208,6 +1208,19 @@ describe("events", () => {
       assert.ok(content.includes("part two"));
     });
 
+    it("stores data-raw on thinking elements", () => {
+      events.replayEvent("thinking", { text: "my thought" }, [], 0);
+      const thinking = dom.messages.querySelector(".thinking");
+      assert.equal(thinking.getAttribute("data-raw"), "my thought");
+    });
+
+    it("updates data-raw when consecutive thinking blocks merge", () => {
+      events.replayEvent("thinking", { text: "part one" }, [], 0);
+      events.replayEvent("thinking", { text: "part two" }, [], 1);
+      const thinking = dom.messages.querySelector(".thinking");
+      assert.equal(thinking.getAttribute("data-raw"), "part one\npart two");
+    });
+
     it("replays tool_call and tool_call_update", () => {
       events.replayEvent("tool_call", { id: "t1", kind: "read", title: "Read", rawInput: {} }, [], 0);
       events.replayEvent("tool_call_update", { id: "t1", status: "completed" }, [], 1);
@@ -1514,6 +1527,278 @@ describe("events", () => {
       // The orphaned post-boundary element should have been removed
       assert.equal(dom.messages.children.length, 1);
       assert.ok(dom.messages.children[0].textContent.includes("from-db"));
+    });
+  });
+
+  describe("primeStreamingState and revert (duplicate message fix)", () => {
+    it("primeStreamingState sets data-primed on adopted assistant element", async () => {
+      const fakeEvents = [
+        { seq: 1, type: "user_message", data: JSON.stringify({ text: "hi" }) },
+        { seq: 2, type: "assistant_message", data: JSON.stringify({ text: "hello" }) },
+      ];
+      const response = { events: fakeEvents, streaming: { thinking: false, assistant: true } };
+      globalThis.fetch = (() => Promise.resolve({
+        ok: true, json: () => Promise.resolve(response),
+      })) as any;
+
+      await events.loadHistory("s1");
+      const el = dom.messages.querySelector(".msg.assistant");
+      assert.ok(el.hasAttribute("data-primed"), "primed element should have data-primed");
+      assert.ok(state.currentAssistantEl === el);
+    });
+
+    it("primeStreamingState sets data-primed on adopted thinking element", async () => {
+      const fakeEvents = [
+        { seq: 1, type: "user_message", data: JSON.stringify({ text: "hi" }) },
+        { seq: 2, type: "thinking", data: JSON.stringify({ text: "hmm" }) },
+      ];
+      const response = { events: fakeEvents, streaming: { thinking: true, assistant: false } };
+      globalThis.fetch = (() => Promise.resolve({
+        ok: true, json: () => Promise.resolve(response),
+      })) as any;
+
+      await events.loadHistory("s1");
+      const el = dom.messages.querySelector(".thinking");
+      assert.ok(el.hasAttribute("data-primed"), "primed thinking should have data-primed");
+      assert.ok(state.currentThinkingEl === el);
+    });
+
+    it("primeStreamingState reads data-raw for currentAssistantText (merged content)", async () => {
+      // Two consecutive assistant_messages get merged; data-raw holds combined text
+      const fakeEvents = [
+        { seq: 1, type: "assistant_message", data: JSON.stringify({ text: "Hello " }) },
+        { seq: 2, type: "assistant_message", data: JSON.stringify({ text: "world" }) },
+      ];
+      const response = { events: fakeEvents, streaming: { thinking: false, assistant: true } };
+      globalThis.fetch = (() => Promise.resolve({
+        ok: true, json: () => Promise.resolve(response),
+      })) as any;
+
+      await events.loadHistory("s1");
+      // data-raw should be combined, and currentAssistantText should match
+      assert.equal(state.currentAssistantText, "Hello world");
+    });
+
+    it("primeStreamingState reads data-raw for currentThinkingText (merged content)", async () => {
+      const fakeEvents = [
+        { seq: 1, type: "thinking", data: JSON.stringify({ text: "part one" }) },
+        { seq: 2, type: "thinking", data: JSON.stringify({ text: "part two" }) },
+      ];
+      const response = { events: fakeEvents, streaming: { thinking: true, assistant: false } };
+      globalThis.fetch = (() => Promise.resolve({
+        ok: true, json: () => Promise.resolve(response),
+      })) as any;
+
+      await events.loadHistory("s1");
+      assert.equal(state.currentThinkingText, "part one\npart two");
+    });
+
+    it("loadNewEvents reverts primed assistant element before replaying", async () => {
+      // Setup: loadHistory primes an assistant element
+      const historyEvents = [
+        { seq: 1, type: "assistant_message", data: JSON.stringify({ text: "original" }) },
+      ];
+      const histResponse = { events: historyEvents, streaming: { thinking: false, assistant: true } };
+      globalThis.fetch = (() => Promise.resolve({
+        ok: true, json: () => Promise.resolve(histResponse),
+      })) as any;
+      await events.loadHistory("s1");
+
+      // Simulate live streaming that grew the element beyond DB content
+      state.currentAssistantText = "original plus more streamed text";
+      state.currentAssistantEl.innerHTML = "<p>original plus more streamed text</p>";
+
+      // Now loadNewEvents — server flushed buffer, returns tail as new event
+      const newEvents = [
+        { seq: 2, type: "assistant_message", data: JSON.stringify({ text: " plus more streamed text" }) },
+      ];
+      globalThis.fetch = (() => Promise.resolve({
+        ok: true, json: () => Promise.resolve(newEvents),
+      })) as any;
+      await events.loadNewEvents("s1");
+
+      // Should have exactly ONE assistant element with merged content (no duplication)
+      const assistants = dom.messages.querySelectorAll(".msg.assistant");
+      assert.equal(assistants.length, 1, "should not duplicate assistant message");
+      assert.ok(assistants[0].textContent.includes("original"));
+      assert.ok(assistants[0].textContent.includes("plus more streamed text"));
+    });
+
+    it("loadNewEvents reverts primed thinking element before replaying", async () => {
+      const historyEvents = [
+        { seq: 1, type: "thinking", data: JSON.stringify({ text: "initial thought" }) },
+      ];
+      const histResponse = { events: historyEvents, streaming: { thinking: true, assistant: false } };
+      globalThis.fetch = (() => Promise.resolve({
+        ok: true, json: () => Promise.resolve(histResponse),
+      })) as any;
+      await events.loadHistory("s1");
+
+      // Simulate live streaming that grew the thinking element
+      state.currentThinkingText = "initial thought\nmore thinking";
+      const content = state.currentThinkingEl.querySelector(".thinking-content");
+      content.textContent = "initial thought\nmore thinking";
+
+      // Server returns flushed tail
+      const newEvents = [
+        { seq: 2, type: "thinking", data: JSON.stringify({ text: "more thinking" }) },
+      ];
+      globalThis.fetch = (() => Promise.resolve({
+        ok: true, json: () => Promise.resolve(newEvents),
+      })) as any;
+      await events.loadNewEvents("s1");
+
+      const thinkings = dom.messages.querySelectorAll(".thinking");
+      assert.equal(thinkings.length, 1, "should not duplicate thinking block");
+      const text = thinkings[0].querySelector(".thinking-content").textContent;
+      assert.ok(text.includes("initial thought"));
+      assert.ok(text.includes("more thinking"));
+    });
+
+    it("loadNewEvents handles primed element when boundary is not the primed element", async () => {
+      // Boundary is a tool_call, primed element is the earlier assistant
+      const historyEvents = [
+        { seq: 1, type: "assistant_message", data: JSON.stringify({ text: "before tool" }) },
+        { seq: 2, type: "tool_call", data: JSON.stringify({ id: "tc1", kind: "read", title: "Read", rawInput: {} }) },
+      ];
+      const histResponse = { events: historyEvents, streaming: { thinking: false, assistant: true } };
+      globalThis.fetch = (() => Promise.resolve({
+        ok: true, json: () => Promise.resolve(histResponse),
+      })) as any;
+      await events.loadHistory("s1");
+
+      // The primed element should be the assistant (not the tool_call boundary)
+      assert.ok(state.currentAssistantEl);
+      assert.ok(state.currentAssistantEl.classList.contains("assistant"));
+
+      // Simulate streaming that grew the assistant element
+      state.currentAssistantText = "before tool and more";
+      state.currentAssistantEl.innerHTML = "<p>before tool and more</p>";
+
+      // Server returns the streamed tail as a new assistant_message
+      const newEvents = [
+        { seq: 3, type: "assistant_message", data: JSON.stringify({ text: " and more" }) },
+      ];
+      globalThis.fetch = (() => Promise.resolve({
+        ok: true, json: () => Promise.resolve(newEvents),
+      })) as any;
+      await events.loadNewEvents("s1");
+
+      // The primed assistant should be reverted to "before tool" (its data-raw)
+      // The new event creates a separate assistant after the tool_call (non-adjacent, M6)
+      const assistants = dom.messages.querySelectorAll(".msg.assistant");
+      assert.equal(assistants.length, 2, "non-adjacent: reverted original + new after tool_call");
+      assert.ok(assistants[0].textContent.includes("before tool"));
+      assert.ok(!assistants[0].textContent.includes("and more"), "reverted element should not contain streamed tail");
+      assert.ok(assistants[1].textContent.includes("and more"));
+    });
+
+    it("finishAssistant clears data-primed attribute", async () => {
+      const fakeEvents = [
+        { seq: 1, type: "assistant_message", data: JSON.stringify({ text: "hello" }) },
+      ];
+      const response = { events: fakeEvents, streaming: { thinking: false, assistant: true } };
+      globalThis.fetch = (() => Promise.resolve({
+        ok: true, json: () => Promise.resolve(response),
+      })) as any;
+      await events.loadHistory("s1");
+
+      const el = dom.messages.querySelector(".msg.assistant");
+      assert.ok(el.hasAttribute("data-primed"));
+
+      // Simulate stream finishing
+      render.finishAssistant();
+      assert.ok(!el.hasAttribute("data-primed"), "data-primed should be cleared on finish");
+    });
+
+    it("finishThinking clears data-primed attribute", async () => {
+      const fakeEvents = [
+        { seq: 1, type: "thinking", data: JSON.stringify({ text: "hmm" }) },
+      ];
+      const response = { events: fakeEvents, streaming: { thinking: true, assistant: false } };
+      globalThis.fetch = (() => Promise.resolve({
+        ok: true, json: () => Promise.resolve(response),
+      })) as any;
+      await events.loadHistory("s1");
+
+      const el = dom.messages.querySelector(".thinking");
+      assert.ok(el.hasAttribute("data-primed"));
+
+      render.finishThinking();
+      assert.ok(!el.hasAttribute("data-primed"), "data-primed should be cleared on finish");
+    });
+
+    it("loadNewEvents with empty events and streaming re-primes from boundary", async () => {
+      // Setup: loadHistory with streaming assistant
+      const historyEvents = [
+        { seq: 1, type: "assistant_message", data: JSON.stringify({ text: "hello" }) },
+      ];
+      const histResponse = { events: historyEvents, streaming: { thinking: false, assistant: true } };
+      globalThis.fetch = (() => Promise.resolve({
+        ok: true, json: () => Promise.resolve(histResponse),
+      })) as any;
+      await events.loadHistory("s1");
+      assert.ok(state.currentAssistantEl);
+
+      // Simulate streaming grew the element
+      state.currentAssistantText = "hello world";
+      state.currentAssistantEl.innerHTML = "<p>hello world</p>";
+
+      // loadNewEvents returns no new events but streaming is still true
+      const response = { events: [], streaming: { thinking: false, assistant: true } };
+      globalThis.fetch = (() => Promise.resolve({
+        ok: true, json: () => Promise.resolve(response),
+      })) as any;
+      await events.loadNewEvents("s1");
+
+      // Should still have the assistant element primed for continued streaming
+      assert.ok(state.currentAssistantEl, "should re-prime assistant from boundary");
+      assert.equal(dom.messages.querySelectorAll(".msg.assistant").length, 1);
+    });
+
+    it("per-session coalesce returns same promise for concurrent calls", async () => {
+      events.replayEvent("user_message", { text: "msg" }, [], 0);
+      state.lastEventSeq = 1;
+      dom.messages.lastElementChild.setAttribute("data-sync-boundary", "");
+
+      let resolveFirst: Function;
+      let fetchCount = 0;
+      globalThis.fetch = (() => {
+        fetchCount++;
+        return new Promise(r => { resolveFirst = r; });
+      }) as any;
+
+      // Two concurrent calls for same session
+      const p1 = events.loadNewEvents("s1");
+      const p2 = events.loadNewEvents("s1");
+
+      // Should be the same promise (coalesced)
+      assert.equal(p1, p2, "concurrent calls for same session should coalesce");
+      assert.equal(fetchCount, 1, "should only fetch once");
+
+      resolveFirst!({ ok: true, json: () => Promise.resolve([]) });
+      await p1;
+    });
+
+    it("per-session coalesce allows independent sessions", async () => {
+      events.replayEvent("user_message", { text: "msg" }, [], 0);
+      state.lastEventSeq = 1;
+      dom.messages.lastElementChild.setAttribute("data-sync-boundary", "");
+
+      let fetchCount = 0;
+      globalThis.fetch = (() => {
+        fetchCount++;
+        return Promise.resolve({ ok: true, json: () => Promise.resolve([]) });
+      }) as any;
+
+      // Calls for different sessions should NOT coalesce
+      const p1 = events.loadNewEvents("s1");
+      const p2 = events.loadNewEvents("s2");
+
+      assert.notEqual(p1, p2, "different sessions should not coalesce");
+      assert.equal(fetchCount, 2, "should fetch for each session");
+
+      await Promise.all([p1, p2]);
     });
   });
 

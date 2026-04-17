@@ -189,37 +189,49 @@ export async function loadHistory(sid: string): Promise<boolean> {
  * of creating duplicates.
  */
 function primeStreamingState(events: StoredEvent[], streaming: { thinking: boolean; assistant: boolean }) {
-  if (streaming.thinking && events.length) {
-    // Find the last thinking event — it was the flushed buffer
-    for (let i = events.length - 1; i >= 0; i--) {
-      if (events[i].type === 'thinking') {
-        const data = JSON.parse(events[i].data);
-        // Find the corresponding DOM element (last .thinking in messages)
-        const allThinking = dom.messages.querySelectorAll('.thinking');
-        const el = allThinking[allThinking.length - 1] as HTMLDetailsElement | undefined;
-        if (el) {
-          state.currentThinkingEl = el;
-          state.currentThinkingText = data.text;
-          // Mark as active (still streaming)
-          const sum = el.querySelector('summary');
-          if (sum) { sum.textContent = '⠿ thinking...'; sum.classList.add('active'); }
+  if (streaming.thinking) {
+    let el: HTMLDetailsElement | undefined;
+    if (events.length) {
+      // Find the last thinking event — it was the flushed buffer
+      for (let i = events.length - 1; i >= 0; i--) {
+        if (events[i].type === 'thinking') {
+          const allThinking = dom.messages.querySelectorAll('.thinking');
+          el = allThinking[allThinking.length - 1] as HTMLDetailsElement | undefined;
+          break;
         }
-        break;
       }
+    } else {
+      // No new events but still streaming — re-prime from existing DOM
+      const allThinking = dom.messages.querySelectorAll('.thinking');
+      el = allThinking[allThinking.length - 1] as HTMLDetailsElement | undefined;
+    }
+    if (el) {
+      state.currentThinkingEl = el;
+      state.currentThinkingText = el.getAttribute('data-raw') || '';
+      el.setAttribute('data-primed', '');
+      const sum = el.querySelector('summary');
+      if (sum) { sum.textContent = '⠿ thinking...'; sum.classList.add('active'); }
     }
   }
-  if (streaming.assistant && events.length) {
-    for (let i = events.length - 1; i >= 0; i--) {
-      if (events[i].type === 'assistant_message') {
-        const data = JSON.parse(events[i].data);
-        const allMsg = dom.messages.querySelectorAll('.msg.assistant');
-        const el = allMsg[allMsg.length - 1] as HTMLDivElement | undefined;
-        if (el) {
-          state.currentAssistantEl = el;
-          state.currentAssistantText = data.text;
+  if (streaming.assistant) {
+    let el: HTMLDivElement | undefined;
+    if (events.length) {
+      for (let i = events.length - 1; i >= 0; i--) {
+        if (events[i].type === 'assistant_message') {
+          const allMsg = dom.messages.querySelectorAll('.msg.assistant');
+          el = allMsg[allMsg.length - 1] as HTMLDivElement | undefined;
+          break;
         }
-        break;
       }
+    } else {
+      // No new events but still streaming — re-prime from existing DOM
+      const allMsg = dom.messages.querySelectorAll('.msg.assistant');
+      el = allMsg[allMsg.length - 1] as HTMLDivElement | undefined;
+    }
+    if (el) {
+      state.currentAssistantEl = el;
+      state.currentAssistantText = el.getAttribute('data-raw') || '';
+      el.setAttribute('data-primed', '');
     }
   }
 }
@@ -232,11 +244,24 @@ function setSyncBoundary() {
   if (last) last.setAttribute('data-sync-boundary', '');
 }
 
+/** Per-session coalesce: concurrent loadNewEvents calls for the same session share one promise. */
+const inflightBySession = new Map<string, Promise<boolean>>();
+
 /**
  * Fetch only events added since the last sync point and replay them.
  * Returns true if new events were applied (or none needed), false on error.
  */
-export async function loadNewEvents(sid: string): Promise<boolean> {
+export function loadNewEvents(sid: string): Promise<boolean> {
+  const existing = inflightBySession.get(sid);
+  if (existing) return existing;
+
+  const promise = _loadNewEventsImpl(sid);
+  inflightBySession.set(sid, promise);
+  promise.finally(() => { inflightBySession.delete(sid); });
+  return promise;
+}
+
+async function _loadNewEventsImpl(sid: string): Promise<boolean> {
   state.replayInProgress = true;
   state.replayQueue = [];
   try {
@@ -245,6 +270,24 @@ export async function loadNewEvents(sid: string): Promise<boolean> {
     if (!res.ok) return false;
     const body = await res.json();
     const { events, streaming } = normalizeEventsResponse(body);
+
+    // Revert primed elements to their DB-only content before boundary cleanup.
+    // primeStreamingState marks adopted elements with [data-primed]; live chunks
+    // may have grown them beyond their data-raw content. Reverting prevents
+    // duplication when the server force-flushes the buffer tail as a new event.
+    for (const primed of dom.messages.querySelectorAll('[data-primed]')) {
+      const raw = primed.getAttribute('data-raw') || '';
+      primed.removeAttribute('data-primed');
+      if (primed.classList.contains('msg') && primed.classList.contains('assistant')) {
+        primed.innerHTML = renderMd(raw);
+        enhanceCodeBlocks(primed as HTMLElement);
+      } else if (primed.classList.contains('thinking')) {
+        const content = primed.querySelector('.thinking-content');
+        if (content) content.textContent = raw;
+        const sum = primed.querySelector('summary');
+        if (sum) { sum.textContent = '⠿ thought'; sum.classList.remove('active'); sum.style.animation = 'none'; }
+      }
+    }
 
     // Always remove DOM elements added after the sync boundary (live-rendered
     // content that may be orphaned or overlap with new DB events), and reset
@@ -275,6 +318,33 @@ export async function loadNewEvents(sid: string): Promise<boolean> {
       replayEvent(events[i].type, data, events, i, ri);
     }
     state.replayTarget = null;
+
+    // Post-merge: if the last DOM element and first fragment child are the same
+    // type (both assistant or both thinking), merge them to avoid split bubbles
+    // across the boundary.
+    const lastInDom = dom.messages.lastElementChild as HTMLElement | null;
+    const firstInFrag = fragment.firstElementChild as HTMLElement | null;
+    if (lastInDom && firstInFrag) {
+      if (lastInDom.classList.contains('msg') && lastInDom.classList.contains('assistant')
+          && firstInFrag.classList.contains('msg') && firstInFrag.classList.contains('assistant')) {
+        const existingRaw = lastInDom.getAttribute('data-raw') || '';
+        const newRaw = firstInFrag.getAttribute('data-raw') || '';
+        const combined = existingRaw + newRaw;
+        lastInDom.setAttribute('data-raw', combined);
+        lastInDom.innerHTML = renderMd(combined);
+        enhanceCodeBlocks(lastInDom);
+        firstInFrag.remove();
+      } else if (lastInDom.classList.contains('thinking') && firstInFrag.classList.contains('thinking')) {
+        const existingRaw = lastInDom.getAttribute('data-raw') || '';
+        const newRaw = firstInFrag.getAttribute('data-raw') || '';
+        const combined = existingRaw + '\n' + newRaw;
+        lastInDom.setAttribute('data-raw', combined);
+        const content = lastInDom.querySelector('.thinking-content');
+        if (content) content.textContent = combined;
+        firstInFrag.remove();
+      }
+    }
+
     dom.messages.appendChild(fragment);
 
     state.lastEventSeq = events[events.length - 1].seq;
@@ -465,12 +535,16 @@ export function replayEvent(type: string, data: Record<string, any>, events: Sto
       if (lastChild && lastChild.classList.contains('thinking')) {
         const content = lastChild.querySelector('.thinking-content');
         if (content) {
-          content.textContent += '\n' + data.text;
+          const existing = lastChild.getAttribute('data-raw') || '';
+          const combined = existing + '\n' + data.text;
+          lastChild.setAttribute('data-raw', combined);
+          content.textContent = combined;
           break;
         }
       }
       const el = document.createElement('details');
       el.className = 'thinking';
+      el.setAttribute('data-raw', data.text);
       el.innerHTML = `<summary>⠿ thought</summary><div class="thinking-content">${escHtml(data.text)}</div>`;
       appendMessageElement(el);
       break;
