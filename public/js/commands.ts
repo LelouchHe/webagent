@@ -113,6 +113,22 @@ export async function handleSlashCommand(text: string): Promise<boolean> {
       addSystem('Removed. Use /switch to see all sessions.');
       return true;
 
+    case '/clear': {
+      if (!state.sessionId) {
+        addSystem('warn: No active session');
+        return true;
+      }
+      const oldId = state.sessionId;
+      const cwd = state.sessionCwd || undefined;
+      if (state.busy) sendCancel();
+      resetSessionUI();
+      addSystem('Clearing session…');
+      requestNewSession({ cwd, inheritFromSessionId: oldId });
+      api.deleteSession(oldId).catch(() => {});
+      cachedSessions = null;
+      return true;
+    }
+
     case '/exit': {
       if (!state.sessionId) {
         addSystem('warn: No active session');
@@ -336,6 +352,7 @@ type SlashItem = SlashCommand | SessionSummary | PathItem | NotifyOption | { val
 
 const SLASH_COMMANDS: SlashCommand[] = [
   { cmd: '/cancel',   args: '',            desc: 'Cancel current response' },
+  { cmd: '/clear',    args: '',            desc: 'Clear session — start fresh in same cwd (model inherited)' },
   { cmd: '/exit',     args: '',            desc: 'Close current session' },
   { cmd: '/help',     args: '',            desc: 'Show help (or type ?)' },
   { cmd: '/mode',     args: '[name]',      desc: 'Pick or switch mode' },

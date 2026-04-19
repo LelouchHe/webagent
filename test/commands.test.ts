@@ -200,6 +200,53 @@ describe("commands", () => {
       assert.equal(state.awaitingNewSession, true);
     });
 
+    it("clears current session — creates new session inheriting from old, then deletes old", async () => {
+      state.clientId = "cl-1";
+      state.sessionId = "old-1";
+      state.sessionCwd = "/home/project";
+      setFetch(async (url: string, init?: any) => {
+        const body = (data: any) => {
+          const json = JSON.stringify(data);
+          return { ok: true, status: 200, json: async () => data, text: async () => json };
+        };
+        if (url === "/api/v1/sessions" && init?.method === "POST") return body({ id: "new-2" });
+        if (url === "/api/v1/sessions/old-1" && init?.method === "DELETE") return body({});
+        return body({});
+      });
+
+      const handled = await commands.handleSlashCommand("/clear");
+      await new Promise(r => setTimeout(r, 0));
+
+      assert.equal(handled, true);
+      const createCall = fetchCalls.find(c => c.url === "/api/v1/sessions" && c.init?.method === "POST");
+      assert.ok(createCall, "expected POST /api/v1/sessions");
+      const createBody = JSON.parse(createCall!.init.body);
+      assert.equal(createBody.cwd, "/home/project");
+      assert.equal(createBody.inheritFromSessionId, "old-1");
+
+      const deleteCall = fetchCalls.find(c => c.url === "/api/v1/sessions/old-1" && c.init?.method === "DELETE");
+      assert.ok(deleteCall, "expected DELETE for old session");
+
+      // Create must be dispatched before delete so server can read old session's model/effort before removing it.
+      const createIdx = fetchCalls.findIndex(c => c.url === "/api/v1/sessions" && c.init?.method === "POST");
+      const deleteIdx = fetchCalls.findIndex(c => c.url === "/api/v1/sessions/old-1" && c.init?.method === "DELETE");
+      assert.ok(createIdx < deleteIdx, "POST must precede DELETE");
+
+      assert.equal(state.awaitingNewSession, true);
+      assert.ok(messageLines().includes("Clearing session…"));
+    });
+
+    it("clear without active session warns and does nothing", async () => {
+      state.sessionId = null;
+      setFetch(() => ({ ok: true, json: async () => ({}), text: async () => "{}" }));
+
+      const handled = await commands.handleSlashCommand("/clear");
+
+      assert.equal(handled, true);
+      assert.equal(fetchCalls.length, 0);
+      assert.ok(messageLines().some((l: string) => l.includes("No active session")));
+    });
+
     it("prunes every session except the current one", async () => {
       state.clientId = "cl-1";
       state.sessionId = "keep";

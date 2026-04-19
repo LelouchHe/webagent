@@ -55,6 +55,7 @@ Commands with submenus (`/model`, `/mode`, `/think`, `/notify`, `/switch`, `/new
 | `/think [level]` | View or switch reasoning effort (low / medium / high) |
 | `/notify [on\|off]` | Toggle push notifications for background alerts |
 | `/cancel` | Cancel current response |
+| `/clear` | Clear session — delete current and start fresh in same cwd (model/think inherited) |
 | `/switch <title\|id>` | Switch to a session (match by title or ID prefix) |
 | `/rename <new title>` | Rename current session |
 | `/exit` | Close current session (delete + switch to previous) |
