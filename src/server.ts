@@ -12,6 +12,7 @@ import { handleAgentEvent } from "./event-handler.ts";
 import { PushService } from "./push-service.ts";
 import { SseManager } from "./sse-manager.ts";
 import { ClientRegistry } from "./client-registry.ts";
+import { startMessageCleanup, type CleanupHandle } from "./message-cleanup.ts";
 import type { AgentEvent } from "./types.ts";
 
 // Prefix all console output with ISO-ish timestamps (YYYY-MM-DD HH:MM:SS)
@@ -53,6 +54,7 @@ sseManager.startHeartbeat();
 sessions.state.onPatch((event) => sseManager.broadcast(event));
 
 let bridge: AgentBridge | null = null;
+let messageCleanup: CleanupHandle | null = null;
 
 // --- HTTP server ---
 
@@ -90,6 +92,7 @@ async function initBridge(): Promise<AgentBridge> {
 async function shutdown() {
   console.log("\n[server] shutting down...");
   sseManager.stopHeartbeat();
+  messageCleanup?.stop();
   sessions.killAllBashProcs();
   await bridge?.shutdown();
   store.close();
@@ -104,6 +107,9 @@ process.on("SIGTERM", shutdown);
 
 server.listen(config.port, "0.0.0.0", async () => {
   console.log(`[server] listening on http://localhost:${config.port}`);
+  // ttl=0 disables the sweep entirely; C14 will thread the real value
+  // from config.messages.unprocessed_ttl_days once the [messages] section lands.
+  messageCleanup = startMessageCleanup(store, 0);
   console.log(`[bridge] starting: ${config.agent_cmd}...`);
   try {
     await initBridge();

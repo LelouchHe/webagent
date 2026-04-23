@@ -275,6 +275,15 @@ export class Store {
     this.db.prepare("DELETE FROM recent_paths WHERE cwd = ?").run(cwd);
   }
 
+  /**
+   * Delete unprocessed messages older than the given epoch-ms threshold.
+   * Stub in this commit (no `messages` table yet); real implementation
+   * lands with the messages CRUD commit (C7). Returns rows removed.
+   */
+  deleteOlderThan(_thresholdMs: number): number {
+    return 0;
+  }
+
   close(): void {
     this.db.close();
   }
