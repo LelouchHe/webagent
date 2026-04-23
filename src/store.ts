@@ -47,6 +47,33 @@ export interface SubscriptionRow {
   created_at: string;
 }
 
+/** A pending unbound notification -- posted via /api/v1/messages with to="user". */
+export interface MessageRow {
+  id: string;
+  from_ref: string;
+  from_label: string | null;
+  to_ref: string;
+  deliver: string;
+  dedup_key: string | null;
+  title: string;
+  body: string;
+  cwd: string | null;
+  created_at: number;
+}
+
+export interface MessageInput {
+  id: string;
+  from_ref: string;
+  from_label: string | null;
+  to_ref: string;
+  deliver: string;
+  dedup_key: string | null;
+  title: string;
+  body: string;
+  cwd: string | null;
+  created_at: number;
+}
+
 export class Store {
   private db: Database.Database;
 
@@ -110,6 +137,28 @@ export class Store {
     if (!colNames.has("source")) {
       this.db.exec("ALTER TABLE sessions ADD COLUMN source TEXT NOT NULL DEFAULT 'auto'");
     }
+
+    // messages — pending unbound notifications. POST /api/v1/messages with
+    // `to = "user"` lands here; consumeMessageTx transactionally moves the
+    // content into a new session's events and deletes the row. Bound
+    // messages (to = session id) skip this table entirely and go straight
+    // to `events`.
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS messages (
+        id              TEXT PRIMARY KEY,
+        from_ref        TEXT NOT NULL,
+        from_label      TEXT,
+        to_ref          TEXT NOT NULL,
+        deliver         TEXT NOT NULL DEFAULT 'push',
+        dedup_key       TEXT,
+        title           TEXT NOT NULL,
+        body            TEXT NOT NULL,
+        cwd             TEXT,
+        created_at      INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_messages_created ON messages (created_at);
+      CREATE INDEX IF NOT EXISTS idx_messages_dedup   ON messages (to_ref, dedup_key);
+    `);
 
     // recent_paths: LRU path list for /new menu
     const rpExists = this.db.prepare(
@@ -342,13 +391,124 @@ export class Store {
     this.db.prepare("DELETE FROM recent_paths WHERE cwd = ?").run(cwd);
   }
 
+  // ===== messages (pending unbound notifications) =====
+
+  createMessage(input: MessageInput): void {
+    this.db
+      .prepare(
+        `INSERT INTO messages
+         (id, from_ref, from_label, to_ref, deliver, dedup_key, title, body, cwd, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        input.id,
+        input.from_ref,
+        input.from_label,
+        input.to_ref,
+        input.deliver,
+        input.dedup_key,
+        input.title,
+        input.body,
+        input.cwd,
+        input.created_at,
+      );
+  }
+
+  getMessage(id: string): MessageRow | undefined {
+    return this.db.prepare("SELECT * FROM messages WHERE id = ?").get(id) as MessageRow | undefined;
+  }
+
+  listUnprocessed(): MessageRow[] {
+    return this.db
+      .prepare("SELECT * FROM messages ORDER BY created_at DESC")
+      .all() as MessageRow[];
+  }
+
+  deleteMessage(id: string): number {
+    const info = this.db.prepare("DELETE FROM messages WHERE id = ?").run(id);
+    return info.changes;
+  }
+
   /**
-   * Delete unprocessed messages older than the given epoch-ms threshold.
-   * Stub in this commit (no `messages` table yet); real implementation
-   * lands with the messages CRUD commit (C7). Returns rows removed.
+   * Delete unprocessed messages whose created_at is older than the given
+   * epoch-ms threshold. Returns the number of rows removed.
    */
-  deleteOlderThan(_thresholdMs: number): number {
-    return 0;
+  deleteOlderThan(thresholdMs: number): number {
+    const info = this.db.prepare("DELETE FROM messages WHERE created_at < ?").run(thresholdMs);
+    return info.changes;
+  }
+
+  /** Find an existing unprocessed message matching (to_ref, dedup_key) for server-side supersede. */
+  findBySupersede(to_ref: string, dedup_key: string | null): MessageRow | undefined {
+    if (!dedup_key) return undefined;
+    return this.db
+      .prepare("SELECT * FROM messages WHERE to_ref = ? AND dedup_key = ? LIMIT 1")
+      .get(to_ref, dedup_key) as MessageRow | undefined;
+  }
+
+  /**
+   * Atomic consume: create a session, append a `message` event whose data
+   * includes `message_id`, and delete the messages row -- all in a single
+   * transaction. If the row is already gone, returns the prior session id
+   * by looking up the historic `message` event; callers can treat this as
+   * idempotent.
+   */
+  consumeMessageTx(
+    messageId: string,
+    opts: { sessionId: string; cwd?: string },
+  ): { sessionId: string; alreadyConsumed: boolean } {
+    // Fast idempotency pre-check outside the tx to avoid the cost of
+    // opening one for an already-resolved message.
+    const existing = this.findMessageEventSession(messageId);
+    if (existing) {
+      return { sessionId: existing, alreadyConsumed: true };
+    }
+
+    const row = this.getMessage(messageId);
+    if (!row) {
+      throw new Error(`consumeMessageTx: message not found (id=${messageId})`);
+    }
+
+    const tx = this.db.transaction(() => {
+      this.db
+        .prepare("INSERT INTO sessions (id, cwd, source) VALUES (?, ?, ?)")
+        .run(opts.sessionId, opts.cwd ?? row.cwd ?? "", "message");
+      // Append message event via saveEvent so seq logic applies.
+      this.saveEvent(
+        opts.sessionId,
+        "message",
+        {
+          message_id: row.id,
+          from_ref: row.from_ref,
+          from_label: row.from_label,
+          title: row.title,
+          body: row.body,
+          cwd: row.cwd,
+        },
+        { from_ref: row.from_ref },
+      );
+      const del = this.db.prepare("DELETE FROM messages WHERE id = ?").run(messageId);
+      if (del.changes === 0) {
+        // Should never happen -- we just fetched the row above. If it does,
+        // roll back via throw.
+        throw new Error(`consumeMessageTx: row vanished mid-tx (id=${messageId})`);
+      }
+    });
+    tx();
+
+    return { sessionId: opts.sessionId, alreadyConsumed: false };
+  }
+
+  private findMessageEventSession(messageId: string): string | undefined {
+    const row = this.db
+      .prepare(
+        `SELECT session_id FROM events
+         WHERE type = 'message'
+           AND json_extract(data, '$.message_id') = ?
+         LIMIT 1`,
+      )
+      .get(messageId) as { session_id: string } | undefined;
+    return row?.session_id;
   }
 
   close(): void {
