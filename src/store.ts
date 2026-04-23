@@ -2,6 +2,20 @@ import Database from "better-sqlite3";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 
+/** Default origin marker for an event row, mirroring the migration backfill. */
+function defaultFromRef(type: string): string {
+  if (type === "user_message") return "user";
+  if (
+    type === "permission_response" ||
+    type === "bash_command" ||
+    type === "bash_result" ||
+    type === "system_message"
+  ) {
+    return "system";
+  }
+  return "agent";
+}
+
 export interface SessionRow {
   id: string;
   cwd: string;
@@ -20,6 +34,8 @@ export interface EventRow {
   seq: number;
   type: string;
   data: string; // JSON
+  /** Origin marker: 'user' | 'system' | 'agent' | 'msg:<id>'. NULL only on legacy rows that pre-date the column. */
+  from_ref: string | null;
   created_at: string;
 }
 
@@ -39,6 +55,9 @@ export class Store {
     this.db = new Database(join(dataDir, "webagent.db"));
     this.db.pragma("journal_mode = WAL");
     this.migrate();
+    // Enforce foreign keys *after* migrate() so the one-time orphan cleanup
+    // can run without pragma interfering with legacy cleanup queries.
+    this.db.pragma("foreign_keys = ON");
   }
 
   private migrate(): void {
@@ -110,6 +129,44 @@ export class Store {
         FROM sessions GROUP BY cwd;
       `);
     }
+
+    // events.from_ref — origin marker for every event row.
+    // Values: 'user' | 'system' | 'agent' | 'msg:<id>'. The 'msg:<id>'
+    // form is reserved for events authored by consuming an inbox message
+    // (see C7+). Bucketed backfill runs once for legacy rows.
+    const eventCols = this.db.prepare("PRAGMA table_info(events)").all() as Array<{ name: string }>;
+    const eventColNames = new Set(eventCols.map((c) => c.name));
+    if (!eventColNames.has("from_ref")) {
+      this.db.exec("ALTER TABLE events ADD COLUMN from_ref TEXT");
+      // Buckets:
+      //   user   — user-authored input
+      //   system — client-originated side-channel actions + host responses
+      //            (permission responses, local bash, system messages)
+      //   agent  — everything else (assistant_message, thinking, tool_call,
+      //            tool_call_update, plan, prompt_done, permission_request,
+      //            etc.)
+      this.db.exec(`
+        UPDATE events SET from_ref = CASE
+          WHEN type = 'user_message' THEN 'user'
+          WHEN type IN ('permission_response', 'bash_command', 'bash_result',
+                        'system_message') THEN 'system'
+          ELSE 'agent'
+        END
+        WHERE from_ref IS NULL
+      `);
+    }
+
+    // One-time orphan cleanup: rows whose session_id no longer exists in
+    // `sessions`. Pre-FK writes could leave these behind (a session DELETE
+    // that didn't cascade because the FK pragma was off). Must run before
+    // enabling FK pragma.
+    this.db.exec("DELETE FROM events WHERE session_id NOT IN (SELECT id FROM sessions)");
+
+    // Secondary index for events queried by (session_id, type, created_at)
+    // -- used by upcoming inbox/message consume queries.
+    this.db.exec(
+      "CREATE INDEX IF NOT EXISTS idx_events_type ON events(session_id, type, created_at)",
+    );
   }
 
   createSession(id: string, cwd: string, source: string = "auto"): SessionRow {
@@ -162,14 +219,24 @@ export class Store {
     this.db.prepare(`UPDATE sessions SET ${column} = ? WHERE id = ?`).run(value, id);
   }
 
-  saveEvent(sessionId: string, type: string, data: Record<string, unknown> = {}): EventRow {
+  saveEvent(
+    sessionId: string,
+    type: string,
+    data: Record<string, unknown> = {},
+    opts?: { from_ref?: string },
+  ): EventRow {
     const seq = (this.db.prepare(
       "SELECT COALESCE(MAX(seq), 0) + 1 AS next FROM events WHERE session_id = ?"
     ).get(sessionId) as { next: number }).next;
 
+    // from_ref defaults via the same buckets as the migration backfill so
+    // existing call sites keep working without churn. Explicit values
+    // (e.g. 'msg:<id>' for inbox-authored events) win when passed.
+    const fromRef = opts?.from_ref ?? defaultFromRef(type);
+
     this.db.prepare(
-      "INSERT INTO events (session_id, seq, type, data) VALUES (?, ?, ?, ?)"
-    ).run(sessionId, seq, type, JSON.stringify(data));
+      "INSERT INTO events (session_id, seq, type, data, from_ref) VALUES (?, ?, ?, ?, ?)"
+    ).run(sessionId, seq, type, JSON.stringify(data), fromRef);
 
     return this.db.prepare("SELECT * FROM events WHERE session_id = ? AND seq = ?")
       .get(sessionId, seq) as EventRow;
