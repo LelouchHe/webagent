@@ -9,7 +9,7 @@ import { SessionManager } from "../src/session-manager.ts";
 import { SseManager } from "../src/sse-manager.ts";
 import { createRequestHandler } from "../src/routes.ts";
 import type { AgentEvent, ConfigOption } from "../src/types.ts";
-
+import type { AgentBridge } from "../src/bridge.ts";
 function makeRequest(
   port: number,
   method: string,
@@ -18,10 +18,16 @@ function makeRequest(
 ): Promise<{ status: number; body: string; headers: http.IncomingHttpHeaders }> {
   return new Promise((resolve, reject) => {
     const req = http.request(
-      { hostname: "127.0.0.1", port, path, method, headers: { "Content-Type": "application/json" } },
+      {
+        hostname: "127.0.0.1",
+        port,
+        path,
+        method,
+        headers: { "Content-Type": "application/json" },
+      },
       (res) => {
         let data = "";
-        res.on("data", (chunk: Buffer) => (data += chunk));
+        res.on("data", (chunk: Buffer) => (data += chunk.toString()));
         res.on("end", () => resolve({ status: res.statusCode!, body: data, headers: res.headers }));
       },
     );
@@ -36,7 +42,12 @@ function openSse(
   port: number,
   path: string,
   opts?: { lastEventId?: string },
-): { events: string[]; rawChunks: string[]; close: () => void; response: Promise<http.IncomingMessage> } {
+): {
+  events: string[];
+  rawChunks: string[];
+  close: () => void;
+  response: Promise<http.IncomingMessage>;
+} {
   const events: string[] = [];
   const rawChunks: string[] = [];
   let res: http.IncomingMessage | null = null;
@@ -45,22 +56,25 @@ function openSse(
   if (opts?.lastEventId) headers["Last-Event-ID"] = opts.lastEventId;
 
   const responsePromise = new Promise<http.IncomingMessage>((resolve, reject) => {
-    const req = http.request(
-      { hostname: "127.0.0.1", port, path, method: "GET", headers },
-      (r) => {
-        res = r;
-        resolve(r);
-        r.on("data", (chunk: Buffer) => {
-          const text = chunk.toString();
-          rawChunks.push(text);
-          // Parse SSE events from chunk
-          for (const block of text.split("\n\n")) {
-            const dataLine = block.split("\n").find(l => l.startsWith("data: "));
-            if (dataLine) events.push(dataLine.slice(6));
-          }
-        });
-      },
-    );
+    const req = http.request({ hostname: "127.0.0.1", port, path, method: "GET", headers }, (r) => {
+      res = r;
+      resolve(r);
+      r.on("data", (chunk: Buffer) => {
+        const text = chunk.toString();
+        rawChunks.push(text);
+        // Parse SSE events from chunk. Skip named "heartbeat" events —
+        // the server now emits `event: heartbeat\ndata: {}` every 15s
+        // (plus once on connect) as a named event so the frontend can
+        // hook it; they are infrastructure, not business events.
+        for (const block of text.split("\n\n")) {
+          const lines = block.split("\n");
+          const eventName = lines.find((l) => l.startsWith("event: "))?.slice(7);
+          if (eventName === "heartbeat") continue;
+          const dataLine = lines.find((l) => l.startsWith("data: "));
+          if (dataLine) events.push(dataLine.slice(6));
+        }
+      });
+    });
     req.on("error", reject);
     req.end();
   });
@@ -68,24 +82,37 @@ function openSse(
   return {
     events,
     rawChunks,
-    close: () => { res?.destroy(); },
+    close: () => {
+      res?.destroy();
+    },
     response: responsePromise,
   };
 }
 
 function createMockBridge() {
   const configOptions: ConfigOption[] = [
-    { type: "select", id: "model", name: "Model", currentValue: "claude-sonnet", options: [{ value: "claude-sonnet", name: "Sonnet" }] },
+    {
+      type: "select",
+      id: "model",
+      name: "Model",
+      currentValue: "claude-sonnet",
+      options: [{ value: "claude-sonnet", name: "Sonnet" }],
+    },
   ];
   let idCounter = 0;
   return {
-    newSession: async () => { idCounter++; return `mock-session-${idCounter}`; },
-    loadSession: async () => ({ configOptions }),
+    newSession: async () => {
+      idCounter++;
+      return `mock-session-${idCounter}`;
+    },
+    loadSession: async (sessionId: string) => ({ sessionId, configOptions }),
     setConfigOption: async () => configOptions,
     cancel: async () => {},
     prompt: async () => {},
     resolvePermission: async () => {},
     denyPermission: async () => {},
+    restart: (async () => {}) as AgentBridge["restart"],
+    reloading: false,
   };
 }
 
@@ -142,7 +169,12 @@ describe("SSE REST API", () => {
   });
 
   async function createSession(): Promise<string> {
-    const res = await makeRequest(port, "POST", "/api/v1/sessions", JSON.stringify({ cwd: tmpDir }));
+    const res = await makeRequest(
+      port,
+      "POST",
+      "/api/v1/sessions",
+      JSON.stringify({ cwd: tmpDir }),
+    );
     return JSON.parse(res.body).id;
   }
 
@@ -211,7 +243,7 @@ describe("SSE REST API", () => {
       sseManager.broadcast({ type: "message_chunk", sessionId: id2, text: "world" } as AgentEvent);
 
       await waitFor(() => sse.events.length >= 3);
-      const events = sse.events.slice(1).map(e => JSON.parse(e));
+      const events = sse.events.slice(1).map((e) => JSON.parse(e));
       assert.equal(events[0].sessionId, id1);
       assert.equal(events[1].sessionId, id2);
     });
@@ -231,10 +263,12 @@ describe("SSE REST API", () => {
       sseManager.broadcast({ type: "message_chunk", sessionId: id1, text: "mine" } as AgentEvent);
       sseManager.broadcast({ type: "message_chunk", sessionId: id2, text: "other" } as AgentEvent);
 
-      // Small wait to let any events propagate
-      await new Promise(r => setTimeout(r, 100));
+      // Short wait to let any *erroneous* cross-session events leak through.
+      // Both broadcasts are synchronous; a bug leaking id2 to id1 would be
+      // observable within a tick. Keep short to avoid slowing the suite.
+      await new Promise((r) => setTimeout(r, 20));
       // Should only have connected + the event for id1
-      const dataEvents = sse.events.slice(1).map(e => JSON.parse(e));
+      const dataEvents = sse.events.slice(1).map((e) => JSON.parse(e));
       assert.equal(dataEvents.length, 1);
       assert.equal(dataEvents[0].sessionId, id1);
       assert.equal(dataEvents[0].text, "mine");
@@ -249,25 +283,34 @@ describe("SSE REST API", () => {
       const id = await createSession();
 
       // Store some events
-      store.saveEvent(id, "user_message", { text: "msg1" });
-      const evt2 = store.saveEvent(id, "assistant_message", { text: "reply1" });
-      store.saveEvent(id, "user_message", { text: "msg2" });
+      store.saveEvent(id, "user_message", { text: "msg1" }, { from_ref: "user" });
+      const evt2 = store.saveEvent(
+        id,
+        "assistant_message",
+        { text: "reply1" },
+        { from_ref: "agent" },
+      );
+      store.saveEvent(id, "user_message", { text: "msg2" }, { from_ref: "user" });
 
       // Connect with Last-Event-ID pointing to evt2's seq
-      const sse = openSse(port, `/api/v1/sessions/${id}/events/stream`, { lastEventId: String(evt2.seq) });
+      const sse = openSse(port, `/api/v1/sessions/${id}/events/stream`, {
+        lastEventId: String(evt2.seq),
+      });
       sseCleanups.push(sse.close);
       await sse.response;
       await waitFor(() => sse.events.length >= 2); // connected + 1 replayed event
 
-      const replayed = sse.events.slice(1).map(e => JSON.parse(e));
+      const replayed = sse.events.slice(1).map((e) => JSON.parse(e));
       assert.equal(replayed.length, 1);
       assert.equal(replayed[0].type, "user_message");
-      assert.ok(JSON.parse(replayed[0].data || "{}").text === "msg2" || replayed[0].text === "msg2");
+      assert.ok(
+        JSON.parse(replayed[0].data ?? "{}").text === "msg2" || replayed[0].text === "msg2",
+      );
     });
 
     it("replays events with seq as SSE id", async () => {
       const id = await createSession();
-      const evt1 = store.saveEvent(id, "user_message", { text: "test" });
+      const evt1 = store.saveEvent(id, "user_message", { text: "test" }, { from_ref: "user" });
 
       // Use Last-Event-ID=0 to get all events replayed with id: field
       const sse = openSse(port, `/api/v1/sessions/${id}/events/stream`, { lastEventId: "0" });
@@ -277,7 +320,10 @@ describe("SSE REST API", () => {
 
       const allRaw = sse.rawChunks.join("");
       // Replayed events should include id: field with their seq number
-      assert.ok(allRaw.includes(`id: ${evt1.seq}`), "Replayed SSE events should include id field with seq");
+      assert.ok(
+        allRaw.includes(`id: ${evt1.seq}`),
+        "Replayed SSE events should include id field with seq",
+      );
     });
   });
 
@@ -291,15 +337,23 @@ describe("SSE REST API", () => {
       const connected = JSON.parse(sse.events[0]);
       const clientId = connected.clientId;
 
-      const res = await makeRequest(port, "POST", `/api/beta/clients/${clientId}/visibility`,
-        JSON.stringify({ visible: true }));
+      const res = await makeRequest(
+        port,
+        "POST",
+        `/api/beta/clients/${clientId}/visibility`,
+        JSON.stringify({ visible: true }),
+      );
       assert.equal(res.status, 200);
       assert.deepEqual(JSON.parse(res.body), { ok: true });
     });
 
     it("returns 404 for unknown clientId", async () => {
-      const res = await makeRequest(port, "POST", "/api/beta/clients/unknown/visibility",
-        JSON.stringify({ visible: true }));
+      const res = await makeRequest(
+        port,
+        "POST",
+        "/api/beta/clients/unknown/visibility",
+        JSON.stringify({ visible: true }),
+      );
       assert.equal(res.status, 404);
     });
 
@@ -310,8 +364,12 @@ describe("SSE REST API", () => {
       await waitFor(() => sse.events.length >= 1);
       const clientId = JSON.parse(sse.events[0]).clientId;
 
-      const res = await makeRequest(port, "POST", `/api/beta/clients/${clientId}/visibility`,
-        JSON.stringify({}));
+      const res = await makeRequest(
+        port,
+        "POST",
+        `/api/beta/clients/${clientId}/visibility`,
+        JSON.stringify({}),
+      );
       assert.equal(res.status, 400);
     });
 
@@ -322,7 +380,12 @@ describe("SSE REST API", () => {
       await waitFor(() => sse.events.length >= 1);
       const clientId = JSON.parse(sse.events[0]).clientId;
 
-      const res = await makeRequest(port, "POST", `/api/beta/clients/${clientId}/visibility`, "bad");
+      const res = await makeRequest(
+        port,
+        "POST",
+        `/api/beta/clients/${clientId}/visibility`,
+        "bad",
+      );
       assert.equal(res.status, 400);
     });
 
@@ -333,31 +396,45 @@ describe("SSE REST API", () => {
       await waitFor(() => sse.events.length >= 1);
       const clientId = JSON.parse(sse.events[0]).clientId;
 
-      const res = await makeRequest(port, "POST", `/api/beta/clients/${clientId}/visibility`,
-        JSON.stringify({ visible: true, sessionId: "session-123" }));
+      const res = await makeRequest(
+        port,
+        "POST",
+        `/api/beta/clients/${clientId}/visibility`,
+        JSON.stringify({ visible: true, sessionId: "session-123" }),
+      );
       assert.equal(res.status, 200);
       assert.deepEqual(JSON.parse(res.body), { ok: true });
     });
   });
 
   describe("heartbeat", () => {
-    it("sends periodic heartbeat comments to connected SSE clients", async () => {
+    it("sends periodic heartbeat named events to connected SSE clients", async () => {
       // Use a short heartbeat interval for testing
       const fastSse = new SseManager(50);
       const chunks: string[] = [];
       const fakeRes = {
         writableEnded: false,
-        write(data: string) { chunks.push(data); return true; },
+        write(data: string) {
+          chunks.push(data);
+          return true;
+        },
         on() {},
       } as any;
       fastSse.add({ id: "hb-1", res: fakeRes });
       fastSse.startHeartbeat();
-      // Wait for at least one heartbeat
-      await new Promise(r => setTimeout(r, 120));
+      // Interval fires periodically; no more immediate-on-add write (that
+      // is driven explicitly by route handlers after the connected event
+      // so tests parsing in-order see "connected" before "heartbeat").
+      await waitFor(
+        () => chunks.filter((c) => c.startsWith("event: heartbeat")).length >= 1,
+        500,
+        5,
+      );
       fastSse.stopHeartbeat();
-      const heartbeats = chunks.filter(c => c.includes(": heartbeat"));
-      assert.ok(heartbeats.length >= 1, `expected at least 1 heartbeat, got ${heartbeats.length}`);
-      assert.equal(heartbeats[0], ": heartbeat\n\n");
+      const heartbeats = chunks.filter((c) => c.startsWith("event: heartbeat"));
+      assert.ok(heartbeats.length >= 1, `expected ≥1 heartbeat, got ${heartbeats.length}`);
+      // Named event so EventSource addEventListener("heartbeat", …) fires.
+      assert.equal(heartbeats[0], "event: heartbeat\ndata: {}\n\n");
     });
   });
 });

@@ -35,3 +35,8 @@ recent_paths_ttl = 30
 
 [push]
 vapid_subject = "mailto:noreply@example.com"
+# Kill switch for cross-device global visibility suppression. When true,
+# if any client is actively viewing session X, push for session X is
+# suppressed for every device. Flip to false to rollback the feature
+# without a code change.
+global_visibility_suppression = true

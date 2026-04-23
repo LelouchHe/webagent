@@ -116,18 +116,23 @@ export function handleAgentEvent(
 
   // Push notification check (after broadcast so clients get the event first)
   if (pushService && "sessionId" in event && event.sessionId) {
-    const session = store.getSession(event.sessionId);
-    const eventData: Record<string, unknown> = {};
+    const pushEvent: { type: string; title?: string; command?: string; exitCode?: number | string; eventId?: number | string } = {
+      type: event.type,
+    };
     if (event.type === "permission_request") {
-      eventData.description = event.title;
+      pushEvent.title = event.title;
+      if ("requestId" in event && event.requestId !== undefined) {
+        pushEvent.eventId = String(event.requestId);
+      }
+    } else if (event.type === "bash_done") {
+      if ("command" in event) pushEvent.command = (event as { command?: string }).command;
+      if ("exitCode" in event) pushEvent.exitCode = (event as { exitCode?: number | string }).exitCode;
+      if ("eventId" in event && (event as { eventId?: number | string }).eventId !== undefined) {
+        pushEvent.eventId = (event as { eventId?: number | string }).eventId;
+      }
     }
-    if (pushService.maybeNotify(event.sessionId, session?.title ?? null, event.type, eventData)) {
-      const notification = pushService.formatNotification(
-        event.sessionId, session?.title ?? null, event.type, eventData,
-      );
-      pushService.sendToAll(notification).catch((err) => {
-        console.error("[push] failed to send:", err);
-      });
-    }
+    pushService.sendForEvent(event.sessionId, pushEvent).catch((err) => {
+      console.error("[push] failed to send:", err);
+    });
   }
 }

@@ -39,7 +39,9 @@ console.log(`[store] using ${config.data_dir}/`);
 
 const sessions = new SessionManager(store, config.default_cwd, config.data_dir);
 const titleService = new TitleService(store, sessions, config.default_cwd);
-const pushService = new PushService(store, config.data_dir, config.push.vapid_subject);
+const pushService = new PushService(store, config.data_dir, config.push.vapid_subject, {
+  globalVisibilitySuppression: config.push.global_visibility_suppression,
+});
 console.log(`[push] VAPID public key ready`);
 
 const sseManager = new SseManager();

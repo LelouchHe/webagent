@@ -1,6 +1,14 @@
 import { describe, it, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync, chmodSync, statSync } from "node:fs";
+import {
+  mkdtempSync,
+  rmSync,
+  existsSync,
+  readFileSync,
+  writeFileSync,
+  chmodSync,
+  statSync,
+} from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Store } from "../src/store.ts";
@@ -106,7 +114,7 @@ describe("PushService", () => {
 
   describe("VAPID key management", () => {
     it("generates and saves vapid.json on first init", () => {
-      const svc = new PushService(store, tmpDir, "mailto:test@localhost");
+      new PushService(store, tmpDir, "mailto:test@localhost");
 
       const vapidPath = join(tmpDir, "vapid.json");
       assert.ok(existsSync(vapidPath), "vapid.json should be created");
@@ -151,10 +159,16 @@ describe("PushService", () => {
   describe("formatNotification", () => {
     it("formats permission_request notification", () => {
       const svc = new PushService(store, tmpDir, "mailto:test@localhost");
-      const n = svc.formatNotification("session-1", "My Session", "permission_request", {
-        description: "Execute rm -rf node_modules",
-      });
-
+      const n = svc.formatNotification(
+        "session-1",
+        "My Session",
+        "permission_request",
+        {
+          description: "Execute rm -rf node_modules",
+        },
+        "test-tag",
+      );
+      if (n.kind !== "notify") throw new Error("unreachable");
       assert.equal(n.title, "My Session");
       assert.ok(n.body.includes("⚿"));
       assert.ok(n.body.includes("Execute rm -rf node_modules"));
@@ -163,26 +177,32 @@ describe("PushService", () => {
 
     it("formats prompt_done notification", () => {
       const svc = new PushService(store, tmpDir, "mailto:test@localhost");
-      const n = svc.formatNotification("s1", "Title", "prompt_done", {});
-
+      const n = svc.formatNotification("s1", "Title", "prompt_done", {}, "test-tag");
+      if (n.kind !== "notify") throw new Error("unreachable");
       assert.ok(n.body.includes("✓"));
     });
 
     it("formats bash_done notification", () => {
       const svc = new PushService(store, tmpDir, "mailto:test@localhost");
-      const n = svc.formatNotification("s1", "Title", "bash_done", {
-        command: "npm run build",
-        exitCode: 0,
-      });
-
+      const n = svc.formatNotification(
+        "s1",
+        "Title",
+        "bash_done",
+        {
+          command: "npm run build",
+          exitCode: 0,
+        },
+        "test-tag",
+      );
+      if (n.kind !== "notify") throw new Error("unreachable");
       assert.ok(n.body.includes("$"));
       assert.ok(n.body.includes("npm run build"));
     });
 
     it("uses fallback title when session title is null", () => {
       const svc = new PushService(store, tmpDir, "mailto:test@localhost");
-      const n = svc.formatNotification("s1", null, "prompt_done", {});
-
+      const n = svc.formatNotification("s1", null, "prompt_done", {}, "test-tag");
+      if (n.kind !== "notify") throw new Error("unreachable");
       assert.equal(n.title, "WebAgent");
     });
   });
@@ -368,7 +388,7 @@ describe("PushService", () => {
 
     class TestPushService extends PushService {
       outcomes = new Map<string, Outcome>();
-      protected override sendOne(
+      override sendOne(
         sub: { endpoint: string; keys: { auth: string; p256dh: string } },
         _payload: string,
       ): Promise<any> {
@@ -395,7 +415,13 @@ describe("PushService", () => {
       svc.outcomes.set("https://push.example.com/bad", "fail");
       svc.outcomes.set("https://push.example.com/good", "ok");
 
-      const notification = { title: "T", body: "B", data: { sessionId: "s1" } };
+      const notification = {
+        kind: "notify" as const,
+        title: "T",
+        body: "B",
+        tag: "test",
+        data: { sessionId: "s1" },
+      };
 
       // Failures 1-4: subscription should still exist
       for (let i = 0; i < 4; i++) {
@@ -415,7 +441,13 @@ describe("PushService", () => {
       store.saveSubscription("https://push.example.com/flaky", "a", "b");
 
       svc.outcomes.set("https://push.example.com/flaky", "fail");
-      const notification = { title: "T", body: "B", data: { sessionId: "s1" } };
+      const notification = {
+        kind: "notify" as const,
+        title: "T",
+        body: "B",
+        tag: "test",
+        data: { sessionId: "s1" },
+      };
 
       // 4 failures
       for (let i = 0; i < 4; i++) {
@@ -432,7 +464,11 @@ describe("PushService", () => {
         await svc.sendToAll(notification);
       }
 
-      assert.equal(store.getAllSubscriptions().length, 1, "should still exist after reset + 4 failures");
+      assert.equal(
+        store.getAllSubscriptions().length,
+        1,
+        "should still exist after reset + 4 failures",
+      );
     });
 
     it("still removes 410 Gone immediately", async () => {
@@ -441,7 +477,13 @@ describe("PushService", () => {
 
       svc.outcomes.set("https://push.example.com/gone", "gone");
 
-      const notification = { title: "T", body: "B", data: { sessionId: "s1" } };
+      const notification = {
+        kind: "notify" as const,
+        title: "T",
+        body: "B",
+        tag: "test",
+        data: { sessionId: "s1" },
+      };
       await svc.sendToAll(notification);
 
       assert.equal(store.getAllSubscriptions().length, 0, "410 should remove immediately");
@@ -461,24 +503,37 @@ describe("PushService", () => {
       svc.outcomes.set("https://push.example.com/phone", "ok");
 
       const sent: string[] = [];
+      // eslint-disable-next-line @typescript-eslint/unbound-method
       const realSendOne = TestPushService.prototype.sendOne;
-      (svc as any).sendOne = function(sub: any, payload: string) {
+      (svc as any).sendOne = function (sub: any, payload: string) {
         sent.push(sub.endpoint);
         return realSendOne.call(svc, sub, payload);
       };
 
       // Notification for session-A — ALL endpoints suppressed (user is viewing it on desktop)
-      await svc.sendToAll({ title: "T", body: "B", data: { sessionId: "session-A" } });
-      assert.deepEqual(sent, [],
-        "should suppress all endpoints for session-A (global visibility)");
+      await svc.sendToAll({
+        kind: "notify" as const,
+        title: "T",
+        body: "B",
+        tag: "test",
+        data: { sessionId: "session-A" },
+      });
+      assert.deepEqual(sent, [], "should suppress all endpoints for session-A (global visibility)");
 
       // Notification for session-B — both endpoints should fire (no one is viewing it)
       sent.length = 0;
-      await svc.sendToAll({ title: "T", body: "B", data: { sessionId: "session-B" } });
-      assert.deepEqual(sent.sort(), [
-        "https://push.example.com/desktop",
-        "https://push.example.com/phone",
-      ], "should send to both for session-B");
+      await svc.sendToAll({
+        kind: "notify" as const,
+        title: "T",
+        body: "B",
+        tag: "test",
+        data: { sessionId: "session-B" },
+      });
+      assert.deepEqual(
+        sent.sort(),
+        ["https://push.example.com/desktop", "https://push.example.com/phone"],
+        "should send to both for session-B",
+      );
     });
 
     it("visible client without session does not suppress push (no session = no suppression)", async () => {
@@ -494,19 +549,27 @@ describe("PushService", () => {
       svc.outcomes.set("https://push.example.com/phone", "ok");
 
       const sent: string[] = [];
+      // eslint-disable-next-line @typescript-eslint/unbound-method
       const realSendOne = TestPushService.prototype.sendOne;
-      (svc as any).sendOne = function(sub: any, payload: string) {
+      (svc as any).sendOne = function (sub: any, payload: string) {
         sent.push(sub.endpoint);
         return realSendOne.call(svc, sub, payload);
       };
 
-      const notification = { title: "T", body: "B", data: { sessionId: "s1" } };
+      const notification = {
+        kind: "notify" as const,
+        title: "T",
+        body: "B",
+        tag: "test",
+        data: { sessionId: "s1" },
+      };
       await svc.sendToAll(notification);
 
-      assert.deepEqual(sent.sort(), [
-        "https://push.example.com/desktop",
-        "https://push.example.com/phone",
-      ], "should send to both — visible client has no session set");
+      assert.deepEqual(
+        sent.sort(),
+        ["https://push.example.com/desktop", "https://push.example.com/phone"],
+        "should send to both — visible client has no session set",
+      );
     });
 
     it("sends to all endpoints when no client is registered", async () => {
@@ -515,13 +578,20 @@ describe("PushService", () => {
       store.saveSubscription("https://push.example.com/b", "c", "d");
 
       const sent: string[] = [];
+      // eslint-disable-next-line @typescript-eslint/unbound-method
       const realSendOne = TestPushService.prototype.sendOne;
-      (svc as any).sendOne = function(sub: any, payload: string) {
+      (svc as any).sendOne = function (sub: any, payload: string) {
         sent.push(sub.endpoint);
         return realSendOne.call(svc, sub, payload);
       };
 
-      const notification = { title: "T", body: "B", data: { sessionId: "s1" } };
+      const notification = {
+        kind: "notify" as const,
+        title: "T",
+        body: "B",
+        tag: "test",
+        data: { sessionId: "s1" },
+      };
       await svc.sendToAll(notification);
 
       assert.equal(sent.length, 2, "should send to both when no clients registered");
@@ -557,17 +627,20 @@ describe("config — push section", () => {
     process.argv = ["node", "test"];
     const config = loadConfig();
 
-    assert.equal(config.push.vapid_subject, "mailto:webagent@localhost");
+    assert.equal(config.push.vapid_subject, "mailto:noreply@example.com");
   });
 
   it("reads push section from TOML", () => {
     const tmpDir = mkdtempSync(join(tmpdir(), "webagent-config-push-"));
     tmpDirs.push(tmpDir);
     const configPath = join(tmpDir, "config.toml");
-    writeFileSync(configPath, `
+    writeFileSync(
+      configPath,
+      `
 [push]
 vapid_subject = "mailto:me@example.com"
-`);
+`,
+    );
     process.argv = ["node", "test", "--config", configPath];
     const config = loadConfig();
 

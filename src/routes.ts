@@ -203,6 +203,13 @@ export function createRequestHandler(deps: RequestHandlerDeps): (req: IncomingMe
           ...permEventData,
         } as AgentEvent);
 
+        // Cross-device banner recall: close the permission banner on
+        // every subscribed endpoint now that the permission has been
+        // handled by this client.
+        if (deps.pushService) {
+          void deps.pushService.sendClose(`sess-${perm.sessionId}-perm-${requestId}`);
+        }
+
         json(res, 200, { ok: true });
         return;
       }
@@ -637,6 +644,7 @@ export function createRequestHandler(deps: RequestHandlerDeps): (req: IncomingMe
 
         // Send connected event
         sseManager.sendEvent(client, { type: "connected", clientId } as unknown as AgentEvent);
+        sseManager.writeHeartbeat(client);
         return;
       }
 
@@ -665,6 +673,7 @@ export function createRequestHandler(deps: RequestHandlerDeps): (req: IncomingMe
 
         // Send connected event
         sseManager.sendEvent(client, { type: "connected", clientId } as unknown as AgentEvent);
+        sseManager.writeHeartbeat(client);
 
         // Replay events from Last-Event-ID if provided
         const lastEventId = req.headers["last-event-id"];
@@ -948,7 +957,14 @@ export function createRequestHandler(deps: RequestHandlerDeps): (req: IncomingMe
         const sseManager = deps.sseManager;
         const clientId = decodeURIComponent(visMatch[1]);
 
-        if (!sseManager.clients.has(clientId)) {
+        // Trust boundary: accept if the client is (a) currently connected
+        // via SSE, or (b) known to the ClientRegistry (populated on /hello,
+        // persists across SSE disconnect). Registry check fixes the
+        // pagehide-beacon race where iOS PWA suspension drops the SSE TCP
+        // connection before the beacon egresses.
+        const clientKnown =
+          sseManager.clients.has(clientId) || deps.clientRegistry?.get(clientId) !== undefined;
+        if (!clientKnown) {
           json(res, 404, { error: "Client not found" });
           return;
         }
@@ -966,11 +982,41 @@ export function createRequestHandler(deps: RequestHandlerDeps): (req: IncomingMe
           return;
         }
 
-        // If push service is available, update visibility and session
+        // sessionId patch semantics: absent = preserve, null = clear,
+        // string = replace. Zod can't distinguish omitted from explicit
+        // null after parse, so branch on raw body key.
+        const hasSessionIdKey = Object.prototype.hasOwnProperty.call(body, "sessionId");
+        let sessionIdPatch: string | null | undefined;
+        if (!hasSessionIdKey) {
+          sessionIdPatch = undefined;
+        } else if (body.sessionId === null) {
+          sessionIdPatch = null;
+        } else if (typeof body.sessionId === "string" && body.sessionId.length > 0) {
+          sessionIdPatch = body.sessionId;
+        } else {
+          sessionIdPatch = null;
+        }
+
         if (deps.pushService) {
-          deps.pushService.setClientVisibility(clientId, body.visible as boolean);
-          if (typeof body.sessionId === "string" && body.sessionId) {
-            deps.pushService.setClientSession(clientId, body.sessionId);
+          const { becameVisibleForSession } = deps.pushService.updateClient(clientId, {
+            visible: body.visible,
+            sessionId: sessionIdPatch,
+          });
+          // Edge-triggered only: heartbeat refreshes repeat the same
+          // (visible:true, sessionId:X) POST every 15s — firing sendClose
+          // on each would hammer banner recall. Only the first such
+          // transition after a change should recall stale banners.
+          if (becameVisibleForSession) {
+            void deps.pushService.sendClose(`sess-${becameVisibleForSession}-done`);
+            if (sessions) {
+              for (const perm of sessions.pendingPermissions.values()) {
+                if (perm.sessionId === becameVisibleForSession) {
+                  void deps.pushService.sendClose(
+                    `sess-${becameVisibleForSession}-perm-${perm.requestId}`,
+                  );
+                }
+              }
+            }
           }
         }
 

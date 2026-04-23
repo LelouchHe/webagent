@@ -24,9 +24,11 @@ const ConfigSchema = z.object({
   }),
 
   push: z.object({
-    vapid_subject: z.string().default("mailto:webagent@localhost"),
+    vapid_subject: z.string().default("mailto:noreply@example.com"),
+    global_visibility_suppression: z.boolean().default(true),
   }).default({
-    vapid_subject: "mailto:webagent@localhost",
+    vapid_subject: "mailto:noreply@example.com",
+    global_visibility_suppression: true,
   }),
 });
 

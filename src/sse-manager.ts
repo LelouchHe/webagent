@@ -2,6 +2,17 @@ import type { ServerResponse } from "node:http";
 import { randomBytes } from "node:crypto";
 import type { AgentEvent } from "./types.ts";
 
+/**
+ * SSE heartbeat frame — a NAMED event so the frontend can hook
+ * `es.addEventListener("heartbeat", ...)` and refresh its per-session
+ * visibility record on the server. Comment-line form (`: heartbeat\n\n`)
+ * is silently discarded by EventSource — no `onmessage` fires — which is
+ * why we use a named event instead. Riding the SSE connection's natural
+ * pulse means connection alive → server TTL stays fresh; connection dies
+ * → TTL expires the ghost automatically.
+ */
+const SSE_HEARTBEAT_FRAME = "event: heartbeat\ndata: {}\n\n";
+
 export interface SseClient {
   id: string;
   res: ServerResponse;
@@ -18,7 +29,7 @@ export class SseManager {
   private readonly heartbeatInterval: number;
   private onRemoveCallback: ((clientId: string) => void) | null = null;
 
-  constructor(heartbeatMs = 20_000) {
+  constructor(heartbeatMs = 15_000) {
     this.heartbeatInterval = heartbeatMs;
   }
 
@@ -32,7 +43,7 @@ export class SseManager {
     if (this.heartbeatTimer) return;
     this.heartbeatTimer = setInterval(() => {
       for (const client of this.clients.values()) {
-        if (!client.res.writableEnded) client.res.write(": heartbeat\n\n");
+        if (!client.res.writableEnded) client.res.write(SSE_HEARTBEAT_FRAME);
       }
     }, this.heartbeatInterval);
     this.heartbeatTimer.unref();
@@ -57,6 +68,19 @@ export class SseManager {
     client.res.on("close", () => this.remove(client.id));
   }
 
+  /** Write a single heartbeat frame to the given client. Used right after
+   *  the "connected" handshake so the frontend's heartbeat-driven
+   *  /visibility refresh fires at T+0 and the server-side visibility TTL
+   *  doesn't wait a full interval to reset after a reconnect. */
+  writeHeartbeat(client: SseClient): void {
+    if (client.res.writableEnded) return;
+    try {
+      client.res.write(SSE_HEARTBEAT_FRAME);
+    } catch {
+      // socket already dead; res.on("close") will clean up
+    }
+  }
+
   /** Remove a client by ID. */
   remove(id: string): void {
     this.clients.delete(id);
@@ -69,7 +93,13 @@ export class SseManager {
     let msg = "";
     if (seq != null) msg += `id: ${seq}\n`;
     msg += `data: ${JSON.stringify(event)}\n\n`;
-    client.res.write(msg);
+    try {
+      client.res.write(msg);
+    } catch {
+      // Socket torn down between writableEnded check and write.
+      // Drop the client so we stop writing to it on every broadcast.
+      this.remove(client.id);
+    }
   }
 
   /**
@@ -78,9 +108,9 @@ export class SseManager {
    */
   broadcast(event: AgentEvent): void {
     const sessionId = (event as Record<string, unknown>).sessionId as string | undefined;
-    for (const client of this.clients.values()) {
+    const snapshot = [...this.clients.values()];
+    for (const client of snapshot) {
       if (client.res.writableEnded) continue;
-      // Global clients get everything; session clients only get matching events
       if (client.sessionId && client.sessionId !== sessionId) continue;
       this.sendEvent(client, event);
     }

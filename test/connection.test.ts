@@ -22,9 +22,14 @@ describe("connection", () => {
     onopen: ((this: any) => any) | null = null;
     onmessage: ((this: any, event: { data: string }) => any) | null = null;
     onerror: ((this: any) => any) | null = null;
+    listeners = new Map<string, ((e: { data: string }) => unknown)[]>();
     constructor(url: string) {
       this.url = url;
       MockEventSource.instances.push(this);
+    }
+    addEventListener(type: string, cb: (e: { data: string }) => unknown) {
+      if (!this.listeners.has(type)) this.listeners.set(type, []);
+      this.listeners.get(type)!.push(cb);
     }
     close() { this.readyState = MockEventSource.CLOSED; }
   }

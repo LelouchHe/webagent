@@ -47,6 +47,21 @@ export function connect() {
     setTimeout(connect, 3000);
   };
 
+  // SSE "heartbeat" named event — server emits one every 15s, plus one
+  // immediately on (re)connect. Refreshing /visibility on each tick keeps
+  // the server-side visibility TTL fresh: as long as this SSE is alive,
+  // the server knows we're still focused on state.sessionId. When the
+  // connection silently dies (Cloudflare HTTP/3 stall, iOS suspension),
+  // heartbeats stop, we stop refreshing, and within the TTL window the
+  // server correctly expires the ghost. Binding INSIDE connect() pins the
+  // listener to this specific EventSource — on reconnect the old one is
+  // GC'd with its parent; we install a fresh listener on the fresh `es`.
+  es.addEventListener('heartbeat', () => {
+    if (!state.clientId) return;
+    if (document.hidden) return; // visibilitychange owns the hidden path
+    api.postVisibility(state.clientId, true, state.sessionId ?? undefined).catch(() => {});
+  });
+
   // Load session immediately via REST — parallel with SSE connection
   initSession();
 }
@@ -160,14 +175,58 @@ function cleanup() {
   setBusy(false);
 }
 
-// Visibility reporting via REST (replaces WS visibility message)
+// Visibility reporting via REST. On going-hidden we MUST use sendBeacon
+// (queued synchronously into the OS network stack), because iOS PWA may
+// suspend the JS runtime and kill in-flight fetch() before bytes leave
+// the device. That previously left the server believing we were still
+// visible → global suppression silently dropped ALL subsequent push
+// notifications for that session on every device until the SSE timeout
+// eventually cleared the ghost. On going-visible the process is awake
+// and we want an awaitable fetch so we can see failures.
+function postHiddenBeacon(clientId: string, sessionId: string | null): void {
+  const url = `/api/beta/clients/${encodeURIComponent(clientId)}/visibility`;
+  const payload = JSON.stringify({ visible: false, sessionId });
+  const blob = new Blob([payload], { type: 'application/json' });
+  let sent: boolean;
+  try {
+    sent = navigator.sendBeacon(url, blob);
+  } catch {
+    sent = false;
+  }
+  if (!sent) {
+    try {
+      void fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: payload,
+        keepalive: true,
+      }).catch(() => {});
+    } catch {
+      /* best-effort */
+    }
+  }
+}
+
 document.addEventListener('visibilitychange', () => {
   if (state.clientId) {
-    api.postVisibility(state.clientId, !document.hidden, state.sessionId ?? undefined).catch(() => {});
+    if (document.hidden) {
+      postHiddenBeacon(state.clientId, state.sessionId ?? null);
+    } else {
+      api.postVisibility(state.clientId, true, state.sessionId ?? undefined).catch(() => {});
+    }
   }
   // Sync missed events when returning from background (iOS can keep connections
   // alive while suspending event delivery, silently losing server messages)
   if (!document.hidden && state.sessionId && state.lastEventSeq > 0 && !state.replayInProgress) {
     loadNewEvents(state.sessionId).then(() => scrollToBottom(false));
+  }
+});
+
+// pagehide: secondary best-effort signal for bfcache/navigation. Not
+// relied on for iOS cold-kill (WebKit doesn't fire pagehide on OS-level
+// process termination), but cheap extra coverage for normal navigations.
+window.addEventListener('pagehide', () => {
+  if (state.clientId) {
+    postHiddenBeacon(state.clientId, state.sessionId ?? null);
   }
 });
