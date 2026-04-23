@@ -1,0 +1,37 @@
+#!/usr/bin/env sh
+
+# Pre-push gate: mirrors the CI pipeline locally so regressions are caught
+# before reaching the remote.
+#
+# Order: cheapest/fastest checks first so failures exit early.
+#   lint       ~2s
+#   typecheck  ~3s
+#   build      ~3s
+#   npm test   ~7s
+#   test:e2e   ~50s
+#
+# Skip with: git push --no-verify
+# Rationale: pre-commit (lint-staged) only formats/lints STAGED files with
+# --fix. A commit that bypassed pre-commit (--no-verify), or introduced
+# lint errors in untouched files (e.g. because a rule got tightened), would
+# slip through locally and only fail in CI. Pre-push runs the full lint so
+# the local gate truly mirrors CI.
+
+set -e
+
+echo "▶ pre-push: lint"
+npm run lint
+
+echo "▶ pre-push: typecheck"
+npm run typecheck
+
+echo "▶ pre-push: build"
+npm run build
+
+echo "▶ pre-push: unit tests (npm test)"
+npm test
+
+echo "▶ pre-push: E2E tests (npm run test:e2e)"
+npm run test:e2e
+
+echo "✔ pre-push checks passed"

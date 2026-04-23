@@ -1,0 +1,14 @@
+npx lint-staged
+
+# Guard: no `.only` in committed test files. `describe.only` / `test.only` /
+# `it.only` silently skips every other test in the suite — easy to forget,
+# impossible to notice in CI output. Cheap grep; runs on every commit.
+STAGED_TESTS=$(git diff --cached --name-only --diff-filter=ACM | grep -E '^(test|scripts)/.*\.(ts|tsx|js)$' || true)
+if [ -n "$STAGED_TESTS" ]; then
+  # shellcheck disable=SC2086
+  if echo "$STAGED_TESTS" | xargs grep -Hn -E '(describe|test|it)\.only\(' 2>/dev/null; then
+    echo "❌ Refusing to commit: '.only' found in staged test files (see lines above)."
+    echo "   Remove .only, or bypass with: git commit --no-verify"
+    exit 1
+  fi
+fi

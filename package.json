@@ -31,6 +31,7 @@
   ],
   "scripts": {
     "compile": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
     "prepublishOnly": "npm run compile && npm run build",
     "build": "node scripts/build.js",
     "start": "node --experimental-strip-types src/server.ts --config config.toml",
@@ -43,7 +44,17 @@
     "lint": "eslint . --max-warnings 0",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
-    "format:check": "prettier --check ."
+    "format:check": "prettier --check .",
+    "prepare": "husky"
+  },
+  "lint-staged": {
+    "*.{ts,js,mjs,cjs}": [
+      "prettier --write",
+      "eslint --fix"
+    ],
+    "*.{json,md,css,html,yml,yaml}": [
+      "prettier --write"
+    ]
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "^0.14.1",
@@ -62,6 +73,8 @@
     "eslint-config-prettier": "^10.1.8",
     "globals": "^17.5.0",
     "happy-dom": "^20.8.3",
+    "husky": "^9.1.7",
+    "lint-staged": "^16.4.0",
     "playwright": "^1.58.2",
     "prettier": "^3.8.3",
     "typescript": "^5.9.3",
