@@ -22,6 +22,7 @@ WebAgent exposes a **REST + SSE** API for managing agent sessions, sending promp
   - [Version](#version)
   - [Bash](#bash)
   - [Bridge](#bridge)
+  - [Inbox](#inbox)
   - [Images](#images)
   - [SSE Streams](#sse-streams)
 - [Beta Endpoints (`/api/beta/`)](#beta-endpoints-apibeta)
@@ -557,6 +558,89 @@ Broadcasts `agent_reloading` SSE event on start, then a `connected` event on suc
 ```json
 { "error": "<error message>" }
 ```
+
+---
+
+### Inbox
+
+The inbox is a primitive for receiving cross-session messages (from cron jobs, external integrations, or other agents). Messages live in a separate `messages` table until consumed (turned into a new session) or acked (dismissed).
+
+#### `POST /api/v1/messages`
+
+Create an inbox message. `to: "user"` creates an unbound message (listed in inbox, consumable into a new session). `to: "session:<id>"` appends the message directly as an event on the target session.
+
+**Request body:**
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `from_ref` | string | Yes | Source identifier. Must match `^(cron\|external):...` |
+| `from_label` | string | No | Human-readable sender label |
+| `to` | string | Yes | `"user"` (unbound) or `"session:<id>"` (bound) |
+| `deliver` | string | No | `"silent"`, `"inapp"`, or `"push"` (default: `"push"`) |
+| `dedup_key` | string | No | When set, supersedes any earlier unbound message with the same `to`+`dedup_key` |
+| `title` | string | Yes | Short title (≤256 chars) |
+| `body` | string | Yes | Message body (≤64KB) |
+| `cwd` | string | No | Optional working directory hint for consumption |
+
+**Response** `200`:
+
+```json
+{ "id": "msg-<16 hex>", "delivered": "pending" }   // unbound
+{ "id": "msg-<16 hex>", "delivered": "session" }   // bound
+```
+
+**Side effects:**
+- Unbound: inserts into `messages` table; broadcasts `message_created` SSE.
+- Bound: appends `message` event to target session; broadcasts `message` SSE.
+- Calls `pushService.sendForMessage` (no-op until C11-C13).
+
+**Errors:** `400` (invalid body, `session_not_found` for bound), `500`.
+
+---
+
+#### `GET /api/v1/messages`
+
+List all unprocessed inbox messages (ordered by `created_at` DESC).
+
+**Response** `200`:
+
+```json
+{ "messages": [ { "id": "msg-...", "from_ref": "...", "title": "...", ... } ] }
+```
+
+---
+
+#### `GET /api/v1/messages/:id`
+
+Get a single unprocessed message by id. Returns `404` if not found.
+
+---
+
+#### `POST /api/v1/messages/:id/consume`
+
+Consume a message: creates a new session, appends a `message` event with the message payload, and deletes the row. Idempotent via DB-authoritative check — calling twice returns `alreadyConsumed: true` the second time.
+
+**Response** `200`:
+
+```json
+{ "sessionId": "<uuid>", "alreadyConsumed": false }
+```
+
+**Side effects:** broadcasts `message_consumed` SSE; triggers `pushService.sendClose(id)` to dismiss banners on other devices (stub until C11-C13).
+
+**Errors:** `404` (message not found — never existed).
+
+---
+
+#### `POST /api/v1/messages/:id/ack` / `DELETE /api/v1/messages/:id`
+
+Ack (dismiss) a message without consuming. Deletes the row.
+
+**Response** `200`: `{ "ok": true }`
+
+**Side effects:** broadcasts `message_acked` SSE; triggers `pushService.sendClose(id)`.
+
+**Errors:** `404` (message not found).
 
 ---
 

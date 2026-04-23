@@ -1,4 +1,5 @@
 import type * as acp from "@agentclientprotocol/sdk";
+import { z } from "zod";
 
 // --- Config option (subset of ACP SessionConfigOption we care about) ---
 
@@ -109,6 +110,11 @@ export type AgentEvent =
   | { type: "agent_reloading_failed"; error: string }
   // Per-session runtime state delta (broadcast to subscribed SSE clients)
   | { type: "state_patch"; sessionId: string; seq: number; patch: import("./session-state.ts").StatePatch }
+  // Inbox messages (Stage B primitive)
+  | { type: "message"; sessionId: string; message_id: string; from_ref: string; from_label: string | null; title: string; body: string; cwd: string | null }
+  | { type: "message_created"; messageId: string }
+  | { type: "message_consumed"; messageId: string; sessionId: string }
+  | { type: "message_acked"; messageId: string }
   // Replay-only events (stored in DB, not sent live)
   | { type: "assistant_message"; sessionId?: string; text: string }
   | { type: "thinking"; sessionId?: string; text: string }
@@ -158,6 +164,37 @@ export interface NormalizedEventsResponse {
   total?: number;
   hasMore?: boolean;
 }
+
+// --- Inbox message ingress (Stage B primitive) ---
+
+const FROM_REF_ALLOWED = /^(cron|external):[A-Za-z0-9._\-+/]{1,120}$/;
+
+export const MessageIngressSchema = z.object({
+  from_ref: z.string().min(1).max(128).regex(FROM_REF_ALLOWED, {
+    message:
+      "from_ref must start with 'cron:' or 'external:' (reserved values and 'session:<id>' rejected in MVP)",
+  }),
+  from_label: z.string().max(64).optional(),
+  to: z.union([z.literal("user"), z.string().regex(/^session:[^\s]+$/)]),
+  deliver: z.enum(["silent", "inapp", "push"]).default("push"),
+  dedup_key: z.string().max(128).optional(),
+  title: z.string().min(1).max(256),
+  body: z.string().max(64 * 1024),
+  cwd: z.string().max(4096).optional(),
+});
+
+export type MessageIngressInput = z.infer<typeof MessageIngressSchema>;
+
+export const MessageEventDataSchema = z.object({
+  message_id: z.string().min(1),
+  from_ref: z.string().min(1),
+  from_label: z.string().nullish(),
+  title: z.string(),
+  body: z.string(),
+  cwd: z.string().nullish(),
+});
+
+export type MessageEventData = z.infer<typeof MessageEventDataSchema>;
 
 // --- Utility ---
 

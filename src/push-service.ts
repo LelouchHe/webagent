@@ -209,6 +209,32 @@ export class PushService {
     }
   }
 
+  /**
+   * Send a "close banner" silent push for a tag. Stubbed until C11-C13 wires
+   * the cross-device banner recall path. Intentionally a no-op so C8 route
+   * handlers can call it unconditionally.
+   */
+  async sendClose(_tag: string): Promise<void> {
+    return;
+  }
+
+  /**
+   * Send a push notification for an inbox message. Stubbed until C11-C13.
+   * Returns true if at least one endpoint would have been reached (placeholder
+   * so call-sites compile; actual implementation ships with push work).
+   */
+  async sendForMessage(_msg: {
+    id: string;
+    to: string;
+    body: string;
+    from_label?: string | null;
+    from_ref: string;
+    deliver: "silent" | "inapp" | "push";
+    dedup_key?: string | null;
+  }): Promise<boolean> {
+    return false;
+  }
+
   /** Send a single push notification. Extracted for testability. */
   protected sendOne(
     sub: { endpoint: string; keys: { auth: string; p256dh: string } },

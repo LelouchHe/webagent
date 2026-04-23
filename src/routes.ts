@@ -11,9 +11,10 @@ import type { Config } from "./config.ts";
 import type { PushService } from "./push-service.ts";
 import type { TitleService } from "./title-service.ts";
 import type { ClientRegistry } from "./client-registry.ts";
-import { errorMessage } from "./types.ts";
+import { errorMessage, MessageIngressSchema } from "./types.ts";
 import type { AgentEvent } from "./types.ts";
 import { interruptBashProc } from "./session-manager.ts";
+import { randomUUID } from "node:crypto";
 
 const IS_WIN = process.platform === "win32";
 
@@ -753,6 +754,136 @@ export function createRequestHandler(deps: RequestHandlerDeps): (req: IncomingMe
           res.end("Not found");
         }
         return;
+      }
+
+      // --- Inbox messages (Stage B primitive) ---
+
+      // POST /api/v1/messages — create ingress message
+      if (url === "/api/v1/messages" && req.method === "POST") {
+        let raw: string;
+        try { raw = await readBody(req); } catch { json(res, 400, { error: "Failed to read body" }); return; }
+        let parsed: unknown;
+        try { parsed = JSON.parse(raw); } catch { json(res, 400, { error: "Invalid JSON" }); return; }
+        const validation = MessageIngressSchema.safeParse(parsed);
+        if (!validation.success) {
+          json(res, 400, { error: "Invalid body", issues: validation.error.issues });
+          return;
+        }
+        const input = validation.data;
+        const id = `msg-${randomUUID().replace(/-/g, "").slice(0, 16)}`;
+
+        if (input.to.startsWith("session:")) {
+          const targetSid = input.to.slice("session:".length);
+          const session = store.getSession(targetSid);
+          if (!session) { json(res, 400, { error: "session_not_found" }); return; }
+          sessions?.flushBuffers(targetSid);
+          const data = {
+            message_id: id,
+            from_ref: input.from_ref,
+            from_label: input.from_label ?? null,
+            title: input.title,
+            body: input.body,
+            cwd: input.cwd ?? null,
+          };
+          store.saveEvent(targetSid, "message", data, { from_ref: input.from_ref });
+          sseManager.broadcast({ type: "message", sessionId: targetSid, ...data });
+          if (deps.pushService) {
+            void deps.pushService.sendForMessage({
+              id, to: input.to, body: input.body,
+              from_label: input.from_label, from_ref: input.from_ref,
+              deliver: input.deliver, dedup_key: input.dedup_key ?? null,
+            });
+          }
+          console.info(`[msg] ingress bound msg_id=${id} sess_id=${targetSid.slice(0, 8)}`);
+          json(res, 200, { id, delivered: "session" });
+          return;
+        }
+
+        // Unbound: to=user → rows in `messages` table
+        const dedupKey = input.dedup_key ?? null;
+        if (dedupKey) {
+          const prior = store.findBySupersede(input.to, dedupKey);
+          if (prior) {
+            store.deleteMessage(prior.id);
+            console.info(`[msg] dedup_key supersede to=${input.to} dedup_key=${dedupKey} old_msg_id=${prior.id} new_msg_id=${id}`);
+          }
+        }
+        store.createMessage({
+          id,
+          from_ref: input.from_ref,
+          from_label: input.from_label ?? null,
+          to_ref: input.to,
+          deliver: input.deliver,
+          dedup_key: dedupKey,
+          title: input.title,
+          body: input.body,
+          cwd: input.cwd ?? null,
+          created_at: Date.now(),
+        });
+        sseManager.broadcast({ type: "message_created", messageId: id });
+        if (deps.pushService) {
+          void deps.pushService.sendForMessage({
+            id, to: input.to, body: input.body,
+            from_label: input.from_label, from_ref: input.from_ref,
+            deliver: input.deliver, dedup_key: dedupKey,
+          });
+        }
+        console.info(`[msg] ingress unbound msg_id=${id} from_ref=${input.from_ref}`);
+        json(res, 200, { id, delivered: "pending" });
+        return;
+      }
+
+      // GET /api/v1/messages — list unprocessed
+      if (url === "/api/v1/messages" && req.method === "GET") {
+        json(res, 200, { messages: store.listUnprocessed() });
+        return;
+      }
+
+      // /api/v1/messages/:id... — GET single, POST :id/consume, POST :id/ack, DELETE :id
+      if (url.startsWith("/api/v1/messages/")) {
+        const tail = url.slice("/api/v1/messages/".length);
+
+        const consumeMatch = tail.match(/^([^/?]+)\/consume\/?$/);
+        if (consumeMatch && req.method === "POST") {
+          const id = decodeURIComponent(consumeMatch[1]);
+          const newSid = randomUUID();
+          let out: { sessionId: string; alreadyConsumed: boolean };
+          try {
+            out = store.consumeMessageTx(id, { sessionId: newSid });
+          } catch (err) {
+            if (/message not found/.test(errorMessage(err))) { json(res, 404, { error: "Message not found" }); return; }
+            throw err;
+          }
+          sseManager.broadcast({ type: "message_consumed", messageId: id, sessionId: out.sessionId });
+          if (!out.alreadyConsumed && deps.pushService) {
+            void deps.pushService.sendClose(id);
+          }
+          console.info(`[msg] consume msg_id=${id} sess_id=${out.sessionId.slice(0, 8)} already_consumed=${out.alreadyConsumed}`);
+          json(res, 200, { sessionId: out.sessionId, alreadyConsumed: out.alreadyConsumed });
+          return;
+        }
+
+        const ackPost = tail.match(/^([^/?]+)\/ack\/?$/);
+        const idOnly = tail.match(/^([^/?]+)\/?$/);
+        const isAck = (ackPost && req.method === "POST") || (idOnly && req.method === "DELETE");
+        if (isAck) {
+          const id = decodeURIComponent((ackPost ?? idOnly)![1]);
+          const changes = store.deleteMessage(id);
+          if (changes === 0) { json(res, 404, { error: "Message not found" }); return; }
+          sseManager.broadcast({ type: "message_acked", messageId: id });
+          if (deps.pushService) void deps.pushService.sendClose(id);
+          console.info(`[msg] ack msg_id=${id}`);
+          json(res, 200, { ok: true });
+          return;
+        }
+
+        if (idOnly && req.method === "GET") {
+          const id = decodeURIComponent(idOnly[1]);
+          const row = store.getMessage(id);
+          if (!row) { json(res, 404, { error: "Message not found" }); return; }
+          json(res, 200, row);
+          return;
+        }
       }
 
       json(res, 404, { error: "Not found" });
