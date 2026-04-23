@@ -742,7 +742,6 @@ function isDuplicateOfReplay(msg: AgentEvent): boolean {
 export function handleEvent(msg: AgentEvent) {
   // Queue events that arrive while history replay is in progress to avoid duplicates
   if (state.replayInProgress) {
-    console.log('[handleEvent-DEBUG] QUEUED (replayInProgress):', msg.type);
     state.replayQueue.push(msg);
     return;
   }
@@ -985,18 +984,13 @@ export function handleEvent(msg: AgentEvent) {
     }
 
     case 'permission_response': {
-      console.log('[PERM-DEBUG] permission_response received:', msg.requestId, 'sessionId:', msg.sessionId, 'state.sessionId:', state.sessionId);
       state.pendingPermissionRequestIds.delete(msg.requestId);
       state.unconfirmedPermissions.delete(msg.requestId);
       const permTarget = document.querySelector(`.permission[data-request-id="${msg.requestId}"]`);
-      console.log('[PERM-DEBUG] permTarget found:', !!permTarget, 'sessionMatch:', msg.sessionId === state.sessionId);
       if (msg.sessionId === state.sessionId && permTarget) {
         const title = permTarget.dataset.title ? `⚿ ${permTarget.dataset.title}` : '⚿';
         const action = resolvePermissionLabel(msg.optionName, msg.denied);
         permTarget.innerHTML = `<span style="opacity:0.5">${escHtml(title)} — ${escHtml(action)}</span>`;
-        console.log('[PERM-DEBUG] DOM updated successfully');
-      } else {
-        console.log('[PERM-DEBUG] DOM NOT updated — check failed');
       }
       finishPromptIfIdle();
       break;

@@ -74,7 +74,7 @@ async function ensureHljs(): Promise<boolean> {
 }
 
 function highlightAllIn(container: Element) {
-  const hljs = (globalThis as any).hljs;
+  const hljs = (globalThis as { hljs?: { highlightElement: (el: Element) => void } }).hljs;
   if (!hljs) return;
   for (const code of container.querySelectorAll('pre code')) {
     if (!(code as HTMLElement).dataset.highlighted) {

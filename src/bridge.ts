@@ -66,13 +66,13 @@ export class AgentBridge extends EventEmitter {
 
   async newSession(cwd: string, opts?: { silent?: boolean }): Promise<string> {
     if (!this.conn) throw new Error("Not connected");
-    const session = await this.conn.newSession({ cwd, mcpServers: [] });
+    const session = (await this.conn.newSession({ cwd, mcpServers: [] })) as acp.NewSessionResponse;
     if (!opts?.silent) {
       this.emit("event", {
         type: "session_created",
         sessionId: session.sessionId,
         cwd,
-        configOptions: (session as any).configOptions ?? [],
+        configOptions: (session.configOptions ?? []) as unknown as ConfigOption[],
       } satisfies AgentEvent);
     }
     return session.sessionId;
@@ -80,20 +80,29 @@ export class AgentBridge extends EventEmitter {
 
   async loadSession(sessionId: string, cwd: string): Promise<{ sessionId: string; configOptions: ConfigOption[] }> {
     if (!this.conn) throw new Error("Not connected");
-    const session = await this.conn.loadSession({ sessionId, cwd, mcpServers: [] });
+    const session = (await this.conn.loadSession({
+      sessionId,
+      cwd,
+      mcpServers: [],
+    })) as acp.LoadSessionResponse;
+    const configOptions = (session.configOptions ?? []) as unknown as ConfigOption[];
     this.emit("event", {
       type: "session_created",
-      sessionId: session.sessionId,
+      sessionId,
       cwd,
-      configOptions: (session as any).configOptions ?? [],
+      configOptions,
     } satisfies AgentEvent);
-    return { sessionId: session.sessionId, configOptions: (session as any).configOptions ?? [] };
+    return { sessionId, configOptions };
   }
 
   async setConfigOption(sessionId: string, configId: string, value: string): Promise<ConfigOption[]> {
     if (!this.conn) throw new Error("Not connected");
-    const result = await this.conn.setSessionConfigOption({ sessionId, configId, value });
-    return (result as any).configOptions ?? [];
+    const result = (await this.conn.setSessionConfigOption({
+      sessionId,
+      configId,
+      value,
+    })) as acp.SetSessionConfigOptionResponse;
+    return result.configOptions as unknown as ConfigOption[];
   }
 
   async prompt(

@@ -8,6 +8,7 @@ import {
 import { addSystem, addMessage, scrollToBottom, escHtml, formatLocalTime } from './render.ts';
 import { loadHistory, handleEvent, fallbackToNextSession } from './events.ts';
 import * as api from './api.ts';
+import { log } from './log.ts';
 import type { SessionSummary } from '../../src/types.ts';
 
 // --- Push notification helpers ---
@@ -30,7 +31,7 @@ async function subscribePush() {
       body: JSON.stringify({ endpoint: json.endpoint, keys: json.keys, clientId: state.clientId }),
     });
   } catch (err) {
-    console.error('[push] subscribe failed:', err);
+    log.scope('push').error('subscribe failed', { err });
   }
 }
 
@@ -48,7 +49,7 @@ async function unsubscribePush() {
       body: JSON.stringify({ endpoint }),
     });
   } catch (err) {
-    console.error('[push] unsubscribe failed:', err);
+    log.scope('push').error('unsubscribe failed', { err });
   }
 }
 

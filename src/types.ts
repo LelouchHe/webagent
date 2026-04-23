@@ -13,6 +13,26 @@ export interface ConfigOption {
 
 // --- Shared interfaces used by both frontend and backend ---
 
+/** Debug log entry produced by the frontend Logger or a future server log SSE bridge. */
+export interface LogRecord {
+  ts: number; // epoch ms
+  level: "debug" | "info" | "warn" | "error";
+  source: "client" | "server"; // v1 always 'client' (server-side bridge is future work)
+  scope?: string; // e.g. "push" or "session.event"
+  msg: string;
+  args: string[]; // fields after safeStringify (cycle-safe, capped)
+  sessionId?: string;
+}
+
+/** Logger interface shared by frontend (and a future backend implementation). */
+export interface Logger {
+  debug(msg: string, fields?: Record<string, unknown>): void;
+  info(msg: string, fields?: Record<string, unknown>): void;
+  warn(msg: string, fields?: Record<string, unknown>): void;
+  error(msg: string, fields?: Record<string, unknown>): void;
+  scope(name: string): Logger;
+}
+
 export interface PlanEntry {
   status: string;
   content: string;
