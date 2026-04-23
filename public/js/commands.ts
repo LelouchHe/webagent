@@ -294,6 +294,79 @@ export async function handleSlashCommand(text: string): Promise<boolean> {
       return true;
     }
 
+    case '/inbox': {
+      const parts = arg.trim().split(/\s+/).filter(Boolean);
+      const action = parts[0];
+
+      if (!action) {
+        // /inbox — list unbound (unconsumed) messages
+        try {
+          const { messages } = await api.listMessages();
+          if (messages.length === 0) {
+            addSystem('inbox: empty');
+            return true;
+          }
+          for (const m of messages) {
+            const from = m.from_label ?? m.from_ref;
+            const time = formatLocalTime(m.created_at);
+            addSystem(`${m.id} · ${m.title} · ${from} · ${time}`);
+          }
+          addSystem('— /inbox <id> to open · /inbox ack <id> to dismiss');
+        } catch (e) {
+          addSystem(`err: inbox list failed (${(e as Error).message})`);
+        }
+        return true;
+      }
+
+      const isAck = action === 'ack';
+      const target = isAck ? parts[1] : action;
+      if (!target) {
+        addSystem('err: usage /inbox <id>  |  /inbox ack <id>');
+        return true;
+      }
+
+      // Match by id or id-prefix against live list
+      let messages: api.InboxMessage[] = [];
+      try {
+        ({ messages } = await api.listMessages());
+      } catch (e) {
+        addSystem(`err: inbox list failed (${(e as Error).message})`);
+        return true;
+      }
+      const q = target.toLowerCase();
+      const match = messages.find(m => m.id === target)
+        ?? messages.find(m => m.id.toLowerCase().startsWith(q))
+        ?? messages.find(m => m.title.toLowerCase().includes(q));
+      if (!match) {
+        addSystem(`err: no inbox message matching "${target}"`);
+        return true;
+      }
+
+      if (isAck) {
+        try {
+          await api.ackMessage(match.id);
+          addSystem(`inbox: ack ${match.id}`);
+        } catch (e) {
+          addSystem(`err: ack failed (${(e as Error).message})`);
+        }
+        return true;
+      }
+
+      try {
+        const r = await api.consumeMessage(match.id);
+        if (r.alreadyConsumed) {
+          addSystem(`inbox: already consumed → switching to ${r.sessionId}`);
+        } else {
+          addSystem(`inbox: opened as ${r.sessionId}`);
+        }
+        // Switch to the new session
+        location.hash = r.sessionId;
+      } catch (e) {
+        addSystem(`err: consume failed (${(e as Error).message})`);
+      }
+      return true;
+    }
+
     case '/notify': {
       if (typeof Notification === 'undefined') {
         addSystem('err: notifications not supported in this browser');
@@ -356,6 +429,7 @@ const SLASH_COMMANDS: SlashCommand[] = [
   { cmd: '/clear',    args: '',            desc: 'Clear session — start fresh in same cwd (model inherited)' },
   { cmd: '/exit',     args: '',            desc: 'Close current session' },
   { cmd: '/help',     args: '',            desc: 'Show help (or type ?)' },
+  { cmd: '/inbox',    args: '[ack] <id>',  desc: 'List / open / dismiss inbox messages' },
   { cmd: '/mode',     args: '[name]',      desc: 'Pick or switch mode' },
   { cmd: '/model',    args: '[name]',      desc: 'Pick or switch model' },
   { cmd: '/new',      args: '[cwd]',       desc: 'New session' },

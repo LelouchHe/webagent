@@ -126,3 +126,30 @@ export function getStatus(sessionId: string): Promise<Record<string, unknown>> {
 export function reloadAgent(): Promise<void> {
   return post("/api/v1/bridge/reload", {});
 }
+
+// --- Inbox messages ---
+
+export interface InboxMessage {
+  id: string;
+  from_ref: string;
+  from_label: string | null;
+  to_ref: string;
+  deliver: string;
+  dedup_key: string | null;
+  title: string;
+  body: string;
+  cwd: string | null;
+  created_at: number;
+}
+
+export function listMessages(): Promise<{ messages: InboxMessage[] }> {
+  return request("/api/v1/messages");
+}
+
+export function consumeMessage(id: string): Promise<{ sessionId: string; alreadyConsumed: boolean }> {
+  return post(`/api/v1/messages/${encodeURIComponent(id)}/consume`, {});
+}
+
+export function ackMessage(id: string): Promise<void> {
+  return request(`/api/v1/messages/${encodeURIComponent(id)}`, { method: "DELETE" });
+}

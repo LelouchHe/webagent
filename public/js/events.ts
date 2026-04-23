@@ -1117,5 +1117,26 @@ export function handleEvent(msg: AgentEvent) {
       addSystem(`err: ${msg.message}`);
       setBusy(false);
       break;
+
+    case 'message_created':
+      addSystem(`inbox: new message ${msg.messageId} — /inbox to view`);
+      break;
+
+    case 'message_consumed':
+      addSystem(`inbox: ${msg.messageId} consumed → session ${msg.sessionId}`);
+      break;
+
+    case 'message_acked':
+      addSystem(`inbox: ${msg.messageId} dismissed`);
+      break;
+
+    case 'message':
+      // Bound-message event in the current session: render as a system line.
+      if (msg.sessionId === state.sessionId) {
+        const from = msg.from_label ?? msg.from_ref;
+        addSystem(`📨 ${from}: ${msg.title}`);
+        if (msg.body) addSystem(msg.body);
+      }
+      break;
   }
 }
