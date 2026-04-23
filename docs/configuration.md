@@ -52,7 +52,11 @@ If no `--config` is provided, all settings use built-in defaults. See `config.to
 | `limits.cancel_timeout` | `10000` (10s) | Cancel timeout in ms; 0 disables |
 | `limits.recent_paths` | `10` | Max recent paths shown in `/new` menu; 0 = show all |
 | `limits.recent_paths_ttl` | `30` | Days to keep unused paths before auto-cleanup; 0 = keep forever |
-| `push.vapid_subject` | `mailto:webagent@localhost` | VAPID subject for Web Push (email or URL) |
+| `push.vapid_subject` | `mailto:webagent@localhost` | VAPID subject for Web Push (email or URL). **Note:** iOS/APNs rejects `localhost` domains — use a real-looking address (e.g. `mailto:noreply@example.com`) in production. |
+| `push.global_visibility_suppression` | `true` | When `true`, a single client viewing session X suppresses push for session X on **all** endpoints/devices. Set to `false` to disable cross-device suppression as an emergency rollback without code change. See [Visibility Sync & Push Suppression](client-architecture.md#visibility-sync--push-suppression). |
+| `title.model` | `claude-haiku-4.5` | Model ID for the async title-generation sub-session. Set to empty string `""` to skip `setConfigOption` and inherit the main session model (useful for CLIs without Haiku, e.g. Copilot / Gemini). |
+| `messages.unprocessed_ttl_days` | `30` | Days before an unprocessed unbound inbox message is auto-cleaned. `0` = keep forever. Bound messages attached to sessions are not affected. See [Messages / Inbox](messages.md). |
+| `debug.level` | `"off"` | Inline log level — one of `off \| debug \| info \| warn \| error`. When `level != "off"`, frontend `log.*` records above that level emit both to the DevTools console and inline into the conversation flow (as system messages). Override per page via `?debug=<level>` URL param or at runtime via `/debug <level>`. |
 
 To use a different ACP-compatible agent backend:
 

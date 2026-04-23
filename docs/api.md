@@ -702,7 +702,7 @@ Then all subsequent events are streamed as they occur:
 data: {"type":"message_chunk","sessionId":"abc-123","text":"Hello"}
 ```
 
-**Heartbeat:** A `: heartbeat` SSE comment is sent every 20 seconds to prevent proxy/QUIC idle timeouts.
+**Heartbeat:** A named `event: heartbeat\ndata: {}` frame is sent every 15 seconds (and once immediately on connect) to prevent proxy/QUIC idle timeouts. Frontend also listens to this event to drive per-session visibility refresh — see [Visibility Sync & Push Suppression](client-architecture.md#visibility-sync--push-suppression).
 
 ---
 
@@ -826,7 +826,7 @@ Associate an SSE client with a push subscription endpoint. Used for per-session 
 
 #### `POST /api/beta/clients/:clientId/visibility`
 
-Report client visibility state (foreground/background) and which session the client is viewing. Used by the push notification service for per-session suppression: push is only suppressed when a visible client is viewing the same session as the notification.
+Report client visibility state (foreground/background) and which session the client is viewing. Used by the push notification service for **global, session-scoped** suppression — if any client is viewing session X, push for session X is suppressed on **all** endpoints across all devices. See [Visibility Sync & Push Suppression](client-architecture.md#visibility-sync--push-suppression) for the full architecture (60s TTL, named-event heartbeat, edge-triggered banner recall).
 
 **Request body:**
 
@@ -837,7 +837,13 @@ Report client visibility state (foreground/background) and which session the cli
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `visible` | boolean | yes | Whether the client is in the foreground |
-| `sessionId` | string | no | The session the client is currently viewing. When provided, updates the server's session tracking for this client. A visible client with no session set does not suppress any push. |
+| `sessionId` | string \| null | no | Omitted = preserve prior value; explicit `null` = clear; string = replace. A visible client with no session set does not suppress any push. |
+
+**Behavior:**
+- Every call stamps `visibleSince`; records older than 60s are ignored by the suppression check (self-heals ghost records).
+- Transitioning to visible+session=X (from invisible OR a different session) triggers `sendClose` for `sess-${X}-done` + pending-permission cleanup on other devices. Heartbeat refreshes of the same state do **not** re-fire sendClose.
+
+**Trust boundary:** accepts `clientId` known to either the SSE manager OR the `clientRegistry` (the registry survives SSE disconnect, so `pagehide` beacons still land after the stream closes).
 
 **Response** `200`: `{ "ok": true }`
 
@@ -875,6 +881,10 @@ These events are streamed in real-time via SSE as the agent works.
 | `bash_command` | `sessionId`, `command` | Bash command started |
 | `bash_output` | `sessionId`, `text`, `stream` | Bash output chunk (`stream`: `"stdout"` or `"stderr"`) |
 | `bash_done` | `sessionId`, `code`, `signal`, `error?` | Bash command completed |
+| `message` | `sessionId`, `message_id`, `from_ref`, `from_label?`, `title`, `body`, `cwd?`, `prompt?` | Bound inbox message delivered to a session. See [Messages / Inbox](messages.md) |
+| `message_created` | `messageId` | Unbound inbox message arrived. Metadata-only — no body/title on the wire; pull via `GET /api/v1/messages/:id` |
+| `message_consumed` | `messageId`, `sessionId` | Inbox message was consumed (session materialized). Clients should remove inbox row and close matching notifications |
+| `message_acked` | `messageId` | Inbox message was dismissed without consume |
 
 ### Replay-Only Events
 
@@ -966,7 +976,7 @@ The `SseManager` class (`src/sse-manager.ts`) manages all SSE connections:
 - **Global clients** (`/api/v1/events/stream`): `sessionId` is `undefined`, receives all events
 - **Per-session clients** (`/api/v1/sessions/:id/events/stream`): only receives events for that session
 - **Broadcast logic**: iterates all clients; skips per-session clients whose `sessionId` doesn't match
-- **Heartbeat**: `: heartbeat\n\n` every 20s (SSE comment, silently ignored by `EventSource` per spec). Prevents Cloudflare HTTP/3 (QUIC) and other proxies from closing idle connections. Timer uses `.unref()` to not block Node.js process exit.
+- **Heartbeat**: Named `event: heartbeat\ndata: {}\n\n` every 15s (plus once immediately on connect). Prevents Cloudflare HTTP/3 (QUIC) and other proxies from closing idle connections. The frontend also listens via `EventSource.addEventListener("heartbeat", ...)` to drive per-session visibility refresh (see [Visibility Sync & Push Suppression](client-architecture.md#visibility-sync--push-suppression)). Timer uses `.unref()` to not block Node.js process exit.
 - **Auto-reconnect with replay**: Per-session streams support `Last-Event-ID` header. On reconnect, the server replays all events after the given seq from the database.
 - **Cleanup**: Clients are removed on `res.close` event (browser disconnect, network drop)
 

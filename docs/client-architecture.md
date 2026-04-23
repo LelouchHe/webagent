@@ -198,43 +198,42 @@ When SSE disconnects:
 3. On reconnect, `initSession()` detects the same session in the hash → **incremental** path
 4. Only fetches events after `state.lastEventSeq` — no full history reload
 
-### Visibility Sync
+### Visibility Sync & Push Suppression
 
-When the browser tab goes hidden/visible:
-- **Hidden:** `api.postVisibility(clientId, false)` — server stops sending push notifications
-- **Visible:** `api.postVisibility(clientId, true)` + `loadNewEvents()` — catches up on any events missed while backgrounded (important for iOS PWA which can suspend event delivery)
+Push notifications are filtered by a **global, session-scoped visibility rule**: if any client is actively viewing session X, push for session X is suppressed on **all** endpoints (e.g. laptop looking at A → phone also doesn't buzz for A). But session B completing in the background still pushes to all devices. Controlled by `push.global_visibility_suppression` (default `true`).
 
-### Push Notification Reliability
+Accurate visibility state is therefore critical — a stale "visible" record globally blackholes push. The fundamental limitation is that `visibilitychange` only tracks tab-switching, not actual user attention, and on iOS PWA the browser can silently kill the hidden-transition `fetch` mid-flight, leaving a permanent ghost record.
 
-Push suppression depends on accurate visibility state on the server. The server checks visibility **once** at event time — if the state is stale, the push opportunity is lost with no retroactive delivery.
+**Defense is layered:**
 
-The fundamental limitation: `visibilitychange` only tracks **tab switching**, not whether the user is actually looking at the screen. There is no browser API equivalent to native OS attention tracking (`NSUserActivity`, `WindowAttentionState`, etc.).
-
-**Mobile (iOS PWA):**
-
-| Scenario | What happens | Fixable? |
+| Layer | Mechanism | File |
 |---|---|---|
-| Swipe to home / switch app | `visibilitychange` fires but `fetch(visible=false)` killed by iOS before reaching server → stale `visible=true` | `navigator.sendBeacon()` (not yet implemented) |
-| Notification center / control center | No `visibilitychange` fires | No — browser doesn't expose this |
-| iOS terminates PWA process | No JS events; SSE stays open until heartbeat fails (~20s) | No — heartbeat already at 20s |
-| Network switch (WiFi→cellular) | SSE silently breaks; stale state until heartbeat detects | No — same as above |
+| 1. Hidden transition survives OS kill | `navigator.sendBeacon` first, `fetch({keepalive:true})` fallback, plus `pagehide` secondary listener | `connection.ts` → `postHiddenBeacon()` |
+| 2. Server clock on every record | Each `/visibility` update stamps `visibleSince`; readers ignore records older than **60s** | `push-service.ts` → `isSessionVisibleToAnyClient` |
+| 3. Continuous refresh while SSE alive | SSE emits a **named** `event: heartbeat` every **15s** (not a comment — `EventSource` discards those); frontend listener POSTs `/visibility` each tick | `sse-manager.ts`, `connection.ts` |
 
-**Desktop (Chrome / Firefox / Safari):**
+SSE liveness is the single authoritative "this client is reachable" signal: connection alive → heartbeat fires → TTL stays fresh; connection dies or process is suspended → heartbeats stop → record expires within 60s and push correctly re-enables globally.
 
-| Scenario | What happens | Fixable? |
+**Edge vs level semantics on `/visibility`:**
+
+- `PushService.updateClient` returns `{ becameVisibleForSession }`, non-null **only** on the edge (invisible OR different session → visible + session=X)
+- `sendClose(sess-${sid}-done)` + permission cleanup fire **only** on that edge, not on every 15s heartbeat refresh — otherwise one focused client would hammer banner recall on every device every 15s
+- Body parsing distinguishes `sessionId` omitted (preserve prior) from explicit `null` (clear) via `"sessionId" in body` on raw JSON before Zod collapses both to `undefined`
+
+**Emergency rollback:** set `push.global_visibility_suppression = false` in the service config and reload — disables cross-device suppression without code change.
+
+#### What still can't be fixed
+
+`visibilitychange` doesn't fire for several real attention-loss scenarios. With TTL + heartbeat, **stale-visible is bounded to ≤60s** rather than permanent, but it still exists. Captured here so we don't re-investigate:
+
+| Scenario | Old behavior | With TTL+heartbeat |
 |---|---|---|
-| Switch tab | `visibilitychange` fires reliably, `fetch` completes | Works correctly ✅ |
-| Minimize window | Chrome macOS: no `visibilitychange`; Firefox: fires | No — browser-dependent |
-| Lock screen | No `visibilitychange` fires | No |
-| Another window covers browser | No `visibilitychange` fires | No |
-| Close laptop lid / sleep | No `visibilitychange`; SSE breaks, heartbeat detects (~20s) | No — heartbeat already at 20s |
-| Close tab / browser | `visibilitychange` fires but `fetch` may not complete before unload | `navigator.sendBeacon()` (not yet implemented) |
-
-**General:**
-
-| Scenario | What happens | Fixable? |
-|---|---|---|
-| Server restart | In-memory visibility state lost; no clients = no suppression | Safe by default ✅ |
+| iOS swipe-to-home / app switch | Ghost-visible forever | Self-heals in ≤60s when SSE dies |
+| iOS Notification Center / Control Center | No `visibilitychange` | Same — but 60s bound if SSE breaks |
+| iOS terminates PWA process | No JS events at all | Heartbeat stops → self-heals in ≤60s |
+| Desktop lock screen / cover window | No `visibilitychange` | Unchanged (SSE still alive) |
+| Desktop close lid / sleep | SSE breaks | Self-heals in ≤60s |
+| Server restart | In-memory state lost | Safe by default — no clients = no suppression |
 
 ---
 

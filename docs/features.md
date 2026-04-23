@@ -43,7 +43,7 @@ Type `/` to trigger an autocomplete menu with arrow keys to navigate, Esc to clo
 | `Enter` | Send current input | Send current input |
 | Click/Tap | Fill and send (Tab + Enter) | — |
 
-Commands with submenus (`/model`, `/mode`, `/think`, `/notify`, `/switch`, `/new`) show a picker after typing the command and a space. Tab completes the selection into the input so you can review or edit before pressing Enter to send.
+Commands with submenus (`/model`, `/mode`, `/think`, `/notify`, `/switch`, `/new`, `/inbox`, `/debug`) show a picker after typing the command and a space. Tab completes the selection into the input so you can review or edit before pressing Enter to send.
 
 | Command | Description |
 |---|---|
@@ -54,6 +54,8 @@ Commands with submenus (`/model`, `/mode`, `/think`, `/notify`, `/switch`, `/new
 | `/mode [name]` | View or switch mode (Agent / Plan / Autopilot) |
 | `/think [level]` | View or switch reasoning effort (low / medium / high) |
 | `/notify [on\|off]` | Toggle push notifications for background alerts |
+| `/inbox` | Open inbox — pick a pending message to consume (opens a new session) or ack (dismiss). See [Messages / Inbox](messages.md). |
+| `/debug [level]` | Set inline log level (`off`, `debug`, `info`, `warn`, `error`). Log records render inline as system messages. |
 | `/cancel` | Cancel current response |
 | `/clear` | Clear session — delete current and start fresh in same cwd (model/think inherited) |
 | `/switch <title\|id>` | Switch to a session (match by title or ID prefix) |
@@ -86,8 +88,9 @@ Tap the `❯` prompt indicator to cycle mode.
 
 - PWA support (installable to home screen)
 - Web Push notifications — background alerts when no browser tab is visible (use `/notify on`)
+- Inbox (`/inbox`) — a structured-notification primitive for cron jobs, webhooks, and other local tools. External senders `POST` to `/api/v1/messages`; the user engages on their own terms. See [Messages / Inbox](messages.md).
 - SSE auto-reconnect (3s retry on disconnect)
-- 30s heartbeat keepalive
+- 15s SSE heartbeat keepalive (also drives push visibility refresh — see [architecture](client-architecture.md#visibility-sync--push-suppression))
 - Auto-expanding input box
 - Mobile-friendly layout
 - Multi-client broadcast (events synced across devices)
