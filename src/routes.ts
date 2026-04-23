@@ -45,6 +45,7 @@ export interface RequestHandlerDeps {
   limits: Pick<Config["limits"], "bash_output" | "image_upload"> & Partial<Pick<Config["limits"], "cancel_timeout" | "recent_paths" | "recent_paths_ttl">>;
   pushService?: PushService;
   serverVersion?: string;
+  debugLevel?: string;
 }
 
 /** Read the full request body as a string. */
@@ -643,7 +644,7 @@ export function createRequestHandler(deps: RequestHandlerDeps): (req: IncomingMe
         sseManager.add(client);
 
         // Send connected event
-        sseManager.sendEvent(client, { type: "connected", clientId } as unknown as AgentEvent);
+        sseManager.sendEvent(client, { type: "connected", clientId, debugLevel: deps.debugLevel ?? "off" } as unknown as AgentEvent);
         sseManager.writeHeartbeat(client);
         return;
       }
@@ -672,7 +673,7 @@ export function createRequestHandler(deps: RequestHandlerDeps): (req: IncomingMe
         sseManager.add(client);
 
         // Send connected event
-        sseManager.sendEvent(client, { type: "connected", clientId } as unknown as AgentEvent);
+        sseManager.sendEvent(client, { type: "connected", clientId, debugLevel: deps.debugLevel ?? "off" } as unknown as AgentEvent);
         sseManager.writeHeartbeat(client);
 
         // Replay events from Last-Event-ID if provided

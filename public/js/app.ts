@@ -10,6 +10,11 @@ import { state, dom, resetSessionUI } from './state.ts';
 import { loadHistory, handleEvent } from './events.ts';
 import { addSystem, scrollToBottom, onThemeChange } from './render.ts';
 import { handleCopyClick, onThemeChange as hljsThemeChange } from './highlight.ts';
+import { setLogRenderer } from './log.ts';
+
+// Inline debug log — when level != "off", log records render as
+// system-msg rows in the conversation flow via addSystem.
+setLogRenderer(addSystem);
 import * as api from './api.ts';
 
 // Code block copy button (event delegation)

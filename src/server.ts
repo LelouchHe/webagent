@@ -72,6 +72,7 @@ const server = createServer(createRequestHandler({
   limits: config.limits,
   pushService,
   serverVersion: PKG_VERSION,
+  debugLevel: config.debug.level,
 }));
 
 async function initBridge(): Promise<AgentBridge> {
@@ -109,9 +110,7 @@ process.on("SIGTERM", shutdown);
 
 server.listen(config.port, "0.0.0.0", async () => {
   console.log(`[server] listening on http://localhost:${config.port}`);
-  // ttl=0 disables the sweep entirely; C14 will thread the real value
-  // from config.messages.unprocessed_ttl_days once the [messages] section lands.
-  messageCleanup = startMessageCleanup(store, 0);
+  messageCleanup = startMessageCleanup(store, config.messages.unprocessed_ttl_days);
   console.log(`[bridge] starting: ${config.agent_cmd}...`);
   try {
     await initBridge();

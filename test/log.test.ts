@@ -129,10 +129,10 @@ describe("log (level-gated)", () => {
     beforeEach(() => mod.setLogLevel("debug"));
 
     it("console prefix + DOM line reflect scope", () => {
-      mod.log.scope("push").warn("subscribe failed");
+      mod.log.scope("net").warn("request failed");
       assert.equal(consoleSpy[0].level, "warn");
-      assert.match(String(consoleSpy[0].args[0]), /^\[push\] subscribe failed$/);
-      assert.match(renderedLines[0], /\[push\] WARN subscribe failed/);
+      assert.match(String(consoleSpy[0].args[0]), /^\[net\] request failed$/);
+      assert.match(renderedLines[0], /\[net\] WARN request failed/);
     });
 
     it("nested scope chains with dot separator", () => {

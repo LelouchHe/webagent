@@ -128,7 +128,7 @@ export function resetForSession(): void {
 
 function make(parentScope?: string): Logger {
   const emit = (level: LogRecord["level"], msg: string, fields?: Record<string, unknown>): void => {
-    // Zero-overhead gate: must be the first statement.
+    // �� Zero-overhead gate: must be the first statement.
     if (LEVEL_RANK[level] < LEVEL_RANK[currentLevel]) {
       return;
     }

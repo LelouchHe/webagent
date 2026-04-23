@@ -8,7 +8,7 @@ import {
 import { addSystem, addMessage, scrollToBottom, escHtml, formatLocalTime } from './render.ts';
 import { loadHistory, handleEvent, fallbackToNextSession } from './events.ts';
 import * as api from './api.ts';
-import { log } from './log.ts';
+import { log, setLogLevel, getLogLevel, type LogLevel } from './log.ts';
 import type { SessionSummary } from '../../src/types.ts';
 
 // --- Push notification helpers ---
@@ -411,6 +411,22 @@ export async function handleSlashCommand(text: string): Promise<boolean> {
       return true;
     }
 
+    case '/debug': {
+      const sub = arg.toLowerCase().trim();
+      if (sub === '') {
+        addSystem(`debug: ${getLogLevel()} (use /debug <off|debug|info|warn|error>)`);
+        return true;
+      }
+      if (!['off', 'debug', 'info', 'warn', 'error'].includes(sub)) {
+        addSystem(`err: invalid level '${sub}' (use off|debug|info|warn|error)`);
+        return true;
+      }
+      setLogLevel(sub as LogLevel);
+      addSystem(`debug: ${sub}`);
+      if (sub !== 'off') log.info('debug logging enabled', { level: sub });
+      return true;
+    }
+
     default:
       return false;
   }
@@ -427,6 +443,7 @@ type SlashItem = SlashCommand | SessionSummary | PathItem | NotifyOption | api.I
 const SLASH_COMMANDS: SlashCommand[] = [
   { cmd: '/cancel',   args: '',            desc: 'Cancel current response' },
   { cmd: '/clear',    args: '',            desc: 'Clear session — start fresh in same cwd (model inherited)' },
+  { cmd: '/debug',    args: '[level]',     desc: 'Set inline log level (off|debug|info|warn|error)' },
   { cmd: '/exit',     args: '',            desc: 'Close current session' },
   { cmd: '/help',     args: '',            desc: 'Show help (or type ?)' },
   { cmd: '/inbox',    args: '[ack] <id>',  desc: 'List / open / dismiss inbox messages' },

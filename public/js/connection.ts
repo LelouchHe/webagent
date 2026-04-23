@@ -4,6 +4,7 @@ import { state, setBusy, getHashSessionId, requestNewSession, resetSessionUI, se
 import { addSystem, finishThinking, finishAssistant, finishBash, scrollToBottom } from './render.ts';
 import { handleEvent, loadHistory, loadNewEvents, retryUnconfirmedPermissions, fallbackToNextSession } from './events.ts';
 import * as api from './api.ts';
+import { applyConnectedLogLevel } from './log.ts';
 
 /** If the browser has an active push subscription, tell the server which
  *  clientId owns it so per-subscription visibility filtering works. */
@@ -33,6 +34,7 @@ export function connect() {
     // SSE initial handshake: server assigns clientId (no agent field)
     if (msg.type === 'connected' && msg.clientId) {
       state.clientId = msg.clientId;
+      applyConnectedLogLevel((msg as unknown as { debugLevel?: string }).debugLevel);
       api.postVisibility(msg.clientId, !document.hidden, state.sessionId ?? undefined).catch(() => {});
       registerPushEndpoint(msg.clientId);
       // Bridge-originated connected events also carry agent info — pass through

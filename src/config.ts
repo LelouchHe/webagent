@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { parse as parseTOML } from "smol-toml";
 import { z } from "zod";
 
-const ConfigSchema = z.object({
+export const ConfigSchema = z.object({
   port: z.number().int().positive().default(6800),
   data_dir: z.string().default("data"),
   default_cwd: z.string().default(process.cwd()),
@@ -30,6 +30,29 @@ const ConfigSchema = z.object({
     vapid_subject: "mailto:noreply@example.com",
     global_visibility_suppression: true,
   }),
+
+  // [title] — title generation sub-session configuration.
+  // `model` is sent via setConfigOption; leave as empty string to skip
+  // the call and inherit the session default (useful on CLIs that don't
+  // expose claude-haiku-4.5).
+  title: z.object({
+    model: z.string().default("claude-haiku-4.5"),
+  }).default({ model: "claude-haiku-4.5" }),
+
+  // [debug] — frontend log level.
+  // level ∈ off | debug | info | warn | error. Default "off".
+  // Users can override per page-load via `?debug=<level>` in the URL,
+  // or at runtime via the /debug slash command.
+  debug: z.object({
+    level: z.enum(["off", "debug", "info", "warn", "error"]).default("off"),
+  }).default({ level: "off" }),
+
+  // [messages] — external notifications primitive.
+  // `unprocessed_ttl_days` caps how long an unbound message stays in the
+  // inbox before TTL cleanup removes it. 0 = keep forever.
+  messages: z.object({
+    unprocessed_ttl_days: z.number().int().nonnegative().default(30),
+  }).default({ unprocessed_ttl_days: 30 }),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;

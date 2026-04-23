@@ -22,6 +22,7 @@ import {
   formatLocalTime,
 } from './render.ts';
 import * as api from './api.ts';
+import { applyConnectedLogLevel } from './log.ts';
 import {
   interpretToolCall, extractToolCallContent, getStatusIcon,
   classifyPermissionOption, resolvePermissionLabel, formatPlanEntries,
@@ -765,6 +766,7 @@ export function handleEvent(msg: AgentEvent) {
     case 'connected':
       if (msg.cancelTimeout != null) state.cancelTimeout = msg.cancelTimeout;
       if (msg.recentPathsLimit != null) state.recentPathsLimit = msg.recentPathsLimit;
+      applyConnectedLogLevel((msg as unknown as { debugLevel?: string }).debugLevel);
       if (state.agentReloading) {
         state.agentReloading = false;
         const name = msg.agent?.name ?? '';

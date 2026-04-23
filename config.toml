@@ -40,3 +40,23 @@ vapid_subject = "mailto:noreply@example.com"
 # suppressed for every device. Flip to false to rollback the feature
 # without a code change.
 global_visibility_suppression = true
+
+[title]
+# Model used for the dedicated silent session that generates session
+# titles. Leave as empty string to skip the setConfigOption call and
+# inherit the session default (useful on CLIs that don't expose
+# claude-haiku-4.5).
+model = "claude-haiku-4.5"
+
+[debug]
+# Frontend log level. One of: off | debug | info | warn | error.
+# Default "off". Users can override per page-load via ?debug=<level> in
+# the URL, or at runtime via the /debug slash command. level != off
+# emits to both DevTools console and the conversation-flow DOM.
+level = "off"
+
+[messages]
+# Days before an unprocessed unbound inbox message is auto-cleaned
+# (default 30). 0 = keep forever. Bound messages (to:"session:<id>")
+# are stored on the owning session and are not subject to this TTL.
+unprocessed_ttl_days = 30
