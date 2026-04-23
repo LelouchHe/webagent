@@ -78,6 +78,13 @@ function replayQuery(sel: string): Element | null {
   return state.replayTarget?.querySelector(sel) ?? document.querySelector(sel);
 }
 
+// Ask the service worker to close any push notification with the given tag.
+// Used by message_acked/message_consumed handlers to recall the local
+// device's banner immediately, independent of the server's silent close push.
+function closeLocalBanner(tag: string): void {
+  navigator.serviceWorker?.controller?.postMessage({ type: 'close-notification', tag });
+}
+
 const NOTIFY_TIP_KEY = 'webagent_notify_tip_shown';
 const NOTIFY_TIP_DENIED_KEY = 'webagent_notify_tip_denied_shown';
 
@@ -1124,10 +1131,12 @@ export function handleEvent(msg: AgentEvent) {
 
     case 'message_consumed':
       addSystem(`inbox: ${msg.messageId} consumed → session ${msg.sessionId}`);
+      closeLocalBanner(`msg-${msg.messageId}`);
       break;
 
     case 'message_acked':
       addSystem(`inbox: ${msg.messageId} dismissed`);
+      closeLocalBanner(`msg-${msg.messageId}`);
       break;
 
     case 'message':
