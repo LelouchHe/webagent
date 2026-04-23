@@ -14,6 +14,7 @@
   --code-bg: #0d2818;
   --permission-bg: #1c1305;
   --permission-title: #d29922;
+  --accent-soft: rgba(88, 166, 255, 0.18);
 }
 [data-theme="light"] {
   --bg: #ffffff;
@@ -30,6 +31,7 @@
   --code-bg: #f0faf0;
   --permission-bg: #fff4cc;
   --permission-title: #7a4f00;
+  --accent-soft: rgba(9, 105, 218, 0.14);
 }
 @media (prefers-color-scheme: light) {
   [data-theme="auto"] {
@@ -47,6 +49,7 @@
     --code-bg: #f0faf0;
     --permission-bg: #fff4cc;
     --permission-title: #7a4f00;
+    --accent-soft: rgba(9, 105, 218, 0.14);
   }
 }
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -159,6 +162,11 @@ body {
   flex-direction: column;
   gap: 4px;
 }
+#messages > * {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: break-word;
+}
 .msg {
   padding: 8px 14px;
   line-height: 1.6;
@@ -256,6 +264,28 @@ body {
 }
 .msg.assistant p { margin: 4px 0; }
 .msg.assistant ul, .msg.assistant ol { padding-left: 20px; margin: 4px 0; }
+.msg.assistant table {
+  border-collapse: collapse;
+  margin: 8px 0;
+  font-family: inherit;
+  font-size: inherit;
+  line-height: 1.5;
+  display: block;
+  overflow-x: auto;
+  max-width: 100%;
+}
+.msg.assistant th,
+.msg.assistant td {
+  border: 1px solid var(--border);
+  padding: 5px 12px;
+  text-align: left;
+  vertical-align: top;
+}
+.msg.assistant th {
+  color: var(--green);
+  border-color: var(--green);
+  font-weight: normal;
+}
 
 /* Thinking */
 .thinking {
@@ -389,12 +419,15 @@ body {
   margin: 2px 0;
   padding: 2px 14px;
   font-size: 15px;
+  min-width: 0;
+  overflow-wrap: break-word;
 }
 .bash-block .bash-cmd {
   color: var(--green);
   font-family: monospace;
   font-size: 14px;
   cursor: pointer;
+  overflow-wrap: break-word;
 }
 .bash-block .bash-cmd::before { content: '$ '; color: var(--text-dim); }
 .bash-block .bash-cmd.running { animation: pulse 1.5s ease-in-out infinite; }
@@ -583,36 +616,45 @@ body {
   font-size: 15px;
   display: flex;
   gap: 12px;
+  width: max-content;
+  min-width: 100%;
+  box-sizing: border-box;
 }
 .slash-item:hover, .slash-item.selected {
-  background: var(--accent);
-  color: #fff;
+  background: var(--accent-soft);
 }
+.slash-item .slash-cmd.current { color: var(--green); }
 .slash-item .slash-cmd { font-weight: bold; min-width: 120px; }
 .slash-item .slash-desc { color: var(--text-dim); }
-.slash-item:hover .slash-desc, .slash-item.selected .slash-desc { color: rgba(255,255,255,0.8); }
 
 /* Inbox-mode items: two-line layout with [x] ack button */
 .slash-item.inbox-item {
   flex-direction: column;
   gap: 2px;
-  align-items: stretch;
+  align-items: flex-start;
+  position: relative;
+  padding-bottom: 22px; /* reserve space for the absolute meta row */
 }
 .slash-item.inbox-item .inbox-row-main {
   display: flex;
   gap: 8px;
   align-items: baseline;
+  min-width: 100%;
 }
 .slash-item.inbox-item .inbox-row-meta {
+  position: absolute;
+  left: 14px; /* item padding-left */
+  right: 14px;
+  bottom: 6px;
   display: flex;
   gap: 6px;
-  font-size: 13px;
+  align-items: baseline;
   color: var(--text-dim);
-  padding-left: 26px;
-}
-.slash-item.inbox-item:hover .inbox-row-meta,
-.slash-item.inbox-item.selected .inbox-row-meta {
-  color: rgba(255,255,255,0.8);
+  font-size: 12px;
+  line-height: 1.4;
+  white-space: nowrap;
+  min-width: 0;
+  padding-left: 22px; /* align under title, past [x] */
 }
 .slash-item .slash-ack {
   color: var(--text-dim);
@@ -623,23 +665,31 @@ body {
 }
 .slash-item .slash-ack:hover { color: var(--red, #e06c75); }
 .slash-item.inbox-item .inbox-title {
-  font-weight: bold;
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  flex: 0 0 auto;
   white-space: nowrap;
+  min-width: 0;
+  font-weight: bold;
 }
 .slash-item.inbox-item .inbox-time {
   font-weight: normal;
   color: var(--text-dim);
   font-size: 13px;
 }
-.slash-item.inbox-item:hover .inbox-time,
-.slash-item.inbox-item.selected .inbox-time {
-  color: rgba(255,255,255,0.8);
+.slash-item.inbox-item .inbox-sep { opacity: 0.5; flex: 0 0 auto; }
+.slash-item.inbox-item .inbox-from {
+  flex: 0 0 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 40%;
 }
-.slash-item.inbox-item .inbox-sep { opacity: 0.5; }
+.slash-item.inbox-item .inbox-cwd {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  direction: rtl;
+  text-align: left;
+}
 
 /* Image attach */
 #attach-preview {

@@ -671,24 +671,24 @@ function renderSlashMenu() {
     dom.slashMenu.innerHTML = slashFiltered.map((p, i) => {
       const isCurrent = p.cwd.toLowerCase() === currentCwd;
       const prefix = isCurrent ? '* ' : '  ';
-      const style = isCurrent ? ' style="color:var(--green)"' : '';
-      return `<div class="slash-item${i === slashIdx ? ' selected' : ''}" data-idx="${i}"><span class="slash-cmd"${style}>${escHtml(prefix + p.cwd)}</span></div>`;
+      const currentClass = isCurrent ? " current" : "";
+      return `<div class="slash-item${i === slashIdx ? ' selected' : ''}" data-idx="${i}"><span class="slash-cmd${currentClass}">${escHtml(prefix + p.cwd)}</span></div>`;
     }).join('');
   } else if (slashMode === 'config') {
     const current = getConfigValue(slashConfigId)?.toLowerCase() || '';
     dom.slashMenu.innerHTML = slashFiltered.map((o, i) => {
       const isCurrent = o.value.toLowerCase() === current;
       const prefix = isCurrent ? '* ' : '  ';
-      const style = isCurrent ? ' style="color:var(--green)"' : '';
-      return `<div class="slash-item${i === slashIdx ? ' selected' : ''}" data-idx="${i}"><span class="slash-cmd"${style}>${escHtml(prefix + o.name)}</span></div>`;
+      const currentClass = isCurrent ? " current" : "";
+      return `<div class="slash-item${i === slashIdx ? ' selected' : ''}" data-idx="${i}"><span class="slash-cmd${currentClass}">${escHtml(prefix + o.name)}</span></div>`;
     }).join('');
   } else if (slashMode === 'notify') {
     const currentVal = notifyActive ? 'on' : 'off';
     dom.slashMenu.innerHTML = slashFiltered.map((o, i) => {
       const isCurrent = o.value === currentVal;
       const prefix = isCurrent ? '* ' : '  ';
-      const style = isCurrent ? ' style="color:var(--green)"' : '';
-      return `<div class="slash-item${i === slashIdx ? ' selected' : ''}" data-idx="${i}"><span class="slash-cmd"${style}>${escHtml(prefix + o.name)}</span><span class="slash-desc">${escHtml(o.desc)}</span></div>`;
+      const currentClass = isCurrent ? " current" : "";
+      return `<div class="slash-item${i === slashIdx ? ' selected' : ''}" data-idx="${i}"><span class="slash-cmd${currentClass}">${escHtml(prefix + o.name)}</span><span class="slash-desc">${escHtml(o.desc)}</span></div>`;
     }).join('');
   } else if (slashMode === 'switch') {
     dom.slashMenu.innerHTML = slashFiltered.map((s, i) => {
@@ -696,8 +696,8 @@ function renderSlashMenu() {
       const prefix = isCurrent ? '* ' : '  ';
       const label = s.title || s.id.slice(0, 8) + '…';
       const time = formatLocalTime(s.last_active_at || s.created_at);
-      const style = isCurrent ? ' style="color:var(--green)"' : '';
-      return `<div class="slash-item${i === slashIdx ? ' selected' : ''}" data-idx="${i}"><span class="slash-cmd"${style}>${escHtml(prefix + label)}</span><span class="slash-desc">${escHtml(s.cwd)} (${escHtml(time)})</span></div>`;
+      const currentClass = isCurrent ? " current" : "";
+      return `<div class="slash-item${i === slashIdx ? ' selected' : ''}" data-idx="${i}"><span class="slash-cmd${currentClass}">${escHtml(prefix + label)}</span><span class="slash-desc">${escHtml(s.cwd)} (${escHtml(time)})</span></div>`;
     }).join('');
   } else if (slashMode === 'inbox') {
     const items = slashFiltered as api.InboxMessage[];
