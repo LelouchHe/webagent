@@ -422,7 +422,7 @@ interface SlashCommand { cmd: string; args: string; desc: string }
 interface NotifyOption { value: string; name: string; desc: string }
 interface PathItem { cwd: string; time: string }
 
-type SlashItem = SlashCommand | SessionSummary | PathItem | NotifyOption | { value: string; name: string };
+type SlashItem = SlashCommand | SessionSummary | PathItem | NotifyOption | api.InboxMessage | { value: string; name: string };
 
 const SLASH_COMMANDS: SlashCommand[] = [
   { cmd: '/cancel',   args: '',            desc: 'Cancel current response' },
@@ -501,6 +501,14 @@ export function updateSlashMenu() {
   if (notifyMatch) {
     const query = text.slice(notifyMatch[0].length).toLowerCase();
     showNotifyMenu(query);
+    return;
+  }
+
+  // /inbox — show unbound-message picker
+  const inboxMatch = text.match(/^\/inbox /);
+  if (inboxMatch) {
+    const query = text.slice(inboxMatch[0].length).toLowerCase();
+    void fetchInboxForMenu(query);
     return;
   }
 
@@ -612,6 +620,34 @@ async function showNotifyMenu(query: string) {
   dom.slashMenu.classList.add('active');
 }
 
+// Inbox menu is always fetched fresh — messages can arrive/be acked frequently.
+async function fetchInboxForMenu(query: string) {
+  let messages: api.InboxMessage[];
+  try {
+    ({ messages } = await api.listMessages());
+  } catch {
+    return;
+  }
+  slashMode = 'inbox';
+  const q = query.toLowerCase();
+  slashFiltered = messages.filter(m => {
+    if (!q) return true;
+    return (
+      m.title.toLowerCase().includes(q) ||
+      (m.from_label ?? '').toLowerCase().includes(q) ||
+      m.from_ref.toLowerCase().includes(q) ||
+      m.id.toLowerCase().startsWith(q)
+    );
+  });
+  if (slashFiltered.length === 0) {
+    hideSlashMenu();
+    return;
+  }
+  slashIdx = 0;
+  renderSlashMenu();
+  dom.slashMenu.classList.add('active');
+}
+
 function renderSlashMenu() {
   if (slashMode === 'new') {
     const currentCwd = (state.sessionCwd || '').toLowerCase();
@@ -646,6 +682,26 @@ function renderSlashMenu() {
       const style = isCurrent ? ' style="color:var(--green)"' : '';
       return `<div class="slash-item${i === slashIdx ? ' selected' : ''}" data-idx="${i}"><span class="slash-cmd"${style}>${escHtml(prefix + label)}</span><span class="slash-desc">${escHtml(s.cwd)} (${escHtml(time)})</span></div>`;
     }).join('');
+  } else if (slashMode === 'inbox') {
+    const items = slashFiltered as api.InboxMessage[];
+    dom.slashMenu.innerHTML = items.map((m, i) => {
+      const label = m.title || '(no title)';
+      const from = m.from_label ?? m.from_ref;
+      const time = formatLocalTime(m.created_at);
+      const cwd = m.cwd ?? '';
+      return (
+        `<div class="slash-item inbox-item${i === slashIdx ? ' selected' : ''}" data-idx="${i}">` +
+        `<div class="inbox-row-main">` +
+        `<span class="slash-ack" data-ack-idx="${i}" title="ack (dismiss)">[x]</span>` +
+        `<span class="slash-cmd inbox-title">${escHtml(label)} <span class="inbox-time">(${escHtml(time)})</span></span>` +
+        `</div>` +
+        `<div class="inbox-row-meta">` +
+        `<span class="inbox-from">${escHtml(from)}</span>` +
+        (cwd ? `<span class="inbox-sep">·</span><span class="inbox-cwd">${escHtml(cwd)}</span>` : '') +
+        `</div>` +
+        `</div>`
+      );
+    }).join('');
   } else {
     dom.slashMenu.innerHTML = slashFiltered.map((c, i) => {
       const label = c.args ? `${c.cmd} ${c.args}` : c.cmd;
@@ -673,7 +729,7 @@ function tabCompleteSlashItem(idx: number) {
     dom.input.value = item.cmd + (item.args ? ' ' : '');
     hideSlashMenu();
     dom.input.focus();
-    if (['/new', '/switch', '/model', '/mode', '/think', '/notify'].includes(item.cmd)) {
+    if (['/new', '/switch', '/model', '/mode', '/think', '/notify', '/inbox'].includes(item.cmd)) {
       slashDismissed = null;
       updateSlashMenu();
     }
@@ -696,6 +752,11 @@ function tabCompleteSlashItem(idx: number) {
   } else if (slashMode === 'switch') {
     const s = slashFiltered[idx];
     dom.input.value = `/switch ${s.title || s.id}`;
+    hideSlashMenu();
+    dom.input.focus();
+  } else if (slashMode === 'inbox') {
+    const m = slashFiltered[idx] as api.InboxMessage;
+    dom.input.value = `/inbox ${m.id}`;
     hideSlashMenu();
     dom.input.focus();
   }
@@ -755,12 +816,17 @@ async function selectSlashItem(idx: number) {
     // Trigger command execution by simulating send
     handleSlashCommand(dom.input.value);
     dom.input.value = '';
+  } else if (slashMode === 'inbox') {
+    const m = slashFiltered[idx] as api.InboxMessage;
+    dom.input.value = '';
+    hideSlashMenu();
+    void handleSlashCommand(`/inbox ${m.id}`);
   } else {
     const item = slashFiltered[idx];
     dom.input.value = item.cmd + (item.args ? ' ' : '');
     hideSlashMenu();
     dom.input.focus();
-    if (['/new', '/switch', '/model', '/mode', '/think', '/notify'].includes(item.cmd)) {
+    if (['/new', '/switch', '/model', '/mode', '/think', '/notify', '/inbox'].includes(item.cmd)) {
       slashDismissed = null;
       updateSlashMenu();
     }
@@ -789,9 +855,33 @@ export function handleSlashMenuKey(e: KeyboardEvent): boolean {
 
 // --- Event listeners ---
 
+// /inbox [x] ack button: dismiss without consuming, refresh the menu.
+async function ackSlashInboxItem(idx: number) {
+  if (idx < 0 || idx >= slashFiltered.length) return;
+  const m = slashFiltered[idx] as api.InboxMessage;
+  try {
+    await api.ackMessage(m.id);
+  } catch (e) {
+    addSystem(`err: ack failed (${(e as Error).message})`);
+    return;
+  }
+  // Re-open the menu with fresh data. Preserve any query the user typed.
+  const current = dom.input.value;
+  const m2 = current.match(/^\/inbox\s(.*)$/);
+  const query = m2 ? m2[1].toLowerCase() : '';
+  await fetchInboxForMenu(query);
+}
+
 dom.slashMenu.addEventListener('mousedown', (e) => {
   e.preventDefault();
-  const item = e.target.closest('.slash-item');
+  const target = e.target as Element | null;
+  // Inbox ack button: [x] click dismisses without consuming.
+  const ackBtn = target?.closest<HTMLElement>('.slash-ack');
+  if (ackBtn?.dataset.ackIdx !== undefined) {
+    void ackSlashInboxItem(Number(ackBtn.dataset.ackIdx));
+    return;
+  }
+  const item = target?.closest<HTMLElement>('.slash-item');
   if (item) selectSlashItem(Number(item.dataset.idx));
 });
 
