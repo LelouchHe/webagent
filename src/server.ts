@@ -11,6 +11,7 @@ import { createRequestHandler } from "./routes.ts";
 import { handleAgentEvent } from "./event-handler.ts";
 import { PushService } from "./push-service.ts";
 import { SseManager } from "./sse-manager.ts";
+import { ClientRegistry } from "./client-registry.ts";
 import type { AgentEvent } from "./types.ts";
 
 // Prefix all console output with ISO-ish timestamps (YYYY-MM-DD HH:MM:SS)
@@ -41,7 +42,11 @@ const pushService = new PushService(store, config.data_dir, config.push.vapid_su
 console.log(`[push] VAPID public key ready`);
 
 const sseManager = new SseManager();
-sseManager.onRemove((clientId) => pushService.removeClient(clientId));
+const clientRegistry = new ClientRegistry();
+sseManager.onRemove((clientId) => {
+  pushService.removeClient(clientId);
+  clientRegistry.remove(clientId);
+});
 sseManager.startHeartbeat();
 
 let bridge: AgentBridge | null = null;
@@ -52,6 +57,7 @@ const server = createServer(createRequestHandler({
   store,
   sessions,
   sseManager,
+  clientRegistry,
   titleService,
   getBridge: () => bridge,
   publicDir: PUBLIC_DIR,
@@ -68,7 +74,7 @@ async function initBridge(): Promise<AgentBridge> {
     handleAgentEvent(event, sessions, store, b, {
       cancelTimeout: config.limits.cancel_timeout,
       recentPathsLimit: config.limits.recent_paths,
-    }, sseManager, pushService);
+    }, sseManager, pushService, clientRegistry);
   });
 
   await b.start();

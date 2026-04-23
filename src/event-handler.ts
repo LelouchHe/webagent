@@ -3,6 +3,7 @@ import type { Store } from "./store.ts";
 import type { SessionManager } from "./session-manager.ts";
 import type { PushService } from "./push-service.ts";
 import type { SseManager } from "./sse-manager.ts";
+import type { ClientRegistry } from "./client-registry.ts";
 import type { AgentEvent } from "./types.ts";
 
 export interface EventHandlerConfig {
@@ -18,6 +19,7 @@ export function handleAgentEvent(
   config: EventHandlerConfig,
   sseManager: SseManager,
   pushService?: PushService,
+  _clientRegistry?: ClientRegistry,
 ): void {
   if ("sessionId" in event && event.sessionId && sessions.restoringSessions.has(event.sessionId)) return;
 

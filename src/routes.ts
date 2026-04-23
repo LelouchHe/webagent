@@ -10,6 +10,7 @@ import type { AgentBridge } from "./bridge.ts";
 import type { Config } from "./config.ts";
 import type { PushService } from "./push-service.ts";
 import type { TitleService } from "./title-service.ts";
+import type { ClientRegistry } from "./client-registry.ts";
 import { errorMessage } from "./types.ts";
 import type { AgentEvent } from "./types.ts";
 import { interruptBashProc } from "./session-manager.ts";
@@ -35,6 +36,7 @@ export interface RequestHandlerDeps {
   store: Store;
   sessions?: SessionManager;
   sseManager: SseManager;
+  clientRegistry?: ClientRegistry;
   titleService?: TitleService;
   getBridge?: () => (Pick<AgentBridge, "newSession" | "setConfigOption" | "loadSession" | "cancel" | "prompt" | "resolvePermission" | "denyPermission" | "restart" | "reloading"> | null);
   publicDir: string;
