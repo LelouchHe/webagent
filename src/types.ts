@@ -107,6 +107,8 @@ export type AgentEvent =
   // Server lifecycle events (no sessionId)
   | { type: "agent_reloading" }
   | { type: "agent_reloading_failed"; error: string }
+  // Per-session runtime state delta (broadcast to subscribed SSE clients)
+  | { type: "state_patch"; sessionId: string; seq: number; patch: import("./session-state.ts").StatePatch }
   // Replay-only events (stored in DB, not sent live)
   | { type: "assistant_message"; sessionId?: string; text: string }
   | { type: "thinking"; sessionId?: string; text: string }

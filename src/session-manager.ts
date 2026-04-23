@@ -6,6 +6,7 @@ import { join } from "node:path";
 import type { Store } from "./store.ts";
 import type { AgentBridge } from "./bridge.ts";
 import type { AgentEvent, ConfigOption, PendingPermission } from "./types.ts";
+import { SessionStateManager } from "./session-state.ts";
 
 const IS_WIN = process.platform === "win32";
 
@@ -49,6 +50,8 @@ export class SessionManager {
   readonly runningBashProcs = new Map<string, ChildProcess>();
   /** Pending permission requests keyed by requestId. */
   readonly pendingPermissions = new Map<string, PendingPermission>();
+  /** Per-session runtime state (busy/streaming/permissions snapshots + patches). */
+  readonly state = new SessionStateManager();
   /** Deduplicates concurrent resume calls for the same session. */
   private pendingResumes = new Map<string, Promise<void>>();
 
@@ -222,6 +225,7 @@ export class SessionManager {
     for (const [reqId, perm] of this.pendingPermissions) {
       if (perm.sessionId === sessionId) this.pendingPermissions.delete(reqId);
     }
+    this.state.delete(sessionId);
     // Remove uploaded images for this session
     rm(join(this.dataDir, "images", sessionId), { recursive: true, force: true }).catch(() => {});
   }

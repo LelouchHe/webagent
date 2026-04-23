@@ -49,6 +49,9 @@ sseManager.onRemove((clientId) => {
 });
 sseManager.startHeartbeat();
 
+// Broadcast runtime state patches to all SSE clients interested in the session.
+sessions.state.onPatch((event) => sseManager.broadcast(event));
+
 let bridge: AgentBridge | null = null;
 
 // --- HTTP server ---
