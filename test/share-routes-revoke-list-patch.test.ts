@@ -109,11 +109,17 @@ describe("validateLabel — owner text rules", () => {
     assert.equal(validateLabel("x".repeat(1024), "x").ok, true);
   });
 
-  it("rejects unpaired surrogates", () => {
-    assert.equal(validateLabel("\uD800", "x").ok, false);
-    assert.equal(validateLabel("abc\uDC00", "x").ok, false);
-    // Valid surrogate pair is accepted.
+  it("accepts unpaired surrogates (V3: dropped check — renders as U+FFFD, no security impact)", () => {
+    assert.equal(validateLabel("\uD800", "x").ok, true);
+    assert.equal(validateLabel("abc\uDC00", "x").ok, true);
+    // Valid surrogate pair is also accepted.
     assert.equal(validateLabel("\uD83D\uDE00", "x").ok, true); // 😀
+  });
+
+  it("honors maxBytes parameter (display_name uses 256, owner_label uses 1024)", () => {
+    assert.equal(validateLabel("x".repeat(257), "display_name", 256).ok, false);
+    assert.equal(validateLabel("x".repeat(256), "display_name", 256).ok, true);
+    assert.equal(validateLabel("𝕏".repeat(65), "display_name", 256).ok, false); // 4 bytes × 65 = 260
   });
 
   it("rejects non-string", () => {

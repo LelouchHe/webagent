@@ -224,13 +224,14 @@ async function handlePreviewCreate(
     ttlHours = body.ttl_hours === 0 ? 0 : Math.min(Math.floor(body.ttl_hours), MAX_TTL_HOURS);
   }
 
-  // Full validation of display_name/owner_label lands in C4 (1024 byte cap,
-  // control char + bidi override reject). v2 accepts pass-through with a
-  // basic length guard so the contract shape is exercised.
-  const displayName = typeof body.display_name === "string" && body.display_name.length <= 256
-    ? body.display_name : null;
-  const ownerLabel = typeof body.owner_label === "string" && body.owner_label.length <= 1024
-    ? body.owner_label : null;
+  // Labels are validated via the same helper as PATCH (V3 unify) — bidi/
+  // control/size rejected at entry rather than silently dropped.
+  const dnResult = validateLabel(body.display_name, "display_name", 256);
+  if (!dnResult.ok) { json(res, 400, { error: dnResult.reason }); return; }
+  const olResult = validateLabel(body.owner_label, "owner_label", 1024);
+  if (!olResult.ok) { json(res, 400, { error: olResult.reason }); return; }
+  const displayName = dnResult.value === "" ? null : dnResult.value;
+  const ownerLabel = olResult.value === "" ? null : olResult.value;
 
   try {
     const result = await withSessionLock(`share:${sessionId}`, async () => {
@@ -409,13 +410,21 @@ async function handlePublish(
     return;
   }
 
-  // Pass-through basic length caps; full validation (ctrl/bidi reject) in C4.
-  const displayName = "display_name" in body
-    ? (typeof body.display_name === "string" && body.display_name.length <= 256 ? body.display_name : null)
-    : undefined;
-  const ownerLabel = "owner_label" in body
-    ? (typeof body.owner_label === "string" && body.owner_label.length <= 1024 ? body.owner_label : null)
-    : undefined;
+  // V3: publish uses the same validator as PATCH. Previously non-string or
+  // over-limit input was silently coerced to null, overwriting whatever the
+  // preview row (or an earlier PATCH) had set. Now reject at the edge.
+  let displayName: string | null | undefined;
+  if ("display_name" in body) {
+    const r = validateLabel(body.display_name, "display_name", 256);
+    if (!r.ok) { json(res, 400, { error: r.reason }); return; }
+    displayName = r.value === "" ? null : r.value;
+  }
+  let ownerLabel: string | null | undefined;
+  if ("owner_label" in body) {
+    const r = validateLabel(body.owner_label, "owner_label", 1024);
+    if (!r.ok) { json(res, 400, { error: r.reason }); return; }
+    ownerLabel = r.value === "" ? null : r.value;
+  }
 
   const activated = deps.store.activateShare(body.token, {
     ...(displayName !== undefined && { displayName }),
@@ -637,38 +646,38 @@ function isExpired(row: ShareRow): boolean {
 
 /**
  * Validate owner-supplied label/display_name text. Rules:
- * - string only
- * - UTF-8 byte length ≤ 1024
+ * - string only (null/undefined → empty string, treated as "unset")
+ * - UTF-8 byte length ≤ maxBytes (default 1024 for owner_label, 256 for display_name)
  * - reject C0 controls (\x00..\x1f) except TAB (\t)
  * - reject DEL (\x7f)
  * - reject bidi override / isolate codepoints U+202A..U+202E, U+2066..U+2069
  *
+ * Unpaired surrogates are intentionally NOT rejected. Labels are rendered
+ * via textContent in the viewer; a lone surrogate renders as U+FFFD replacement
+ * with no security implication. SQLite (WTF-8) and JSON.stringify both
+ * tolerate them.
+ *
  * Returns `{ ok: true, value }` on accept, `{ ok: false, reason }` on reject.
  * Empty string is accepted (caller decides semantics).
  */
-export function validateLabel(input: unknown, field: string): { ok: true; value: string } | { ok: false; reason: string } {
+export function validateLabel(
+  input: unknown,
+  field: string,
+  maxBytes: number = 1024,
+): { ok: true; value: string } | { ok: false; reason: string } {
   if (input == null) return { ok: true, value: "" };
   if (typeof input !== "string") return { ok: false, reason: `${field} must be a string` };
-  if (Buffer.byteLength(input, "utf8") > 1024) {
-    return { ok: false, reason: `${field} exceeds 1024 bytes` };
+  if (Buffer.byteLength(input, "utf8") > maxBytes) {
+    return { ok: false, reason: `${field} exceeds ${maxBytes} bytes` };
   }
-  for (let i = 0; i < input.length; i++) {
-    const cp = input.charCodeAt(i);
+  // Iterate by Unicode codepoint (for..of uses the string iterator, which
+  // yields one codepoint per step — supplementary chars are not split into
+  // two surrogate halves). All checked ranges are in the BMP so charCodeAt
+  // would also work, but codepoint iteration keeps the code UTF-16 agnostic.
+  for (const ch of input) {
+    const cp = ch.codePointAt(0)!;
     if (cp < 0x20 && cp !== 0x09) return { ok: false, reason: `${field} contains control character` };
     if (cp === 0x7f) return { ok: false, reason: `${field} contains DEL character` };
-    if (cp >= 0xd800 && cp <= 0xdfff) {
-      // Surrogate pair check: high surrogate MUST be followed by low surrogate.
-      if (cp <= 0xdbff) {
-        const next = input.charCodeAt(i + 1);
-        if (!(next >= 0xdc00 && next <= 0xdfff)) {
-          return { ok: false, reason: `${field} contains unpaired surrogate` };
-        }
-        i++;
-        continue;
-      }
-      // Lone low surrogate.
-      return { ok: false, reason: `${field} contains unpaired surrogate` };
-    }
     if ((cp >= 0x202a && cp <= 0x202e) || (cp >= 0x2066 && cp <= 0x2069)) {
       return { ok: false, reason: `${field} contains bidi override` };
     }
@@ -753,18 +762,15 @@ async function handlePatchLabel(
 
   let ownerLabel: string | null | undefined = undefined;
   if ("owner_label" in body) {
-    const v = validateLabel(body.owner_label, "owner_label");
+    const v = validateLabel(body.owner_label, "owner_label", 1024);
     if (!v.ok) { json(res, 400, { error: v.reason }); return; }
     ownerLabel = v.value === "" ? null : v.value;
   }
 
   let displayName: string | null | undefined = undefined;
   if ("display_name" in body) {
-    const v = validateLabel(body.display_name, "display_name");
+    const v = validateLabel(body.display_name, "display_name", 256);
     if (!v.ok) { json(res, 400, { error: v.reason }); return; }
-    if (Buffer.byteLength(v.value, "utf8") > 256) {
-      json(res, 400, { error: "display_name exceeds 256 bytes" }); return;
-    }
     displayName = v.value === "" ? null : v.value;
   }
 

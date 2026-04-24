@@ -201,6 +201,46 @@ describe("share preview routes — POST /api/v1/sessions/:id/share", () => {
     const rows = store.listOwnerShares();
     assert.equal(rows.length, 1);
   });
+
+  it("V3: rejects bidi override in display_name at preview create (not silently dropped)", async () => {
+    const m = mockRes();
+    await handleShareRoutes(
+      mockReq(`/api/v1/sessions/${sessionId}/share`, "POST", {
+        body: { display_name: "evil\u202etxt" },
+      }),
+      m.res, deps,
+    );
+    assert.equal(m.status(), 400);
+    const b = m.body() as { error: string };
+    assert.match(b.error, /bidi override/);
+    // And no preview row created.
+    assert.equal(store.findActivePreviewBySession(sessionId), undefined);
+  });
+
+  it("V3: rejects control char in owner_label at preview create", async () => {
+    const m = mockRes();
+    await handleShareRoutes(
+      mockReq(`/api/v1/sessions/${sessionId}/share`, "POST", {
+        body: { owner_label: "line1\x00line2" },
+      }),
+      m.res, deps,
+    );
+    assert.equal(m.status(), 400);
+    assert.match((m.body() as { error: string }).error, /control character/);
+  });
+
+  it("V3: rejects display_name > 256 bytes at preview create (UTF-8, not UTF-16)", async () => {
+    const m = mockRes();
+    // 𝕏 is 4 UTF-8 bytes, × 65 = 260 bytes > 256
+    await handleShareRoutes(
+      mockReq(`/api/v1/sessions/${sessionId}/share`, "POST", {
+        body: { display_name: "𝕏".repeat(65) },
+      }),
+      m.res, deps,
+    );
+    assert.equal(m.status(), 400);
+    assert.match((m.body() as { error: string }).error, /exceeds 256 bytes/);
+  });
 });
 
 describe("share preview routes — GET /api/v1/sessions/:id/share/preview", () => {

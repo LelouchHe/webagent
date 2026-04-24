@@ -198,6 +198,42 @@ describe("share publish route — POST /api/v1/sessions/:id/share/publish", () =
       ownerReq(`/api/v1/sessions/${sessionId}/share/publish`, "POST", { body: {} }), r.res, deps);
     assert.equal(r.status(), 400);
   });
+
+  it("V3: rejects bidi override in display_name at publish (previously silently null'd)", async () => {
+    const r1 = mockRes();
+    await handleShareRoutes(
+      ownerReq(`/api/v1/sessions/${sessionId}/share`, "POST", { body: { display_name: "alice" } }), r1.res, deps);
+    const token = (r1.json() as { token: string }).token;
+
+    const r2 = mockRes();
+    await handleShareRoutes(
+      ownerReq(`/api/v1/sessions/${sessionId}/share/publish`, "POST", {
+        body: { token, display_name: "evil\u202etxt" },
+      }), r2.res, deps);
+    assert.equal(r2.status(), 400);
+    assert.match((r2.json() as { error: string }).error, /bidi override/);
+
+    // Preview row's display_name is preserved (not nulled by the failed publish).
+    const row = store.getShareByToken(token);
+    assert.equal(row?.display_name, "alice");
+    assert.equal(row?.shared_at, null, "publish rejected → still a preview");
+  });
+
+  it("V3: rejects over-limit owner_label at publish (UTF-8 bytes, not UTF-16 length)", async () => {
+    const r1 = mockRes();
+    await handleShareRoutes(
+      ownerReq(`/api/v1/sessions/${sessionId}/share`, "POST", { body: {} }), r1.res, deps);
+    const token = (r1.json() as { token: string }).token;
+
+    const r2 = mockRes();
+    // 1024 UTF-16 chars of 𝕏 = 2048 UTF-8 bytes > 1024
+    await handleShareRoutes(
+      ownerReq(`/api/v1/sessions/${sessionId}/share/publish`, "POST", {
+        body: { token, owner_label: "𝕏".repeat(300) },
+      }), r2.res, deps);
+    assert.equal(r2.status(), 400);
+    assert.match((r2.json() as { error: string }).error, /exceeds 1024 bytes/);
+  });
 });
 
 describe("share public viewer — GET /s/:token + /api/v1/shared/:token/events", () => {
