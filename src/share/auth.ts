@@ -12,30 +12,24 @@ export class OwnerAuthError extends Error {
 export type OwnerAuthRejectReason =
   | "no_origin_no_sec_fetch"
   | "sec_fetch_cross_site"
-  | "origin_mismatch";
+  | "origin_mismatch"
+  | "origin_without_sec_fetch";
 
 /**
  * Owner-auth gate for all /api/v1/sessions/:id/share* and /api/v1/shares
  * routes. Throws OwnerAuthError on reject, returns void on accept.
  *
- * Policy (see share-plan §4.2 R2-c1 + share-dev 2026-04-24 Origin spike):
+ * Policy (see share-plan §4.2 R2-c1 + share-dev 2026-04-24 Origin spike +
+ * C5-review anomaly-guard tightening):
  *
- *   1. CF Access path — `Cf-Access-Authenticated-User-Email` header set by
- *      the edge allowlist gates. If present (and email-shaped), accept.
- *   2. Browser path — accept if `Sec-Fetch-Site ∈ {same-origin, none}`
- *      OR if `Origin` matches `Host`. Either signal alone is sufficient
- *      because modern browsers always emit Sec-Fetch-Site while older
- *      ones always emit Origin on non-GET; the AND form in the spec
- *      would falsely reject same-origin GET from modern browsers that
- *      omit Origin. See share-dev spike for the empirical table.
- *   3. Naked request — no CF header, no Sec-Fetch-Site, no Origin →
- *      reject. Agent subprocess `curl` lands here.
- *   4. Cross-site — Sec-Fetch-Site reports `cross-site` or `same-site` →
- *      reject.
- *
- * Defense-in-depth; CF Access remains the primary gate. Per share-plan
- * §4.2 v7 R3-c4 single-source-of-truth discipline, do not add per-route
- * parameterization — add a new helper for divergent checks.
+ *   1. CF Access — `Cf-Access-Authenticated-User-Email` present (email
+ *      shape) → accept.
+ *   2. Browser — `Sec-Fetch-Site ∈ {same-origin, none}` → accept.
+ *      `Sec-Fetch-Site ∈ {cross-site, same-site}` → reject.
+ *   3. Origin-without-Sec-Fetch → reject ('origin_without_sec_fetch').
+ *      Real browsers in 2026 always emit Sec-Fetch-Site alongside Origin;
+ *      the asymmetry is a curl / server-to-server forgery signature.
+ *   4. Naked (no CF, no Sec-Fetch, no Origin) → reject.
  */
 export function assertOwner(req: IncomingMessage): void {
   const cfEmail = headerValue(req, "cf-access-authenticated-user-email");
@@ -43,16 +37,19 @@ export function assertOwner(req: IncomingMessage): void {
 
   const secFetchSite = headerValue(req, "sec-fetch-site");
   const origin = headerValue(req, "origin");
-  const host = headerValue(req, "host");
 
   if (secFetchSite) {
     if (secFetchSite === "same-origin" || secFetchSite === "none") return;
     throw new OwnerAuthError("sec_fetch_cross_site");
   }
 
-  if (origin && host) {
-    if (originMatchesHost(origin, host)) return;
-    throw new OwnerAuthError("origin_mismatch");
+  // Anomaly guard (code-review C1/C5 follow-up): every modern browser that
+  // sends Origin also sends Sec-Fetch-Site. We only reach here when
+  // Sec-Fetch-Site is absent; Origin-without-Sec-Fetch is a curl /
+  // server-to-server signature — reject so a LAN-reachable dogfood
+  // server can't be owned via a forged Origin header.
+  if (origin) {
+    throw new OwnerAuthError("origin_without_sec_fetch");
   }
 
   throw new OwnerAuthError("no_origin_no_sec_fetch");
@@ -62,14 +59,4 @@ function headerValue(req: IncomingMessage, name: string): string | undefined {
   const v = req.headers[name];
   if (Array.isArray(v)) return v[0];
   return v;
-}
-
-function originMatchesHost(origin: string, host: string): boolean {
-  let originHost: string;
-  try {
-    originHost = new URL(origin).host;
-  } catch {
-    return false;
-  }
-  return originHost.toLowerCase() === host.toLowerCase();
 }

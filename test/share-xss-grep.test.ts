@@ -15,16 +15,21 @@ import { join, extname } from "node:path";
  */
 
 const FORBIDDEN_PATTERNS: Array<{ name: string; regex: RegExp }> = [
-  { name: "innerHTML",          regex: /\.innerHTML\s*=/ },
-  { name: "outerHTML",          regex: /\.outerHTML\s*=/ },
-  { name: "insertAdjacentHTML", regex: /\.insertAdjacentHTML\s*\(/ },
-  { name: "document.write",     regex: /document\.write\s*\(/ },
-  // eval() and Function() constructor — dynamic code evaluation.
+  // Dot or bracket access: .innerHTML=, ["innerHTML"]=, ['innerHTML']=, [`innerHTML`]=
+  { name: "innerHTML",          regex: /(?:\.innerHTML|\[\s*(['"`])innerHTML\1\s*\])\s*=/ },
+  { name: "outerHTML",          regex: /(?:\.outerHTML|\[\s*(['"`])outerHTML\1\s*\])\s*=/ },
+  { name: "insertAdjacentHTML", regex: /(?:\.insertAdjacentHTML|\[\s*(['"`])insertAdjacentHTML\1\s*\])\s*\(/ },
+  { name: "document.write",     regex: /document(?:\.write|\[\s*(['"`])write\1\s*\])\s*\(/ },
+  // Dynamic code evaluation.
   { name: "eval",               regex: /(?<![A-Za-z0-9_$])eval\s*\(/ },
   { name: "new Function",       regex: /new\s+Function\s*\(/ },
-  // setTimeout/setInterval with string first argument — string timers are eval.
+  // String-as-first-arg timers are eval.
   { name: "string-setTimeout",  regex: /setTimeout\s*\(\s*['"`]/ },
   { name: "string-setInterval", regex: /setInterval\s*\(\s*['"`]/ },
+  // Dynamic property assignment that spells innerHTML via concatenation — reject
+  // the primitive string fragments so `el["inner" + "HTML"]` cannot hide.
+  { name: "dynamic-innerHTML",  regex: /["'`]inner["'`]\s*\+\s*["'`]HTML["'`]/ },
+  { name: "dynamic-outerHTML",  regex: /["'`]outer["'`]\s*\+\s*["'`]HTML["'`]/ },
 ];
 
 const ROOTS = ["public/js/share", "src/share"];
@@ -44,6 +49,23 @@ function walk(dir: string): string[] {
 }
 
 describe("xss-grep: share surfaces must not use HTML injection or eval primitives", () => {
+  it("regex catches bracket-notation + dynamic-property bypasses", () => {
+    // Verify the regex itself defends against known bypass patterns.
+    const samples = [
+      `el["innerHTML"] = x`,
+      `el['innerHTML']=y`,
+      `el[\`innerHTML\`] = z`,
+      `el["outerHTML"] = w`,
+      `el["insertAdjacentHTML"](p, s)`,
+      `document["write"]("x")`,
+      `el[prop] = "inner" + "HTML"`,
+      `const k = 'outer' + 'HTML'`,
+    ];
+    for (const s of samples) {
+      const hit = FORBIDDEN_PATTERNS.some(({ regex }) => regex.test(s));
+      assert.ok(hit, `regex should match: ${s}`);
+    }
+  });
   for (const root of ROOTS) {
     it(`scans ${root}/** for forbidden patterns`, () => {
       const files = walk(root);

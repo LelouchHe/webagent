@@ -27,21 +27,9 @@ describe("assertOwner", () => {
       );
     });
 
-    it("Origin matches Host (older browsers without Sec-Fetch)", () => {
+    it("Origin matches Host WITH Sec-Fetch-Site same-origin (belt + suspenders)", () => {
       assert.doesNotThrow(() =>
-        assertOwner(fakeReq({ origin: "http://localhost:6800", host: "localhost:6800" })),
-      );
-    });
-
-    it("Origin https matches same host", () => {
-      assert.doesNotThrow(() =>
-        assertOwner(fakeReq({ origin: "https://example.com", host: "example.com" })),
-      );
-    });
-
-    it("Origin case-insensitive host match", () => {
-      assert.doesNotThrow(() =>
-        assertOwner(fakeReq({ origin: "https://Example.COM", host: "example.com" })),
+        assertOwner(fakeReq({ "sec-fetch-site": "same-origin", origin: "http://localhost:6800", host: "localhost:6800" })),
       );
     });
   });
@@ -52,6 +40,27 @@ describe("assertOwner", () => {
         () => assertOwner(fakeReq({ host: "localhost:6800" })),
         (e: unknown) => e instanceof OwnerAuthError && e.reason === "no_origin_no_sec_fetch",
       );
+    });
+
+    it("Origin set but no Sec-Fetch-Site — 'origin_without_sec_fetch' (curl signature)", () => {
+      // Modern browsers always emit Sec-Fetch-Site alongside Origin.
+      // Every Origin-only shape — match, mismatch, malformed, case-diff —
+      // must collapse into the same reject reason so a future policy
+      // loosening cannot accidentally re-enable a subset.
+      const samples: Array<Record<string, string>> = [
+        { origin: "http://localhost:6800", host: "localhost:6800" },       // match
+        { origin: "https://example.com", host: "example.com" },             // match https
+        { origin: "https://Example.COM", host: "example.com" },             // case-insensitive match
+        { origin: "https://evil.com", host: "localhost:6800" },             // mismatch
+        { origin: "not-a-url", host: "localhost:6800" },                    // malformed URL
+      ];
+      for (const headers of samples) {
+        assert.throws(
+          () => assertOwner(fakeReq(headers)),
+          (e: unknown) => e instanceof OwnerAuthError && e.reason === "origin_without_sec_fetch",
+          `expected 'origin_without_sec_fetch' for ${JSON.stringify(headers)}`,
+        );
+      }
     });
 
     it("Sec-Fetch-Site: cross-site — 'sec_fetch_cross_site'", () => {
@@ -68,20 +77,6 @@ describe("assertOwner", () => {
       assert.throws(
         () => assertOwner(fakeReq({ "sec-fetch-site": "same-site", host: "a.example.com" })),
         (e: unknown) => e instanceof OwnerAuthError && e.reason === "sec_fetch_cross_site",
-      );
-    });
-
-    it("Origin mismatches Host — 'origin_mismatch'", () => {
-      assert.throws(
-        () => assertOwner(fakeReq({ origin: "https://evil.com", host: "localhost:6800" })),
-        (e: unknown) => e instanceof OwnerAuthError && e.reason === "origin_mismatch",
-      );
-    });
-
-    it("malformed Origin URL — 'origin_mismatch'", () => {
-      assert.throws(
-        () => assertOwner(fakeReq({ origin: "not-a-url", host: "localhost:6800" })),
-        (e: unknown) => e instanceof OwnerAuthError && e.reason === "origin_mismatch",
       );
     });
 
