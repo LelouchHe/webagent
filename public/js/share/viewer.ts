@@ -154,7 +154,7 @@ async function main(): Promise<void> {
       headers: { "Accept": "application/json" },
       credentials: "omit",
     });
-    if (res.status === 410) { document.body.innerHTML = "<div class='share-gone'>此链接已撤销或过期。</div>"; return; }
+    if (res.status === 410) { document.body.innerHTML = "<div class='share-gone'>此链接已撤销或过期。</div>"; return; } // xss-ok: static literal
     if (!res.ok) { document.body.textContent = `error ${res.status}`; return; }
     payload = await res.json() as SharePayload;
   } catch (err) {
