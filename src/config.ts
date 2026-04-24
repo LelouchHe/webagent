@@ -53,6 +53,38 @@ export const ConfigSchema = z.object({
   messages: z.object({
     unprocessed_ttl_days: z.number().int().nonnegative().default(30),
   }).default({ unprocessed_ttl_days: 30 }),
+
+  // [share] — public read-only session share links.
+  // Default: disabled. Dogfood manually flips `enabled = true` after
+  // CF Access bypass + Rate Limiting are configured. See docs/share.md.
+  //   enabled        — master kill switch; when false, all share routes
+  //                    return 410 and slash commands are hidden.
+  //   ttl_hours      — global default TTL for public share links. 0 =
+  //                    never expire (default). >0 is clamped to 168 (7d).
+  //                    Per-share override via `shares.ttl_hours` column.
+  //   csp_enforce    — true (default) emits Content-Security-Policy on
+  //                    /s/* and /api/v1/shared/* routes. false emits
+  //                    Content-Security-Policy-Report-Only for rollback.
+  //   viewer_origin  — public viewer URL host; empty string = same as
+  //                    webagent host (default). Useful if viewer is
+  //                    behind a different CF Worker route (e.g.
+  //                    "https://share.example.com").
+  //   internal_hosts — sanitizer internal-domain allowlist; any token
+  //                    matching these substrings gets rewritten to
+  //                    `<internal-host>` before publishing.
+  share: z.object({
+    enabled: z.boolean().default(false),
+    ttl_hours: z.number().int().nonnegative().default(0),
+    csp_enforce: z.boolean().default(true),
+    viewer_origin: z.string().default(""),
+    internal_hosts: z.array(z.string()).default([]),
+  }).default({
+    enabled: false,
+    ttl_hours: 0,
+    csp_enforce: true,
+    viewer_origin: "",
+    internal_hosts: [],
+  }),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;

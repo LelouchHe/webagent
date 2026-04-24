@@ -60,3 +60,31 @@ level = "off"
 # (default 30). 0 = keep forever. Bound messages (to:"session:<id>")
 # are stored on the owning session and are not subject to this TTL.
 unprocessed_ttl_days = 30
+
+[share]
+# Public read-only session share links. Default off. Dogfood manually
+# flips `enabled = true` after CF Access bypass + Rate Limiting are
+# configured. See docs/share.md.
+
+# Master kill switch. When false, all /api/v1/sessions/*/share* and
+# /s/* routes return 410, and /share slash commands are hidden.
+enabled = false
+
+# Global default TTL for public share links (hours). 0 = never expire
+# (default). Values >0 are clamped to 168 (7d) at startup with a WARN.
+# Per-share overrides live in the shares.ttl_hours column.
+ttl_hours = 0
+
+# true emits Content-Security-Policy on /s/* + /api/v1/shared/*.
+# Set false to fall back to Content-Security-Policy-Report-Only as an
+# emergency kill switch without touching code.
+csp_enforce = true
+
+# Public viewer origin; null = same as webagent host. Set when viewer is
+# fronted by a separate CF Worker route (e.g. "https://share.example.com").
+viewer_origin = ""
+
+# Sanitizer internal-domain allowlist; substrings matched (case-insensitive)
+# get rewritten to `<internal-host>` before publishing. Example:
+# internal_hosts = ["corp.example.com", "internal-db"]
+internal_hosts = []

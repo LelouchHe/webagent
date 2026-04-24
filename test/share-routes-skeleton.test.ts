@@ -63,7 +63,7 @@ describe("handleShareRoutes skeleton", () => {
     assert.equal(m.status(), 503);
   });
 
-  it("enabled: claims /api/v1/sessions/:id/share POST", async () => {
+  it("enabled: claims /api/v1/sessions/:id/share POST (now implemented; returns 401 without owner-auth headers)", async () => {
     const m = mockRes();
     const handled = await handleShareRoutes(
       mockReq("/api/v1/sessions/s1/share", "POST"),
@@ -71,7 +71,8 @@ describe("handleShareRoutes skeleton", () => {
       { store, config: enabledCfg },
     );
     assert.equal(handled, true);
-    assert.equal(m.status(), 503);
+    // POST /share is now the real route (C2); without Sec-Fetch-Site/Origin it rejects as 401.
+    assert.equal(m.status(), 401);
   });
 
   it("enabled: claims /api/v1/sessions/:id/share/publish", async () => {

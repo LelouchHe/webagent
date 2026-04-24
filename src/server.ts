@@ -73,6 +73,7 @@ const server = createServer(createRequestHandler({
   pushService,
   serverVersion: PKG_VERSION,
   debugLevel: config.debug.level,
+  shareConfig: config.share,
 }));
 
 async function initBridge(): Promise<AgentBridge> {

@@ -15,6 +15,7 @@ import { errorMessage, MessageIngressSchema } from "./types.ts";
 import type { AgentEvent } from "./types.ts";
 import { interruptBashProc } from "./session-manager.ts";
 import { randomUUID } from "node:crypto";
+import { handleShareRoutes } from "./share/routes.ts";
 
 const IS_WIN = process.platform === "win32";
 
@@ -46,6 +47,8 @@ export interface RequestHandlerDeps {
   pushService?: PushService;
   serverVersion?: string;
   debugLevel?: string;
+  /** Share feature config. When `enabled=false`, share routes are invisible. */
+  shareConfig?: Config["share"];
 }
 
 /** Read the full request body as a string. */
@@ -80,6 +83,13 @@ export function createRequestHandler(deps: RequestHandlerDeps): (req: IncomingMe
 
   return async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     const url = req.url ?? "/";
+
+    // Share routes — early dispatch so /s/* and /api/v1/shares* claim
+    // their URL space before the generic /api/v1 branch. When
+    // `shareConfig.enabled === false` handleShareRoutes is a no-op.
+    if (deps.shareConfig && await handleShareRoutes(req, res, { store, sessions, config: deps.shareConfig })) {
+      return;
+    }
 
     // --- API routes ---
     if (url === "/api/v1" || url.startsWith("/api/v1/")) {

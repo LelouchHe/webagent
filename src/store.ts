@@ -74,6 +74,37 @@ export interface MessageInput {
   created_at: number;
 }
 
+/** share-plan §4.1 full row shape. */
+export interface ShareRow {
+  token: string;
+  session_id: string;
+  /** epoch ms; NULL = preview (un-activated). */
+  shared_at: number | null;
+  share_snapshot_seq: number;
+  /** NULL = fall back to config.share.ttl_hours; 0 = never expire; >0 = custom hours. */
+  ttl_hours: number | null;
+  display_name: string | null;
+  owner_label: string | null;
+  created_at: number;
+  last_accessed_at: number | null;
+  /** NULL = live; non-NULL = revoked; public endpoints return 410. */
+  revoked_at: number | null;
+}
+
+/** Summary projection for GET /api/v1/shares (joins session title). */
+export interface ShareSummaryRow {
+  token: string;
+  session_id: string;
+  session_title: string | null;
+  shared_at: number | null;
+  created_at: number;
+  display_name: string | null;
+  owner_label: string | null;
+  share_snapshot_seq: number;
+  ttl_hours: number | null;
+  last_accessed_at: number | null;
+}
+
 export class Store {
   private db: Database.Database;
 
@@ -216,6 +247,41 @@ export class Store {
     this.db.exec(
       "CREATE INDEX IF NOT EXISTS idx_events_type ON events(session_id, type, created_at)",
     );
+
+    // shares — public read-only share links (share-plan §4.1).
+    // State machine: preview (shared_at NULL) → active (shared_at set) →
+    // revoked (revoked_at set). Multiple active siblings per session
+    // allowed (v4 multi-share). Partial unique index enforces at most
+    // one un-activated preview per session at any time.
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS shares (
+        token TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL REFERENCES sessions(id),
+        shared_at INTEGER,
+        share_snapshot_seq INTEGER NOT NULL,
+        ttl_hours INTEGER,
+        display_name TEXT,
+        owner_label TEXT,
+        created_at INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER) * 1000),
+        last_accessed_at INTEGER,
+        revoked_at INTEGER
+      );
+      CREATE INDEX IF NOT EXISTS idx_shares_session ON shares(session_id, created_at DESC);
+      CREATE UNIQUE INDEX IF NOT EXISTS shares_one_active_preview
+        ON shares(session_id)
+        WHERE shared_at IS NULL AND revoked_at IS NULL;
+    `);
+
+    // owner_prefs — key-value store for owner-scoped defaults (display_name,
+    // last /by selection, etc). Single-user model = single owner scope.
+    // Stored as plain key/value so we don't grow a new table per pref.
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS owner_prefs (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL,
+        updated_at INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER) * 1000)
+      );
+    `);
   }
 
   createSession(id: string, cwd: string, source: string = "auto"): SessionRow {
@@ -513,5 +579,148 @@ export class Store {
 
   close(): void {
     this.db.close();
+  }
+
+  // ===== shares (share-plan §4.1) =====
+
+  /**
+   * Insert a new preview row. Caller must have flushed buffered chunks
+   * and computed snapshotSeq in the same synchronous tick (share-plan
+   * §4.3 R1-c2). Returns the inserted row.
+   *
+   * May throw SQLITE_CONSTRAINT_UNIQUE on shares_one_active_preview;
+   * callers handle via findActivePreviewBySession fallback (§4.3 R2-c2).
+   */
+  insertSharePreview(input: {
+    token: string;
+    sessionId: string;
+    snapshotSeq: number;
+    ttlHours?: number | null;
+    displayName?: string | null;
+    ownerLabel?: string | null;
+  }): ShareRow {
+    this.db.prepare(
+      `INSERT INTO shares (token, session_id, share_snapshot_seq, ttl_hours, display_name, owner_label)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    ).run(
+      input.token,
+      input.sessionId,
+      input.snapshotSeq,
+      input.ttlHours ?? null,
+      input.displayName ?? null,
+      input.ownerLabel ?? null,
+    );
+    return this.getShareByToken(input.token)!;
+  }
+
+  /** SELECT the single un-activated preview for this session (partial unique). */
+  findActivePreviewBySession(sessionId: string): ShareRow | undefined {
+    return this.db.prepare(
+      `SELECT * FROM shares
+       WHERE session_id = ? AND shared_at IS NULL AND revoked_at IS NULL
+       ORDER BY created_at DESC LIMIT 1`,
+    ).get(sessionId) as ShareRow | undefined;
+  }
+
+  getShareByToken(token: string): ShareRow | undefined {
+    return this.db.prepare("SELECT * FROM shares WHERE token = ?").get(token) as ShareRow | undefined;
+  }
+
+  /**
+   * Activate preview: shared_at NULL → now(). Returns true if row moved
+   * (0 → 1 rows affected). False if preview already activated, revoked,
+   * or token doesn't exist.
+   */
+  activateShare(token: string, opts?: { displayName?: string | null; ownerLabel?: string | null }): boolean {
+    const now = Date.now();
+    let sql = "UPDATE shares SET shared_at = ?";
+    const params: unknown[] = [now];
+    if (opts && "displayName" in opts) {
+      sql += ", display_name = ?";
+      params.push(opts.displayName ?? null);
+    }
+    if (opts && "ownerLabel" in opts) {
+      sql += ", owner_label = ?";
+      params.push(opts.ownerLabel ?? null);
+    }
+    sql += " WHERE token = ? AND shared_at IS NULL AND revoked_at IS NULL";
+    params.push(token);
+    const info = this.db.prepare(sql).run(...params);
+    return info.changes > 0;
+  }
+
+  /** Soft-delete; returns true if this call actually flipped the state. */
+  revokeShare(token: string): boolean {
+    const info = this.db.prepare(
+      "UPDATE shares SET revoked_at = ? WHERE token = ? AND revoked_at IS NULL",
+    ).run(Date.now(), token);
+    return info.changes > 0;
+  }
+
+  /** Update only owner_label (PATCH route). Caller validates the value first. */
+  updateShareOwnerLabel(token: string, label: string | null): boolean {
+    const info = this.db.prepare(
+      "UPDATE shares SET owner_label = ? WHERE token = ? AND revoked_at IS NULL",
+    ).run(label, token);
+    return info.changes > 0;
+  }
+
+  /** Owner list — every live share (preview + active, not revoked). */
+  listOwnerShares(): ShareSummaryRow[] {
+    return this.db.prepare(
+      `SELECT
+         s.token AS token,
+         s.session_id AS session_id,
+         sess.title AS session_title,
+         s.shared_at AS shared_at,
+         s.created_at AS created_at,
+         s.display_name AS display_name,
+         s.owner_label AS owner_label,
+         s.share_snapshot_seq AS share_snapshot_seq,
+         s.ttl_hours AS ttl_hours,
+         s.last_accessed_at AS last_accessed_at
+       FROM shares s
+       LEFT JOIN sessions sess ON sess.id = s.session_id
+       WHERE s.revoked_at IS NULL
+       ORDER BY s.created_at DESC`,
+    ).all() as ShareSummaryRow[];
+  }
+
+  /**
+   * One-time write of last_accessed_at (share-plan §4.1 R2 ENG-6a +
+   * OPS-R2-1): only fire when currently NULL to avoid write amplification.
+   * Returns true if the field was set by this call.
+   */
+  touchShareAccessed(token: string): boolean {
+    const info = this.db.prepare(
+      "UPDATE shares SET last_accessed_at = ? WHERE token = ? AND last_accessed_at IS NULL",
+    ).run(Date.now(), token);
+    return info.changes > 0;
+  }
+
+  /** Lazy prune of preview rows older than 24h (share-plan §4.1). */
+  pruneStalePreviews(): number {
+    const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+    const info = this.db.prepare(
+      "DELETE FROM shares WHERE shared_at IS NULL AND revoked_at IS NULL AND created_at < ?",
+    ).run(cutoff);
+    return info.changes;
+  }
+
+  // ===== owner_prefs =====
+
+  getOwnerPref(key: string): string | undefined {
+    const row = this.db.prepare("SELECT value FROM owner_prefs WHERE key = ?").get(key) as
+      | { value: string }
+      | undefined;
+    return row?.value;
+  }
+
+  setOwnerPref(key: string, value: string): void {
+    this.db.prepare(
+      `INSERT INTO owner_prefs (key, value, updated_at)
+       VALUES (?, ?, ?)
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+    ).run(key, value, Date.now());
   }
 }
