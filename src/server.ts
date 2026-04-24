@@ -13,6 +13,7 @@ import { PushService } from "./push-service.ts";
 import { SseManager } from "./sse-manager.ts";
 import { ClientRegistry } from "./client-registry.ts";
 import { startMessageCleanup, type CleanupHandle } from "./message-cleanup.ts";
+import { startSharePreviewCleanup, type SharePreviewCleanupHandle } from "./share/cleanup.ts";
 import type { AgentEvent } from "./types.ts";
 
 // Prefix all console output with ISO-ish timestamps (YYYY-MM-DD HH:MM:SS)
@@ -57,6 +58,7 @@ sessions.state.onPatch((event) => sseManager.broadcast(event));
 
 let bridge: AgentBridge | null = null;
 let messageCleanup: CleanupHandle | null = null;
+let sharePreviewCleanup: SharePreviewCleanupHandle | null = null;
 
 // --- HTTP server ---
 
@@ -97,6 +99,7 @@ async function shutdown() {
   console.log("\n[server] shutting down...");
   sseManager.stopHeartbeat();
   messageCleanup?.stop();
+  sharePreviewCleanup?.stop();
   sessions.killAllBashProcs();
   await bridge?.shutdown();
   store.close();
@@ -112,6 +115,10 @@ process.on("SIGTERM", shutdown);
 server.listen(config.port, "0.0.0.0", async () => {
   console.log(`[server] listening on http://localhost:${config.port}`);
   messageCleanup = startMessageCleanup(store, config.messages.unprocessed_ttl_days);
+  if (config.share.enabled) {
+    sharePreviewCleanup = startSharePreviewCleanup(store);
+    console.log(`[share] preview gc armed (24h interval)`);
+  }
   console.log(`[bridge] starting: ${config.agent_cmd}...`);
   try {
     await initBridge();

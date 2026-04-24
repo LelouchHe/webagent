@@ -117,6 +117,23 @@ All owner routes go through `assertOwner()` which requires either
 owner reads use the `X-Share-Token` header; tokens never appear in
 owner-side URLs.
 
+## Operational notes
+
+- **Preview GC**: when `[share] enabled = true`, the server arms a
+  24-hour sweep on startup that deletes preview rows older than 24h
+  which were never activated (`shared_at IS NULL AND revoked_at IS NULL
+  AND created_at < now - 24h`). Activated and revoked shares are never
+  touched — audit trail is preserved. Log lines:
+  - `[share] preview gc armed (24h interval)` on bootstrap
+  - `[share] preview gc removed=N` whenever the sweep deletes rows
+- **Manual prune**: `sqlite3 <data_dir>/wa.db "DELETE FROM shares WHERE
+  shared_at IS NULL AND revoked_at IS NULL AND created_at < strftime('%s','now')*1000 - 86400000"`
+- **Image GC (manual)**: images referenced by live shares live under
+  `<data_dir>/uploads/`. Revoke does NOT delete image files (route-edge
+  check blocks access). To reclaim disk, enumerate files not referenced
+  by any non-revoked share and delete them manually. Future hardening
+  will add an automated pass.
+
 ## Known limitations (v1)
 
 - **No inline fork:** viewers cannot "continue this conversation". The

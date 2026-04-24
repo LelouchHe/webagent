@@ -706,9 +706,13 @@ export class Store {
     return info.changes > 0;
   }
 
-  /** Lazy prune of preview rows older than 24h (share-plan §4.1). */
-  pruneStalePreviews(): number {
-    const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+  /**
+   * Lazy prune of preview rows older than 24h (share-plan §4.1).
+   * `now` is injectable for tests. Rows with shared_at or revoked_at set
+   * are NEVER touched — only orphaned previews are GC'd.
+   */
+  pruneStalePreviews(now: number = Date.now()): number {
+    const cutoff = now - 24 * 60 * 60 * 1000;
     const info = this.db.prepare(
       "DELETE FROM shares WHERE shared_at IS NULL AND revoked_at IS NULL AND created_at < ?",
     ).run(cutoff);
