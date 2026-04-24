@@ -56,11 +56,17 @@ describe("handleShareRoutes skeleton", () => {
     assert.equal(m.ended(), false);
   });
 
-  it("enabled: claims /s/:token with 503", async () => {
+  it("enabled: claims /s/:token (24-char token, unknown -> 410)", async () => {
     const m = mockRes();
-    const handled = await handleShareRoutes(mockReq("/s/abc"), m.res, { store, config: enabledCfg });
+    // 24-char base64url token format; not in store -> 410 revoked/not-found path.
+    const fakeToken = "AAAAAAAAAAAAAAAAAAAAAAAA";
+    const handled = await handleShareRoutes(
+      mockReq(`/s/${fakeToken}`),
+      m.res,
+      { store, config: enabledCfg, publicDir: "/tmp" },
+    );
     assert.equal(handled, true);
-    assert.equal(m.status(), 503);
+    assert.equal(m.status(), 410);
   });
 
   it("enabled: claims /api/v1/sessions/:id/share POST (now implemented; returns 401 without owner-auth headers)", async () => {

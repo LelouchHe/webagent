@@ -14,32 +14,64 @@ const isWatch = args.includes('--watch');
 const SRC = 'public';
 const OUT = isDev ? 'dist-dev' : 'dist';
 
-async function copyStaticAssets(bundleFile) {
+async function copyStaticAssets(bundles) {
+  // bundles = { app: 'app.js' | 'app.<hash>.js', viewer: 'share/viewer.js' | 'share/viewer.<hash>.js' }
   // Copy static assets (everything except js/)
   for (const entry of await readdir(SRC)) {
     if (entry === 'js') continue;
     await cp(join(SRC, entry), join(OUT, entry), { recursive: true });
   }
 
+  const rewriteHtml = async (name, bundle) => {
+    const p = join(OUT, name);
+    let html = await readFile(p, 'utf-8');
+    html = html.replace('type="module" src="/js/app.js"', `src="/js/${bundle}"`);
+    html = html.replace('type="module" src="/js/share/viewer.js"', `src="/js/${bundle}"`);
+    await writeFile(p, html);
+  };
+
   if (isDev) {
-    // Dev: rewrite index.html to point to the un-hashed bundle
-    let html = await readFile(join(OUT, 'index.html'), 'utf-8');
-    html = html.replace('type="module" src="/js/app.js"', `src="/js/${bundleFile}"`);
-    await writeFile(join(OUT, 'index.html'), html);
+    // Dev: un-hashed bundles
+    await rewriteHtml('index.html', bundles.app);
+    // share-viewer.html has no inline script tag yet — inject one so dev+prod both work.
+    const sv = join(OUT, 'share-viewer.html');
+    let svHtml = await readFile(sv, 'utf-8');
+    if (!svHtml.includes('src="/js/share/viewer')) {
+      svHtml = svHtml.replace('</body>', `<script src="/js/${bundles.viewer}"></script>\n</body>`);
+    }
+    await writeFile(sv, svHtml);
   } else {
-    // Production: hash CSS and rewrite index.html
-    const cssContent = await readFile(join(OUT, 'styles.css'), 'utf-8');
-    const cssHash = hashString(cssContent);
-    const newCss = `styles.${cssHash}.css`;
-    await writeFile(join(OUT, newCss), cssContent);
-    await rm(join(OUT, 'styles.css'));
+    // Production: hash CSS and rewrite HTML
+    const cssFiles = [
+      ['styles.css', 'index.html'],
+      ['share-viewer.css', 'share-viewer.html'],
+    ];
+    const cssMap = {};
+    for (const [cssName, _htmlName] of cssFiles) {
+      const cssContent = await readFile(join(OUT, cssName), 'utf-8');
+      const cssHash = hashString(cssContent);
+      const hashedName = cssName.replace('.css', `.${cssHash}.css`);
+      await writeFile(join(OUT, hashedName), cssContent);
+      await rm(join(OUT, cssName));
+      cssMap[cssName] = hashedName;
+    }
 
+    // index.html
     let html = await readFile(join(OUT, 'index.html'), 'utf-8');
-    html = html.replace('/styles.css', `/${newCss}`);
-    html = html.replace('type="module" src="/js/app.js"', `src="/js/${bundleFile}"`);
+    html = html.replace('/styles.css', `/${cssMap['styles.css']}`);
+    html = html.replace('type="module" src="/js/app.js"', `src="/js/${bundles.app}"`);
     await writeFile(join(OUT, 'index.html'), html);
 
-    console.log(`Build complete → ${bundleFile}, ${newCss}`);
+    // share-viewer.html — inject bundled script + rewrite CSS hrefs
+    let svHtml = await readFile(join(OUT, 'share-viewer.html'), 'utf-8');
+    svHtml = svHtml.replace('/styles.css', `/${cssMap['styles.css']}`);
+    svHtml = svHtml.replace('/share-viewer.css', `/${cssMap['share-viewer.css']}`);
+    if (!svHtml.includes('src="/js/share/viewer')) {
+      svHtml = svHtml.replace('</body>', `<script src="/js/${bundles.viewer}"></script>\n</body>`);
+    }
+    await writeFile(join(OUT, 'share-viewer.html'), svHtml);
+
+    console.log(`Build complete → app=${bundles.app}, viewer=${bundles.viewer}`);
   }
 }
 
@@ -47,7 +79,10 @@ async function main() {
   await rm(OUT, { recursive: true, force: true });
 
   const esbuildOptions = {
-    entryPoints: [join(SRC, 'js', 'app.ts')],
+    entryPoints: [
+      join(SRC, 'js', 'app.ts'),
+      join(SRC, 'js', 'share', 'viewer.ts'),
+    ],
     bundle: true,
     format: 'esm',
     platform: 'browser',
@@ -55,7 +90,12 @@ async function main() {
     outdir: join(OUT, 'js'),
     entryNames: isDev ? '[name]' : '[name].[hash]',
     minify: !isDev,
-    external: ['marked', 'DOMPurify'],
+    // Main app loads marked/DOMPurify from CDN for now. Share viewer MUST
+    // bundle them (no CDN, strict CSP). esbuild picks them up from node_modules
+    // for viewer.ts; keeping them external for app.ts preserves current
+    // CDN behavior until the main app is migrated off CDN separately.
+    external: [],
+    alias: {},
   };
 
   if (isWatch) {
@@ -63,7 +103,7 @@ async function main() {
     await ctx.watch();
     // Initial build
     await ctx.rebuild();
-    await copyStaticAssets('app.js');
+    await copyStaticAssets({ app: 'app.js', viewer: 'share/viewer.js' });
     console.log(`Dev build ready (watching for changes)…`);
 
     // Also watch static assets (HTML, CSS) for changes
@@ -73,7 +113,7 @@ async function main() {
         const watcher = fsWatch(SRC, { recursive: true, signal: ac.signal });
         for await (const event of watcher) {
           if (event.filename && !event.filename.startsWith('js/')) {
-            await copyStaticAssets('app.js');
+            await copyStaticAssets({ app: 'app.js', viewer: 'share/viewer.js' });
           }
         }
       } catch (e) {
@@ -85,11 +125,13 @@ async function main() {
   } else {
     await build(esbuildOptions);
 
-    const jsFiles = (await readdir(join(OUT, 'js'))).filter(f => f.endsWith('.js'));
-    const bundleFile = jsFiles[0];
-    await copyStaticAssets(bundleFile);
+    // esbuild flattens entry names: viewer.ts -> js/viewer.[hash].js.
+    const topFiles = (await readdir(join(OUT, 'js'))).filter(f => f.endsWith('.js'));
+    const appBundle = topFiles.find(f => f.startsWith('app')) ?? 'app.js';
+    const viewerBundle = topFiles.find(f => f.startsWith('viewer')) ?? 'viewer.js';
+    await copyStaticAssets({ app: appBundle, viewer: viewerBundle });
 
-    if (isDev) console.log(`Dev build complete → ${bundleFile}`);
+    if (isDev) console.log(`Dev build complete → app=${appBundle}, viewer=${viewerBundle}`);
   }
 }
 

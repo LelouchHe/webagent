@@ -9,6 +9,7 @@ import { addSystem, addMessage, scrollToBottom, escHtml, formatLocalTime } from 
 import { loadHistory, handleEvent, fallbackToNextSession } from './events.ts';
 import * as api from './api.ts';
 import { log, setLogLevel, getLogLevel, type LogLevel } from './log.ts';
+import { handleShareCommand } from './share/commands.ts';
 import type { SessionSummary } from '../../src/types.ts';
 
 // --- Push notification helpers ---
@@ -427,6 +428,10 @@ export async function handleSlashCommand(text: string): Promise<boolean> {
       return true;
     }
 
+    case '/share': {
+      return handleShareCommand(arg);
+    }
+
     default:
       return false;
   }
@@ -455,6 +460,7 @@ const SLASH_COMMANDS: SlashCommand[] = [
   { cmd: '/pwd',      args: '',            desc: 'Show working directory' },
   { cmd: '/reload',   args: '',            desc: 'Reload agent CLI' },
   { cmd: '/rename',   args: '<new title>', desc: 'Rename current session' },
+  { cmd: '/share',    args: '[publish|discard]', desc: 'Share a read-only snapshot of this session' },
   { cmd: '/switch',   args: '<title|id>',  desc: 'Switch to session' },
   { cmd: '/think',    args: '[level]',     desc: 'Pick or switch reasoning effort' },
 ];

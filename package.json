@@ -60,6 +60,8 @@
     "@agentclientprotocol/sdk": "^0.14.1",
     "@types/web-push": "^3.6.4",
     "better-sqlite3": "^12.6.2",
+    "dompurify": "3.3",
+    "marked": "^14.1.4",
     "smol-toml": "^1.6.0",
     "web-push": "^3.6.7",
     "zod": "^4.3.6"

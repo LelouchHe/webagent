@@ -87,7 +87,7 @@ export function createRequestHandler(deps: RequestHandlerDeps): (req: IncomingMe
     // Share routes — early dispatch so /s/* and /api/v1/shares* claim
     // their URL space before the generic /api/v1 branch. When
     // `shareConfig.enabled === false` handleShareRoutes is a no-op.
-    if (deps.shareConfig && await handleShareRoutes(req, res, { store, sessions, config: deps.shareConfig })) {
+    if (deps.shareConfig && await handleShareRoutes(req, res, { store, sessions, config: deps.shareConfig, dataDir: deps.dataDir, publicDir: deps.publicDir })) {
       return;
     }
 

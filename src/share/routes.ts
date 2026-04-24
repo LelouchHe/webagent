@@ -1,3 +1,5 @@
+import { readFile } from "node:fs/promises";
+import { extname, join } from "node:path";
 import { homedir } from "node:os";
 import { randomUUID } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
@@ -5,6 +7,7 @@ import type { Store } from "../store.ts";
 import type { SessionManager } from "../session-manager.ts";
 import type { Config } from "../config.ts";
 import type { StoredEvent } from "../types.ts";
+import type { ShareRow } from "../store.ts";
 import { generateShareToken } from "./token.ts";
 import { assertOwner, OwnerAuthError } from "./auth.ts";
 import { SanitizeError, type SanitizeInputEvent } from "./sanitize.ts";
@@ -15,9 +18,41 @@ export interface ShareRouteDeps {
   store: Store;
   sessions?: SessionManager;
   config: Config["share"];
+  dataDir?: string;
+  publicDir?: string;
 }
 
 const MAX_TTL_HOURS = 168;
+
+const IMAGE_MIME: Record<string, string> = {
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
+  ".svg": "image/svg+xml",
+};
+
+/**
+ * Content Security Policy applied to the public viewer surface only. Strict:
+ * no inline script, no inline style, no remote origins. Self-served assets +
+ * data: URIs for images (marked emits some). Report-only when enforce=false.
+ */
+function viewerCsp(enforce: boolean): { name: string; value: string } {
+  const name = enforce ? "Content-Security-Policy" : "Content-Security-Policy-Report-Only";
+  const value = [
+    "default-src 'self'",
+    "script-src 'self'",
+    "style-src 'self'",
+    "img-src 'self' data:",
+    "connect-src 'self'",
+    "object-src 'none'",
+    "base-uri 'self'",
+    "frame-ancestors 'none'",
+    "form-action 'none'",
+  ].join("; ");
+  return { name, value };
+}
 
 function readJson(req: IncomingMessage): Promise<unknown> {
   return new Promise((resolve, reject) => {
@@ -60,10 +95,22 @@ export async function handleShareRoutes(
   const url = req.url ?? "/";
   const method = req.method ?? "GET";
 
-  // Viewer HTML (real shell in C3).
-  if (url === "/s" || url.startsWith("/s/") || url.startsWith("/s?")) {
-    res.writeHead(503, { "Content-Type": "text/plain; charset=utf-8" });
-    res.end("share viewer not yet implemented (C3)");
+  // Viewer image proxy — must come before general /s/:token HTML match.
+  const imgMatch = url.match(/^\/s\/([A-Za-z0-9_-]{24})\/images\/([^/?]+)\/?(?:\?.*)?$/);
+  if (imgMatch && method === "GET") {
+    await handleViewerImage(res, deps, imgMatch[1], decodeURIComponent(imgMatch[2]));
+    return true;
+  }
+
+  // Viewer HTML shell.
+  const viewerMatch = url.match(/^\/s\/([A-Za-z0-9_-]{24})\/?(?:\?.*)?$/);
+  if (viewerMatch && method === "GET") {
+    await handleViewerHtml(res, deps, viewerMatch[1]);
+    return true;
+  }
+  if (url === "/s" || url === "/s/") {
+    res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+    res.end("share token required");
     return true;
   }
 
@@ -79,7 +126,19 @@ export async function handleShareRoutes(
     return true;
   }
 
-  // Other share sub-routes (publish, revoke, list, shared/*) — C3/C4.
+  const publishMatch = url.match(/^\/api\/v1\/sessions\/([^/?]+)\/share\/publish\/?(?:\?.*)?$/);
+  if (publishMatch && method === "POST") {
+    await handlePublish(req, res, deps, decodeURIComponent(publishMatch[1]));
+    return true;
+  }
+
+  const sharedEventsMatch = url.match(/^\/api\/v1\/shared\/([A-Za-z0-9_-]{24})\/events\/?(?:\?.*)?$/);
+  if (sharedEventsMatch && method === "GET") {
+    await handleSharedEvents(res, deps, sharedEventsMatch[1]);
+    return true;
+  }
+
+  // Other share sub-routes (revoke, list) — C4.
   if (
     /^\/api\/v1\/sessions\/[^/]+\/share(?:\/|$|\?)/.test(url) ||
     url === "/api/v1/shares" ||
@@ -289,4 +348,274 @@ async function handlePreviewRead(
     console.error(`[share] preview_read error_id=${errorId}`, err);
     json(res, 500, { error: "internal error", error_id: errorId });
   }
+}
+
+/**
+ * POST /api/v1/sessions/:id/share/publish — activate an existing preview.
+ *
+ * Body: { token, display_name?, owner_label? }
+ * - token MUST match a preview row for this session that has not been
+ *   activated or revoked.
+ * - display_name / owner_label, if present, overwrite the preview row and
+ *   are persisted into owner_prefs so the next /share defaults to them.
+ *
+ * Response: { token, session_id, shared_at, display_name, owner_label,
+ *             public_url } on 200; 404/409/410 on state errors.
+ */
+async function handlePublish(
+  req: IncomingMessage,
+  res: ServerResponse,
+  deps: ShareRouteDeps,
+  sessionId: string,
+): Promise<void> {
+  try {
+    assertOwner(req);
+  } catch (e) {
+    if (e instanceof OwnerAuthError) { ownerReject(res, e); return; }
+    throw e;
+  }
+
+  let body: { token?: string; display_name?: string | null; owner_label?: string | null };
+  try {
+    body = (await readJson(req)) as typeof body;
+    if (body === null || typeof body !== "object") body = {};
+  } catch { json(res, 400, { error: "invalid JSON body" }); return; }
+
+  if (!body.token || typeof body.token !== "string") {
+    json(res, 400, { error: "token required" }); return;
+  }
+
+  const row = deps.store.getShareByToken(body.token);
+  if (!row) { json(res, 404, { error: "share not found" }); return; }
+  if (row.session_id !== sessionId) { json(res, 404, { error: "token does not match session" }); return; }
+  if (row.revoked_at != null) { json(res, 410, { error: "share revoked" }); return; }
+  if (row.shared_at != null) {
+    json(res, 409, { error: "share already active", token: row.token, shared_at: row.shared_at });
+    return;
+  }
+
+  // Pass-through basic length caps; full validation (ctrl/bidi reject) in C4.
+  const displayName = "display_name" in body
+    ? (typeof body.display_name === "string" && body.display_name.length <= 256 ? body.display_name : null)
+    : undefined;
+  const ownerLabel = "owner_label" in body
+    ? (typeof body.owner_label === "string" && body.owner_label.length <= 1024 ? body.owner_label : null)
+    : undefined;
+
+  const activated = deps.store.activateShare(body.token, {
+    ...(displayName !== undefined && { displayName }),
+    ...(ownerLabel !== undefined && { ownerLabel }),
+  });
+  if (!activated) {
+    // Race: concurrent revoke/activate between getShareByToken and activateShare.
+    const fresh = deps.store.getShareByToken(body.token);
+    if (!fresh || fresh.revoked_at != null) { json(res, 410, { error: "share revoked" }); return; }
+    if (fresh.shared_at != null) {
+      json(res, 409, { error: "share already active", token: fresh.token, shared_at: fresh.shared_at });
+      return;
+    }
+    json(res, 500, { error: "unexpected activate failure" });
+    return;
+  }
+
+  if (displayName !== undefined && displayName != null) {
+    deps.store.setOwnerPref("share.default_display_name", displayName);
+  }
+
+  const after = deps.store.getShareByToken(body.token);
+  if (!after) { json(res, 500, { error: "post-activate read failed" }); return; }
+
+  const origin = deps.config.viewer_origin && deps.config.viewer_origin !== ""
+    ? deps.config.viewer_origin.replace(/\/$/, "")
+    : "";
+  json(res, 200, {
+    token: after.token,
+    session_id: sessionId,
+    shared_at: after.shared_at,
+    display_name: after.display_name,
+    owner_label: after.owner_label,
+    public_url: `${origin}/s/${after.token}`,
+  });
+}
+
+/**
+ * GET /s/:token — public viewer HTML shell. Sets a strict CSP header. No
+ * owner auth; the viewer JS will fetch /api/v1/shared/:token/events.
+ */
+async function handleViewerHtml(
+  res: ServerResponse,
+  deps: ShareRouteDeps,
+  token: string,
+): Promise<void> {
+  const row = deps.store.getShareByToken(token);
+  if (!row || row.revoked_at != null || row.shared_at == null) {
+    // Preview tokens (shared_at IS NULL) MUST NOT resolve publicly.
+    const csp = viewerCsp(deps.config.csp_enforce);
+    res.writeHead(410, {
+      "Content-Type": "text/html; charset=utf-8",
+      [csp.name]: csp.value,
+      "Cache-Control": "no-store",
+      "X-Robots-Tag": "noindex, nofollow",
+    });
+    res.end("<!doctype html><html><body><h1>410</h1><p>此链接已撤销或过期。</p></body></html>");
+    return;
+  }
+
+  if (isExpired(row)) {
+    const csp = viewerCsp(deps.config.csp_enforce);
+    res.writeHead(410, {
+      "Content-Type": "text/html; charset=utf-8",
+      [csp.name]: csp.value,
+      "Cache-Control": "no-store",
+      "X-Robots-Tag": "noindex, nofollow",
+    });
+    res.end("<!doctype html><html><body><h1>410</h1><p>此链接已过期。</p></body></html>");
+    return;
+  }
+
+  if (!deps.publicDir) { json(res, 500, { error: "publicDir not configured" }); return; }
+
+  try {
+    const html = await readFile(join(deps.publicDir, "share-viewer.html"), "utf-8");
+    const csp = viewerCsp(deps.config.csp_enforce);
+    res.writeHead(200, {
+      "Content-Type": "text/html; charset=utf-8",
+      [csp.name]: csp.value,
+      "Cache-Control": "no-store, no-cache, must-revalidate",
+      "X-Frame-Options": "DENY",
+      "Referrer-Policy": "no-referrer",
+      "X-Robots-Tag": "noindex, nofollow",
+    });
+    res.end(html);
+    // Fire-and-forget: bump last_accessed_at so prune logic can age untouched shares.
+    deps.store.touchShareAccessed(token);
+  } catch (err: unknown) {
+    const errorId = randomUUID();
+    console.error(`[share] viewer_html error_id=${errorId}`, err);
+    res.writeHead(500, { "Content-Type": "text/plain" });
+    res.end(`viewer unavailable (error_id=${errorId})`);
+  }
+}
+
+/**
+ * GET /api/v1/shared/:token/events — public JSON. Re-runs the sanitizer
+ * on every call (cached by projection LRU). No owner auth.
+ */
+async function handleSharedEvents(
+  res: ServerResponse,
+  deps: ShareRouteDeps,
+  token: string,
+): Promise<void> {
+  const row = deps.store.getShareByToken(token);
+  if (!row || row.revoked_at != null || row.shared_at == null) {
+    json(res, 410, { error: "share revoked or not found" });
+    return;
+  }
+  if (isExpired(row)) {
+    json(res, 410, { error: "share expired" });
+    return;
+  }
+
+  const session = deps.store.getSession(row.session_id);
+  if (!session) { json(res, 500, { error: "session vanished" }); return; }
+
+  const allEvents = deps.store.getEvents(row.session_id).filter(e => e.seq <= row.share_snapshot_seq);
+
+  try {
+    const { events, cacheHit } = getOrComputeProjection({
+      sessionId: row.session_id,
+      events: allEvents as SanitizeInputEvent[],
+      cwd: session.cwd,
+      homeDir: homedir(),
+      internalHosts: deps.config.internal_hosts,
+    });
+
+    // Public response: DOES NOT expose session_id. Only title + display_name + meta.
+    res.writeHead(200, {
+      "Content-Type": "application/json",
+      "Cache-Control": "no-store",
+      "X-Content-Type-Options": "nosniff",
+    });
+    res.end(JSON.stringify({
+      schema_version: "1.0",
+      share: {
+        token: row.token,
+        session_title: session.title,
+        shared_at: row.shared_at,
+        snapshot_seq: row.share_snapshot_seq,
+        display_name: row.display_name,
+        created_at: row.created_at,
+        ttl_hours: row.ttl_hours,
+      },
+      events,
+      cache_hit: cacheHit,
+    }));
+  } catch (err: unknown) {
+    if (err instanceof SanitizeError) {
+      // Hard-reject on a LIVE active share — owner's session gained a
+      // post-publish leak. Return 410 publicly; owner sees root cause via
+      // preview re-gate.
+      console.error("[share] shared_events hard-reject", { rule: err.rule, event_id: err.event_id });
+      json(res, 410, { error: "share unavailable" });
+      return;
+    }
+    const errorId = randomUUID();
+    console.error(`[share] shared_events error_id=${errorId}`, err);
+    json(res, 500, { error: "internal error", error_id: errorId });
+  }
+}
+
+/**
+ * GET /s/:token/images/:file — token-scoped image proxy. Resolves the token
+ * to a session_id on-demand; directly serving /api/v1/sessions/:id/images
+ * would leak session_id.
+ */
+async function handleViewerImage(
+  res: ServerResponse,
+  deps: ShareRouteDeps,
+  token: string,
+  file: string,
+): Promise<void> {
+  if (!deps.dataDir) { json(res, 500, { error: "dataDir not configured" }); return; }
+
+  const row = deps.store.getShareByToken(token);
+  if (!row || row.revoked_at != null || row.shared_at == null) {
+    json(res, 410, { error: "share unavailable" }); return;
+  }
+  if (isExpired(row)) { json(res, 410, { error: "share expired" }); return; }
+
+  // Only allow simple filenames — reject any path separators / dotfiles / traversal.
+  if (!/^[A-Za-z0-9._-]+$/.test(file) || file.startsWith(".")) {
+    json(res, 404, { error: "invalid file" }); return;
+  }
+
+  const imagesRoot = join(deps.dataDir, "images");
+  const filePath = join(imagesRoot, row.session_id, file);
+  // Final realpath-style guard: must stay under dataDir/images/<session_id>.
+  const sessionRoot = join(imagesRoot, row.session_id);
+  if (!filePath.startsWith(sessionRoot + "/") && filePath !== sessionRoot) {
+    res.writeHead(403); res.end("Forbidden"); return;
+  }
+
+  try {
+    const buf = await readFile(filePath);
+    const mime = IMAGE_MIME[extname(filePath).toLowerCase()] ?? "application/octet-stream";
+    res.writeHead(200, {
+      "Content-Type": mime,
+      "Cache-Control": "public, max-age=3600",
+      "X-Content-Type-Options": "nosniff",
+      "Content-Security-Policy": "default-src 'none'",
+      "X-Robots-Tag": "noindex, nofollow",
+    });
+    res.end(buf);
+  } catch {
+    res.writeHead(404, { "Content-Type": "text/plain" });
+    res.end("Not found");
+  }
+}
+
+function isExpired(row: ShareRow): boolean {
+  if (row.ttl_hours == null || row.ttl_hours === 0) return false;
+  const anchor = row.shared_at ?? row.created_at;
+  return Date.now() > anchor + row.ttl_hours * 3600_000;
 }
