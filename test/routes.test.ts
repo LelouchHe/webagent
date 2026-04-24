@@ -14,14 +14,16 @@ function makeRequest(
   path: string,
   body?: string,
   headers?: Record<string, string>,
-): Promise<{ status: number; body: string }> {
+): Promise<{ status: number; body: string; headers: http.IncomingHttpHeaders }> {
   return new Promise((resolve, reject) => {
     const req = http.request(
       { hostname: "127.0.0.1", port, path, method, headers },
       (res) => {
         let data = "";
         res.on("data", (chunk: Buffer) => (data += chunk));
-        res.on("end", () => resolve({ status: res.statusCode!, body: data }));
+        res.on("end", () =>
+          resolve({ status: res.statusCode!, body: data, headers: res.headers }),
+        );
       },
     );
     req.on("error", reject);
@@ -63,6 +65,55 @@ describe("HTTP routes", () => {
     const res = await makeRequest(port, "GET", "/");
     assert.equal(res.status, 200);
     assert.ok(res.body.includes("<h1>Test</h1>"));
+  });
+
+  it("GET / sets no-cache for index.html", async () => {
+    const res = await makeRequest(port, "GET", "/");
+    assert.equal(res.headers["cache-control"], "no-cache");
+  });
+
+  it("GET hashed JS bundle gets immutable long cache", async () => {
+    mkdirSync(join(publicDir, "js"));
+    writeFileSync(join(publicDir, "js", "app.a1b2c3d4e5f6.js"), "console.log(1)");
+    const res = await makeRequest(port, "GET", "/js/app.a1b2c3d4e5f6.js");
+    assert.equal(res.status, 200);
+    assert.equal(res.headers["cache-control"], "public, max-age=31536000, immutable");
+  });
+
+  it("GET hashed CSS gets immutable long cache", async () => {
+    writeFileSync(join(publicDir, "styles.deadbeef1234.css"), "body{}");
+    const res = await makeRequest(port, "GET", "/styles.deadbeef1234.css");
+    assert.equal(res.status, 200);
+    assert.equal(res.headers["cache-control"], "public, max-age=31536000, immutable");
+  });
+
+  it("GET non-hashed JS gets no-cache", async () => {
+    mkdirSync(join(publicDir, "js"));
+    writeFileSync(join(publicDir, "js", "app.js"), "console.log(1)");
+    const res = await makeRequest(port, "GET", "/js/app.js");
+    assert.equal(res.status, 200);
+    assert.equal(res.headers["cache-control"], "no-cache");
+  });
+
+  it("GET sw.js gets no-cache (never long-cached)", async () => {
+    writeFileSync(join(publicDir, "sw.js"), "// sw");
+    const res = await makeRequest(port, "GET", "/sw.js");
+    assert.equal(res.status, 200);
+    assert.equal(res.headers["cache-control"], "no-cache");
+  });
+
+  it("GET manifest.json gets no-cache", async () => {
+    writeFileSync(join(publicDir, "manifest.json"), "{}");
+    const res = await makeRequest(port, "GET", "/manifest.json");
+    assert.equal(res.status, 200);
+    assert.equal(res.headers["cache-control"], "no-cache");
+  });
+
+  it("GET icon png gets no-cache (non-hashed)", async () => {
+    writeFileSync(join(publicDir, "icon-192.png"), "");
+    const res = await makeRequest(port, "GET", "/icon-192.png");
+    assert.equal(res.status, 200);
+    assert.equal(res.headers["cache-control"], "no-cache");
   });
 
   it("GET /api/v1/sessions returns empty list", async () => {

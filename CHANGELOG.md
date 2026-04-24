@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/), and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+### Changed
+
+- Frontend assets are now fully self-hosted: `marked` and `dompurify` are bundled into `dist/js/app.[hash].js` via esbuild instead of loaded from `cdn.jsdelivr.net`. Enables offline PWA, removes third-party SRI risk, and lets CSP drop `script-src https://cdn.jsdelivr.net`.
+- Production builds keep the 2 newest hashed bundles (`app.*.js` / `styles.*.css`) in `dist/` so in-flight page loads during an upgrade can still fetch their pinned version.
+- Static file handler in `routes.ts` now sets `Cache-Control`:
+  - Hashed assets (`*.[8+ hex].{js,css}`): `public, max-age=31536000, immutable`
+  - `index.html`, `manifest.json`, `sw.js`, icons, favicon: `no-cache` (revalidate every request)
+
 ## [0.3.0] - 2026-04-15
 
 ### Added

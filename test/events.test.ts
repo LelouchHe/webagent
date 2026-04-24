@@ -137,11 +137,9 @@ describe("events", () => {
       });
 
       it("enhances streamed code blocks when the stream finishes", async () => {
-        const originalParse = globalThis.marked.parse;
         const originalAppendChild = document.head.appendChild.bind(document.head);
         let sawHljsScript = false;
 
-        globalThis.marked.parse = () => '<pre><code class="language-js">const x = 1;</code></pre>';
         (globalThis as any).hljs = undefined;
 
         document.head.appendChild = ((node: Node) => {
@@ -177,7 +175,6 @@ describe("events", () => {
           assert.ok(wrapper, "expected streamed code block to be wrapped when streaming finishes");
           assert.equal(sawHljsScript, true, "expected completed streamed code block to trigger hljs lazy load");
         } finally {
-          globalThis.marked.parse = originalParse;
           document.head.appendChild = originalAppendChild;
         }
       });

@@ -4,7 +4,7 @@
 //   --dev    Output to dist-dev/, no minification, no content hashing
 //   --watch  Watch mode (implies --dev)
 
-import { readFile, writeFile, cp, rm, readdir, watch as fsWatch } from 'node:fs/promises';
+import { readFile, writeFile, cp, rm, readdir, watch as fsWatch, stat, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { build, context } from 'esbuild';
 
@@ -43,8 +43,45 @@ async function copyStaticAssets(bundleFile) {
   }
 }
 
+const KEEP_HASHED_VERSIONS = 2;
+
+async function pruneOldHashedAssets() {
+  // Keep newest N hashed bundles; delete older ones. Dev builds don't hash so this is a no-op there.
+  if (isDev) return;
+
+  const jsDir = join(OUT, 'js');
+  const jsEntries = (await readdir(jsDir, { withFileTypes: true }))
+    .filter((e) => e.isFile() && /^app\.[a-zA-Z0-9]+\.js$/.test(e.name));
+  const jsSorted = await sortByMtimeDesc(jsDir, jsEntries.map((e) => e.name));
+  for (const f of jsSorted.slice(KEEP_HASHED_VERSIONS)) {
+    await rm(join(jsDir, f), { force: true });
+  }
+
+  const rootEntries = (await readdir(OUT, { withFileTypes: true }))
+    .filter((e) => e.isFile() && /^styles\.[a-zA-Z0-9]+\.css$/.test(e.name));
+  const cssSorted = await sortByMtimeDesc(OUT, rootEntries.map((e) => e.name));
+  for (const f of cssSorted.slice(KEEP_HASHED_VERSIONS)) {
+    await rm(join(OUT, f), { force: true });
+  }
+}
+
+async function sortByMtimeDesc(dir, names) {
+  const withStat = await Promise.all(
+    names.map(async (n) => ({ n, mtime: (await stat(join(dir, n))).mtimeMs })),
+  );
+  withStat.sort((a, b) => b.mtime - a.mtime);
+  return withStat.map((x) => x.n);
+}
+
 async function main() {
-  await rm(OUT, { recursive: true, force: true });
+  if (isDev) {
+    // Dev: wipe fully; un-hashed names so no retention needed.
+    await rm(OUT, { recursive: true, force: true });
+  } else {
+    // Prod: keep OUT so last N hashed bundles survive for in-flight page loads during upgrade.
+    // Static assets (index.html, manifest.json, sw.js, icon-*) get overwritten by cp below.
+    await mkdir(OUT, { recursive: true });
+  }
 
   const esbuildOptions = {
     entryPoints: [join(SRC, 'js', 'app.ts')],
@@ -55,7 +92,7 @@ async function main() {
     outdir: join(OUT, 'js'),
     entryNames: isDev ? '[name]' : '[name].[hash]',
     minify: !isDev,
-    external: ['marked', 'DOMPurify'],
+    external: [],
   };
 
   if (isWatch) {
@@ -86,8 +123,11 @@ async function main() {
     await build(esbuildOptions);
 
     const jsFiles = (await readdir(join(OUT, 'js'))).filter(f => f.endsWith('.js'));
-    const bundleFile = jsFiles[0];
+    // esbuild may have left older hashed bundles from prior builds; pick the newest by mtime.
+    const sorted = await sortByMtimeDesc(join(OUT, 'js'), jsFiles);
+    const bundleFile = sorted[0];
     await copyStaticAssets(bundleFile);
+    await pruneOldHashedAssets();
 
     if (isDev) console.log(`Dev build complete → ${bundleFile}`);
   }

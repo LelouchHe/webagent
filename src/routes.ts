@@ -1124,7 +1124,15 @@ export function createRequestHandler(deps: RequestHandlerDeps): (req: IncomingMe
     try {
       const data = await readFile(filePath);
       const ext = extname(filePath);
-      res.writeHead(200, { "Content-Type": MIME[ext] ?? "application/octet-stream" });
+      const base = filePath.slice(filePath.lastIndexOf("/") + 1);
+      const isHashedAsset = /\.[a-f0-9]{8,}\.(js|css)$/.test(base);
+      const cacheControl = isHashedAsset
+        ? "public, max-age=31536000, immutable"
+        : "no-cache";
+      res.writeHead(200, {
+        "Content-Type": MIME[ext] ?? "application/octet-stream",
+        "Cache-Control": cacheControl,
+      });
       res.end(data);
     } catch {
       res.writeHead(404);

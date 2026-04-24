@@ -2,6 +2,8 @@
 
 import { dom, state } from './state.ts';
 import { enhanceCodeBlocks } from './highlight.ts';
+import { marked } from 'marked';
+import DOMPurify from 'dompurify';
 
 import type { RawInput, DiffLine } from '../../src/types.ts';
 import { parseDiff } from './event-interpreter.ts';
@@ -10,7 +12,7 @@ import { parseDiff } from './event-interpreter.ts';
 marked.setOptions({ breaks: true, gfm: true });
 
 export function renderMd(text: string): string {
-  return DOMPurify.sanitize(marked.parse(text));
+  return DOMPurify.sanitize(marked.parse(text) as string);
 }
 
 // --- Message helpers ---
