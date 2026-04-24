@@ -55,17 +55,36 @@ export async function handleShareCommand(arg: string): Promise<boolean> {
     return true;
   }
 
-  const sub = arg.trim().toLowerCase();
-  if (sub === 'publish') {
-    return handlePublish();
-  }
+  const trimmed = arg.trim();
+  const parts = trimmed.split(/\s+/);
+  const sub = (parts[0] ?? '').toLowerCase();
+
+  if (sub === 'publish') return handlePublish();
   if (sub === 'discard') {
     addSystem('share: discard — preview will age out on TTL; use /share again to regenerate');
     previewToken = null;
     return true;
   }
+  if (sub === 'list') return handleList();
+  if (sub === 'revoke') {
+    const token = parts[1];
+    if (!token) {
+      addSystem('share: usage — /share revoke <token>');
+      return true;
+    }
+    return handleRevoke(token);
+  }
+  if (sub === 'label') {
+    const token = parts[1];
+    const label = trimmed.slice(('label '.length + (token?.length ?? 0)) + 1).trim();
+    if (!token) {
+      addSystem('share: usage — /share label <token> <new label>');
+      return true;
+    }
+    return handleSetLabel(token, label);
+  }
   if (sub !== '') {
-    addSystem(`share: unknown subcommand '${sub}' — try /share, /share publish, /share discard`);
+    addSystem(`share: unknown subcommand '${sub}' — try /share, /share publish, /share list, /share revoke <token>, /share label <token> <text>, /share discard`);
     return true;
   }
 
@@ -154,11 +173,114 @@ async function handlePublish(): Promise<boolean> {
       `share published:\n` +
       `  public URL: ${url}\n` +
       `  token:      ${data.token}\n` +
-      `  (链接是只读快照;撤销请用 /share list 找到后删除 — C4 提供)`,
+      `  /share list                   — 查看所有 live shares\n` +
+      `  /share revoke ${data.token}  — 撤销此链接`,
     );
     previewToken = null;
   } catch (err) {
     slog.error('publish error', { err });
+    addSystem(`share: network error ${String(err)}`);
+  }
+  return true;
+}
+
+interface ShareListRow {
+  token: string;
+  session_id: string;
+  session_title: string | null;
+  shared_at: number | null;
+  created_at: number;
+  display_name: string | null;
+  owner_label: string | null;
+  share_snapshot_seq: number;
+  ttl_hours: number | null;
+  last_accessed_at: number | null;
+}
+
+async function handleList(): Promise<boolean> {
+  try {
+    const res = await fetch('/api/v1/shares', { credentials: 'same-origin' });
+    if (!res.ok) {
+      addSystem(`share: list failed ${res.status}`);
+      return true;
+    }
+    const data = await res.json() as { shares: ShareListRow[] };
+    if (data.shares.length === 0) {
+      addSystem('share list: (empty — no live shares)');
+      return true;
+    }
+    const lines: string[] = ['share list:'];
+    for (const s of data.shares) {
+      const kind = s.shared_at == null ? 'preview' : 'active ';
+      const label = s.owner_label ? ` [${s.owner_label}]` : '';
+      const title = s.session_title ? ` "${s.session_title}"` : '';
+      lines.push(`  ${kind}  ${s.token}  #${s.share_snapshot_seq}${title}${label}`);
+    }
+    lines.push('  /share revoke <token>         — 撤销');
+    lines.push('  /share label <token> <text>   — 改 owner_label');
+    addSystem(lines.join('\n'));
+  } catch (err) {
+    slog.error('list error', { err });
+    addSystem(`share: network error ${String(err)}`);
+  }
+  return true;
+}
+
+async function handleRevoke(token: string): Promise<boolean> {
+  // Look up session_id by listing; revoke hits a session-scoped endpoint.
+  try {
+    const lr = await fetch('/api/v1/shares', { credentials: 'same-origin' });
+    if (!lr.ok) {
+      addSystem(`share: revoke failed to resolve token (list=${lr.status})`);
+      return true;
+    }
+    const data = await lr.json() as { shares: ShareListRow[] };
+    const row = data.shares.find(s => s.token === token);
+    if (!row) {
+      addSystem(`share: token not found in live shares (already revoked?)`);
+      return true;
+    }
+    const res = await fetch(`/api/v1/sessions/${encodeURIComponent(row.session_id)}/share`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token }),
+      credentials: 'same-origin',
+    });
+    if (!res.ok) {
+      addSystem(`share: revoke failed ${res.status}`);
+      return true;
+    }
+    const j = await res.json() as { revoked: boolean };
+    addSystem(j.revoked ? `share: revoked ${token}` : `share: ${token} already revoked`);
+  } catch (err) {
+    slog.error('revoke error', { err });
+    addSystem(`share: network error ${String(err)}`);
+  }
+  return true;
+}
+
+async function handleSetLabel(token: string, label: string): Promise<boolean> {
+  try {
+    const lr = await fetch('/api/v1/shares', { credentials: 'same-origin' });
+    if (!lr.ok) { addSystem(`share: label failed to resolve token (list=${lr.status})`); return true; }
+    const data = await lr.json() as { shares: ShareListRow[] };
+    const row = data.shares.find(s => s.token === token);
+    if (!row) { addSystem(`share: token not found`); return true; }
+    const res = await fetch(`/api/v1/sessions/${encodeURIComponent(row.session_id)}/share`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token, owner_label: label }),
+      credentials: 'same-origin',
+    });
+    if (!res.ok) {
+      const t = await res.text();
+      addSystem(`share: label failed ${res.status} — ${t.slice(0, 200)}`);
+      return true;
+    }
+    const j = await res.json() as { owner_label: string | null };
+    addSystem(`share: label set — ${token} → ${j.owner_label ?? '(cleared)'}`);
+  } catch (err) {
+    slog.error('label error', { err });
     addSystem(`share: network error ${String(err)}`);
   }
   return true;

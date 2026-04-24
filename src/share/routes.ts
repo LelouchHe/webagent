@@ -138,15 +138,30 @@ export async function handleShareRoutes(
     return true;
   }
 
-  // Other share sub-routes (revoke, list) — C4.
+  const revokeMatch = url.match(/^\/api\/v1\/sessions\/([^/?]+)\/share\/?(?:\?.*)?$/);
+  if (revokeMatch && method === "DELETE") {
+    await handleRevoke(req, res, deps, decodeURIComponent(revokeMatch[1]));
+    return true;
+  }
+  if (revokeMatch && method === "PATCH") {
+    await handlePatchLabel(req, res, deps, decodeURIComponent(revokeMatch[1]));
+    return true;
+  }
+
+  if (url.match(/^\/api\/v1\/shares\/?(?:\?.*)?$/) && method === "GET") {
+    await handleOwnerList(req, res, deps);
+    return true;
+  }
+
+  // Any other /api/v1/shares[/...] or /api/v1/shared/... miss → 404.
   if (
     /^\/api\/v1\/sessions\/[^/]+\/share(?:\/|$|\?)/.test(url) ||
     url === "/api/v1/shares" ||
     url.startsWith("/api/v1/shares/") ||
     url.startsWith("/api/v1/shared/")
   ) {
-    res.writeHead(503, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ error: "share API not yet implemented" }));
+    res.writeHead(404, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: "not found" }));
     return true;
   }
 
@@ -299,7 +314,7 @@ async function handlePreviewRead(
 
   const row = deps.store.getShareByToken(token);
   if (!row) { json(res, 404, { error: "share not found" }); return; }
-  if (row.session_id !== sessionId) { json(res, 404, { error: "token does not match session" }); return; }
+  if (row.session_id !== sessionId) { json(res, 404, { error: "share not found" }); return; }
   if (row.revoked_at != null) { json(res, 410, { error: "share revoked" }); return; }
   if (row.shared_at != null) { json(res, 409, { error: "share already active (use public viewer)" }); return; }
 
@@ -387,7 +402,7 @@ async function handlePublish(
 
   const row = deps.store.getShareByToken(body.token);
   if (!row) { json(res, 404, { error: "share not found" }); return; }
-  if (row.session_id !== sessionId) { json(res, 404, { error: "token does not match session" }); return; }
+  if (row.session_id !== sessionId) { json(res, 404, { error: "share not found" }); return; }
   if (row.revoked_at != null) { json(res, 410, { error: "share revoked" }); return; }
   if (row.shared_at != null) {
     json(res, 409, { error: "share already active", token: row.token, shared_at: row.shared_at });
@@ -618,4 +633,168 @@ function isExpired(row: ShareRow): boolean {
   if (row.ttl_hours == null || row.ttl_hours === 0) return false;
   const anchor = row.shared_at ?? row.created_at;
   return Date.now() > anchor + row.ttl_hours * 3600_000;
+}
+
+/**
+ * Validate owner-supplied label/display_name text. Rules:
+ * - string only
+ * - UTF-8 byte length ≤ 1024
+ * - reject C0 controls (\x00..\x1f) except TAB (\t)
+ * - reject DEL (\x7f)
+ * - reject bidi override / isolate codepoints U+202A..U+202E, U+2066..U+2069
+ *
+ * Returns `{ ok: true, value }` on accept, `{ ok: false, reason }` on reject.
+ * Empty string is accepted (caller decides semantics).
+ */
+export function validateLabel(input: unknown, field: string): { ok: true; value: string } | { ok: false; reason: string } {
+  if (input == null) return { ok: true, value: "" };
+  if (typeof input !== "string") return { ok: false, reason: `${field} must be a string` };
+  if (Buffer.byteLength(input, "utf8") > 1024) {
+    return { ok: false, reason: `${field} exceeds 1024 bytes` };
+  }
+  for (let i = 0; i < input.length; i++) {
+    const cp = input.charCodeAt(i);
+    if (cp < 0x20 && cp !== 0x09) return { ok: false, reason: `${field} contains control character` };
+    if (cp === 0x7f) return { ok: false, reason: `${field} contains DEL character` };
+    if (cp >= 0xd800 && cp <= 0xdfff) {
+      // Surrogate pair check: high surrogate MUST be followed by low surrogate.
+      if (cp <= 0xdbff) {
+        const next = input.charCodeAt(i + 1);
+        if (!(next >= 0xdc00 && next <= 0xdfff)) {
+          return { ok: false, reason: `${field} contains unpaired surrogate` };
+        }
+        i++;
+        continue;
+      }
+      // Lone low surrogate.
+      return { ok: false, reason: `${field} contains unpaired surrogate` };
+    }
+    if ((cp >= 0x202a && cp <= 0x202e) || (cp >= 0x2066 && cp <= 0x2069)) {
+      return { ok: false, reason: `${field} contains bidi override` };
+    }
+  }
+  return { ok: true, value: input };
+}
+
+/**
+ * DELETE /api/v1/sessions/:id/share — revoke an active or preview share.
+ * Body: { token }.
+ * Idempotent: already-revoked tokens return 200 with revoked=false.
+ * Returns { ok, token, revoked, purge_status }. purge_status is always
+ * 'skipped' in v1 — image/event purge is a future hardening pass.
+ */
+async function handleRevoke(
+  req: IncomingMessage,
+  res: ServerResponse,
+  deps: ShareRouteDeps,
+  sessionId: string,
+): Promise<void> {
+  try { assertOwner(req); } catch (e) {
+    if (e instanceof OwnerAuthError) { ownerReject(res, e); return; }
+    throw e;
+  }
+
+  let body: { token?: string };
+  try {
+    body = (await readJson(req)) as typeof body;
+    if (body === null || typeof body !== "object") body = {};
+  } catch { json(res, 400, { error: "invalid JSON body" }); return; }
+
+  if (!body.token || typeof body.token !== "string") {
+    json(res, 400, { error: "token required" }); return;
+  }
+
+  const row = deps.store.getShareByToken(body.token);
+  if (!row) { json(res, 404, { error: "share not found" }); return; }
+  if (row.session_id !== sessionId) { json(res, 404, { error: "share not found" }); return; }
+
+  const revoked = deps.store.revokeShare(body.token);
+  json(res, 200, {
+    ok: true,
+    token: body.token,
+    revoked,
+    purge_status: "skipped",
+  });
+}
+
+/**
+ * PATCH /api/v1/sessions/:id/share — update owner_label / display_name on
+ * a live (non-revoked) share. Body: { token, owner_label?, display_name? }.
+ *
+ * Full validation: UTF-8 ≤1024B, no C0 controls (except TAB), no DEL, no
+ * bidi overrides. Fields omitted from body are left unchanged; fields set
+ * to empty string clear the value.
+ */
+async function handlePatchLabel(
+  req: IncomingMessage,
+  res: ServerResponse,
+  deps: ShareRouteDeps,
+  sessionId: string,
+): Promise<void> {
+  try { assertOwner(req); } catch (e) {
+    if (e instanceof OwnerAuthError) { ownerReject(res, e); return; }
+    throw e;
+  }
+
+  let body: { token?: string; owner_label?: unknown; display_name?: unknown };
+  try {
+    body = (await readJson(req)) as typeof body;
+    if (body === null || typeof body !== "object") body = {};
+  } catch { json(res, 400, { error: "invalid JSON body" }); return; }
+
+  if (!body.token || typeof body.token !== "string") {
+    json(res, 400, { error: "token required" }); return;
+  }
+
+  const row = deps.store.getShareByToken(body.token);
+  if (!row) { json(res, 404, { error: "share not found" }); return; }
+  if (row.session_id !== sessionId) { json(res, 404, { error: "share not found" }); return; }
+  if (row.revoked_at != null) { json(res, 410, { error: "share revoked" }); return; }
+
+  let ownerLabel: string | null | undefined = undefined;
+  if ("owner_label" in body) {
+    const v = validateLabel(body.owner_label, "owner_label");
+    if (!v.ok) { json(res, 400, { error: v.reason }); return; }
+    ownerLabel = v.value === "" ? null : v.value;
+  }
+
+  let displayName: string | null | undefined = undefined;
+  if ("display_name" in body) {
+    const v = validateLabel(body.display_name, "display_name");
+    if (!v.ok) { json(res, 400, { error: v.reason }); return; }
+    if (Buffer.byteLength(v.value, "utf8") > 256) {
+      json(res, 400, { error: "display_name exceeds 256 bytes" }); return;
+    }
+    displayName = v.value === "" ? null : v.value;
+  }
+
+  if (ownerLabel !== undefined) deps.store.updateShareOwnerLabel(body.token, ownerLabel);
+  if (displayName !== undefined) deps.store.updateShareDisplayName(body.token, displayName);
+
+  const after = deps.store.getShareByToken(body.token);
+  if (!after) { json(res, 500, { error: "post-patch read failed" }); return; }
+  json(res, 200, {
+    token: after.token,
+    session_id: sessionId,
+    owner_label: after.owner_label,
+    display_name: after.display_name,
+  });
+}
+
+/**
+ * GET /api/v1/shares — owner-only list of live (non-revoked) shares.
+ * Returns { shares: [...] } with preview + active rows separated by
+ * shared_at (null = preview).
+ */
+async function handleOwnerList(
+  req: IncomingMessage,
+  res: ServerResponse,
+  deps: ShareRouteDeps,
+): Promise<void> {
+  try { assertOwner(req); } catch (e) {
+    if (e instanceof OwnerAuthError) { ownerReject(res, e); return; }
+    throw e;
+  }
+  const rows = deps.store.listOwnerShares();
+  json(res, 200, { shares: rows });
 }

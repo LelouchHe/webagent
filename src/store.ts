@@ -665,6 +665,14 @@ export class Store {
     return info.changes > 0;
   }
 
+  /** Update only display_name (PATCH route). Caller validates the value first. */
+  updateShareDisplayName(token: string, name: string | null): boolean {
+    const info = this.db.prepare(
+      "UPDATE shares SET display_name = ? WHERE token = ? AND revoked_at IS NULL",
+    ).run(name, token);
+    return info.changes > 0;
+  }
+
   /** Owner list — every live share (preview + active, not revoked). */
   listOwnerShares(): ShareSummaryRow[] {
     return this.db.prepare(
