@@ -80,14 +80,57 @@ export class SanitizeError extends Error {
 // Order matters only for error messages; any match aborts. Patterns are
 // designed to be low-false-positive (we're looking for obvious leakage,
 // not heuristic secrets — those belong to Layer 1b).
+// Rule set aims at well-known token prefixes that would not normally
+// appear in shared agent output. Every entry has a fixed prefix and a
+// minimum body length — keeps false positives low (a README that
+// mentions "ghp_" without a body passes; a real token does not).
+// Add new entries here; share-sanitize-secrets.test.ts enumerates each.
 const HARD_REJECT_RULES: Array<{ id: string; pattern: RegExp; msg: string }> = [
   {
     id: "private_key",
-    pattern: /-----BEGIN (?:OPENSSH |RSA |EC |DSA |)PRIVATE KEY-----/,
+    // Matches OpenSSH, RSA, EC, DSA, encrypted, and PKCS8 ("BEGIN PRIVATE KEY").
+    // PGP has a different armor shape ("... BLOCK-----") — covered by pgp_private_key below.
+    pattern: /-----BEGIN (?:OPENSSH |RSA |EC |DSA |ENCRYPTED |)PRIVATE KEY-----/,
     msg: "private key detected",
+  },
+  {
+    id: "pgp_private_key",
+    pattern: /-----BEGIN PGP PRIVATE KEY BLOCK-----/,
+    msg: "PGP private key detected",
   },
   { id: "github_pat", pattern: /\bgithub_pat_[A-Za-z0-9_]{22,}\b/, msg: "GitHub PAT detected" },
   { id: "github_ghp", pattern: /\bghp_[A-Za-z0-9]{20,}\b/, msg: "GitHub classic token detected" },
+  {
+    id: "github_oauth",
+    // gho_/ghu_/ghs_/ghr_ — oauth + user-to-server + server-to-server + refresh.
+    pattern: /\bgh[oursw]_[A-Za-z0-9]{20,}\b/,
+    msg: "GitHub OAuth/app token detected",
+  },
+  {
+    id: "anthropic_api",
+    pattern: /\bsk-ant-(?:api|sid)[0-9]{2}-[A-Za-z0-9_-]{32,}\b/,
+    msg: "Anthropic API key detected",
+  },
+  {
+    id: "openai_api",
+    pattern: /\bsk-(?:proj|svcacct|admin)-[A-Za-z0-9_-]{32,}\b/,
+    msg: "OpenAI API key detected",
+  },
+  {
+    id: "slack_token",
+    pattern: /\bxox[baprs]-[A-Za-z0-9-]{20,}\b/,
+    msg: "Slack token detected",
+  },
+  {
+    id: "google_api",
+    pattern: /\bAIza[A-Za-z0-9_-]{35,}\b/,
+    msg: "Google API key detected",
+  },
+  {
+    id: "stripe_key",
+    pattern: /\b(?:sk|rk)_live_[A-Za-z0-9]{24,}\b/,
+    msg: "Stripe live key detected",
+  },
   {
     id: "aws_secret",
     pattern: /aws_secret_access_key\s*[:=]\s*['"]?[A-Za-z0-9/+=]{20,}/i,

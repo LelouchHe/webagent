@@ -110,7 +110,7 @@ describe("sanitize — Layer 1c hard reject", () => {
     try {
       sanitizeEventsForShare({
         ...ctx,
-        events: [ev(7, "assistant_message", { text: "token is github_pat_11ABCDEF0123456789ABCDE_longenough" })],
+        events: [ev(7, "assistant_message", { text: "token is github_pat_NOTAREAL00000000000000000000000" })],
       });
     } catch (e) { caught = e; }
     assert.ok(caught instanceof SanitizeError);
@@ -121,7 +121,7 @@ describe("sanitize — Layer 1c hard reject", () => {
   it("rejects ghp_ classic tokens", () => {
     assert.throws(() => sanitizeEventsForShare({
       ...ctx,
-      events: [ev(1, "assistant_message", { text: "ghp_1234567890abcdefghij1234" })],
+      events: [ev(1, "assistant_message", { text: "ghp_NOTAREAL0000000000000000" })],
     }), /GitHub classic token/);
   });
 
@@ -137,7 +137,7 @@ describe("sanitize — Layer 1c hard reject", () => {
       ...ctx,
       events: [ev(1, "tool_call", {
         title: "run",
-        rawInput: { command: "echo ghp_1234567890abcdefghij1234" },
+        rawInput: { command: "echo ghp_NOTAREAL0000000000000000" },
       })],
     }), SanitizeError);
   });
