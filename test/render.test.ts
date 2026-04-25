@@ -57,6 +57,27 @@ describe("render", () => {
       const withoutZ = render.formatLocalTime("2024-01-01T00:00:00");
       assert.equal(withZ, withoutZ);
     });
+
+    it("accepts epoch milliseconds (number) — InboxMessage.created_at is number", () => {
+      // Regression: TypeError "e.endsWith is not a function" was thrown when
+      // /inbox menu rendered InboxMessage.created_at, which the store returns
+      // as epoch ms, not an ISO string.
+      const ms = Date.UTC(2024, 5, 15, 8, 30, 0);
+      const result = render.formatLocalTime(ms);
+      assert.match(result, /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/);
+    });
+
+    it("returns empty string for invalid input", () => {
+      assert.equal(render.formatLocalTime("not-a-date"), "");
+      assert.equal(render.formatLocalTime(NaN), "");
+    });
+
+    it("preserves timestamps that already carry a timezone offset", () => {
+      // SQLite-style 'YYYY-MM-DD HH:MM:SS+00:00' should not get a redundant Z.
+      const tz = render.formatLocalTime("2024-01-01T00:00:00+00:00");
+      const z = render.formatLocalTime("2024-01-01T00:00:00Z");
+      assert.equal(tz, z);
+    });
   });
 
   describe("renderPatchDiff", () => {

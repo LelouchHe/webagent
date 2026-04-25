@@ -127,9 +127,16 @@ export function escHtml(s: string): string {
   return d.innerHTML;
 }
 
-export function formatLocalTime(utcStr: string): string {
-  if (!utcStr) return '';
-  const d = new Date(utcStr.endsWith('Z') ? utcStr : utcStr + 'Z');
+export function formatLocalTime(utc: string | number | null | undefined): string {
+  if (utc === null || utc === undefined || utc === '') return '';
+  let d: Date;
+  if (typeof utc === 'number') {
+    d = new Date(utc);
+  } else {
+    const s = String(utc);
+    d = new Date(s.endsWith('Z') || /[+-]\d{2}:?\d{2}$/.test(s) ? s : s + 'Z');
+  }
+  if (isNaN(d.getTime())) return '';
   const pad = (n: number) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
