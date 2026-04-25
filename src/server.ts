@@ -139,6 +139,29 @@ server.listen(config.port, "0.0.0.0", async () => {
   await authStore.load();
   const tokenCount = authStore.list().length;
   console.log(`[auth] loaded ${tokenCount} token(s) from auth.json`);
+  if (tokenCount === 0) {
+    // First-run / wiped state. Refuse to serve traffic without auth — the
+    // whole point of this build is "no token, no access". Two modes:
+    //   - foreground (TTY): immediate exit so the operator sees the
+    //     prompt and runs the recovery command.
+    //   - daemon (no TTY): sleep first to throttle supervisor restart
+    //     storms, then exit 78 (sysexits.h: configuration error). The
+    //     supervisor logs the message instead of restarting in a tight loop.
+    const msg = [
+      "[auth] no tokens in auth.json — refusing to serve unauthenticated.",
+      "[auth] create one with:  webagent --create-token <name>",
+      "[auth] then start the server again (or send SIGHUP to the running process).",
+    ].join("\n");
+    if (process.stdin.isTTY) {
+      console.error(msg);
+      process.exit(1);
+    } else {
+      console.error(msg);
+      console.error("[auth] sleeping 60s to avoid supervisor restart loop...");
+      await new Promise((r) => setTimeout(r, 60_000));
+      process.exit(78);
+    }
+  }
   messageCleanup = startMessageCleanup(store, config.messages.unprocessed_ttl_days);
   console.log(`[bridge] starting: ${config.agent_cmd}...`);
   try {
