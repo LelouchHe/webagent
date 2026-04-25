@@ -20,6 +20,7 @@ describe("commands", () => {
   after(() => teardownDOM());
   beforeEach(() => {
     resetState(state, dom);
+    commands.__resetCommandsForTest();
     fetchCalls = [];
     globalThis.fetch = undefined as any;
   });

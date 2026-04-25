@@ -61,6 +61,7 @@ export function resetState(state: any, dom: any) {
   state.serverVersion = null;
   state.agentName = null;
   state.agentVersion = null;
+  if (state._cancelTimerId != null) clearTimeout(state._cancelTimerId);
   state._cancelTimerId = null;
   state.lastEventSeq = 0;
   state.replayInProgress = false;

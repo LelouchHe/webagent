@@ -7,6 +7,7 @@ describe("input", () => {
   let dom: any;
   let setBusy: any;
   let inputModule: any;
+  let commandsMod: any;
   let fetchCalls: Array<{ url: string; init?: any }>;
 
   before(async () => {
@@ -17,7 +18,7 @@ describe("input", () => {
     setBusy = stateMod.setBusy;
     await import("../public/js/render.ts");
     await import("../public/js/events.ts");
-    await import("../public/js/commands.ts");
+    commandsMod = await import("../public/js/commands.ts");
     await import("../public/js/images.ts");
     inputModule = await import("../public/js/input.ts");
     void inputModule;
@@ -27,6 +28,7 @@ describe("input", () => {
 
   beforeEach(() => {
     resetState(state, dom);
+    commandsMod.__resetCommandsForTest();
     fetchCalls = [];
     globalThis.fetch = undefined as any;
   });

@@ -560,6 +560,25 @@ let slashFiltered: SlashItem[] = [];
 let slashMode = 'commands';
 let slashConfigId: string | null = null;
 let cachedSessions: SessionSummary[] | null = null;
+let cachedSessionsTimer: ReturnType<typeof setTimeout> | null = null;
+let cachedPathsTimer: ReturnType<typeof setTimeout> | null = null;
+
+function scheduleCacheClear(which: 'sessions' | 'paths') {
+  if (which === 'sessions') {
+    if (cachedSessionsTimer) clearTimeout(cachedSessionsTimer);
+    cachedSessionsTimer = setTimeout(() => { cachedSessions = null; cachedSessionsTimer = null; }, 5000);
+  } else {
+    if (cachedPathsTimer) clearTimeout(cachedPathsTimer);
+    cachedPathsTimer = setTimeout(() => { cachedPaths = null; cachedPathsTimer = null; }, 5000);
+  }
+}
+
+export function __resetCommandsForTest() {
+  cachedSessions = null;
+  cachedPaths = null;
+  if (cachedSessionsTimer) { clearTimeout(cachedSessionsTimer); cachedSessionsTimer = null; }
+  if (cachedPathsTimer) { clearTimeout(cachedPathsTimer); cachedPathsTimer = null; }
+}
 let slashDismissed: string | null = null;
 let notifyActive = false;
 
@@ -642,7 +661,7 @@ async function fetchSessionsForMenu(query: string, mode = 'switch') {
     try {
       const res = await fetch('/api/v1/sessions');
       cachedSessions = await res.json();
-      setTimeout(() => { cachedSessions = null; }, 5000);
+      scheduleCacheClear('sessions');
     } catch { return; }
   }
   slashMode = mode;
@@ -670,7 +689,7 @@ async function fetchPathsForMenu(query: string) {
       const url = limit > 0 ? `/api/v1/recent-paths?limit=${limit}` : '/api/v1/recent-paths';
       const res = await fetch(url);
       cachedPaths = (await res.json()).map((p: { cwd: string; last_used_at: string }) => ({ cwd: p.cwd, time: p.last_used_at }));
-      setTimeout(() => { cachedPaths = null; }, 5000);
+      scheduleCacheClear('paths');
     } catch { return; }
   }
   slashMode = 'new';

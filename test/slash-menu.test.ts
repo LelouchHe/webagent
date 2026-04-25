@@ -22,6 +22,7 @@ describe("slash menu — Tab vs Click behavior", () => {
 
   beforeEach(() => {
     resetState(state, dom);
+    commands.__resetCommandsForTest();
     (globalThis as any).Notification = { permission: "default", requestPermission: async () => "default" };
     fetchCalls = [];
     globalThis.fetch = ((url: string, init?: any) => {

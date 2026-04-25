@@ -179,6 +179,7 @@ export function resetSessionUI() {
   state.pendingPromptDone = false;
   state.turnEnded = false;
   state.newTurnStarted = false;
+  if (state._cancelTimerId != null) clearTimeout(state._cancelTimerId);
   state._cancelTimerId = null;
   state.lastEventSeq = 0;
   state.oldestLoadedSeq = 0;
