@@ -154,6 +154,8 @@ export class SessionManager {
       this.liveSessions.add(sessionId);
       if (session.title) this.sessionHasTitle.add(sessionId);
       const configOptions = this.applyStoredConfig(restored.configOptions, session);
+      // Populate the cache so subsequent GET /:id requests see real config
+      if (restored.configOptions.length) this.cachedConfigOptions = restored.configOptions;
       console.log(`[session] restored: ${sessionId.slice(0, 8)}…`);
       return {
         type: "session_created",

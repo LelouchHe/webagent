@@ -631,6 +631,28 @@ export function createRequestHandler(deps: RequestHandlerDeps): (req: IncomingMe
             const bridge = getBridge();
             if (bridge) {
               const resumePromise = sessions.ensureResumed(bridge, sessionId);
+              // After resume populates cachedConfigOptions, broadcast a fresh
+              // config_option_update so any client currently viewing the
+              // session (whose initial GET returned an empty configOptions
+              // array because the cache was cold) gets the real values.
+              resumePromise.then(() => {
+                const cur = store.getSession(sessionId);
+                if (!cur || !sessions.cachedConfigOptions.length) return;
+                const opts = sessions.cachedConfigOptions.map((opt) => {
+                  const stored: Record<string, string | null> = {
+                    model: cur.model,
+                    mode: cur.mode,
+                    reasoning_effort: cur.reasoning_effort,
+                  };
+                  const override = stored[opt.id];
+                  return override ? { ...opt, currentValue: override } : opt;
+                });
+                sseManager.broadcast({
+                  type: "config_option_update",
+                  sessionId,
+                  configOptions: opts,
+                } as AgentEvent);
+              }).catch(() => {});
               // Auto-retry if the last turn was interrupted (must wait for resume)
               const hasInterrupted = store.hasInterruptedTurn(sessionId);
               if (hasInterrupted) {
