@@ -6,6 +6,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## Unreleased
 
+### ⚠️ BREAKING — 0.4.0
+
+**Bearer token auth is now required.** webagent will refuse to start without
+at least one token in `data/auth.json`. Existing installs upgrading from
+0.3.x must seed a token before the next start:
+
+```sh
+webagent --create-token <name>
+# prints the raw token ONCE — paste it into the new login page
+```
+
+Notes:
+- All `/api/**` endpoints (except `/api/v1/version` and `/api/beta/push/vapid-key`) require `Authorization: Bearer <token>`.
+- Browsers store the token in `localStorage` under `wa_token`.
+- SSE streams use a short-lived ticket (`POST /api/v1/sse-ticket`) instead of carrying the bearer.
+- Image URLs are HMAC-signed with a 1h expiry. The HMAC secret regenerates on every server restart, invalidating any previously rendered URLs.
+- Strict CSP (`default-src 'self'`, no `unsafe-inline` for scripts) is now applied to every HTML response. `highlight.js` is vendored (12 common languages) so no third-party origin is needed at runtime.
+- Multi-token CRUD is exposed via `GET/POST /api/v1/tokens` and `DELETE /api/v1/tokens/:name` (admin scope only). The `/token` slash command provides a UI.
+- `SIGHUP` reloads `auth.json` without dropping live sessions.
+
 ### Changed
 
 - Frontend assets are now fully self-hosted: `marked` and `dompurify` are bundled into `dist/js/app.[hash].js` via esbuild instead of loaded from `cdn.jsdelivr.net`. Enables offline PWA, removes third-party SRI risk, and lets CSP drop `script-src https://cdn.jsdelivr.net`.

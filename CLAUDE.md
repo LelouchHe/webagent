@@ -92,6 +92,22 @@ agent_cmd = "my-agent --acp"
     3. If notifications stop working after a server update or VAPID key change, re-install the PWA (delete from home screen, re-add), then `/notify on` again. Simply toggling `/notify off` → `/notify on` may not be enough if the Service Worker cache is stale.
   - **iOS PWA quirks**: Apple's push service (`web.push.apple.com`) rejects VAPID subjects with `localhost` domains (`403 BadJwtToken`) — use a real-looking email like `mailto:noreply@example.com`. When changing `push.vapid_subject`, delete `data/vapid.json` to regenerate keys, then all clients must re-subscribe.
 
+## Auth (0.4.0+)
+
+Bearer token authentication is **required**. Server refuses to start when `data/auth.json` has zero tokens (TTY: exits 1; daemon: sleeps 60s then exits 78 to throttle supervisor restart loops).
+
+- **Bootstrap**: `webagent --create-token <name>` writes an admin-scope token to `auth.json` (mode `0600`) and prints the raw token ONCE. Paste it into `/login` on first browser visit.
+- **Storage**: `auth.json` stores `{ name, scope, hash, createdAt, lastUsedAt }`. Tokens are SHA-256 hashed; raw value never persisted server-side. `proper-lockfile` guards read-modify-write so CLI and server flush don't race. `lastUsedAt` is buffered in memory and flushed every 60s (and on `SIGTERM`).
+- **Scopes**: `admin` (full, includes `/tokens/**`) vs `api` (everything except token CRUD). CLI-created tokens are `admin`; tokens created via `POST /api/v1/tokens` are `api`.
+- **Whitelist** (no auth required): `/api/v1/version`, `/api/beta/push/vapid-key`, static assets (HTML/JS/CSS/icons/manifest/sw.js), `/`, `/login`, `/theme-init.js`.
+- **Frontend**: token persists in `localStorage` under `wa_token`. `public/js/api.ts` `request()` injects `Authorization: Bearer ...` on every API call; 401 → clear + redirect to `/login`. `public/js/login-core.ts` exports `TOKEN_STORAGE_KEY` so login page and api wrapper agree on the key.
+- **SSE**: EventSource cannot set headers, so connection.ts does `POST /api/v1/sse-ticket` (Bearer) → ticket (60s, single-use, in-memory) → `EventSource(/api/v1/events/stream?ticket=...)`. The 15s heartbeat re-checks the token in memory; revoked tokens are kicked within one heartbeat.
+- **Image URLs**: signed via HMAC over `path|exp` with a per-restart secret (1h expiry). Image route verifies sig + exp before serving. Frontend just renders the URL; signing is applied when serializing image events to history/SSE.
+- **CSP**: every HTML entrypoint response gets `default-src 'self'; img-src 'self' data: blob:; script-src 'self'; style-src 'self'; connect-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'`. The HTML entrypoint set is the single source of truth (`HTML_ENTRYPOINTS` in `src/routes.ts`). Three invariant tests guard it: `test/csp.test.ts`, `test/html-entrypoints.test.ts`, `test/inline-assets.test.ts`. No `unsafe-inline` for scripts — theme bootstrap is in `/theme-init.js`. `highlight.js` is vendored (12 languages) so we drop CDN connect-src.
+- **CLI**: `webagent --create-token <name>`, `--list-tokens`, `--revoke-token <name>`. `SIGHUP` reloads `auth.json` from disk (logs success/failure loud), without dropping live sessions or SSE clients.
+- **E2E**: `test/e2e/seed.ts` runs at Playwright config-load time. It wipes `test/e2e-data/`, generates one admin token, writes `auth.json` (server-side) + `storage-state.json` (Playwright loads into every page) + `.token` (raw value for specs that need it). Idempotent — config is reloaded per worker; only the runner wipes (via `rm -rf test/e2e-data &&` in the npm script). `playwright.config.ts` sets `extraHTTPHeaders: Authorization: Bearer ...` so direct `page.request.*` API calls work; specs that test rejection paths opt out via `test.use({ extraHTTPHeaders: {} })`.
+- **Production bundle**: `grep -E 'wat_[A-Za-z0-9_-]{30,}' dist/` MUST return nothing. The literal `wat_` is fine (it's the placeholder text in `login.html`); we only forbid actual token-looking strings.
+
 ## ACP Client Extensions
 
 ACP parameters like `mcpServers`, `terminal`, and `fs` are **client-to-agent capability injections** — the client offers extra capabilities on top of the agent's own baseline. The agent (CLI) retains all its native abilities regardless of what the client provides.
