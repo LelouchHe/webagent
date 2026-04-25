@@ -624,6 +624,14 @@ export function updateSlashMenu() {
     return;
   }
 
+  // /debug — show level picker
+  const debugMatch = text.match(/^\/debug /);
+  if (debugMatch) {
+    const query = text.slice(debugMatch[0].length).toLowerCase();
+    showDebugMenu(query);
+    return;
+  }
+
   // /inbox — show unbound-message picker
   const inboxMatch = text.match(/^\/inbox /);
   if (inboxMatch) {
@@ -748,6 +756,31 @@ async function showNotifyMenu(query: string) {
   dom.slashMenu.classList.add('active');
 }
 
+const DEBUG_OPTIONS: NotifyOption[] = [
+  { value: 'off',   name: 'off',   desc: 'Disable logging' },
+  { value: 'error', name: 'error', desc: 'Errors only' },
+  { value: 'warn',  name: 'warn',  desc: 'Warnings and above' },
+  { value: 'info',  name: 'info',  desc: 'Info and above' },
+  { value: 'debug', name: 'debug', desc: 'Everything, including verbose' },
+];
+
+function showDebugMenu(query: string) {
+  slashMode = 'debug';
+  slashFiltered = DEBUG_OPTIONS.filter(o => {
+    if (!query) return true;
+    return o.value.includes(query) || o.name.includes(query);
+  });
+  if (slashFiltered.length === 0) {
+    hideSlashMenu();
+    return;
+  }
+  const currentValue = getLogLevel();
+  const idx = (slashFiltered as NotifyOption[]).findIndex(o => o.value === currentValue);
+  slashIdx = idx >= 0 ? idx : 0;
+  renderSlashMenu();
+  dom.slashMenu.classList.add('active');
+}
+
 // Inbox menu is always fetched fresh — messages can arrive/be acked frequently.
 async function fetchInboxForMenu(query: string) {
   let messages: api.InboxMessage[];
@@ -821,6 +854,15 @@ function renderSlashMenu() {
   } else if (slashMode === 'notify') {
     const currentVal = notifyActive ? 'on' : 'off';
     dom.slashMenu.innerHTML = slashFiltered.map((o, i) => {
+      const isCurrent = o.value === currentVal;
+      const prefix = isCurrent ? '* ' : '  ';
+      const currentClass = isCurrent ? " current" : "";
+      return `<div class="slash-item${i === slashIdx ? ' selected' : ''}" data-idx="${i}"><span class="slash-cmd${currentClass}">${escHtml(prefix + o.name)}</span><span class="slash-desc">${escHtml(o.desc)}</span></div>`;
+    }).join('');
+  } else if (slashMode === 'debug') {
+    const currentVal = getLogLevel();
+    const items = slashFiltered as NotifyOption[];
+    dom.slashMenu.innerHTML = items.map((o, i) => {
       const isCurrent = o.value === currentVal;
       const prefix = isCurrent ? '* ' : '  ';
       const currentClass = isCurrent ? " current" : "";
@@ -911,7 +953,7 @@ function tabCompleteSlashItem(idx: number) {
     dom.input.value = item.cmd + (item.args ? ' ' : '');
     hideSlashMenu();
     dom.input.focus();
-    if (['/new', '/switch', '/model', '/mode', '/think', '/notify', '/inbox', '/token'].includes(item.cmd)) {
+    if (['/new', '/switch', '/model', '/mode', '/think', '/notify', '/inbox', '/token', '/debug'].includes(item.cmd)) {
       slashDismissed = null;
       updateSlashMenu();
     }
@@ -924,6 +966,11 @@ function tabCompleteSlashItem(idx: number) {
   } else if (slashMode === 'notify') {
     const o = slashFiltered[idx];
     dom.input.value = `/notify ${o.value}`;
+    hideSlashMenu();
+    dom.input.focus();
+  } else if (slashMode === 'debug') {
+    const o = slashFiltered[idx];
+    dom.input.value = `/debug ${o.value}`;
     hideSlashMenu();
     dom.input.focus();
   } else if (slashMode === 'new') {
@@ -1005,6 +1052,12 @@ async function selectSlashItem(idx: number) {
     // Trigger command execution by simulating send
     handleSlashCommand(dom.input.value);
     dom.input.value = '';
+  } else if (slashMode === 'debug') {
+    const o = slashFiltered[idx];
+    dom.input.value = `/debug ${o.value}`;
+    hideSlashMenu();
+    void handleSlashCommand(dom.input.value);
+    dom.input.value = '';
   } else if (slashMode === 'inbox') {
     const m = slashFiltered[idx] as api.InboxMessage;
     dom.input.value = '';
@@ -1023,7 +1076,7 @@ async function selectSlashItem(idx: number) {
     dom.input.value = item.cmd + (item.args ? ' ' : '');
     hideSlashMenu();
     dom.input.focus();
-    if (['/new', '/switch', '/model', '/mode', '/think', '/notify', '/inbox', '/token'].includes(item.cmd)) {
+    if (['/new', '/switch', '/model', '/mode', '/think', '/notify', '/inbox', '/token', '/debug'].includes(item.cmd)) {
       slashDismissed = null;
       updateSlashMenu();
     }
