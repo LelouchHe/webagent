@@ -20,6 +20,8 @@ WebAgent exposes a **REST + SSE** API for managing agent sessions, sending promp
   - [Config](#config)
   - [Recent Paths](#recent-paths)
   - [Version](#version)
+  - [Auth](#auth)
+  - [Tokens](#tokens)
   - [Bash](#bash)
   - [Bridge](#bridge)
   - [Inbox](#inbox)
@@ -477,6 +479,128 @@ Get server and agent version information.
 | `agent` | object \| null | Agent backend info. `null` if bridge hasn't connected yet |
 | `agent.name` | string | Agent name reported via ACP |
 | `agent.version` | string | Agent version reported via ACP |
+
+---
+
+### Auth
+
+#### `GET /api/v1/auth/verify`
+
+Validate the caller's Bearer token. Used by the login page after the user pastes a token: a 200 response means the token is valid and the page can store it in `localStorage` and redirect to the app.
+
+This endpoint **always requires** a valid `Authorization: Bearer <token>` header — it has no anonymous mode. An invalid or missing token returns `401`.
+
+**Response** `200`:
+
+```json
+{
+  "ok": true,
+  "name": "laptop",
+  "scope": "admin"
+}
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `ok` | boolean | Always `true` on success |
+| `name` | string | Token's human-readable name (e.g. `"laptop"`) |
+| `scope` | string | `"admin"` (full access) or `"api"` (no `/tokens/**`) |
+
+**Response** `401`:
+
+```json
+{ "error": "Unauthorized", "reason": "missing" | "invalid" }
+```
+
+The response includes a `WWW-Authenticate: Bearer` header on 401.
+
+---
+
+#### `POST /api/v1/sse-ticket`
+
+Mint a single-use, short-lived ticket so an `EventSource` can authenticate to the SSE stream — `EventSource` cannot send custom headers, so the Bearer token can't ride directly on `/api/v1/events/stream`. The client posts here with its Bearer, gets a ticket, then opens `EventSource(/api/v1/events/stream?ticket=…)`.
+
+Tickets:
+
+- live for **60 seconds**
+- are **single-use** (consumed when the SSE handshake reads them)
+- are kept only in server memory (not persisted)
+
+Requires a valid `Authorization: Bearer <token>` header. Returns `401` otherwise.
+
+**Response** `200`:
+
+```json
+{
+  "ticket": "abc123…",
+  "expiresIn": 60
+}
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `ticket` | string | Opaque random token, base64url |
+| `expiresIn` | number | Seconds until the ticket expires (always `60`) |
+
+The SSE stream re-checks the bound token on every heartbeat (≤15 s). If the token is revoked mid-stream, the connection is closed within one heartbeat interval; the client must mint a fresh ticket and reconnect.
+
+---
+
+### Tokens
+
+Manage Bearer tokens stored in `data/auth.json`. All endpoints require an admin-scope token; api-scope tokens get `403`.
+
+#### `GET /api/v1/tokens`
+
+List all tokens (metadata only — the raw token and its hash are never returned).
+
+**Response** `200`:
+
+```json
+{
+  "tokens": [
+    { "name": "laptop", "scope": "admin", "createdAt": "2025-01-01T00:00:00.000Z", "lastUsedAt": "2025-01-02T12:30:00.000Z" },
+    { "name": "phone",  "scope": "api",   "createdAt": "2025-01-02T00:00:00.000Z", "lastUsedAt": null }
+  ]
+}
+```
+
+#### `POST /api/v1/tokens`
+
+Create a new token. **The raw token is returned exactly once** — the server only stores its SHA-256 hash, so a forgotten token cannot be recovered.
+
+**Request body:**
+
+```json
+{ "name": "phone" }
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `name` | string | 1–64 chars, `[A-Za-z0-9_-]`. Must be unique. |
+
+New tokens are always created with `api` scope (no access to `/tokens/**`). Use the `webagent --create-token <name>` CLI to mint admin-scope tokens.
+
+**Response** `201`:
+
+```json
+{
+  "token": "wat_…",
+  "name": "phone",
+  "scope": "api"
+}
+```
+
+**Errors:**
+
+- `400` — invalid name (missing, too long, illegal chars)
+- `409` — name already exists
+
+#### `DELETE /api/v1/tokens/:name`
+
+Revoke a token by name. The next request using that token returns `401`; any open SSE stream tied to it is closed within ≤15 s (heartbeat check).
+
+**Response** `204` on success, `404` if no token with that name exists, `400` if the name is malformed.
 
 ---
 
