@@ -128,7 +128,7 @@ form-action 'self'
 No `unsafe-inline` for scripts. No third-party origins. Notable consequences:
 
 - The early-paint theme bootstrap is in a separate file (`/theme-init.js`) and loaded with `<script src="...">` instead of being inline.
-- `marked` and `dompurify` are bundled into `app.[hash].js`. `highlight.js` (12 common languages) is vendored under `public/vendor/`. No `cdn.jsdelivr.net` at runtime.
+- `marked` and `dompurify` are bundled into `app.[hash].js`. `highlight.js` common (36 languages) is bundled into the main JS — no `cdn.jsdelivr.net` at runtime.
 - `frame-ancestors 'none'` prevents any other site from embedding webagent in an `<iframe>`.
 
 The HTML entrypoint set is the **single source of truth** in `src/routes.ts`:
