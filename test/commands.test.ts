@@ -6,6 +6,7 @@ describe("commands", () => {
   let state: any;
   let dom: any;
   let commands: any;
+  let events: any;
   let fetchCalls: Array<{ url: string; init?: any }>;
 
   before(async () => {
@@ -14,6 +15,7 @@ describe("commands", () => {
     state = stateMod.state;
     dom = stateMod.dom;
     await import("../public/js/render.ts");
+    events = await import("../public/js/events.ts");
     commands = await import("../public/js/commands.ts");
   });
 
@@ -228,13 +230,64 @@ describe("commands", () => {
       const deleteCall = fetchCalls.find(c => c.url === "/api/v1/sessions/old-1" && c.init?.method === "DELETE");
       assert.ok(deleteCall, "expected DELETE for old session");
 
-      // Create must be dispatched before delete so server can read old session's model/effort before removing it.
-      const createIdx = fetchCalls.findIndex(c => c.url === "/api/v1/sessions" && c.init?.method === "POST");
-      const deleteIdx = fetchCalls.findIndex(c => c.url === "/api/v1/sessions/old-1" && c.init?.method === "DELETE");
-      assert.ok(createIdx < deleteIdx, "POST must precede DELETE");
-
       assert.equal(state.awaitingNewSession, true);
       assert.ok(messageLines().includes("Clearing session…"));
+    });
+
+    // Regression: /clear used to fire createSession and deleteSession in parallel, relying
+    // on dispatch order. But the server processes delete (DB row removal) faster than
+    // create (ACP session spinup), so the resulting `session_deleted` SSE arrived first,
+    // triggered fallbackToNextSession(), and landed the user on some unrelated existing
+    // session. The fresh `session_created` was then ignored because awaitingNewSession had
+    // already been consumed.
+    //
+    // The fix is to await createSession before dispatching delete — that guarantees the
+    // server emits session_created before session_deleted on the SSE stream.
+    //
+    // This stub models real server timing: create is async (yields a tick before its
+    // SSE broadcast and HTTP response), delete is synchronous. The decoy in listSessions
+    // is the trap target — without it, fallback might happen to pick "new" and silently
+    // mask the bug.
+    it("/clear lands on the new session despite slow create / fast delete", async () => {
+      state.clientId = "cl-1";
+      state.sessionId = "old";
+      state.sessionCwd = "/p";
+      setFetch(async (url: string, init?: any) => {
+        const body = (data: any) => {
+          const json = JSON.stringify(data);
+          return { ok: true, status: 200, json: async () => data, text: async () => json };
+        };
+        if (url === "/api/v1/sessions" && init?.method === "POST") {
+          // Simulate slow create: yield a tick, then broadcast session_created, then return.
+          await new Promise(r => setTimeout(r, 0));
+          events.handleEvent({ type: "session_created", sessionId: "new", cwd: "/p", title: null, configOptions: [] });
+          return body({ id: "new" });
+        }
+        if (url === "/api/v1/sessions/old" && init?.method === "DELETE") {
+          // Simulate fast delete: synchronous broadcast.
+          events.handleEvent({ type: "session_deleted", sessionId: "old" });
+          return body({});
+        }
+        // listSessions: decoy comes before "new" so fallback's find() lands on the wrong
+        // target if the buggy parallel path runs. Without this trap target, fallback
+        // could pick "new" and silently mask the bug.
+        if (url === "/api/v1/sessions" && (!init?.method || init.method === "GET")) {
+          return body([{ id: "old" }, { id: "decoy" }, { id: "new" }]);
+        }
+        if (url.startsWith("/api/v1/sessions/") && url.includes("/events")) return body([]);
+        if (url.startsWith("/api/v1/sessions/")) {
+          const id = url.split("/").pop();
+          return body({ id, cwd: "/p", title: null, configOptions: [] });
+        }
+        return body({});
+      });
+
+      await commands.handleSlashCommand("/clear");
+      // Drain pending microtasks/timers — slow create resolves on a later tick.
+      for (let i = 0; i < 5; i++) await new Promise(r => setTimeout(r, 0));
+
+      assert.equal(state.sessionId, "new", `expected to land on new session, got ${state.sessionId}`);
+      assert.equal(state.awaitingNewSession, false);
     });
 
     it("clear without active session warns and does nothing", async () => {

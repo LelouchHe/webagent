@@ -125,7 +125,17 @@ export async function handleSlashCommand(text: string): Promise<boolean> {
       if (state.busy) sendCancel();
       resetSessionUI();
       addSystem('Clearing session…');
-      requestNewSession({ cwd, inheritFromSessionId: oldId });
+      // Serialize: await create so the server broadcasts session_created before we
+      // dispatch the delete. Otherwise session_deleted could arrive first on SSE and
+      // trigger fallbackToNextSession() which would land us on some unrelated session.
+      state.awaitingNewSession = true;
+      try {
+        await api.createSession({ cwd, inheritFromSessionId: oldId });
+      } catch {
+        state.awaitingNewSession = false;
+        addSystem('err: Failed to clear session');
+        return true;
+      }
       api.deleteSession(oldId).catch(() => {});
       cachedSessions = null;
       return true;
