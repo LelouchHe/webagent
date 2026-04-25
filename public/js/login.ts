@@ -9,7 +9,7 @@ if (localStorage.getItem(TOKEN_STORAGE_KEY)) {
 }
 
 const form = document.getElementById("login-form") as HTMLFormElement | null;
-const input = document.getElementById("token-input") as HTMLTextAreaElement | null;
+const input = document.getElementById("token-input") as HTMLInputElement | null;
 const errorEl = document.getElementById("error") as HTMLDivElement | null;
 const submitBtn = document.getElementById("submit-btn") as HTMLButtonElement | null;
 
