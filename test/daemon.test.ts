@@ -164,8 +164,8 @@ describe("daemon", () => {
 
       // Wait for PID file
       const pidFile = join(tmpDir, "webagent.pid");
-      for (let i = 0; i < 10; i++) {
-        await sleep(300);
+      for (let i = 0; i < 60; i++) {
+        await sleep(50);
         if (existsSync(pidFile)) break;
       }
 
@@ -192,8 +192,8 @@ describe("daemon", () => {
 
         // Wait for supervisor to be ready
         const pidFile = join(tmpDir, "webagent.pid");
-        for (let i = 0; i < 10; i++) {
-          await sleep(300);
+        for (let i = 0; i < 60; i++) {
+          await sleep(50);
           if (existsSync(pidFile)) break;
         }
         assert.ok(existsSync(pidFile));
@@ -203,9 +203,13 @@ describe("daemon", () => {
         supervisor.stdout?.on("data", (d: Buffer) => { output += d.toString(); });
         supervisor.stderr?.on("data", (d: Buffer) => { output += d.toString(); });
 
-        // Send SIGHUP for atomic restart
+        // Send SIGHUP for atomic restart; poll output for the log line
+        // instead of sleeping a fixed 2s.
         supervisor.kill("SIGHUP");
-        await sleep(2000);
+        for (let i = 0; i < 40; i++) {
+          if (output.includes("SIGHUP")) break;
+          await sleep(50);
+        }
 
         assert.ok(output.includes("SIGHUP"), `expected SIGHUP log in output: ${output}`);
 
