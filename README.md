@@ -76,6 +76,7 @@ Frontend source lives in `public/js/*.ts`, bundled by esbuild into a single cont
 |---|---|
 | **[Features](docs/features.md)** | Chat, images, bash, sessions, slash commands, keyboard shortcuts, themes |
 | **[Configuration & Operations](docs/configuration.md)** | TOML config, daemon commands, agent setup, upgrading |
+| **[Security](docs/security.md)** | Bearer auth, token storage, SSE ticket, signed image URLs, CSP, data layout |
 | **[API Reference](docs/api.md)** | REST endpoints, SSE events, implementation details |
 | **[ACP Integration](docs/acp.md)** | Client extensions, protocol scope, current limits |
 | **[Client Architecture](docs/client-architecture.md)** | Frontend modules, data flow, conventions |
