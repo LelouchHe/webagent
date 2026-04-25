@@ -14,6 +14,26 @@ const isWatch = args.includes('--watch');
 const SRC = 'public';
 const OUT = isDev ? 'dist-dev' : 'dist';
 
+async function buildBundledCss() {
+  const main = await readFile(join(OUT, 'styles.css'), 'utf-8');
+  // Bundle hljs themes locally (no CDN). Light is the default; dark overrides
+  // when [data-theme="dark"] is set explicitly OR when [data-theme="auto"]
+  // and the OS prefers dark. Native CSS nesting (Chrome 120+, Safari 16.5+,
+  // Firefox 117+) re-prefixes the .hljs selectors at runtime.
+  const lightCss = await readFile(join('node_modules', 'highlight.js', 'styles', 'github.css'), 'utf-8');
+  const darkCss = await readFile(join('node_modules', 'highlight.js', 'styles', 'github-dark.css'), 'utf-8');
+  return [
+    main,
+    '\n/* --- highlight.js themes (vendored from highlight.js@common, BSD-3-Clause) --- */\n',
+    '/* light: default */\n',
+    lightCss,
+    '\n/* dark: explicit */\n',
+    `[data-theme="dark"] {\n${darkCss}\n}\n`,
+    '\n/* dark: auto + system prefers dark */\n',
+    `@media (prefers-color-scheme: dark) {\n  [data-theme="auto"] {\n${darkCss}\n  }\n}\n`,
+  ].join('');
+}
+
 async function copyStaticAssets(bundleFile, loginBundleFile) {
   // Copy static assets (everything except js/)
   for (const entry of await readdir(SRC)) {
@@ -22,7 +42,10 @@ async function copyStaticAssets(bundleFile, loginBundleFile) {
   }
 
   if (isDev) {
-    // Dev: rewrite index.html + login.html to point to un-hashed bundles
+    // Dev: write bundled CSS + rewrite index.html + login.html to point to un-hashed bundles
+    const cssContent = await buildBundledCss();
+    await writeFile(join(OUT, 'styles.css'), cssContent);
+
     let html = await readFile(join(OUT, 'index.html'), 'utf-8');
     html = html.replace('type="module" src="/js/app.js"', `src="/js/${bundleFile}"`);
     await writeFile(join(OUT, 'index.html'), html);
@@ -31,8 +54,8 @@ async function copyStaticAssets(bundleFile, loginBundleFile) {
     loginHtml = loginHtml.replace('type="module" src="/js/login.js"', `src="/js/${loginBundleFile}"`);
     await writeFile(join(OUT, 'login.html'), loginHtml);
   } else {
-    // Production: hash CSS and rewrite index.html + login.html
-    const cssContent = await readFile(join(OUT, 'styles.css'), 'utf-8');
+    // Production: bundle + hash CSS, rewrite HTML
+    const cssContent = await buildBundledCss();
     const cssHash = hashString(cssContent);
     const newCss = `styles.${cssHash}.css`;
     await writeFile(join(OUT, newCss), cssContent);

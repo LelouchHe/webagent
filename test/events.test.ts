@@ -137,46 +137,29 @@ describe("events", () => {
       });
 
       it("enhances streamed code blocks when the stream finishes", async () => {
-        const originalAppendChild = document.head.appendChild.bind(document.head);
-        let sawHljsScript = false;
+        events.handleEvent({ type: "message_chunk", text: "```js\nconst " });
+        events.handleEvent({ type: "message_chunk", text: "x = 1;\n```" });
 
-        (globalThis as any).hljs = undefined;
+        assert.equal(
+          dom.messages.querySelector(".code-block-wrapper"),
+          null,
+          "streaming chunks should not keep rebuilding code wrappers",
+        );
 
-        document.head.appendChild = ((node: Node) => {
-          const result = originalAppendChild(node);
-          if ((node as Element).nodeName === "SCRIPT") {
-            sawHljsScript = true;
-            queueMicrotask(() => {
-              (globalThis as any).hljs = {
-                highlightElement(code: HTMLElement) {
-                  code.dataset.highlighted = "yes";
-                },
-              };
-              (node as HTMLScriptElement).onload?.(new Event("load"));
-            });
-          }
-          return result;
-        }) as typeof document.head.appendChild;
+        events.handleEvent({ type: "prompt_done", stopReason: "end_turn" });
+        await new Promise(resolve => setTimeout(resolve, 0));
 
-        try {
-          events.handleEvent({ type: "message_chunk", text: "```js\nconst " });
-          events.handleEvent({ type: "message_chunk", text: "x = 1;\n```" });
-
-          assert.equal(
-            dom.messages.querySelector(".code-block-wrapper"),
-            null,
-            "streaming chunks should not keep rebuilding code wrappers",
-          );
-
-          events.handleEvent({ type: "prompt_done", stopReason: "end_turn" });
-          await new Promise(resolve => setTimeout(resolve, 0));
-
-          const wrapper = dom.messages.querySelector(".code-block-wrapper");
-          assert.ok(wrapper, "expected streamed code block to be wrapped when streaming finishes");
-          assert.equal(sawHljsScript, true, "expected completed streamed code block to trigger hljs lazy load");
-        } finally {
-          document.head.appendChild = originalAppendChild;
-        }
+        const wrapper = dom.messages.querySelector(".code-block-wrapper");
+        assert.ok(wrapper, "expected streamed code block to be wrapped when streaming finishes");
+        const code = wrapper.querySelector("code");
+        assert.ok(code, "expected wrapped code element");
+        // hljs is now bundled (eager), so highlightElement runs synchronously
+        // inside enhanceCodeBlocks and stamps dataset.highlighted on the node.
+        assert.equal(
+          (code as HTMLElement).dataset.highlighted,
+          "yes",
+          "expected hljs to highlight the streamed code block",
+        );
       });
     });
 
