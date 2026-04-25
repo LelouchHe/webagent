@@ -25,6 +25,7 @@ const WHITELIST: readonly WhitelistEntry[] = [
   { method: "GET", test: (p) => p === "/manifest.json" },
   { method: "GET", test: (p) => p === "/sw.js" },
   { method: "GET", test: (p) => p === "/favicon.ico" },
+  { method: "GET", test: (p) => p === "/theme-init.js" },
 
   // Hashed bundles (must match build output naming)
   { method: "GET", test: (p) => /^\/js\/[A-Za-z0-9._-]+\.js$/.test(p) },

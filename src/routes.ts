@@ -37,6 +37,39 @@ const MIME: Record<string, string> = {
   ".webp": "image/webp",
 };
 
+/**
+ * HTML entrypoints served by this app. Any new HTML page MUST be registered
+ * here. Tests in `test/html-entrypoints.test.ts`, `test/csp.test.ts` and
+ * `test/inline-assets.test.ts` rely on this list to enforce security
+ * invariants (CSP header, no inline scripts/styles).
+ */
+export const HTML_ENTRYPOINTS = [
+  { urlPath: "/", file: "index.html" },
+  { urlPath: "/login", file: "login.html" },
+] as const;
+
+/**
+ * Strict Content-Security-Policy for HTML responses.
+ *
+ *  - default-src 'self': everything same-origin only
+ *  - img-src adds data: + blob: for image-upload preview
+ *  - script-src 'self' (no inline; theme bootstrap is /theme-init.js)
+ *  - style-src 'self' (no inline; login styles live in /styles.css)
+ *  - object-src 'none', frame-ancestors 'none', base-uri 'self', form-action 'self'
+ *  - connect-src 'self' for fetch + EventSource
+ */
+export const CSP_POLICY = [
+  "default-src 'self'",
+  "img-src 'self' data: blob:",
+  "script-src 'self'",
+  "style-src 'self'",
+  "connect-src 'self'",
+  "object-src 'none'",
+  "frame-ancestors 'none'",
+  "base-uri 'self'",
+  "form-action 'self'",
+].join("; ");
+
 export interface RequestHandlerDeps {
   store: Store;
   sessions?: SessionManager;
@@ -1310,8 +1343,8 @@ export function createRequestHandler(deps: RequestHandlerDeps): (req: IncomingMe
 
     // --- Static files ---
     let staticPath = url;
-    if (staticPath === "/") staticPath = "/index.html";
-    else if (staticPath === "/login") staticPath = "/login.html";
+    const htmlEntry = HTML_ENTRYPOINTS.find((e) => e.urlPath === staticPath);
+    if (htmlEntry) staticPath = "/" + htmlEntry.file;
     const filePath = join(deps.publicDir, staticPath);
     if (!filePath.startsWith(deps.publicDir)) {
       res.writeHead(403);
@@ -1326,10 +1359,13 @@ export function createRequestHandler(deps: RequestHandlerDeps): (req: IncomingMe
       const cacheControl = isHashedAsset
         ? "public, max-age=31536000, immutable"
         : "no-cache";
-      res.writeHead(200, {
+      const headers: Record<string, string> = {
         "Content-Type": MIME[ext] ?? "application/octet-stream",
         "Cache-Control": cacheControl,
-      });
+      };
+      // CSP applies to HTML entrypoints (where script/style execute).
+      if (htmlEntry) headers["Content-Security-Policy"] = CSP_POLICY;
+      res.writeHead(200, headers);
       res.end(data);
     } catch {
       res.writeHead(404);

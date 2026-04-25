@@ -766,3 +766,28 @@ body {
   opacity: 0.5;
   font-size: 0.85em;
 }
+
+/* --- Login page (extracted from login.html for CSP `style-src 'self'`) --- */
+body.login-page { display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; }
+.login-card { width: 100%; max-width: 480px; padding: 2rem 1.5rem; box-sizing: border-box; }
+.login-card h1 { font-size: 1.2rem; margin: 0 0 0.5rem; }
+.login-card p { font-size: 0.9rem; opacity: 0.75; margin: 0 0 1.25rem; line-height: 1.45; }
+.login-card textarea {
+  width: 100%; box-sizing: border-box; min-height: 4.5rem;
+  font-family: inherit; font-size: 0.95rem; padding: 0.6rem;
+  border: 1px solid currentColor; border-radius: 4px;
+  background: transparent; color: inherit; resize: vertical;
+}
+.login-card .error {
+  display: none; margin-top: 0.75rem; padding: 0.5rem 0.75rem;
+  border: 1px solid #c0392b; color: #c0392b; border-radius: 4px;
+  font-size: 0.85rem;
+}
+.login-card button {
+  margin-top: 1rem; width: 100%; padding: 0.6rem;
+  font: inherit; cursor: pointer; border: 1px solid currentColor;
+  background: transparent; color: inherit; border-radius: 4px;
+}
+.login-card button:disabled { opacity: 0.5; cursor: not-allowed; }
+.login-card .hint { font-size: 0.78rem; opacity: 0.6; margin-top: 1rem; }
+.login-card code { background: rgba(127,127,127,0.15); padding: 0.1rem 0.35rem; border-radius: 3px; }
