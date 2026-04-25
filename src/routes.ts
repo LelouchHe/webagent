@@ -1382,7 +1382,7 @@ export function createRequestHandler(deps: RequestHandlerDeps): (req: IncomingMe
       const data = await readFile(filePath);
       const ext = extname(filePath);
       const base = filePath.slice(filePath.lastIndexOf("/") + 1);
-      const isHashedAsset = /\.[a-f0-9]{8,}\.(js|css)$/.test(base);
+      const isHashedAsset = /\.[A-Za-z0-9_-]{8,}\.(js|css)$/.test(base);
       const cacheControl = isHashedAsset
         ? "public, max-age=31536000, immutable"
         : "no-cache";
