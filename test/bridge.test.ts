@@ -1,4 +1,4 @@
-import { afterEach, describe, it } from "node:test";
+import { afterEach, describe, it, mock } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
@@ -387,49 +387,70 @@ describe("AgentBridge", () => {
     });
 
     it("retries start() on failure with backoff", async () => {
-      const bridge = new AgentBridge("fake-agent");
-      const events: any[] = [];
-      bridge.on("event", (e: any) => events.push(e));
+      mock.timers.enable({ apis: ["setTimeout"] });
+      try {
+        const bridge = new AgentBridge("fake-agent");
+        const events: any[] = [];
+        bridge.on("event", (e: any) => events.push(e));
 
-      (bridge as any).conn = { cancel: async () => {} };
+        (bridge as any).conn = { cancel: async () => {} };
 
-      const sessions = createMockSessions();
-      const titleService = createMockTitleService();
+        const sessions = createMockSessions();
+        const titleService = createMockTitleService();
 
-      let attempt = 0;
-      (bridge as any).start = async () => {
-        attempt++;
-        if (attempt < 3) throw new Error(`fail-${attempt}`);
-        (bridge as any).conn = {};
-        bridge.emit("event", { type: "connected", agent: { name: "mock", version: "1.0" }, configOptions: [] });
-      };
+        let attempt = 0;
+        (bridge as any).start = async () => {
+          attempt++;
+          if (attempt < 3) throw new Error(`fail-${attempt}`);
+          (bridge as any).conn = {};
+          bridge.emit("event", { type: "connected", agent: { name: "mock", version: "1.0" }, configOptions: [] });
+        };
 
-      await bridge.restart(sessions as any, titleService as any);
+        const p = bridge.restart(sessions as any, titleService as any);
+        for (let i = 0; i < 5; i++) {
+          mock.timers.tick(5000);
+          await new Promise((r) => setImmediate(r));
+        }
+        await p;
 
-      assert.equal(attempt, 3);
-      assert.equal(bridge.reloading, false);
+        assert.equal(attempt, 3);
+        assert.equal(bridge.reloading, false);
+      } finally {
+        mock.timers.reset();
+      }
     });
 
     it("emits agent_reloading_failed when all start attempts fail", async () => {
-      const bridge = new AgentBridge("fake-agent");
-      const events: any[] = [];
-      bridge.on("event", (e: any) => events.push(e));
+      mock.timers.enable({ apis: ["setTimeout"] });
+      try {
+        const bridge = new AgentBridge("fake-agent");
+        const events: any[] = [];
+        bridge.on("event", (e: any) => events.push(e));
 
-      (bridge as any).conn = { cancel: async () => {} };
+        (bridge as any).conn = { cancel: async () => {} };
 
-      const sessions = createMockSessions();
-      const titleService = createMockTitleService();
+        const sessions = createMockSessions();
+        const titleService = createMockTitleService();
 
-      (bridge as any).start = async () => {
-        throw new Error("broken");
-      };
+        (bridge as any).start = async () => {
+          throw new Error("broken");
+        };
 
-      await assert.rejects(() => bridge.restart(sessions as any, titleService as any));
+        const p = bridge.restart(sessions as any, titleService as any);
+        const rejection = assert.rejects(() => p);
+        for (let i = 0; i < 5; i++) {
+          mock.timers.tick(5000);
+          await new Promise((r) => setImmediate(r));
+        }
+        await rejection;
 
-      const failEvent = events.find((e: any) => e.type === "agent_reloading_failed");
-      assert.ok(failEvent, "should emit agent_reloading_failed");
-      assert.equal(failEvent.error, "broken");
-      assert.equal(bridge.reloading, false, "reloading flag should be cleared on failure");
+        const failEvent = events.find((e: any) => e.type === "agent_reloading_failed");
+        assert.ok(failEvent, "should emit agent_reloading_failed");
+        assert.equal(failEvent.error, "broken");
+        assert.equal(bridge.reloading, false, "reloading flag should be cleared on failure");
+      } finally {
+        mock.timers.reset();
+      }
     });
   });
 });
