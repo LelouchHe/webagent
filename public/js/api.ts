@@ -127,6 +127,12 @@ export function reloadAgent(): Promise<void> {
   return post("/api/v1/bridge/reload", {});
 }
 
+// --- SSE ticket ---
+
+export function mintSseTicket(): Promise<{ ticket: string; expiresIn: number }> {
+  return post("/api/v1/sse-ticket", {});
+}
+
 // --- Inbox messages ---
 
 export interface InboxMessage {

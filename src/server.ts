@@ -11,8 +11,12 @@ import { createRequestHandler } from "./routes.ts";
 import { handleAgentEvent } from "./event-handler.ts";
 import { PushService } from "./push-service.ts";
 import { SseManager } from "./sse-manager.ts";
+import { TicketStore } from "./sse-ticket.ts";
+import { randomBytes } from "node:crypto";
 import { ClientRegistry } from "./client-registry.ts";
 import { startMessageCleanup, type CleanupHandle } from "./message-cleanup.ts";
+import { AuthStore } from "./auth-store.ts";
+import { join as pathJoin } from "node:path";
 import type { AgentEvent } from "./types.ts";
 
 // Prefix all console output with ISO-ish timestamps (YYYY-MM-DD HH:MM:SS)
@@ -52,6 +56,16 @@ sseManager.onRemove((clientId) => {
 });
 sseManager.startHeartbeat();
 
+const authStore = new AuthStore(pathJoin(config.data_dir, "auth.json"));
+const ticketStore = new TicketStore();
+// In-memory image signing secret; regenerated on every restart so previously
+// leaked URLs become invalid the moment the server is bounced.
+const imageSecret = randomBytes(32);
+// SSE heartbeat re-checks token revocation; revoked → connection closed
+// within one heartbeat interval (≤15s).
+sseManager.setRevocationCheck((tokenName) => !authStore.hasTokenName(tokenName));
+sseManager.setImageSecret(imageSecret);
+
 // Broadcast runtime state patches to all SSE clients interested in the session.
 sessions.state.onPatch((event) => sseManager.broadcast(event));
 
@@ -73,6 +87,9 @@ const server = createServer(createRequestHandler({
   pushService,
   serverVersion: PKG_VERSION,
   debugLevel: config.debug.level,
+  authStore,
+  ticketStore,
+  imageSecret,
 }));
 
 async function initBridge(): Promise<AgentBridge> {
@@ -98,6 +115,7 @@ async function shutdown() {
   messageCleanup?.stop();
   sessions.killAllBashProcs();
   await bridge?.shutdown();
+  await authStore.close();
   store.close();
   server.close();
   process.exit(0);
@@ -106,10 +124,21 @@ async function shutdown() {
 process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);
 
+// SIGHUP: reload auth.json without restarting (e.g. after CLI revoked a token)
+process.on("SIGHUP", () => {
+  authStore.reload().then(
+    () => console.log("[auth] reloaded auth.json"),
+    (err) => console.error("[auth] reload failed:", err),
+  );
+});
+
 // --- Start ---
 
 server.listen(config.port, "0.0.0.0", async () => {
   console.log(`[server] listening on http://localhost:${config.port}`);
+  await authStore.load();
+  const tokenCount = authStore.list().length;
+  console.log(`[auth] loaded ${tokenCount} token(s) from auth.json`);
   messageCleanup = startMessageCleanup(store, config.messages.unprocessed_ttl_days);
   console.log(`[bridge] starting: ${config.agent_cmd}...`);
   try {

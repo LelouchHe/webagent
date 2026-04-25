@@ -14,7 +14,7 @@ const isWatch = args.includes('--watch');
 const SRC = 'public';
 const OUT = isDev ? 'dist-dev' : 'dist';
 
-async function copyStaticAssets(bundleFile) {
+async function copyStaticAssets(bundleFile, loginBundleFile) {
   // Copy static assets (everything except js/)
   for (const entry of await readdir(SRC)) {
     if (entry === 'js') continue;
@@ -22,12 +22,16 @@ async function copyStaticAssets(bundleFile) {
   }
 
   if (isDev) {
-    // Dev: rewrite index.html to point to the un-hashed bundle
+    // Dev: rewrite index.html + login.html to point to un-hashed bundles
     let html = await readFile(join(OUT, 'index.html'), 'utf-8');
     html = html.replace('type="module" src="/js/app.js"', `src="/js/${bundleFile}"`);
     await writeFile(join(OUT, 'index.html'), html);
+
+    let loginHtml = await readFile(join(OUT, 'login.html'), 'utf-8');
+    loginHtml = loginHtml.replace('type="module" src="/js/login.js"', `src="/js/${loginBundleFile}"`);
+    await writeFile(join(OUT, 'login.html'), loginHtml);
   } else {
-    // Production: hash CSS and rewrite index.html
+    // Production: hash CSS and rewrite index.html + login.html
     const cssContent = await readFile(join(OUT, 'styles.css'), 'utf-8');
     const cssHash = hashString(cssContent);
     const newCss = `styles.${cssHash}.css`;
@@ -39,7 +43,12 @@ async function copyStaticAssets(bundleFile) {
     html = html.replace('type="module" src="/js/app.js"', `src="/js/${bundleFile}"`);
     await writeFile(join(OUT, 'index.html'), html);
 
-    console.log(`Build complete → ${bundleFile}, ${newCss}`);
+    let loginHtml = await readFile(join(OUT, 'login.html'), 'utf-8');
+    loginHtml = loginHtml.replace('/styles.css', `/${newCss}`);
+    loginHtml = loginHtml.replace('type="module" src="/js/login.js"', `src="/js/${loginBundleFile}"`);
+    await writeFile(join(OUT, 'login.html'), loginHtml);
+
+    console.log(`Build complete → ${bundleFile}, ${loginBundleFile}, ${newCss}`);
   }
 }
 
@@ -54,6 +63,13 @@ async function pruneOldHashedAssets() {
     .filter((e) => e.isFile() && /^app\.[a-zA-Z0-9]+\.js$/.test(e.name));
   const jsSorted = await sortByMtimeDesc(jsDir, jsEntries.map((e) => e.name));
   for (const f of jsSorted.slice(KEEP_HASHED_VERSIONS)) {
+    await rm(join(jsDir, f), { force: true });
+  }
+
+  const loginEntries = (await readdir(jsDir, { withFileTypes: true }))
+    .filter((e) => e.isFile() && /^login\.[a-zA-Z0-9]+\.js$/.test(e.name));
+  const loginSorted = await sortByMtimeDesc(jsDir, loginEntries.map((e) => e.name));
+  for (const f of loginSorted.slice(KEEP_HASHED_VERSIONS)) {
     await rm(join(jsDir, f), { force: true });
   }
 
@@ -84,7 +100,7 @@ async function main() {
   }
 
   const esbuildOptions = {
-    entryPoints: [join(SRC, 'js', 'app.ts')],
+    entryPoints: [join(SRC, 'js', 'app.ts'), join(SRC, 'js', 'login.ts')],
     bundle: true,
     format: 'esm',
     platform: 'browser',
@@ -100,7 +116,7 @@ async function main() {
     await ctx.watch();
     // Initial build
     await ctx.rebuild();
-    await copyStaticAssets('app.js');
+    await copyStaticAssets('app.js', 'login.js');
     console.log(`Dev build ready (watching for changes)…`);
 
     // Also watch static assets (HTML, CSS) for changes
@@ -110,7 +126,7 @@ async function main() {
         const watcher = fsWatch(SRC, { recursive: true, signal: ac.signal });
         for await (const event of watcher) {
           if (event.filename && !event.filename.startsWith('js/')) {
-            await copyStaticAssets('app.js');
+            await copyStaticAssets('app.js', 'login.js');
           }
         }
       } catch (e) {
@@ -122,14 +138,18 @@ async function main() {
   } else {
     await build(esbuildOptions);
 
-    const jsFiles = (await readdir(join(OUT, 'js'))).filter(f => f.endsWith('.js'));
-    // esbuild may have left older hashed bundles from prior builds; pick the newest by mtime.
-    const sorted = await sortByMtimeDesc(join(OUT, 'js'), jsFiles);
-    const bundleFile = sorted[0];
-    await copyStaticAssets(bundleFile);
+    const jsFiles = await readdir(join(OUT, 'js'));
+    const appCandidates = jsFiles.filter((f) => /^app\.[A-Za-z0-9]+\.js$/.test(f) || f === 'app.js');
+    const loginCandidates = jsFiles.filter((f) => /^login\.[A-Za-z0-9]+\.js$/.test(f) || f === 'login.js');
+    // esbuild may have left older hashed bundles; pick newest by mtime per family.
+    const appSorted = await sortByMtimeDesc(join(OUT, 'js'), appCandidates);
+    const loginSorted = await sortByMtimeDesc(join(OUT, 'js'), loginCandidates);
+    const bundleFile = appSorted[0];
+    const loginBundleFile = loginSorted[0];
+    await copyStaticAssets(bundleFile, loginBundleFile);
     await pruneOldHashedAssets();
 
-    if (isDev) console.log(`Dev build complete → ${bundleFile}`);
+    if (isDev) console.log(`Dev build complete → ${bundleFile}, ${loginBundleFile}`);
   }
 }
 

@@ -1,5 +1,17 @@
 // Boot entry point — imports all modules and starts the app
 
+// Pre-bootstrap: bounce to /login if no token. Done before any other module
+// runs so we don't waste time spinning up the app for an unauthenticated user.
+import { TOKEN_STORAGE_KEY } from './login-core.ts';
+if (!localStorage.getItem(TOKEN_STORAGE_KEY)) {
+  location.replace('/login');
+  // Throw to halt the rest of the bundle in case replace() is async.
+  throw new Error('redirecting to /login');
+}
+
+import { installAuthFetch } from './auth-fetch.ts';
+installAuthFetch();
+
 import './render.ts';    // theme, click-to-collapse listeners
 import './commands.ts';  // slash menu listeners
 import './images.ts';    // attach/paste listeners

@@ -25,8 +25,25 @@ async function registerPushEndpoint(clientId: string) {
 export function connect() {
   setConnectionStatus('connecting', 'connecting');
 
-  // SSE for receiving server events (background — does not block page load)
-  const es = new EventSource('/api/v1/events/stream');
+  // SSE for receiving server events. EventSource cannot send Authorization,
+  // so we exchange a Bearer for a single-use 60s ticket first, then open
+  // the stream with ?ticket=…
+  void openStream();
+}
+
+async function openStream() {
+  let ticket = '';
+  try {
+    const resp = await api.mintSseTicket();
+    ticket = resp.ticket;
+  } catch {
+    // Auth wrapper already redirects to /login on 401. For transient errors
+    // schedule a retry on the same cadence as the SSE reconnect path.
+    setTimeout(connect, 3000);
+    return;
+  }
+
+  const es = new EventSource(`/api/v1/events/stream?ticket=${encodeURIComponent(ticket)}`);
   state.eventSource = es;
 
   es.onmessage = async (e: MessageEvent) => {

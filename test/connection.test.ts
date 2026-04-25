@@ -89,11 +89,20 @@ describe("connection", () => {
   function setFetch(handler: (url: string, init?: RequestInit) => Promise<any> | any) {
     globalThis.fetch = (async (url: string, init?: RequestInit) => {
       fetchCalls.push({ url, init });
+      // Auto-respond to SSE ticket mints — every connect() call now does
+      // this exchange before opening EventSource.
+      if (url === "/api/v1/sse-ticket" && init?.method === "POST") {
+        return mockResponse({ ticket: "tkt-test", expiresIn: 60 });
+      }
       return handler(url, init);
     }) as any;
   }
 
-  function latestES() {
+  async function latestES() {
+    // connect() is now async (awaits ticket mint + opens EventSource).
+    // Flush microtasks so MockEventSource has been constructed before we
+    // read it.
+    for (let i = 0; i < 10; i++) await Promise.resolve();
     const es = MockEventSource.instances.at(-1);
     assert.ok(es, "Expected an EventSource instance");
     return es;
@@ -112,7 +121,7 @@ describe("connection", () => {
   }
 
   /** Flush microtask queue so fire-and-forget async (initSession) completes. */
-  async function flush(n = 10) {
+  async function flush(n = 30) {
     for (let i = 0; i < n; i++) await Promise.resolve();
   }
 
@@ -127,8 +136,8 @@ describe("connection", () => {
     });
 
     connection.connect();
-    const es = latestES();
-    assert.equal(es.url, "/api/v1/events/stream");
+    const es = await latestES();
+    assert.equal(es.url, "/api/v1/events/stream?ticket=tkt-test");
     // initSession runs immediately (parallel with SSE), flush to let it complete
     await flush();
     // SSE connected arrives — sets clientId only
@@ -215,10 +224,10 @@ describe("connection", () => {
     assert.equal(state.awaitingNewSession, true);
   });
 
-  it("marks the UI disconnected and schedules reconnect on SSE error", () => {
+  it("marks the UI disconnected and schedules reconnect on SSE error", async () => {
     setFetch(async () => mockResponse({}));
     connection.connect();
-    const es = latestES();
+    const es = await latestES();
     state.busy = true;
     state.currentBashEl = render.addBashBlock("echo hi", true);
     state.pendingToolCallIds.add("tc-orphan");
@@ -262,7 +271,7 @@ describe("connection", () => {
     assert.equal(state.lastEventSeq, 1);
 
     // Disconnect
-    const firstES = latestES();
+    const firstES = await latestES();
     firstES.onerror?.();
     assert.deepEqual(timeoutCalls, [3000]);
 
@@ -417,7 +426,7 @@ describe("connection", () => {
     });
 
     connection.connect();
-    const es = latestES();
+    const es = await latestES();
     await flush();
 
     // SSE handshake

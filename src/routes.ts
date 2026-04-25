@@ -15,6 +15,10 @@ import { errorMessage, MessageIngressSchema } from "./types.ts";
 import type { AgentEvent } from "./types.ts";
 import { interruptBashProc } from "./session-manager.ts";
 import { randomUUID } from "node:crypto";
+import { authenticate, isWhitelistedPath, requireScope } from "./auth-middleware.ts";
+import type { AuthStore, TokenRecord } from "./auth-store.ts";
+import type { TicketStore } from "./sse-ticket.ts";
+import { signImageUrl, verifyImageSig, reSignImageUrlsInJson } from "./auth.ts";
 
 const IS_WIN = process.platform === "win32";
 
@@ -46,6 +50,20 @@ export interface RequestHandlerDeps {
   pushService?: PushService;
   serverVersion?: string;
   debugLevel?: string;
+  /**
+   * Optional auth store. When set, every request to `/api/**` outside the
+   * whitelist (see auth-middleware.ts) requires a valid Bearer token.
+   * When unset, the gate is disabled — used by older test files that
+   * predate auth. Production must always wire this in.
+   */
+  authStore?: AuthStore;
+  /** Optional SSE ticket store. Required alongside authStore for the
+   *  /api/v1/sse-ticket route and ticket-based SSE auth. */
+  ticketStore?: TicketStore;
+  /** Optional secret for HMAC-signed image URLs. When present, image GET
+   *  requires `?sig=&exp=`; image upload returns a signed URL. When absent
+   *  (legacy/tests), images are served unauthenticated. */
+  imageSecret?: Buffer;
 }
 
 /** Read the full request body as a string. */
@@ -75,11 +93,37 @@ function json(res: ServerResponse, status: number, data: unknown, req?: Incoming
   }
 }
 
+/** Per-request principal storage. WeakMap keeps it tied to the request lifetime
+ *  without monkey-patching IncomingMessage or relying on `any`. */
+const principalByRequest = new WeakMap<IncomingMessage, TokenRecord>();
+
+export function getPrincipal(req: IncomingMessage): TokenRecord | undefined {
+  return principalByRequest.get(req);
+}
+
 export function createRequestHandler(deps: RequestHandlerDeps): (req: IncomingMessage, res: ServerResponse) => Promise<void> {
   const { store, sessions, getBridge, sseManager, titleService } = deps;
 
   return async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     const url = req.url ?? "/";
+
+    // --- Auth gate: any /api/** outside whitelist requires Bearer ---
+    if (deps.authStore && url.startsWith("/api/")) {
+      const path = url.split("?")[0] ?? url;
+      const method = req.method ?? "GET";
+      if (!isWhitelistedPath(method, path)) {
+        const result = authenticate(req.headers, deps.authStore);
+        if (!result.ok) {
+          res.writeHead(401, {
+            "Content-Type": "application/json",
+            "WWW-Authenticate": "Bearer",
+          });
+          res.end(JSON.stringify({ error: "Unauthorized", reason: result.reason }));
+          return;
+        }
+        principalByRequest.set(req, result.principal);
+      }
+    }
 
     // --- API routes ---
     if (url === "/api/v1" || url.startsWith("/api/v1/")) {
@@ -140,6 +184,99 @@ export function createRequestHandler(deps: RequestHandlerDeps): (req: IncomingMe
           server: deps.serverVersion ?? "unknown",
           agent: sessions?.agentInfo ?? null,
         });
+        return;
+      }
+
+      // GET /api/v1/auth/verify — token validation probe
+      if (url === "/api/v1/auth/verify" && req.method === "GET") {
+        const principal = principalByRequest.get(req);
+        if (!principal) {
+          json(res, 401, { error: "Unauthorized" });
+          return;
+        }
+        json(res, 200, { ok: true, name: principal.name, scope: principal.scope });
+        return;
+      }
+
+      // POST /api/v1/sse-ticket — mint short-lived ticket for EventSource
+      if (url === "/api/v1/sse-ticket" && req.method === "POST") {
+        const principal = principalByRequest.get(req);
+        if (!principal) { json(res, 401, { error: "Unauthorized" }); return; }
+        if (!deps.ticketStore) { json(res, 501, { error: "SSE not available" }); return; }
+        const ticket = deps.ticketStore.mint({
+          tokenName: principal.name,
+          scope: principal.scope,
+        });
+        json(res, 200, { ticket, expiresIn: 60 });
+        return;
+      }
+
+      // --- Token management (admin scope) ---
+      // GET /api/v1/tokens — list all tokens (no hash field)
+      if (url === "/api/v1/tokens" && req.method === "GET") {
+        const principal = principalByRequest.get(req);
+        if (!deps.authStore || !principal) { json(res, 401, { error: "Unauthorized" }); return; }
+        if (principal.scope !== "admin") { json(res, 403, { error: "Forbidden" }); return; }
+        const list = deps.authStore.list().map((t) => ({
+          name: t.name,
+          scope: t.scope,
+          createdAt: t.createdAt,
+          lastUsedAt: t.lastUsedAt,
+        }));
+        json(res, 200, list);
+        return;
+      }
+
+      // POST /api/v1/tokens — create new api-scope token, return raw value once
+      if (url === "/api/v1/tokens" && req.method === "POST") {
+        const principal = principalByRequest.get(req);
+        if (!deps.authStore || !principal) { json(res, 401, { error: "Unauthorized" }); return; }
+        if (principal.scope !== "admin") { json(res, 403, { error: "Forbidden" }); return; }
+        let body: { name?: unknown };
+        try {
+          body = JSON.parse(await readBody(req));
+        } catch {
+          json(res, 400, { error: "Invalid JSON" });
+          return;
+        }
+        const name = typeof body.name === "string" ? body.name : "";
+        try {
+          const created = await deps.authStore.addToken(name, "api");
+          json(res, 201, {
+            token: created.token,
+            name: created.record.name,
+            scope: created.record.scope,
+          });
+        } catch (err: unknown) {
+          const msg = errorMessage(err);
+          if (/already exists|duplicate/i.test(msg)) {
+            json(res, 409, { error: msg });
+          } else {
+            json(res, 400, { error: msg });
+          }
+        }
+        return;
+      }
+
+      // DELETE /api/v1/tokens/:name — revoke
+      const tokenDelMatch = url.match(/^\/api\/v1\/tokens\/([^/?]+)\/?$/);
+      if (tokenDelMatch && req.method === "DELETE") {
+        const principal = principalByRequest.get(req);
+        if (!deps.authStore || !principal) { json(res, 401, { error: "Unauthorized" }); return; }
+        if (principal.scope !== "admin") { json(res, 403, { error: "Forbidden" }); return; }
+        const name = decodeURIComponent(tokenDelMatch[1]!);
+        if (!/^[A-Za-z0-9_-]{1,64}$/.test(name)) {
+          json(res, 400, { error: "Invalid token name" });
+          return;
+        }
+        try {
+          const ok = await deps.authStore.revokeToken(name);
+          if (!ok) { json(res, 404, { error: "Token not found" }); return; }
+          res.writeHead(204);
+          res.end();
+        } catch (err: unknown) {
+          json(res, 400, { error: errorMessage(err) });
+        }
         return;
       }
 
@@ -610,6 +747,17 @@ export function createRequestHandler(deps: RequestHandlerDeps): (req: IncomingMe
           }
         }
         const events = store.getEvents(sessionId, { excludeThinking, afterSeq, beforeSeq, limit });
+        // Re-sign image URLs at egress so 1h-old stored URLs become valid
+        // again — the user can reload history days later and images still
+        // resolve. Mutates `data` in-place; safe because store.getEvents
+        // returns fresh records.
+        if (deps.imageSecret) {
+          for (const ev of events) {
+            if (typeof ev.data === "string" && ev.data.includes("/images/")) {
+              ev.data = reSignImageUrlsInJson(ev.data, deps.imageSecret);
+            }
+          }
+        }
         const envelope: Record<string, unknown> = {
           events,
           streaming: { thinking: streamingThinking, assistant: streamingAssistant },
@@ -632,6 +780,21 @@ export function createRequestHandler(deps: RequestHandlerDeps): (req: IncomingMe
       if (url.startsWith("/api/v1/events/stream") && req.method === "GET") {
         if (!deps.sseManager) { json(res, 501, { error: "SSE not available" }); return; }
         const sseManager = deps.sseManager;
+
+        // Ticket-based auth (EventSource cannot send Authorization header).
+        // When authStore is configured, every SSE connection MUST present a
+        // valid single-use ticket from POST /api/v1/sse-ticket.
+        let tokenName: string | undefined;
+        if (deps.authStore) {
+          const ticket = new URLSearchParams(url.split("?")[1] ?? "").get("ticket") ?? "";
+          const principal = deps.ticketStore?.consume(ticket);
+          if (!principal) {
+            json(res, 401, { error: "Invalid or expired ticket" });
+            return;
+          }
+          tokenName = principal.tokenName;
+        }
+
         const clientId = sseManager.generateClientId();
 
         res.writeHead(200, {
@@ -640,7 +803,7 @@ export function createRequestHandler(deps: RequestHandlerDeps): (req: IncomingMe
           "Connection": "keep-alive",
         });
 
-        const client: import("./sse-manager.ts").SseClient = { id: clientId, res };
+        const client: import("./sse-manager.ts").SseClient = { id: clientId, res, tokenName };
         sseManager.add(client);
 
         // Send connected event
@@ -656,6 +819,17 @@ export function createRequestHandler(deps: RequestHandlerDeps): (req: IncomingMe
         const sseManager = deps.sseManager;
         const sessionId = decodeURIComponent(sseSessionMatch[1]);
 
+        let tokenName: string | undefined;
+        if (deps.authStore) {
+          const ticket = new URLSearchParams(url.split("?")[1] ?? "").get("ticket") ?? "";
+          const principal = deps.ticketStore?.consume(ticket);
+          if (!principal) {
+            json(res, 401, { error: "Invalid or expired ticket" });
+            return;
+          }
+          tokenName = principal.tokenName;
+        }
+
         const session = store.getSession(sessionId);
         if (!session) {
           json(res, 404, { error: "Session not found" });
@@ -669,7 +843,7 @@ export function createRequestHandler(deps: RequestHandlerDeps): (req: IncomingMe
           "Connection": "keep-alive",
         });
 
-        const client: import("./sse-manager.ts").SseClient = { id: clientId, res, sessionId };
+        const client: import("./sse-manager.ts").SseClient = { id: clientId, res, sessionId, tokenName };
         sseManager.add(client);
 
         // Send connected event
@@ -735,16 +909,36 @@ export function createRequestHandler(deps: RequestHandlerDeps): (req: IncomingMe
         const absPath = join(deps.dataDir, relPath);
         await mkdir(join(deps.dataDir, "images", sessionId), { recursive: true });
         await writeFile(absPath, Buffer.from(data, "base64"));
-        const imgUrl = `/api/v1/sessions/${sessionId}/images/${fileName}`;
+        const basePath = `/api/v1/sessions/${sessionId}/images/${fileName}`;
+        // 1h signed URL — long enough that the browser holds the rendered
+        // image in <img> cache for the full session lifetime, short enough
+        // that a leaked URL (screenshot, link share) expires within the day.
+        const imgUrl = deps.imageSecret
+          ? `${basePath}?${signImageUrl(basePath, deps.imageSecret, 3600)}`
+          : basePath;
         json(res, 200, { path: relPath, url: imgUrl });
         return;
       }
 
       // GET /api/v1/sessions/:id/images/:file
-      const imgGetMatch = url.match(/^\/api\/v1\/sessions\/([^/]+)\/images\/([^/?]+)\/?$/);
+      const imgGetMatch = url.match(/^\/api\/v1\/sessions\/([^/]+)\/images\/([^/?]+)(\?.*)?$/);
       if (imgGetMatch && req.method === "GET") {
         const sessionId = decodeURIComponent(imgGetMatch[1]);
         const file = decodeURIComponent(imgGetMatch[2]);
+        // When secret is configured, image GET requires sig+exp in query —
+        // there is no Bearer fallback because <img src=...> can't carry
+        // headers. Verify before any disk I/O.
+        if (deps.imageSecret) {
+          const params = new URLSearchParams(url.split("?")[1] ?? "");
+          const sig = params.get("sig") ?? "";
+          const exp = params.get("exp") ?? "";
+          const basePath = `/api/v1/sessions/${sessionId}/images/${file}`;
+          if (!verifyImageSig(basePath, exp, sig, deps.imageSecret)) {
+            res.writeHead(401, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ error: "Unauthorized" }));
+            return;
+          }
+        }
         const filePath = join(deps.dataDir, "images", sessionId, file);
         if (!filePath.startsWith(join(deps.dataDir, "images"))) {
           res.writeHead(403);
@@ -1115,7 +1309,10 @@ export function createRequestHandler(deps: RequestHandlerDeps): (req: IncomingMe
     }
 
     // --- Static files ---
-    const filePath = join(deps.publicDir, url === "/" ? "/index.html" : url);
+    let staticPath = url;
+    if (staticPath === "/") staticPath = "/index.html";
+    else if (staticPath === "/login") staticPath = "/login.html";
+    const filePath = join(deps.publicDir, staticPath);
     if (!filePath.startsWith(deps.publicDir)) {
       res.writeHead(403);
       res.end("Forbidden");
