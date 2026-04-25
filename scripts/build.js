@@ -34,6 +34,37 @@ async function buildBundledCss() {
   ].join('');
 }
 
+const KEEP_HASHED_VERSIONS = 2;
+
+/**
+ * Extract chunk filenames that the given JS source statically imports.
+ * Matches both './chunk.HASH.js' (relative) and '/js/chunk.HASH.js' (absolute).
+ */
+function extractChunkRefs(src) {
+  const re = /["'`](?:\.\/)?(?:\/js\/)?(chunk\.[A-Za-z0-9_-]+\.js)["'`]/g;
+  const found = new Set();
+  for (const m of src.matchAll(re)) found.add(m[1]);
+  return [...found];
+}
+
+/**
+ * Inject <link rel="modulepreload"> tags for each chunk into the HTML <head>,
+ * just before </head>. Idempotent: existing modulepreload tags for chunks
+ * not in `chunks` are stripped first.
+ */
+function injectModulePreload(html, chunks) {
+  // Strip any pre-existing modulepreload tags pointing at /js/chunk.*
+  html = html.replace(
+    /\s*<link\s+rel=["']modulepreload["']\s+href=["']\/js\/chunk\.[A-Za-z0-9_-]+\.js["']\s*\/?\s*>/g,
+    '',
+  );
+  if (chunks.length === 0) return html;
+  const tags = chunks
+    .map((c) => `<link rel="modulepreload" href="/js/${c}">`)
+    .join('\n');
+  return html.replace('</head>', `${tags}\n</head>`);
+}
+
 async function copyStaticAssets(bundleFile, loginBundleFile) {
   // Copy static assets (everything except js/)
   for (const entry of await readdir(SRC)) {
@@ -47,11 +78,11 @@ async function copyStaticAssets(bundleFile, loginBundleFile) {
     await writeFile(join(OUT, 'styles.css'), cssContent);
 
     let html = await readFile(join(OUT, 'index.html'), 'utf-8');
-    html = html.replace('type="module" src="/js/app.js"', `src="/js/${bundleFile}"`);
+    html = html.replace('type="module" src="/js/app.js"', `type="module" src="/js/${bundleFile}"`);
     await writeFile(join(OUT, 'index.html'), html);
 
     let loginHtml = await readFile(join(OUT, 'login.html'), 'utf-8');
-    loginHtml = loginHtml.replace('type="module" src="/js/login.js"', `src="/js/${loginBundleFile}"`);
+    loginHtml = loginHtml.replace('type="module" src="/js/login.js"', `type="module" src="/js/${loginBundleFile}"`);
     await writeFile(join(OUT, 'login.html'), loginHtml);
   } else {
     // Production: bundle + hash CSS, rewrite HTML
@@ -61,30 +92,36 @@ async function copyStaticAssets(bundleFile, loginBundleFile) {
     await writeFile(join(OUT, newCss), cssContent);
     await rm(join(OUT, 'styles.css'));
 
+    // Discover chunks the app bundle dynamically/statically imports, so we can
+    // emit <link rel="modulepreload"> for parallel download.
+    const appSrc = await readFile(join(OUT, 'js', bundleFile), 'utf-8');
+    const appChunks = extractChunkRefs(appSrc);
+
     let html = await readFile(join(OUT, 'index.html'), 'utf-8');
     html = html.replace('/styles.css', `/${newCss}`);
-    html = html.replace('type="module" src="/js/app.js"', `src="/js/${bundleFile}"`);
+    html = html.replace('type="module" src="/js/app.js"', `type="module" src="/js/${bundleFile}"`);
+    html = injectModulePreload(html, appChunks);
     await writeFile(join(OUT, 'index.html'), html);
 
     let loginHtml = await readFile(join(OUT, 'login.html'), 'utf-8');
     loginHtml = loginHtml.replace('/styles.css', `/${newCss}`);
-    loginHtml = loginHtml.replace('type="module" src="/js/login.js"', `src="/js/${loginBundleFile}"`);
+    loginHtml = loginHtml.replace('type="module" src="/js/login.js"', `type="module" src="/js/${loginBundleFile}"`);
     await writeFile(join(OUT, 'login.html'), loginHtml);
 
-    console.log(`Build complete → ${bundleFile}, ${loginBundleFile}, ${newCss}`);
+    console.log(`Build complete → ${bundleFile} (+${appChunks.length} chunk${appChunks.length === 1 ? '' : 's'}), ${loginBundleFile}, ${newCss}`);
   }
 }
-
-const KEEP_HASHED_VERSIONS = 2;
 
 async function pruneOldHashedAssets() {
   // Keep newest N hashed bundles; delete older ones. Dev builds don't hash so this is a no-op there.
   if (isDev) return;
 
   const jsDir = join(OUT, 'js');
+
   const jsEntries = (await readdir(jsDir, { withFileTypes: true }))
     .filter((e) => e.isFile() && /^app\.[a-zA-Z0-9]+\.js$/.test(e.name));
   const jsSorted = await sortByMtimeDesc(jsDir, jsEntries.map((e) => e.name));
+  const keepApp = jsSorted.slice(0, KEEP_HASHED_VERSIONS);
   for (const f of jsSorted.slice(KEEP_HASHED_VERSIONS)) {
     await rm(join(jsDir, f), { force: true });
   }
@@ -92,8 +129,26 @@ async function pruneOldHashedAssets() {
   const loginEntries = (await readdir(jsDir, { withFileTypes: true }))
     .filter((e) => e.isFile() && /^login\.[a-zA-Z0-9]+\.js$/.test(e.name));
   const loginSorted = await sortByMtimeDesc(jsDir, loginEntries.map((e) => e.name));
+  const keepLogin = loginSorted.slice(0, KEEP_HASHED_VERSIONS);
   for (const f of loginSorted.slice(KEEP_HASHED_VERSIONS)) {
     await rm(join(jsDir, f), { force: true });
+  }
+
+  // Reachability-aware chunk prune: any chunk referenced by a retained app or
+  // login bundle MUST be kept, even if older by mtime. This prevents in-flight
+  // tabs (loaded against the previous app.[hash].js) from 404-ing on lazy
+  // imports during a deploy. Anything else can be deleted.
+  const reachableChunks = new Set();
+  for (const f of [...keepApp, ...keepLogin]) {
+    const src = await readFile(join(jsDir, f), 'utf-8');
+    for (const c of extractChunkRefs(src)) reachableChunks.add(c);
+  }
+  const chunkEntries = (await readdir(jsDir, { withFileTypes: true }))
+    .filter((e) => e.isFile() && /^chunk\.[A-Za-z0-9_-]+\.js$/.test(e.name));
+  for (const e of chunkEntries) {
+    if (!reachableChunks.has(e.name)) {
+      await rm(join(jsDir, e.name), { force: true });
+    }
   }
 
   const rootEntries = (await readdir(OUT, { withFileTypes: true }))
@@ -130,6 +185,8 @@ async function main() {
     target: 'es2022',
     outdir: join(OUT, 'js'),
     entryNames: isDev ? '[name]' : '[name].[hash]',
+    chunkNames: 'chunk.[hash]',
+    splitting: true,
     minify: !isDev,
     external: [],
   };

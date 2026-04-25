@@ -1,15 +1,22 @@
-// Syntax highlighting (highlight.js, common 36 languages, eager-bundled)
+// Syntax highlighting (highlight.js, common 36 languages, lazy-loaded)
 // + code block toolbar (language label + copy button)
 //
-// hljs is bundled directly into the main app.js — no CDN, no lazy loading,
-// no async state machine. Theme CSS is appended to the main styles bundle
-// at build time (see scripts/build.js); dark/light switching is purely CSS
-// via [data-theme] + prefers-color-scheme.
+// hljs is dynamically imported into a separate chunk (esbuild splitting:true).
+// `<link rel="modulepreload">` in index.html starts the chunk download in
+// parallel with app.js, so by the time the first code block lands the chunk
+// is usually warm in cache. enhanceCodeBlocks renders the toolbar
+// synchronously; highlightAllIn awaits the dynamic import. Theme CSS is
+// appended to the main styles bundle at build time (see scripts/build.js).
 
-import hljs from 'highlight.js/lib/common';
+let hljsPromise:
+  | Promise<typeof import("highlight.js/lib/common").default>
+  | null = null;
+const getHljs = () =>
+  (hljsPromise ||= import("highlight.js/lib/common").then((m) => m.default));
 
-function highlightAllIn(container: Element) {
-  for (const code of container.querySelectorAll('pre code')) {
+async function highlightAllIn(container: Element) {
+  const hljs = await getHljs();
+  for (const code of container.querySelectorAll("pre code")) {
     if (!(code as HTMLElement).dataset.highlighted) {
       hljs.highlightElement(code as HTMLElement);
     }
@@ -80,14 +87,13 @@ export function handleCopyClick(e: Event) {
 }
 
 /**
- * Process code blocks in a container: add toolbar + highlight.
- * Called after renderMd() sets innerHTML. Synchronous because hljs is
- * bundled — no waiting for network or script load.
+ * Process code blocks in a container: add toolbar synchronously, then
+ * highlight asynchronously (chunk loads on demand, hits modulepreload cache).
  */
 export function enhanceCodeBlocks(container: Element) {
   if (!container.querySelector('pre code')) return;
   processCodeBlocks(container);
-  highlightAllIn(container);
+  void highlightAllIn(container);
 }
 
 /**

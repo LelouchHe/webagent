@@ -101,6 +101,20 @@ describe("HTTP routes", () => {
     );
   });
 
+  it("GET hashed chunk.[hash].js gets immutable long cache", async () => {
+    mkdirSync(join(publicDir, "js"), { recursive: true });
+    writeFileSync(
+      join(publicDir, "js", "chunk.deadbeef1234.js"),
+      "export const x = 1;",
+    );
+    const res = await makeRequest(port, "GET", "/js/chunk.deadbeef1234.js");
+    assert.equal(res.status, 200);
+    assert.equal(
+      res.headers["cache-control"],
+      "public, max-age=31536000, immutable",
+    );
+  });
+
   it("GET hashed CSS gets immutable long cache", async () => {
     writeFileSync(join(publicDir, "styles.deadbeef1234.css"), "body{}");
     const res = await makeRequest(port, "GET", "/styles.deadbeef1234.css");

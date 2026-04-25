@@ -80,7 +80,7 @@ The client uses **REST for all commands** and **SSE for receiving real-time even
 
 ## Module Structure
 
-All frontend source lives in `public/js/*.ts`. esbuild bundles it into a single content-hashed file.
+All frontend source lives in `public/js/*.ts`. esbuild bundles it into a content-hashed `app.[hash].js` plus shared `chunk.[hash].js` files (esbuild `splitting: true`). `highlight.js` is dynamically imported, so it lives in its own chunk and only loads when the first code block appears; `<link rel="modulepreload">` in `index.html` starts the chunk download in parallel with `app.js`.
 
 | Module | Responsibility | Key exports |
 |---|---|---|
@@ -638,13 +638,14 @@ Ctrl+M cycles through available modes. Click on the prompt indicator also cycles
 
 ```
 public/js/*.ts  ──→  esbuild  ──→  dist/js/app.[hash].js
+                                    + dist/js/chunk.[hash].js  (split shared deps; hljs)
 public/styles.css ──→  copy   ──→  dist/styles.[hash].css
-public/index.html ──→  inject ──→  dist/index.html
+public/index.html ──→  inject ──→  dist/index.html  (+ <link rel=modulepreload> per chunk)
 ```
 
-- `scripts/build.js` runs esbuild
-- Production: minified, content-hashed filenames for cache busting
-- Development (`--dev`): no minification, no hashing, output to `dist-dev/`
+- `scripts/build.js` runs esbuild with `splitting: true` and `chunkNames: 'chunk.[hash]'`
+- Production: minified, content-hashed filenames for cache busting; reachability-aware prune keeps chunks referenced by retained app/login bundles
+- Development (`--dev`): no minification on entry, but chunks are still hashed (esbuild requires unique chunk names); output to `dist-dev/`
 - `--watch`: live rebuild on file changes
 
 Content-hashed filenames mean `npm run build` is sufficient for frontend-only changes — the server reads files on each request, and Cloudflare/browser caches are busted by the new hash.
