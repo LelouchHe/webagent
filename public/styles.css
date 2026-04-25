@@ -767,6 +767,10 @@ body {
   font-size: 0.85em;
 }
 
+/* Utility: dim out cancelled / settled / past states. Used in dynamic innerHTML
+   where inline `style="opacity:0.5"` would violate strict CSP `style-src 'self'`. */
+.dim { opacity: 0.5; }
+
 /* --- Login page (extracted from login.html for CSP `style-src 'self'`) --- */
 body.login-page { display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; }
 .login-card { width: 100%; max-width: 480px; padding: 2rem 1.5rem; box-sizing: border-box; }

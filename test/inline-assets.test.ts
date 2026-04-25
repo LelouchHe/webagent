@@ -1,8 +1,19 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { HTML_ENTRYPOINTS } from "../src/routes.ts";
+
+function walkTs(dir: string): string[] {
+  const out: string[] = [];
+  for (const name of readdirSync(dir)) {
+    const full = join(dir, name);
+    const st = statSync(full);
+    if (st.isDirectory()) out.push(...walkTs(full));
+    else if (name.endsWith(".ts")) out.push(full);
+  }
+  return out;
+}
 
 /**
  * Security invariant: Registered HTML entrypoints MUST NOT contain inline
@@ -60,4 +71,41 @@ describe("inline scripts/styles in HTML entrypoints", () => {
       );
     });
   }
+});
+
+/**
+ * Security invariant: frontend TS source MUST NOT emit inline `style="..."`
+ * attributes via innerHTML strings. Strict CSP `style-src 'self'` blocks them
+ * at runtime — the page silently loses styling and (worse) downstream code
+ * that depends on the DOM mutation order can break (e.g. the CSP error halts
+ * a render path that builds the slash-command menu).
+ *
+ * Allowed alternatives:
+ *   - DOM CSSOM API: `el.style.opacity = '0.5'` (NOT subject to style-src in
+ *     Chrome's current CSP impl — only HTML style attributes are)
+ *   - CSS class: `<span class="dim">...` + `.dim { opacity: 0.5; }` in styles.css
+ *
+ * If this test fails: replace the `style="..."` attribute with a class.
+ */
+const INLINE_STYLE_ATTR_RE = /\bstyle\s*=\s*["'][^"']*["']/g;
+
+describe("inline style attributes in frontend TS", () => {
+  it("public/js/**/*.ts has no `style=\"...\"` literals", () => {
+    const tsFiles = walkTs(join(ROOT, "public", "js"));
+    const offenders: string[] = [];
+    for (const file of tsFiles) {
+      const src = readFileSync(file, "utf-8");
+      const matches = src.match(INLINE_STYLE_ATTR_RE);
+      if (matches) {
+        offenders.push(`${file.replace(ROOT + "/", "")}: ${matches.join(", ")}`);
+      }
+    }
+    assert.equal(
+      offenders.length,
+      0,
+      `Found inline style="..." attributes in frontend TS (CSP style-src 'self' blocks these at runtime). ` +
+        `Replace with a CSS class in public/styles.css, or use DOM API el.style.X = Y.\n` +
+        offenders.join("\n"),
+    );
+  });
 });

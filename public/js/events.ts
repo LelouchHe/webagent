@@ -132,7 +132,7 @@ function cancelPendingTurnUI() {
     if (!permEl || !permEl.querySelector('button')) continue;
     const titleEl = permEl.querySelector('.title');
     const title = titleEl?.textContent || '⚿';
-    permEl.innerHTML = `<span style="opacity:0.5">${escHtml(title)} — cancelled</span>`;
+    permEl.innerHTML = `<span class="dim">${escHtml(title)} — cancelled</span>`;
   }
   state.pendingToolCallIds.clear();
   state.pendingPermissionRequestIds.clear();
@@ -486,7 +486,7 @@ export function retryUnconfirmedPermissions() {
       api.resolvePermission(response.sessionId, requestId, response.optionId).catch(() => {});
     }
     const title = el.dataset.title ? `⚿ ${escHtml(el.dataset.title)}` : '⚿';
-    el.innerHTML = `<span style="opacity:0.5">${title} — ${escHtml(response.optionName)}</span>`;
+    el.innerHTML = `<span class="dim">${title} — ${escHtml(response.optionName)}</span>`;
     state.unconfirmedPermissions.delete(requestId);
   }
 }
@@ -642,7 +642,7 @@ export function replayEvent(type: string, data: Record<string, any>, events: Sto
       el.className = 'permission';
       el.dataset.requestId = data.requestId;
       el.dataset.title = data.title || '';
-      el.innerHTML = `<span class="title" style="opacity:0.5">⚿ ${escHtml(data.title)}</span> `;
+      el.innerHTML = `<span class="title dim">⚿ ${escHtml(data.title)}</span> `;
       // During replay, check the pre-built set to see if a later permission_response
       // already resolved this request (avoids forward-scanning the events array).
       const wasResolved = ri
@@ -663,7 +663,7 @@ export function replayEvent(type: string, data: Record<string, any>, events: Sto
             } else {
               api.resolvePermission(state.sessionId!, data.requestId, opt.optionId).catch(() => {});
             }
-            el.innerHTML = `<span style="opacity:0.5">⚿ ${escHtml(data.title)} — ${escHtml(opt.name)}</span>`;
+            el.innerHTML = `<span class="dim">⚿ ${escHtml(data.title)} — ${escHtml(opt.name)}</span>`;
           };
           el.appendChild(btn);
         });
@@ -680,7 +680,7 @@ export function replayEvent(type: string, data: Record<string, any>, events: Sto
       if (el) {
         const title = (el as HTMLElement).dataset.title ? `⚿ ${(el as HTMLElement).dataset.title}` : '⚿';
         const action = resolvePermissionLabel(data.optionName, data.denied);
-        el.innerHTML = `<span style="opacity:0.5">${escHtml(title)} — ${escHtml(action)}</span>`;
+        el.innerHTML = `<span class="dim">${escHtml(title)} — ${escHtml(action)}</span>`;
       }
       break;
     }
@@ -983,7 +983,7 @@ export function handleEvent(msg: AgentEvent) {
             optionName: opt.name,
             denied: perm.apiAction === 'deny',
           });
-          permEl.innerHTML = `<span style="opacity:0.5">⚿ ${escHtml(msg.title)} — ${escHtml(opt.name)}</span>`;
+          permEl.innerHTML = `<span class="dim">⚿ ${escHtml(msg.title)} — ${escHtml(opt.name)}</span>`;
           finishPromptIfIdle();
         };
         permEl.appendChild(btn);
@@ -999,7 +999,7 @@ export function handleEvent(msg: AgentEvent) {
       if (msg.sessionId === state.sessionId && permTarget) {
         const title = permTarget.dataset.title ? `⚿ ${permTarget.dataset.title}` : '⚿';
         const action = resolvePermissionLabel(msg.optionName, msg.denied);
-        permTarget.innerHTML = `<span style="opacity:0.5">${escHtml(title)} — ${escHtml(action)}</span>`;
+        permTarget.innerHTML = `<span class="dim">${escHtml(title)} — ${escHtml(action)}</span>`;
       }
       finishPromptIfIdle();
       break;
