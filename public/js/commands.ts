@@ -919,14 +919,13 @@ function renderSlashMenu() {
       const lead = t.isSelf
         ? `<span class="slash-self">*</span>`
         : `<span class="slash-ack" data-revoke-idx="${i}" title="revoke">[x]</span>`;
-      const nameClass = t.isSelf ? 'slash-cmd current' : 'slash-cmd';
+      const nameClass = t.isSelf ? 'slash-cmd inbox-title current' : 'slash-cmd inbox-title';
       return (
         `<div class="slash-item inbox-item token-item${i === slashIdx ? ' selected' : ''}" data-idx="${i}">` +
         `<div class="inbox-row-main">` +
           lead +
           `<span class="${nameClass}">${escHtml(t.name)}</span>` +
-          `<span class="inbox-sep">—</span>` +
-          `<span class="inbox-time">last used ${escHtml(last)}</span>` +
+          `<span class="inbox-time">(${escHtml(last)})</span>` +
         `</div>` +
         `<div class="inbox-row-meta">` +
           `<span class="${scopeColorClass}">${escHtml(t.scope)}</span>` +

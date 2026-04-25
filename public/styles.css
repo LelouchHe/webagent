@@ -587,9 +587,10 @@ body {
   color: var(--red);
   border-color: var(--red);
 }
-#input-prompt.busy { color: transparent; }
+#input-prompt.busy { visibility: hidden; }
 #input-prompt.busy::before {
   content: '⠋';
+  visibility: visible;
   position: absolute;
   inset: 0;
   color: var(--prompt-color);
@@ -657,20 +658,26 @@ body {
   line-height: 1.4;
   white-space: nowrap;
   min-width: 100%;
-  padding-left: 22px; /* align under title, past [x] */
+  padding-left: calc(3ch + 8px); /* align under title, past leading [x]/* marker */
 }
 .slash-item .slash-ack {
   color: var(--text-dim);
   cursor: pointer;
   user-select: none;
-  padding: 0 2px;
+  display: inline-block;
+  width: 3ch;
+  text-align: center;
+  flex: 0 0 auto;
   font-weight: normal;
 }
 .slash-item .slash-ack:hover { color: var(--red, #e06c75); }
 .slash-item .slash-self {
   color: var(--green);
   user-select: none;
-  padding: 0 2px;
+  display: inline-block;
+  width: 3ch;
+  text-align: center;
+  flex: 0 0 auto;
   font-weight: bold;
 }
 .slash-item.inbox-item .inbox-title {
@@ -694,9 +701,8 @@ body {
   white-space: nowrap;
 }
 
-/* Token scope colors: admin = red (sensitive), api = green (normal). */
+/* Token scope colors: admin = red (sensitive); api = default text color. */
 .slash-item .token-scope-admin { color: var(--red, #e06c75); font-weight: bold; }
-.slash-item .token-scope-api { color: var(--green); }
 
 /* Image attach */
 #attach-preview {
