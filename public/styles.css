@@ -467,7 +467,8 @@ body {
   border-top: 2px solid #e8872b;
 }
 #input-area.bash-mode #input-prompt {
-  color: #e8872b;
+  --prompt-color: #e8872b;
+  color: var(--prompt-color);
 }
 #input-area.bash-mode #input {
   color: #e8872b;
@@ -489,7 +490,8 @@ body {
   letter-spacing: 0.5px;
 }
 #input-area.plan-mode #input-prompt {
-  color: var(--green);
+  --prompt-color: var(--green);
+  color: var(--prompt-color);
 }
 #input-area.autopilot-mode {
   border-top: 2px solid var(--red);
@@ -508,7 +510,8 @@ body {
   letter-spacing: 0.5px;
 }
 #input-area.autopilot-mode #input-prompt {
-  color: var(--red);
+  --prompt-color: var(--red);
+  color: var(--prompt-color);
 }
 #status-bar {
   display: flex;
@@ -530,11 +533,13 @@ body {
   text-align: left;
 }
 #input-prompt {
-  color: var(--text);
+  --prompt-color: var(--text);
+  color: var(--prompt-color);
   font-weight: bold;
   user-select: none;
   line-height: 1.5;
   cursor: pointer;
+  position: relative;
 }
 #input {
   flex: 1;
@@ -582,10 +587,12 @@ body {
   color: var(--red);
   border-color: var(--red);
 }
-#input-prompt.busy { font-size: 0; position: relative; }
+#input-prompt.busy { color: transparent; }
 #input-prompt.busy::before {
   content: '⠋';
-  font-size: 16px;
+  position: absolute;
+  inset: 0;
+  color: var(--prompt-color);
   animation: spinner 0.8s steps(1) infinite;
 }
 @keyframes spinner {
