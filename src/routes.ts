@@ -630,16 +630,20 @@ export function createRequestHandler(deps: RequestHandlerDeps): (req: IncomingMe
             json(res, 404, { error: "Session not found" });
             return;
           }
-          // Start resume in background (non-blocking) so the client gets metadata fast
+          // Start resume in background (non-blocking) so the client gets metadata fast.
+          // BUT: if cache is cold (cold-restart case), block on resume up to 8s so
+          // configOptions returns inline. This eliminates the race where the
+          // post-resume `config_option_update` broadcast can arrive before the
+          // client's SSE is fully wired up — a flake observed on slow CI runners.
           const wasLive = sessions?.liveSessions.has(sessionId) ?? true;
+          let resumePromise: Promise<void> | null = null;
           if (sessions && getBridge && !wasLive) {
             const bridge = getBridge();
             if (bridge) {
-              const resumePromise = sessions.ensureResumed(bridge, sessionId);
-              // After resume populates cachedConfigOptions, broadcast a fresh
-              // config_option_update so any client currently viewing the
-              // session (whose initial GET returned an empty configOptions
-              // array because the cache was cold) gets the real values.
+              resumePromise = sessions.ensureResumed(bridge, sessionId);
+              // Broadcast config_option_update too, so any OTHER client viewing
+              // the same session (whose own GET may have raced and returned cold)
+              // also picks up the warm values.
               resumePromise.then(() => {
                 const cur = store.getSession(sessionId);
                 if (!cur || !sessions.cachedConfigOptions.length) return;
@@ -678,10 +682,26 @@ export function createRequestHandler(deps: RequestHandlerDeps): (req: IncomingMe
               }
             }
           }
+          // If cache is cold and we kicked off a resume, wait briefly so the
+          // GET response includes warm configOptions. Bounded to 8s — past that
+          // we fall back to returning empty configOptions and rely on the
+          // broadcast above. The frontend retries (re-fetches) on broadcast.
+          if (resumePromise && !sessions?.cachedConfigOptions.length) {
+            let timer: NodeJS.Timeout | null = null;
+            const timeoutPromise = new Promise<void>((resolve) => {
+              timer = setTimeout(resolve, 8000);
+            });
+            await Promise.race([
+              resumePromise.finally(() => { if (timer) clearTimeout(timer); }),
+              timeoutPromise,
+            ]).catch(() => {});
+          }
+          // Re-read session in case resume mutated stored config
+          const freshSession = store.getSession(sessionId) ?? session;
           const configOptions = sessions ? (() => {
             // Build configOptions from cached + stored overrides
             const opts = sessions.cachedConfigOptions.map(opt => {
-              const stored: Record<string, string | null> = { model: session.model, mode: session.mode, reasoning_effort: session.reasoning_effort };
+              const stored: Record<string, string | null> = { model: freshSession.model, mode: freshSession.mode, reasoning_effort: freshSession.reasoning_effort };
               const override = stored[opt.id];
               return override ? { ...opt, currentValue: override } : opt;
             });
@@ -689,12 +709,12 @@ export function createRequestHandler(deps: RequestHandlerDeps): (req: IncomingMe
           })() : [];
           const busyKind = sessions?.getBusyKind(sessionId) ?? null;
           json(res, 200, {
-            id: session.id,
-            cwd: session.cwd,
-            title: session.title,
-            source: session.source,
-            model: session.model,
-            mode: session.mode,
+            id: freshSession.id,
+            cwd: freshSession.cwd,
+            title: freshSession.title,
+            source: freshSession.source,
+            model: freshSession.model,
+            mode: freshSession.mode,
             configOptions,
             busy: busyKind != null,
             busyKind,

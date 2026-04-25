@@ -126,8 +126,9 @@ test("cold server restart still populates model + slash autocomplete", async ({ 
     server = await startServer(configPath);
     await expectConnectionStatus(page, "connected", { timeout: 15_000 });
 
-    // Status bar must eventually show model · cwd. The fix relies on the
-    // post-resume broadcast — without it, this stays "<cwd>" forever.
+    // Status bar must eventually show model · cwd. Server now blocks GET
+    // /api/v1/sessions/:id on cold-cache resume (up to 8s) so configOptions
+    // returns inline — no broadcast race.
     await expect(page.locator("#status-bar")).toContainText("mock-model-2", { timeout: 10_000 });
 
     // Slash autocomplete must show /model candidates. Without configOptions
