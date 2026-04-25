@@ -1,11 +1,28 @@
 import { test, expect, type Page } from "playwright/test";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn, type ChildProcess } from "node:child_process";
+import { createHash } from "node:crypto";
 import { createNewSession, currentSessionId, sendPrompt } from "./helpers.ts";
 
 const TRUNC_PORT = 6804;
+const TRUNC_ORIGIN = `http://127.0.0.1:${TRUNC_PORT}`;
+const E2E_TOKEN = readFileSync(join(import.meta.dirname, "..", "e2e-data", ".token"), "utf8").trim();
+
+function seedAuthFile(path: string, token: string): void {
+  const hash = createHash("sha256").update(token).digest("hex");
+  writeFileSync(
+    path,
+    JSON.stringify(
+      { tokens: [{ name: "e2e-trunc", scope: "admin", hash, createdAt: Date.now(), lastUsedAt: null }] },
+      null,
+      2,
+    ),
+    { mode: 0o600 },
+  );
+}
 
 async function waitForHealthy(url: string): Promise<void> {
   const deadline = Date.now() + 30_000;
@@ -40,7 +57,7 @@ async function startServer(configPath: string): Promise<ChildProcess> {
       }
     });
   });
-  await waitForHealthy(`http://127.0.0.1:${TRUNC_PORT}/api/v1/sessions`);
+  await waitForHealthy(`${TRUNC_ORIGIN}/api/v1/version`);
   return child;
 }
 
@@ -70,6 +87,7 @@ test("reloaded bash history uses the truncated stored tail when output exceeds t
 
   try {
     await mkdir(dataDir, { recursive: true });
+    seedAuthFile(join(dataDir, "auth.json"), E2E_TOKEN);
     await writeFile(configPath, [
       `port = ${TRUNC_PORT}`,
       `data_dir = "${dataDir}"`,
@@ -83,7 +101,13 @@ test("reloaded bash history uses the truncated stored tail when output exceeds t
     ].join("\n"));
 
     server = await startServer(configPath);
-    await gotoConnected(page, `http://127.0.0.1:${TRUNC_PORT}/`);
+    await page.context().addInitScript(
+      ({ key, value }) => {
+        try { localStorage.setItem(key, value); } catch {}
+      },
+      { key: "wa_token", value: E2E_TOKEN },
+    );
+    await gotoConnected(page, `${TRUNC_ORIGIN}/`);
 
     await createNewSession(page);
     await sendPrompt(page, "!node -e \"console.log('A'.repeat(200))\"");

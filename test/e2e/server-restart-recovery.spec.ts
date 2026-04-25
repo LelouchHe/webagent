@@ -1,11 +1,23 @@
 import { test, expect, type Page } from "playwright/test";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn, type ChildProcess } from "node:child_process";
+import { createHash } from "node:crypto";
 import { createNewSession, currentSessionId, expectConnectionStatus, sendPrompt } from "./helpers.ts";
 
 const RESTART_PORT = 6803;
+const RESTART_ORIGIN = `http://127.0.0.1:${RESTART_PORT}`;
+const E2E_TOKEN = readFileSync(join(import.meta.dirname, "..", "e2e-data", ".token"), "utf8").trim();
+
+function seedAuthFile(path: string, token: string): void {
+  const hash = createHash("sha256").update(token).digest("hex");
+  const data = {
+    tokens: [{ name: "e2e-restart", scope: "admin", hash, createdAt: Date.now(), lastUsedAt: null }],
+  };
+  writeFileSync(path, JSON.stringify(data, null, 2), { mode: 0o600 });
+}
 
 async function waitForHealthy(url: string): Promise<void> {
   const deadline = Date.now() + 30_000;
@@ -40,7 +52,7 @@ async function startServer(configPath: string): Promise<ChildProcess> {
       }
     });
   });
-  await waitForHealthy(`http://127.0.0.1:${RESTART_PORT}/api/v1/sessions`);
+  await waitForHealthy(`${RESTART_ORIGIN}/api/v1/version`);
   return child;
 }
 
@@ -70,6 +82,7 @@ test("server restart restores the same session without duplicating history", asy
 
   try {
     await mkdir(dataDir, { recursive: true });
+    seedAuthFile(join(dataDir, "auth.json"), E2E_TOKEN);
     await writeFile(configPath, [
       `port = ${RESTART_PORT}`,
       `data_dir = "${dataDir}"`,
@@ -83,7 +96,15 @@ test("server restart restores the same session without duplicating history", asy
     ].join("\n"));
 
     server = await startServer(configPath);
-    await gotoConnected(page, `http://127.0.0.1:${RESTART_PORT}/`);
+    // Inject the same token into localStorage for this origin (storageState
+    // in playwright.config only targets :6802).
+    await page.context().addInitScript(
+      ({ key, value }) => {
+        try { localStorage.setItem(key, value); } catch {}
+      },
+      { key: "wa_token", value: E2E_TOKEN },
+    );
+    await gotoConnected(page, `${RESTART_ORIGIN}/`);
 
     await createNewSession(page);
     await sendPrompt(page, "survive a restart");
