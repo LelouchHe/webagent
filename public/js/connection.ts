@@ -194,35 +194,25 @@ function cleanup() {
   setBusy(false);
 }
 
-// Visibility reporting via REST. On going-hidden we MUST use sendBeacon
-// (queued synchronously into the OS network stack), because iOS PWA may
-// suspend the JS runtime and kill in-flight fetch() before bytes leave
-// the device. That previously left the server believing we were still
-// visible → global suppression silently dropped ALL subsequent push
-// notifications for that session on every device until the SSE timeout
-// eventually cleared the ghost. On going-visible the process is awake
-// and we want an awaitable fetch so we can see failures.
+// Visibility reporting via REST. On going-hidden iOS PWA may suspend the JS
+// runtime mid-flight, so we use `fetch({ keepalive: true })` which the browser
+// commits to the network stack before suspension. We can't use sendBeacon here
+// because it doesn't support custom headers — and our Authorization: Bearer
+// header is required by the auth middleware. If the keepalive fetch gets
+// killed (rare), the SSE heartbeat (15s) and server-side visibility TTL act as
+// a backstop: a stuck "visible" flag self-clears when the SSE drops.
 function postHiddenBeacon(clientId: string, sessionId: string | null): void {
   const url = `/api/beta/clients/${encodeURIComponent(clientId)}/visibility`;
   const payload = JSON.stringify({ visible: false, sessionId });
-  const blob = new Blob([payload], { type: 'application/json' });
-  let sent: boolean;
   try {
-    sent = navigator.sendBeacon(url, blob);
+    void fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: payload,
+      keepalive: true,
+    }).catch(() => {});
   } catch {
-    sent = false;
-  }
-  if (!sent) {
-    try {
-      void fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: payload,
-        keepalive: true,
-      }).catch(() => {});
-    } catch {
-      /* best-effort */
-    }
+    /* best-effort */
   }
 }
 
