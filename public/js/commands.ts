@@ -10,6 +10,7 @@ import { loadHistory, handleEvent, fallbackToNextSession } from './events.ts';
 import * as api from './api.ts';
 import { log, setLogLevel, getLogLevel, type LogLevel } from './log.ts';
 import type { SessionSummary } from '../../src/types.ts';
+import { TOKEN_STORAGE_KEY } from './login-core.ts';
 
 // --- Push notification helpers ---
 
@@ -143,6 +144,87 @@ export async function handleSlashCommand(text: string): Promise<boolean> {
         await fallbackToNextSession(exitId, state.sessionCwd || undefined);
       } catch {
         addSystem('err: Failed to exit session');
+      }
+      return true;
+    }
+
+    case '/logout': {
+      // Forget the bearer token on this device and bounce to /login.
+      // The token itself stays valid on the server — use `/token rev <name>`
+      // to invalidate it across devices.
+      try {
+        localStorage.removeItem(TOKEN_STORAGE_KEY);
+      } catch { /* private mode / quota — redirect anyway */ }
+      try { state.eventSource?.close(); } catch { /* ignore */ }
+      addSystem('Logged out.');
+      location.replace('/login');
+      return true;
+    }
+
+    case '/token': {
+      // /token             → list tokens as system messages
+      // /token <name>      → create new api-scope token, show raw value once
+      // /token rev <name>  → revoke
+      const parts = arg.trim().split(/\s+/).filter(Boolean);
+      const action = parts[0];
+
+      if (!action) {
+        try {
+          const tokens = await api.listTokens();
+          if (tokens.length === 0) {
+            addSystem('token: (none)');
+            return true;
+          }
+          for (const t of tokens) {
+            const last = t.lastUsedAt ? formatLocalTime(t.lastUsedAt) : 'never';
+            addSystem(`${t.name} (${t.scope}) — created ${formatLocalTime(t.createdAt)}, last used ${last}`);
+          }
+          addSystem('— /token <name> to create · /token rev <name> to revoke');
+        } catch (e) {
+          const err = e as api.ApiError;
+          if (err.status === 403) addSystem('err: admin scope required to manage tokens');
+          else addSystem(`err: token list failed (${err.message})`);
+        }
+        return true;
+      }
+
+      if (action === 'rev') {
+        const name = parts[1];
+        if (!name) {
+          addSystem('err: usage /token rev <name>');
+          return true;
+        }
+        try {
+          await api.revokeToken(name);
+          addSystem(`token: revoked ${name}`);
+        } catch (e) {
+          const err = e as api.ApiError;
+          if (err.status === 404) addSystem(`err: no token named "${name}"`);
+          else if (err.status === 403) addSystem('err: admin scope required to manage tokens');
+          else if (err.status === 400 && /using|yourself|cannot/i.test(err.message)) {
+            addSystem("err: can't revoke the token you're signed in with — use another admin token");
+          }
+          else addSystem(`err: revoke failed (${err.message})`);
+        }
+        return true;
+      }
+
+      // Create new api-scope token
+      const name = action;
+      if (!/^[A-Za-z0-9_-]{1,64}$/.test(name)) {
+        addSystem('err: token name must match [A-Za-z0-9_-]{1,64}');
+        return true;
+      }
+      try {
+        const created = await api.createApiToken(name);
+        addSystem(`token: created ${created.name} (${created.scope})`);
+        addSystem(`${created.token}`);
+        addSystem('— save this now; it will never be shown again');
+      } catch (e) {
+        const err = e as api.ApiError;
+        if (err.status === 409) addSystem(`err: token "${name}" already exists`);
+        else if (err.status === 403) addSystem('err: admin scope required to manage tokens');
+        else addSystem(`err: create failed (${err.message})`);
       }
       return true;
     }
@@ -438,7 +520,7 @@ interface SlashCommand { cmd: string; args: string; desc: string }
 interface NotifyOption { value: string; name: string; desc: string }
 interface PathItem { cwd: string; time: string }
 
-type SlashItem = SlashCommand | SessionSummary | PathItem | NotifyOption | api.InboxMessage | { value: string; name: string };
+type SlashItem = SlashCommand | SessionSummary | PathItem | NotifyOption | api.InboxMessage | api.TokenSummary | { value: string; name: string };
 
 const SLASH_COMMANDS: SlashCommand[] = [
   { cmd: '/cancel',   args: '',            desc: 'Cancel current response' },
@@ -447,6 +529,7 @@ const SLASH_COMMANDS: SlashCommand[] = [
   { cmd: '/exit',     args: '',            desc: 'Close current session' },
   { cmd: '/help',     args: '',            desc: 'Show help (or type ?)' },
   { cmd: '/inbox',    args: '[ack] <id>',  desc: 'List / open / dismiss inbox messages' },
+  { cmd: '/logout',   args: '',            desc: 'Log out this device' },
   { cmd: '/mode',     args: '[name]',      desc: 'Pick or switch mode' },
   { cmd: '/model',    args: '[name]',      desc: 'Pick or switch model' },
   { cmd: '/new',      args: '[cwd]',       desc: 'New session' },
@@ -457,6 +540,7 @@ const SLASH_COMMANDS: SlashCommand[] = [
   { cmd: '/rename',   args: '<new title>', desc: 'Rename current session' },
   { cmd: '/switch',   args: '<title|id>',  desc: 'Switch to session' },
   { cmd: '/think',    args: '[level]',     desc: 'Pick or switch reasoning effort' },
+  { cmd: '/token',    args: '[rev] <name>', desc: 'List / create / revoke API tokens' },
 ];
 
 const SHORTCUTS = [
@@ -526,6 +610,14 @@ export function updateSlashMenu() {
   if (inboxMatch) {
     const query = text.slice(inboxMatch[0].length).toLowerCase();
     void fetchInboxForMenu(query);
+    return;
+  }
+
+  // /token — show token list / picker
+  const tokenMatch = text.match(/^\/token /);
+  if (tokenMatch) {
+    const query = text.slice(tokenMatch[0].length).toLowerCase();
+    void fetchTokensForMenu(query);
     return;
   }
 
@@ -665,6 +757,31 @@ async function fetchInboxForMenu(query: string) {
   dom.slashMenu.classList.add('active');
 }
 
+// Token menu: always fetched fresh — admin scope required server-side.
+async function fetchTokensForMenu(query: string) {
+  // Strip optional leading 'rev ' so `/token rev foo` filters by 'foo'.
+  let q = query.toLowerCase();
+  if (q.startsWith('rev ')) q = q.slice(4);
+  let tokens: api.TokenSummary[];
+  try {
+    tokens = await api.listTokens();
+  } catch (e) {
+    const err = e as api.ApiError;
+    if (err.status === 403) addSystem('err: admin scope required to manage tokens');
+    return;
+  }
+  slashMode = 'token';
+  slashFiltered = tokens.filter(t => !q || t.name.toLowerCase().includes(q));
+  if (slashFiltered.length === 0) {
+    hideSlashMenu();
+    return;
+  }
+  slashIdx = 0;
+  renderSlashMenu();
+  dom.slashMenu.classList.add('active');
+}
+
+
 function renderSlashMenu() {
   if (slashMode === 'new') {
     const currentCwd = (state.sessionCwd || '').toLowerCase();
@@ -719,6 +836,35 @@ function renderSlashMenu() {
         `</div>`
       );
     }).join('');
+  } else if (slashMode === 'token') {
+    const items = slashFiltered as api.TokenSummary[];
+    dom.slashMenu.innerHTML = items.map((t, i) => {
+      const last = t.lastUsedAt ? formatLocalTime(t.lastUsedAt) : 'never';
+      const created = formatLocalTime(t.createdAt);
+      const scopeColorClass = t.scope === 'admin' ? 'token-scope-admin' : 'token-scope-api';
+      // The token used by this very session is non-revokable (server enforces).
+      // Mark it like /switch marks the active session: '* ' prefix + green name,
+      // and skip the [x] button entirely.
+      const lead = t.isSelf
+        ? `<span class="slash-self">*</span>`
+        : `<span class="slash-ack" data-revoke-idx="${i}" title="revoke">[x]</span>`;
+      const nameClass = t.isSelf ? 'slash-cmd current' : 'slash-cmd';
+      return (
+        `<div class="slash-item inbox-item token-item${i === slashIdx ? ' selected' : ''}" data-idx="${i}">` +
+        `<div class="inbox-row-main">` +
+          lead +
+          `<span class="${nameClass}">${escHtml(t.name)}</span>` +
+          `<span class="inbox-sep">—</span>` +
+          `<span class="inbox-time">last used ${escHtml(last)}</span>` +
+        `</div>` +
+        `<div class="inbox-row-meta">` +
+          `<span class="${scopeColorClass}">${escHtml(t.scope)}</span>` +
+          `<span class="inbox-sep">·</span>` +
+          `<span class="inbox-cwd">created ${escHtml(created)}</span>` +
+        `</div>` +
+        `</div>`
+      );
+    }).join('');
   } else {
     dom.slashMenu.innerHTML = slashFiltered.map((c, i) => {
       const label = c.args ? `${c.cmd} ${c.args}` : c.cmd;
@@ -746,7 +892,7 @@ function tabCompleteSlashItem(idx: number) {
     dom.input.value = item.cmd + (item.args ? ' ' : '');
     hideSlashMenu();
     dom.input.focus();
-    if (['/new', '/switch', '/model', '/mode', '/think', '/notify', '/inbox'].includes(item.cmd)) {
+    if (['/new', '/switch', '/model', '/mode', '/think', '/notify', '/inbox', '/token'].includes(item.cmd)) {
       slashDismissed = null;
       updateSlashMenu();
     }
@@ -774,6 +920,13 @@ function tabCompleteSlashItem(idx: number) {
   } else if (slashMode === 'inbox') {
     const m = slashFiltered[idx] as api.InboxMessage;
     dom.input.value = `/inbox ${m.id}`;
+    hideSlashMenu();
+    dom.input.focus();
+  } else if (slashMode === 'token') {
+    const t = slashFiltered[idx] as api.TokenSummary;
+    // Tab on a token row pre-fills `/token rev <name>` (the most useful op
+    // for an existing token; user can edit the verb if they want create).
+    dom.input.value = `/token rev ${t.name}`;
     hideSlashMenu();
     dom.input.focus();
   }
@@ -838,12 +991,20 @@ async function selectSlashItem(idx: number) {
     dom.input.value = '';
     hideSlashMenu();
     void handleSlashCommand(`/inbox ${m.id}`);
+  } else if (slashMode === 'token') {
+    // Click on a token row: just fill `/token rev <name>` so the user must
+    // confirm with Enter. Revoke is destructive; the [x] button is the
+    // explicit shortcut.
+    const t = slashFiltered[idx] as api.TokenSummary;
+    dom.input.value = `/token rev ${t.name}`;
+    hideSlashMenu();
+    dom.input.focus();
   } else {
     const item = slashFiltered[idx];
     dom.input.value = item.cmd + (item.args ? ' ' : '');
     hideSlashMenu();
     dom.input.focus();
-    if (['/new', '/switch', '/model', '/mode', '/think', '/notify', '/inbox'].includes(item.cmd)) {
+    if (['/new', '/switch', '/model', '/mode', '/think', '/notify', '/inbox', '/token'].includes(item.cmd)) {
       slashDismissed = null;
       updateSlashMenu();
     }
@@ -889,13 +1050,40 @@ async function ackSlashInboxItem(idx: number) {
   await fetchInboxForMenu(query);
 }
 
+// /token [x] revoke button: revoke immediately, refresh the menu.
+async function revokeSlashTokenItem(idx: number) {
+  if (idx < 0 || idx >= slashFiltered.length) return;
+  const t = slashFiltered[idx] as api.TokenSummary;
+  try {
+    await api.revokeToken(t.name);
+    addSystem(`token: revoked ${t.name}`);
+  } catch (e) {
+    const err = e as api.ApiError;
+    if (err.status === 403) addSystem('err: admin scope required to manage tokens');
+    else if (err.status === 404) addSystem(`err: no token named "${t.name}"`);
+    else addSystem(`err: revoke failed (${err.message})`);
+    return;
+  }
+  // Re-open the menu with fresh data. Preserve any query the user typed.
+  const current = dom.input.value;
+  const m2 = current.match(/^\/token\s(.*)$/);
+  const query = m2 ? m2[1].toLowerCase() : '';
+  await fetchTokensForMenu(query);
+}
+
 dom.slashMenu.addEventListener('mousedown', (e) => {
   e.preventDefault();
   const target = e.target as Element | null;
-  // Inbox ack button: [x] click dismisses without consuming.
-  const ackBtn = target?.closest<HTMLElement>('.slash-ack');
-  if (ackBtn?.dataset.ackIdx !== undefined) {
-    void ackSlashInboxItem(Number(ackBtn.dataset.ackIdx));
+  // Two-line item action button: [x] click. Distinguish via data-* attr —
+  // inbox uses data-ack-idx (dismiss without consuming), token uses
+  // data-revoke-idx (DELETE the token).
+  const actionBtn = target?.closest<HTMLElement>('.slash-ack');
+  if (actionBtn?.dataset.ackIdx !== undefined) {
+    void ackSlashInboxItem(Number(actionBtn.dataset.ackIdx));
+    return;
+  }
+  if (actionBtn?.dataset.revokeIdx !== undefined) {
+    void revokeSlashTokenItem(Number(actionBtn.dataset.revokeIdx));
     return;
   }
   const item = target?.closest<HTMLElement>('.slash-item');

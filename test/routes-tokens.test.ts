@@ -82,18 +82,24 @@ describe("tokens CRUD", () => {
     assert.equal(r.status, 403);
   });
 
-  it("GET /tokens returns list without hashes", async () => {
+  it("GET /tokens returns list without hashes; isSelf marks the caller", async () => {
     const r = await req(port, "GET", "/api/v1/tokens", {
       Authorization: `Bearer ${adminToken}`,
     });
     assert.equal(r.status, 200);
     const list = JSON.parse(r.body) as Array<Record<string, unknown>>;
     assert.ok(list.length >= 2);
+    let selfCount = 0;
     for (const t of list) {
       assert.ok(t.name);
       assert.ok(t.scope);
       assert.equal(t.hash, undefined, "hash must not be exposed");
+      assert.equal(typeof t.isSelf, "boolean");
+      if (t.isSelf) selfCount++;
     }
+    assert.equal(selfCount, 1, "exactly one token should be marked isSelf");
+    const self = list.find((t) => t.isSelf);
+    assert.equal(self!.name, "admin1");
   });
 
   // POST /tokens
@@ -210,5 +216,22 @@ describe("tokens CRUD", () => {
       Authorization: `Bearer ${adminToken}`,
     });
     assert.equal(r.status, 400);
+  });
+
+  it("DELETE /tokens/:name refuses to revoke the caller's own token", async () => {
+    // adminToken belongs to "admin1" — using it to revoke admin1 must fail.
+    const r = await req(port, "DELETE", "/api/v1/tokens/admin1", {
+      Authorization: `Bearer ${adminToken}`,
+    });
+    assert.equal(r.status, 400);
+    const body = JSON.parse(r.body) as { error?: string };
+    assert.match(body.error || "", /yourself|using|cannot/i);
+    // Token still works.
+    const list = await req(port, "GET", "/api/v1/tokens", {
+      Authorization: `Bearer ${adminToken}`,
+    });
+    assert.equal(list.status, 200);
+    const tokens = JSON.parse(list.body) as Array<{ name: string }>;
+    assert.ok(tokens.find((t) => t.name === "admin1"));
   });
 });

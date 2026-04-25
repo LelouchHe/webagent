@@ -255,6 +255,7 @@ export function createRequestHandler(deps: RequestHandlerDeps): (req: IncomingMe
           scope: t.scope,
           createdAt: t.createdAt,
           lastUsedAt: t.lastUsedAt,
+          isSelf: t.name === principal.name,
         }));
         json(res, 200, list);
         return;
@@ -300,6 +301,10 @@ export function createRequestHandler(deps: RequestHandlerDeps): (req: IncomingMe
         const name = decodeURIComponent(tokenDelMatch[1]!);
         if (!/^[A-Za-z0-9_-]{1,64}$/.test(name)) {
           json(res, 400, { error: "Invalid token name" });
+          return;
+        }
+        if (name === principal.name) {
+          json(res, 400, { error: "Cannot revoke the token you are using" });
           return;
         }
         try {

@@ -159,3 +159,25 @@ export function consumeMessage(id: string): Promise<{ sessionId: string; already
 export function ackMessage(id: string): Promise<void> {
   return request(`/api/v1/messages/${encodeURIComponent(id)}`, { method: "DELETE" });
 }
+
+// --- Tokens (admin scope only) ---
+
+export interface TokenSummary {
+  name: string;
+  scope: "admin" | "api";
+  createdAt: number;
+  lastUsedAt: number | null;
+  isSelf: boolean;
+}
+
+export function listTokens(): Promise<TokenSummary[]> {
+  return request("/api/v1/tokens");
+}
+
+export function createApiToken(name: string): Promise<{ token: string; name: string; scope: "api" }> {
+  return post("/api/v1/tokens", { name });
+}
+
+export function revokeToken(name: string): Promise<void> {
+  return request("/api/v1/tokens/" + encodeURIComponent(name), { method: "DELETE" });
+}
