@@ -357,6 +357,18 @@ export const ROOT: CmdNode = {
           },
         };
       },
+      freeform: (q) => {
+        const trimmed = q.trim();
+        if (!trimmed) return null;
+        return {
+          primary: `create session at '${trimmed}'`,
+          onSelect: () => {
+            resetSessionUI();
+            addSystem('Creating new session…');
+            requestNewSession({ cwd: trimmed });
+          },
+        };
+      },
     },
     {
       name: '/notify', desc: 'Toggle notifications',
