@@ -224,23 +224,6 @@ export async function handleSlashCommand(text: string): Promise<boolean> {
       return true;
     }
 
-    case '/prune': {
-      try {
-        const res = await fetch('/api/v1/sessions');
-        const sessions = await res.json();
-        const toDelete = sessions.filter((s: { id: string }) => s.id !== state.sessionId);
-        if (toDelete.length === 0) {
-          addSystem('No other sessions to prune.');
-          return true;
-        }
-        await Promise.all(toDelete.map((s: { id: string }) => api.deleteSession(s.id).catch(() => {})));
-        addSystem(`Pruned ${toDelete.length} session(s).`);
-      } catch {
-        addSystem('err: Failed to prune sessions');
-      }
-      return true;
-    }
-
     case '/switch': {
       if (!arg) {
         addSystem('Usage: /switch <title or id prefix>');

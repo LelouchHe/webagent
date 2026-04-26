@@ -292,35 +292,6 @@ describe("commands", () => {
       assert.ok(messageLines().some((l: string) => l.includes("No active session")));
     });
 
-    it("prunes every session except the current one", async () => {
-      state.clientId = "cl-1";
-      state.sessionId = "keep";
-      setFetch(async (url: string, init?: any) => {
-        if (url === "/api/v1/sessions" && (!init || init.method !== "DELETE")) {
-          return {
-            json: async () => [
-              { id: "keep", title: "Keep" },
-              { id: "drop-1", title: "Drop One" },
-              { id: "drop-2", title: "Drop Two" },
-            ],
-          };
-        }
-        // DELETE calls
-        return { ok: true, json: async () => ({}) };
-      });
-
-      const handled = await commands.handleSlashCommand("/prune");
-
-      assert.equal(handled, true);
-      const deleteCalls = fetchCalls.filter(c => c.init?.method === "DELETE");
-      assert.equal(deleteCalls.length, 2);
-      assert.deepEqual(deleteCalls.map(c => c.url).sort(), [
-        "/api/v1/sessions/drop-1",
-        "/api/v1/sessions/drop-2",
-      ]);
-      assert.ok(messageLines().includes("Pruned 2 session(s)."));
-    });
-
     it("switches to a matching session and loads history", async () => {
       state.clientId = "cl-1";
       state.sessionId = "current";

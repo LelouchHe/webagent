@@ -391,20 +391,6 @@ export const ROOT: CmdNode = {
       },
     },
     {
-      name: '/prune', desc: 'Delete other sessions',
-      onSelect: async () => {
-        try {
-          const sessions = await listSessions();
-          const toDelete = sessions.filter((s) => s.id !== state.sessionId);
-          if (toDelete.length === 0) { addSystem('No other sessions to prune.'); return; }
-          await Promise.all(toDelete.map((s) => api.deleteSession(s.id).catch(() => {})));
-          addSystem(`Pruned ${toDelete.length} session(s).`);
-        } catch {
-          addSystem('err: Failed to prune sessions');
-        }
-      },
-    },
-    {
       name: '/reload', desc: 'Reload agent',
       onSelect: () => {
         addSystem('Reloading agent…');

@@ -60,7 +60,6 @@ Commands with submenus (`/model`, `/mode`, `/think`, `/notify`, `/switch`, `/new
 | `/switch <title\|id>` | Switch session (match by title or ID prefix) |
 | `/rename <new title>` | Rename session |
 | `/exit` | End current session (delete + switch to previous) |
-| `/prune` | Delete other sessions (keep current) |
 | `/reload` | Reload agent subprocess (pick up CLI upgrades, new skills) |
 | `/logout` | Log out — clear local token and return to login page |
 | `/token` | Manage API tokens (list, create, revoke) — see [Auth & Security](security.md) |
