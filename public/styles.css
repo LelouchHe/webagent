@@ -620,7 +620,7 @@ body {
 #slash-menu.active { display: block; }
 
 .slash-item {
-  padding: 6px 14px;
+  padding: 6px 6px;
   cursor: pointer;
   font-size: 15px;
   display: flex;
@@ -634,9 +634,9 @@ body {
 
 .slash-row-l1 {
   display: grid;
-  grid-template-columns: 2ch auto 1fr;
+  grid-template-columns: 1ch auto 1fr;
   align-items: baseline;
-  gap: 8px;
+  gap: 4px;
   min-width: 100%;
 }
 .slash-row-l2 {
@@ -647,13 +647,13 @@ body {
   color: var(--text-dim);
   font-size: 12px;
   line-height: 1.4;
-  padding-left: calc(2ch + 8px);
+  padding-left: calc(1ch + 4px);
   min-width: 100%;
 }
 
 .slash-prefix {
   display: inline-block;
-  width: 2ch;
+  width: 1ch;
   text-align: center;
   user-select: none;
   flex: 0 0 auto;
