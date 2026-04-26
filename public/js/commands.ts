@@ -118,6 +118,7 @@ function rebuild(tailQuery: string, pathPrefix: string): void {
 
 function renderMenu(pathPrefix: string): void {
   dom.slashMenu.innerHTML = '';
+  dom.slashMenu.classList.toggle('slash-menu-root', pathPrefix === '');
   candidates.forEach((c, i) => {
     if (c.kind === 'separator') {
       const sep = document.createElement('div');

@@ -681,10 +681,14 @@ body {
   font-weight: bold;
   white-space: nowrap;
 }
+.slash-menu-root .slash-primary {
+  min-width: 7ch;
+}
 .slash-current { color: var(--green); }
 .slash-secondary {
   color: var(--text-dim);
   white-space: nowrap;
+  margin-left: 1ch;
 }
 .slash-path {
   white-space: nowrap;
