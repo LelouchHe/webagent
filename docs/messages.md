@@ -96,7 +96,7 @@ Typing `/inbox` (with or without a trailing space) opens a picker listing all pe
 - **`[x]` button:** ack (dismiss without consuming)
 - **Tab:** fills `/inbox <id>` into the input so the command is visible before you press Enter
 
-Typing `/inbox <id-prefix|title-substring>` (without picker) consumes the first match; `/inbox ack <id-prefix|title-substring>` dismisses it. Matching mirrors `/switch` (id prefix OR case-insensitive title substring, first hit wins). There is no `consume` keyword — plain `/inbox <query>` is the consume path.
+Typing `/inbox <id-prefix|title-substring>` (without picker) consumes the first match; `/inbox dismiss <id-prefix|title-substring>` dismisses it. Matching mirrors `/switch` (id prefix OR case-insensitive title substring, first hit wins). There is no `consume` keyword — plain `/inbox <query>` is the consume path.
 
 The menu refetches on every open (no client-side caching) so new arrivals show up immediately.
 

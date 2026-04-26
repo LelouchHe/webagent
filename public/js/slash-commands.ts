@@ -76,7 +76,7 @@ async function unsubscribePush(): Promise<void> {
   }
 }
 
-// --- shared data fetchers (keep call sites identical for /inbox + /inbox ack) ---
+// --- shared data fetchers (keep call sites identical for /inbox + /inbox dismiss) ---
 
 async function listSessions(): Promise<SessionSummary[]> {
   const res = await fetch('/api/v1/sessions');
@@ -262,10 +262,10 @@ export const ROOT: CmdNode = {
       name: '/log', desc: 'Set log level',
       fetch: () => [
         { value: 'off',   name: 'off',   desc: 'Disable logging' },
-        { value: 'error', name: 'error', desc: 'Errors only' },
-        { value: 'warn',  name: 'warn',  desc: 'Warnings and above' },
-        { value: 'info',  name: 'info',  desc: 'Info and above' },
-        { value: 'debug', name: 'debug', desc: 'Everything, including verbose' },
+        { value: 'error', name: 'error', desc: 'Show errors only' },
+        { value: 'warn',  name: 'warn',  desc: 'Show warnings and errors' },
+        { value: 'info',  name: 'info',  desc: 'Show info, warnings, errors' },
+        { value: 'debug', name: 'debug', desc: 'Show all messages' },
       ],
       toSpec: (item) => {
         const o = item as { value: string; name: string; desc: string };
@@ -313,7 +313,7 @@ export const ROOT: CmdNode = {
       },
       children: [
         {
-          name: 'ack', desc: 'Dismiss without consuming',
+          name: 'dismiss', desc: 'Dismiss only',
           fetch: listInbox,
           toSpec: (item) => {
             const m = item as api.InboxMessage;
@@ -363,8 +363,8 @@ export const ROOT: CmdNode = {
       fetch: async () => {
         await refreshNotifyActive();
         return [
-          { value: 'on',  name: 'on',  desc: 'Enable' },
-          { value: 'off', name: 'off', desc: 'Disable' },
+          { value: 'on',  name: 'on',  desc: 'Enable notifications' },
+          { value: 'off', name: 'off', desc: 'Disable notifications' },
         ];
       },
       toSpec: (item) => {
@@ -454,10 +454,10 @@ export const ROOT: CmdNode = {
           path: `${t.scope} · created ${formatLocalTime(t.createdAt)}`,
           current: t.isSelf,
           // Self token is read-only (server forbids self-revoke). Other tokens
-          // print a hint pointing at /token rev — actual revoke lives in the
-          // `rev` subcommand to keep destructive ops off accidental clicks.
+          // print a hint pointing at /token revoke — actual revoke lives in the
+          // `revoke` subcommand to keep destructive ops off accidental clicks.
           onSelect: t.isSelf ? undefined : () => {
-            addSystem(`— use /token rev ${t.name} to revoke`);
+            addSystem(`— use /token revoke ${t.name} to revoke`);
           },
         };
       },
@@ -471,7 +471,7 @@ export const ROOT: CmdNode = {
       },
       children: [
         {
-          name: 'rev', desc: 'Revoke a token',
+          name: 'revoke', desc: 'Revoke token',
           // rev list excludes self (server enforces non-revocable; we hide it)
           fetch: async () => (await listTokensFn()).filter((t) => !t.isSelf),
           toSpec: (item) => {

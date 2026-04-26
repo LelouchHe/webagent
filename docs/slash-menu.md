@@ -10,7 +10,7 @@ input starts with `/`. It is the only surface for slash-style commands; both
 1. **One template, one walker, one renderer.** Adding a new command, a new
    subcommand, or a new freeform action should never require touching CSS,
    render code, or keyboard wiring.
-2. **Iterative drill-in.** `/inbox` shows a menu, `/inbox ack` shows another
+2. **Iterative drill-in.** `/inbox` shows a menu, `/inbox dismiss` shows another
    menu of the same shape, and so on — no command should "run out of"
    autocomplete after the first token.
 3. **Predictable Tab / Enter / Click semantics across every command.**
@@ -104,7 +104,7 @@ You should never need to touch `commands.ts`, `slash-render.ts`, `styles.css`, o
 
 Before this refactor, every command had its own branch in `commands.ts`:
 seven `fetch*ForMenu` helpers, a seven-way `renderSlashMenu` switch, separate
-Tab handlers per command. Adding `/token rev` or `/inbox ack` meant writing
+Tab handlers per command. Adding `/token revoke` or `/inbox dismiss` meant writing
 custom CSS classes (`.token-item`, `.inbox-row-meta`, `.slash-ack`,
 `.slash-self`) and bespoke click handlers. The walker pipeline collapsed all
 of that into the three pure modules above plus one declarative tree.

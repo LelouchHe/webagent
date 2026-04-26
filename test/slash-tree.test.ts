@@ -29,8 +29,8 @@ function makeRoot(): CmdNode {
         toSpec: (it: any) => ({ primary: it.id, path: it.cwd }),
         children: [
           {
-            name: 'ack',
-            desc: 'Ack messages',
+            name: 'dismiss',
+            desc: 'Dismiss only',
             fetch: async () => [],
             toSpec: (it: any) => ({ primary: it.id, path: it.cwd }),
           },
@@ -106,17 +106,17 @@ describe("slash-tree — resolvePath", () => {
 
   it("two-level descend with trailing space", () => {
     const root = makeRoot();
-    const r = resolvePath('/inbox ack ', root);
-    assert.equal(r.node.name, 'ack');
-    assert.equal(r.pathPrefix, '/inbox ack');
+    const r = resolvePath('/inbox dismiss ', root);
+    assert.equal(r.node.name, 'dismiss');
+    assert.equal(r.pathPrefix, '/inbox dismiss');
     assert.equal(r.tailQuery, '');
   });
 
   it("two-level descend with query", () => {
     const root = makeRoot();
-    const r = resolvePath('/inbox ack abc', root);
-    assert.equal(r.node.name, 'ack');
-    assert.equal(r.pathPrefix, '/inbox ack');
+    const r = resolvePath('/inbox dismiss abc', root);
+    assert.equal(r.node.name, 'dismiss');
+    assert.equal(r.pathPrefix, '/inbox dismiss');
     assert.equal(r.tailQuery, 'abc');
   });
 
@@ -129,9 +129,9 @@ describe("slash-tree — resolvePath", () => {
 
   it("degrade: unknown second-level sub-token preserves position", () => {
     const root = makeRoot();
-    const r = resolvePath('/inbox ack stuff and more', root);
-    // We descended to ack, and 'stuff and more' is the tail
-    assert.equal(r.node.name, 'ack');
+    const r = resolvePath('/inbox dismiss stuff and more', root);
+    // We descended to dismiss, and 'stuff and more' is the tail
+    assert.equal(r.node.name, 'dismiss');
     assert.equal(r.tailQuery, 'stuff and more');
   });
 });
@@ -307,7 +307,7 @@ describe("slash-tree — buildCandidates", () => {
   it("separator inserted between › group and data when both present", () => {
     const inbox: CmdNode = {
       name: '/inbox',
-      children: [{ name: 'ack', desc: 'Ack', onSelect: async () => {} }],
+      children: [{ name: 'dismiss', desc: 'Ack', onSelect: async () => {} }],
       fetch: async () => [],
       toSpec: (it: any) => ({ primary: it.id }),
     };

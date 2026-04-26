@@ -3,7 +3,7 @@ import { gotoConnected } from "./helpers.ts";
 
 // /token slash menu — list, create, revoke.
 // `/token ` opens menu listing all tokens; `/token <newname>` creates an
-// api-scope token; `/token rev <name>` revokes. Seeded admin token "e2e"
+// api-scope token; `/token revoke <name>` revokes. Seeded admin token "e2e"
 // is always present.
 
 test("/token list/create/revoke flow via slash menu", async ({ page }) => {
@@ -27,8 +27,8 @@ test("/token list/create/revoke flow via slash menu", async ({ page }) => {
   await page.locator("#input").fill("/token ");
   await expect(page.locator("#slash-menu")).toContainText("mytest");
 
-  // Revoke via `rev` subcommand
-  await page.locator("#input").fill("/token rev mytest");
+  // Revoke via `revoke` subcommand
+  await page.locator("#input").fill("/token revoke mytest");
   await page.keyboard.press("Enter");
   await expect(page.locator("#messages")).toContainText(/revoked.*mytest|mytest.*revoked/i);
 
@@ -37,7 +37,7 @@ test("/token list/create/revoke flow via slash menu", async ({ page }) => {
   await expect(page.locator("#slash-menu")).not.toContainText("mytest");
 });
 
-test("/token rev subcommand menu lists revocable tokens", async ({ page }) => {
+test("/token revoke subcommand menu lists revocable tokens", async ({ page }) => {
   await gotoConnected(page);
 
   // Create one extra token first
@@ -45,9 +45,9 @@ test("/token rev subcommand menu lists revocable tokens", async ({ page }) => {
   await page.keyboard.press("Enter");
   await expect(page.locator("#messages")).toContainText("clickrev");
 
-  // Open `/token rev ` submenu — should list non-self tokens (clickrev),
+  // Open `/token revoke ` submenu — should list non-self tokens (clickrev),
   // not e2e (which is the active session token).
-  await page.locator("#input").fill("/token rev ");
+  await page.locator("#input").fill("/token revoke ");
   await expect(page.locator("#slash-menu.active")).toBeVisible();
   await expect(page.locator("#slash-menu")).toContainText("clickrev");
 

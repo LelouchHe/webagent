@@ -175,7 +175,7 @@ export async function handleSlashCommand(text: string): Promise<boolean> {
             const last = t.lastUsedAt ? formatLocalTime(t.lastUsedAt) : 'never';
             addSystem(`${t.name} (${t.scope}) — created ${formatLocalTime(t.createdAt)}, last used ${last}`);
           }
-          addSystem('— /token <name> to create · /token rev <name> to revoke');
+          addSystem('— /token <name> to create · /token revoke <name> to revoke');
         } catch (e) {
           const err = e as api.ApiError;
           if (err.status === 403) addSystem('err: admin scope required to manage tokens');
@@ -184,10 +184,10 @@ export async function handleSlashCommand(text: string): Promise<boolean> {
         return true;
       }
 
-      if (action === 'rev') {
+      if (action === 'revoke') {
         const name = subParts[1];
         if (!name) {
-          addSystem('err: usage /token rev <name>');
+          addSystem('err: usage /token revoke <name>');
           return true;
         }
         try {
@@ -386,17 +386,17 @@ export async function handleSlashCommand(text: string): Promise<boolean> {
             const time = formatLocalTime(m.created_at);
             addSystem(`${m.id} · ${m.title} · ${from} · ${time}`);
           }
-          addSystem('— /inbox <id> to open · /inbox ack <id> to dismiss');
+          addSystem('— /inbox <id> to open · /inbox dismiss <id> to dismiss only');
         } catch (e) {
           addSystem(`err: inbox list failed (${(e as Error).message})`);
         }
         return true;
       }
 
-      const isAck = action === 'ack';
-      const target = isAck ? subParts[1] : action;
+      const isDismiss = action === 'dismiss';
+      const target = isDismiss ? subParts[1] : action;
       if (!target) {
-        addSystem('err: usage /inbox <id>  |  /inbox ack <id>');
+        addSystem('err: usage /inbox <id>  |  /inbox dismiss <id>');
         return true;
       }
 
@@ -416,12 +416,12 @@ export async function handleSlashCommand(text: string): Promise<boolean> {
         return true;
       }
 
-      if (isAck) {
+      if (isDismiss) {
         try {
           await api.ackMessage(match.id);
-          addSystem(`inbox: ack ${match.id}`);
+          addSystem(`inbox: dismissed ${match.id}`);
         } catch (e) {
-          addSystem(`err: ack failed (${(e as Error).message})`);
+          addSystem(`err: dismiss failed (${(e as Error).message})`);
         }
         return true;
       }
