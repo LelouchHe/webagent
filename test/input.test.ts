@@ -108,11 +108,11 @@ describe("input", () => {
     state.sessionId = "s1";
     state.clientId = "cl-1";
     state.busy = true;
-    dom.input.value = "/pwd";
+    dom.input.value = "/help";
 
     keydown("Enter");
 
-    assert.ok(dom.messages.textContent.includes("s1") || dom.messages.textContent.includes("unknown"));
+    assert.ok(dom.messages.textContent.includes("Show help"));
     assert.equal(dom.input.value, "");
   });
 
@@ -157,11 +157,11 @@ describe("input", () => {
     state.clientId = "cl-1";
     state.busy = true;
     setBusy(true);
-    dom.input.value = "/pwd";
+    dom.input.value = "/help";
 
     clickSend();
 
-    assert.ok(dom.messages.textContent.includes("/test"));
+    assert.ok(dom.messages.textContent.includes("Show help"));
     assert.equal(dom.input.value, "");
   });
 

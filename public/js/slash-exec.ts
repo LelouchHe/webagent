@@ -89,10 +89,6 @@ export async function handleSlashCommand(text: string): Promise<boolean> {
       return true;
     }
 
-    case '/pwd':
-      addSystem(`📁 ${state.sessionCwd || 'unknown'}`);
-      return true;
-
     case '/rename': {
       if (!state.sessionId) {
         addSystem('err: No active session');
@@ -481,10 +477,10 @@ export async function handleSlashCommand(text: string): Promise<boolean> {
       return true;
     }
 
-    case '/debug': {
+    case '/log': {
       const sub = arg.toLowerCase().trim();
       if (sub === '') {
-        addSystem(`debug: ${getLogLevel()} (use /debug <off|debug|info|warn|error>)`);
+        addSystem(`log: ${getLogLevel()} (use /log <off|debug|info|warn|error>)`);
         return true;
       }
       if (!['off', 'debug', 'info', 'warn', 'error'].includes(sub)) {
@@ -492,8 +488,8 @@ export async function handleSlashCommand(text: string): Promise<boolean> {
         return true;
       }
       setLogLevel(sub as LogLevel);
-      addSystem(`debug: ${sub}`);
-      if (sub !== 'off') log.info('debug logging enabled', { level: sub });
+      addSystem(`log: ${sub}`);
+      if (sub !== 'off') log.info('log enabled', { level: sub });
       return true;
     }
 

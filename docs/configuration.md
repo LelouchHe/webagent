@@ -56,7 +56,7 @@ If no `--config` is provided, all settings use built-in defaults. See `config.to
 | `push.global_visibility_suppression` | `true` | When `true`, a single client viewing session X suppresses push for session X on **all** endpoints/devices. Set to `false` to disable cross-device suppression as an emergency rollback without code change. See [Visibility Sync & Push Suppression](client-architecture.md#visibility-sync--push-suppression). |
 | `title.model` | `claude-haiku-4.5` | Model ID for the async title-generation sub-session. Set to empty string `""` to skip `setConfigOption` and inherit the main session model (useful for CLIs without Haiku, e.g. Copilot / Gemini). |
 | `messages.unprocessed_ttl_days` | `30` | Days before an unprocessed unbound inbox message is auto-cleaned. `0` = keep forever. Bound messages attached to sessions are not affected. See [Messages / Inbox](messages.md). |
-| `debug.level` | `"off"` | Inline log level — one of `off \| debug \| info \| warn \| error`. When `level != "off"`, frontend `log.*` records above that level emit both to the DevTools console and inline into the conversation flow (as system messages). Override per page via `?debug=<level>` URL param or at runtime via `/debug <level>`. |
+| `debug.level` | `"off"` | Inline log level — one of `off \| debug \| info \| warn \| error`. When `level != "off"`, frontend `log.*` records above that level emit both to the DevTools console and inline into the conversation flow (as system messages). Override per page via `?debug=<level>` URL param or at runtime via `/log <level>`. |
 
 To use a different ACP-compatible agent backend:
 

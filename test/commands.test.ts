@@ -73,22 +73,13 @@ describe("commands", () => {
       assert.equal(body.cwd, "/my/project", "should inherit cwd from current session");
     });
 
-    it("shows the current working directory for /pwd", async () => {
-      state.sessionCwd = "/repo";
-
-      const handled = await commands.handleSlashCommand("/pwd");
-
-      assert.equal(handled, true);
-      assert.ok(messageLines().includes("📁 /repo"));
-    });
-
     it("shows help for ? and lists /help in commands", async () => {
       const handled = await commands.handleSlashCommand("?");
 
       assert.equal(handled, true);
       const lines = messageLines();
       assert.ok(lines.includes("? — Show help"));
-      assert.ok(lines.includes("/help — Show help (or type ?)"));
+      assert.ok(lines.includes("/help — Show help"));
       assert.ok(lines.includes("!<command> — Run bash command"));
     });
 

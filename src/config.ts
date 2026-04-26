@@ -42,7 +42,7 @@ export const ConfigSchema = z.object({
   // [debug] — frontend log level.
   // level ∈ off | debug | info | warn | error. Default "off".
   // Users can override per page-load via `?debug=<level>` in the URL,
-  // or at runtime via the /debug slash command.
+  // or at runtime via the /log slash command.
   debug: z.object({
     level: z.enum(["off", "debug", "info", "warn", "error"]).default("off"),
   }).default({ level: "off" }),

@@ -239,7 +239,7 @@ export const ROOT: CmdNode = {
       },
     },
     {
-      name: '/clear', desc: 'Clear session — start fresh in same cwd',
+      name: '/clear', desc: 'Reset session in same cwd',
       onSelect: async () => {
         if (!state.sessionId) { addSystem('warn: No active session'); return; }
         const oldId = state.sessionId;
@@ -259,7 +259,7 @@ export const ROOT: CmdNode = {
       },
     },
     {
-      name: '/debug', desc: 'Set inline log level',
+      name: '/log', desc: 'Set log level',
       fetch: () => [
         { value: 'off',   name: 'off',   desc: 'Disable logging' },
         { value: 'error', name: 'error', desc: 'Errors only' },
@@ -275,14 +275,14 @@ export const ROOT: CmdNode = {
           current: o.value === getLogLevel(),
           onSelect: () => {
             setLogLevel(o.value as LogLevel);
-            addSystem(`debug: ${o.value}`);
-            if (o.value !== 'off') log.info('debug logging enabled', { level: o.value });
+            addSystem(`log: ${o.value}`);
+            if (o.value !== 'off') log.info('log enabled', { level: o.value });
           },
         };
       },
     },
     {
-      name: '/exit', desc: 'Close current session',
+      name: '/exit', desc: 'End current session',
       onSelect: async () => {
         if (!state.sessionId) { addSystem('warn: No active session'); return; }
         const exitId = state.sessionId;
@@ -295,9 +295,9 @@ export const ROOT: CmdNode = {
         }
       },
     },
-    { name: '/help', desc: 'Show help (or type ?)', onSelect: () => printHelp() },
+    { name: '/help', desc: 'Show help', onSelect: () => printHelp() },
     {
-      name: '/inbox', desc: 'Open / list inbox messages',
+      name: '/inbox', desc: 'Manage inbox',
       fetch: listInbox,
       toSpec: (item) => {
         const m = item as api.InboxMessage;
@@ -331,7 +331,7 @@ export const ROOT: CmdNode = {
       ],
     },
     {
-      name: '/logout', desc: 'Log out this device',
+      name: '/logout', desc: 'Log out',
       onSelect: () => {
         try { localStorage.removeItem(TOKEN_STORAGE_KEY); } catch { /* ignore */ }
         try { state.eventSource?.close(); } catch { /* ignore */ }
@@ -339,10 +339,10 @@ export const ROOT: CmdNode = {
         location.replace('/login');
       },
     },
-    configCmdNode('/mode', 'Pick or switch mode', 'mode'),
-    configCmdNode('/model', 'Pick or switch model', 'model'),
+    configCmdNode('/mode', 'Switch mode', 'mode'),
+    configCmdNode('/model', 'Switch model', 'model'),
     {
-      name: '/new', desc: 'New session',
+      name: '/new', desc: 'Create new session',
       fetch: listRecentPaths,
       toSpec: (item) => {
         const p = item as PathItem;
@@ -359,7 +359,7 @@ export const ROOT: CmdNode = {
       },
     },
     {
-      name: '/notify', desc: 'Toggle background notifications',
+      name: '/notify', desc: 'Toggle notifications',
       fetch: async () => {
         await refreshNotifyActive();
         return [
@@ -379,7 +379,7 @@ export const ROOT: CmdNode = {
       },
     },
     {
-      name: '/prune', desc: 'Delete all sessions except current',
+      name: '/prune', desc: 'Delete other sessions',
       onSelect: async () => {
         try {
           const sessions = await listSessions();
@@ -393,11 +393,7 @@ export const ROOT: CmdNode = {
       },
     },
     {
-      name: '/pwd', desc: 'Show working directory',
-      onSelect: () => addSystem(`📁 ${state.sessionCwd || 'unknown'}`),
-    },
-    {
-      name: '/reload', desc: 'Reload agent CLI',
+      name: '/reload', desc: 'Reload agent',
       onSelect: () => {
         addSystem('Reloading agent…');
         api.reloadAgent().catch((err) => {
@@ -406,7 +402,7 @@ export const ROOT: CmdNode = {
       },
     },
     {
-      name: '/rename', desc: 'Rename current session',
+      name: '/rename', desc: 'Rename session',
       freeform: (q) => {
         const trimmed = q.trim();
         if (!trimmed) return null;
@@ -425,7 +421,7 @@ export const ROOT: CmdNode = {
       },
     },
     {
-      name: '/switch', desc: 'Switch to session',
+      name: '/switch', desc: 'Switch session',
       fetch: listSessions,
       matches: (item, q) => {
         const s = item as SessionSummary;
@@ -445,9 +441,9 @@ export const ROOT: CmdNode = {
         };
       },
     },
-    configCmdNode('/think', 'Pick or switch reasoning effort', 'reasoning_effort'),
+    configCmdNode('/think', 'Set thinking effort', 'reasoning_effort'),
     {
-      name: '/token', desc: 'List / create / revoke API tokens',
+      name: '/token', desc: 'Manage API tokens',
       fetch: listTokensFn,
       toSpec: (item) => {
         const t = item as api.TokenSummary;

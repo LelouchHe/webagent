@@ -43,25 +43,24 @@ Type `/` to trigger an autocomplete menu with arrow keys to navigate, Esc to clo
 | `Enter` | Send current input | Send current input |
 | Click/Tap | Fill and send (Tab + Enter) | — |
 
-Commands with submenus (`/model`, `/mode`, `/think`, `/notify`, `/switch`, `/new`, `/inbox`, `/debug`) show a picker after typing the command and a space. Tab completes the selection into the input so you can review or edit before pressing Enter to send.
+Commands with submenus (`/model`, `/mode`, `/think`, `/notify`, `/switch`, `/new`, `/inbox`, `/log`) show a picker after typing the command and a space. Tab completes the selection into the input so you can review or edit before pressing Enter to send.
 
 | Command | Description |
 |---|---|
 | `/help` (or `?`) | Show help |
 | `/new [cwd]` | Create new session — shows recent paths picker (paths persist across session exits, auto-cleaned by TTL) |
-| `/pwd` | Show current working directory |
-| `/model [name]` | View or switch model (fuzzy match, e.g. `/model opus`) |
-| `/mode [name]` | View or switch mode (Agent / Plan / Autopilot) |
-| `/think [level]` | View or switch reasoning effort (low / medium / high) |
-| `/notify [on\|off]` | Toggle push notifications for background alerts |
-| `/inbox` | Open inbox — pick a pending message to consume (opens a new session) or ack (dismiss). See [Messages / Inbox](messages.md). |
-| `/debug [level]` | Set inline log level (`off`, `debug`, `info`, `warn`, `error`). Log records render inline as system messages. |
+| `/model [name]` | Switch model (fuzzy match, e.g. `/model opus`) |
+| `/mode [name]` | Switch mode (Agent / Plan / Autopilot) |
+| `/think [level]` | Set thinking effort (low / medium / high) |
+| `/notify [on\|off]` | Toggle push notifications |
+| `/inbox` | Manage inbox — pick a pending message to consume (opens a new session) or ack (dismiss). See [Messages / Inbox](messages.md). |
+| `/log [level]` | Set log level (`off`, `debug`, `info`, `warn`, `error`). Log records render inline as system messages. |
 | `/cancel` | Cancel current response |
-| `/clear` | Clear session — delete current and start fresh in same cwd (model/think inherited) |
-| `/switch <title\|id>` | Switch to a session (match by title or ID prefix) |
-| `/rename <new title>` | Rename current session |
-| `/exit` | Close current session (delete + switch to previous) |
-| `/prune` | Delete all sessions except current |
+| `/clear` | Reset session in same cwd — delete current and start fresh (model/think inherited) |
+| `/switch <title\|id>` | Switch session (match by title or ID prefix) |
+| `/rename <new title>` | Rename session |
+| `/exit` | End current session (delete + switch to previous) |
+| `/prune` | Delete other sessions (keep current) |
 | `/reload` | Reload agent subprocess (pick up CLI upgrades, new skills) |
 
 Type `?` for inline help listing all commands and shortcuts.

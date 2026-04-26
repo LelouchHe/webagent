@@ -14,7 +14,7 @@
 //     is invoked once at module load.
 //   - Server config: the `connected` SSE event carries `debugLevel`; the
 //     connection handler calls `setLogLevel` with `urlLevel ?? configLevel`.
-//   - `/debug <level>` slash command: calls `setLogLevel` at runtime.
+//   - `/log <level>` slash command: calls `setLogLevel` at runtime.
 //
 // Logger always forwards to native `console.*` for DevTools call-site line
 // numbers. No `console.*` monkey-patch.
