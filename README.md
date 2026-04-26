@@ -80,6 +80,7 @@ Frontend source lives in `public/js/*.ts`, bundled by esbuild into a single cont
 | **[API Reference](docs/api.md)** | REST endpoints, SSE events, implementation details |
 | **[ACP Integration](docs/acp.md)** | Client extensions, protocol scope, current limits |
 | **[Client Architecture](docs/client-architecture.md)** | Frontend modules, data flow, conventions |
+| **[Slash Menu](docs/slash-menu.md)** | Walker pipeline, `CmdNode` tree, Tab/Enter/Click contract, how to add commands |
 | **[Messages / Inbox](docs/messages.md)** | `/inbox` slash command, POST ingress, bound vs unbound messages |
 | **[Development](docs/development.md)** | Building from source, dev mode, testing, publishing |
 | **[Auto-Start on Boot](docs/autostart.md)** | launchd, systemd, crontab, Windows Task Scheduler |
