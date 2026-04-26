@@ -299,6 +299,25 @@ body {
 .thinking-content { cursor: default; }
 .thinking summary.active { animation: pulse 1.5s ease-in-out infinite; }
 
+/* Inbox message card — same collapsible feel as .thinking but with accent. */
+.message {
+  color: var(--text);
+  font-size: 15px;
+  padding: 6px 14px;
+  border-left: 2px solid var(--accent-muted, var(--accent));
+  margin: 6px 0;
+}
+.message summary {
+  cursor: pointer;
+  color: var(--text-dim);
+  font-size: 13px;
+  font-style: italic;
+}
+.message-content {
+  cursor: default;
+  margin-top: 4px;
+}
+
 /* Waiting indicator (after user sends, before first response) */
 @keyframes blink { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
 @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }

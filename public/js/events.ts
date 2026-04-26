@@ -516,6 +516,27 @@ function createReplayIndex(events: StoredEvent[]): ReplayIndex {
   return { toolCalls: new Map(), permissions: new Map(), resolvedPermissions, currentBashEl: null };
 }
 
+/**
+ * Render an inbox `message` event as a collapsible card, styled like the
+ * `thought` block (different accent color to distinguish inbox delivery).
+ * Shared between live dispatch and replay.
+ */
+function renderMessageCard(msg: AgentEvent & { type: "message" }) {
+  const el = document.createElement("details");
+  el.className = "message";
+  el.open = true;
+  el.setAttribute("data-message-id", msg.message_id);
+  el.setAttribute("data-raw", msg.body);
+  const sourceLabel = msg.from_label ?? msg.from_ref;
+  const title = msg.title ? ` · ${escHtml(msg.title)}` : "";
+  el.innerHTML =
+    `<summary>\u2709\uFE0E ${escHtml(sourceLabel)}${title}</summary>` +
+    `<div class="message-content">${renderMd(msg.body)}</div>`;
+  appendMessageElement(el);
+  const content = el.querySelector(".message-content");
+  if (content) enhanceCodeBlocks(content);
+}
+
 export function replayEvent(type: string, data: Record<string, any>, events: StoredEvent[], idx: number, ri?: ReplayIndex) {
   switch (type) {
     case 'user_message': {
@@ -714,6 +735,9 @@ export function replayEvent(type: string, data: Record<string, any>, events: Sto
       state.pendingPermissionRequestIds.clear();
       state.pendingPromptDone = false;
       setBusy(false);
+      break;
+    case 'message':
+      renderMessageCard(data as AgentEvent & { type: 'message' });
       break;
   }
 }
@@ -1142,11 +1166,9 @@ export function handleEvent(msg: AgentEvent) {
       break;
 
     case 'message':
-      // Bound-message event in the current session: render as a system line.
       if (msg.sessionId === state.sessionId) {
-        const from = msg.from_label ?? msg.from_ref;
-        addSystem(`📨 ${from}: ${msg.title}`);
-        if (msg.body) addSystem(msg.body);
+        renderMessageCard(msg);
+        scrollToBottom();
       }
       break;
   }
