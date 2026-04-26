@@ -62,6 +62,8 @@ Commands with submenus (`/model`, `/mode`, `/think`, `/notify`, `/switch`, `/new
 | `/exit` | End current session (delete + switch to previous) |
 | `/prune` | Delete other sessions (keep current) |
 | `/reload` | Reload agent subprocess (pick up CLI upgrades, new skills) |
+| `/logout` | Log out — clear local token and return to login page |
+| `/token` | Manage API tokens (list, create, revoke) — see [Auth & Security](security.md) |
 
 Type `?` for inline help listing all commands and shortcuts.
 
