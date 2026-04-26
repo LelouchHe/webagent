@@ -666,7 +666,7 @@ body {
   color: var(--text-dim);
   font-size: 12px;
   line-height: 1.4;
-  padding-left: calc(1ch + 4px);
+  padding-left: calc(4ch + 4px);
   min-width: 100%;
 }
 
