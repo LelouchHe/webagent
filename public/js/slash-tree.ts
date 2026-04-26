@@ -12,10 +12,16 @@ export interface CmdNode {
   desc?: string;
   /** Subcommands (walker renders with `›` prefix). */
   children?: CmdNode[];
-  /** Fetch this layer's data items. Absent = no data view. */
-  fetch?: () => Promise<unknown[]>;
+  /** Fetch this layer's data items. Absent = no data view. May return a
+   *  plain array (for state-backed lists like config options) or a Promise. */
+  fetch?: () => unknown[] | Promise<unknown[]>;
   /** Render data item → SlashItemSpec. Required when `fetch` is defined. */
   toSpec?: (item: unknown) => SlashItemSpec;
+  /** Optional custom filter for data items. Receives raw item + lowercased
+   *  trimmed query; returns true to keep. Defaults to substring match on
+   *  `toSpec(item).primary`. Use when filtering should consider fields not
+   *  shown in primary (e.g. session id prefix). */
+  matches?: (item: unknown, q: string) => boolean;
   /** Freeform fallback entry. Returns spec or null (null = no freeform row). */
   freeform?: (query: string) => SlashItemSpec | null;
   /** Leaf action — node selected directly executes (e.g. /notify on). */
@@ -126,10 +132,14 @@ export function buildCandidates(
       if (data.length === 0) {
         dataState = 'empty';
       } else {
-        const allSpecs = data.map((item) => node.toSpec!(item));
-        const filtered = q
-          ? allSpecs.filter((s) => s.primary.toLowerCase().includes(q))
-          : allSpecs;
+        const filteredItems = q
+          ? data.filter((item) =>
+              node.matches
+                ? node.matches(item, q)
+                : node.toSpec!(item).primary.toLowerCase().includes(q),
+            )
+          : data;
+        const filtered = filteredItems.map((item) => node.toSpec!(item));
         if (filtered.length === 0) {
           dataState = 'no-match';
         } else {

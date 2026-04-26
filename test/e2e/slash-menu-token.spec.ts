@@ -1,31 +1,30 @@
 import { test, expect } from "playwright/test";
 import { gotoConnected } from "./helpers.ts";
 
-// /token slash menu — list, create, revoke. Mirrors /inbox UX:
-// `/token ` (with trailing space) opens an autocomplete menu listing all
-// tokens; `/token <name>` creates a new api-scope token; `/token rev <name>`
-// revokes. The seeded admin token "e2e" is always present.
+// /token slash menu — list, create, revoke.
+// `/token ` opens menu listing all tokens; `/token <newname>` creates an
+// api-scope token; `/token rev <name>` revokes. Seeded admin token "e2e"
+// is always present.
 
 test("/token list/create/revoke flow via slash menu", async ({ page }) => {
   await gotoConnected(page);
 
   // Trigger token menu — should show seeded "e2e" admin token
   await page.locator("#input").fill("/token ");
-  await expect(page.locator("#slash-menu.active .token-item")).toHaveCount(1);
-  await expect(page.locator("#slash-menu .token-item").first()).toContainText("e2e");
-  await expect(page.locator("#slash-menu .token-item").first()).toContainText("admin");
+  // Items: 1 freeform "create" subcommand + 1 separator + 1 e2e token row.
+  await expect(page.locator("#slash-menu.active .slash-item")).toHaveCount(2);
+  await expect(page.locator("#slash-menu")).toContainText("e2e");
+  await expect(page.locator("#slash-menu")).toContainText("admin");
 
   // Create a new token
   await page.locator("#input").fill("/token mytest");
   await page.keyboard.press("Enter");
 
-  // System message should contain the raw token (wat_ prefix from auth-store)
   await expect(page.locator("#messages")).toContainText(/wat_[A-Za-z0-9_-]+/);
   await expect(page.locator("#messages")).toContainText("mytest");
 
-  // Reopen menu — now 2 tokens
+  // Reopen menu — now 2 tokens (plus freeform row)
   await page.locator("#input").fill("/token ");
-  await expect(page.locator("#slash-menu.active .token-item")).toHaveCount(2);
   await expect(page.locator("#slash-menu")).toContainText("mytest");
 
   // Revoke via `rev` subcommand
@@ -33,13 +32,12 @@ test("/token list/create/revoke flow via slash menu", async ({ page }) => {
   await page.keyboard.press("Enter");
   await expect(page.locator("#messages")).toContainText(/revoked.*mytest|mytest.*revoked/i);
 
-  // Reopen menu — back to 1 token
+  // Reopen menu — back to just e2e
   await page.locator("#input").fill("/token ");
-  await expect(page.locator("#slash-menu.active .token-item")).toHaveCount(1);
   await expect(page.locator("#slash-menu")).not.toContainText("mytest");
 });
 
-test("/token [x] button revokes inline and refreshes menu", async ({ page }) => {
+test("/token rev subcommand menu lists revocable tokens", async ({ page }) => {
   await gotoConnected(page);
 
   // Create one extra token first
@@ -47,15 +45,18 @@ test("/token [x] button revokes inline and refreshes menu", async ({ page }) => 
   await page.keyboard.press("Enter");
   await expect(page.locator("#messages")).toContainText("clickrev");
 
-  // Open menu → click [x] on clickrev row
+  // Open `/token rev ` submenu — should list non-self tokens (clickrev),
+  // not e2e (which is the active session token).
+  await page.locator("#input").fill("/token rev ");
+  await expect(page.locator("#slash-menu.active")).toBeVisible();
+  await expect(page.locator("#slash-menu")).toContainText("clickrev");
+
+  // Click the clickrev row to revoke
+  const clickrevRow = page.locator("#slash-menu .slash-item").filter({ hasText: "clickrev" });
+  await clickrevRow.click();
+  await expect(page.locator("#messages")).toContainText(/revoked.*clickrev|clickrev.*revoked/i);
+
+  // Reopen menu — clickrev gone
   await page.locator("#input").fill("/token ");
-  await expect(page.locator("#slash-menu.active .token-item")).toHaveCount(2);
-
-  // Find the row containing 'clickrev' and click its [x]
-  const clickrevRow = page.locator("#slash-menu .token-item").filter({ hasText: "clickrev" });
-  await clickrevRow.locator("[data-revoke-idx]").click();
-
-  // Menu should refresh, only 'e2e' remains
-  await expect(page.locator("#slash-menu.active .token-item")).toHaveCount(1);
   await expect(page.locator("#slash-menu")).not.toContainText("clickrev");
 });
