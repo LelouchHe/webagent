@@ -26,9 +26,56 @@ export type SlashPrefix = '' | '›' | '*';
 
 // Step 2 implements this. Stub so other modules can import the type now.
 export function renderItem(
-  _spec: SlashItemSpec,
-  _isSelected: boolean,
-  _prefix: SlashPrefix,
+  spec: SlashItemSpec,
+  isSelected: boolean,
+  prefix: SlashPrefix,
 ): HTMLElement {
-  throw new Error('renderItem: not implemented (Step 2)');
+  const item = document.createElement('div');
+  item.className = 'slash-item' + (isSelected ? ' selected' : '');
+
+  const isDouble = spec.path !== undefined;
+
+  // L1 row: prefix | primary | secondary
+  const l1 = document.createElement('div');
+  l1.className = 'slash-row-l1';
+
+  const prefixEl = document.createElement('span');
+  prefixEl.className = 'slash-prefix';
+  prefixEl.textContent = prefix;
+  l1.appendChild(prefixEl);
+
+  const primaryEl = document.createElement('span');
+  primaryEl.className = 'slash-primary' + (spec.current ? ' slash-current' : '');
+  primaryEl.textContent = spec.primary;
+  l1.appendChild(primaryEl);
+
+  if (spec.secondary !== undefined) {
+    const secondaryEl = document.createElement('span');
+    secondaryEl.className = 'slash-secondary';
+    secondaryEl.textContent = spec.secondary;
+    l1.appendChild(secondaryEl);
+  }
+
+  item.appendChild(l1);
+
+  if (isDouble) {
+    const l2 = document.createElement('div');
+    l2.className = 'slash-row-l2';
+
+    const pathEl = document.createElement('span');
+    pathEl.className = 'slash-path';
+    pathEl.textContent = spec.path!;
+    l2.appendChild(pathEl);
+
+    if (spec.pathSecondary !== undefined) {
+      const pathSecEl = document.createElement('span');
+      pathSecEl.className = 'slash-path-secondary';
+      pathSecEl.textContent = spec.pathSecondary;
+      l2.appendChild(pathSecEl);
+    }
+
+    item.appendChild(l2);
+  }
+
+  return item;
 }
