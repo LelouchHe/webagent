@@ -15,7 +15,7 @@ import { loadHistory, handleEvent, fallbackToNextSession } from './events.ts';
 import * as api from './api.ts';
 import { log, setLogLevel, getLogLevel, type LogLevel } from './log.ts';
 import { TOKEN_STORAGE_KEY } from './login-core.ts';
-import { ROOT } from './slash-commands.ts';
+import { ROOT, consumeInbox } from './slash-commands.ts';
 
 async function subscribePush(): Promise<void> {
   try {
@@ -431,13 +431,7 @@ export async function handleSlashCommand(text: string): Promise<boolean> {
       }
 
       try {
-        const r = await api.consumeMessage(match.id);
-        if (r.alreadyConsumed) {
-          addSystem(`inbox: already consumed → switching to ${r.sessionId}`);
-        } else {
-          addSystem(`inbox: opened as ${r.sessionId}`);
-        }
-        location.hash = r.sessionId;
+        await consumeInbox(match);
       } catch (e) {
         addSystem(`err: consume failed (${(e as Error).message})`);
       }

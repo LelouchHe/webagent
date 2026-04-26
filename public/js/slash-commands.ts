@@ -139,7 +139,7 @@ async function setConfigAndUpdate(configId: string, value: string, name: string)
   if (state.sessionId) await api.setConfig(state.sessionId, configId, value).catch(() => {});
 }
 
-async function consumeInbox(m: api.InboxMessage): Promise<void> {
+export async function consumeInbox(m: api.InboxMessage): Promise<void> {
   try {
     const r = await api.consumeMessage(m.id);
     if (r.alreadyConsumed) {
@@ -147,7 +147,7 @@ async function consumeInbox(m: api.InboxMessage): Promise<void> {
     } else {
       addSystem(`inbox: opened as ${r.sessionId}`);
     }
-    location.hash = r.sessionId;
+    await switchToSession(r.sessionId);
   } catch (e) {
     addSystem(`err: consume failed (${(e as Error).message})`);
   }

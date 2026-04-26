@@ -153,3 +153,56 @@ describe("slash menu — Tab vs Click behavior", () => {
     assert.equal(body.value, "opus");
   });
 });
+
+describe("inbox consume — switches session via switchToSession", () => {
+  let state: any;
+  let dom: any;
+  let slashCommands: any;
+  let fetchCalls: Array<{ url: string; init?: any }>;
+
+  before(async () => {
+    setupDOM();
+    const stateMod = await import("../public/js/state.ts");
+    state = stateMod.state;
+    dom = stateMod.dom;
+    await import("../public/js/render.ts");
+    await import("../public/js/events.ts");
+    slashCommands = await import("../public/js/slash-commands.ts");
+  });
+
+  after(() => teardownDOM());
+
+  beforeEach(() => {
+    resetState(state, dom);
+    fetchCalls = [];
+    state.sessionId = "old-session";
+    globalThis.fetch = ((url: string, init?: any) => {
+      fetchCalls.push({ url, init });
+      const respond = (obj: any) => Promise.resolve({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve(obj),
+        text: () => Promise.resolve(JSON.stringify(obj)),
+      });
+      if (url.includes("/messages/") && url.endsWith("/consume")) {
+        return respond({ sessionId: "new-session", alreadyConsumed: false });
+      }
+      if (url === "/api/v1/sessions/new-session") {
+        return respond({ id: "new-session", cwd: "/x", title: "from inbox", configOptions: [], busyKind: null });
+      }
+      if (url.includes("/events")) {
+        return respond({ events: [], streaming: { thinking: false, assistant: false } });
+      }
+      return respond({});
+    }) as any;
+  });
+
+  it("consumeInbox switches session state to the consumed sessionId", async () => {
+    await slashCommands.consumeInbox({ id: "m1", from_ref: "x", title: "t", body: "b", createdAt: 0 } as any);
+    assert.equal(state.sessionId, "new-session", "should switch to the new session");
+    const consumeCall = fetchCalls.find(c => c.url.endsWith("/consume"));
+    assert.ok(consumeCall, "should call consume endpoint");
+    const sessionCall = fetchCalls.find(c => c.url === "/api/v1/sessions/new-session");
+    assert.ok(sessionCall, "should fetch new session metadata (proves switchToSession ran)");
+  });
+});
