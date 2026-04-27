@@ -24,7 +24,9 @@ describe("input", () => {
     void inputModule;
   });
 
-  after(() => teardownDOM());
+  after(() => {
+    teardownDOM();
+  });
 
   beforeEach(() => {
     resetState(state, dom);

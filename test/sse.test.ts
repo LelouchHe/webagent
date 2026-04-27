@@ -32,13 +32,13 @@ function makeRequest(
       (res) => {
         let data = "";
         res.on("data", (chunk: Buffer) => (data += chunk.toString()));
-        res.on("end", () =>
+        res.on("end", () => {
           resolve({
             status: res.statusCode!,
             body: data,
             headers: res.headers,
-          }),
-        );
+          });
+        });
       },
     );
     req.on("error", reject);
@@ -186,7 +186,11 @@ describe("SSE REST API", () => {
   afterEach(async () => {
     for (const cleanup of sseCleanups) cleanup();
     sseCleanups.length = 0;
-    await new Promise<void>((resolve) => server.close(() => resolve()));
+    await new Promise<void>((resolve) =>
+      server.close(() => {
+        resolve();
+      }),
+    );
     store.close();
     rmSync(tmpDir, { recursive: true, force: true });
   });

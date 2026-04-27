@@ -24,13 +24,13 @@ function req(
       (res) => {
         let data = "";
         res.on("data", (c: Buffer) => (data += c.toString()));
-        res.on("end", () =>
+        res.on("end", () => {
           resolve({
             status: res.statusCode!,
             body: data,
             headers: res.headers,
-          }),
-        );
+          });
+        });
       },
     );
     r.on("error", reject);
@@ -80,7 +80,11 @@ describe("routes auth gate", () => {
   after(async () => {
     await authStore.close();
     store.close();
-    await new Promise<void>((r) => server.close(() => r()));
+    await new Promise<void>((r) =>
+      server.close(() => {
+        r();
+      }),
+    );
     rmSync(tmpDir, { recursive: true, force: true });
   });
 

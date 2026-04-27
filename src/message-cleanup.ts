@@ -57,6 +57,8 @@ export function startMessageCleanup(
 
   return {
     armed: true,
-    stop: () => clearInterval(timer),
+    stop: () => {
+      clearInterval(timer);
+    },
   };
 }

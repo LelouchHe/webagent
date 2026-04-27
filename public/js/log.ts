@@ -163,10 +163,18 @@ function make(parentScope?: string): Logger {
   };
 
   return {
-    debug: (m, f) => emit("debug", m, f),
-    info: (m, f) => emit("info", m, f),
-    warn: (m, f) => emit("warn", m, f),
-    error: (m, f) => emit("error", m, f),
+    debug: (m, f) => {
+      emit("debug", m, f);
+    },
+    info: (m, f) => {
+      emit("info", m, f);
+    },
+    warn: (m, f) => {
+      emit("warn", m, f);
+    },
+    error: (m, f) => {
+      emit("error", m, f);
+    },
     scope: (n) => make(parentScope ? `${parentScope}.${n}` : n),
   };
 }

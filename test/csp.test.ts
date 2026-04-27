@@ -32,9 +32,9 @@ async function fetchPath(
   return new Promise((resolve, reject) => {
     const req = http.get({ host: "127.0.0.1", port, path }, (res) => {
       res.on("data", () => {});
-      res.on("end", () =>
-        resolve({ status: res.statusCode ?? 0, headers: res.headers }),
-      );
+      res.on("end", () => {
+        resolve({ status: res.statusCode ?? 0, headers: res.headers });
+      });
     });
     req.on("error", reject);
   });
@@ -74,7 +74,11 @@ describe("CSP header on HTML entrypoints", () => {
   });
 
   after(async () => {
-    await new Promise<void>((resolve) => server.close(() => resolve()));
+    await new Promise<void>((resolve) =>
+      server.close(() => {
+        resolve();
+      }),
+    );
     store.close();
     rmSync(tmpDir, { recursive: true, force: true });
   });

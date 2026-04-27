@@ -334,7 +334,13 @@ export const ROOT: CmdNode = {
         }
       },
     },
-    { name: "/help", desc: "Show help", onSelect: () => printHelp() },
+    {
+      name: "/help",
+      desc: "Show help",
+      onSelect: () => {
+        printHelp();
+      },
+    },
     {
       name: "/inbox",
       desc: "Manage inbox",

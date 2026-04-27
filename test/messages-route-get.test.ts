@@ -19,7 +19,9 @@ function req(
       (res) => {
         let d = "";
         res.on("data", (c: Buffer) => (d += c.toString()));
-        res.on("end", () => resolve({ status: res.statusCode!, body: d }));
+        res.on("end", () => {
+          resolve({ status: res.statusCode!, body: d });
+        });
       },
     );
     r.on("error", reject);
@@ -52,7 +54,11 @@ describe("GET /api/v1/messages — list + single", () => {
   });
 
   afterEach(async () => {
-    await new Promise<void>((res) => server.close(() => res()));
+    await new Promise<void>((res) =>
+      server.close(() => {
+        res();
+      }),
+    );
     store.close();
     rmSync(tmpDir, { recursive: true, force: true });
   });

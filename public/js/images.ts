@@ -50,7 +50,9 @@ export function renderAttachPreview() {
 
 // --- Event listeners ---
 
-dom.attachBtn.onclick = () => dom.fileInput.click();
+dom.attachBtn.onclick = () => {
+  dom.fileInput.click();
+};
 dom.fileInput.onchange = async () => {
   for (const f of dom.fileInput.files!) {
     if (f.type.startsWith("image/")) addPendingImage(await readFileAsBase64(f));

@@ -9,8 +9,12 @@ describe("state", () => {
     setupDOM();
     mod = await import("../public/js/state.ts");
   });
-  after(() => teardownDOM());
-  beforeEach(() => resetState(mod.state, mod.dom));
+  after(() => {
+    teardownDOM();
+  });
+  beforeEach(() => {
+    resetState(mod.state, mod.dom);
+  });
 
   describe("DOM refs", () => {
     it("resolves all DOM elements", () => {

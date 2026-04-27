@@ -94,7 +94,9 @@ export class SseManager {
   /** Register a new SSE client connection. */
   add(client: SseClient): void {
     this.clients.set(client.id, client);
-    client.res.on("close", () => this.remove(client.id));
+    client.res.on("close", () => {
+      this.remove(client.id);
+    });
   }
 
   /** Write a single heartbeat frame to the given client. Used right after

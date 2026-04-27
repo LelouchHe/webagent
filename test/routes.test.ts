@@ -25,13 +25,13 @@ function makeRequest(
       (res) => {
         let data = "";
         res.on("data", (chunk: Buffer) => (data += chunk.toString("utf-8")));
-        res.on("end", () =>
+        res.on("end", () => {
           resolve({
             status: res.statusCode!,
             body: data,
             headers: res.headers,
-          }),
-        );
+          });
+        });
       },
     );
     req.on("error", reject);
@@ -74,7 +74,11 @@ describe("HTTP routes", () => {
 
   afterEach(async () => {
     store.close();
-    await new Promise<void>((resolve) => server.close(() => resolve()));
+    await new Promise<void>((resolve) =>
+      server.close(() => {
+        resolve();
+      }),
+    );
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
@@ -411,7 +415,11 @@ describe("Image upload", () => {
 
   afterEach(async () => {
     store.close();
-    await new Promise<void>((resolve) => server.close(() => resolve()));
+    await new Promise<void>((resolve) =>
+      server.close(() => {
+        resolve();
+      }),
+    );
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
@@ -555,7 +563,11 @@ describe("Push API routes", () => {
 
   afterEach(async () => {
     store.close();
-    await new Promise<void>((resolve) => server.close(() => resolve()));
+    await new Promise<void>((resolve) =>
+      server.close(() => {
+        resolve();
+      }),
+    );
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
@@ -671,7 +683,11 @@ describe("Push API routes", () => {
     const res = await makeRequest(port2, "GET", "/api/beta/push/vapid-key");
     assert.equal(res.status, 404);
 
-    await new Promise<void>((resolve) => server2.close(() => resolve()));
+    await new Promise<void>((resolve) =>
+      server2.close(() => {
+        resolve();
+      }),
+    );
   });
 });
 
@@ -722,7 +738,11 @@ describe("POST /api/v1/bridge/reload", () => {
 
   afterEach(async () => {
     store.close();
-    await new Promise<void>((resolve) => server.close(() => resolve()));
+    await new Promise<void>((resolve) =>
+      server.close(() => {
+        resolve();
+      }),
+    );
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
@@ -775,6 +795,10 @@ describe("POST /api/v1/bridge/reload", () => {
     const res = await makeRequest(port2, "POST", "/api/v1/bridge/reload");
     assert.equal(res.status, 503);
 
-    await new Promise<void>((resolve) => server2.close(() => resolve()));
+    await new Promise<void>((resolve) =>
+      server2.close(() => {
+        resolve();
+      }),
+    );
   });
 });

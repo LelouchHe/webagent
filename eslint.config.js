@@ -96,6 +96,7 @@ export default tseslint.config(
       "@typescript-eslint/prefer-for-of": "error",
       "@typescript-eslint/prefer-optional-chain": "error",
       "@typescript-eslint/prefer-readonly": "error",
+      "@typescript-eslint/no-confusing-void-expression": "error",
 
       // Off — too noisy / not aligned with our style
       "@typescript-eslint/no-non-null-assertion": "off",

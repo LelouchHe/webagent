@@ -19,7 +19,9 @@ describe("commands", () => {
     commands = await import("../public/js/commands.ts");
   });
 
-  after(() => teardownDOM());
+  after(() => {
+    teardownDOM();
+  });
   beforeEach(() => {
     resetState(state, dom);
     commands.__resetCommandsForTest();

@@ -281,9 +281,9 @@ document.addEventListener("visibilitychange", () => {
     !state.replayInProgress
   ) {
     const sid = state.sessionId;
-    void Promise.all([reloadSnapshot(sid), loadNewEvents(sid)]).then(() =>
-      scrollToBottom(false),
-    );
+    void Promise.all([reloadSnapshot(sid), loadNewEvents(sid)]).then(() => {
+      scrollToBottom(false);
+    });
   }
 });
 

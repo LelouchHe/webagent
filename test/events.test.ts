@@ -28,7 +28,9 @@ describe("events", () => {
     render = await import("../public/js/render.ts");
     events = await import("../public/js/events.ts");
   });
-  after(() => teardownDOM());
+  after(() => {
+    teardownDOM();
+  });
   beforeEach(() => {
     resetState(state, dom);
     fetchCalls = [];

@@ -172,7 +172,9 @@ describe("daemon", () => {
       if (supervisor?.exitCode === null) {
         supervisor.kill("SIGTERM");
         await new Promise<void>((r) => {
-          supervisor!.once("exit", () => r());
+          supervisor!.once("exit", () => {
+            r();
+          });
           setTimeout(r, 3000);
         });
       }
@@ -221,7 +223,9 @@ describe("daemon", () => {
       // Send SIGTERM
       supervisor.kill("SIGTERM");
       await new Promise<void>((r) => {
-        supervisor!.once("exit", () => r());
+        supervisor!.once("exit", () => {
+          r();
+        });
       });
 
       // PID file should be cleaned up
@@ -280,7 +284,9 @@ describe("daemon", () => {
         // Clean up
         supervisor.kill("SIGTERM");
         await new Promise<void>((r) => {
-          supervisor!.once("exit", () => r());
+          supervisor!.once("exit", () => {
+            r();
+          });
         });
       });
     }

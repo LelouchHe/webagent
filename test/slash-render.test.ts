@@ -9,7 +9,9 @@ describe("slash-render — renderItem", () => {
     setupDOM();
     ({ renderItem } = await import("../public/js/slash-render.ts"));
   });
-  after(() => teardownDOM());
+  after(() => {
+    teardownDOM();
+  });
 
   beforeEach(() => {
     document.body.innerHTML = '<div id="container"></div>';

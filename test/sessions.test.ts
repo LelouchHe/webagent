@@ -28,7 +28,9 @@ function makeRequest(
       (res) => {
         let data = "";
         res.on("data", (chunk: Buffer) => (data += chunk.toString()));
-        res.on("end", () => resolve({ status: res.statusCode!, body: data }));
+        res.on("end", () => {
+          resolve({ status: res.statusCode!, body: data });
+        });
       },
     );
     req.on("error", reject);
@@ -125,7 +127,11 @@ describe("Session REST API", () => {
 
   afterEach(async () => {
     store.close();
-    await new Promise<void>((resolve) => server.close(() => resolve()));
+    await new Promise<void>((resolve) =>
+      server.close(() => {
+        resolve();
+      }),
+    );
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
@@ -237,7 +243,11 @@ describe("Session REST API", () => {
       const res = await makeRequest(p2, "POST", "/api/v1/sessions", "{}");
       assert.equal(res.status, 503);
 
-      await new Promise<void>((resolve) => s2.close(() => resolve()));
+      await new Promise<void>((resolve) =>
+        s2.close(() => {
+          resolve();
+        }),
+      );
     });
   });
 
@@ -472,7 +482,11 @@ describe("Session REST API", () => {
       );
       assert.equal(res.status, 503);
 
-      await new Promise<void>((resolve) => s2.close(() => resolve()));
+      await new Promise<void>((resolve) =>
+        s2.close(() => {
+          resolve();
+        }),
+      );
     });
   });
 
@@ -552,13 +566,13 @@ describe("Session REST API", () => {
           (res) => {
             const chunks: Buffer[] = [];
             res.on("data", (chunk: Buffer) => chunks.push(chunk));
-            res.on("end", () =>
+            res.on("end", () => {
               resolve({
                 status: res.statusCode!,
                 headers: res.headers,
                 rawBody: Buffer.concat(chunks),
-              }),
-            );
+              });
+            });
           },
         );
         req.on("error", reject);

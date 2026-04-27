@@ -520,8 +520,9 @@ describe("SessionManager", () => {
           loadCount++;
           return new Promise<{ sessionId: string; configOptions: never[] }>(
             (resolve) => {
-              resolveLoad = () =>
+              resolveLoad = () => {
                 resolve({ sessionId: "s1", configOptions: [] });
+              };
             },
           );
         },

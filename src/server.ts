@@ -82,7 +82,9 @@ sseManager.setRevocationCheck(
 sseManager.setImageSecret(imageSecret);
 
 // Broadcast runtime state patches to all SSE clients interested in the session.
-sessions.state.onPatch((event) => sseManager.broadcast(event));
+sessions.state.onPatch((event) => {
+  sseManager.broadcast(event);
+});
 
 let bridge: AgentBridge | null = null;
 let messageCleanup: CleanupHandle | null = null;
@@ -157,8 +159,12 @@ process.on("SIGTERM", () => {
 // SIGHUP: reload auth.json without restarting (e.g. after CLI revoked a token)
 process.on("SIGHUP", () => {
   authStore.reload().then(
-    () => console.log("[auth] reloaded auth.json"),
-    (err) => console.error("[auth] reload failed:", err),
+    () => {
+      console.log("[auth] reloaded auth.json");
+    },
+    (err) => {
+      console.error("[auth] reload failed:", err);
+    },
   );
 });
 

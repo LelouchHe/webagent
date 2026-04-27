@@ -33,13 +33,13 @@ function makeRequest(
       (res) => {
         let data = "";
         res.on("data", (chunk: Buffer) => (data += chunk.toString()));
-        res.on("end", () =>
+        res.on("end", () => {
           resolve({
             status: res.statusCode!,
             body: data,
             headers: res.headers,
-          }),
-        );
+          });
+        });
       },
     );
     req.on("error", reject);
@@ -116,7 +116,11 @@ describe("Quick Prompt REST API", () => {
   });
 
   afterEach(async () => {
-    await new Promise<void>((resolve) => server.close(() => resolve()));
+    await new Promise<void>((resolve) =>
+      server.close(() => {
+        resolve();
+      }),
+    );
     store.close();
     rmSync(tmpDir, { recursive: true, force: true });
   });
@@ -221,7 +225,9 @@ describe("Quick Prompt REST API", () => {
       assert.equal(res.status, 503);
     } finally {
       await new Promise<void>((resolve) =>
-        noBridgeServer.close(() => resolve()),
+        noBridgeServer.close(() => {
+          resolve();
+        }),
       );
     }
   });

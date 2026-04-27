@@ -69,7 +69,9 @@ describe("connection", () => {
     connection = await import("../public/js/connection.ts");
   });
 
-  after(() => teardownDOM());
+  after(() => {
+    teardownDOM();
+  });
 
   beforeEach(() => {
     resetState(state, dom);

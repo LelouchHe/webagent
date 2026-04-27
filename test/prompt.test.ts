@@ -33,13 +33,13 @@ function makeRequest(
       (res) => {
         let data = "";
         res.on("data", (chunk: Buffer) => (data += chunk.toString()));
-        res.on("end", () =>
+        res.on("end", () => {
           resolve({
             status: res.statusCode!,
             headers: res.headers,
             body: data,
-          }),
-        );
+          });
+        });
       },
     );
     req.on("error", reject);
@@ -145,7 +145,11 @@ describe("Prompt REST API", () => {
   });
 
   afterEach(async () => {
-    await new Promise<void>((resolve) => server.close(() => resolve()));
+    await new Promise<void>((resolve) =>
+      server.close(() => {
+        resolve();
+      }),
+    );
     store.close();
     rmSync(tmpDir, { recursive: true, force: true });
   });
@@ -345,7 +349,11 @@ describe("Prompt REST API", () => {
         JSON.stringify({ text: "hello" }),
       );
       assert.equal(res.status, 503);
-      await new Promise<void>((r) => srv.close(() => r()));
+      await new Promise<void>((r) =>
+        srv.close(() => {
+          r();
+        }),
+      );
     });
 
     it("accepts images alongside text", async () => {
@@ -553,7 +561,11 @@ describe("Prompt REST API", () => {
       );
       assert.ok(titleEvent, "session_title_updated should be broadcast");
 
-      await new Promise<void>((r) => srv.close(() => r()));
+      await new Promise<void>((r) =>
+        srv.close(() => {
+          r();
+        }),
+      );
     });
 
     it("skips title generation for session that already has a title", async () => {
@@ -591,7 +603,11 @@ describe("Prompt REST API", () => {
         "titleService.generate should NOT be called for titled session",
       );
 
-      await new Promise<void>((r) => srv.close(() => r()));
+      await new Promise<void>((r) =>
+        srv.close(() => {
+          r();
+        }),
+      );
     });
   });
 });

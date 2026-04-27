@@ -27,7 +27,9 @@ describe("images", () => {
     images = await import("../public/js/images.ts");
   });
 
-  after(() => teardownDOM());
+  after(() => {
+    teardownDOM();
+  });
 
   beforeEach(() => {
     resetState(state, dom);

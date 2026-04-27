@@ -14,8 +14,12 @@ describe("highlight (lazy-load + code toolbar)", () => {
     dom = stateMod.dom;
     highlight = await import("../public/js/highlight.ts");
   });
-  after(() => teardownDOM());
-  beforeEach(() => resetState(state, dom));
+  after(() => {
+    teardownDOM();
+  });
+  beforeEach(() => {
+    resetState(state, dom);
+  });
 
   describe("processCodeBlocks", () => {
     it("wraps pre>code in a .code-block-wrapper with toolbar", () => {

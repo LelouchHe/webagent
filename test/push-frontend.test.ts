@@ -21,7 +21,9 @@ describe("push — /notify command", () => {
     commands = await import("../public/js/commands.ts");
   });
 
-  after(() => teardownDOM());
+  after(() => {
+    teardownDOM();
+  });
 
   beforeEach(() => {
     resetState(state, dom);
@@ -194,7 +196,9 @@ describe("push — visibility reporting", () => {
     _connection = await import("../public/js/connection.ts");
   });
 
-  after(() => teardownDOM());
+  after(() => {
+    teardownDOM();
+  });
 
   beforeEach(() => {
     resetState(state, dom);

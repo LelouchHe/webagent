@@ -329,7 +329,9 @@ function runSupervisor(serverArgs: string[]): void {
         return;
       }
       const c = child;
-      c.once("exit", () => innerResolve());
+      c.once("exit", () => {
+        innerResolve();
+      });
       c.kill("SIGTERM");
       setTimeout(() => {
         try {

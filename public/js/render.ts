@@ -40,7 +40,7 @@ export function finishAssistant() {
   state.currentAssistantText = "";
   if (assistantEl && typeof assistantEl.querySelector === "function") {
     assistantEl.removeAttribute("data-primed");
-    void enhanceCodeBlocks(assistantEl);
+    enhanceCodeBlocks(assistantEl);
   }
 }
 

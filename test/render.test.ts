@@ -30,8 +30,12 @@ describe("render", () => {
     dom = stateMod.dom;
     render = await import("../public/js/render.ts");
   });
-  after(() => teardownDOM());
-  beforeEach(() => resetState(state, dom));
+  after(() => {
+    teardownDOM();
+  });
+  beforeEach(() => {
+    resetState(state, dom);
+  });
 
   describe("escHtml", () => {
     it("escapes HTML entities", () => {

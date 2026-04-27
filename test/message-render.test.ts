@@ -20,7 +20,9 @@ describe("message event rendering", () => {
     dom = stateMod.dom;
     events = await import("../public/js/events.ts");
   });
-  after(() => teardownDOM());
+  after(() => {
+    teardownDOM();
+  });
   beforeEach(() => {
     resetState(state, dom);
     // Message events carry sessionId; handleEvent drops any whose sessionId

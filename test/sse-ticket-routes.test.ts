@@ -29,13 +29,13 @@ function req(
       (res) => {
         let data = "";
         res.on("data", (c: Buffer) => (data += c.toString()));
-        res.on("end", () =>
+        res.on("end", () => {
           resolve({
             status: res.statusCode!,
             body: data,
             headers: res.headers,
-          }),
-        );
+          });
+        });
       },
     );
     r.on("error", reject);
@@ -87,7 +87,11 @@ describe("SSE ticket flow", () => {
     sseManager.stopHeartbeat();
     await authStore.close();
     store.close();
-    await new Promise<void>((r) => server.close(() => r()));
+    await new Promise<void>((r) =>
+      server.close(() => {
+        r();
+      }),
+    );
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
@@ -249,14 +253,20 @@ describe("SSE revocation via heartbeat", () => {
     await Promise.race([
       streamEnded,
       new Promise((_, rej) =>
-        setTimeout(() => rej(new Error("stream not closed within 1s")), 1000),
+        setTimeout(() => {
+          rej(new Error("stream not closed within 1s"));
+        }, 1000),
       ),
     ]);
 
     sse.stopHeartbeat();
     await authStore.close();
     store.close();
-    await new Promise<void>((r) => server.close(() => r()));
+    await new Promise<void>((r) =>
+      server.close(() => {
+        r();
+      }),
+    );
     rmSync(dir, { recursive: true, force: true });
   });
 });

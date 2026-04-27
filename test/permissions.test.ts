@@ -32,7 +32,9 @@ function makeRequest(
       (res) => {
         let data = "";
         res.on("data", (chunk: Buffer) => (data += chunk.toString()));
-        res.on("end", () => resolve({ status: res.statusCode!, body: data }));
+        res.on("end", () => {
+          resolve({ status: res.statusCode!, body: data });
+        });
       },
     );
     req.on("error", reject);
@@ -126,7 +128,11 @@ describe("Permissions REST API", () => {
   });
 
   afterEach(async () => {
-    await new Promise<void>((resolve) => server.close(() => resolve()));
+    await new Promise<void>((resolve) =>
+      server.close(() => {
+        resolve();
+      }),
+    );
     store.close();
     rmSync(tmpDir, { recursive: true, force: true });
   });
@@ -358,7 +364,11 @@ describe("Permissions REST API", () => {
         JSON.stringify({ optionId: "allow_once" }),
       );
       assert.equal(res.status, 503);
-      await new Promise<void>((r) => srv.close(() => r()));
+      await new Promise<void>((r) =>
+        srv.close(() => {
+          r();
+        }),
+      );
     });
   });
 });

@@ -7,8 +7,12 @@ import {
 } from "../public/js/login-core.ts";
 
 describe("login-core", () => {
-  beforeEach(() => setupDOM());
-  afterEach(() => teardownDOM());
+  beforeEach(() => {
+    setupDOM();
+  });
+  afterEach(() => {
+    teardownDOM();
+  });
 
   describe("verifyAndStoreToken", () => {
     it("rejects empty input without calling fetch", async () => {

@@ -20,7 +20,9 @@ function req(
       (res) => {
         let data = "";
         res.on("data", (c: Buffer) => (data += c.toString("utf8")));
-        res.on("end", () => resolve({ status: res.statusCode!, body: data }));
+        res.on("end", () => {
+          resolve({ status: res.statusCode!, body: data });
+        });
       },
     );
     r.on("error", reject);
@@ -61,7 +63,11 @@ describe("GET /api/v1/sessions/:id/snapshot", () => {
 
   afterEach(async () => {
     store.close();
-    await new Promise<void>((r) => server.close(() => r()));
+    await new Promise<void>((r) =>
+      server.close(() => {
+        r();
+      }),
+    );
     rmSync(tmpDir, { recursive: true, force: true });
   });
 

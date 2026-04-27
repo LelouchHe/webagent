@@ -21,7 +21,9 @@ describe("slash menu — Tab vs Click behavior", () => {
     commands = await import("../public/js/commands.ts");
   });
 
-  after(() => teardownDOM());
+  after(() => {
+    teardownDOM();
+  });
 
   beforeEach(() => {
     resetState(state, dom);
@@ -227,7 +229,9 @@ describe("inbox consume — switches session via switchToSession", () => {
     slashCommands = await import("../public/js/slash-commands.ts");
   });
 
-  after(() => teardownDOM());
+  after(() => {
+    teardownDOM();
+  });
 
   beforeEach(() => {
     resetState(state, dom);
