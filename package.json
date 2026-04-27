@@ -36,6 +36,7 @@
     "prepublishOnly": "npm run compile && npm run build",
     "build": "node scripts/build.js",
     "start": "node --experimental-strip-types src/server.ts --config config.toml",
+    "pretest": "test -f .husky/_/pre-push || npx husky",
     "test": "npm run compile && node --experimental-strip-types --test test/*.test.ts",
     "test:e2e": "rm -rf test/e2e-data && playwright test",
     "dev": "node scripts/build.js --watch & node --experimental-strip-types --watch src/server.ts --config config.dev.toml",
