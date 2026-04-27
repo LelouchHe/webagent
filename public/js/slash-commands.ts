@@ -13,6 +13,7 @@ import {
   getConfigValue,
   updateModeUI,
   updateStatusBar,
+  reloadSnapshot,
 } from "./state.ts";
 import { addSystem, scrollToBottom, formatLocalTime } from "./render.ts";
 import { loadHistory, handleEvent, fallbackToNextSession } from "./events.ts";
@@ -130,6 +131,7 @@ async function switchToSession(id: string): Promise<void> {
     const [session, loaded] = await Promise.all([
       api.getSession(id),
       loadHistory(id),
+      reloadSnapshot(id),
     ]);
     if (gen !== state.sessionSwitchGen) return;
     handleEvent({

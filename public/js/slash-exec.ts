@@ -14,6 +14,7 @@ import {
   getConfigOption,
   updateModeUI,
   updateStatusBar,
+  reloadSnapshot,
 } from "./state.ts";
 import { addSystem, scrollToBottom, formatLocalTime } from "./render.ts";
 import { loadHistory, handleEvent, fallbackToNextSession } from "./events.ts";
@@ -93,9 +94,14 @@ export async function handleSlashCommand(text: string): Promise<boolean> {
     case "/new": {
       // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- empty string should fall through
       const cwd = arg || state.sessionCwd || undefined;
+      // Capture before reset so model/mode inheritance still works after we
+      // clear sessionId (we clear it so any in-flight state_patch from the
+      // outgoing session is rejected by the per-session guard in handleEvent).
+      const inheritFrom = state.sessionId;
       resetSessionUI();
+      state.sessionId = null;
       addSystem("Creating new session…");
-      requestNewSession({ cwd: cwd });
+      requestNewSession({ cwd: cwd, inheritFromSessionId: inheritFrom });
       return true;
     }
 
@@ -278,6 +284,7 @@ export async function handleSlashCommand(text: string): Promise<boolean> {
         const [session] = await Promise.all([
           api.getSession(match.id),
           loadHistory(match.id),
+          reloadSnapshot(match.id),
         ]);
         if (gen !== state.sessionSwitchGen) return true;
         handleEvent({
