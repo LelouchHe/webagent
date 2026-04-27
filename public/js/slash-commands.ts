@@ -495,7 +495,7 @@ export const ROOT: CmdNode = {
       },
       toSpec: (item: unknown) => {
         const s = item as SessionSummary;
-        const label = s.title ?? s.id.slice(0, 8) + "…";
+        const label = s.title ?? s.id;
         const time = formatLocalTime(s.last_active_at);
         return {
           primary: label,
