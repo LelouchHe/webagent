@@ -426,4 +426,203 @@ describe("SessionManager", () => {
       assert.ok(!sm.liveSessions.has("s1"));
     });
   });
+
+  describe("resume-time cache warming", () => {
+    // ACP's loadSession does not return configOptions (only newSession /
+    // setConfigOption do). When the global cache is empty (e.g. after
+    // bridge.restart), piggyback on the user's own resume: call
+    // setConfigOption with the session's own stored value (idempotent) to
+    // pull the full schema from the agent.
+
+    it("warms cachedConfigOptions on first resume when cache is empty and session has stored mode", async () => {
+      store.createSession("s1", "/x");
+      store.updateSessionConfig("s1", "mode", "#plan");
+      sm.cachedConfigOptions = [];
+
+      const setCalls: Array<{ id: string; value: string }> = [];
+      const bridge = {
+        async newSession() {
+          return "";
+        },
+        async setConfigOption(_sid: string, id: string, value: string) {
+          setCalls.push({ id, value });
+          return [
+            {
+              type: "select" as const,
+              id: "mode",
+              name: "Mode",
+              currentValue: "#plan",
+              options: [
+                { value: "agent", name: "agent" },
+                { value: "#plan", name: "plan" },
+                { value: "#autopilot", name: "autopilot" },
+              ],
+            },
+            {
+              type: "select" as const,
+              id: "model",
+              name: "Model",
+              currentValue: "gpt-5.4",
+              options: [{ value: "gpt-5.4", name: "GPT-5.4" }],
+            },
+          ];
+        },
+        async loadSession() {
+          return { sessionId: "s1", configOptions: [] };
+        },
+      };
+
+      await sm.ensureResumed(bridge, "s1");
+      assert.equal(setCalls.length, 1);
+      assert.equal(setCalls[0].id, "mode");
+      assert.equal(setCalls[0].value, "#plan");
+      assert.equal(sm.cachedConfigOptions.length, 2);
+      assert.ok(sm.liveSessions.has("s1"));
+    });
+
+    it("skips warming when cache is already populated", async () => {
+      store.createSession("s1", "/x");
+      store.updateSessionConfig("s1", "mode", "#plan");
+      sm.cachedConfigOptions = [
+        {
+          type: "select",
+          id: "mode",
+          name: "Mode",
+          currentValue: "agent",
+          options: [{ value: "agent", name: "agent" }],
+        },
+      ];
+
+      let setCalled = false;
+      const bridge = {
+        async newSession() {
+          return "";
+        },
+        async setConfigOption() {
+          setCalled = true;
+          return [];
+        },
+        async loadSession() {
+          return { sessionId: "s1", configOptions: [] };
+        },
+      };
+
+      await sm.ensureResumed(bridge, "s1");
+      assert.equal(setCalled, false);
+    });
+
+    it("skips warming when session has no stored config at all", async () => {
+      store.createSession("s1", "/x");
+      sm.cachedConfigOptions = [];
+
+      let setCalled = false;
+      const bridge = {
+        async newSession() {
+          return "";
+        },
+        async setConfigOption() {
+          setCalled = true;
+          return [];
+        },
+        async loadSession() {
+          return { sessionId: "s1", configOptions: [] };
+        },
+      };
+
+      await sm.ensureResumed(bridge, "s1");
+      assert.equal(setCalled, false);
+      assert.equal(sm.cachedConfigOptions.length, 0);
+      assert.ok(sm.liveSessions.has("s1"));
+    });
+
+    it("prefers mode > reasoning_effort > model when picking the warming key", async () => {
+      store.createSession("s1", "/x");
+      store.updateSessionConfig("s1", "reasoning_effort", "medium");
+      store.updateSessionConfig("s1", "model", "gpt-5.4");
+      sm.cachedConfigOptions = [];
+
+      let picked: { id: string; value: string } | null = null;
+      const bridge = {
+        async newSession() {
+          return "";
+        },
+        async setConfigOption(_sid: string, id: string, value: string) {
+          picked = { id, value };
+          return [];
+        },
+        async loadSession() {
+          return { sessionId: "s1", configOptions: [] };
+        },
+      };
+
+      await sm.ensureResumed(bridge, "s1");
+      assert.deepEqual(picked, { id: "reasoning_effort", value: "medium" });
+    });
+
+    it("resume still succeeds when setConfigOption throws", async () => {
+      store.createSession("s1", "/x");
+      store.updateSessionConfig("s1", "mode", "#plan");
+      sm.cachedConfigOptions = [];
+
+      const bridge = {
+        async newSession() {
+          return "";
+        },
+        async setConfigOption() {
+          throw new Error("agent boom");
+        },
+        async loadSession() {
+          return { sessionId: "s1", configOptions: [] };
+        },
+      };
+
+      await sm.ensureResumed(bridge, "s1");
+      assert.equal(sm.cachedConfigOptions.length, 0);
+      assert.ok(sm.liveSessions.has("s1"), "resume must succeed even if warming fails");
+    });
+
+    it("does not overwrite session DB row with agent defaults in the warm response", async () => {
+      // Probe responses carry agent in-memory defaults for unrelated keys
+      // (e.g. setConfigOption(mode, #plan) response's model.currentValue is
+      // NOT the user's preference). Warming must never write these back.
+      store.createSession("s1", "/x");
+      store.updateSessionConfig("s1", "mode", "#plan");
+      store.updateSessionConfig("s1", "model", "gpt-5.4");
+      sm.cachedConfigOptions = [];
+
+      const bridge = {
+        async newSession() {
+          return "";
+        },
+        async setConfigOption() {
+          return [
+            {
+              type: "select" as const,
+              id: "mode",
+              name: "Mode",
+              currentValue: "#plan",
+              options: [{ value: "#plan", name: "plan" }],
+            },
+            {
+              type: "select" as const,
+              id: "model",
+              currentValue: "gpt-5.2",
+              name: "Model",
+              options: [
+                { value: "gpt-5.2", name: "5.2" },
+                { value: "gpt-5.4", name: "5.4" },
+              ],
+            },
+          ];
+        },
+        async loadSession() {
+          return { sessionId: "s1", configOptions: [] };
+        },
+      };
+
+      await sm.ensureResumed(bridge, "s1");
+      const row = store.getSession("s1")!;
+      assert.equal(row.model, "gpt-5.4", "DB model must stay as user's choice");
+    });
+  });
 });

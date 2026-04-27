@@ -235,6 +235,10 @@ export class AgentBridge extends EventEmitter {
 
       // 5. Clear liveSessions so ensureResumed() will re-register on next access
       sessions.liveSessions.clear();
+      // Also clear the global configOptions cache — a restarted agent may
+      // speak a different schema (e.g. agent upgrade removed a model). The
+      // next resumeSession will warm it from the user's stored config.
+      sessions.cachedConfigOptions = [];
 
       // 6. Shutdown old process
       await this.shutdown();

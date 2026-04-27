@@ -149,12 +149,16 @@ export class SessionManager {
     // Restore via ACP
     this.restoringSessions.add(sessionId);
     try {
-      const restored = await bridge.loadSession(sessionId, session.cwd);
+      await bridge.loadSession(sessionId, session.cwd);
       this.liveSessions.add(sessionId);
       if (session.title) this.sessionHasTitle.add(sessionId);
-      const configOptions = this.applyStoredConfig(restored.configOptions, session);
-      // Populate the cache so subsequent GET /:id requests see real config
-      if (restored.configOptions.length) this.cachedConfigOptions = restored.configOptions;
+      // Piggyback a cache-warming setConfigOption on the user's own resume
+      // when the global cache is empty (typical after bridge.restart). Uses
+      // the session's own stored value — idempotent, no side effect. Failure
+      // is swallowed: the resume still succeeds and the frontend falls back
+      // to snapshot-based mode/model display (see public/js/state.ts).
+      await this.tryWarmCache(bridge, sessionId, session);
+      const configOptions = this.applyStoredConfig(this.cachedConfigOptions, session);
       console.log(`[session] restored: ${sessionId.slice(0, 8)}…`);
       return {
         type: "session_created",
@@ -168,6 +172,43 @@ export class SessionManager {
       throw err;
     } finally {
       this.restoringSessions.delete(sessionId);
+    }
+  }
+
+  /**
+   * When cachedConfigOptions is empty, use the session's own stored config
+   * value to trigger a setConfigOption. The agent's response carries the
+   * full ConfigOption[] schema (options lists + in-memory currentValues),
+   * which we cache. Writes **only** the global cache, never the session's
+   * DB row — setConfigOption's currentValue for unrelated keys is the
+   * agent's in-memory default, not the user's preference.
+   *
+   * Key priority mode > reasoning_effort > model:
+   *   - mode is a small stable enum, rewriting current value is idempotent.
+   *   - model has the highest schema-drift risk (agent upgrades drop values).
+   */
+  private async tryWarmCache(
+    bridge: SessionBridge,
+    sessionId: string,
+    session: { model: string | null; mode: string | null; reasoning_effort: string | null },
+  ): Promise<void> {
+    if (this.cachedConfigOptions.length > 0) return;
+    const pick = session.mode
+      ? { id: "mode", value: session.mode }
+      : session.reasoning_effort
+        ? { id: "reasoning_effort", value: session.reasoning_effort }
+        : session.model
+          ? { id: "model", value: session.model }
+          : null;
+    if (!pick) return;
+    try {
+      const opts = await bridge.setConfigOption(sessionId, pick.id, pick.value);
+      if (opts.length > 0) {
+        this.cachedConfigOptions = opts;
+        console.log(`[session] warmed cache on resume (${opts.length} options)`);
+      }
+    } catch (err) {
+      console.warn(`[session] cache warming failed for ${sessionId.slice(0, 8)}…:`, err);
     }
   }
 
