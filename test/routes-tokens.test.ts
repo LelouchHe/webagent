@@ -84,11 +84,23 @@ describe("tokens CRUD", () => {
   });
 
   // GET /tokens
-  it("GET /tokens requires admin scope", async () => {
+  it("GET /tokens for api scope returns self-only list", async () => {
     const r = await req(port, "GET", "/api/v1/tokens", {
       Authorization: `Bearer ${apiToken}`,
     });
-    assert.equal(r.status, 403);
+    assert.equal(r.status, 200);
+    const list = JSON.parse(r.body) as Array<Record<string, unknown>>;
+    assert.equal(list.length, 1, "api scope sees exactly one entry (self)");
+    const self = list[0];
+    assert.equal(self.name, "api1");
+    assert.equal(self.scope, "api");
+    assert.equal(self.isSelf, true);
+    assert.equal(self.hash, undefined, "hash must not be exposed");
+  });
+
+  it("GET /tokens without auth is unauthorized", async () => {
+    const r = await req(port, "GET", "/api/v1/tokens");
+    assert.equal(r.status, 401);
   });
 
   it("GET /tokens returns list without hashes; isSelf marks the caller", async () => {

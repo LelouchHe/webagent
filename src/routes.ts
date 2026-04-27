@@ -343,18 +343,21 @@ export function createRequestHandler(
       }
 
       // --- Token management (admin scope) ---
-      // GET /api/v1/tokens — list all tokens (no hash field)
+      // GET /api/v1/tokens — list tokens.
+      // admin: full list. api: own token only (self-row, so the slash
+      // menu can show the user's own metadata without leaking peers).
       if (url === "/api/v1/tokens" && req.method === "GET") {
         const principal = principalByRequest.get(req);
         if (!deps.authStore || !principal) {
           json(res, 401, { error: "Unauthorized" });
           return;
         }
-        if (principal.scope !== "admin") {
-          json(res, 403, { error: "Forbidden" });
-          return;
-        }
-        const list = deps.authStore.list().map((t) => ({
+        const all = deps.authStore.list();
+        const visible =
+          principal.scope === "admin"
+            ? all
+            : all.filter((t) => t.name === principal.name);
+        const list = visible.map((t) => ({
           name: t.name,
           scope: t.scope,
           createdAt: t.createdAt,
