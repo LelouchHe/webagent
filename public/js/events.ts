@@ -122,7 +122,8 @@ function closeLocalBanner(tag: string): void {
   // strict DOM types alone. Cast through to allow the runtime check.
   const sw =
     typeof navigator !== "undefined"
-      ? (navigator as Navigator & { serviceWorker?: ServiceWorkerContainer }).serviceWorker
+      ? (navigator as Navigator & { serviceWorker?: ServiceWorkerContainer })
+          .serviceWorker
       : undefined;
   sw?.controller?.postMessage({
     type: "close-notification",
