@@ -332,6 +332,23 @@ export class SessionManager {
     return sessionId ? perms.filter(p => p.sessionId === sessionId) : perms;
   }
 
+  /**
+   * Re-derive runtime.pendingPermissions from the Map and push via state_patch.
+   * Call this after every mutation of `pendingPermissions` so the frontend
+   * snapshot stays authoritative.
+   */
+  syncPendingPermissions(sessionId: string): void {
+    const forSession = [...this.pendingPermissions.values()]
+      .filter(p => p.sessionId === sessionId)
+      .map(p => ({
+        requestId: p.requestId,
+        toolName: "",
+        title: p.title,
+        options: p.options.map(o => ({ optionId: o.optionId, label: o.label })),
+      }));
+    this.state.patch(sessionId, { runtime: { pendingPermissions: forSession } });
+  }
+
   /** Kill all running bash processes (for shutdown). */
   killAllBashProcs(): void {
     const forceSignal = process.platform === "win32" ? undefined : "SIGKILL";

@@ -466,31 +466,6 @@ export async function loadOlderEvents(sid: string): Promise<boolean> {
 }
 
 /**
- * Resend permission responses that were sent optimistically but never confirmed
- * by the server (e.g. WS dropped before delivery). Call after loadNewEvents/loadHistory
- * on reconnect.
- */
-export function retryUnconfirmedPermissions() {
-  for (const [requestId, response] of state.unconfirmedPermissions) {
-    const el = document.querySelector(`.permission[data-request-id="${requestId}"]`);
-    if (!el || !el.querySelector('button')) {
-      // Element gone or already resolved — clean up
-      state.unconfirmedPermissions.delete(requestId);
-      continue;
-    }
-    // Still pending in DOM — resend via REST and optimistically resolve
-    if (response.denied) {
-      api.denyPermission(response.sessionId, requestId).catch(() => {});
-    } else {
-      api.resolvePermission(response.sessionId, requestId, response.optionId).catch(() => {});
-    }
-    const title = el.dataset.title ? `⚿ ${escHtml(el.dataset.title)}` : '⚿';
-    el.innerHTML = `<span class="dim">${title} — ${escHtml(response.optionName)}</span>`;
-    state.unconfirmedPermissions.delete(requestId);
-  }
-}
-
-/**
  * Replay index: O(1) element lookup during replay, replacing querySelector on
  * the growing DocumentFragment.  Created once per loadHistory/loadNewEvents call
  * and passed through the replay loop.  When null (live events), falls back to
@@ -1016,13 +991,6 @@ export function handleEvent(msg: AgentEvent) {
             api.resolvePermission(state.sessionId!, msg.requestId, opt.optionId).catch(() => {});
           }
           state.pendingPermissionRequestIds.delete(msg.requestId);
-          // Track for retry on reconnect (cleared when server confirms via permission_response)
-          state.unconfirmedPermissions.set(msg.requestId, {
-            sessionId: state.sessionId,
-            optionId: opt.optionId,
-            optionName: opt.name,
-            denied: perm.apiAction === 'deny',
-          });
           permEl.innerHTML = `<span class="dim">⚿ ${escHtml(msg.title)} — ${escHtml(opt.name)}</span>`;
           finishPromptIfIdle();
         };
@@ -1034,7 +1002,6 @@ export function handleEvent(msg: AgentEvent) {
 
     case 'permission_response': {
       state.pendingPermissionRequestIds.delete(msg.requestId);
-      state.unconfirmedPermissions.delete(msg.requestId);
       const permTarget = document.querySelector(`.permission[data-request-id="${msg.requestId}"]`);
       if (msg.sessionId === state.sessionId && permTarget) {
         const title = permTarget.dataset.title ? `⚿ ${permTarget.dataset.title}` : '⚿';

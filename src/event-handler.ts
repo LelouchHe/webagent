@@ -44,13 +44,16 @@ export function handleAgentEvent(
     case "message_chunk":
       sessions.flushThinkingBuffer(event.sessionId);
       sessions.appendAssistant(event.sessionId, event.text);
+      sessions.state.patch(event.sessionId, { runtime: { streaming: { assistant: true, thinking: false } } });
       break;
     case "thought_chunk":
       sessions.flushAssistantBuffer(event.sessionId);
       sessions.appendThinking(event.sessionId, event.text);
+      sessions.state.patch(event.sessionId, { runtime: { streaming: { assistant: false, thinking: true } } });
       break;
     case "tool_call":
       sessions.flushBuffers(event.sessionId);
+      sessions.state.patch(event.sessionId, { runtime: { streaming: { assistant: false, thinking: false } } });
       store.saveEvent(event.sessionId, event.type, { id: event.id, title: event.title, kind: event.kind, rawInput: event.rawInput });
       break;
     case "tool_call_update":
@@ -58,10 +61,12 @@ export function handleAgentEvent(
       break;
     case "plan":
       sessions.flushBuffers(event.sessionId);
+      sessions.state.patch(event.sessionId, { runtime: { streaming: { assistant: false, thinking: false } } });
       store.saveEvent(event.sessionId, event.type, { entries: event.entries });
       break;
     case "permission_request": {
       sessions.flushBuffers(event.sessionId);
+      sessions.state.patch(event.sessionId, { runtime: { streaming: { assistant: false, thinking: false } } });
       store.saveEvent(event.sessionId, event.type, {
         requestId: event.requestId, title: event.title, options: event.options,
       });
@@ -74,6 +79,7 @@ export function handleAgentEvent(
           label: o.label ?? o.name ?? o.optionId,
         })),
       });
+      sessions.syncPendingPermissions(event.sessionId);
       // Auto-approve permissions in autopilot mode (allow_once only to avoid persisting across mode switches)
       const mode = store.getSession(event.sessionId)?.mode ?? "";
       if (mode.includes("#autopilot")) {
@@ -83,6 +89,7 @@ export function handleAgentEvent(
         if (opt) {
           bridge.resolvePermission(event.requestId, opt.optionId);
           sessions.pendingPermissions.delete(event.requestId);
+          sessions.syncPendingPermissions(event.sessionId);
           const optionName = opt.label ?? opt.optionId;
           store.saveEvent(event.sessionId, "permission_response", {
             requestId: event.requestId, optionName, denied: false,
@@ -105,6 +112,7 @@ export function handleAgentEvent(
       sessions.activePrompts.delete(event.sessionId);
       sessions.syncBusy(event.sessionId);
       sessions.flushBuffers(event.sessionId);
+      sessions.state.patch(event.sessionId, { runtime: { streaming: { assistant: false, thinking: false } } });
       store.saveEvent(event.sessionId, event.type, { stopReason: event.stopReason });
       break;
     case "error":

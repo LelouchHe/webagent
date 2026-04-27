@@ -14,10 +14,11 @@ function makeRequest(
   method: string,
   path: string,
   body?: string,
+  extraHeaders?: Record<string, string>,
 ): Promise<{ status: number; headers: http.IncomingHttpHeaders; body: string }> {
   return new Promise((resolve, reject) => {
     const req = http.request(
-      { hostname: "127.0.0.1", port, path, method, headers: { "Content-Type": "application/json" } },
+      { hostname: "127.0.0.1", port, path, method, headers: { "Content-Type": "application/json", ...extraHeaders } },
       (res) => {
         let data = "";
         res.on("data", (chunk: Buffer) => (data += chunk));
@@ -234,6 +235,29 @@ describe("Prompt REST API", () => {
         JSON.stringify({ text: "describe this", images: [{ data: "base64data", mimeType: "image/png" }] }));
       assert.equal(res.status, 202);
       assert.deepEqual(mockBridge.lastPromptArgs?.images, [{ data: "base64data", mimeType: "image/png" }]);
+    });
+
+    it("is idempotent when X-Client-Op-Id is replayed", async () => {
+      const sessionId = await createSession();
+      let promptCount = 0;
+      const origPrompt = mockBridge.prompt;
+      mockBridge.prompt = async (...args: unknown[]) => {
+        promptCount++;
+        return (origPrompt as (...a: unknown[]) => Promise<unknown>).apply(mockBridge, args);
+      };
+
+      const headers = { "X-Client-Op-Id": "op-prompt-1" };
+      const res1 = await makeRequest(port, "POST", `/api/v1/sessions/${sessionId}/prompt`,
+        JSON.stringify({ text: "hello" }), headers);
+      assert.equal(res1.status, 202);
+      // Wait for session to go idle again
+      await new Promise(r => setTimeout(r, 10));
+
+      const res2 = await makeRequest(port, "POST", `/api/v1/sessions/${sessionId}/prompt`,
+        JSON.stringify({ text: "hello" }), headers);
+      assert.equal(res2.status, 202);
+      assert.equal(res2.body, res1.body);
+      assert.equal(promptCount, 1);
     });
   });
 

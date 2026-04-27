@@ -350,4 +350,52 @@ describe("Store", () => {
       assert.equal(store.listRecentPaths().length, 1);
     });
   });
+
+  describe("client_ops (idempotency)", () => {
+    beforeEach(() => {
+      store.createSession("s1", "/tmp");
+    });
+
+    it("getClientOp returns null for unseen op", () => {
+      assert.equal(store.getClientOp("s1", "op-xyz"), null);
+    });
+
+    it("saveClientOp + getClientOp round-trips the cached result", () => {
+      store.saveClientOp("s1", "op-1", { status: 200, body: { ok: true } });
+      const cached = store.getClientOp("s1", "op-1");
+      assert.deepEqual(cached, { status: 200, body: { ok: true } });
+    });
+
+    it("saveClientOp is idempotent (INSERT OR IGNORE)", () => {
+      store.saveClientOp("s1", "op-1", { status: 200, body: { a: 1 } });
+      store.saveClientOp("s1", "op-1", { status: 500, body: { a: 2 } });
+      assert.deepEqual(store.getClientOp("s1", "op-1"), { status: 200, body: { a: 1 } });
+    });
+
+    it("scopes op ids per session", () => {
+      store.createSession("s2", "/tmp");
+      store.saveClientOp("s1", "op-shared", { status: 200, body: "a" });
+      store.saveClientOp("s2", "op-shared", { status: 200, body: "b" });
+      assert.equal((store.getClientOp("s1", "op-shared") as { body: string }).body, "a");
+      assert.equal((store.getClientOp("s2", "op-shared") as { body: string }).body, "b");
+    });
+
+    it("pruneClientOps removes rows older than cutoff", () => {
+      store.saveClientOp("s1", "stale", { status: 200, body: {} });
+      // Force stale row's created_at back by 10 days
+      (store as unknown as { db: { prepare: (s: string) => { run: () => void } } }).db
+        .prepare("UPDATE client_ops SET created_at = datetime('now', '-10 days') WHERE client_op_id = 'stale'")
+        .run();
+      store.saveClientOp("s1", "fresh", { status: 200, body: {} });
+      store.pruneClientOps(7 * 24 * 3600 * 1000);
+      assert.equal(store.getClientOp("s1", "stale"), null);
+      assert.ok(store.getClientOp("s1", "fresh"));
+    });
+
+    it("deleteSession cascades to client_ops", () => {
+      store.saveClientOp("s1", "op-1", { status: 200, body: {} });
+      store.deleteSession("s1");
+      assert.equal(store.getClientOp("s1", "op-1"), null);
+    });
+  });
 });

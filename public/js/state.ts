@@ -11,13 +11,6 @@ interface PendingImage {
   previewUrl: string;
 }
 
-interface UnconfirmedPermission {
-  sessionId: string;
-  optionId: string;
-  optionName: string;
-  denied: boolean;
-}
-
 const $ = <T extends HTMLElement>(s: string) => document.querySelector<T>(s)!;
 
 export const dom = {
@@ -91,7 +84,6 @@ export const state = {
   replayInProgress: false,
   replayTarget: null as DocumentFragment | null,
   replayQueue: [] as AgentEvent[],
-  unconfirmedPermissions: new Map<string, UnconfirmedPermission>(),
   agentReloading: false,
   recentPathsLimit: 10,
 };
@@ -283,7 +275,6 @@ export function resetSessionUI() {
   state.followMessages = true;
   state.pendingToolCallIds.clear();
   state.pendingPermissionRequestIds.clear();
-  state.unconfirmedPermissions.clear();
   state.pendingPromptDone = false;
   state.turnEnded = false;
   state.newTurnStarted = false;

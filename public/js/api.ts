@@ -25,12 +25,19 @@ async function request<T = unknown>(url: string, init?: RequestInit): Promise<T>
   return JSON.parse(text) as T;
 }
 
-function post<T = unknown>(url: string, body: Record<string, unknown>): Promise<T> {
+function post<T = unknown>(url: string, body: Record<string, unknown>, clientOpId?: string): Promise<T> {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (clientOpId) headers["X-Client-Op-Id"] = clientOpId;
   return request<T>(url, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers,
     body: JSON.stringify(body),
   });
+}
+
+function newOpId(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") return crypto.randomUUID();
+  return "op-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 10);
 }
 
 // --- Session CRUD ---
@@ -64,23 +71,23 @@ export function getSnapshot(id: string): Promise<Record<string, unknown>> {
 export function sendMessage(sessionId: string, text: string, images?: Array<{ data: string; mimeType: string; path?: string }>): Promise<unknown> {
   const body: Record<string, unknown> = { text };
   if (images?.length) body.images = images;
-  return post("/api/v1/sessions/" + sessionId + "/prompt", body);
+  return post("/api/v1/sessions/" + sessionId + "/prompt", body, newOpId());
 }
 
 // --- Cancel ---
 
 export function cancelSession(sessionId: string): Promise<void> {
-  return post("/api/v1/sessions/" + sessionId + "/cancel", {});
+  return post("/api/v1/sessions/" + sessionId + "/cancel", {}, newOpId());
 }
 
 // --- Permissions ---
 
 export function resolvePermission(sessionId: string, requestId: string, optionId: string): Promise<void> {
-  return post("/api/v1/sessions/" + sessionId + "/permissions/" + requestId, { optionId });
+  return post("/api/v1/sessions/" + sessionId + "/permissions/" + requestId, { optionId }, newOpId());
 }
 
 export function denyPermission(sessionId: string, requestId: string): Promise<void> {
-  return post("/api/v1/sessions/" + sessionId + "/permissions/" + requestId, { denied: true });
+  return post("/api/v1/sessions/" + sessionId + "/permissions/" + requestId, { denied: true }, newOpId());
 }
 
 // --- Config ---

@@ -15,10 +15,11 @@ function makeRequest(
   method: string,
   path: string,
   body?: string,
+  extraHeaders?: Record<string, string>,
 ): Promise<{ status: number; body: string }> {
   return new Promise((resolve, reject) => {
     const req = http.request(
-      { hostname: "127.0.0.1", port, path, method, headers: { "Content-Type": "application/json" } },
+      { hostname: "127.0.0.1", port, path, method, headers: { "Content-Type": "application/json", ...extraHeaders } },
       (res) => {
         let data = "";
         res.on("data", (chunk: Buffer) => (data += chunk));
@@ -157,6 +158,29 @@ describe("Operations REST API", () => {
       const res = await makeRequest(p, "POST", `/api/v1/sessions/${sessionId}/cancel`);
       assert.equal(res.status, 503);
       await new Promise<void>((r) => srv.close(() => r()));
+    });
+
+    it("is idempotent when the same X-Client-Op-Id is replayed", async () => {
+      const sessionId = await createSession();
+      sessions.activePrompts.add(sessionId);
+
+      let callCount = 0;
+      mockBridge.cancel = async () => { callCount++; };
+
+      const headers = { "X-Client-Op-Id": "op-cancel-1" };
+      const res1 = await makeRequest(port, "POST", `/api/v1/sessions/${sessionId}/cancel`, undefined, headers);
+      assert.equal(res1.status, 200);
+      assert.equal(callCount, 1);
+
+      const res2 = await makeRequest(port, "POST", `/api/v1/sessions/${sessionId}/cancel`, undefined, headers);
+      assert.equal(res2.status, 200);
+      assert.equal(res2.body, res1.body);
+      assert.equal(callCount, 1);
+
+      sessions.activePrompts.add(sessionId);
+      const res3 = await makeRequest(port, "POST", `/api/v1/sessions/${sessionId}/cancel`, undefined, { "X-Client-Op-Id": "op-cancel-2" });
+      assert.equal(res3.status, 200);
+      assert.equal(callCount, 2);
     });
   });
 

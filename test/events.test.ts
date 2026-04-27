@@ -402,22 +402,6 @@ describe("events", () => {
         assert.equal(perms[0].querySelectorAll("button").length, 0, "should stay resolved");
       });
 
-      it("tracks unconfirmed permission response after Allow click", () => {
-        state.sessionId = "s1";
-        events.handleEvent({
-          type: "permission_request",
-          requestId: "perm-track",
-          title: "Allow?",
-          options: [{ optionId: "allow", kind: "allow_once", name: "Allow" }],
-        });
-        dom.messages.querySelector(".permission button").click();
-        assert.ok(state.unconfirmedPermissions instanceof Map);
-        assert.ok(state.unconfirmedPermissions.has("perm-track"), "should track unconfirmed response");
-        const entry = state.unconfirmedPermissions.get("perm-track");
-        assert.equal(entry.optionId, "allow");
-        assert.equal(entry.optionName, "Allow");
-      });
-
       it("preserves title after user clicks a permission button", () => {
         state.sessionId = "s1";
         events.handleEvent({
@@ -472,27 +456,6 @@ describe("events", () => {
         const perm = dom.messages.querySelector(".permission");
         assert.ok(perm.textContent.includes("Run dangerous command"));
         assert.ok(perm.textContent.includes("Allow once"));
-      });
-
-      it("clears unconfirmed permission on permission_response", () => {
-        state.sessionId = "s1";
-        events.handleEvent({
-          type: "permission_request",
-          requestId: "perm-conf",
-          title: "Allow?",
-          options: [{ optionId: "allow", kind: "allow_once", name: "Allow" }],
-        });
-        dom.messages.querySelector(".permission button").click();
-        assert.ok(state.unconfirmedPermissions.has("perm-conf"));
-        events.handleEvent({
-          type: "permission_response",
-          sessionId: "s1",
-          requestId: "perm-conf",
-          optionName: "Allow",
-          denied: false,
-        });
-        assert.equal(state.unconfirmedPermissions.has("perm-conf"), false,
-          "should clear unconfirmed after server confirms");
       });
     });
 
@@ -2056,88 +2019,6 @@ describe("events", () => {
       assert.equal(thinkingEls.length, 1);
       assert.ok(state.currentThinkingEl);
       assert.equal(state.currentThinkingText, "new thought");
-    });
-  });
-
-  describe("retryUnconfirmedPermissions", () => {
-    it("resends response for a still-pending permission after reconnect", () => {
-      state.sessionId = "s1";
-
-      // Simulate a permission that was responded to but never confirmed
-      state.unconfirmedPermissions.set("perm-retry", {
-        sessionId: "s1",
-        optionId: "allow",
-        optionName: "Allow Once",
-        denied: false,
-      });
-
-      // Create a pending permission element in DOM (as if replayed from DB without response)
-      const el = document.createElement("div");
-      el.className = "permission";
-      el.dataset.requestId = "perm-retry";
-      el.dataset.title = "Execute ls";
-      el.innerHTML = '<span class="title">⚿ Execute ls</span> ';
-      const btn = document.createElement("button");
-      btn.textContent = "Allow Once";
-      el.appendChild(btn);
-      dom.messages.appendChild(el);
-
-      events.retryUnconfirmedPermissions();
-
-      // Should have sent a REST call to resolve the permission
-      const call = fetchCalls.find(c => c.url.includes("/api/v1/sessions/s1/permissions/perm-retry") && c.init?.method === "POST");
-      assert.ok(call, "expected POST to /api/v1/sessions/s1/permissions/perm-retry");
-      const body = JSON.parse(call!.init.body);
-      assert.equal(body.optionId, "allow");
-      // Should have optimistically resolved the UI
-      assert.equal(el.querySelectorAll("button").length, 0);
-      assert.ok(el.textContent!.includes("Execute ls"));
-      assert.ok(el.textContent!.includes("Allow Once"));
-      // Should have cleaned up
-      assert.equal(state.unconfirmedPermissions.has("perm-retry"), false);
-    });
-
-    it("skips already-resolved permission", () => {
-      state.sessionId = "s1";
-
-      state.unconfirmedPermissions.set("perm-ok", {
-        sessionId: "s1",
-        optionId: "allow",
-        optionName: "Allow",
-        denied: false,
-      });
-
-      // Create a resolved permission element (no buttons)
-      const el = document.createElement("div");
-      el.className = "permission";
-      el.dataset.requestId = "perm-ok";
-      el.innerHTML = '<span style="opacity:0.5">⚿ Allow? — Allow</span>';
-      dom.messages.appendChild(el);
-
-      events.retryUnconfirmedPermissions();
-
-      // No permission REST calls — already resolved
-      const permCalls = fetchCalls.filter(c => c.url.includes("/api/v1/sessions/s1/permissions/"));
-      assert.equal(permCalls.length, 0);
-      assert.equal(state.unconfirmedPermissions.has("perm-ok"), false);
-    });
-
-    it("cleans up when permission element no longer exists", () => {
-      state.sessionId = "s1";
-
-      state.unconfirmedPermissions.set("perm-gone", {
-        sessionId: "s1",
-        optionId: "allow",
-        optionName: "Allow",
-        denied: false,
-      });
-
-      // No matching element in DOM
-      events.retryUnconfirmedPermissions();
-
-      const permCalls = fetchCalls.filter(c => c.url.includes("/api/v1/sessions/s1/permissions/"));
-      assert.equal(permCalls.length, 0);
-      assert.equal(state.unconfirmedPermissions.has("perm-gone"), false);
     });
   });
 

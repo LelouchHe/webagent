@@ -182,10 +182,7 @@ describe("POST /api/v1/messages — ingress", () => {
     assert.equal(msgEvent.from_ref, "cron:nightly");
   });
 
-  // Skipped: X-Client-Op-Id client_ops idempotency will land in a later phase
-  // alongside client_ops infrastructure. The route currently accepts the
-  // header as opaque (no side effects).
-  it.skip("idempotent via X-Client-Op-Id: second call returns identical id without duplicating the row", async () => {
+  it("idempotent via X-Client-Op-Id: second call returns identical id without duplicating the row", async () => {
     const opId = "op-abc";
     const r1 = await post(port, "/api/v1/messages", baseBody(), { "X-Client-Op-Id": opId });
     assert.equal(r1.status, 200);

@@ -109,6 +109,40 @@ function readBody(req: IncomingMessage): Promise<string> {
   });
 }
 
+/**
+ * client-server-split M2: idempotency helpers for mutating REST.
+ * Frontend generates a UUID per user-initiated action and sends it as
+ * `X-Client-Op-Id`. Replays (after SSE/network reconnect) return the
+ * cached response instead of re-executing side effects. Missing header →
+ * non-idempotent path (back-compat for curl / older clients).
+ */
+function getClientOpId(req: IncomingMessage): string | null {
+  const v = req.headers["x-client-op-id"];
+  if (typeof v === "string" && v.length > 0 && v.length <= 128) return v;
+  return null;
+}
+
+function tryReplayClientOp(
+  req: IncomingMessage,
+  res: ServerResponse,
+  store: Store,
+  sessionId: string,
+): { opId: string | null; replayed: boolean } {
+  const opId = getClientOpId(req);
+  if (!opId) return { opId: null, replayed: false };
+  const cached = store.getClientOp(sessionId, opId) as { status: number; body: unknown } | null;
+  if (cached && typeof cached === "object" && "status" in cached && "body" in cached) {
+    json(res, cached.status, cached.body, req);
+    return { opId, replayed: true };
+  }
+  return { opId, replayed: false };
+}
+
+function saveClientOpResult(store: Store, opId: string | null, sessionId: string, status: number, body: unknown): void {
+  if (!opId) return;
+  store.saveClientOp(sessionId, opId, { status, body });
+}
+
 /** Send a JSON response, gzip-compressed when the client supports it. */
 function json(res: ServerResponse, status: number, data: unknown, req?: IncomingMessage): void {
   const body = JSON.stringify(data);
@@ -348,6 +382,8 @@ export function createRequestHandler(deps: RequestHandlerDeps): (req: IncomingMe
       if (permActionMatch && req.method === "POST") {
         const sessionId = decodeURIComponent(permActionMatch[1]);
         const requestId = decodeURIComponent(permActionMatch[2]);
+        const { opId, replayed } = tryReplayClientOp(req, res, store, sessionId);
+        if (replayed) return;
         const perm = sessions?.pendingPermissions.get(requestId);
         if (!perm) { json(res, 404, { error: "Permission not found" }); return; }
         if (perm.sessionId !== sessionId) { json(res, 400, { error: "Session ID mismatch" }); return; }
@@ -369,6 +405,7 @@ export function createRequestHandler(deps: RequestHandlerDeps): (req: IncomingMe
         }
 
         sessions!.pendingPermissions.delete(requestId);
+        sessions!.syncPendingPermissions(sessionId);
 
         // Store event and broadcast (same type so SSE drops are recoverable via sync)
         const permEventData = { requestId, optionName, denied };
@@ -386,7 +423,9 @@ export function createRequestHandler(deps: RequestHandlerDeps): (req: IncomingMe
           void deps.pushService.sendClose(`sess-${perm.sessionId}-perm-${requestId}`);
         }
 
-        json(res, 200, { ok: true });
+        const okBody = { ok: true };
+        saveClientOpResult(store, opId, sessionId, 200, okBody);
+        json(res, 200, okBody);
         return;
       }
 
@@ -398,6 +437,9 @@ export function createRequestHandler(deps: RequestHandlerDeps): (req: IncomingMe
         if (!session) { json(res, 404, { error: "Session not found" }); return; }
         const bridge = getBridge?.();
         if (!bridge) { json(res, 503, { error: "Agent not ready yet" }); return; }
+
+        const { opId, replayed } = tryReplayClientOp(req, res, store, sessionId);
+        if (replayed) return;
 
         // Kill running bash process if any
         const proc = sessions?.runningBashProcs.get(sessionId);
@@ -416,7 +458,9 @@ export function createRequestHandler(deps: RequestHandlerDeps): (req: IncomingMe
         const cancelTimeout = deps.limits.cancel_timeout ?? 0;
         if (sessions && cancelTimeout > 0) sessions.state.armCancelSafety(sessionId, cancelTimeout);
         sessions?.syncBusy(sessionId);
-        json(res, 200, { ok: true });
+        const okBody = { ok: true };
+        saveClientOpResult(store, opId, sessionId, 200, okBody);
+        json(res, 200, okBody);
         return;
       }
 
@@ -450,6 +494,7 @@ export function createRequestHandler(deps: RequestHandlerDeps): (req: IncomingMe
         // Make sure runtime reflects the current activePrompts/bash state even
         // if no patch has been emitted yet for this session.
         sessions.syncBusy(sessionId);
+        sessions.syncPendingPermissions(sessionId);
         const runtimeState = sessions.state.getState(sessionId);
         const lastEventSeq = store.getLastEventSeq(sessionId);
         json(res, 200, {
@@ -478,6 +523,9 @@ export function createRequestHandler(deps: RequestHandlerDeps): (req: IncomingMe
         const bridge = getBridge?.();
         if (!bridge) { json(res, 503, { error: "Agent not ready yet" }); return; }
         if (!sessions) { json(res, 503, { error: "Session manager not available" }); return; }
+
+        const { opId, replayed } = tryReplayClientOp(req, res, store, sessionId);
+        if (replayed) return;
 
         // Ensure session is live in ACP before prompting (awaits in-flight resume)
         try {
@@ -524,7 +572,9 @@ export function createRequestHandler(deps: RequestHandlerDeps): (req: IncomingMe
           sessions!.syncBusy(sessionId);
         });
 
-        json(res, 202, { status: "accepted" });
+        const acceptedBody = { status: "accepted" };
+        saveClientOpResult(store, opId, sessionId, 202, acceptedBody);
+        json(res, 202, acceptedBody);
         return;
       }
 
@@ -1088,6 +1138,12 @@ export function createRequestHandler(deps: RequestHandlerDeps): (req: IncomingMe
 
       // POST /api/v1/messages — create ingress message
       if (url === "/api/v1/messages" && req.method === "POST") {
+        // client-server-split M2: idempotency for the ingress message
+        // creator. /messages has no real session id, so we scope the
+        // cache under the synthetic key "__ingress__".
+        const { opId, replayed } = tryReplayClientOp(req, res, store, "__ingress__");
+        if (replayed) return;
+
         let raw: string;
         try { raw = await readBody(req); } catch { json(res, 400, { error: "Failed to read body" }); return; }
         let parsed: unknown;
@@ -1123,7 +1179,9 @@ export function createRequestHandler(deps: RequestHandlerDeps): (req: IncomingMe
             });
           }
           console.info(`[msg] ingress bound msg_id=${id} sess_id=${targetSid.slice(0, 8)}`);
-          json(res, 200, { id, delivered: "session" });
+          const boundBody = { id, delivered: "session" };
+          saveClientOpResult(store, opId, "__ingress__", 200, boundBody);
+          json(res, 200, boundBody);
           return;
         }
 
@@ -1157,7 +1215,9 @@ export function createRequestHandler(deps: RequestHandlerDeps): (req: IncomingMe
           });
         }
         console.info(`[msg] ingress unbound msg_id=${id} from_ref=${input.from_ref}`);
-        json(res, 200, { id, delivered: "pending" });
+        const unboundBody = { id, delivered: "pending" };
+        saveClientOpResult(store, opId, "__ingress__", 200, unboundBody);
+        json(res, 200, unboundBody);
         return;
       }
 

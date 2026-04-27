@@ -2,7 +2,7 @@
 
 import { state, setBusy, getHashSessionId, requestNewSession, resetSessionUI, setConnectionStatus, clearCancelTimer, reloadSnapshot } from './state.ts';
 import { addSystem, finishThinking, finishAssistant, finishBash, scrollToBottom } from './render.ts';
-import { handleEvent, loadHistory, loadNewEvents, retryUnconfirmedPermissions, fallbackToNextSession } from './events.ts';
+import { handleEvent, loadHistory, loadNewEvents, fallbackToNextSession } from './events.ts';
 import * as api from './api.ts';
 import { applyConnectedLogLevel } from './log.ts';
 
@@ -95,7 +95,6 @@ async function initSession() {
   if (existingId && existingId === state.sessionId && state.lastEventSeq > 0) {
     await resumeAndLoad(existingId, true, gen);
     if (gen !== state.sessionSwitchGen) return;
-    retryUnconfirmedPermissions();
     scrollToBottom(false);
     return;
   }

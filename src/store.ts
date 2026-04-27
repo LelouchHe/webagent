@@ -160,6 +160,20 @@ export class Store {
       CREATE INDEX IF NOT EXISTS idx_messages_dedup   ON messages (to_ref, dedup_key);
     `);
 
+    // client-server-split M2: idempotency for mutating REST calls. Stores
+    // the cached response per (session_id, client_op_id) so retries (after
+    // network/SSE reconnect) return the same result instead of re-executing
+    // side effects.
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS client_ops (
+        session_id   TEXT NOT NULL,
+        client_op_id TEXT NOT NULL,
+        result_json  TEXT NOT NULL,
+        created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now')),
+        PRIMARY KEY (session_id, client_op_id)
+      );
+    `);
+
     // recent_paths: LRU path list for /new menu
     const rpExists = this.db.prepare(
       "SELECT 1 FROM sqlite_master WHERE type='table' AND name='recent_paths'"
@@ -236,6 +250,7 @@ export class Store {
 
   deleteSession(id: string): void {
     this.db.prepare("DELETE FROM events WHERE session_id = ?").run(id);
+    this.db.prepare("DELETE FROM client_ops WHERE session_id = ?").run(id);
     this.db.prepare("DELETE FROM sessions WHERE id = ?").run(id);
   }
 
@@ -517,6 +532,49 @@ export class Store {
       )
       .get(messageId) as { session_id: string } | undefined;
     return row?.session_id;
+  }
+
+  // --- client-server-split M2: client_ops idempotency ---
+
+  /**
+   * Look up a previously-cached response for (sessionId, clientOpId).
+   * Returns the parsed result or null if no cached entry exists.
+   */
+  getClientOp(sessionId: string, clientOpId: string): unknown | null {
+    const row = this.db
+      .prepare(
+        "SELECT result_json FROM client_ops WHERE session_id = ? AND client_op_id = ?",
+      )
+      .get(sessionId, clientOpId) as { result_json: string } | undefined;
+    if (!row) return null;
+    try {
+      return JSON.parse(row.result_json);
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Cache a successful response for (sessionId, clientOpId). Uses
+   * INSERT OR IGNORE so a concurrent winner is preserved.
+   */
+  saveClientOp(sessionId: string, clientOpId: string, result: unknown): void {
+    this.db
+      .prepare(
+        "INSERT OR IGNORE INTO client_ops (session_id, client_op_id, result_json) VALUES (?, ?, ?)",
+      )
+      .run(sessionId, clientOpId, JSON.stringify(result));
+  }
+
+  /** Prune client_ops rows older than `maxAgeMs` (milliseconds). Returns rows deleted. */
+  pruneClientOps(maxAgeMs: number): number {
+    const seconds = Math.floor(maxAgeMs / 1000);
+    const info = this.db
+      .prepare(
+        "DELETE FROM client_ops WHERE strftime('%s','now') - strftime('%s', created_at) >= ?",
+      )
+      .run(seconds);
+    return info.changes as number;
   }
 
   close(): void {
