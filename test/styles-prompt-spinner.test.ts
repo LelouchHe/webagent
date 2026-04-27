@@ -39,7 +39,7 @@ const CSS = readFileSync(join(ROOT, "public", "styles.css"), "utf-8");
 describe("input-prompt busy spinner CSS contract", () => {
   it("host span#input-prompt has empty textContent in index.html", () => {
     const m = HTML.match(/<span\s+id="input-prompt"[^>]*>([^<]*)<\/span>/);
-    assert.ok(m, "did not find <span id=\"input-prompt\"> in index.html");
+    assert.ok(m, 'did not find <span id="input-prompt"> in index.html');
     assert.equal(
       m[1],
       "",
@@ -49,12 +49,11 @@ describe("input-prompt busy spinner CSS contract", () => {
   });
 
   it('#input-prompt::before renders the chevron via content: "❯"', () => {
-    const re =
-      /#input-prompt::before\s*\{[^}]*content\s*:\s*"❯[^"]*"[^}]*\}/;
+    const re = /#input-prompt::before\s*\{[^}]*content\s*:\s*"❯[^"]*"[^}]*\}/;
     assert.match(
       CSS,
       re,
-      "expected `#input-prompt::before { content: \"❯…\"; }` rule in styles.css",
+      'expected `#input-prompt::before { content: "❯…"; }` rule in styles.css',
     );
   });
 
