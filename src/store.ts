@@ -2,20 +2,6 @@ import Database from "better-sqlite3";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 
-/** Default origin marker for an event row, mirroring the migration backfill. */
-function defaultFromRef(type: string): string {
-  if (type === "user_message") return "user";
-  if (
-    type === "permission_response" ||
-    type === "bash_command" ||
-    type === "bash_result" ||
-    type === "system_message"
-  ) {
-    return "system";
-  }
-  return "agent";
-}
-
 export interface SessionRow {
   id: string;
   cwd: string;
@@ -293,10 +279,16 @@ export class Store {
       "SELECT COALESCE(MAX(seq), 0) + 1 AS next FROM events WHERE session_id = ?"
     ).get(sessionId) as { next: number }).next;
 
-    // from_ref defaults via the same buckets as the migration backfill so
-    // existing call sites keep working without churn. Explicit values
-    // (e.g. 'msg:<id>' for inbox-authored events) win when passed.
-    const fromRef = opts?.from_ref ?? defaultFromRef(type);
+    // Origin marker is required. Every writer must pass an explicit value;
+    // missing/empty fails loudly so a forgotten retrofit can't silently
+    // mis-bucket a row in production. Valid values:
+    //   'user' | 'system' | 'agent' | 'msg:<id>'.
+    const fromRef = opts?.from_ref;
+    if (!fromRef) {
+      throw new Error(
+        `saveEvent: from_ref is required (type=${type} session=${sessionId.slice(0, 8)}) — pass { from_ref: 'user' | 'system' | 'agent' | 'msg:<id>' }`,
+      );
+    }
 
     this.db.prepare(
       "INSERT INTO events (session_id, seq, type, data, from_ref) VALUES (?, ?, ?, ?, ?)"

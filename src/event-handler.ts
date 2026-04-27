@@ -54,22 +54,22 @@ export function handleAgentEvent(
     case "tool_call":
       sessions.flushBuffers(event.sessionId);
       sessions.state.patch(event.sessionId, { runtime: { streaming: { assistant: false, thinking: false } } });
-      store.saveEvent(event.sessionId, event.type, { id: event.id, title: event.title, kind: event.kind, rawInput: event.rawInput });
+      store.saveEvent(event.sessionId, event.type, { id: event.id, title: event.title, kind: event.kind, rawInput: event.rawInput }, { from_ref: "agent" });
       break;
     case "tool_call_update":
-      store.saveEvent(event.sessionId, event.type, { id: event.id, status: event.status, content: event.content });
+      store.saveEvent(event.sessionId, event.type, { id: event.id, status: event.status, content: event.content }, { from_ref: "agent" });
       break;
     case "plan":
       sessions.flushBuffers(event.sessionId);
       sessions.state.patch(event.sessionId, { runtime: { streaming: { assistant: false, thinking: false } } });
-      store.saveEvent(event.sessionId, event.type, { entries: event.entries });
+      store.saveEvent(event.sessionId, event.type, { entries: event.entries }, { from_ref: "agent" });
       break;
     case "permission_request": {
       sessions.flushBuffers(event.sessionId);
       sessions.state.patch(event.sessionId, { runtime: { streaming: { assistant: false, thinking: false } } });
       store.saveEvent(event.sessionId, event.type, {
         requestId: event.requestId, title: event.title, options: event.options,
-      });
+      }, { from_ref: "agent" });
       sessions.pendingPermissions.set(event.requestId, {
         requestId: event.requestId,
         sessionId: event.sessionId,
@@ -93,7 +93,7 @@ export function handleAgentEvent(
           const optionName = opt.label ?? opt.optionId;
           store.saveEvent(event.sessionId, "permission_response", {
             requestId: event.requestId, optionName, denied: false,
-          });
+          }, { from_ref: "system" });
           // Broadcast both so the frontend can render then collapse the permission card
           sseManager.broadcast(event);
           sseManager.broadcast({
@@ -113,7 +113,7 @@ export function handleAgentEvent(
       sessions.syncBusy(event.sessionId);
       sessions.flushBuffers(event.sessionId);
       sessions.state.patch(event.sessionId, { runtime: { streaming: { assistant: false, thinking: false } } });
-      store.saveEvent(event.sessionId, event.type, { stopReason: event.stopReason });
+      store.saveEvent(event.sessionId, event.type, { stopReason: event.stopReason }, { from_ref: "agent" });
       break;
     case "error":
       if (event.sessionId) {

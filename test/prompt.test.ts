@@ -264,8 +264,8 @@ describe("Prompt REST API", () => {
   describe("GET /api/v1/sessions/:id/events", () => {
     it("returns session events", async () => {
       const sessionId = await createSession();
-      store.saveEvent(sessionId, "user_message", { text: "hello" });
-      store.saveEvent(sessionId, "assistant_message", { text: "hi there" });
+      store.saveEvent(sessionId, "user_message", { text: "hello" }, { from_ref: "user" });
+      store.saveEvent(sessionId, "assistant_message", { text: "hi there" }, { from_ref: "agent" });
 
       const res = await makeRequest(port, "GET", `/api/v1/sessions/${sessionId}/events`);
       assert.equal(res.status, 200);
@@ -277,9 +277,9 @@ describe("Prompt REST API", () => {
 
     it("supports thinking filter", async () => {
       const sessionId = await createSession();
-      store.saveEvent(sessionId, "user_message", { text: "hello" });
-      store.saveEvent(sessionId, "thinking", { text: "hmm..." });
-      store.saveEvent(sessionId, "assistant_message", { text: "hi" });
+      store.saveEvent(sessionId, "user_message", { text: "hello" }, { from_ref: "user" });
+      store.saveEvent(sessionId, "thinking", { text: "hmm..." }, { from_ref: "agent" });
+      store.saveEvent(sessionId, "assistant_message", { text: "hi" }, { from_ref: "agent" });
 
       const res = await makeRequest(port, "GET", `/api/v1/sessions/${sessionId}/events?thinking=0`);
       const body = JSON.parse(res.body);
@@ -289,8 +289,8 @@ describe("Prompt REST API", () => {
 
     it("supports after pagination", async () => {
       const sessionId = await createSession();
-      store.saveEvent(sessionId, "user_message", { text: "first" });
-      store.saveEvent(sessionId, "user_message", { text: "second" });
+      store.saveEvent(sessionId, "user_message", { text: "first" }, { from_ref: "user" });
+      store.saveEvent(sessionId, "user_message", { text: "second" }, { from_ref: "user" });
 
       const allEvents = store.getEvents(sessionId);
       const firstSeq = allEvents[0].seq;

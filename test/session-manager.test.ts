@@ -56,7 +56,7 @@ describe("SessionManager", () => {
   describe("createSession", () => {
     it("inherits config from the source session", async () => {
       store.createSession("s1", "/x");
-      store.saveEvent("s1", "user_message", { text: "hi" });
+      store.saveEvent("s1", "user_message", { text: "hi" }, { from_ref: "user" });
       store.updateSessionConfig("s1", "model", "claude-sonnet-4.6");
       store.updateSessionConfig("s1", "mode", "plan-mode");
       store.updateSessionConfig("s1", "reasoning_effort", "high");
@@ -147,7 +147,7 @@ describe("SessionManager", () => {
 
       // Create a session with events — should not be cleaned
       store.createSession("has-events", "/x");
-      store.saveEvent("has-events", "user_message", { text: "hi" });
+      store.saveEvent("has-events", "user_message", { text: "hi" }, { from_ref: "user" });
       sm.liveSessions.add("has-events");
 
       let nextId = 0;
@@ -278,9 +278,9 @@ describe("SessionManager", () => {
   describe("autoRetryIfNeeded", () => {
     it("returns false when session has no interrupted turn", () => {
       store.createSession("s1", "/x");
-      store.saveEvent("s1", "user_message", { text: "hello" });
-      store.saveEvent("s1", "assistant_message", { text: "response" });
-      store.saveEvent("s1", "prompt_done", { stopReason: "end_turn" });
+      store.saveEvent("s1", "user_message", { text: "hello" }, { from_ref: "user" });
+      store.saveEvent("s1", "assistant_message", { text: "response" }, { from_ref: "agent" });
+      store.saveEvent("s1", "prompt_done", { stopReason: "end_turn" }, { from_ref: "agent" });
 
       const promptCalls: string[] = [];
       const bridge = {
@@ -294,8 +294,8 @@ describe("SessionManager", () => {
 
     it("auto-retries when turn was interrupted", () => {
       store.createSession("s1", "/x");
-      store.saveEvent("s1", "user_message", { text: "hello" });
-      store.saveEvent("s1", "assistant_message", { text: "partial..." });
+      store.saveEvent("s1", "user_message", { text: "hello" }, { from_ref: "user" });
+      store.saveEvent("s1", "assistant_message", { text: "partial..." }, { from_ref: "agent" });
 
       const promptCalls: Array<{ sessionId: string; text: string }> = [];
       const bridge = {
@@ -311,7 +311,7 @@ describe("SessionManager", () => {
 
     it("skips if session is already actively prompting", () => {
       store.createSession("s1", "/x");
-      store.saveEvent("s1", "user_message", { text: "hello" });
+      store.saveEvent("s1", "user_message", { text: "hello" }, { from_ref: "user" });
       // No prompt_done — interrupted turn
       sm.activePrompts.add("s1");
 
@@ -326,7 +326,7 @@ describe("SessionManager", () => {
 
     it("cleans up activePrompts on prompt failure", async () => {
       store.createSession("s1", "/x");
-      store.saveEvent("s1", "user_message", { text: "hello" });
+      store.saveEvent("s1", "user_message", { text: "hello" }, { from_ref: "user" });
 
       let rejectPrompt: (err: Error) => void;
       const bridge = {

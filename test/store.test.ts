@@ -75,7 +75,7 @@ describe("Store", () => {
 
     it("deletes session and its events", () => {
       store.createSession("s1", "/x");
-      store.saveEvent("s1", "user_message", { text: "hi" });
+      store.saveEvent("s1", "user_message", { text: "hi" }, { from_ref: "user" });
       store.deleteSession("s1");
 
       assert.equal(store.getSession("s1"), undefined);
@@ -86,8 +86,8 @@ describe("Store", () => {
   describe("events", () => {
     it("saves and retrieves events with auto-incrementing seq", () => {
       store.createSession("s1", "/x");
-      store.saveEvent("s1", "user_message", { text: "hello" });
-      store.saveEvent("s1", "assistant_message", { text: "world" });
+      store.saveEvent("s1", "user_message", { text: "hello" }, { from_ref: "user" });
+      store.saveEvent("s1", "assistant_message", { text: "world" }, { from_ref: "agent" });
 
       const events = store.getEvents("s1");
       assert.equal(events.length, 2);
@@ -99,9 +99,9 @@ describe("Store", () => {
 
     it("excludes thinking events when requested", () => {
       store.createSession("s1", "/x");
-      store.saveEvent("s1", "user_message", { text: "hi" });
-      store.saveEvent("s1", "thinking", { text: "hmm..." });
-      store.saveEvent("s1", "assistant_message", { text: "ok" });
+      store.saveEvent("s1", "user_message", { text: "hi" }, { from_ref: "user" });
+      store.saveEvent("s1", "thinking", { text: "hmm..." }, { from_ref: "agent" });
+      store.saveEvent("s1", "assistant_message", { text: "ok" }, { from_ref: "agent" });
 
       const all = store.getEvents("s1");
       assert.equal(all.length, 3);
@@ -118,9 +118,9 @@ describe("Store", () => {
 
     it("filters events by afterSeq", () => {
       store.createSession("s1", "/x");
-      store.saveEvent("s1", "user_message", { text: "a" });
-      store.saveEvent("s1", "assistant_message", { text: "b" });
-      store.saveEvent("s1", "user_message", { text: "c" });
+      store.saveEvent("s1", "user_message", { text: "a" }, { from_ref: "user" });
+      store.saveEvent("s1", "assistant_message", { text: "b" }, { from_ref: "agent" });
+      store.saveEvent("s1", "user_message", { text: "c" }, { from_ref: "user" });
 
       const after1 = store.getEvents("s1", { afterSeq: 1 });
       assert.equal(after1.length, 2);
@@ -133,9 +133,9 @@ describe("Store", () => {
 
     it("combines afterSeq with excludeThinking", () => {
       store.createSession("s1", "/x");
-      store.saveEvent("s1", "user_message", { text: "a" });
-      store.saveEvent("s1", "thinking", { text: "hmm" });
-      store.saveEvent("s1", "assistant_message", { text: "b" });
+      store.saveEvent("s1", "user_message", { text: "a" }, { from_ref: "user" });
+      store.saveEvent("s1", "thinking", { text: "hmm" }, { from_ref: "agent" });
+      store.saveEvent("s1", "assistant_message", { text: "b" }, { from_ref: "agent" });
 
       const events = store.getEvents("s1", { afterSeq: 1, excludeThinking: true });
       assert.equal(events.length, 1);
@@ -147,7 +147,7 @@ describe("Store", () => {
     it("deletes old empty sessions and returns their IDs", () => {
       store.createSession("empty-old", "/a");
       store.createSession("has-events", "/b");
-      store.saveEvent("has-events", "user_message", { text: "hi" });
+      store.saveEvent("has-events", "user_message", { text: "hi" }, { from_ref: "user" });
 
       // With minAgeS=0, all empty sessions are eligible
       const deleted = store.deleteEmptySessions(0);
@@ -169,7 +169,7 @@ describe("Store", () => {
       store.createSession("e1", "/a");
       store.createSession("e2", "/b");
       store.createSession("e3", "/c");
-      store.saveEvent("e2", "user_message", { text: "hi" });
+      store.saveEvent("e2", "user_message", { text: "hi" }, { from_ref: "user" });
 
       const deleted = store.deleteEmptySessions(0);
       assert.equal(deleted.length, 2);
@@ -182,7 +182,7 @@ describe("Store", () => {
 
     it("returns empty array when no empty sessions exist", () => {
       store.createSession("s1", "/a");
-      store.saveEvent("s1", "user_message", { text: "hi" });
+      store.saveEvent("s1", "user_message", { text: "hi" }, { from_ref: "user" });
 
       const deleted = store.deleteEmptySessions(0);
       assert.deepEqual(deleted, []);
@@ -213,38 +213,38 @@ describe("Store", () => {
 
     it("returns true when user_message has no following prompt_done", () => {
       store.createSession("s1", "/x");
-      store.saveEvent("s1", "user_message", { text: "hello" });
-      store.saveEvent("s1", "assistant_message", { text: "partial..." });
+      store.saveEvent("s1", "user_message", { text: "hello" }, { from_ref: "user" });
+      store.saveEvent("s1", "assistant_message", { text: "partial..." }, { from_ref: "agent" });
       assert.equal(store.hasInterruptedTurn("s1"), true);
     });
 
     it("returns false when prompt_done follows user_message", () => {
       store.createSession("s1", "/x");
-      store.saveEvent("s1", "user_message", { text: "hello" });
-      store.saveEvent("s1", "assistant_message", { text: "full response" });
-      store.saveEvent("s1", "prompt_done", { stopReason: "end_turn" });
+      store.saveEvent("s1", "user_message", { text: "hello" }, { from_ref: "user" });
+      store.saveEvent("s1", "assistant_message", { text: "full response" }, { from_ref: "agent" });
+      store.saveEvent("s1", "prompt_done", { stopReason: "end_turn" }, { from_ref: "agent" });
       assert.equal(store.hasInterruptedTurn("s1"), false);
     });
 
     it("detects interrupted turn after a completed turn", () => {
       store.createSession("s1", "/x");
       // First turn — completed
-      store.saveEvent("s1", "user_message", { text: "first" });
-      store.saveEvent("s1", "assistant_message", { text: "reply" });
-      store.saveEvent("s1", "prompt_done", { stopReason: "end_turn" });
+      store.saveEvent("s1", "user_message", { text: "first" }, { from_ref: "user" });
+      store.saveEvent("s1", "assistant_message", { text: "reply" }, { from_ref: "agent" });
+      store.saveEvent("s1", "prompt_done", { stopReason: "end_turn" }, { from_ref: "agent" });
       // Second turn — interrupted
-      store.saveEvent("s1", "user_message", { text: "second" });
-      store.saveEvent("s1", "assistant_message", { text: "partial..." });
+      store.saveEvent("s1", "user_message", { text: "second" }, { from_ref: "user" });
+      store.saveEvent("s1", "assistant_message", { text: "partial..." }, { from_ref: "agent" });
       assert.equal(store.hasInterruptedTurn("s1"), true);
     });
 
     it("returns false when only non-prompt events follow prompt_done", () => {
       store.createSession("s1", "/x");
-      store.saveEvent("s1", "user_message", { text: "hello" });
-      store.saveEvent("s1", "prompt_done", { stopReason: "end_turn" });
+      store.saveEvent("s1", "user_message", { text: "hello" }, { from_ref: "user" });
+      store.saveEvent("s1", "prompt_done", { stopReason: "end_turn" }, { from_ref: "agent" });
       // Bash command (not a prompt turn)
-      store.saveEvent("s1", "bash_command", { command: "ls" });
-      store.saveEvent("s1", "bash_result", { output: "file.txt", code: 0, signal: null });
+      store.saveEvent("s1", "bash_command", { command: "ls" }, { from_ref: "user" });
+      store.saveEvent("s1", "bash_result", { output: "file.txt", code: 0, signal: null }, { from_ref: "system" });
       assert.equal(store.hasInterruptedTurn("s1"), false);
     });
   });

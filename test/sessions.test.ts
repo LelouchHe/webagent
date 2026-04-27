@@ -378,7 +378,7 @@ describe("Session REST API", () => {
       const createRes = await makeRequest(port, "POST", "/api/v1/sessions", "{}");
       const sessionId = JSON.parse(createRes.body).id;
       const longText = "A".repeat(2000);
-      store.saveEvent(sessionId, "assistant_message", { text: longText });
+      store.saveEvent(sessionId, "assistant_message", { text: longText }, { from_ref: "agent" });
 
       const res = await makeRawRequest(port, "GET", `/api/v1/sessions/${sessionId}/events`, {
         "Accept-Encoding": "gzip",
@@ -401,7 +401,7 @@ describe("Session REST API", () => {
     it("returns uncompressed when Accept-Encoding is absent", async () => {
       const createRes = await makeRequest(port, "POST", "/api/v1/sessions", "{}");
       const sessionId = JSON.parse(createRes.body).id;
-      store.saveEvent(sessionId, "assistant_message", { text: "B".repeat(2000) });
+      store.saveEvent(sessionId, "assistant_message", { text: "B".repeat(2000) }, { from_ref: "agent" });
 
       const res = await makeRawRequest(port, "GET", `/api/v1/sessions/${sessionId}/events`);
 
@@ -414,7 +414,7 @@ describe("Session REST API", () => {
     it("skips gzip for small responses under 1KB", async () => {
       const createRes = await makeRequest(port, "POST", "/api/v1/sessions", "{}");
       const sessionId = JSON.parse(createRes.body).id;
-      store.saveEvent(sessionId, "assistant_message", { text: "tiny" });
+      store.saveEvent(sessionId, "assistant_message", { text: "tiny" }, { from_ref: "agent" });
 
       const res = await makeRawRequest(port, "GET", `/api/v1/sessions/${sessionId}/events`, {
         "Accept-Encoding": "gzip",
@@ -462,7 +462,7 @@ describe("Session REST API", () => {
     it("returns streaming false when no buffers are pending", async () => {
       const createRes = await makeRequest(port, "POST", "/api/v1/sessions", "{}");
       const sessionId = JSON.parse(createRes.body).id;
-      store.saveEvent(sessionId, "user_message", { text: "hi" });
+      store.saveEvent(sessionId, "user_message", { text: "hi" }, { from_ref: "user" });
 
       const res = await makeRequest(port, "GET", `/api/v1/sessions/${sessionId}/events`);
       const body = JSON.parse(res.body);

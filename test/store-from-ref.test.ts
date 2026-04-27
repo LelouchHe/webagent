@@ -19,26 +19,26 @@ describe("Store events.from_ref + orphan cleanup + FK", () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("saveEvent defaults from_ref via type-bucket when caller omits opts", () => {
+  it("saveEvent persists explicit from_ref values per category", () => {
     const store = new Store(tmpDir);
     store.createSession("s1", "/tmp");
 
-    const userMsg = store.saveEvent("s1", "user_message", { text: "hi" });
-    const permResp = store.saveEvent("s1", "permission_response", { ok: true });
-    const bashCmd = store.saveEvent("s1", "bash_command", { cmd: "ls" });
-    const assistant = store.saveEvent("s1", "assistant_message", { text: "ack" });
-    const toolCall = store.saveEvent("s1", "tool_call", { id: "t1" });
+    const userMsg = store.saveEvent("s1", "user_message", { text: "hi" }, { from_ref: "user" });
+    const permResp = store.saveEvent("s1", "permission_response", { ok: true }, { from_ref: "system" });
+    const bashCmd = store.saveEvent("s1", "bash_command", { cmd: "ls" }, { from_ref: "user" });
+    const assistant = store.saveEvent("s1", "assistant_message", { text: "ack" }, { from_ref: "agent" });
+    const toolCall = store.saveEvent("s1", "tool_call", { id: "t1" }, { from_ref: "agent" });
 
     assert.equal(userMsg.from_ref, "user");
     assert.equal(permResp.from_ref, "system");
-    assert.equal(bashCmd.from_ref, "system");
+    assert.equal(bashCmd.from_ref, "user");
     assert.equal(assistant.from_ref, "agent");
     assert.equal(toolCall.from_ref, "agent");
 
     store.close();
   });
 
-  it("saveEvent honors explicit from_ref over the bucket default", () => {
+  it("saveEvent accepts msg:<id> form for inbox-authored events", () => {
     const store = new Store(tmpDir);
     store.createSession("s1", "/tmp");
 
@@ -47,6 +47,16 @@ describe("Store events.from_ref + orphan cleanup + FK", () => {
     });
     assert.equal(ev.from_ref, "msg:abc123");
 
+    store.close();
+  });
+
+  it("saveEvent THROWS when from_ref is missing (guard active)", () => {
+    const store = new Store(tmpDir);
+    store.createSession("s1", "/tmp");
+    assert.throws(
+      () => store.saveEvent("s1", "user_message", { text: "x" }),
+      /from_ref/,
+    );
     store.close();
   });
 
@@ -134,10 +144,10 @@ describe("Store events.from_ref + orphan cleanup + FK", () => {
 
     store.createSession("s1", "/tmp");
     // Insert into a real session works
-    assert.doesNotThrow(() => store.saveEvent("s1", "user_message", {}));
+    assert.doesNotThrow(() => store.saveEvent("s1", "user_message", {}, { from_ref: "user" }));
     // Insert into a non-existent session is rejected by the FK
     assert.throws(
-      () => store.saveEvent("s2-missing", "user_message", {}),
+      () => store.saveEvent("s2-missing", "user_message", {}, { from_ref: "user" }),
       /FOREIGN KEY constraint failed/i,
     );
 

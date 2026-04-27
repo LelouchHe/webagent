@@ -240,7 +240,7 @@ export class SessionManager {
   flushAssistantBuffer(sessionId: string): void {
     const assistant = this.assistantBuffers.get(sessionId);
     if (assistant) {
-      this.store.saveEvent(sessionId, "assistant_message", { text: assistant });
+      this.store.saveEvent(sessionId, "assistant_message", { text: assistant }, { from_ref: "agent" });
       this.assistantBuffers.delete(sessionId);
     }
   }
@@ -249,7 +249,7 @@ export class SessionManager {
   flushThinkingBuffer(sessionId: string): void {
     const thinking = this.thinkingBuffers.get(sessionId);
     if (thinking) {
-      this.store.saveEvent(sessionId, "thinking", { text: thinking });
+      this.store.saveEvent(sessionId, "thinking", { text: thinking }, { from_ref: "agent" });
       this.thinkingBuffers.delete(sessionId);
     }
   }

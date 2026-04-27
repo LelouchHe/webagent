@@ -409,7 +409,7 @@ export function createRequestHandler(deps: RequestHandlerDeps): (req: IncomingMe
 
         // Store event and broadcast (same type so SSE drops are recoverable via sync)
         const permEventData = { requestId, optionName, denied };
-        store.saveEvent(perm.sessionId, "permission_response", { ...permEventData, optionId });
+        store.saveEvent(perm.sessionId, "permission_response", { ...permEventData, optionId }, { from_ref: "user" });
         sseManager.broadcast({
           type: "permission_response",
           sessionId: perm.sessionId,
@@ -548,7 +548,7 @@ export function createRequestHandler(deps: RequestHandlerDeps): (req: IncomingMe
 
         // Store user_message event (strip base64 data, keep only path + mimeType)
         const storedImages = body.images?.map(i => ({ path: i.path, mimeType: i.mimeType }));
-        store.saveEvent(sessionId, "user_message", { text: body.text, ...(storedImages?.length && { images: storedImages }) });
+        store.saveEvent(sessionId, "user_message", { text: body.text, ...(storedImages?.length && { images: storedImages }) }, { from_ref: "user" });
         store.updateSessionLastActive(sessionId);
         store.touchRecentPath(session.cwd);
         const userMsgEvent = { type: "user_message", sessionId, text: body.text, images: storedImages } as AgentEvent;
@@ -595,7 +595,7 @@ export function createRequestHandler(deps: RequestHandlerDeps): (req: IncomingMe
         if (!body.command) { json(res, 400, { error: "Missing required field: command" }); return; }
 
         const cwd = sessions.getSessionCwd(sessionId);
-        store.saveEvent(sessionId, "bash_command", { command: body.command });
+        store.saveEvent(sessionId, "bash_command", { command: body.command }, { from_ref: "user" });
         const bashCmdEvent = { type: "bash_command", sessionId, command: body.command } as AgentEvent;
         sseManager.broadcast(bashCmdEvent);
 
@@ -634,7 +634,7 @@ export function createRequestHandler(deps: RequestHandlerDeps): (req: IncomingMe
           sessions!.runningBashProcs.delete(sessionId);
           sessions!.syncBusy(sessionId);
           const stored = outputTruncated ? "[truncated]\n" + output : output;
-          store.saveEvent(sessionId, "bash_result", { output: stored, code, signal });
+          store.saveEvent(sessionId, "bash_result", { output: stored, code, signal }, { from_ref: "system" });
           const bashDoneEvent = { type: "bash_done", sessionId, code, signal } as AgentEvent;
           sseManager.broadcast(bashDoneEvent);
         });
@@ -643,7 +643,7 @@ export function createRequestHandler(deps: RequestHandlerDeps): (req: IncomingMe
           sessions!.runningBashProcs.delete(sessionId);
           sessions!.syncBusy(sessionId);
           const errMsg = errorMessage(err);
-          store.saveEvent(sessionId, "bash_result", { output: errMsg, code: -1, signal: null });
+          store.saveEvent(sessionId, "bash_result", { output: errMsg, code: -1, signal: null }, { from_ref: "system" });
           const bashErrEvent = { type: "bash_done", sessionId, code: -1, signal: null, error: errMsg } as AgentEvent;
           sseManager.broadcast(bashErrEvent);
         });

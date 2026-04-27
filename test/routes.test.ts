@@ -212,7 +212,7 @@ describe("HTTP routes", () => {
 
   it("GET /api/v1/sessions/:id/events returns events", async () => {
     store.createSession("s1", "/x");
-    store.saveEvent("s1", "user_message", { text: "hi" });
+    store.saveEvent("s1", "user_message", { text: "hi" }, { from_ref: "user" });
     const res = await makeRequest(port, "GET", "/api/v1/sessions/s1/events");
     assert.equal(res.status, 200);
     const body = JSON.parse(res.body);
@@ -222,9 +222,9 @@ describe("HTTP routes", () => {
 
   it("GET /api/v1/sessions/:id/events?after=N returns only new events", async () => {
     store.createSession("s1", "/x");
-    store.saveEvent("s1", "user_message", { text: "a" });
-    store.saveEvent("s1", "assistant_message", { text: "b" });
-    store.saveEvent("s1", "user_message", { text: "c" });
+    store.saveEvent("s1", "user_message", { text: "a" }, { from_ref: "user" });
+    store.saveEvent("s1", "assistant_message", { text: "b" }, { from_ref: "agent" });
+    store.saveEvent("s1", "user_message", { text: "c" }, { from_ref: "user" });
 
     const res = await makeRequest(
       port,
@@ -240,7 +240,7 @@ describe("HTTP routes", () => {
   it("GET /api/v1/sessions/:id/events?limit=N returns latest N events in ASC order", async () => {
     store.createSession("s1", "/x");
     for (let i = 0; i < 5; i++)
-      store.saveEvent("s1", "user_message", { text: `msg-${i}` });
+      store.saveEvent("s1", "user_message", { text: `msg-${i}` }, { from_ref: "user" });
 
     const res = await makeRequest(
       port,
@@ -261,7 +261,7 @@ describe("HTTP routes", () => {
   it("GET /api/v1/sessions/:id/events?limit=N&before=SEQ paginates backwards", async () => {
     store.createSession("s1", "/x");
     for (let i = 0; i < 10; i++)
-      store.saveEvent("s1", "user_message", { text: `msg-${i}` });
+      store.saveEvent("s1", "user_message", { text: `msg-${i}` }, { from_ref: "user" });
 
     // Get the latest 3
     const res1 = await makeRequest(
@@ -311,7 +311,7 @@ describe("HTTP routes", () => {
 
   it("GET /api/v1/sessions/:id/events without limit omits total/hasMore (backward compat)", async () => {
     store.createSession("s1", "/x");
-    store.saveEvent("s1", "user_message", { text: "a" });
+    store.saveEvent("s1", "user_message", { text: "a" }, { from_ref: "user" });
 
     const res = await makeRequest(port, "GET", "/api/v1/sessions/s1/events");
     const body = JSON.parse(res.body);
