@@ -283,7 +283,9 @@ export async function reloadSnapshot(
   // clobber B's state because applySnapshot runs unconditionally.
   const genAtStart = state.sessionSwitchGen;
   try {
-    const snap = (await api.getSnapshot(sessionId)) as unknown as SessionSnapshot;
+    const snap = (await api.getSnapshot(
+      sessionId,
+    )) as unknown as SessionSnapshot;
     if (state.sessionSwitchGen !== genAtStart) return null;
     applySnapshot(snap);
     return snap;
