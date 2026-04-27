@@ -321,75 +321,71 @@ export class AgentBridge extends EventEmitter {
     const update = params.update;
     const sessionId = params.sessionId;
 
-    // Silent sessions: only buffer text, don't emit events
     if (this.silentSessions.has(sessionId)) {
-      if (update.sessionUpdate === "agent_message_chunk" && update.content.type === "text") {
-        const buf = (this.silentBuffers.get(sessionId) ?? "") + update.content.text;
-        this.silentBuffers.set(sessionId, buf);
-      }
+      this.captureSilentText(sessionId, update);
       return Promise.resolve();
     }
 
+    const event = this.sessionUpdateToEvent(sessionId, update);
+    if (event) this.emit("event", event);
+    return Promise.resolve();
+  }
+
+  private captureSilentText(sessionId: string, update: acp.SessionNotification["update"]): void {
+    if (update.sessionUpdate === "agent_message_chunk" && update.content.type === "text") {
+      const buf = (this.silentBuffers.get(sessionId) ?? "") + update.content.text;
+      this.silentBuffers.set(sessionId, buf);
+    }
+  }
+
+  private sessionUpdateToEvent(
+    sessionId: string,
+    update: acp.SessionNotification["update"],
+  ): AgentEvent | null {
     switch (update.sessionUpdate) {
       case "agent_message_chunk":
-        if (update.content.type === "text") {
-          this.emit("event", {
-            type: "message_chunk",
-            sessionId,
-            text: update.content.text,
-          } satisfies AgentEvent);
-        }
-        break;
+        return update.content.type === "text"
+          ? { type: "message_chunk", sessionId, text: update.content.text }
+          : null;
 
       case "agent_thought_chunk":
-        if (update.content.type === "text") {
-          this.emit("event", {
-            type: "thought_chunk",
-            sessionId,
-            text: update.content.text,
-          } satisfies AgentEvent);
-        }
-        break;
+        return update.content.type === "text"
+          ? { type: "thought_chunk", sessionId, text: update.content.text }
+          : null;
 
       case "tool_call":
-        this.emit("event", {
+        return {
           type: "tool_call",
           sessionId,
           id: update.toolCallId ?? "",
           title: update.title ?? "",
           kind: update.kind ?? "unknown",
           rawInput: update.rawInput as RawInput | undefined,
-        } satisfies AgentEvent);
-        break;
+        };
 
       case "tool_call_update":
-        this.emit("event", {
+        return {
           type: "tool_call_update",
           sessionId,
           id: update.toolCallId ?? "",
           status: update.status ?? "",
           content: update.content ?? undefined,
-        } satisfies AgentEvent);
-        break;
+        };
 
       case "plan":
-        this.emit("event", {
-          type: "plan",
-          sessionId,
-          entries: update.entries ?? [],
-        } satisfies AgentEvent);
-        break;
+        return { type: "plan", sessionId, entries: update.entries ?? [] };
 
       case "config_option_update":
-        this.emit("event", {
+        return {
           type: "config_option_update",
           sessionId,
-          configOptions: (update as any).configOptions ?? [],
-        } satisfies AgentEvent);
-        break;
-    }
+          configOptions:
+            (update as unknown as { configOptions?: ConfigOption[] }).configOptions ?? [],
+        };
 
-    return Promise.resolve();
+      default:
+        return null;
+    }
   }
 
   private async handleReadFile(params: acp.ReadTextFileRequest): Promise<acp.ReadTextFileResponse> {
