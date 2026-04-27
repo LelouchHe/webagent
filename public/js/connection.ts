@@ -25,6 +25,7 @@ import {
 } from "./events.ts";
 import * as api from "./api.ts";
 import { applyConnectedLogLevel } from "./log.ts";
+import type { SessionDetail } from "../../src/types.ts";
 
 /** If the browser has an active push subscription, tell the server which
  *  clientId owns it so per-subscription visibility filtering works. */
@@ -172,9 +173,9 @@ async function resumeAndLoad(
       if (gen !== state.sessionSwitchGen) return;
       handleEvent({
         type: "session_created",
-        sessionId: session.id as string,
-        cwd: session.cwd as string,
-        title: session.title as string | null,
+        sessionId: session.id,
+        cwd: session.cwd,
+        title: session.title,
         configOptions: session.configOptions,
       });
     } catch {
@@ -190,7 +191,7 @@ async function resumeAndLoad(
     state.sessionId = null;
     const historyPromise = loadHistory(sessionId);
     const snapshotPromise = reloadSnapshot(sessionId);
-    let session: Record<string, unknown>;
+    let session: SessionDetail;
     try {
       const [s, loaded] = await Promise.all([
         api.getSession(sessionId),
@@ -210,9 +211,9 @@ async function resumeAndLoad(
     }
     handleEvent({
       type: "session_created",
-      sessionId: session.id as string,
-      cwd: session.cwd as string,
-      title: session.title as string | null,
+      sessionId: session.id,
+      cwd: session.cwd,
+      title: session.title,
       configOptions: session.configOptions,
     });
   }

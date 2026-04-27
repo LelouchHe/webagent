@@ -60,7 +60,7 @@ const copyTimers = new WeakMap<
 
 /** Copy button click handler — delegated from #messages */
 export function handleCopyClick(e: Event) {
-  const btn = (e.target as Element).closest(".copy-btn");
+  const btn = (e.target as Element).closest<HTMLButtonElement>(".copy-btn");
   if (!btn) return;
 
   const wrapper = btn.closest(".code-block-wrapper");

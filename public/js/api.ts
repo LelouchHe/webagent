@@ -1,6 +1,8 @@
 // REST API client for all server communication.
 // Replaces WebSocket message sends with typed fetch calls.
 
+import type { SessionDetail, SessionSummary } from "../../src/types.ts";
+
 export class ApiError extends Error {
   name = "ApiError";
   status: number;
@@ -78,11 +80,11 @@ export function deleteSession(id: string): Promise<void> {
   return request("/api/v1/sessions/" + id, { method: "DELETE" });
 }
 
-export function listSessions(): Promise<unknown[]> {
+export function listSessions(): Promise<SessionSummary[]> {
   return request("/api/v1/sessions");
 }
 
-export function getSession(id: string): Promise<Record<string, unknown>> {
+export function getSession(id: string): Promise<SessionDetail> {
   return request("/api/v1/sessions/" + id);
 }
 

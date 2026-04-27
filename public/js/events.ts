@@ -56,7 +56,7 @@ import {
   isPromptIdle,
 } from "./event-interpreter.ts";
 import { enhanceCodeBlocks } from "./highlight.ts";
-import type { AgentEvent, StoredEvent } from "../../src/types.ts";
+import type { AgentEvent, PlanEntry, StoredEvent } from "../../src/types.ts";
 
 /**
  * When the current session is gone (expired, deleted), try to switch to the
@@ -84,9 +84,9 @@ export async function fallbackToNextSession(
       if (gen !== state.sessionSwitchGen) return;
       handleEvent({
         type: "session_created",
-        sessionId: session.id as string,
-        cwd: session.cwd as string,
-        title: session.title as string | null,
+        sessionId: session.id,
+        cwd: session.cwd,
+        title: session.title,
         configOptions: session.configOptions,
       });
       if (loaded) scrollToBottom(true);
@@ -756,10 +756,9 @@ export function replayEvent(
     case "plan": {
       const el = document.createElement("div");
       el.className = "plan";
-      const entries = d.entries as
-        | Array<{ content: string; status?: string }>
-        | undefined;
-      const planViews = formatPlanEntries(entries ?? []);
+      const planViews = formatPlanEntries(
+        (d.entries as PlanEntry[] | undefined) ?? [],
+      );
       el.innerHTML =
         '<div class="plan-title">― plan</div>' +
         planViews
@@ -856,8 +855,8 @@ export function replayEvent(
         }
         finishBash(
           el,
-          d.code as number | undefined,
-          d.signal as string | undefined,
+          (d.code as number | null | undefined) ?? null,
+          (d.signal as string | null | undefined) ?? null,
         );
         if (ri) ri.currentBashEl = null;
       }
@@ -920,12 +919,13 @@ export function handleEvent(msg: AgentEvent) {
   // Ignore events from other sessions (multi-client broadcast).
   // When sessionId is null (mid-switch), drop session-specific events
   // to prevent old-session events from leaking into the new session's DOM.
+  const msgSid = "sessionId" in msg ? msg.sessionId : undefined;
   if (
-    msg.sessionId &&
+    msgSid &&
     msg.type !== "session_created" &&
     msg.type !== "session_deleted"
   ) {
-    if (!state.sessionId || msg.sessionId !== state.sessionId) {
+    if (!state.sessionId || msgSid !== state.sessionId) {
       return;
     }
   }
@@ -1067,7 +1067,7 @@ export function handleEvent(msg: AgentEvent) {
         appendMessageElement(state.currentThinkingEl);
       }
       state.currentThinkingText += msg.text;
-      state.currentThinkingEl.querySelector(".thinking-content").textContent =
+      state.currentThinkingEl.querySelector(".thinking-content")!.textContent =
         state.currentThinkingText;
       scrollToBottom();
       break;
@@ -1238,6 +1238,7 @@ export function handleEvent(msg: AgentEvent) {
       if (msg.sessionId !== state.sessionId) break;
       if (state.currentBashEl) {
         const out = state.currentBashEl.querySelector(".bash-output");
+        if (!out) break;
         if (msg.stream === "stderr") {
           const span = document.createElement("span");
           span.className = "stderr";

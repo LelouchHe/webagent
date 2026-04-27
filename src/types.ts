@@ -63,6 +63,17 @@ export interface SessionSummary {
   last_active_at: string;
 }
 
+/** Detailed session record returned by GET /api/v1/sessions/:id. */
+export interface SessionDetail {
+  id: string;
+  cwd: string;
+  title: string | null;
+  source: string;
+  model: string | null;
+  mode: string | null;
+  configOptions: ConfigOption[];
+}
+
 /** Stored event row returned by GET /api/v1/sessions/:id/events. */
 export interface StoredEvent {
   id: number;
@@ -119,7 +130,7 @@ export type AgentEvent =
       sessionId: string;
       id: string;
       status: string;
-      content?: unknown[];
+      content?: ToolContentItem[];
     }
   | { type: "plan"; sessionId: string; entries: PlanEntry[] }
   | {

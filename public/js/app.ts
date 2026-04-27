@@ -75,9 +75,9 @@ if ("serviceWorker" in navigator) {
           if (gen !== state.sessionSwitchGen) return;
           handleEvent({
             type: "session_created",
-            sessionId: session.id as string,
-            cwd: session.cwd as string,
-            title: session.title as string | null,
+            sessionId: session.id,
+            cwd: session.cwd,
+            title: session.title,
             configOptions: session.configOptions,
           });
           if (loaded) scrollToBottom(true);

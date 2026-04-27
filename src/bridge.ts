@@ -3,7 +3,12 @@ import { spawn } from "node:child_process";
 import { Writable, Readable } from "node:stream";
 import { EventEmitter } from "node:events";
 import * as acp from "@agentclientprotocol/sdk";
-import type { AgentEvent, ConfigOption, RawInput } from "./types.ts";
+import type {
+  AgentEvent,
+  ConfigOption,
+  RawInput,
+  ToolContentItem,
+} from "./types.ts";
 import type { SessionManager } from "./session-manager.ts";
 import type { TitleService } from "./title-service.ts";
 import { interruptBashProc } from "./session-manager.ts";
@@ -434,7 +439,9 @@ export class AgentBridge extends EventEmitter {
           sessionId,
           id: update.toolCallId,
           status: update.status ?? "",
-          content: update.content ?? undefined,
+          content: (update.content ?? undefined) as
+            | ToolContentItem[]
+            | undefined,
         };
 
       case "plan":
