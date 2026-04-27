@@ -117,7 +117,14 @@ function replayQuery(sel: string): Element | null {
 // Used by message_acked/message_consumed handlers to recall the local
 // device's banner immediately, independent of the server's silent close push.
 function closeLocalBanner(tag: string): void {
-  navigator.serviceWorker.controller?.postMessage({
+  // Guard for non-browser environments (e.g. JSDOM in unit tests):
+  // navigator may exist but lack serviceWorker, so we can't rely on
+  // strict DOM types alone. Cast through to allow the runtime check.
+  const sw =
+    typeof navigator !== "undefined"
+      ? (navigator as Navigator & { serviceWorker?: ServiceWorkerContainer }).serviceWorker
+      : undefined;
+  sw?.controller?.postMessage({
     type: "close-notification",
     tag,
   });
