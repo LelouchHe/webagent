@@ -661,7 +661,13 @@ body {
   user-select: none;
   line-height: 1.5;
   cursor: pointer;
-  position: relative;
+}
+#input-prompt::before {
+  content: "❯ ";
+}
+#input-prompt.busy::before {
+  content: "⠋ ";
+  animation: spinner 0.8s steps(1) infinite;
 }
 #input {
   flex: 1;
@@ -710,17 +716,6 @@ body {
 #send-btn.cancel:active {
   color: var(--red);
   border-color: var(--red);
-}
-#input-prompt.busy {
-  visibility: hidden;
-}
-#input-prompt.busy::before {
-  content: "⠋";
-  visibility: visible;
-  position: absolute;
-  inset: 0;
-  color: var(--prompt-color);
-  animation: spinner 0.8s steps(1) infinite;
 }
 @keyframes spinner {
   0% {
