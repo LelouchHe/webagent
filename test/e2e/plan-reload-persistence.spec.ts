@@ -1,7 +1,14 @@
 import { test, expect } from "playwright/test";
-import { createNewSession, currentSessionId, gotoConnected, sendPrompt } from "./helpers.ts";
+import {
+  createNewSession,
+  currentSessionId,
+  gotoConnected,
+  sendPrompt,
+} from "./helpers.ts";
 
-test("reloading keeps plan mode active for the current session", async ({ page }) => {
+test("reloading keeps plan mode active for the current session", async ({
+  page,
+}) => {
   await gotoConnected(page);
   const sessionId = await createNewSession(page);
 

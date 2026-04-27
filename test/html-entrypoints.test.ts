@@ -38,7 +38,9 @@ describe("HTML entrypoint registry", () => {
   });
 
   it("every HTML_ENTRYPOINTS entry points to a real file", () => {
-    const onDisk = new Set(readdirSync(PUBLIC_DIR).filter((f) => f.endsWith(".html")));
+    const onDisk = new Set(
+      readdirSync(PUBLIC_DIR).filter((f) => f.endsWith(".html")),
+    );
     for (const entry of HTML_ENTRYPOINTS) {
       assert.ok(
         onDisk.has(entry.file),
@@ -50,7 +52,10 @@ describe("HTML entrypoint registry", () => {
   it("urlPath values are unique", () => {
     const seen = new Set<string>();
     for (const entry of HTML_ENTRYPOINTS) {
-      assert.ok(!seen.has(entry.urlPath), `Duplicate urlPath in HTML_ENTRYPOINTS: ${entry.urlPath}`);
+      assert.ok(
+        !seen.has(entry.urlPath),
+        `Duplicate urlPath in HTML_ENTRYPOINTS: ${entry.urlPath}`,
+      );
       seen.add(entry.urlPath);
     }
   });

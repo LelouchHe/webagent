@@ -42,7 +42,10 @@ describe("Store", () => {
       store.updateSessionLastActive("s1");
 
       const session = store.getSession("s1")!;
-      assert.match(session.last_active_at, /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}$/);
+      assert.match(
+        session.last_active_at,
+        /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}$/,
+      );
     });
 
     it("returns undefined for non-existent session", () => {
@@ -75,7 +78,12 @@ describe("Store", () => {
 
     it("deletes session and its events", () => {
       store.createSession("s1", "/x");
-      store.saveEvent("s1", "user_message", { text: "hi" }, { from_ref: "user" });
+      store.saveEvent(
+        "s1",
+        "user_message",
+        { text: "hi" },
+        { from_ref: "user" },
+      );
       store.deleteSession("s1");
 
       assert.equal(store.getSession("s1"), undefined);
@@ -86,8 +94,18 @@ describe("Store", () => {
   describe("events", () => {
     it("saves and retrieves events with auto-incrementing seq", () => {
       store.createSession("s1", "/x");
-      store.saveEvent("s1", "user_message", { text: "hello" }, { from_ref: "user" });
-      store.saveEvent("s1", "assistant_message", { text: "world" }, { from_ref: "agent" });
+      store.saveEvent(
+        "s1",
+        "user_message",
+        { text: "hello" },
+        { from_ref: "user" },
+      );
+      store.saveEvent(
+        "s1",
+        "assistant_message",
+        { text: "world" },
+        { from_ref: "agent" },
+      );
 
       const events = store.getEvents("s1");
       assert.equal(events.length, 2);
@@ -99,9 +117,24 @@ describe("Store", () => {
 
     it("excludes thinking events when requested", () => {
       store.createSession("s1", "/x");
-      store.saveEvent("s1", "user_message", { text: "hi" }, { from_ref: "user" });
-      store.saveEvent("s1", "thinking", { text: "hmm..." }, { from_ref: "agent" });
-      store.saveEvent("s1", "assistant_message", { text: "ok" }, { from_ref: "agent" });
+      store.saveEvent(
+        "s1",
+        "user_message",
+        { text: "hi" },
+        { from_ref: "user" },
+      );
+      store.saveEvent(
+        "s1",
+        "thinking",
+        { text: "hmm..." },
+        { from_ref: "agent" },
+      );
+      store.saveEvent(
+        "s1",
+        "assistant_message",
+        { text: "ok" },
+        { from_ref: "agent" },
+      );
 
       const all = store.getEvents("s1");
       assert.equal(all.length, 3);
@@ -118,9 +151,24 @@ describe("Store", () => {
 
     it("filters events by afterSeq", () => {
       store.createSession("s1", "/x");
-      store.saveEvent("s1", "user_message", { text: "a" }, { from_ref: "user" });
-      store.saveEvent("s1", "assistant_message", { text: "b" }, { from_ref: "agent" });
-      store.saveEvent("s1", "user_message", { text: "c" }, { from_ref: "user" });
+      store.saveEvent(
+        "s1",
+        "user_message",
+        { text: "a" },
+        { from_ref: "user" },
+      );
+      store.saveEvent(
+        "s1",
+        "assistant_message",
+        { text: "b" },
+        { from_ref: "agent" },
+      );
+      store.saveEvent(
+        "s1",
+        "user_message",
+        { text: "c" },
+        { from_ref: "user" },
+      );
 
       const after1 = store.getEvents("s1", { afterSeq: 1 });
       assert.equal(after1.length, 2);
@@ -133,11 +181,24 @@ describe("Store", () => {
 
     it("combines afterSeq with excludeThinking", () => {
       store.createSession("s1", "/x");
-      store.saveEvent("s1", "user_message", { text: "a" }, { from_ref: "user" });
+      store.saveEvent(
+        "s1",
+        "user_message",
+        { text: "a" },
+        { from_ref: "user" },
+      );
       store.saveEvent("s1", "thinking", { text: "hmm" }, { from_ref: "agent" });
-      store.saveEvent("s1", "assistant_message", { text: "b" }, { from_ref: "agent" });
+      store.saveEvent(
+        "s1",
+        "assistant_message",
+        { text: "b" },
+        { from_ref: "agent" },
+      );
 
-      const events = store.getEvents("s1", { afterSeq: 1, excludeThinking: true });
+      const events = store.getEvents("s1", {
+        afterSeq: 1,
+        excludeThinking: true,
+      });
       assert.equal(events.length, 1);
       assert.equal(events[0].type, "assistant_message");
     });
@@ -147,7 +208,12 @@ describe("Store", () => {
     it("deletes old empty sessions and returns their IDs", () => {
       store.createSession("empty-old", "/a");
       store.createSession("has-events", "/b");
-      store.saveEvent("has-events", "user_message", { text: "hi" }, { from_ref: "user" });
+      store.saveEvent(
+        "has-events",
+        "user_message",
+        { text: "hi" },
+        { from_ref: "user" },
+      );
 
       // With minAgeS=0, all empty sessions are eligible
       const deleted = store.deleteEmptySessions(0);
@@ -169,7 +235,12 @@ describe("Store", () => {
       store.createSession("e1", "/a");
       store.createSession("e2", "/b");
       store.createSession("e3", "/c");
-      store.saveEvent("e2", "user_message", { text: "hi" }, { from_ref: "user" });
+      store.saveEvent(
+        "e2",
+        "user_message",
+        { text: "hi" },
+        { from_ref: "user" },
+      );
 
       const deleted = store.deleteEmptySessions(0);
       assert.equal(deleted.length, 2);
@@ -182,7 +253,12 @@ describe("Store", () => {
 
     it("returns empty array when no empty sessions exist", () => {
       store.createSession("s1", "/a");
-      store.saveEvent("s1", "user_message", { text: "hi" }, { from_ref: "user" });
+      store.saveEvent(
+        "s1",
+        "user_message",
+        { text: "hi" },
+        { from_ref: "user" },
+      );
 
       const deleted = store.deleteEmptySessions(0);
       assert.deepEqual(deleted, []);
@@ -213,38 +289,108 @@ describe("Store", () => {
 
     it("returns true when user_message has no following prompt_done", () => {
       store.createSession("s1", "/x");
-      store.saveEvent("s1", "user_message", { text: "hello" }, { from_ref: "user" });
-      store.saveEvent("s1", "assistant_message", { text: "partial..." }, { from_ref: "agent" });
+      store.saveEvent(
+        "s1",
+        "user_message",
+        { text: "hello" },
+        { from_ref: "user" },
+      );
+      store.saveEvent(
+        "s1",
+        "assistant_message",
+        { text: "partial..." },
+        { from_ref: "agent" },
+      );
       assert.equal(store.hasInterruptedTurn("s1"), true);
     });
 
     it("returns false when prompt_done follows user_message", () => {
       store.createSession("s1", "/x");
-      store.saveEvent("s1", "user_message", { text: "hello" }, { from_ref: "user" });
-      store.saveEvent("s1", "assistant_message", { text: "full response" }, { from_ref: "agent" });
-      store.saveEvent("s1", "prompt_done", { stopReason: "end_turn" }, { from_ref: "agent" });
+      store.saveEvent(
+        "s1",
+        "user_message",
+        { text: "hello" },
+        { from_ref: "user" },
+      );
+      store.saveEvent(
+        "s1",
+        "assistant_message",
+        { text: "full response" },
+        { from_ref: "agent" },
+      );
+      store.saveEvent(
+        "s1",
+        "prompt_done",
+        { stopReason: "end_turn" },
+        { from_ref: "agent" },
+      );
       assert.equal(store.hasInterruptedTurn("s1"), false);
     });
 
     it("detects interrupted turn after a completed turn", () => {
       store.createSession("s1", "/x");
       // First turn — completed
-      store.saveEvent("s1", "user_message", { text: "first" }, { from_ref: "user" });
-      store.saveEvent("s1", "assistant_message", { text: "reply" }, { from_ref: "agent" });
-      store.saveEvent("s1", "prompt_done", { stopReason: "end_turn" }, { from_ref: "agent" });
+      store.saveEvent(
+        "s1",
+        "user_message",
+        { text: "first" },
+        { from_ref: "user" },
+      );
+      store.saveEvent(
+        "s1",
+        "assistant_message",
+        { text: "reply" },
+        { from_ref: "agent" },
+      );
+      store.saveEvent(
+        "s1",
+        "prompt_done",
+        { stopReason: "end_turn" },
+        { from_ref: "agent" },
+      );
       // Second turn — interrupted
-      store.saveEvent("s1", "user_message", { text: "second" }, { from_ref: "user" });
-      store.saveEvent("s1", "assistant_message", { text: "partial..." }, { from_ref: "agent" });
+      store.saveEvent(
+        "s1",
+        "user_message",
+        { text: "second" },
+        { from_ref: "user" },
+      );
+      store.saveEvent(
+        "s1",
+        "assistant_message",
+        { text: "partial..." },
+        { from_ref: "agent" },
+      );
       assert.equal(store.hasInterruptedTurn("s1"), true);
     });
 
     it("returns false when only non-prompt events follow prompt_done", () => {
       store.createSession("s1", "/x");
-      store.saveEvent("s1", "user_message", { text: "hello" }, { from_ref: "user" });
-      store.saveEvent("s1", "prompt_done", { stopReason: "end_turn" }, { from_ref: "agent" });
+      store.saveEvent(
+        "s1",
+        "user_message",
+        { text: "hello" },
+        { from_ref: "user" },
+      );
+      store.saveEvent(
+        "s1",
+        "prompt_done",
+        { stopReason: "end_turn" },
+        { from_ref: "agent" },
+      );
       // Bash command (not a prompt turn)
-      store.saveEvent("s1", "bash_command", { command: "ls" }, { from_ref: "user" });
-      store.saveEvent("s1", "bash_result", { output: "file.txt", code: 0, signal: null }, { from_ref: "system" });
+      store.saveEvent(
+        "s1",
+        "bash_command",
+        { command: "ls" },
+        { from_ref: "user" },
+      );
+      store.saveEvent(
+        "s1",
+        "bash_result",
+        { output: "file.txt", code: 0, signal: null },
+        { from_ref: "system" },
+      );
       assert.equal(store.hasInterruptedTurn("s1"), false);
     });
   });
@@ -297,9 +443,11 @@ describe("Store", () => {
     it("listRecentPaths cleans up paths older than ttlDays", () => {
       store.touchRecentPath("/old");
       // Manually backdate the path to 60 days ago
-      (store as any).db.prepare(
-        "UPDATE recent_paths SET last_used_at = datetime('now', '-60 days')"
-      ).run();
+      (store as any).db
+        .prepare(
+          "UPDATE recent_paths SET last_used_at = datetime('now', '-60 days')",
+        )
+        .run();
       store.touchRecentPath("/fresh");
 
       const paths = store.listRecentPaths({ ttlDays: 30 });
@@ -312,9 +460,11 @@ describe("Store", () => {
 
     it("listRecentPaths with ttlDays=0 skips cleanup", () => {
       store.touchRecentPath("/old");
-      (store as any).db.prepare(
-        "UPDATE recent_paths SET last_used_at = datetime('now', '-9999 days')"
-      ).run();
+      (store as any).db
+        .prepare(
+          "UPDATE recent_paths SET last_used_at = datetime('now', '-9999 days')",
+        )
+        .run();
       const paths = store.listRecentPaths({ ttlDays: 0 });
       assert.equal(paths.length, 1);
     });
@@ -331,7 +481,7 @@ describe("Store", () => {
       store = new Store(tmpDir);
 
       const paths = store.listRecentPaths();
-      const cwds = paths.map(p => p.cwd).sort();
+      const cwds = paths.map((p) => p.cwd).sort();
       assert.deepEqual(cwds, ["/from-session-a", "/from-session-b"]);
     });
 
@@ -369,22 +519,37 @@ describe("Store", () => {
     it("saveClientOp is idempotent (INSERT OR IGNORE)", () => {
       store.saveClientOp("s1", "op-1", { status: 200, body: { a: 1 } });
       store.saveClientOp("s1", "op-1", { status: 500, body: { a: 2 } });
-      assert.deepEqual(store.getClientOp("s1", "op-1"), { status: 200, body: { a: 1 } });
+      assert.deepEqual(store.getClientOp("s1", "op-1"), {
+        status: 200,
+        body: { a: 1 },
+      });
     });
 
     it("scopes op ids per session", () => {
       store.createSession("s2", "/tmp");
       store.saveClientOp("s1", "op-shared", { status: 200, body: "a" });
       store.saveClientOp("s2", "op-shared", { status: 200, body: "b" });
-      assert.equal((store.getClientOp("s1", "op-shared") as { body: string }).body, "a");
-      assert.equal((store.getClientOp("s2", "op-shared") as { body: string }).body, "b");
+      assert.equal(
+        (store.getClientOp("s1", "op-shared") as { body: string }).body,
+        "a",
+      );
+      assert.equal(
+        (store.getClientOp("s2", "op-shared") as { body: string }).body,
+        "b",
+      );
     });
 
     it("pruneClientOps removes rows older than cutoff", () => {
       store.saveClientOp("s1", "stale", { status: 200, body: {} });
       // Force stale row's created_at back by 10 days
-      (store as unknown as { db: { prepare: (s: string) => { run: () => void } } }).db
-        .prepare("UPDATE client_ops SET created_at = datetime('now', '-10 days') WHERE client_op_id = 'stale'")
+      (
+        store as unknown as {
+          db: { prepare: (s: string) => { run: () => void } };
+        }
+      ).db
+        .prepare(
+          "UPDATE client_ops SET created_at = datetime('now', '-10 days') WHERE client_op_id = 'stale'",
+        )
         .run();
       store.saveClientOp("s1", "fresh", { status: 200, body: {} });
       store.pruneClientOps(7 * 24 * 3600 * 1000);

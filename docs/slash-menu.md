@@ -19,11 +19,11 @@ input starts with `/`. It is the only surface for slash-style commands; both
 
 Three modules, each with a frozen contract:
 
-| Module | Role | Pure? |
-|---|---|---|
-| [`slash-tree.ts`](../public/js/slash-tree.ts) | Walker — `resolvePath` + `buildCandidates`. Tokenizes input against the command tree, returns the ordered list of rows to show. | ✅ Pure. No DOM, no fetches. |
-| [`slash-render.ts`](../public/js/slash-render.ts) | `renderItem(spec, isSelected, prefix)` — the single visual template. Emits `.slash-item` with one or two grid rows. | ✅ Pure. DOM in, DOM out. |
-| [`slash-commands.ts`](../public/js/slash-commands.ts) | Declarative `ROOT` `CmdNode` tree — single source of truth for every command, subcommand, fetcher, and freeform action. | ❌ Has side-effects in `onSelect` handlers (api calls, navigation). |
+| Module                                                | Role                                                                                                                            | Pure?                                                               |
+| ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| [`slash-tree.ts`](../public/js/slash-tree.ts)         | Walker — `resolvePath` + `buildCandidates`. Tokenizes input against the command tree, returns the ordered list of rows to show. | ✅ Pure. No DOM, no fetches.                                        |
+| [`slash-render.ts`](../public/js/slash-render.ts)     | `renderItem(spec, isSelected, prefix)` — the single visual template. Emits `.slash-item` with one or two grid rows.             | ✅ Pure. DOM in, DOM out.                                           |
+| [`slash-commands.ts`](../public/js/slash-commands.ts) | Declarative `ROOT` `CmdNode` tree — single source of truth for every command, subcommand, fetcher, and freeform action.         | ❌ Has side-effects in `onSelect` handlers (api calls, navigation). |
 
 The thin driver [`commands.ts`](../public/js/commands.ts) glues them: input → `resolvePath` → maybe-fetch → `buildCandidates` → `renderItem` per row.
 
@@ -33,14 +33,14 @@ The thin driver [`commands.ts`](../public/js/commands.ts) glues them: input → 
 
 ```ts
 interface CmdNode {
-  name: string;                // '/foo' at root, 'bar' for children
-  desc?: string;               // shown as secondary in the parent menu
-  children?: CmdNode[];        // subcommands, walker prefixes them with ›
-  fetch?: () => unknown[] | Promise<unknown[]>;  // sync OR async data
+  name: string; // '/foo' at root, 'bar' for children
+  desc?: string; // shown as secondary in the parent menu
+  children?: CmdNode[]; // subcommands, walker prefixes them with ›
+  fetch?: () => unknown[] | Promise<unknown[]>; // sync OR async data
   toSpec?: (item: unknown) => SlashItemSpec;
   matches?: (item: unknown, q: string) => boolean; // optional non-primary filter
-  freeform?: (q: string) => SlashItemSpec | null;  // "create on the fly" row
-  onSelect?: () => void | Promise<void>;           // leaf action
+  freeform?: (q: string) => SlashItemSpec | null; // "create on the fly" row
+  onSelect?: () => void | Promise<void>; // leaf action
 }
 ```
 
@@ -65,25 +65,25 @@ Field absence = capability not present. A node with only `children` is a pure su
 
 Every row is a flex column with up to two grid rows:
 
-| Slot | Class | Notes |
-|---|---|---|
-| L1 prefix | `.slash-prefix` | One of ` `, `›`, `*`. Walker decides. |
-| L1 primary | `.slash-primary` | Bold. `+ .slash-current` (green) when `spec.current`. |
-| L1 secondary | `.slash-secondary` | Dim, optional. |
-| L2 path | `.slash-path` | Left-truncated (RTL trick). Presence of `spec.path` flips the row to two-line. |
-| L2 path-secondary | `.slash-path-secondary` | Time / metadata, optional. |
+| Slot              | Class                   | Notes                                                                          |
+| ----------------- | ----------------------- | ------------------------------------------------------------------------------ |
+| L1 prefix         | `.slash-prefix`         | One of ` `, `›`, `*`. Walker decides.                                          |
+| L1 primary        | `.slash-primary`        | Bold. `+ .slash-current` (green) when `spec.current`.                          |
+| L1 secondary      | `.slash-secondary`      | Dim, optional.                                                                 |
+| L2 path           | `.slash-path`           | Left-truncated (RTL trick). Presence of `spec.path` flips the row to two-line. |
+| L2 path-secondary | `.slash-path-secondary` | Time / metadata, optional.                                                     |
 
 There is exactly one renderer. Adding visual variants means extending `SlashItemSpec`, not branching the template.
 
 ## Tab / Enter / Click — per-row semantics
 
-| Row kind | Tab | Click (mousedown) | Enter |
-|---|---|---|---|
-| Subcommand with more under it | Fill `<path> <name> ` (trailing space; menu re-walks) | Fill + drill in | Ignores menu; raw text → `handleSlashCommand` |
-| Pure-leaf subcommand | Fill `<path> <name>` | Run `onSelect`, close menu | Same as above |
-| Data row | Fill `<path> <primary>` | Run `onSelect` (or system message if read-only), close | Same |
-| Freeform | No-op (input already represents the freeform) | Run `freeform.onSelect`, close | Same |
-| Placeholder / separator | No-op | No-op | — |
+| Row kind                      | Tab                                                   | Click (mousedown)                                      | Enter                                         |
+| ----------------------------- | ----------------------------------------------------- | ------------------------------------------------------ | --------------------------------------------- |
+| Subcommand with more under it | Fill `<path> <name> ` (trailing space; menu re-walks) | Fill + drill in                                        | Ignores menu; raw text → `handleSlashCommand` |
+| Pure-leaf subcommand          | Fill `<path> <name>`                                  | Run `onSelect`, close menu                             | Same as above                                 |
+| Data row                      | Fill `<path> <primary>`                               | Run `onSelect` (or system message if read-only), close | Same                                          |
+| Freeform                      | No-op (input already represents the freeform)         | Run `freeform.onSelect`, close                         | Same                                          |
+| Placeholder / separator       | No-op                                                 | No-op                                                  | —                                             |
 
 Enter **never** consumes the highlighted menu item. This keeps "type the full command" and "pick from the menu" as cleanly separated workflows; users who memorize commands are never surprised by the cursor jumping into the menu.
 

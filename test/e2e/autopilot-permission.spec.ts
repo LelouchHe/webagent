@@ -11,7 +11,9 @@ test("autopilot mode auto-approves permission requests", async ({ page }) => {
 
   await sendPrompt(page, "E2E_PERMISSION autopilot should approve this");
 
-  await expect(page.locator(".msg.assistant").last()).toContainText("Permission granted");
+  await expect(page.locator(".msg.assistant").last()).toContainText(
+    "Permission granted",
+  );
   await expect(page.locator(".permission button")).toHaveCount(0);
   await expect(page.locator("#send-btn")).toHaveText("↵");
   await expect(page.locator("#input")).toBeEnabled();

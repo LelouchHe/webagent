@@ -39,7 +39,10 @@ try {
   await store.close();
   process.exit(0);
 } catch (err) {
-  console.error("Failed to create token:", err instanceof Error ? err.message : err);
+  console.error(
+    "Failed to create token:",
+    err instanceof Error ? err.message : err,
+  );
   await store.close().catch(() => {});
   process.exit(1);
 }

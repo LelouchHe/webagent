@@ -60,16 +60,16 @@ Every HTTP request flows through `src/auth-middleware.ts`:
 
 Whitelisted paths (no auth required):
 
-| Path | Why |
-|---|---|
-| `GET /api/v1/version` | Public probe; no PII |
-| `GET /api/beta/push/vapid-key` | Public probe; subscribing requires auth |
-| `GET /` | HTML shell — `app.ts` redirects to `/login` if no token in `localStorage` |
-| `GET /login`, `/login.html` | Login page |
-| `GET /manifest.json`, `/sw.js`, `/favicon.ico`, `/theme-init.js` | PWA + early-paint helpers needed before login |
-| `GET /js/*.js`, `/styles*.css`, `/icons/*` | Static bundles (content-hashed) |
-| `GET /api/v1/events/stream` | SSE — auth via short-lived ticket in query string instead (see below) |
-| `GET /api/v1/images/*` | Auth via HMAC signature in query string instead (see below) |
+| Path                                                             | Why                                                                       |
+| ---------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| `GET /api/v1/version`                                            | Public probe; no PII                                                      |
+| `GET /api/beta/push/vapid-key`                                   | Public probe; subscribing requires auth                                   |
+| `GET /`                                                          | HTML shell — `app.ts` redirects to `/login` if no token in `localStorage` |
+| `GET /login`, `/login.html`                                      | Login page                                                                |
+| `GET /manifest.json`, `/sw.js`, `/favicon.ico`, `/theme-init.js` | PWA + early-paint helpers needed before login                             |
+| `GET /js/*.js`, `/styles*.css`, `/icons/*`                       | Static bundles (content-hashed)                                           |
+| `GET /api/v1/events/stream`                                      | SSE — auth via short-lived ticket in query string instead (see below)     |
+| `GET /api/v1/images/*`                                           | Auth via HMAC signature in query string instead (see below)               |
 
 Anything else (chat history, prompt submission, model selection, bash, push subscriptions) requires a Bearer token.
 
@@ -142,11 +142,11 @@ export const HTML_ENTRYPOINTS = [
 
 Three invariant tests guard CSP correctness so future changes don't regress silently:
 
-| Test | Asserts |
-|---|---|
-| `test/csp.test.ts` | Every HTML entrypoint response includes `Content-Security-Policy` matching the documented policy |
-| `test/html-entrypoints.test.ts` | Every HTML file under `public/` is registered in `HTML_ENTRYPOINTS` (no orphan HTML pages) |
-| `test/inline-assets.test.ts` | No `<script>...</script>` or `<style>...</style>` blocks with inline content in any HTML entrypoint |
+| Test                            | Asserts                                                                                             |
+| ------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `test/csp.test.ts`              | Every HTML entrypoint response includes `Content-Security-Policy` matching the documented policy    |
+| `test/html-entrypoints.test.ts` | Every HTML file under `public/` is registered in `HTML_ENTRYPOINTS` (no orphan HTML pages)          |
+| `test/inline-assets.test.ts`    | No `<script>...</script>` or `<style>...</style>` blocks with inline content in any HTML entrypoint |
 
 ## Operations
 

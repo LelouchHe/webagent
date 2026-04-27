@@ -30,7 +30,7 @@ test.describe("image lightbox", () => {
     await expect(overlay).toBeVisible();
     await expect(overlay.locator("img")).toHaveAttribute(
       "src",
-      await chatImage.getAttribute("src") as string,
+      (await chatImage.getAttribute("src")) as string,
     );
   });
 
@@ -64,7 +64,9 @@ test.describe("image lightbox", () => {
     await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2);
     await page.mouse.wheel(0, -100);
 
-    const transform = await img.evaluate((el) => getComputedStyle(el).transform);
+    const transform = await img.evaluate(
+      (el) => getComputedStyle(el).transform,
+    );
     // After zooming in, transform should contain a scale > 1
     expect(transform).not.toBe("none");
   });

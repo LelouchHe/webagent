@@ -32,8 +32,12 @@ describe("images", () => {
   beforeEach(() => {
     resetState(state, dom);
     clicked = 0;
-    dom.input.focus = () => { clicked += 1; };
-    dom.fileInput.click = () => { clicked += 100; };
+    dom.input.focus = () => {
+      clicked += 1;
+    };
+    dom.fileInput.click = () => {
+      clicked += 100;
+    };
   });
 
   it("renders thumbnails and removes them when requested", () => {
@@ -79,7 +83,10 @@ describe("images", () => {
   });
 
   it("adds pasted images and prevents the default paste behavior", async () => {
-    const event = new window.Event("paste", { bubbles: true, cancelable: true }) as any;
+    const event = new window.Event("paste", {
+      bubbles: true,
+      cancelable: true,
+    }) as any;
     event.clipboardData = {
       items: [
         {

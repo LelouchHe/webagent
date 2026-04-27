@@ -57,14 +57,14 @@ Browser ←── REST + SSE ──→ Server ←── ACP ──→ Agent CLI
 
 The frontend is a standard browser client that talks to the server over REST + SSE. The API is the boundary — anyone can build their own client.
 
-| Module | Role |
-|---|---|
-| `routes.ts` | REST API + static files ([full API reference](docs/api.md)) |
-| `event-handler.ts` | ACP event routing → SSE broadcast |
-| `session-manager.ts` | Session state, buffers, bash processes |
-| `bridge.ts` | ACP bridge — agent subprocess lifecycle |
-| `store.ts` | SQLite persistence (WAL mode) |
-| `daemon.ts` | Background service with crash recovery |
+| Module               | Role                                                        |
+| -------------------- | ----------------------------------------------------------- |
+| `routes.ts`          | REST API + static files ([full API reference](docs/api.md)) |
+| `event-handler.ts`   | ACP event routing → SSE broadcast                           |
+| `session-manager.ts` | Session state, buffers, bash processes                      |
+| `bridge.ts`          | ACP bridge — agent subprocess lifecycle                     |
+| `store.ts`           | SQLite persistence (WAL mode)                               |
+| `daemon.ts`          | Background service with crash recovery                      |
 
 Tech stack: Node.js + TypeScript (`--experimental-strip-types`), SQLite (`better-sqlite3`), Zod validation, esbuild bundling.
 
@@ -72,15 +72,15 @@ Frontend source lives in `public/js/*.ts`, bundled by esbuild into a single cont
 
 ## Documentation
 
-| Document | Contents |
-|---|---|
-| **[Features](docs/features.md)** | Chat, images, bash, sessions, slash commands, keyboard shortcuts, themes |
-| **[Configuration & Operations](docs/configuration.md)** | TOML config, daemon commands, agent setup, upgrading |
-| **[Security](docs/security.md)** | Bearer auth, token storage, SSE ticket, signed image URLs, CSP, data layout |
-| **[API Reference](docs/api.md)** | REST endpoints, SSE events, implementation details |
-| **[ACP Integration](docs/acp.md)** | Client extensions, protocol scope, current limits |
-| **[Client Architecture](docs/client-architecture.md)** | Frontend modules, data flow, conventions |
-| **[Slash Menu](docs/slash-menu.md)** | Walker pipeline, `CmdNode` tree, Tab/Enter/Click contract, how to add commands |
-| **[Messages / Inbox](docs/messages.md)** | `/inbox` slash command, POST ingress, bound vs unbound messages |
-| **[Development](docs/development.md)** | Building from source, dev mode, testing, publishing |
-| **[Auto-Start on Boot](docs/autostart.md)** | launchd, systemd, crontab, Windows Task Scheduler |
+| Document                                                | Contents                                                                       |
+| ------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| **[Features](docs/features.md)**                        | Chat, images, bash, sessions, slash commands, keyboard shortcuts, themes       |
+| **[Configuration & Operations](docs/configuration.md)** | TOML config, daemon commands, agent setup, upgrading                           |
+| **[Security](docs/security.md)**                        | Bearer auth, token storage, SSE ticket, signed image URLs, CSP, data layout    |
+| **[API Reference](docs/api.md)**                        | REST endpoints, SSE events, implementation details                             |
+| **[ACP Integration](docs/acp.md)**                      | Client extensions, protocol scope, current limits                              |
+| **[Client Architecture](docs/client-architecture.md)**  | Frontend modules, data flow, conventions                                       |
+| **[Slash Menu](docs/slash-menu.md)**                    | Walker pipeline, `CmdNode` tree, Tab/Enter/Click contract, how to add commands |
+| **[Messages / Inbox](docs/messages.md)**                | `/inbox` slash command, POST ingress, bound vs unbound messages                |
+| **[Development](docs/development.md)**                  | Building from source, dev mode, testing, publishing                            |
+| **[Auto-Start on Boot](docs/autostart.md)**             | launchd, systemd, crontab, Windows Task Scheduler                              |

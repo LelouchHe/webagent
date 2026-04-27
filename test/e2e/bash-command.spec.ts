@@ -1,7 +1,9 @@
 import { test, expect } from "playwright/test";
 import { createNewSession, gotoConnected, sendPrompt } from "./helpers.ts";
 
-test("running a bash command shows its command and output", async ({ page }) => {
+test("running a bash command shows its command and output", async ({
+  page,
+}) => {
   await gotoConnected(page);
   await createNewSession(page);
 

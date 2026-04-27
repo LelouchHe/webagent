@@ -12,11 +12,11 @@ WebAgent uses ACP for the core agent loop: session creation / restore, prompt tu
 
 ACP allows the client to inject extra capabilities into the agent on top of its native baseline. WebAgent currently provides:
 
-| Extension | Status | Notes |
-|---|---|---|
-| `fs` (readTextFile / writeTextFile) | ✅ Implemented | Agent can read/write files through the client |
-| `terminal` | Declared but not wired | `!<command>` runs via the app's own local bash bridge, not ACP `terminal/*` |
-| `mcpServers` | `[]` (no extras) | Agent's own MCP servers (e.g. GitHub MCP) work normally; passing `[]` means the client isn't providing additional ones |
+| Extension                           | Status                 | Notes                                                                                                                  |
+| ----------------------------------- | ---------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `fs` (readTextFile / writeTextFile) | ✅ Implemented         | Agent can read/write files through the client                                                                          |
+| `terminal`                          | Declared but not wired | `!<command>` runs via the app's own local bash bridge, not ACP `terminal/*`                                            |
+| `mcpServers`                        | `[]` (no extras)       | Agent's own MCP servers (e.g. GitHub MCP) work normally; passing `[]` means the client isn't providing additional ones |
 
 Passing `mcpServers: []` does **not** disable MCP — the agent loads its own configured MCP servers independently. The parameter is for the client to provide _additional_ servers the agent wouldn't have on its own.
 
@@ -35,11 +35,11 @@ In practice, this means WebAgent provides a browser UI for the core ACP chat/ses
 
 Each major agent vendor ships its own SDK for programmatic embedding:
 
-| Vendor | SDK | Languages |
-|---|---|---|
-| GitHub Copilot | [`@github/copilot-sdk`](https://github.com/github/copilot-sdk) | Node.js, Python, Go, .NET, Java |
-| Claude Code | [`@anthropic-ai/claude-code`](https://www.npmjs.com/package/@anthropic-ai/claude-code) | Node.js, Python |
-| Codex CLI | [`@openai/codex-sdk`](https://www.npmjs.com/package/@openai/codex-sdk) | Node.js, Python |
+| Vendor         | SDK                                                                                    | Languages                       |
+| -------------- | -------------------------------------------------------------------------------------- | ------------------------------- |
+| GitHub Copilot | [`@github/copilot-sdk`](https://github.com/github/copilot-sdk)                         | Node.js, Python, Go, .NET, Java |
+| Claude Code    | [`@anthropic-ai/claude-code`](https://www.npmjs.com/package/@anthropic-ai/claude-code) | Node.js, Python                 |
+| Codex CLI      | [`@openai/codex-sdk`](https://www.npmjs.com/package/@openai/codex-sdk)                 | Node.js, Python                 |
 
 All three SDKs share the same pattern: they spawn their own CLI as a subprocess, communicate via JSON-RPC over stdio, and provide a high-level language-specific API on top. Each SDK is locked to its own CLI — there is no cross-SDK interoperability (you cannot use Copilot SDK to drive Claude Code, or vice versa).
 
@@ -113,19 +113,19 @@ SDKs offer deeper integration but come with their own costs:
 
 ### Trade-off summary
 
-| | Vendor SDK | WebAgent (ACP) |
-|---|---|---|
-| Agent support | Single vendor only | Any ACP-compatible agent |
-| Multi-agent in one app | Requires multiple SDK integrations | One protocol, swap `agent_cmd` |
-| Setup effort | Low (SDK manages CLI) | Medium (manual CLI + config) |
-| Context visibility/compact | Available (vendor-dependent) | Not available (protocol gap) |
-| Cost / token tracking | Available | Not available |
-| Auth handling | Built-in | Relies on CLI's own auth |
-| Depth of integration | Deep (vendor-specific features) | Protocol surface only |
-| Customization freedom | Constrained by SDK opinions | Full control |
-| Vendor lock-in | Yes | No |
-| Dependency weight | Heavy (bundles CLI binary) | Light (protocol library only) |
-| Ecosystem alignment | Vendor ecosystem | ACP / Zed / JetBrains ecosystem |
+|                            | Vendor SDK                         | WebAgent (ACP)                  |
+| -------------------------- | ---------------------------------- | ------------------------------- |
+| Agent support              | Single vendor only                 | Any ACP-compatible agent        |
+| Multi-agent in one app     | Requires multiple SDK integrations | One protocol, swap `agent_cmd`  |
+| Setup effort               | Low (SDK manages CLI)              | Medium (manual CLI + config)    |
+| Context visibility/compact | Available (vendor-dependent)       | Not available (protocol gap)    |
+| Cost / token tracking      | Available                          | Not available                   |
+| Auth handling              | Built-in                           | Relies on CLI's own auth        |
+| Depth of integration       | Deep (vendor-specific features)    | Protocol surface only           |
+| Customization freedom      | Constrained by SDK opinions        | Full control                    |
+| Vendor lock-in             | Yes                                | No                              |
+| Dependency weight          | Heavy (bundles CLI binary)         | Light (protocol library only)   |
+| Ecosystem alignment        | Vendor ecosystem                   | ACP / Zed / JetBrains ecosystem |
 
 ### When to use which
 

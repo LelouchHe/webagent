@@ -1,8 +1,8 @@
 // Minimal service worker for PWA installability + push notifications.
 // No offline caching — app requires SSE connection.
 
-self.addEventListener('install', () => self.skipWaiting());
-self.addEventListener('activate', (e) => e.waitUntil(self.clients.claim()));
+self.addEventListener("install", () => self.skipWaiting());
+self.addEventListener("activate", (e) => e.waitUntil(self.clients.claim()));
 
 // --- Push notifications ---
 //
@@ -14,7 +14,7 @@ self.addEventListener('activate', (e) => e.waitUntil(self.clients.claim()));
 //                                                  for acked/consumed inbox
 //                                                  messages).
 
-self.addEventListener('push', (e) => {
+self.addEventListener("push", (e) => {
   if (!e.data) return;
 
   let payload;
@@ -24,14 +24,14 @@ self.addEventListener('push', (e) => {
     return;
   }
 
-  if (payload.kind === 'close' && payload.tag) {
+  if (payload.kind === "close" && payload.tag) {
     e.waitUntil(closeByTag(payload.tag));
     return;
   }
 
   // Backward-compat: older payloads had no `kind`. Treat as notify.
   const { title, body, tag, data } = payload;
-  const finalTag = tag || data?.sessionId || 'default';
+  const finalTag = tag || data?.sessionId || "default";
   e.waitUntil(showNotify(title, body, finalTag, data));
 });
 
@@ -50,10 +50,10 @@ self.addEventListener('push', (e) => {
 async function showNotify(title, body, tag, data) {
   const existing = await self.registration.getNotifications({ tag });
   for (const n of existing) n.close();
-  await self.registration.showNotification(title || 'WebAgent', {
-    body: body || '',
-    icon: '/icon-192.png',
-    badge: '/icon-192.png',
+  await self.registration.showNotification(title || "WebAgent", {
+    body: body || "",
+    icon: "/icon-192.png",
+    badge: "/icon-192.png",
     tag,
     data: data || {},
   });
@@ -68,35 +68,36 @@ async function closeByTag(tag) {
 // (frontend dispatches this on `message_acked` / `message_consumed` so the
 // local device's banner disappears without waiting for the server's silent
 // close push).
-self.addEventListener('message', (e) => {
+self.addEventListener("message", (e) => {
   const msg = e.data;
-  if (msg && msg.type === 'close-notification' && msg.tag) {
+  if (msg && msg.type === "close-notification" && msg.tag) {
     e.waitUntil(closeByTag(msg.tag));
   }
 });
 
-self.addEventListener('notificationclick', (e) => {
+self.addEventListener("notificationclick", (e) => {
   e.notification.close();
 
   const data = e.notification.data || {};
   // For inbox messages, route to the bound session (if set) or root.
   // For session events, route to the session.
   const sessionId = data.sessionId;
-  const urlHash = sessionId ? `/#${sessionId}` : '/';
+  const urlHash = sessionId ? `/#${sessionId}` : "/";
 
   e.waitUntil(
-    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clients) => {
-      // Focus existing window if open
-      for (const client of clients) {
-        if (client.url.includes(self.location.origin)) {
-          client.focus();
-          client.postMessage({ type: 'navigate', sessionId });
-          return;
+    self.clients
+      .matchAll({ type: "window", includeUncontrolled: true })
+      .then((clients) => {
+        // Focus existing window if open
+        for (const client of clients) {
+          if (client.url.includes(self.location.origin)) {
+            client.focus();
+            client.postMessage({ type: "navigate", sessionId });
+            return;
+          }
         }
-      }
-      // Otherwise open a new window
-      return self.clients.openWindow(urlHash);
-    })
+        // Otherwise open a new window
+        return self.clients.openWindow(urlHash);
+      }),
   );
 });
-

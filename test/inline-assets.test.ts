@@ -90,14 +90,16 @@ describe("inline scripts/styles in HTML entrypoints", () => {
 const INLINE_STYLE_ATTR_RE = /\bstyle\s*=\s*["'][^"']*["']/g;
 
 describe("inline style attributes in frontend TS", () => {
-  it("public/js/**/*.ts has no `style=\"...\"` literals", () => {
+  it('public/js/**/*.ts has no `style="..."` literals', () => {
     const tsFiles = walkTs(join(ROOT, "public", "js"));
     const offenders: string[] = [];
     for (const file of tsFiles) {
       const src = readFileSync(file, "utf-8");
       const matches = src.match(INLINE_STYLE_ATTR_RE);
       if (matches) {
-        offenders.push(`${file.replace(ROOT + "/", "")}: ${matches.join(", ")}`);
+        offenders.push(
+          `${file.replace(ROOT + "/", "")}: ${matches.join(", ")}`,
+        );
       }
     }
     assert.equal(

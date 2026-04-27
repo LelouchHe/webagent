@@ -56,23 +56,41 @@ describe("SessionManager", () => {
   describe("createSession", () => {
     it("inherits config from the source session", async () => {
       store.createSession("s1", "/x");
-      store.saveEvent("s1", "user_message", { text: "hi" }, { from_ref: "user" });
+      store.saveEvent(
+        "s1",
+        "user_message",
+        { text: "hi" },
+        { from_ref: "user" },
+      );
       store.updateSessionConfig("s1", "model", "claude-sonnet-4.6");
       store.updateSessionConfig("s1", "mode", "plan-mode");
       store.updateSessionConfig("s1", "reasoning_effort", "high");
       sm.cachedConfigOptions = [
         { id: "model", name: "Model", currentValue: "mock-model", options: [] },
         { id: "mode", name: "Mode", currentValue: "agent", options: [] },
-        { id: "reasoning_effort", name: "Reasoning", currentValue: "medium", options: [] },
+        {
+          id: "reasoning_effort",
+          name: "Reasoning",
+          currentValue: "medium",
+          options: [],
+        },
       ];
 
-      const configCalls: Array<{ sessionId: string; configId: string; value: string }> = [];
+      const configCalls: Array<{
+        sessionId: string;
+        configId: string;
+        value: string;
+      }> = [];
       const bridge = {
         async newSession(cwd: string) {
           assert.equal(cwd, tmpDir);
           return "s2";
         },
-        async setConfigOption(sessionId: string, configId: string, value: string) {
+        async setConfigOption(
+          sessionId: string,
+          configId: string,
+          value: string,
+        ) {
           configCalls.push({ sessionId, configId, value });
         },
         async loadSession() {
@@ -89,7 +107,10 @@ describe("SessionManager", () => {
       ]);
       assert.equal(created.sessionId, "s2");
       assert.deepEqual(
-        created.configOptions.map((opt) => ({ id: opt.id, currentValue: opt.currentValue })),
+        created.configOptions.map((opt) => ({
+          id: opt.id,
+          currentValue: opt.currentValue,
+        })),
         [
           { id: "model", currentValue: "claude-sonnet-4.6" },
           { id: "mode", currentValue: "agent" },
@@ -125,15 +146,18 @@ describe("SessionManager", () => {
 
     it("rejects a non-existent cwd", async () => {
       const bridge = {
-        async newSession() { return "s2"; },
+        async newSession() {
+          return "s2";
+        },
         async setConfigOption() {},
-        async loadSession() { throw new Error("should not be called"); },
+        async loadSession() {
+          throw new Error("should not be called");
+        },
       };
 
-      await assert.rejects(
-        () => sm.createSession(bridge, "/no/such/path"),
-        { message: "Directory does not exist: /no/such/path" },
-      );
+      await assert.rejects(() => sm.createSession(bridge, "/no/such/path"), {
+        message: "Directory does not exist: /no/such/path",
+      });
     });
 
     it("cleans up old empty sessions and removes them from liveSessions", async () => {
@@ -141,20 +165,31 @@ describe("SessionManager", () => {
       store.createSession("empty-old", "/x");
       sm.liveSessions.add("empty-old");
       // Backdate created_at so it's older than the threshold
-      store["db"].prepare(
-        "UPDATE sessions SET created_at = strftime('%Y-%m-%d %H:%M:%f', 'now', '-120 seconds') WHERE id = ?",
-      ).run("empty-old");
+      store["db"]
+        .prepare(
+          "UPDATE sessions SET created_at = strftime('%Y-%m-%d %H:%M:%f', 'now', '-120 seconds') WHERE id = ?",
+        )
+        .run("empty-old");
 
       // Create a session with events — should not be cleaned
       store.createSession("has-events", "/x");
-      store.saveEvent("has-events", "user_message", { text: "hi" }, { from_ref: "user" });
+      store.saveEvent(
+        "has-events",
+        "user_message",
+        { text: "hi" },
+        { from_ref: "user" },
+      );
       sm.liveSessions.add("has-events");
 
       let nextId = 0;
       const bridge = {
-        async newSession() { return `new-${nextId++}`; },
+        async newSession() {
+          return `new-${nextId++}`;
+        },
         async setConfigOption() {},
-        async loadSession() { throw new Error("should not be called"); },
+        async loadSession() {
+          throw new Error("should not be called");
+        },
       };
 
       await sm.createSession(bridge);
@@ -173,9 +208,13 @@ describe("SessionManager", () => {
       sm.liveSessions.add("fresh-empty");
 
       const bridge = {
-        async newSession() { return "new-1"; },
+        async newSession() {
+          return "new-1";
+        },
         async setConfigOption() {},
-        async loadSession() { throw new Error("should not be called"); },
+        async loadSession() {
+          throw new Error("should not be called");
+        },
       };
 
       await sm.createSession(bridge);
@@ -278,13 +317,30 @@ describe("SessionManager", () => {
   describe("autoRetryIfNeeded", () => {
     it("returns false when session has no interrupted turn", () => {
       store.createSession("s1", "/x");
-      store.saveEvent("s1", "user_message", { text: "hello" }, { from_ref: "user" });
-      store.saveEvent("s1", "assistant_message", { text: "response" }, { from_ref: "agent" });
-      store.saveEvent("s1", "prompt_done", { stopReason: "end_turn" }, { from_ref: "agent" });
+      store.saveEvent(
+        "s1",
+        "user_message",
+        { text: "hello" },
+        { from_ref: "user" },
+      );
+      store.saveEvent(
+        "s1",
+        "assistant_message",
+        { text: "response" },
+        { from_ref: "agent" },
+      );
+      store.saveEvent(
+        "s1",
+        "prompt_done",
+        { stopReason: "end_turn" },
+        { from_ref: "agent" },
+      );
 
       const promptCalls: string[] = [];
       const bridge = {
-        async prompt(sessionId: string, text: string) { promptCalls.push(text); },
+        async prompt(sessionId: string, text: string) {
+          promptCalls.push(text);
+        },
       };
 
       assert.equal(sm.autoRetryIfNeeded(bridge, "s1"), false);
@@ -294,12 +350,24 @@ describe("SessionManager", () => {
 
     it("auto-retries when turn was interrupted", () => {
       store.createSession("s1", "/x");
-      store.saveEvent("s1", "user_message", { text: "hello" }, { from_ref: "user" });
-      store.saveEvent("s1", "assistant_message", { text: "partial..." }, { from_ref: "agent" });
+      store.saveEvent(
+        "s1",
+        "user_message",
+        { text: "hello" },
+        { from_ref: "user" },
+      );
+      store.saveEvent(
+        "s1",
+        "assistant_message",
+        { text: "partial..." },
+        { from_ref: "agent" },
+      );
 
       const promptCalls: Array<{ sessionId: string; text: string }> = [];
       const bridge = {
-        async prompt(sessionId: string, text: string) { promptCalls.push({ sessionId, text }); },
+        async prompt(sessionId: string, text: string) {
+          promptCalls.push({ sessionId, text });
+        },
       };
 
       assert.equal(sm.autoRetryIfNeeded(bridge, "s1"), true);
@@ -311,13 +379,20 @@ describe("SessionManager", () => {
 
     it("skips if session is already actively prompting", () => {
       store.createSession("s1", "/x");
-      store.saveEvent("s1", "user_message", { text: "hello" }, { from_ref: "user" });
+      store.saveEvent(
+        "s1",
+        "user_message",
+        { text: "hello" },
+        { from_ref: "user" },
+      );
       // No prompt_done — interrupted turn
       sm.activePrompts.add("s1");
 
       const promptCalls: string[] = [];
       const bridge = {
-        async prompt(_sid: string, text: string) { promptCalls.push(text); },
+        async prompt(_sid: string, text: string) {
+          promptCalls.push(text);
+        },
       };
 
       assert.equal(sm.autoRetryIfNeeded(bridge, "s1"), false);
@@ -326,12 +401,19 @@ describe("SessionManager", () => {
 
     it("cleans up activePrompts on prompt failure", async () => {
       store.createSession("s1", "/x");
-      store.saveEvent("s1", "user_message", { text: "hello" }, { from_ref: "user" });
+      store.saveEvent(
+        "s1",
+        "user_message",
+        { text: "hello" },
+        { from_ref: "user" },
+      );
 
       let rejectPrompt: (err: Error) => void;
       const bridge = {
         prompt(_sid: string, _text: string) {
-          return new Promise<void>((_resolve, reject) => { rejectPrompt = reject; });
+          return new Promise<void>((_resolve, reject) => {
+            rejectPrompt = reject;
+          });
         },
       };
 
@@ -341,7 +423,7 @@ describe("SessionManager", () => {
       // Simulate prompt failure
       rejectPrompt!(new Error("agent died"));
       // Allow microtask queue to process the .catch()
-      await new Promise(resolve => setTimeout(resolve, 10));
+      await new Promise((resolve) => setTimeout(resolve, 10));
       assert.ok(!sm.activePrompts.has("s1"));
     });
   });
@@ -353,9 +435,14 @@ describe("SessionManager", () => {
 
       let loadCalled = false;
       const bridge = {
-        async newSession() { return ""; },
+        async newSession() {
+          return "";
+        },
         async setConfigOption() {},
-        async loadSession() { loadCalled = true; return { sessionId: "s1", configOptions: [] }; },
+        async loadSession() {
+          loadCalled = true;
+          return { sessionId: "s1", configOptions: [] };
+        },
       };
 
       await sm.ensureResumed(bridge, "s1");
@@ -370,9 +457,14 @@ describe("SessionManager", () => {
 
       let loadCalled = false;
       const bridge = {
-        async newSession() { return ""; },
+        async newSession() {
+          return "";
+        },
         async setConfigOption() {},
-        async loadSession() { loadCalled = true; return { sessionId: "s1", configOptions: [] }; },
+        async loadSession() {
+          loadCalled = true;
+          return { sessionId: "s1", configOptions: [] };
+        },
       };
 
       await sm.ensureResumed(bridge, "s1");
@@ -387,13 +479,18 @@ describe("SessionManager", () => {
       let loadCount = 0;
       let resolveLoad: (() => void) | undefined;
       const bridge = {
-        async newSession() { return ""; },
+        async newSession() {
+          return "";
+        },
         async setConfigOption() {},
         loadSession() {
           loadCount++;
-          return new Promise<{ sessionId: string; configOptions: never[] }>((resolve) => {
-            resolveLoad = () => resolve({ sessionId: "s1", configOptions: [] });
-          });
+          return new Promise<{ sessionId: string; configOptions: never[] }>(
+            (resolve) => {
+              resolveLoad = () =>
+                resolve({ sessionId: "s1", configOptions: [] });
+            },
+          );
         },
       };
 
@@ -413,9 +510,13 @@ describe("SessionManager", () => {
       store.createSession("s1", "/x");
 
       const bridge = {
-        async newSession() { return ""; },
+        async newSession() {
+          return "";
+        },
         async setConfigOption() {},
-        async loadSession() { throw new Error("ACP timeout"); },
+        async loadSession() {
+          throw new Error("ACP timeout");
+        },
       };
 
       const p1 = sm.ensureResumed(bridge, "s1");
@@ -578,7 +679,10 @@ describe("SessionManager", () => {
 
       await sm.ensureResumed(bridge, "s1");
       assert.equal(sm.cachedConfigOptions.length, 0);
-      assert.ok(sm.liveSessions.has("s1"), "resume must succeed even if warming fails");
+      assert.ok(
+        sm.liveSessions.has("s1"),
+        "resume must succeed even if warming fails",
+      );
     });
 
     it("does not overwrite session DB row with agent defaults in the warm response", async () => {

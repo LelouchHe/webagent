@@ -7,7 +7,9 @@ test("cancelling after a tool call clears busy state", async ({ page }) => {
 
   await sendPrompt(page, "E2E_SLOW_TOOL cancel after tool call");
 
-  await expect(page.locator(".tool-call").last()).toContainText("Long-running tool");
+  await expect(page.locator(".tool-call").last()).toContainText(
+    "Long-running tool",
+  );
   await expect(page.locator("#send-btn")).toHaveText("^C");
 
   await page.locator("#send-btn").click();

@@ -18,6 +18,7 @@ webagent --create-token <name>
 ```
 
 Notes:
+
 - All `/api/**` endpoints (except `/api/v1/version` and `/api/beta/push/vapid-key`) require `Authorization: Bearer <token>`.
 - Browsers store the token in `localStorage` under `wa_token`.
 - SSE streams use a short-lived ticket (`POST /api/v1/sse-ticket`) instead of carrying the bearer.

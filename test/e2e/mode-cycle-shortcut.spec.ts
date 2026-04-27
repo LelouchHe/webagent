@@ -1,7 +1,9 @@
 import { test, expect } from "playwright/test";
 import { createNewSession, gotoConnected } from "./helpers.ts";
 
-test("Ctrl+M cycles mode through agent, plan, and autopilot", async ({ page }) => {
+test("Ctrl+M cycles mode through agent, plan, and autopilot", async ({
+  page,
+}) => {
   await gotoConnected(page);
   await createNewSession(page);
 

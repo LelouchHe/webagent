@@ -127,7 +127,11 @@ export function resetForSession(): void {
 // ============================================================
 
 function make(parentScope?: string): Logger {
-  const emit = (level: LogRecord["level"], msg: string, fields?: Record<string, unknown>): void => {
+  const emit = (
+    level: LogRecord["level"],
+    msg: string,
+    fields?: Record<string, unknown>,
+  ): void => {
     // �� Zero-overhead gate: must be the first statement.
     if (LEVEL_RANK[level] < LEVEL_RANK[currentLevel]) {
       return;
@@ -148,8 +152,11 @@ function make(parentScope?: string): Logger {
     try {
       const ts = formatTs(Date.now());
       const scopePart = parentScope ? ` [${parentScope}]` : "";
-      const fieldsPart = fields !== undefined ? " " + safeStringify(fields) : "";
-      addSystemImpl(`${ts}${scopePart} ${level.toUpperCase()} ${msg}${fieldsPart}`);
+      const fieldsPart =
+        fields !== undefined ? " " + safeStringify(fields) : "";
+      addSystemImpl(
+        `${ts}${scopePart} ${level.toUpperCase()} ${msg}${fieldsPart}`,
+      );
     } catch {
       // never let logger internals throw to caller
     }
@@ -200,7 +207,9 @@ function safeStringify(value: unknown): string {
     });
     if (typeof str !== "string") return String(value);
     if (str.length > FIELD_CAP_BYTES) {
-      return str.slice(0, FIELD_CAP_BYTES) + `…(truncated, ${str.length} bytes)`;
+      return (
+        str.slice(0, FIELD_CAP_BYTES) + `…(truncated, ${str.length} bytes)`
+      );
     }
     return str;
   } catch {

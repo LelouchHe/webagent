@@ -91,7 +91,10 @@ describe("auth - image URL signing", () => {
       const qs = signImageUrl(PATH, SECRET, 3600);
       const after = Math.floor(Date.now() / 1000);
       const exp = Number(new URLSearchParams(qs).get("exp"));
-      assert.ok(exp >= before + 3600 && exp <= after + 3601, `exp ${exp} not in window`);
+      assert.ok(
+        exp >= before + 3600 && exp <= after + 3601,
+        `exp ${exp} not in window`,
+      );
     });
 
     it("different paths produce different signatures", () => {
@@ -107,14 +110,24 @@ describe("auth - image URL signing", () => {
     it("accepts a freshly signed URL", () => {
       const qs = signImageUrl(PATH, SECRET, 3600);
       const params = new URLSearchParams(qs);
-      const ok = verifyImageSig(PATH, params.get("exp")!, params.get("sig")!, SECRET);
+      const ok = verifyImageSig(
+        PATH,
+        params.get("exp")!,
+        params.get("sig")!,
+        SECRET,
+      );
       assert.equal(ok, true);
     });
 
     it("rejects when path differs (HMAC binds path)", () => {
       const qs = signImageUrl(PATH, SECRET, 3600);
       const params = new URLSearchParams(qs);
-      const ok = verifyImageSig("other/file.png", params.get("exp")!, params.get("sig")!, SECRET);
+      const ok = verifyImageSig(
+        "other/file.png",
+        params.get("exp")!,
+        params.get("sig")!,
+        SECRET,
+      );
       assert.equal(ok, false);
     });
 
@@ -123,7 +136,10 @@ describe("auth - image URL signing", () => {
       const params = new URLSearchParams(qs);
       const sig = params.get("sig")!;
       const tampered = sig.slice(0, -1) + (sig.endsWith("0") ? "1" : "0");
-      assert.equal(verifyImageSig(PATH, params.get("exp")!, tampered, SECRET), false);
+      assert.equal(
+        verifyImageSig(PATH, params.get("exp")!, tampered, SECRET),
+        false,
+      );
     });
 
     it("rejects when exp is in the past", () => {
@@ -131,19 +147,31 @@ describe("auth - image URL signing", () => {
       // sign with negative ttl to get expired URL
       const qs = signImageUrl(PATH, SECRET, -10);
       const params = new URLSearchParams(qs);
-      assert.equal(verifyImageSig(PATH, past, params.get("sig")!, SECRET), false);
+      assert.equal(
+        verifyImageSig(PATH, past, params.get("sig")!, SECRET),
+        false,
+      );
     });
 
     it("rejects when exp is altered (HMAC binds exp)", () => {
       const qs = signImageUrl(PATH, SECRET, 3600);
       const params = new URLSearchParams(qs);
       const futureExp = String(Math.floor(Date.now() / 1000) + 99999);
-      assert.equal(verifyImageSig(PATH, futureExp, params.get("sig")!, SECRET), false);
+      assert.equal(
+        verifyImageSig(PATH, futureExp, params.get("sig")!, SECRET),
+        false,
+      );
     });
 
     it("rejects malformed inputs without throwing", () => {
-      assert.equal(verifyImageSig(PATH, "not-a-number", "deadbeef", SECRET), false);
-      assert.equal(verifyImageSig(PATH, "1234567890", "not-hex!!", SECRET), false);
+      assert.equal(
+        verifyImageSig(PATH, "not-a-number", "deadbeef", SECRET),
+        false,
+      );
+      assert.equal(
+        verifyImageSig(PATH, "1234567890", "not-hex!!", SECRET),
+        false,
+      );
       assert.equal(verifyImageSig(PATH, "", "", SECRET), false);
     });
 
@@ -151,7 +179,15 @@ describe("auth - image URL signing", () => {
       const qs = signImageUrl(PATH, SECRET, 3600);
       const params = new URLSearchParams(qs);
       const otherSecret = Buffer.from("b".repeat(64), "hex");
-      assert.equal(verifyImageSig(PATH, params.get("exp")!, params.get("sig")!, otherSecret), false);
+      assert.equal(
+        verifyImageSig(
+          PATH,
+          params.get("exp")!,
+          params.get("sig")!,
+          otherSecret,
+        ),
+        false,
+      );
     });
   });
 });

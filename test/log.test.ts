@@ -16,7 +16,8 @@ describe("log (level-gated)", () => {
     mod = await import("../public/js/log.ts");
     for (const lvl of ["debug", "info", "warn", "error"] as const) {
       origConsole[lvl] = (console as any)[lvl];
-      (console as any)[lvl] = (...args: unknown[]) => consoleSpy.push({ level: lvl, args });
+      (console as any)[lvl] = (...args: unknown[]) =>
+        consoleSpy.push({ level: lvl, args });
     }
     mod.setLogRenderer((text: string) => {
       renderedLines.push(text);

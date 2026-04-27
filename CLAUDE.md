@@ -5,6 +5,7 @@ A terminal-style web UI for ACP-compatible agents.
 Tech stack: Node.js + TypeScript (`--experimental-strip-types`), REST + SSE real-time communication, SQLite persistence (`better-sqlite3`), Zod validation, esbuild (frontend bundling).
 
 Core modules:
+
 - `server.ts` — HTTP server bootstrap
 - `routes.ts` — HTTP request handlers (static files, REST API, image upload)
 - `event-handler.ts` — ACP event routing + SSE broadcast
@@ -50,18 +51,18 @@ node --experimental-strip-types src/server.ts --config config.toml
 
 If no `--config` is provided, all settings use built-in defaults. See `config.toml` for production settings and `config.dev.toml` for development.
 
-| Key | Default | Description |
-|---|---|---|
-| `port` | `6800` | HTTP server port |
-| `data_dir` | `data` | SQLite + uploads directory |
-| `default_cwd` | `process.cwd()` | Working directory for new sessions |
-| `public_dir` | `dist` | Static assets directory |
-| `agent_cmd` | `copilot --acp` | ACP agent command (binary + args, space-separated) |
-| `limits.bash_output` | `1048576` (1 MB) | Max bash output stored in DB per command |
-| `limits.image_upload` | `10485760` (10 MB) | Max image upload size |
-| `limits.cancel_timeout` | `10000` (10s) | Cancel timeout in ms; 0 disables |
-| `limits.recent_paths` | `10` | Max recent paths shown in `/new` menu; 0 = show all |
-| `limits.recent_paths_ttl` | `30` | Days to keep unused paths before auto-cleanup; 0 = keep forever |
+| Key                       | Default            | Description                                                     |
+| ------------------------- | ------------------ | --------------------------------------------------------------- |
+| `port`                    | `6800`             | HTTP server port                                                |
+| `data_dir`                | `data`             | SQLite + uploads directory                                      |
+| `default_cwd`             | `process.cwd()`    | Working directory for new sessions                              |
+| `public_dir`              | `dist`             | Static assets directory                                         |
+| `agent_cmd`               | `copilot --acp`    | ACP agent command (binary + args, space-separated)              |
+| `limits.bash_output`      | `1048576` (1 MB)   | Max bash output stored in DB per command                        |
+| `limits.image_upload`     | `10485760` (10 MB) | Max image upload size                                           |
+| `limits.cancel_timeout`   | `10000` (10s)      | Cancel timeout in ms; 0 disables                                |
+| `limits.recent_paths`     | `10`               | Max recent paths shown in `/new` menu; 0 = show all             |
+| `limits.recent_paths_ttl` | `30`               | Days to keep unused paths before auto-cleanup; 0 = keep forever |
 
 To use a different ACP-compatible agent backend:
 
@@ -107,11 +108,11 @@ Quick reference for code-level work:
 
 ACP parameters like `mcpServers`, `terminal`, and `fs` are **client-to-agent capability injections** — the client offers extra capabilities on top of the agent's own baseline. The agent (CLI) retains all its native abilities regardless of what the client provides.
 
-| Parameter | What it means | WebAgent currently provides |
-|---|---|---|
-| `clientCapabilities.terminal` | "I can act as your terminal" — agent can ask the client to run shell commands | `true` — declared but not wired to ACP `terminal/*`; the app's `!<command>` runs via its own local bash bridge instead |
-| `clientCapabilities.fs` | "I can read/write files for you" — agent can ask the client to access the filesystem | `{ readTextFile: true, writeTextFile: true }` — fully implemented |
-| `mcpServers` | "Here are additional MCP servers for you to use" — agent connects to these on top of its own configured servers | `[]` — no extra MCP servers from the client; the agent's own MCP config (e.g. GitHub MCP) still works |
+| Parameter                     | What it means                                                                                                   | WebAgent currently provides                                                                                            |
+| ----------------------------- | --------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `clientCapabilities.terminal` | "I can act as your terminal" — agent can ask the client to run shell commands                                   | `true` — declared but not wired to ACP `terminal/*`; the app's `!<command>` runs via its own local bash bridge instead |
+| `clientCapabilities.fs`       | "I can read/write files for you" — agent can ask the client to access the filesystem                            | `{ readTextFile: true, writeTextFile: true }` — fully implemented                                                      |
+| `mcpServers`                  | "Here are additional MCP servers for you to use" — agent connects to these on top of its own configured servers | `[]` — no extra MCP servers from the client; the agent's own MCP config (e.g. GitHub MCP) still works                  |
 
 Passing `mcpServers: []` does **not** disable MCP — it means the client isn't providing extras. The agent loads its own MCP servers independently. Same pattern as `terminal`: declaring the capability is an offer, not a requirement for the agent to function.
 

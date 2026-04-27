@@ -82,19 +82,19 @@ The client uses **REST for all commands** and **SSE for receiving real-time even
 
 All frontend source lives in `public/js/*.ts`. esbuild bundles it into a content-hashed `app.[hash].js` plus shared `chunk.[hash].js` files (esbuild `splitting: true`). `highlight.js` is dynamically imported, so it lives in its own chunk and only loads when the first code block appears; `<link rel="modulepreload">` in `index.html` starts the chunk download in parallel with `app.js`.
 
-| Module | Responsibility | Key exports |
-|---|---|---|
-| **`app.ts`** | Boot entry point. Imports all modules, calls `connect()`, registers service worker | — |
-| **`state.ts`** | Shared state singleton, DOM refs (`dom`), config helpers, routing, cancel logic | `state`, `dom`, `setBusy()`, `requestNewSession()`, `resetSessionUI()`, `setConnectionStatus()` |
-| **`connection.ts`** | SSE + REST connection lifecycle, parallel init, visibility sync | `connect()` |
-| **`events.ts`** | Event dispatch (live + replay), history loading, permission responses | `handleEvent()`, `loadHistory()`, `loadNewEvents()` |
-| **`event-interpreter.ts`** | Pure data transformation for ACP events — zero DOM dependency | `interpretToolCall()`, `classifyPermissionOption()`, `parseDiff()`, etc. |
-| **`constants.ts`** | Display constants (tool icons, plan status icons) | `TOOL_ICONS`, `PLAN_STATUS_ICONS` |
-| **`input.ts`** | User input: send messages, cancel, keyboard shortcuts, mode cycling | — |
-| **`commands.ts`** | Slash command parsing, menu UI, `/switch`, `/new`, `/exit`, `/rename`, `/model`, `/mode`, `/notify` | `handleSlashCommand()`, `hideSlashMenu()` |
-| **`images.ts`** | Image attach (click/drag/paste), preview, upload to server | `renderAttachPreview()` |
-| **`render.ts`** | DOM helpers: add messages, markdown rendering, theme, scroll, diff HTML generation | `addMessage()`, `addSystem()`, `scrollToBottom()`, `renderMd()` |
-| **`api.ts`** | REST client — typed `fetch` wrappers for every server endpoint | `createSession()`, `sendMessage()`, `cancelSession()`, etc. |
+| Module                     | Responsibility                                                                                      | Key exports                                                                                     |
+| -------------------------- | --------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| **`app.ts`**               | Boot entry point. Imports all modules, calls `connect()`, registers service worker                  | —                                                                                               |
+| **`state.ts`**             | Shared state singleton, DOM refs (`dom`), config helpers, routing, cancel logic                     | `state`, `dom`, `setBusy()`, `requestNewSession()`, `resetSessionUI()`, `setConnectionStatus()` |
+| **`connection.ts`**        | SSE + REST connection lifecycle, parallel init, visibility sync                                     | `connect()`                                                                                     |
+| **`events.ts`**            | Event dispatch (live + replay), history loading, permission responses                               | `handleEvent()`, `loadHistory()`, `loadNewEvents()`                                             |
+| **`event-interpreter.ts`** | Pure data transformation for ACP events — zero DOM dependency                                       | `interpretToolCall()`, `classifyPermissionOption()`, `parseDiff()`, etc.                        |
+| **`constants.ts`**         | Display constants (tool icons, plan status icons)                                                   | `TOOL_ICONS`, `PLAN_STATUS_ICONS`                                                               |
+| **`input.ts`**             | User input: send messages, cancel, keyboard shortcuts, mode cycling                                 | —                                                                                               |
+| **`commands.ts`**          | Slash command parsing, menu UI, `/switch`, `/new`, `/exit`, `/rename`, `/model`, `/mode`, `/notify` | `handleSlashCommand()`, `hideSlashMenu()`                                                       |
+| **`images.ts`**            | Image attach (click/drag/paste), preview, upload to server                                          | `renderAttachPreview()`                                                                         |
+| **`render.ts`**            | DOM helpers: add messages, markdown rendering, theme, scroll, diff HTML generation                  | `addMessage()`, `addSystem()`, `scrollToBottom()`, `renderMd()`                                 |
+| **`api.ts`**               | REST client — typed `fetch` wrappers for every server endpoint                                      | `createSession()`, `sendMessage()`, `cancelSession()`, etc.                                     |
 
 **Dependency graph** (arrows = imports):
 
@@ -153,6 +153,7 @@ connect()
 The SSE stream is **not** a prerequisite for page load. It runs in the background while REST calls fetch session data.
 
 **SSE message handling:**
+
 - `connected` event → stores `state.clientId`, reports visibility via REST
 - All other events → dispatched to `handleEvent()`
 - `onerror` → close, cleanup, reconnect after 3 seconds
@@ -173,6 +174,7 @@ initSession()
 **`resumeAndLoad(sessionId, incremental)`:**
 
 For **full loads** (new session or first visit):
+
 ```
 Promise.all([
   api.getSession(sessionId),    // auto-resumes in ACP if needed
@@ -182,6 +184,7 @@ Promise.all([
 ```
 
 For **incremental reconnects** (same session, SSE dropped):
+
 ```
 api.getSession(sessionId)        // get config/title/busy state
 → handleEvent({ type: 'session_created', ... })
@@ -193,6 +196,7 @@ This parallel loading means history rendering starts as soon as the event data a
 ### Reconnection
 
 When SSE disconnects:
+
 1. `cleanup()` — reset connection state, finalize streaming elements
 2. `setTimeout(connect, 3000)` — retry after 3 seconds
 3. On reconnect, `initSession()` detects the same session in the hash → **incremental** path
@@ -206,11 +210,11 @@ Accurate visibility state is therefore critical — a stale "visible" record glo
 
 **Defense is layered:**
 
-| Layer | Mechanism | File |
-|---|---|---|
-| 1. Hidden transition survives OS kill | `navigator.sendBeacon` first, `fetch({keepalive:true})` fallback, plus `pagehide` secondary listener | `connection.ts` → `postHiddenBeacon()` |
-| 2. Server clock on every record | Each `/visibility` update stamps `visibleSince`; readers ignore records older than **60s** | `push-service.ts` → `isSessionVisibleToAnyClient` |
-| 3. Continuous refresh while SSE alive | SSE emits a **named** `event: heartbeat` every **15s** (not a comment — `EventSource` discards those); frontend listener POSTs `/visibility` each tick | `sse-manager.ts`, `connection.ts` |
+| Layer                                 | Mechanism                                                                                                                                              | File                                              |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------- |
+| 1. Hidden transition survives OS kill | `navigator.sendBeacon` first, `fetch({keepalive:true})` fallback, plus `pagehide` secondary listener                                                   | `connection.ts` → `postHiddenBeacon()`            |
+| 2. Server clock on every record       | Each `/visibility` update stamps `visibleSince`; readers ignore records older than **60s**                                                             | `push-service.ts` → `isSessionVisibleToAnyClient` |
+| 3. Continuous refresh while SSE alive | SSE emits a **named** `event: heartbeat` every **15s** (not a comment — `EventSource` discards those); frontend listener POSTs `/visibility` each tick | `sse-manager.ts`, `connection.ts`                 |
 
 SSE liveness is the single authoritative "this client is reachable" signal: connection alive → heartbeat fires → TTL stays fresh; connection dies or process is suspended → heartbeats stop → record expires within 60s and push correctly re-enables globally.
 
@@ -226,14 +230,14 @@ SSE liveness is the single authoritative "this client is reachable" signal: conn
 
 `visibilitychange` doesn't fire for several real attention-loss scenarios. With TTL + heartbeat, **stale-visible is bounded to ≤60s** rather than permanent, but it still exists. Captured here so we don't re-investigate:
 
-| Scenario | Old behavior | With TTL+heartbeat |
-|---|---|---|
-| iOS swipe-to-home / app switch | Ghost-visible forever | Self-heals in ≤60s when SSE dies |
-| iOS Notification Center / Control Center | No `visibilitychange` | Same — but 60s bound if SSE breaks |
-| iOS terminates PWA process | No JS events at all | Heartbeat stops → self-heals in ≤60s |
-| Desktop lock screen / cover window | No `visibilitychange` | Unchanged (SSE still alive) |
-| Desktop close lid / sleep | SSE breaks | Self-heals in ≤60s |
-| Server restart | In-memory state lost | Safe by default — no clients = no suppression |
+| Scenario                                 | Old behavior          | With TTL+heartbeat                            |
+| ---------------------------------------- | --------------------- | --------------------------------------------- |
+| iOS swipe-to-home / app switch           | Ghost-visible forever | Self-heals in ≤60s when SSE dies              |
+| iOS Notification Center / Control Center | No `visibilitychange` | Same — but 60s bound if SSE breaks            |
+| iOS terminates PWA process               | No JS events at all   | Heartbeat stops → self-heals in ≤60s          |
+| Desktop lock screen / cover window       | No `visibilitychange` | Unchanged (SSE still alive)                   |
+| Desktop close lid / sleep                | SSE breaks            | Self-heals in ≤60s                            |
+| Server restart                           | In-memory state lost  | Safe by default — no clients = no suppression |
 
 ---
 
@@ -325,21 +329,20 @@ All session switches go through `handleEvent({ type: 'session_created', ... })` 
 
 ```typescript
 // Pattern used in commands.ts /switch, menu click, app.ts SW handler:
-state.sessionId = null;  // clear to pass the guard in handleEvent
+state.sessionId = null; // clear to pass the guard in handleEvent
 resetSessionUI();
-Promise.all([
-  api.getSession(targetId),
-  loadHistory(targetId),
-]).then(([session, loaded]) => {
-  handleEvent({
-    type: 'session_created',
-    sessionId: session.id,
-    cwd: session.cwd,
-    title: session.title,
-    configOptions: session.configOptions,
-    busyKind: session.busyKind,
-  });
-});
+Promise.all([api.getSession(targetId), loadHistory(targetId)]).then(
+  ([session, loaded]) => {
+    handleEvent({
+      type: "session_created",
+      sessionId: session.id,
+      cwd: session.cwd,
+      title: session.title,
+      configOptions: session.configOptions,
+      busyKind: session.busyKind,
+    });
+  },
+);
 ```
 
 **Why through handleEvent?** The `session_created` handler updates `configOptions`, `statusBar`, `sessionCwd`, `sessionTitle`, hash, connection status, and busy state. Bypassing it (e.g., setting fields manually) leads to inconsistencies (status bar disappearing, mode not updating).
@@ -347,6 +350,7 @@ Promise.all([
 ### Hash Routing
 
 Sessions are identified by URL hash: `/#session-id`. This enables:
+
 - Bookmarking sessions
 - Push notification click → navigate to session
 - Browser back/forward (hash change)
@@ -389,22 +393,22 @@ Uses `res.text()` + `JSON.parse()` instead of `res.json()` to handle empty bodie
 
 **Exported functions** (each maps to one REST endpoint):
 
-| Function | Method | Endpoint |
-|---|---|---|
-| `createSession(opts?)` | POST | `/api/v1/sessions` |
-| `deleteSession(id)` | DELETE | `/api/v1/sessions/:id` |
-| `listSessions()` | GET | `/api/v1/sessions` |
-| `getSession(id)` | GET | `/api/v1/sessions/:id` |
-| `sendMessage(sessionId, text, images?)` | POST | `/api/v1/sessions/:id/prompt` |
-| `cancelSession(sessionId)` | POST | `/api/v1/sessions/:id/cancel` |
-| `resolvePermission(sessionId, requestId, optionId)` | POST | `/api/v1/sessions/:id/permissions/:reqId` |
-| `denyPermission(sessionId, requestId)` | POST | `/api/v1/sessions/:id/permissions/:reqId` |
-| `setConfig(sessionId, configId, value)` | PUT | `/api/v1/sessions/:id/{model,mode,reasoning-effort}` |
-| `setTitle(sessionId, title)` | PUT | `/api/v1/sessions/:id/title` |
-| `execBash(sessionId, command)` | POST | `/api/v1/sessions/:id/bash` |
-| `cancelBash(sessionId)` | POST | `/api/v1/sessions/:id/bash/cancel` |
-| `postVisibility(clientId, visible)` | POST | `/api/beta/clients/:clientId/visibility` |
-| `getStatus(sessionId)` | GET | `/api/v1/sessions/:id/status` |
+| Function                                            | Method | Endpoint                                             |
+| --------------------------------------------------- | ------ | ---------------------------------------------------- |
+| `createSession(opts?)`                              | POST   | `/api/v1/sessions`                                   |
+| `deleteSession(id)`                                 | DELETE | `/api/v1/sessions/:id`                               |
+| `listSessions()`                                    | GET    | `/api/v1/sessions`                                   |
+| `getSession(id)`                                    | GET    | `/api/v1/sessions/:id`                               |
+| `sendMessage(sessionId, text, images?)`             | POST   | `/api/v1/sessions/:id/prompt`                        |
+| `cancelSession(sessionId)`                          | POST   | `/api/v1/sessions/:id/cancel`                        |
+| `resolvePermission(sessionId, requestId, optionId)` | POST   | `/api/v1/sessions/:id/permissions/:reqId`            |
+| `denyPermission(sessionId, requestId)`              | POST   | `/api/v1/sessions/:id/permissions/:reqId`            |
+| `setConfig(sessionId, configId, value)`             | PUT    | `/api/v1/sessions/:id/{model,mode,reasoning-effort}` |
+| `setTitle(sessionId, title)`                        | PUT    | `/api/v1/sessions/:id/title`                         |
+| `execBash(sessionId, command)`                      | POST   | `/api/v1/sessions/:id/bash`                          |
+| `cancelBash(sessionId)`                             | POST   | `/api/v1/sessions/:id/bash/cancel`                   |
+| `postVisibility(clientId, visible)`                 | POST   | `/api/beta/clients/:clientId/visibility`             |
+| `getStatus(sessionId)`                              | GET    | `/api/v1/sessions/:id/status`                        |
 
 ---
 
@@ -412,13 +416,13 @@ Uses `res.text()` + `JSON.parse()` instead of `res.json()` to handle empty bodie
 
 ### Live Events vs Replay Events
 
-| Concern | Live (SSE) | Replay (History) |
-|---|---|---|
-| Handler | `handleEvent()` | `replayEvent()` |
-| Text format | `message_chunk` (incremental) | `assistant_message` (complete) |
-| Tool calls | Rendered with pending state | Rendered with final state (look-ahead for `tool_call_update`) |
-| Permissions | Show buttons | Check if resolved later in history |
-| Streaming | Updates DOM incrementally | Renders complete content at once |
+| Concern     | Live (SSE)                    | Replay (History)                                              |
+| ----------- | ----------------------------- | ------------------------------------------------------------- |
+| Handler     | `handleEvent()`               | `replayEvent()`                                               |
+| Text format | `message_chunk` (incremental) | `assistant_message` (complete)                                |
+| Tool calls  | Rendered with pending state   | Rendered with final state (look-ahead for `tool_call_update`) |
+| Permissions | Show buttons                  | Check if resolved later in history                            |
+| Streaming   | Updates DOM incrementally     | Renders complete content at once                              |
 
 ### Event Deduplication
 
@@ -449,7 +453,7 @@ This prevents tool calls and permissions from appearing twice when SSE delivers 
 SSE broadcasts to **all** clients, including the sender. When sending a message:
 
 ```typescript
-state.sentMessageForSession = state.sessionId;  // before send
+state.sentMessageForSession = state.sessionId; // before send
 ```
 
 When `user_message` arrives via SSE:
@@ -457,7 +461,7 @@ When `user_message` arrives via SSE:
 ```typescript
 if (state.sentMessageForSession === msg.sessionId) {
   state.sentMessageForSession = null;
-  break;  // skip — already rendered optimistically
+  break; // skip — already rendered optimistically
 }
 ```
 
@@ -479,17 +483,17 @@ events.ts / render.ts — DOM creation
 
 Both `replayEvent()` and `handleEvent()` call the same interpreter functions, eliminating data-preparation duplication between the two paths. DOM creation remains separate because the two paths have different context (e.g. replay renders resolved permissions as dimmed, live renders buttons).
 
-| Function | Input | Output |
-|---|---|---|
-| `interpretToolCall(kind, title, rawInput)` | Tool call fields | `{ icon, title, detail?, detailPrefix?, showDiff }` |
-| `extractToolCallContent(content)` | ACP content array (3 formats) | Plain text string |
-| `getStatusIcon(status)` | Status string | `{ icon, className }` |
-| `classifyPermissionOption(kind)` | Option kind string | `{ cssClass: 'allow'\|'deny', apiAction: 'resolve'\|'deny' }` |
-| `resolvePermissionLabel(optionName?, denied?)` | Response fields | Display label string |
-| `formatPlanEntries(entries)` | Plan entries | `{ symbol, content }[]` |
-| `parseDiff(rawInput)` | RawInput | `DiffLine[]` (structured, unescaped) |
-| `normalizeEventsResponse(body)` | API response | Normalized envelope |
-| `isPromptIdle(promptDone, toolCalls, permissions)` | Pending counts | Boolean |
+| Function                                           | Input                         | Output                                                        |
+| -------------------------------------------------- | ----------------------------- | ------------------------------------------------------------- |
+| `interpretToolCall(kind, title, rawInput)`         | Tool call fields              | `{ icon, title, detail?, detailPrefix?, showDiff }`           |
+| `extractToolCallContent(content)`                  | ACP content array (3 formats) | Plain text string                                             |
+| `getStatusIcon(status)`                            | Status string                 | `{ icon, className }`                                         |
+| `classifyPermissionOption(kind)`                   | Option kind string            | `{ cssClass: 'allow'\|'deny', apiAction: 'resolve'\|'deny' }` |
+| `resolvePermissionLabel(optionName?, denied?)`     | Response fields               | Display label string                                          |
+| `formatPlanEntries(entries)`                       | Plan entries                  | `{ symbol, content }[]`                                       |
+| `parseDiff(rawInput)`                              | RawInput                      | `DiffLine[]` (structured, unescaped)                          |
+| `normalizeEventsResponse(body)`                    | API response                  | Normalized envelope                                           |
+| `isPromptIdle(promptDone, toolCalls, permissions)` | Pending counts                | Boolean                                                       |
 
 Note: `classifyPermissionOption` returns two independent classifications — `cssClass` and `apiAction` are not a simple binary. A kind like `"escalate"` would get `cssClass: 'deny'` (not allow) but `apiAction: 'resolve'` (not deny). This preserves the asymmetric semantics of the original inline code.
 
@@ -521,19 +525,19 @@ Note: `classifyPermissionOption` returns two independent classifications — `cs
 
 Triggered by `/` prefix in input. Handled in `commands.ts`.
 
-| Command | API Call | Description |
-|---|---|---|
-| `/switch [query]` | `api.listSessions()` + `api.getSession()` + `loadHistory()` | Switch to another session |
-| `/new [path]` | `api.createSession()` | Create new session |
-| `/exit` | `api.deleteSession()` + session switch | Close current session, switch to MRU |
-| `/rename <title>` | `api.setTitle(sessionId, title)` | Rename current session |
-| `/model [name]` | `api.setConfig(sessionId, 'model', value)` | Switch model |
-| `/mode [name]` | `api.setConfig(sessionId, 'mode', value)` | Switch mode |
-| `/think [level]` | `api.setConfig(sessionId, 'reasoning_effort', value)` | Set reasoning effort |
-| `/compact` | `api.sendMessage(sessionId, '/compact')` | Send as prompt (agent handles) |
-| `/notify [on\|off]` | Push API + `/api/beta/push/subscribe` | Manage push notifications |
-| `/clear` | — | Clear the DOM (no API call) |
-| `/? [query]` | — | Search sessions by title |
+| Command             | API Call                                                    | Description                          |
+| ------------------- | ----------------------------------------------------------- | ------------------------------------ |
+| `/switch [query]`   | `api.listSessions()` + `api.getSession()` + `loadHistory()` | Switch to another session            |
+| `/new [path]`       | `api.createSession()`                                       | Create new session                   |
+| `/exit`             | `api.deleteSession()` + session switch                      | Close current session, switch to MRU |
+| `/rename <title>`   | `api.setTitle(sessionId, title)`                            | Rename current session               |
+| `/model [name]`     | `api.setConfig(sessionId, 'model', value)`                  | Switch model                         |
+| `/mode [name]`      | `api.setConfig(sessionId, 'mode', value)`                   | Switch mode                          |
+| `/think [level]`    | `api.setConfig(sessionId, 'reasoning_effort', value)`       | Set reasoning effort                 |
+| `/compact`          | `api.sendMessage(sessionId, '/compact')`                    | Send as prompt (agent handles)       |
+| `/notify [on\|off]` | Push API + `/api/beta/push/subscribe`                       | Manage push notifications            |
+| `/clear`            | —                                                           | Clear the DOM (no API call)          |
+| `/? [query]`        | —                                                           | Search sessions by title             |
 
 The slash menu provides autocomplete with keyboard navigation (arrow keys, Tab to fill, Enter to send).
 
@@ -567,21 +571,21 @@ All state lives in `state.ts` as a single mutable object. No state management li
 
 **Key state fields:**
 
-| Field | Type | Purpose |
-|---|---|---|
-| `eventSource` | EventSource | Active SSE connection |
-| `clientId` | string | Assigned by server on SSE connect |
-| `sessionId` | string | Current session |
-| `sessionCwd` | string | Working directory |
-| `configOptions` | ConfigOption[] | Model, mode, reasoning_effort options |
-| `busy` | boolean | Agent or bash is running |
-| `currentAssistantEl` | HTMLElement | In-progress streaming message element |
-| `currentAssistantText` | string | Accumulated streamed text |
-| `lastEventSeq` | number | Last event seq from history/incremental load |
-| `replayInProgress` | boolean | True during history replay |
-| `replayQueue` | AgentEvent[] | SSE events queued during replay |
-| `sentMessageForSession` | string | For self-echo suppression |
-| `unconfirmedPermissions` | Map | Permissions sent but not confirmed |
+| Field                    | Type           | Purpose                                      |
+| ------------------------ | -------------- | -------------------------------------------- |
+| `eventSource`            | EventSource    | Active SSE connection                        |
+| `clientId`               | string         | Assigned by server on SSE connect            |
+| `sessionId`              | string         | Current session                              |
+| `sessionCwd`             | string         | Working directory                            |
+| `configOptions`          | ConfigOption[] | Model, mode, reasoning_effort options        |
+| `busy`                   | boolean        | Agent or bash is running                     |
+| `currentAssistantEl`     | HTMLElement    | In-progress streaming message element        |
+| `currentAssistantText`   | string         | Accumulated streamed text                    |
+| `lastEventSeq`           | number         | Last event seq from history/incremental load |
+| `replayInProgress`       | boolean        | True during history replay                   |
+| `replayQueue`            | AgentEvent[]   | SSE events queued during replay              |
+| `sentMessageForSession`  | string         | For self-echo suppression                    |
+| `unconfirmedPermissions` | Map            | Permissions sent but not confirmed           |
 
 ---
 
@@ -603,6 +607,7 @@ When a turn boundary occurs (`tool_call`, `plan`, `prompt_done`), the streaming 
 ### Tool Calls
 
 Each tool call gets a `<div id="tc-{id}" class="tool-call">` with an icon derived from `interpretToolCall()`. Status updates use `getStatusIcon()` to change the class and icon:
+
 - Pending: tool kind icon (e.g. `cat`, `edit`, `exec`)
 - Completed: ✓
 - Failed: ✗
@@ -614,12 +619,14 @@ Edit tool calls render a diff view via `parseDiff()` (structured data) → `rend
 A `<div id="status-bar">` below the input area shows: `model · cwd`
 
 Updated by `updateStatusBar()` in `state.ts`, called from:
+
 - `updateConfigOptions()` (on any config change)
 - `handleEvent(session_created)` (on session load/switch)
 
 ### Busy State
 
 When `setBusy(true)`:
+
 - Send button changes to `^C` (cancel)
 - Prompt indicator shows busy animation
 - Regular messages are blocked (slash/bash commands still allowed)
@@ -627,6 +634,7 @@ When `setBusy(true)`:
 ### Mode Indicator
 
 The input area gets CSS classes based on mode:
+
 - `plan-mode` → mode label shows "plan"
 - `autopilot-mode` → mode label shows "autopilot"
 
@@ -679,6 +687,7 @@ This eliminates the serial dependency chain that existed with WebSocket-only arc
 ### Global SSE Stream
 
 The client connects to `/api/v1/events/stream` (global), not per-session. This means:
+
 - No reconnect needed on session switch
 - Multi-client broadcast works naturally (see other clients' session changes)
 - One connection per browser tab, regardless of session switches

@@ -7,7 +7,11 @@ export async function expectConnectionStatus(
 ): Promise<void> {
   const indicator = page.locator("#status");
   await expect(indicator).toHaveAttribute("data-state", status, options);
-  await expect(indicator).toHaveAttribute("aria-label", new RegExp(`^${status}$`, "i"), options);
+  await expect(indicator).toHaveAttribute(
+    "aria-label",
+    new RegExp(`^${status}$`, "i"),
+    options,
+  );
 }
 
 export async function gotoConnected(page: Page, path = "/"): Promise<void> {

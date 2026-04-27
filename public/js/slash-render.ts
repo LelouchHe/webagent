@@ -22,7 +22,7 @@ export interface SlashItemSpec {
 }
 
 /** Prefix glyph chosen by the walker, not the spec author. */
-export type SlashPrefix = '' | '›' | '*';
+export type SlashPrefix = "" | "›" | "*";
 
 // Step 2 implements this. Stub so other modules can import the type now.
 export function renderItem(
@@ -30,28 +30,29 @@ export function renderItem(
   isSelected: boolean,
   prefix: SlashPrefix,
 ): HTMLElement {
-  const item = document.createElement('div');
-  item.className = 'slash-item' + (isSelected ? ' selected' : '');
+  const item = document.createElement("div");
+  item.className = "slash-item" + (isSelected ? " selected" : "");
 
   const isDouble = spec.path !== undefined;
 
   // L1 row: prefix | primary | secondary
-  const l1 = document.createElement('div');
-  l1.className = 'slash-row-l1';
+  const l1 = document.createElement("div");
+  l1.className = "slash-row-l1";
 
-  const prefixEl = document.createElement('span');
-  prefixEl.className = 'slash-prefix';
+  const prefixEl = document.createElement("span");
+  prefixEl.className = "slash-prefix";
   prefixEl.textContent = prefix;
   l1.appendChild(prefixEl);
 
-  const primaryEl = document.createElement('span');
-  primaryEl.className = 'slash-primary' + (spec.current ? ' slash-current' : '');
+  const primaryEl = document.createElement("span");
+  primaryEl.className =
+    "slash-primary" + (spec.current ? " slash-current" : "");
   primaryEl.textContent = spec.primary;
   l1.appendChild(primaryEl);
 
   if (spec.secondary !== undefined) {
-    const secondaryEl = document.createElement('span');
-    secondaryEl.className = 'slash-secondary';
+    const secondaryEl = document.createElement("span");
+    secondaryEl.className = "slash-secondary";
     secondaryEl.textContent = spec.secondary;
     l1.appendChild(secondaryEl);
   }
@@ -59,17 +60,17 @@ export function renderItem(
   item.appendChild(l1);
 
   if (isDouble) {
-    const l2 = document.createElement('div');
-    l2.className = 'slash-row-l2';
+    const l2 = document.createElement("div");
+    l2.className = "slash-row-l2";
 
-    const pathEl = document.createElement('span');
-    pathEl.className = 'slash-path';
+    const pathEl = document.createElement("span");
+    pathEl.className = "slash-path";
     pathEl.textContent = spec.path!;
     l2.appendChild(pathEl);
 
     if (spec.pathSecondary !== undefined) {
-      const pathSecEl = document.createElement('span');
-      pathSecEl.className = 'slash-path-secondary';
+      const pathSecEl = document.createElement("span");
+      pathSecEl.className = "slash-path-secondary";
       pathSecEl.textContent = spec.pathSecondary;
       l2.appendChild(pathSecEl);
     }

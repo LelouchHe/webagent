@@ -9,14 +9,27 @@ import { createNewSession, currentSessionId, sendPrompt } from "./helpers.ts";
 
 const TRUNC_PORT = 6804;
 const TRUNC_ORIGIN = `http://127.0.0.1:${TRUNC_PORT}`;
-const E2E_TOKEN = readFileSync(join(import.meta.dirname, "..", "e2e-data", ".token"), "utf8").trim();
+const E2E_TOKEN = readFileSync(
+  join(import.meta.dirname, "..", "e2e-data", ".token"),
+  "utf8",
+).trim();
 
 function seedAuthFile(path: string, token: string): void {
   const hash = createHash("sha256").update(token).digest("hex");
   writeFileSync(
     path,
     JSON.stringify(
-      { tokens: [{ name: "e2e-trunc", scope: "admin", hash, createdAt: Date.now(), lastUsedAt: null }] },
+      {
+        tokens: [
+          {
+            name: "e2e-trunc",
+            scope: "admin",
+            hash,
+            createdAt: Date.now(),
+            lastUsedAt: null,
+          },
+        ],
+      },
       null,
       2,
     ),
@@ -43,7 +56,13 @@ async function startServer(configPath: string): Promise<ChildProcess> {
     { cwd: process.cwd(), stdio: ["ignore", "pipe", "inherit"] },
   );
   await new Promise<void>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error("Timed out waiting for truncation test server bridge")), 30_000);
+    const timer = setTimeout(
+      () =>
+        reject(
+          new Error("Timed out waiting for truncation test server bridge"),
+        ),
+      30_000,
+    );
     child.once("exit", () => {
       clearTimeout(timer);
       reject(new Error("Truncation test server exited before becoming ready"));
@@ -65,7 +84,10 @@ async function stopServer(child: ChildProcess): Promise<void> {
   if (child.exitCode !== null) return;
   child.kill("SIGTERM");
   await new Promise<void>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error("Timed out stopping truncation test server")), 10_000);
+    const timer = setTimeout(
+      () => reject(new Error("Timed out stopping truncation test server")),
+      10_000,
+    );
     child.once("exit", () => {
       clearTimeout(timer);
       resolve();
@@ -75,11 +97,16 @@ async function stopServer(child: ChildProcess): Promise<void> {
 
 async function gotoConnected(page: Page, url: string): Promise<void> {
   await page.goto(url);
-  await expect(page.locator("#status")).toHaveAttribute("data-state", "connected");
+  await expect(page.locator("#status")).toHaveAttribute(
+    "data-state",
+    "connected",
+  );
   await expect(page.locator("#input")).toBeEnabled();
 }
 
-test("reloaded bash history uses the truncated stored tail when output exceeds the limit", async ({ page }) => {
+test("reloaded bash history uses the truncated stored tail when output exceeds the limit", async ({
+  page,
+}) => {
   const root = await mkdtemp(join(tmpdir(), "webagent-bash-trunc-e2e-"));
   const dataDir = join(root, "data");
   const configPath = join(root, "config.toml");
@@ -88,22 +115,27 @@ test("reloaded bash history uses the truncated stored tail when output exceeds t
   try {
     await mkdir(dataDir, { recursive: true });
     seedAuthFile(join(dataDir, "auth.json"), E2E_TOKEN);
-    await writeFile(configPath, [
-      `port = ${TRUNC_PORT}`,
-      `data_dir = "${dataDir}"`,
-      `public_dir = "dist-dev"`,
-      `agent_cmd = "node --experimental-strip-types test/e2e/mock-agent.ts"`,
-      "",
-      "[limits]",
-      "bash_output = 64",
-      "image_upload = 10_485_760",
-      "",
-    ].join("\n"));
+    await writeFile(
+      configPath,
+      [
+        `port = ${TRUNC_PORT}`,
+        `data_dir = "${dataDir}"`,
+        `public_dir = "dist-dev"`,
+        `agent_cmd = "node --experimental-strip-types test/e2e/mock-agent.ts"`,
+        "",
+        "[limits]",
+        "bash_output = 64",
+        "image_upload = 10_485_760",
+        "",
+      ].join("\n"),
+    );
 
     server = await startServer(configPath);
     await page.context().addInitScript(
       ({ key, value }) => {
-        try { localStorage.setItem(key, value); } catch {}
+        try {
+          localStorage.setItem(key, value);
+        } catch {}
       },
       { key: "wa_token", value: E2E_TOKEN },
     );

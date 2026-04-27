@@ -33,7 +33,10 @@ describe("TicketStore", () => {
 
   it("consume returns null after expiry", () => {
     const fakeNow = { t: 1_000_000 };
-    const expiringStore = new TicketStore({ ttlMs: 60_000, now: () => fakeNow.t });
+    const expiringStore = new TicketStore({
+      ttlMs: 60_000,
+      now: () => fakeNow.t,
+    });
     const ticket = expiringStore.mint({ tokenName: "x", scope: "api" });
     fakeNow.t += 60_001;
     assert.equal(expiringStore.consume(ticket), null);

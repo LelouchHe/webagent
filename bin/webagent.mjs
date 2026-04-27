@@ -24,7 +24,12 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
     const cfgIdx = argv.indexOf("--config");
     if (cfgIdx !== -1 && argv[cfgIdx + 1]) {
       // loadConfig() reads --config from process.argv directly
-      process.argv = [process.argv[0], process.argv[1], "--config", argv[cfgIdx + 1]];
+      process.argv = [
+        process.argv[0],
+        process.argv[1],
+        "--config",
+        argv[cfgIdx + 1],
+      ];
     } else {
       process.argv = [process.argv[0], process.argv[1]];
     }
@@ -75,15 +80,14 @@ if (cmd && SUBCOMMANDS.has(cmd)) {
   // ---- Direct server launch (foreground) ----------------------------------
   const server = join(__dirname, "..", "lib", "server.js");
 
-  const child = spawn(
-    process.execPath,
-    [server, ...process.argv.slice(2)],
-    { stdio: "inherit" },
-  );
+  const child = spawn(process.execPath, [server, ...process.argv.slice(2)], {
+    stdio: "inherit",
+  });
 
-  const signals = process.platform === "win32"
-    ? ["SIGINT", "SIGTERM"]
-    : ["SIGINT", "SIGTERM", "SIGHUP"];
+  const signals =
+    process.platform === "win32"
+      ? ["SIGINT", "SIGTERM"]
+      : ["SIGINT", "SIGTERM", "SIGHUP"];
   for (const sig of signals) {
     process.on(sig, () => child.kill(sig));
   }
@@ -93,4 +97,3 @@ if (cmd && SUBCOMMANDS.has(cmd)) {
     else process.exit(code ?? 1);
   });
 }
-

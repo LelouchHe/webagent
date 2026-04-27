@@ -27,20 +27,26 @@ describe("AgentBridge", () => {
       },
     };
 
-    await bridge.prompt("s1", "hello", [{ data: "abc", mimeType: "image/png" }]);
+    await bridge.prompt("s1", "hello", [
+      { data: "abc", mimeType: "image/png" },
+    ]);
 
-    assert.deepEqual(promptCalls, [{
-      sessionId: "s1",
-      prompt: [
-        { type: "image", data: "abc", mimeType: "image/png" },
-        { type: "text", text: "hello" },
-      ],
-    }]);
-    assert.deepEqual(events, [{
-      type: "prompt_done",
-      sessionId: "s1",
-      stopReason: "end_turn",
-    }]);
+    assert.deepEqual(promptCalls, [
+      {
+        sessionId: "s1",
+        prompt: [
+          { type: "image", data: "abc", mimeType: "image/png" },
+          { type: "text", text: "hello" },
+        ],
+      },
+    ]);
+    assert.deepEqual(events, [
+      {
+        type: "prompt_done",
+        sessionId: "s1",
+        stopReason: "end_turn",
+      },
+    ]);
   });
 
   it("emits prompt_done when a prompt is cancelled", async () => {
@@ -56,11 +62,13 @@ describe("AgentBridge", () => {
 
     await bridge.prompt("s1", "hello");
 
-    assert.deepEqual(events, [{
-      type: "prompt_done",
-      sessionId: "s1",
-      stopReason: "cancelled",
-    }]);
+    assert.deepEqual(events, [
+      {
+        type: "prompt_done",
+        sessionId: "s1",
+        stopReason: "cancelled",
+      },
+    ]);
   });
 
   it("emits error events for non-cancellation prompt failures", async () => {
@@ -76,11 +84,13 @@ describe("AgentBridge", () => {
 
     await bridge.prompt("s1", "hello");
 
-    assert.deepEqual(events, [{
-      type: "error",
-      sessionId: "s1",
-      message: "boom",
-    }]);
+    assert.deepEqual(events, [
+      {
+        type: "error",
+        sessionId: "s1",
+        message: "boom",
+      },
+    ]);
   });
 
   it("buffers silent prompt text in promptForText without emitting events", async () => {
@@ -126,7 +136,9 @@ describe("AgentBridge", () => {
     bridge.resolvePermission(requestId, "allow");
     const allowed = await permissionPromise;
 
-    assert.deepEqual(allowed, { outcome: { outcome: "selected", optionId: "allow" } });
+    assert.deepEqual(allowed, {
+      outcome: { outcome: "selected", optionId: "allow" },
+    });
 
     const deniedPromise = (bridge as any).handlePermission({
       sessionId: "s2",
@@ -155,7 +167,9 @@ describe("AgentBridge", () => {
       options: [{ optionId: "allow", kind: "allow_once", name: "Allow" }],
     });
 
-    assert.deepEqual(result, { outcome: { outcome: "selected", optionId: "allow" } });
+    assert.deepEqual(result, {
+      outcome: { outcome: "selected", optionId: "allow" },
+    });
   });
 
   it("cancels pending permission requests for the targeted session", async () => {
@@ -184,7 +198,9 @@ describe("AgentBridge", () => {
     assert.deepEqual(await s1Permission, { outcome: { outcome: "cancelled" } });
     assert.deepEqual(cancelCalls, [{ sessionId: "s1" }]);
 
-    const remainingRequestId = [...(bridge as any).permissionResolvers.keys()][0];
+    const remainingRequestId = [
+      ...(bridge as any).permissionResolvers.keys(),
+    ][0];
     bridge.denyPermission(remainingRequestId);
     assert.deepEqual(await s2Permission, { outcome: { outcome: "cancelled" } });
   });
@@ -238,17 +254,42 @@ describe("AgentBridge", () => {
       sessionId: "s1",
       update: {
         sessionUpdate: "config_option_update",
-        configOptions: [{ id: "model", name: "Model", currentValue: "x", options: [] }],
+        configOptions: [
+          { id: "model", name: "Model", currentValue: "x", options: [] },
+        ],
       },
     });
 
     assert.deepEqual(events, [
       { type: "message_chunk", sessionId: "s1", text: "hello" },
       { type: "thought_chunk", sessionId: "s1", text: "thinking" },
-      { type: "tool_call", sessionId: "s1", id: "tc1", title: "Run test", kind: "execute", rawInput: { command: "npm test" } },
-      { type: "tool_call_update", sessionId: "s1", id: "tc1", status: "completed", content: [{ type: "text", text: "done" }] },
-      { type: "plan", sessionId: "s1", entries: [{ content: "Step 1", status: "pending" }] },
-      { type: "config_option_update", sessionId: "s1", configOptions: [{ id: "model", name: "Model", currentValue: "x", options: [] }] },
+      {
+        type: "tool_call",
+        sessionId: "s1",
+        id: "tc1",
+        title: "Run test",
+        kind: "execute",
+        rawInput: { command: "npm test" },
+      },
+      {
+        type: "tool_call_update",
+        sessionId: "s1",
+        id: "tc1",
+        status: "completed",
+        content: [{ type: "text", text: "done" }],
+      },
+      {
+        type: "plan",
+        sessionId: "s1",
+        entries: [{ content: "Step 1", status: "pending" }],
+      },
+      {
+        type: "config_option_update",
+        sessionId: "s1",
+        configOptions: [
+          { id: "model", name: "Model", currentValue: "x", options: [] },
+        ],
+      },
     ]);
   });
 
@@ -257,13 +298,22 @@ describe("AgentBridge", () => {
 
     (bridge as any).conn = {
       setSessionConfigOption: async () => ({
-        configOptions: [{ id: "model", name: "Model", currentValue: "mock-model-2", options: [] }],
+        configOptions: [
+          {
+            id: "model",
+            name: "Model",
+            currentValue: "mock-model-2",
+            options: [],
+          },
+        ],
       }),
     };
 
     const result = await bridge.setConfigOption("s1", "model", "mock-model-2");
 
-    assert.deepEqual(result, [{ id: "model", name: "Model", currentValue: "mock-model-2", options: [] }]);
+    assert.deepEqual(result, [
+      { id: "model", name: "Model", currentValue: "mock-model-2", options: [] },
+    ]);
   });
 
   it("reads and writes text files through ACP file callbacks", async () => {
@@ -272,7 +322,10 @@ describe("AgentBridge", () => {
     tmpDirs.push(tmpDir);
     const filePath = join(tmpDir, "nested", "file.txt");
 
-    await (bridge as any).handleWriteFile({ path: filePath, content: "hello file" });
+    await (bridge as any).handleWriteFile({
+      path: filePath,
+      content: "hello file",
+    });
     const result = await (bridge as any).handleReadFile({ path: filePath });
 
     assert.deepEqual(result, { content: "hello file" });
@@ -285,7 +338,12 @@ describe("AgentBridge", () => {
         restoringSessions: new Set<string>(),
         activePrompts: new Set(["s1"]),
         runningBashProcs: new Map<string, any>(),
-        pendingPermissions: new Map([["req1", { requestId: "req1", sessionId: "s1", title: "test", options: [] }]]),
+        pendingPermissions: new Map([
+          [
+            "req1",
+            { requestId: "req1", sessionId: "s1", title: "test", options: [] },
+          ],
+        ]),
         assistantBuffers: new Map([["s1", "partial text"]]),
         thinkingBuffers: new Map([["s1", "partial thought"]]),
         flushBuffers(sessionId: string) {
@@ -306,8 +364,12 @@ describe("AgentBridge", () => {
     function createMockTitleService() {
       let invalidated = false;
       return {
-        invalidate() { invalidated = true; },
-        get wasInvalidated() { return invalidated; },
+        invalidate() {
+          invalidated = true;
+        },
+        get wasInvalidated() {
+          return invalidated;
+        },
       };
     }
 
@@ -319,7 +381,9 @@ describe("AgentBridge", () => {
       // Stub conn for cancel
       let cancelCalled = false;
       (bridge as any).conn = {
-        cancel: async () => { cancelCalled = true; },
+        cancel: async () => {
+          cancelCalled = true;
+        },
       };
 
       const sessions = createMockSessions();
@@ -343,11 +407,31 @@ describe("AgentBridge", () => {
       assert.equal(events[0].type, "agent_reloading");
 
       // State should be cleaned
-      assert.equal(sessions.liveSessions.size, 0, "liveSessions should be cleared");
-      assert.equal(sessions.activePrompts.size, 0, "activePrompts should be cleared");
-      assert.equal(sessions.pendingPermissions.size, 0, "pendingPermissions should be cleared");
-      assert.equal(sessions.assistantBuffers.size, 0, "assistantBuffers should be flushed");
-      assert.equal(sessions.thinkingBuffers.size, 0, "thinkingBuffers should be flushed");
+      assert.equal(
+        sessions.liveSessions.size,
+        0,
+        "liveSessions should be cleared",
+      );
+      assert.equal(
+        sessions.activePrompts.size,
+        0,
+        "activePrompts should be cleared",
+      );
+      assert.equal(
+        sessions.pendingPermissions.size,
+        0,
+        "pendingPermissions should be cleared",
+      );
+      assert.equal(
+        sessions.assistantBuffers.size,
+        0,
+        "assistantBuffers should be flushed",
+      );
+      assert.equal(
+        sessions.thinkingBuffers.size,
+        0,
+        "thinkingBuffers should be flushed",
+      );
 
       // Title service should be invalidated
       assert.ok(titleService.wasInvalidated);
@@ -371,12 +455,19 @@ describe("AgentBridge", () => {
 
       (bridge as any).start = async () => {
         (bridge as any).conn = {};
-        bridge.emit("event", { type: "connected", agent: { name: "mock", version: "1.0" }, configOptions: [] });
+        bridge.emit("event", {
+          type: "connected",
+          agent: { name: "mock", version: "1.0" },
+          configOptions: [],
+        });
       };
 
       // Start first restart but make it slow
       let resolveStart: () => void;
-      (bridge as any).start = () => new Promise<void>((r) => { resolveStart = r; });
+      (bridge as any).start = () =>
+        new Promise<void>((r) => {
+          resolveStart = r;
+        });
 
       const p1 = bridge.restart(sessions as any, titleService as any);
 
@@ -408,7 +499,11 @@ describe("AgentBridge", () => {
           attempt++;
           if (attempt < 3) throw new Error(`fail-${attempt}`);
           (bridge as any).conn = {};
-          bridge.emit("event", { type: "connected", agent: { name: "mock", version: "1.0" }, configOptions: [] });
+          bridge.emit("event", {
+            type: "connected",
+            agent: { name: "mock", version: "1.0" },
+            configOptions: [],
+          });
         };
 
         const p = bridge.restart(sessions as any, titleService as any);
@@ -449,10 +544,16 @@ describe("AgentBridge", () => {
         }
         await rejection;
 
-        const failEvent = events.find((e: any) => e.type === "agent_reloading_failed");
+        const failEvent = events.find(
+          (e: any) => e.type === "agent_reloading_failed",
+        );
         assert.ok(failEvent, "should emit agent_reloading_failed");
         assert.equal(failEvent.error, "broken");
-        assert.equal(bridge.reloading, false, "reloading flag should be cleared on failure");
+        assert.equal(
+          bridge.reloading,
+          false,
+          "reloading flag should be cleared on failure",
+        );
       } finally {
         mock.timers.reset();
       }

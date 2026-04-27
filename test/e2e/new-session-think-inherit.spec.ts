@@ -1,7 +1,14 @@
 import { test, expect } from "playwright/test";
-import { createNewSession, currentSessionId, gotoConnected, sendPrompt } from "./helpers.ts";
+import {
+  createNewSession,
+  currentSessionId,
+  gotoConnected,
+  sendPrompt,
+} from "./helpers.ts";
 
-test("creating a new session inherits the selected reasoning effort", async ({ page }) => {
+test("creating a new session inherits the selected reasoning effort", async ({
+  page,
+}) => {
   await gotoConnected(page);
   const firstSessionId = await createNewSession(page);
 

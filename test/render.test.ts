@@ -7,7 +7,15 @@ describe("render", () => {
   let dom: any;
   let render: any;
 
-  function setMessagesScrollMetrics({ scrollTop, scrollHeight, clientHeight }: { scrollTop: number; scrollHeight: number; clientHeight: number; }) {
+  function setMessagesScrollMetrics({
+    scrollTop,
+    scrollHeight,
+    clientHeight,
+  }: {
+    scrollTop: number;
+    scrollHeight: number;
+    clientHeight: number;
+  }) {
     Object.defineProperties(dom.messages, {
       scrollTop: { value: scrollTop, writable: true, configurable: true },
       scrollHeight: { value: scrollHeight, configurable: true },
@@ -172,7 +180,8 @@ describe("render", () => {
 
     it("clears thinking state and updates summary", () => {
       const el = globalThis.document.createElement("details");
-      el.innerHTML = '<summary class="active">⠿ thinking...</summary><div class="thinking-content">text</div>';
+      el.innerHTML =
+        '<summary class="active">⠿ thinking...</summary><div class="thinking-content">text</div>';
       dom.messages.appendChild(el);
       state.currentThinkingEl = el;
       state.currentThinkingText = "text";
@@ -211,10 +220,15 @@ describe("render", () => {
     it("does not collapse an expanded panel when clicking its content", () => {
       const details = globalThis.document.createElement("details");
       details.open = true;
-      details.innerHTML = '<summary>diff</summary><div class="diff-view">content</div>';
+      details.innerHTML =
+        '<summary>diff</summary><div class="diff-view">content</div>';
       dom.messages.appendChild(details);
 
-      details.querySelector(".diff-view").dispatchEvent(new globalThis.window.MouseEvent("click", { bubbles: true }));
+      details
+        .querySelector(".diff-view")
+        .dispatchEvent(
+          new globalThis.window.MouseEvent("click", { bubbles: true }),
+        );
 
       assert.equal(details.open, true);
     });
@@ -222,10 +236,18 @@ describe("render", () => {
 
   describe("scrollToBottom", () => {
     it("keeps following when the user was already at the bottom", () => {
-      setMessagesScrollMetrics({ scrollTop: 400, scrollHeight: 600, clientHeight: 200 });
+      setMessagesScrollMetrics({
+        scrollTop: 400,
+        scrollHeight: 600,
+        clientHeight: 200,
+      });
       dom.messages.dispatchEvent(new globalThis.window.Event("scroll"));
 
-      setMessagesScrollMetrics({ scrollTop: dom.messages.scrollTop, scrollHeight: 1400, clientHeight: 200 });
+      setMessagesScrollMetrics({
+        scrollTop: dom.messages.scrollTop,
+        scrollHeight: 1400,
+        clientHeight: 200,
+      });
       render.scrollToBottom();
 
       assert.equal(dom.messages.scrollTop, 1400);
@@ -233,10 +255,18 @@ describe("render", () => {
     });
 
     it("does not move the viewport when the user scrolled up", () => {
-      setMessagesScrollMetrics({ scrollTop: 120, scrollHeight: 600, clientHeight: 200 });
+      setMessagesScrollMetrics({
+        scrollTop: 120,
+        scrollHeight: 600,
+        clientHeight: 200,
+      });
       dom.messages.dispatchEvent(new globalThis.window.Event("scroll"));
 
-      setMessagesScrollMetrics({ scrollTop: dom.messages.scrollTop, scrollHeight: 1400, clientHeight: 200 });
+      setMessagesScrollMetrics({
+        scrollTop: dom.messages.scrollTop,
+        scrollHeight: 1400,
+        clientHeight: 200,
+      });
       render.scrollToBottom();
 
       assert.equal(dom.messages.scrollTop, 120);
@@ -244,7 +274,11 @@ describe("render", () => {
     });
 
     it("always scrolls when forced", () => {
-      setMessagesScrollMetrics({ scrollTop: 120, scrollHeight: 600, clientHeight: 200 });
+      setMessagesScrollMetrics({
+        scrollTop: 120,
+        scrollHeight: 600,
+        clientHeight: 200,
+      });
       state.followMessages = false;
 
       render.scrollToBottom(true);
@@ -271,7 +305,11 @@ describe("render", () => {
 
     it("recomputes follow state from the pre-append position", () => {
       state.followMessages = false;
-      setMessagesScrollMetrics({ scrollTop: 400, scrollHeight: 600, clientHeight: 200 });
+      setMessagesScrollMetrics({
+        scrollTop: 400,
+        scrollHeight: 600,
+        clientHeight: 200,
+      });
 
       render.addBashBlock("npm test", true);
 

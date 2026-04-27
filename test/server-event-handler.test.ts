@@ -11,7 +11,11 @@ import type { AgentEvent } from "../src/types.ts";
 function createMockSseManager() {
   const broadcasted: AgentEvent[] = [];
   return {
-    sseManager: { broadcast(event: AgentEvent) { broadcasted.push(event); } },
+    sseManager: {
+      broadcast(event: AgentEvent) {
+        broadcasted.push(event);
+      },
+    },
     broadcasted,
   };
 }
@@ -55,11 +59,19 @@ describe("handleAgentEvent", () => {
 
     handleAgentEvent(
       { type: "message_chunk", sessionId: "s1", text: "hello" } as any,
-      sessions, store, bridge, { cancelTimeout: 10000 }, sseManager as any,
+      sessions,
+      store,
+      bridge,
+      { cancelTimeout: 10000 },
+      sseManager as any,
     );
 
     assert.equal(broadcasted.length, 1);
-    assert.deepEqual(broadcasted[0], { type: "message_chunk", sessionId: "s1", text: "hello" });
+    assert.deepEqual(broadcasted[0], {
+      type: "message_chunk",
+      sessionId: "s1",
+      text: "hello",
+    });
     // Text is buffered, not yet flushed to store
     assert.equal(sessions.assistantBuffers.get("s1"), "hello");
   });
@@ -72,14 +84,22 @@ describe("handleAgentEvent", () => {
     // Start thinking
     handleAgentEvent(
       { type: "thought_chunk", sessionId: "s1", text: "hmm" } as any,
-      sessions, store, bridge, { cancelTimeout: 10000 }, sseManager as any,
+      sessions,
+      store,
+      bridge,
+      { cancelTimeout: 10000 },
+      sseManager as any,
     );
     assert.equal(sessions.thinkingBuffers.get("s1"), "hmm");
 
     // Switch to message — should flush thinking
     handleAgentEvent(
       { type: "message_chunk", sessionId: "s1", text: "answer" } as any,
-      sessions, store, bridge, { cancelTimeout: 10000 }, sseManager as any,
+      sessions,
+      store,
+      bridge,
+      { cancelTimeout: 10000 },
+      sseManager as any,
     );
     assert.equal(sessions.thinkingBuffers.has("s1"), false);
     const events = store.getEvents("s1");
@@ -92,8 +112,19 @@ describe("handleAgentEvent", () => {
     const { sseManager, broadcasted } = createMockSseManager();
 
     handleAgentEvent(
-      { type: "tool_call", sessionId: "s1", id: "tc1", title: "Read file", kind: "read", rawInput: "{}" } as any,
-      sessions, store, bridge, { cancelTimeout: 10000 }, sseManager as any,
+      {
+        type: "tool_call",
+        sessionId: "s1",
+        id: "tc1",
+        title: "Read file",
+        kind: "read",
+        rawInput: "{}",
+      } as any,
+      sessions,
+      store,
+      bridge,
+      { cancelTimeout: 10000 },
+      sseManager as any,
     );
 
     const events = store.getEvents("s1");
@@ -110,7 +141,11 @@ describe("handleAgentEvent", () => {
 
     handleAgentEvent(
       { type: "prompt_done", sessionId: "s1", stopReason: "end_turn" } as any,
-      sessions, store, bridge, { cancelTimeout: 10000 }, sseManager as any,
+      sessions,
+      store,
+      bridge,
+      { cancelTimeout: 10000 },
+      sseManager as any,
     );
 
     assert.equal(sessions.activePrompts.has("s1"), false);
@@ -123,11 +158,17 @@ describe("handleAgentEvent", () => {
     store.createSession("s1", "/tmp");
     const { bridge } = createMockBridge();
     const { sseManager } = createMockSseManager();
-    const configOptions = [{ id: "model", name: "Model", currentValue: "gpt-4", options: [] }];
+    const configOptions = [
+      { id: "model", name: "Model", currentValue: "gpt-4", options: [] },
+    ];
 
     handleAgentEvent(
       { type: "session_created", sessionId: "s1", configOptions } as any,
-      sessions, store, bridge, { cancelTimeout: 10000 }, sseManager as any,
+      sessions,
+      store,
+      bridge,
+      { cancelTimeout: 10000 },
+      sseManager as any,
     );
 
     assert.deepEqual(sessions.cachedConfigOptions, configOptions);
@@ -142,7 +183,11 @@ describe("handleAgentEvent", () => {
 
     handleAgentEvent(
       { type: "message_chunk", sessionId: "s1", text: "hidden" } as any,
-      sessions, store, bridge, { cancelTimeout: 10000 }, sseManager as any,
+      sessions,
+      store,
+      bridge,
+      { cancelTimeout: 10000 },
+      sseManager as any,
     );
 
     assert.equal(broadcasted.length, 0);
@@ -157,7 +202,11 @@ describe("handleAgentEvent", () => {
 
     handleAgentEvent(
       { type: "error", sessionId: "s1", message: "something failed" } as any,
-      sessions, store, bridge, { cancelTimeout: 10000 }, sseManager as any,
+      sessions,
+      store,
+      bridge,
+      { cancelTimeout: 10000 },
+      sseManager as any,
     );
 
     assert.equal(sessions.activePrompts.has("s1"), false);
@@ -182,11 +231,17 @@ describe("handleAgentEvent", () => {
           { optionId: "deny", kind: "deny", label: "Deny" },
         ],
       } as any,
-      sessions, store, bridge, { cancelTimeout: 10000 }, sseManager as any,
+      sessions,
+      store,
+      bridge,
+      { cancelTimeout: 10000 },
+      sseManager as any,
     );
 
     // Bridge should resolve with allow_once
-    assert.deepEqual(calls.resolvePermission, [{ requestId: "req1", optionId: "allow_once" }]);
+    assert.deepEqual(calls.resolvePermission, [
+      { requestId: "req1", optionId: "allow_once" },
+    ]);
 
     // Should broadcast permission_request then permission_response via SSE
     assert.equal(broadcasted.length, 2);
@@ -220,7 +275,11 @@ describe("handleAgentEvent", () => {
           { optionId: "deny", kind: "deny", label: "Deny" },
         ],
       } as any,
-      sessions, store, bridge, { cancelTimeout: 10000 }, sseManager as any,
+      sessions,
+      store,
+      bridge,
+      { cancelTimeout: 10000 },
+      sseManager as any,
     );
 
     // Bridge should NOT be called
@@ -244,11 +303,19 @@ describe("handleAgentEvent", () => {
         requestId: "req1",
         title: "Dangerous action",
         options: [
-          { optionId: "allow_always", kind: "allow_always", label: "Allow always" },
+          {
+            optionId: "allow_always",
+            kind: "allow_always",
+            label: "Allow always",
+          },
           { optionId: "deny", kind: "deny", label: "Deny" },
         ],
       } as any,
-      sessions, store, bridge, { cancelTimeout: 10000 }, sseManager as any,
+      sessions,
+      store,
+      bridge,
+      { cancelTimeout: 10000 },
+      sseManager as any,
     );
 
     // Should NOT auto-approve (no allow_once option)

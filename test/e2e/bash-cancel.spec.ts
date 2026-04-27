@@ -1,7 +1,9 @@
 import { test, expect } from "playwright/test";
 import { createNewSession, gotoConnected, sendPrompt } from "./helpers.ts";
 
-test("a running bash command can be cancelled from the UI", async ({ page }) => {
+test("a running bash command can be cancelled from the UI", async ({
+  page,
+}) => {
   await gotoConnected(page);
   await createNewSession(page);
 

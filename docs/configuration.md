@@ -8,18 +8,18 @@ WebAgent works with any agent that implements the [Agent Client Protocol](https:
 
 These agents have built-in ACP and work directly with `agent_cmd`:
 
-| Agent | Command | Notes |
-|---|---|---|
-| [Copilot CLI](https://github.com/github/copilot-cli) | `copilot --acp` | Default. GitHub's AI pair programmer |
+| Agent                                                     | Command                     | Notes                                                             |
+| --------------------------------------------------------- | --------------------------- | ----------------------------------------------------------------- |
+| [Copilot CLI](https://github.com/github/copilot-cli)      | `copilot --acp`             | Default. GitHub's AI pair programmer                              |
 | [Gemini CLI](https://github.com/google-gemini/gemini-cli) | `gemini --experimental-acp` | Google's Gemini models (experimental flag, no stable `--acp` yet) |
-| [OpenCode](https://opencode.ai/) | `opencode acp` | Open-source, extensible (note: subcommand, not flag) |
+| [OpenCode](https://opencode.ai/)                          | `opencode acp`              | Open-source, extensible (note: subcommand, not flag)              |
 
 ### Via ACP adapter
 
 These agents do not have a native `--acp` flag. Use a community adapter that wraps the CLI into an ACP-compatible process:
 
-| Agent | Adapter | Install |
-|---|---|---|
+| Agent                                                                | Adapter                                                                                              | Install                                     |
+| -------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- | ------------------------------------------- |
 | [Claude Code](https://docs.anthropic.com/en/docs/agents/claude-code) | [`@zed-industries/claude-agent-acp`](https://www.npmjs.com/package/@zed-industries/claude-agent-acp) | `npm i -g @zed-industries/claude-agent-acp` |
 
 To use Claude Code with WebAgent via the adapter:
@@ -40,23 +40,23 @@ webagent --config config.toml
 
 If no `--config` is provided, all settings use built-in defaults. See `config.toml` for the checked-in default settings and `config.dev.toml` for development.
 
-| Key | Default | Description |
-|---|---|---|
-| `port` | `6800` | HTTP server port |
-| `data_dir` | `data` | SQLite + uploads directory |
-| `default_cwd` | `process.cwd()` | Working directory for new sessions |
-| `public_dir` | `dist` | Static assets directory |
-| `agent_cmd` | `copilot --acp` | ACP agent command (binary + args, space-separated) |
-| `limits.bash_output` | `1048576` (1 MB) | Max bash output stored in DB per command |
-| `limits.image_upload` | `10485760` (10 MB) | Max image upload size |
-| `limits.cancel_timeout` | `10000` (10s) | Cancel timeout in ms; 0 disables |
-| `limits.recent_paths` | `10` | Max recent paths shown in `/new` menu; 0 = show all |
-| `limits.recent_paths_ttl` | `30` | Days to keep unused paths before auto-cleanup; 0 = keep forever |
-| `push.vapid_subject` | `mailto:webagent@localhost` | VAPID subject for Web Push (email or URL). **Note:** iOS/APNs rejects `localhost` domains — use a real-looking address (e.g. `mailto:noreply@example.com`) in production. |
-| `push.global_visibility_suppression` | `true` | When `true`, a single client viewing session X suppresses push for session X on **all** endpoints/devices. Set to `false` to disable cross-device suppression as an emergency rollback without code change. See [Visibility Sync & Push Suppression](client-architecture.md#visibility-sync--push-suppression). |
-| `title.model` | `claude-haiku-4.5` | Model ID for the async title-generation sub-session. Set to empty string `""` to skip `setConfigOption` and inherit the main session model (useful for CLIs without Haiku, e.g. Copilot / Gemini). |
-| `messages.unprocessed_ttl_days` | `30` | Days before an unprocessed unbound inbox message is auto-cleaned. `0` = keep forever. Bound messages attached to sessions are not affected. See [Messages / Inbox](messages.md). |
-| `debug.level` | `"off"` | Inline log level — one of `off \| debug \| info \| warn \| error`. When `level != "off"`, frontend `log.*` records above that level emit both to the DevTools console and inline into the conversation flow (as system messages). Override per page via `?debug=<level>` URL param or at runtime via `/log <level>`. |
+| Key                                  | Default                     | Description                                                                                                                                                                                                                                                                                                          |
+| ------------------------------------ | --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `port`                               | `6800`                      | HTTP server port                                                                                                                                                                                                                                                                                                     |
+| `data_dir`                           | `data`                      | SQLite + uploads directory                                                                                                                                                                                                                                                                                           |
+| `default_cwd`                        | `process.cwd()`             | Working directory for new sessions                                                                                                                                                                                                                                                                                   |
+| `public_dir`                         | `dist`                      | Static assets directory                                                                                                                                                                                                                                                                                              |
+| `agent_cmd`                          | `copilot --acp`             | ACP agent command (binary + args, space-separated)                                                                                                                                                                                                                                                                   |
+| `limits.bash_output`                 | `1048576` (1 MB)            | Max bash output stored in DB per command                                                                                                                                                                                                                                                                             |
+| `limits.image_upload`                | `10485760` (10 MB)          | Max image upload size                                                                                                                                                                                                                                                                                                |
+| `limits.cancel_timeout`              | `10000` (10s)               | Cancel timeout in ms; 0 disables                                                                                                                                                                                                                                                                                     |
+| `limits.recent_paths`                | `10`                        | Max recent paths shown in `/new` menu; 0 = show all                                                                                                                                                                                                                                                                  |
+| `limits.recent_paths_ttl`            | `30`                        | Days to keep unused paths before auto-cleanup; 0 = keep forever                                                                                                                                                                                                                                                      |
+| `push.vapid_subject`                 | `mailto:webagent@localhost` | VAPID subject for Web Push (email or URL). **Note:** iOS/APNs rejects `localhost` domains — use a real-looking address (e.g. `mailto:noreply@example.com`) in production.                                                                                                                                            |
+| `push.global_visibility_suppression` | `true`                      | When `true`, a single client viewing session X suppresses push for session X on **all** endpoints/devices. Set to `false` to disable cross-device suppression as an emergency rollback without code change. See [Visibility Sync & Push Suppression](client-architecture.md#visibility-sync--push-suppression).      |
+| `title.model`                        | `claude-haiku-4.5`          | Model ID for the async title-generation sub-session. Set to empty string `""` to skip `setConfigOption` and inherit the main session model (useful for CLIs without Haiku, e.g. Copilot / Gemini).                                                                                                                   |
+| `messages.unprocessed_ttl_days`      | `30`                        | Days before an unprocessed unbound inbox message is auto-cleaned. `0` = keep forever. Bound messages attached to sessions are not affected. See [Messages / Inbox](messages.md).                                                                                                                                     |
+| `debug.level`                        | `"off"`                     | Inline log level — one of `off \| debug \| info \| warn \| error`. When `level != "off"`, frontend `log.*` records above that level emit both to the DevTools console and inline into the conversation flow (as system messages). Override per page via `?debug=<level>` URL param or at runtime via `/log <level>`. |
 
 To use a different ACP-compatible agent backend:
 

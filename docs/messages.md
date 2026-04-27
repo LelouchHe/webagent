@@ -28,10 +28,10 @@ It is deliberately **not** an auto-inject mechanism. Nothing a cron job sends ev
 
 Two shapes on ingress:
 
-| Mode | `to` field | Behavior |
-|---|---|---|
-| **Unbound** | `"user"` | Message goes into the inbox. User opens `/inbox`, picks it, and either **consume** (creates a new session, cwd inherited if provided) or **ack** (dismiss without engaging). |
-| **Bound** | `"session:<id>"` | Message is appended as a `message` event directly to the target session's event stream. No inbox hop. Unknown session id → `400`. |
+| Mode        | `to` field       | Behavior                                                                                                                                                                     |
+| ----------- | ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Unbound** | `"user"`         | Message goes into the inbox. User opens `/inbox`, picks it, and either **consume** (creates a new session, cwd inherited if provided) or **ack** (dismiss without engaging). |
+| **Bound**   | `"session:<id>"` | Message is appended as a `message` event directly to the target session's event stream. No inbox hop. Unknown session id → `400`.                                            |
 
 Supersede (optional): pass `dedup_key`. A new unbound message with the same `(to, dedup_key)` pair replaces any older unprocessed row. Useful for "build status" style pings where only the latest matters.
 
@@ -172,13 +172,13 @@ Pass `X-Client-Op-Id: <uuid>`; repeated requests return the same message id (res
 
 ## Where to look in the code
 
-| Concern | File |
-|---|---|
-| Zod schema, `from_ref` regex | `src/types.ts` (`MessageIngressSchema`) |
-| REST routes (`POST`, `GET`, `consume`, `ack`) | `src/routes.ts` |
-| DB operations (`consumeMessageTx`, `findBySupersede`, `deleteOlderThan`) | `src/store.ts` |
-| Push tag derivation, `session:<id>` routing | `src/push-service.ts` (`sendForMessage`, `tagToTopic`) |
-| Inbox slash menu, rendering, click/tab handlers | `public/js/commands.ts` |
-| Inbox types + API client | `public/js/api.ts` |
-| SW banner-close + notificationclick routing | `public/sw.js` |
-| Tests | `test/messages-*.test.ts`, `test/push-egress*.test.ts`, `test/inbox-command.test.ts`, `test/slash-menu.test.ts` |
+| Concern                                                                  | File                                                                                                            |
+| ------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------- |
+| Zod schema, `from_ref` regex                                             | `src/types.ts` (`MessageIngressSchema`)                                                                         |
+| REST routes (`POST`, `GET`, `consume`, `ack`)                            | `src/routes.ts`                                                                                                 |
+| DB operations (`consumeMessageTx`, `findBySupersede`, `deleteOlderThan`) | `src/store.ts`                                                                                                  |
+| Push tag derivation, `session:<id>` routing                              | `src/push-service.ts` (`sendForMessage`, `tagToTopic`)                                                          |
+| Inbox slash menu, rendering, click/tab handlers                          | `public/js/commands.ts`                                                                                         |
+| Inbox types + API client                                                 | `public/js/api.ts`                                                                                              |
+| SW banner-close + notificationclick routing                              | `public/sw.js`                                                                                                  |
+| Tests                                                                    | `test/messages-*.test.ts`, `test/push-egress*.test.ts`, `test/inbox-command.test.ts`, `test/slash-menu.test.ts` |

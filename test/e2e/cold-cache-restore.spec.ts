@@ -5,7 +5,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
-import { createNewSession, expectConnectionStatus, sendPrompt } from "./helpers.ts";
+import {
+  createNewSession,
+  expectConnectionStatus,
+  sendPrompt,
+} from "./helpers.ts";
 
 // Regression test for: after a cold server restart, sessions.cachedConfigOptions
 // is empty. The first GET /api/v1/sessions/:id used to return configOptions: []
@@ -21,12 +25,23 @@ import { createNewSession, expectConnectionStatus, sendPrompt } from "./helpers.
 
 const RESTART_PORT = 6805;
 const RESTART_ORIGIN = `http://127.0.0.1:${RESTART_PORT}`;
-const E2E_TOKEN = readFileSync(join(import.meta.dirname, "..", "e2e-data", ".token"), "utf8").trim();
+const E2E_TOKEN = readFileSync(
+  join(import.meta.dirname, "..", "e2e-data", ".token"),
+  "utf8",
+).trim();
 
 function seedAuthFile(path: string, token: string): void {
   const hash = createHash("sha256").update(token).digest("hex");
   const data = {
-    tokens: [{ name: "e2e-cold-cache", scope: "admin", hash, createdAt: Date.now(), lastUsedAt: null }],
+    tokens: [
+      {
+        name: "e2e-cold-cache",
+        scope: "admin",
+        hash,
+        createdAt: Date.now(),
+        lastUsedAt: null,
+      },
+    ],
   };
   writeFileSync(path, JSON.stringify(data, null, 2), { mode: 0o600 });
 }
@@ -50,7 +65,13 @@ async function startServer(configPath: string): Promise<ChildProcess> {
     { cwd: process.cwd(), stdio: ["ignore", "pipe", "inherit"] },
   );
   await new Promise<void>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error("Timed out waiting for cold-cache test server bridge")), 30_000);
+    const timer = setTimeout(
+      () =>
+        reject(
+          new Error("Timed out waiting for cold-cache test server bridge"),
+        ),
+      30_000,
+    );
     child.once("exit", () => {
       clearTimeout(timer);
       reject(new Error("Cold-cache test server exited before becoming ready"));
@@ -72,7 +93,10 @@ async function stopServer(child: ChildProcess): Promise<void> {
   if (child.exitCode !== null) return;
   child.kill("SIGTERM");
   await new Promise<void>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error("Timed out stopping cold-cache test server")), 10_000);
+    const timer = setTimeout(
+      () => reject(new Error("Timed out stopping cold-cache test server")),
+      10_000,
+    );
     child.once("exit", () => {
       clearTimeout(timer);
       resolve();
@@ -86,7 +110,9 @@ async function gotoConnected(page: Page, url: string): Promise<void> {
   await expect(page.locator("#input")).toBeEnabled();
 }
 
-test("cold server restart still populates model + slash autocomplete", async ({ page }) => {
+test("cold server restart still populates model + slash autocomplete", async ({
+  page,
+}) => {
   const root = await mkdtemp(join(tmpdir(), "webagent-cold-cache-e2e-"));
   const dataDir = join(root, "data");
   const configPath = join(root, "config.toml");
@@ -95,21 +121,28 @@ test("cold server restart still populates model + slash autocomplete", async ({ 
   try {
     await mkdir(dataDir, { recursive: true });
     seedAuthFile(join(dataDir, "auth.json"), E2E_TOKEN);
-    await writeFile(configPath, [
-      `port = ${RESTART_PORT}`,
-      `data_dir = "${dataDir}"`,
-      `public_dir = "dist-dev"`,
-      `agent_cmd = "node --experimental-strip-types test/e2e/mock-agent.ts"`,
-      "",
-      "[limits]",
-      "bash_output = 1_048_576",
-      "image_upload = 10_485_760",
-      "",
-    ].join("\n"));
+    await writeFile(
+      configPath,
+      [
+        `port = ${RESTART_PORT}`,
+        `data_dir = "${dataDir}"`,
+        `public_dir = "dist-dev"`,
+        `agent_cmd = "node --experimental-strip-types test/e2e/mock-agent.ts"`,
+        "",
+        "[limits]",
+        "bash_output = 1_048_576",
+        "image_upload = 10_485_760",
+        "",
+      ].join("\n"),
+    );
 
     server = await startServer(configPath);
     await page.context().addInitScript(
-      ({ key, value }) => { try { localStorage.setItem(key, value); } catch {} },
+      ({ key, value }) => {
+        try {
+          localStorage.setItem(key, value);
+        } catch {}
+      },
       { key: "wa_token", value: E2E_TOKEN },
     );
     await gotoConnected(page, `${RESTART_ORIGIN}/`);
@@ -117,7 +150,9 @@ test("cold server restart still populates model + slash autocomplete", async ({ 
     await createNewSession(page);
     // Pin model so we can check it round-trips through the cold cache.
     await sendPrompt(page, "/model mock model 2");
-    await expect(page.locator("#messages")).toContainText("Model → Mock Model 2");
+    await expect(page.locator("#messages")).toContainText(
+      "Model → Mock Model 2",
+    );
 
     // Cold restart: sessions.cachedConfigOptions starts empty in the new process.
     await stopServer(server);
@@ -129,7 +164,9 @@ test("cold server restart still populates model + slash autocomplete", async ({ 
     // Status bar must eventually show model · cwd. Server now blocks GET
     // /api/v1/sessions/:id on cold-cache resume (up to 8s) so configOptions
     // returns inline — no broadcast race.
-    await expect(page.locator("#status-bar")).toContainText("mock-model-2", { timeout: 10_000 });
+    await expect(page.locator("#status-bar")).toContainText("mock-model-2", {
+      timeout: 10_000,
+    });
 
     // Slash autocomplete must show /model candidates. Without configOptions
     // populated, the menu would be empty and Enter would just send the

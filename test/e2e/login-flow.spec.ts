@@ -21,9 +21,14 @@ test.describe("login flow", () => {
   // playwright.config; it deliberately tests the unauthenticated entry path.
   test.use({ storageState: { cookies: [], origins: [] } });
 
-  test("unauthenticated visit redirects to /login and submitting a valid token signs in", async ({ page }) => {
+  test("unauthenticated visit redirects to /login and submitting a valid token signs in", async ({
+    page,
+  }) => {
     const token = readFileSync(TOKEN_PATH, "utf8").trim();
-    expect(token, "seed.ts must have written test/e2e-data/.token").toBeTruthy();
+    expect(
+      token,
+      "seed.ts must have written test/e2e-data/.token",
+    ).toBeTruthy();
 
     // Visiting / with no token bounces to /login
     await page.goto("/");
@@ -44,7 +49,10 @@ test.describe("login flow", () => {
     await expect(page.locator("#input")).toBeEnabled({ timeout: 10_000 });
 
     // Token persisted under the expected key
-    const stored = await page.evaluate((k) => localStorage.getItem(k), TOKEN_KEY);
+    const stored = await page.evaluate(
+      (k) => localStorage.getItem(k),
+      TOKEN_KEY,
+    );
     expect(stored).toBe(token);
   });
 });

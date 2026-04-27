@@ -15,11 +15,14 @@ function req(
   path: string,
 ): Promise<{ status: number; body: string }> {
   return new Promise((resolve, reject) => {
-    const r = http.request({ hostname: "127.0.0.1", port, path, method }, (res) => {
-      let data = "";
-      res.on("data", (c: Buffer) => (data += c.toString("utf8")));
-      res.on("end", () => resolve({ status: res.statusCode!, body: data }));
-    });
+    const r = http.request(
+      { hostname: "127.0.0.1", port, path, method },
+      (res) => {
+        let data = "";
+        res.on("data", (c: Buffer) => (data += c.toString("utf8")));
+        res.on("end", () => resolve({ status: res.statusCode!, body: data }));
+      },
+    );
     r.on("error", reject);
     r.end();
   });
@@ -45,7 +48,11 @@ describe("GET /api/v1/sessions/:id/snapshot", () => {
       sseManager: sse,
       publicDir: join(tmpDir, "public"),
       dataDir: tmpDir,
-      limits: { bash_output: 1_048_576, image_upload: 10_485_760, cancel_timeout: 10_000 },
+      limits: {
+        bash_output: 1_048_576,
+        image_upload: 10_485_760,
+        cancel_timeout: 10_000,
+      },
     });
     server = http.createServer(handler);
     await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
@@ -74,7 +81,10 @@ describe("GET /api/v1/sessions/:id/snapshot", () => {
     assert.equal(body.session.cwd, "/tmp/cwd");
     assert.equal(body.runtime.busy, null);
     assert.deepEqual(body.runtime.pendingPermissions, []);
-    assert.deepEqual(body.runtime.streaming, { assistant: false, thinking: false });
+    assert.deepEqual(body.runtime.streaming, {
+      assistant: false,
+      thinking: false,
+    });
     assert.equal(body.session.lastEventSeq, 0);
   });
 

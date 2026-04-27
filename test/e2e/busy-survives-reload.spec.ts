@@ -21,7 +21,10 @@ test("busy state survives page reload mid-prompt", async ({ page }) => {
   await expect(page.locator("#send-btn")).toHaveText("^C");
 
   await page.reload();
-  await expect(page.locator("#status")).toHaveAttribute("data-state", "connected");
+  await expect(page.locator("#status")).toHaveAttribute(
+    "data-state",
+    "connected",
+  );
 
   // The critical assertion: busy state restored from server-side busyKind.
   await expect(page.locator("#send-btn")).toHaveText("^C");

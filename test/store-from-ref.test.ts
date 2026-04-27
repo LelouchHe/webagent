@@ -23,11 +23,36 @@ describe("Store events.from_ref + orphan cleanup + FK", () => {
     const store = new Store(tmpDir);
     store.createSession("s1", "/tmp");
 
-    const userMsg = store.saveEvent("s1", "user_message", { text: "hi" }, { from_ref: "user" });
-    const permResp = store.saveEvent("s1", "permission_response", { ok: true }, { from_ref: "system" });
-    const bashCmd = store.saveEvent("s1", "bash_command", { cmd: "ls" }, { from_ref: "user" });
-    const assistant = store.saveEvent("s1", "assistant_message", { text: "ack" }, { from_ref: "agent" });
-    const toolCall = store.saveEvent("s1", "tool_call", { id: "t1" }, { from_ref: "agent" });
+    const userMsg = store.saveEvent(
+      "s1",
+      "user_message",
+      { text: "hi" },
+      { from_ref: "user" },
+    );
+    const permResp = store.saveEvent(
+      "s1",
+      "permission_response",
+      { ok: true },
+      { from_ref: "system" },
+    );
+    const bashCmd = store.saveEvent(
+      "s1",
+      "bash_command",
+      { cmd: "ls" },
+      { from_ref: "user" },
+    );
+    const assistant = store.saveEvent(
+      "s1",
+      "assistant_message",
+      { text: "ack" },
+      { from_ref: "agent" },
+    );
+    const toolCall = store.saveEvent(
+      "s1",
+      "tool_call",
+      { id: "t1" },
+      { from_ref: "agent" },
+    );
 
     assert.equal(userMsg.from_ref, "user");
     assert.equal(permResp.from_ref, "system");
@@ -42,9 +67,14 @@ describe("Store events.from_ref + orphan cleanup + FK", () => {
     const store = new Store(tmpDir);
     store.createSession("s1", "/tmp");
 
-    const ev = store.saveEvent("s1", "assistant_message", { text: "from inbox" }, {
-      from_ref: "msg:abc123",
-    });
+    const ev = store.saveEvent(
+      "s1",
+      "assistant_message",
+      { text: "from inbox" },
+      {
+        from_ref: "msg:abc123",
+      },
+    );
     assert.equal(ev.from_ref, "msg:abc123");
 
     store.close();
@@ -88,7 +118,9 @@ describe("Store events.from_ref + orphan cleanup + FK", () => {
     // Open via Store -- migrate() must add the column and backfill all rows.
     const store = new Store(tmpDir);
     const rows = store["db"]
-      .prepare("SELECT seq, type, from_ref FROM events WHERE session_id = 's1' ORDER BY seq")
+      .prepare(
+        "SELECT seq, type, from_ref FROM events WHERE session_id = 's1' ORDER BY seq",
+      )
       .all() as Array<{ seq: number; type: string; from_ref: string }>;
 
     assert.equal(rows.length, 5);
@@ -128,7 +160,11 @@ describe("Store events.from_ref + orphan cleanup + FK", () => {
     const orphans = store["db"]
       .prepare("SELECT COUNT(*) AS n FROM events WHERE session_id = 'orphan'")
       .get() as { n: number };
-    assert.equal(orphans.n, 0, "orphan rows must be cleaned up at migrate time");
+    assert.equal(
+      orphans.n,
+      0,
+      "orphan rows must be cleaned up at migrate time",
+    );
     const alive = store["db"]
       .prepare("SELECT COUNT(*) AS n FROM events WHERE session_id = 'alive'")
       .get() as { n: number };
@@ -144,10 +180,13 @@ describe("Store events.from_ref + orphan cleanup + FK", () => {
 
     store.createSession("s1", "/tmp");
     // Insert into a real session works
-    assert.doesNotThrow(() => store.saveEvent("s1", "user_message", {}, { from_ref: "user" }));
+    assert.doesNotThrow(() =>
+      store.saveEvent("s1", "user_message", {}, { from_ref: "user" }),
+    );
     // Insert into a non-existent session is rejected by the FK
     assert.throws(
-      () => store.saveEvent("s2-missing", "user_message", {}, { from_ref: "user" }),
+      () =>
+        store.saveEvent("s2-missing", "user_message", {}, { from_ref: "user" }),
       /FOREIGN KEY constraint failed/i,
     );
 
@@ -157,7 +196,9 @@ describe("Store events.from_ref + orphan cleanup + FK", () => {
   it("idx_events_type exists after migrate", () => {
     const store = new Store(tmpDir);
     const idx = store["db"]
-      .prepare("SELECT name FROM sqlite_master WHERE type='index' AND name='idx_events_type'")
+      .prepare(
+        "SELECT name FROM sqlite_master WHERE type='index' AND name='idx_events_type'",
+      )
       .get() as { name: string } | undefined;
     assert.equal(idx?.name, "idx_events_type");
     store.close();

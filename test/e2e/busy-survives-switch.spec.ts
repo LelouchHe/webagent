@@ -1,5 +1,10 @@
 import { test, expect } from "playwright/test";
-import { createNewSession, currentSessionId, gotoConnected, sendPrompt } from "./helpers.ts";
+import {
+  createNewSession,
+  currentSessionId,
+  gotoConnected,
+  sendPrompt,
+} from "./helpers.ts";
 
 // Regression test for: busy state should survive switching away to another
 // session and switching back. The server tracks busy per-session via
@@ -10,7 +15,9 @@ import { createNewSession, currentSessionId, gotoConnected, sendPrompt } from ".
 // to consult it (e.g. the post-switch handleEvent is missing the field), the
 // "send button stays as ↵" instead of restoring to ^C.
 
-test("busy state survives switching to another session and back", async ({ page }) => {
+test("busy state survives switching to another session and back", async ({
+  page,
+}) => {
   await gotoConnected(page);
 
   const slowSessionId = await createNewSession(page);

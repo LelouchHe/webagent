@@ -14,11 +14,14 @@ function req(
   path: string,
 ): Promise<{ status: number; body: string }> {
   return new Promise((resolve, reject) => {
-    const r = http.request({ hostname: "127.0.0.1", port, path, method }, (res) => {
-      let d = "";
-      res.on("data", (c: Buffer) => (d += c.toString()));
-      res.on("end", () => resolve({ status: res.statusCode!, body: d }));
-    });
+    const r = http.request(
+      { hostname: "127.0.0.1", port, path, method },
+      (res) => {
+        let d = "";
+        res.on("data", (c: Buffer) => (d += c.toString()));
+        res.on("end", () => resolve({ status: res.statusCode!, body: d }));
+      },
+    );
     r.on("error", reject);
     r.end();
   });
@@ -54,7 +57,9 @@ describe("GET /api/v1/messages — list + single", () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  function mkMsg(overrides: Partial<Parameters<Store["createMessage"]>[0]> = {}): string {
+  function mkMsg(
+    overrides: Partial<Parameters<Store["createMessage"]>[0]> = {},
+  ): string {
     const id = overrides.id ?? `m-${Math.random().toString(36).slice(2, 10)}`;
     store.createMessage({
       from_ref: "cron:x",
@@ -113,6 +118,9 @@ describe("GET /api/v1/messages — list + single", () => {
 
   it("rejects non-GET methods with 405 or 404", async () => {
     const res = await req(port, "DELETE", "/api/v1/messages");
-    assert.ok(res.status === 405 || res.status === 404, `expected 405/404, got ${res.status}`);
+    assert.ok(
+      res.status === 405 || res.status === 404,
+      `expected 405/404, got ${res.status}`,
+    );
   });
 });

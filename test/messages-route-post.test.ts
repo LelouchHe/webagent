@@ -95,35 +95,45 @@ describe("POST /api/v1/messages — ingress", () => {
 
   it("400 on invalid JSON", async () => {
     // send raw broken JSON
-    const raw = await new Promise<{ status: number; body: string }>((resolve, reject) => {
-      const r = http.request(
-        {
-          hostname: "127.0.0.1",
-          port,
-          path: "/api/v1/messages",
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-        },
-        (res) => {
-          let d = "";
-          res.on("data", (c: Buffer) => (d += c.toString()));
-          res.on("end", () => resolve({ status: res.statusCode!, body: d }));
-        },
-      );
-      r.on("error", reject);
-      r.write("{not json");
-      r.end();
-    });
+    const raw = await new Promise<{ status: number; body: string }>(
+      (resolve, reject) => {
+        const r = http.request(
+          {
+            hostname: "127.0.0.1",
+            port,
+            path: "/api/v1/messages",
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+          },
+          (res) => {
+            let d = "";
+            res.on("data", (c: Buffer) => (d += c.toString()));
+            res.on("end", () => resolve({ status: res.statusCode!, body: d }));
+          },
+        );
+        r.on("error", reject);
+        r.write("{not json");
+        r.end();
+      },
+    );
     assert.equal(raw.status, 400);
   });
 
   it("400 when from_ref uses reserved 'user' prefix", async () => {
-    const r = await post(port, "/api/v1/messages", baseBody({ from_ref: "user" }));
+    const r = await post(
+      port,
+      "/api/v1/messages",
+      baseBody({ from_ref: "user" }),
+    );
     assert.equal(r.status, 400);
   });
 
   it("400 when from_ref uses 'session:<id>' (reserved for auth)", async () => {
-    const r = await post(port, "/api/v1/messages", baseBody({ from_ref: "session:abc" }));
+    const r = await post(
+      port,
+      "/api/v1/messages",
+      baseBody({ from_ref: "session:abc" }),
+    );
     assert.equal(r.status, 400);
   });
 
@@ -152,7 +162,11 @@ describe("POST /api/v1/messages — ingress", () => {
   });
 
   it("bound to=session:<id> with unknown session returns 400 session_not_found (no fallback to inbox)", async () => {
-    const r = await post(port, "/api/v1/messages", baseBody({ to: "session:no-such-sid" }));
+    const r = await post(
+      port,
+      "/api/v1/messages",
+      baseBody({ to: "session:no-such-sid" }),
+    );
     assert.equal(r.status, 400);
     const body = JSON.parse(r.body);
     assert.equal(body.error, "session_not_found");
@@ -163,7 +177,11 @@ describe("POST /api/v1/messages — ingress", () => {
   it("bound to=session:<existing> appends a message event to that session", async () => {
     const sid = "sess-target";
     store.createSession(sid, "/tmp", "test");
-    const r = await post(port, "/api/v1/messages", baseBody({ to: `session:${sid}` }));
+    const r = await post(
+      port,
+      "/api/v1/messages",
+      baseBody({ to: `session:${sid}` }),
+    );
     assert.equal(r.status, 200);
     const body = JSON.parse(r.body);
     assert.ok(body.id);
@@ -184,11 +202,15 @@ describe("POST /api/v1/messages — ingress", () => {
 
   it("idempotent via X-Client-Op-Id: second call returns identical id without duplicating the row", async () => {
     const opId = "op-abc";
-    const r1 = await post(port, "/api/v1/messages", baseBody(), { "X-Client-Op-Id": opId });
+    const r1 = await post(port, "/api/v1/messages", baseBody(), {
+      "X-Client-Op-Id": opId,
+    });
     assert.equal(r1.status, 200);
     const id1 = JSON.parse(r1.body).id;
 
-    const r2 = await post(port, "/api/v1/messages", baseBody(), { "X-Client-Op-Id": opId });
+    const r2 = await post(port, "/api/v1/messages", baseBody(), {
+      "X-Client-Op-Id": opId,
+    });
     assert.equal(r2.status, 200);
     assert.equal(JSON.parse(r2.body).id, id1, "replay returns same id");
 

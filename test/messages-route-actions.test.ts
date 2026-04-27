@@ -15,11 +15,14 @@ function send(
   path: string,
 ): Promise<{ status: number; body: string }> {
   return new Promise((resolve, reject) => {
-    const r = http.request({ hostname: "127.0.0.1", port, path, method }, (res) => {
-      let d = "";
-      res.on("data", (c: Buffer) => (d += c.toString()));
-      res.on("end", () => resolve({ status: res.statusCode!, body: d }));
-    });
+    const r = http.request(
+      { hostname: "127.0.0.1", port, path, method },
+      (res) => {
+        let d = "";
+        res.on("data", (c: Buffer) => (d += c.toString()));
+        res.on("end", () => resolve({ status: res.statusCode!, body: d }));
+      },
+    );
     r.on("error", reject);
     r.end();
   });

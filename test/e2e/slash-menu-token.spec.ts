@@ -30,14 +30,18 @@ test("/token list/create/revoke flow via slash menu", async ({ page }) => {
   // Revoke via `revoke` subcommand
   await page.locator("#input").fill("/token revoke mytest");
   await page.keyboard.press("Enter");
-  await expect(page.locator("#messages")).toContainText(/revoked.*mytest|mytest.*revoked/i);
+  await expect(page.locator("#messages")).toContainText(
+    /revoked.*mytest|mytest.*revoked/i,
+  );
 
   // Reopen menu — back to just e2e
   await page.locator("#input").fill("/token ");
   await expect(page.locator("#slash-menu")).not.toContainText("mytest");
 });
 
-test("/token revoke subcommand menu lists revocable tokens", async ({ page }) => {
+test("/token revoke subcommand menu lists revocable tokens", async ({
+  page,
+}) => {
   await gotoConnected(page);
 
   // Create one extra token first
@@ -52,9 +56,13 @@ test("/token revoke subcommand menu lists revocable tokens", async ({ page }) =>
   await expect(page.locator("#slash-menu")).toContainText("clickrev");
 
   // Click the clickrev row to revoke
-  const clickrevRow = page.locator("#slash-menu .slash-item").filter({ hasText: "clickrev" });
+  const clickrevRow = page
+    .locator("#slash-menu .slash-item")
+    .filter({ hasText: "clickrev" });
   await clickrevRow.click();
-  await expect(page.locator("#messages")).toContainText(/revoked.*clickrev|clickrev.*revoked/i);
+  await expect(page.locator("#messages")).toContainText(
+    /revoked.*clickrev|clickrev.*revoked/i,
+  );
 
   // Reopen menu — clickrev gone
   await page.locator("#input").fill("/token ");

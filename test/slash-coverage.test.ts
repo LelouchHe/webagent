@@ -24,7 +24,10 @@ function extractCodeCommands(): Set<string> {
 
   // Locate the ROOT tree block to scope our search.
   const start = src.indexOf("export const ROOT: CmdNode = {");
-  assert.ok(start >= 0, "Could not find `export const ROOT` in slash-commands.ts");
+  assert.ok(
+    start >= 0,
+    "Could not find `export const ROOT` in slash-commands.ts",
+  );
   const block = src.slice(start);
 
   const names = new Set<string>();
@@ -35,7 +38,9 @@ function extractCodeCommands(): Set<string> {
   }
 
   // Form 2:  configCmdNode('/mode', 'Switch mode', 'mode')
-  for (const m of block.matchAll(/configCmdNode\(\s*['"](\/[a-z][a-z0-9_-]*)['"]/g)) {
+  for (const m of block.matchAll(
+    /configCmdNode\(\s*['"](\/[a-z][a-z0-9_-]*)['"]/g,
+  )) {
     names.add(m[1]);
   }
 
