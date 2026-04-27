@@ -156,16 +156,19 @@ Keep this distinction clear in docs and code discussions: some missing capabilit
 ## Testing
 
 ```bash
+npm run typecheck                          # tsc --noEmit over src/test/public/scripts
 npm test                                   # run all tests
 npm run test:e2e                          # run Playwright browser E2E
 npm run test:e2e -- test/e2e/foo.spec.ts # run a specific Playwright spec via the npm script
 ```
 
+`typecheck` is gated by both `.husky/pre-push` and CI, so a push that breaks types fails locally before it reaches the remote.
+
 ## Publishing
 
 Published to npm as `@lelouchhe/webagent`. CI and release are handled by GitHub Actions:
 
-- **CI** (`.github/workflows/ci.yml`): Runs `npm test` + Playwright E2E on every push to `main` and on PRs.
+- **CI** (`.github/workflows/ci.yml`): Runs `format:check`, `lint`, `typecheck`, `build`, `npm test`, and Playwright E2E on every push to `main` and on PRs.
 - **Publish** (`.github/workflows/publish.yml`): Triggers on `v*` tag push. Builds `dist/` and publishes to npm with provenance.
 
 Requires `NPM_TOKEN` secret in GitHub repo settings (npmjs.com → Granular Access Token → Read and write on `@lelouchhe/webagent`).
