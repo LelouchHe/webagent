@@ -1,7 +1,7 @@
 // User input handling: send, cancel, keyboard shortcuts
 
 import {
-  state, dom, setBusy, sendCancel,
+  state, dom, setInputValue, setBusy, sendCancel,
   getConfigOption, getConfigValue, updateModeUI,
 } from './state.ts';
 import { addMessage, addSystem, addBashBlock, showWaiting } from './render.ts';
@@ -22,9 +22,8 @@ function sendMessage() {
 
   // Slash commands and bash always go through, even while busy
   if ((text.startsWith('/') || text === '?' || text.startsWith('? ')) && state.pendingImages.length === 0) {
-    dom.input.value = '';
+    setInputValue('');
     dom.input.style.height = 'auto';
-    syncSendBtn();
     handleSlashCommand(text);
     return;
   }
@@ -40,7 +39,7 @@ function sendMessage() {
       addSystem('warn: Not connected, please retry');
       return;
     }
-    dom.input.value = '';
+    setInputValue('');
     dom.input.style.height = 'auto';
     dom.inputArea.classList.remove('bash-mode');
     addBashBlock(command, true);
@@ -53,7 +52,7 @@ function sendMessage() {
   // Regular messages require agent to be idle
   if (state.busy) return;
 
-  dom.input.value = '';
+  setInputValue('');
   dom.input.style.height = 'auto';
   dom.inputArea.classList.remove('bash-mode');
 

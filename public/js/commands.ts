@@ -5,7 +5,7 @@
 // plus Tab/Click/keyboard dispatch. Execution paths (onSelect handlers) live
 // in slash-commands.ts so this file stays a thin pipeline.
 
-import { dom } from './state.ts';
+import { dom, setInputValue } from './state.ts';
 import { addSystem } from './render.ts';
 import { resolvePath, buildCandidates, type CmdNode, type Candidate } from './slash-tree.ts';
 import { renderItem } from './slash-render.ts';
@@ -168,7 +168,7 @@ function tabComplete(): void {
   if (c.kind === 'subcommand' && c.node) {
     const hasMore = !!(c.node.children?.length || c.node.fetch || c.node.freeform);
     const sep = pathPrefix ? ' ' : '';
-    dom.input.value = `${pathPrefix}${sep}${c.node.name}${hasMore ? ' ' : ''}`;
+    setInputValue(`${pathPrefix}${sep}${c.node.name}${hasMore ? ' ' : ''}`);
     if (hasMore) {
       dismissedFor = null;
       updateSlashMenu();
@@ -177,7 +177,7 @@ function tabComplete(): void {
     }
   } else if (c.kind === 'data') {
     const sep = pathPrefix ? ' ' : '';
-    dom.input.value = `${pathPrefix}${sep}${c.spec.primary}`;
+    setInputValue(`${pathPrefix}${sep}${c.spec.primary}`);
     hideSlashMenu();
   } else if (c.kind === 'freeform') {
     // Freeform spec reflects the user's typed query — Tab is a no-op
@@ -200,7 +200,7 @@ async function clickItem(idx: number): Promise<void> {
     const hasMore = !!(c.node.children?.length || c.node.fetch || c.node.freeform);
     if (hasMore) {
       const sep = pathPrefix ? ' ' : '';
-      dom.input.value = `${pathPrefix}${sep}${c.node.name} `;
+      setInputValue(`${pathPrefix}${sep}${c.node.name} `);
       dismissedFor = null;
       updateSlashMenu();
       dom.input.focus();
@@ -208,14 +208,14 @@ async function clickItem(idx: number): Promise<void> {
     }
     // Pure-leaf subcommand — execute immediately
     hideSlashMenu();
-    dom.input.value = '';
+    setInputValue('');
     if (c.node.onSelect) await c.node.onSelect();
     return;
   }
 
   // data / freeform
   hideSlashMenu();
-  dom.input.value = '';
+  setInputValue('');
   if (c.spec.onSelect) {
     await c.spec.onSelect();
   } else {

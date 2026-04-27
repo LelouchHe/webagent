@@ -29,6 +29,25 @@ export const dom = {
   statusBar: $<HTMLDivElement>('#status-bar'),
 };
 
+/**
+ * Set `dom.input.value` and notify listeners.
+ *
+ * Programmatic assignment to `HTMLTextAreaElement.value` does NOT fire the
+ * "input" event, so the UI that depends on input content (send button
+ * state, slash menu, bash mode toggle) silently goes out of sync. Always
+ * route programmatic changes through this helper so those listeners run.
+ * Direct `dom.input.value = ...` assignments are banned by ESLint
+ * (see `eslint.config.js`).
+ */
+export function setInputValue(v: string): void {
+  // eslint-disable-next-line no-restricted-syntax
+  dom.input.value = v;
+  // Use window.Event (not the bare global) so this works under jsdom in
+  // tests, where the bare Event constructor isn't always the one the
+  // element's dispatchEvent accepts.
+  dom.input.dispatchEvent(new window.Event("input", { bubbles: true }));
+}
+
 export const state = {
   eventSource: null as EventSource | null,
   clientId: null as string | null,

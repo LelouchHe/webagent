@@ -329,4 +329,48 @@ describe("input", () => {
     assert.ok(!msgCall, "should not send message when disconnected");
     assert.equal(state.busy, false, "should not enter busy state");
   });
+
+  // Regression: programmatic changes to dom.input.value (e.g. from slash-menu
+  // click clearing the input) used to skip the "input" event, which left the
+  // send button stuck on ↵ even when the input was empty. setInputValue() is
+  // the canonical way to mutate the input so listeners (syncSendBtn,
+  // slash-menu, bash-mode) stay in sync.
+  describe("setInputValue", () => {
+    it("dispatches a bubbling input event so listeners run", async () => {
+      const { setInputValue } = await import("../public/js/state.ts");
+      let fired = 0;
+      const listener = () => { fired++; };
+      dom.input.addEventListener("input", listener);
+      try {
+        setInputValue("hello");
+        assert.equal(fired, 1);
+        assert.equal(dom.input.value, "hello");
+        setInputValue("");
+        assert.equal(fired, 2);
+        assert.equal(dom.input.value, "");
+      } finally {
+        dom.input.removeEventListener("input", listener);
+      }
+    });
+
+    it("clearing via setInputValue while busy resets send button to ^C", async () => {
+      const { setInputValue, setBusy: setBusyFn } = await import("../public/js/state.ts");
+      // Pre-condition: busy + slash text → send button should be ↵
+      setBusyFn(true);
+      setInputValue("/help");
+      assert.equal(dom.sendBtn.textContent, "↵", "slash text while busy → ↵");
+      // Clearing must flip back to ^C because the input listener fires
+      setInputValue("");
+      assert.equal(dom.sendBtn.textContent, "^C", "empty input while busy → ^C");
+    });
+
+    it("setting non-empty via setInputValue while busy flips ^C → ↵", async () => {
+      const { setInputValue, setBusy: setBusyFn } = await import("../public/js/state.ts");
+      setBusyFn(true);
+      setInputValue("");
+      assert.equal(dom.sendBtn.textContent, "^C", "empty input while busy → ^C");
+      setInputValue("/clear");
+      assert.equal(dom.sendBtn.textContent, "↵", "slash text while busy → ↵");
+    });
+  });
 });
