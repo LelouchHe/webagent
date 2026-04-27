@@ -6,14 +6,12 @@ describe("highlight (lazy-load + code toolbar)", () => {
   let state: any;
   let dom: any;
   let highlight: any;
-  let render: any;
 
   before(async () => {
     setupDOM();
     const stateMod = await import("../public/js/state.ts");
     state = stateMod.state;
     dom = stateMod.dom;
-    render = await import("../public/js/render.ts");
     highlight = await import("../public/js/highlight.ts");
   });
   after(() => teardownDOM());
@@ -37,7 +35,8 @@ describe("highlight (lazy-load + code toolbar)", () => {
     it("shows language label when language class is present", () => {
       const el = globalThis.document.createElement("div");
       el.className = "msg assistant";
-      el.innerHTML = '<pre><code class="language-python">print("hi")</code></pre>';
+      el.innerHTML =
+        '<pre><code class="language-python">print("hi")</code></pre>';
       highlight.processCodeBlocks(el);
 
       // Language label removed — only copy button in toolbar
@@ -59,7 +58,8 @@ describe("highlight (lazy-load + code toolbar)", () => {
     it("adds a copy button to each code block", () => {
       const el = globalThis.document.createElement("div");
       el.className = "msg assistant";
-      el.innerHTML = "<pre><code>block1</code></pre><pre><code>block2</code></pre>";
+      el.innerHTML =
+        "<pre><code>block1</code></pre><pre><code>block2</code></pre>";
       highlight.processCodeBlocks(el);
 
       const buttons = el.querySelectorAll(".copy-btn");
@@ -91,7 +91,8 @@ describe("highlight (lazy-load + code toolbar)", () => {
   describe("getCodeText", () => {
     it("extracts text content from a code block wrapper", () => {
       const el = globalThis.document.createElement("div");
-      el.innerHTML = '<div class="code-block-wrapper"><div class="code-toolbar"></div><pre><code>hello world</code></pre></div>';
+      el.innerHTML =
+        '<div class="code-block-wrapper"><div class="code-toolbar"></div><pre><code>hello world</code></pre></div>';
       const code = el.querySelector("code")!;
       assert.equal(code.textContent, "hello world");
     });
@@ -119,7 +120,8 @@ describe("highlight (lazy-load + code toolbar)", () => {
 
     it("copies code text to clipboard on copy button click", async () => {
       const el = globalThis.document.createElement("div");
-      el.innerHTML = '<div class="code-block-wrapper"><div class="code-toolbar"><button class="copy-btn">cp</button></div><pre><code>const x = 1;</code></pre></div>';
+      el.innerHTML =
+        '<div class="code-block-wrapper"><div class="code-toolbar"><button class="copy-btn">cp</button></div><pre><code>const x = 1;</code></pre></div>';
       dom.messages.appendChild(el);
 
       const btn = el.querySelector(".copy-btn") as HTMLElement;
@@ -128,18 +130,21 @@ describe("highlight (lazy-load + code toolbar)", () => {
       btn.click();
 
       // Give the clipboard promise time to resolve
-      await new Promise(r => setTimeout(r, 10));
+      await new Promise((r) => setTimeout(r, 10));
       assert.equal(clipboardText, "const x = 1;");
       dom.messages.removeEventListener("click", highlight.handleCopyClick);
     });
 
     it("ignores clicks on non-copy-btn elements", () => {
       const el = globalThis.document.createElement("div");
-      el.innerHTML = '<div class="code-block-wrapper"><div class="code-toolbar"><span class="code-lang">js</span></div><pre><code>x</code></pre></div>';
+      el.innerHTML =
+        '<div class="code-block-wrapper"><div class="code-toolbar"><span class="code-lang">js</span></div><pre><code>x</code></pre></div>';
       dom.messages.appendChild(el);
 
       const lang = el.querySelector(".code-lang")!;
-      const event = new globalThis.window.MouseEvent("click", { bubbles: true });
+      const event = new globalThis.window.MouseEvent("click", {
+        bubbles: true,
+      });
       Object.defineProperty(event, "target", { value: lang });
       highlight.handleCopyClick(event);
       assert.equal(clipboardText, null);

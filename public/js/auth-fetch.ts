@@ -42,7 +42,7 @@ function isAuthedApiCall(url: string): boolean {
 function extractInputUrl(input: RequestInfo | URL): string {
   if (typeof input === "string") return input;
   if (input instanceof URL) return input.toString();
-  return (input as Request).url;
+  return input.url;
 }
 
 export function installAuthFetch(opts: AuthFetchOptions = {}): () => void {
@@ -50,7 +50,7 @@ export function installAuthFetch(opts: AuthFetchOptions = {}): () => void {
   const onUnauthorized = opts.onUnauthorized ?? defaultRedirect;
 
   // Stash original so uninstall can restore.
-  if (!originalFetch) originalFetch = globalThis.fetch;
+  originalFetch ??= globalThis.fetch;
 
   const wrapped: typeof fetch = async (input, init) => {
     const url = extractInputUrl(input);
@@ -61,12 +61,10 @@ export function installAuthFetch(opts: AuthFetchOptions = {}): () => void {
       const token = localStorage.getItem(TOKEN_STORAGE_KEY);
       if (token) {
         // Merge in our header without clobbering an explicit one.
-        const baseHeaders = init?.headers
-          ? init.headers
-          : input instanceof Request
-            ? input.headers
-            : undefined;
-        const headers = new Headers(baseHeaders as HeadersInit | undefined);
+        const baseHeaders =
+          init?.headers ??
+          (input instanceof Request ? input.headers : undefined);
+        const headers = new Headers(baseHeaders);
         if (!headers.has("Authorization")) {
           headers.set("Authorization", `Bearer ${token}`);
         }

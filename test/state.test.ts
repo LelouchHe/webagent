@@ -29,7 +29,15 @@ describe("state", () => {
   describe("config helpers", () => {
     beforeEach(() => {
       mod.state.configOptions = [
-        { id: "model", name: "Model", currentValue: "sonnet", options: [{ value: "sonnet", name: "Sonnet" }, { value: "opus", name: "Opus" }] },
+        {
+          id: "model",
+          name: "Model",
+          currentValue: "sonnet",
+          options: [
+            { value: "sonnet", name: "Sonnet" },
+            { value: "opus", name: "Opus" },
+          ],
+        },
         { id: "mode", name: "Mode", currentValue: "agent", options: [] },
       ];
     });
@@ -55,7 +63,9 @@ describe("state", () => {
     });
 
     it("updateConfigOptions replaces all options", () => {
-      const newOpts = [{ id: "new", name: "New", currentValue: "x", options: [] }];
+      const newOpts = [
+        { id: "new", name: "New", currentValue: "x", options: [] },
+      ];
       mod.updateConfigOptions(newOpts);
       assert.equal(mod.state.configOptions.length, 1);
       assert.equal(mod.getConfigOption("new").name, "New");
@@ -84,14 +94,18 @@ describe("state", () => {
 
   describe("updateModeUI", () => {
     it("adds plan-mode class for plan mode", () => {
-      mod.state.configOptions = [{ id: "mode", currentValue: "mode#plan", options: [] }];
+      mod.state.configOptions = [
+        { id: "mode", currentValue: "mode#plan", options: [] },
+      ];
       mod.updateModeUI();
       assert.ok(mod.dom.inputArea.classList.contains("plan-mode"));
       assert.ok(!mod.dom.inputArea.classList.contains("autopilot-mode"));
     });
 
     it("adds autopilot-mode class for autopilot mode", () => {
-      mod.state.configOptions = [{ id: "mode", currentValue: "mode#autopilot", options: [] }];
+      mod.state.configOptions = [
+        { id: "mode", currentValue: "mode#autopilot", options: [] },
+      ];
       mod.updateModeUI();
       assert.ok(mod.dom.inputArea.classList.contains("autopilot-mode"));
       assert.ok(!mod.dom.inputArea.classList.contains("plan-mode"));
@@ -99,7 +113,9 @@ describe("state", () => {
 
     it("removes mode classes for agent mode", () => {
       mod.dom.inputArea.classList.add("plan-mode");
-      mod.state.configOptions = [{ id: "mode", currentValue: "agent", options: [] }];
+      mod.state.configOptions = [
+        { id: "mode", currentValue: "agent", options: [] },
+      ];
       mod.updateModeUI();
       assert.ok(!mod.dom.inputArea.classList.contains("plan-mode"));
       assert.ok(!mod.dom.inputArea.classList.contains("autopilot-mode"));
@@ -117,12 +133,12 @@ describe("state", () => {
       mod.state.sessionId = "existing-id";
       mod.requestNewSession();
       assert.equal(mod.state.awaitingNewSession, true);
-      await new Promise(r => setTimeout(r, 0));
+      await new Promise((r) => setTimeout(r, 0));
 
       assert.equal(calls.length, 1);
       assert.equal(calls[0].url, "/api/v1/sessions");
-      assert.equal(calls[0].init?.method, "POST");
-      const body = JSON.parse(calls[0].init?.body as string);
+      assert.equal(calls[0].init!.method, "POST");
+      const body = JSON.parse(calls[0].init!.body as string);
       assert.equal(body.inheritFromSessionId, "existing-id");
     });
 
@@ -134,7 +150,7 @@ describe("state", () => {
       }) as any;
 
       mod.requestNewSession({ cwd: "/tmp" });
-      await new Promise(r => setTimeout(r, 0));
+      await new Promise((r) => setTimeout(r, 0));
 
       const body = JSON.parse(calls[0].init?.body as string);
       assert.equal(body.cwd, "/tmp");
@@ -175,7 +191,9 @@ describe("state", () => {
     it("clears session title and metadata", () => {
       mod.state.sessionTitle = "Old Title";
       mod.state.sessionCwd = "/old/path";
-      mod.state.configOptions = [{ id: "model", name: "Model", currentValue: "x", options: [] }];
+      mod.state.configOptions = [
+        { id: "model", name: "Model", currentValue: "x", options: [] },
+      ];
       mod.dom.sessionInfo.textContent = "Old Title";
       document.title = "Old Title";
 
@@ -202,7 +220,7 @@ describe("state", () => {
       mod.state.currentBashEl = null;
 
       assert.equal(mod.sendCancel(), true);
-      await new Promise(r => setTimeout(r, 0));
+      await new Promise((r) => setTimeout(r, 0));
 
       assert.equal(calls.length, 1);
       assert.equal(calls[0].url, "/api/v1/sessions/s1/cancel");
@@ -221,7 +239,7 @@ describe("state", () => {
       mod.state.currentBashEl = {};
 
       assert.equal(mod.sendCancel(), true);
-      await new Promise(r => setTimeout(r, 0));
+      await new Promise((r) => setTimeout(r, 0));
 
       assert.equal(calls[0].url, "/api/v1/sessions/s1/cancel");
     });
@@ -258,7 +276,11 @@ describe("state", () => {
   });
 
   describe("snapshot / state_patch", () => {
-    function snap(seq: number, busy: any, sessionExtras: Record<string, any> = {}) {
+    function snap(
+      seq: number,
+      busy: any,
+      sessionExtras: Record<string, any> = {},
+    ) {
       return {
         version: 1,
         seq,
@@ -295,7 +317,9 @@ describe("state", () => {
       mod.state.lastStateSeq = 5;
       const ok = mod.applyStatePatch({
         seq: 6,
-        patch: { runtime: { busy: { kind: "agent", since: "", promptId: null } } },
+        patch: {
+          runtime: { busy: { kind: "agent", since: "", promptId: null } },
+        },
       });
       assert.equal(ok, true);
       assert.equal(mod.state.lastStateSeq, 6);
@@ -307,7 +331,9 @@ describe("state", () => {
       mod.setBusy(false);
       const ok = mod.applyStatePatch({
         seq: 8,
-        patch: { runtime: { busy: { kind: "agent", since: "", promptId: null } } },
+        patch: {
+          runtime: { busy: { kind: "agent", since: "", promptId: null } },
+        },
       });
       assert.equal(ok, false);
       assert.equal(mod.state.lastStateSeq, 5);
@@ -317,16 +343,26 @@ describe("state", () => {
     it("applyStatePatch with null busy clears busy", () => {
       mod.state.lastStateSeq = 2;
       mod.setBusy(true);
-      const ok = mod.applyStatePatch({ seq: 3, patch: { runtime: { busy: null } } });
+      const ok = mod.applyStatePatch({
+        seq: 3,
+        patch: { runtime: { busy: null } },
+      });
       assert.equal(ok, true);
       assert.equal(mod.state.busy, false);
     });
 
     it("reloadSnapshot applies fetched snapshot", async () => {
-      const body = JSON.stringify(snap(11, { kind: "bash", since: "", promptId: null }));
+      const body = JSON.stringify(
+        snap(11, { kind: "bash", since: "", promptId: null }),
+      );
       globalThis.fetch = (async (url: string) => {
         assert.ok(url.endsWith("/snapshot"));
-        return { ok: true, status: 200, text: async () => body, json: async () => JSON.parse(body) };
+        return {
+          ok: true,
+          status: 200,
+          text: async () => body,
+          json: async () => JSON.parse(body),
+        };
       }) as any;
       const result = await mod.reloadSnapshot("s1");
       assert.ok(result);
@@ -335,7 +371,9 @@ describe("state", () => {
     });
 
     it("reloadSnapshot returns null on failure", async () => {
-      globalThis.fetch = (async () => { throw new Error("net"); }) as any;
+      globalThis.fetch = async () => {
+        throw new Error("net");
+      };
       const result = await mod.reloadSnapshot("s1");
       assert.equal(result, null);
     });
@@ -349,11 +387,17 @@ describe("state", () => {
       mod.setBusy(false);
 
       let resolveA: (v: unknown) => void = () => {};
-      const aPending = new Promise((res) => { resolveA = res; });
+      const aPending = new Promise((res) => {
+        resolveA = res;
+      });
       const snapA = snap(5, { kind: "agent", since: "", promptId: null });
       globalThis.fetch = (async () => {
         await aPending;
-        return { ok: true, status: 200, text: async () => JSON.stringify(snapA) };
+        return {
+          ok: true,
+          status: 200,
+          text: async () => JSON.stringify(snapA),
+        };
       }) as any;
 
       const pA = mod.reloadSnapshot("A");
@@ -366,8 +410,16 @@ describe("state", () => {
       const res = await pA;
 
       assert.equal(res, null, "stale snapshot should be discarded");
-      assert.equal(mod.state.lastStateSeq, 100, "lastStateSeq must not be clobbered");
-      assert.equal(mod.state.busy, false, "busy must not flip from stale snapshot");
+      assert.equal(
+        mod.state.lastStateSeq,
+        100,
+        "lastStateSeq must not be clobbered",
+      );
+      assert.equal(
+        mod.state.busy,
+        false,
+        "busy must not flip from stale snapshot",
+      );
     });
 
     it("reloadSnapshot still applies when no switch happened during fetch", async () => {
@@ -375,9 +427,13 @@ describe("state", () => {
       mod.setBusy(false);
       const startGen = mod.state.sessionSwitchGen;
 
-      const body = JSON.stringify(snap(9, { kind: "agent", since: "", promptId: null }));
+      const body = JSON.stringify(
+        snap(9, { kind: "agent", since: "", promptId: null }),
+      );
       globalThis.fetch = (async () => ({
-        ok: true, status: 200, text: async () => body,
+        ok: true,
+        status: 200,
+        text: async () => body,
       })) as any;
 
       const result = await mod.reloadSnapshot("A");
@@ -397,17 +453,33 @@ describe("state", () => {
 
     it("applySnapshot does NOT overwrite fallback when configOptions populated", () => {
       mod.state.configOptions = [
-        { id: "mode", name: "Mode", currentValue: "#autopilot", options: [{ value: "#autopilot", name: "auto" }] },
+        {
+          id: "mode",
+          name: "Mode",
+          currentValue: "#autopilot",
+          options: [{ value: "#autopilot", name: "auto" }],
+        },
       ];
       mod.applySnapshot(snap(1, null, { mode: "#plan", model: "gpt-5.4" }));
-      assert.equal(mod.getFallback("mode"), null, "fallback must remain unset when configOptions wins");
+      assert.equal(
+        mod.getFallback("mode"),
+        null,
+        "fallback must remain unset when configOptions wins",
+      );
     });
 
     it("updateConfigOptions clears fallback when populated non-empty", () => {
-      mod.setFallbackFromSnapshot({ session: { mode: "#plan", model: "gpt-5.4" } });
+      mod.setFallbackFromSnapshot({
+        session: { mode: "#plan", model: "gpt-5.4" },
+      });
       assert.equal(mod.getFallback("mode"), "#plan");
       mod.updateConfigOptions([
-        { id: "mode", name: "Mode", currentValue: "#autopilot", options: [{ value: "#autopilot", name: "auto" }] },
+        {
+          id: "mode",
+          name: "Mode",
+          currentValue: "#autopilot",
+          options: [{ value: "#autopilot", name: "auto" }],
+        },
       ]);
       assert.equal(mod.getFallback("mode"), null);
     });

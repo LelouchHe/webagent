@@ -4,7 +4,11 @@ import http from "node:http";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createRequestHandler, HTML_ENTRYPOINTS, CSP_POLICY } from "../src/routes.ts";
+import {
+  createRequestHandler,
+  HTML_ENTRYPOINTS,
+  CSP_POLICY,
+} from "../src/routes.ts";
 import { Store } from "../src/store.ts";
 
 /**
@@ -18,11 +22,19 @@ import { Store } from "../src/store.ts";
  *   - Loosened CSP_POLICY (intentional? update assertions and security review).
  */
 
-async function fetchPath(port: number, path: string): Promise<{ status: number; headers: Record<string, string | string[] | undefined> }> {
+async function fetchPath(
+  port: number,
+  path: string,
+): Promise<{
+  status: number;
+  headers: Record<string, string | string[] | undefined>;
+}> {
   return new Promise((resolve, reject) => {
     const req = http.get({ host: "127.0.0.1", port, path }, (res) => {
       res.on("data", () => {});
-      res.on("end", () => resolve({ status: res.statusCode ?? 0, headers: res.headers as Record<string, string | string[] | undefined> }));
+      res.on("end", () =>
+        resolve({ status: res.statusCode ?? 0, headers: res.headers }),
+      );
     });
     req.on("error", reject);
   });
@@ -41,7 +53,10 @@ describe("CSP header on HTML entrypoints", () => {
     mkdirSync(publicDir);
     // Stub each HTML entrypoint file
     for (const entry of HTML_ENTRYPOINTS) {
-      writeFileSync(join(publicDir, entry.file), `<!DOCTYPE html><html><body>${entry.file}</body></html>`);
+      writeFileSync(
+        join(publicDir, entry.file),
+        `<!DOCTYPE html><html><body>${entry.file}</body></html>`,
+      );
     }
     store = new Store(join(tmpDir, "test.db"));
     const handler = createRequestHandler({
@@ -52,7 +67,9 @@ describe("CSP header on HTML entrypoints", () => {
       limits: { bash_output: 1024, image_upload: 1024 },
     });
     server = http.createServer(handler);
-    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    await new Promise<void>((resolve) =>
+      server.listen(0, "127.0.0.1", resolve),
+    );
     port = (server.address() as { port: number }).port;
   });
 
@@ -68,7 +85,11 @@ describe("CSP header on HTML entrypoints", () => {
       assert.equal(res.status, 200, `expected 200 for ${entry.urlPath}`);
       const csp = res.headers["content-security-policy"];
       assert.ok(csp, `missing CSP header on ${entry.urlPath}`);
-      assert.equal(csp, CSP_POLICY, `CSP header on ${entry.urlPath} differs from CSP_POLICY constant`);
+      assert.equal(
+        csp,
+        CSP_POLICY,
+        `CSP header on ${entry.urlPath} differs from CSP_POLICY constant`,
+      );
     });
   }
 
@@ -91,8 +112,14 @@ describe("CSP header on HTML entrypoints", () => {
   });
 
   it("CSP does NOT include unsafe-inline or unsafe-eval", () => {
-    assert.ok(!CSP_POLICY.includes("unsafe-inline"), "CSP_POLICY must not include 'unsafe-inline' (would allow inline scripts/styles)");
-    assert.ok(!CSP_POLICY.includes("unsafe-eval"), "CSP_POLICY must not include 'unsafe-eval' (would allow eval/Function)");
+    assert.ok(
+      !CSP_POLICY.includes("unsafe-inline"),
+      "CSP_POLICY must not include 'unsafe-inline' (would allow inline scripts/styles)",
+    );
+    assert.ok(
+      !CSP_POLICY.includes("unsafe-eval"),
+      "CSP_POLICY must not include 'unsafe-eval' (would allow eval/Function)",
+    );
   });
 
   it("does NOT emit CSP header on non-HTML static assets", async () => {
@@ -102,5 +129,5 @@ describe("CSP header on HTML entrypoints", () => {
     assert.equal(res.status, 200);
     assert.equal(res.headers["content-security-policy"], undefined);
   });
-// CSP not added on non-HTML static assets verified above.
+  // CSP not added on non-HTML static assets verified above.
 });

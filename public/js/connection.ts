@@ -1,29 +1,50 @@
 // SSE + REST connection lifecycle (passive WS kept for backward-compat send)
 
-import { state, setBusy, getHashSessionId, requestNewSession, resetSessionUI, setConnectionStatus, clearCancelTimer, reloadSnapshot } from './state.ts';
-import { addSystem, finishThinking, finishAssistant, finishBash, scrollToBottom } from './render.ts';
-import { handleEvent, loadHistory, loadNewEvents, fallbackToNextSession } from './events.ts';
-import * as api from './api.ts';
-import { applyConnectedLogLevel } from './log.ts';
+import {
+  state,
+  setBusy,
+  getHashSessionId,
+  requestNewSession,
+  resetSessionUI,
+  setConnectionStatus,
+  clearCancelTimer,
+  reloadSnapshot,
+} from "./state.ts";
+import {
+  addSystem,
+  finishThinking,
+  finishAssistant,
+  finishBash,
+  scrollToBottom,
+} from "./render.ts";
+import {
+  handleEvent,
+  loadHistory,
+  loadNewEvents,
+  fallbackToNextSession,
+} from "./events.ts";
+import * as api from "./api.ts";
+import { applyConnectedLogLevel } from "./log.ts";
 
 /** If the browser has an active push subscription, tell the server which
  *  clientId owns it so per-subscription visibility filtering works. */
 async function registerPushEndpoint(clientId: string) {
   try {
-    const reg = await navigator.serviceWorker?.ready;
-    if (!reg) return;
+    const reg = await navigator.serviceWorker.ready;
     const sub = await reg.pushManager.getSubscription();
     if (!sub) return;
-    await fetch('/api/beta/push/register-client', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+    await fetch("/api/beta/push/register-client", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ clientId, endpoint: sub.endpoint }),
     });
-  } catch { /* best-effort */ }
+  } catch {
+    /* best-effort */
+  }
 }
 
 export function connect() {
-  setConnectionStatus('connecting', 'connecting');
+  setConnectionStatus("connecting", "connecting");
 
   // SSE for receiving server events. EventSource cannot send Authorization,
   // so we exchange a Bearer for a single-use 60s ticket first, then open
@@ -32,7 +53,7 @@ export function connect() {
 }
 
 async function openStream() {
-  let ticket = '';
+  let ticket: string;
   try {
     const resp = await api.mintSseTicket();
     ticket = resp.ticket;
@@ -43,21 +64,32 @@ async function openStream() {
     return;
   }
 
-  const es = new EventSource(`/api/v1/events/stream?ticket=${encodeURIComponent(ticket)}`);
+  const es = new EventSource(
+    `/api/v1/events/stream?ticket=${encodeURIComponent(ticket)}`,
+  );
   state.eventSource = es;
 
-  es.onmessage = async (e: MessageEvent) => {
-    const msg = JSON.parse(e.data);
+  es.onmessage = (e: MessageEvent) => {
+    const msg = JSON.parse(e.data as string) as {
+      type: string;
+      clientId?: string;
+      agent?: unknown;
+      debugLevel?: string;
+    };
     // SSE initial handshake: server assigns clientId (no agent field)
-    if (msg.type === 'connected' && msg.clientId) {
+    if (msg.type === "connected" && msg.clientId) {
       state.clientId = msg.clientId;
-      applyConnectedLogLevel((msg as unknown as { debugLevel?: string }).debugLevel);
-      api.postVisibility(msg.clientId, !document.hidden, state.sessionId ?? undefined).catch(() => {});
-      registerPushEndpoint(msg.clientId);
+      applyConnectedLogLevel(msg.debugLevel);
+      void api.postVisibility(
+        msg.clientId,
+        !document.hidden,
+        state.sessionId ?? undefined,
+      );
+      void registerPushEndpoint(msg.clientId);
       // Bridge-originated connected events also carry agent info — pass through
       if (!msg.agent) return;
     }
-    handleEvent(msg);
+    handleEvent(msg as unknown as import("../../src/types.ts").AgentEvent);
   };
 
   es.onerror = () => {
@@ -75,18 +107,18 @@ async function openStream() {
   // server correctly expires the ghost. Binding INSIDE connect() pins the
   // listener to this specific EventSource — on reconnect the old one is
   // GC'd with its parent; we install a fresh listener on the fresh `es`.
-  es.addEventListener('heartbeat', () => {
+  es.addEventListener("heartbeat", () => {
     if (!state.clientId) return;
     if (document.hidden) return; // visibilitychange owns the hidden path
-    api.postVisibility(state.clientId, true, state.sessionId ?? undefined).catch(() => {});
+    void api.postVisibility(state.clientId, true, state.sessionId ?? undefined);
   });
 
   // Load session immediately via REST — parallel with SSE connection
-  initSession();
+  void initSession();
 }
 
 async function initSession() {
-  setConnectionStatus('connecting', 'session loading');
+  setConnectionStatus("connecting", "session loading");
   const gen = state.sessionSwitchGen;
 
   const existingId = getHashSessionId();
@@ -110,7 +142,7 @@ async function initSession() {
 
   // No session in URL — try to resume last active session
   try {
-    const sessions = await api.listSessions() as Array<{ id: string }>;
+    const sessions = (await api.listSessions()) as Array<{ id: string }>;
     if (gen !== state.sessionSwitchGen) return;
     if (sessions.length > 0) {
       resetSessionUI();
@@ -119,21 +151,27 @@ async function initSession() {
       scrollToBottom(true);
       return;
     }
-  } catch {}
+  } catch {
+    /* best effort */
+  }
 
   if (gen !== state.sessionSwitchGen) return;
   // No previous sessions — create new
   requestNewSession();
 }
 
-async function resumeAndLoad(sessionId: string, incremental: boolean, gen: number) {
+async function resumeAndLoad(
+  sessionId: string,
+  incremental: boolean,
+  gen: number,
+) {
   if (incremental) {
     // Incremental: need session details first (for config), then catch-up events
     try {
-      const session = await api.getSession(sessionId) as Record<string, unknown>;
+      const session = await api.getSession(sessionId);
       if (gen !== state.sessionSwitchGen) return;
       handleEvent({
-        type: 'session_created',
+        type: "session_created",
         sessionId: session.id as string,
         cwd: session.cwd as string,
         title: session.title as string | null,
@@ -141,15 +179,12 @@ async function resumeAndLoad(sessionId: string, incremental: boolean, gen: numbe
       });
     } catch {
       if (gen !== state.sessionSwitchGen) return;
-      await fallbackToNextSession(sessionId, state.sessionCwd || undefined);
+      await fallbackToNextSession(sessionId, state.sessionCwd ?? undefined);
       return;
     }
     if (gen !== state.sessionSwitchGen) return;
     // Load snapshot in parallel with catch-up events (runtime state vs history)
-    await Promise.all([
-      reloadSnapshot(sessionId),
-      loadNewEvents(sessionId),
-    ]);
+    await Promise.all([reloadSnapshot(sessionId), loadNewEvents(sessionId)]);
   } else {
     // Full load: fetch session details and history in parallel
     state.sessionId = null;
@@ -158,7 +193,7 @@ async function resumeAndLoad(sessionId: string, incremental: boolean, gen: numbe
     let session: Record<string, unknown>;
     try {
       const [s, loaded] = await Promise.all([
-        api.getSession(sessionId) as Promise<Record<string, unknown>>,
+        api.getSession(sessionId),
         historyPromise,
       ]);
       // Wait for snapshot but don't fail the whole load if it fails
@@ -166,15 +201,15 @@ async function resumeAndLoad(sessionId: string, incremental: boolean, gen: numbe
       if (gen !== state.sessionSwitchGen) return;
       session = s;
       if (!loaded) {
-        addSystem('warn: Failed to load history.');
+        addSystem("warn: Failed to load history.");
       }
     } catch {
       if (gen !== state.sessionSwitchGen) return;
-      await fallbackToNextSession(sessionId, state.sessionCwd || undefined);
+      await fallbackToNextSession(sessionId, state.sessionCwd ?? undefined);
       return;
     }
     handleEvent({
-      type: 'session_created',
+      type: "session_created",
       sessionId: session.id as string,
       cwd: session.cwd as string,
       title: session.title as string | null,
@@ -184,12 +219,14 @@ async function resumeAndLoad(sessionId: string, incremental: boolean, gen: numbe
 }
 
 function cleanup() {
-  setConnectionStatus('disconnected', 'disconnected');
+  setConnectionStatus("disconnected", "disconnected");
   state.eventSource = null;
   state.clientId = null;
   finishThinking();
   finishAssistant();
-  if (state.currentBashEl) { finishBash(state.currentBashEl, null, 'disconnected'); }
+  if (state.currentBashEl) {
+    finishBash(state.currentBashEl, null, "disconnected");
+  }
   state.pendingToolCallIds.clear();
   state.pendingPermissionRequestIds.clear();
   state.pendingPromptDone = false;
@@ -210,8 +247,8 @@ function postHiddenBeacon(clientId: string, sessionId: string | null): void {
   const payload = JSON.stringify({ visible: false, sessionId });
   try {
     void fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
       body: payload,
       keepalive: true,
     }).catch(() => {});
@@ -220,29 +257,39 @@ function postHiddenBeacon(clientId: string, sessionId: string | null): void {
   }
 }
 
-document.addEventListener('visibilitychange', () => {
+document.addEventListener("visibilitychange", () => {
   if (state.clientId) {
     if (document.hidden) {
       postHiddenBeacon(state.clientId, state.sessionId ?? null);
     } else {
-      api.postVisibility(state.clientId, true, state.sessionId ?? undefined).catch(() => {});
+      void api.postVisibility(
+        state.clientId,
+        true,
+        state.sessionId ?? undefined,
+      );
     }
   }
   // Sync missed events + runtime state when returning from background (iOS
   // can keep connections alive while suspending event delivery, silently
   // losing server messages). Reload snapshot is cheap and authoritative for
   // runtime fields (busy).
-  if (!document.hidden && state.sessionId && state.lastEventSeq > 0 && !state.replayInProgress) {
+  if (
+    !document.hidden &&
+    state.sessionId &&
+    state.lastEventSeq > 0 &&
+    !state.replayInProgress
+  ) {
     const sid = state.sessionId;
-    Promise.all([reloadSnapshot(sid), loadNewEvents(sid)])
-      .then(() => scrollToBottom(false));
+    void Promise.all([reloadSnapshot(sid), loadNewEvents(sid)]).then(() =>
+      scrollToBottom(false),
+    );
   }
 });
 
 // pagehide: secondary best-effort signal for bfcache/navigation. Not
 // relied on for iOS cold-kill (WebKit doesn't fire pagehide on OS-level
 // process termination), but cheap extra coverage for normal navigations.
-window.addEventListener('pagehide', () => {
+window.addEventListener("pagehide", () => {
   if (state.clientId) {
     postHiddenBeacon(state.clientId, state.sessionId ?? null);
   }

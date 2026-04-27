@@ -137,9 +137,9 @@ describe("build output: hljs split", () => {
   });
 
   it("after a second build with different source, retained old app.[hash].js's chunks still exist", () => {
-    const before = appBundles();
-    assert.ok(before.length >= 1, "no app bundles after first build");
-    const oldApp = before[0];
+    const beforeBuild = appBundles();
+    assert.ok(beforeBuild.length >= 1, "no app bundles after first build");
+    const oldApp = beforeBuild[0];
     const oldChunks = extractChunkRefs(
       readFileSync(join(DIST, "js", oldApp), "utf-8"),
     );
@@ -149,7 +149,10 @@ describe("build output: hljs split", () => {
     );
 
     // Force a different hash by appending a unique comment to app.ts.
-    writeFileSync(APP_TS, originalAppTs + `\n// build-test marker ${Date.now()}\n`);
+    writeFileSync(
+      APP_TS,
+      originalAppTs + `\n// build-test marker ${Date.now()}\n`,
+    );
 
     runBuild();
 

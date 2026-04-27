@@ -63,12 +63,12 @@ export class SseManager {
       for (const client of this.clients.values()) {
         if (client.res.writableEnded) continue;
         // Close any stream whose backing token has been revoked.
-        if (
-          client.tokenName &&
-          this.isTokenRevoked &&
-          this.isTokenRevoked(client.tokenName)
-        ) {
-          try { client.res.end(); } catch { /* already torn down */ }
+        if (client.tokenName && this.isTokenRevoked?.(client.tokenName)) {
+          try {
+            client.res.end();
+          } catch {
+            /* already torn down */
+          }
           this.remove(client.id);
           continue;
         }
@@ -140,7 +140,9 @@ export class SseManager {
    * Global clients get all events. Per-session clients only get events for their session.
    */
   broadcast(event: AgentEvent): void {
-    const sessionId = (event as Record<string, unknown>).sessionId as string | undefined;
+    const sessionId = (event as Record<string, unknown>).sessionId as
+      | string
+      | undefined;
     const snapshot = [...this.clients.values()];
     for (const client of snapshot) {
       if (client.res.writableEnded) continue;

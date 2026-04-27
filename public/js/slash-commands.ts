@@ -5,16 +5,22 @@
 // `ack` child both list messages), assign a shared function reference.
 
 import {
-  state, dom, resetSessionUI, requestNewSession, sendCancel,
-  getConfigOption, getConfigValue, updateModeUI, updateStatusBar,
-} from './state.ts';
-import { addSystem, scrollToBottom, formatLocalTime } from './render.ts';
-import { loadHistory, handleEvent, fallbackToNextSession } from './events.ts';
-import * as api from './api.ts';
-import { log, setLogLevel, getLogLevel, type LogLevel } from './log.ts';
-import type { CmdNode } from './slash-tree.ts';
-import type { SessionSummary } from '../../src/types.ts';
-import { TOKEN_STORAGE_KEY } from './login-core.ts';
+  state,
+  resetSessionUI,
+  requestNewSession,
+  sendCancel,
+  getConfigOption,
+  getConfigValue,
+  updateModeUI,
+  updateStatusBar,
+} from "./state.ts";
+import { addSystem, scrollToBottom, formatLocalTime } from "./render.ts";
+import { loadHistory, handleEvent, fallbackToNextSession } from "./events.ts";
+import * as api from "./api.ts";
+import { log, setLogLevel, getLogLevel, type LogLevel } from "./log.ts";
+import type { CmdNode } from "./slash-tree.ts";
+import type { SessionSummary } from "../../src/types.ts";
+import { TOKEN_STORAGE_KEY } from "./login-core.ts";
 
 // --- shared helpers used by onSelect handlers ---
 
@@ -22,14 +28,16 @@ let notifyActive = false;
 
 async function refreshNotifyActive(): Promise<void> {
   try {
-    const reg = await navigator.serviceWorker?.ready;
-    notifyActive = reg ? (await reg.pushManager.getSubscription()) !== null : false;
-  } catch { notifyActive = false; }
+    const reg = await navigator.serviceWorker.ready;
+    notifyActive = (await reg.pushManager.getSubscription()) !== null;
+  } catch {
+    notifyActive = false;
+  }
 }
 
 function urlBase64ToUint8Array(base64String: string): Uint8Array {
-  const padding = '='.repeat((4 - base64String.length % 4) % 4);
-  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
   const raw = atob(base64);
   const arr = new Uint8Array(raw.length);
   for (let i = 0; i < raw.length; i++) arr[i] = raw.charCodeAt(i);
@@ -38,57 +46,67 @@ function urlBase64ToUint8Array(base64String: string): Uint8Array {
 
 async function subscribePush(): Promise<void> {
   try {
-    const reg = await navigator.serviceWorker?.ready;
-    if (!reg) return;
-    const res = await fetch('/api/beta/push/vapid-key');
+    const reg = await navigator.serviceWorker.ready;
+    const res = await fetch("/api/beta/push/vapid-key");
     if (!res.ok) return;
-    const { publicKey } = await res.json();
+    const { publicKey } = (await res.json()) as { publicKey: string };
     const sub = await reg.pushManager.subscribe({
       userVisibleOnly: true,
       applicationServerKey: urlBase64ToUint8Array(publicKey),
     });
     const json = sub.toJSON();
-    await fetch('/api/beta/push/subscribe', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ endpoint: json.endpoint, keys: json.keys, clientId: state.clientId }),
+    await fetch("/api/beta/push/subscribe", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        endpoint: json.endpoint,
+        keys: json.keys,
+        clientId: state.clientId,
+      }),
     });
   } catch (err) {
-    log.scope('push').error('subscribe failed', { err });
+    log.scope("push").error("subscribe failed", { err });
   }
 }
 
 async function unsubscribePush(): Promise<void> {
   try {
-    const reg = await navigator.serviceWorker?.ready;
-    if (!reg) return;
+    const reg = await navigator.serviceWorker.ready;
     const sub = await reg.pushManager.getSubscription();
     if (!sub) return;
     const endpoint = sub.endpoint;
     await sub.unsubscribe();
-    await fetch('/api/beta/push/unsubscribe', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+    await fetch("/api/beta/push/unsubscribe", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ endpoint }),
     });
   } catch (err) {
-    log.scope('push').error('unsubscribe failed', { err });
+    log.scope("push").error("unsubscribe failed", { err });
   }
 }
 
 // --- shared data fetchers (keep call sites identical for /inbox + /inbox dismiss) ---
 
 async function listSessions(): Promise<SessionSummary[]> {
-  const res = await fetch('/api/v1/sessions');
-  return res.json();
+  const res = await fetch("/api/v1/sessions");
+  return res.json() as Promise<SessionSummary[]>;
 }
 
-interface PathItem { cwd: string; time: string }
+interface PathItem {
+  cwd: string;
+  time: string;
+}
 async function listRecentPaths(): Promise<PathItem[]> {
-  const limit = state.recentPathsLimit || 0;
-  const url = limit > 0 ? `/api/v1/recent-paths?limit=${limit}` : '/api/v1/recent-paths';
+  const limit = state.recentPathsLimit;
+  const url =
+    limit > 0 ? `/api/v1/recent-paths?limit=${limit}` : "/api/v1/recent-paths";
   const res = await fetch(url);
-  return (await res.json()).map((p: { cwd: string; last_used_at: string }) => ({
+  const data = (await res.json()) as Array<{
+    cwd: string;
+    last_used_at: string;
+  }>;
+  return data.map((p) => ({
     cwd: p.cwd,
     time: p.last_used_at,
   }));
@@ -110,12 +128,12 @@ async function switchToSession(id: string): Promise<void> {
   state.sessionId = null;
   try {
     const [session, loaded] = await Promise.all([
-      api.getSession(id) as Promise<Record<string, unknown>>,
+      api.getSession(id),
       loadHistory(id),
     ]);
     if (gen !== state.sessionSwitchGen) return;
     handleEvent({
-      type: 'session_created',
+      type: "session_created",
       sessionId: session.id as string,
       cwd: session.cwd as string,
       title: session.title as string | null,
@@ -125,17 +143,22 @@ async function switchToSession(id: string): Promise<void> {
   } catch {
     resetSessionUI();
     state.sessionId = null;
-    addSystem('err: Failed to switch session');
+    addSystem("err: Failed to switch session");
   }
 }
 
-async function setConfigAndUpdate(configId: string, value: string, name: string): Promise<void> {
+async function setConfigAndUpdate(
+  configId: string,
+  value: string,
+  name: string,
+): Promise<void> {
   const opt = getConfigOption(configId);
   if (opt) opt.currentValue = value;
   updateModeUI();
   updateStatusBar();
-  addSystem(`${opt?.name || configId} → ${name}`);
-  if (state.sessionId) await api.setConfig(state.sessionId, configId, value).catch(() => {});
+  addSystem(`${opt?.name ?? configId} → ${name}`);
+  if (state.sessionId)
+    await api.setConfig(state.sessionId, configId, value).catch(() => {});
 }
 
 export async function consumeInbox(m: api.InboxMessage): Promise<void> {
@@ -163,18 +186,19 @@ async function ackInbox(m: api.InboxMessage): Promise<void> {
 
 async function createApiToken(name: string): Promise<void> {
   if (!/^[A-Za-z0-9_-]{1,64}$/.test(name)) {
-    addSystem('err: token name must match [A-Za-z0-9_-]{1,64}');
+    addSystem("err: token name must match [A-Za-z0-9_-]{1,64}");
     return;
   }
   try {
     const created = await api.createApiToken(name);
     addSystem(`token: created ${created.name} (${created.scope})`);
     addSystem(`${created.token}`);
-    addSystem('— save this now; it will never be shown again');
+    addSystem("— save this now; it will never be shown again");
   } catch (e) {
     const err = e as api.ApiError;
     if (err.status === 409) addSystem(`err: token "${name}" already exists`);
-    else if (err.status === 403) addSystem('err: admin scope required to manage tokens');
+    else if (err.status === 403)
+      addSystem("err: admin scope required to manage tokens");
     else addSystem(`err: create failed (${err.message})`);
   }
 }
@@ -186,29 +210,31 @@ async function revokeToken(name: string): Promise<void> {
   } catch (e) {
     const err = e as api.ApiError;
     if (err.status === 404) addSystem(`err: no token named "${name}"`);
-    else if (err.status === 403) addSystem('err: admin scope required to manage tokens');
+    else if (err.status === 403)
+      addSystem("err: admin scope required to manage tokens");
     else if (err.status === 400 && /using|yourself|cannot/i.test(err.message)) {
-      addSystem("err: can't revoke the token you're signed in with — use another admin token");
-    }
-    else addSystem(`err: revoke failed (${err.message})`);
+      addSystem(
+        "err: can't revoke the token you're signed in with — use another admin token",
+      );
+    } else addSystem(`err: revoke failed (${err.message})`);
   }
 }
 
 // --- /notify on/off helpers (subcommand pure leaves) ---
 
 async function notifyOn(): Promise<void> {
-  if (typeof Notification === 'undefined') {
-    addSystem('err: notifications not supported in this browser');
+  if (typeof Notification === "undefined") {
+    addSystem("err: notifications not supported in this browser");
     return;
   }
-  if (Notification.permission === 'denied') {
-    addSystem('notify: blocked — allow in browser site settings to enable');
+  if (Notification.permission === "denied") {
+    addSystem("notify: blocked — allow in browser site settings to enable");
     return;
   }
-  if (Notification.permission !== 'granted') {
+  if (Notification.permission !== "granted") {
     const result = await Notification.requestPermission();
-    if (result !== 'granted') {
-      addSystem('notify: blocked — allow in browser site settings to enable');
+    if (result !== "granted") {
+      addSystem("notify: blocked — allow in browser site settings to enable");
       return;
     }
   }
@@ -216,55 +242,63 @@ async function notifyOn(): Promise<void> {
   const alreadyActive = notifyActive;
   await subscribePush();
   notifyActive = true;
-  addSystem(alreadyActive ? 'notify: already enabled' : 'notify: enabled');
+  addSystem(alreadyActive ? "notify: already enabled" : "notify: enabled");
 }
 
 async function notifyOff(): Promise<void> {
   await unsubscribePush();
   notifyActive = false;
-  addSystem('notify: disabled');
+  addSystem("notify: disabled");
 }
 
 // --- ROOT tree ---
 
 export const ROOT: CmdNode = {
-  name: '<root>',
+  name: "<root>",
   children: [
     {
-      name: '/cancel', desc: 'Cancel current response',
+      name: "/cancel",
+      desc: "Cancel current response",
       onSelect: () => {
-        if (state.busy) { sendCancel(); addSystem('^C'); }
-        else addSystem('Nothing to cancel.');
+        if (state.busy) {
+          sendCancel();
+          addSystem("^C");
+        } else addSystem("Nothing to cancel.");
       },
     },
     {
-      name: '/clear', desc: 'Reset session in same cwd',
+      name: "/clear",
+      desc: "Reset session in same cwd",
       onSelect: async () => {
-        if (!state.sessionId) { addSystem('warn: No active session'); return; }
+        if (!state.sessionId) {
+          addSystem("warn: No active session");
+          return;
+        }
         const oldId = state.sessionId;
-        const cwd = state.sessionCwd || undefined;
+        const cwd = state.sessionCwd ?? undefined;
         if (state.busy) sendCancel();
         resetSessionUI();
-        addSystem('Clearing session…');
+        addSystem("Clearing session…");
         state.awaitingNewSession = true;
         try {
           await api.createSession({ cwd, inheritFromSessionId: oldId });
         } catch {
           state.awaitingNewSession = false;
-          addSystem('err: Failed to clear session');
+          addSystem("err: Failed to clear session");
           return;
         }
-        api.deleteSession(oldId).catch(() => {});
+        void api.deleteSession(oldId);
       },
     },
     {
-      name: '/log', desc: 'Set log level',
+      name: "/log",
+      desc: "Set log level",
       fetch: () => [
-        { value: 'off',   name: 'off',   desc: 'Disable logging' },
-        { value: 'error', name: 'error', desc: 'Show errors only' },
-        { value: 'warn',  name: 'warn',  desc: 'Show warnings and errors' },
-        { value: 'info',  name: 'info',  desc: 'Show info, warnings, errors' },
-        { value: 'debug', name: 'debug', desc: 'Show all messages' },
+        { value: "off", name: "off", desc: "Disable logging" },
+        { value: "error", name: "error", desc: "Show errors only" },
+        { value: "warn", name: "warn", desc: "Show warnings and errors" },
+        { value: "info", name: "info", desc: "Show info, warnings, errors" },
+        { value: "debug", name: "debug", desc: "Show all messages" },
       ],
       toSpec: (item) => {
         const o = item as { value: string; name: string; desc: string };
@@ -275,53 +309,59 @@ export const ROOT: CmdNode = {
           onSelect: () => {
             setLogLevel(o.value as LogLevel);
             addSystem(`log: ${o.value}`);
-            if (o.value !== 'off') log.info('log enabled', { level: o.value });
+            if (o.value !== "off") log.info("log enabled", { level: o.value });
           },
         };
       },
     },
     {
-      name: '/exit', desc: 'End current session',
+      name: "/exit",
+      desc: "End current session",
       onSelect: async () => {
-        if (!state.sessionId) { addSystem('warn: No active session'); return; }
+        if (!state.sessionId) {
+          addSystem("warn: No active session");
+          return;
+        }
         const exitId = state.sessionId;
         try {
           if (state.busy) sendCancel();
-          api.deleteSession(exitId).catch(() => {});
-          await fallbackToNextSession(exitId, state.sessionCwd || undefined);
+          void api.deleteSession(exitId);
+          await fallbackToNextSession(exitId, state.sessionCwd ?? undefined);
         } catch {
-          addSystem('err: Failed to exit session');
+          addSystem("err: Failed to exit session");
         }
       },
     },
-    { name: '/help', desc: 'Show help', onSelect: () => printHelp() },
+    { name: "/help", desc: "Show help", onSelect: () => printHelp() },
     {
-      name: '/inbox', desc: 'Manage inbox',
+      name: "/inbox",
+      desc: "Manage inbox",
       fetch: listInbox,
-      toSpec: (item) => {
+      toSpec: (item: unknown) => {
         const m = item as api.InboxMessage;
         const from = m.from_label ?? m.from_ref;
         const time = formatLocalTime(m.created_at);
         return {
-          primary: m.title || '(no title)',
+          primary: m.title,
           secondary: time,
-          path: m.cwd ?? '',
+          path: m.cwd ?? "",
           pathSecondary: from,
           onSelect: () => consumeInbox(m),
         };
       },
       children: [
         {
-          name: 'dismiss', desc: 'Dismiss only',
+          name: "dismiss",
+          desc: "Dismiss only",
           fetch: listInbox,
-          toSpec: (item) => {
+          toSpec: (item: unknown) => {
             const m = item as api.InboxMessage;
             const from = m.from_label ?? m.from_ref;
             const time = formatLocalTime(m.created_at);
             return {
-              primary: m.title || '(no title)',
+              primary: m.title,
               secondary: time,
-              path: m.cwd ?? '',
+              path: m.cwd ?? "",
               pathSecondary: from,
               onSelect: () => ackInbox(m),
             };
@@ -330,28 +370,39 @@ export const ROOT: CmdNode = {
       ],
     },
     {
-      name: '/logout', desc: 'Log out',
+      name: "/logout",
+      desc: "Log out",
       onSelect: () => {
-        try { localStorage.removeItem(TOKEN_STORAGE_KEY); } catch { /* ignore */ }
-        try { state.eventSource?.close(); } catch { /* ignore */ }
-        addSystem('Logged out.');
-        location.replace('/login');
+        try {
+          localStorage.removeItem(TOKEN_STORAGE_KEY);
+        } catch {
+          /* ignore */
+        }
+        try {
+          state.eventSource?.close();
+        } catch {
+          /* ignore */
+        }
+        addSystem("Logged out.");
+        location.replace("/login");
       },
     },
-    configCmdNode('/mode', 'Switch mode', 'mode'),
-    configCmdNode('/model', 'Switch model', 'model'),
+    configCmdNode("/mode", "Switch mode", "mode"),
+    configCmdNode("/model", "Switch model", "model"),
     {
-      name: '/new', desc: 'Create new session',
+      name: "/new",
+      desc: "Create new session",
       fetch: listRecentPaths,
-      toSpec: (item) => {
+      toSpec: (item: unknown) => {
         const p = item as PathItem;
-        const isCurrent = p.cwd.toLowerCase() === (state.sessionCwd || '').toLowerCase();
+        const isCurrent =
+          p.cwd.toLowerCase() === (state.sessionCwd ?? "").toLowerCase();
         return {
           primary: p.cwd,
           current: isCurrent,
           onSelect: () => {
             resetSessionUI();
-            addSystem('Creating new session…');
+            addSystem("Creating new session…");
             requestNewSession({ cwd: p.cwd });
           },
         };
@@ -363,72 +414,81 @@ export const ROOT: CmdNode = {
           primary: `create session at '${trimmed}'`,
           onSelect: () => {
             resetSessionUI();
-            addSystem('Creating new session…');
+            addSystem("Creating new session…");
             requestNewSession({ cwd: trimmed });
           },
         };
       },
     },
     {
-      name: '/notify', desc: 'Toggle notifications',
+      name: "/notify",
+      desc: "Toggle notifications",
       fetch: async () => {
         await refreshNotifyActive();
         return [
-          { value: 'on',  name: 'on',  desc: 'Enable notifications' },
-          { value: 'off', name: 'off', desc: 'Disable notifications' },
+          { value: "on", name: "on", desc: "Enable notifications" },
+          { value: "off", name: "off", desc: "Disable notifications" },
         ];
       },
       toSpec: (item) => {
-        const o = item as { value: 'on' | 'off'; name: string; desc: string };
-        const isActive = (o.value === 'on') === notifyActive;
+        const o = item as { value: "on" | "off"; name: string; desc: string };
+        const isActive = (o.value === "on") === notifyActive;
         return {
           primary: o.name,
           secondary: o.desc,
           current: isActive,
-          onSelect: o.value === 'on' ? notifyOn : notifyOff,
+          onSelect: o.value === "on" ? notifyOn : notifyOff,
         };
       },
     },
     {
-      name: '/reload', desc: 'Reload agent',
+      name: "/reload",
+      desc: "Reload agent",
       onSelect: () => {
-        addSystem('Reloading agent…');
+        addSystem("Reloading agent…");
         api.reloadAgent().catch((err) => {
-          addSystem(`err: ${err instanceof Error ? err.message : 'Failed to reload agent'}`);
+          addSystem(
+            `err: ${err instanceof Error ? err.message : "Failed to reload agent"}`,
+          );
         });
       },
     },
     {
-      name: '/rename', desc: 'Rename session',
+      name: "/rename",
+      desc: "Rename session",
       freeform: (q) => {
         const trimmed = q.trim();
         if (!trimmed) return null;
         return {
           primary: `rename to '${trimmed}'`,
           onSelect: async () => {
-            if (!state.sessionId) { addSystem('err: No active session'); return; }
+            if (!state.sessionId) {
+              addSystem("err: No active session");
+              return;
+            }
             try {
               await api.setTitle(state.sessionId, trimmed);
               addSystem(`Renamed → ${trimmed}`);
             } catch {
-              addSystem('err: Failed to rename session');
+              addSystem("err: Failed to rename session");
             }
           },
         };
       },
     },
     {
-      name: '/switch', desc: 'Switch session',
+      name: "/switch",
+      desc: "Switch session",
       fetch: listSessions,
-      matches: (item, q) => {
+      matches: (item: unknown, q: string) => {
         const s = item as SessionSummary;
-        const title = (s.title || '').toLowerCase();
+        const title = (s.title ?? "").toLowerCase();
         return title.includes(q) || s.id.startsWith(q);
       },
-      toSpec: (item) => {
+      toSpec: (item: unknown) => {
         const s = item as SessionSummary;
-        const label = s.title || s.id.slice(0, 8) + '…';
-        const time = formatLocalTime(s.last_active_at || s.created_at);
+        const label = s.title ?? s.id.slice(0, 8) + "…";
+        const time = formatLocalTime(s.last_active_at);
         return {
           primary: label,
           secondary: time,
@@ -438,13 +498,14 @@ export const ROOT: CmdNode = {
         };
       },
     },
-    configCmdNode('/think', 'Set thinking effort', 'reasoning_effort'),
+    configCmdNode("/think", "Set thinking effort", "reasoning_effort"),
     {
-      name: '/token', desc: 'Manage API tokens',
+      name: "/token",
+      desc: "Manage API tokens",
       fetch: listTokensFn,
-      toSpec: (item) => {
+      toSpec: (item: unknown) => {
         const t = item as api.TokenSummary;
-        const last = t.lastUsedAt ? formatLocalTime(t.lastUsedAt) : 'never';
+        const last = t.lastUsedAt ? formatLocalTime(t.lastUsedAt) : "never";
         return {
           primary: t.name,
           secondary: `last used ${last}`,
@@ -453,9 +514,11 @@ export const ROOT: CmdNode = {
           // Self token is read-only (server forbids self-revoke). Other tokens
           // print a hint pointing at /token revoke — actual revoke lives in the
           // `revoke` subcommand to keep destructive ops off accidental clicks.
-          onSelect: t.isSelf ? undefined : () => {
-            addSystem(`— use /token revoke ${t.name} to revoke`);
-          },
+          onSelect: t.isSelf
+            ? undefined
+            : () => {
+                addSystem(`— use /token revoke ${t.name} to revoke`);
+              },
         };
       },
       freeform: (q) => {
@@ -468,12 +531,13 @@ export const ROOT: CmdNode = {
       },
       children: [
         {
-          name: 'revoke', desc: 'Revoke token',
+          name: "revoke",
+          desc: "Revoke token",
           // rev list excludes self (server enforces non-revocable; we hide it)
           fetch: async () => (await listTokensFn()).filter((t) => !t.isSelf),
-          toSpec: (item) => {
+          toSpec: (item: unknown) => {
             const t = item as api.TokenSummary;
-            const last = t.lastUsedAt ? formatLocalTime(t.lastUsedAt) : 'never';
+            const last = t.lastUsedAt ? formatLocalTime(t.lastUsedAt) : "never";
             return {
               primary: t.name,
               secondary: `last used ${last}`,
@@ -489,12 +553,13 @@ export const ROOT: CmdNode = {
 
 function configCmdNode(name: string, desc: string, configId: string): CmdNode {
   return {
-    name, desc,
+    name,
+    desc,
     fetch: () => {
       const opt = getConfigOption(configId);
       return opt ? opt.options : [];
     },
-    toSpec: (item) => {
+    toSpec: (item: unknown) => {
       const o = item as { value: string; name: string };
       const current = getConfigValue(configId);
       return {
@@ -509,32 +574,33 @@ function configCmdNode(name: string, desc: string, configId: string): CmdNode {
 function printHelp(): void {
   const parts: string[] = [];
   if (state.serverVersion) parts.push(`WebAgent ${state.serverVersion}`);
-  if (state.agentName && state.agentVersion) parts.push(`${state.agentName} ${state.agentVersion}`);
-  if (parts.length) addSystem(parts.join(' · '));
-  addSystem('›  has next step    *  current value');
-  addSystem('Tab completes · Enter sends raw text');
-  addSystem('? — Show help');
-  addSystem('!<command> — Run bash command');
+  if (state.agentName && state.agentVersion)
+    parts.push(`${state.agentName} ${state.agentVersion}`);
+  if (parts.length) addSystem(parts.join(" · "));
+  addSystem("›  has next step    *  current value");
+  addSystem("Tab completes · Enter sends raw text");
+  addSystem("? — Show help");
+  addSystem("!<command> — Run bash command");
   for (const c of ROOT.children!) {
-    addSystem(`${c.name} — ${c.desc ?? ''}`);
+    addSystem(`${c.name} — ${c.desc ?? ""}`);
   }
-  addSystem('--- Shortcuts ---');
+  addSystem("--- Shortcuts ---");
   for (const s of SHORTCUTS) addSystem(`${s.key} — ${s.desc}`);
-  addSystem('--- Tips ---');
+  addSystem("--- Tips ---");
   for (const t of TIPS) addSystem(t.text);
 }
 
 export const SHORTCUTS = [
-  { key: 'Enter',       desc: 'Send message' },
-  { key: 'Shift+Enter', desc: 'New line' },
-  { key: '^C',          desc: 'Cancel current response' },
-  { key: '^M',          desc: 'Cycle mode (Agent → Plan → Autopilot)' },
-  { key: '^U',          desc: 'Upload image' },
+  { key: "Enter", desc: "Send message" },
+  { key: "Shift+Enter", desc: "New line" },
+  { key: "^C", desc: "Cancel current response" },
+  { key: "^M", desc: "Cycle mode (Agent → Plan → Autopilot)" },
+  { key: "^U", desc: "Upload image" },
 ];
 
-export const TIPS = [
-  { text: 'Tap ❯ prompt to cycle mode' },
-];
+export const TIPS = [{ text: "Tap ❯ prompt to cycle mode" }];
 
 // expose for tests
-export function __resetNotifyActive(): void { notifyActive = false; }
+export function __resetNotifyActive(): void {
+  notifyActive = false;
+}

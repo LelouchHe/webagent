@@ -5,12 +5,17 @@
 // plus Tab/Click/keyboard dispatch. Execution paths (onSelect handlers) live
 // in slash-commands.ts so this file stays a thin pipeline.
 
-import { dom, setInputValue } from './state.ts';
-import { addSystem } from './render.ts';
-import { resolvePath, buildCandidates, type CmdNode, type Candidate } from './slash-tree.ts';
-import { renderItem } from './slash-render.ts';
-import { ROOT } from './slash-commands.ts';
-import { handleSlashCommand } from './slash-exec.ts';
+import { dom, setInputValue } from "./state.ts";
+import { addSystem } from "./render.ts";
+import {
+  resolvePath,
+  buildCandidates,
+  type CmdNode,
+  type Candidate,
+} from "./slash-tree.ts";
+import { renderItem } from "./slash-render.ts";
+import { ROOT } from "./slash-commands.ts";
+import { handleSlashCommand } from "./slash-exec.ts";
 
 export { handleSlashCommand };
 
@@ -18,7 +23,7 @@ export { handleSlashCommand };
 
 let currentPath: string | null = null;
 let currentNode: CmdNode = ROOT;
-let currentData: unknown[] | 'loading' | 'error' | undefined = undefined;
+let currentData: unknown[] | "loading" | "error" | undefined = undefined;
 let candidates: Candidate[] = [];
 let selectedIdx = -1;
 let dismissedFor: string | null = null;
@@ -42,7 +47,7 @@ export function updateSlashMenu(): void {
     dismissedFor = null;
   }
 
-  if (!text.startsWith('/')) {
+  if (!text.startsWith("/")) {
     hideSlashMenu();
     return;
   }
@@ -59,7 +64,7 @@ export function updateSlashMenu(): void {
     if (node.fetch && node.toSpec) {
       const result = node.fetch();
       if (result instanceof Promise) {
-        currentData = 'loading';
+        currentData = "loading";
         const myPath = pathPrefix;
         void result.then(
           (items) => {
@@ -69,7 +74,7 @@ export function updateSlashMenu(): void {
           },
           () => {
             if (currentPath !== myPath) return;
-            currentData = 'error';
+            currentData = "error";
             rebuild(currentTailQueryFromInput(), pathPrefix);
           },
         );
@@ -108,32 +113,32 @@ function rebuild(tailQuery: string, pathPrefix: string): void {
   // auto-selecting it (e.g. the active session in /switch) is awkward when the
   // user opens the menu intending to switch *away* from it.
   const firstSelectable = cands.findIndex(
-    (c) => c.kind !== 'separator' && c.kind !== 'placeholder',
+    (c) => c.kind !== "separator" && c.kind !== "placeholder",
   );
   selectedIdx = firstSelectable >= 0 ? firstSelectable : 0;
 
   renderMenu(pathPrefix);
-  dom.slashMenu.classList.add('active');
+  dom.slashMenu.classList.add("active");
 }
 
 function renderMenu(pathPrefix: string): void {
-  dom.slashMenu.innerHTML = '';
-  dom.slashMenu.classList.toggle('slash-menu-root', pathPrefix === '');
+  dom.slashMenu.innerHTML = "";
+  dom.slashMenu.classList.toggle("slash-menu-root", pathPrefix === "");
   candidates.forEach((c, i) => {
-    if (c.kind === 'separator') {
-      const sep = document.createElement('div');
-      sep.className = 'slash-separator';
+    if (c.kind === "separator") {
+      const sep = document.createElement("div");
+      sep.className = "slash-separator";
       sep.dataset.idx = String(i);
       dom.slashMenu.appendChild(sep);
       return;
     }
     const isSelected = i === selectedIdx;
     const itemEl = renderItem(c.spec, isSelected, c.prefix);
-    if (c.prefix === '›') {
-      itemEl.classList.add('slash-arrow');
+    if (c.prefix === "›") {
+      itemEl.classList.add("slash-arrow");
     }
-    if (c.kind === 'placeholder') {
-      itemEl.classList.add('slash-placeholder');
+    if (c.kind === "placeholder") {
+      itemEl.classList.add("slash-placeholder");
     }
     itemEl.dataset.idx = String(i);
     dom.slashMenu.appendChild(itemEl);
@@ -141,13 +146,13 @@ function renderMenu(pathPrefix: string): void {
 
   dom.slashMenu.dataset.pathPrefix = pathPrefix;
 
-  const sel = dom.slashMenu.querySelector('.slash-item.selected');
-  if (sel) (sel as HTMLElement).scrollIntoView({ block: 'nearest' });
+  const sel = dom.slashMenu.querySelector(".slash-item.selected");
+  if (sel) (sel as HTMLElement).scrollIntoView({ block: "nearest" });
 }
 
 export function hideSlashMenu(): void {
-  dom.slashMenu.classList.remove('active');
-  dom.slashMenu.innerHTML = '';
+  dom.slashMenu.classList.remove("active");
+  dom.slashMenu.innerHTML = "";
   selectedIdx = -1;
   candidates = [];
   currentPath = null;
@@ -160,26 +165,31 @@ export function hideSlashMenu(): void {
 
 function tabComplete(): void {
   const c = candidates[selectedIdx];
+  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- array access safety
   if (!c) return;
-  const pathPrefix = dom.slashMenu.dataset.pathPrefix ?? '';
+  const pathPrefix = dom.slashMenu.dataset.pathPrefix ?? "";
 
-  if (c.kind === 'separator' || c.kind === 'placeholder') return;
+  if (c.kind === "separator" || c.kind === "placeholder") return;
 
-  if (c.kind === 'subcommand' && c.node) {
-    const hasMore = !!(c.node.children?.length || c.node.fetch || c.node.freeform);
-    const sep = pathPrefix ? ' ' : '';
-    setInputValue(`${pathPrefix}${sep}${c.node.name}${hasMore ? ' ' : ''}`);
+  if (c.kind === "subcommand" && c.node) {
+    const nodeChildren = c.node.children ?? [];
+    const hasMore =
+      nodeChildren.length > 0 ||
+      Boolean(c.node.fetch) ||
+      Boolean(c.node.freeform);
+    const sep = pathPrefix ? " " : "";
+    setInputValue(`${pathPrefix}${sep}${c.node.name}${hasMore ? " " : ""}`);
     if (hasMore) {
       dismissedFor = null;
       updateSlashMenu();
     } else {
       hideSlashMenu();
     }
-  } else if (c.kind === 'data') {
-    const sep = pathPrefix ? ' ' : '';
+  } else if (c.kind === "data") {
+    const sep = pathPrefix ? " " : "";
     setInputValue(`${pathPrefix}${sep}${c.spec.primary}`);
     hideSlashMenu();
-  } else if (c.kind === 'freeform') {
+  } else if (c.kind === "freeform") {
     // Freeform spec reflects the user's typed query — Tab is a no-op
     // (input already contains what the freeform represents).
     hideSlashMenu();
@@ -191,15 +201,20 @@ function tabComplete(): void {
 
 async function clickItem(idx: number): Promise<void> {
   const c = candidates[idx];
+  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- array access safety
   if (!c) return;
-  const pathPrefix = dom.slashMenu.dataset.pathPrefix ?? '';
+  const pathPrefix = dom.slashMenu.dataset.pathPrefix ?? "";
 
-  if (c.kind === 'separator' || c.kind === 'placeholder') return;
+  if (c.kind === "separator" || c.kind === "placeholder") return;
 
-  if (c.kind === 'subcommand' && c.node) {
-    const hasMore = !!(c.node.children?.length || c.node.fetch || c.node.freeform);
+  if (c.kind === "subcommand" && c.node) {
+    const childNodes = c.node.children ?? [];
+    const hasMore =
+      childNodes.length > 0 ||
+      Boolean(c.node.fetch) ||
+      Boolean(c.node.freeform);
     if (hasMore) {
-      const sep = pathPrefix ? ' ' : '';
+      const sep = pathPrefix ? " " : "";
       setInputValue(`${pathPrefix}${sep}${c.node.name} `);
       dismissedFor = null;
       updateSlashMenu();
@@ -208,38 +223,38 @@ async function clickItem(idx: number): Promise<void> {
     }
     // Pure-leaf subcommand — execute immediately
     hideSlashMenu();
-    setInputValue('');
+    setInputValue("");
     if (c.node.onSelect) await c.node.onSelect();
     return;
   }
 
   // data / freeform
   hideSlashMenu();
-  setInputValue('');
+  setInputValue("");
   if (c.spec.onSelect) {
     await c.spec.onSelect();
   } else {
-    addSystem('Read-only entry — no action.');
+    addSystem("Read-only entry — no action.");
   }
 }
 
 // --- keyboard navigation ---
 
 export function handleSlashMenuKey(e: KeyboardEvent): boolean {
-  if (!dom.slashMenu.classList.contains('active')) return false;
+  if (!dom.slashMenu.classList.contains("active")) return false;
   if (candidates.length === 0) return false;
 
-  if (e.key === 'ArrowDown') {
+  if (e.key === "ArrowDown") {
     selectedIdx = nextSelectable(selectedIdx, 1);
-    renderMenu(dom.slashMenu.dataset.pathPrefix ?? '');
+    renderMenu(dom.slashMenu.dataset.pathPrefix ?? "");
     return true;
   }
-  if (e.key === 'ArrowUp') {
+  if (e.key === "ArrowUp") {
     selectedIdx = nextSelectable(selectedIdx, -1);
-    renderMenu(dom.slashMenu.dataset.pathPrefix ?? '');
+    renderMenu(dom.slashMenu.dataset.pathPrefix ?? "");
     return true;
   }
-  if (e.key === 'Tab') {
+  if (e.key === "Tab") {
     tabComplete();
     return true;
   }
@@ -250,7 +265,10 @@ function nextSelectable(from: number, dir: 1 | -1): number {
   const n = candidates.length;
   for (let step = 1; step <= n; step++) {
     const i = (from + dir * step + n) % n;
-    if (candidates[i].kind !== 'separator' && candidates[i].kind !== 'placeholder') {
+    if (
+      candidates[i].kind !== "separator" &&
+      candidates[i].kind !== "placeholder"
+    ) {
       return i;
     }
   }
@@ -259,16 +277,16 @@ function nextSelectable(from: number, dir: 1 | -1): number {
 
 // --- DOM listeners ---
 
-dom.slashMenu.addEventListener('mousedown', (e) => {
+dom.slashMenu.addEventListener("mousedown", (e) => {
   e.preventDefault();
   const target = e.target as Element | null;
-  const item = target?.closest<HTMLElement>('.slash-item');
-  if (item && item.dataset.idx !== undefined) {
+  const item = target?.closest<HTMLElement>(".slash-item");
+  if (item?.dataset.idx !== undefined) {
     void clickItem(Number(item.dataset.idx));
   }
 });
 
-dom.input.addEventListener('input', () => {
+dom.input.addEventListener("input", () => {
   updateSlashMenu();
-  dom.inputArea.classList.toggle('bash-mode', dom.input.value.startsWith('!'));
+  dom.inputArea.classList.toggle("bash-mode", dom.input.value.startsWith("!"));
 });

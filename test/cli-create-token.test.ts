@@ -1,26 +1,39 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, existsSync, writeFileSync, readFileSync } from "node:fs";
+import {
+  mkdtempSync,
+  rmSync,
+  existsSync,
+  writeFileSync,
+  readFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 const BIN = join(process.cwd(), "bin", "webagent.mjs");
 // Repo `lib/` is built by `npm run compile` (run as part of `npm test`).
 
-function runCli(args: string[], dataDir: string): { status: number; stdout: string; stderr: string } {
+function runCli(
+  args: string[],
+  dataDir: string,
+): { status: number; stdout: string; stderr: string } {
   const cfgPath = join(dataDir, "config.toml");
   if (!existsSync(cfgPath)) {
     writeFileSync(cfgPath, `data_dir = "${dataDir}"\n`);
   }
-  const result = spawnSync(process.execPath, [BIN, ...args, "--config", cfgPath], {
-    encoding: "utf-8",
-  });
+  const result = spawnSync(
+    process.execPath,
+    [BIN, ...args, "--config", cfgPath],
+    {
+      encoding: "utf-8",
+    },
+  );
   return {
-    status: result.status ?? -1,
-    stdout: result.stdout ?? "",
-    stderr: result.stderr ?? "",
-  };
+    status: result.status,
+    stdout: result.stdout,
+    stderr: result.stderr,
+  } as { status: number; stdout: string; stderr: string };
 }
 
 describe("webagent --create-token CLI", () => {

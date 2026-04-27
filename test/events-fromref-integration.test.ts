@@ -52,9 +52,9 @@ describe("event writers populate from_ref correctly", () => {
   }
 
   it("assistant_message (flushed from buffer) is from_ref='agent'", () => {
-    emit({ type: "message_chunk", sessionId: "s1", text: "hi" } as AgentEvent);
+    emit({ type: "message_chunk", sessionId: "s1", text: "hi" });
     // Boundary event forces flush
-    emit({ type: "prompt_done", sessionId: "s1", stopReason: "end_turn" } as AgentEvent);
+    emit({ type: "prompt_done", sessionId: "s1", stopReason: "end_turn" });
 
     const events = store.getEvents("s1");
     const asst = events.find((e) => e.type === "assistant_message");
@@ -65,8 +65,14 @@ describe("event writers populate from_ref correctly", () => {
   });
 
   it("thinking (flushed from buffer) is from_ref='agent'", () => {
-    emit({ type: "thought_chunk", sessionId: "s1", text: "hmm" } as AgentEvent);
-    emit({ type: "tool_call", sessionId: "s1", id: "t1", title: "read", kind: "read" } as AgentEvent);
+    emit({ type: "thought_chunk", sessionId: "s1", text: "hmm" });
+    emit({
+      type: "tool_call",
+      sessionId: "s1",
+      id: "t1",
+      title: "read",
+      kind: "read",
+    });
     const events = store.getEvents("s1");
     const thinking = events.find((e) => e.type === "thinking");
     assert.ok(thinking);
@@ -74,7 +80,13 @@ describe("event writers populate from_ref correctly", () => {
   });
 
   it("tool_call is from_ref='agent'", () => {
-    emit({ type: "tool_call", sessionId: "s1", id: "t1", title: "read", kind: "read" } as AgentEvent);
+    emit({
+      type: "tool_call",
+      sessionId: "s1",
+      id: "t1",
+      title: "read",
+      kind: "read",
+    });
     const ev = store.getEvents("s1").find((e) => e.type === "tool_call");
     assert.ok(ev);
     assert.equal(ev.from_ref, "agent");
@@ -86,7 +98,7 @@ describe("event writers populate from_ref correctly", () => {
       sessionId: "s1",
       id: "t1",
       status: "completed",
-    } as AgentEvent);
+    });
     const ev = store.getEvents("s1").find((e) => e.type === "tool_call_update");
     assert.ok(ev);
     assert.equal(ev.from_ref, "agent");
@@ -97,7 +109,7 @@ describe("event writers populate from_ref correctly", () => {
       type: "plan",
       sessionId: "s1",
       entries: [{ content: "do a thing", status: "pending" }],
-    } as AgentEvent);
+    });
     const ev = store.getEvents("s1").find((e) => e.type === "plan");
     assert.ok(ev);
     assert.equal(ev.from_ref, "agent");
@@ -110,14 +122,16 @@ describe("event writers populate from_ref correctly", () => {
       requestId: "p1",
       title: "Read file",
       options: [{ optionId: "allow_once", name: "Allow", kind: "allow_once" }],
-    } as AgentEvent);
-    const ev = store.getEvents("s1").find((e) => e.type === "permission_request");
+    });
+    const ev = store
+      .getEvents("s1")
+      .find((e) => e.type === "permission_request");
     assert.ok(ev);
     assert.equal(ev.from_ref, "agent");
   });
 
   it("prompt_done is from_ref='agent'", () => {
-    emit({ type: "prompt_done", sessionId: "s1", stopReason: "end_turn" } as AgentEvent);
+    emit({ type: "prompt_done", sessionId: "s1", stopReason: "end_turn" });
     const ev = store.getEvents("s1").find((e) => e.type === "prompt_done");
     assert.ok(ev);
     assert.equal(ev.from_ref, "agent");
@@ -132,8 +146,10 @@ describe("event writers populate from_ref correctly", () => {
       requestId: "p2",
       title: "Read file",
       options: [{ optionId: "allow_once", name: "Allow", kind: "allow_once" }],
-    } as AgentEvent);
-    const resp = store.getEvents("s1").find((e) => e.type === "permission_response");
+    });
+    const resp = store
+      .getEvents("s1")
+      .find((e) => e.type === "permission_response");
     assert.ok(resp, "auto-approve should persist a permission_response row");
     assert.equal(resp.from_ref, "system");
   });
@@ -149,7 +165,12 @@ describe("event writers populate from_ref correctly", () => {
   });
 
   it("bash_command='user' / bash_result='system' (routes.ts bash contract)", () => {
-    store.saveEvent("s1", "bash_command", { command: "ls" }, { from_ref: "user" });
+    store.saveEvent(
+      "s1",
+      "bash_command",
+      { command: "ls" },
+      { from_ref: "user" },
+    );
     store.saveEvent(
       "s1",
       "bash_result",
@@ -165,7 +186,12 @@ describe("event writers populate from_ref correctly", () => {
     store.saveEvent(
       "s1",
       "permission_response",
-      { requestId: "p1", optionName: "Allow", denied: false, optionId: "allow_once" },
+      {
+        requestId: "p1",
+        optionName: "Allow",
+        denied: false,
+        optionId: "allow_once",
+      },
       { from_ref: "user" },
     );
     const [ev] = store.getEvents("s1");

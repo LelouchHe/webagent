@@ -28,8 +28,14 @@ function req(
       { hostname: "127.0.0.1", port, path, method, headers },
       (res) => {
         let data = "";
-        res.on("data", (c: Buffer) => (data += c));
-        res.on("end", () => resolve({ status: res.statusCode!, body: data, headers: res.headers }));
+        res.on("data", (c: Buffer) => (data += c.toString()));
+        res.on("end", () =>
+          resolve({
+            status: res.statusCode!,
+            body: data,
+            headers: res.headers,
+          }),
+        );
       },
     );
     r.on("error", reject);
@@ -122,7 +128,11 @@ describe("image signed URLs", () => {
   });
 
   it("GET image without sig returns 401", async () => {
-    const r = await req(port, "GET", "/api/v1/sessions/sess1/images/anything.png");
+    const r = await req(
+      port,
+      "GET",
+      "/api/v1/sessions/sess1/images/anything.png",
+    );
     assert.equal(r.status, 401);
   });
 
@@ -171,8 +181,12 @@ describe("image signed URLs", () => {
     );
     const url = JSON.parse(upload.body).url as string;
     // Move sig to a different file path
-    const qs = url.split("?")[1]!;
-    const r = await req(port, "GET", `/api/v1/sessions/sess1/images/other.png?${qs}`);
+    const qs = url.split("?")[1];
+    const r = await req(
+      port,
+      "GET",
+      `/api/v1/sessions/sess1/images/other.png?${qs}`,
+    );
     assert.equal(r.status, 401);
   });
 });

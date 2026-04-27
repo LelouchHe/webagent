@@ -8,7 +8,10 @@ import { Store } from "../src/store.ts";
 import { createRequestHandler } from "../src/routes.ts";
 import { AuthStore } from "../src/auth-store.ts";
 
-interface Resp { status: number; body: string }
+interface Resp {
+  status: number;
+  body: string;
+}
 
 function req(
   port: number,
@@ -22,7 +25,7 @@ function req(
       { hostname: "127.0.0.1", port, path, method, headers },
       (res) => {
         let data = "";
-        res.on("data", (c: Buffer) => (data += c));
+        res.on("data", (c: Buffer) => (data += c.toString()));
         res.on("end", () => resolve({ status: res.statusCode!, body: data }));
       },
     );
@@ -198,10 +201,10 @@ describe("tokens CRUD", () => {
     assert.equal(del.status, 204);
 
     // Now invalid
-    const after = await req(port, "GET", "/api/v1/auth/verify", {
+    const afterDel = await req(port, "GET", "/api/v1/auth/verify", {
       Authorization: `Bearer ${newToken}`,
     });
-    assert.equal(after.status, 401);
+    assert.equal(afterDel.status, 401);
   });
 
   it("DELETE /tokens/:name returns 404 for unknown name", async () => {
@@ -225,7 +228,7 @@ describe("tokens CRUD", () => {
     });
     assert.equal(r.status, 400);
     const body = JSON.parse(r.body) as { error?: string };
-    assert.match(body.error || "", /yourself|using|cannot/i);
+    assert.match(body.error ?? "", /yourself|using|cannot/i);
     // Token still works.
     const list = await req(port, "GET", "/api/v1/tokens", {
       Authorization: `Bearer ${adminToken}`,

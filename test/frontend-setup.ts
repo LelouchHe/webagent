@@ -17,10 +17,11 @@ export function setupDOM() {
   win = new Window({ url: "http://localhost:6801" });
   globalThis.window = win as any;
   globalThis.document = win.document as any;
-  globalThis.localStorage = win.localStorage as any;
+  globalThis.localStorage = win.localStorage;
   globalThis.location = win.location as any;
-  globalThis.history = win.history as any;
+  globalThis.history = win.history;
   globalThis.HTMLElement = win.HTMLElement as any;
+  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- JSDOM may not have WebSocket
   globalThis.WebSocket = (win.WebSocket ?? class MockWS {}) as any;
 
   win.document.body.innerHTML = HTML;
@@ -92,4 +93,3 @@ export function resetState(state: any, dom: any) {
   dom.inputArea.className = "";
   if (dom.statusBar) dom.statusBar.textContent = "";
 }
-

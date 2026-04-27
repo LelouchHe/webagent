@@ -2,6 +2,8 @@ import { describe, it, before, after, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { setupDOM, teardownDOM, resetState } from "./frontend-setup.ts";
 
+/* eslint-disable @typescript-eslint/no-unsafe-function-type -- Promise resolver pattern uses generic Function type */
+
 describe("events", () => {
   let state: any;
   let dom: any;
@@ -10,6 +12,7 @@ describe("events", () => {
   let stateMod: any;
   let fetchCalls: Array<{ url: string; init?: any }>;
 
+  // eslint-disable-next-line @typescript-eslint/no-redundant-type-constituents
   function setFetch(handler: (url: string, init?: any) => Promise<any> | any) {
     (globalThis as any).fetch = async (url: string, init?: any) => {
       fetchCalls.push({ url, init });
@@ -29,7 +32,11 @@ describe("events", () => {
   beforeEach(() => {
     resetState(state, dom);
     fetchCalls = [];
-    setFetch(() => ({ ok: true, json: async () => ({}), text: async () => '{}' }));
+    setFetch(() => ({
+      ok: true,
+      json: async () => ({}),
+      text: async () => "{}",
+    }));
   });
 
   describe("handleEvent", () => {
@@ -41,7 +48,9 @@ describe("events", () => {
           sessionId: "s1",
           cwd: "/home",
           title: "Test Session",
-          configOptions: [{ id: "model", name: "Model", currentValue: "x", options: [] }],
+          configOptions: [
+            { id: "model", name: "Model", currentValue: "x", options: [] },
+          ],
         });
         assert.equal(state.sessionId, "s1");
         assert.equal(state.sessionCwd, "/home");
@@ -69,7 +78,9 @@ describe("events", () => {
           title: "New Session",
         });
         assert.equal(dom.messages.children.length, 1);
-        assert.ok(dom.messages.children[0].textContent.includes("Session created"));
+        assert.ok(
+          dom.messages.children[0].textContent.includes("Session created"),
+        );
       });
 
       it("reattaches a running bash block after replay", () => {
@@ -81,7 +92,11 @@ describe("events", () => {
           configOptions: [],
         });
         assert.ok(state.currentBashEl);
-        assert.ok(state.currentBashEl.querySelector(".bash-cmd").classList.contains("running"));
+        assert.ok(
+          state.currentBashEl
+            .querySelector(".bash-cmd")
+            .classList.contains("running"),
+        );
       });
 
       it("applies plan-mode class from snapshot fallback when configOptions is empty", () => {
@@ -175,10 +190,13 @@ describe("events", () => {
         );
 
         events.handleEvent({ type: "prompt_done", stopReason: "end_turn" });
-        await new Promise(resolve => setTimeout(resolve, 0));
+        await new Promise((resolve) => setTimeout(resolve, 0));
 
         const wrapper = dom.messages.querySelector(".code-block-wrapper");
-        assert.ok(wrapper, "expected streamed code block to be wrapped when streaming finishes");
+        assert.ok(
+          wrapper,
+          "expected streamed code block to be wrapped when streaming finishes",
+        );
         const code = wrapper.querySelector("code");
         assert.ok(code, "expected wrapped code element");
         // hljs is now bundled (eager), so highlightElement runs synchronously
@@ -251,38 +269,75 @@ describe("events", () => {
 
     describe("tool_call_update", () => {
       it("updates tool call status to completed", () => {
-        events.handleEvent({ type: "tool_call", id: "tc1", kind: "read", title: "Read", rawInput: {} });
-        events.handleEvent({ type: "tool_call_update", id: "tc1", status: "completed" });
+        events.handleEvent({
+          type: "tool_call",
+          id: "tc1",
+          kind: "read",
+          title: "Read",
+          rawInput: {},
+        });
+        events.handleEvent({
+          type: "tool_call_update",
+          id: "tc1",
+          status: "completed",
+        });
         const el = globalThis.document.getElementById("tc-tc1");
         assert.ok(el.classList.contains("completed"));
         assert.equal(el.querySelector(".icon").textContent, "✓");
       });
 
       it("updates tool call status to failed", () => {
-        events.handleEvent({ type: "tool_call", id: "tc2", kind: "read", title: "Read", rawInput: {} });
-        events.handleEvent({ type: "tool_call_update", id: "tc2", status: "failed" });
+        events.handleEvent({
+          type: "tool_call",
+          id: "tc2",
+          kind: "read",
+          title: "Read",
+          rawInput: {},
+        });
+        events.handleEvent({
+          type: "tool_call_update",
+          id: "tc2",
+          status: "failed",
+        });
         const el = globalThis.document.getElementById("tc-tc2");
         assert.ok(el.classList.contains("failed"));
         assert.equal(el.querySelector(".icon").textContent, "✗");
       });
 
       it("shows task_complete summary directly without collapsed details", () => {
-        events.handleEvent({ type: "tool_call", id: "tc-done", kind: "task_complete", title: "Task complete", rawInput: { summary: "Fixed the login bug" } });
         events.handleEvent({
-          type: "tool_call_update", id: "tc-done", status: "completed",
+          type: "tool_call",
+          id: "tc-done",
+          kind: "task_complete",
+          title: "Task complete",
+          rawInput: { summary: "Fixed the login bug" },
+        });
+        events.handleEvent({
+          type: "tool_call_update",
+          id: "tc-done",
+          status: "completed",
           content: [{ type: "text", content: { text: "Fixed the login bug" } }],
         });
         const el = globalThis.document.getElementById("tc-tc-done");
         assert.ok(el.classList.contains("completed"));
         // Summary should be visible directly, not inside a collapsed <details>
-        assert.ok(!el.querySelector("details"), "task_complete should not use collapsed details");
+        assert.ok(
+          !el.querySelector("details"),
+          "task_complete should not use collapsed details",
+        );
         const summary = el.querySelector(".tc-summary");
         assert.ok(summary, "should have a .tc-summary element");
         assert.ok(summary.textContent.includes("Fixed the login bug"));
       });
 
       it("uses ✔ icon for task_complete kind", () => {
-        events.handleEvent({ type: "tool_call", id: "tc-done2", kind: "task_complete", title: "Task complete", rawInput: {} });
+        events.handleEvent({
+          type: "tool_call",
+          id: "tc-done2",
+          kind: "task_complete",
+          title: "Task complete",
+          rawInput: {},
+        });
         const el = globalThis.document.getElementById("tc-tc-done2");
         assert.equal(el.querySelector(".icon").textContent, "✔");
       });
@@ -338,9 +393,16 @@ describe("events", () => {
         });
         const btn = dom.messages.querySelector(".permission button");
         btn.click();
-        const call = fetchCalls.find(c => c.url.includes("/api/v1/sessions/s1/permissions/perm2") && c.init?.method === "POST");
-        assert.ok(call, "expected a POST to /api/v1/sessions/s1/permissions/perm2");
-        const body = JSON.parse(call!.init.body);
+        const call = fetchCalls.find(
+          (c) =>
+            c.url.includes("/api/v1/sessions/s1/permissions/perm2") &&
+            c.init?.method === "POST",
+        );
+        assert.ok(
+          call,
+          "expected a POST to /api/v1/sessions/s1/permissions/perm2",
+        );
+        const body = JSON.parse(call.init.body);
         assert.equal(body.optionId, "allow");
       });
 
@@ -358,7 +420,10 @@ describe("events", () => {
         btn.click();
         events.handleEvent({ type: "prompt_done" });
 
-        assert.equal(state.pendingPermissionRequestIds.has("perm-local"), false);
+        assert.equal(
+          state.pendingPermissionRequestIds.has("perm-local"),
+          false,
+        );
         assert.equal(state.busy, false);
       });
 
@@ -376,8 +441,14 @@ describe("events", () => {
           title: "Allow file write?",
           options: [{ optionId: "allow", kind: "allow_once", name: "Allow" }],
         });
-        const perms = dom.messages.querySelectorAll('.permission[data-request-id="perm-dup"]');
-        assert.equal(perms.length, 1, "should not create duplicate permission element");
+        const perms = dom.messages.querySelectorAll(
+          '.permission[data-request-id="perm-dup"]',
+        );
+        assert.equal(
+          perms.length,
+          1,
+          "should not create duplicate permission element",
+        );
       });
 
       it("skips duplicate permission_request even if already resolved", () => {
@@ -397,9 +468,19 @@ describe("events", () => {
           title: "Allow?",
           options: [{ optionId: "allow", kind: "allow_once", name: "Allow" }],
         });
-        const perms = dom.messages.querySelectorAll('.permission[data-request-id="perm-dup2"]');
-        assert.equal(perms.length, 1, "should not create duplicate after resolution");
-        assert.equal(perms[0].querySelectorAll("button").length, 0, "should stay resolved");
+        const perms = dom.messages.querySelectorAll(
+          '.permission[data-request-id="perm-dup2"]',
+        );
+        assert.equal(
+          perms.length,
+          1,
+          "should not create duplicate after resolution",
+        );
+        assert.equal(
+          perms[0].querySelectorAll("button").length,
+          0,
+          "should stay resolved",
+        );
       });
 
       it("preserves title after user clicks a permission button", () => {
@@ -408,7 +489,9 @@ describe("events", () => {
           type: "permission_request",
           requestId: "perm-click",
           title: "Execute npm install",
-          options: [{ optionId: "allow", kind: "allow_once", name: "Allow once" }],
+          options: [
+            { optionId: "allow", kind: "allow_once", name: "Allow once" },
+          ],
         });
         dom.messages.querySelector(".permission button").click();
         const perm = dom.messages.querySelector(".permission");
@@ -444,7 +527,9 @@ describe("events", () => {
           type: "permission_request",
           requestId: "perm-title",
           title: "Run dangerous command",
-          options: [{ optionId: "allow", kind: "allow_once", name: "Allow once" }],
+          options: [
+            { optionId: "allow", kind: "allow_once", name: "Allow once" },
+          ],
         });
         events.handleEvent({
           type: "permission_response",
@@ -462,31 +547,59 @@ describe("events", () => {
     describe("bash events", () => {
       it("handles bash_command from another client", () => {
         state.sessionId = "s1";
-        events.handleEvent({ type: "bash_command", sessionId: "s1", command: "ls" });
+        events.handleEvent({
+          type: "bash_command",
+          sessionId: "s1",
+          command: "ls",
+        });
         assert.ok(state.currentBashEl);
         assert.equal(state.busy, true);
       });
 
       it("handles bash_output", () => {
         state.sessionId = "s1";
-        events.handleEvent({ type: "bash_command", sessionId: "s1", command: "ls" });
-        events.handleEvent({ type: "bash_output", sessionId: "s1", text: "file.txt\n", stream: "stdout" });
+        events.handleEvent({
+          type: "bash_command",
+          sessionId: "s1",
+          command: "ls",
+        });
+        events.handleEvent({
+          type: "bash_output",
+          sessionId: "s1",
+          text: "file.txt\n",
+          stream: "stdout",
+        });
         const out = state.currentBashEl.querySelector(".bash-output");
         assert.ok(out.textContent.includes("file.txt"));
       });
 
       it("handles bash_output stderr", () => {
         state.sessionId = "s1";
-        events.handleEvent({ type: "bash_command", sessionId: "s1", command: "fail" });
-        events.handleEvent({ type: "bash_output", sessionId: "s1", text: "error!", stream: "stderr" });
-        const stderr = state.currentBashEl.querySelector(".bash-output .stderr");
+        events.handleEvent({
+          type: "bash_command",
+          sessionId: "s1",
+          command: "fail",
+        });
+        events.handleEvent({
+          type: "bash_output",
+          sessionId: "s1",
+          text: "error!",
+          stream: "stderr",
+        });
+        const stderr = state.currentBashEl.querySelector(
+          ".bash-output .stderr",
+        );
         assert.ok(stderr);
         assert.equal(stderr.textContent, "error!");
       });
 
       it("handles bash_done", () => {
         state.sessionId = "s1";
-        events.handleEvent({ type: "bash_command", sessionId: "s1", command: "ls" });
+        events.handleEvent({
+          type: "bash_command",
+          sessionId: "s1",
+          command: "ls",
+        });
         events.handleEvent({ type: "bash_done", sessionId: "s1", code: 0 });
         assert.equal(state.currentBashEl, null);
         assert.equal(state.busy, false);
@@ -519,7 +632,11 @@ describe("events", () => {
         assert.equal(state.pendingToolCallIds.size, 0);
 
         // Late tool_call_update is harmless
-        events.handleEvent({ type: "tool_call_update", id: "tc-pending", status: "completed" });
+        events.handleEvent({
+          type: "tool_call_update",
+          id: "tc-pending",
+          status: "completed",
+        });
         assert.equal(state.busy, false);
       });
 
@@ -612,7 +729,11 @@ describe("events", () => {
 
         // New turn starts
         state.sessionId = "s1";
-        events.handleEvent({ type: "user_message", sessionId: "s1", text: "hello" });
+        events.handleEvent({
+          type: "user_message",
+          sessionId: "s1",
+          text: "hello",
+        });
 
         // tool_call in the new turn should work normally
         events.handleEvent({
@@ -655,7 +776,7 @@ describe("events", () => {
         // The server does NOT echo user_message back to the sender —
         // only to other clients.
         state.turnEnded = false; // input.js:104
-        state.busy = true;      // input.js:105 (setBusy(true))
+        state.busy = true; // input.js:105 (setBusy(true))
 
         // Agent responds with message_chunk first (normal flow):
         events.handleEvent({ type: "message_chunk", text: "Let me " });
@@ -669,8 +790,15 @@ describe("events", () => {
           rawInput: { command: "ls" },
         });
 
-        assert.equal(state.pendingToolCallIds.has("tc-new"), true, "tool_call should not be dropped");
-        assert.ok(document.getElementById("tc-tc-new"), "tool_call element should exist");
+        assert.equal(
+          state.pendingToolCallIds.has("tc-new"),
+          true,
+          "tool_call should not be dropped",
+        );
+        assert.ok(
+          document.getElementById("tc-tc-new"),
+          "tool_call element should exist",
+        );
 
         // Same for permission_request
         events.handleEvent({
@@ -686,7 +814,6 @@ describe("events", () => {
       });
     });
 
-
     describe("state_patch", () => {
       it("applies an in-order patch from SSE", () => {
         state.sessionId = "s1";
@@ -695,7 +822,9 @@ describe("events", () => {
           type: "state_patch",
           sessionId: "s1",
           seq: 1,
-          patch: { runtime: { busy: { kind: "agent", since: "", promptId: null } } },
+          patch: {
+            runtime: { busy: { kind: "agent", since: "", promptId: null } },
+          },
         });
         assert.equal(state.busy, true);
         assert.equal(state.lastStateSeq, 1);
@@ -712,12 +841,22 @@ describe("events", () => {
               version: 1,
               seq: 5,
               session: {
-                id: "s1", title: null, cwd: "/", model: null, mode: null,
-                createdAt: null, lastEventSeq: 0,
+                id: "s1",
+                title: null,
+                cwd: "/",
+                model: null,
+                mode: null,
+                createdAt: null,
+                lastEventSeq: 0,
               },
               runtime: { busy: null },
             });
-            return { ok: true, status: 200, json: async () => JSON.parse(body), text: async () => body };
+            return {
+              ok: true,
+              status: 200,
+              json: async () => JSON.parse(body),
+              text: async () => body,
+            };
           }
           return { ok: true, json: async () => ({}), text: async () => "{}" };
         };
@@ -725,7 +864,9 @@ describe("events", () => {
           type: "state_patch",
           sessionId: "s1",
           seq: 3,
-          patch: { runtime: { busy: { kind: "agent", since: "", promptId: null } } },
+          patch: {
+            runtime: { busy: { kind: "agent", since: "", promptId: null } },
+          },
         });
         assert.equal(state.lastStateSeq, 0);
         await new Promise((r) => setTimeout(r, 5));
@@ -733,19 +874,30 @@ describe("events", () => {
       });
     });
 
-
     describe("session_deleted", () => {
       it("auto-switches to next session when current is deleted", async () => {
         state.sessionId = "s1";
-        const nextSession = { id: "s2", cwd: "/tmp", title: "Next", configOptions: [], busyKind: null };
+        const nextSession = {
+          id: "s2",
+          cwd: "/tmp",
+          title: "Next",
+          configOptions: [],
+          busyKind: null,
+        };
         setFetch(async (url: string, init?: any) => {
-          if (url === "/api/v1/sessions" && (!init?.method || init.method === "GET"))
-            return { ok: true, text: async () => JSON.stringify([{ id: "s2" }]) };
+          if (
+            url === "/api/v1/sessions" &&
+            (!init?.method || init.method === "GET")
+          )
+            return {
+              ok: true,
+              text: async () => JSON.stringify([{ id: "s2" }]),
+            };
           if (url === "/api/v1/sessions/s2")
             return { ok: true, text: async () => JSON.stringify(nextSession) };
           if (url.startsWith("/api/v1/sessions/s2/events"))
-            return { ok: true, text: async () => '[]' };
-          return { ok: true, text: async () => '{}' };
+            return { ok: true, text: async () => "[]" };
+          return { ok: true, text: async () => "{}" };
         });
 
         events.handleEvent({ type: "session_deleted", sessionId: "s1" });
@@ -757,11 +909,17 @@ describe("events", () => {
       it("creates new session when current is deleted and no others exist", async () => {
         state.sessionId = "s1";
         setFetch(async (url: string, init?: any) => {
-          if (url === "/api/v1/sessions" && (!init?.method || init.method === "GET"))
-            return { ok: true, text: async () => '[]' };
+          if (
+            url === "/api/v1/sessions" &&
+            (!init?.method || init.method === "GET")
+          )
+            return { ok: true, text: async () => "[]" };
           if (url === "/api/v1/sessions" && init?.method === "POST")
-            return { ok: true, text: async () => JSON.stringify({ id: "new-1" }) };
-          return { ok: true, text: async () => '{}' };
+            return {
+              ok: true,
+              text: async () => JSON.stringify({ id: "new-1" }),
+            };
+          return { ok: true, text: async () => "{}" };
         });
 
         events.handleEvent({ type: "session_deleted", sessionId: "s1" });
@@ -778,17 +936,36 @@ describe("events", () => {
 
     describe("config_set", () => {
       it("updates config value and shows system message", () => {
-        state.configOptions = [{ id: "model", name: "Model", currentValue: "old", options: [{ value: "new", name: "New Model" }] }];
-        events.handleEvent({ type: "config_set", configId: "model", value: "new" });
+        state.configOptions = [
+          {
+            id: "model",
+            name: "Model",
+            currentValue: "old",
+            options: [{ value: "new", name: "New Model" }],
+          },
+        ];
+        events.handleEvent({
+          type: "config_set",
+          configId: "model",
+          value: "new",
+        });
         assert.equal(stateMod.getConfigValue("model"), "new");
-        assert.ok(dom.messages.querySelector(".system-msg").textContent.includes("Model"));
+        assert.ok(
+          dom.messages
+            .querySelector(".system-msg")
+            .textContent.includes("Model"),
+        );
       });
     });
 
     describe("session_title_updated", () => {
       it("updates title for current session", () => {
         state.sessionId = "s1";
-        events.handleEvent({ type: "session_title_updated", sessionId: "s1", title: "New Title" });
+        events.handleEvent({
+          type: "session_title_updated",
+          sessionId: "s1",
+          title: "New Title",
+        });
         assert.equal(state.sessionTitle, "New Title");
         assert.equal(dom.sessionInfo.textContent, "New Title");
       });
@@ -796,7 +973,11 @@ describe("events", () => {
       it("ignores title update for other sessions", () => {
         state.sessionId = "s1";
         state.sessionTitle = "Old";
-        events.handleEvent({ type: "session_title_updated", sessionId: "s2", title: "Other" });
+        events.handleEvent({
+          type: "session_title_updated",
+          sessionId: "s2",
+          title: "Other",
+        });
         assert.equal(state.sessionTitle, "Old");
       });
     });
@@ -806,12 +987,19 @@ describe("events", () => {
         state.busy = true;
         events.handleEvent({ type: "error", message: "Something broke" });
         assert.equal(state.busy, false);
-        assert.ok(dom.messages.querySelector(".system-msg").textContent.includes("Something broke"));
+        assert.ok(
+          dom.messages
+            .querySelector(".system-msg")
+            .textContent.includes("Something broke"),
+        );
       });
 
       it("clears awaitingNewSession so the UI is not stuck", () => {
         state.awaitingNewSession = true;
-        events.handleEvent({ type: "error", message: "Directory does not exist: /bad" });
+        events.handleEvent({
+          type: "error",
+          message: "Directory does not exist: /bad",
+        });
         assert.equal(state.awaitingNewSession, false);
       });
     });
@@ -826,14 +1014,28 @@ describe("events", () => {
 
         // Old prompt is streaming assistant text
         events.handleEvent({ type: "message_chunk", text: "old response " });
-        assert.ok(state.currentAssistantEl, "should have an active assistant element");
+        assert.ok(
+          state.currentAssistantEl,
+          "should have an active assistant element",
+        );
 
         // Another client sends a new message (broadcast arrives)
-        events.handleEvent({ type: "user_message", sessionId: "s1", text: "new question" });
+        events.handleEvent({
+          type: "user_message",
+          sessionId: "s1",
+          text: "new question",
+        });
 
         // The old assistant element should be finalised
-        assert.ok(state.currentAssistantEl === null, "currentAssistantEl should be null after user_message");
-        assert.equal(state.currentAssistantText, "", "currentAssistantText should be cleared");
+        assert.ok(
+          state.currentAssistantEl === null,
+          "currentAssistantEl should be null after user_message",
+        );
+        assert.equal(
+          state.currentAssistantText,
+          "",
+          "currentAssistantText should be cleared",
+        );
 
         // New message_chunk should create a fresh element BELOW the user message
         events.handleEvent({ type: "message_chunk", text: "new response" });
@@ -841,9 +1043,18 @@ describe("events", () => {
         // DOM order: old assistant, user bubble, new assistant
         const children = [...dom.messages.children];
         assert.equal(children.length, 3);
-        assert.ok(children[0].classList.contains("assistant"), "first child should be old assistant");
-        assert.ok(children[1].classList.contains("user"), "second child should be user message");
-        assert.ok(children[2].classList.contains("assistant"), "third child should be new assistant");
+        assert.ok(
+          children[0].classList.contains("assistant"),
+          "first child should be old assistant",
+        );
+        assert.ok(
+          children[1].classList.contains("user"),
+          "second child should be user message",
+        );
+        assert.ok(
+          children[2].classList.contains("assistant"),
+          "third child should be new assistant",
+        );
       });
 
       it("user_message finalises in-progress thinking element", () => {
@@ -851,21 +1062,39 @@ describe("events", () => {
 
         // Old prompt is streaming thinking
         events.handleEvent({ type: "thought_chunk", text: "thinking..." });
-        assert.ok(state.currentThinkingEl, "should have an active thinking element");
+        assert.ok(
+          state.currentThinkingEl,
+          "should have an active thinking element",
+        );
 
         // Another client sends a new message
-        events.handleEvent({ type: "user_message", sessionId: "s1", text: "new question" });
+        events.handleEvent({
+          type: "user_message",
+          sessionId: "s1",
+          text: "new question",
+        });
 
         // Thinking element should be finalised
-        assert.ok(state.currentThinkingEl === null, "currentThinkingEl should be null");
-        assert.equal(state.currentThinkingText, "", "currentThinkingText should be cleared");
+        assert.ok(
+          state.currentThinkingEl === null,
+          "currentThinkingEl should be null",
+        );
+        assert.equal(
+          state.currentThinkingText,
+          "",
+          "currentThinkingText should be cleared",
+        );
       });
 
       it("stale prompt_done(cancelled) does not clobber new turn state (stuck busy)", () => {
         state.sessionId = "s1";
 
         // New turn starts: another client sent a message
-        events.handleEvent({ type: "user_message", sessionId: "s1", text: "new question" });
+        events.handleEvent({
+          type: "user_message",
+          sessionId: "s1",
+          text: "new question",
+        });
         assert.equal(state.turnEnded, false);
 
         // Agent starts responding to the new prompt
@@ -886,17 +1115,26 @@ describe("events", () => {
         events.handleEvent({ type: "prompt_done", stopReason: "cancelled" });
 
         // The new turn's tool call should NOT be cleared
-        assert.ok(state.pendingToolCallIds.has("tc-new"),
-          "stale cancel should not clear new turn pending tool calls");
-        assert.equal(state.busy, true,
-          "stale cancel should not clear busy for the new turn");
+        assert.ok(
+          state.pendingToolCallIds.has("tc-new"),
+          "stale cancel should not clear new turn pending tool calls",
+        );
+        assert.equal(
+          state.busy,
+          true,
+          "stale cancel should not clear busy for the new turn",
+        );
       });
 
       it("stale prompt_done(cancelled) does not prevent new prompt_done from clearing busy", () => {
         state.sessionId = "s1";
 
         // New turn starts
-        events.handleEvent({ type: "user_message", sessionId: "s1", text: "question" });
+        events.handleEvent({
+          type: "user_message",
+          sessionId: "s1",
+          text: "question",
+        });
         events.handleEvent({
           type: "tool_call",
           id: "tc-a",
@@ -909,14 +1147,21 @@ describe("events", () => {
         events.handleEvent({ type: "prompt_done", stopReason: "cancelled" });
 
         // Tool call completes
-        events.handleEvent({ type: "tool_call_update", id: "tc-a", status: "completed" });
+        events.handleEvent({
+          type: "tool_call_update",
+          id: "tc-a",
+          status: "completed",
+        });
 
         // The real prompt_done for the new turn arrives
         events.handleEvent({ type: "prompt_done", stopReason: "end_turn" });
 
         // Busy should be cleared
-        assert.equal(state.busy, false,
-          "new prompt_done should clear busy even after a stale cancel");
+        assert.equal(
+          state.busy,
+          false,
+          "new prompt_done should clear busy even after a stale cancel",
+        );
         assert.equal(state.pendingPromptDone, false);
       });
 
@@ -946,14 +1191,22 @@ describe("events", () => {
     describe("event filtering", () => {
       it("ignores events from other sessions", () => {
         state.sessionId = "s1";
-        events.handleEvent({ type: "message_chunk", sessionId: "s2", text: "hello" });
+        events.handleEvent({
+          type: "message_chunk",
+          sessionId: "s2",
+          text: "hello",
+        });
         assert.equal(state.currentAssistantEl, null);
         assert.equal(dom.messages.children.length, 0);
       });
 
       it("processes events matching current session", () => {
         state.sessionId = "s1";
-        events.handleEvent({ type: "message_chunk", sessionId: "s1", text: "hello" });
+        events.handleEvent({
+          type: "message_chunk",
+          sessionId: "s1",
+          text: "hello",
+        });
         assert.ok(state.currentAssistantEl);
       });
 
@@ -966,8 +1219,16 @@ describe("events", () => {
 
       it("drops non-lifecycle events when sessionId is null (mid-switch)", () => {
         state.sessionId = null;
-        events.handleEvent({ type: "user_message", sessionId: "s1", text: "leaked" });
-        events.handleEvent({ type: "message_chunk", sessionId: "s1", text: "leaked" });
+        events.handleEvent({
+          type: "user_message",
+          sessionId: "s1",
+          text: "leaked",
+        });
+        events.handleEvent({
+          type: "message_chunk",
+          sessionId: "s1",
+          text: "leaked",
+        });
         assert.equal(dom.messages.children.length, 0);
         assert.equal(state.currentAssistantEl, null);
       });
@@ -981,79 +1242,103 @@ describe("events", () => {
     });
   });
 
-    describe("status_bar", () => {
-      it("shows model and cwd after session_created", () => {
-        state.awaitingNewSession = true;
-        events.handleEvent({
-          type: "session_created",
-          sessionId: "s1",
-          cwd: "/home/user/project",
-          configOptions: [
-            { id: "model", name: "Model", currentValue: "claude-sonnet", options: [] },
-          ],
-        });
-        const text = dom.statusBar.textContent;
-        assert.ok(text.includes("claude-sonnet"), "should show model");
-        assert.ok(text.includes("/home/user/project"), "should show cwd");
+  describe("status_bar", () => {
+    it("shows model and cwd after session_created", () => {
+      state.awaitingNewSession = true;
+      events.handleEvent({
+        type: "session_created",
+        sessionId: "s1",
+        cwd: "/home/user/project",
+        configOptions: [
+          {
+            id: "model",
+            name: "Model",
+            currentValue: "claude-sonnet",
+            options: [],
+          },
+        ],
       });
-
-      it("renders full cwd in a dedicated span with CSS truncation class", () => {
-        state.awaitingNewSession = true;
-        events.handleEvent({
-          type: "session_created",
-          sessionId: "s1",
-          cwd: "/Users/lelouch/mine/code/webagent",
-          configOptions: [],
-        });
-        const cwdSpan = dom.statusBar.querySelector(".status-cwd");
-        assert.ok(cwdSpan, "should have a .status-cwd span");
-        assert.equal(cwdSpan.textContent, "/Users/lelouch/mine/code/webagent");
-      });
-
-      it("shows short cwd without truncation", () => {
-        state.awaitingNewSession = true;
-        events.handleEvent({
-          type: "session_created",
-          sessionId: "s1",
-          cwd: "/home/user",
-          configOptions: [],
-        });
-        assert.ok(dom.statusBar.textContent.includes("/home/user"));
-      });
-
-      it("updates when config_set changes model", () => {
-        state.sessionId = "s1";
-        state.configOptions = [
-          { id: "model", name: "Model", currentValue: "old-model", options: [{ value: "new-model", name: "New" }] },
-        ];
-        events.handleEvent({ type: "config_set", configId: "model", value: "new-model" });
-        assert.ok(dom.statusBar.textContent.includes("new-model"));
-      });
-
-      it("updates on config_option_update", () => {
-        state.sessionId = "s1";
-        events.handleEvent({
-          type: "config_option_update",
-          configOptions: [
-            { id: "model", name: "Model", currentValue: "new-model", options: [] },
-          ],
-        });
-        assert.ok(dom.statusBar.textContent.includes("new-model"));
-      });
-
-      it("cleared by resetSessionUI", () => {
-        state.awaitingNewSession = true;
-        events.handleEvent({
-          type: "session_created",
-          sessionId: "s1",
-          cwd: "/home",
-          configOptions: [{ id: "model", name: "Model", currentValue: "test", options: [] }],
-        });
-        assert.ok(dom.statusBar.textContent.length > 0, "precondition: not empty");
-        stateMod.resetSessionUI();
-        assert.equal(dom.statusBar.textContent, "");
-      });
+      const text = dom.statusBar.textContent;
+      assert.ok(text.includes("claude-sonnet"), "should show model");
+      assert.ok(text.includes("/home/user/project"), "should show cwd");
     });
+
+    it("renders full cwd in a dedicated span with CSS truncation class", () => {
+      state.awaitingNewSession = true;
+      events.handleEvent({
+        type: "session_created",
+        sessionId: "s1",
+        cwd: "/Users/lelouch/mine/code/webagent",
+        configOptions: [],
+      });
+      const cwdSpan = dom.statusBar.querySelector(".status-cwd");
+      assert.ok(cwdSpan, "should have a .status-cwd span");
+      assert.equal(cwdSpan.textContent, "/Users/lelouch/mine/code/webagent");
+    });
+
+    it("shows short cwd without truncation", () => {
+      state.awaitingNewSession = true;
+      events.handleEvent({
+        type: "session_created",
+        sessionId: "s1",
+        cwd: "/home/user",
+        configOptions: [],
+      });
+      assert.ok(dom.statusBar.textContent.includes("/home/user"));
+    });
+
+    it("updates when config_set changes model", () => {
+      state.sessionId = "s1";
+      state.configOptions = [
+        {
+          id: "model",
+          name: "Model",
+          currentValue: "old-model",
+          options: [{ value: "new-model", name: "New" }],
+        },
+      ];
+      events.handleEvent({
+        type: "config_set",
+        configId: "model",
+        value: "new-model",
+      });
+      assert.ok(dom.statusBar.textContent.includes("new-model"));
+    });
+
+    it("updates on config_option_update", () => {
+      state.sessionId = "s1";
+      events.handleEvent({
+        type: "config_option_update",
+        configOptions: [
+          {
+            id: "model",
+            name: "Model",
+            currentValue: "new-model",
+            options: [],
+          },
+        ],
+      });
+      assert.ok(dom.statusBar.textContent.includes("new-model"));
+    });
+
+    it("cleared by resetSessionUI", () => {
+      state.awaitingNewSession = true;
+      events.handleEvent({
+        type: "session_created",
+        sessionId: "s1",
+        cwd: "/home",
+        configOptions: [
+          { id: "model", name: "Model", currentValue: "test", options: [] },
+        ],
+      });
+      assert.ok(
+        dom.statusBar.textContent.length > 0,
+        "precondition: not empty",
+      );
+      stateMod.resetSessionUI();
+      assert.equal(dom.statusBar.textContent, "");
+    });
+  });
 
   describe("replayEvent", () => {
     it("replays user_message", () => {
@@ -1096,8 +1381,13 @@ describe("events", () => {
       events.replayEvent("thinking", { text: "part one" }, [], 0);
       events.replayEvent("thinking", { text: "part two" }, [], 1);
       const thinkings = dom.messages.querySelectorAll(".thinking");
-      assert.equal(thinkings.length, 1, "should merge into a single thinking block");
-      const content = thinkings[0].querySelector(".thinking-content").textContent;
+      assert.equal(
+        thinkings.length,
+        1,
+        "should merge into a single thinking block",
+      );
+      const content =
+        thinkings[0].querySelector(".thinking-content").textContent;
       assert.ok(content.includes("part one"));
       assert.ok(content.includes("part two"));
     });
@@ -1116,21 +1406,50 @@ describe("events", () => {
     });
 
     it("replays tool_call and tool_call_update", () => {
-      events.replayEvent("tool_call", { id: "t1", kind: "read", title: "Read", rawInput: {} }, [], 0);
-      events.replayEvent("tool_call_update", { id: "t1", status: "completed" }, [], 1);
+      events.replayEvent(
+        "tool_call",
+        { id: "t1", kind: "read", title: "Read", rawInput: {} },
+        [],
+        0,
+      );
+      events.replayEvent(
+        "tool_call_update",
+        { id: "t1", status: "completed" },
+        [],
+        1,
+      );
       const el = globalThis.document.getElementById("tc-t1");
       assert.ok(el.classList.contains("completed"));
     });
 
     it("replays task_complete with visible summary", () => {
-      events.replayEvent("tool_call", { id: "t-tc", kind: "task_complete", title: "Task complete", rawInput: {} }, [], 0);
-      events.replayEvent("tool_call_update", {
-        id: "t-tc", status: "completed",
-        content: [{ type: "text", content: { text: "Deployed to prod" } }],
-      }, [], 1);
+      events.replayEvent(
+        "tool_call",
+        {
+          id: "t-tc",
+          kind: "task_complete",
+          title: "Task complete",
+          rawInput: {},
+        },
+        [],
+        0,
+      );
+      events.replayEvent(
+        "tool_call_update",
+        {
+          id: "t-tc",
+          status: "completed",
+          content: [{ type: "text", content: { text: "Deployed to prod" } }],
+        },
+        [],
+        1,
+      );
       const el = globalThis.document.getElementById("tc-t-tc");
       assert.ok(el.classList.contains("completed"));
-      assert.ok(!el.querySelector("details"), "task_complete should not use collapsed details during replay");
+      assert.ok(
+        !el.querySelector("details"),
+        "task_complete should not use collapsed details during replay",
+      );
       const summary = el.querySelector(".tc-summary");
       assert.ok(summary, "should have visible .tc-summary during replay");
       assert.ok(summary.textContent.includes("Deployed to prod"));
@@ -1141,15 +1460,37 @@ describe("events", () => {
       const pending = globalThis.document.getElementById("bash-replay-pending");
       assert.ok(pending);
       events.replayEvent("bash_result", { output: "hi\n", code: 0 }, [], 1);
-      assert.equal(globalThis.document.getElementById("bash-replay-pending"), null);
+      assert.equal(
+        globalThis.document.getElementById("bash-replay-pending"),
+        null,
+      );
     });
 
     it("replays permission_request with resolved state", () => {
       const evts = [
-        { type: "permission_request", data: JSON.stringify({ requestId: "p1", title: "Allow?", options: [{ optionId: "a", kind: "allow", name: "Allow" }] }) },
-        { type: "permission_response", data: JSON.stringify({ requestId: "p1", denied: false, optionName: "Allow" }) },
+        {
+          type: "permission_request",
+          data: JSON.stringify({
+            requestId: "p1",
+            title: "Allow?",
+            options: [{ optionId: "a", kind: "allow", name: "Allow" }],
+          }),
+        },
+        {
+          type: "permission_response",
+          data: JSON.stringify({
+            requestId: "p1",
+            denied: false,
+            optionName: "Allow",
+          }),
+        },
       ];
-      events.replayEvent("permission_request", JSON.parse(evts[0].data), evts, 0);
+      events.replayEvent(
+        "permission_request",
+        JSON.parse(evts[0].data),
+        evts,
+        0,
+      );
       const perm = dom.messages.querySelector(".permission");
       // Already resolved — no buttons should be present
       assert.equal(perm.querySelectorAll("button").length, 0);
@@ -1157,14 +1498,44 @@ describe("events", () => {
 
     it("preserves permission title through full replay cycle", () => {
       const evts = [
-        { type: "permission_request", data: JSON.stringify({ requestId: "p2", title: "Run rm -rf", options: [{ optionId: "a", kind: "allow", name: "Allow once" }] }) },
-        { type: "permission_response", data: JSON.stringify({ requestId: "p2", denied: false, optionName: "Allow once" }) },
+        {
+          type: "permission_request",
+          data: JSON.stringify({
+            requestId: "p2",
+            title: "Run rm -rf",
+            options: [{ optionId: "a", kind: "allow", name: "Allow once" }],
+          }),
+        },
+        {
+          type: "permission_response",
+          data: JSON.stringify({
+            requestId: "p2",
+            denied: false,
+            optionName: "Allow once",
+          }),
+        },
       ];
-      events.replayEvent("permission_request", JSON.parse(evts[0].data), evts, 0);
-      events.replayEvent("permission_response", JSON.parse(evts[1].data), evts, 1);
+      events.replayEvent(
+        "permission_request",
+        JSON.parse(evts[0].data),
+        evts,
+        0,
+      );
+      events.replayEvent(
+        "permission_response",
+        JSON.parse(evts[1].data),
+        evts,
+        1,
+      );
       const perm = dom.messages.querySelector(".permission");
-      assert.ok(perm.textContent.includes("Run rm -rf"), "title should be preserved");
-      assert.ok(perm.textContent.includes("Allow once"), "action should be shown");
+      assert.ok(
+        perm.textContent.includes("Run rm -rf"),
+        "title should be preserved",
+      );
+      assert.ok(
+        perm.textContent.includes("Allow once"),
+        "action should be shown",
+      );
     });
   });
 
@@ -1172,18 +1543,25 @@ describe("events", () => {
     it("sets lastEventSeq and sync boundary from loaded events", async () => {
       const fakeEvents = [
         { seq: 1, type: "user_message", data: JSON.stringify({ text: "hi" }) },
-        { seq: 2, type: "assistant_message", data: JSON.stringify({ text: "hello" }) },
+        {
+          seq: 2,
+          type: "assistant_message",
+          data: JSON.stringify({ text: "hello" }),
+        },
       ];
-      globalThis.fetch = (() => Promise.resolve({
-        ok: true,
-        json: () => Promise.resolve(fakeEvents),
-      })) as any;
+      globalThis.fetch = (() =>
+        Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve(fakeEvents),
+        })) as any;
 
       const loaded = await events.loadHistory("s1");
       assert.equal(loaded, true);
       assert.equal(state.lastEventSeq, 2);
       assert.equal(dom.messages.children.length, 2);
-      assert.ok(dom.messages.lastElementChild.hasAttribute("data-sync-boundary"));
+      assert.ok(
+        dom.messages.lastElementChild.hasAttribute("data-sync-boundary"),
+      );
     });
 
     it("sends limit parameter in fetch URL", async () => {
@@ -1192,7 +1570,11 @@ describe("events", () => {
         capturedUrl = url;
         return Promise.resolve({
           ok: true,
-          json: () => Promise.resolve({ events: [], streaming: { thinking: false, assistant: false } }),
+          json: () =>
+            Promise.resolve({
+              events: [],
+              streaming: { thinking: false, assistant: false },
+            }),
         });
       }) as any;
 
@@ -1203,17 +1585,23 @@ describe("events", () => {
     it("sets pagination state from paginated response", async () => {
       const fakeEvents = [
         { seq: 50, type: "user_message", data: JSON.stringify({ text: "hi" }) },
-        { seq: 51, type: "assistant_message", data: JSON.stringify({ text: "hello" }) },
+        {
+          seq: 51,
+          type: "assistant_message",
+          data: JSON.stringify({ text: "hello" }),
+        },
       ];
-      globalThis.fetch = (() => Promise.resolve({
-        ok: true,
-        json: () => Promise.resolve({
-          events: fakeEvents,
-          streaming: { thinking: false, assistant: false },
-          total: 100,
-          hasMore: true,
-        }),
-      })) as any;
+      globalThis.fetch = (() =>
+        Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              events: fakeEvents,
+              streaming: { thinking: false, assistant: false },
+              total: 100,
+              hasMore: true,
+            }),
+        })) as any;
 
       await events.loadHistory("s1");
       assert.equal(state.lastEventSeq, 51);
@@ -1223,17 +1611,23 @@ describe("events", () => {
 
     it("sets hasMoreHistory=false when all events fit in one page", async () => {
       const fakeEvents = [
-        { seq: 1, type: "user_message", data: JSON.stringify({ text: "only" }) },
+        {
+          seq: 1,
+          type: "user_message",
+          data: JSON.stringify({ text: "only" }),
+        },
       ];
-      globalThis.fetch = (() => Promise.resolve({
-        ok: true,
-        json: () => Promise.resolve({
-          events: fakeEvents,
-          streaming: { thinking: false, assistant: false },
-          total: 1,
-          hasMore: false,
-        }),
-      })) as any;
+      globalThis.fetch = (() =>
+        Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              events: fakeEvents,
+              streaming: { thinking: false, assistant: false },
+              total: 1,
+              hasMore: false,
+            }),
+        })) as any;
 
       await events.loadHistory("s1");
       assert.equal(state.hasMoreHistory, false);
@@ -1251,20 +1645,29 @@ describe("events", () => {
       events.replayEvent("assistant_message", { text: "msg-6" }, [], 0);
 
       const olderEvents = [
-        { seq: 3, type: "user_message", data: JSON.stringify({ text: "msg-3" }) },
-        { seq: 4, type: "assistant_message", data: JSON.stringify({ text: "msg-4" }) },
+        {
+          seq: 3,
+          type: "user_message",
+          data: JSON.stringify({ text: "msg-3" }),
+        },
+        {
+          seq: 4,
+          type: "assistant_message",
+          data: JSON.stringify({ text: "msg-4" }),
+        },
       ];
       globalThis.fetch = ((url: string) => {
         assert.ok(url.includes("before=5"), "should use before cursor");
         assert.ok(url.includes("limit="), "should include limit");
         return Promise.resolve({
           ok: true,
-          json: () => Promise.resolve({
-            events: olderEvents,
-            streaming: { thinking: false, assistant: false },
-            total: 6,
-            hasMore: true,
-          }),
+          json: () =>
+            Promise.resolve({
+              events: olderEvents,
+              streaming: { thinking: false, assistant: false },
+              total: 6,
+              hasMore: true,
+            }),
         });
       }) as any;
 
@@ -1282,14 +1685,22 @@ describe("events", () => {
       state.sessionId = "s1";
       events.replayEvent("user_message", { text: "existing" }, [], 0);
 
-      globalThis.fetch = (() => Promise.resolve({
-        ok: true,
-        json: () => Promise.resolve({
-          events: [{ seq: 1, type: "user_message", data: JSON.stringify({ text: "first" }) }],
-          streaming: { thinking: false, assistant: false },
-          hasMore: false,
-        }),
-      })) as any;
+      globalThis.fetch = (() =>
+        Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              events: [
+                {
+                  seq: 1,
+                  type: "user_message",
+                  data: JSON.stringify({ text: "first" }),
+                },
+              ],
+              streaming: { thinking: false, assistant: false },
+              hasMore: false,
+            }),
+        })) as any;
 
       await events.loadOlderEvents("s1");
       assert.equal(state.hasMoreHistory, false);
@@ -1319,11 +1730,18 @@ describe("events", () => {
       dom.messages.lastElementChild.setAttribute("data-sync-boundary", "");
 
       const newEvents = [
-        { seq: 2, type: "assistant_message", data: JSON.stringify({ text: "new reply" }) },
+        {
+          seq: 2,
+          type: "assistant_message",
+          data: JSON.stringify({ text: "new reply" }),
+        },
       ];
       globalThis.fetch = ((url: string) => {
         assert.ok(url.includes("after=1"));
-        return Promise.resolve({ ok: true, json: () => Promise.resolve(newEvents) });
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve(newEvents),
+        });
       }) as any;
 
       const result = await events.loadNewEvents("s1");
@@ -1334,7 +1752,9 @@ describe("events", () => {
       assert.ok(dom.messages.children[0].textContent.includes("old"));
       assert.ok(dom.messages.children[1].textContent.includes("new reply"));
       // Boundary moved to last element
-      assert.ok(dom.messages.lastElementChild.hasAttribute("data-sync-boundary"));
+      assert.ok(
+        dom.messages.lastElementChild.hasAttribute("data-sync-boundary"),
+      );
     });
 
     it("removes post-boundary live elements before replaying", async () => {
@@ -1352,12 +1772,22 @@ describe("events", () => {
       // New events from server include both the completed version of the live event
       // and a new event
       const newEvents = [
-        { seq: 2, type: "assistant_message", data: JSON.stringify({ text: "full reply" }) },
-        { seq: 3, type: "user_message", data: JSON.stringify({ text: "follow up" }) },
+        {
+          seq: 2,
+          type: "assistant_message",
+          data: JSON.stringify({ text: "full reply" }),
+        },
+        {
+          seq: 3,
+          type: "user_message",
+          data: JSON.stringify({ text: "follow up" }),
+        },
       ];
-      globalThis.fetch = (() => Promise.resolve({
-        ok: true, json: () => Promise.resolve(newEvents),
-      })) as any;
+      globalThis.fetch = (() =>
+        Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve(newEvents),
+        })) as any;
 
       await events.loadNewEvents("s1");
 
@@ -1373,9 +1803,11 @@ describe("events", () => {
       state.lastEventSeq = 1;
       dom.messages.lastElementChild.setAttribute("data-sync-boundary", "");
 
-      globalThis.fetch = (() => Promise.resolve({
-        ok: true, json: () => Promise.resolve([]),
-      })) as any;
+      globalThis.fetch = (() =>
+        Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve([]),
+        })) as any;
 
       const result = await events.loadNewEvents("s1");
       assert.equal(result, true);
@@ -1385,9 +1817,11 @@ describe("events", () => {
 
     it("clears replayInProgress even when returning early for empty events", async () => {
       state.lastEventSeq = 1;
-      globalThis.fetch = (() => Promise.resolve({
-        ok: true, json: () => Promise.resolve([]),
-      })) as any;
+      globalThis.fetch = (() =>
+        Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve([]),
+        })) as any;
 
       await events.loadNewEvents("s1");
       assert.equal(state.replayInProgress, false);
@@ -1412,9 +1846,11 @@ describe("events", () => {
       state.currentAssistantText = "";
 
       // Reconnect: loadNewEvents returns empty (buffer not flushed yet)
-      globalThis.fetch = (() => Promise.resolve({
-        ok: true, json: () => Promise.resolve([]),
-      })) as any;
+      globalThis.fetch = (() =>
+        Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve([]),
+        })) as any;
 
       await events.loadNewEvents("s1");
 
@@ -1428,16 +1864,28 @@ describe("events", () => {
     it("primeStreamingState sets data-primed on adopted assistant element", async () => {
       const fakeEvents = [
         { seq: 1, type: "user_message", data: JSON.stringify({ text: "hi" }) },
-        { seq: 2, type: "assistant_message", data: JSON.stringify({ text: "hello" }) },
+        {
+          seq: 2,
+          type: "assistant_message",
+          data: JSON.stringify({ text: "hello" }),
+        },
       ];
-      const response = { events: fakeEvents, streaming: { thinking: false, assistant: true } };
-      globalThis.fetch = (() => Promise.resolve({
-        ok: true, json: () => Promise.resolve(response),
-      })) as any;
+      const response = {
+        events: fakeEvents,
+        streaming: { thinking: false, assistant: true },
+      };
+      globalThis.fetch = (() =>
+        Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve(response),
+        })) as any;
 
       await events.loadHistory("s1");
       const el = dom.messages.querySelector(".msg.assistant");
-      assert.ok(el.hasAttribute("data-primed"), "primed element should have data-primed");
+      assert.ok(
+        el.hasAttribute("data-primed"),
+        "primed element should have data-primed",
+      );
       assert.ok(state.currentAssistantEl === el);
     });
 
@@ -1446,27 +1894,48 @@ describe("events", () => {
         { seq: 1, type: "user_message", data: JSON.stringify({ text: "hi" }) },
         { seq: 2, type: "thinking", data: JSON.stringify({ text: "hmm" }) },
       ];
-      const response = { events: fakeEvents, streaming: { thinking: true, assistant: false } };
-      globalThis.fetch = (() => Promise.resolve({
-        ok: true, json: () => Promise.resolve(response),
-      })) as any;
+      const response = {
+        events: fakeEvents,
+        streaming: { thinking: true, assistant: false },
+      };
+      globalThis.fetch = (() =>
+        Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve(response),
+        })) as any;
 
       await events.loadHistory("s1");
       const el = dom.messages.querySelector(".thinking");
-      assert.ok(el.hasAttribute("data-primed"), "primed thinking should have data-primed");
+      assert.ok(
+        el.hasAttribute("data-primed"),
+        "primed thinking should have data-primed",
+      );
       assert.ok(state.currentThinkingEl === el);
     });
 
     it("primeStreamingState reads data-raw for currentAssistantText (merged content)", async () => {
       // Two consecutive assistant_messages get merged; data-raw holds combined text
       const fakeEvents = [
-        { seq: 1, type: "assistant_message", data: JSON.stringify({ text: "Hello " }) },
-        { seq: 2, type: "assistant_message", data: JSON.stringify({ text: "world" }) },
+        {
+          seq: 1,
+          type: "assistant_message",
+          data: JSON.stringify({ text: "Hello " }),
+        },
+        {
+          seq: 2,
+          type: "assistant_message",
+          data: JSON.stringify({ text: "world" }),
+        },
       ];
-      const response = { events: fakeEvents, streaming: { thinking: false, assistant: true } };
-      globalThis.fetch = (() => Promise.resolve({
-        ok: true, json: () => Promise.resolve(response),
-      })) as any;
+      const response = {
+        events: fakeEvents,
+        streaming: { thinking: false, assistant: true },
+      };
+      globalThis.fetch = (() =>
+        Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve(response),
+        })) as any;
 
       await events.loadHistory("s1");
       // data-raw should be combined, and currentAssistantText should match
@@ -1475,13 +1944,26 @@ describe("events", () => {
 
     it("primeStreamingState reads data-raw for currentThinkingText (merged content)", async () => {
       const fakeEvents = [
-        { seq: 1, type: "thinking", data: JSON.stringify({ text: "part one" }) },
-        { seq: 2, type: "thinking", data: JSON.stringify({ text: "part two" }) },
+        {
+          seq: 1,
+          type: "thinking",
+          data: JSON.stringify({ text: "part one" }),
+        },
+        {
+          seq: 2,
+          type: "thinking",
+          data: JSON.stringify({ text: "part two" }),
+        },
       ];
-      const response = { events: fakeEvents, streaming: { thinking: true, assistant: false } };
-      globalThis.fetch = (() => Promise.resolve({
-        ok: true, json: () => Promise.resolve(response),
-      })) as any;
+      const response = {
+        events: fakeEvents,
+        streaming: { thinking: true, assistant: false },
+      };
+      globalThis.fetch = (() =>
+        Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve(response),
+        })) as any;
 
       await events.loadHistory("s1");
       assert.equal(state.currentThinkingText, "part one\npart two");
@@ -1490,56 +1972,92 @@ describe("events", () => {
     it("loadNewEvents reverts primed assistant element before replaying", async () => {
       // Setup: loadHistory primes an assistant element
       const historyEvents = [
-        { seq: 1, type: "assistant_message", data: JSON.stringify({ text: "original" }) },
+        {
+          seq: 1,
+          type: "assistant_message",
+          data: JSON.stringify({ text: "original" }),
+        },
       ];
-      const histResponse = { events: historyEvents, streaming: { thinking: false, assistant: true } };
-      globalThis.fetch = (() => Promise.resolve({
-        ok: true, json: () => Promise.resolve(histResponse),
-      })) as any;
+      const histResponse = {
+        events: historyEvents,
+        streaming: { thinking: false, assistant: true },
+      };
+      globalThis.fetch = (() =>
+        Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve(histResponse),
+        })) as any;
       await events.loadHistory("s1");
 
       // Simulate live streaming that grew the element beyond DB content
       state.currentAssistantText = "original plus more streamed text";
-      state.currentAssistantEl.innerHTML = "<p>original plus more streamed text</p>";
+      state.currentAssistantEl.innerHTML =
+        "<p>original plus more streamed text</p>";
 
       // Now loadNewEvents — server flushed buffer, returns tail as new event
       const newEvents = [
-        { seq: 2, type: "assistant_message", data: JSON.stringify({ text: " plus more streamed text" }) },
+        {
+          seq: 2,
+          type: "assistant_message",
+          data: JSON.stringify({ text: " plus more streamed text" }),
+        },
       ];
-      globalThis.fetch = (() => Promise.resolve({
-        ok: true, json: () => Promise.resolve(newEvents),
-      })) as any;
+      globalThis.fetch = (() =>
+        Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve(newEvents),
+        })) as any;
       await events.loadNewEvents("s1");
 
       // Should have exactly ONE assistant element with merged content (no duplication)
       const assistants = dom.messages.querySelectorAll(".msg.assistant");
-      assert.equal(assistants.length, 1, "should not duplicate assistant message");
+      assert.equal(
+        assistants.length,
+        1,
+        "should not duplicate assistant message",
+      );
       assert.ok(assistants[0].textContent.includes("original"));
       assert.ok(assistants[0].textContent.includes("plus more streamed text"));
     });
 
     it("loadNewEvents reverts primed thinking element before replaying", async () => {
       const historyEvents = [
-        { seq: 1, type: "thinking", data: JSON.stringify({ text: "initial thought" }) },
+        {
+          seq: 1,
+          type: "thinking",
+          data: JSON.stringify({ text: "initial thought" }),
+        },
       ];
-      const histResponse = { events: historyEvents, streaming: { thinking: true, assistant: false } };
-      globalThis.fetch = (() => Promise.resolve({
-        ok: true, json: () => Promise.resolve(histResponse),
-      })) as any;
+      const histResponse = {
+        events: historyEvents,
+        streaming: { thinking: true, assistant: false },
+      };
+      globalThis.fetch = (() =>
+        Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve(histResponse),
+        })) as any;
       await events.loadHistory("s1");
 
       // Simulate live streaming that grew the thinking element
       state.currentThinkingText = "initial thought\nmore thinking";
-      const content = state.currentThinkingEl.querySelector(".thinking-content");
+      const content =
+        state.currentThinkingEl.querySelector(".thinking-content");
       content.textContent = "initial thought\nmore thinking";
 
       // Server returns flushed tail
       const newEvents = [
-        { seq: 2, type: "thinking", data: JSON.stringify({ text: "more thinking" }) },
+        {
+          seq: 2,
+          type: "thinking",
+          data: JSON.stringify({ text: "more thinking" }),
+        },
       ];
-      globalThis.fetch = (() => Promise.resolve({
-        ok: true, json: () => Promise.resolve(newEvents),
-      })) as any;
+      globalThis.fetch = (() =>
+        Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve(newEvents),
+        })) as any;
       await events.loadNewEvents("s1");
 
       const thinkings = dom.messages.querySelectorAll(".thinking");
@@ -1552,13 +2070,31 @@ describe("events", () => {
     it("loadNewEvents handles primed element when boundary is not the primed element", async () => {
       // Boundary is a tool_call, primed element is the earlier assistant
       const historyEvents = [
-        { seq: 1, type: "assistant_message", data: JSON.stringify({ text: "before tool" }) },
-        { seq: 2, type: "tool_call", data: JSON.stringify({ id: "tc1", kind: "read", title: "Read", rawInput: {} }) },
+        {
+          seq: 1,
+          type: "assistant_message",
+          data: JSON.stringify({ text: "before tool" }),
+        },
+        {
+          seq: 2,
+          type: "tool_call",
+          data: JSON.stringify({
+            id: "tc1",
+            kind: "read",
+            title: "Read",
+            rawInput: {},
+          }),
+        },
       ];
-      const histResponse = { events: historyEvents, streaming: { thinking: false, assistant: true } };
-      globalThis.fetch = (() => Promise.resolve({
-        ok: true, json: () => Promise.resolve(histResponse),
-      })) as any;
+      const histResponse = {
+        events: historyEvents,
+        streaming: { thinking: false, assistant: true },
+      };
+      globalThis.fetch = (() =>
+        Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve(histResponse),
+        })) as any;
       await events.loadHistory("s1");
 
       // The primed element should be the assistant (not the tool_call boundary)
@@ -1571,30 +2107,52 @@ describe("events", () => {
 
       // Server returns the streamed tail as a new assistant_message
       const newEvents = [
-        { seq: 3, type: "assistant_message", data: JSON.stringify({ text: " and more" }) },
+        {
+          seq: 3,
+          type: "assistant_message",
+          data: JSON.stringify({ text: " and more" }),
+        },
       ];
-      globalThis.fetch = (() => Promise.resolve({
-        ok: true, json: () => Promise.resolve(newEvents),
-      })) as any;
+      globalThis.fetch = (() =>
+        Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve(newEvents),
+        })) as any;
       await events.loadNewEvents("s1");
 
       // The primed assistant should be reverted to "before tool" (its data-raw)
       // The new event creates a separate assistant after the tool_call (non-adjacent, M6)
       const assistants = dom.messages.querySelectorAll(".msg.assistant");
-      assert.equal(assistants.length, 2, "non-adjacent: reverted original + new after tool_call");
+      assert.equal(
+        assistants.length,
+        2,
+        "non-adjacent: reverted original + new after tool_call",
+      );
       assert.ok(assistants[0].textContent.includes("before tool"));
-      assert.ok(!assistants[0].textContent.includes("and more"), "reverted element should not contain streamed tail");
+      assert.ok(
+        !assistants[0].textContent.includes("and more"),
+        "reverted element should not contain streamed tail",
+      );
       assert.ok(assistants[1].textContent.includes("and more"));
     });
 
     it("finishAssistant clears data-primed attribute", async () => {
       const fakeEvents = [
-        { seq: 1, type: "assistant_message", data: JSON.stringify({ text: "hello" }) },
+        {
+          seq: 1,
+          type: "assistant_message",
+          data: JSON.stringify({ text: "hello" }),
+        },
       ];
-      const response = { events: fakeEvents, streaming: { thinking: false, assistant: true } };
-      globalThis.fetch = (() => Promise.resolve({
-        ok: true, json: () => Promise.resolve(response),
-      })) as any;
+      const response = {
+        events: fakeEvents,
+        streaming: { thinking: false, assistant: true },
+      };
+      globalThis.fetch = (() =>
+        Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve(response),
+        })) as any;
       await events.loadHistory("s1");
 
       const el = dom.messages.querySelector(".msg.assistant");
@@ -1602,35 +2160,55 @@ describe("events", () => {
 
       // Simulate stream finishing
       render.finishAssistant();
-      assert.ok(!el.hasAttribute("data-primed"), "data-primed should be cleared on finish");
+      assert.ok(
+        !el.hasAttribute("data-primed"),
+        "data-primed should be cleared on finish",
+      );
     });
 
     it("finishThinking clears data-primed attribute", async () => {
       const fakeEvents = [
         { seq: 1, type: "thinking", data: JSON.stringify({ text: "hmm" }) },
       ];
-      const response = { events: fakeEvents, streaming: { thinking: true, assistant: false } };
-      globalThis.fetch = (() => Promise.resolve({
-        ok: true, json: () => Promise.resolve(response),
-      })) as any;
+      const response = {
+        events: fakeEvents,
+        streaming: { thinking: true, assistant: false },
+      };
+      globalThis.fetch = (() =>
+        Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve(response),
+        })) as any;
       await events.loadHistory("s1");
 
       const el = dom.messages.querySelector(".thinking");
       assert.ok(el.hasAttribute("data-primed"));
 
       render.finishThinking();
-      assert.ok(!el.hasAttribute("data-primed"), "data-primed should be cleared on finish");
+      assert.ok(
+        !el.hasAttribute("data-primed"),
+        "data-primed should be cleared on finish",
+      );
     });
 
     it("loadNewEvents with empty events and streaming re-primes from boundary", async () => {
       // Setup: loadHistory with streaming assistant
       const historyEvents = [
-        { seq: 1, type: "assistant_message", data: JSON.stringify({ text: "hello" }) },
+        {
+          seq: 1,
+          type: "assistant_message",
+          data: JSON.stringify({ text: "hello" }),
+        },
       ];
-      const histResponse = { events: historyEvents, streaming: { thinking: false, assistant: true } };
-      globalThis.fetch = (() => Promise.resolve({
-        ok: true, json: () => Promise.resolve(histResponse),
-      })) as any;
+      const histResponse = {
+        events: historyEvents,
+        streaming: { thinking: false, assistant: true },
+      };
+      globalThis.fetch = (() =>
+        Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve(histResponse),
+        })) as any;
       await events.loadHistory("s1");
       assert.ok(state.currentAssistantEl);
 
@@ -1639,14 +2217,22 @@ describe("events", () => {
       state.currentAssistantEl.innerHTML = "<p>hello world</p>";
 
       // loadNewEvents returns no new events but streaming is still true
-      const response = { events: [], streaming: { thinking: false, assistant: true } };
-      globalThis.fetch = (() => Promise.resolve({
-        ok: true, json: () => Promise.resolve(response),
-      })) as any;
+      const response = {
+        events: [],
+        streaming: { thinking: false, assistant: true },
+      };
+      globalThis.fetch = (() =>
+        Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve(response),
+        })) as any;
       await events.loadNewEvents("s1");
 
       // Should still have the assistant element primed for continued streaming
-      assert.ok(state.currentAssistantEl, "should re-prime assistant from boundary");
+      assert.ok(
+        state.currentAssistantEl,
+        "should re-prime assistant from boundary",
+      );
       assert.equal(dom.messages.querySelectorAll(".msg.assistant").length, 1);
     });
 
@@ -1659,7 +2245,9 @@ describe("events", () => {
       let fetchCount = 0;
       globalThis.fetch = (() => {
         fetchCount++;
-        return new Promise(r => { resolveFirst = r; });
+        return new Promise((r) => {
+          resolveFirst = r;
+        });
       }) as any;
 
       // Two concurrent calls for same session
@@ -1698,32 +2286,54 @@ describe("events", () => {
     it("reverts both thinking and assistant when both are primed simultaneously", async () => {
       const historyEvents = [
         { seq: 1, type: "thinking", data: JSON.stringify({ text: "thought" }) },
-        { seq: 2, type: "assistant_message", data: JSON.stringify({ text: "reply" }) },
+        {
+          seq: 2,
+          type: "assistant_message",
+          data: JSON.stringify({ text: "reply" }),
+        },
       ];
-      const histResponse = { events: historyEvents, streaming: { thinking: true, assistant: true } };
-      globalThis.fetch = (() => Promise.resolve({
-        ok: true, json: () => Promise.resolve(histResponse),
-      })) as any;
+      const histResponse = {
+        events: historyEvents,
+        streaming: { thinking: true, assistant: true },
+      };
+      globalThis.fetch = (() =>
+        Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve(histResponse),
+        })) as any;
       await events.loadHistory("s1");
 
       assert.ok(state.currentThinkingEl, "thinking should be primed");
       assert.ok(state.currentAssistantEl, "assistant should be primed");
-      assert.ok(dom.messages.querySelector(".thinking").hasAttribute("data-primed"));
-      assert.ok(dom.messages.querySelector(".msg.assistant").hasAttribute("data-primed"));
+      assert.ok(
+        dom.messages.querySelector(".thinking").hasAttribute("data-primed"),
+      );
+      assert.ok(
+        dom.messages
+          .querySelector(".msg.assistant")
+          .hasAttribute("data-primed"),
+      );
 
       // Simulate live streaming grew both elements
       state.currentThinkingText = "thought extended";
-      state.currentThinkingEl.querySelector(".thinking-content").textContent = "thought extended";
+      state.currentThinkingEl.querySelector(".thinking-content").textContent =
+        "thought extended";
       state.currentAssistantText = "reply extended";
       state.currentAssistantEl.innerHTML = "<p>reply extended</p>";
 
       // Server returns flushed tail for assistant only (thinking → assistant → tail)
       const newEvents = [
-        { seq: 3, type: "assistant_message", data: JSON.stringify({ text: " extended" }) },
+        {
+          seq: 3,
+          type: "assistant_message",
+          data: JSON.stringify({ text: " extended" }),
+        },
       ];
-      globalThis.fetch = (() => Promise.resolve({
-        ok: true, json: () => Promise.resolve(newEvents),
-      })) as any;
+      globalThis.fetch = (() =>
+        Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve(newEvents),
+        })) as any;
       state.sessionId = "s1";
       await events.loadNewEvents("s1");
 
@@ -1733,7 +2343,10 @@ describe("events", () => {
       assert.equal(thinkings.length, 1, "should not duplicate thinking");
       assert.equal(assistants.length, 1, "should not duplicate assistant");
       // Thinking reverted to original DB content
-      assert.equal(thinkings[0].querySelector(".thinking-content").textContent, "thought");
+      assert.equal(
+        thinkings[0].querySelector(".thinking-content").textContent,
+        "thought",
+      );
       // Assistant merged: reverted "reply" + new " extended"
       assert.ok(assistants[0].textContent.includes("reply"));
       assert.ok(assistants[0].textContent.includes("extended"));
@@ -1746,16 +2359,27 @@ describe("events", () => {
       dom.messages.lastElementChild.setAttribute("data-sync-boundary", "");
 
       let resolveFetch: Function;
-      globalThis.fetch = (() => new Promise(r => { resolveFetch = r; })) as any;
+      globalThis.fetch = (() =>
+        new Promise((r) => {
+          resolveFetch = r;
+        })) as any;
 
       const promise = events.loadNewEvents("s1");
 
       // Session switches while fetch is in-flight
       state.sessionId = "s2";
 
-      resolveFetch!({ ok: true, json: () => Promise.resolve([
-        { seq: 2, type: "assistant_message", data: JSON.stringify({ text: "stale" }) },
-      ]) });
+      resolveFetch!({
+        ok: true,
+        json: () =>
+          Promise.resolve([
+            {
+              seq: 2,
+              type: "assistant_message",
+              data: JSON.stringify({ text: "stale" }),
+            },
+          ]),
+      });
 
       const result = await promise;
       assert.equal(result, false, "should return false when session switched");
@@ -1782,12 +2406,22 @@ describe("events", () => {
 
       // Now reconnect — loadNewEvents replays tool_call_update from DB
       const newEvents = [
-        { seq: 2, type: "tool_call_update", data: JSON.stringify({ id: "tc-live", status: "completed" }) },
-        { seq: 3, type: "prompt_done", data: JSON.stringify({ stopReason: "end_turn" }) },
+        {
+          seq: 2,
+          type: "tool_call_update",
+          data: JSON.stringify({ id: "tc-live", status: "completed" }),
+        },
+        {
+          seq: 3,
+          type: "prompt_done",
+          data: JSON.stringify({ stopReason: "end_turn" }),
+        },
       ];
-      globalThis.fetch = (() => Promise.resolve({
-        ok: true, json: () => Promise.resolve(newEvents),
-      })) as any;
+      globalThis.fetch = (() =>
+        Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve(newEvents),
+        })) as any;
 
       await events.loadNewEvents("s1");
 
@@ -1805,14 +2439,21 @@ describe("events", () => {
       ];
 
       let resolveFetch: Function;
-      globalThis.fetch = (() => new Promise(r => { resolveFetch = r; })) as any;
+      globalThis.fetch = (() =>
+        new Promise((r) => {
+          resolveFetch = r;
+        })) as any;
 
       state.sessionId = "s1";
       const historyPromise = events.loadHistory("s1");
 
       // While fetch is in-flight, simulate a WS event arriving
       assert.equal(state.replayInProgress, true);
-      events.handleEvent({ type: "message_chunk", sessionId: "s1", text: "hello" });
+      events.handleEvent({
+        type: "message_chunk",
+        sessionId: "s1",
+        text: "hello",
+      });
       assert.equal(state.replayQueue.length, 1);
       // It should NOT have created a DOM element yet
       assert.equal(dom.messages.children.length, 0);
@@ -1831,18 +2472,35 @@ describe("events", () => {
 
     it("deduplicates tool_call events that were both replayed and queued", async () => {
       const fakeEvents = [
-        { seq: 1, type: "tool_call", data: JSON.stringify({ id: "tc1", title: "Read file", kind: "read", rawInput: {} }) },
+        {
+          seq: 1,
+          type: "tool_call",
+          data: JSON.stringify({
+            id: "tc1",
+            title: "Read file",
+            kind: "read",
+            rawInput: {},
+          }),
+        },
       ];
 
       let resolveFetch: Function;
-      globalThis.fetch = (() => new Promise(r => { resolveFetch = r; })) as any;
+      globalThis.fetch = (() =>
+        new Promise((r) => {
+          resolveFetch = r;
+        })) as any;
 
       state.sessionId = "s1";
       const historyPromise = events.loadHistory("s1");
 
       // Simulate the same tool_call arriving via WS while replay is in-flight
       events.handleEvent({
-        type: "tool_call", sessionId: "s1", id: "tc1", title: "Read file", kind: "read", rawInput: {},
+        type: "tool_call",
+        sessionId: "s1",
+        id: "tc1",
+        title: "Read file",
+        kind: "read",
+        rawInput: {},
       });
       assert.equal(state.replayQueue.length, 1);
 
@@ -1868,26 +2526,38 @@ describe("events", () => {
         {
           seq: 2,
           type: "permission_response",
-          data: JSON.stringify({ requestId: "perm1", optionName: "Allow", denied: false }),
+          data: JSON.stringify({
+            requestId: "perm1",
+            optionName: "Allow",
+            denied: false,
+          }),
         },
       ];
 
       let resolveFetch: Function;
-      globalThis.fetch = (() => new Promise(r => { resolveFetch = r; })) as any;
+      globalThis.fetch = (() =>
+        new Promise((r) => {
+          resolveFetch = r;
+        })) as any;
 
       state.sessionId = "s1";
       const historyPromise = events.loadHistory("s1");
 
       // Same permission_request arrives via WS
       events.handleEvent({
-        type: "permission_request", sessionId: "s1", requestId: "perm1",
-        title: "Run command", options: [{ optionId: "o1", name: "Allow", kind: "allow_once" }],
+        type: "permission_request",
+        sessionId: "s1",
+        requestId: "perm1",
+        title: "Run command",
+        options: [{ optionId: "o1", name: "Allow", kind: "allow_once" }],
       });
 
       resolveFetch!({ ok: true, json: () => Promise.resolve(fakeEvents) });
       await historyPromise;
 
-      const perms = dom.messages.querySelectorAll('.permission[data-request-id="perm1"]');
+      const perms = dom.messages.querySelectorAll(
+        '.permission[data-request-id="perm1"]',
+      );
       assert.equal(perms.length, 1);
     });
 
@@ -1897,14 +2567,22 @@ describe("events", () => {
       ];
 
       let resolveFetch: Function;
-      globalThis.fetch = (() => new Promise(r => { resolveFetch = r; })) as any;
+      globalThis.fetch = (() =>
+        new Promise((r) => {
+          resolveFetch = r;
+        })) as any;
 
       state.sessionId = "s1";
       const historyPromise = events.loadHistory("s1");
 
       // A tool_call for a NEW id that isn't in the history
       events.handleEvent({
-        type: "tool_call", sessionId: "s1", id: "tc-new", title: "New tool", kind: "execute", rawInput: {},
+        type: "tool_call",
+        sessionId: "s1",
+        id: "tc-new",
+        title: "New tool",
+        kind: "execute",
+        rawInput: {},
       });
 
       resolveFetch!({ ok: true, json: () => Promise.resolve(fakeEvents) });
@@ -1922,18 +2600,35 @@ describe("events", () => {
       dom.messages.lastElementChild.setAttribute("data-sync-boundary", "");
 
       const newEvents = [
-        { seq: 2, type: "tool_call", data: JSON.stringify({ id: "tc2", title: "Edit", kind: "edit", rawInput: {} }) },
+        {
+          seq: 2,
+          type: "tool_call",
+          data: JSON.stringify({
+            id: "tc2",
+            title: "Edit",
+            kind: "edit",
+            rawInput: {},
+          }),
+        },
       ];
 
       let resolveFetch: Function;
-      globalThis.fetch = (() => new Promise(r => { resolveFetch = r; })) as any;
+      globalThis.fetch = (() =>
+        new Promise((r) => {
+          resolveFetch = r;
+        })) as any;
 
       state.sessionId = "s1";
       const promise = events.loadNewEvents("s1");
 
       // Duplicate tool_call arrives via WS
       events.handleEvent({
-        type: "tool_call", sessionId: "s1", id: "tc2", title: "Edit", kind: "edit", rawInput: {},
+        type: "tool_call",
+        sessionId: "s1",
+        id: "tc2",
+        title: "Edit",
+        kind: "edit",
+        rawInput: {},
       });
 
       resolveFetch!({ ok: true, json: () => Promise.resolve(newEvents) });
@@ -1948,18 +2643,32 @@ describe("events", () => {
       // Simulate: agent is mid-thinking, events API flushed the buffer
       const fakeEvents = [
         { seq: 1, type: "user_message", data: JSON.stringify({ text: "hi" }) },
-        { seq: 2, type: "thinking", data: JSON.stringify({ text: "partial thought" }) },
+        {
+          seq: 2,
+          type: "thinking",
+          data: JSON.stringify({ text: "partial thought" }),
+        },
       ];
-      const response = { events: fakeEvents, streaming: { thinking: true, assistant: false } };
+      const response = {
+        events: fakeEvents,
+        streaming: { thinking: true, assistant: false },
+      };
 
       let resolveFetch: Function;
-      globalThis.fetch = (() => new Promise(r => { resolveFetch = r; })) as any;
+      globalThis.fetch = (() =>
+        new Promise((r) => {
+          resolveFetch = r;
+        })) as any;
 
       state.sessionId = "s1";
       const historyPromise = events.loadHistory("s1");
 
       // thought_chunk arrives via SSE while replay is in-flight (duplicate content)
-      events.handleEvent({ type: "thought_chunk", sessionId: "s1", text: "partial thought" });
+      events.handleEvent({
+        type: "thought_chunk",
+        sessionId: "s1",
+        text: "partial thought",
+      });
       assert.equal(state.replayQueue.length, 1);
 
       resolveFetch!({ ok: true, json: () => Promise.resolve(response) });
@@ -1976,17 +2685,31 @@ describe("events", () => {
     it("deduplicates message_chunk events when streaming.assistant is signaled", async () => {
       const fakeEvents = [
         { seq: 1, type: "user_message", data: JSON.stringify({ text: "hi" }) },
-        { seq: 2, type: "assistant_message", data: JSON.stringify({ text: "hello" }) },
+        {
+          seq: 2,
+          type: "assistant_message",
+          data: JSON.stringify({ text: "hello" }),
+        },
       ];
-      const response = { events: fakeEvents, streaming: { thinking: false, assistant: true } };
+      const response = {
+        events: fakeEvents,
+        streaming: { thinking: false, assistant: true },
+      };
 
       let resolveFetch: Function;
-      globalThis.fetch = (() => new Promise(r => { resolveFetch = r; })) as any;
+      globalThis.fetch = (() =>
+        new Promise((r) => {
+          resolveFetch = r;
+        })) as any;
 
       state.sessionId = "s1";
       const historyPromise = events.loadHistory("s1");
 
-      events.handleEvent({ type: "message_chunk", sessionId: "s1", text: "hello" });
+      events.handleEvent({
+        type: "message_chunk",
+        sessionId: "s1",
+        text: "hello",
+      });
 
       resolveFetch!({ ok: true, json: () => Promise.resolve(response) });
       await historyPromise;
@@ -1994,7 +2717,10 @@ describe("events", () => {
       // One user message + one assistant message (not duplicated)
       const assistantEls = dom.messages.querySelectorAll(".msg.assistant");
       assert.equal(assistantEls.length, 1);
-      assert.ok(state.currentAssistantEl, "currentAssistantEl should be primed");
+      assert.ok(
+        state.currentAssistantEl,
+        "currentAssistantEl should be primed",
+      );
     });
 
     it("allows new thought_chunk through when no streaming was signaled", async () => {
@@ -2004,12 +2730,19 @@ describe("events", () => {
       ];
 
       let resolveFetch: Function;
-      globalThis.fetch = (() => new Promise(r => { resolveFetch = r; })) as any;
+      globalThis.fetch = (() =>
+        new Promise((r) => {
+          resolveFetch = r;
+        })) as any;
 
       state.sessionId = "s1";
       const historyPromise = events.loadHistory("s1");
 
-      events.handleEvent({ type: "thought_chunk", sessionId: "s1", text: "new thought" });
+      events.handleEvent({
+        type: "thought_chunk",
+        sessionId: "s1",
+        text: "new thought",
+      });
 
       resolveFetch!({ ok: true, json: () => Promise.resolve(fakeEvents) });
       await historyPromise;
@@ -2030,7 +2763,7 @@ describe("events", () => {
       assert.equal(state.busy, true);
       assert.equal(state.agentReloading, true);
       const msgs = [...dom.messages.children].map((el: any) => el.textContent);
-      assert.ok(msgs.some(m => m.includes("reloading")));
+      assert.ok(msgs.some((m) => m.includes("reloading")));
     });
 
     it("connected after agent_reloading shows reloaded message and clears busy", () => {
@@ -2047,7 +2780,7 @@ describe("events", () => {
       assert.equal(state.agentReloading, false);
       assert.equal(state.busy, false);
       const msgs = [...dom.messages.children].map((el: any) => el.textContent);
-      assert.ok(msgs.some(m => m.includes("reloaded")));
+      assert.ok(msgs.some((m) => m.includes("reloaded")));
     });
 
     it("agent_reloading_failed shows error and clears busy", () => {
@@ -2055,11 +2788,14 @@ describe("events", () => {
       state.agentReloading = true;
       state.busy = true;
 
-      events.handleEvent({ type: "agent_reloading_failed", error: "broken binary" });
+      events.handleEvent({
+        type: "agent_reloading_failed",
+        error: "broken binary",
+      });
 
       assert.equal(state.busy, false);
       const msgs = [...dom.messages.children].map((el: any) => el.textContent);
-      assert.ok(msgs.some(m => m.includes("broken binary")));
+      assert.ok(msgs.some((m) => m.includes("broken binary")));
     });
   });
 });

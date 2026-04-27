@@ -1,7 +1,7 @@
 // Shared state, DOM refs, config helpers, routing, session management
 
-import type { ConfigOption, AgentEvent } from '../../src/types.ts';
-import * as api from './api.ts';
+import type { ConfigOption, AgentEvent } from "../../src/types.ts";
+import * as api from "./api.ts";
 
 export type { ConfigOption };
 
@@ -14,19 +14,19 @@ interface PendingImage {
 const $ = <T extends HTMLElement>(s: string) => document.querySelector<T>(s)!;
 
 export const dom = {
-  messages: $<HTMLDivElement>('#messages'),
-  input: $<HTMLTextAreaElement>('#input'),
-  sendBtn: $<HTMLButtonElement>('#send-btn'),
-  prompt: $<HTMLSpanElement>('#input-prompt'),
-  status: $<HTMLSpanElement>('#status'),
-  sessionInfo: $<HTMLSpanElement>('#session-info'),
-  attachBtn: $<HTMLButtonElement>('#attach-btn'),
-  fileInput: $<HTMLInputElement>('#file-input'),
-  attachPreview: $<HTMLDivElement>('#attach-preview'),
-  themeBtn: $<HTMLButtonElement>('#theme-btn'),
-  slashMenu: $<HTMLDivElement>('#slash-menu'),
-  inputArea: $<HTMLDivElement>('#input-area'),
-  statusBar: $<HTMLDivElement>('#status-bar'),
+  messages: $<HTMLDivElement>("#messages"),
+  input: $<HTMLTextAreaElement>("#input"),
+  sendBtn: $<HTMLButtonElement>("#send-btn"),
+  prompt: $<HTMLSpanElement>("#input-prompt"),
+  status: $<HTMLSpanElement>("#status"),
+  sessionInfo: $<HTMLSpanElement>("#session-info"),
+  attachBtn: $<HTMLButtonElement>("#attach-btn"),
+  fileInput: $<HTMLInputElement>("#file-input"),
+  attachPreview: $<HTMLDivElement>("#attach-preview"),
+  themeBtn: $<HTMLButtonElement>("#theme-btn"),
+  slashMenu: $<HTMLDivElement>("#slash-menu"),
+  inputArea: $<HTMLDivElement>("#input-area"),
+  statusBar: $<HTMLDivElement>("#status-bar"),
 };
 
 /**
@@ -68,9 +68,9 @@ export const state = {
   sessionMode: null as string | null,
   sessionModel: null as string | null,
   currentAssistantEl: null as HTMLElement | null,
-  currentAssistantText: '',
+  currentAssistantText: "",
   currentThinkingEl: null as HTMLElement | null,
-  currentThinkingText: '',
+  currentThinkingText: "",
   busy: false,
   pendingImages: [] as PendingImage[],
   currentBashEl: null as HTMLElement | null,
@@ -107,26 +107,33 @@ export const state = {
   recentPathsLimit: 10,
 };
 
-type ConnectionStatus = 'disconnected' | 'connecting' | 'connected';
+type ConnectionStatus = "disconnected" | "connecting" | "connected";
 
 const CONNECTION_STATUS_CLASSES: Record<ConnectionStatus, string> = {
-  disconnected: 'is-disconnected',
-  connecting: 'is-connecting',
-  connected: 'is-connected',
+  disconnected: "is-disconnected",
+  connecting: "is-connecting",
+  connected: "is-connected",
 };
 
-export function setConnectionStatus(status: ConnectionStatus, label: string = status) {
-  dom.status.textContent = '';
+export function setConnectionStatus(
+  status: ConnectionStatus,
+  label: string = status,
+) {
+  dom.status.textContent = "";
   dom.status.className = `status-dot ${CONNECTION_STATUS_CLASSES[status]}`;
   dom.status.dataset.state = status;
-  dom.status.setAttribute('aria-label', label);
-  dom.status.setAttribute('title', label);
+  dom.status.setAttribute("aria-label", label);
+  dom.status.setAttribute("title", label);
 }
 
 // --- Config helpers ---
 
-export function getConfigOption(id: string) { return state.configOptions.find(o => o.id === id); }
-export function getConfigValue(id: string) { return getConfigOption(id)?.currentValue ?? null; }
+export function getConfigOption(id: string) {
+  return state.configOptions.find((o) => o.id === id);
+}
+export function getConfigValue(id: string) {
+  return getConfigOption(id)?.currentValue ?? null;
+}
 export function setConfigValue(id: string, value: string) {
   const opt = getConfigOption(id);
   if (opt) opt.currentValue = value;
@@ -143,7 +150,9 @@ export function updateConfigOptions(newOptions: ConfigOption[]) {
 // populates the global cache), the agent-side mode/model is still in effect
 // (DB-persisted), so updateModeUI/updateStatusBar fall back to snapshot values.
 // Single-writer: only setFallbackFromSnapshot writes these fields.
-export function setFallbackFromSnapshot(snap: { session: { mode?: string | null; model?: string | null } }): void {
+export function setFallbackFromSnapshot(snap: {
+  session: { mode?: string | null; model?: string | null };
+}): void {
   // Guard: once configOptions is populated it becomes the single source of
   // truth — don't let a late snapshot overwrite it with stale fallback.
   if (state.configOptions.length > 0) return;
@@ -154,31 +163,32 @@ export function clearFallback(): void {
   state.sessionMode = null;
   state.sessionModel = null;
 }
-export function getFallback(key: 'mode' | 'model'): string | null {
-  return key === 'mode' ? state.sessionMode : state.sessionModel;
+export function getFallback(key: "mode" | "model"): string | null {
+  return key === "mode" ? state.sessionMode : state.sessionModel;
 }
 
 export function updateModeUI() {
-  dom.inputArea.classList.remove('plan-mode', 'autopilot-mode');
+  dom.inputArea.classList.remove("plan-mode", "autopilot-mode");
   // Empty-string `currentValue` should fall through to the fallback, not
   // terminate the chain. `??` would keep `""` as the winner; `||` skips it.
-  const modeValue = getConfigValue('mode') || getFallback('mode') || '';
-  if (modeValue.includes('#plan')) dom.inputArea.classList.add('plan-mode');
-  else if (modeValue.includes('#autopilot')) dom.inputArea.classList.add('autopilot-mode');
+  // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing
+  const modeValue = getConfigValue("mode") || getFallback("mode") || "";
+  if (modeValue.includes("#plan")) dom.inputArea.classList.add("plan-mode");
+  else if (modeValue.includes("#autopilot"))
+    dom.inputArea.classList.add("autopilot-mode");
 }
 
 export function updateStatusBar() {
-  if (!dom.statusBar) return;
-  // See updateModeUI for why `||` (not `??`).
-  const model = getConfigValue('model') || getFallback('model');
-  const cwd = state.sessionCwd || '';
-  dom.statusBar.textContent = '';
+  // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- see updateModeUI
+  const model = getConfigValue("model") || getFallback("model");
+  const cwd = state.sessionCwd ?? "";
+  dom.statusBar.textContent = "";
   if (cwd) {
     if (model) {
-      dom.statusBar.appendChild(document.createTextNode(model + ' \u00b7 '));
+      dom.statusBar.appendChild(document.createTextNode(model + " \u00b7 "));
     }
-    const cwdSpan = document.createElement('span');
-    cwdSpan.className = 'status-cwd';
+    const cwdSpan = document.createElement("span");
+    cwdSpan.className = "status-cwd";
     cwdSpan.textContent = cwd;
     dom.statusBar.appendChild(cwdSpan);
   } else if (model) {
@@ -191,16 +201,34 @@ export function updateStatusBar() {
 export interface SessionSnapshot {
   version: number;
   seq: number;
-  session: { id: string; title: string | null; cwd: string; model: string | null; mode: string | null; createdAt: string | null; lastEventSeq: number };
+  session: {
+    id: string;
+    title: string | null;
+    cwd: string;
+    model: string | null;
+    mode: string | null;
+    createdAt: string | null;
+    lastEventSeq: number;
+  };
   runtime: {
-    busy: { kind: 'agent' | 'bash'; since: string; promptId: string | null } | null;
+    busy: {
+      kind: "agent" | "bash";
+      since: string;
+      promptId: string | null;
+    } | null;
     pendingPermissions?: unknown[];
     streaming?: { assistant: boolean; thinking: boolean };
   };
 }
 
 export interface StatePatchPayload {
-  runtime?: { busy?: { kind: 'agent' | 'bash'; since: string; promptId: string | null } | null };
+  runtime?: {
+    busy?: {
+      kind: "agent" | "bash";
+      since: string;
+      promptId: string | null;
+    } | null;
+  };
 }
 
 /**
@@ -211,7 +239,7 @@ export interface StatePatchPayload {
  */
 export function applySnapshot(snap: SessionSnapshot): void {
   state.lastStateSeq = snap.seq;
-  const busy = snap.runtime?.busy ?? null;
+  const busy = snap.runtime.busy;
   setBusy(busy != null);
   if (busy == null) clearCancelTimer();
   // Bug A: populate display fallback from snapshot and repaint. Guarded
@@ -226,11 +254,14 @@ export function applySnapshot(snap: SessionSnapshot): void {
  * in order; false when the seq gap indicates we missed patches (caller must
  * reloadSnapshot). Out-of-order patches are dropped silently.
  */
-export function applyStatePatch(patchEvent: { seq: number; patch: StatePatchPayload }): boolean {
+export function applyStatePatch(patchEvent: {
+  seq: number;
+  patch: StatePatchPayload;
+}): boolean {
   if (patchEvent.seq !== state.lastStateSeq + 1) return false;
   state.lastStateSeq = patchEvent.seq;
   const r = patchEvent.patch.runtime;
-  if (r && 'busy' in r) {
+  if (r && "busy" in r) {
     const busy = r.busy ?? null;
     setBusy(busy != null);
     if (busy == null) clearCancelTimer();
@@ -243,14 +274,16 @@ export function applyStatePatch(patchEvent: { seq: number; patch: StatePatchPayl
  * snapshot (for callers that need session meta like lastEventSeq) or null
  * on failure.
  */
-export async function reloadSnapshot(sessionId: string): Promise<SessionSnapshot | null> {
+export async function reloadSnapshot(
+  sessionId: string,
+): Promise<SessionSnapshot | null> {
   // Capture sessionSwitchGen so an in-flight stale snapshot can be dropped
   // when a newer switch bumps the generation before the fetch resolves.
   // Without this guard, an A→B→A rapid switch could see A's slow response
   // clobber B's state because applySnapshot runs unconditionally.
   const genAtStart = state.sessionSwitchGen;
   try {
-    const snap = await api.getSnapshot(sessionId) as SessionSnapshot;
+    const snap = (await api.getSnapshot(sessionId)) as SessionSnapshot;
     if (state.sessionSwitchGen !== genAtStart) return null;
     applySnapshot(snap);
     return snap;
@@ -262,34 +295,39 @@ export async function reloadSnapshot(sessionId: string): Promise<SessionSnapshot
 export function setBusy(on: boolean) {
   state.busy = on;
   if (on) {
-    dom.sendBtn.textContent = '^C';
-    dom.sendBtn.title = 'Cancel (Ctrl+C)';
-    dom.sendBtn.classList.add('cancel');
-    dom.prompt.classList.add('busy');
+    dom.sendBtn.textContent = "^C";
+    dom.sendBtn.title = "Cancel (Ctrl+C)";
+    dom.sendBtn.classList.add("cancel");
+    dom.prompt.classList.add("busy");
   } else {
-    dom.sendBtn.textContent = '↵';
-    dom.sendBtn.title = 'Send (Enter)';
-    dom.sendBtn.classList.remove('cancel');
-    dom.prompt.classList.remove('busy');
+    dom.sendBtn.textContent = "↵";
+    dom.sendBtn.title = "Send (Enter)";
+    dom.sendBtn.classList.remove("cancel");
+    dom.prompt.classList.remove("busy");
   }
 }
 
-export function requestNewSession({ cwd, inheritFromSessionId = state.sessionId }: { cwd?: string; inheritFromSessionId?: string | null } = {}) {
+export function requestNewSession({
+  cwd,
+  inheritFromSessionId = state.sessionId,
+}: { cwd?: string; inheritFromSessionId?: string | null } = {}) {
   state.awaitingNewSession = true;
   api.createSession({ cwd, inheritFromSessionId }).catch(() => {});
 }
 
 // Modules can register cleanup functions to run on session reset (avoids circular imports)
 const resetHooks: (() => void)[] = [];
-export function onSessionReset(hook: () => void) { resetHooks.push(hook); }
+export function onSessionReset(hook: () => void) {
+  resetHooks.push(hook);
+}
 
 export function resetSessionUI() {
   for (const hook of resetHooks) hook();
-  dom.messages.innerHTML = '';
+  dom.messages.innerHTML = "";
   state.currentAssistantEl = null;
-  state.currentAssistantText = '';
+  state.currentAssistantText = "";
   state.currentThinkingEl = null;
-  state.currentThinkingText = '';
+  state.currentThinkingText = "";
   state.pendingImages.length = 0;
   state.followMessages = true;
   state.pendingToolCallIds.clear();
@@ -306,11 +344,11 @@ export function resetSessionUI() {
   state.loadingOlderEvents = false;
   state.replayInProgress = false;
   state.replayQueue = [];
-  dom.attachPreview.innerHTML = '';
-  dom.attachPreview.classList.remove('active');
+  dom.attachPreview.innerHTML = "";
+  dom.attachPreview.classList.remove("active");
   dom.input.disabled = false;
   dom.sendBtn.disabled = false;
-  dom.input.placeholder = 'Message or ?';
+  dom.input.placeholder = "Message or ?";
   setBusy(false);
   // Clear session metadata so stale title/model don't linger on switch failure
   state.sessionTitle = null;
@@ -318,7 +356,7 @@ export function resetSessionUI() {
   state.configOptions = [];
   clearFallback();
   updateSessionInfo(null, null);
-  if (dom.statusBar) dom.statusBar.textContent = '';
+  dom.statusBar.textContent = "";
 }
 
 // Send cancel without UI side-effect — callers add their own feedback.
@@ -346,12 +384,12 @@ export function getHashSessionId(): string | null {
 }
 
 export function setHashSessionId(id: string) {
-  history.replaceState(null, '', `#${id}`);
+  history.replaceState(null, "", `#${id}`);
 }
 
 export function updateSessionInfo(id: string | null, title: string | null) {
-  dom.sessionInfo.textContent = title || (id ? id.slice(0, 8) + '…' : '');
-  document.title = title || '>_';
+  dom.sessionInfo.textContent = title ?? (id ? id.slice(0, 8) + "…" : "");
+  document.title = title ?? ">_";
 }
 
-setConnectionStatus('disconnected');
+setConnectionStatus("disconnected");

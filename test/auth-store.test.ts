@@ -1,6 +1,12 @@
 import { describe, it, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, statSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  mkdtempSync,
+  rmSync,
+  statSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { AuthStore } from "../src/auth-store.ts";
@@ -32,15 +38,21 @@ describe("AuthStore", () => {
       const token = generateToken();
       const data = {
         tokens: [
-          { name: "laptop", scope: "admin", hash: hashToken(token), createdAt: 1000, lastUsedAt: null },
+          {
+            name: "laptop",
+            scope: "admin",
+            hash: hashToken(token),
+            createdAt: 1000,
+            lastUsedAt: null,
+          },
         ],
       };
       writeFileSync(authPath, JSON.stringify(data), { mode: 0o600 });
       await store.load();
       const list = store.list();
       assert.equal(list.length, 1);
-      assert.equal(list[0]!.name, "laptop");
-      assert.equal(list[0]!.scope, "admin");
+      assert.equal(list[0].name, "laptop");
+      assert.equal(list[0].scope, "admin");
     });
 
     it("rejects malformed JSON gracefully", async () => {
@@ -114,7 +126,7 @@ describe("AuthStore", () => {
       const { token } = await store.addToken("laptop", "admin");
       const found = store.findByToken(token);
       assert.ok(found);
-      assert.equal(found!.name, "laptop");
+      assert.equal(found.name, "laptop");
     });
 
     it("returns null for unknown token", async () => {
@@ -212,12 +224,24 @@ describe("AuthStore", () => {
       assert.equal(store.list().length, 0);
       // External process adds a token.
       const t = generateToken();
-      writeFileSync(authPath, JSON.stringify({
-        tokens: [{ name: "external", scope: "api", hash: hashToken(t), createdAt: 1, lastUsedAt: null }],
-      }), { mode: 0o600 });
+      writeFileSync(
+        authPath,
+        JSON.stringify({
+          tokens: [
+            {
+              name: "external",
+              scope: "api",
+              hash: hashToken(t),
+              createdAt: 1,
+              lastUsedAt: null,
+            },
+          ],
+        }),
+        { mode: 0o600 },
+      );
       await store.reload();
       assert.equal(store.list().length, 1);
-      assert.equal(store.list()[0]!.name, "external");
+      assert.equal(store.list()[0].name, "external");
     });
   });
 });

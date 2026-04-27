@@ -3,11 +3,11 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { loadConfig, getConfig } from "../src/config.ts";
+import { loadConfig } from "../src/config.ts";
 
 describe("config", () => {
   const originalArgv = [...process.argv];
-  const originalExit = process.exit;
+  const originalExit = process.exit; // eslint-disable-line @typescript-eslint/unbound-method
   const originalLog = console.log;
   const originalError = console.error;
   const tmpDirs: string[] = [];
@@ -50,7 +50,9 @@ describe("config", () => {
     const tmpDir = mkdtempSync(join(tmpdir(), "webagent-config-"));
     tmpDirs.push(tmpDir);
     const configPath = join(tmpDir, "config.toml");
-    writeFileSync(configPath, `
+    writeFileSync(
+      configPath,
+      `
 port = 7001
 data_dir = "custom-data"
 public_dir = "public-build"
@@ -62,7 +64,8 @@ image_upload = 4096
 cancel_timeout = 5000
 recent_paths = 20
 recent_paths_ttl = 60
-`);
+`,
+    );
     process.argv = ["node", "test", "--config", configPath];
 
     const config = loadConfig();
@@ -86,9 +89,9 @@ recent_paths_ttl = 60
     const configPath = join(tmpDir, "config.toml");
     writeFileSync(configPath, `port = -1`);
     process.argv = ["node", "test", "--config", configPath];
-    process.exit = ((code?: number) => {
+    process.exit = (code?: number) => {
       throw new Error(`exit:${code}`);
-    }) as any;
+    };
 
     assert.throws(() => loadConfig(), /exit:1/);
   });

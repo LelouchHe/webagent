@@ -11,49 +11,79 @@
 //                        everything after it, then replays incremental events.
 
 import {
-  state, dom, setBusy, setConfigValue, getConfigOption, updateConfigOptions,
-  updateModeUI, updateStatusBar, resetSessionUI, requestNewSession, setHashSessionId, updateSessionInfo,
-  setConnectionStatus, clearCancelTimer, onSessionReset, applyStatePatch, reloadSnapshot,
-} from './state.ts';
-import type { ConfigOption } from './state.ts';
+  state,
+  dom,
+  setBusy,
+  setConfigValue,
+  getConfigOption,
+  updateConfigOptions,
+  updateModeUI,
+  updateStatusBar,
+  resetSessionUI,
+  requestNewSession,
+  setHashSessionId,
+  updateSessionInfo,
+  setConnectionStatus,
+  clearCancelTimer,
+  onSessionReset,
+  applyStatePatch,
+  reloadSnapshot,
+} from "./state.ts";
 import {
-  addMessage, addSystem, finishAssistant, finishThinking, hideWaiting,
-  scrollToBottom, renderMd, escHtml, renderPatchDiff, addBashBlock, finishBash, appendMessageElement,
-  formatLocalTime,
-} from './render.ts';
-import * as api from './api.ts';
-import { applyConnectedLogLevel } from './log.ts';
+  addMessage,
+  addSystem,
+  finishAssistant,
+  finishThinking,
+  hideWaiting,
+  scrollToBottom,
+  renderMd,
+  escHtml,
+  renderPatchDiff,
+  addBashBlock,
+  finishBash,
+  appendMessageElement,
+} from "./render.ts";
+import * as api from "./api.ts";
+import { applyConnectedLogLevel } from "./log.ts";
 import {
-  interpretToolCall, extractToolCallContent, getStatusIcon,
-  classifyPermissionOption, resolvePermissionLabel, formatPlanEntries,
-  parseDiff, normalizeEventsResponse, isPromptIdle,
-} from './event-interpreter.ts';
-import { enhanceCodeBlocks } from './highlight.ts';
-import type { AgentEvent, StoredEvent } from '../../src/types.ts';
+  interpretToolCall,
+  extractToolCallContent,
+  getStatusIcon,
+  classifyPermissionOption,
+  resolvePermissionLabel,
+  formatPlanEntries,
+  normalizeEventsResponse,
+  isPromptIdle,
+} from "./event-interpreter.ts";
+import { enhanceCodeBlocks } from "./highlight.ts";
+import type { AgentEvent, StoredEvent } from "../../src/types.ts";
 
 /**
  * When the current session is gone (expired, deleted), try to switch to the
  * next available session. Creates a new session only if no others exist.
  * Shared by resumeAndLoad error recovery, session_deleted handler, and /exit.
  */
-export async function fallbackToNextSession(expiredId: string | null, cwd?: string): Promise<void> {
+export async function fallbackToNextSession(
+  expiredId: string | null,
+  cwd?: string,
+): Promise<void> {
   state.sessionSwitchGen++;
   const gen = state.sessionSwitchGen;
   try {
-    const sessions = await api.listSessions() as Array<{ id: string }>;
+    const sessions = (await api.listSessions()) as Array<{ id: string }>;
     if (gen !== state.sessionSwitchGen) return;
-    const next = sessions.find(s => s.id !== expiredId);
+    const next = sessions.find((s) => s.id !== expiredId);
     if (next) {
       resetSessionUI();
       state.sessionId = null;
       setHashSessionId(next.id);
       const [session, loaded] = await Promise.all([
-        api.getSession(next.id) as Promise<Record<string, unknown>>,
+        api.getSession(next.id),
         loadHistory(next.id),
       ]);
       if (gen !== state.sessionSwitchGen) return;
       handleEvent({
-        type: 'session_created',
+        type: "session_created",
         sessionId: session.id as string,
         cwd: session.cwd as string,
         title: session.title as string | null,
@@ -62,17 +92,22 @@ export async function fallbackToNextSession(expiredId: string | null, cwd?: stri
       if (loaded) scrollToBottom(true);
       return;
     }
-  } catch { /* fall through to create new */ }
+  } catch {
+    /* fall through to create new */
+  }
   if (gen !== state.sessionSwitchGen) return;
   resetSessionUI();
   state.sessionId = null;
-  requestNewSession({ cwd: cwd || undefined });
+  requestNewSession({ cwd: cwd ?? undefined });
 }
 
 // During replay, elements live in a detached DocumentFragment (no getElementById).
 // These helpers search the fragment first, then fall back to the live DOM.
 function replayById(id: string): HTMLElement | null {
-  return (state.replayTarget?.querySelector(`[id="${id}"]`) ?? document.getElementById(id)) as HTMLElement | null;
+  return (
+    state.replayTarget?.querySelector(`[id="${id}"]`) ??
+    document.getElementById(id)
+  );
 }
 function replayQuery(sel: string): Element | null {
   return state.replayTarget?.querySelector(sel) ?? document.querySelector(sel);
@@ -82,34 +117,46 @@ function replayQuery(sel: string): Element | null {
 // Used by message_acked/message_consumed handlers to recall the local
 // device's banner immediately, independent of the server's silent close push.
 function closeLocalBanner(tag: string): void {
-  navigator.serviceWorker?.controller?.postMessage({ type: 'close-notification', tag });
+  navigator.serviceWorker.controller?.postMessage({
+    type: "close-notification",
+    tag,
+  });
 }
 
-const NOTIFY_TIP_KEY = 'webagent_notify_tip_shown';
-const NOTIFY_TIP_DENIED_KEY = 'webagent_notify_tip_denied_shown';
+const NOTIFY_TIP_KEY = "webagent_notify_tip_shown";
+const NOTIFY_TIP_DENIED_KEY = "webagent_notify_tip_denied_shown";
 
 function showNotifyTip() {
-  if (typeof Notification === 'undefined') return;
+  if (typeof Notification === "undefined") return;
   if (state.replayInProgress) return;
 
   const perm = Notification.permission;
-  if (perm === 'granted') return; // already enabled
+  if (perm === "granted") return; // already enabled
 
-  if (perm === 'denied') {
+  if (perm === "denied") {
     if (localStorage.getItem(NOTIFY_TIP_DENIED_KEY)) return;
-    localStorage.setItem(NOTIFY_TIP_DENIED_KEY, '1');
-    addSystem('tip: notifications are blocked — allow in browser site settings to enable');
+    localStorage.setItem(NOTIFY_TIP_DENIED_KEY, "1");
+    addSystem(
+      "tip: notifications are blocked — allow in browser site settings to enable",
+    );
     return;
   }
 
   // permission === 'default'
   if (localStorage.getItem(NOTIFY_TIP_KEY)) return;
-  localStorage.setItem(NOTIFY_TIP_KEY, '1');
-  addSystem('tip: use /notify to enable background notifications');
+  localStorage.setItem(NOTIFY_TIP_KEY, "1");
+  addSystem("tip: use /notify to enable background notifications");
 }
 
 function finishPromptIfIdle() {
-  if (!isPromptIdle(state.pendingPromptDone, state.pendingToolCallIds.size, state.pendingPermissionRequestIds.size)) return;
+  if (
+    !isPromptIdle(
+      state.pendingPromptDone,
+      state.pendingToolCallIds.size,
+      state.pendingPermissionRequestIds.size,
+    )
+  )
+    return;
   hideWaiting();
   finishThinking();
   finishAssistant();
@@ -122,15 +169,17 @@ function cancelPendingTurnUI() {
   for (const id of state.pendingToolCallIds) {
     const el = document.getElementById(`tc-${id}`);
     if (!el) continue;
-    el.className = 'tool-call failed';
-    const iconSpan = el.querySelector('.icon');
-    if (iconSpan) iconSpan.textContent = '✗';
+    el.className = "tool-call failed";
+    const iconSpan = el.querySelector(".icon");
+    if (iconSpan) iconSpan.textContent = "✗";
   }
   for (const requestId of state.pendingPermissionRequestIds) {
-    const permEl = document.querySelector(`.permission[data-request-id="${requestId}"]`);
-    if (!permEl || !permEl.querySelector('button')) continue;
-    const titleEl = permEl.querySelector('.title');
-    const title = titleEl?.textContent || '⚿';
+    const permEl = document.querySelector(
+      `.permission[data-request-id="${requestId}"]`,
+    );
+    if (!permEl?.querySelector("button")) continue;
+    const titleEl = permEl.querySelector(".title");
+    const title = titleEl?.textContent ?? "⚿";
     permEl.innerHTML = `<span class="dim">${escHtml(title)} — cancelled</span>`;
   }
   state.pendingToolCallIds.clear();
@@ -142,9 +191,9 @@ function completePendingTurnUI() {
   for (const id of state.pendingToolCallIds) {
     const el = document.getElementById(`tc-${id}`);
     if (!el) continue;
-    el.className = 'tool-call completed';
-    const iconSpan = el.querySelector('.icon');
-    if (iconSpan) iconSpan.textContent = '✓';
+    el.className = "tool-call completed";
+    const iconSpan = el.querySelector(".icon");
+    if (iconSpan) iconSpan.textContent = "✓";
   }
   state.pendingToolCallIds.clear();
   state.pendingPermissionRequestIds.clear();
@@ -156,9 +205,11 @@ export async function loadHistory(sid: string): Promise<boolean> {
   state.replayInProgress = true;
   state.replayQueue = [];
   try {
-    const res = await fetch(`/api/v1/sessions/${sid}/events?limit=${HISTORY_PAGE_SIZE}`);
+    const res = await fetch(
+      `/api/v1/sessions/${sid}/events?limit=${HISTORY_PAGE_SIZE}`,
+    );
     if (!res.ok) return false;
-    const body = await res.json();
+    const body = (await res.json()) as Record<string, unknown>;
     const { events, streaming, hasMore } = normalizeEventsResponse(body);
 
     // Batch DOM operations: render into an offscreen fragment, then append once.
@@ -167,15 +218,15 @@ export async function loadHistory(sid: string): Promise<boolean> {
     const ri = createReplayIndex(events);
     state.replayTarget = fragment;
     for (let i = 0; i < events.length; i++) {
-      const data = JSON.parse(events[i].data);
+      const data = JSON.parse(events[i].data) as Record<string, unknown>;
       replayEvent(events[i].type, data, events, i, ri);
     }
     state.replayTarget = null;
 
     // Hide container to avoid layout during append, then show
-    dom.messages.style.display = 'none';
+    dom.messages.style.display = "none";
     dom.messages.appendChild(fragment);
-    dom.messages.style.display = '';
+    dom.messages.style.display = "";
 
     if (events.length) {
       state.lastEventSeq = events[events.length - 1].seq;
@@ -205,60 +256,70 @@ export async function loadHistory(sid: string): Promise<boolean> {
  * element so incoming thought_chunk / message_chunk events append to it instead
  * of creating duplicates.
  */
-function primeStreamingState(events: StoredEvent[], streaming: { thinking: boolean; assistant: boolean }) {
+function primeStreamingState(
+  events: StoredEvent[],
+  streaming: { thinking: boolean; assistant: boolean },
+) {
   if (streaming.thinking) {
     let el: HTMLDetailsElement | undefined;
     if (events.length) {
       // Find the last thinking event — it was the flushed buffer
       for (let i = events.length - 1; i >= 0; i--) {
-        if (events[i].type === 'thinking') {
-          const allThinking = dom.messages.querySelectorAll('.thinking');
-          el = allThinking[allThinking.length - 1] as HTMLDetailsElement | undefined;
+        if (events[i].type === "thinking") {
+          const allThinking = dom.messages.querySelectorAll(".thinking");
+          el = allThinking[allThinking.length - 1] as
+            | HTMLDetailsElement
+            | undefined;
           break;
         }
       }
     } else {
       // No new events but still streaming — re-prime from existing DOM
-      const allThinking = dom.messages.querySelectorAll('.thinking');
-      el = allThinking[allThinking.length - 1] as HTMLDetailsElement | undefined;
+      const allThinking = dom.messages.querySelectorAll(".thinking");
+      el = allThinking[allThinking.length - 1] as
+        | HTMLDetailsElement
+        | undefined;
     }
     if (el) {
       state.currentThinkingEl = el;
-      state.currentThinkingText = el.getAttribute('data-raw') || '';
-      el.setAttribute('data-primed', '');
-      const sum = el.querySelector('summary');
-      if (sum) { sum.textContent = '⠿ thinking...'; sum.classList.add('active'); }
+      state.currentThinkingText = el.getAttribute("data-raw") ?? "";
+      el.setAttribute("data-primed", "");
+      const sum = el.querySelector("summary");
+      if (sum) {
+        sum.textContent = "⠿ thinking...";
+        sum.classList.add("active");
+      }
     }
   }
   if (streaming.assistant) {
     let el: HTMLDivElement | undefined;
     if (events.length) {
       for (let i = events.length - 1; i >= 0; i--) {
-        if (events[i].type === 'assistant_message') {
-          const allMsg = dom.messages.querySelectorAll('.msg.assistant');
+        if (events[i].type === "assistant_message") {
+          const allMsg = dom.messages.querySelectorAll(".msg.assistant");
           el = allMsg[allMsg.length - 1] as HTMLDivElement | undefined;
           break;
         }
       }
     } else {
       // No new events but still streaming — re-prime from existing DOM
-      const allMsg = dom.messages.querySelectorAll('.msg.assistant');
+      const allMsg = dom.messages.querySelectorAll(".msg.assistant");
       el = allMsg[allMsg.length - 1] as HTMLDivElement | undefined;
     }
     if (el) {
       state.currentAssistantEl = el;
-      state.currentAssistantText = el.getAttribute('data-raw') || '';
-      el.setAttribute('data-primed', '');
+      state.currentAssistantText = el.getAttribute("data-raw") ?? "";
+      el.setAttribute("data-primed", "");
     }
   }
 }
 
 /** Mark the last DOM child as the sync boundary for incremental reconnect. */
 function setSyncBoundary() {
-  const prev = dom.messages.querySelector('[data-sync-boundary]');
-  if (prev) prev.removeAttribute('data-sync-boundary');
+  const prev = dom.messages.querySelector("[data-sync-boundary]");
+  if (prev) prev.removeAttribute("data-sync-boundary");
   const last = dom.messages.lastElementChild;
-  if (last) last.setAttribute('data-sync-boundary', '');
+  if (last) last.setAttribute("data-sync-boundary", "");
 }
 
 /** Per-session coalesce: concurrent loadNewEvents calls for the same session share one promise. */
@@ -274,10 +335,15 @@ export function loadNewEvents(sid: string): Promise<boolean> {
 
   const promise = _loadNewEventsImpl(sid);
   inflightBySession.set(sid, promise);
-  promise.finally(() => { inflightBySession.delete(sid); });
+  promise
+    .finally(() => {
+      inflightBySession.delete(sid);
+    })
+    .catch(() => {});
   return promise;
 }
 
+// eslint-disable-next-line complexity -- TODO: refactor to reduce branching in replay logic
 async function _loadNewEventsImpl(sid: string): Promise<boolean> {
   state.replayInProgress = true;
   state.replayQueue = [];
@@ -287,24 +353,31 @@ async function _loadNewEventsImpl(sid: string): Promise<boolean> {
     if (!res.ok) return false;
     // Guard: if session switched while fetch was in-flight, discard stale results
     if (state.sessionId && sid !== state.sessionId) return false;
-    const body = await res.json();
+    const body = (await res.json()) as Record<string, unknown>;
     const { events, streaming } = normalizeEventsResponse(body);
 
     // Revert primed elements to their DB-only content before boundary cleanup.
     // primeStreamingState marks adopted elements with [data-primed]; live chunks
     // may have grown them beyond their data-raw content. Reverting prevents
     // duplication when the server force-flushes the buffer tail as a new event.
-    for (const primed of dom.messages.querySelectorAll('[data-primed]')) {
-      const raw = primed.getAttribute('data-raw') || '';
-      primed.removeAttribute('data-primed');
-      if (primed.classList.contains('msg') && primed.classList.contains('assistant')) {
+    for (const primed of dom.messages.querySelectorAll("[data-primed]")) {
+      const raw = primed.getAttribute("data-raw") ?? "";
+      primed.removeAttribute("data-primed");
+      if (
+        primed.classList.contains("msg") &&
+        primed.classList.contains("assistant")
+      ) {
         primed.innerHTML = renderMd(raw);
-        enhanceCodeBlocks(primed as HTMLElement);
-      } else if (primed.classList.contains('thinking')) {
-        const content = primed.querySelector('.thinking-content');
+        enhanceCodeBlocks(primed);
+      } else if (primed.classList.contains("thinking")) {
+        const content = primed.querySelector(".thinking-content");
         if (content) content.textContent = raw;
-        const sum = primed.querySelector('summary');
-        if (sum) { sum.textContent = '⠿ thought'; sum.classList.remove('active'); sum.style.animation = 'none'; }
+        const sum = primed.querySelector("summary");
+        if (sum) {
+          sum.textContent = "⠿ thought";
+          sum.classList.remove("active");
+          sum.style.animation = "none";
+        }
       }
     }
 
@@ -313,14 +386,14 @@ async function _loadNewEventsImpl(sid: string): Promise<boolean> {
     // in-progress streaming state.  This must run even when the event list is
     // empty so that partially-streamed elements left over from a disconnect
     // don't stay in the DOM.
-    const boundary = dom.messages.querySelector('[data-sync-boundary]');
+    const boundary = dom.messages.querySelector("[data-sync-boundary]");
     if (boundary) {
       while (boundary.nextElementSibling) boundary.nextElementSibling.remove();
     }
     state.currentAssistantEl = null;
-    state.currentAssistantText = '';
+    state.currentAssistantText = "";
     state.currentThinkingEl = null;
-    state.currentThinkingText = '';
+    state.currentThinkingText = "";
     state.currentBashEl = null;
 
     if (events.length === 0) {
@@ -333,7 +406,7 @@ async function _loadNewEventsImpl(sid: string): Promise<boolean> {
     const ri = createReplayIndex(events);
     state.replayTarget = fragment;
     for (let i = 0; i < events.length; i++) {
-      const data = JSON.parse(events[i].data);
+      const data = JSON.parse(events[i].data) as Record<string, unknown>;
       replayEvent(events[i].type, data, events, i, ri);
     }
     state.replayTarget = null;
@@ -344,21 +417,28 @@ async function _loadNewEventsImpl(sid: string): Promise<boolean> {
     const lastInDom = dom.messages.lastElementChild as HTMLElement | null;
     const firstInFrag = fragment.firstElementChild as HTMLElement | null;
     if (lastInDom && firstInFrag) {
-      if (lastInDom.classList.contains('msg') && lastInDom.classList.contains('assistant')
-          && firstInFrag.classList.contains('msg') && firstInFrag.classList.contains('assistant')) {
-        const existingRaw = lastInDom.getAttribute('data-raw') || '';
-        const newRaw = firstInFrag.getAttribute('data-raw') || '';
+      if (
+        lastInDom.classList.contains("msg") &&
+        lastInDom.classList.contains("assistant") &&
+        firstInFrag.classList.contains("msg") &&
+        firstInFrag.classList.contains("assistant")
+      ) {
+        const existingRaw = lastInDom.getAttribute("data-raw") ?? "";
+        const newRaw = firstInFrag.getAttribute("data-raw") ?? "";
         const combined = existingRaw + newRaw;
-        lastInDom.setAttribute('data-raw', combined);
+        lastInDom.setAttribute("data-raw", combined);
         lastInDom.innerHTML = renderMd(combined);
         enhanceCodeBlocks(lastInDom);
         firstInFrag.remove();
-      } else if (lastInDom.classList.contains('thinking') && firstInFrag.classList.contains('thinking')) {
-        const existingRaw = lastInDom.getAttribute('data-raw') || '';
-        const newRaw = firstInFrag.getAttribute('data-raw') || '';
-        const combined = existingRaw + '\n' + newRaw;
-        lastInDom.setAttribute('data-raw', combined);
-        const content = lastInDom.querySelector('.thinking-content');
+      } else if (
+        lastInDom.classList.contains("thinking") &&
+        firstInFrag.classList.contains("thinking")
+      ) {
+        const existingRaw = lastInDom.getAttribute("data-raw") ?? "";
+        const newRaw = firstInFrag.getAttribute("data-raw") ?? "";
+        const combined = existingRaw + "\n" + newRaw;
+        lastInDom.setAttribute("data-raw", combined);
+        const content = lastInDom.querySelector(".thinking-content");
         if (content) content.textContent = combined;
         firstInFrag.remove();
       }
@@ -385,18 +465,26 @@ let historySentinelObserver: IntersectionObserver | null = null;
 
 function installHistorySentinel() {
   removeHistorySentinel();
-  const sentinel = document.createElement('div');
-  sentinel.id = 'history-sentinel';
-  sentinel.className = 'history-sentinel';
-  sentinel.textContent = '↑ loading…';
+  const sentinel = document.createElement("div");
+  sentinel.id = "history-sentinel";
+  sentinel.className = "history-sentinel";
+  sentinel.textContent = "↑ loading…";
   dom.messages.prepend(sentinel);
 
-  if (typeof IntersectionObserver === 'function') {
-    historySentinelObserver = new IntersectionObserver((entries) => {
-      if (entries[0]?.isIntersecting && !state.loadingOlderEvents && state.hasMoreHistory && state.sessionId) {
-        loadOlderEvents(state.sessionId);
-      }
-    }, { root: dom.messages, rootMargin: '200px 0px 0px 0px' });
+  if (typeof IntersectionObserver === "function") {
+    historySentinelObserver = new IntersectionObserver(
+      (entries) => {
+        if (
+          entries[0].isIntersecting &&
+          !state.loadingOlderEvents &&
+          state.hasMoreHistory &&
+          state.sessionId
+        ) {
+          void loadOlderEvents(state.sessionId);
+        }
+      },
+      { root: dom.messages, rootMargin: "200px 0px 0px 0px" },
+    );
     historySentinelObserver.observe(sentinel);
   }
 }
@@ -406,21 +494,28 @@ function removeHistorySentinel() {
     historySentinelObserver.disconnect();
     historySentinelObserver = null;
   }
-  document.getElementById('history-sentinel')?.remove();
+  document.getElementById("history-sentinel")?.remove();
 }
 
 // Clean up observer on session reset to avoid leaking across session switches
 onSessionReset(removeHistorySentinel);
 
 export async function loadOlderEvents(sid: string): Promise<boolean> {
-  if (state.loadingOlderEvents || !state.hasMoreHistory || state.oldestLoadedSeq <= 0) return false;
+  if (
+    state.loadingOlderEvents ||
+    !state.hasMoreHistory ||
+    state.oldestLoadedSeq <= 0
+  )
+    return false;
   state.loadingOlderEvents = true;
   try {
-    const res = await fetch(`/api/v1/sessions/${sid}/events?limit=${HISTORY_PAGE_SIZE}&before=${state.oldestLoadedSeq}`);
+    const res = await fetch(
+      `/api/v1/sessions/${sid}/events?limit=${HISTORY_PAGE_SIZE}&before=${state.oldestLoadedSeq}`,
+    );
     if (!res.ok) return false;
     // Bail out if the user switched sessions while the fetch was in-flight
     if (sid !== state.sessionId) return false;
-    const body = await res.json();
+    const body = (await res.json()) as Record<string, unknown>;
     const { events, hasMore } = normalizeEventsResponse(body);
 
     if (events.length === 0) {
@@ -434,7 +529,7 @@ export async function loadOlderEvents(sid: string): Promise<boolean> {
     const ri = createReplayIndex(events);
     state.replayTarget = fragment;
     for (let i = 0; i < events.length; i++) {
-      const data = JSON.parse(events[i].data);
+      const data = JSON.parse(events[i].data) as Record<string, unknown>;
       replayEvent(events[i].type, data, events, i, ri);
     }
     state.replayTarget = null;
@@ -442,13 +537,13 @@ export async function loadOlderEvents(sid: string): Promise<boolean> {
     // Prepend to DOM while preserving scroll position
     const container = dom.messages;
     const prevScrollHeight = container.scrollHeight;
-    const sentinel = document.getElementById('history-sentinel');
+    const sentinel = document.getElementById("history-sentinel");
     if (sentinel) {
       sentinel.after(fragment);
     } else {
       container.prepend(fragment);
     }
-    container.scrollTop += (container.scrollHeight - prevScrollHeight);
+    container.scrollTop += container.scrollHeight - prevScrollHeight;
 
     state.oldestLoadedSeq = events[0].seq;
     state.hasMoreHistory = hasMore === true;
@@ -483,11 +578,17 @@ function createReplayIndex(events: StoredEvent[]): ReplayIndex {
   // check resolution status without forward-scanning the events array.
   const resolvedPermissions = new Set<string>();
   for (const e of events) {
-    if (e.type === 'permission_response') {
-      resolvedPermissions.add(JSON.parse(e.data).requestId);
+    if (e.type === "permission_response") {
+      const parsed = JSON.parse(e.data) as { requestId: string };
+      resolvedPermissions.add(parsed.requestId);
     }
   }
-  return { toolCalls: new Map(), permissions: new Map(), resolvedPermissions, currentBashEl: null };
+  return {
+    toolCalls: new Map(),
+    permissions: new Map(),
+    resolvedPermissions,
+    currentBashEl: null,
+  };
 }
 
 /**
@@ -511,106 +612,135 @@ function renderMessageCard(msg: AgentEvent & { type: "message" }) {
   if (content) enhanceCodeBlocks(content);
 }
 
-export function replayEvent(type: string, data: Record<string, any>, events: StoredEvent[], idx: number, ri?: ReplayIndex) {
+// eslint-disable-next-line complexity -- TODO: refactor event type switch with helper functions
+export function replayEvent(
+  type: string,
+  data: unknown,
+  events: StoredEvent[],
+  idx: number,
+  ri?: ReplayIndex,
+) {
+  const d = data as Record<string, unknown>;
   switch (type) {
-    case 'user_message': {
-      const el = addMessage('user', data.text);
-      if (data.images) {
-        for (const img of data.images) {
-          const imgEl = document.createElement('img');
-          imgEl.className = 'user-image';
-          imgEl.src = img.path;
+    case "user_message": {
+      const el = addMessage("user", d.text as string);
+      if (d.images && Array.isArray(d.images)) {
+        for (const img of d.images) {
+          const imgObj = img as { path: string };
+          const imgEl = document.createElement("img");
+          imgEl.className = "user-image";
+          imgEl.src = imgObj.path;
           el.appendChild(imgEl);
         }
       }
       break;
     }
-    case 'assistant_message': {
+    case "assistant_message": {
       // Merge consecutive assistant messages into one bubble (buffer flushes can split them)
-      const container = state.replayTarget || dom.messages;
+      const container = state.replayTarget ?? dom.messages;
       const lastChild = container.lastElementChild as HTMLElement | null;
-      if (lastChild && lastChild.classList.contains('msg') && lastChild.classList.contains('assistant')) {
+      const textVal = d.text as string;
+      if (
+        lastChild &&
+        lastChild.classList.contains("msg") &&
+        lastChild.classList.contains("assistant")
+      ) {
         // Re-render with combined text by extracting existing text and appending
-        const existing = lastChild.getAttribute('data-raw') || '';
-        const combined = existing + data.text;
-        lastChild.setAttribute('data-raw', combined);
+        const existing = lastChild.getAttribute("data-raw") ?? "";
+        const combined = existing + textVal;
+        lastChild.setAttribute("data-raw", combined);
         lastChild.innerHTML = renderMd(combined);
         enhanceCodeBlocks(lastChild);
         break;
       }
-      const el = addMessage('assistant', data.text);
-      el.setAttribute('data-raw', data.text);
+      const el = addMessage("assistant", textVal);
+      el.setAttribute("data-raw", textVal);
       enhanceCodeBlocks(el);
       break;
     }
-    case 'thinking': {
+    case "thinking": {
       // Merge consecutive thinking blocks into one (buffer flushes can split them)
-      const container = state.replayTarget || dom.messages;
+      const container = state.replayTarget ?? dom.messages;
       const lastChild = container.lastElementChild as HTMLElement | null;
-      if (lastChild && lastChild.classList.contains('thinking')) {
-        const content = lastChild.querySelector('.thinking-content');
+      const textVal = d.text as string;
+      if (lastChild?.classList.contains("thinking")) {
+        const content = lastChild.querySelector(".thinking-content");
         if (content) {
-          const existing = lastChild.getAttribute('data-raw') || '';
-          const combined = existing + '\n' + data.text;
-          lastChild.setAttribute('data-raw', combined);
+          const existing = lastChild.getAttribute("data-raw") ?? "";
+          const combined = existing + "\n" + textVal;
+          lastChild.setAttribute("data-raw", combined);
           content.textContent = combined;
           break;
         }
       }
-      const el = document.createElement('details');
-      el.className = 'thinking';
-      el.setAttribute('data-raw', data.text);
-      el.innerHTML = `<summary>⠿ thought</summary><div class="thinking-content">${escHtml(data.text)}</div>`;
+      const el = document.createElement("details");
+      el.className = "thinking";
+      el.setAttribute("data-raw", textVal);
+      el.innerHTML = `<summary>⠿ thought</summary><div class="thinking-content">${escHtml(textVal)}</div>`;
       appendMessageElement(el);
       break;
     }
-    case 'tool_call': {
-      const tc = interpretToolCall(data.kind, data.title, data.rawInput);
-      const el = document.createElement('div');
-      el.className = 'tool-call';
-      el.id = `tc-${data.id}`;
-      el.dataset.kind = data.kind;
+    case "tool_call": {
+      const tc = interpretToolCall(
+        d.kind as string,
+        d.title as string,
+        d.rawInput as string | Record<string, unknown> | undefined,
+      );
+      const el = document.createElement("div");
+      el.className = "tool-call";
+      el.id = `tc-${d.id as string}`;
+      el.dataset.kind = d.kind as string;
       let label = `<span class="icon">${tc.icon}</span> ${escHtml(tc.title)}`;
       if (tc.detail) {
-        label += `<span class="tc-detail">${tc.detailPrefix || ''}${escHtml(tc.detail)}</span>`;
+        label += `<span class="tc-detail">${tc.detailPrefix ?? ""}${escHtml(tc.detail)}</span>`;
       }
       el.innerHTML = label;
       if (tc.showDiff) {
-        const diffHtml = renderPatchDiff(data.rawInput);
+        const diffHtml = renderPatchDiff(
+          d.rawInput as string | Record<string, unknown> | undefined,
+        );
         if (diffHtml) {
-          const details = document.createElement('details');
+          const details = document.createElement("details");
           details.innerHTML = `<summary>diff</summary><div class="diff-view">${diffHtml}</div>`;
           el.appendChild(details);
         }
       }
-      const detail = el.querySelector('.tc-detail');
+      const detail = el.querySelector(".tc-detail");
       if (detail) {
-        el.addEventListener('click', (e) => {
-          if (e.target.closest('details')) return;
-          detail.classList.toggle('expanded');
+        el.addEventListener("click", (e) => {
+          if ((e.target as HTMLElement).closest("details")) return;
+          detail.classList.toggle("expanded");
         });
       }
       appendMessageElement(el);
-      if (ri) ri.toolCalls.set(data.id, el);
+      if (ri) ri.toolCalls.set(d.id as string, el);
       break;
     }
-    case 'tool_call_update': {
-      const el = ri ? ri.toolCalls.get(data.id) : replayById(`tc-${data.id}`);
+    case "tool_call_update": {
+      const idVal = d.id as string;
+      const el = ri ? ri.toolCalls.get(idVal) : replayById(`tc-${idVal}`);
       if (el) {
-        const si = getStatusIcon(data.status);
+        const si = getStatusIcon(d.status as string);
         el.className = si.className;
-        const iconSpan = el.querySelector('.icon');
+        const iconSpan = el.querySelector(".icon");
         if (iconSpan) iconSpan.textContent = si.icon;
-        if (data.content && data.content.length && !el.querySelector('details') && !el.querySelector('.tc-summary')) {
-          const text = extractToolCallContent(data.content);
+        const contentArr = d.content as
+          | Array<{ type: string; text?: string }>
+          | undefined;
+        if (
+          contentArr?.length &&
+          !el.querySelector("details") &&
+          !el.querySelector(".tc-summary")
+        ) {
+          const text = extractToolCallContent(contentArr);
           if (text) {
-            if (el.dataset.kind === 'task_complete') {
-              const div = document.createElement('div');
-              div.className = 'tc-summary';
+            if (el.dataset.kind === "task_complete") {
+              const div = document.createElement("div");
+              div.className = "tc-summary";
               div.textContent = text;
               el.appendChild(div);
             } else {
-              const details = document.createElement('details');
+              const details = document.createElement("details");
               details.innerHTML = `<summary>output</summary><div class="tc-content">${escHtml(text)}</div>`;
               el.appendChild(details);
             }
@@ -618,100 +748,129 @@ export function replayEvent(type: string, data: Record<string, any>, events: Sto
         }
       }
       // Clear pending state so prompt_done can finish after reconnect replay
-      if (data.status === 'completed' || data.status === 'failed') {
-        state.pendingToolCallIds.delete(data.id);
+      if (d.status === "completed" || d.status === "failed") {
+        state.pendingToolCallIds.delete(idVal);
       }
       break;
     }
-    case 'plan': {
-      const el = document.createElement('div');
-      el.className = 'plan';
-      const planViews = formatPlanEntries(data.entries || []);
-      el.innerHTML = '<div class="plan-title">― plan</div>' +
-        planViews.map(pv => `<div class="plan-entry">${pv.symbol} ${escHtml(pv.content)}</div>`).join('');
+    case "plan": {
+      const el = document.createElement("div");
+      el.className = "plan";
+      const entries = d.entries as
+        | Array<{ content: string; status?: string }>
+        | undefined;
+      const planViews = formatPlanEntries(entries ?? []);
+      el.innerHTML =
+        '<div class="plan-title">― plan</div>' +
+        planViews
+          .map(
+            (pv) =>
+              `<div class="plan-entry">${pv.symbol} ${escHtml(pv.content)}</div>`,
+          )
+          .join("");
       appendMessageElement(el);
       break;
     }
-    case 'permission_request': {
-      const el = document.createElement('div');
-      el.className = 'permission';
-      el.dataset.requestId = data.requestId;
-      el.dataset.title = data.title || '';
-      el.innerHTML = `<span class="title dim">⚿ ${escHtml(data.title)}</span> `;
+    case "permission_request": {
+      const reqId = d.requestId as string;
+      const titleVal = (d.title as string | undefined) ?? "";
+      const el = document.createElement("div");
+      el.className = "permission";
+      el.dataset.requestId = reqId;
+      el.dataset.title = titleVal;
+      el.innerHTML = `<span class="title dim">⚿ ${escHtml(titleVal)}</span> `;
       // During replay, check the pre-built set to see if a later permission_response
       // already resolved this request (avoids forward-scanning the events array).
       const wasResolved = ri
-        ? ri.resolvedPermissions.has(data.requestId)
-        : events && events.slice(idx + 1).some(e =>
-            e.type === 'permission_response' && JSON.parse(e.data).requestId === data.requestId
-          );
-      if (!wasResolved && data.options) {
-        el.querySelector('.title')!.style.opacity = '1';
-        data.options.forEach((opt: Record<string, any>) => {
-          const btn = document.createElement('button');
-          const perm = classifyPermissionOption(opt.kind || '');
+        ? ri.resolvedPermissions.has(reqId)
+        : events.slice(idx + 1).some((e) => {
+            const parsed = JSON.parse(e.data) as { requestId: string };
+            return (
+              e.type === "permission_response" && parsed.requestId === reqId
+            );
+          });
+      const options = d.options as
+        | Array<{ kind?: string; name: string; optionId: string }>
+        | undefined;
+      if (!wasResolved && options) {
+        const titleSpan = el.querySelector(".title");
+        if (titleSpan) (titleSpan as HTMLElement).style.opacity = "1";
+        options.forEach((opt) => {
+          const btn = document.createElement("button");
+          const perm = classifyPermissionOption(opt.kind ?? "");
           btn.className = perm.cssClass;
           btn.textContent = opt.name;
           btn.onclick = () => {
-            if (perm.apiAction === 'deny') {
-              api.denyPermission(state.sessionId!, data.requestId).catch(() => {});
+            if (perm.apiAction === "deny") {
+              void api.denyPermission(state.sessionId!, reqId);
             } else {
-              api.resolvePermission(state.sessionId!, data.requestId, opt.optionId).catch(() => {});
+              void api.resolvePermission(state.sessionId!, reqId, opt.optionId);
             }
-            el.innerHTML = `<span class="dim">⚿ ${escHtml(data.title)} — ${escHtml(opt.name)}</span>`;
+            el.innerHTML = `<span class="dim">⚿ ${escHtml(titleVal)} — ${escHtml(opt.name)}</span>`;
           };
           el.appendChild(btn);
         });
       }
       appendMessageElement(el);
       // Store after append so permission_response can find it
-      if (ri) ri.permissions.set(data.requestId, el);
+      if (ri) ri.permissions.set(reqId, el);
       break;
     }
-    case 'permission_response': {
+    case "permission_response": {
+      const respReqId = d.requestId as string;
       const el = ri
-        ? ri.permissions.get(data.requestId) as HTMLElement | undefined
-        : replayQuery(`.permission[data-request-id="${data.requestId}"]`);
+        ? ri.permissions.get(respReqId)
+        : replayQuery(`.permission[data-request-id="${respReqId}"]`);
       if (el) {
-        const title = (el as HTMLElement).dataset.title ? `⚿ ${(el as HTMLElement).dataset.title}` : '⚿';
-        const action = resolvePermissionLabel(data.optionName, data.denied);
+        const title = (el as HTMLElement).dataset.title
+          ? `⚿ ${(el as HTMLElement).dataset.title}`
+          : "⚿";
+        const action = resolvePermissionLabel(
+          d.optionName as string | undefined,
+          d.denied as boolean | undefined,
+        );
         el.innerHTML = `<span class="dim">${escHtml(title)} — ${escHtml(action)}</span>`;
       }
       break;
     }
-    case 'bash_command': {
-      const el = addBashBlock(data.command, false);
+    case "bash_command": {
+      const el = addBashBlock(d.command as string, false);
       if (ri) {
         ri.currentBashEl = el;
       } else {
-        el.id = 'bash-replay-pending';
+        el.id = "bash-replay-pending";
       }
       break;
     }
-    case 'bash_result': {
-      const el = ri ? ri.currentBashEl : replayById('bash-replay-pending');
+    case "bash_result": {
+      const el = ri ? ri.currentBashEl : replayById("bash-replay-pending");
       if (el) {
-        if (!ri) el.removeAttribute('id');
-        if (data.output) {
-          const out = el.querySelector('.bash-output');
+        if (!ri) el.removeAttribute("id");
+        const outputVal = d.output as string | undefined;
+        if (outputVal) {
+          const out = el.querySelector(".bash-output");
           if (out) {
-            out.textContent = data.output;
-            out.classList.add('has-content');
+            out.textContent = outputVal;
+            out.classList.add("has-content");
           }
         }
-        finishBash(el, data.code, data.signal);
+        finishBash(
+          el,
+          d.code as number | undefined,
+          d.signal as string | undefined,
+        );
         if (ri) ri.currentBashEl = null;
       }
       break;
     }
-    case 'prompt_done':
+    case "prompt_done":
       state.pendingToolCallIds.clear();
       state.pendingPermissionRequestIds.clear();
       state.pendingPromptDone = false;
       setBusy(false);
       break;
-    case 'message':
-      renderMessageCard(data as AgentEvent & { type: 'message' });
+    case "message":
+      renderMessageCard(d as unknown as AgentEvent & { type: "message" });
       break;
   }
 }
@@ -728,23 +887,29 @@ function drainReplayQueue() {
 
 /** Check whether a queued WS event duplicates an element already rendered by replay. */
 function isDuplicateOfReplay(msg: AgentEvent): boolean {
+  // eslint-disable-next-line @typescript-eslint/switch-exhaustiveness-check -- intentionally partial, default handles the rest
   switch (msg.type) {
-    case 'tool_call':
-      return !!document.getElementById(`tc-${msg.id}`);
-    case 'permission_request':
-      return !!document.querySelector(`.permission[data-request-id="${msg.requestId}"]`);
+    case "tool_call":
+      return Boolean(document.getElementById(`tc-${msg.id}`));
+    case "permission_request":
+      return Boolean(
+        document.querySelector(
+          `.permission[data-request-id="${msg.requestId}"]`,
+        ),
+      );
     // Streaming chunks were flushed to DB by the events endpoint, so the
     // content is already rendered.  The live currentThinkingEl / currentAssistantEl
     // was primed by primeStreamingState — new chunks will append to it.
-    case 'thought_chunk':
-      return !!state.currentThinkingEl;
-    case 'message_chunk':
-      return !!state.currentAssistantEl;
+    case "thought_chunk":
+      return Boolean(state.currentThinkingEl);
+    case "message_chunk":
+      return Boolean(state.currentAssistantEl);
     default:
       return false;
   }
 }
 
+// eslint-disable-next-line complexity -- TODO: refactor event type switch with helper functions
 export function handleEvent(msg: AgentEvent) {
   // Queue events that arrive while history replay is in progress to avoid duplicates
   if (state.replayInProgress) {
@@ -752,50 +917,62 @@ export function handleEvent(msg: AgentEvent) {
     return;
   }
 
-   // Ignore events from other sessions (multi-client broadcast).
-   // When sessionId is null (mid-switch), drop session-specific events
-   // to prevent old-session events from leaking into the new session's DOM.
-  if (msg.sessionId && msg.type !== 'session_created' && msg.type !== 'session_deleted') {
+  // Ignore events from other sessions (multi-client broadcast).
+  // When sessionId is null (mid-switch), drop session-specific events
+  // to prevent old-session events from leaking into the new session's DOM.
+  if (
+    msg.sessionId &&
+    msg.type !== "session_created" &&
+    msg.type !== "session_deleted"
+  ) {
     if (!state.sessionId || msg.sessionId !== state.sessionId) {
       return;
     }
   }
+  // eslint-disable-next-line @typescript-eslint/switch-exhaustiveness-check -- only handles events with UI effects
   switch (msg.type) {
-    case 'connected':
+    case "connected":
       if (msg.cancelTimeout != null) state.cancelTimeout = msg.cancelTimeout;
-      if (msg.recentPathsLimit != null) state.recentPathsLimit = msg.recentPathsLimit;
-      applyConnectedLogLevel((msg as unknown as { debugLevel?: string }).debugLevel);
+      if (msg.recentPathsLimit != null)
+        state.recentPathsLimit = msg.recentPathsLimit;
+      applyConnectedLogLevel(msg.debugLevel);
       if (state.agentReloading) {
         state.agentReloading = false;
-        const name = msg.agent?.name ?? '';
-        const ver = msg.agent?.version ?? '';
-        const label = name && ver ? `${name} ${ver}` : 'Agent';
+        const name = msg.agent.name;
+        const ver = msg.agent.version;
+        const label = name && ver ? `${name} ${ver}` : "Agent";
         addSystem(`${label} reloaded.`);
         setBusy(false);
       }
       break;
 
-    case 'state_patch': {
+    case "state_patch": {
       // client-server-split M1: runtime state (busy, future: pending perms,
       // streaming) flows through snapshot + patch, not replay.
       const applied = applyStatePatch({ seq: msg.seq, patch: msg.patch });
       if (!applied && state.sessionId === msg.sessionId) {
         // seq gap (missed patches) → reload the authoritative snapshot
-        reloadSnapshot(state.sessionId);
+        void reloadSnapshot(state.sessionId);
       }
       break;
     }
 
-    case 'session_created':
+    case "session_created":
       // Only switch to the new session if this client requested it
-      if (!state.awaitingNewSession && state.sessionId && msg.sessionId !== state.sessionId) {
+      if (
+        !state.awaitingNewSession &&
+        state.sessionId &&
+        msg.sessionId !== state.sessionId
+      ) {
         break;
       }
       state.awaitingNewSession = false;
       state.sessionId = msg.sessionId;
-      state.sessionCwd = msg.cwd || state.sessionCwd;
-      state.sessionTitle = msg.title || null;
-      if (msg.configOptions?.length) updateConfigOptions(msg.configOptions);
+      state.sessionCwd = msg.cwd ?? state.sessionCwd;
+      state.sessionTitle = msg.title ?? null;
+      // eslint-disable-next-line @typescript-eslint/prefer-optional-chain, @typescript-eslint/no-unnecessary-condition -- runtime safety for legacy events
+      if (msg.configOptions && msg.configOptions.length)
+        updateConfigOptions(msg.configOptions);
       // Always repaint: when configOptions is empty (typical after reload
       // before the lifecycle probe warms the cache), updateModeUI/
       // updateStatusBar fall back to state.sessionMode/sessionModel set by
@@ -806,31 +983,37 @@ export function handleEvent(msg: AgentEvent) {
       setHashSessionId(state.sessionId);
       // Report which session this client is now viewing (for per-session push suppression)
       if (state.clientId) {
-        api.postVisibility(state.clientId, !document.hidden, state.sessionId).catch(() => {});
+        api
+          .postVisibility(state.clientId, !document.hidden, state.sessionId)
+          .catch(() => {});
       }
       updateSessionInfo(state.sessionId, state.sessionTitle);
-      setConnectionStatus('connected', 'connected');
+      setConnectionStatus("connected", "connected");
       dom.input.disabled = false;
       dom.sendBtn.disabled = false;
-      dom.input.placeholder = 'Message or ?';
+      dom.input.placeholder = "Message or ?";
       state.newTurnStarted = false;
       // Adopt any in-flight bash block from history replay (snapshot carries
       // the busy truth; we just need to hook up the DOM element if present).
-      const pendingBashEl = document.getElementById('bash-replay-pending');
-      if (pendingBashEl) {
-        pendingBashEl.removeAttribute('id');
-        pendingBashEl.querySelector('.bash-cmd')?.classList.add('running');
-        state.currentBashEl = pendingBashEl;
-      } else {
-        state.currentBashEl = null;
+      {
+        const pendingBashEl = document.getElementById("bash-replay-pending");
+        if (pendingBashEl) {
+          pendingBashEl.removeAttribute("id");
+          pendingBashEl.querySelector(".bash-cmd")?.classList.add("running");
+          state.currentBashEl = pendingBashEl;
+        } else {
+          state.currentBashEl = null;
+        }
       }
       if (dom.messages.children.length === 0) {
-        addSystem(`Session created: ${state.sessionTitle || msg.sessionId.slice(0, 8) + '…'}`);
+        addSystem(
+          `Session created: ${state.sessionTitle ?? msg.sessionId.slice(0, 8) + "…"}`,
+        );
       }
       updateStatusBar();
       break;
 
-    case 'user_message': {
+    case "user_message": {
       // SSE broadcasts to all clients including the sender (unlike WS which
       // excluded the sender). Detect our own echo and skip it — we already
       // rendered the message and set busy in sendPrompt().
@@ -846,11 +1029,11 @@ export function handleEvent(msg: AgentEvent) {
       state.newTurnStarted = true;
       state.turnEnded = false;
       if (msg.sessionId === state.sessionId) {
-        const el = addMessage('user', msg.text);
+        const el = addMessage("user", msg.text);
         if (msg.images) {
           for (const img of msg.images) {
-            const imgEl = document.createElement('img');
-            imgEl.className = 'user-image';
+            const imgEl = document.createElement("img");
+            imgEl.className = "user-image";
             imgEl.src = img.path;
             el.appendChild(imgEl);
           }
@@ -859,35 +1042,37 @@ export function handleEvent(msg: AgentEvent) {
       break;
     }
 
-    case 'message_chunk':
+    case "message_chunk":
       if (state.turnEnded) break;
       hideWaiting();
       finishThinking();
       if (!state.currentAssistantEl) {
-        state.currentAssistantEl = addMessage('assistant', '');
-        state.currentAssistantText = '';
+        state.currentAssistantEl = addMessage("assistant", "");
+        state.currentAssistantText = "";
       }
       state.currentAssistantText += msg.text;
       state.currentAssistantEl.innerHTML = renderMd(state.currentAssistantText);
       scrollToBottom();
       break;
 
-    case 'thought_chunk':
+    case "thought_chunk":
       if (state.turnEnded) break;
       hideWaiting();
       if (!state.currentThinkingEl) {
-        state.currentThinkingEl = document.createElement('details');
-        state.currentThinkingEl.className = 'thinking';
-        state.currentThinkingEl.innerHTML = '<summary class="active">⠿ thinking...</summary><div class="thinking-content"></div>';
-        state.currentThinkingText = '';
+        state.currentThinkingEl = document.createElement("details");
+        state.currentThinkingEl.className = "thinking";
+        state.currentThinkingEl.innerHTML =
+          '<summary class="active">⠿ thinking...</summary><div class="thinking-content"></div>';
+        state.currentThinkingText = "";
         appendMessageElement(state.currentThinkingEl);
       }
       state.currentThinkingText += msg.text;
-      state.currentThinkingEl.querySelector('.thinking-content').textContent = state.currentThinkingText;
+      state.currentThinkingEl.querySelector(".thinking-content").textContent =
+        state.currentThinkingText;
       scrollToBottom();
       break;
 
-    case 'tool_call': {
+    case "tool_call": {
       if (state.turnEnded) break;
       state.pendingToolCallIds.add(msg.id);
       setBusy(true);
@@ -895,55 +1080,59 @@ export function handleEvent(msg: AgentEvent) {
       finishThinking();
       finishAssistant();
       const tc = interpretToolCall(msg.kind, msg.title, msg.rawInput);
-      const el = document.createElement('div');
-      el.className = 'tool-call';
+      const el = document.createElement("div");
+      el.className = "tool-call";
       el.id = `tc-${msg.id}`;
       el.dataset.kind = msg.kind;
       let label = `<span class="icon">${tc.icon}</span> ${escHtml(tc.title)}`;
       if (tc.detail) {
-        label += `<span class="tc-detail">${tc.detailPrefix || ''}${escHtml(tc.detail)}</span>`;
+        label += `<span class="tc-detail">${tc.detailPrefix ?? ""}${escHtml(tc.detail)}</span>`;
       }
       el.innerHTML = label;
       if (tc.showDiff) {
         const diffHtml = renderPatchDiff(msg.rawInput);
         if (diffHtml) {
-          const details = document.createElement('details');
+          const details = document.createElement("details");
           details.innerHTML = `<summary>diff</summary><div class="diff-view">${diffHtml}</div>`;
           el.appendChild(details);
         }
       }
-      const detail = el.querySelector('.tc-detail');
+      const detail = el.querySelector(".tc-detail");
       if (detail) {
-        el.addEventListener('click', (e) => {
+        el.addEventListener("click", (e) => {
           // Don't toggle tc-detail when clicking inside a <details> element
-          if (e.target.closest('details')) return;
-          detail.classList.toggle('expanded');
+          if ((e.target as Element).closest("details")) return;
+          detail.classList.toggle("expanded");
         });
       }
       appendMessageElement(el);
       break;
     }
 
-    case 'tool_call_update': {
+    case "tool_call_update": {
       const el = document.getElementById(`tc-${msg.id}`);
-      if (msg.status === 'completed' || msg.status === 'failed') {
+      if (msg.status === "completed" || msg.status === "failed") {
         state.pendingToolCallIds.delete(msg.id);
       }
       if (el) {
         const si = getStatusIcon(msg.status);
         el.className = si.className;
-        const iconSpan = el.querySelector('.icon');
+        const iconSpan = el.querySelector(".icon");
         if (iconSpan) iconSpan.textContent = si.icon;
-        if (msg.content && msg.content.length && !el.querySelector('details') && !el.querySelector('.tc-summary')) {
+        if (
+          msg.content?.length &&
+          !el.querySelector("details") &&
+          !el.querySelector(".tc-summary")
+        ) {
           const text = extractToolCallContent(msg.content);
           if (text) {
-            if (el.dataset.kind === 'task_complete') {
-              const div = document.createElement('div');
-              div.className = 'tc-summary';
+            if (el.dataset.kind === "task_complete") {
+              const div = document.createElement("div");
+              div.className = "tc-summary";
               div.textContent = text;
               el.appendChild(div);
             } else {
-              const details = document.createElement('details');
+              const details = document.createElement("details");
               details.innerHTML = `<summary>output</summary><div class="tc-content">${escHtml(text)}</div>`;
               el.appendChild(details);
             }
@@ -955,40 +1144,53 @@ export function handleEvent(msg: AgentEvent) {
       break;
     }
 
-    case 'plan': {
+    case "plan": {
       finishThinking();
       finishAssistant();
-      const el = document.createElement('div');
-      el.className = 'plan';
+      const el = document.createElement("div");
+      el.className = "plan";
       const planViews = formatPlanEntries(msg.entries);
-      el.innerHTML = '<div class="plan-title">― plan</div>' +
-        planViews.map(pv => `<div class="plan-entry">${pv.symbol} ${escHtml(pv.content)}</div>`).join('');
+      el.innerHTML =
+        '<div class="plan-title">― plan</div>' +
+        planViews
+          .map(
+            (pv) =>
+              `<div class="plan-entry">${pv.symbol} ${escHtml(pv.content)}</div>`,
+          )
+          .join("");
       appendMessageElement(el);
       break;
     }
 
-    case 'permission_request': {
+    case "permission_request": {
       if (state.turnEnded) break;
       // Dedup: skip if a permission element with this requestId already exists (e.g. bridge restore)
-      if (document.querySelector(`.permission[data-request-id="${msg.requestId}"]`)) break;
+      if (
+        document.querySelector(
+          `.permission[data-request-id="${msg.requestId}"]`,
+        )
+      )
+        break;
       state.pendingPermissionRequestIds.add(msg.requestId);
       setBusy(true);
       finishThinking();
-      const permEl = document.createElement('div');
-      permEl.className = 'permission';
+      const permEl = document.createElement("div");
+      permEl.className = "permission";
       permEl.dataset.requestId = msg.requestId;
-      permEl.dataset.title = msg.title || '';
+      permEl.dataset.title = msg.title;
       permEl.innerHTML = `<span class="title">⚿ ${escHtml(msg.title)}</span> `;
-      msg.options.forEach(opt => {
-        const btn = document.createElement('button');
-        const perm = classifyPermissionOption(opt.kind || '');
+      msg.options.forEach((opt) => {
+        const btn = document.createElement("button");
+        const perm = classifyPermissionOption(opt.kind);
         btn.className = perm.cssClass;
         btn.textContent = opt.name;
         btn.onclick = () => {
-          if (perm.apiAction === 'deny') {
+          if (perm.apiAction === "deny") {
             api.denyPermission(state.sessionId!, msg.requestId).catch(() => {});
           } else {
-            api.resolvePermission(state.sessionId!, msg.requestId, opt.optionId).catch(() => {});
+            api
+              .resolvePermission(state.sessionId!, msg.requestId, opt.optionId)
+              .catch(() => {});
           }
           state.pendingPermissionRequestIds.delete(msg.requestId);
           permEl.innerHTML = `<span class="dim">⚿ ${escHtml(msg.title)} — ${escHtml(opt.name)}</span>`;
@@ -1000,11 +1202,18 @@ export function handleEvent(msg: AgentEvent) {
       break;
     }
 
-    case 'permission_response': {
+    case "permission_response": {
       state.pendingPermissionRequestIds.delete(msg.requestId);
-      const permTarget = document.querySelector(`.permission[data-request-id="${msg.requestId}"]`);
-      if (msg.sessionId === state.sessionId && permTarget) {
-        const title = permTarget.dataset.title ? `⚿ ${permTarget.dataset.title}` : '⚿';
+      const permTarget = document.querySelector(
+        `.permission[data-request-id="${msg.requestId}"]`,
+      );
+      if (
+        msg.sessionId === state.sessionId &&
+        permTarget instanceof HTMLElement
+      ) {
+        const title = permTarget.dataset.title
+          ? `⚿ ${permTarget.dataset.title}`
+          : "⚿";
         const action = resolvePermissionLabel(msg.optionName, msg.denied);
         permTarget.innerHTML = `<span class="dim">${escHtml(title)} — ${escHtml(action)}</span>`;
       }
@@ -1012,7 +1221,7 @@ export function handleEvent(msg: AgentEvent) {
       break;
     }
 
-    case 'bash_command': {
+    case "bash_command": {
       // Suppress SSE echo of our own bash command (we already rendered it in input.ts)
       if (state.sentBashForSession === msg.sessionId) {
         state.sentBashForSession = null;
@@ -1025,26 +1234,26 @@ export function handleEvent(msg: AgentEvent) {
       break;
     }
 
-    case 'bash_output': {
+    case "bash_output": {
       if (msg.sessionId !== state.sessionId) break;
       if (state.currentBashEl) {
-        const out = state.currentBashEl.querySelector('.bash-output');
-        if (msg.stream === 'stderr') {
-          const span = document.createElement('span');
-          span.className = 'stderr';
+        const out = state.currentBashEl.querySelector(".bash-output");
+        if (msg.stream === "stderr") {
+          const span = document.createElement("span");
+          span.className = "stderr";
           span.textContent = msg.text;
           out.appendChild(span);
         } else {
           out.appendChild(document.createTextNode(msg.text));
         }
-        out.classList.add('has-content');
+        out.classList.add("has-content");
         out.scrollTop = out.scrollHeight;
         scrollToBottom();
       }
       break;
     }
 
-    case 'bash_done': {
+    case "bash_done": {
       if (msg.sessionId !== state.sessionId) break;
       finishBash(state.currentBashEl, msg.code, msg.signal);
       if (msg.error) addSystem(`err: ${msg.error}`);
@@ -1052,9 +1261,9 @@ export function handleEvent(msg: AgentEvent) {
       break;
     }
 
-    case 'prompt_done': {
+    case "prompt_done": {
       clearCancelTimer();
-      if (msg.stopReason === 'cancelled' && state.newTurnStarted) {
+      if (msg.stopReason === "cancelled" && state.newTurnStarted) {
         // This prompt_done belongs to a previous turn — a new turn has already
         // started (signaled by user_message from another client).  Don't clobber
         // the current turn's pending state; just tidy up leftover streaming elements.
@@ -1064,7 +1273,7 @@ export function handleEvent(msg: AgentEvent) {
         break;
       }
       state.newTurnStarted = false;
-      if (msg.stopReason === 'cancelled') {
+      if (msg.stopReason === "cancelled") {
         cancelPendingTurnUI();
       } else {
         // prompt_done is authoritative: the agent's turn is over. Any tool calls
@@ -1078,51 +1287,58 @@ export function handleEvent(msg: AgentEvent) {
       break;
     }
 
-    case 'session_deleted':
+    case "session_deleted":
       if (msg.sessionId === state.sessionId) {
-        fallbackToNextSession(msg.sessionId, state.sessionCwd || undefined);
+        void fallbackToNextSession(
+          msg.sessionId,
+          state.sessionCwd ?? undefined,
+        );
       }
       break;
 
-    case 'session_expired': {
-      fallbackToNextSession(state.sessionId, state.sessionCwd || undefined);
+    case "session_expired": {
+      void fallbackToNextSession(
+        state.sessionId,
+        state.sessionCwd ?? undefined,
+      );
       break;
     }
 
-    case 'config_set': {
+    case "config_set": {
       setConfigValue(msg.configId, msg.value);
       const opt = getConfigOption(msg.configId);
-      const label = opt?.name || msg.configId;
-      const valueName = opt?.options.find(o => o.value === msg.value)?.name || msg.value;
+      const label = opt?.name ?? msg.configId;
+      const valueName =
+        opt?.options.find((o) => o.value === msg.value)?.name ?? msg.value;
       addSystem(`ok: ${label}: ${valueName}`);
-      if (msg.configId === 'mode') updateModeUI();
+      if (msg.configId === "mode") updateModeUI();
       updateStatusBar();
       break;
     }
 
-    case 'config_option_update':
-      if (msg.configOptions?.length) updateConfigOptions(msg.configOptions);
+    case "config_option_update":
+      if (msg.configOptions.length) updateConfigOptions(msg.configOptions);
       break;
 
-    case 'session_title_updated':
+    case "session_title_updated":
       if (msg.sessionId === state.sessionId) {
         state.sessionTitle = msg.title;
         updateSessionInfo(state.sessionId, state.sessionTitle);
       }
       break;
 
-    case 'agent_reloading':
+    case "agent_reloading":
       state.agentReloading = true;
-      addSystem('Agent reloading…');
+      addSystem("Agent reloading…");
       setBusy(true);
       break;
 
-    case 'agent_reloading_failed':
+    case "agent_reloading_failed":
       addSystem(`err: Agent reload failed: ${msg.error}`);
       setBusy(false);
       break;
 
-    case 'error':
+    case "error":
       state.awaitingNewSession = false;
       state.pendingToolCallIds.clear();
       state.pendingPermissionRequestIds.clear();
@@ -1134,25 +1350,29 @@ export function handleEvent(msg: AgentEvent) {
       setBusy(false);
       break;
 
-    case 'message_created':
+    case "message_created":
       addSystem(`inbox: new message ${msg.messageId} — /inbox to view`);
       break;
 
-    case 'message_consumed':
+    case "message_consumed":
       addSystem(`inbox: ${msg.messageId} consumed → session ${msg.sessionId}`);
       closeLocalBanner(`msg-${msg.messageId}`);
       break;
 
-    case 'message_acked':
+    case "message_acked":
       addSystem(`inbox: ${msg.messageId} dismissed`);
       closeLocalBanner(`msg-${msg.messageId}`);
       break;
 
-    case 'message':
+    case "message":
       if (msg.sessionId === state.sessionId) {
         renderMessageCard(msg);
         scrollToBottom();
       }
+      break;
+
+    default:
+      // Other event types are handled but don't need special processing
       break;
   }
 }

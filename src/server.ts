@@ -23,7 +23,9 @@ import type { AgentEvent } from "./types.ts";
 for (const method of ["log", "error", "warn"] as const) {
   const orig = console[method].bind(console);
   console[method] = (...args: unknown[]) => {
-    const ts = new Date().toLocaleString("sv-SE", { hour12: false }).replace(",", "");
+    const ts = new Date()
+      .toLocaleString("sv-SE", { hour12: false })
+      .replace(",", "");
     orig(ts, ...args);
   };
 }
@@ -32,9 +34,15 @@ const config = loadConfig();
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const PUBLIC_DIR = join(__dirname, "..", config.public_dir);
 const PKG_VERSION = (() => {
-  try { return JSON.parse(readFileSync(join(__dirname, "..", "package.json"), "utf-8")).version ?? "unknown"; }
-  catch { return "unknown"; }
-})() as string;
+  try {
+    const pkg = JSON.parse(
+      readFileSync(join(__dirname, "..", "package.json"), "utf-8"),
+    ) as { version?: string };
+    return pkg.version ?? "unknown";
+  } catch {
+    return "unknown";
+  }
+})();
 
 // --- Core dependencies ---
 
@@ -43,9 +51,14 @@ console.log(`[store] using ${config.data_dir}/`);
 
 const sessions = new SessionManager(store, config.default_cwd, config.data_dir);
 const titleService = new TitleService(store, sessions, config.default_cwd);
-const pushService = new PushService(store, config.data_dir, config.push.vapid_subject, {
-  globalVisibilitySuppression: config.push.global_visibility_suppression,
-});
+const pushService = new PushService(
+  store,
+  config.data_dir,
+  config.push.vapid_subject,
+  {
+    globalVisibilitySuppression: config.push.global_visibility_suppression,
+  },
+);
 console.log(`[push] VAPID public key ready`);
 
 const sseManager = new SseManager();
@@ -63,7 +76,9 @@ const ticketStore = new TicketStore();
 const imageSecret = randomBytes(32);
 // SSE heartbeat re-checks token revocation; revoked → connection closed
 // within one heartbeat interval (≤15s).
-sseManager.setRevocationCheck((tokenName) => !authStore.hasTokenName(tokenName));
+sseManager.setRevocationCheck(
+  (tokenName) => !authStore.hasTokenName(tokenName),
+);
 sseManager.setImageSecret(imageSecret);
 
 // Broadcast runtime state patches to all SSE clients interested in the session.
@@ -74,32 +89,43 @@ let messageCleanup: CleanupHandle | null = null;
 
 // --- HTTP server ---
 
-const server = createServer(createRequestHandler({
-  store,
-  sessions,
-  sseManager,
-  clientRegistry,
-  titleService,
-  getBridge: () => bridge,
-  publicDir: PUBLIC_DIR,
-  dataDir: config.data_dir,
-  limits: config.limits,
-  pushService,
-  serverVersion: PKG_VERSION,
-  debugLevel: config.debug.level,
-  authStore,
-  ticketStore,
-  imageSecret,
-}));
+const server = createServer((req, res) => {
+  void createRequestHandler({
+    store,
+    sessions,
+    sseManager,
+    clientRegistry,
+    titleService,
+    getBridge: () => bridge,
+    publicDir: PUBLIC_DIR,
+    dataDir: config.data_dir,
+    limits: config.limits,
+    pushService,
+    serverVersion: PKG_VERSION,
+    debugLevel: config.debug.level,
+    authStore,
+    ticketStore,
+    imageSecret,
+  })(req, res);
+});
 
 async function initBridge(): Promise<AgentBridge> {
   const b = new AgentBridge(config.agent_cmd);
 
   b.on("event", (event: AgentEvent) => {
-    handleAgentEvent(event, sessions, store, b, {
-      cancelTimeout: config.limits.cancel_timeout,
-      recentPathsLimit: config.limits.recent_paths,
-    }, sseManager, pushService, clientRegistry);
+    handleAgentEvent(
+      event,
+      sessions,
+      store,
+      b,
+      {
+        cancelTimeout: config.limits.cancel_timeout,
+        recentPathsLimit: config.limits.recent_paths,
+      },
+      sseManager,
+      pushService,
+      clientRegistry,
+    );
   });
 
   await b.start();
@@ -121,8 +147,12 @@ async function shutdown() {
   process.exit(0);
 }
 
-process.on("SIGINT", shutdown);
-process.on("SIGTERM", shutdown);
+process.on("SIGINT", () => {
+  void shutdown();
+});
+process.on("SIGTERM", () => {
+  void shutdown();
+});
 
 // SIGHUP: reload auth.json without restarting (e.g. after CLI revoked a token)
 process.on("SIGHUP", () => {
@@ -134,41 +164,48 @@ process.on("SIGHUP", () => {
 
 // --- Start ---
 
-server.listen(config.port, "0.0.0.0", async () => {
-  console.log(`[server] listening on http://localhost:${config.port}`);
-  await authStore.load();
-  const tokenCount = authStore.list().length;
-  console.log(`[auth] loaded ${tokenCount} token(s) from auth.json`);
-  if (tokenCount === 0) {
-    // First-run / wiped state. Refuse to serve traffic without auth — the
-    // whole point of this build is "no token, no access". Two modes:
-    //   - foreground (TTY): immediate exit so the operator sees the
-    //     prompt and runs the recovery command.
-    //   - daemon (no TTY): sleep first to throttle supervisor restart
-    //     storms, then exit 78 (sysexits.h: configuration error). The
-    //     supervisor logs the message instead of restarting in a tight loop.
-    const msg = [
-      "[auth] no tokens in auth.json — refusing to serve unauthenticated.",
-      "[auth] create one with:  webagent --create-token <name>",
-      "[auth] then start the server again (or send SIGHUP to the running process).",
-    ].join("\n");
-    if (process.stdin.isTTY) {
-      console.error(msg);
-      process.exit(1);
-    } else {
-      console.error(msg);
-      console.error("[auth] sleeping 60s to avoid supervisor restart loop...");
-      await new Promise((r) => setTimeout(r, 60_000));
-      process.exit(78);
+server.listen(config.port, "0.0.0.0", () => {
+  void (async () => {
+    console.log(`[server] listening on http://localhost:${config.port}`);
+    await authStore.load();
+    const tokenCount = authStore.list().length;
+    console.log(`[auth] loaded ${tokenCount} token(s) from auth.json`);
+    if (tokenCount === 0) {
+      // First-run / wiped state. Refuse to serve traffic without auth — the
+      // whole point of this build is "no token, no access". Two modes:
+      //   - foreground (TTY): immediate exit so the operator sees the
+      //     prompt and runs the recovery command.
+      //   - daemon (no TTY): sleep first to throttle supervisor restart
+      //     storms, then exit 78 (sysexits.h: configuration error). The
+      //     supervisor logs the message instead of restarting in a tight loop.
+      const msg = [
+        "[auth] no tokens in auth.json — refusing to serve unauthenticated.",
+        "[auth] create one with:  webagent --create-token <name>",
+        "[auth] then start the server again (or send SIGHUP to the running process).",
+      ].join("\n");
+      if (process.stdin.isTTY) {
+        console.error(msg);
+        process.exit(1);
+      } else {
+        console.error(msg);
+        console.error(
+          "[auth] sleeping 60s to avoid supervisor restart loop...",
+        );
+        await new Promise((r) => setTimeout(r, 60_000));
+        process.exit(78);
+      }
     }
-  }
-  messageCleanup = startMessageCleanup(store, config.messages.unprocessed_ttl_days);
-  console.log(`[bridge] starting: ${config.agent_cmd}...`);
-  try {
-    await initBridge();
-    console.log(`[bridge] ready`);
-    sessions.hydrate();
-  } catch (err) {
-    console.error(`[bridge] failed to start:`, err);
-  }
+    messageCleanup = startMessageCleanup(
+      store,
+      config.messages.unprocessed_ttl_days,
+    );
+    console.log(`[bridge] starting: ${config.agent_cmd}...`);
+    try {
+      await initBridge();
+      console.log(`[bridge] ready`);
+      sessions.hydrate();
+    } catch (err) {
+      console.error(`[bridge] failed to start:`, err);
+    }
+  })();
 });

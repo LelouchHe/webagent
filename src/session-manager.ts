@@ -6,11 +6,14 @@ import { join } from "node:path";
 import type { Store } from "./store.ts";
 import type { AgentBridge } from "./bridge.ts";
 import type { AgentEvent, ConfigOption, PendingPermission } from "./types.ts";
-import { SessionStateManager, type BusyKind } from "./session-state.ts";
+
+import { SessionStateManager } from "./session-state.ts";
 
 const IS_WIN = process.platform === "win32";
 
-export function interruptBashProc(proc: ReturnType<SessionManager["runningBashProcs"]["get"]>): void {
+export function interruptBashProc(
+  proc: ReturnType<SessionManager["runningBashProcs"]["get"]>,
+): void {
   if (!proc) return;
   if (IS_WIN && typeof proc.pid === "number") {
     // Windows: kill entire process tree since there are no process groups
@@ -28,10 +31,13 @@ export function interruptBashProc(proc: ReturnType<SessionManager["runningBashPr
   proc.kill("SIGINT");
 }
 
-type SessionBridge = Pick<AgentBridge, "newSession" | "setConfigOption" | "loadSession">;
+type SessionBridge = Pick<
+  AgentBridge,
+  "newSession" | "setConfigOption" | "loadSession"
+>;
 
 /** Known config option IDs that we persist per-session. */
-const PERSISTED_CONFIG_IDS = ["model", "mode", "reasoning_effort"] as const;
+const _PERSISTED_CONFIG_IDS = ["model", "mode", "reasoning_effort"] as const;
 
 /** Minimum age (seconds) before an empty session is eligible for cleanup. */
 const EMPTY_SESSION_MIN_AGE_S = 60;
@@ -53,14 +59,14 @@ export class SessionManager {
   /** Per-session runtime state (busy/streaming/permissions snapshots + patches). */
   readonly state = new SessionStateManager();
   /** Deduplicates concurrent resume calls for the same session. */
-  private pendingResumes = new Map<string, Promise<void>>();
+  private readonly pendingResumes = new Map<string, Promise<void>>();
 
   cachedConfigOptions: ConfigOption[] = [];
   agentInfo: { name: string; version: string } | null = null;
 
-  private store: Store;
-  private defaultCwd: string;
-  private dataDir: string;
+  private readonly store: Store;
+  private readonly defaultCwd: string;
+  private readonly dataDir: string;
 
   constructor(store: Store, defaultCwd: string, dataDir: string) {
     this.store = store;
@@ -93,7 +99,8 @@ export class SessionManager {
     // Clean up empty sessions (no events) older than the threshold
     const cleaned = this.store.deleteEmptySessions(EMPTY_SESSION_MIN_AGE_S);
     for (const id of cleaned) this.liveSessions.delete(id);
-    if (cleaned.length > 0) console.log(`[session] cleaned ${cleaned.length} empty session(s)`);
+    if (cleaned.length > 0)
+      console.info(`[session] cleaned ${cleaned.length} empty session(s)`);
 
     const sourceSession = inheritFromSessionId
       ? this.store.getSession(inheritFromSessionId)
@@ -158,8 +165,11 @@ export class SessionManager {
       // is swallowed: the resume still succeeds and the frontend falls back
       // to snapshot-based mode/model display (see public/js/state.ts).
       await this.tryWarmCache(bridge, sessionId, session);
-      const configOptions = this.applyStoredConfig(this.cachedConfigOptions, session);
-      console.log(`[session] restored: ${sessionId.slice(0, 8)}…`);
+      const configOptions = this.applyStoredConfig(
+        this.cachedConfigOptions,
+        session,
+      );
+      console.info(`[session] restored: ${sessionId.slice(0, 8)}…`);
       return {
         type: "session_created",
         sessionId,
@@ -190,7 +200,11 @@ export class SessionManager {
   private async tryWarmCache(
     bridge: SessionBridge,
     sessionId: string,
-    session: { model: string | null; mode: string | null; reasoning_effort: string | null },
+    session: {
+      model: string | null;
+      mode: string | null;
+      reasoning_effort: string | null;
+    },
   ): Promise<void> {
     if (this.cachedConfigOptions.length > 0) return;
     const pick = session.mode
@@ -205,10 +219,15 @@ export class SessionManager {
       const opts = await bridge.setConfigOption(sessionId, pick.id, pick.value);
       if (opts.length > 0) {
         this.cachedConfigOptions = opts;
-        console.log(`[session] warmed cache on resume (${opts.length} options)`);
+        console.info(
+          `[session] warmed cache on resume (${opts.length} options)`,
+        );
       }
     } catch (err) {
-      console.warn(`[session] cache warming failed for ${sessionId.slice(0, 8)}…:`, err);
+      console.warn(
+        `[session] cache warming failed for ${sessionId.slice(0, 8)}…:`,
+        err,
+      );
     }
   }
 
@@ -231,14 +250,22 @@ export class SessionManager {
   }
 
   /** Build configOptions from cache, overriding currentValue with stored session values. */
-  private buildConfigOptions(session: { model: string | null; mode: string | null; reasoning_effort: string | null }): ConfigOption[] {
+  private buildConfigOptions(session: {
+    model: string | null;
+    mode: string | null;
+    reasoning_effort: string | null;
+  }): ConfigOption[] {
     return this.applyStoredConfig(this.cachedConfigOptions, session);
   }
 
   /** Override currentValue in configOptions with stored session values. */
   private applyStoredConfig(
     configOptions: ConfigOption[],
-    session: { model: string | null; mode: string | null; reasoning_effort: string | null },
+    session: {
+      model: string | null;
+      mode: string | null;
+      reasoning_effort: string | null;
+    },
   ): ConfigOption[] {
     if (!configOptions.length) return this.cachedConfigOptions;
     const stored: Record<string, string | null> = {
@@ -268,7 +295,10 @@ export class SessionManager {
     }
     this.state.delete(sessionId);
     // Remove uploaded images for this session
-    rm(join(this.dataDir, "images", sessionId), { recursive: true, force: true }).catch(() => {});
+    rm(join(this.dataDir, "images", sessionId), {
+      recursive: true,
+      force: true,
+    }).catch(() => {});
   }
 
   /** Flush assistant/thinking buffers to store. */
@@ -281,7 +311,12 @@ export class SessionManager {
   flushAssistantBuffer(sessionId: string): void {
     const assistant = this.assistantBuffers.get(sessionId);
     if (assistant) {
-      this.store.saveEvent(sessionId, "assistant_message", { text: assistant }, { from_ref: "agent" });
+      this.store.saveEvent(
+        sessionId,
+        "assistant_message",
+        { text: assistant },
+        { from_ref: "agent" },
+      );
       this.assistantBuffers.delete(sessionId);
     }
   }
@@ -290,7 +325,12 @@ export class SessionManager {
   flushThinkingBuffer(sessionId: string): void {
     const thinking = this.thinkingBuffers.get(sessionId);
     if (thinking) {
-      this.store.saveEvent(sessionId, "thinking", { text: thinking }, { from_ref: "agent" });
+      this.store.saveEvent(
+        sessionId,
+        "thinking",
+        { text: thinking },
+        { from_ref: "agent" },
+      );
       this.thinkingBuffers.delete(sessionId);
     }
   }
@@ -330,18 +370,21 @@ export class SessionManager {
     const kind = this.getBusyKind(sessionId);
     const current = this.state.getState(sessionId).runtime.busy;
     if (kind === null) {
-      if (current !== null) this.state.patch(sessionId, { runtime: { busy: null } });
+      if (current !== null)
+        this.state.patch(sessionId, { runtime: { busy: null } });
       // Also clear any pending cancel safety net now that we are idle.
       this.state.clearCancelSafety(sessionId);
       return;
     }
-    const nextPromptId = kind === "agent" ? (promptId ?? current?.promptId ?? null) : null;
-    if (current && current.kind === kind && current.promptId === nextPromptId) return;
+    const nextPromptId =
+      kind === "agent" ? (promptId ?? current?.promptId ?? null) : null;
+    if (current?.kind === kind && current.promptId === nextPromptId) return;
     this.state.patch(sessionId, {
       runtime: {
         busy: {
-          kind: kind as BusyKind,
-          since: current?.kind === kind ? current.since : new Date().toISOString(),
+          kind: kind,
+          since:
+            current?.kind === kind ? current.since : new Date().toISOString(),
           promptId: nextPromptId,
         },
       },
@@ -352,25 +395,38 @@ export class SessionManager {
    * If the session's last turn was interrupted (user_message without prompt_done),
    * auto-retry by prompting the agent to continue. Returns true if retrying.
    */
-  autoRetryIfNeeded(bridge: Pick<AgentBridge, "prompt">, sessionId: string): boolean {
+  autoRetryIfNeeded(
+    bridge: Pick<AgentBridge, "prompt">,
+    sessionId: string,
+  ): boolean {
     if (this.activePrompts.has(sessionId)) return false;
     if (!this.store.hasInterruptedTurn(sessionId)) return false;
 
-    console.log(`[session] auto-retrying interrupted turn for ${sessionId.slice(0, 8)}…`);
+    console.info(
+      `[session] auto-retrying interrupted turn for ${sessionId.slice(0, 8)}…`,
+    );
     this.activePrompts.add(sessionId);
     this.syncBusy(sessionId);
-    bridge.prompt(sessionId, "Continue your previous response — it was interrupted mid-way.").catch((err: unknown) => {
-      console.error(`[session] auto-retry failed for ${sessionId.slice(0, 8)}…:`, err);
-      this.activePrompts.delete(sessionId);
-      this.syncBusy(sessionId);
-    });
+    bridge
+      .prompt(
+        sessionId,
+        "Continue your previous response — it was interrupted mid-way.",
+      )
+      .catch((err: unknown) => {
+        console.error(
+          `[session] auto-retry failed for ${sessionId.slice(0, 8)}…:`,
+          err,
+        );
+        this.activePrompts.delete(sessionId);
+        this.syncBusy(sessionId);
+      });
     return true;
   }
 
   /** Get pending permission requests for a session (or all sessions if no id). */
   getPendingPermissions(sessionId?: string): PendingPermission[] {
     const perms = [...this.pendingPermissions.values()];
-    return sessionId ? perms.filter(p => p.sessionId === sessionId) : perms;
+    return sessionId ? perms.filter((p) => p.sessionId === sessionId) : perms;
   }
 
   /**
@@ -380,14 +436,19 @@ export class SessionManager {
    */
   syncPendingPermissions(sessionId: string): void {
     const forSession = [...this.pendingPermissions.values()]
-      .filter(p => p.sessionId === sessionId)
-      .map(p => ({
+      .filter((p) => p.sessionId === sessionId)
+      .map((p) => ({
         requestId: p.requestId,
         toolName: "",
         title: p.title,
-        options: p.options.map(o => ({ optionId: o.optionId, label: o.label })),
+        options: p.options.map((o) => ({
+          optionId: o.optionId,
+          label: o.label,
+        })),
       }));
-    this.state.patch(sessionId, { runtime: { pendingPermissions: forSession } });
+    this.state.patch(sessionId, {
+      runtime: { pendingPermissions: forSession },
+    });
   }
 
   /** Kill all running bash processes (for shutdown). */

@@ -9,7 +9,7 @@ describe("connection", () => {
   let connection: any;
   let fetchCalls: Array<{ url: string; init?: RequestInit }>;
   let timeoutCalls: number[];
-  let timeoutFns: Function[];
+  let timeoutFns: (() => void)[];
   let originalSetTimeout: typeof globalThis.setTimeout;
 
   class MockEventSource {
@@ -31,7 +31,9 @@ describe("connection", () => {
       if (!this.listeners.has(type)) this.listeners.set(type, []);
       this.listeners.get(type)!.push(cb);
     }
-    close() { this.readyState = MockEventSource.CLOSED; }
+    close() {
+      this.readyState = MockEventSource.CLOSED;
+    }
   }
 
   class MockWebSocket {
@@ -47,8 +49,12 @@ describe("connection", () => {
       this.url = url;
       MockWebSocket.instances.push(this);
     }
-    send(data: string) { this.sent.push(data); }
-    close() { this.onclose?.(); }
+    send(data: string) {
+      this.sent.push(data);
+    }
+    close() {
+      this.onclose?.();
+    }
   }
 
   before(async () => {
@@ -74,19 +80,26 @@ describe("connection", () => {
     MockWebSocket.instances.length = 0;
     globalThis.fetch = undefined as any;
     history.replaceState(null, "", "/");
-    globalThis.setTimeout = ((fn: Function, ms?: number) => {
+    globalThis.setTimeout = ((fn: () => void, ms?: number) => {
       timeoutFns.push(fn);
       timeoutCalls.push(ms ?? 0);
-      return 1 as any;
-    }) as any;
+      return 1 as unknown as NodeJS.Timeout;
+    }) as typeof setTimeout;
   });
 
   function mockResponse(data: any) {
     const body = JSON.stringify(data);
-    return { ok: true, status: 200, json: async () => data, text: async () => body };
+    return {
+      ok: true,
+      status: 200,
+      json: async () => data,
+      text: async () => body,
+    };
   }
 
-  function setFetch(handler: (url: string, init?: RequestInit) => Promise<any> | any) {
+  function setFetch(
+    handler: (url: string, init?: RequestInit) => Promise<Response>,
+  ) {
     globalThis.fetch = (async (url: string, init?: RequestInit) => {
       fetchCalls.push({ url, init });
       // Auto-respond to SSE ticket mints — every connect() call now does
@@ -96,7 +109,12 @@ describe("connection", () => {
       }
       // Auto-stub snapshot endpoint so tests that don't care about it don't explode.
       if (url.endsWith("/snapshot")) {
-        return mockResponse({ version: 1, seq: 0, session: {}, runtime: { busy: null } });
+        return mockResponse({
+          version: 1,
+          seq: 0,
+          session: {},
+          runtime: { busy: null },
+        });
       }
       return handler(url, init);
     }) as any;
@@ -112,16 +130,33 @@ describe("connection", () => {
     return es;
   }
 
-  function fireConnected(es: InstanceType<typeof MockEventSource>, clientId: string) {
-    return es.onmessage?.({ data: JSON.stringify({ type: "connected", clientId }) });
+  function fireConnected(
+    es: InstanceType<typeof MockEventSource>,
+    clientId: string,
+  ) {
+    return es.onmessage?.({
+      data: JSON.stringify({ type: "connected", clientId }),
+    });
   }
 
-  function fireBridgeConnected(es: InstanceType<typeof MockEventSource>, agent: { name: string; version: string }) {
-    return es.onmessage?.({ data: JSON.stringify({ type: "connected", agent, cancelTimeout: 10000 }) });
+  function fireBridgeConnected(
+    es: InstanceType<typeof MockEventSource>,
+    agent: { name: string; version: string },
+  ) {
+    return es.onmessage?.({
+      data: JSON.stringify({ type: "connected", agent, cancelTimeout: 10000 }),
+    });
   }
 
   function sessionResponse(id: string, overrides?: Record<string, unknown>) {
-    return { id, cwd: "/tmp", title: null, configOptions: [], busyKind: null, ...overrides };
+    return {
+      id,
+      cwd: "/tmp",
+      title: null,
+      configOptions: [],
+      busyKind: null,
+      ...overrides,
+    };
   }
 
   /** Flush microtask queue so fire-and-forget async (initSession) completes. */
@@ -133,9 +168,16 @@ describe("connection", () => {
     history.replaceState(null, "", "/#hash-session");
     setFetch(async (url: string) => {
       if (url.includes("/visibility")) return mockResponse({});
-      if (url === "/api/v1/sessions/hash-session") return mockResponse(sessionResponse("hash-session"));
+      if (url === "/api/v1/sessions/hash-session")
+        return mockResponse(sessionResponse("hash-session"));
       if (url.startsWith("/api/v1/sessions/hash-session/events"))
-        return mockResponse([{ seq: 1, type: "assistant_message", data: JSON.stringify({ text: "restored" }) }]);
+        return mockResponse([
+          {
+            seq: 1,
+            type: "assistant_message",
+            data: JSON.stringify({ text: "restored" }),
+          },
+        ]);
       throw new Error(`Unexpected fetch: ${url}`);
     });
 
@@ -149,9 +191,11 @@ describe("connection", () => {
 
     assert.equal(state.clientId, "cl-test");
     assert.equal(state.sessionId, "hash-session");
-    const urls = fetchCalls.map(c => c.url);
-    assert.ok(urls.some(u => u === "/api/v1/sessions/hash-session"));
-    assert.ok(urls.some(u => u.startsWith("/api/v1/sessions/hash-session/events")));
+    const urls = fetchCalls.map((c) => c.url);
+    assert.ok(urls.some((u) => u === "/api/v1/sessions/hash-session"));
+    assert.ok(
+      urls.some((u) => u.startsWith("/api/v1/sessions/hash-session/events")),
+    );
     assert.ok(dom.messages.textContent.includes("restored"));
     assert.equal(state.lastEventSeq, 1);
   });
@@ -159,18 +203,21 @@ describe("connection", () => {
   it("resumes the most recent session when there is no hash", async () => {
     setFetch(async (url: string) => {
       if (url.includes("/visibility")) return mockResponse({});
-      if (url === "/api/v1/sessions") return mockResponse([{ id: "recent-session" }]);
-      if (url === "/api/v1/sessions/recent-session") return mockResponse(sessionResponse("recent-session"));
-      if (url.startsWith("/api/v1/sessions/recent-session/events")) return mockResponse([]);
+      if (url === "/api/v1/sessions")
+        return mockResponse([{ id: "recent-session" }]);
+      if (url === "/api/v1/sessions/recent-session")
+        return mockResponse(sessionResponse("recent-session"));
+      if (url.startsWith("/api/v1/sessions/recent-session/events"))
+        return mockResponse([]);
       throw new Error(`Unexpected fetch: ${url}`);
     });
 
     connection.connect();
     await flush();
 
-    const urls = fetchCalls.map(c => c.url);
-    assert.ok(urls.some(u => u === "/api/v1/sessions"));
-    assert.ok(urls.some(u => u === "/api/v1/sessions/recent-session"));
+    const urls = fetchCalls.map((c) => c.url);
+    assert.ok(urls.some((u) => u === "/api/v1/sessions"));
+    assert.ok(urls.some((u) => u === "/api/v1/sessions/recent-session"));
     assert.equal(state.sessionId, "recent-session");
   });
 
@@ -179,12 +226,26 @@ describe("connection", () => {
     setFetch(async (url: string, init?: RequestInit) => {
       if (url.includes("/visibility")) return mockResponse({});
       // The expired session returns 404
-      if (url === "/api/v1/sessions/expired-session") return { ok: false, status: 404, json: async () => ({ error: "not found" }) };
-      if (url.startsWith("/api/v1/sessions/expired-session/events")) return mockResponse([]);
+      if (url === "/api/v1/sessions/expired-session")
+        return {
+          ok: false,
+          status: 404,
+          json: async () => ({ error: "not found" }),
+        };
+      if (url.startsWith("/api/v1/sessions/expired-session/events"))
+        return mockResponse([]);
       // listSessions returns another available session
-      if (url === "/api/v1/sessions" && (!init?.method || init.method === "GET")) return mockResponse([{ id: "fallback-session" }]);
-      if (url === "/api/v1/sessions/fallback-session") return mockResponse(sessionResponse("fallback-session", { title: "Fallback" }));
-      if (url.startsWith("/api/v1/sessions/fallback-session/events")) return mockResponse([]);
+      if (
+        url === "/api/v1/sessions" &&
+        (!init?.method || init.method === "GET")
+      )
+        return mockResponse([{ id: "fallback-session" }]);
+      if (url === "/api/v1/sessions/fallback-session")
+        return mockResponse(
+          sessionResponse("fallback-session", { title: "Fallback" }),
+        );
+      if (url.startsWith("/api/v1/sessions/fallback-session/events"))
+        return mockResponse([]);
       throw new Error(`Unexpected fetch: ${url} ${init?.method}`);
     });
 
@@ -200,11 +261,22 @@ describe("connection", () => {
     history.replaceState(null, "", "/#expired-session");
     setFetch(async (url: string, init?: RequestInit) => {
       if (url.includes("/visibility")) return mockResponse({});
-      if (url === "/api/v1/sessions/expired-session") return { ok: false, status: 404, json: async () => ({ error: "not found" }) };
-      if (url.startsWith("/api/v1/sessions/expired-session/events")) return mockResponse([]);
+      if (url === "/api/v1/sessions/expired-session")
+        return {
+          ok: false,
+          status: 404,
+          json: async () => ({ error: "not found" }),
+        };
+      if (url.startsWith("/api/v1/sessions/expired-session/events"))
+        return mockResponse([]);
       // No other sessions available
-      if (url === "/api/v1/sessions" && (!init?.method || init.method === "GET")) return mockResponse([]);
-      if (url === "/api/v1/sessions" && init?.method === "POST") return mockResponse({ id: "new-1" });
+      if (
+        url === "/api/v1/sessions" &&
+        (!init?.method || init.method === "GET")
+      )
+        return mockResponse([]);
+      if (url === "/api/v1/sessions" && init?.method === "POST")
+        return mockResponse({ id: "new-1" });
       throw new Error(`Unexpected fetch: ${url} ${init?.method}`);
     });
 
@@ -217,8 +289,13 @@ describe("connection", () => {
   it("creates a new session when no previous session exists", async () => {
     setFetch(async (url: string, init?: RequestInit) => {
       if (url.includes("/visibility")) return mockResponse({});
-      if (url === "/api/v1/sessions" && (!init?.method || init.method === "GET")) return mockResponse([]);
-      if (url === "/api/v1/sessions" && init?.method === "POST") return mockResponse({ id: "new-1" });
+      if (
+        url === "/api/v1/sessions" &&
+        (!init?.method || init.method === "GET")
+      )
+        return mockResponse([]);
+      if (url === "/api/v1/sessions" && init?.method === "POST")
+        return mockResponse({ id: "new-1" });
       throw new Error(`Unexpected fetch: ${url} ${init?.method}`);
     });
 
@@ -258,12 +335,25 @@ describe("connection", () => {
     let eventsFetchCount = 0;
     setFetch(async (url: string) => {
       if (url.includes("/visibility")) return mockResponse({});
-      if (url === "/api/v1/sessions/restored-session") return mockResponse(sessionResponse("restored-session"));
+      if (url === "/api/v1/sessions/restored-session")
+        return mockResponse(sessionResponse("restored-session"));
       if (url.includes("/api/v1/sessions/restored-session/events")) {
         eventsFetchCount++;
         if (eventsFetchCount === 1)
-          return mockResponse([{ seq: 1, type: "assistant_message", data: JSON.stringify({ text: "first load" }) }]);
-        return mockResponse([{ seq: 2, type: "assistant_message", data: JSON.stringify({ text: "after reconnect" }) }]);
+          return mockResponse([
+            {
+              seq: 1,
+              type: "assistant_message",
+              data: JSON.stringify({ text: "first load" }),
+            },
+          ]);
+        return mockResponse([
+          {
+            seq: 2,
+            type: "assistant_message",
+            data: JSON.stringify({ text: "after reconnect" }),
+          },
+        ]);
       }
       throw new Error(`Unexpected fetch: ${url}`);
     });
@@ -306,10 +396,20 @@ describe("connection", () => {
 
     setFetch(async (url: string) => {
       if (url.includes("/visibility")) return mockResponse({});
-      if (url === "/api/v1/sessions/incr-session") return mockResponse(sessionResponse("incr-session"));
+      if (url === "/api/v1/sessions/incr-session")
+        return mockResponse(sessionResponse("incr-session"));
       if (url.includes("/api/v1/sessions/incr-session/events")) {
-        assert.ok(url.includes("after=2"), `Expected after=2 in URL, got: ${url}`);
-        return mockResponse([{ seq: 3, type: "assistant_message", data: JSON.stringify({ text: "full reply" }) }]);
+        assert.ok(
+          url.includes("after=2"),
+          `Expected after=2 in URL, got: ${url}`,
+        );
+        return mockResponse([
+          {
+            seq: 3,
+            type: "assistant_message",
+            data: JSON.stringify({ text: "full reply" }),
+          },
+        ]);
       }
       throw new Error(`Unexpected fetch: ${url}`);
     });
@@ -340,7 +440,11 @@ describe("connection", () => {
         return {
           ok: true,
           json: async () => [
-            { seq: 4, type: "assistant_message", data: JSON.stringify({ text: "missed while backgrounded" }) },
+            {
+              seq: 4,
+              type: "assistant_message",
+              data: JSON.stringify({ text: "missed while backgrounded" }),
+            },
           ],
         };
       }
@@ -348,7 +452,10 @@ describe("connection", () => {
     });
 
     // Simulate visibilitychange: hidden → visible
-    Object.defineProperty(globalThis.document, "hidden", { value: false, configurable: true });
+    Object.defineProperty(globalThis.document, "hidden", {
+      value: false,
+      configurable: true,
+    });
     const event = new (globalThis.window as any).Event("visibilitychange");
     globalThis.document.dispatchEvent(event);
 
@@ -356,9 +463,15 @@ describe("connection", () => {
     await new Promise((r) => originalSetTimeout(r, 50));
 
     // Should have sent visibility report via REST
-    assert.ok(fetchCalls.some(c => c.url.includes("/visibility")), "should POST visibility");
+    assert.ok(
+      fetchCalls.some((c) => c.url.includes("/visibility")),
+      "should POST visibility",
+    );
     // Should have fetched missed events
-    assert.ok(fetchCalls.some(c => c.url.includes("after=3")), "should fetch new events");
+    assert.ok(
+      fetchCalls.some((c) => c.url.includes("after=3")),
+      "should fetch new events",
+    );
     // The missed message should now appear
     assert.ok(dom.messages.textContent.includes("missed while backgrounded"));
     assert.equal(state.lastEventSeq, 4);
@@ -368,7 +481,9 @@ describe("connection", () => {
     history.replaceState(null, "", "/#session-a");
 
     let resolveSessionA!: () => void;
-    const sessionADeferred = new Promise<void>(r => { resolveSessionA = r; });
+    const sessionADeferred = new Promise<void>((r) => {
+      resolveSessionA = r;
+    });
 
     setFetch(async (url: string) => {
       if (url.includes("/visibility")) return mockResponse({});
@@ -376,7 +491,8 @@ describe("connection", () => {
         await sessionADeferred;
         return mockResponse(sessionResponse("session-a"));
       }
-      if (url.startsWith("/api/v1/sessions/session-a/events")) return mockResponse([]);
+      if (url.startsWith("/api/v1/sessions/session-a/events"))
+        return mockResponse([]);
       throw new Error(`Unexpected fetch: ${url}`);
     });
 
@@ -407,8 +523,10 @@ describe("connection", () => {
 
     setFetch(async (url: string) => {
       if (url.includes("/visibility")) return mockResponse({});
-      if (url === "/api/v1/sessions/idle-session") return mockResponse(sessionResponse("idle-session"));
-      if (url.includes("/api/v1/sessions/idle-session/events")) return mockResponse([]);
+      if (url === "/api/v1/sessions/idle-session")
+        return mockResponse(sessionResponse("idle-session"));
+      if (url.includes("/api/v1/sessions/idle-session/events"))
+        return mockResponse([]);
       throw new Error(`Unexpected fetch: ${url}`);
     });
 
@@ -424,8 +542,10 @@ describe("connection", () => {
     history.replaceState(null, "", "/#reload-session");
     setFetch(async (url: string) => {
       if (url.includes("/visibility")) return mockResponse({});
-      if (url === "/api/v1/sessions/reload-session") return mockResponse(sessionResponse("reload-session"));
-      if (url.startsWith("/api/v1/sessions/reload-session/events")) return mockResponse([]);
+      if (url === "/api/v1/sessions/reload-session")
+        return mockResponse(sessionResponse("reload-session"));
+      if (url.startsWith("/api/v1/sessions/reload-session/events"))
+        return mockResponse([]);
       throw new Error(`Unexpected fetch: ${url}`);
     });
 
@@ -443,7 +563,14 @@ describe("connection", () => {
     // Bridge connected event (has agent, no clientId) — must reach handleEvent
     fireBridgeConnected(es, { name: "copilot", version: "2.0" });
 
-    assert.equal(state.agentReloading, false, "handleEvent should have cleared agentReloading");
-    assert.ok(dom.messages.textContent.includes("copilot 2.0 reloaded"), "should show reloaded message");
+    assert.equal(
+      state.agentReloading,
+      false,
+      "handleEvent should have cleared agentReloading",
+    );
+    assert.ok(
+      dom.messages.textContent.includes("copilot 2.0 reloaded"),
+      "should show reloaded message",
+    );
   });
 });

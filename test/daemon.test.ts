@@ -1,10 +1,23 @@
 import { describe, it, before, after, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync, readFileSync, existsSync, unlinkSync, rmSync } from "node:fs";
+import {
+  mkdtempSync,
+  writeFileSync,
+  readFileSync,
+  existsSync,
+  unlinkSync,
+  rmSync,
+} from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { spawn, type ChildProcess } from "node:child_process";
-import { isSubcommand, resolveArgs, readPidInfo, writePidInfo, type PidInfo } from "../src/daemon.ts";
+import {
+  isSubcommand,
+  resolveArgs,
+  readPidInfo,
+  writePidInfo,
+  type PidInfo,
+} from "../src/daemon.ts";
 
 // ---------------------------------------------------------------------------
 // Unit tests — pure helpers
@@ -82,7 +95,11 @@ describe("daemon", () => {
 
     it("writePidInfo + readPidInfo round-trips for the current process", () => {
       const pidFile = join(tmpDir, "roundtrip.pid");
-      const info: PidInfo = { pid: process.pid, args: ["--config", "/x.toml"], started: new Date().toISOString() };
+      const info: PidInfo = {
+        pid: process.pid,
+        args: ["--config", "/x.toml"],
+        started: new Date().toISOString(),
+      };
       writePidInfo(pidFile, info);
 
       const read = readPidInfo(pidFile);
@@ -99,11 +116,19 @@ describe("daemon", () => {
     it("readPidInfo returns null and cleans up stale PID", () => {
       const pidFile = join(tmpDir, "stale.pid");
       // Use a PID that almost certainly doesn't exist
-      writePidInfo(pidFile, { pid: 2_999_999, args: [], started: "2020-01-01T00:00:00Z" });
+      writePidInfo(pidFile, {
+        pid: 2_999_999,
+        args: [],
+        started: "2020-01-01T00:00:00Z",
+      });
 
       const result = readPidInfo(pidFile);
       assert.equal(result, null);
-      assert.equal(existsSync(pidFile), false, "stale PID file should be removed");
+      assert.equal(
+        existsSync(pidFile),
+        false,
+        "stale PID file should be removed",
+      );
     });
 
     it("readPidInfo returns null for corrupt JSON", () => {
@@ -112,12 +137,19 @@ describe("daemon", () => {
 
       const result = readPidInfo(pidFile);
       assert.equal(result, null);
-      assert.equal(existsSync(pidFile), false, "corrupt PID file should be removed");
+      assert.equal(
+        existsSync(pidFile),
+        false,
+        "corrupt PID file should be removed",
+      );
     });
 
     it("readPidInfo returns null for invalid pid value", () => {
       const pidFile = join(tmpDir, "badpid.pid");
-      writeFileSync(pidFile, JSON.stringify({ pid: "abc", args: [], started: "" }));
+      writeFileSync(
+        pidFile,
+        JSON.stringify({ pid: "abc", args: [], started: "" }),
+      );
 
       const result = readPidInfo(pidFile);
       assert.equal(result, null);
@@ -137,7 +169,7 @@ describe("daemon", () => {
     });
 
     afterEach(async () => {
-      if (supervisor && supervisor.exitCode === null) {
+      if (supervisor?.exitCode === null) {
         supervisor.kill("SIGTERM");
         await new Promise<void>((r) => {
           supervisor!.once("exit", () => r());
@@ -146,7 +178,11 @@ describe("daemon", () => {
       }
       supervisor = null;
       // Clean up PID file
-      try { unlinkSync(join(tmpDir, "webagent.pid")); } catch { /* ignore */ }
+      try {
+        unlinkSync(join(tmpDir, "webagent.pid"));
+      } catch {
+        /* ignore */
+      }
     });
 
     after(() => {
@@ -155,10 +191,16 @@ describe("daemon", () => {
 
     it("supervisor writes PID file and exits cleanly on SIGTERM", async () => {
       // Start supervisor with a simple long-running "server" (sleep via node -e)
-      const daemonTs = join(import.meta.dirname!, "..", "src", "daemon.ts");
+      const daemonTs = join(import.meta.dirname, "..", "src", "daemon.ts");
       supervisor = spawn(
         process.execPath,
-        ["--experimental-strip-types", daemonTs, "__supervisor", "--config", "/dev/null"],
+        [
+          "--experimental-strip-types",
+          daemonTs,
+          "__supervisor",
+          "--config",
+          "/dev/null",
+        ],
         { cwd: tmpDir, stdio: "pipe" },
       );
 
@@ -169,24 +211,39 @@ describe("daemon", () => {
         if (existsSync(pidFile)) break;
       }
 
-      assert.ok(existsSync(pidFile), "PID file should exist after supervisor starts");
+      assert.ok(
+        existsSync(pidFile),
+        "PID file should exist after supervisor starts",
+      );
       const info = JSON.parse(readFileSync(pidFile, "utf8")) as PidInfo;
       assert.equal(info.pid, supervisor.pid);
 
       // Send SIGTERM
       supervisor.kill("SIGTERM");
-      await new Promise<void>((r) => { supervisor!.once("exit", () => r()); });
+      await new Promise<void>((r) => {
+        supervisor!.once("exit", () => r());
+      });
 
       // PID file should be cleaned up
-      assert.equal(existsSync(pidFile), false, "PID file should be removed after SIGTERM");
+      assert.equal(
+        existsSync(pidFile),
+        false,
+        "PID file should be removed after SIGTERM",
+      );
     });
 
     if (process.platform !== "win32") {
       it("supervisor restarts server on SIGHUP", async () => {
-        const daemonTs = join(import.meta.dirname!, "..", "src", "daemon.ts");
+        const daemonTs = join(import.meta.dirname, "..", "src", "daemon.ts");
         supervisor = spawn(
           process.execPath,
-          ["--experimental-strip-types", daemonTs, "__supervisor", "--config", "/dev/null"],
+          [
+            "--experimental-strip-types",
+            daemonTs,
+            "__supervisor",
+            "--config",
+            "/dev/null",
+          ],
           { cwd: tmpDir, stdio: "pipe" },
         );
 
@@ -200,8 +257,12 @@ describe("daemon", () => {
 
         // Capture stdout to detect restart message
         let output = "";
-        supervisor.stdout?.on("data", (d: Buffer) => { output += d.toString(); });
-        supervisor.stderr?.on("data", (d: Buffer) => { output += d.toString(); });
+        supervisor.stdout?.on("data", (d: Buffer) => {
+          output += d.toString();
+        });
+        supervisor.stderr?.on("data", (d: Buffer) => {
+          output += d.toString();
+        });
 
         // Send SIGHUP for atomic restart; poll output for the log line
         // instead of sleeping a fixed 2s.
@@ -211,11 +272,16 @@ describe("daemon", () => {
           await sleep(50);
         }
 
-        assert.ok(output.includes("SIGHUP"), `expected SIGHUP log in output: ${output}`);
+        assert.ok(
+          output.includes("SIGHUP"),
+          `expected SIGHUP log in output: ${output}`,
+        );
 
         // Clean up
         supervisor.kill("SIGTERM");
-        await new Promise<void>((r) => { supervisor!.once("exit", () => r()); });
+        await new Promise<void>((r) => {
+          supervisor!.once("exit", () => r());
+        });
       });
     }
   });

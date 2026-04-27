@@ -13,14 +13,24 @@ function req(
   method: string,
   path: string,
   headers?: Record<string, string>,
-): Promise<{ status: number; body: string; headers: http.IncomingHttpHeaders }> {
+): Promise<{
+  status: number;
+  body: string;
+  headers: http.IncomingHttpHeaders;
+}> {
   return new Promise((resolve, reject) => {
     const r = http.request(
       { hostname: "127.0.0.1", port, path, method, headers },
       (res) => {
         let data = "";
-        res.on("data", (c: Buffer) => (data += c));
-        res.on("end", () => resolve({ status: res.statusCode!, body: data, headers: res.headers }));
+        res.on("data", (c: Buffer) => (data += c.toString()));
+        res.on("end", () =>
+          resolve({
+            status: res.statusCode!,
+            body: data,
+            headers: res.headers,
+          }),
+        );
       },
     );
     r.on("error", reject);
@@ -82,7 +92,9 @@ describe("routes auth gate", () => {
     });
 
     it("401 on /api/v1/sessions with malformed Authorization", async () => {
-      const r = await req(port, "GET", "/api/v1/sessions", { Authorization: "Token foo" });
+      const r = await req(port, "GET", "/api/v1/sessions", {
+        Authorization: "Token foo",
+      });
       assert.equal(r.status, 401);
     });
 

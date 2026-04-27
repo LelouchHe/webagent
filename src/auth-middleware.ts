@@ -38,12 +38,20 @@ const WHITELIST: readonly WhitelistEntry[] = [
   // SSE streams — authenticated via short-lived ticket in query string
   // (EventSource cannot send custom headers).
   { method: "GET", test: (p) => p === "/api/v1/events/stream" },
-  { method: "GET", test: (p) => /^\/api\/v1\/sessions\/[A-Za-z0-9_-]+\/events\/stream$/.test(p) },
+  {
+    method: "GET",
+    test: (p) =>
+      /^\/api\/v1\/sessions\/[A-Za-z0-9_-]+\/events\/stream$/.test(p),
+  },
 
   // Image GETs — authenticated via HMAC sig+exp query string (an <img>
   // tag cannot send Authorization headers). The image route handler does
   // its own verification before serving bytes.
-  { method: "GET", test: (p) => /^\/api\/v1\/sessions\/[A-Za-z0-9_-]+\/images\/[A-Za-z0-9._-]+$/.test(p) },
+  {
+    method: "GET",
+    test: (p) =>
+      /^\/api\/v1\/sessions\/[A-Za-z0-9_-]+\/images\/[A-Za-z0-9._-]+$/.test(p),
+  },
 ];
 
 /**
@@ -53,7 +61,7 @@ const WHITELIST: readonly WhitelistEntry[] = [
  */
 export function isWhitelistedPath(method: string, path: string): boolean {
   if (!path || path.includes("..") || path.includes("//")) return false;
-  const m = method?.toUpperCase();
+  const m = method.toUpperCase();
   for (const entry of WHITELIST) {
     if (entry.method === m && entry.test(path)) return true;
   }
@@ -70,7 +78,9 @@ export function authenticate(
   store: AuthStore,
 ): AuthResult {
   const raw = headers.authorization ?? headers.Authorization;
-  if (raw === undefined || raw === null) return { ok: false, reason: "missing" };
+  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- runtime safety for dynamic headers
+  if (raw === undefined || raw === null)
+    return { ok: false, reason: "missing" };
   if (Array.isArray(raw)) return { ok: false, reason: "invalid" };
   if (typeof raw !== "string") return { ok: false, reason: "invalid" };
 
@@ -80,7 +90,7 @@ export function authenticate(
   // Parse "Bearer <token>" case-insensitively. Reject scheme-only or extra spaces.
   const match = /^Bearer\s+(\S+)\s*$/i.exec(trimmed);
   if (!match) return { ok: false, reason: "invalid" };
-  const token = match[1]!;
+  const token = match[1];
 
   const principal = store.findByToken(token);
   if (!principal) return { ok: false, reason: "invalid" };
@@ -96,6 +106,7 @@ export function authenticate(
 export function requireScope(result: AuthResult, required: Scope): boolean {
   if (!result.ok) return false;
   const have = result.principal.scope;
+  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- exhaustive check for type safety
   if (required === "api") return have === "api" || have === "admin";
   return have === "admin";
 }

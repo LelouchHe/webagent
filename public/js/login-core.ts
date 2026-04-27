@@ -25,7 +25,7 @@ export async function verifyAndStoreToken(
   deps: VerifyDeps = {},
 ): Promise<VerifyResult> {
   const fetchFn = deps.fetch ?? fetch;
-  const token = (rawInput ?? "").trim();
+  const token = rawInput.trim();
   if (!token) return { ok: false, error: "Token is required" };
 
   let res: Response;
@@ -42,11 +42,19 @@ export async function verifyAndStoreToken(
   if (res.status === 200) {
     let body: { ok?: boolean; name?: string; scope?: string };
     try {
-      body = await res.json();
+      body = (await res.json()) as {
+        ok?: boolean;
+        name?: string;
+        scope?: string;
+      };
     } catch {
       return { ok: false, error: "Server returned invalid response" };
     }
-    if (!body.ok || typeof body.name !== "string" || typeof body.scope !== "string") {
+    if (
+      !body.ok ||
+      typeof body.name !== "string" ||
+      typeof body.scope !== "string"
+    ) {
       return { ok: false, error: "Server returned malformed response" };
     }
     try {

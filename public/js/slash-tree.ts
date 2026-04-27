@@ -3,7 +3,7 @@
 //
 // Field absence = capability not present. To reuse data across nodes, share
 // the same JS function reference (e.g. `const listInbox = () => ...`).
-import type { SlashItemSpec, SlashPrefix } from './slash-render.ts';
+import type { SlashItemSpec, SlashPrefix } from "./slash-render.ts";
 
 export interface CmdNode {
   /** Command segment without leading slash for children, with slash for ROOT-level. */
@@ -33,7 +33,7 @@ export interface Candidate {
   spec: SlashItemSpec;
   prefix: SlashPrefix;
   /** Source classification, drives selection dispatch. */
-  kind: 'subcommand' | 'freeform' | 'data' | 'placeholder' | 'separator';
+  kind: "subcommand" | "freeform" | "data" | "placeholder" | "separator";
   /** When kind === 'subcommand', the child node selected. */
   node?: CmdNode;
 }
@@ -53,16 +53,16 @@ export function resolvePath(
   input: string,
   root: CmdNode,
 ): { node: CmdNode; pathPrefix: string; tailQuery: string } {
-  const lstripped = input.replace(/^\s+/, '');
-  if (lstripped === '') return { node: root, pathPrefix: '', tailQuery: '' };
+  const lstripped = input.replace(/^\s+/, "");
+  if (lstripped === "") return { node: root, pathPrefix: "", tailQuery: "" };
 
   const trailing = /\s$/.test(lstripped);
   const parts = lstripped.split(/\s+/).filter((p) => p.length > 0);
   const fullTokens = trailing ? parts : parts.slice(0, -1);
-  const tailToken = trailing ? '' : (parts[parts.length - 1] ?? '');
+  const tailToken = trailing ? "" : (parts[parts.length - 1] ?? "");
 
   let node = root;
-  let pathPrefix = '';
+  let pathPrefix = "";
   let consumed = 0;
   for (const tok of fullTokens) {
     const child = node.children?.find((c) => c.name === tok);
@@ -74,7 +74,7 @@ export function resolvePath(
 
   const leftover = fullTokens.slice(consumed);
   if (tailToken) leftover.push(tailToken);
-  const tailQuery = leftover.join(' ');
+  const tailQuery = leftover.join(" ");
 
   return { node, pathPrefix, tailQuery };
 }
@@ -95,10 +95,11 @@ export function resolvePath(
  * tailQuery.trim() exactly, the freeform row is suppressed (you can't create
  * a duplicate; the existing row will be selected instead).
  */
+// eslint-disable-next-line complexity -- TODO: refactor candidate building logic
 export function buildCandidates(
   node: CmdNode,
   tailQuery: string,
-  data?: unknown[] | 'loading' | 'error',
+  data?: unknown[] | "loading" | "error",
 ): Candidate[] {
   const out: Candidate[] = [];
   const q = tailQuery.trim().toLowerCase();
@@ -108,11 +109,13 @@ export function buildCandidates(
   if (node.children) {
     for (const child of node.children) {
       if (q && !child.name.toLowerCase().includes(q)) continue;
-      const hasMore = !!(child.children?.length || child.fetch || child.freeform);
+      const hasChildren = (child.children?.length ?? 0) > 0;
+      // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- checking truthy presence
+      const hasMore = hasChildren || child.fetch || child.freeform;
       subcommands.push({
         spec: { primary: child.name, secondary: child.desc },
-        prefix: hasMore ? '›' : '',
-        kind: 'subcommand',
+        prefix: hasMore ? "›" : "",
+        kind: "subcommand",
         node: child,
       });
     }
@@ -121,16 +124,17 @@ export function buildCandidates(
 
   // 2. Resolve data specs (need them before freeform for collision check)
   let dataSpecs: SlashItemSpec[] = [];
-  let dataState: 'none' | 'loading' | 'error' | 'empty' | 'no-match' | 'ok' = 'none';
+  let dataState: "none" | "loading" | "error" | "empty" | "no-match" | "ok" =
+    "none";
 
   if (node.fetch && node.toSpec) {
-    if (data === 'loading') {
-      dataState = 'loading';
-    } else if (data === 'error') {
-      dataState = 'error';
+    if (data === "loading") {
+      dataState = "loading";
+    } else if (data === "error") {
+      dataState = "error";
     } else if (Array.isArray(data)) {
       if (data.length === 0) {
-        dataState = 'empty';
+        dataState = "empty";
       } else {
         const filteredItems = q
           ? data.filter((item) =>
@@ -141,9 +145,9 @@ export function buildCandidates(
           : data;
         const filtered = filteredItems.map((item) => node.toSpec!(item));
         if (filtered.length === 0) {
-          dataState = 'no-match';
+          dataState = "no-match";
         } else {
-          dataState = 'ok';
+          dataState = "ok";
           dataSpecs = filtered;
         }
       }
@@ -161,7 +165,7 @@ export function buildCandidates(
     if (!collision) {
       const fspec = node.freeform(tailQuery);
       if (fspec) {
-        freeformCand = { spec: fspec, prefix: '›', kind: 'freeform' };
+        freeformCand = { spec: fspec, prefix: "›", kind: "freeform" };
         out.push(freeformCand);
       }
     }
@@ -169,26 +173,34 @@ export function buildCandidates(
 
   // 4. Separator: only when › group AND data section both present
   const hasArrowGroup = subcommands.length > 0 || freeformCand !== null;
-  const hasDataSection = dataState !== 'none';
+  const hasDataSection = dataState !== "none";
   if (hasArrowGroup && hasDataSection) {
-    out.push({ spec: { primary: '' }, prefix: '', kind: 'separator' });
+    out.push({ spec: { primary: "" }, prefix: "", kind: "separator" });
   }
 
   // 5. Data rows / placeholder
-  if (dataState === 'loading') {
-    out.push({ spec: { primary: '(loading...)' }, prefix: '', kind: 'placeholder' });
-  } else if (dataState === 'error') {
-    out.push({ spec: { primary: '(error)' }, prefix: '', kind: 'placeholder' });
-  } else if (dataState === 'empty') {
-    out.push({ spec: { primary: '(none)' }, prefix: '', kind: 'placeholder' });
-  } else if (dataState === 'no-match') {
-    out.push({ spec: { primary: '(no match)' }, prefix: '', kind: 'placeholder' });
-  } else if (dataState === 'ok') {
+  if (dataState === "loading") {
+    out.push({
+      spec: { primary: "(loading...)" },
+      prefix: "",
+      kind: "placeholder",
+    });
+  } else if (dataState === "error") {
+    out.push({ spec: { primary: "(error)" }, prefix: "", kind: "placeholder" });
+  } else if (dataState === "empty") {
+    out.push({ spec: { primary: "(none)" }, prefix: "", kind: "placeholder" });
+  } else if (dataState === "no-match") {
+    out.push({
+      spec: { primary: "(no match)" },
+      prefix: "",
+      kind: "placeholder",
+    });
+  } else if (dataState === "ok") {
     for (const spec of dataSpecs) {
       out.push({
         spec,
-        prefix: spec.current ? '*' : '',
-        kind: 'data',
+        prefix: spec.current ? "*" : "",
+        kind: "data",
       });
     }
   }

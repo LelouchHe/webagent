@@ -219,7 +219,7 @@ describe("Store — messages table", () => {
         cwd: null,
         created_at: 1,
       });
-      assert.equal(store.findBySupersede("user", null as unknown as string), undefined);
+      assert.equal(store.findBySupersede("user", null), undefined);
     });
   });
 
@@ -251,7 +251,10 @@ describe("Store — messages table", () => {
       assert.equal(events.length, 1);
       assert.equal(events[0].type, "message");
       assert.equal(events[0].from_ref, "cron:backup");
-      const data = JSON.parse(events[0].data) as { message_id: string; title: string };
+      const data = JSON.parse(events[0].data) as {
+        message_id: string;
+        title: string;
+      };
       assert.equal(data.message_id, "m1");
       assert.equal(data.title, "Done");
     });
@@ -260,7 +263,9 @@ describe("Store — messages table", () => {
       // We can't easily stub in node:test without mock.method; simulate by
       // calling consume with a missing message id — it should throw and leave
       // no artefacts.
-      assert.throws(() => store.consumeMessageTx("ghost", { sessionId: "sess-ghost", cwd: "/x" }));
+      assert.throws(() =>
+        store.consumeMessageTx("ghost", { sessionId: "sess-ghost", cwd: "/x" }),
+      );
       assert.equal(store.getSession("sess-ghost"), undefined);
       assert.equal(store.getEvents("sess-ghost").length, 0);
     });
@@ -278,9 +283,15 @@ describe("Store — messages table", () => {
         cwd: null,
         created_at: 1,
       });
-      const first = store.consumeMessageTx("m1", { sessionId: "sess-a", cwd: "/x" });
+      const first = store.consumeMessageTx("m1", {
+        sessionId: "sess-a",
+        cwd: "/x",
+      });
       // Second attempt — row is gone, but we want idempotent resolution.
-      const second = store.consumeMessageTx("m1", { sessionId: "sess-b", cwd: "/x" });
+      const second = store.consumeMessageTx("m1", {
+        sessionId: "sess-b",
+        cwd: "/x",
+      });
       assert.equal(second.sessionId, first.sessionId);
       assert.equal(second.alreadyConsumed, true);
       // No second session created.

@@ -8,21 +8,37 @@ import { Store } from "../src/store.ts";
 import { SessionManager } from "../src/session-manager.ts";
 import { SseManager } from "../src/sse-manager.ts";
 import { createRequestHandler } from "../src/routes.ts";
-import type { AgentEvent, ConfigOption } from "../src/types.ts";
+import type { ConfigOption } from "../src/types.ts";
 
 function makeRequest(
   port: number,
   method: string,
   path: string,
   body?: string,
-): Promise<{ status: number; body: string; headers: http.IncomingHttpHeaders }> {
+): Promise<{
+  status: number;
+  body: string;
+  headers: http.IncomingHttpHeaders;
+}> {
   return new Promise((resolve, reject) => {
     const req = http.request(
-      { hostname: "127.0.0.1", port, path, method, headers: { "Content-Type": "application/json" } },
+      {
+        hostname: "127.0.0.1",
+        port,
+        path,
+        method,
+        headers: { "Content-Type": "application/json" },
+      },
       (res) => {
         let data = "";
-        res.on("data", (chunk: Buffer) => (data += chunk));
-        res.on("end", () => resolve({ status: res.statusCode!, body: data, headers: res.headers }));
+        res.on("data", (chunk: Buffer) => (data += chunk.toString()));
+        res.on("end", () =>
+          resolve({
+            status: res.statusCode!,
+            body: data,
+            headers: res.headers,
+          }),
+        );
       },
     );
     req.on("error", reject);
@@ -33,16 +49,27 @@ function makeRequest(
 
 function createMockBridge() {
   const configOptions: ConfigOption[] = [
-    { type: "select", id: "model", name: "Model", currentValue: "claude-sonnet", options: [{ value: "claude-sonnet", name: "Sonnet" }] },
+    {
+      type: "select",
+      id: "model",
+      name: "Model",
+      currentValue: "claude-sonnet",
+      options: [{ value: "claude-sonnet", name: "Sonnet" }],
+    },
   ];
   let idCounter = 0;
   const promptCalls: Array<{ sessionId: string; text: string }> = [];
   return {
-    newSession: async () => { idCounter++; return `mock-session-${idCounter}`; },
+    newSession: async () => {
+      idCounter++;
+      return `mock-session-${idCounter}`;
+    },
     loadSession: async () => ({ configOptions }),
     setConfigOption: async () => configOptions,
     cancel: async () => {},
-    prompt: async (sessionId: string, text: string) => { promptCalls.push({ sessionId, text }); },
+    prompt: async (sessionId: string, text: string) => {
+      promptCalls.push({ sessionId, text });
+    },
     resolvePermission: async () => {},
     denyPermission: async () => {},
     promptCalls,
@@ -80,7 +107,9 @@ describe("Quick Prompt REST API", () => {
       sseManager,
     });
     server = http.createServer(handler);
-    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    await new Promise<void>((resolve) =>
+      server.listen(0, "127.0.0.1", resolve),
+    );
     port = (server.address() as { port: number }).port;
   });
 
@@ -91,21 +120,32 @@ describe("Quick Prompt REST API", () => {
   });
 
   it("creates a session and returns 202 with sessionId and streamUrl", async () => {
-    const res = await makeRequest(port, "POST", "/api/beta/prompt",
-      JSON.stringify({ text: "analyze this" }));
+    const res = await makeRequest(
+      port,
+      "POST",
+      "/api/beta/prompt",
+      JSON.stringify({ text: "analyze this" }),
+    );
     assert.equal(res.status, 202);
     const body = JSON.parse(res.body);
     assert.ok(body.sessionId);
-    assert.equal(body.streamUrl, `/api/v1/sessions/${body.sessionId}/events/stream`);
+    assert.equal(
+      body.streamUrl,
+      `/api/v1/sessions/${body.sessionId}/events/stream`,
+    );
   });
 
   it("sends the prompt to the bridge", async () => {
-    const res = await makeRequest(port, "POST", "/api/beta/prompt",
-      JSON.stringify({ text: "do something" }));
+    const res = await makeRequest(
+      port,
+      "POST",
+      "/api/beta/prompt",
+      JSON.stringify({ text: "do something" }),
+    );
     const body = JSON.parse(res.body);
 
     // Wait a tick for the async prompt call
-    await new Promise(r => setTimeout(r, 50));
+    await new Promise((r) => setTimeout(r, 50));
     assert.equal(mockBridge.promptCalls.length, 1);
     assert.equal(mockBridge.promptCalls[0].sessionId, body.sessionId);
     assert.equal(mockBridge.promptCalls[0].text, "do something");
@@ -113,24 +153,36 @@ describe("Quick Prompt REST API", () => {
 
   it("uses provided cwd for the session", async () => {
     const customCwd = tmpDir;
-    const res = await makeRequest(port, "POST", "/api/beta/prompt",
-      JSON.stringify({ text: "test", cwd: customCwd }));
+    const res = await makeRequest(
+      port,
+      "POST",
+      "/api/beta/prompt",
+      JSON.stringify({ text: "test", cwd: customCwd }),
+    );
     const body = JSON.parse(res.body);
     const session = store.getSession(body.sessionId);
     assert.equal(session!.cwd, customCwd);
   });
 
   it("marks the session source as auto", async () => {
-    const res = await makeRequest(port, "POST", "/api/beta/prompt",
-      JSON.stringify({ text: "test" }));
+    const res = await makeRequest(
+      port,
+      "POST",
+      "/api/beta/prompt",
+      JSON.stringify({ text: "test" }),
+    );
     const body = JSON.parse(res.body);
     const session = store.getSession(body.sessionId);
     assert.equal(session!.source, "auto");
   });
 
   it("returns 400 when text is missing", async () => {
-    const res = await makeRequest(port, "POST", "/api/beta/prompt",
-      JSON.stringify({ cwd: tmpDir }));
+    const res = await makeRequest(
+      port,
+      "POST",
+      "/api/beta/prompt",
+      JSON.stringify({ cwd: tmpDir }),
+    );
     assert.equal(res.status, 400);
     assert.ok(JSON.parse(res.body).error.includes("text"));
   });
@@ -152,15 +204,23 @@ describe("Quick Prompt REST API", () => {
       sseManager,
     });
     const noBridgeServer = http.createServer(handler);
-    await new Promise<void>((resolve) => noBridgeServer.listen(0, "127.0.0.1", resolve));
+    await new Promise<void>((resolve) =>
+      noBridgeServer.listen(0, "127.0.0.1", resolve),
+    );
     const noBridgePort = (noBridgeServer.address() as { port: number }).port;
 
     try {
-      const res = await makeRequest(noBridgePort, "POST", "/api/beta/prompt",
-        JSON.stringify({ text: "test" }));
+      const res = await makeRequest(
+        noBridgePort,
+        "POST",
+        "/api/beta/prompt",
+        JSON.stringify({ text: "test" }),
+      );
       assert.equal(res.status, 503);
     } finally {
-      await new Promise<void>((resolve) => noBridgeServer.close(() => resolve()));
+      await new Promise<void>((resolve) =>
+        noBridgeServer.close(() => resolve()),
+      );
     }
   });
 });

@@ -31,7 +31,10 @@ describe("auth-middleware", () => {
 
     it("blocks all /api/** by default", () => {
       assert.equal(isWhitelistedPath("GET", "/api/v1/sessions"), false);
-      assert.equal(isWhitelistedPath("POST", "/api/v1/sessions/x/messages"), false);
+      assert.equal(
+        isWhitelistedPath("POST", "/api/v1/sessions/x/messages"),
+        false,
+      );
       assert.equal(isWhitelistedPath("DELETE", "/api/v1/tokens/laptop"), false);
       assert.equal(isWhitelistedPath("GET", "/api/v1/auth/verify"), false);
     });
@@ -42,7 +45,10 @@ describe("auth-middleware", () => {
     });
 
     it("does not allow path traversal tricks", () => {
-      assert.equal(isWhitelistedPath("GET", "/api/v1/version/../sessions"), false);
+      assert.equal(
+        isWhitelistedPath("GET", "/api/v1/version/../sessions"),
+        false,
+      );
       assert.equal(isWhitelistedPath("GET", "/icons/../auth.json"), false);
     });
   });
@@ -72,6 +78,7 @@ describe("auth-middleware", () => {
     it("returns ok=true for valid Bearer token", () => {
       const r = authenticate(authHeader(validToken), store);
       assert.equal(r.ok, true);
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- type narrowing
       if (r.ok) {
         assert.equal(r.principal.name, "laptop");
         assert.equal(r.principal.scope, "admin");
@@ -81,19 +88,27 @@ describe("auth-middleware", () => {
     it("returns ok=false for missing header", () => {
       const r = authenticate({}, store);
       assert.equal(r.ok, false);
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- type narrowing
       if (!r.ok) assert.equal(r.reason, "missing");
     });
 
     it("returns ok=false for malformed header", () => {
-      assert.equal(authenticate({ authorization: "Token foo" }, store).ok, false);
+      assert.equal(
+        authenticate({ authorization: "Token foo" }, store).ok,
+        false,
+      );
       assert.equal(authenticate({ authorization: "Bearer" }, store).ok, false);
       assert.equal(authenticate({ authorization: "" }, store).ok, false);
-      assert.equal(authenticate({ authorization: "Bearer  " }, store).ok, false);
+      assert.equal(
+        authenticate({ authorization: "Bearer  " }, store).ok,
+        false,
+      );
     });
 
     it("returns ok=false for unknown token", () => {
       const r = authenticate(authHeader("wat_unknownunknown"), store);
       assert.equal(r.ok, false);
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- type narrowing
       if (!r.ok) assert.equal(r.reason, "invalid");
     });
 
@@ -101,6 +116,7 @@ describe("auth-middleware", () => {
       await store.revokeToken("laptop");
       const r = authenticate(authHeader(validToken), store);
       assert.equal(r.ok, false);
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- type narrowing
       if (!r.ok) assert.equal(r.reason, "invalid");
     });
 
@@ -114,14 +130,20 @@ describe("auth-middleware", () => {
     });
 
     it("supports case-insensitive Bearer scheme", () => {
-      assert.equal(authenticate({ authorization: `bearer ${validToken}` }, store).ok, true);
-      assert.equal(authenticate({ authorization: `BEARER ${validToken}` }, store).ok, true);
+      assert.equal(
+        authenticate({ authorization: `bearer ${validToken}` }, store).ok,
+        true,
+      );
+      assert.equal(
+        authenticate({ authorization: `BEARER ${validToken}` }, store).ok,
+        true,
+      );
     });
 
     it("array authorization headers are rejected", () => {
       // Node may pass array if duplicated header
       const r = authenticate(
-        { authorization: [`Bearer ${validToken}`, `Bearer foo`] as unknown as string },
+        { authorization: [`Bearer ${validToken}`, `Bearer foo`] },
         store,
       );
       assert.equal(r.ok, false);
@@ -130,10 +152,28 @@ describe("auth-middleware", () => {
 
   describe("requireScope", () => {
     function admin(): AuthResult {
-      return { ok: true, principal: { name: "a", scope: "admin", lastUsedAt: null, createdAt: 0, hash: "x" } };
+      return {
+        ok: true,
+        principal: {
+          name: "a",
+          scope: "admin",
+          lastUsedAt: null,
+          createdAt: 0,
+          hash: "x",
+        },
+      };
     }
     function api(): AuthResult {
-      return { ok: true, principal: { name: "b", scope: "api", lastUsedAt: null, createdAt: 0, hash: "x" } };
+      return {
+        ok: true,
+        principal: {
+          name: "b",
+          scope: "api",
+          lastUsedAt: null,
+          createdAt: 0,
+          hash: "x",
+        },
+      };
     }
 
     it("admin scope passes admin requirement", () => {

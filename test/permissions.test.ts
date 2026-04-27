@@ -7,7 +7,11 @@ import { tmpdir } from "node:os";
 import { Store } from "../src/store.ts";
 import { SessionManager } from "../src/session-manager.ts";
 import { createRequestHandler } from "../src/routes.ts";
-import type { ConfigOption, AgentEvent, PendingPermission } from "../src/types.ts";
+import type {
+  ConfigOption,
+  AgentEvent,
+  PendingPermission,
+} from "../src/types.ts";
 
 function makeRequest(
   port: number,
@@ -17,10 +21,16 @@ function makeRequest(
 ): Promise<{ status: number; body: string }> {
   return new Promise((resolve, reject) => {
     const req = http.request(
-      { hostname: "127.0.0.1", port, path, method, headers: { "Content-Type": "application/json" } },
+      {
+        hostname: "127.0.0.1",
+        port,
+        path,
+        method,
+        headers: { "Content-Type": "application/json" },
+      },
       (res) => {
         let data = "";
-        res.on("data", (chunk: Buffer) => (data += chunk));
+        res.on("data", (chunk: Buffer) => (data += chunk.toString()));
         res.on("end", () => resolve({ status: res.statusCode!, body: data }));
       },
     );
@@ -32,23 +42,45 @@ function makeRequest(
 
 function createMockBridge() {
   const configOptions: ConfigOption[] = [
-    { type: "select", id: "model", name: "Model", currentValue: "claude-sonnet", options: [{ value: "claude-sonnet", name: "Sonnet" }] },
+    {
+      type: "select",
+      id: "model",
+      name: "Model",
+      currentValue: "claude-sonnet",
+      options: [{ value: "claude-sonnet", name: "Sonnet" }],
+    },
   ];
   let idCounter = 0;
   let lastResolve: { requestId: string; optionId: string } | null = null;
   let lastDeny: string | null = null;
   return {
-    newSession: async () => { idCounter++; return `mock-session-${idCounter}`; },
+    newSession: async () => {
+      idCounter++;
+      return `mock-session-${idCounter}`;
+    },
     loadSession: async () => ({ configOptions }),
     setConfigOption: async (_s: string, configId: string, value: string) =>
-      configOptions.map(opt => opt.id === configId ? { ...opt, currentValue: value } : opt),
+      configOptions.map((opt) =>
+        opt.id === configId ? { ...opt, currentValue: value } : opt,
+      ),
     cancel: async () => {},
     prompt: async () => {},
-    resolvePermission: async (requestId: string, optionId: string) => { lastResolve = { requestId, optionId }; },
-    denyPermission: async (requestId: string) => { lastDeny = requestId; },
-    get lastResolve() { return lastResolve; },
-    get lastDeny() { return lastDeny; },
-    resetTracking() { lastResolve = null; lastDeny = null; },
+    resolvePermission: async (requestId: string, optionId: string) => {
+      lastResolve = { requestId, optionId };
+    },
+    denyPermission: async (requestId: string) => {
+      lastDeny = requestId;
+    },
+    get lastResolve() {
+      return lastResolve;
+    },
+    get lastDeny() {
+      return lastDeny;
+    },
+    resetTracking() {
+      lastResolve = null;
+      lastDeny = null;
+    },
   };
 }
 
@@ -80,10 +112,14 @@ describe("Permissions REST API", () => {
       publicDir,
       dataDir: tmpDir,
       limits: { bash_output: 1024, image_upload: 1024 },
-      sseManager: { broadcast: (event: AgentEvent) => broadcastEvents.push(event) } as any,
+      sseManager: {
+        broadcast: (event: AgentEvent) => broadcastEvents.push(event),
+      } as any,
     });
     server = http.createServer(handler);
-    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    await new Promise<void>((resolve) =>
+      server.listen(0, "127.0.0.1", resolve),
+    );
     port = (server.address() as { port: number }).port;
   });
 
@@ -94,11 +130,19 @@ describe("Permissions REST API", () => {
   });
 
   async function createSession(): Promise<string> {
-    const res = await makeRequest(port, "POST", "/api/v1/sessions", JSON.stringify({ cwd: tmpDir }));
+    const res = await makeRequest(
+      port,
+      "POST",
+      "/api/v1/sessions",
+      JSON.stringify({ cwd: tmpDir }),
+    );
     return JSON.parse(res.body).id;
   }
 
-  function addPendingPermission(sessionId: string, requestId: string): PendingPermission {
+  function addPendingPermission(
+    sessionId: string,
+    requestId: string,
+  ): PendingPermission {
     const perm: PendingPermission = {
       requestId,
       sessionId,
@@ -116,7 +160,11 @@ describe("Permissions REST API", () => {
   describe("GET /api/v1/sessions/:id/permissions", () => {
     it("returns empty array when no pending permissions", async () => {
       const sessionId = await createSession();
-      const res = await makeRequest(port, "GET", `/api/v1/sessions/${sessionId}/permissions`);
+      const res = await makeRequest(
+        port,
+        "GET",
+        `/api/v1/sessions/${sessionId}/permissions`,
+      );
       assert.equal(res.status, 200);
       assert.deepEqual(JSON.parse(res.body), []);
     });
@@ -126,7 +174,11 @@ describe("Permissions REST API", () => {
       addPendingPermission(sessionId, "perm-1");
       addPendingPermission(sessionId, "perm-2");
 
-      const res = await makeRequest(port, "GET", `/api/v1/sessions/${sessionId}/permissions`);
+      const res = await makeRequest(
+        port,
+        "GET",
+        `/api/v1/sessions/${sessionId}/permissions`,
+      );
       assert.equal(res.status, 200);
       const perms = JSON.parse(res.body);
       assert.equal(perms.length, 2);
@@ -140,7 +192,11 @@ describe("Permissions REST API", () => {
       addPendingPermission(s1, "perm-1");
       addPendingPermission(s2, "perm-2");
 
-      const res = await makeRequest(port, "GET", `/api/v1/sessions/${s1}/permissions`);
+      const res = await makeRequest(
+        port,
+        "GET",
+        `/api/v1/sessions/${s1}/permissions`,
+      );
       const perms = JSON.parse(res.body);
       assert.equal(perms.length, 1);
       assert.equal(perms[0].requestId, "perm-1");
@@ -152,11 +208,18 @@ describe("Permissions REST API", () => {
       const sessionId = await createSession();
       addPendingPermission(sessionId, "perm-1");
 
-      const res = await makeRequest(port, "POST", `/api/v1/sessions/${sessionId}/permissions/perm-1`,
-        JSON.stringify({ optionId: "allow_once" }));
+      const res = await makeRequest(
+        port,
+        "POST",
+        `/api/v1/sessions/${sessionId}/permissions/perm-1`,
+        JSON.stringify({ optionId: "allow_once" }),
+      );
       assert.equal(res.status, 200);
       assert.deepEqual(JSON.parse(res.body), { ok: true });
-      assert.deepEqual(mockBridge.lastResolve, { requestId: "perm-1", optionId: "allow_once" });
+      assert.deepEqual(mockBridge.lastResolve, {
+        requestId: "perm-1",
+        optionId: "allow_once",
+      });
       // Permission should be removed from pending
       assert.ok(!sessions.pendingPermissions.has("perm-1"));
     });
@@ -165,8 +228,12 @@ describe("Permissions REST API", () => {
       const sessionId = await createSession();
       addPendingPermission(sessionId, "perm-1");
 
-      const res = await makeRequest(port, "POST", `/api/v1/sessions/${sessionId}/permissions/perm-1`,
-        JSON.stringify({ denied: true }));
+      const res = await makeRequest(
+        port,
+        "POST",
+        `/api/v1/sessions/${sessionId}/permissions/perm-1`,
+        JSON.stringify({ denied: true }),
+      );
       assert.equal(res.status, 200);
       assert.equal(mockBridge.lastDeny, "perm-1");
       assert.ok(!sessions.pendingPermissions.has("perm-1"));
@@ -176,10 +243,14 @@ describe("Permissions REST API", () => {
       const sessionId = await createSession();
       addPendingPermission(sessionId, "perm-1");
 
-      await makeRequest(port, "POST", `/api/v1/sessions/${sessionId}/permissions/perm-1`,
-        JSON.stringify({ optionId: "allow_once" }));
+      await makeRequest(
+        port,
+        "POST",
+        `/api/v1/sessions/${sessionId}/permissions/perm-1`,
+        JSON.stringify({ optionId: "allow_once" }),
+      );
       const events = store.getEvents(sessionId);
-      const permEvent = events.find(e => e.type === "permission_response");
+      const permEvent = events.find((e) => e.type === "permission_response");
       assert.ok(permEvent);
       const data = JSON.parse(permEvent.data);
       assert.equal(data.requestId, "perm-1");
@@ -191,16 +262,26 @@ describe("Permissions REST API", () => {
       addPendingPermission(sessionId, "perm-1");
       broadcastEvents = [];
 
-      await makeRequest(port, "POST", `/api/v1/sessions/${sessionId}/permissions/perm-1`,
-        JSON.stringify({ optionId: "allow_once" }));
-      const resolved = broadcastEvents.find((e: any) => e.type === "permission_response");
+      await makeRequest(
+        port,
+        "POST",
+        `/api/v1/sessions/${sessionId}/permissions/perm-1`,
+        JSON.stringify({ optionId: "allow_once" }),
+      );
+      const resolved = broadcastEvents.find(
+        (e: any) => e.type === "permission_response",
+      );
       assert.ok(resolved);
     });
 
     it("returns 404 for unknown requestId", async () => {
       const sessionId = await createSession();
-      const res = await makeRequest(port, "POST", `/api/v1/sessions/${sessionId}/permissions/nonexistent`,
-        JSON.stringify({ optionId: "allow_once" }));
+      const res = await makeRequest(
+        port,
+        "POST",
+        `/api/v1/sessions/${sessionId}/permissions/nonexistent`,
+        JSON.stringify({ optionId: "allow_once" }),
+      );
       assert.equal(res.status, 404);
     });
 
@@ -208,8 +289,12 @@ describe("Permissions REST API", () => {
       const sessionId = await createSession();
       addPendingPermission(sessionId, "perm-1");
 
-      const res = await makeRequest(port, "POST", `/api/v1/sessions/${sessionId}/permissions/perm-1`,
-        JSON.stringify({}));
+      const res = await makeRequest(
+        port,
+        "POST",
+        `/api/v1/sessions/${sessionId}/permissions/perm-1`,
+        JSON.stringify({}),
+      );
       assert.equal(res.status, 400);
     });
 
@@ -217,7 +302,12 @@ describe("Permissions REST API", () => {
       const sessionId = await createSession();
       addPendingPermission(sessionId, "perm-1");
 
-      const res = await makeRequest(port, "POST", `/api/v1/sessions/${sessionId}/permissions/perm-1`, "not json");
+      const res = await makeRequest(
+        port,
+        "POST",
+        `/api/v1/sessions/${sessionId}/permissions/perm-1`,
+        "not json",
+      );
       assert.equal(res.status, 400);
     });
 
@@ -226,11 +316,19 @@ describe("Permissions REST API", () => {
       // A second POST should return 404 since it's gone.
       const sessionId = await createSession();
       addPendingPermission(sessionId, "perm-1");
-      await makeRequest(port, "POST", `/api/v1/sessions/${sessionId}/permissions/perm-1`,
-        JSON.stringify({ optionId: "allow_once" }));
+      await makeRequest(
+        port,
+        "POST",
+        `/api/v1/sessions/${sessionId}/permissions/perm-1`,
+        JSON.stringify({ optionId: "allow_once" }),
+      );
 
-      const res = await makeRequest(port, "POST", `/api/v1/sessions/${sessionId}/permissions/perm-1`,
-        JSON.stringify({ optionId: "allow_once" }));
+      const res = await makeRequest(
+        port,
+        "POST",
+        `/api/v1/sessions/${sessionId}/permissions/perm-1`,
+        JSON.stringify({ optionId: "allow_once" }),
+      );
       assert.equal(res.status, 404);
     });
 
@@ -239,8 +337,11 @@ describe("Permissions REST API", () => {
       addPendingPermission(sessionId, "perm-1");
 
       const handler = createRequestHandler({
-        store, sessions, getBridge: () => null,
-        publicDir, dataDir: tmpDir,
+        store,
+        sessions,
+        getBridge: () => null,
+        publicDir,
+        dataDir: tmpDir,
         limits: { bash_output: 1024, image_upload: 1024 },
         sseManager: { broadcast() {} } as any,
       });
@@ -248,8 +349,12 @@ describe("Permissions REST API", () => {
       await new Promise<void>((r) => srv.listen(0, "127.0.0.1", r));
       const p = (srv.address() as { port: number }).port;
 
-      const res = await makeRequest(p, "POST", `/api/v1/sessions/${sessionId}/permissions/perm-1`,
-        JSON.stringify({ optionId: "allow_once" }));
+      const res = await makeRequest(
+        p,
+        "POST",
+        `/api/v1/sessions/${sessionId}/permissions/perm-1`,
+        JSON.stringify({ optionId: "allow_once" }),
+      );
       assert.equal(res.status, 503);
       await new Promise<void>((r) => srv.close(() => r()));
     });

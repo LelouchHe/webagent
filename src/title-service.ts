@@ -6,12 +6,12 @@ const TITLE_MODEL = "claude-haiku-4.5";
 
 export class TitleService {
   private titleSessionId: string | null = null;
-  private activeSourceSessions = new Set<string>();
-  private cancelledSourceSessions = new Set<string>();
-  private defaultCwd: string;
+  private readonly activeSourceSessions = new Set<string>();
+  private readonly cancelledSourceSessions = new Set<string>();
+  private readonly defaultCwd: string;
 
-  private store: Store;
-  private sessions: SessionManager;
+  private readonly store: Store;
+  private readonly sessions: SessionManager;
 
   constructor(store: Store, sessions: SessionManager, defaultCwd: string) {
     this.store = store;
@@ -20,13 +20,24 @@ export class TitleService {
   }
 
   /** Generate a title for the session (non-blocking, fire-and-forget). */
-  generate(bridge: AgentBridge, userMessage: string, sessionId: string, onTitle?: (title: string) => void): void {
-    if (this.sessions.sessionHasTitle.has(sessionId) || this.activeSourceSessions.has(sessionId)) return;
-    this._generate(bridge, userMessage, sessionId).then((title) => {
-      if (title && onTitle) onTitle(title);
-    }).catch((err) => {
-      console.error(`[title] generation failed:`, err);
-    });
+  generate(
+    bridge: AgentBridge,
+    userMessage: string,
+    sessionId: string,
+    onTitle?: (title: string) => void,
+  ): void {
+    if (
+      this.sessions.sessionHasTitle.has(sessionId) ||
+      this.activeSourceSessions.has(sessionId)
+    )
+      return;
+    this._generate(bridge, userMessage, sessionId)
+      .then((title) => {
+        if (title && onTitle) onTitle(title);
+      })
+      .catch((err) => {
+        console.error(`[title] generation failed:`, err);
+      });
   }
 
   private async _generate(
@@ -50,7 +61,10 @@ export class TitleService {
       // User may have set a title while generation was in flight
       if (this.sessions.sessionHasTitle.has(sessionId)) return;
 
-      const cleaned = title.replace(/^["']|["']$/g, "").trim().slice(0, 30);
+      const cleaned = title
+        .replace(/^["']|["']$/g, "")
+        .trim()
+        .slice(0, 30);
       if (!cleaned) return;
 
       this.store.updateSessionTitle(sessionId, cleaned);
@@ -64,7 +78,8 @@ export class TitleService {
 
   async cancel(sessionId: string, bridge: AgentBridge): Promise<void> {
     this.cancelledSourceSessions.add(sessionId);
-    if (!this.titleSessionId || !this.activeSourceSessions.has(sessionId)) return;
+    if (!this.titleSessionId || !this.activeSourceSessions.has(sessionId))
+      return;
     await bridge.cancel(this.titleSessionId);
   }
 
@@ -74,7 +89,9 @@ export class TitleService {
   }
 
   /** Ensure the dedicated title session exists. Returns session ID or null. */
-  private async ensureTitleSession(bridge: AgentBridge): Promise<string | null> {
+  private async ensureTitleSession(
+    bridge: AgentBridge,
+  ): Promise<string | null> {
     if (this.titleSessionId) return this.titleSessionId;
     try {
       const id = await bridge.newSession(this.defaultCwd, { silent: true });

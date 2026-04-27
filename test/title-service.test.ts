@@ -24,7 +24,11 @@ describe("TitleService", () => {
         bridgeCalls.newSession.push({ cwd, opts });
         return "title-session";
       },
-      async setConfigOption(sessionId: string, configId: string, value: string) {
+      async setConfigOption(
+        sessionId: string,
+        configId: string,
+        value: string,
+      ) {
         bridgeCalls.setConfigOption.push({ sessionId, configId, value });
       },
       async promptForText(sessionId: string, prompt: string) {
@@ -34,26 +38,43 @@ describe("TitleService", () => {
     };
     const service = new TitleService(store as any, sessions as any, "/repo");
 
-    const title = await (service as any)._generate(bridge, "hello world", "session-1");
+    const title = await (service as any)._generate(
+      bridge,
+      "hello world",
+      "session-1",
+    );
 
     assert.equal(title, "A very useful title that is de");
-    assert.deepEqual(titleUpdates, [{ sessionId: "session-1", title: "A very useful title that is de" }]);
+    assert.deepEqual(titleUpdates, [
+      { sessionId: "session-1", title: "A very useful title that is de" },
+    ]);
     assert.ok(sessions.sessionHasTitle.has("session-1"));
     assert.ok(sessions.liveSessions.has("title-session"));
-    assert.deepEqual(bridgeCalls.newSession, [{ cwd: "/repo", opts: { silent: true } }]);
-    assert.deepEqual(bridgeCalls.setConfigOption, [{
-      sessionId: "title-session",
-      configId: "model",
-      value: "claude-haiku-4.5",
-    }]);
+    assert.deepEqual(bridgeCalls.newSession, [
+      { cwd: "/repo", opts: { silent: true } },
+    ]);
+    assert.deepEqual(bridgeCalls.setConfigOption, [
+      {
+        sessionId: "title-session",
+        configId: "model",
+        value: "claude-haiku-4.5",
+      },
+    ]);
 
     await (service as any)._generate(bridge, "another message", "session-2");
     assert.equal(bridgeCalls.newSession.length, 1);
   });
 
   it("swallows title-session setup failure and returns nothing", async () => {
-    const store = { updateSessionTitle() { throw new Error("should not be called"); } };
-    const sessions = { sessionHasTitle: new Set<string>(), liveSessions: new Set<string>() };
+    const store = {
+      updateSessionTitle() {
+        throw new Error("should not be called");
+      },
+    };
+    const sessions = {
+      sessionHasTitle: new Set<string>(),
+      liveSessions: new Set<string>(),
+    };
     const bridge = {
       async newSession() {
         throw new Error("bridge unavailable");
@@ -65,7 +86,11 @@ describe("TitleService", () => {
     };
     const service = new TitleService(store as any, sessions as any, "/repo");
 
-    const title = await (service as any)._generate(bridge, "hello", "session-1");
+    const title = await (service as any)._generate(
+      bridge,
+      "hello",
+      "session-1",
+    );
 
     assert.equal(title, undefined);
     assert.equal(sessions.sessionHasTitle.size, 0);
@@ -73,16 +98,25 @@ describe("TitleService", () => {
 
   it("generate calls the callback only when a title is produced", async () => {
     const store = { updateSessionTitle() {} };
-    const sessions = { sessionHasTitle: new Set<string>(), liveSessions: new Set<string>() };
+    const sessions = {
+      sessionHasTitle: new Set<string>(),
+      liveSessions: new Set<string>(),
+    };
     const bridge = {
-      async newSession() { return "title-session"; },
+      async newSession() {
+        return "title-session";
+      },
       async setConfigOption() {},
-      async promptForText() { return "Generated"; },
+      async promptForText() {
+        return "Generated";
+      },
     };
     const service = new TitleService(store as any, sessions as any, "/repo");
     const titles: string[] = [];
 
-    service.generate(bridge as any, "hello", "session-1", (title) => titles.push(title));
+    service.generate(bridge as any, "hello", "session-1", (title) =>
+      titles.push(title),
+    );
     await new Promise((resolve) => setImmediate(resolve));
 
     assert.deepEqual(titles, ["Generated"]);
@@ -90,14 +124,19 @@ describe("TitleService", () => {
 
   it("cancels title generation only for the matching source session", async () => {
     const store = { updateSessionTitle() {} };
-    const sessions = { sessionHasTitle: new Set<string>(), liveSessions: new Set<string>() };
+    const sessions = {
+      sessionHasTitle: new Set<string>(),
+      liveSessions: new Set<string>(),
+    };
     const cancelCalls: string[] = [];
     let releasePrompt: ((value: string) => void) | null = null;
     const bridge = {
-      async newSession() { return "title-session"; },
+      async newSession() {
+        return "title-session";
+      },
       async setConfigOption() {},
       async promptForText() {
-        return await new Promise<string>((resolve) => {
+        return new Promise<string>((resolve) => {
           releasePrompt = resolve;
         });
       },
@@ -118,16 +157,25 @@ describe("TitleService", () => {
   });
 
   it("deduplicates in-flight title generation and allows retry after cancellation", async () => {
-    const store = { updateSessionTitle() { throw new Error("should not be called"); } };
-    const sessions = { sessionHasTitle: new Set<string>(), liveSessions: new Set<string>() };
+    const store = {
+      updateSessionTitle() {
+        throw new Error("should not be called");
+      },
+    };
+    const sessions = {
+      sessionHasTitle: new Set<string>(),
+      liveSessions: new Set<string>(),
+    };
     const promptCalls: string[] = [];
     let releasePrompt: ((value: string) => void) | null = null;
     const bridge = {
-      async newSession() { return "title-session"; },
+      async newSession() {
+        return "title-session";
+      },
       async setConfigOption() {},
       async promptForText() {
         promptCalls.push("prompt");
-        return await new Promise<string>((resolve) => {
+        return new Promise<string>((resolve) => {
           releasePrompt = resolve;
         });
       },
@@ -157,13 +205,18 @@ describe("TitleService", () => {
         titleUpdates.push({ sessionId, title });
       },
     };
-    const sessions = { sessionHasTitle: new Set<string>(), liveSessions: new Set<string>() };
+    const sessions = {
+      sessionHasTitle: new Set<string>(),
+      liveSessions: new Set<string>(),
+    };
     let releasePrompt: ((value: string) => void) | null = null;
     const bridge = {
-      async newSession() { return "title-session"; },
+      async newSession() {
+        return "title-session";
+      },
       async setConfigOption() {},
       async promptForText() {
-        return await new Promise<string>((resolve) => {
+        return new Promise<string>((resolve) => {
           releasePrompt = resolve;
         });
       },
@@ -172,7 +225,9 @@ describe("TitleService", () => {
 
     // Start generation
     const titles: string[] = [];
-    service.generate(bridge as any, "hello", "session-1", (t) => titles.push(t));
+    service.generate(bridge as any, "hello", "session-1", (t) =>
+      titles.push(t),
+    );
     await new Promise((resolve) => setImmediate(resolve));
 
     // User manually sets title while generation is in flight
@@ -189,12 +244,20 @@ describe("TitleService", () => {
 
   it("invalidate() clears the cached title session so next generate creates a new one", async () => {
     const store = { updateSessionTitle() {} };
-    const sessions = { sessionHasTitle: new Set<string>(), liveSessions: new Set<string>() };
+    const sessions = {
+      sessionHasTitle: new Set<string>(),
+      liveSessions: new Set<string>(),
+    };
     let newSessionCalls = 0;
     const bridge = {
-      async newSession() { newSessionCalls++; return `title-session-${newSessionCalls}`; },
+      async newSession() {
+        newSessionCalls++;
+        return `title-session-${newSessionCalls}`;
+      },
       async setConfigOption() {},
-      async promptForText() { return "Title"; },
+      async promptForText() {
+        return "Title";
+      },
     };
     const service = new TitleService(store as any, sessions as any, "/repo");
 
@@ -211,6 +274,10 @@ describe("TitleService", () => {
     service.invalidate();
     sessions.sessionHasTitle.clear();
     await (service as any)._generate(bridge, "hello", "session-3");
-    assert.equal(newSessionCalls, 2, "should create new session after invalidate");
+    assert.equal(
+      newSessionCalls,
+      2,
+      "should create new session after invalidate",
+    );
   });
 });

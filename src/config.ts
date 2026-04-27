@@ -9,50 +9,60 @@ export const ConfigSchema = z.object({
   public_dir: z.string().default("dist"),
   agent_cmd: z.string().default("copilot --acp"),
 
-  limits: z.object({
-    bash_output: z.number().int().positive().default(1_048_576),   // 1 MB
-    image_upload: z.number().int().positive().default(10_485_760), // 10 MB
-    cancel_timeout: z.number().int().nonnegative().default(10_000), // 10s; 0 disables
-    recent_paths: z.number().int().nonnegative().default(10),       // /new menu display limit; 0 = show all
-    recent_paths_ttl: z.number().int().nonnegative().default(30),   // days before auto-cleanup; 0 = keep forever
-  }).default({
-    bash_output: 1_048_576,
-    image_upload: 10_485_760,
-    cancel_timeout: 10_000,
-    recent_paths: 10,
-    recent_paths_ttl: 30,
-  }),
+  limits: z
+    .object({
+      bash_output: z.number().int().positive().default(1_048_576), // 1 MB
+      image_upload: z.number().int().positive().default(10_485_760), // 10 MB
+      cancel_timeout: z.number().int().nonnegative().default(10_000), // 10s; 0 disables
+      recent_paths: z.number().int().nonnegative().default(10), // /new menu display limit; 0 = show all
+      recent_paths_ttl: z.number().int().nonnegative().default(30), // days before auto-cleanup; 0 = keep forever
+    })
+    .default({
+      bash_output: 1_048_576,
+      image_upload: 10_485_760,
+      cancel_timeout: 10_000,
+      recent_paths: 10,
+      recent_paths_ttl: 30,
+    }),
 
-  push: z.object({
-    vapid_subject: z.string().default("mailto:noreply@example.com"),
-    global_visibility_suppression: z.boolean().default(true),
-  }).default({
-    vapid_subject: "mailto:noreply@example.com",
-    global_visibility_suppression: true,
-  }),
+  push: z
+    .object({
+      vapid_subject: z.string().default("mailto:noreply@example.com"),
+      global_visibility_suppression: z.boolean().default(true),
+    })
+    .default({
+      vapid_subject: "mailto:noreply@example.com",
+      global_visibility_suppression: true,
+    }),
 
   // [title] — title generation sub-session configuration.
   // `model` is sent via setConfigOption; leave as empty string to skip
   // the call and inherit the session default (useful on CLIs that don't
   // expose claude-haiku-4.5).
-  title: z.object({
-    model: z.string().default("claude-haiku-4.5"),
-  }).default({ model: "claude-haiku-4.5" }),
+  title: z
+    .object({
+      model: z.string().default("claude-haiku-4.5"),
+    })
+    .default({ model: "claude-haiku-4.5" }),
 
   // [debug] — frontend log level.
   // level ∈ off | debug | info | warn | error. Default "off".
   // Users can override per page-load via `?debug=<level>` in the URL,
   // or at runtime via the /log slash command.
-  debug: z.object({
-    level: z.enum(["off", "debug", "info", "warn", "error"]).default("off"),
-  }).default({ level: "off" }),
+  debug: z
+    .object({
+      level: z.enum(["off", "debug", "info", "warn", "error"]).default("off"),
+    })
+    .default({ level: "off" }),
 
   // [messages] — external notifications primitive.
   // `unprocessed_ttl_days` caps how long an unbound message stays in the
   // inbox before TTL cleanup removes it. 0 = keep forever.
-  messages: z.object({
-    unprocessed_ttl_days: z.number().int().nonnegative().default(30),
-  }).default({ unprocessed_ttl_days: 30 }),
+  messages: z
+    .object({
+      unprocessed_ttl_days: z.number().int().nonnegative().default(30),
+    })
+    .default({ unprocessed_ttl_days: 30 }),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;
@@ -74,7 +84,7 @@ export function loadConfig(): Config {
   if (configPath) {
     try {
       const content = readFileSync(configPath, "utf-8");
-      raw = parseTOML(content) as Record<string, unknown>;
+      raw = parseTOML(content);
       console.log(`[config] loaded: ${configPath}`);
     } catch (err) {
       console.error(`[config] failed to read ${configPath}:`, err);

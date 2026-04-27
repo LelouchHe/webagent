@@ -10,14 +10,23 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T = unknown>(url: string, init?: RequestInit): Promise<T> {
+async function request<T = unknown>(
+  url: string,
+  init?: RequestInit,
+): Promise<T> {
   const res = await fetch(url, init);
   if (!res.ok) {
     let message = `HTTP ${res.status}`;
     try {
-      const body = await res.json() as Record<string, unknown>;
-      if (body.error) message = String(body.error);
-    } catch { /* non-JSON error body */ }
+      const body = (await res.json()) as Record<string, unknown>;
+      if (body.error)
+        message =
+          typeof body.error === "string"
+            ? body.error
+            : JSON.stringify(body.error);
+    } catch {
+      /* non-JSON error body */
+    }
     throw new ApiError(res.status, message);
   }
   const text = await res.text();
@@ -25,8 +34,14 @@ async function request<T = unknown>(url: string, init?: RequestInit): Promise<T>
   return JSON.parse(text) as T;
 }
 
-function post<T = unknown>(url: string, body: Record<string, unknown>, clientOpId?: string): Promise<T> {
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
+function post<T = unknown>(
+  url: string,
+  body: Record<string, unknown>,
+  clientOpId?: string,
+): Promise<T> {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
   if (clientOpId) headers["X-Client-Op-Id"] = clientOpId;
   return request<T>(url, {
     method: "POST",
@@ -36,16 +51,26 @@ function post<T = unknown>(url: string, body: Record<string, unknown>, clientOpI
 }
 
 function newOpId(): string {
-  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") return crypto.randomUUID();
-  return "op-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 10);
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function")
+    return crypto.randomUUID();
+  return (
+    "op-" +
+    Date.now().toString(36) +
+    "-" +
+    Math.random().toString(36).slice(2, 10)
+  );
 }
 
 // --- Session CRUD ---
 
-export function createSession(opts?: { cwd?: string; inheritFromSessionId?: string | null }): Promise<Record<string, unknown>> {
+export function createSession(opts?: {
+  cwd?: string;
+  inheritFromSessionId?: string | null;
+}): Promise<Record<string, unknown>> {
   const body: Record<string, unknown> = {};
   if (opts?.cwd) body.cwd = opts.cwd;
-  if (opts?.inheritFromSessionId) body.inheritFromSessionId = opts.inheritFromSessionId;
+  if (opts?.inheritFromSessionId)
+    body.inheritFromSessionId = opts.inheritFromSessionId;
   return post("/api/v1/sessions", body);
 }
 
@@ -68,7 +93,11 @@ export function getSnapshot(id: string): Promise<Record<string, unknown>> {
 
 // --- Prompt ---
 
-export function sendMessage(sessionId: string, text: string, images?: Array<{ data: string; mimeType: string; path?: string }>): Promise<unknown> {
+export function sendMessage(
+  sessionId: string,
+  text: string,
+  images?: Array<{ data: string; mimeType: string; path?: string }>,
+): Promise<unknown> {
   const body: Record<string, unknown> = { text };
   if (images?.length) body.images = images;
   return post("/api/v1/sessions/" + sessionId + "/prompt", body, newOpId());
@@ -82,17 +111,36 @@ export function cancelSession(sessionId: string): Promise<void> {
 
 // --- Permissions ---
 
-export function resolvePermission(sessionId: string, requestId: string, optionId: string): Promise<void> {
-  return post("/api/v1/sessions/" + sessionId + "/permissions/" + requestId, { optionId }, newOpId());
+export function resolvePermission(
+  sessionId: string,
+  requestId: string,
+  optionId: string,
+): Promise<void> {
+  return post(
+    "/api/v1/sessions/" + sessionId + "/permissions/" + requestId,
+    { optionId },
+    newOpId(),
+  );
 }
 
-export function denyPermission(sessionId: string, requestId: string): Promise<void> {
-  return post("/api/v1/sessions/" + sessionId + "/permissions/" + requestId, { denied: true }, newOpId());
+export function denyPermission(
+  sessionId: string,
+  requestId: string,
+): Promise<void> {
+  return post(
+    "/api/v1/sessions/" + sessionId + "/permissions/" + requestId,
+    { denied: true },
+    newOpId(),
+  );
 }
 
 // --- Config ---
 
-export function setConfig(sessionId: string, configId: string, value: string): Promise<void> {
+export function setConfig(
+  sessionId: string,
+  configId: string,
+  value: string,
+): Promise<void> {
   const urlId = configId.replace(/_/g, "-");
   return request("/api/v1/sessions/" + sessionId + "/" + urlId, {
     method: "PUT",
@@ -121,7 +169,11 @@ export function cancelBash(sessionId: string): Promise<void> {
 
 // --- Visibility ---
 
-export function postVisibility(clientId: string, visible: boolean, sessionId?: string): Promise<void> {
+export function postVisibility(
+  clientId: string,
+  visible: boolean,
+  sessionId?: string,
+): Promise<void> {
   const body: Record<string, unknown> = { visible };
   if (sessionId) body.sessionId = sessionId;
   return post("/api/beta/clients/" + clientId + "/visibility", body);
@@ -141,7 +193,10 @@ export function reloadAgent(): Promise<void> {
 
 // --- SSE ticket ---
 
-export function mintSseTicket(): Promise<{ ticket: string; expiresIn: number }> {
+export function mintSseTicket(): Promise<{
+  ticket: string;
+  expiresIn: number;
+}> {
   return post("/api/v1/sse-ticket", {});
 }
 
@@ -164,12 +219,16 @@ export function listMessages(): Promise<{ messages: InboxMessage[] }> {
   return request("/api/v1/messages");
 }
 
-export function consumeMessage(id: string): Promise<{ sessionId: string; alreadyConsumed: boolean }> {
+export function consumeMessage(
+  id: string,
+): Promise<{ sessionId: string; alreadyConsumed: boolean }> {
   return post(`/api/v1/messages/${encodeURIComponent(id)}/consume`, {});
 }
 
 export function ackMessage(id: string): Promise<void> {
-  return request(`/api/v1/messages/${encodeURIComponent(id)}`, { method: "DELETE" });
+  return request(`/api/v1/messages/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
 }
 
 // --- Tokens (admin scope only) ---
@@ -186,10 +245,14 @@ export function listTokens(): Promise<TokenSummary[]> {
   return request("/api/v1/tokens");
 }
 
-export function createApiToken(name: string): Promise<{ token: string; name: string; scope: "api" }> {
+export function createApiToken(
+  name: string,
+): Promise<{ token: string; name: string; scope: "api" }> {
   return post("/api/v1/tokens", { name });
 }
 
 export function revokeToken(name: string): Promise<void> {
-  return request("/api/v1/tokens/" + encodeURIComponent(name), { method: "DELETE" });
+  return request("/api/v1/tokens/" + encodeURIComponent(name), {
+    method: "DELETE",
+  });
 }

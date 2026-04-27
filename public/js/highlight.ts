@@ -8,11 +8,11 @@
 // synchronously; highlightAllIn awaits the dynamic import. Theme CSS is
 // appended to the main styles bundle at build time (see scripts/build.js).
 
-let hljsPromise:
-  | Promise<typeof import("highlight.js/lib/common").default>
-  | null = null;
+let hljsPromise: Promise<
+  typeof import("highlight.js/lib/common").default
+> | null = null;
 const getHljs = () =>
-  (hljsPromise ||= import("highlight.js/lib/common").then((m) => m.default));
+  (hljsPromise ??= import("highlight.js/lib/common").then((m) => m.default));
 
 async function highlightAllIn(container: Element) {
   const hljs = await getHljs();
@@ -27,22 +27,22 @@ async function highlightAllIn(container: Element) {
 
 /** Wrap each <pre><code> with a toolbar (copy button). */
 export function processCodeBlocks(container: Element) {
-  const pres = container.querySelectorAll('pre');
+  const pres = container.querySelectorAll("pre");
   for (const pre of pres) {
-    const code = pre.querySelector('code');
+    const code = pre.querySelector("code");
     if (!code) continue;
-    if (pre.parentElement?.classList.contains('code-block-wrapper')) continue;
+    if (pre.parentElement?.classList.contains("code-block-wrapper")) continue;
 
-    const wrapper = document.createElement('div');
-    wrapper.className = 'code-block-wrapper';
+    const wrapper = document.createElement("div");
+    wrapper.className = "code-block-wrapper";
 
-    const toolbar = document.createElement('div');
-    toolbar.className = 'code-toolbar';
+    const toolbar = document.createElement("div");
+    toolbar.className = "code-toolbar";
 
-    const copyBtn = document.createElement('button');
-    copyBtn.className = 'copy-btn';
-    copyBtn.textContent = 'cp';
-    copyBtn.type = 'button';
+    const copyBtn = document.createElement("button");
+    copyBtn.className = "copy-btn";
+    copyBtn.textContent = "cp";
+    copyBtn.type = "button";
     toolbar.appendChild(copyBtn);
 
     pre.replaceWith(wrapper);
@@ -53,37 +53,43 @@ export function processCodeBlocks(container: Element) {
 
 // --- Copy button ---
 
-const copyTimers = new WeakMap<HTMLButtonElement, ReturnType<typeof setTimeout>>();
+const copyTimers = new WeakMap<
+  HTMLButtonElement,
+  ReturnType<typeof setTimeout>
+>();
 
 /** Copy button click handler — delegated from #messages */
 export function handleCopyClick(e: Event) {
-  const btn = (e.target as Element).closest('.copy-btn') as HTMLButtonElement | null;
+  const btn = (e.target as Element).closest(".copy-btn");
   if (!btn) return;
 
-  const wrapper = btn.closest('.code-block-wrapper');
-  const code = wrapper?.querySelector('code');
+  const wrapper = btn.closest(".code-block-wrapper");
+  const code = wrapper?.querySelector("code");
   if (!code) return;
 
-  const text = code.textContent || '';
-  navigator.clipboard.writeText(text).then(() => {
-    const prev = copyTimers.get(btn);
-    if (prev) clearTimeout(prev);
+  const text = code.textContent || "";
+  navigator.clipboard
+    .writeText(text)
+    .then(() => {
+      const prev = copyTimers.get(btn);
+      if (prev) clearTimeout(prev);
 
-    btn.textContent = '✓';
-    btn.classList.add('copied');
-    const timer = setTimeout(() => {
-      btn.textContent = 'cp';
-      btn.classList.remove('copied');
-      copyTimers.delete(btn);
-    }, 1500);
-    copyTimers.set(btn, timer);
-  }).catch(() => {
-    const range = document.createRange();
-    range.selectNodeContents(code);
-    const sel = window.getSelection();
-    sel?.removeAllRanges();
-    sel?.addRange(range);
-  });
+      btn.textContent = "✓";
+      btn.classList.add("copied");
+      const timer = setTimeout(() => {
+        btn.textContent = "cp";
+        btn.classList.remove("copied");
+        copyTimers.delete(btn);
+      }, 1500);
+      copyTimers.set(btn, timer);
+    })
+    .catch(() => {
+      const range = document.createRange();
+      range.selectNodeContents(code);
+      const sel = window.getSelection();
+      sel?.removeAllRanges();
+      sel?.addRange(range);
+    });
 }
 
 /**
@@ -91,7 +97,7 @@ export function handleCopyClick(e: Event) {
  * highlight asynchronously (chunk loads on demand, hits modulepreload cache).
  */
 export function enhanceCodeBlocks(container: Element) {
-  if (!container.querySelector('pre code')) return;
+  if (!container.querySelector("pre code")) return;
   processCodeBlocks(container);
   void highlightAllIn(container);
 }

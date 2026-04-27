@@ -16,8 +16,8 @@ describe("message event rendering", () => {
   before(async () => {
     setupDOM();
     const stateMod = await import("../public/js/state.ts");
-    state = stateMod.state as unknown as typeof state;
-    dom = stateMod.dom as unknown as typeof dom;
+    state = stateMod.state;
+    dom = stateMod.dom;
     events = await import("../public/js/events.ts");
   });
   after(() => teardownDOM());
@@ -28,7 +28,9 @@ describe("message event rendering", () => {
     (state as { sessionId: string }).sessionId = "s1";
   });
 
-  function makeMessageEvent(overrides: Partial<AgentEvent & { type: "message" }> = {}) {
+  function makeMessageEvent(
+    overrides: Partial<AgentEvent & { type: "message" }> = {},
+  ) {
     return {
       type: "message",
       sessionId: "s1",
@@ -54,37 +56,63 @@ describe("message event rendering", () => {
 
   it("summary contains the from_ref and title", () => {
     events.handleEvent(
-      makeMessageEvent({ title: "Disk almost full", from_ref: "cron:disk-check" }),
+      makeMessageEvent({
+        title: "Disk almost full",
+        from_ref: "cron:disk-check",
+      }),
     );
     const summary = dom.messages.querySelector("details.message summary");
     assert.ok(summary);
     const text = summary.textContent;
-    assert.ok(text.includes("cron:disk-check"), `from_ref in summary: "${text}"`);
+    assert.ok(
+      text.includes("cron:disk-check"),
+      `from_ref in summary: "${text}"`,
+    );
     assert.ok(text.includes("Disk almost full"), `title in summary: "${text}"`);
   });
 
   it("prefers from_label over from_ref in the summary when present", () => {
-    events.handleEvent(makeMessageEvent({ from_label: "Disk Monitor", from_ref: "cron:disk" }));
+    events.handleEvent(
+      makeMessageEvent({ from_label: "Disk Monitor", from_ref: "cron:disk" }),
+    );
     const summary = dom.messages.querySelector("details.message summary");
     assert.ok(summary);
     const text = summary.textContent;
-    assert.ok(text.includes("Disk Monitor"), `from_label in summary: "${text}"`);
+    assert.ok(
+      text.includes("Disk Monitor"),
+      `from_label in summary: "${text}"`,
+    );
   });
 
   it("body is passed through the markdown renderer", () => {
     events.handleEvent(makeMessageEvent({ body: "Line **bold** here" }));
-    const content = dom.messages.querySelector("details.message .message-content");
+    const content = dom.messages.querySelector(
+      "details.message .message-content",
+    );
     assert.ok(content);
     // Confirm body went through renderMd: marked emits <p> wrapper and
     // converts **bold** to <strong>bold</strong>.
-    assert.ok(content.innerHTML.includes("<p>"), "body rendered via marked pipeline");
-    assert.ok(content.innerHTML.includes("<strong>bold</strong>"), "bold converted by marked");
-    assert.ok(content.textContent.includes("Line") && content.textContent.includes("bold") && content.textContent.includes("here"), "body text present");
+    assert.ok(
+      content.innerHTML.includes("<p>"),
+      "body rendered via marked pipeline",
+    );
+    assert.ok(
+      content.innerHTML.includes("<strong>bold</strong>"),
+      "bold converted by marked",
+    );
+    assert.ok(
+      content.textContent.includes("Line") &&
+        content.textContent.includes("bold") &&
+        content.textContent.includes("here"),
+      "body text present",
+    );
   });
 
   it("escapes raw HTML in body (markdown pipeline should not be XSS-prone)", () => {
     events.handleEvent(makeMessageEvent({ body: "<script>alert(1)</script>" }));
-    const content = dom.messages.querySelector("details.message .message-content");
+    const content = dom.messages.querySelector(
+      "details.message .message-content",
+    );
     assert.ok(content);
     assert.equal(content.querySelector("script"), null, "no raw <script>");
   });
@@ -100,9 +128,16 @@ describe("message event rendering", () => {
     // Stubbed marked doesn't actually emit <pre><code> for ``` fences, so we
     // just confirm the container exists and wraps the body. Real markdown
     // handling is exercised by the marked library (not our contract).
-    events.handleEvent(makeMessageEvent({ body: "Run this:\n\n```bash\ndu -sh /var/log\n```" }));
-    const content = dom.messages.querySelector("details.message .message-content");
+    events.handleEvent(
+      makeMessageEvent({ body: "Run this:\n\n```bash\ndu -sh /var/log\n```" }),
+    );
+    const content = dom.messages.querySelector(
+      "details.message .message-content",
+    );
     assert.ok(content, "content container exists");
-    assert.ok(content.textContent.includes("du -sh /var/log"), "body content present");
+    assert.ok(
+      content.textContent.includes("du -sh /var/log"),
+      "body content present",
+    );
   });
 });

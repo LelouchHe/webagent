@@ -24,7 +24,7 @@ export function hashToken(token: string): string {
  * Returns false on any malformed input rather than throwing.
  */
 export function verifyToken(token: string, expectedHashHex: string): boolean {
-  if (!token || !expectedHashHex || expectedHashHex.length !== HASH_HEX_LEN) {
+  if (!token || expectedHashHex.length !== HASH_HEX_LEN) {
     return false;
   }
   if (!/^[a-f0-9]+$/i.test(expectedHashHex)) return false;
@@ -49,7 +49,11 @@ function canonical(path: string, exp: number | string): string {
  * Returns "exp=<unix>&sig=<hex>" — appendable as a query string to the path.
  * ttlSeconds may be negative (yields an already-expired URL, useful in tests).
  */
-export function signImageUrl(path: string, secret: Buffer, ttlSeconds: number): string {
+export function signImageUrl(
+  path: string,
+  secret: Buffer,
+  ttlSeconds: number,
+): string {
   const exp = Math.floor(Date.now() / 1000) + ttlSeconds;
   const sig = hmacHex(secret, canonical(path, exp));
   return `exp=${exp}&sig=${sig}`;
@@ -93,9 +97,13 @@ export function verifyImageSig(
 const IMAGE_URL_RE =
   /\/api\/v1\/sessions\/[A-Za-z0-9_-]+\/images\/[A-Za-z0-9._-]+(?:\?(?:exp=\d+&sig=[a-f0-9]+|sig=[a-f0-9]+&exp=\d+))?/g;
 
-export function reSignImageUrlsInJson(json: string, secret: Buffer, ttlSeconds = 3600): string {
+export function reSignImageUrlsInJson(
+  json: string,
+  secret: Buffer,
+  ttlSeconds = 3600,
+): string {
   return json.replace(IMAGE_URL_RE, (match) => {
-    const basePath = match.split("?")[0]!;
+    const basePath = match.split("?")[0];
     return `${basePath}?${signImageUrl(basePath, secret, ttlSeconds)}`;
   });
 }

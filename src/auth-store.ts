@@ -1,8 +1,4 @@
-import {
-  promises as fs,
-  existsSync,
-  readFileSync,
-} from "node:fs";
+import { promises as fs, existsSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
 import lockfile from "proper-lockfile";
 import { generateToken, hashToken, verifyToken } from "./auth.ts";
@@ -32,7 +28,7 @@ const LOCK_OPTS = {
 
 export class AuthStore {
   private tokens: Map<string, TokenRecord> = new Map(); // keyed by hash
-  private dirtyHashes: Set<string> = new Set(); // touched lastUsedAt waiting to flush
+  private readonly dirtyHashes: Set<string> = new Set(); // touched lastUsedAt waiting to flush
   private loaded = false;
   private flushTimer: NodeJS.Timeout | null = null;
 
@@ -72,7 +68,7 @@ export class AuthStore {
   }
 
   findByToken(token: string): TokenRecord | null {
-    if (!token || !token.startsWith("wat_")) return null;
+    if (!token.startsWith("wat_")) return null;
     const h = hashToken(token);
     const rec = this.tokens.get(h);
     if (!rec) return null;
@@ -100,10 +96,15 @@ export class AuthStore {
     this.dirtyHashes.add(h);
   }
 
-  async addToken(name: string, scope: Scope): Promise<{ token: string; record: TokenRecord }> {
+  async addToken(
+    name: string,
+    scope: Scope,
+  ): Promise<{ token: string; record: TokenRecord }> {
     this.assertLoaded();
     if (!VALID_NAME.test(name)) {
-      throw new Error(`Invalid token name: ${JSON.stringify(name)} (use [A-Za-z0-9_-], 1-64 chars)`);
+      throw new Error(
+        `Invalid token name: ${JSON.stringify(name)} (use [A-Za-z0-9_-], 1-64 chars)`,
+      );
     }
     if (!VALID_SCOPE.has(scope)) {
       throw new Error(`Invalid scope: ${scope}`);
@@ -167,7 +168,10 @@ export class AuthStore {
       const merged = onDisk.map((diskRec) => {
         if (this.dirtyHashes.has(diskRec.hash)) {
           const memRec = this.tokens.get(diskRec.hash);
-          if (memRec && memRec.lastUsedAt && (!diskRec.lastUsedAt || memRec.lastUsedAt > diskRec.lastUsedAt)) {
+          if (
+            memRec?.lastUsedAt &&
+            (!diskRec.lastUsedAt || memRec.lastUsedAt > diskRec.lastUsedAt)
+          ) {
             return { ...diskRec, lastUsedAt: memRec.lastUsedAt };
           }
         }
@@ -196,7 +200,8 @@ export class AuthStore {
   // ---- internals -----------------------------------------------------------
 
   private assertLoaded(): void {
-    if (!this.loaded) throw new Error("AuthStore not loaded; call load() first");
+    if (!this.loaded)
+      throw new Error("AuthStore not loaded; call load() first");
   }
 
   private startFlushTimer(): void {
@@ -204,7 +209,7 @@ export class AuthStore {
     this.flushTimer = setInterval(() => {
       void this.flush().catch(() => {});
     }, this.flushIntervalMs);
-    this.flushTimer.unref?.();
+    this.flushTimer.unref();
   }
 
   private async readFromDisk(): Promise<TokenRecord[]> {
@@ -224,7 +229,8 @@ export class AuthStore {
     return onDisk.map((diskRec) => {
       const memRec = this.tokens.get(diskRec.hash);
       if (!memRec) return diskRec;
-      const lastUsedAt = Math.max(diskRec.lastUsedAt ?? 0, memRec.lastUsedAt ?? 0) || null;
+      const lastUsedAt =
+        Math.max(diskRec.lastUsedAt ?? 0, memRec.lastUsedAt ?? 0) || null;
       return { ...diskRec, lastUsedAt };
     });
   }
@@ -268,30 +274,41 @@ function parseAuthFile(raw: string): AuthFileShape {
   try {
     data = JSON.parse(raw);
   } catch (err) {
-    throw new Error(`auth.json is not valid JSON: ${(err as Error).message}`);
+    throw new Error(`auth.json is not valid JSON: ${(err as Error).message}`, {
+      cause: err,
+    });
   }
-  if (!data || typeof data !== "object" || !Array.isArray((data as { tokens?: unknown }).tokens)) {
+  if (
+    !data ||
+    typeof data !== "object" ||
+    !Array.isArray((data as { tokens?: unknown }).tokens)
+  ) {
     throw new Error("auth.json must have a 'tokens' array");
   }
   const tokens = (data as { tokens: unknown[] }).tokens.map((entry, i) => {
-    if (!entry || typeof entry !== "object") throw new Error(`auth.json tokens[${i}] not an object`);
+    if (!entry || typeof entry !== "object")
+      throw new Error(`auth.json tokens[${i}] not an object`);
     const e = entry as Record<string, unknown>;
-    if (typeof e.name !== "string") throw new Error(`auth.json tokens[${i}].name missing`);
-    if (e.scope !== "admin" && e.scope !== "api") throw new Error(`auth.json tokens[${i}].scope invalid`);
+    if (typeof e.name !== "string")
+      throw new Error(`auth.json tokens[${i}].name missing`);
+    if (e.scope !== "admin" && e.scope !== "api")
+      throw new Error(`auth.json tokens[${i}].scope invalid`);
     if (typeof e.hash !== "string" || !/^[a-f0-9]{64}$/i.test(e.hash)) {
       throw new Error(`auth.json tokens[${i}].hash invalid`);
     }
-    if (typeof e.createdAt !== "number") throw new Error(`auth.json tokens[${i}].createdAt missing`);
+    if (typeof e.createdAt !== "number")
+      throw new Error(`auth.json tokens[${i}].createdAt missing`);
     const lastUsedAt = e.lastUsedAt;
     if (lastUsedAt !== null && typeof lastUsedAt !== "number") {
       throw new Error(`auth.json tokens[${i}].lastUsedAt invalid`);
     }
     return {
       name: e.name,
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion -- narrowed by line 280 check but TSC needs cast from unknown
       scope: e.scope as Scope,
       hash: e.hash.toLowerCase(),
       createdAt: e.createdAt,
-      lastUsedAt: lastUsedAt as number | null,
+      lastUsedAt: lastUsedAt,
     };
   });
   return { tokens };

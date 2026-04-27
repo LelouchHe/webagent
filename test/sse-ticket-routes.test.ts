@@ -28,8 +28,14 @@ function req(
       { hostname: "127.0.0.1", port, path, method, headers },
       (res) => {
         let data = "";
-        res.on("data", (c: Buffer) => (data += c));
-        res.on("end", () => resolve({ status: res.statusCode!, body: data, headers: res.headers }));
+        res.on("data", (c: Buffer) => (data += c.toString()));
+        res.on("end", () =>
+          resolve({
+            status: res.statusCode!,
+            body: data,
+            headers: res.headers,
+          }),
+        );
       },
     );
     r.on("error", reject);
@@ -165,7 +171,11 @@ describe("SSE ticket flow", () => {
     });
 
     // Second use must fail
-    const second = await req(port, "GET", `/api/v1/events/stream?ticket=${ticket}`);
+    const second = await req(
+      port,
+      "GET",
+      `/api/v1/events/stream?ticket=${ticket}`,
+    );
     assert.equal(second.status, 401);
   });
 });
@@ -187,8 +197,12 @@ describe("SSE revocation via heartbeat", () => {
     sse.startHeartbeat();
 
     const handler = createRequestHandler({
-      store, authStore, ticketStore, sseManager: sse,
-      publicDir, dataDir: dir,
+      store,
+      authStore,
+      ticketStore,
+      sseManager: sse,
+      publicDir,
+      dataDir: dir,
       limits: { bash_output: 1024, image_upload: 1024 },
       serverVersion: "test",
     });
@@ -234,7 +248,9 @@ describe("SSE revocation via heartbeat", () => {
     // Server should end the connection within ~2 heartbeats (≤200ms)
     await Promise.race([
       streamEnded,
-      new Promise((_, rej) => setTimeout(() => rej(new Error("stream not closed within 1s")), 1000)),
+      new Promise((_, rej) =>
+        setTimeout(() => rej(new Error("stream not closed within 1s")), 1000),
+      ),
     ]);
 
     sse.stopHeartbeat();
