@@ -1,0 +1,7 @@
+# prettier respects .gitignore by default — only list extras here.
+
+# Markdown: hand-formatted prose / generated changelogs.
+*.md
+
+# Bundled JS in /public (esbuild output, when present in worktree).
+public/js/*.js
