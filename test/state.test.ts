@@ -340,6 +340,53 @@ describe("state", () => {
       assert.equal(result, null);
     });
 
+    // Regression: A→B rapid switch. Slow A resolves after fast B; without a
+    // guard A's snapshot would clobber B's applied state. The guard is a
+    // sessionSwitchGen capture at reloadSnapshot entry, re-checked before
+    // applySnapshot runs.
+    it("reloadSnapshot drops stale result if sessionSwitchGen bumped during fetch", async () => {
+      mod.state.lastStateSeq = 100;
+      mod.setBusy(false);
+
+      let resolveA: (v: unknown) => void = () => {};
+      const aPending = new Promise((res) => { resolveA = res; });
+      const snapA = snap(5, { kind: "agent", since: "", promptId: null });
+      globalThis.fetch = (async () => {
+        await aPending;
+        return { ok: true, status: 200, text: async () => JSON.stringify(snapA) };
+      }) as any;
+
+      const pA = mod.reloadSnapshot("A");
+
+      // Simulate another switch starting mid-fetch
+      mod.state.sessionSwitchGen++;
+
+      // Now unblock A. It should NOT apply because the gen moved on.
+      resolveA({});
+      const res = await pA;
+
+      assert.equal(res, null, "stale snapshot should be discarded");
+      assert.equal(mod.state.lastStateSeq, 100, "lastStateSeq must not be clobbered");
+      assert.equal(mod.state.busy, false, "busy must not flip from stale snapshot");
+    });
+
+    it("reloadSnapshot still applies when no switch happened during fetch", async () => {
+      mod.state.lastStateSeq = 0;
+      mod.setBusy(false);
+      const startGen = mod.state.sessionSwitchGen;
+
+      const body = JSON.stringify(snap(9, { kind: "agent", since: "", promptId: null }));
+      globalThis.fetch = (async () => ({
+        ok: true, status: 200, text: async () => body,
+      })) as any;
+
+      const result = await mod.reloadSnapshot("A");
+      assert.ok(result);
+      assert.equal(mod.state.sessionSwitchGen, startGen);
+      assert.equal(mod.state.lastStateSeq, 9);
+      assert.equal(mod.state.busy, true);
+    });
+
     it("applySnapshot populates display fallback when configOptions empty", () => {
       mod.state.configOptions = [];
       mod.applySnapshot(snap(1, null, { mode: "#plan", model: "gpt-5.4" }));

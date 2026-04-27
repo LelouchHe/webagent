@@ -233,8 +233,14 @@ export function applyStatePatch(patchEvent: { seq: number; patch: StatePatchPayl
  * on failure.
  */
 export async function reloadSnapshot(sessionId: string): Promise<SessionSnapshot | null> {
+  // Capture sessionSwitchGen so an in-flight stale snapshot can be dropped
+  // when a newer switch bumps the generation before the fetch resolves.
+  // Without this guard, an A→B→A rapid switch could see A's slow response
+  // clobber B's state because applySnapshot runs unconditionally.
+  const genAtStart = state.sessionSwitchGen;
   try {
     const snap = await api.getSnapshot(sessionId) as SessionSnapshot;
+    if (state.sessionSwitchGen !== genAtStart) return null;
     applySnapshot(snap);
     return snap;
   } catch {
