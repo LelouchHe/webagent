@@ -103,12 +103,14 @@ export function handleAgentEvent(
     }
     case "prompt_done":
       sessions.activePrompts.delete(event.sessionId);
+      sessions.syncBusy(event.sessionId);
       sessions.flushBuffers(event.sessionId);
       store.saveEvent(event.sessionId, event.type, { stopReason: event.stopReason });
       break;
     case "error":
       if (event.sessionId) {
         sessions.activePrompts.delete(event.sessionId);
+        sessions.syncBusy(event.sessionId);
       }
       break;
   }

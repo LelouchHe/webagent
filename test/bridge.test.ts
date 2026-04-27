@@ -295,6 +295,11 @@ describe("AgentBridge", () => {
         sessionHasTitle: new Set<string>(),
         cachedConfigOptions: [],
         agentInfo: null as any,
+        state: {
+          patch(_id: string, _p: unknown) {},
+          delete(_id: string) {},
+          clearCancelSafety(_id: string) {},
+        },
       };
     }
 

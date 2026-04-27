@@ -327,6 +327,14 @@ export class Store {
     return (this.db.prepare(query).get(...params) as { count: number }).count;
   }
 
+  /** Highest seq of any stored event for this session (0 when empty). */
+  getLastEventSeq(sessionId: string): number {
+    const row = this.db
+      .prepare("SELECT COALESCE(MAX(seq), 0) AS seq FROM events WHERE session_id = ?")
+      .get(sessionId) as { seq: number };
+    return row.seq;
+  }
+
   /** Check if the most recent agent turn was interrupted (user_message without a following prompt_done). */
   hasInterruptedTurn(sessionId: string): boolean {
     const row = this.db.prepare(`

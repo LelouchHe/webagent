@@ -410,6 +410,12 @@ export function createRequestHandler(deps: RequestHandlerDeps): (req: IncomingMe
           await bridge.cancel(sessionId);
           sessions.activePrompts.delete(sessionId);
         }
+        // Arm backend safety net: if prompt_done doesn't arrive within the
+        // configured timeout, force-clear busy so the UI unstalls. Replaces
+        // the old frontend-side cancel timer.
+        const cancelTimeout = deps.limits.cancel_timeout ?? 0;
+        if (sessions && cancelTimeout > 0) sessions.state.armCancelSafety(sessionId, cancelTimeout);
+        sessions?.syncBusy(sessionId);
         json(res, 200, { ok: true });
         return;
       }
@@ -427,6 +433,39 @@ export function createRequestHandler(deps: RequestHandlerDeps): (req: IncomingMe
           busyKind,
           pendingPermissions: pendingPerms,
         });
+        return;
+      }
+
+      // --- GET /api/v1/sessions/:id/snapshot ---
+      // client-server-split M1: single source of truth for "what state is
+      // this session in right now". Frontend calls this on connect / reconnect
+      // / after long backgrounding, then applies incremental `state_patch`
+      // SSE events.
+      const snapshotMatch = url.match(/^\/api\/v1\/sessions\/([^/]+)\/snapshot\/?$/);
+      if (snapshotMatch && req.method === "GET") {
+        const sessionId = decodeURIComponent(snapshotMatch[1]);
+        const session = store.getSession(sessionId);
+        if (!session) { json(res, 404, { error: "Session not found" }); return; }
+        if (!sessions) { json(res, 503, { error: "Session manager not available" }); return; }
+        // Make sure runtime reflects the current activePrompts/bash state even
+        // if no patch has been emitted yet for this session.
+        sessions.syncBusy(sessionId);
+        const runtimeState = sessions.state.getState(sessionId);
+        const lastEventSeq = store.getLastEventSeq(sessionId);
+        json(res, 200, {
+          version: 1,
+          seq: runtimeState.seq,
+          session: {
+            id: session.id,
+            title: session.title,
+            cwd: session.cwd,
+            model: session.model,
+            mode: session.mode,
+            createdAt: session.created_at ?? null,
+            lastEventSeq,
+          },
+          runtime: runtimeState.runtime,
+        }, req);
         return;
       }
 
@@ -477,10 +516,12 @@ export function createRequestHandler(deps: RequestHandlerDeps): (req: IncomingMe
 
         // Fire prompt asynchronously (don't await — response is 202)
         sessions.activePrompts.add(sessionId);
+        sessions.syncBusy(sessionId);
         bridge.prompt(sessionId, body.text, body.images).catch((err: unknown) => {
           console.error(`[prompt] error for ${sessionId}:`, err);
         }).finally(() => {
           sessions!.activePrompts.delete(sessionId);
+          sessions!.syncBusy(sessionId);
         });
 
         json(res, 202, { status: "accepted" });
@@ -517,6 +558,7 @@ export function createRequestHandler(deps: RequestHandlerDeps): (req: IncomingMe
           stdio: ["ignore", "pipe", "pipe"],
         });
         sessions.runningBashProcs.set(sessionId, child);
+        sessions.syncBusy(sessionId);
         let output = "";
         let outputTruncated = false;
         const limit = deps.limits.bash_output;
@@ -540,6 +582,7 @@ export function createRequestHandler(deps: RequestHandlerDeps): (req: IncomingMe
 
         child.on("close", (code, signal) => {
           sessions!.runningBashProcs.delete(sessionId);
+          sessions!.syncBusy(sessionId);
           const stored = outputTruncated ? "[truncated]\n" + output : output;
           store.saveEvent(sessionId, "bash_result", { output: stored, code, signal });
           const bashDoneEvent = { type: "bash_done", sessionId, code, signal } as AgentEvent;
@@ -548,6 +591,7 @@ export function createRequestHandler(deps: RequestHandlerDeps): (req: IncomingMe
 
         child.on("error", (err) => {
           sessions!.runningBashProcs.delete(sessionId);
+          sessions!.syncBusy(sessionId);
           const errMsg = errorMessage(err);
           store.saveEvent(sessionId, "bash_result", { output: errMsg, code: -1, signal: null });
           const bashErrEvent = { type: "bash_done", sessionId, code: -1, signal: null, error: errMsg } as AgentEvent;
@@ -667,13 +711,16 @@ export function createRequestHandler(deps: RequestHandlerDeps): (req: IncomingMe
               if (hasInterrupted) {
                 // Optimistically mark busy so concurrent POST sees the session as active
                 sessions.activePrompts.add(sessionId);
+                sessions.syncBusy(sessionId);
                 resumePromise.then(() => {
                   if (!sessions!.autoRetryIfNeeded(bridge, sessionId)) {
                     // Retry not needed after all — release the optimistic lock
                     sessions!.activePrompts.delete(sessionId);
+                    sessions!.syncBusy(sessionId);
                   }
                 }).catch(() => {
                   sessions!.activePrompts.delete(sessionId);
+                  sessions!.syncBusy(sessionId);
                 });
               } else {
                 resumePromise.catch((err) => {
@@ -707,7 +754,6 @@ export function createRequestHandler(deps: RequestHandlerDeps): (req: IncomingMe
             });
             return opts;
           })() : [];
-          const busyKind = sessions?.getBusyKind(sessionId) ?? null;
           json(res, 200, {
             id: freshSession.id,
             cwd: freshSession.cwd,
@@ -716,8 +762,6 @@ export function createRequestHandler(deps: RequestHandlerDeps): (req: IncomingMe
             model: freshSession.model,
             mode: freshSession.mode,
             configOptions,
-            busy: busyKind != null,
-            busyKind,
           }, req);
           return;
         }
@@ -1212,6 +1256,7 @@ export function createRequestHandler(deps: RequestHandlerDeps): (req: IncomingMe
 
         // Fire-and-forget: send the prompt asynchronously, tracking busy state
         sessions.activePrompts.add(sessionId);
+        sessions.syncBusy(sessionId);
         // Generate title (fire-and-forget)
         if (titleService && !sessions.sessionHasTitle.has(sessionId)) {
           titleService.generate(bridge as AgentBridge, text, sessionId, (title) => {
@@ -1221,7 +1266,10 @@ export function createRequestHandler(deps: RequestHandlerDeps): (req: IncomingMe
         }
         bridge.prompt(sessionId, text)
           .catch(() => {})
-          .finally(() => sessions.activePrompts.delete(sessionId));
+          .finally(() => {
+            sessions.activePrompts.delete(sessionId);
+            sessions.syncBusy(sessionId);
+          });
         return;
       }
 

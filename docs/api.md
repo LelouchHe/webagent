@@ -284,6 +284,45 @@ Get the busy state and pending permissions for a session.
 
 ---
 
+#### `GET /api/v1/sessions/:id/snapshot`
+
+**Single source of truth** for a session's current runtime state. The frontend calls this on cold-load / reconnect / after long backgrounding, then applies incremental `state_patch` SSE events. This replaces the old "replay history + reconcile" pattern for runtime fields like `busy`.
+
+Use `GET /events` for message history (rendering only) and `GET /snapshot` for runtime state (`busy`, `pendingPermissions`, `streaming`). The two are decoupled — `/events` never mutates runtime state in the frontend.
+
+**Response** `200`:
+
+```json
+{
+  "version": 1,
+  "seq": 42,
+  "session": {
+    "id": "abc-123",
+    "title": "My Session",
+    "cwd": "/Users/me/proj",
+    "model": "gpt-5",
+    "mode": "agent",
+    "createdAt": "2026-04-18 17:00:00",
+    "lastEventSeq": 1234
+  },
+  "runtime": {
+    "busy": { "kind": "agent", "since": "2026-04-18T18:00:00.000Z", "promptId": "p1" },
+    "pendingPermissions": [],
+    "streaming": { "assistant": false, "thinking": false }
+  }
+}
+```
+
+- `seq` — monotonically increasing per session; paired with SSE `state_patch.seq` for consistency.
+- `runtime.busy` — `null` when idle; otherwise `{ kind: "agent" | "bash", since, promptId }`.
+- `runtime.pendingPermissions` / `runtime.streaming` — present in the schema; population via `state_patch` follows in subsequent milestones.
+
+**Consistency rule**: If an incoming `state_patch.seq != lastSeq + 1`, the frontend reloads the snapshot and drops in-flight patches.
+
+**Errors:** `404` (session not found), `503` (session manager not available).
+
+---
+
 ### Messages
 
 #### `POST /api/v1/sessions/:id/prompt`

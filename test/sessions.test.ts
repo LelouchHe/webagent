@@ -191,8 +191,6 @@ describe("Session REST API", () => {
       assert.equal(body.id, id);
       assert.equal(body.cwd, tmpDir);
       assert.ok(Array.isArray(body.configOptions));
-      assert.equal(body.busy, false);
-      assert.equal(body.busyKind, null);
     });
 
     it("returns 404 for unknown session", async () => {

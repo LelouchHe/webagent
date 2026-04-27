@@ -6,7 +6,7 @@ import { join } from "node:path";
 import type { Store } from "./store.ts";
 import type { AgentBridge } from "./bridge.ts";
 import type { AgentEvent, ConfigOption, PendingPermission } from "./types.ts";
-import { SessionStateManager } from "./session-state.ts";
+import { SessionStateManager, type BusyKind } from "./session-state.ts";
 
 const IS_WIN = process.platform === "win32";
 
@@ -143,7 +143,6 @@ export class SessionManager {
         cwd: session.cwd,
         title: session.title,
         configOptions,
-        busyKind: this.getBusyKind(sessionId) ?? undefined,
       };
     }
 
@@ -163,7 +162,6 @@ export class SessionManager {
         cwd: session.cwd,
         title: session.title,
         configOptions,
-        busyKind: this.getBusyKind(sessionId) ?? undefined,
       };
     } catch (err) {
       console.error(`[session] restore failed:`, err);
@@ -280,6 +278,36 @@ export class SessionManager {
   }
 
   /**
+   * Recompute busy from active prompts/bash procs and patch the state manager.
+   * Call this immediately after mutating activePrompts / runningBashProcs so
+   * the frontend snapshot stays in sync via `state_patch` broadcast.
+   *
+   * `promptId` attaches to an agent busy transition (ignored otherwise). If
+   * omitted when staying agent-busy, the existing promptId is preserved.
+   */
+  syncBusy(sessionId: string, promptId?: string | null): void {
+    const kind = this.getBusyKind(sessionId);
+    const current = this.state.getState(sessionId).runtime.busy;
+    if (kind === null) {
+      if (current !== null) this.state.patch(sessionId, { runtime: { busy: null } });
+      // Also clear any pending cancel safety net now that we are idle.
+      this.state.clearCancelSafety(sessionId);
+      return;
+    }
+    const nextPromptId = kind === "agent" ? (promptId ?? current?.promptId ?? null) : null;
+    if (current && current.kind === kind && current.promptId === nextPromptId) return;
+    this.state.patch(sessionId, {
+      runtime: {
+        busy: {
+          kind: kind as BusyKind,
+          since: current?.kind === kind ? current.since : new Date().toISOString(),
+          promptId: nextPromptId,
+        },
+      },
+    });
+  }
+
+  /**
    * If the session's last turn was interrupted (user_message without prompt_done),
    * auto-retry by prompting the agent to continue. Returns true if retrying.
    */
@@ -289,9 +317,11 @@ export class SessionManager {
 
     console.log(`[session] auto-retrying interrupted turn for ${sessionId.slice(0, 8)}…`);
     this.activePrompts.add(sessionId);
+    this.syncBusy(sessionId);
     bridge.prompt(sessionId, "Continue your previous response — it was interrupted mid-way.").catch((err: unknown) => {
       console.error(`[session] auto-retry failed for ${sessionId.slice(0, 8)}…:`, err);
       this.activePrompts.delete(sessionId);
+      this.syncBusy(sessionId);
     });
     return true;
   }
