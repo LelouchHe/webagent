@@ -76,7 +76,9 @@ export function updateSlashMenu(): void {
           (err: unknown) => {
             if (currentPath !== myPath) return;
             const msg =
-              err instanceof Error && err.message ? err.message : "fetch failed";
+              err instanceof Error && err.message
+                ? err.message
+                : "fetch failed";
             currentData = { error: msg };
             rebuild(currentTailQueryFromInput(), pathPrefix);
           },

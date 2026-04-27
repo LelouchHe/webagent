@@ -234,10 +234,7 @@ describe("slash-tree — buildCandidates", () => {
       error: "admin scope required to manage tokens",
     });
     assert.equal(c.length, 1);
-    assert.equal(
-      c[0].spec.primary,
-      "(admin scope required to manage tokens)",
-    );
+    assert.equal(c[0].spec.primary, "(admin scope required to manage tokens)");
   });
 
   it("placeholder (none) when fetch returns empty array", () => {

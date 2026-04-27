@@ -142,7 +142,7 @@ export function buildCandidates(
       "error" in data
     ) {
       dataState = "error";
-      errorMsg = (data as { error: string }).error;
+      errorMsg = typeof data.error === "string" ? data.error : "";
     } else if (Array.isArray(data)) {
       if (data.length === 0) {
         dataState = "empty";
