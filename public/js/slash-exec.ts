@@ -256,7 +256,6 @@ export async function handleSlashCommand(text: string): Promise<boolean> {
           cwd: session.cwd as string,
           title: session.title as string | null,
           configOptions: session.configOptions,
-          busyKind: session.busyKind,
         });
         scrollToBottom(true);
       } catch {

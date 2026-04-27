@@ -1,6 +1,6 @@
 // SSE + REST connection lifecycle (passive WS kept for backward-compat send)
 
-import { state, setBusy, getHashSessionId, requestNewSession, resetSessionUI, setConnectionStatus, clearCancelTimer } from './state.ts';
+import { state, setBusy, getHashSessionId, requestNewSession, resetSessionUI, setConnectionStatus, clearCancelTimer, reloadSnapshot } from './state.ts';
 import { addSystem, finishThinking, finishAssistant, finishBash, scrollToBottom } from './render.ts';
 import { handleEvent, loadHistory, loadNewEvents, retryUnconfirmedPermissions, fallbackToNextSession } from './events.ts';
 import * as api from './api.ts';
@@ -139,7 +139,6 @@ async function resumeAndLoad(sessionId: string, incremental: boolean, gen: numbe
         cwd: session.cwd as string,
         title: session.title as string | null,
         configOptions: session.configOptions,
-        busyKind: session.busyKind,
       });
     } catch {
       if (gen !== state.sessionSwitchGen) return;
@@ -147,17 +146,24 @@ async function resumeAndLoad(sessionId: string, incremental: boolean, gen: numbe
       return;
     }
     if (gen !== state.sessionSwitchGen) return;
-    await loadNewEvents(sessionId);
+    // Load snapshot in parallel with catch-up events (runtime state vs history)
+    await Promise.all([
+      reloadSnapshot(sessionId),
+      loadNewEvents(sessionId),
+    ]);
   } else {
     // Full load: fetch session details and history in parallel
     state.sessionId = null;
     const historyPromise = loadHistory(sessionId);
+    const snapshotPromise = reloadSnapshot(sessionId);
     let session: Record<string, unknown>;
     try {
       const [s, loaded] = await Promise.all([
         api.getSession(sessionId) as Promise<Record<string, unknown>>,
         historyPromise,
       ]);
+      // Wait for snapshot but don't fail the whole load if it fails
+      await snapshotPromise;
       if (gen !== state.sessionSwitchGen) return;
       session = s;
       if (!loaded) {
@@ -174,7 +180,6 @@ async function resumeAndLoad(sessionId: string, incremental: boolean, gen: numbe
       cwd: session.cwd as string,
       title: session.title as string | null,
       configOptions: session.configOptions,
-      busyKind: session.busyKind,
     });
   }
 }
@@ -224,10 +229,14 @@ document.addEventListener('visibilitychange', () => {
       api.postVisibility(state.clientId, true, state.sessionId ?? undefined).catch(() => {});
     }
   }
-  // Sync missed events when returning from background (iOS can keep connections
-  // alive while suspending event delivery, silently losing server messages)
+  // Sync missed events + runtime state when returning from background (iOS
+  // can keep connections alive while suspending event delivery, silently
+  // losing server messages). Reload snapshot is cheap and authoritative for
+  // runtime fields (busy).
   if (!document.hidden && state.sessionId && state.lastEventSeq > 0 && !state.replayInProgress) {
-    loadNewEvents(state.sessionId).then(() => scrollToBottom(false));
+    const sid = state.sessionId;
+    Promise.all([reloadSnapshot(sid), loadNewEvents(sid)])
+      .then(() => scrollToBottom(false));
   }
 });
 

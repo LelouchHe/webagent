@@ -256,4 +256,113 @@ describe("state", () => {
       assert.equal(globalThis.document.title, ">_");
     });
   });
+
+  describe("snapshot / state_patch", () => {
+    function snap(seq: number, busy: any, sessionExtras: Record<string, any> = {}) {
+      return {
+        version: 1,
+        seq,
+        session: {
+          id: "s",
+          title: null,
+          cwd: "/",
+          model: null,
+          mode: null,
+          createdAt: null,
+          lastEventSeq: 0,
+          ...sessionExtras,
+        },
+        runtime: { busy },
+      };
+    }
+
+    it("applySnapshot sets busy and resets lastStateSeq", () => {
+      mod.state.lastStateSeq = 42;
+      mod.setBusy(false);
+      mod.applySnapshot(snap(7, { kind: "agent", since: "", promptId: null }));
+      assert.equal(mod.state.lastStateSeq, 7);
+      assert.equal(mod.state.busy, true);
+    });
+
+    it("applySnapshot with null busy clears busy", () => {
+      mod.setBusy(true);
+      mod.applySnapshot(snap(3, null));
+      assert.equal(mod.state.busy, false);
+      assert.equal(mod.state.lastStateSeq, 3);
+    });
+
+    it("applyStatePatch applies in-order patch and bumps seq", () => {
+      mod.state.lastStateSeq = 5;
+      const ok = mod.applyStatePatch({
+        seq: 6,
+        patch: { runtime: { busy: { kind: "agent", since: "", promptId: null } } },
+      });
+      assert.equal(ok, true);
+      assert.equal(mod.state.lastStateSeq, 6);
+      assert.equal(mod.state.busy, true);
+    });
+
+    it("applyStatePatch returns false on seq gap and does not mutate", () => {
+      mod.state.lastStateSeq = 5;
+      mod.setBusy(false);
+      const ok = mod.applyStatePatch({
+        seq: 8,
+        patch: { runtime: { busy: { kind: "agent", since: "", promptId: null } } },
+      });
+      assert.equal(ok, false);
+      assert.equal(mod.state.lastStateSeq, 5);
+      assert.equal(mod.state.busy, false);
+    });
+
+    it("applyStatePatch with null busy clears busy", () => {
+      mod.state.lastStateSeq = 2;
+      mod.setBusy(true);
+      const ok = mod.applyStatePatch({ seq: 3, patch: { runtime: { busy: null } } });
+      assert.equal(ok, true);
+      assert.equal(mod.state.busy, false);
+    });
+
+    it("reloadSnapshot applies fetched snapshot", async () => {
+      const body = JSON.stringify(snap(11, { kind: "bash", since: "", promptId: null }));
+      globalThis.fetch = (async (url: string) => {
+        assert.ok(url.endsWith("/snapshot"));
+        return { ok: true, status: 200, text: async () => body, json: async () => JSON.parse(body) };
+      }) as any;
+      const result = await mod.reloadSnapshot("s1");
+      assert.ok(result);
+      assert.equal(mod.state.lastStateSeq, 11);
+      assert.equal(mod.state.busy, true);
+    });
+
+    it("reloadSnapshot returns null on failure", async () => {
+      globalThis.fetch = (async () => { throw new Error("net"); }) as any;
+      const result = await mod.reloadSnapshot("s1");
+      assert.equal(result, null);
+    });
+
+    it("applySnapshot populates display fallback when configOptions empty", () => {
+      mod.state.configOptions = [];
+      mod.applySnapshot(snap(1, null, { mode: "#plan", model: "gpt-5.4" }));
+      assert.equal(mod.getFallback("mode"), "#plan");
+      assert.equal(mod.getFallback("model"), "gpt-5.4");
+      assert.ok(mod.dom.inputArea.classList.contains("plan-mode"));
+    });
+
+    it("applySnapshot does NOT overwrite fallback when configOptions populated", () => {
+      mod.state.configOptions = [
+        { id: "mode", name: "Mode", currentValue: "#autopilot", options: [{ value: "#autopilot", name: "auto" }] },
+      ];
+      mod.applySnapshot(snap(1, null, { mode: "#plan", model: "gpt-5.4" }));
+      assert.equal(mod.getFallback("mode"), null, "fallback must remain unset when configOptions wins");
+    });
+
+    it("updateConfigOptions clears fallback when populated non-empty", () => {
+      mod.setFallbackFromSnapshot({ session: { mode: "#plan", model: "gpt-5.4" } });
+      assert.equal(mod.getFallback("mode"), "#plan");
+      mod.updateConfigOptions([
+        { id: "mode", name: "Mode", currentValue: "#autopilot", options: [{ value: "#autopilot", name: "auto" }] },
+      ]);
+      assert.equal(mod.getFallback("mode"), null);
+    });
+  });
 });

@@ -180,9 +180,16 @@ document.addEventListener('keydown', (e) => {
 });
 
 // Cycle mode helper
+let lastModeUnavailableWarnTs = 0;
 function cycleMode() {
   const opt = getConfigOption('mode');
-  if (!opt || !opt.options.length) return;
+  if (!opt || !opt.options.length) {
+    if (Date.now() - lastModeUnavailableWarnTs > 3000) {
+      addSystem('Mode switcher temporarily unavailable. Try `/new` to start a fresh session.');
+      lastModeUnavailableWarnTs = Date.now();
+    }
+    return;
+  }
   const idx = opt.options.findIndex(o => o.value === opt.currentValue);
   const next = opt.options[(idx + 1) % opt.options.length];
   opt.currentValue = next.value;

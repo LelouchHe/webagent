@@ -94,6 +94,10 @@ describe("connection", () => {
       if (url === "/api/v1/sse-ticket" && init?.method === "POST") {
         return mockResponse({ ticket: "tkt-test", expiresIn: 60 });
       }
+      // Auto-stub snapshot endpoint so tests that don't care about it don't explode.
+      if (url.endsWith("/snapshot")) {
+        return mockResponse({ version: 1, seq: 0, session: {}, runtime: { busy: null } });
+      }
       return handler(url, init);
     }) as any;
   }

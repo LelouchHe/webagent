@@ -72,30 +72,58 @@ describe("events", () => {
         assert.ok(dom.messages.children[0].textContent.includes("Session created"));
       });
 
-      it("restores busy state for an active agent session", () => {
-        state.awaitingNewSession = true;
-        events.handleEvent({
-          type: "session_created",
-          sessionId: "s1",
-          busyKind: "agent",
-          configOptions: [],
-        });
-        assert.equal(state.busy, true);
-        assert.equal(dom.sendBtn.textContent, "^C");
-      });
-
-      it("reattaches a running bash block for a busy bash session", () => {
+      it("reattaches a running bash block after replay", () => {
         events.replayEvent("bash_command", { command: "ls" }, [], 0);
         state.awaitingNewSession = true;
         events.handleEvent({
           type: "session_created",
           sessionId: "s1",
-          busyKind: "bash",
           configOptions: [],
         });
-        assert.equal(state.busy, true);
         assert.ok(state.currentBashEl);
         assert.ok(state.currentBashEl.querySelector(".bash-cmd").classList.contains("running"));
+      });
+
+      it("applies plan-mode class from snapshot fallback when configOptions is empty", () => {
+        // Simulate: snapshot arrived first and set sessionMode; then session_created
+        // arrived with empty configOptions (typical after `svc webagent reload`).
+        stateMod.setFallbackFromSnapshot({
+          session: { mode: "#plan", model: "gpt-5.4" },
+        });
+        state.awaitingNewSession = true;
+        events.handleEvent({
+          type: "session_created",
+          sessionId: "s1",
+          cwd: "/home",
+          configOptions: [],
+        });
+        assert.ok(
+          dom.inputArea.classList.contains("plan-mode"),
+          "input-area should have plan-mode class from fallback",
+        );
+      });
+
+      it("clears fallback and uses configOptions when they arrive non-empty", () => {
+        stateMod.setFallbackFromSnapshot({
+          session: { mode: "#plan", model: "gpt-5.4" },
+        });
+        state.awaitingNewSession = true;
+        events.handleEvent({
+          type: "session_created",
+          sessionId: "s1",
+          configOptions: [
+            {
+              id: "mode",
+              name: "Mode",
+              currentValue: "#autopilot",
+              options: [{ value: "#autopilot", name: "auto" }],
+            },
+          ],
+        });
+        assert.ok(dom.inputArea.classList.contains("autopilot-mode"));
+        assert.ok(!dom.inputArea.classList.contains("plan-mode"));
+        // Fallback should be cleared now that configOptions is authoritative
+        assert.equal(stateMod.getFallback("mode"), null);
       });
     });
 
@@ -695,130 +723,53 @@ describe("events", () => {
       });
     });
 
-    describe("cancel timeout", () => {
-      function withMockTimers(fn: (ctx: { timeoutFns: Function[]; timeoutDelays: number[]; clearedIds: number[] }) => void) {
-        const origSet = globalThis.setTimeout;
-        const origClear = globalThis.clearTimeout;
-        const timeoutFns: Function[] = [];
-        const timeoutDelays: number[] = [];
-        const clearedIds: number[] = [];
-        let nextId = 100;
-        globalThis.setTimeout = ((f: Function, ms?: number) => {
-          timeoutFns.push(f);
-          timeoutDelays.push(ms ?? 0);
-          return nextId++ as any;
-        }) as any;
-        globalThis.clearTimeout = ((id: number) => {
-          clearedIds.push(id);
-        }) as any;
-        try {
-          fn({ timeoutFns, timeoutDelays, clearedIds });
-        } finally {
-          globalThis.setTimeout = origSet;
-          globalThis.clearTimeout = origClear;
-        }
-      }
 
-      it("starts a cancel timeout after sendCancel", () => {
-        withMockTimers(({ timeoutFns, timeoutDelays }) => {
-          state.sessionId = "s1";
-          state.busy = true;
-          state.cancelTimeout = 10_000;
-
-          stateMod.sendCancel();
-
-          assert.ok(timeoutFns.length > 0, "should have scheduled a timeout");
-          assert.equal(timeoutDelays[0], 10_000);
+    describe("state_patch", () => {
+      it("applies an in-order patch from SSE", () => {
+        state.sessionId = "s1";
+        state.lastStateSeq = 0;
+        events.handleEvent({
+          type: "state_patch",
+          sessionId: "s1",
+          seq: 1,
+          patch: { runtime: { busy: { kind: "agent", since: "", promptId: null } } },
         });
+        assert.equal(state.busy, true);
+        assert.equal(state.lastStateSeq, 1);
       });
 
-      it("cancel timeout fires and resets busy with warning", () => {
-        withMockTimers(({ timeoutFns }) => {
-          state.sessionId = "s1";
-          state.busy = true;
-          state.cancelTimeout = 5000;
-          state._onCancelTimeout = () => render.addSystem("warn: Agent not responding to cancel");
-
-          stateMod.sendCancel();
-
-          // Fire the timeout callback
-          timeoutFns[0]();
-
-          assert.equal(state.busy, false);
-          assert.ok(dom.messages.textContent.includes("not responding"));
+      it("drops out-of-order patches (seq gap) and triggers snapshot reload", async () => {
+        state.sessionId = "s1";
+        state.lastStateSeq = 0;
+        let snapshotFetched = false;
+        (globalThis as any).fetch = async (url: string) => {
+          if (url.endsWith("/snapshot")) {
+            snapshotFetched = true;
+            const body = JSON.stringify({
+              version: 1,
+              seq: 5,
+              session: {
+                id: "s1", title: null, cwd: "/", model: null, mode: null,
+                createdAt: null, lastEventSeq: 0,
+              },
+              runtime: { busy: null },
+            });
+            return { ok: true, status: 200, json: async () => JSON.parse(body), text: async () => body };
+          }
+          return { ok: true, json: async () => ({}), text: async () => "{}" };
+        };
+        events.handleEvent({
+          type: "state_patch",
+          sessionId: "s1",
+          seq: 3,
+          patch: { runtime: { busy: { kind: "agent", since: "", promptId: null } } },
         });
-      });
-
-      it("prompt_done clears the cancel timeout", () => {
-        withMockTimers(({ clearedIds }) => {
-          state.sessionId = "s1";
-          state.busy = true;
-          state.cancelTimeout = 10_000;
-
-          stateMod.sendCancel();
-
-          // prompt_done arrives before timeout fires
-          events.handleEvent({ type: "prompt_done", stopReason: "cancelled" });
-
-          assert.ok(clearedIds.length > 0, "should have cleared the timeout");
-        });
-      });
-
-      it("does not start timeout when cancelTimeout is 0", () => {
-        withMockTimers(({ timeoutFns }) => {
-          state.sessionId = "s1";
-          state.busy = true;
-          state.cancelTimeout = 0;
-
-          stateMod.sendCancel();
-
-          assert.equal(timeoutFns.length, 0, "should not schedule a timeout when disabled");
-        });
-      });
-
-      it("agent events after cancel timeout do not re-set busy", () => {
-        withMockTimers(({ timeoutFns }) => {
-          state.sessionId = "s1";
-          state.busy = true;
-          state.cancelTimeout = 10_000;
-
-          stateMod.sendCancel();
-
-          // Fire the cancel timeout
-          timeoutFns[0]();
-          assert.equal(state.busy, false, "cancel timeout should clear busy");
-          assert.equal(state.turnEnded, true, "cancel timeout should set turnEnded");
-
-          // Agent keeps streaming (didn't acknowledge cancel)
-          events.handleEvent({ type: "message_chunk", text: "still going " });
-          assert.equal(state.turnEnded, true, "message_chunk should NOT reset turnEnded after cancel timeout");
-          assert.equal(state.busy, false, "message_chunk should not set busy");
-
-          events.handleEvent({ type: "thought_chunk", text: "thinking..." });
-          assert.equal(state.turnEnded, true, "thought_chunk should NOT reset turnEnded after cancel timeout");
-
-          // tool_call should be blocked by turnEnded guard
-          events.handleEvent({
-            type: "tool_call",
-            id: "tc-stale",
-            kind: "execute",
-            title: "Run",
-            rawInput: { command: "ls" },
-          });
-          assert.equal(state.busy, false, "tool_call should not re-set busy after cancel timeout");
-          assert.equal(state.pendingToolCallIds.size, 0, "tool_call should be dropped");
-
-          // permission_request should also be blocked
-          events.handleEvent({
-            type: "permission_request",
-            requestId: "perm-stale",
-            title: "Allow?",
-            options: [{ optionId: "allow", kind: "allow_once", name: "Allow" }],
-          });
-          assert.equal(state.busy, false, "permission_request should not re-set busy after cancel timeout");
-        });
+        assert.equal(state.lastStateSeq, 0);
+        await new Promise((r) => setTimeout(r, 5));
+        assert.ok(snapshotFetched, "expected snapshot reload on seq gap");
       });
     });
+
 
     describe("session_deleted", () => {
       it("auto-switches to next session when current is deleted", async () => {

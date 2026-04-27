@@ -54,6 +54,11 @@ export function getSession(id: string): Promise<Record<string, unknown>> {
   return request("/api/v1/sessions/" + id);
 }
 
+/** client-server-split M1: fetch the current runtime snapshot. */
+export function getSnapshot(id: string): Promise<Record<string, unknown>> {
+  return request("/api/v1/sessions/" + id + "/snapshot");
+}
+
 // --- Prompt ---
 
 export function sendMessage(sessionId: string, text: string, images?: Array<{ data: string; mimeType: string; path?: string }>): Promise<unknown> {

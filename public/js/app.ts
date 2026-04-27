@@ -73,7 +73,6 @@ if ('serviceWorker' in navigator) {
           cwd: session.cwd as string,
           title: session.title as string | null,
           configOptions: session.configOptions,
-          busyKind: session.busyKind,
         });
         if (loaded) scrollToBottom(true);
       }).catch(() => {

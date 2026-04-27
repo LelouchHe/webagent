@@ -48,6 +48,13 @@ export const state = {
   sessionTitle: null as string | null,
   awaitingNewSession: false,
   configOptions: [] as ConfigOption[],
+  // Fallback copies of session.mode / session.model from snapshot. Used by
+  // updateModeUI / updateStatusBar when configOptions is empty (typical after
+  // `svc webagent reload` before the lifecycle probe warms the global cache).
+  // Written only by setFallbackFromSnapshot (and cleared by clearFallback) —
+  // external code must go through getFallback() to read.
+  sessionMode: null as string | null,
+  sessionModel: null as string | null,
   currentAssistantEl: null as HTMLElement | null,
   currentAssistantText: '',
   currentThinkingEl: null as HTMLElement | null,
@@ -73,6 +80,10 @@ export const state = {
   _cancelTimerId: null as ReturnType<typeof setTimeout> | null,
   _onCancelTimeout: null as (() => void) | null,
   lastEventSeq: 0,
+  // client-server-split M1: monotonic seq from snapshot + state_patch stream.
+  // Incremented by applyStatePatch; reset by applySnapshot. A mismatch
+  // (patch.seq !== lastStateSeq + 1) triggers reloadSnapshot().
+  lastStateSeq: 0,
   // Pagination state for lazy-loading older events
   oldestLoadedSeq: 0,
   hasMoreHistory: false,
@@ -111,20 +122,44 @@ export function setConfigValue(id: string, value: string) {
 }
 export function updateConfigOptions(newOptions: ConfigOption[]) {
   state.configOptions = newOptions;
+  if (newOptions.length > 0) clearFallback();
   updateModeUI();
   updateStatusBar();
 }
 
+// --- Display fallback (Bug A) ---
+// When configOptions is empty (e.g. after reload before the lifecycle probe
+// populates the global cache), the agent-side mode/model is still in effect
+// (DB-persisted), so updateModeUI/updateStatusBar fall back to snapshot values.
+// Single-writer: only setFallbackFromSnapshot writes these fields.
+export function setFallbackFromSnapshot(snap: { session: { mode?: string | null; model?: string | null } }): void {
+  // Guard: once configOptions is populated it becomes the single source of
+  // truth — don't let a late snapshot overwrite it with stale fallback.
+  if (state.configOptions.length > 0) return;
+  state.sessionMode = snap.session.mode ?? null;
+  state.sessionModel = snap.session.model ?? null;
+}
+export function clearFallback(): void {
+  state.sessionMode = null;
+  state.sessionModel = null;
+}
+export function getFallback(key: 'mode' | 'model'): string | null {
+  return key === 'mode' ? state.sessionMode : state.sessionModel;
+}
+
 export function updateModeUI() {
   dom.inputArea.classList.remove('plan-mode', 'autopilot-mode');
-  const modeValue = getConfigValue('mode') || '';
+  // Empty-string `currentValue` should fall through to the fallback, not
+  // terminate the chain. `??` would keep `""` as the winner; `||` skips it.
+  const modeValue = getConfigValue('mode') || getFallback('mode') || '';
   if (modeValue.includes('#plan')) dom.inputArea.classList.add('plan-mode');
   else if (modeValue.includes('#autopilot')) dom.inputArea.classList.add('autopilot-mode');
 }
 
 export function updateStatusBar() {
   if (!dom.statusBar) return;
-  const model = getConfigValue('model');
+  // See updateModeUI for why `||` (not `??`).
+  const model = getConfigValue('model') || getFallback('model');
   const cwd = state.sessionCwd || '';
   dom.statusBar.textContent = '';
   if (cwd) {
@@ -137,6 +172,73 @@ export function updateStatusBar() {
     dom.statusBar.appendChild(cwdSpan);
   } else if (model) {
     dom.statusBar.textContent = model;
+  }
+}
+
+// --- Snapshot / state_patch (client-server-split M1) ---
+
+export interface SessionSnapshot {
+  version: number;
+  seq: number;
+  session: { id: string; title: string | null; cwd: string; model: string | null; mode: string | null; createdAt: string | null; lastEventSeq: number };
+  runtime: {
+    busy: { kind: 'agent' | 'bash'; since: string; promptId: string | null } | null;
+    pendingPermissions?: unknown[];
+    streaming?: { assistant: boolean; thinking: boolean };
+  };
+}
+
+export interface StatePatchPayload {
+  runtime?: { busy?: { kind: 'agent' | 'bash'; since: string; promptId: string | null } | null };
+}
+
+/**
+ * Install the full runtime snapshot from the server. Called on cold-load,
+ * reconnect, long backgrounding, or whenever a state_patch seq gap is
+ * detected. Resets lastStateSeq to snapshot.seq so subsequent patches are
+ * validated against the snapshot baseline.
+ */
+export function applySnapshot(snap: SessionSnapshot): void {
+  state.lastStateSeq = snap.seq;
+  const busy = snap.runtime?.busy ?? null;
+  setBusy(busy != null);
+  if (busy == null) clearCancelTimer();
+  // Bug A: populate display fallback from snapshot and repaint. Guarded
+  // internally — no-op if configOptions is already non-empty.
+  setFallbackFromSnapshot(snap);
+  updateModeUI();
+  updateStatusBar();
+}
+
+/**
+ * Apply an incremental state_patch. Returns true when the patch was applied
+ * in order; false when the seq gap indicates we missed patches (caller must
+ * reloadSnapshot). Out-of-order patches are dropped silently.
+ */
+export function applyStatePatch(patchEvent: { seq: number; patch: StatePatchPayload }): boolean {
+  if (patchEvent.seq !== state.lastStateSeq + 1) return false;
+  state.lastStateSeq = patchEvent.seq;
+  const r = patchEvent.patch.runtime;
+  if (r && 'busy' in r) {
+    const busy = r.busy ?? null;
+    setBusy(busy != null);
+    if (busy == null) clearCancelTimer();
+  }
+  return true;
+}
+
+/**
+ * Fetch the authoritative snapshot for a session and apply it. Returns the
+ * snapshot (for callers that need session meta like lastEventSeq) or null
+ * on failure.
+ */
+export async function reloadSnapshot(sessionId: string): Promise<SessionSnapshot | null> {
+  try {
+    const snap = await api.getSnapshot(sessionId) as SessionSnapshot;
+    applySnapshot(snap);
+    return snap;
+  } catch {
+    return null;
   }
 }
 
@@ -182,6 +284,7 @@ export function resetSessionUI() {
   if (state._cancelTimerId != null) clearTimeout(state._cancelTimerId);
   state._cancelTimerId = null;
   state.lastEventSeq = 0;
+  state.lastStateSeq = 0;
   state.oldestLoadedSeq = 0;
   state.hasMoreHistory = false;
   state.loadingOlderEvents = false;
@@ -197,27 +300,18 @@ export function resetSessionUI() {
   state.sessionTitle = null;
   state.sessionCwd = null;
   state.configOptions = [];
+  clearFallback();
   updateSessionInfo(null, null);
   if (dom.statusBar) dom.statusBar.textContent = '';
 }
 
 // Send cancel without UI side-effect — callers add their own feedback.
-// If state.cancelTimeout > 0, arms a timer that calls onCancelTimeout() when
-// the agent fails to acknowledge the cancel in time.
+// The backend (session-state.ts `armCancelSafety`) owns the safety net that
+// force-clears busy if the agent fails to acknowledge the cancel within the
+// configured timeout; the resulting `state_patch` lands here via SSE.
 export function sendCancel() {
   if (!state.busy || !state.sessionId) return false;
   api.cancelSession(state.sessionId).catch(() => {});
-  clearCancelTimer();
-  if (state.cancelTimeout > 0) {
-    state._cancelTimerId = setTimeout(() => {
-      state._cancelTimerId = null;
-      if (state.busy) {
-        state.turnEnded = true;
-        setBusy(false);
-        state._onCancelTimeout?.();
-      }
-    }, state.cancelTimeout);
-  }
   return true;
 }
 

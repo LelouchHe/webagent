@@ -13,7 +13,7 @@
 import {
   state, dom, setBusy, setConfigValue, getConfigOption, updateConfigOptions,
   updateModeUI, updateStatusBar, resetSessionUI, requestNewSession, setHashSessionId, updateSessionInfo,
-  setConnectionStatus, clearCancelTimer, onSessionReset,
+  setConnectionStatus, clearCancelTimer, onSessionReset, applyStatePatch, reloadSnapshot,
 } from './state.ts';
 import type { ConfigOption } from './state.ts';
 import {
@@ -58,7 +58,6 @@ export async function fallbackToNextSession(expiredId: string | null, cwd?: stri
         cwd: session.cwd as string,
         title: session.title as string | null,
         configOptions: session.configOptions,
-        busyKind: session.busyKind,
       });
       if (loaded) scrollToBottom(true);
       return;
@@ -801,6 +800,17 @@ export function handleEvent(msg: AgentEvent) {
       }
       break;
 
+    case 'state_patch': {
+      // client-server-split M1: runtime state (busy, future: pending perms,
+      // streaming) flows through snapshot + patch, not replay.
+      const applied = applyStatePatch({ seq: msg.seq, patch: msg.patch });
+      if (!applied && state.sessionId === msg.sessionId) {
+        // seq gap (missed patches) → reload the authoritative snapshot
+        reloadSnapshot(state.sessionId);
+      }
+      break;
+    }
+
     case 'session_created':
       // Only switch to the new session if this client requested it
       if (!state.awaitingNewSession && state.sessionId && msg.sessionId !== state.sessionId) {
@@ -811,6 +821,13 @@ export function handleEvent(msg: AgentEvent) {
       state.sessionCwd = msg.cwd || state.sessionCwd;
       state.sessionTitle = msg.title || null;
       if (msg.configOptions?.length) updateConfigOptions(msg.configOptions);
+      // Always repaint: when configOptions is empty (typical after reload
+      // before the lifecycle probe warms the cache), updateModeUI/
+      // updateStatusBar fall back to state.sessionMode/sessionModel set by
+      // applySnapshot. Without this an empty session_created leaves the
+      // input area styled as default mode.
+      updateModeUI();
+      updateStatusBar();
       setHashSessionId(state.sessionId);
       // Report which session this client is now viewing (for per-session push suppression)
       if (state.clientId) {
@@ -821,15 +838,14 @@ export function handleEvent(msg: AgentEvent) {
       dom.input.disabled = false;
       dom.sendBtn.disabled = false;
       dom.input.placeholder = 'Message or ?';
-      setBusy(Boolean(msg.busyKind));
       state.newTurnStarted = false;
-      if (msg.busyKind === 'bash') {
-        const pendingBashEl = document.getElementById('bash-replay-pending');
-        if (pendingBashEl) {
-          pendingBashEl.removeAttribute('id');
-          pendingBashEl.querySelector('.bash-cmd')?.classList.add('running');
-          state.currentBashEl = pendingBashEl;
-        }
+      // Adopt any in-flight bash block from history replay (snapshot carries
+      // the busy truth; we just need to hook up the DOM element if present).
+      const pendingBashEl = document.getElementById('bash-replay-pending');
+      if (pendingBashEl) {
+        pendingBashEl.removeAttribute('id');
+        pendingBashEl.querySelector('.bash-cmd')?.classList.add('running');
+        state.currentBashEl = pendingBashEl;
       } else {
         state.currentBashEl = null;
       }
