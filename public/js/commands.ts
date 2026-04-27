@@ -12,6 +12,7 @@ import {
   buildCandidates,
   type CmdNode,
   type Candidate,
+  type FetchData,
 } from "./slash-tree.ts";
 import { renderItem } from "./slash-render.ts";
 import { ROOT } from "./slash-commands.ts";
@@ -23,7 +24,7 @@ export { handleSlashCommand };
 
 let currentPath: string | null = null;
 let currentNode: CmdNode = ROOT;
-let currentData: unknown[] | "loading" | "error" | undefined = undefined;
+let currentData: FetchData | undefined = undefined;
 let candidates: Candidate[] = [];
 let selectedIdx = -1;
 let dismissedFor: string | null = null;
@@ -72,9 +73,11 @@ export function updateSlashMenu(): void {
             currentData = items;
             rebuild(currentTailQueryFromInput(), pathPrefix);
           },
-          () => {
+          (err: unknown) => {
             if (currentPath !== myPath) return;
-            currentData = "error";
+            const msg =
+              err instanceof Error && err.message ? err.message : "fetch failed";
+            currentData = { error: msg };
             rebuild(currentTailQueryFromInput(), pathPrefix);
           },
         );

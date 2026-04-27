@@ -213,15 +213,31 @@ describe("slash-tree — buildCandidates", () => {
     assert.equal(c[0].spec.primary, "(loading...)");
   });
 
-  it("placeholder (error)", () => {
+  it("placeholder (error) — fallback when message empty", () => {
     const inbox: CmdNode = {
       name: "/inbox",
       fetch: async () => [],
       toSpec: (item: any) => ({ primary: item.id }),
     };
-    const c = buildCandidates(inbox, "", "error");
+    const c = buildCandidates(inbox, "", { error: "" });
     assert.equal(c.length, 1);
     assert.equal(c[0].spec.primary, "(error)");
+  });
+
+  it("placeholder shows error message when provided", () => {
+    const inbox: CmdNode = {
+      name: "/inbox",
+      fetch: async () => [],
+      toSpec: (item: any) => ({ primary: item.id }),
+    };
+    const c = buildCandidates(inbox, "", {
+      error: "admin scope required to manage tokens",
+    });
+    assert.equal(c.length, 1);
+    assert.equal(
+      c[0].spec.primary,
+      "(admin scope required to manage tokens)",
+    );
   });
 
   it("placeholder (none) when fetch returns empty array", () => {

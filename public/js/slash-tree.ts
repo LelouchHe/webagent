@@ -28,6 +28,10 @@ export interface CmdNode {
   onSelect?: () => void | Promise<void>;
 }
 
+/** Walker's data-state for a fetch node. Either a resolved array, the
+ *  "loading" sentinel, or an error wrapper carrying the message to display. */
+export type FetchData = unknown[] | "loading" | { error: string };
+
 /** Output of buildCandidates — one entry per visible row. */
 export interface Candidate {
   spec: SlashItemSpec;
@@ -99,7 +103,7 @@ export function resolvePath(
 export function buildCandidates(
   node: CmdNode,
   tailQuery: string,
-  data?: unknown[] | "loading" | "error",
+  data?: FetchData,
 ): Candidate[] {
   const out: Candidate[] = [];
   const q = tailQuery.trim().toLowerCase();
@@ -126,12 +130,19 @@ export function buildCandidates(
   let dataSpecs: SlashItemSpec[] = [];
   let dataState: "none" | "loading" | "error" | "empty" | "no-match" | "ok" =
     "none";
+  let errorMsg = "";
 
   if (node.fetch && node.toSpec) {
     if (data === "loading") {
       dataState = "loading";
-    } else if (data === "error") {
+    } else if (
+      data &&
+      typeof data === "object" &&
+      !Array.isArray(data) &&
+      "error" in data
+    ) {
       dataState = "error";
+      errorMsg = (data as { error: string }).error;
     } else if (Array.isArray(data)) {
       if (data.length === 0) {
         dataState = "empty";
@@ -186,7 +197,11 @@ export function buildCandidates(
       kind: "placeholder",
     });
   } else if (dataState === "error") {
-    out.push({ spec: { primary: "(error)" }, prefix: "", kind: "placeholder" });
+    out.push({
+      spec: { primary: `(${errorMsg || "error"})` },
+      prefix: "",
+      kind: "placeholder",
+    });
   } else if (dataState === "empty") {
     out.push({ spec: { primary: "(none)" }, prefix: "", kind: "placeholder" });
   } else if (dataState === "no-match") {
