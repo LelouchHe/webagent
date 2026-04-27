@@ -12,6 +12,7 @@ import type {
   AgentEvent,
   PendingPermission,
 } from "../src/types.ts";
+import { mockBridgeStubs } from "./fixtures.ts";
 
 function makeRequest(
   port: number,
@@ -54,11 +55,12 @@ function createMockBridge() {
   let lastResolve: { requestId: string; optionId: string } | null = null;
   let lastDeny: string | null = null;
   return {
+    ...mockBridgeStubs(),
     newSession: async () => {
       idCounter++;
       return `mock-session-${idCounter}`;
     },
-    loadSession: async () => ({ configOptions }),
+    loadSession: async () => ({ sessionId: "", configOptions }),
     setConfigOption: async (_s: string, configId: string, value: string) =>
       configOptions.map((opt) =>
         opt.id === configId ? { ...opt, currentValue: value } : opt,

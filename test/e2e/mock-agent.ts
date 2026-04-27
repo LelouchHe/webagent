@@ -106,7 +106,6 @@ class MockAgent implements Agent {
       this.sessions.set(params.sessionId, session);
     }
     return {
-      sessionId: params.sessionId,
       configOptions: session.configOptions,
     };
   }

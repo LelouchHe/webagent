@@ -46,9 +46,10 @@ describe("login-core", () => {
         fetch: fetchFn as typeof fetch,
       });
       assert.equal(r.ok, true);
-      assert.ok(captured); // runtime guard
-      assert.equal(captured.auth, "Bearer wat_padded");
-      assert.equal(captured.url, "/api/v1/auth/verify");
+      const c = captured as { url: string; auth: string } | null;
+      assert.ok(c); // runtime guard
+      assert.equal(c.auth, "Bearer wat_padded");
+      assert.equal(c.url, "/api/v1/auth/verify");
     });
 
     it("stores token in localStorage on 200", async () => {

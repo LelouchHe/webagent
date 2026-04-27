@@ -8,6 +8,7 @@ import { Store } from "../src/store.ts";
 import { SessionManager } from "../src/session-manager.ts";
 import { createRequestHandler } from "../src/routes.ts";
 import type { ConfigOption, AgentEvent } from "../src/types.ts";
+import { mockBridgeStubs } from "./fixtures.ts";
 
 function makeRequest(
   port: number,
@@ -71,11 +72,13 @@ function createMockBridge() {
     images?: unknown[];
   } | null = null;
   return {
+    ...mockBridgeStubs(),
     newSession: async (_cwd: string) => {
       idCounter++;
       return `mock-session-${idCounter}`;
     },
     loadSession: async (_sessionId: string, _cwd: string) => ({
+      sessionId: _sessionId,
       configOptions,
     }),
     setConfigOption: async (
@@ -366,13 +369,13 @@ describe("Prompt REST API", () => {
       const sessionId = await createSession();
       let promptCount = 0;
       const origPrompt = mockBridge.prompt;
-      mockBridge.prompt = async (...args: unknown[]) => {
+      mockBridge.prompt = (async (...args: unknown[]) => {
         promptCount++;
         return (origPrompt as (...a: unknown[]) => Promise<unknown>).apply(
           mockBridge,
           args,
         );
-      };
+      }) as typeof mockBridge.prompt;
 
       const headers = { "X-Client-Op-Id": "op-prompt-1" };
       const res1 = await makeRequest(
@@ -541,12 +544,10 @@ describe("Prompt REST API", () => {
         JSON.stringify({ text: "hello world" }),
       );
 
-      assert.ok(
-        generatedTitle,
-        "titleService.generate should have been called",
-      );
-      assert.equal(generatedTitle.text, "hello world");
-      assert.equal(generatedTitle.sessionId, sessionId);
+      const gt = generatedTitle as TitleGenResult | null;
+      assert.ok(gt, "titleService.generate should have been called");
+      assert.equal(gt.text, "hello world");
+      assert.equal(gt.sessionId, sessionId);
       const titleEvent = titleBroadcast.find(
         (e: any) => e.type === "session_title_updated",
       );

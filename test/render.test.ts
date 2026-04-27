@@ -190,8 +190,8 @@ describe("render", () => {
 
       assert.equal(state.currentThinkingEl, null);
       assert.equal(state.currentThinkingText, "");
-      assert.equal(el.querySelector("summary").textContent, "⠿ thought");
-      assert.ok(!el.querySelector("summary").classList.contains("active"));
+      assert.equal(el.querySelector("summary")!.textContent, "⠿ thought");
+      assert.ok(!el.querySelector("summary")!.classList.contains("active"));
     });
   });
 
@@ -225,7 +225,7 @@ describe("render", () => {
       dom.messages.appendChild(details);
 
       details
-        .querySelector(".diff-view")
+        .querySelector(".diff-view")!
         .dispatchEvent(
           new globalThis.window.MouseEvent("click", { bubbles: true }),
         );

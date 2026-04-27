@@ -61,7 +61,9 @@ describe("HTTP routes", () => {
       limits: {
         bash_output: 1_048_576,
         image_upload: 10_485_760,
+        cancel_timeout: 10_000,
       },
+      sseManager: { broadcast() {} } as any,
     });
     server = http.createServer(handler);
     await new Promise<void>((resolve) =>
@@ -396,7 +398,9 @@ describe("Image upload", () => {
       limits: {
         bash_output: 1_048_576,
         image_upload: UPLOAD_LIMIT,
+        cancel_timeout: 10_000,
       },
+      sseManager: { broadcast() {} } as any,
     });
     server = http.createServer(handler);
     await new Promise<void>((resolve) =>
@@ -540,6 +544,7 @@ describe("Push API routes", () => {
         cancel_timeout: 10_000,
       },
       pushService,
+      sseManager: { broadcast() {} } as any,
     });
     server = http.createServer(handler);
     await new Promise<void>((resolve) =>
@@ -655,6 +660,7 @@ describe("Push API routes", () => {
         image_upload: 10_485_760,
         cancel_timeout: 10_000,
       },
+      sseManager: { broadcast() {} } as any,
     });
     const server2 = http.createServer(handler2);
     await new Promise<void>((resolve) =>

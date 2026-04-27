@@ -29,7 +29,7 @@ describe("HTML entrypoint registry", () => {
     const registered = HTML_ENTRYPOINTS.map((e) => e.file);
     for (const f of onDisk) {
       assert.ok(
-        registered.includes(f),
+        registered.includes(f as (typeof HTML_ENTRYPOINTS)[number]["file"]),
         `public/${f} exists on disk but is NOT registered in HTML_ENTRYPOINTS (src/routes.ts). ` +
           `Add { urlPath: "...", file: "${f}" } to HTML_ENTRYPOINTS so CSP, auth whitelist, ` +
           `and inline-asset tests cover it.`,

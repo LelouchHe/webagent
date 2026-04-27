@@ -7,6 +7,7 @@ import { Store } from "../src/store.ts";
 import { SessionManager } from "../src/session-manager.ts";
 import { handleAgentEvent } from "../src/event-handler.ts";
 import type { AgentEvent } from "../src/types.ts";
+import { makeEventHandlerConfig } from "./fixtures.ts";
 
 function createMockSseManager() {
   const broadcasted: AgentEvent[] = [];
@@ -62,7 +63,7 @@ describe("handleAgentEvent", () => {
       sessions,
       store,
       bridge,
-      { cancelTimeout: 10000 },
+      makeEventHandlerConfig(),
       sseManager as any,
     );
 
@@ -87,7 +88,7 @@ describe("handleAgentEvent", () => {
       sessions,
       store,
       bridge,
-      { cancelTimeout: 10000 },
+      makeEventHandlerConfig(),
       sseManager as any,
     );
     assert.equal(sessions.thinkingBuffers.get("s1"), "hmm");
@@ -98,7 +99,7 @@ describe("handleAgentEvent", () => {
       sessions,
       store,
       bridge,
-      { cancelTimeout: 10000 },
+      makeEventHandlerConfig(),
       sseManager as any,
     );
     assert.equal(sessions.thinkingBuffers.has("s1"), false);
@@ -123,7 +124,7 @@ describe("handleAgentEvent", () => {
       sessions,
       store,
       bridge,
-      { cancelTimeout: 10000 },
+      makeEventHandlerConfig(),
       sseManager as any,
     );
 
@@ -144,7 +145,7 @@ describe("handleAgentEvent", () => {
       sessions,
       store,
       bridge,
-      { cancelTimeout: 10000 },
+      makeEventHandlerConfig(),
       sseManager as any,
     );
 
@@ -167,7 +168,7 @@ describe("handleAgentEvent", () => {
       sessions,
       store,
       bridge,
-      { cancelTimeout: 10000 },
+      makeEventHandlerConfig(),
       sseManager as any,
     );
 
@@ -186,7 +187,7 @@ describe("handleAgentEvent", () => {
       sessions,
       store,
       bridge,
-      { cancelTimeout: 10000 },
+      makeEventHandlerConfig(),
       sseManager as any,
     );
 
@@ -205,7 +206,7 @@ describe("handleAgentEvent", () => {
       sessions,
       store,
       bridge,
-      { cancelTimeout: 10000 },
+      makeEventHandlerConfig(),
       sseManager as any,
     );
 
@@ -234,7 +235,7 @@ describe("handleAgentEvent", () => {
       sessions,
       store,
       bridge,
-      { cancelTimeout: 10000 },
+      makeEventHandlerConfig(),
       sseManager as any,
     );
 
@@ -278,7 +279,7 @@ describe("handleAgentEvent", () => {
       sessions,
       store,
       bridge,
-      { cancelTimeout: 10000 },
+      makeEventHandlerConfig(),
       sseManager as any,
     );
 
@@ -314,7 +315,7 @@ describe("handleAgentEvent", () => {
       sessions,
       store,
       bridge,
-      { cancelTimeout: 10000 },
+      makeEventHandlerConfig(),
       sseManager as any,
     );
 

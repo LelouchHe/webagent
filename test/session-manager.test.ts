@@ -66,9 +66,22 @@ describe("SessionManager", () => {
       store.updateSessionConfig("s1", "mode", "plan-mode");
       store.updateSessionConfig("s1", "reasoning_effort", "high");
       sm.cachedConfigOptions = [
-        { id: "model", name: "Model", currentValue: "mock-model", options: [] },
-        { id: "mode", name: "Mode", currentValue: "agent", options: [] },
         {
+          type: "select",
+          id: "model",
+          name: "Model",
+          currentValue: "mock-model",
+          options: [],
+        },
+        {
+          type: "select",
+          id: "mode",
+          name: "Mode",
+          currentValue: "agent",
+          options: [],
+        },
+        {
+          type: "select",
           id: "reasoning_effort",
           name: "Reasoning",
           currentValue: "medium",
@@ -92,6 +105,7 @@ describe("SessionManager", () => {
           value: string,
         ) {
           configCalls.push({ sessionId, configId, value });
+          return [];
         },
         async loadSession() {
           throw new Error("loadSession should not be called");
@@ -130,6 +144,7 @@ describe("SessionManager", () => {
         },
         async setConfigOption() {
           configCalled = true;
+          return [];
         },
         async loadSession() {
           throw new Error("loadSession should not be called");
@@ -149,7 +164,9 @@ describe("SessionManager", () => {
         async newSession() {
           return "s2";
         },
-        async setConfigOption() {},
+        async setConfigOption() {
+          return [];
+        },
         async loadSession() {
           throw new Error("should not be called");
         },
@@ -186,7 +203,9 @@ describe("SessionManager", () => {
         async newSession() {
           return `new-${nextId++}`;
         },
-        async setConfigOption() {},
+        async setConfigOption() {
+          return [];
+        },
         async loadSession() {
           throw new Error("should not be called");
         },
@@ -211,7 +230,9 @@ describe("SessionManager", () => {
         async newSession() {
           return "new-1";
         },
-        async setConfigOption() {},
+        async setConfigOption() {
+          return [];
+        },
         async loadSession() {
           throw new Error("should not be called");
         },
@@ -438,7 +459,9 @@ describe("SessionManager", () => {
         async newSession() {
           return "";
         },
-        async setConfigOption() {},
+        async setConfigOption() {
+          return [];
+        },
         async loadSession() {
           loadCalled = true;
           return { sessionId: "s1", configOptions: [] };
@@ -452,7 +475,13 @@ describe("SessionManager", () => {
     it("calls loadSession for non-live sessions", async () => {
       store.createSession("s1", "/x");
       sm.cachedConfigOptions = [
-        { id: "model", name: "Model", currentValue: "m", options: [] },
+        {
+          type: "select",
+          id: "model",
+          name: "Model",
+          currentValue: "m",
+          options: [],
+        },
       ];
 
       let loadCalled = false;
@@ -460,7 +489,9 @@ describe("SessionManager", () => {
         async newSession() {
           return "";
         },
-        async setConfigOption() {},
+        async setConfigOption() {
+          return [];
+        },
         async loadSession() {
           loadCalled = true;
           return { sessionId: "s1", configOptions: [] };
@@ -482,7 +513,9 @@ describe("SessionManager", () => {
         async newSession() {
           return "";
         },
-        async setConfigOption() {},
+        async setConfigOption() {
+          return [];
+        },
         loadSession() {
           loadCount++;
           return new Promise<{ sessionId: string; configOptions: never[] }>(
@@ -513,7 +546,9 @@ describe("SessionManager", () => {
         async newSession() {
           return "";
         },
-        async setConfigOption() {},
+        async setConfigOption() {
+          return [];
+        },
         async loadSession() {
           throw new Error("ACP timeout");
         },

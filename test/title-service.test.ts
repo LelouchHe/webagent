@@ -234,7 +234,7 @@ describe("TitleService", () => {
     sessions.sessionHasTitle.add("session-1");
 
     // Now release the prompt with a generated title
-    releasePrompt?.("Auto Title");
+    releasePrompt!("Auto Title");
     await new Promise((resolve) => setImmediate(resolve));
 
     // The auto-generated title should NOT have been stored

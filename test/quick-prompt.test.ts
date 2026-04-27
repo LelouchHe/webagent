@@ -9,6 +9,7 @@ import { SessionManager } from "../src/session-manager.ts";
 import { SseManager } from "../src/sse-manager.ts";
 import { createRequestHandler } from "../src/routes.ts";
 import type { ConfigOption } from "../src/types.ts";
+import { mockBridgeStubs } from "./fixtures.ts";
 
 function makeRequest(
   port: number,
@@ -60,11 +61,12 @@ function createMockBridge() {
   let idCounter = 0;
   const promptCalls: Array<{ sessionId: string; text: string }> = [];
   return {
+    ...mockBridgeStubs(),
     newSession: async () => {
       idCounter++;
       return `mock-session-${idCounter}`;
     },
-    loadSession: async () => ({ configOptions }),
+    loadSession: async () => ({ sessionId: "", configOptions }),
     setConfigOption: async () => configOptions,
     cancel: async () => {},
     prompt: async (sessionId: string, text: string) => {

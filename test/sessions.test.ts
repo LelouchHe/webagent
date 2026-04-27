@@ -8,6 +8,7 @@ import { Store } from "../src/store.ts";
 import { SessionManager } from "../src/session-manager.ts";
 import { createRequestHandler } from "../src/routes.ts";
 import type { ConfigOption, AgentEvent } from "../src/types.ts";
+import { mockBridgeStubs } from "./fixtures.ts";
 
 function makeRequest(
   port: number,
@@ -56,11 +57,13 @@ function createMockBridge(nextId = "mock-session-1") {
     },
   ];
   return {
+    ...mockBridgeStubs(),
     newSession: async (_cwd: string) => {
       idCounter++;
       return idCounter === 1 ? nextId : `mock-session-${idCounter}`;
     },
     loadSession: async (_sessionId: string, _cwd: string) => ({
+      sessionId: _sessionId,
       configOptions,
     }),
     setConfigOption: async (

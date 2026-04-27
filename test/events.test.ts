@@ -234,7 +234,7 @@ describe("events", () => {
           title: "Read file.ts",
           rawInput: { path: "file.ts" },
         });
-        const el = globalThis.document.getElementById("tc-tc1");
+        const el = globalThis.document.getElementById("tc-tc1")!;
         assert.ok(el);
         assert.ok(el.classList.contains("tool-call"));
         assert.ok(el.textContent.includes("cat"));
@@ -262,7 +262,7 @@ describe("events", () => {
           title: "Run",
           rawInput: { command: "npm test" },
         });
-        const el = globalThis.document.getElementById("tc-tc3");
+        const el = globalThis.document.getElementById("tc-tc3")!;
         assert.ok(el.textContent.includes("npm test"));
       });
     });
@@ -281,9 +281,9 @@ describe("events", () => {
           id: "tc1",
           status: "completed",
         });
-        const el = globalThis.document.getElementById("tc-tc1");
+        const el = globalThis.document.getElementById("tc-tc1")!;
         assert.ok(el.classList.contains("completed"));
-        assert.equal(el.querySelector(".icon").textContent, "✓");
+        assert.equal(el.querySelector(".icon")!.textContent, "✓");
       });
 
       it("updates tool call status to failed", () => {
@@ -299,9 +299,9 @@ describe("events", () => {
           id: "tc2",
           status: "failed",
         });
-        const el = globalThis.document.getElementById("tc-tc2");
+        const el = globalThis.document.getElementById("tc-tc2")!;
         assert.ok(el.classList.contains("failed"));
-        assert.equal(el.querySelector(".icon").textContent, "✗");
+        assert.equal(el.querySelector(".icon")!.textContent, "✗");
       });
 
       it("shows task_complete summary directly without collapsed details", () => {
@@ -318,14 +318,14 @@ describe("events", () => {
           status: "completed",
           content: [{ type: "text", content: { text: "Fixed the login bug" } }],
         });
-        const el = globalThis.document.getElementById("tc-tc-done");
+        const el = globalThis.document.getElementById("tc-tc-done")!;
         assert.ok(el.classList.contains("completed"));
         // Summary should be visible directly, not inside a collapsed <details>
         assert.ok(
           !el.querySelector("details"),
           "task_complete should not use collapsed details",
         );
-        const summary = el.querySelector(".tc-summary");
+        const summary = el.querySelector(".tc-summary")!;
         assert.ok(summary, "should have a .tc-summary element");
         assert.ok(summary.textContent.includes("Fixed the login bug"));
       });
@@ -338,8 +338,8 @@ describe("events", () => {
           title: "Task complete",
           rawInput: {},
         });
-        const el = globalThis.document.getElementById("tc-tc-done2");
-        assert.equal(el.querySelector(".icon").textContent, "✔");
+        const el = globalThis.document.getElementById("tc-tc-done2")!;
+        assert.equal(el.querySelector(".icon")!.textContent, "✔");
       });
     });
 
@@ -1418,7 +1418,7 @@ describe("events", () => {
         [],
         1,
       );
-      const el = globalThis.document.getElementById("tc-t1");
+      const el = globalThis.document.getElementById("tc-t1")!;
       assert.ok(el.classList.contains("completed"));
     });
 
@@ -1444,13 +1444,13 @@ describe("events", () => {
         [],
         1,
       );
-      const el = globalThis.document.getElementById("tc-t-tc");
+      const el = globalThis.document.getElementById("tc-t-tc")!;
       assert.ok(el.classList.contains("completed"));
       assert.ok(
         !el.querySelector("details"),
         "task_complete should not use collapsed details during replay",
       );
-      const summary = el.querySelector(".tc-summary");
+      const summary = el.querySelector(".tc-summary")!;
       assert.ok(summary, "should have visible .tc-summary during replay");
       assert.ok(summary.textContent.includes("Deployed to prod"));
     });

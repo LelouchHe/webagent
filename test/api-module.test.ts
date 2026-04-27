@@ -115,13 +115,13 @@ describe("api module", () => {
       text: () => Promise.resolve(""),
     };
     await api.sendMessage("s1", "hello", [
-      { url: "data:image/png;base64,abc" },
+      { data: "abc", mimeType: "image/png" },
     ]);
     assert.equal(fetchCalls[0].url, "/api/v1/sessions/s1/prompt");
     assert.equal(fetchCalls[0].init!.method, "POST");
     const body = JSON.parse(fetchCalls[0].init!.body as string);
     assert.equal(body.text, "hello");
-    assert.deepEqual(body.images, [{ url: "data:image/png;base64,abc" }]);
+    assert.deepEqual(body.images, [{ data: "abc", mimeType: "image/png" }]);
   });
 
   it("sendMessage omits images when empty", async () => {

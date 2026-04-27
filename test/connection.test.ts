@@ -87,7 +87,14 @@ describe("connection", () => {
     }) as typeof setTimeout;
   });
 
-  function mockResponse(data: any) {
+  type MockResponse = {
+    ok: boolean;
+    status?: number;
+    json: () => Promise<unknown>;
+    text?: () => Promise<string>;
+  };
+
+  function mockResponse(data: any): MockResponse {
     const body = JSON.stringify(data);
     return {
       ok: true,
@@ -98,7 +105,7 @@ describe("connection", () => {
   }
 
   function setFetch(
-    handler: (url: string, init?: RequestInit) => Promise<Response>,
+    handler: (url: string, init?: RequestInit) => Promise<MockResponse>,
   ) {
     globalThis.fetch = (async (url: string, init?: RequestInit) => {
       fetchCalls.push({ url, init });
@@ -117,7 +124,7 @@ describe("connection", () => {
         });
       }
       return handler(url, init);
-    }) as any;
+    }) as unknown as typeof fetch;
   }
 
   async function latestES() {
