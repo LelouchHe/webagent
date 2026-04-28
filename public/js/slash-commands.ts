@@ -518,7 +518,7 @@ export const ROOT: CmdNode = {
     },
     {
       name: "/share",
-      desc: "Share a read-only snapshot — Enter to open, /share revoke <token> to remove",
+      desc: "Share a read-only snapshot",
       // Lists active (published) shares only — preview rows never leak in.
       // Enter on the empty input creates a fresh preview (freeform fallback).
       // Selecting a row opens the share's public URL in a new tab.
@@ -534,7 +534,7 @@ export const ROOT: CmdNode = {
       children: [
         {
           name: "by",
-          desc: "Set author shown to viewers (blank to clear)",
+          desc: "Set author",
           // fetch returns a single-row list with the current value so the
           // submenu surfaces it; freeform handles "type a name + Enter".
           fetch: async () => {
@@ -560,7 +560,7 @@ export const ROOT: CmdNode = {
         },
         {
           name: "revoke",
-          desc: "Take a public share offline — cannot be undone",
+          desc: "Revoke a share",
           fetch: listOwnerShares,
           toSpec: (item: unknown) =>
             shareRowSpec(item as ShareListRow, "revoke"),
@@ -701,12 +701,12 @@ export const PREVIEW_ROOT: CmdNode = {
   children: [
     {
       name: "/publish",
-      desc: "Freeze and publish this preview",
+      desc: "Publish preview",
       onSelect: () => publishPreview(),
     },
     {
       name: "/discard",
-      desc: "Drop this preview (TTL cleans backend)",
+      desc: "Drop preview",
       onSelect: () => {
         discardPreview();
       },
