@@ -16,6 +16,7 @@
 // and never touched from owner code.
 
 import { state } from "../state.ts";
+import { updateModeUI } from "../state.ts";
 import { addSystem } from "../render.ts";
 import { log } from "../log.ts";
 
@@ -102,6 +103,7 @@ export async function createPreview(): Promise<void> {
     }
     const data = (await res.json()) as PreviewResponse;
     state.previewToken = data.token;
+    updateModeUI();
 
     const action = data.reused ? "reused" : "ready";
     addSystem(
@@ -162,6 +164,7 @@ export async function publishPreview(): Promise<void> {
     const data = (await res.json()) as PublishResponse;
     const url = publicUrl(data.public_url, data.token);
     state.previewToken = null;
+    updateModeUI();
     addSystem(
       `share published:\n` +
         `  public URL    ${url}\n` +
@@ -185,6 +188,7 @@ export function discardPreview(): void {
     return;
   }
   state.previewToken = null;
+  updateModeUI();
   addSystem("share: preview dropped");
 }
 

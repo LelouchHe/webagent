@@ -173,7 +173,15 @@ export function getFallback(key: "mode" | "model"): string | null {
 }
 
 export function updateModeUI() {
-  dom.inputArea.classList.remove("plan-mode", "autopilot-mode");
+  dom.inputArea.classList.remove("plan-mode", "autopilot-mode", "preview-mode");
+  if (state.previewToken) {
+    dom.inputArea.classList.add("preview-mode");
+    dom.input.placeholder = "preview · /publish or /discard";
+    return;
+  }
+  if (dom.input.placeholder === "preview · /publish or /discard") {
+    dom.input.placeholder = "Message or ?";
+  }
   // Empty-string `currentValue` should fall through to the fallback, not
   // terminate the chain. `??` would keep `""` as the winner; `||` skips it.
   // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing

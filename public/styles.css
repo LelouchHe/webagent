@@ -635,6 +635,26 @@ body {
   --prompt-color: var(--red);
   color: var(--prompt-color);
 }
+#input-area.preview-mode {
+  border-top: 2px solid var(--blue);
+}
+#input-area.preview-mode::before {
+  content: "preview";
+  position: absolute;
+  top: -7px;
+  left: 16px;
+  font-size: 10px;
+  line-height: 1;
+  padding: 0 4px;
+  background: var(--bg);
+  color: var(--blue);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+#input-area.preview-mode #input-prompt {
+  --prompt-color: var(--blue);
+  color: var(--prompt-color);
+}
 #status-bar {
   display: flex;
   padding: 0 16px 10px;
