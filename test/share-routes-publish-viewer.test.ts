@@ -236,7 +236,7 @@ describe("share publish route — POST /api/v1/sessions/:id/share/publish", () =
     assert.equal(r.status(), 409);
   });
 
-  it("410 on publishing a revoked preview", async () => {
+  it("404 on publishing a revoked (hard-deleted) preview", async () => {
     const r1 = mockRes();
     await handleShareRoutes(
       ownerReq(`/api/v1/sessions/${sessionId}/share`, "POST", { body: {} }),
@@ -254,7 +254,7 @@ describe("share publish route — POST /api/v1/sessions/:id/share/publish", () =
       r2.res,
       deps,
     );
-    assert.equal(r2.status(), 410);
+    assert.equal(r2.status(), 404);
   });
 
   it("404 when token does not belong to this session", async () => {

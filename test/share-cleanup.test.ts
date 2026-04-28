@@ -62,12 +62,13 @@ describe("share preview cleanup — sweepStaleSharePreviewsOnce", () => {
     assert.ok(store.getShareByToken("tok-active"));
   });
 
-  it("never prunes a revoked share — audit trail preserved", () => {
+  it("revoked shares are hard-deleted, so prune is a no-op for them", () => {
     insertPreviewWithAge("tok-revoked", 30 * DAY_MS);
     store.revokeShare("tok-revoked");
+    // Revoke already removed the row; prune has nothing to do for it.
+    assert.equal(store.getShareByToken("tok-revoked"), undefined);
     const removed = sweepStaleSharePreviewsOnce(store);
     assert.equal(removed, 0);
-    assert.ok(store.getShareByToken("tok-revoked"));
   });
 
   it("sweeps multiple stale previews in one call", () => {

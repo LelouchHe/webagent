@@ -31,7 +31,6 @@ describe("shares store", () => {
     });
     assert.equal(row.token, tok);
     assert.equal(row.shared_at, null);
-    assert.equal(row.revoked_at, null);
     assert.equal(row.share_snapshot_seq, 10);
   });
 
@@ -88,14 +87,13 @@ describe("shares store", () => {
     assert.notEqual(row.shared_at, null);
   });
 
-  it("revokeShare flips once; public lookups still return row with revoked_at set", () => {
+  it("revokeShare hard-deletes the row; second call is a no-op", () => {
     const tok = generateShareToken();
     store.insertSharePreview({ token: tok, sessionId, snapshotSeq: 1 });
     store.activateShare(tok);
     assert.equal(store.revokeShare(tok), true);
     assert.equal(store.revokeShare(tok), false);
-    const row = store.getShareByToken(tok)!;
-    assert.notEqual(row.revoked_at, null);
+    assert.equal(store.getShareByToken(tok), undefined);
   });
 
   it("touchShareAccessed only writes once", () => {
@@ -107,7 +105,7 @@ describe("shares store", () => {
     assert.notEqual(store.getShareByToken(tok)!.last_accessed_at, null);
   });
 
-  it("listOwnerShares excludes revoked and includes session title", () => {
+  it("listOwnerShares excludes hard-deleted (revoked) shares and includes session title", () => {
     const t1 = generateShareToken();
     const t2 = generateShareToken();
     const t3 = generateShareToken();

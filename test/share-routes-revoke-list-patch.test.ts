@@ -405,7 +405,7 @@ describe("PATCH /api/v1/sessions/:id/share — label/display_name", () => {
     assert.equal(r.status(), 400);
   });
 
-  it("410 if share revoked", async () => {
+  it("404 if share revoked (hard-deleted)", async () => {
     const token = await createPreview(deps, sid);
     await publish(deps, sid, token);
     store.revokeShare(token);
@@ -418,7 +418,7 @@ describe("PATCH /api/v1/sessions/:id/share — label/display_name", () => {
       r.res,
       deps,
     );
-    assert.equal(r.status(), 410);
+    assert.equal(r.status(), 404);
   });
 
   it("404 if token belongs to different session", async () => {

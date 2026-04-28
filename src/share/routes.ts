@@ -416,10 +416,6 @@ async function handlePreviewRead(
     json(res, 404, { error: "share not found" });
     return;
   }
-  if (row.revoked_at != null) {
-    json(res, 410, { error: "share revoked" });
-    return;
-  }
   if (row.shared_at != null) {
     json(res, 409, { error: "share already active (use public viewer)" });
     return;
@@ -543,10 +539,6 @@ async function handlePublish(
     json(res, 404, { error: "share not found" });
     return;
   }
-  if (row.revoked_at != null) {
-    json(res, 410, { error: "share revoked" });
-    return;
-  }
   if (row.shared_at != null) {
     json(res, 409, {
       error: "share already active",
@@ -585,7 +577,7 @@ async function handlePublish(
   if (!activated) {
     // Race: concurrent revoke/activate between getShareByToken and activateShare.
     const fresh = deps.store.getShareByToken(body.token);
-    if (!fresh || fresh.revoked_at != null) {
+    if (!fresh) {
       json(res, 410, { error: "share revoked" });
       return;
     }
@@ -635,7 +627,7 @@ async function handleViewerHtml(
   token: string,
 ): Promise<void> {
   const row = deps.store.getShareByToken(token);
-  if (!row || row.revoked_at != null || row.shared_at == null) {
+  if (row?.shared_at == null) {
     // Preview tokens (shared_at IS NULL) MUST NOT resolve publicly.
     const csp = viewerCsp(deps.config.csp_enforce);
     res.writeHead(410, {
@@ -704,7 +696,7 @@ async function handleSharedEvents(
   token: string,
 ): Promise<void> {
   const row = deps.store.getShareByToken(token);
-  if (!row || row.revoked_at != null || row.shared_at == null) {
+  if (row?.shared_at == null) {
     json(res, 410, { error: "share revoked or not found" });
     return;
   }
@@ -850,7 +842,7 @@ async function handleViewerImage(
   }
 
   const row = deps.store.getShareByToken(token);
-  if (!row || row.revoked_at != null || row.shared_at == null) {
+  if (row?.shared_at == null) {
     json(res, 410, { error: "share unavailable" });
     return;
   }
@@ -983,7 +975,15 @@ async function handleRevoke(
 
   const row = deps.store.getShareByToken(body.token);
   if (!row) {
-    json(res, 404, { error: "share not found" });
+    // Idempotent DELETE: row already gone (revoked or never existed).
+    // We can't verify session ownership without a row, but the token
+    // is opaque/random so leaking "revoked or never existed" is fine.
+    json(res, 200, {
+      ok: true,
+      token: body.token,
+      revoked: false,
+      purge_status: "skipped",
+    });
     return;
   }
   if (row.session_id !== sessionId) {
@@ -1046,10 +1046,6 @@ async function handlePatchLabel(
   }
   if (row.session_id !== sessionId) {
     json(res, 404, { error: "share not found" });
-    return;
-  }
-  if (row.revoked_at != null) {
-    json(res, 410, { error: "share revoked" });
     return;
   }
 

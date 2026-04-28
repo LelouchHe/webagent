@@ -73,8 +73,6 @@ export interface ShareRow {
   owner_label: string | null;
   created_at: number;
   last_accessed_at: number | null;
-  /** NULL = live; non-NULL = revoked; public endpoints return 410. */
-  revoked_at: number | null;
 }
 
 /** Summary projection for GET /api/v1/shares (joins session title). */
@@ -261,10 +259,11 @@ export class Store {
     );
 
     // shares — public read-only share links (share-plan §4.1).
-    // State machine: preview (shared_at NULL) → active (shared_at set) →
-    // revoked (revoked_at set). Multiple active siblings per session
-    // allowed (v4 multi-share). Partial unique index enforces at most
-    // one un-activated preview per session at any time.
+    // State machine: preview (shared_at NULL) → active (shared_at set).
+    // Revocation = hard-delete the row (no audit trail kept).
+    // Multiple active siblings per session allowed (v4 multi-share).
+    // Partial unique index enforces at most one un-activated preview per
+    // session at any time.
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS shares (
         token TEXT PRIMARY KEY,
@@ -275,13 +274,30 @@ export class Store {
         display_name TEXT,
         owner_label TEXT,
         created_at INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER) * 1000),
-        last_accessed_at INTEGER,
-        revoked_at INTEGER
+        last_accessed_at INTEGER
       );
       CREATE INDEX IF NOT EXISTS idx_shares_session ON shares(session_id, created_at DESC);
+    `);
+
+    // Migrate: drop revoked_at column from existing tables (v0.5+).
+    // Revocation is now hard-delete; kept rows are always live.
+    const shareCols = this.db
+      .prepare("PRAGMA table_info(shares)")
+      .all() as Array<{ name: string }>;
+    const shareColNames = new Set(shareCols.map((c) => c.name));
+    if (shareColNames.has("revoked_at")) {
+      // Hard-delete any pre-existing revoked rows so the migration
+      // doesn't resurrect them as "live" shares after dropping the column.
+      this.db.exec("DELETE FROM shares WHERE revoked_at IS NOT NULL");
+      // Drop the partial unique index that references revoked_at, then
+      // the column, then recreate the index without the revoked_at clause.
+      this.db.exec("DROP INDEX IF EXISTS shares_one_active_preview");
+      this.db.exec("ALTER TABLE shares DROP COLUMN revoked_at");
+    }
+    this.db.exec(`
       CREATE UNIQUE INDEX IF NOT EXISTS shares_one_active_preview
         ON shares(session_id)
-        WHERE shared_at IS NULL AND revoked_at IS NULL;
+        WHERE shared_at IS NULL;
     `);
 
     // owner_prefs — key-value store for owner-scoped defaults (display_name,
@@ -778,7 +794,7 @@ export class Store {
     return this.db
       .prepare(
         `SELECT * FROM shares
-       WHERE session_id = ? AND shared_at IS NULL AND revoked_at IS NULL
+       WHERE session_id = ? AND shared_at IS NULL
        ORDER BY created_at DESC LIMIT 1`,
       )
       .get(sessionId) as ShareRow | undefined;
@@ -810,28 +826,24 @@ export class Store {
       sql += ", owner_label = ?";
       params.push(opts.ownerLabel ?? null);
     }
-    sql += " WHERE token = ? AND shared_at IS NULL AND revoked_at IS NULL";
+    sql += " WHERE token = ? AND shared_at IS NULL";
     params.push(token);
     const info = this.db.prepare(sql).run(...params);
     return info.changes > 0;
   }
 
-  /** Soft-delete; returns true if this call actually flipped the state. */
+  /** Hard-delete a share row. Returns true if the row existed. */
   revokeShare(token: string): boolean {
     const info = this.db
-      .prepare(
-        "UPDATE shares SET revoked_at = ? WHERE token = ? AND revoked_at IS NULL",
-      )
-      .run(Date.now(), token);
+      .prepare("DELETE FROM shares WHERE token = ?")
+      .run(token);
     return info.changes > 0;
   }
 
   /** Update only owner_label (PATCH route). Caller validates the value first. */
   updateShareOwnerLabel(token: string, label: string | null): boolean {
     const info = this.db
-      .prepare(
-        "UPDATE shares SET owner_label = ? WHERE token = ? AND revoked_at IS NULL",
-      )
+      .prepare("UPDATE shares SET owner_label = ? WHERE token = ?")
       .run(label, token);
     return info.changes > 0;
   }
@@ -839,14 +851,12 @@ export class Store {
   /** Update only display_name (PATCH route). Caller validates the value first. */
   updateShareDisplayName(token: string, name: string | null): boolean {
     const info = this.db
-      .prepare(
-        "UPDATE shares SET display_name = ? WHERE token = ? AND revoked_at IS NULL",
-      )
+      .prepare("UPDATE shares SET display_name = ? WHERE token = ?")
       .run(name, token);
     return info.changes > 0;
   }
 
-  /** Owner list — every live share (preview + active, not revoked). */
+  /** Owner list — every share row (preview + active). */
   listOwnerShares(): ShareSummaryRow[] {
     return this.db
       .prepare(
@@ -863,7 +873,6 @@ export class Store {
          s.last_accessed_at AS last_accessed_at
        FROM shares s
        LEFT JOIN sessions sess ON sess.id = s.session_id
-       WHERE s.revoked_at IS NULL
        ORDER BY s.created_at DESC`,
       )
       .all() as ShareSummaryRow[];
@@ -885,15 +894,13 @@ export class Store {
 
   /**
    * Lazy prune of preview rows older than 24h (share-plan §4.1).
-   * `now` is injectable for tests. Rows with shared_at or revoked_at set
-   * are NEVER touched — only orphaned previews are GC'd.
+   * `now` is injectable for tests. Activated rows (shared_at set) are
+   * NEVER touched — only orphaned previews are GC'd.
    */
   pruneStalePreviews(now: number = Date.now()): number {
     const cutoff = now - 24 * 60 * 60 * 1000;
     const info = this.db
-      .prepare(
-        "DELETE FROM shares WHERE shared_at IS NULL AND revoked_at IS NULL AND created_at < ?",
-      )
+      .prepare("DELETE FROM shares WHERE shared_at IS NULL AND created_at < ?")
       .run(cutoff);
     return info.changes;
   }

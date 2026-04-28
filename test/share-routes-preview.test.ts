@@ -454,7 +454,7 @@ describe("share preview routes — GET /api/v1/sessions/:id/share/preview", () =
     assert.equal(m.status(), 409);
   });
 
-  it("410 when share revoked", async () => {
+  it("404 when share revoked (hard-deleted)", async () => {
     const m0 = mockRes();
     await handleShareRoutes(
       mockReq(`/api/v1/sessions/${sessionId}/share`, "POST", { body: {} }),
@@ -471,6 +471,6 @@ describe("share preview routes — GET /api/v1/sessions/:id/share/preview", () =
       m.res,
       deps,
     );
-    assert.equal(m.status(), 410);
+    assert.equal(m.status(), 404);
   });
 });
