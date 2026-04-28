@@ -277,7 +277,6 @@ function shareRowSpec(s: ShareListRow, kind: "open" | "revoke") {
     secondary: ago,
     path: `/s/${s.token}`,
     pathSecondary: s.session_title ?? undefined,
-    current: s.session_id === state.sessionId,
     onSelect: () => {
       if (kind === "open") openShare(s.token);
       else void revokeShare(s.token);
