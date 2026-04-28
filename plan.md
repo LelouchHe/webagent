@@ -2,8 +2,8 @@
 
 > **Revised after rubber-duck critique(2026-04-24 00:40)**:把 CSP 前提左移到 C3,staleness/image-proxy/A1-inline-transform/owner-prefs 从 deferred 升为必做,inline fork 明确 scope cut(不假装 defer),`src/share/routes.ts` 在 C1 就抽出。C6 docs/smoke 合并进 C5,**5 commits**。
 
-**Source of truth**: `~/mine/space/plan/WebAgent/share-plan.md` v10 / `share-ux.md` v0.13
-**Tracking**: `~/mine/space/plan/WebAgent/share-dev.md`
+**Source of truth**: `~/mine/space/plan/WebAgent/share/plan.md` v10 / `share/ux.md` v0.13
+**Tracking**: `~/mine/space/plan/WebAgent/share/dev.md`
 
 ## Scope
 
@@ -15,7 +15,7 @@
 2. **Viewer hover polish**(share-ux §5.1 美化项):基础渲染先出,hover 动画/按钮出现逻辑等 polish 留 v1.1。
 3. **"继续这里往下问" Inline CTA**(v0.5 OT2 方案 X):同 #1 一起砍。
 
-这 3 项进 `share-dev.md` "scope-cut" 列表,PR summary 里透明列出。其他 frozen 必须 v1 交付。
+这 3 项进 `share/dev.md` "scope-cut" 列表,PR summary 里透明列出。其他 frozen 必须 v1 交付。
 
 ## Preliminary:兼容性 Spike(在 C1 动工前 ≤ 30 分钟)
 
@@ -41,6 +41,7 @@ Spike 脚本:`test/share-auth-spike.ts` 临时文件,跑完删。
 ### C1 — 地基 + share routes 抽层(spike 完后)
 
 **Files**
+
 - `src/config.ts` + Zod: 加 `[share]` section
   - `enabled: boolean = false`
   - `ttl_hours: number = 0` (0 = 永不过期; clamp Math.min(val, 168) if > 0)
@@ -56,7 +57,9 @@ Spike 脚本:`test/share-auth-spike.ts` 临时文件,跑完删。
   - CRUD helpers(见前版 plan 同样列表)+ `getOwnerPref` / `setOwnerPref`
 - `src/share/routes.ts` 骨架:
   ```ts
-  export function handleShareRoutes(req, res, ctx): boolean { return false; }  // C1 空实现
+  export function handleShareRoutes(req, res, ctx): boolean {
+    return false;
+  } // C1 空实现
   ```
   在 `src/routes.ts` 顶部加一次挂接(`if (await handleShareRoutes(...)) return;`),但 `enabled=false` 时直接 return false(不影响任何现有请求)
 - `test/share-store.test.ts` + `test/share-routes-skeleton.test.ts`(断言 skeleton 不 intercept 现有路由)
@@ -64,6 +67,7 @@ Spike 脚本:`test/share-auth-spike.ts` 临时文件,跑完删。
 ### C2 — sanitize + preview + CSP viewer shell 前提
 
 **Files**
+
 - `src/share/sanitize.ts`:
   - `const SANITIZER_VERSION = "2026-04-24"`
   - `sanitizeEventsForShare({events, cwd, homeDir, internalHosts})`
@@ -72,13 +76,13 @@ Spike 脚本:`test/share-auth-spike.ts` 临时文件,跑完删。
   **强制向量集**(owner overlay + public viewer 均测):
   - `<script>alert(1)</script>` 原生 HTML
   - `<img src=x onerror=alert(1)>` 事件属性
-  - `<svg onload=alert(1)>` / `<svg><script>` 
+  - `<svg onload=alert(1)>` / `<svg><script>`
   - `<iframe srcdoc="...">` / `<math>` / `xlink:href`
   - `[x](javascript:alert(1))` markdown link
   - `![x](data:image/svg+xml,<svg onload=alert(1)>)` md image
   - `javascript:` / `data:` / `vbscript:` / `blob:` / 前置空格 / 大小写混合 / entity 编码
   - `<a href=javascript:...>` raw markdown HTML
-  - `display_name` / `owner_label` / `session title` 含 HTML → 断言 DOM 无 script / on* / 危险 scheme
+  - `display_name` / `owner_label` / `session title` 含 HTML → 断言 DOM 无 script / on\* / 危险 scheme
 - `src/share/projection.ts` + `test/share-projection.test.ts`:LRU 容量 100,key `session_id:hash:VERSION`
 - `src/share/mutex.ts` + `test/share-mutex.test.ts`
 - **SessionManager 扩展**(非 event-handler):`flushBufferedChunks(sessionId): lastSeq`,复用现有 `/events` 中途 flush 的触发点(已有 invariant,不新增)
@@ -107,10 +111,11 @@ Spike 脚本:`test/share-auth-spike.ts` 临时文件,跑完删。
 ### C3 — publish + 完整 public viewer + image proxy
 
 **Files**
+
 - Routes(`src/share/routes.ts`):
   - `POST /api/v1/sessions/:id/share/confirm` — 激活,body `{ token, display_name?, owner_label? }`。display_name/owner_label 写 owner_prefs 持久化,作为下次默认
   - `GET /s/:token` — HTML shell,CSP 头(路由级,仅此处 + shared JSON)
-  - `GET /api/v1/shared/:token/events` — JSON 
+  - `GET /api/v1/shared/:token/events` — JSON
   - `GET /s/:token/images/:file` — **image token-scoped proxy**(token → session_id → data/uploads/... ),绝不 bypass 原 `/api/v1/sessions/:id/images/*`
   - 410/404 guards
 - `public/js/share/viewer.ts`:
@@ -131,6 +136,7 @@ Spike 脚本:`test/share-auth-spike.ts` 临时文件,跑完删。
 ### C4 — revoke + list + A1 inline + [shared] indicator
 
 **Files**
+
 - Routes(`src/share/routes.ts`):
   - `DELETE /api/v1/sessions/:id/share` — body `{ token }`, returns `{ ok, purge_status: 'skipped' }` (CF purge 留 v1.1,但契约字段保留)
   - `GET /api/v1/shares` — assertOwner, returns owner 所有 live shares
@@ -147,6 +153,7 @@ Spike 脚本:`test/share-auth-spike.ts` 临时文件,跑完删。
 ### C5 — CSP enforce + xss-grep CI + docs + smoke
 
 **Files**
+
 - `test/xss-grep.test.ts` — CI gate:
   - scan `public/js/**` + `src/**`
   - 禁用 `innerHTML` / `insertAdjacentHTML` / `outerHTML` / `document.write` / `new Function` / `eval(` / `setTimeout(<string>` / `setInterval(<string>`
