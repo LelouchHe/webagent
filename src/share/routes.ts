@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { readFile, rm } from "node:fs/promises";
 import { extname, join } from "node:path";
 import { homedir } from "node:os";
 import { randomUUID } from "node:crypto";
@@ -705,7 +705,10 @@ async function handleSharedEvents(
     return;
   }
 
-  const session = deps.store.getSession(row.session_id);
+  // Public viewer must keep working after the owner deletes the source
+  // session — events stay alive as long as any active share references
+  // them (Store.deleteSession soft-deletes when shares exist).
+  const session = deps.store.getSessionIncludingDeleted(row.session_id);
   if (!session) {
     json(res, 500, { error: "session vanished" });
     return;
@@ -992,6 +995,18 @@ async function handleRevoke(
   }
 
   const revoked = deps.store.revokeShare(body.token);
+  // If this was the last share on a soft-deleted session, finish the
+  // hard-delete (events + sessions row) so we don't leak orphans.
+  if (revoked) {
+    const reaped = deps.store.reapTombstoneIfOrphaned(row.session_id);
+    if (reaped && deps.dataDir) {
+      // Tombstoned session is fully gone; sweep its image directory too.
+      rm(join(deps.dataDir, "images", row.session_id), {
+        recursive: true,
+        force: true,
+      }).catch(() => {});
+    }
+  }
   json(res, 200, {
     ok: true,
     token: body.token,

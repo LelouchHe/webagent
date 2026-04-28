@@ -12,6 +12,8 @@ export interface SessionRow {
   source: string;
   created_at: string;
   last_active_at: string;
+  /** epoch ms; NULL = live; non-NULL = soft-deleted (kept alive for active shares). */
+  deleted_at: number | null;
 }
 
 export interface EventRow {
@@ -157,6 +159,9 @@ export class Store {
       this.db.exec(
         "ALTER TABLE sessions ADD COLUMN source TEXT NOT NULL DEFAULT 'auto'",
       );
+    }
+    if (!colNames.has("deleted_at")) {
+      this.db.exec("ALTER TABLE sessions ADD COLUMN deleted_at INTEGER");
     }
 
     // messages — pending unbound notifications. POST /api/v1/messages with
@@ -325,27 +330,96 @@ export class Store {
     if (opts?.source) {
       return this.db
         .prepare(
-          "SELECT * FROM sessions WHERE source = ? ORDER BY COALESCE(last_active_at, created_at) DESC",
+          "SELECT * FROM sessions WHERE source = ? AND deleted_at IS NULL ORDER BY COALESCE(last_active_at, created_at) DESC",
         )
         .all(opts.source) as SessionRow[];
     }
     return this.db
       .prepare(
-        "SELECT * FROM sessions ORDER BY COALESCE(last_active_at, created_at) DESC",
+        "SELECT * FROM sessions WHERE deleted_at IS NULL ORDER BY COALESCE(last_active_at, created_at) DESC",
       )
       .all() as SessionRow[];
   }
 
+  /** Returns live sessions only. Soft-deleted (tombstone) rows are hidden. */
   getSession(id: string): SessionRow | undefined {
+    return this.db
+      .prepare("SELECT * FROM sessions WHERE id = ? AND deleted_at IS NULL")
+      .get(id) as SessionRow | undefined;
+  }
+
+  /**
+   * Returns a session row even if soft-deleted. Used by the public share
+   * viewer, which must keep working after the owner deletes the source
+   * session (events stay alive as long as any active share references them).
+   */
+  getSessionIncludingDeleted(id: string): SessionRow | undefined {
     return this.db.prepare("SELECT * FROM sessions WHERE id = ?").get(id) as
       | SessionRow
       | undefined;
   }
 
-  deleteSession(id: string): void {
-    this.db.prepare("DELETE FROM events WHERE session_id = ?").run(id);
+  /**
+   * Delete a session. If any active (published) shares reference it, the
+   * session row + events are kept (soft-delete via deleted_at) so the
+   * shared snapshot remains viewable. Otherwise everything is hard-
+   * deleted. Preview shares (shared_at IS NULL) are always cleared:
+   * unpublished drafts share the session's lifecycle.
+   *
+   * Returns "hard" if the row + events were physically removed, "soft"
+   * if the row was tombstoned because shares still reference it. Callers
+   * use this to decide whether to clean up filesystem artefacts (images).
+   */
+  deleteSession(id: string): "hard" | "soft" {
+    // Drop preview shares regardless — they are owner-only drafts and
+    // share the session's lifecycle by design.
+    this.db
+      .prepare("DELETE FROM shares WHERE session_id = ? AND shared_at IS NULL")
+      .run(id);
+    const activeShareCount = (
+      this.db
+        .prepare(
+          "SELECT COUNT(*) AS n FROM shares WHERE session_id = ? AND shared_at IS NOT NULL",
+        )
+        .get(id) as { n: number }
+    ).n;
     this.db.prepare("DELETE FROM client_ops WHERE session_id = ?").run(id);
+    if (activeShareCount > 0) {
+      // Soft-delete: keep events + sessions row so public share viewers
+      // can still resolve. revokeShare() / reapTombstoneIfOrphaned()
+      // finishes the job once the last share is gone.
+      this.db
+        .prepare("UPDATE sessions SET deleted_at = ? WHERE id = ?")
+        .run(Date.now(), id);
+      return "soft";
+    }
+    this.db.prepare("DELETE FROM events WHERE session_id = ?").run(id);
     this.db.prepare("DELETE FROM sessions WHERE id = ?").run(id);
+    return "hard";
+  }
+
+  /**
+   * Hard-delete events + sessions row for a session that has been soft-
+   * deleted and whose last share was just revoked. No-op if the session
+   * is still live (deleted_at IS NULL) or still has active shares.
+   * Returns true if a tombstone was reaped.
+   */
+  reapTombstoneIfOrphaned(sessionId: string): boolean {
+    const sess = this.db
+      .prepare(
+        "SELECT id FROM sessions WHERE id = ? AND deleted_at IS NOT NULL",
+      )
+      .get(sessionId) as { id: string } | undefined;
+    if (!sess) return false;
+    const remaining = (
+      this.db
+        .prepare("SELECT COUNT(*) AS n FROM shares WHERE session_id = ?")
+        .get(sessionId) as { n: number }
+    ).n;
+    if (remaining > 0) return false;
+    this.db.prepare("DELETE FROM events WHERE session_id = ?").run(sessionId);
+    this.db.prepare("DELETE FROM sessions WHERE id = ?").run(sessionId);
+    return true;
   }
 
   /** Delete sessions that have zero events and are older than minAgeS seconds. Returns IDs deleted. */

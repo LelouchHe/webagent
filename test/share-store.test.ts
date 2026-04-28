@@ -156,6 +156,94 @@ describe("shares store", () => {
     store.revokeShare(t1);
     assert.equal(store.updateShareOwnerLabel(t1, "v2"), false);
   });
+
+  describe("session lifecycle ↔ shares", () => {
+    it("deleteSession with no shares hard-deletes session + events", () => {
+      store.saveEvent(
+        sessionId,
+        "user_message",
+        { text: "hi" },
+        { from_ref: "user" },
+      );
+      assert.equal(store.deleteSession(sessionId), "hard");
+      assert.equal(store.getSession(sessionId), undefined);
+      assert.equal(store.getSessionIncludingDeleted(sessionId), undefined);
+      assert.equal(store.getEvents(sessionId).length, 0);
+    });
+
+    it("deleteSession with active share soft-deletes; events + viewer-side lookup keep working", () => {
+      const tok = generateShareToken();
+      store.saveEvent(
+        sessionId,
+        "user_message",
+        { text: "hi" },
+        { from_ref: "user" },
+      );
+      store.insertSharePreview({ token: tok, sessionId, snapshotSeq: 1 });
+      store.activateShare(tok);
+
+      assert.equal(store.deleteSession(sessionId), "soft");
+      // Owner-facing lookup hides tombstone:
+      assert.equal(store.getSession(sessionId), undefined);
+      assert.equal(store.listSessions().length, 0);
+      // Public viewer can still resolve session metadata:
+      const tomb = store.getSessionIncludingDeleted(sessionId)!;
+      assert.notEqual(tomb, undefined);
+      assert.notEqual(tomb.deleted_at, null);
+      assert.equal(store.getEvents(sessionId).length, 1);
+      // Share row still live:
+      assert.notEqual(store.getShareByToken(tok), undefined);
+    });
+
+    it("deleteSession drops preview shares but keeps published siblings", () => {
+      const tPub = generateShareToken();
+      const tPrev = generateShareToken();
+      store.insertSharePreview({ token: tPub, sessionId, snapshotSeq: 1 });
+      store.activateShare(tPub);
+      store.insertSharePreview({ token: tPrev, sessionId, snapshotSeq: 2 });
+
+      assert.equal(store.deleteSession(sessionId), "soft");
+      assert.equal(store.getShareByToken(tPrev), undefined);
+      assert.notEqual(store.getShareByToken(tPub), undefined);
+    });
+
+    it("reapTombstoneIfOrphaned hard-deletes once the last share is gone", () => {
+      const t1 = generateShareToken();
+      const t2 = generateShareToken();
+      store.saveEvent(
+        sessionId,
+        "user_message",
+        { text: "hi" },
+        { from_ref: "user" },
+      );
+      store.insertSharePreview({ token: t1, sessionId, snapshotSeq: 1 });
+      store.activateShare(t1);
+      store.insertSharePreview({ token: t2, sessionId, snapshotSeq: 2 });
+      store.activateShare(t2);
+      store.deleteSession(sessionId);
+
+      // First revoke: tombstone still has another share — reap is a no-op.
+      store.revokeShare(t1);
+      assert.equal(store.reapTombstoneIfOrphaned(sessionId), false);
+      assert.notEqual(store.getSessionIncludingDeleted(sessionId), undefined);
+
+      // Last revoke: reap finishes the hard-delete.
+      store.revokeShare(t2);
+      assert.equal(store.reapTombstoneIfOrphaned(sessionId), true);
+      assert.equal(store.getSessionIncludingDeleted(sessionId), undefined);
+      assert.equal(store.getEvents(sessionId).length, 0);
+    });
+
+    it("reapTombstoneIfOrphaned is a no-op on a live (not-tombstoned) session", () => {
+      const tok = generateShareToken();
+      store.insertSharePreview({ token: tok, sessionId, snapshotSeq: 1 });
+      store.activateShare(tok);
+      store.revokeShare(tok);
+      assert.equal(store.reapTombstoneIfOrphaned(sessionId), false);
+      // Live session row untouched.
+      assert.notEqual(store.getSession(sessionId), undefined);
+    });
+  });
 });
 
 describe("owner_prefs store", () => {
