@@ -98,6 +98,12 @@ describe("slash-render — renderItem", () => {
     assert.equal(primary?.classList.contains("slash-current"), false);
   });
 
+  it("prefix='↵' renders return symbol (commit / freeform)", () => {
+    const el = renderItem({ primary: "create 'foo'" }, false, "↵");
+    const prefix = el.querySelector(".slash-prefix");
+    assert.equal((prefix as HTMLElement).textContent, "↵");
+  });
+
   it("prefix='' leaves prefix slot empty (still occupies width)", () => {
     const el = renderItem({ primary: "foo" }, false, "");
     const prefix = el.querySelector(".slash-prefix");
