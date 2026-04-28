@@ -54,7 +54,7 @@ export interface ShareListRow {
 }
 
 function previewUrl(token: string): string {
-  return `${location.origin}/s/${token}?preview=${token}`;
+  return `${location.origin}/s/${token}`;
 }
 
 function publicUrl(rawPath: string, token: string): string {
