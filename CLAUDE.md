@@ -106,21 +106,32 @@ Quick reference for code-level work:
 
 ## ACP Client Extensions
 
-ACP parameters like `mcpServers`, `terminal`, and `fs` are **client-to-agent capability injections** — the client offers extra capabilities on top of the agent's own baseline. The agent (CLI) retains all its native abilities regardless of what the client provides.
+ACP `clientCapabilities` (`fs`, `terminal`) and `mcpServers` are **opt-in capability offers** from client to agent. The agent retains all its native abilities regardless; whether it actually calls the offered capability is per-agent and varies wildly.
 
-| Parameter                     | What it means                                                                                                   | WebAgent currently provides                                                                                            |
-| ----------------------------- | --------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| `clientCapabilities.terminal` | "I can act as your terminal" — agent can ask the client to run shell commands                                   | `true` — declared but not wired to ACP `terminal/*`; the app's `!<command>` runs via its own local bash bridge instead |
-| `clientCapabilities.fs`       | "I can read/write files for you" — agent can ask the client to access the filesystem                            | `{ readTextFile: true, writeTextFile: true }` — fully implemented                                                      |
-| `mcpServers`                  | "Here are additional MCP servers for you to use" — agent connects to these on top of its own configured servers | `[]` — no extra MCP servers from the client; the agent's own MCP config (e.g. GitHub MCP) still works                  |
+**Empirically observed cross-agent behavior** (don't re-research, just trust this table):
 
-Passing `mcpServers: []` does **not** disable MCP — it means the client isn't providing extras. The agent loads its own MCP servers independently. Same pattern as `terminal`: declaring the capability is an offer, not a requirement for the agent to function.
+| Agent       | Calls `fs/readTextFile` | Calls `fs/writeTextFile` | Calls `terminal/*` |
+| ----------- | ----------------------- | ------------------------ | ------------------ |
+| Copilot CLI | no (uses native fs)     | no                       | no                 |
+| OpenCode    | no                      | yes (edit-confirm only)  | no                 |
+| Qwen Code   | yes (DI'd when capability set) | yes               | no                 |
+| Claude Code | unverified              | unverified               | unverified         |
+| Gemini CLI  | unverified              | unverified               | unverified         |
 
-**Future extension point**: To give the agent access to MCP servers it doesn't natively have (e.g. project-specific tools, non-project-directory services), add them to the `mcpServers` array in `config.toml` and forward through `newSession`/`loadSession`.
+`fs` / `terminal` are protocol-designed for **editor-style clients** (Zed/VSCode) that have unsaved buffers or integrated terminal panels. WebAgent is a web UI with neither — even if an agent calls our handler, we'd just relay to local disk, identical to the agent calling fs itself.
+
+**Current WebAgent declarations**:
+- `clientCapabilities.fs = { readTextFile: false, writeTextFile: false }` — handlers removed (Copilot doesn't call them; if a future agent like Qwen Code needs them, flip flags + re-add handlers).
+- `clientCapabilities.terminal = true` — declared but no handler wired. The app's `!<command>` runs via its own local bash bridge, not ACP `terminal/*`. No major agent calls it anyway.
+- `mcpServers: []` — client doesn't inject MCP servers. Does **not** disable agent's own MCP config (e.g. GitHub MCP via `~/.copilot/mcp-config.json` still works).
+
+**Extension points**:
+- To inject project-specific MCP servers from the client, populate `mcpServers` in `newSession`/`loadSession`.
+- To re-add fs handlers (for an agent that uses them), restore the `readTextFile` / `writeTextFile` entries in the `client` object in `bridge.ts` and flip the capability flags.
 
 ## ACP Scope and Current Limits
 
-- **Core ACP surface only**: WebAgent currently relies on ACP for session lifecycle (`newSession`, `loadSession`, `prompt`, `cancel`), permission requests, session updates, model selection, and text file read/write.
+- **Core ACP surface only**: WebAgent currently relies on ACP for session lifecycle (`newSession`, `loadSession`, `prompt`, `cancel`), permission requests, session updates, and model selection.
 - **Narrow event mapping**: The UI/store layer only maps a subset of ACP updates today: assistant text, thinking text, tool calls, tool call updates, and plans.
 - **Session cancel, not host-task cancel**: ACP `cancel` only stops the current session prompt/turn. In this repo we extend that to the session's own local bash/permission/title work, but WebAgent still cannot cancel host-level tasks started outside the server's runtime (for example external Copilot CLI tool invocations or subprocesses it owns).
 - **Browser UI, not full CLI parity**: Direct CLI surfaces such as `/plan`, `/fleet`, `/mcp`, `/agent`, `/skills` are not mirrored as first-class WebAgent controls. The app only renders the ACP events it receives. Autopilot mode is supported via server-side auto-approval of permissions.

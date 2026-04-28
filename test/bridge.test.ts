@@ -1,17 +1,10 @@
 import { afterEach, describe, it, mock } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
 import { AgentBridge } from "../src/bridge.ts";
 
 describe("AgentBridge", () => {
-  const tmpDirs: string[] = [];
-
   afterEach(() => {
-    while (tmpDirs.length) {
-      rmSync(tmpDirs.pop()!, { recursive: true, force: true });
-    }
+    mock.restoreAll();
   });
 
   it("emits prompt_done after a successful prompt with images", async () => {
@@ -314,21 +307,6 @@ describe("AgentBridge", () => {
     assert.deepEqual(result, [
       { id: "model", name: "Model", currentValue: "mock-model-2", options: [] },
     ]);
-  });
-
-  it("reads and writes text files through ACP file callbacks", async () => {
-    const bridge = new AgentBridge("fake-agent");
-    const tmpDir = mkdtempSync(join(tmpdir(), "webagent-bridge-"));
-    tmpDirs.push(tmpDir);
-    const filePath = join(tmpDir, "nested", "file.txt");
-
-    await (bridge as any).handleWriteFile({
-      path: filePath,
-      content: "hello file",
-    });
-    const result = await (bridge as any).handleReadFile({ path: filePath });
-
-    assert.deepEqual(result, { content: "hello file" });
   });
 
   describe("restart()", () => {

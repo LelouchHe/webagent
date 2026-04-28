@@ -52,10 +52,6 @@ export class AgentBridge extends EventEmitter {
         this.handlePermission(params),
       sessionUpdate: async (params: acp.SessionNotification) =>
         this.handleSessionUpdate(params),
-      readTextFile: async (params: acp.ReadTextFileRequest) =>
-        this.handleReadFile(params),
-      writeTextFile: async (params: acp.WriteTextFileRequest) =>
-        this.handleWriteFile(params),
     };
 
     this.conn = new acp.ClientSideConnection((_agent) => client, stream);
@@ -63,7 +59,7 @@ export class AgentBridge extends EventEmitter {
     const init = (await this.conn.initialize({
       protocolVersion: acp.PROTOCOL_VERSION,
       clientCapabilities: {
-        fs: { readTextFile: true, writeTextFile: true },
+        fs: { readTextFile: false, writeTextFile: false },
         terminal: true,
       },
     })) as { agentInfo?: { name?: string; version?: string } };
@@ -459,23 +455,5 @@ export class AgentBridge extends EventEmitter {
       default:
         return null;
     }
-  }
-
-  private async handleReadFile(
-    params: acp.ReadTextFileRequest,
-  ): Promise<acp.ReadTextFileResponse> {
-    const { readFile } = await import("node:fs/promises");
-    const content = await readFile(params.path, "utf-8");
-    return { content };
-  }
-
-  private async handleWriteFile(
-    params: acp.WriteTextFileRequest,
-  ): Promise<acp.WriteTextFileResponse> {
-    const { writeFile, mkdir } = await import("node:fs/promises");
-    const { dirname } = await import("node:path");
-    await mkdir(dirname(params.path), { recursive: true });
-    await writeFile(params.path, params.content);
-    return {};
   }
 }
