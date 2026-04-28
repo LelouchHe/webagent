@@ -256,3 +256,77 @@ async function fetchAllSharesForRevoke(): Promise<ShareListRow[]> {
   const data = (await res.json()) as { shares: ShareListRow[] };
   return data.shares.filter((s) => s.shared_at != null);
 }
+
+/**
+ * GET /api/v1/share/by — read the owner's default display_name. Returns
+ * null when unset (publish goes out anonymous). Used by the slash menu to
+ * surface the current value when offering `/share by`.
+ */
+export async function getDefaultDisplayName(): Promise<string | null> {
+  try {
+    const res = await fetch("/api/v1/share/by", {
+      credentials: "same-origin",
+    });
+    if (!res.ok) return null;
+    const data = (await res.json()) as { value: string | null };
+    return data.value;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Set (or clear with `null`) the owner's default display_name. Also patches
+ * the active preview (if any) so the change is visible in the current
+ * session before /publish. Already-published shares are left untouched —
+ * snapshot semantics.
+ */
+export async function setDefaultDisplayName(
+  name: string | null,
+): Promise<void> {
+  try {
+    const res = await fetch("/api/v1/share/by", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ value: name }),
+      credentials: "same-origin",
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      addSystem(
+        `share: set author failed ${res.status} — ${text.slice(0, 200)}`,
+      );
+      return;
+    }
+    const data = (await res.json()) as { value: string | null };
+
+    // Best-effort: reflect the change on the in-flight preview, if any.
+    if (state.previewToken && state.sessionId) {
+      try {
+        await fetch(
+          `/api/v1/sessions/${encodeURIComponent(state.sessionId)}/share`,
+          {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              token: state.previewToken,
+              display_name: data.value ?? "",
+            }),
+            credentials: "same-origin",
+          },
+        );
+      } catch (err) {
+        slog.warn("by: preview patch failed", { err });
+      }
+    }
+
+    addSystem(
+      data.value
+        ? `share: author set to '${data.value}'`
+        : "share: author cleared (publish anonymously)",
+    );
+  } catch (err) {
+    slog.error("by error", { err });
+    addSystem(`share: network error — ${String(err)}`);
+  }
+}

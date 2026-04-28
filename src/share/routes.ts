@@ -198,6 +198,18 @@ export async function handleShareRoutes(
     return true;
   }
 
+  if (
+    url.match(/^\/api\/v1\/share\/by\/?(?:\?.*)?$/) &&
+    (method === "GET" || method === "PUT")
+  ) {
+    if (method === "GET") {
+      await handleByGet(req, res, deps);
+    } else {
+      await handleByPut(req, res, deps);
+    }
+    return true;
+  }
+
   if (url.match(/^\/api\/v1\/shares\/?(?:\?.*)?$/) && method === "GET") {
     await handleOwnerList(req, res, deps);
     return true;
@@ -208,7 +220,9 @@ export async function handleShareRoutes(
     /^\/api\/v1\/sessions\/[^/]+\/share(?:\/|$|\?)/.test(url) ||
     url === "/api/v1/shares" ||
     url.startsWith("/api/v1/shares/") ||
-    url.startsWith("/api/v1/shared/")
+    url.startsWith("/api/v1/shared/") ||
+    url === "/api/v1/share" ||
+    url.startsWith("/api/v1/share/")
   ) {
     res.writeHead(404, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ error: "not found" }));
@@ -220,6 +234,16 @@ export async function handleShareRoutes(
 
 function ownerReject(res: ServerResponse, err: OwnerAuthError): void {
   json(res, err.status, { error: "owner auth required", reason: err.reason });
+}
+
+const DEFAULT_DISPLAY_NAME_KEY = "share.default_display_name";
+
+function resolveDisplayName(
+  deps: ShareRouteDeps,
+  validated: string,
+): string | null {
+  if (validated !== "") return validated;
+  return deps.store.getOwnerPref(DEFAULT_DISPLAY_NAME_KEY) ?? null;
 }
 
 /**
@@ -303,7 +327,7 @@ async function handlePreviewCreate(
     json(res, 400, { error: olResult.reason });
     return;
   }
-  const displayName = dnResult.value === "" ? null : dnResult.value;
+  const displayName = resolveDisplayName(deps, dnResult.value);
   const ownerLabel = olResult.value === "" ? null : olResult.value;
 
   try {
@@ -1123,4 +1147,71 @@ async function handleOwnerList(
   }
   const rows = deps.store.listOwnerShares();
   json(res, 200, { shares: rows });
+}
+
+/**
+ * GET /api/v1/share/by — read the owner's default display_name (used by
+ * the slash menu to surface the current value as secondary text).
+ * Returns { value: string | null }; null = not set / will publish anonymously.
+ */
+async function handleByGet(
+  req: IncomingMessage,
+  res: ServerResponse,
+  deps: ShareRouteDeps,
+): Promise<void> {
+  try {
+    assertOwner(req);
+  } catch (e) {
+    if (e instanceof OwnerAuthError) {
+      ownerReject(res, e);
+      return;
+    }
+    throw e;
+  }
+  const value = deps.store.getOwnerPref(DEFAULT_DISPLAY_NAME_KEY) ?? null;
+  json(res, 200, { value });
+}
+
+/**
+ * PUT /api/v1/share/by — set or clear the owner's default display_name.
+ * Body { value: string | null }. null / empty string clears. Validation
+ * mirrors the publish/PATCH endpoints (≤256 bytes UTF-8, no controls/bidi).
+ */
+async function handleByPut(
+  req: IncomingMessage,
+  res: ServerResponse,
+  deps: ShareRouteDeps,
+): Promise<void> {
+  try {
+    assertOwner(req);
+  } catch (e) {
+    if (e instanceof OwnerAuthError) {
+      ownerReject(res, e);
+      return;
+    }
+    throw e;
+  }
+
+  let body: { value?: unknown };
+  try {
+    body = (await readJson(req)) as typeof body;
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- runtime defense; cast above lies to TS
+    if (body === null || typeof body !== "object") body = {};
+  } catch {
+    json(res, 400, { error: "invalid JSON body" });
+    return;
+  }
+
+  const v = validateLabel(body.value, "value", 256);
+  if (!v.ok) {
+    json(res, 400, { error: v.reason });
+    return;
+  }
+  if (v.value === "") {
+    deps.store.clearOwnerPref(DEFAULT_DISPLAY_NAME_KEY);
+    json(res, 200, { value: null });
+  } else {
+    deps.store.setOwnerPref(DEFAULT_DISPLAY_NAME_KEY, v.value);
+    json(res, 200, { value: v.value });
+  }
 }

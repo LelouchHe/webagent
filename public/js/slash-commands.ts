@@ -29,6 +29,8 @@ import {
   discardPreview,
   listOwnerShares,
   revokeShare,
+  getDefaultDisplayName,
+  setDefaultDisplayName,
   type ShareListRow,
 } from "./share/commands.ts";
 
@@ -521,6 +523,32 @@ export const ROOT: CmdNode = {
         };
       },
       children: [
+        {
+          name: "by",
+          desc: "Set author shown to viewers (blank to clear)",
+          // fetch returns a single-row list with the current value so the
+          // submenu surfaces it; freeform handles "type a name + Enter".
+          fetch: async () => {
+            const value = await getDefaultDisplayName();
+            return [{ value }];
+          },
+          toSpec: (item: unknown) => {
+            const v = (item as { value: string | null }).value;
+            return {
+              primary: v ?? "(none)",
+              secondary: v ? "current — Enter to clear" : "currently anonymous",
+              onSelect: () => setDefaultDisplayName(null),
+            };
+          },
+          freeform: (q) => {
+            const trimmed = q.trim();
+            if (!trimmed) return null;
+            return {
+              primary: `set author to '${trimmed}'`,
+              onSelect: () => setDefaultDisplayName(trimmed),
+            };
+          },
+        },
         {
           name: "revoke",
           desc: "Revoke a public share",

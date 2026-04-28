@@ -997,4 +997,8 @@ export class Store {
       )
       .run(key, value, Date.now());
   }
+
+  clearOwnerPref(key: string): void {
+    this.db.prepare("DELETE FROM owner_prefs WHERE key = ?").run(key);
+  }
 }

@@ -508,3 +508,111 @@ describe("GET /api/v1/shares — owner list", () => {
     assert.equal(typeof rowB.shared_at, "number");
   });
 });
+
+describe("GET/PUT /api/v1/share/by — default display_name", () => {
+  let tmpDir: string;
+  let store: Store;
+  let deps: ShareRouteDeps;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), "wa-share-by-"));
+    store = new Store(tmpDir);
+    clearProjectionCache();
+    __clearAllLocks();
+    deps = { store, config: cfg, dataDir: tmpDir, publicDir: "/tmp" };
+  });
+  afterEach(() => {
+    store.close();
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("401 without owner headers", async () => {
+    const r = mockRes();
+    await handleShareRoutes(publicReq("/api/v1/share/by"), r.res, deps);
+    assert.equal(r.status(), 401);
+  });
+
+  it("GET returns null when unset", async () => {
+    const r = mockRes();
+    await handleShareRoutes(ownerReq("/api/v1/share/by"), r.res, deps);
+    assert.equal(r.status(), 200);
+    assert.deepEqual(r.json(), { value: null });
+  });
+
+  it("PUT sets, GET reads back, PUT null clears", async () => {
+    const r1 = mockRes();
+    await handleShareRoutes(
+      ownerReq("/api/v1/share/by", "PUT", { value: "Alice" }),
+      r1.res,
+      deps,
+    );
+    assert.equal(r1.status(), 200);
+    assert.deepEqual(r1.json(), { value: "Alice" });
+
+    const r2 = mockRes();
+    await handleShareRoutes(ownerReq("/api/v1/share/by"), r2.res, deps);
+    assert.deepEqual(r2.json(), { value: "Alice" });
+
+    const r3 = mockRes();
+    await handleShareRoutes(
+      ownerReq("/api/v1/share/by", "PUT", { value: null }),
+      r3.res,
+      deps,
+    );
+    assert.equal(r3.status(), 200);
+    assert.deepEqual(r3.json(), { value: null });
+
+    const r4 = mockRes();
+    await handleShareRoutes(ownerReq("/api/v1/share/by"), r4.res, deps);
+    assert.deepEqual(r4.json(), { value: null });
+  });
+
+  it("PUT empty string clears (treated like null)", async () => {
+    await handleShareRoutes(
+      ownerReq("/api/v1/share/by", "PUT", { value: "Bob" }),
+      mockRes().res,
+      deps,
+    );
+    const r = mockRes();
+    await handleShareRoutes(
+      ownerReq("/api/v1/share/by", "PUT", { value: "" }),
+      r.res,
+      deps,
+    );
+    assert.equal(r.status(), 200);
+    assert.deepEqual(r.json(), { value: null });
+  });
+
+  it("PUT rejects control characters", async () => {
+    const r = mockRes();
+    await handleShareRoutes(
+      ownerReq("/api/v1/share/by", "PUT", { value: "bad\x01name" }),
+      r.res,
+      deps,
+    );
+    assert.equal(r.status(), 400);
+  });
+
+  it("default flows into a fresh preview when display_name omitted", async () => {
+    const sid = "s-default";
+    store.createSession(sid, "/tmp/p");
+    store.saveEvent(sid, "user_message", { text: "hi" }, { from_ref: "agent" });
+
+    await handleShareRoutes(
+      ownerReq("/api/v1/share/by", "PUT", { value: "Charlie" }),
+      mockRes().res,
+      deps,
+    );
+    const r = mockRes();
+    await handleShareRoutes(
+      ownerReq(`/api/v1/sessions/${sid}/share`, "POST", {}),
+      r.res,
+      deps,
+    );
+    assert.equal(r.status(), 201);
+    assert.equal(
+      (r.json() as { display_name: string }).display_name,
+      "Charlie",
+    );
+  });
+});

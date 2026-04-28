@@ -27,6 +27,7 @@ import {
   publishPreview,
   discardPreview,
   revokeShare,
+  setDefaultDisplayName,
 } from "./share/commands.ts";
 
 async function subscribePush(): Promise<void> {
@@ -120,8 +121,14 @@ export async function handleSlashCommand(text: string): Promise<boolean> {
         await revokeShare(token);
         return true;
       }
+      if (sub === "by") {
+        // Everything after "by" is the name; preserve original casing/spaces.
+        const rest = arg.replace(/^by(\s+|$)/i, "").trim();
+        await setDefaultDisplayName(rest === "" ? null : rest);
+        return true;
+      }
       addSystem(
-        `share: unknown subcommand '${sub}' — try /share or /share revoke <token>`,
+        `share: unknown subcommand '${sub}' — try /share, /share by <name>, or /share revoke <token>`,
       );
       return true;
     }
