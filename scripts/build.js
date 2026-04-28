@@ -66,16 +66,19 @@ function extractChunkRefs(src) {
  * Inject <link rel="modulepreload"> tags for each chunk into the HTML <head>,
  * just before </head>. Idempotent: existing modulepreload tags for chunks
  * not in `chunks` are stripped first.
+ *
+ * `prefix` controls the URL path used in href; default `/js/` (main app),
+ * `/s/_/` for the share viewer so all its assets stay under one prefix.
  */
-function injectModulePreload(html, chunks) {
-  // Strip any pre-existing modulepreload tags pointing at /js/chunk.*
+function injectModulePreload(html, chunks, prefix = "/js/") {
+  // Strip any pre-existing modulepreload tags pointing at ANY chunk path.
   html = html.replace(
-    /\s*<link\s+rel=["']modulepreload["']\s+href=["']\/js\/chunk\.[A-Za-z0-9_-]+\.js["']\s*\/?\s*>/g,
+    /\s*<link\s+rel=["']modulepreload["']\s+href=["'][^"']*chunk\.[A-Za-z0-9_-]+\.js["']\s*\/?\s*>/g,
     "",
   );
   if (chunks.length === 0) return html;
   const tags = chunks
-    .map((c) => `<link rel="modulepreload" href="/js/${c}">`)
+    .map((c) => `<link rel="modulepreload" href="${prefix}${c}">`)
     .join("\n");
   return html.replace("</head>", `${tags}\n</head>`);
 }
@@ -108,15 +111,25 @@ async function copyStaticAssets(bundles) {
     );
     await writeFile(join(OUT, "login.html"), loginHtml);
 
-    // share-viewer.html has no inline script tag — inject one so dev+prod both work.
+    // share-viewer.html: rewrite asset URLs to /s/_/ namespace so the viewer
+    // is fully self-contained (single CF Access bypass / proxy rule on /s/*).
     const sv = join(OUT, "share-viewer.html");
     let svHtml = await readFile(sv, "utf-8");
+    svHtml = svHtml.replace("/styles.css", "/s/_/styles.css");
+    svHtml = svHtml.replace("/share-viewer.css", "/s/_/share-viewer.css");
     if (!svHtml.includes('src="/js/share/viewer')) {
       svHtml = svHtml.replace(
         "</body>",
-        `<script type="module" src="/js/${bundles.viewer}"></script>\n</body>`,
+        `<script type="module" src="/s/_/${bundles.viewer}"></script>\n</body>`,
       );
     }
+    // Dev splitting still emits hashed chunk.*.js — rewrite modulepreload too.
+    const viewerSrcDev = await readFile(
+      join(OUT, "js", bundles.viewer),
+      "utf-8",
+    );
+    const viewerChunksDev = extractChunkRefs(viewerSrcDev);
+    svHtml = injectModulePreload(svHtml, viewerChunksDev, "/s/_/");
     await writeFile(sv, svHtml);
   } else {
     // Production: bundle + hash CSS, hash share-viewer.css, rewrite HTML.
@@ -157,15 +170,15 @@ async function copyStaticAssets(bundles) {
     await writeFile(join(OUT, "login.html"), loginHtml);
 
     let svHtml = await readFile(join(OUT, "share-viewer.html"), "utf-8");
-    svHtml = svHtml.replace("/styles.css", `/${newCss}`);
-    svHtml = svHtml.replace("/share-viewer.css", `/${newSvCss}`);
+    svHtml = svHtml.replace("/styles.css", `/s/_/${newCss}`);
+    svHtml = svHtml.replace("/share-viewer.css", `/s/_/${newSvCss}`);
     if (!svHtml.includes('src="/js/share/viewer')) {
       svHtml = svHtml.replace(
         "</body>",
-        `<script type="module" src="/js/${bundles.viewer}"></script>\n</body>`,
+        `<script type="module" src="/s/_/${bundles.viewer}"></script>\n</body>`,
       );
     }
-    svHtml = injectModulePreload(svHtml, viewerChunks);
+    svHtml = injectModulePreload(svHtml, viewerChunks, "/s/_/");
     await writeFile(join(OUT, "share-viewer.html"), svHtml);
 
     console.log(

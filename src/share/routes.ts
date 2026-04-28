@@ -108,6 +108,16 @@ export async function handleShareRoutes(
   const url = req.url ?? "/";
   const method = req.method ?? "GET";
 
+  // Viewer static assets (CSS/JS) — served under /s/_/ so the share viewer
+  // is fully self-contained behind one URL prefix. CF Access / proxies only
+  // need to whitelist /s/* (not /js/*, /styles.*.css, etc.). Must come
+  // before the /s/:token match so `_` doesn't get parsed as a token.
+  const assetMatch = url.match(/^\/s\/_\/([A-Za-z0-9._-]+)\/?(?:\?.*)?$/);
+  if (assetMatch && method === "GET") {
+    await handleViewerAsset(res, deps, assetMatch[1]);
+    return true;
+  }
+
   // Viewer image proxy — must come before general /s/:token HTML match.
   const imgMatch = url.match(
     /^\/s\/([A-Za-z0-9_-]{24})\/images\/([^/?]+)\/?(?:\?.*)?$/,
@@ -759,6 +769,67 @@ async function handleSharedEvents(
     const errorId = randomUUID();
     console.error(`[share] shared_events error_id=${errorId}`, err);
     json(res, 500, { error: "internal error", error_id: errorId });
+  }
+}
+
+/**
+ * GET /s/_/<file> — viewer-namespaced static asset proxy. Serves the same
+ * hashed CSS/JS bundles as the main app, but under a /s/* path so the
+ * viewer is fully self-contained behind one URL prefix (single CF Access
+ * bypass, no leakage of owner-only paths). Read-only allowlist of safe
+ * filename patterns; hashed bundles get immutable cache, dev-mode unhashed
+ * bundles get no-cache.
+ */
+async function handleViewerAsset(
+  res: ServerResponse,
+  deps: ShareRouteDeps,
+  file: string,
+): Promise<void> {
+  if (!deps.publicDir) {
+    res.writeHead(500, { "Content-Type": "text/plain" });
+    res.end("publicDir not configured");
+    return;
+  }
+
+  // Strict filename allowlist — only the bundles share-viewer.html references.
+  // Hashed prod: styles.HASH.css, share-viewer.HASH.css, viewer.HASH.js, chunk.HASH.js
+  // Dev unhashed: styles.css, share-viewer.css, viewer.js
+  const cssMatch = /^(styles|share-viewer)(?:\.[A-Za-z0-9_-]+)?\.css$/.test(
+    file,
+  );
+  const jsMatch = /^(viewer|chunk)(?:\.[A-Za-z0-9_-]+)?\.js$/.test(file);
+  if (!cssMatch && !jsMatch) {
+    res.writeHead(404, { "Content-Type": "text/plain" });
+    res.end("not found");
+    return;
+  }
+
+  const filePath = jsMatch
+    ? join(deps.publicDir, "js", file)
+    : join(deps.publicDir, file);
+
+  // Hashed bundles (X.HASH.css|js) are content-addressed → immutable.
+  // Dev unhashed bundles (X.css|js) revalidate every load.
+  const hashed = /\.[A-Za-z0-9_-]{6,}\.(css|js)$/.test(file);
+  const cacheControl = hashed
+    ? "public, max-age=31536000, immutable"
+    : "no-cache";
+  const contentType = jsMatch
+    ? "text/javascript; charset=utf-8"
+    : "text/css; charset=utf-8";
+
+  try {
+    const buf = await readFile(filePath);
+    res.writeHead(200, {
+      "Content-Type": contentType,
+      "Cache-Control": cacheControl,
+      "X-Content-Type-Options": "nosniff",
+      "X-Robots-Tag": "noindex, nofollow",
+    });
+    res.end(buf);
+  } catch {
+    res.writeHead(404, { "Content-Type": "text/plain" });
+    res.end("not found");
   }
 }
 
