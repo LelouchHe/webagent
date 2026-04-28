@@ -39,7 +39,10 @@ type KeyInfo = {
   defaultValue?: unknown;
 };
 
-function unwrap(schema: z.ZodTypeAny): { inner: z.ZodTypeAny; defaultValue?: unknown } {
+function unwrap(schema: z.ZodTypeAny): {
+  inner: z.ZodTypeAny;
+  defaultValue?: unknown;
+} {
   let current: z.ZodTypeAny = schema;
   let def: unknown = undefined;
   let hasDef = false;
@@ -70,11 +73,14 @@ function walkSchema(schema: z.ZodTypeAny): KeyInfo[] {
   if (rootCtor !== "ZodObject") {
     throw new Error(`walkSchema: root must be a ZodObject, got ${rootCtor}`);
   }
-  const shape = (root as unknown as { shape: Record<string, z.ZodTypeAny> }).shape;
+  const shape = (root as unknown as { shape: Record<string, z.ZodTypeAny> })
+    .shape;
   for (const [key, child] of Object.entries(shape)) {
     const { inner, defaultValue } = unwrap(child);
     if (inner.constructor.name === "ZodObject") {
-      const subShape = (inner as unknown as { shape: Record<string, z.ZodTypeAny> }).shape;
+      const subShape = (
+        inner as unknown as { shape: Record<string, z.ZodTypeAny> }
+      ).shape;
       for (const [subKey, subChild] of Object.entries(subShape)) {
         const { defaultValue: subDefault } = unwrap(subChild);
         out.push({
@@ -155,7 +161,10 @@ describe("config coverage", async () => {
   const keys = walkSchema(ConfigSchema);
 
   it("should find a reasonable number of schema keys", () => {
-    assert.ok(keys.length >= 15, `Expected ≥15 schema keys, found ${keys.length}`);
+    assert.ok(
+      keys.length >= 15,
+      `Expected ≥15 schema keys, found ${keys.length}`,
+    );
   });
 
   // --- (1) config.toml coverage rules:
@@ -218,7 +227,8 @@ function getLive(parsed: Record<string, unknown>, path: string): unknown {
   const parts = path.split(".");
   let cur: unknown = parsed;
   for (const p of parts) {
-    if (cur === undefined || cur === null || typeof cur !== "object") return undefined;
+    if (cur === undefined || cur === null || typeof cur !== "object")
+      return undefined;
     cur = (cur as Record<string, unknown>)[p];
   }
   return cur;

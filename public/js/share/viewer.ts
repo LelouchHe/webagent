@@ -5,7 +5,12 @@
 
 import { marked } from "marked";
 import DOMPurify from "dompurify";
-import { interpretToolCall, extractToolCallContent, getStatusIcon, formatPlanEntries } from "../event-interpreter.ts";
+import {
+  interpretToolCall,
+  extractToolCallContent,
+  getStatusIcon,
+  formatPlanEntries,
+} from "../event-interpreter.ts";
 import type { StoredEvent, ToolContentItem } from "../../../src/types.ts";
 
 interface SharePayload {
@@ -31,13 +36,17 @@ function el(tag: string, className?: string, text?: string): HTMLElement {
 // Parse event.data — StoredEvent.data is JSON string over the wire.
 function parseData(ev: StoredEvent): Record<string, unknown> {
   if (typeof ev.data === "string") {
-    try { return JSON.parse(ev.data) as Record<string, unknown>; } catch { return {}; }
+    try {
+      return JSON.parse(ev.data) as Record<string, unknown>;
+    } catch {
+      return {};
+    }
   }
-  return (ev.data ?? {}) as Record<string, unknown>;
+  return ev.data;
 }
 
 function renderMarkdown(text: string, token: string): string {
-  const html = marked.parse(text, { async: false }) as string;
+  const html = marked.parse(text, { async: false });
   // Layer 2 defense (Layer 1a/1c already ran on the backend).
   const clean = DOMPurify.sanitize(html, {
     USE_PROFILES: { html: true },
@@ -90,13 +99,18 @@ function renderEvent(ev: StoredEvent, token: string, host: HTMLElement): void {
       row.classList.add("tool-call", "pending");
       row.appendChild(el("span", "tool-icon", view.icon));
       row.appendChild(el("span", "tool-title", view.title));
-      if (view.detail) row.appendChild(el("span", "tool-detail", `${view.detailPrefix ?? ""}${view.detail}`));
+      if (view.detail)
+        row.appendChild(
+          el("span", "tool-detail", `${view.detailPrefix ?? ""}${view.detail}`),
+        );
       host.appendChild(row);
       break;
     }
     case "tool_call_update": {
       const status = typeof d.status === "string" ? d.status : "pending";
-      const content = Array.isArray(d.content) ? (d.content as ToolContentItem[]) : [];
+      const content = Array.isArray(d.content)
+        ? (d.content as ToolContentItem[])
+        : [];
       const text = extractToolCallContent(content);
       const { icon, className } = getStatusIcon(status);
       row.className = `msg msg-tool_call_update ${className}`;
@@ -106,7 +120,9 @@ function renderEvent(ev: StoredEvent, token: string, host: HTMLElement): void {
       break;
     }
     case "plan": {
-      const entries = Array.isArray(d.entries) ? formatPlanEntries(d.entries as never) : [];
+      const entries = Array.isArray(d.entries)
+        ? formatPlanEntries(d.entries as never)
+        : [];
       row.classList.add("plan");
       const ul = el("ul", "plan-list");
       for (const p of entries) {
@@ -129,18 +145,25 @@ function formatTimestamp(iso: string): string {
   try {
     const d = new Date(iso);
     return d.toISOString().replace("T", " ").slice(0, 16) + "Z";
-  } catch { return iso; }
+  } catch {
+    return iso;
+  }
 }
 
 async function main(): Promise<void> {
   // Set theme without an inline script (CSP: no unsafe-inline).
   try {
-    const t = localStorage.getItem("theme") || "auto";
+    const t = localStorage.getItem("theme") ?? "auto";
     document.documentElement.setAttribute("data-theme", t);
-  } catch { /* ignore storage failures */ }
+  } catch {
+    /* ignore storage failures */
+  }
 
   const m = /^\/s\/([A-Za-z0-9_-]{24})(?:[/?#]|$)/.exec(location.pathname);
-  if (!m) { document.body.textContent = "invalid share URL"; return; }
+  if (!m) {
+    document.body.textContent = "invalid share URL";
+    return;
+  }
   const token = m[1];
 
   const infoEl = document.getElementById("session-info");
@@ -150,13 +173,23 @@ async function main(): Promise<void> {
 
   let payload: SharePayload;
   try {
-    const res = await fetch(`/api/v1/shared/${encodeURIComponent(token)}/events`, {
-      headers: { "Accept": "application/json" },
-      credentials: "omit",
-    });
-    if (res.status === 410) { document.body.innerHTML = "<div class='share-gone'>此链接已撤销或过期。</div>"; return; } // xss-ok: static literal
-    if (!res.ok) { document.body.textContent = `error ${res.status}`; return; }
-    payload = await res.json() as SharePayload;
+    const res = await fetch(
+      `/api/v1/shared/${encodeURIComponent(token)}/events`,
+      {
+        headers: { Accept: "application/json" },
+        credentials: "omit",
+      },
+    );
+    if (res.status === 410) {
+      document.body.innerHTML = // xss-ok: static literal, no user input
+        "<div class='share-gone'>此链接已撤销或过期。</div>";
+      return;
+    }
+    if (!res.ok) {
+      document.body.textContent = `error ${res.status}`;
+      return;
+    }
+    payload = (await res.json()) as SharePayload;
   } catch (err) {
     document.body.textContent = `failed to load: ${String(err)}`;
     return;

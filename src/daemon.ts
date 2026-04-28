@@ -41,13 +41,17 @@ export interface PidInfo {
 export function readPidInfo(filePath: string): PidInfo | null {
   if (!existsSync(filePath)) return null;
   try {
-    const info: PidInfo = JSON.parse(readFileSync(filePath, "utf8"));
+    const info: PidInfo = JSON.parse(readFileSync(filePath, "utf8")) as PidInfo;
     if (typeof info.pid !== "number" || !Number.isFinite(info.pid)) return null;
     process.kill(info.pid, 0); // existence check — throws if dead
     return info;
   } catch {
     // Process is dead or file corrupt — clean up
-    try { unlinkSync(filePath); } catch { /* ignore */ }
+    try {
+      unlinkSync(filePath);
+    } catch {
+      /* ignore */
+    }
     return null;
   }
 }
@@ -69,7 +73,11 @@ export function isSubcommand(arg: string): arg is Subcommand {
 export function resolveArgs(args: string[]): string[] {
   const result = [...args];
   for (let i = 0; i < result.length; i++) {
-    if (result[i] === "--config" && i + 1 < result.length && !isAbsolute(result[i + 1])) {
+    if (
+      result[i] === "--config" &&
+      i + 1 < result.length &&
+      !isAbsolute(result[i + 1])
+    ) {
       result[i + 1] = resolve(result[i + 1]);
     }
   }
@@ -85,10 +93,14 @@ export async function run(command: Subcommand, args: string[]): Promise<void> {
   const logFile = join(process.cwd(), LOG_FILE);
 
   switch (command) {
-    case "start":   return cmdStart(pidFile, logFile, args);
-    case "stop":    return cmdStop(pidFile);
-    case "status":  return cmdStatus(pidFile, logFile);
-    case "restart": return cmdRestart(pidFile, logFile);
+    case "start":
+      return cmdStart(pidFile, logFile, args);
+    case "stop":
+      return cmdStop(pidFile);
+    case "status":
+      return cmdStatus(pidFile, logFile);
+    case "restart":
+      return cmdRestart(pidFile, logFile);
   }
 }
 
@@ -96,7 +108,11 @@ export async function run(command: Subcommand, args: string[]): Promise<void> {
 // Commands
 // ---------------------------------------------------------------------------
 
-async function cmdStart(pidFile: string, logFile: string, args: string[]): Promise<void> {
+async function cmdStart(
+  pidFile: string,
+  logFile: string,
+  args: string[],
+): Promise<void> {
   const existing = readPidInfo(pidFile);
   if (existing) {
     console.log(`webagent is already running (pid ${existing.pid})`);
@@ -107,7 +123,9 @@ async function cmdStart(pidFile: string, logFile: string, args: string[]): Promi
   const serverJs = join(__dirname, "server.js");
   if (!existsSync(serverJs)) {
     console.error(`server not found: ${serverJs}`);
-    console.error('run "npx tsc -p tsconfig.build.json" first if developing from source');
+    console.error(
+      'run "npx tsc -p tsconfig.build.json" first if developing from source',
+    );
     process.exitCode = 1;
     return;
   }
@@ -122,7 +140,9 @@ async function cmdStart(pidFile: string, logFile: string, args: string[]): Promi
       if (lines.length > LOG_MAX_LINES) {
         writeFileSync(logFile, lines.slice(-LOG_MAX_LINES).join("\n"));
       }
-    } catch { /* best-effort */ }
+    } catch {
+      /* best-effort */
+    }
   }
 
   const log = openSync(logFile, "a");
@@ -130,7 +150,12 @@ async function cmdStart(pidFile: string, logFile: string, args: string[]): Promi
   const child = spawn(
     process.execPath,
     [daemonJs, "__supervisor", ...resolved],
-    { detached: true, stdio: ["ignore", log, log], cwd: process.cwd(), windowsHide: true },
+    {
+      detached: true,
+      stdio: ["ignore", log, log],
+      cwd: process.cwd(),
+      windowsHide: true,
+    },
   );
   child.unref();
   closeSync(log);
@@ -162,7 +187,11 @@ async function cmdStop(pidFile: string): Promise<void> {
     process.kill(info.pid, "SIGTERM");
   } catch {
     console.log("webagent is not running (stale pid file removed)");
-    try { unlinkSync(pidFile); } catch { /* ignore */ }
+    try {
+      unlinkSync(pidFile);
+    } catch {
+      /* ignore */
+    }
     return;
   }
 
@@ -174,7 +203,11 @@ async function cmdStop(pidFile: string): Promise<void> {
       process.kill(info.pid, 0);
     } catch {
       // Gone — supervisor cleans up PID file, but be safe
-      try { unlinkSync(pidFile); } catch { /* ignore */ }
+      try {
+        unlinkSync(pidFile);
+      } catch {
+        /* ignore */
+      }
       console.log("webagent stopped");
       return;
     }
@@ -248,7 +281,11 @@ function runSupervisor(serverArgs: string[]): void {
   const serverJs = join(__dirname, "server.js");
   const pidFile = join(process.cwd(), PID_FILE);
 
-  writePidInfo(pidFile, { pid: process.pid, args: serverArgs, started: new Date().toISOString() });
+  writePidInfo(pidFile, {
+    pid: process.pid,
+    args: serverArgs,
+    started: new Date().toISOString(),
+  });
 
   let child: ChildProcess | null = null;
   let stopping = false;
@@ -258,7 +295,10 @@ function runSupervisor(serverArgs: string[]): void {
 
   function spawnServer(): void {
     lastStart = Date.now();
-    child = spawn(process.execPath, [serverJs, ...serverArgs], { stdio: "inherit", windowsHide: true });
+    child = spawn(process.execPath, [serverJs, ...serverArgs], {
+      stdio: "inherit",
+      windowsHide: true,
+    });
     child.on("exit", onChildExit);
   }
 
@@ -272,18 +312,34 @@ function runSupervisor(serverArgs: string[]): void {
       delay = Math.min(delay * 2, RESTART_DELAY_MAX);
     }
 
-    console.log(`[supervisor] server exited (code=${code} signal=${signal}), restarting in ${delay}ms`);
+    console.log(
+      `[supervisor] server exited (code=${code} signal=${signal}), restarting in ${delay}ms`,
+    );
     timer = setTimeout(spawnServer, delay);
   }
 
   function killChild(): Promise<void> {
-    if (timer) { clearTimeout(timer); timer = null; }
-    return new Promise((resolve) => {
-      if (!child) { resolve(); return; }
+    if (timer) {
+      clearTimeout(timer);
+      timer = null;
+    }
+    return new Promise((innerResolve) => {
+      if (!child) {
+        innerResolve();
+        return;
+      }
       const c = child;
-      c.once("exit", () => resolve());
+      c.once("exit", () => {
+        innerResolve();
+      });
       c.kill("SIGTERM");
-      setTimeout(() => { try { c.kill("SIGKILL"); } catch { /* ignore */ } }, KILL_GRACE_MS);
+      setTimeout(() => {
+        try {
+          c.kill("SIGKILL");
+        } catch {
+          /* ignore */
+        }
+      }, KILL_GRACE_MS);
     });
   }
 
@@ -291,19 +347,29 @@ function runSupervisor(serverArgs: string[]): void {
     if (stopping) return;
     stopping = true;
     await killChild();
-    try { unlinkSync(pidFile); } catch { /* ignore */ }
+    try {
+      unlinkSync(pidFile);
+    } catch {
+      /* ignore */
+    }
     process.exit(0);
   }
 
-  process.on("SIGTERM", () => { shutdown(); });
-  process.on("SIGINT", () => { shutdown(); });
+  process.on("SIGTERM", () => {
+    void shutdown();
+  });
+  process.on("SIGINT", () => {
+    void shutdown();
+  });
 
   if (process.platform !== "win32") {
-    process.on("SIGHUP", async () => {
-      console.log("[supervisor] SIGHUP received, restarting server");
-      delay = RESTART_DELAY_INITIAL;
-      await killChild();
-      if (!stopping) spawnServer();
+    process.on("SIGHUP", () => {
+      void (async () => {
+        console.log("[supervisor] SIGHUP received, restarting server");
+        delay = RESTART_DELAY_INITIAL;
+        await killChild();
+        if (!stopping) spawnServer();
+      })();
     });
   }
 

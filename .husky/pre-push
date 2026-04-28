@@ -4,6 +4,7 @@
 # before reaching the remote.
 #
 # Order: cheapest/fastest checks first so failures exit early.
+#   format     ~1s
 #   lint       ~2s
 #   typecheck  ~3s
 #   build      ~3s
@@ -18,6 +19,9 @@
 # the local gate truly mirrors CI.
 
 set -e
+
+echo "▶ pre-push: format"
+npm run format:check
 
 echo "▶ pre-push: lint"
 npm run lint

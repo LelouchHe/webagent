@@ -80,7 +80,11 @@ function permsEqual(a: PendingPermission[], b: PendingPermission[]): boolean {
   for (let i = 0; i < a.length; i++) {
     const x = a[i],
       y = b[i];
-    if (x.requestId !== y.requestId || x.toolName !== y.toolName || x.title !== y.title)
+    if (
+      x.requestId !== y.requestId ||
+      x.toolName !== y.toolName ||
+      x.title !== y.title
+    )
       return false;
     if (x.options.length !== y.options.length) return false;
     for (let j = 0; j < x.options.length; j++) {
@@ -95,9 +99,13 @@ function permsEqual(a: PendingPermission[], b: PendingPermission[]): boolean {
 }
 
 /** True when the patch would change the current runtime state. */
-function hasRuntimeChanges(current: Runtime, patch: RuntimePatch | undefined): boolean {
+function hasRuntimeChanges(
+  current: Runtime,
+  patch: RuntimePatch | undefined,
+): boolean {
   if (!patch) return false;
-  if ("busy" in patch && !busyEqual(current.busy, patch.busy ?? null)) return true;
+  if ("busy" in patch && !busyEqual(current.busy, patch.busy ?? null))
+    return true;
   if (
     "pendingPermissions" in patch &&
     patch.pendingPermissions &&
@@ -106,8 +114,13 @@ function hasRuntimeChanges(current: Runtime, patch: RuntimePatch | undefined): b
     return true;
   if ("streaming" in patch && patch.streaming) {
     const s = patch.streaming;
-    if (s.assistant !== undefined && s.assistant !== current.streaming.assistant) return true;
-    if (s.thinking !== undefined && s.thinking !== current.streaming.thinking) return true;
+    if (
+      s.assistant !== undefined &&
+      s.assistant !== current.streaming.assistant
+    )
+      return true;
+    if (s.thinking !== undefined && s.thinking !== current.streaming.thinking)
+      return true;
   }
   return false;
 }
@@ -115,7 +128,10 @@ function hasRuntimeChanges(current: Runtime, patch: RuntimePatch | undefined): b
 export class SessionStateManager {
   private readonly states = new Map<string, SessionRuntimeState>();
   private readonly listeners = new Set<Listener>();
-  private readonly cancelTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private readonly cancelTimers = new Map<
+    string,
+    ReturnType<typeof setTimeout>
+  >();
 
   /** Get current state (creates default entry on first access). */
   getState(sessionId: string): SessionRuntimeState {
@@ -141,8 +157,12 @@ export class SessionStateManager {
       if ("busy" in patch.runtime) {
         state.runtime.busy = patch.runtime.busy ?? null;
       }
-      if ("pendingPermissions" in patch.runtime && patch.runtime.pendingPermissions) {
-        state.runtime.pendingPermissions = patch.runtime.pendingPermissions.slice();
+      if (
+        "pendingPermissions" in patch.runtime &&
+        patch.runtime.pendingPermissions
+      ) {
+        state.runtime.pendingPermissions =
+          patch.runtime.pendingPermissions.slice();
       }
       if ("streaming" in patch.runtime && patch.runtime.streaming) {
         if (patch.runtime.streaming.assistant !== undefined) {
@@ -195,7 +215,8 @@ export class SessionStateManager {
       this.cancelTimers.delete(sessionId);
       this.patch(sessionId, { runtime: { busy: null } });
     }, timeoutMs);
-    if (typeof t === "object" && "unref" in t) (t as { unref: () => void }).unref();
+    if (typeof t === "object" && "unref" in t)
+      (t as { unref: () => void }).unref();
     this.cancelTimers.set(sessionId, t);
   }
 

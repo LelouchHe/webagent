@@ -1,7 +1,14 @@
 import { test, expect } from "playwright/test";
-import { createNewSession, currentSessionId, gotoConnected, sendPrompt } from "./helpers.ts";
+import {
+  createNewSession,
+  currentSessionId,
+  gotoConnected,
+  sendPrompt,
+} from "./helpers.ts";
 
-test("permission resolution syncs across two clients in the same session", async ({ browser }) => {
+test("permission resolution syncs across two clients in the same session", async ({
+  browser,
+}) => {
   const pageA = await browser.newPage();
   const pageB = await browser.newPage();
 
@@ -24,8 +31,12 @@ test("permission resolution syncs across two clients in the same session", async
   await expect(permissionB).toContainText("Allow");
   await expect(permissionA.getByRole("button")).toHaveCount(0);
   await expect(permissionB.getByRole("button")).toHaveCount(0);
-  await expect(pageA.locator(".msg.assistant").last()).toContainText("Permission granted");
-  await expect(pageB.locator(".msg.assistant").last()).toContainText("Permission granted");
+  await expect(pageA.locator(".msg.assistant").last()).toContainText(
+    "Permission granted",
+  );
+  await expect(pageB.locator(".msg.assistant").last()).toContainText(
+    "Permission granted",
+  );
   await expect(pageA.locator("#send-btn")).toHaveText("↵");
   await expect(pageB.locator("#send-btn")).toHaveText("↵");
 });

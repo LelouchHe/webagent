@@ -20,7 +20,10 @@ const DAY_MS = 24 * 60 * 60 * 1000;
  * Sweep one batch of stale previews (older than 24h, never activated,
  * never revoked). Returns rows removed. `now` injectable for tests.
  */
-export function sweepStaleSharePreviewsOnce(store: Store, now: number = Date.now()): number {
+export function sweepStaleSharePreviewsOnce(
+  store: Store,
+  now: number = Date.now(),
+): number {
   const removed = store.pruneStalePreviews(now);
   if (removed > 0) {
     console.info(`[share] preview gc removed=${removed}`);
@@ -35,7 +38,9 @@ export function sweepStaleSharePreviewsOnce(store: Store, now: number = Date.now
  *
  * Only call when `config.share.enabled === true`; otherwise skip entirely.
  */
-export function startSharePreviewCleanup(store: Store): SharePreviewCleanupHandle {
+export function startSharePreviewCleanup(
+  store: Store,
+): SharePreviewCleanupHandle {
   try {
     sweepStaleSharePreviewsOnce(store);
   } catch (err) {
@@ -53,6 +58,8 @@ export function startSharePreviewCleanup(store: Store): SharePreviewCleanupHandl
 
   return {
     armed: true,
-    stop: () => clearInterval(timer),
+    stop: () => {
+      clearInterval(timer);
+    },
   };
 }

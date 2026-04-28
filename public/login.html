@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Sign in — webagent</title>
+    <link rel="icon" href="/icons/icon.svg" type="image/svg+xml" />
+    <link rel="manifest" href="/manifest.json" />
+    <meta
+      name="theme-color"
+      content="#0d1117"
+      media="(prefers-color-scheme: dark)"
+    />
+    <meta
+      name="theme-color"
+      content="#ffffff"
+      media="(prefers-color-scheme: light)"
+    />
+    <script src="/theme-init.js"></script>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body class="login-page">
+    <div class="login-card">
+      <h1>>_ webagent</h1>
+      <p>
+        Paste your access token to sign in. Tokens are stored on this device
+        only.
+      </p>
+      <form id="login-form">
+        <input
+          id="token-input"
+          type="password"
+          placeholder="wat_..."
+          autocomplete="current-password"
+          autocorrect="off"
+          autocapitalize="none"
+          spellcheck="false"
+        />
+        <div id="error" class="error" role="alert"></div>
+        <button id="submit-btn" type="submit">Sign in</button>
+      </form>
+      <p class="hint">
+        Don't have a token? Run
+        <code>webagent --create-token &lt;name&gt;</code> on the server.
+      </p>
+    </div>
+    <script type="module" src="/js/login.js"></script>
+  </body>
+</html>

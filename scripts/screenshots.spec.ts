@@ -4,7 +4,11 @@
  * Run:  npm run screenshots
  */
 import { test, expect } from "playwright/test";
-import { gotoConnected, createNewSession, sendPrompt } from "../test/e2e/helpers.ts";
+import {
+  gotoConnected,
+  createNewSession,
+  sendPrompt,
+} from "../test/e2e/helpers.ts";
 
 const DESKTOP = { width: 1280, height: 800 };
 const MOBILE = { width: 375, height: 812 };
@@ -34,7 +38,8 @@ test("capture desktop chat screenshot", async ({ browser }) => {
   await sendAndWait(page, "E2E_TOOL_EDIT");
   await sendAndWait(page, "E2E_TOOL_CREATE");
 
-  for (const el of await page.locator("details summary").all()) await el.click();
+  for (const el of await page.locator("details summary").all())
+    await el.click();
 
   await page.screenshot({ path: `${OUT}/chat-desktop.png` });
   await ctx.close();
@@ -63,7 +68,9 @@ test("capture permission screenshot", async ({ browser }) => {
 
   await sendPrompt(page, "E2E_PERMISSION");
   const permission = page.locator(".permission").last();
-  await expect(permission).toContainText("Sensitive command", { timeout: 10_000 });
+  await expect(permission).toContainText("Sensitive command", {
+    timeout: 10_000,
+  });
 
   await page.screenshot({ path: `${OUT}/permission.png` });
   await ctx.close();
@@ -78,7 +85,8 @@ test("capture mobile screenshot", async ({ browser }) => {
 
   await sendAndWait(page, "E2E_TOOL_EDIT");
 
-  for (const el of await page.locator("details summary").all()) await el.click();
+  for (const el of await page.locator("details summary").all())
+    await el.click();
 
   await page.screenshot({ path: `${OUT}/mobile-chat.png` });
   await ctx.close();

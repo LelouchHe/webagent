@@ -28,10 +28,10 @@ It is deliberately **not** an auto-inject mechanism. Nothing a cron job sends ev
 
 Two shapes on ingress:
 
-| Mode | `to` field | Behavior |
-|---|---|---|
-| **Unbound** | `"user"` | Message goes into the inbox. User opens `/inbox`, picks it, and either **consume** (creates a new session, cwd inherited if provided) or **ack** (dismiss without engaging). |
-| **Bound** | `"session:<id>"` | Message is appended as a `message` event directly to the target session's event stream. No inbox hop. Unknown session id → `400`. |
+| Mode        | `to` field       | Behavior                                                                                                                                                                     |
+| ----------- | ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Unbound** | `"user"`         | Message goes into the inbox. User opens `/inbox`, picks it, and either **consume** (creates a new session, cwd inherited if provided) or **ack** (dismiss without engaging). |
+| **Bound**   | `"session:<id>"` | Message is appended as a `message` event directly to the target session's event stream. No inbox hop. Unknown session id → `400`.                                            |
 
 Supersede (optional): pass `dedup_key`. A new unbound message with the same `(to, dedup_key)` pair replaces any older unprocessed row. Useful for "build status" style pings where only the latest matters.
 
@@ -96,7 +96,7 @@ Typing `/inbox` (with or without a trailing space) opens a picker listing all pe
 - **`[x]` button:** ack (dismiss without consuming)
 - **Tab:** fills `/inbox <id>` into the input so the command is visible before you press Enter
 
-Typing `/inbox <id-prefix|title-substring>` (without picker) consumes the first match; `/inbox ack <id-prefix|title-substring>` dismisses it. Matching mirrors `/switch` (id prefix OR case-insensitive title substring, first hit wins). There is no `consume` keyword — plain `/inbox <query>` is the consume path.
+Typing `/inbox <id-prefix|title-substring>` (without picker) consumes the first match; `/inbox dismiss <id-prefix|title-substring>` dismisses it. Matching mirrors `/switch` (id prefix OR case-insensitive title substring, first hit wins). There is no `consume` keyword — plain `/inbox <query>` is the consume path.
 
 The menu refetches on every open (no client-side caching) so new arrivals show up immediately.
 
@@ -172,13 +172,13 @@ Pass `X-Client-Op-Id: <uuid>`; repeated requests return the same message id (res
 
 ## Where to look in the code
 
-| Concern | File |
-|---|---|
-| Zod schema, `from_ref` regex | `src/types.ts` (`MessageIngressSchema`) |
-| REST routes (`POST`, `GET`, `consume`, `ack`) | `src/routes.ts` |
-| DB operations (`consumeMessageTx`, `findBySupersede`, `deleteOlderThan`) | `src/store.ts` |
-| Push tag derivation, `session:<id>` routing | `src/push-service.ts` (`sendForMessage`, `tagToTopic`) |
-| Inbox slash menu, rendering, click/tab handlers | `public/js/commands.ts` |
-| Inbox types + API client | `public/js/api.ts` |
-| SW banner-close + notificationclick routing | `public/sw.js` |
-| Tests | `test/messages-*.test.ts`, `test/push-egress*.test.ts`, `test/inbox-command.test.ts`, `test/slash-menu.test.ts` |
+| Concern                                                                  | File                                                                                                            |
+| ------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------- |
+| Zod schema, `from_ref` regex                                             | `src/types.ts` (`MessageIngressSchema`)                                                                         |
+| REST routes (`POST`, `GET`, `consume`, `ack`)                            | `src/routes.ts`                                                                                                 |
+| DB operations (`consumeMessageTx`, `findBySupersede`, `deleteOlderThan`) | `src/store.ts`                                                                                                  |
+| Push tag derivation, `session:<id>` routing                              | `src/push-service.ts` (`sendForMessage`, `tagToTopic`)                                                          |
+| Inbox slash menu, rendering, click/tab handlers                          | `public/js/commands.ts`                                                                                         |
+| Inbox types + API client                                                 | `public/js/api.ts`                                                                                              |
+| SW banner-close + notificationclick routing                              | `public/sw.js`                                                                                                  |
+| Tests                                                                    | `test/messages-*.test.ts`, `test/push-egress*.test.ts`, `test/inbox-command.test.ts`, `test/slash-menu.test.ts` |

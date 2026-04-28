@@ -53,7 +53,9 @@ function send(
       (res) => {
         let d = "";
         res.on("data", (c: Buffer) => (d += c.toString()));
-        res.on("end", () => resolve({ status: res.statusCode!, body: d }));
+        res.on("end", () => {
+          resolve({ status: res.statusCode!, body: d });
+        });
       },
     );
     r.on("error", reject);
@@ -121,12 +123,15 @@ describe("acp-push-close: handled signals fire sendClose", () => {
       dataDir: tmpDir,
       limits: { bash_output: 1_048_576, image_upload: 10_485_760 },
       pushService: push,
-      sessions: sessionManager as unknown as Parameters<typeof createRequestHandler>[0]["sessions"],
+      sessions: sessionManager as unknown as Parameters<
+        typeof createRequestHandler
+      >[0]["sessions"],
       getBridge: () =>
         ({
           resolvePermission: (requestId: string, optionId: string) =>
             bridgeCalls.push({ requestId, optionId }),
-          denyPermission: (requestId: string) => bridgeCalls.push({ requestId, denied: true }),
+          denyPermission: (requestId: string) =>
+            bridgeCalls.push({ requestId, denied: true }),
         }) as unknown as Parameters<
           typeof createRequestHandler
         >[0]["getBridge"] extends () => infer R
@@ -139,7 +144,11 @@ describe("acp-push-close: handled signals fire sendClose", () => {
   });
 
   afterEach(async () => {
-    await new Promise<void>((res) => server.close(() => res()));
+    await new Promise<void>((res) =>
+      server.close(() => {
+        res();
+      }),
+    );
     store.close();
     rmSync(tmpDir, { recursive: true, force: true });
   });
@@ -156,9 +165,14 @@ describe("acp-push-close: handled signals fire sendClose", () => {
       ],
     });
 
-    const r = await send(port, "POST", `/api/v1/sessions/${sessionId}/permissions/${requestId}`, {
-      optionId: "allow_once",
-    });
+    const r = await send(
+      port,
+      "POST",
+      `/api/v1/sessions/${sessionId}/permissions/${requestId}`,
+      {
+        optionId: "allow_once",
+      },
+    );
     assert.equal(r.status, 200);
     assert.deepEqual(push.closes, [`sess-${sessionId}-perm-${requestId}`]);
   });
@@ -172,9 +186,14 @@ describe("acp-push-close: handled signals fire sendClose", () => {
       options: [{ optionId: "deny", label: "Deny" }],
     });
 
-    const r = await send(port, "POST", `/api/v1/sessions/${sessionId}/permissions/${requestId}`, {
-      denied: true,
-    });
+    const r = await send(
+      port,
+      "POST",
+      `/api/v1/sessions/${sessionId}/permissions/${requestId}`,
+      {
+        denied: true,
+      },
+    );
     assert.equal(r.status, 200);
     assert.deepEqual(push.closes, [`sess-${sessionId}-perm-${requestId}`]);
   });
@@ -192,10 +211,15 @@ describe("acp-push-close: handled signals fire sendClose", () => {
     addFakeSseClient(clientId);
     push.registerClient(clientId, "https://push.example.com/1");
 
-    const r = await send(port, "POST", `/api/beta/clients/${clientId}/visibility`, {
-      visible: true,
-      sessionId,
-    });
+    const r = await send(
+      port,
+      "POST",
+      `/api/beta/clients/${clientId}/visibility`,
+      {
+        visible: true,
+        sessionId,
+      },
+    );
     assert.equal(r.status, 200);
 
     assert.ok(
@@ -212,10 +236,15 @@ describe("acp-push-close: handled signals fire sendClose", () => {
     const clientId = "client-2";
     addFakeSseClient(clientId);
     push.registerClient(clientId, "https://push.example.com/2");
-    const r = await send(port, "POST", `/api/beta/clients/${clientId}/visibility`, {
-      visible: false,
-      sessionId,
-    });
+    const r = await send(
+      port,
+      "POST",
+      `/api/beta/clients/${clientId}/visibility`,
+      {
+        visible: false,
+        sessionId,
+      },
+    );
     assert.equal(r.status, 200);
     assert.deepEqual(push.closes, []);
   });
@@ -224,9 +253,14 @@ describe("acp-push-close: handled signals fire sendClose", () => {
     const clientId = "client-3";
     addFakeSseClient(clientId);
     push.registerClient(clientId, "https://push.example.com/3");
-    const r = await send(port, "POST", `/api/beta/clients/${clientId}/visibility`, {
-      visible: true,
-    });
+    const r = await send(
+      port,
+      "POST",
+      `/api/beta/clients/${clientId}/visibility`,
+      {
+        visible: true,
+      },
+    );
     assert.equal(r.status, 200);
     assert.deepEqual(push.closes, []);
   });
@@ -237,10 +271,15 @@ describe("acp-push-close: handled signals fire sendClose", () => {
     push.registerClient(clientId, "https://push.example.com/edge");
 
     // First transition: visible:true + sessionId = edge → one sendClose.
-    let r = await send(port, "POST", `/api/beta/clients/${clientId}/visibility`, {
-      visible: true,
-      sessionId,
-    });
+    let r = await send(
+      port,
+      "POST",
+      `/api/beta/clients/${clientId}/visibility`,
+      {
+        visible: true,
+        sessionId,
+      },
+    );
     assert.equal(r.status, 200);
     const afterEdge = push.closes.length;
     assert.ok(afterEdge >= 1, `expected ≥1 close on edge, got ${afterEdge}`);

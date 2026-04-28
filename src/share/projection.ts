@@ -1,5 +1,10 @@
 import { createHash } from "node:crypto";
-import { sanitizeEventsForShare, SANITIZER_VERSION, type ParsedEvent, type SanitizeInputEvent } from "./sanitize.ts";
+import {
+  sanitizeEventsForShare,
+  SANITIZER_VERSION,
+  type ParsedEvent,
+  type SanitizeInputEvent,
+} from "./sanitize.ts";
 
 /**
  * In-memory LRU cache of sanitized event projections
@@ -70,7 +75,9 @@ export function projectionCacheSize(): number {
  * `sessionId`. Caller is responsible for passing the FULL event list
  * up to the snapshot_seq — partial lists will hash to different keys.
  */
-export function getOrComputeProjection(input: ProjectionInput): ProjectionResult {
+export function getOrComputeProjection(
+  input: ProjectionInput,
+): ProjectionResult {
   const hash = hashEvents(input.events);
   const key = `${input.sessionId}:${hash}:${SANITIZER_VERSION}`;
 

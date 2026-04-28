@@ -9,14 +9,25 @@ import { handleShareRoutes } from "../src/share/routes.ts";
 import type { Config } from "../src/config.ts";
 
 /** Minimal mock res capturing status/body. */
-function mockRes(): { res: ServerResponse; status: () => number; body: () => string; ended: () => boolean } {
+function mockRes(): {
+  res: ServerResponse;
+  status: () => number;
+  body: () => string;
+  ended: () => boolean;
+} {
   let status = 0;
   let body = "";
   let ended = false;
   const res = {
-    writeHead(code: number) { status = code; return res; },
+    writeHead(code: number) {
+      status = code;
+      return res;
+    },
     setHeader() {},
-    end(chunk?: unknown) { if (typeof chunk === "string") body += chunk; ended = true; },
+    end(chunk?: unknown) {
+      if (typeof chunk === "string") body += chunk;
+      ended = true;
+    },
   };
   return {
     res: res as unknown as ServerResponse,
@@ -31,7 +42,11 @@ function mockReq(url: string, method = "GET"): IncomingMessage {
 }
 
 const enabledCfg: Config["share"] = {
-  enabled: true, ttl_hours: 0, csp_enforce: true, viewer_origin: "", internal_hosts: [],
+  enabled: true,
+  ttl_hours: 0,
+  csp_enforce: true,
+  viewer_origin: "",
+  internal_hosts: [],
 };
 const disabledCfg: Config["share"] = { ...enabledCfg, enabled: false };
 
@@ -51,7 +66,10 @@ describe("handleShareRoutes skeleton", () => {
 
   it("disabled: returns false (does not intercept anything)", async () => {
     const m = mockRes();
-    const handled = await handleShareRoutes(mockReq("/s/abc"), m.res, { store, config: disabledCfg });
+    const handled = await handleShareRoutes(mockReq("/s/abc"), m.res, {
+      store,
+      config: disabledCfg,
+    });
     assert.equal(handled, false);
     assert.equal(m.ended(), false);
   });
@@ -60,11 +78,11 @@ describe("handleShareRoutes skeleton", () => {
     const m = mockRes();
     // 24-char base64url token format; not in store -> 410 revoked/not-found path.
     const fakeToken = "AAAAAAAAAAAAAAAAAAAAAAAA";
-    const handled = await handleShareRoutes(
-      mockReq(`/s/${fakeToken}`),
-      m.res,
-      { store, config: enabledCfg, publicDir: "/tmp" },
-    );
+    const handled = await handleShareRoutes(mockReq(`/s/${fakeToken}`), m.res, {
+      store,
+      config: enabledCfg,
+      publicDir: "/tmp",
+    });
     assert.equal(handled, true);
     assert.equal(m.status(), 410);
   });
@@ -92,9 +110,17 @@ describe("handleShareRoutes skeleton", () => {
   });
 
   it("enabled: claims /api/v1/shares and /api/v1/shared/:token", async () => {
-    for (const url of ["/api/v1/shares", "/api/v1/shares/abc", "/api/v1/shared/abc", "/api/v1/shared/abc/events"]) {
+    for (const url of [
+      "/api/v1/shares",
+      "/api/v1/shares/abc",
+      "/api/v1/shared/abc",
+      "/api/v1/shared/abc/events",
+    ]) {
       const m = mockRes();
-      const handled = await handleShareRoutes(mockReq(url), m.res, { store, config: enabledCfg });
+      const handled = await handleShareRoutes(mockReq(url), m.res, {
+        store,
+        config: enabledCfg,
+      });
       assert.equal(handled, true, `should claim ${url}`);
     }
   });
@@ -109,7 +135,10 @@ describe("handleShareRoutes skeleton", () => {
       "/",
     ]) {
       const m = mockRes();
-      const handled = await handleShareRoutes(mockReq(url), m.res, { store, config: enabledCfg });
+      const handled = await handleShareRoutes(mockReq(url), m.res, {
+        store,
+        config: enabledCfg,
+      });
       assert.equal(handled, false, `should NOT claim ${url}`);
     }
   });

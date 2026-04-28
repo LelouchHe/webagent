@@ -25,6 +25,8 @@ export default tseslint.config(
       ":memory:/**",
       // Browser service worker — different globals, not worth wiring up here.
       "public/sw.js",
+      // Theme initialization script — runs before TS bundle, plain JS.
+      "public/theme-init.js",
       // CLI entry shim, plain JS.
       "bin/**",
       // Playwright config/spec files use a distinct test runner with its own globals.
@@ -94,6 +96,7 @@ export default tseslint.config(
       "@typescript-eslint/prefer-for-of": "error",
       "@typescript-eslint/prefer-optional-chain": "error",
       "@typescript-eslint/prefer-readonly": "error",
+      "@typescript-eslint/no-confusing-void-expression": "error",
 
       // Off — too noisy / not aligned with our style
       "@typescript-eslint/no-non-null-assertion": "off",
@@ -107,7 +110,12 @@ export default tseslint.config(
       // 99% noise and the fix (String(err)) reads worse. Allow common ones.
       "@typescript-eslint/restrict-template-expressions": [
         "error",
-        { allowNumber: true, allowBoolean: true, allowAny: true, allowNullish: true },
+        {
+          allowNumber: true,
+          allowBoolean: true,
+          allowAny: true,
+          allowNullish: true,
+        },
       ],
       "@typescript-eslint/restrict-plus-operands": "error",
       "@typescript-eslint/no-unsafe-function-type": "error",

@@ -1,118 +1,48 @@
-// Lazy-loaded syntax highlighting (highlight.js) + code block toolbar (language label + copy button)
+// Syntax highlighting (highlight.js, common 36 languages, lazy-loaded)
+// + code block toolbar (language label + copy button)
+//
+// hljs is dynamically imported into a separate chunk (esbuild splitting:true).
+// `<link rel="modulepreload">` in index.html starts the chunk download in
+// parallel with app.js, so by the time the first code block lands the chunk
+// is usually warm in cache. enhanceCodeBlocks renders the toolbar
+// synchronously; highlightAllIn awaits the dynamic import. Theme CSS is
+// appended to the main styles bundle at build time (see scripts/build.js).
 
-type LoadState = 'idle' | 'loading' | 'ready';
-let hljsState: LoadState = 'idle';
-let hljsResolvers: Array<() => void> = [];
+let hljsPromise: Promise<
+  typeof import("highlight.js/lib/common").default
+> | null = null;
+const getHljs = () =>
+  (hljsPromise ??= import("highlight.js/lib/common").then((m) => m.default));
 
-const HLJS_VERSION = '11.11.1';
-const HLJS_CDN = `https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@${HLJS_VERSION}/build`;
-
-// Theme mapping: data-theme → hljs theme CSS file
-const HLJS_THEMES: Record<string, string> = {
-  dark: 'github-dark.min.css',
-  light: 'github.min.css',
-  auto: '', // resolved at runtime
-};
-
-let themeLink: HTMLLinkElement | null = null;
-
-function resolvedTheme(): 'dark' | 'light' {
-  const t = document.documentElement.getAttribute('data-theme') || 'auto';
-  if (t === 'light') return 'light';
-  if (t === 'dark') return 'dark';
-  return window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
-}
-
-function loadThemeCSS() {
-  const theme = resolvedTheme();
-  const file = HLJS_THEMES[theme];
-  const href = `${HLJS_CDN}/styles/${file}`;
-
-  if (themeLink) {
-    if (themeLink.href === href) return;
-    themeLink.href = href;
-    return;
-  }
-  themeLink = document.createElement('link');
-  themeLink.rel = 'stylesheet';
-  themeLink.href = href;
-  document.head.appendChild(themeLink);
-}
-
-function loadHljsScript(): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const script = document.createElement('script');
-    script.src = `${HLJS_CDN}/highlight.min.js`;
-    script.onload = () => resolve();
-    script.onerror = () => reject(new Error('Failed to load highlight.js'));
-    document.head.appendChild(script);
-  });
-}
-
-async function ensureHljs(): Promise<boolean> {
-  if (hljsState === 'ready') return true;
-  if (hljsState === 'loading') {
-    return new Promise<boolean>(resolve => {
-      hljsResolvers.push(() => resolve(hljsState === 'ready'));
-    });
-  }
-
-  hljsState = 'loading';
-  try {
-    loadThemeCSS();
-    await loadHljsScript();
-    hljsState = 'ready';
-    const waiters = hljsResolvers.splice(0);
-    waiters.forEach(r => r());
-    return true;
-  } catch {
-    hljsState = 'idle'; // allow retry
-    const waiters = hljsResolvers.splice(0);
-    waiters.forEach(r => r());
-    return false;
-  }
-}
-
-function highlightAllIn(container: Element) {
-  const hljs = (globalThis as { hljs?: { highlightElement: (el: Element) => void } }).hljs;
-  if (!hljs) return;
-  for (const code of container.querySelectorAll('pre code')) {
+async function highlightAllIn(container: Element) {
+  const hljs = await getHljs();
+  for (const code of container.querySelectorAll("pre code")) {
     if (!(code as HTMLElement).dataset.highlighted) {
-      hljs.highlightElement(code);
+      hljs.highlightElement(code as HTMLElement);
     }
   }
 }
 
-// --- Code block toolbar (language label + copy button) ---
+// --- Code block toolbar (copy button) ---
 
-function extractLanguage(code: Element): string {
-  for (const cls of code.classList) {
-    if (cls.startsWith('language-')) return cls.slice(9);
-  }
-  return '';
-}
-
-/** Wrap each <pre><code> with a toolbar (language label + copy button). */
+/** Wrap each <pre><code> with a toolbar (copy button). */
 export function processCodeBlocks(container: Element) {
-  const pres = container.querySelectorAll('pre');
+  const pres = container.querySelectorAll("pre");
   for (const pre of pres) {
-    const code = pre.querySelector('code');
+    const code = pre.querySelector("code");
     if (!code) continue;
-    // Skip already processed
-    if (pre.parentElement?.classList.contains('code-block-wrapper')) continue;
+    if (pre.parentElement?.classList.contains("code-block-wrapper")) continue;
 
-    const lang = extractLanguage(code);
+    const wrapper = document.createElement("div");
+    wrapper.className = "code-block-wrapper";
 
-    const wrapper = document.createElement('div');
-    wrapper.className = 'code-block-wrapper';
+    const toolbar = document.createElement("div");
+    toolbar.className = "code-toolbar";
 
-    const toolbar = document.createElement('div');
-    toolbar.className = 'code-toolbar';
-
-    const copyBtn = document.createElement('button');
-    copyBtn.className = 'copy-btn';
-    copyBtn.textContent = 'cp';
-    copyBtn.type = 'button';
+    const copyBtn = document.createElement("button");
+    copyBtn.className = "copy-btn";
+    copyBtn.textContent = "cp";
+    copyBtn.type = "button";
     toolbar.appendChild(copyBtn);
 
     pre.replaceWith(wrapper);
@@ -123,69 +53,60 @@ export function processCodeBlocks(container: Element) {
 
 // --- Copy button ---
 
-const copyTimers = new WeakMap<HTMLButtonElement, ReturnType<typeof setTimeout>>();
+const copyTimers = new WeakMap<
+  HTMLButtonElement,
+  ReturnType<typeof setTimeout>
+>();
 
 /** Copy button click handler — delegated from #messages */
 export function handleCopyClick(e: Event) {
-  const btn = (e.target as Element).closest('.copy-btn') as HTMLButtonElement | null;
+  const btn = (e.target as Element).closest<HTMLButtonElement>(".copy-btn");
   if (!btn) return;
 
-  const wrapper = btn.closest('.code-block-wrapper');
-  const code = wrapper?.querySelector('code');
+  const wrapper = btn.closest(".code-block-wrapper");
+  const code = wrapper?.querySelector("code");
   if (!code) return;
 
-  const text = code.textContent || '';
-  navigator.clipboard.writeText(text).then(() => {
-    // Reset any pending timer from a previous click
-    const prev = copyTimers.get(btn);
-    if (prev) clearTimeout(prev);
+  const text = code.textContent || "";
+  navigator.clipboard
+    .writeText(text)
+    .then(() => {
+      const prev = copyTimers.get(btn);
+      if (prev) clearTimeout(prev);
 
-    btn.textContent = '✓';
-    btn.classList.add('copied');
-    const timer = setTimeout(() => {
-      btn.textContent = 'cp';
-      btn.classList.remove('copied');
-      copyTimers.delete(btn);
-    }, 1500);
-    copyTimers.set(btn, timer);
-  }).catch(() => {
-    // Fallback: select text
-    const range = document.createRange();
-    range.selectNodeContents(code);
-    const sel = window.getSelection();
-    sel?.removeAllRanges();
-    sel?.addRange(range);
-  });
+      btn.textContent = "✓";
+      btn.classList.add("copied");
+      const timer = setTimeout(() => {
+        btn.textContent = "cp";
+        btn.classList.remove("copied");
+        copyTimers.delete(btn);
+      }, 1500);
+      copyTimers.set(btn, timer);
+    })
+    .catch(() => {
+      const range = document.createRange();
+      range.selectNodeContents(code);
+      const sel = window.getSelection();
+      sel?.removeAllRanges();
+      sel?.addRange(range);
+    });
 }
 
 /**
- * Process code blocks in a container: add toolbar + trigger lazy highlight.
- * Called after renderMd() sets innerHTML.
+ * Process code blocks in a container: add toolbar synchronously, then
+ * highlight asynchronously (chunk loads on demand, hits modulepreload cache).
  */
-export async function enhanceCodeBlocks(container: Element) {
-  const hasCode = container.querySelector('pre code');
-  if (!hasCode) return;
-
+export function enhanceCodeBlocks(container: Element) {
+  if (!container.querySelector("pre code")) return;
   processCodeBlocks(container);
-
-  const loaded = await ensureHljs();
-  if (loaded) {
-    highlightAllIn(container);
-  }
+  void highlightAllIn(container);
 }
 
-/** Call when theme changes to swap hljs CSS */
+/**
+ * Theme change is handled entirely in CSS now (see styles.css / hljs theme
+ * blocks scoped by [data-theme] + prefers-color-scheme). This is kept as a
+ * no-op for backward compat with app.ts wiring.
+ */
 export function onThemeChange() {
-  if (hljsState === 'ready' && themeLink) {
-    loadThemeCSS();
-  }
-}
-
-// Listen for OS color scheme changes (affects 'auto' theme)
-if (typeof window !== 'undefined' && window.matchMedia) {
-  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
-    if (hljsState === 'ready' && themeLink) {
-      loadThemeCSS();
-    }
-  });
+  // intentionally empty
 }

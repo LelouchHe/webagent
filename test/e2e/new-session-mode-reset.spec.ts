@@ -1,7 +1,14 @@
 import { test, expect } from "playwright/test";
-import { createNewSession, currentSessionId, gotoConnected, sendPrompt } from "./helpers.ts";
+import {
+  createNewSession,
+  currentSessionId,
+  gotoConnected,
+  sendPrompt,
+} from "./helpers.ts";
 
-test("creating a new session does not inherit autopilot mode", async ({ page }) => {
+test("creating a new session does not inherit autopilot mode", async ({
+  page,
+}) => {
   await gotoConnected(page);
   const firstSessionId = await createNewSession(page);
 

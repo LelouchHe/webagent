@@ -17,13 +17,12 @@ export function setupDOM() {
   win = new Window({ url: "http://localhost:6801" });
   globalThis.window = win as any;
   globalThis.document = win.document as any;
-  globalThis.localStorage = win.localStorage as any;
+  globalThis.localStorage = win.localStorage;
   globalThis.location = win.location as any;
-  globalThis.history = win.history as any;
+  globalThis.history = win.history;
   globalThis.HTMLElement = win.HTMLElement as any;
+  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- JSDOM may not have WebSocket
   globalThis.WebSocket = (win.WebSocket ?? class MockWS {}) as any;
-  globalThis.marked = { setOptions: () => {}, parse: (t: string) => `<p>${t}</p>` } as any;
-  globalThis.DOMPurify = { sanitize: (html: string) => html.replace(/<script[\s\S]*?<\/script>/gi, "") } as any;
 
   win.document.body.innerHTML = HTML;
 }
@@ -45,6 +44,8 @@ export function resetState(state: any, dom: any) {
   state.sessionTitle = null;
   state.awaitingNewSession = false;
   state.configOptions = [];
+  state.sessionMode = null;
+  state.sessionModel = null;
   state.currentAssistantEl = null;
   state.currentAssistantText = "";
   state.currentThinkingEl = null;
@@ -63,8 +64,10 @@ export function resetState(state: any, dom: any) {
   state.serverVersion = null;
   state.agentName = null;
   state.agentVersion = null;
+  if (state._cancelTimerId != null) clearTimeout(state._cancelTimerId);
   state._cancelTimerId = null;
   state.lastEventSeq = 0;
+  state.lastStateSeq = 0;
   state.replayInProgress = false;
   state.replayQueue = [];
   if (state.unconfirmedPermissions) state.unconfirmedPermissions.clear();
@@ -90,4 +93,3 @@ export function resetState(state: any, dom: any) {
   dom.inputArea.className = "";
   if (dom.statusBar) dom.statusBar.textContent = "";
 }
-

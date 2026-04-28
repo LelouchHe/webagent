@@ -1,7 +1,14 @@
 import { test, expect } from "playwright/test";
-import { createNewSession, currentSessionId, gotoConnected, sendPrompt } from "./helpers.ts";
+import {
+  createNewSession,
+  currentSessionId,
+  gotoConnected,
+  sendPrompt,
+} from "./helpers.ts";
 
-test("reasoning-effort changes sync across two clients in the same session", async ({ browser }) => {
+test("reasoning-effort changes sync across two clients in the same session", async ({
+  browser,
+}) => {
   const pageA = await browser.newPage();
   const pageB = await browser.newPage();
 

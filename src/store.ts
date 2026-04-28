@@ -2,20 +2,6 @@ import Database from "better-sqlite3";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 
-/** Default origin marker for an event row, mirroring the migration backfill. */
-function defaultFromRef(type: string): string {
-  if (type === "user_message") return "user";
-  if (
-    type === "permission_response" ||
-    type === "bash_command" ||
-    type === "bash_result" ||
-    type === "system_message"
-  ) {
-    return "system";
-  }
-  return "agent";
-}
-
 export interface SessionRow {
   id: string;
   cwd: string;
@@ -106,7 +92,7 @@ export interface ShareSummaryRow {
 }
 
 export class Store {
-  private db: Database.Database;
+  private readonly db: Database.Database;
 
   constructor(dataDir: string) {
     mkdirSync(dataDir, { recursive: true });
@@ -146,15 +132,19 @@ export class Store {
     `);
 
     // Migrate existing tables: add columns if missing
-    const cols = this.db.prepare("PRAGMA table_info(sessions)").all() as Array<{ name: string }>;
-    const colNames = new Set(cols.map(c => c.name));
+    const cols = this.db.prepare("PRAGMA table_info(sessions)").all() as Array<{
+      name: string;
+    }>;
+    const colNames = new Set(cols.map((c) => c.name));
     if (!colNames.has("title")) {
       this.db.exec("ALTER TABLE sessions ADD COLUMN title TEXT");
     }
     if (!colNames.has("last_active_at")) {
       this.db.exec("ALTER TABLE sessions ADD COLUMN last_active_at TEXT");
       // Backfill from created_at
-      this.db.exec("UPDATE sessions SET last_active_at = created_at WHERE last_active_at IS NULL");
+      this.db.exec(
+        "UPDATE sessions SET last_active_at = created_at WHERE last_active_at IS NULL",
+      );
     }
     if (!colNames.has("model")) {
       this.db.exec("ALTER TABLE sessions ADD COLUMN model TEXT");
@@ -166,7 +156,9 @@ export class Store {
       this.db.exec("ALTER TABLE sessions ADD COLUMN reasoning_effort TEXT");
     }
     if (!colNames.has("source")) {
-      this.db.exec("ALTER TABLE sessions ADD COLUMN source TEXT NOT NULL DEFAULT 'auto'");
+      this.db.exec(
+        "ALTER TABLE sessions ADD COLUMN source TEXT NOT NULL DEFAULT 'auto'",
+      );
     }
 
     // messages — pending unbound notifications. POST /api/v1/messages with
@@ -191,10 +183,26 @@ export class Store {
       CREATE INDEX IF NOT EXISTS idx_messages_dedup   ON messages (to_ref, dedup_key);
     `);
 
+    // client-server-split M2: idempotency for mutating REST calls. Stores
+    // the cached response per (session_id, client_op_id) so retries (after
+    // network/SSE reconnect) return the same result instead of re-executing
+    // side effects.
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS client_ops (
+        session_id   TEXT NOT NULL,
+        client_op_id TEXT NOT NULL,
+        result_json  TEXT NOT NULL,
+        created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now')),
+        PRIMARY KEY (session_id, client_op_id)
+      );
+    `);
+
     // recent_paths: LRU path list for /new menu
-    const rpExists = this.db.prepare(
-      "SELECT 1 FROM sqlite_master WHERE type='table' AND name='recent_paths'"
-    ).get();
+    const rpExists = this.db
+      .prepare(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='recent_paths'",
+      )
+      .get();
     if (!rpExists) {
       this.db.exec(`
         CREATE TABLE recent_paths (
@@ -214,7 +222,9 @@ export class Store {
     // Values: 'user' | 'system' | 'agent' | 'msg:<id>'. The 'msg:<id>'
     // form is reserved for events authored by consuming an inbox message
     // (see C7+). Bucketed backfill runs once for legacy rows.
-    const eventCols = this.db.prepare("PRAGMA table_info(events)").all() as Array<{ name: string }>;
+    const eventCols = this.db
+      .prepare("PRAGMA table_info(events)")
+      .all() as Array<{ name: string }>;
     const eventColNames = new Set(eventCols.map((c) => c.name));
     if (!eventColNames.has("from_ref")) {
       this.db.exec("ALTER TABLE events ADD COLUMN from_ref TEXT");
@@ -240,7 +250,9 @@ export class Store {
     // `sessions`. Pre-FK writes could leave these behind (a session DELETE
     // that didn't cascade because the FK pragma was off). Must run before
     // enabling FK pragma.
-    this.db.exec("DELETE FROM events WHERE session_id NOT IN (SELECT id FROM sessions)");
+    this.db.exec(
+      "DELETE FROM events WHERE session_id NOT IN (SELECT id FROM sessions)",
+    );
 
     // Secondary index for events queried by (session_id, type, created_at)
     // -- used by upcoming inbox/message consume queries.
@@ -285,53 +297,86 @@ export class Store {
   }
 
   createSession(id: string, cwd: string, source: string = "auto"): SessionRow {
-    this.db.prepare("INSERT INTO sessions (id, cwd, source) VALUES (?, ?, ?)").run(id, cwd, source);
-    return this.db.prepare("SELECT * FROM sessions WHERE id = ?").get(id) as SessionRow;
+    this.db
+      .prepare("INSERT INTO sessions (id, cwd, source) VALUES (?, ?, ?)")
+      .run(id, cwd, source);
+    return this.db
+      .prepare("SELECT * FROM sessions WHERE id = ?")
+      .get(id) as SessionRow;
   }
 
   listSessions(opts?: { source?: string }): SessionRow[] {
     if (opts?.source) {
-      return this.db.prepare("SELECT * FROM sessions WHERE source = ? ORDER BY COALESCE(last_active_at, created_at) DESC").all(opts.source) as SessionRow[];
+      return this.db
+        .prepare(
+          "SELECT * FROM sessions WHERE source = ? ORDER BY COALESCE(last_active_at, created_at) DESC",
+        )
+        .all(opts.source) as SessionRow[];
     }
-    return this.db.prepare("SELECT * FROM sessions ORDER BY COALESCE(last_active_at, created_at) DESC").all() as SessionRow[];
+    return this.db
+      .prepare(
+        "SELECT * FROM sessions ORDER BY COALESCE(last_active_at, created_at) DESC",
+      )
+      .all() as SessionRow[];
   }
 
   getSession(id: string): SessionRow | undefined {
-    return this.db.prepare("SELECT * FROM sessions WHERE id = ?").get(id) as SessionRow | undefined;
+    return this.db.prepare("SELECT * FROM sessions WHERE id = ?").get(id) as
+      | SessionRow
+      | undefined;
   }
 
   deleteSession(id: string): void {
     this.db.prepare("DELETE FROM events WHERE session_id = ?").run(id);
+    this.db.prepare("DELETE FROM client_ops WHERE session_id = ?").run(id);
     this.db.prepare("DELETE FROM sessions WHERE id = ?").run(id);
   }
 
   /** Delete sessions that have zero events and are older than minAgeS seconds. Returns IDs deleted. */
   deleteEmptySessions(minAgeS: number): string[] {
-    const empties = this.db.prepare(`
+    const empties = this.db
+      .prepare(
+        `
       SELECT s.id FROM sessions s
       LEFT JOIN events e ON e.session_id = s.id
       WHERE e.id IS NULL
         AND strftime('%s', 'now') - strftime('%s', s.created_at) >= ?
-    `).all(minAgeS) as Array<{ id: string }>;
+    `,
+      )
+      .all(minAgeS) as Array<{ id: string }>;
     if (empties.length === 0) return [];
     const del = this.db.prepare("DELETE FROM sessions WHERE id = ?");
     for (const r of empties) del.run(r.id);
-    return empties.map(r => r.id);
+    return empties.map((r) => r.id);
   }
 
   updateSessionTitle(id: string, title: string): void {
-    this.db.prepare("UPDATE sessions SET title = ? WHERE id = ?").run(title, id);
+    this.db
+      .prepare("UPDATE sessions SET title = ? WHERE id = ?")
+      .run(title, id);
   }
 
   updateSessionLastActive(id: string): void {
-    this.db.prepare("UPDATE sessions SET last_active_at = strftime('%Y-%m-%d %H:%M:%f', 'now') WHERE id = ?").run(id);
+    this.db
+      .prepare(
+        "UPDATE sessions SET last_active_at = strftime('%Y-%m-%d %H:%M:%f', 'now') WHERE id = ?",
+      )
+      .run(id);
   }
 
   /** Update a config option value (model, mode, reasoning_effort) for a session. */
   updateSessionConfig(id: string, configId: string, value: string): void {
-    const column = ({ model: "model", mode: "mode", reasoning_effort: "reasoning_effort" } as Record<string, string>)[configId];
+    const column = (
+      {
+        model: "model",
+        mode: "mode",
+        reasoning_effort: "reasoning_effort",
+      } as Record<string, string>
+    )[configId];
     if (!column) return;
-    this.db.prepare(`UPDATE sessions SET ${column} = ? WHERE id = ?`).run(value, id);
+    this.db
+      .prepare(`UPDATE sessions SET ${column} = ? WHERE id = ?`)
+      .run(value, id);
   }
 
   saveEvent(
@@ -340,24 +385,45 @@ export class Store {
     data: Record<string, unknown> = {},
     opts?: { from_ref?: string },
   ): EventRow {
-    const seq = (this.db.prepare(
-      "SELECT COALESCE(MAX(seq), 0) + 1 AS next FROM events WHERE session_id = ?"
-    ).get(sessionId) as { next: number }).next;
+    const seq = (
+      this.db
+        .prepare(
+          "SELECT COALESCE(MAX(seq), 0) + 1 AS next FROM events WHERE session_id = ?",
+        )
+        .get(sessionId) as { next: number }
+    ).next;
 
-    // from_ref defaults via the same buckets as the migration backfill so
-    // existing call sites keep working without churn. Explicit values
-    // (e.g. 'msg:<id>' for inbox-authored events) win when passed.
-    const fromRef = opts?.from_ref ?? defaultFromRef(type);
+    // Origin marker is required. Every writer must pass an explicit value;
+    // missing/empty fails loudly so a forgotten retrofit can't silently
+    // mis-bucket a row in production. Valid values:
+    //   'user' | 'system' | 'agent' | 'msg:<id>'.
+    const fromRef = opts?.from_ref;
+    if (!fromRef) {
+      throw new Error(
+        `saveEvent: from_ref is required (type=${type} session=${sessionId.slice(0, 8)}) — pass { from_ref: 'user' | 'system' | 'agent' | 'msg:<id>' }`,
+      );
+    }
 
-    this.db.prepare(
-      "INSERT INTO events (session_id, seq, type, data, from_ref) VALUES (?, ?, ?, ?, ?)"
-    ).run(sessionId, seq, type, JSON.stringify(data), fromRef);
+    this.db
+      .prepare(
+        "INSERT INTO events (session_id, seq, type, data, from_ref) VALUES (?, ?, ?, ?, ?)",
+      )
+      .run(sessionId, seq, type, JSON.stringify(data), fromRef);
 
-    return this.db.prepare("SELECT * FROM events WHERE session_id = ? AND seq = ?")
+    return this.db
+      .prepare("SELECT * FROM events WHERE session_id = ? AND seq = ?")
       .get(sessionId, seq) as EventRow;
   }
 
-  getEvents(sessionId: string, opts?: { excludeThinking?: boolean; afterSeq?: number; beforeSeq?: number; limit?: number }): EventRow[] {
+  getEvents(
+    sessionId: string,
+    opts?: {
+      excludeThinking?: boolean;
+      afterSeq?: number;
+      beforeSeq?: number;
+      limit?: number;
+    },
+  ): EventRow[] {
     const hasLimit = opts?.limit != null && opts.limit > 0;
     const conditions = ["session_id = ?"];
     const params: unknown[] = [sessionId];
@@ -378,13 +444,18 @@ export class Store {
       // Fetch the last N matching rows: subquery orders DESC with LIMIT,
       // outer query re-orders ASC so the page is in chronological order.
       const sql = `SELECT * FROM (SELECT * FROM events WHERE ${where} ORDER BY seq DESC LIMIT ?) ORDER BY seq`;
-      params.push(opts!.limit);
+      params.push(opts.limit);
       return this.db.prepare(sql).all(...params) as EventRow[];
     }
-    return this.db.prepare(`SELECT * FROM events WHERE ${where} ORDER BY seq`).all(...params) as EventRow[];
+    return this.db
+      .prepare(`SELECT * FROM events WHERE ${where} ORDER BY seq`)
+      .all(...params) as EventRow[];
   }
 
-  getEventCount(sessionId: string, opts?: { excludeThinking?: boolean }): number {
+  getEventCount(
+    sessionId: string,
+    opts?: { excludeThinking?: boolean },
+  ): number {
     let query = "SELECT COUNT(*) as count FROM events WHERE session_id = ?";
     const params: unknown[] = [sessionId];
     if (opts?.excludeThinking) {
@@ -393,9 +464,21 @@ export class Store {
     return (this.db.prepare(query).get(...params) as { count: number }).count;
   }
 
+  /** Highest seq of any stored event for this session (0 when empty). */
+  getLastEventSeq(sessionId: string): number {
+    const row = this.db
+      .prepare(
+        "SELECT COALESCE(MAX(seq), 0) AS seq FROM events WHERE session_id = ?",
+      )
+      .get(sessionId) as { seq: number };
+    return row.seq;
+  }
+
   /** Check if the most recent agent turn was interrupted (user_message without a following prompt_done). */
   hasInterruptedTurn(sessionId: string): boolean {
-    const row = this.db.prepare(`
+    const row = this.db
+      .prepare(
+        `
       SELECT 1 FROM events
       WHERE session_id = ? AND type = 'user_message'
         AND seq > COALESCE(
@@ -403,54 +486,73 @@ export class Store {
           0
         )
       LIMIT 1
-    `).get(sessionId, sessionId);
-    return !!row;
+    `,
+      )
+      .get(sessionId, sessionId);
+    return Boolean(row);
   }
 
   // --- Push subscriptions ---
 
   saveSubscription(endpoint: string, auth: string, p256dh: string): void {
-    this.db.prepare(
-      `INSERT INTO push_subscriptions (endpoint, auth, p256dh)
+    this.db
+      .prepare(
+        `INSERT INTO push_subscriptions (endpoint, auth, p256dh)
        VALUES (?, ?, ?)
        ON CONFLICT(endpoint) DO UPDATE SET auth = excluded.auth, p256dh = excluded.p256dh`,
-    ).run(endpoint, auth, p256dh);
+      )
+      .run(endpoint, auth, p256dh);
   }
 
   removeSubscription(endpoint: string): void {
-    this.db.prepare("DELETE FROM push_subscriptions WHERE endpoint = ?").run(endpoint);
+    this.db
+      .prepare("DELETE FROM push_subscriptions WHERE endpoint = ?")
+      .run(endpoint);
   }
 
   getAllSubscriptions(): SubscriptionRow[] {
-    return this.db.prepare("SELECT * FROM push_subscriptions").all() as SubscriptionRow[];
+    return this.db
+      .prepare("SELECT * FROM push_subscriptions")
+      .all() as SubscriptionRow[];
   }
 
   // --- Recent paths ---
 
   touchRecentPath(cwd: string): void {
-    this.db.prepare(
-      `INSERT INTO recent_paths (cwd, last_used_at)
+    this.db
+      .prepare(
+        `INSERT INTO recent_paths (cwd, last_used_at)
        VALUES (?, strftime('%Y-%m-%d %H:%M:%f', 'now'))
        ON CONFLICT(cwd) DO UPDATE SET last_used_at = strftime('%Y-%m-%d %H:%M:%f', 'now')`,
-    ).run(cwd);
+      )
+      .run(cwd);
   }
 
-  listRecentPaths(opts?: { limit?: number; ttlDays?: number }): Array<{ cwd: string; last_used_at: string }> {
+  listRecentPaths(opts?: {
+    limit?: number;
+    ttlDays?: number;
+  }): Array<{ cwd: string; last_used_at: string }> {
     const ttl = opts?.ttlDays ?? 0;
     if (ttl > 0) {
-      this.db.prepare(
-        "DELETE FROM recent_paths WHERE last_used_at < strftime('%Y-%m-%d %H:%M:%f', 'now', ?)"
-      ).run(`-${ttl} days`);
+      this.db
+        .prepare(
+          "DELETE FROM recent_paths WHERE last_used_at < strftime('%Y-%m-%d %H:%M:%f', 'now', ?)",
+        )
+        .run(`-${ttl} days`);
     }
     const limit = opts?.limit;
     if (limit && limit > 0) {
-      return this.db.prepare(
-        "SELECT cwd, last_used_at FROM recent_paths ORDER BY last_used_at DESC LIMIT ?"
-      ).all(limit) as Array<{ cwd: string; last_used_at: string }>;
+      return this.db
+        .prepare(
+          "SELECT cwd, last_used_at FROM recent_paths ORDER BY last_used_at DESC LIMIT ?",
+        )
+        .all(limit) as Array<{ cwd: string; last_used_at: string }>;
     }
-    return this.db.prepare(
-      "SELECT cwd, last_used_at FROM recent_paths ORDER BY last_used_at DESC"
-    ).all() as Array<{ cwd: string; last_used_at: string }>;
+    return this.db
+      .prepare(
+        "SELECT cwd, last_used_at FROM recent_paths ORDER BY last_used_at DESC",
+      )
+      .all() as Array<{ cwd: string; last_used_at: string }>;
   }
 
   deleteRecentPath(cwd: string): void {
@@ -481,7 +583,9 @@ export class Store {
   }
 
   getMessage(id: string): MessageRow | undefined {
-    return this.db.prepare("SELECT * FROM messages WHERE id = ?").get(id) as MessageRow | undefined;
+    return this.db.prepare("SELECT * FROM messages WHERE id = ?").get(id) as
+      | MessageRow
+      | undefined;
   }
 
   listUnprocessed(): MessageRow[] {
@@ -500,15 +604,22 @@ export class Store {
    * epoch-ms threshold. Returns the number of rows removed.
    */
   deleteOlderThan(thresholdMs: number): number {
-    const info = this.db.prepare("DELETE FROM messages WHERE created_at < ?").run(thresholdMs);
+    const info = this.db
+      .prepare("DELETE FROM messages WHERE created_at < ?")
+      .run(thresholdMs);
     return info.changes;
   }
 
   /** Find an existing unprocessed message matching (to_ref, dedup_key) for server-side supersede. */
-  findBySupersede(to_ref: string, dedup_key: string | null): MessageRow | undefined {
+  findBySupersede(
+    to_ref: string,
+    dedup_key: string | null,
+  ): MessageRow | undefined {
     if (!dedup_key) return undefined;
     return this.db
-      .prepare("SELECT * FROM messages WHERE to_ref = ? AND dedup_key = ? LIMIT 1")
+      .prepare(
+        "SELECT * FROM messages WHERE to_ref = ? AND dedup_key = ? LIMIT 1",
+      )
       .get(to_ref, dedup_key) as MessageRow | undefined;
   }
 
@@ -553,11 +664,15 @@ export class Store {
         },
         { from_ref: row.from_ref },
       );
-      const del = this.db.prepare("DELETE FROM messages WHERE id = ?").run(messageId);
+      const del = this.db
+        .prepare("DELETE FROM messages WHERE id = ?")
+        .run(messageId);
       if (del.changes === 0) {
         // Should never happen -- we just fetched the row above. If it does,
         // roll back via throw.
-        throw new Error(`consumeMessageTx: row vanished mid-tx (id=${messageId})`);
+        throw new Error(
+          `consumeMessageTx: row vanished mid-tx (id=${messageId})`,
+        );
       }
     });
     tx();
@@ -575,6 +690,49 @@ export class Store {
       )
       .get(messageId) as { session_id: string } | undefined;
     return row?.session_id;
+  }
+
+  // --- client-server-split M2: client_ops idempotency ---
+
+  /**
+   * Look up a previously-cached response for (sessionId, clientOpId).
+   * Returns the parsed result or null if no cached entry exists.
+   */
+  getClientOp(sessionId: string, clientOpId: string): unknown {
+    const row = this.db
+      .prepare(
+        "SELECT result_json FROM client_ops WHERE session_id = ? AND client_op_id = ?",
+      )
+      .get(sessionId, clientOpId) as { result_json: string } | undefined;
+    if (!row) return null;
+    try {
+      return JSON.parse(row.result_json);
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Cache a successful response for (sessionId, clientOpId). Uses
+   * INSERT OR IGNORE so a concurrent winner is preserved.
+   */
+  saveClientOp(sessionId: string, clientOpId: string, result: unknown): void {
+    this.db
+      .prepare(
+        "INSERT OR IGNORE INTO client_ops (session_id, client_op_id, result_json) VALUES (?, ?, ?)",
+      )
+      .run(sessionId, clientOpId, JSON.stringify(result));
+  }
+
+  /** Prune client_ops rows older than `maxAgeMs` (milliseconds). Returns rows deleted. */
+  pruneClientOps(maxAgeMs: number): number {
+    const seconds = Math.floor(maxAgeMs / 1000);
+    const info = this.db
+      .prepare(
+        "DELETE FROM client_ops WHERE strftime('%s','now') - strftime('%s', created_at) >= ?",
+      )
+      .run(seconds);
+    return info.changes;
   }
 
   close(): void {
@@ -599,31 +757,37 @@ export class Store {
     displayName?: string | null;
     ownerLabel?: string | null;
   }): ShareRow {
-    this.db.prepare(
-      `INSERT INTO shares (token, session_id, share_snapshot_seq, ttl_hours, display_name, owner_label)
+    this.db
+      .prepare(
+        `INSERT INTO shares (token, session_id, share_snapshot_seq, ttl_hours, display_name, owner_label)
        VALUES (?, ?, ?, ?, ?, ?)`,
-    ).run(
-      input.token,
-      input.sessionId,
-      input.snapshotSeq,
-      input.ttlHours ?? null,
-      input.displayName ?? null,
-      input.ownerLabel ?? null,
-    );
+      )
+      .run(
+        input.token,
+        input.sessionId,
+        input.snapshotSeq,
+        input.ttlHours ?? null,
+        input.displayName ?? null,
+        input.ownerLabel ?? null,
+      );
     return this.getShareByToken(input.token)!;
   }
 
   /** SELECT the single un-activated preview for this session (partial unique). */
   findActivePreviewBySession(sessionId: string): ShareRow | undefined {
-    return this.db.prepare(
-      `SELECT * FROM shares
+    return this.db
+      .prepare(
+        `SELECT * FROM shares
        WHERE session_id = ? AND shared_at IS NULL AND revoked_at IS NULL
        ORDER BY created_at DESC LIMIT 1`,
-    ).get(sessionId) as ShareRow | undefined;
+      )
+      .get(sessionId) as ShareRow | undefined;
   }
 
   getShareByToken(token: string): ShareRow | undefined {
-    return this.db.prepare("SELECT * FROM shares WHERE token = ?").get(token) as ShareRow | undefined;
+    return this.db
+      .prepare("SELECT * FROM shares WHERE token = ?")
+      .get(token) as ShareRow | undefined;
   }
 
   /**
@@ -631,7 +795,10 @@ export class Store {
    * (0 → 1 rows affected). False if preview already activated, revoked,
    * or token doesn't exist.
    */
-  activateShare(token: string, opts?: { displayName?: string | null; ownerLabel?: string | null }): boolean {
+  activateShare(
+    token: string,
+    opts?: { displayName?: string | null; ownerLabel?: string | null },
+  ): boolean {
     const now = Date.now();
     let sql = "UPDATE shares SET shared_at = ?";
     const params: unknown[] = [now];
@@ -651,32 +818,39 @@ export class Store {
 
   /** Soft-delete; returns true if this call actually flipped the state. */
   revokeShare(token: string): boolean {
-    const info = this.db.prepare(
-      "UPDATE shares SET revoked_at = ? WHERE token = ? AND revoked_at IS NULL",
-    ).run(Date.now(), token);
+    const info = this.db
+      .prepare(
+        "UPDATE shares SET revoked_at = ? WHERE token = ? AND revoked_at IS NULL",
+      )
+      .run(Date.now(), token);
     return info.changes > 0;
   }
 
   /** Update only owner_label (PATCH route). Caller validates the value first. */
   updateShareOwnerLabel(token: string, label: string | null): boolean {
-    const info = this.db.prepare(
-      "UPDATE shares SET owner_label = ? WHERE token = ? AND revoked_at IS NULL",
-    ).run(label, token);
+    const info = this.db
+      .prepare(
+        "UPDATE shares SET owner_label = ? WHERE token = ? AND revoked_at IS NULL",
+      )
+      .run(label, token);
     return info.changes > 0;
   }
 
   /** Update only display_name (PATCH route). Caller validates the value first. */
   updateShareDisplayName(token: string, name: string | null): boolean {
-    const info = this.db.prepare(
-      "UPDATE shares SET display_name = ? WHERE token = ? AND revoked_at IS NULL",
-    ).run(name, token);
+    const info = this.db
+      .prepare(
+        "UPDATE shares SET display_name = ? WHERE token = ? AND revoked_at IS NULL",
+      )
+      .run(name, token);
     return info.changes > 0;
   }
 
   /** Owner list — every live share (preview + active, not revoked). */
   listOwnerShares(): ShareSummaryRow[] {
-    return this.db.prepare(
-      `SELECT
+    return this.db
+      .prepare(
+        `SELECT
          s.token AS token,
          s.session_id AS session_id,
          sess.title AS session_title,
@@ -691,7 +865,8 @@ export class Store {
        LEFT JOIN sessions sess ON sess.id = s.session_id
        WHERE s.revoked_at IS NULL
        ORDER BY s.created_at DESC`,
-    ).all() as ShareSummaryRow[];
+      )
+      .all() as ShareSummaryRow[];
   }
 
   /**
@@ -700,9 +875,11 @@ export class Store {
    * Returns true if the field was set by this call.
    */
   touchShareAccessed(token: string): boolean {
-    const info = this.db.prepare(
-      "UPDATE shares SET last_accessed_at = ? WHERE token = ? AND last_accessed_at IS NULL",
-    ).run(Date.now(), token);
+    const info = this.db
+      .prepare(
+        "UPDATE shares SET last_accessed_at = ? WHERE token = ? AND last_accessed_at IS NULL",
+      )
+      .run(Date.now(), token);
     return info.changes > 0;
   }
 
@@ -713,26 +890,30 @@ export class Store {
    */
   pruneStalePreviews(now: number = Date.now()): number {
     const cutoff = now - 24 * 60 * 60 * 1000;
-    const info = this.db.prepare(
-      "DELETE FROM shares WHERE shared_at IS NULL AND revoked_at IS NULL AND created_at < ?",
-    ).run(cutoff);
+    const info = this.db
+      .prepare(
+        "DELETE FROM shares WHERE shared_at IS NULL AND revoked_at IS NULL AND created_at < ?",
+      )
+      .run(cutoff);
     return info.changes;
   }
 
   // ===== owner_prefs =====
 
   getOwnerPref(key: string): string | undefined {
-    const row = this.db.prepare("SELECT value FROM owner_prefs WHERE key = ?").get(key) as
-      | { value: string }
-      | undefined;
+    const row = this.db
+      .prepare("SELECT value FROM owner_prefs WHERE key = ?")
+      .get(key) as { value: string } | undefined;
     return row?.value;
   }
 
   setOwnerPref(key: string, value: string): void {
-    this.db.prepare(
-      `INSERT INTO owner_prefs (key, value, updated_at)
+    this.db
+      .prepare(
+        `INSERT INTO owner_prefs (key, value, updated_at)
        VALUES (?, ?, ?)
        ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
-    ).run(key, value, Date.now());
+      )
+      .run(key, value, Date.now());
   }
 }

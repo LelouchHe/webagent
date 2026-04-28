@@ -7,6 +7,7 @@ describe("input", () => {
   let dom: any;
   let setBusy: any;
   let inputModule: any;
+  let commandsMod: any;
   let fetchCalls: Array<{ url: string; init?: any }>;
 
   before(async () => {
@@ -17,16 +18,19 @@ describe("input", () => {
     setBusy = stateMod.setBusy;
     await import("../public/js/render.ts");
     await import("../public/js/events.ts");
-    await import("../public/js/commands.ts");
+    commandsMod = await import("../public/js/commands.ts");
     await import("../public/js/images.ts");
     inputModule = await import("../public/js/input.ts");
     void inputModule;
   });
 
-  after(() => teardownDOM());
+  after(() => {
+    teardownDOM();
+  });
 
   beforeEach(() => {
     resetState(state, dom);
+    commandsMod.__resetCommandsForTest();
     fetchCalls = [];
     globalThis.fetch = undefined as any;
   });
@@ -36,17 +40,28 @@ describe("input", () => {
   }
 
   function keydown(key: string, options: Record<string, unknown> = {}) {
-    const event = new window.KeyboardEvent("keydown", { key, bubbles: true, cancelable: true, ...options });
+    const event = new window.KeyboardEvent("keydown", {
+      key,
+      bubbles: true,
+      cancelable: true,
+      ...options,
+    });
     dom.input.dispatchEvent(event);
     return event;
   }
 
   function docKeydown(key: string, options: Record<string, unknown> = {}) {
-    const event = new window.KeyboardEvent("keydown", { key, bubbles: true, cancelable: true, ...options });
+    const event = new window.KeyboardEvent("keydown", {
+      key,
+      bubbles: true,
+      cancelable: true,
+      ...options,
+    });
     document.dispatchEvent(event);
     return event;
   }
 
+  // eslint-disable-next-line @typescript-eslint/no-redundant-type-constituents
   function setFetch(handler: (url: string, init?: any) => Promise<any> | any) {
     globalThis.fetch = (async (url: string, init?: any) => {
       fetchCalls.push({ url, init });
@@ -55,25 +70,33 @@ describe("input", () => {
   }
 
   it("sends prompts for normal messages and enters busy state", () => {
-    setFetch(() => ({ ok: true, json: async () => ({ status: "accepted" }), text: async () => '{"status":"accepted"}' }));
+    setFetch(() => ({
+      ok: true,
+      json: async () => ({ status: "accepted" }),
+      text: async () => '{"status":"accepted"}',
+    }));
     state.sessionId = "s1";
     state.clientId = "cl-1";
     dom.input.value = "hello";
 
     clickSend();
 
-    const call = fetchCalls.find(c => c.url.includes("/prompt"));
+    const call = fetchCalls.find((c) => c.url.includes("/prompt"));
     assert.ok(call, "expected a prompt fetch call");
-    assert.equal(call!.url, "/api/v1/sessions/s1/prompt");
-    assert.equal(call!.init?.method, "POST");
-    assert.deepEqual(JSON.parse(call!.init?.body), { text: "hello" });
+    assert.equal(call.url, "/api/v1/sessions/s1/prompt");
+    assert.equal(call.init?.method, "POST");
+    assert.deepEqual(JSON.parse(call.init?.body), { text: "hello" });
     assert.equal(state.busy, true);
     assert.equal(dom.sendBtn.textContent, "^C");
     assert.equal(dom.input.value, "");
   });
 
   it("resets turnEnded when sending a new prompt", () => {
-    setFetch(() => ({ ok: true, json: async () => ({}), text: async () => '{}' }));
+    setFetch(() => ({
+      ok: true,
+      json: async () => ({}),
+      text: async () => "{}",
+    }));
     state.sessionId = "s1";
     state.clientId = "cl-1";
     state.turnEnded = true;
@@ -86,18 +109,22 @@ describe("input", () => {
   });
 
   it("routes bang-prefixed input to bash execution", () => {
-    setFetch(() => ({ ok: true, json: async () => ({}), text: async () => '{}' }));
+    setFetch(() => ({
+      ok: true,
+      json: async () => ({}),
+      text: async () => "{}",
+    }));
     state.sessionId = "s1";
     state.clientId = "cl-1";
     dom.input.value = "!echo hello";
 
     clickSend();
 
-    const call = fetchCalls.find(c => c.url.includes("/bash"));
+    const call = fetchCalls.find((c) => c.url.includes("/bash"));
     assert.ok(call, "expected a bash fetch call");
-    assert.equal(call!.url, "/api/v1/sessions/s1/bash");
-    assert.equal(call!.init?.method, "POST");
-    assert.deepEqual(JSON.parse(call!.init?.body), { command: "echo hello" });
+    assert.equal(call.url, "/api/v1/sessions/s1/bash");
+    assert.equal(call.init?.method, "POST");
+    assert.deepEqual(JSON.parse(call.init?.body), { command: "echo hello" });
     assert.equal(state.busy, true);
     assert.ok(dom.messages.textContent.includes("echo hello"));
   });
@@ -106,11 +133,11 @@ describe("input", () => {
     state.sessionId = "s1";
     state.clientId = "cl-1";
     state.busy = true;
-    dom.input.value = "/pwd";
+    dom.input.value = "/help";
 
     keydown("Enter");
 
-    assert.ok(dom.messages.textContent.includes("s1") || dom.messages.textContent.includes("unknown"));
+    assert.ok(dom.messages.textContent.includes("Show help"));
     assert.equal(dom.input.value, "");
   });
 
@@ -155,11 +182,11 @@ describe("input", () => {
     state.clientId = "cl-1";
     state.busy = true;
     setBusy(true);
-    dom.input.value = "/pwd";
+    dom.input.value = "/help";
 
     clickSend();
 
-    assert.ok(dom.messages.textContent.includes("/test"));
+    assert.ok(dom.messages.textContent.includes("Show help"));
     assert.equal(dom.input.value, "");
   });
 
@@ -183,27 +210,35 @@ describe("input", () => {
     });
     setFetch(async (url: string) => {
       if (url.includes("/api/v1/sessions/") && url.includes("/images")) {
-        return { ok: true, json: async () => ({ url: "/api/v1/sessions/s1/images/image.png" }), text: async () => '{"url":"/api/v1/sessions/s1/images/image.png"}' };
+        return {
+          ok: true,
+          json: async () => ({ url: "/api/v1/sessions/s1/images/image.png" }),
+          text: async () => '{"url":"/api/v1/sessions/s1/images/image.png"}',
+        };
       }
       // sendMessage call
-      return { ok: true, json: async () => ({}), text: async () => '{}' };
+      return { ok: true, json: async () => ({}), text: async () => "{}" };
     });
 
     clickSend();
     await new Promise((resolve) => setImmediate(resolve));
     await new Promise((resolve) => setImmediate(resolve));
 
-    const imageCall = fetchCalls.find(c => c.url.includes("/api/v1/sessions/") && c.url.includes("/images"));
+    const imageCall = fetchCalls.find(
+      (c) => c.url.includes("/api/v1/sessions/") && c.url.includes("/images"),
+    );
     assert.ok(imageCall, "expected an image upload call");
-    const msgCall = fetchCalls.find(c => c.url.includes("/prompt"));
+    const msgCall = fetchCalls.find((c) => c.url.includes("/prompt"));
     assert.ok(msgCall, "expected a prompt call");
-    const body = JSON.parse(msgCall!.init?.body);
+    const body = JSON.parse(msgCall.init?.body);
     assert.equal(body.text, "What is in this image?");
-    assert.deepEqual(body.images, [{
-      data: "abc123",
-      mimeType: "image/png",
-      path: "/api/v1/sessions/s1/images/image.png",
-    }]);
+    assert.deepEqual(body.images, [
+      {
+        data: "abc123",
+        mimeType: "image/png",
+        path: "/api/v1/sessions/s1/images/image.png",
+      },
+    ]);
   });
 
   it("sends cancel on global Ctrl+C while busy and no selection", () => {
@@ -214,10 +249,10 @@ describe("input", () => {
     const event = docKeydown("c", { ctrlKey: true });
 
     assert.equal(event.defaultPrevented, true);
-    const cancelCall = fetchCalls.find(c => c.url.includes("/cancel"));
+    const cancelCall = fetchCalls.find((c) => c.url.includes("/cancel"));
     assert.ok(cancelCall, "expected a cancel fetch call");
-    assert.equal(cancelCall!.url, "/api/v1/sessions/s1/cancel");
-    assert.equal(cancelCall!.init?.method, "POST");
+    assert.equal(cancelCall.url, "/api/v1/sessions/s1/cancel");
+    assert.equal(cancelCall.init?.method, "POST");
     assert.ok(dom.messages.textContent.includes("^C"));
   });
 
@@ -229,7 +264,11 @@ describe("input", () => {
 
     const event = docKeydown("c", { ctrlKey: true });
 
-    assert.equal(event.defaultPrevented, false, "should not prevent default when textarea has selection");
+    assert.equal(
+      event.defaultPrevented,
+      false,
+      "should not prevent default when textarea has selection",
+    );
   });
 
   it("Ctrl+C allows native copy when text is selected on the page", () => {
@@ -244,14 +283,20 @@ describe("input", () => {
 
     const event = docKeydown("c", { ctrlKey: true });
 
-    assert.equal(event.defaultPrevented, false, "should not prevent default when page has selection");
+    assert.equal(
+      event.defaultPrevented,
+      false,
+      "should not prevent default when page has selection",
+    );
     globalThis.document.body.removeChild(div);
     globalThis.window.getSelection()!.removeAllRanges();
   });
 
   it("opens the file picker on Ctrl+U", () => {
     let clicked = 0;
-    dom.fileInput.click = () => { clicked += 1; };
+    dom.fileInput.click = () => {
+      clicked += 1;
+    };
 
     const event = keydown("u", { ctrlKey: true });
 
@@ -260,26 +305,35 @@ describe("input", () => {
   });
 
   it("cycles mode on Ctrl+M", () => {
-    setFetch(() => ({ ok: true, json: async () => ({}), text: async () => '{}' }));
+    setFetch(() => ({
+      ok: true,
+      json: async () => ({}),
+      text: async () => "{}",
+    }));
     state.sessionId = "s1";
     state.clientId = "cl-1";
-    state.configOptions = [{
-      id: "mode",
-      name: "Mode",
-      currentValue: "agent",
-      options: [
-        { value: "agent", name: "Agent" },
-        { value: "chat#plan", name: "Plan" },
-        { value: "chat#autopilot", name: "Autopilot" },
-      ],
-    }];
+    state.configOptions = [
+      {
+        id: "mode",
+        name: "Mode",
+        currentValue: "agent",
+        options: [
+          { value: "agent", name: "Agent" },
+          { value: "chat#plan", name: "Plan" },
+          { value: "chat#autopilot", name: "Autopilot" },
+        ],
+      },
+    ];
 
     const event = docKeydown("m", { ctrlKey: true });
 
     assert.equal(event.defaultPrevented, true);
-    const call = fetchCalls.find(c => c.url.includes("/api/v1/sessions/s1/mode") && c.init?.method === "PUT");
+    const call = fetchCalls.find(
+      (c) =>
+        c.url.includes("/api/v1/sessions/s1/mode") && c.init?.method === "PUT",
+    );
     assert.ok(call, "expected a PUT config call");
-    const body = JSON.parse(call!.init?.body);
+    const body = JSON.parse(call.init?.body);
     assert.equal(body.value, "chat#plan");
     assert.ok(dom.messages.textContent.includes("Mode → Plan"));
   });
@@ -292,7 +346,10 @@ describe("input", () => {
     clickSend();
 
     assert.equal(fetchCalls.length, 0, "should not send when disconnected");
-    assert.ok(dom.messages.textContent.includes("Not connected"), "should warn user");
+    assert.ok(
+      dom.messages.textContent.includes("Not connected"),
+      "should warn user",
+    );
     assert.equal(state.busy, false, "should not enter busy state");
   });
 
@@ -303,8 +360,15 @@ describe("input", () => {
 
     clickSend();
 
-    assert.equal(fetchCalls.length, 0, "should not send bash when disconnected");
-    assert.ok(dom.messages.textContent.includes("Not connected"), "should warn user");
+    assert.equal(
+      fetchCalls.length,
+      0,
+      "should not send bash when disconnected",
+    );
+    assert.ok(
+      dom.messages.textContent.includes("Not connected"),
+      "should warn user",
+    );
     assert.equal(state.busy, false, "should not enter busy state");
   });
 
@@ -316,15 +380,75 @@ describe("input", () => {
       mimeType: "image/png",
       previewUrl: "data:image/png;base64,abc123",
     });
-    setFetch(async () => ({ ok: true, json: async () => ({ url: "/api/v1/sessions/s1/images/image.png" }), text: async () => '{"url":"/api/v1/sessions/s1/images/image.png"}' }));
+    setFetch(async () => ({
+      ok: true,
+      json: async () => ({ url: "/api/v1/sessions/s1/images/image.png" }),
+      text: async () => '{"url":"/api/v1/sessions/s1/images/image.png"}',
+    }));
 
     clickSend();
     await new Promise((resolve) => setImmediate(resolve));
     await new Promise((resolve) => setImmediate(resolve));
 
     // Image upload may still fire, but the prompt should not
-    const msgCall = fetchCalls.find(c => c.url.includes("/prompt"));
+    const msgCall = fetchCalls.find((c) => c.url.includes("/prompt"));
     assert.ok(!msgCall, "should not send message when disconnected");
     assert.equal(state.busy, false, "should not enter busy state");
+  });
+
+  // Regression: programmatic changes to dom.input.value (e.g. from slash-menu
+  // click clearing the input) used to skip the "input" event, which left the
+  // send button stuck on ↵ even when the input was empty. setInputValue() is
+  // the canonical way to mutate the input so listeners (syncSendBtn,
+  // slash-menu, bash-mode) stay in sync.
+  describe("setInputValue", () => {
+    it("dispatches a bubbling input event so listeners run", async () => {
+      const { setInputValue } = await import("../public/js/state.ts");
+      let fired = 0;
+      const listener = () => {
+        fired++;
+      };
+      dom.input.addEventListener("input", listener);
+      try {
+        setInputValue("hello");
+        assert.equal(fired, 1);
+        assert.equal(dom.input.value, "hello");
+        setInputValue("");
+        assert.equal(fired, 2);
+        assert.equal(dom.input.value, "");
+      } finally {
+        dom.input.removeEventListener("input", listener);
+      }
+    });
+
+    it("clearing via setInputValue while busy resets send button to ^C", async () => {
+      const { setInputValue, setBusy: setBusyFn } =
+        await import("../public/js/state.ts");
+      // Pre-condition: busy + slash text → send button should be ↵
+      setBusyFn(true);
+      setInputValue("/help");
+      assert.equal(dom.sendBtn.textContent, "↵", "slash text while busy → ↵");
+      // Clearing must flip back to ^C because the input listener fires
+      setInputValue("");
+      assert.equal(
+        dom.sendBtn.textContent,
+        "^C",
+        "empty input while busy → ^C",
+      );
+    });
+
+    it("setting non-empty via setInputValue while busy flips ^C → ↵", async () => {
+      const { setInputValue, setBusy: setBusyFn } =
+        await import("../public/js/state.ts");
+      setBusyFn(true);
+      setInputValue("");
+      assert.equal(
+        dom.sendBtn.textContent,
+        "^C",
+        "empty input while busy → ^C",
+      );
+      setInputValue("/clear");
+      assert.equal(dom.sendBtn.textContent, "↵", "slash text while busy → ↵");
+    });
   });
 });

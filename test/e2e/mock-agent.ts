@@ -106,18 +106,19 @@ class MockAgent implements Agent {
       this.sessions.set(params.sessionId, session);
     }
     return {
-      sessionId: params.sessionId,
       configOptions: session.configOptions,
     };
   }
 
-  async setSessionConfigOption(params: SetSessionConfigOptionRequest): Promise<SetSessionConfigOptionResponse> {
+  async setSessionConfigOption(
+    params: SetSessionConfigOptionRequest,
+  ): Promise<SetSessionConfigOptionResponse> {
     const session = this.sessions.get(params.sessionId);
     if (!session) {
       throw new Error(`Unknown session: ${params.sessionId}`);
     }
     session.configOptions = session.configOptions.map((opt) =>
-      opt.id === params.configId ? { ...opt, currentValue: params.value } : opt
+      opt.id === params.configId ? { ...opt, currentValue: params.value } : opt,
     );
     return { configOptions: session.configOptions };
   }
@@ -154,37 +155,55 @@ class MockAgent implements Agent {
 
     if (text.startsWith("E2E_PERMISSION")) {
       if (text.startsWith("E2E_PERMISSION_TWICE")) {
-        const first = await this.runPermissionStep(params.sessionId, "Sensitive command 1", "echo sensitive-1");
-        const second = await this.runPermissionStep(params.sessionId, "Sensitive command 2", "echo sensitive-2");
-        const granted = first.outcome.outcome === "selected" && second.outcome.outcome === "selected";
+        const first = await this.runPermissionStep(
+          params.sessionId,
+          "Sensitive command 1",
+          "echo sensitive-1",
+        );
+        const second = await this.runPermissionStep(
+          params.sessionId,
+          "Sensitive command 2",
+          "echo sensitive-2",
+        );
+        const granted =
+          first.outcome.outcome === "selected" &&
+          second.outcome.outcome === "selected";
         await this.conn.sessionUpdate({
           sessionId: params.sessionId,
           update: {
             sessionUpdate: "agent_message_chunk",
             content: {
               type: "text",
-              text: granted ? "Both permissions granted" : "A permission was denied",
+              text: granted
+                ? "Both permissions granted"
+                : "A permission was denied",
             },
           },
         });
         return { stopReason: granted ? "end_turn" : "cancelled" };
       }
 
-      const permission = await this.runPermissionStep(params.sessionId, "Sensitive command", "echo sensitive");
+      const permission = await this.runPermissionStep(
+        params.sessionId,
+        "Sensitive command",
+        "echo sensitive",
+      );
       await this.conn.sessionUpdate({
         sessionId: params.sessionId,
         update: {
           sessionUpdate: "agent_message_chunk",
           content: {
             type: "text",
-            text: permission.outcome.outcome === "selected"
-              ? "Permission granted"
-              : "Permission denied",
+            text:
+              permission.outcome.outcome === "selected"
+                ? "Permission granted"
+                : "Permission denied",
           },
         },
       });
       return {
-        stopReason: permission.outcome.outcome === "selected" ? "end_turn" : "cancelled",
+        stopReason:
+          permission.outcome.outcome === "selected" ? "end_turn" : "cancelled",
       };
     }
 
@@ -200,19 +219,27 @@ class MockAgent implements Agent {
           rawInput: {
             path: "src/server.ts",
             old_str: 'const PORT = 3000;\nconst HOST = "localhost";',
-            new_str: 'const PORT = parseInt(process.env.PORT || "8080");\nconst HOST = "0.0.0.0";',
+            new_str:
+              'const PORT = parseInt(process.env.PORT || "8080");\nconst HOST = "0.0.0.0";',
           },
         },
       });
       await this.conn.sessionUpdate({
         sessionId: params.sessionId,
-        update: { sessionUpdate: "tool_call_update", toolCallId, status: "completed" },
+        update: {
+          sessionUpdate: "tool_call_update",
+          toolCallId,
+          status: "completed",
+        },
       });
       await this.conn.sessionUpdate({
         sessionId: params.sessionId,
         update: {
           sessionUpdate: "agent_message_chunk",
-          content: { type: "text", text: "Updated the server config to use environment variables." },
+          content: {
+            type: "text",
+            text: "Updated the server config to use environment variables.",
+          },
         },
       });
       return { stopReason: "end_turn" };
@@ -229,19 +256,27 @@ class MockAgent implements Agent {
           kind: "edit",
           rawInput: {
             path: "src/config.ts",
-            file_text: 'export interface Config {\n  port: number;\n  host: string;\n  dataDir: string;\n}\n\nexport const defaults: Config = {\n  port: 8080,\n  host: "0.0.0.0",\n  dataDir: "./data",\n};\n',
+            file_text:
+              'export interface Config {\n  port: number;\n  host: string;\n  dataDir: string;\n}\n\nexport const defaults: Config = {\n  port: 8080,\n  host: "0.0.0.0",\n  dataDir: "./data",\n};\n',
           },
         },
       });
       await this.conn.sessionUpdate({
         sessionId: params.sessionId,
-        update: { sessionUpdate: "tool_call_update", toolCallId, status: "completed" },
+        update: {
+          sessionUpdate: "tool_call_update",
+          toolCallId,
+          status: "completed",
+        },
       });
       await this.conn.sessionUpdate({
         sessionId: params.sessionId,
         update: {
           sessionUpdate: "agent_message_chunk",
-          content: { type: "text", text: "Created the config module with default values." },
+          content: {
+            type: "text",
+            text: "Created the config module with default values.",
+          },
         },
       });
       return { stopReason: "end_turn" };
@@ -257,41 +292,46 @@ class MockAgent implements Agent {
     return { stopReason: "end_turn" };
   }
 
-  private async runPermissionStep(sessionId: string, title: string, command: string) {
-      const toolCallId = `tool-${++this.toolCallCounter}`;
-      await this.conn.sessionUpdate({
-        sessionId,
-        update: {
-          sessionUpdate: "tool_call",
-          toolCallId,
-          title,
-          kind: "execute",
-          rawInput: { command },
-        },
-      });
-      const permission = await this.conn.requestPermission({
-        sessionId,
-        toolCall: {
-          toolCallId,
-          title,
-          kind: "execute",
-          status: "pending",
-          rawInput: { command },
-        },
-        options: [
-          { optionId: "allow", kind: "allow_once", name: "Allow" },
-          { optionId: "deny", kind: "reject_once", name: "Deny" },
-        ],
-      });
-      await this.conn.sessionUpdate({
-        sessionId,
-        update: {
-          sessionUpdate: "tool_call_update",
-          toolCallId,
-          status: permission.outcome.outcome === "selected" ? "completed" : "failed",
-        },
-      });
-      return permission;
+  private async runPermissionStep(
+    sessionId: string,
+    title: string,
+    command: string,
+  ) {
+    const toolCallId = `tool-${++this.toolCallCounter}`;
+    await this.conn.sessionUpdate({
+      sessionId,
+      update: {
+        sessionUpdate: "tool_call",
+        toolCallId,
+        title,
+        kind: "execute",
+        rawInput: { command },
+      },
+    });
+    const permission = await this.conn.requestPermission({
+      sessionId,
+      toolCall: {
+        toolCallId,
+        title,
+        kind: "execute",
+        status: "pending",
+        rawInput: { command },
+      },
+      options: [
+        { optionId: "allow", kind: "allow_once", name: "Allow" },
+        { optionId: "deny", kind: "reject_once", name: "Deny" },
+      ],
+    });
+    await this.conn.sessionUpdate({
+      sessionId,
+      update: {
+        sessionUpdate: "tool_call_update",
+        toolCallId,
+        status:
+          permission.outcome.outcome === "selected" ? "completed" : "failed",
+      },
+    });
+    return permission;
   }
 
   async cancel(params: CancelNotification): Promise<void> {

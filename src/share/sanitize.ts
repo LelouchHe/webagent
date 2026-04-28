@@ -90,7 +90,8 @@ const HARD_REJECT_RULES: Array<{ id: string; pattern: RegExp; msg: string }> = [
     id: "private_key",
     // Matches OpenSSH, RSA, EC, DSA, encrypted, and PKCS8 ("BEGIN PRIVATE KEY").
     // PGP has a different armor shape ("... BLOCK-----") — covered by pgp_private_key below.
-    pattern: /-----BEGIN (?:OPENSSH |RSA |EC |DSA |ENCRYPTED |)PRIVATE KEY-----/,
+    pattern:
+      /-----BEGIN (?:OPENSSH |RSA |EC |DSA |ENCRYPTED |)PRIVATE KEY-----/,
     msg: "private key detected",
   },
   {
@@ -98,8 +99,16 @@ const HARD_REJECT_RULES: Array<{ id: string; pattern: RegExp; msg: string }> = [
     pattern: /-----BEGIN PGP PRIVATE KEY BLOCK-----/,
     msg: "PGP private key detected",
   },
-  { id: "github_pat", pattern: /\bgithub_pat_[A-Za-z0-9_]{22,}\b/, msg: "GitHub PAT detected" },
-  { id: "github_ghp", pattern: /\bghp_[A-Za-z0-9]{20,}\b/, msg: "GitHub classic token detected" },
+  {
+    id: "github_pat",
+    pattern: /\bgithub_pat_[A-Za-z0-9_]{22,}\b/,
+    msg: "GitHub PAT detected",
+  },
+  {
+    id: "github_ghp",
+    pattern: /\bghp_[A-Za-z0-9]{20,}\b/,
+    msg: "GitHub classic token detected",
+  },
   {
     id: "github_oauth",
     // gho_/ghu_/ghs_/ghr_ — oauth + user-to-server + server-to-server + refresh.
@@ -164,7 +173,8 @@ function rewriteStructured(
   let out = s;
   // cwd first (usually longer / more specific than homedir)
   if (cwd) out = out.replace(new RegExp(escapeRegExp(cwd), "g"), "<cwd>");
-  if (homeDir) out = out.replace(new RegExp(escapeRegExp(homeDir), "g"), "<home>");
+  if (homeDir)
+    out = out.replace(new RegExp(escapeRegExp(homeDir), "g"), "<home>");
   for (const host of internalHosts) {
     if (!host) continue;
     out = out.replace(new RegExp(escapeRegExp(host), "g"), "<internal-host>");
@@ -223,9 +233,13 @@ function sanitizeEvent(
   };
 }
 
-function deepRewriteStrings(value: unknown, rewrite: (s: string) => string): unknown {
+function deepRewriteStrings(
+  value: unknown,
+  rewrite: (s: string) => string,
+): unknown {
   if (typeof value === "string") return rewrite(value);
-  if (Array.isArray(value)) return value.map((v) => deepRewriteStrings(v, rewrite));
+  if (Array.isArray(value))
+    return value.map((v) => deepRewriteStrings(v, rewrite));
   if (value && typeof value === "object") {
     const out: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(value)) {

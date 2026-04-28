@@ -25,7 +25,9 @@ describe("shares store", () => {
   it("insertSharePreview creates a preview row (shared_at NULL)", () => {
     const tok = generateShareToken();
     const row = store.insertSharePreview({
-      token: tok, sessionId, snapshotSeq: 10,
+      token: tok,
+      sessionId,
+      snapshotSeq: 10,
     });
     assert.equal(row.token, tok);
     assert.equal(row.shared_at, null);
@@ -34,9 +36,18 @@ describe("shares store", () => {
   });
 
   it("partial unique index: second preview insert throws", () => {
-    store.insertSharePreview({ token: generateShareToken(), sessionId, snapshotSeq: 1 });
+    store.insertSharePreview({
+      token: generateShareToken(),
+      sessionId,
+      snapshotSeq: 1,
+    });
     assert.throws(
-      () => store.insertSharePreview({ token: generateShareToken(), sessionId, snapshotSeq: 2 }),
+      () =>
+        store.insertSharePreview({
+          token: generateShareToken(),
+          sessionId,
+          snapshotSeq: 2,
+        }),
       /UNIQUE/,
     );
   });
@@ -104,13 +115,21 @@ describe("shares store", () => {
     store.insertSharePreview({ token: t1, sessionId, snapshotSeq: 1 });
     store.activateShare(t1);
     store.createSession("sess-b", "/tmp");
-    store.insertSharePreview({ token: t2, sessionId: "sess-b", snapshotSeq: 1 });
+    store.insertSharePreview({
+      token: t2,
+      sessionId: "sess-b",
+      snapshotSeq: 1,
+    });
     store.activateShare(t2);
     store.revokeShare(t2);
-    store.insertSharePreview({ token: t3, sessionId: "sess-b", snapshotSeq: 1 });
+    store.insertSharePreview({
+      token: t3,
+      sessionId: "sess-b",
+      snapshotSeq: 1,
+    });
     const rows = store.listOwnerShares();
     assert.equal(rows.length, 2);
-    const t1Row = rows.find(r => r.token === t1)!;
+    const t1Row = rows.find((r) => r.token === t1)!;
     assert.equal(t1Row.session_title, "Demo title");
   });
 
@@ -119,8 +138,13 @@ describe("shares store", () => {
     store.insertSharePreview({ token: tok, sessionId, snapshotSeq: 1 });
     // Simulate a 25h-old row by direct UPDATE
     const old = Date.now() - 25 * 60 * 60 * 1000;
-    (store as unknown as { db: { prepare: (s: string) => { run: (...a: unknown[]) => void } } }).db
-      .prepare("UPDATE shares SET created_at = ? WHERE token = ?").run(old, tok);
+    (
+      store as unknown as {
+        db: { prepare: (s: string) => { run: (...a: unknown[]) => void } };
+      }
+    ).db
+      .prepare("UPDATE shares SET created_at = ? WHERE token = ?")
+      .run(old, tok);
     assert.equal(store.pruneStalePreviews(), 1);
     assert.equal(store.getShareByToken(tok), undefined);
   });

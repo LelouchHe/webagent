@@ -29,10 +29,14 @@ test("desktop header visually centers the session title", async ({ page }) => {
   });
 
   expect(layout.textAlign).toBe("center");
-  expect(Math.abs(layout.headerCenter - layout.titleCenter)).toBeLessThanOrEqual(24);
+  expect(
+    Math.abs(layout.headerCenter - layout.titleCenter),
+  ).toBeLessThanOrEqual(24);
 });
 
-test("mobile header lets the title use remaining space instead of forcing centering", async ({ page }) => {
+test("mobile header lets the title use remaining space instead of forcing centering", async ({
+  page,
+}) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await gotoConnected(page);
 
@@ -55,7 +59,9 @@ test("mobile header lets the title use remaining space instead of forcing center
   expect(layout.flexGrow).toBe("1");
 });
 
-test("input action buttons use a consistent keycap layout", async ({ page }) => {
+test("input action buttons use a consistent keycap layout", async ({
+  page,
+}) => {
   await gotoConnected(page);
 
   const styles = await page.evaluate(() => {

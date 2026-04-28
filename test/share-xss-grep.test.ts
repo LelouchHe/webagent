@@ -16,20 +16,33 @@ import { join, extname } from "node:path";
 
 const FORBIDDEN_PATTERNS: Array<{ name: string; regex: RegExp }> = [
   // Dot or bracket access: .innerHTML=, ["innerHTML"]=, ['innerHTML']=, [`innerHTML`]=
-  { name: "innerHTML",          regex: /(?:\.innerHTML|\[\s*(['"`])innerHTML\1\s*\])\s*=/ },
-  { name: "outerHTML",          regex: /(?:\.outerHTML|\[\s*(['"`])outerHTML\1\s*\])\s*=/ },
-  { name: "insertAdjacentHTML", regex: /(?:\.insertAdjacentHTML|\[\s*(['"`])insertAdjacentHTML\1\s*\])\s*\(/ },
-  { name: "document.write",     regex: /document(?:\.write|\[\s*(['"`])write\1\s*\])\s*\(/ },
+  {
+    name: "innerHTML",
+    regex: /(?:\.innerHTML|\[\s*(['"`])innerHTML\1\s*\])\s*=/,
+  },
+  {
+    name: "outerHTML",
+    regex: /(?:\.outerHTML|\[\s*(['"`])outerHTML\1\s*\])\s*=/,
+  },
+  {
+    name: "insertAdjacentHTML",
+    regex:
+      /(?:\.insertAdjacentHTML|\[\s*(['"`])insertAdjacentHTML\1\s*\])\s*\(/,
+  },
+  {
+    name: "document.write",
+    regex: /document(?:\.write|\[\s*(['"`])write\1\s*\])\s*\(/,
+  },
   // Dynamic code evaluation.
-  { name: "eval",               regex: /(?<![A-Za-z0-9_$])eval\s*\(/ },
-  { name: "new Function",       regex: /new\s+Function\s*\(/ },
+  { name: "eval", regex: /(?<![A-Za-z0-9_$])eval\s*\(/ },
+  { name: "new Function", regex: /new\s+Function\s*\(/ },
   // String-as-first-arg timers are eval.
-  { name: "string-setTimeout",  regex: /setTimeout\s*\(\s*['"`]/ },
+  { name: "string-setTimeout", regex: /setTimeout\s*\(\s*['"`]/ },
   { name: "string-setInterval", regex: /setInterval\s*\(\s*['"`]/ },
   // Dynamic property assignment that spells innerHTML via concatenation — reject
   // the primitive string fragments so `el["inner" + "HTML"]` cannot hide.
-  { name: "dynamic-innerHTML",  regex: /["'`]inner["'`]\s*\+\s*["'`]HTML["'`]/ },
-  { name: "dynamic-outerHTML",  regex: /["'`]outer["'`]\s*\+\s*["'`]HTML["'`]/ },
+  { name: "dynamic-innerHTML", regex: /["'`]inner["'`]\s*\+\s*["'`]HTML["'`]/ },
+  { name: "dynamic-outerHTML", regex: /["'`]outer["'`]\s*\+\s*["'`]HTML["'`]/ },
 ];
 
 const ROOTS = ["public/js/share", "src/share"];
@@ -38,7 +51,11 @@ const EXTS = [".ts", ".js", ".mjs"];
 function walk(dir: string): string[] {
   const out: string[] = [];
   let entries: string[];
-  try { entries = readdirSync(dir); } catch { return out; }
+  try {
+    entries = readdirSync(dir);
+  } catch {
+    return out;
+  }
   for (const name of entries) {
     const p = join(dir, name);
     const st = statSync(p);
@@ -77,12 +94,20 @@ describe("xss-grep: share surfaces must not use HTML injection or eval primitive
           if (line.includes("xss-ok:")) return;
           for (const { name, regex } of FORBIDDEN_PATTERNS) {
             if (regex.test(line)) {
-              violations.push(`${file}:${i + 1} [${name}] ${line.trim().slice(0, 120)}`);
+              violations.push(
+                `${file}:${i + 1} [${name}] ${line.trim().slice(0, 120)}`,
+              );
             }
           }
         });
       }
-      assert.deepEqual(violations, [], violations.length > 0 ? "XSS-grep violations:\n  " + violations.join("\n  ") : "clean");
+      assert.deepEqual(
+        violations,
+        [],
+        violations.length > 0
+          ? "XSS-grep violations:\n  " + violations.join("\n  ")
+          : "clean",
+      );
     });
   }
 });

@@ -125,13 +125,13 @@ at boot.
 
 Open **Task Scheduler** → Create Basic Task:
 
-| Field | Value |
-|---|---|
-| Trigger | **When the computer starts** (or **When I log on**) |
-| Action | **Start a program** |
-| Program | `node` (or full path to `node.exe`) |
+| Field     | Value                                                                        |
+| --------- | ---------------------------------------------------------------------------- |
+| Trigger   | **When the computer starts** (or **When I log on**)                          |
+| Action    | **Start a program**                                                          |
+| Program   | `node` (or full path to `node.exe`)                                          |
 | Arguments | `C:\path\to\webagent\bin\webagent.mjs start --config C:\path\to\config.toml` |
-| Start in | `C:\path\to\working-directory` |
+| Start in  | `C:\path\to\working-directory`                                               |
 
 Alternatively, use a PowerShell one-liner:
 
@@ -150,11 +150,11 @@ Register-ScheduledTask -TaskName "WebAgent" -Action $action -Trigger $trigger
 
 ## Which approach to choose?
 
-| Method | Crash recovery | Boot start | Complexity |
-|---|---|---|---|
-| `webagent start` only | ✓ (built-in supervisor) | ✗ | Lowest |
-| crontab `@reboot` + `webagent start` | ✓ | ✓ | Low |
-| launchd / systemd (foreground mode) | ✓ (OS-level) | ✓ | Medium |
+| Method                               | Crash recovery          | Boot start | Complexity |
+| ------------------------------------ | ----------------------- | ---------- | ---------- |
+| `webagent start` only                | ✓ (built-in supervisor) | ✗          | Lowest     |
+| crontab `@reboot` + `webagent start` | ✓                       | ✓          | Low        |
+| launchd / systemd (foreground mode)  | ✓ (OS-level)            | ✓          | Medium     |
 
 For most users, `webagent start` is sufficient. Add a crontab `@reboot` line
 if you need boot persistence. Use launchd/systemd only if you want full

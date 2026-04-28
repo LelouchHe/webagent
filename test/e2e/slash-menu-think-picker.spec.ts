@@ -1,7 +1,9 @@
 import { test, expect } from "playwright/test";
 import { createNewSession, gotoConnected } from "./helpers.ts";
 
-test("slash-menu /think picker can switch reasoning effort", async ({ page }) => {
+test("slash-menu /think picker can switch reasoning effort", async ({
+  page,
+}) => {
   await gotoConnected(page);
   await createNewSession(page);
 

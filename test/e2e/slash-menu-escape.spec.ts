@@ -1,7 +1,9 @@
 import { test, expect } from "playwright/test";
 import { gotoConnected } from "./helpers.ts";
 
-test("Escape dismisses the slash menu and keeps input focus", async ({ page }) => {
+test("Escape dismisses the slash menu and keeps input focus", async ({
+  page,
+}) => {
   await gotoConnected(page);
 
   const input = page.locator("#input");

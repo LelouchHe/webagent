@@ -10,7 +10,10 @@ describe("push — /notify command", () => {
   before(async () => {
     setupDOM();
     // Mock Notification API
-    (globalThis as any).Notification = { permission: "default", requestPermission: async () => "default" };
+    (globalThis as any).Notification = {
+      permission: "default",
+      requestPermission: async () => "default",
+    };
     const stateMod = await import("../public/js/state.ts");
     state = stateMod.state;
     dom = stateMod.dom;
@@ -18,12 +21,21 @@ describe("push — /notify command", () => {
     commands = await import("../public/js/commands.ts");
   });
 
-  after(() => teardownDOM());
+  after(() => {
+    teardownDOM();
+  });
 
   beforeEach(() => {
     resetState(state, dom);
-    (globalThis as any).Notification = { permission: "default", requestPermission: async () => "default" };
-    globalThis.fetch = (() => Promise.resolve({ ok: true, json: () => Promise.resolve({ publicKey: "test-key" }) })) as any;
+    (globalThis as any).Notification = {
+      permission: "default",
+      requestPermission: async () => "default",
+    };
+    globalThis.fetch = (() =>
+      Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ publicKey: "test-key" }),
+      })) as any;
     // Mock pushManager with subscription tracking
     let activeSub: any = null;
     const mockPushManager = {
@@ -31,14 +43,24 @@ describe("push — /notify command", () => {
       subscribe: async () => {
         activeSub = {
           endpoint: "https://mock-push/endpoint",
-          toJSON: () => ({ endpoint: "https://mock-push/endpoint", keys: { p256dh: "k1", auth: "k2" } }),
-          unsubscribe: async () => { activeSub = null; return true; },
+          toJSON: () => ({
+            endpoint: "https://mock-push/endpoint",
+            keys: { p256dh: "k1", auth: "k2" },
+          }),
+          unsubscribe: async () => {
+            activeSub = null;
+            return true;
+          },
         };
         return activeSub;
       },
     };
     Object.defineProperty(globalThis, "navigator", {
-      value: { serviceWorker: { ready: Promise.resolve({ pushManager: mockPushManager }) } },
+      value: {
+        serviceWorker: {
+          ready: Promise.resolve({ pushManager: mockPushManager }),
+        },
+      },
       writable: true,
       configurable: true,
     });
@@ -61,8 +83,12 @@ describe("push — /notify command", () => {
 
     await commands.handleSlashCommand("/notify");
     const lines = messageLines();
-    assert.ok(lines.some((l: string) => l.includes("notify") || l.includes("notification")),
-      `expected status message, got: ${lines}`);
+    assert.ok(
+      lines.some(
+        (l: string) => l.includes("notify") || l.includes("notification"),
+      ),
+      `expected status message, got: ${lines.join(", ")}`,
+    );
   });
 
   it("/notify on triggers permission request when default", async () => {
@@ -70,7 +96,10 @@ describe("push — /notify command", () => {
     let permRequested = false;
     (globalThis as any).Notification = {
       permission: "default",
-      requestPermission: async () => { permRequested = true; return "granted"; },
+      requestPermission: async () => {
+        permRequested = true;
+        return "granted";
+      },
     };
 
     await commands.handleSlashCommand("/notify on");
@@ -81,13 +110,18 @@ describe("push — /notify command", () => {
     state.sessionId = "s1";
     (globalThis as any).Notification = {
       permission: "default",
-      requestPermission: async () => { (globalThis as any).Notification.permission = "denied"; return "denied"; },
+      requestPermission: async () => {
+        (globalThis as any).Notification.permission = "denied";
+        return "denied";
+      },
     };
 
     await commands.handleSlashCommand("/notify on");
     const lines = messageLines();
-    assert.ok(lines.some((l: string) => l.includes("blocked") || l.includes("denied")),
-      `expected denied message, got: ${lines}`);
+    assert.ok(
+      lines.some((l: string) => l.includes("blocked") || l.includes("denied")),
+      `expected denied message, got: ${lines.join(", ")}`,
+    );
   });
 
   it("/notify off shows confirmation", async () => {
@@ -95,8 +129,10 @@ describe("push — /notify command", () => {
 
     await commands.handleSlashCommand("/notify off");
     const lines = messageLines();
-    assert.ok(lines.some((l: string) => l.includes("off") || l.includes("disabled")),
-      `expected off message, got: ${lines}`);
+    assert.ok(
+      lines.some((l: string) => l.includes("off") || l.includes("disabled")),
+      `expected off message, got: ${lines.join(", ")}`,
+    );
   });
 
   it("/notify shows off after /notify off even when permission is granted", async () => {
@@ -117,8 +153,10 @@ describe("push — /notify command", () => {
     // Check status — should be off, not enabled
     await commands.handleSlashCommand("/notify");
     const lines = messageLines();
-    assert.ok(lines.some((l: string) => l.includes("off")),
-      `expected off status after disable, got: ${lines}`);
+    assert.ok(
+      lines.some((l: string) => l.includes("off")),
+      `expected off status after disable, got: ${lines.join(", ")}`,
+    );
   });
 
   it("/notify on re-subscribes after previous /notify off", async () => {
@@ -135,15 +173,17 @@ describe("push — /notify command", () => {
     await commands.handleSlashCommand("/notify on");
 
     const lines = messageLines();
-    assert.ok(lines.some((l: string) => l.includes("enabled")),
-      `expected enabled after re-subscribe, got: ${lines}`);
+    assert.ok(
+      lines.some((l: string) => l.includes("enabled")),
+      `expected enabled after re-subscribe, got: ${lines.join(", ")}`,
+    );
   });
 });
 
 describe("push — visibility reporting", () => {
   let state: any;
   let dom: any;
-  let connection: any;
+  let _connection: any;
   let fetchCalls: Array<{ url: string; init?: any }>;
 
   before(async () => {
@@ -153,10 +193,12 @@ describe("push — visibility reporting", () => {
     state = stateMod.state;
     dom = stateMod.dom;
     await import("../public/js/render.ts");
-    connection = await import("../public/js/connection.ts");
+    _connection = await import("../public/js/connection.ts");
   });
 
-  after(() => teardownDOM());
+  after(() => {
+    teardownDOM();
+  });
 
   beforeEach(() => {
     resetState(state, dom);
@@ -172,19 +214,29 @@ describe("push — visibility reporting", () => {
     state.sessionId = "sess-abc";
 
     // Simulate visibilitychange
-    Object.defineProperty(document, "hidden", { value: true, configurable: true });
+    Object.defineProperty(document, "hidden", {
+      value: true,
+      configurable: true,
+    });
     const event = new (globalThis.window as any).Event("visibilitychange");
     document.dispatchEvent(event);
 
-    const visCall = fetchCalls.find(c => c.url.includes("/visibility"));
+    const visCall = fetchCalls.find((c) => c.url.includes("/visibility"));
     assert.ok(visCall, "expected a visibility fetch call");
-    assert.equal(visCall!.url, "/api/beta/clients/cl-test/visibility");
-    assert.equal(visCall!.init?.method, "POST");
-    const body = JSON.parse(visCall!.init?.body);
+    assert.equal(visCall.url, "/api/beta/clients/cl-test/visibility");
+    assert.equal(visCall.init?.method, "POST");
+    const body = JSON.parse(visCall.init?.body);
     assert.equal(body.visible, false);
-    assert.equal(body.sessionId, "sess-abc", "should include sessionId in visibility report");
+    assert.equal(
+      body.sessionId,
+      "sess-abc",
+      "should include sessionId in visibility report",
+    );
 
     // Restore
-    Object.defineProperty(document, "hidden", { value: false, configurable: true });
+    Object.defineProperty(document, "hidden", {
+      value: false,
+      configurable: true,
+    });
   });
 });

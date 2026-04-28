@@ -1,6 +1,7 @@
 import type { ServerResponse } from "node:http";
 import { randomBytes } from "node:crypto";
 import type { AgentEvent } from "./types.ts";
+import { reSignImageUrlsInJson } from "./auth.ts";
 
 /**
  * SSE heartbeat frame — a NAMED event so the frontend can hook
@@ -17,6 +18,7 @@ export interface SseClient {
   id: string;
   res: ServerResponse;
   sessionId?: string; // undefined = global stream
+  tokenName?: string; // bound at connect via SSE ticket; used for revoke detection
 }
 
 /**
@@ -28,6 +30,8 @@ export class SseManager {
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private readonly heartbeatInterval: number;
   private onRemoveCallback: ((clientId: string) => void) | null = null;
+  private isTokenRevoked: ((tokenName: string) => boolean) | null = null;
+  private imageSecret: Buffer | null = null;
 
   constructor(heartbeatMs = 15_000) {
     this.heartbeatInterval = heartbeatMs;
@@ -38,12 +42,37 @@ export class SseManager {
     this.onRemoveCallback = cb;
   }
 
+  /** When set, every outgoing SSE message has its image URLs re-signed with
+   *  a fresh exp/sig — required for stored events to render past the
+   *  original 1h signature TTL. */
+  setImageSecret(secret: Buffer): void {
+    this.imageSecret = secret;
+  }
+
+  /** Install a revocation check called on every heartbeat. If it returns
+   *  true the SSE connection is closed immediately (within one heartbeat
+   *  interval, ≤15s by default). */
+  setRevocationCheck(check: (tokenName: string) => boolean): void {
+    this.isTokenRevoked = check;
+  }
+
   /** Start the periodic heartbeat. Call once after construction. */
   startHeartbeat(): void {
     if (this.heartbeatTimer) return;
     this.heartbeatTimer = setInterval(() => {
       for (const client of this.clients.values()) {
-        if (!client.res.writableEnded) client.res.write(SSE_HEARTBEAT_FRAME);
+        if (client.res.writableEnded) continue;
+        // Close any stream whose backing token has been revoked.
+        if (client.tokenName && this.isTokenRevoked?.(client.tokenName)) {
+          try {
+            client.res.end();
+          } catch {
+            /* already torn down */
+          }
+          this.remove(client.id);
+          continue;
+        }
+        client.res.write(SSE_HEARTBEAT_FRAME);
       }
     }, this.heartbeatInterval);
     this.heartbeatTimer.unref();
@@ -65,7 +94,9 @@ export class SseManager {
   /** Register a new SSE client connection. */
   add(client: SseClient): void {
     this.clients.set(client.id, client);
-    client.res.on("close", () => this.remove(client.id));
+    client.res.on("close", () => {
+      this.remove(client.id);
+    });
   }
 
   /** Write a single heartbeat frame to the given client. Used right after
@@ -90,9 +121,13 @@ export class SseManager {
   /** Send an SSE event to a single client. */
   sendEvent(client: SseClient, event: AgentEvent, seq?: number): void {
     if (client.res.writableEnded) return;
+    let data = JSON.stringify(event);
+    if (this.imageSecret && data.includes("/images/")) {
+      data = reSignImageUrlsInJson(data, this.imageSecret);
+    }
     let msg = "";
     if (seq != null) msg += `id: ${seq}\n`;
-    msg += `data: ${JSON.stringify(event)}\n\n`;
+    msg += `data: ${data}\n\n`;
     try {
       client.res.write(msg);
     } catch {
@@ -107,7 +142,9 @@ export class SseManager {
    * Global clients get all events. Per-session clients only get events for their session.
    */
   broadcast(event: AgentEvent): void {
-    const sessionId = (event as Record<string, unknown>).sessionId as string | undefined;
+    const sessionId = (event as Record<string, unknown>).sessionId as
+      | string
+      | undefined;
     const snapshot = [...this.clients.values()];
     for (const client of snapshot) {
       if (client.res.writableEnded) continue;

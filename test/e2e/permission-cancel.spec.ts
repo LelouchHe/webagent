@@ -1,7 +1,9 @@
 import { test, expect } from "playwright/test";
 import { createNewSession, gotoConnected, sendPrompt } from "./helpers.ts";
 
-test("cancel interrupts a pending permission turn immediately", async ({ page }) => {
+test("cancel interrupts a pending permission turn immediately", async ({
+  page,
+}) => {
   await gotoConnected(page);
   await createNewSession(page);
 

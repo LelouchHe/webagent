@@ -8,7 +8,8 @@ import { PushService, isAppleEndpoint } from "../src/push-service.ts";
 import type { PushNotification } from "../src/push-service.ts";
 
 class StubbedPushService extends PushService {
-  public sent: Array<{ endpoint: string; payload: string; topic?: string }> = [];
+  public sent: Array<{ endpoint: string; payload: string; topic?: string }> =
+    [];
   public shouldReject: { statusCode?: number } | null = null;
   protected override sendOne(
     sub: { endpoint: string; keys: { auth: string; p256dh: string } },
@@ -17,7 +18,9 @@ class StubbedPushService extends PushService {
   ): Promise<never> {
     this.sent.push({ endpoint: sub.endpoint, payload, topic: options?.topic });
     if (this.shouldReject)
-      return Promise.reject(new Error(`HTTP ${this.shouldReject.statusCode ?? "?"}`));
+      return Promise.reject(
+        new Error(`HTTP ${this.shouldReject.statusCode ?? "?"}`),
+      );
     return Promise.resolve(undefined as never);
   }
 }
@@ -119,7 +122,10 @@ describe("PushService — PushNotification payload shape", () => {
     assert.ok(t1, "first send must have a topic");
     assert.ok(t2, "second send must have a topic");
     assert.equal(t1, t2, "same tag must produce identical topic for collapse");
-    assert.ok(t1.length > 0 && t1.length <= 32, `topic must be ≤32 chars (got ${t1.length})`);
+    assert.ok(
+      t1.length > 0 && t1.length <= 32,
+      `topic must be ≤32 chars (got ${t1.length})`,
+    );
     assert.match(t1, /^[A-Za-z0-9_-]+$/, "topic must be URL-safe Base64");
   });
 
@@ -286,12 +292,22 @@ describe("PushService — PushNotification payload shape", () => {
       logs.push(args.map(String).join(" "));
     });
     try {
-      await push.sendForMessage({ id: "msg-m1", to: "*", body: "x", deliver: "push" });
+      await push.sendForMessage({
+        id: "msg-m1",
+        to: "*",
+        body: "x",
+        deliver: "push",
+      });
     } finally {
       console.log = origLog;
     }
-    const egressLine = logs.find((l) => l.includes("[egress]") && l.includes("sendForMessage"));
-    assert.ok(egressLine, `expected [egress] sendForMessage log, got: ${logs.join(" | ")}`);
+    const egressLine = logs.find(
+      (l) => l.includes("[egress]") && l.includes("sendForMessage"),
+    );
+    assert.ok(
+      egressLine,
+      `expected [egress] sendForMessage log, got: ${logs.join(" | ")}`,
+    );
     assert.ok(egressLine.includes("msg_id=msg-m1"));
     assert.ok(egressLine.includes("tag=msg-m1"));
   });
@@ -308,20 +324,32 @@ describe("isAppleEndpoint", () => {
 
   it("matches hypothetical api.push.apple.com", () => {
     // Apple has historically rebranded push hosts; defensive matching.
-    assert.equal(isAppleEndpoint("https://api.push.apple.com/3/device/token"), true);
+    assert.equal(
+      isAppleEndpoint("https://api.push.apple.com/3/device/token"),
+      true,
+    );
   });
 
   it("does not match FCM", () => {
-    assert.equal(isAppleEndpoint("https://fcm.googleapis.com/fcm/send/AAA"), false);
+    assert.equal(
+      isAppleEndpoint("https://fcm.googleapis.com/fcm/send/AAA"),
+      false,
+    );
   });
 
   it("does not match Mozilla push", () => {
-    assert.equal(isAppleEndpoint("https://updates.push.services.mozilla.com/wpush/v2/abc"), false);
+    assert.equal(
+      isAppleEndpoint("https://updates.push.services.mozilla.com/wpush/v2/abc"),
+      false,
+    );
   });
 
   it("does not match a lookalike domain", () => {
     // Guard against naive substring matches.
-    assert.equal(isAppleEndpoint("https://push.apple.com.evil.example.com/token"), false);
+    assert.equal(
+      isAppleEndpoint("https://push.apple.com.evil.example.com/token"),
+      false,
+    );
   });
 
   it("handles malformed URLs gracefully", () => {
@@ -348,12 +376,23 @@ describe("PushService — Apple endpoint skip for kind:'close'", () => {
 
   it("sendClose skips Apple endpoints and dispatches to FCM only", async () => {
     store.saveSubscription("https://web.push.apple.com/ios-token", "a1", "p1");
-    store.saveSubscription("https://fcm.googleapis.com/fcm/send/chrome", "a2", "p2");
+    store.saveSubscription(
+      "https://fcm.googleapis.com/fcm/send/chrome",
+      "a2",
+      "p2",
+    );
 
     await push.sendClose("sess-abc-done");
 
-    assert.equal(push.sent.length, 1, "expected only FCM to be hit, Apple must be filtered");
-    assert.equal(push.sent[0].endpoint, "https://fcm.googleapis.com/fcm/send/chrome");
+    assert.equal(
+      push.sent.length,
+      1,
+      "expected only FCM to be hit, Apple must be filtered",
+    );
+    assert.equal(
+      push.sent[0].endpoint,
+      "https://fcm.googleapis.com/fcm/send/chrome",
+    );
   });
 
   it("sendClose with only Apple subs sends nothing at the network layer", async () => {
@@ -362,12 +401,20 @@ describe("PushService — Apple endpoint skip for kind:'close'", () => {
 
     await push.sendClose("sess-xyz-done");
 
-    assert.equal(push.sent.length, 0, "no dispatches expected; all subs are Apple");
+    assert.equal(
+      push.sent.length,
+      0,
+      "no dispatches expected; all subs are Apple",
+    );
   });
 
   it("sendToAll with kind:'notify' still dispatches to Apple (regression guard)", async () => {
     store.saveSubscription("https://web.push.apple.com/ios-token", "a1", "p1");
-    store.saveSubscription("https://fcm.googleapis.com/fcm/send/chrome", "a2", "p2");
+    store.saveSubscription(
+      "https://fcm.googleapis.com/fcm/send/chrome",
+      "a2",
+      "p2",
+    );
 
     const note: PushNotification = {
       kind: "notify",
@@ -378,7 +425,11 @@ describe("PushService — Apple endpoint skip for kind:'close'", () => {
     };
     await push.sendToAll(note);
 
-    assert.equal(push.sent.length, 2, "notify must reach all endpoints including Apple");
+    assert.equal(
+      push.sent.length,
+      2,
+      "notify must reach all endpoints including Apple",
+    );
     const endpoints = push.sent.map((s) => s.endpoint).sort();
     assert.deepEqual(endpoints, [
       "https://fcm.googleapis.com/fcm/send/chrome",
@@ -403,7 +454,9 @@ describe("PushService — visibility v2 (TTL / edge / kill switch / preserve-vs-
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  function makePush(opts: { suppress?: boolean; ttl?: number } = {}): StubbedPushService {
+  function makePush(
+    opts: { suppress?: boolean; ttl?: number } = {},
+  ): StubbedPushService {
     return new StubbedPushService(store, tmpDir, "mailto:t@example.com", {
       globalVisibilitySuppression: opts.suppress ?? true,
       visibilityTtlMs: opts.ttl ?? 60_000,
@@ -413,7 +466,11 @@ describe("PushService — visibility v2 (TTL / edge / kill switch / preserve-vs-
 
   it("TTL: stale visibility record stops suppressing once TTL elapses", async () => {
     const push = makePush();
-    push.updateClient("c1", { visible: true, sessionId: "sX", endpoint: "https://e/1" });
+    push.updateClient("c1", {
+      visible: true,
+      sessionId: "sX",
+      endpoint: "https://e/1",
+    });
     assert.equal(push.isSessionVisibleToAnyClient("sX"), true);
     clock += 61_000; // exceed 60s TTL
     assert.equal(push.isSessionVisibleToAnyClient("sX"), false);
@@ -479,7 +536,11 @@ describe("PushService — visibility v2 (TTL / edge / kill switch / preserve-vs-
 
   it("removeClient wipes all state atomically", () => {
     const push = makePush();
-    push.updateClient("c1", { visible: true, sessionId: "sX", endpoint: "https://e/1" });
+    push.updateClient("c1", {
+      visible: true,
+      sessionId: "sX",
+      endpoint: "https://e/1",
+    });
     push.removeClient("c1");
     assert.equal(push.getClientState("c1"), null);
     assert.equal(push.isSessionVisibleToAnyClient("sX"), false);
@@ -487,7 +548,11 @@ describe("PushService — visibility v2 (TTL / edge / kill switch / preserve-vs-
 
   it("hasVisibleClient and isEndpointVisible also respect TTL", () => {
     const push = makePush();
-    push.updateClient("c1", { visible: true, sessionId: "sX", endpoint: "https://e/1" });
+    push.updateClient("c1", {
+      visible: true,
+      sessionId: "sX",
+      endpoint: "https://e/1",
+    });
     assert.equal(push.hasVisibleClient(), true);
     assert.equal(push.isEndpointVisible("https://e/1"), true);
     clock += 61_000;

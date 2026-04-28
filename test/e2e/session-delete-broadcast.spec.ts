@@ -1,7 +1,14 @@
 import { test, expect } from "playwright/test";
-import { createNewSession, currentSessionId, gotoConnected, sendPrompt } from "./helpers.ts";
+import {
+  createNewSession,
+  currentSessionId,
+  gotoConnected,
+  sendPrompt,
+} from "./helpers.ts";
 
-test("/exit broadcasts session_deleted — other tab auto-switches to next session", async ({ browser }) => {
+test("/exit broadcasts session_deleted — other tab auto-switches to next session", async ({
+  browser,
+}) => {
   const pageA = await browser.newPage();
   const pageB = await browser.newPage();
 

@@ -19,10 +19,15 @@ const locks = new Map<string, Promise<unknown>>();
  * Run `fn` inside the per-key mutex. Serializes callers with the same
  * key; different keys run in parallel. Returns `fn`'s result / throws.
  */
-export async function withSessionLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
+export async function withSessionLock<T>(
+  key: string,
+  fn: () => Promise<T>,
+): Promise<T> {
   const prev = locks.get(key) ?? Promise.resolve();
   let resolve!: () => void;
-  const next = new Promise<void>((r) => { resolve = r; });
+  const next = new Promise<void>((r) => {
+    resolve = r;
+  });
   const chain = prev.then(() => next);
   locks.set(key, chain);
 

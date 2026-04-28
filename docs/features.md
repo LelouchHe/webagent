@@ -37,44 +37,47 @@
 
 Type `/` to trigger an autocomplete menu with arrow keys to navigate, Esc to close.
 
-| Key | In menu | Without menu |
-|---|---|---|
-| `Tab` | Fill selected item into input | — |
-| `Enter` | Send current input | Send current input |
-| Click/Tap | Fill and send (Tab + Enter) | — |
+| Key       | In menu                       | Without menu       |
+| --------- | ----------------------------- | ------------------ |
+| `Tab`     | Fill selected item into input | —                  |
+| `Enter`   | Send current input            | Send current input |
+| Click/Tap | Fill and send (Tab + Enter)   | —                  |
 
-Commands with submenus (`/model`, `/mode`, `/think`, `/notify`, `/switch`, `/new`, `/inbox`, `/debug`) show a picker after typing the command and a space. Tab completes the selection into the input so you can review or edit before pressing Enter to send.
+Commands with submenus (`/model`, `/mode`, `/think`, `/notify`, `/switch`, `/new`, `/inbox`, `/log`) show a picker after typing the command and a space. Tab completes the selection into the input so you can review or edit before pressing Enter to send.
 
-| Command | Description |
-|---|---|
-| `/help` (or `?`) | Show help |
-| `/new [cwd]` | Create new session — shows recent paths picker (paths persist across session exits, auto-cleaned by TTL) |
-| `/pwd` | Show current working directory |
-| `/model [name]` | View or switch model (fuzzy match, e.g. `/model opus`) |
-| `/mode [name]` | View or switch mode (Agent / Plan / Autopilot) |
-| `/think [level]` | View or switch reasoning effort (low / medium / high) |
-| `/notify [on\|off]` | Toggle push notifications for background alerts |
-| `/inbox` | Open inbox — pick a pending message to consume (opens a new session) or ack (dismiss). See [Messages / Inbox](messages.md). |
-| `/debug [level]` | Set inline log level (`off`, `debug`, `info`, `warn`, `error`). Log records render inline as system messages. |
-| `/cancel` | Cancel current response |
-| `/clear` | Clear session — delete current and start fresh in same cwd (model/think inherited) |
-| `/switch <title\|id>` | Switch to a session (match by title or ID prefix) |
-| `/rename <new title>` | Rename current session |
-| `/exit` | Close current session (delete + switch to previous) |
-| `/prune` | Delete all sessions except current |
-| `/reload` | Reload agent subprocess (pick up CLI upgrades, new skills) |
+| Command               | Description                                                                                                                   |
+| --------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `/help` (or `?`)      | Show help                                                                                                                     |
+| `/new [cwd]`          | Create new session — shows recent paths picker (paths persist across session exits, auto-cleaned by TTL)                      |
+| `/model [name]`       | Switch model (fuzzy match, e.g. `/model opus`)                                                                                |
+| `/mode [name]`        | Switch mode (Agent / Plan / Autopilot)                                                                                        |
+| `/think [level]`      | Set thinking effort (low / medium / high)                                                                                     |
+| `/notify [on\|off]`   | Toggle push notifications                                                                                                     |
+| `/inbox`              | Manage inbox — pick a pending message to consume (opens a new session) or ack (dismiss). See [Messages / Inbox](messages.md). |
+| `/log [level]`        | Set log level (`off`, `debug`, `info`, `warn`, `error`). Log records render inline as system messages.                        |
+| `/cancel`             | Cancel current response                                                                                                       |
+| `/clear`              | Reset session in same cwd — delete current and start fresh (model/think inherited)                                            |
+| `/switch <title\|id>` | Switch session (match by title or ID prefix)                                                                                  |
+| `/rename <new title>` | Rename session                                                                                                                |
+| `/exit`               | End current session (delete + switch to previous)                                                                             |
+| `/reload`             | Reload agent subprocess (pick up CLI upgrades, new skills)                                                                    |
+| `/logout`             | Log out — clear local token and return to login page                                                                          |
+| `/token`              | Manage API tokens (list, create, revoke) — see [Auth & Security](security.md)                                                 |
+| `/share`              | List active public shares · Enter creates a read-only snapshot (preview → /publish or /discard). See [Share Links](share.md). |
+| `/publish`            | Available only inside a `/share` preview: freeze the snapshot and publish a public read-only URL                              |
+| `/discard`            | Available only inside a `/share` preview: drop the preview (TTL cleans the backend row)                                       |
 
 Type `?` for inline help listing all commands and shortcuts.
 
 ## Keyboard Shortcuts
 
-| Shortcut | Action |
-|---|---|
-| `Enter` | Send message |
-| `Shift+Enter` | New line |
-| `Ctrl+C` | Cancel current response (native copy when text is selected) |
-| `Ctrl+M` | Cycle mode (Agent → Plan → Autopilot) |
-| `Ctrl+U` | Upload image |
+| Shortcut      | Action                                                      |
+| ------------- | ----------------------------------------------------------- |
+| `Enter`       | Send message                                                |
+| `Shift+Enter` | New line                                                    |
+| `Ctrl+C`      | Cancel current response (native copy when text is selected) |
+| `Ctrl+M`      | Cycle mode (Agent → Plan → Autopilot)                       |
+| `Ctrl+U`      | Upload image                                                |
 
 Tap the `❯` prompt indicator to cycle mode.
 

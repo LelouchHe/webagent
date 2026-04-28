@@ -4,7 +4,10 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Store } from "../src/store.ts";
-import { sweepStaleSharePreviewsOnce, startSharePreviewCleanup } from "../src/share/cleanup.ts";
+import {
+  sweepStaleSharePreviewsOnce,
+  startSharePreviewCleanup,
+} from "../src/share/cleanup.ts";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -28,8 +31,13 @@ describe("share preview cleanup — sweepStaleSharePreviewsOnce", () => {
     store.insertSharePreview({ token, sessionId: "s", snapshotSeq: 1 });
     const t = Date.now() - ageMs;
     // direct UPDATE — Store's insertSharePreview uses the default strftime timestamp.
-    (store as unknown as { db: { prepare: (q: string) => { run: (...a: unknown[]) => void } } })
-      .db.prepare("UPDATE shares SET created_at = ? WHERE token = ?").run(t, token);
+    (
+      store as unknown as {
+        db: { prepare: (q: string) => { run: (...a: unknown[]) => void } };
+      }
+    ).db
+      .prepare("UPDATE shares SET created_at = ? WHERE token = ?")
+      .run(t, token);
   }
 
   it("prunes orphan preview older than 24h", () => {
@@ -70,8 +78,13 @@ describe("share preview cleanup — sweepStaleSharePreviewsOnce", () => {
     store.createSession("s4", "/tmp/x");
     const seed = (tok: string, sess: string, age: number) => {
       store.insertSharePreview({ token: tok, sessionId: sess, snapshotSeq: 1 });
-      (store as unknown as { db: { prepare: (q: string) => { run: (...a: unknown[]) => void } } })
-        .db.prepare("UPDATE shares SET created_at = ? WHERE token = ?").run(Date.now() - age, tok);
+      (
+        store as unknown as {
+          db: { prepare: (q: string) => { run: (...a: unknown[]) => void } };
+        }
+      ).db
+        .prepare("UPDATE shares SET created_at = ? WHERE token = ?")
+        .run(Date.now() - age, tok);
     };
     seed("t1", "s", 25 * 60 * 60 * 1000);
     seed("t2", "s2", 48 * 60 * 60 * 1000);
@@ -100,14 +113,27 @@ describe("share preview cleanup — startSharePreviewCleanup", () => {
 
   it("sweeps once immediately on start", () => {
     // Seed a stale preview then start the scheduler.
-    store.insertSharePreview({ token: "t-stale", sessionId: "s", snapshotSeq: 1 });
-    (store as unknown as { db: { prepare: (q: string) => { run: (...a: unknown[]) => void } } })
-      .db.prepare("UPDATE shares SET created_at = ? WHERE token = ?").run(Date.now() - 48 * 60 * 60 * 1000, "t-stale");
+    store.insertSharePreview({
+      token: "t-stale",
+      sessionId: "s",
+      snapshotSeq: 1,
+    });
+    (
+      store as unknown as {
+        db: { prepare: (q: string) => { run: (...a: unknown[]) => void } };
+      }
+    ).db
+      .prepare("UPDATE shares SET created_at = ? WHERE token = ?")
+      .run(Date.now() - 48 * 60 * 60 * 1000, "t-stale");
 
     const handle = startSharePreviewCleanup(store);
     try {
       assert.equal(handle.armed, true);
-      assert.equal(store.getShareByToken("t-stale"), undefined, "immediate sweep should drop stale row");
+      assert.equal(
+        store.getShareByToken("t-stale"),
+        undefined,
+        "immediate sweep should drop stale row",
+      );
     } finally {
       handle.stop();
     }

@@ -44,8 +44,16 @@ describe("Store — push_subscriptions", () => {
   });
 
   it("saveSubscription upserts on duplicate endpoint", () => {
-    store.saveSubscription("https://push.example.com/1", "auth-old", "p256dh-old");
-    store.saveSubscription("https://push.example.com/1", "auth-new", "p256dh-new");
+    store.saveSubscription(
+      "https://push.example.com/1",
+      "auth-old",
+      "p256dh-old",
+    );
+    store.saveSubscription(
+      "https://push.example.com/1",
+      "auth-new",
+      "p256dh-new",
+    );
 
     const subs = store.getAllSubscriptions();
     assert.equal(subs.length, 1);
@@ -177,7 +185,13 @@ describe("PushService", () => {
 
     it("formats prompt_done notification", () => {
       const svc = new PushService(store, tmpDir, "mailto:test@localhost");
-      const n = svc.formatNotification("s1", "Title", "prompt_done", {}, "test-tag");
+      const n = svc.formatNotification(
+        "s1",
+        "Title",
+        "prompt_done",
+        {},
+        "test-tag",
+      );
       if (n.kind !== "notify") throw new Error("unreachable");
       assert.ok(n.body.includes("✓"));
     });
@@ -201,7 +215,13 @@ describe("PushService", () => {
 
     it("uses fallback title when session title is null", () => {
       const svc = new PushService(store, tmpDir, "mailto:test@localhost");
-      const n = svc.formatNotification("s1", null, "prompt_done", {}, "test-tag");
+      const n = svc.formatNotification(
+        "s1",
+        null,
+        "prompt_done",
+        {},
+        "test-tag",
+      );
       if (n.kind !== "notify") throw new Error("unreachable");
       assert.equal(n.title, "WebAgent");
     });
@@ -278,8 +298,14 @@ describe("PushService", () => {
       svc.setClientVisibility("ws-1", true);
       svc.setClientVisibility("ws-2", false);
 
-      assert.equal(svc.isEndpointVisible("https://push.example.com/desktop"), true);
-      assert.equal(svc.isEndpointVisible("https://push.example.com/phone"), false);
+      assert.equal(
+        svc.isEndpointVisible("https://push.example.com/desktop"),
+        true,
+      );
+      assert.equal(
+        svc.isEndpointVisible("https://push.example.com/phone"),
+        false,
+      );
     });
   });
 
@@ -371,7 +397,10 @@ describe("PushService", () => {
       const svc = new PushService(store, tmpDir, "mailto:test@localhost");
 
       assert.equal(svc.maybeNotify("s1", "Title", "prompt_done", {}), true);
-      assert.equal(svc.maybeNotify("s1", "Title", "permission_request", {}), true);
+      assert.equal(
+        svc.maybeNotify("s1", "Title", "permission_request", {}),
+        true,
+      );
       assert.equal(svc.maybeNotify("s1", "Title", "bash_done", {}), true);
     });
 
@@ -399,7 +428,9 @@ describe("PushService", () => {
           return Promise.reject(err);
         }
         if (outcome === "fail") {
-          const err = new Error("Unexpected response") as Error & { statusCode: number };
+          const err = new Error("Unexpected response") as Error & {
+            statusCode: number;
+          };
           err.statusCode = 403;
           return Promise.reject(err);
         }
@@ -427,7 +458,11 @@ describe("PushService", () => {
       for (let i = 0; i < 4; i++) {
         await svc.sendToAll(notification);
       }
-      assert.equal(store.getAllSubscriptions().length, 2, "should keep sub before threshold");
+      assert.equal(
+        store.getAllSubscriptions().length,
+        2,
+        "should keep sub before threshold",
+      );
 
       // Failure 5: subscription should be removed
       await svc.sendToAll(notification);
@@ -486,7 +521,11 @@ describe("PushService", () => {
       };
       await svc.sendToAll(notification);
 
-      assert.equal(store.getAllSubscriptions().length, 0, "410 should remove immediately");
+      assert.equal(
+        store.getAllSubscriptions().length,
+        0,
+        "410 should remove immediately",
+      );
     });
 
     it("suppresses all endpoints when any client views the session", async () => {
@@ -518,7 +557,11 @@ describe("PushService", () => {
         tag: "test",
         data: { sessionId: "session-A" },
       });
-      assert.deepEqual(sent, [], "should suppress all endpoints for session-A (global visibility)");
+      assert.deepEqual(
+        sent,
+        [],
+        "should suppress all endpoints for session-A (global visibility)",
+      );
 
       // Notification for session-B — both endpoints should fire (no one is viewing it)
       sent.length = 0;
@@ -594,7 +637,11 @@ describe("PushService", () => {
       };
       await svc.sendToAll(notification);
 
-      assert.equal(sent.length, 2, "should send to both when no clients registered");
+      assert.equal(
+        sent.length,
+        2,
+        "should send to both when no clients registered",
+      );
     });
   });
 });

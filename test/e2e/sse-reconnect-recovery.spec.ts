@@ -1,7 +1,15 @@
 import { test, expect } from "playwright/test";
-import { createNewSession, currentSessionId, expectConnectionStatus, gotoConnected, sendPrompt } from "./helpers.ts";
+import {
+  createNewSession,
+  currentSessionId,
+  expectConnectionStatus,
+  gotoConnected,
+  sendPrompt,
+} from "./helpers.ts";
 
-test("SSE reconnect keeps the same session without duplicating history", async ({ page }) => {
+test("SSE reconnect keeps the same session without duplicating history", async ({
+  page,
+}) => {
   await page.addInitScript(() => {
     const NativeES = window.EventSource;
     class TrackingES extends NativeES {
@@ -17,7 +25,9 @@ test("SSE reconnect keeps the same session without duplicating history", async (
   await createNewSession(page);
 
   await sendPrompt(page, "survive a reconnect");
-  await expect(page.locator(".msg.assistant").last()).toContainText("Echo: survive a reconnect");
+  await expect(page.locator(".msg.assistant").last()).toContainText(
+    "Echo: survive a reconnect",
+  );
 
   const sessionId = await currentSessionId(page);
 
@@ -32,6 +42,10 @@ test("SSE reconnect keeps the same session without duplicating history", async (
   await expect.poll(() => currentSessionId(page)).toBe(sessionId);
   await expect(page.locator(".msg.user")).toHaveCount(1);
   await expect(page.locator(".msg.assistant")).toHaveCount(1);
-  await expect(page.locator(".msg.user").last()).toHaveText("survive a reconnect");
-  await expect(page.locator(".msg.assistant").last()).toContainText("Echo: survive a reconnect");
+  await expect(page.locator(".msg.user").last()).toHaveText(
+    "survive a reconnect",
+  );
+  await expect(page.locator(".msg.assistant").last()).toContainText(
+    "Echo: survive a reconnect",
+  );
 });

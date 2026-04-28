@@ -89,7 +89,11 @@ describe("message-cleanup — unprocessed TTL sweep", () => {
     });
     const handle = startMessageCleanup(store, 30);
     try {
-      assert.equal(store.getMessage("old"), undefined, "initial sweep must remove expired");
+      assert.equal(
+        store.getMessage("old"),
+        undefined,
+        "initial sweep must remove expired",
+      );
     } finally {
       handle.stop();
     }
@@ -112,7 +116,10 @@ describe("message-cleanup — unprocessed TTL sweep", () => {
         cwd: null,
         created_at: now - 100 * 24 * 60 * 60 * 1000,
       });
-      assert.ok(store.getMessage("late-arrival"), "initial sweep was before insert");
+      assert.ok(
+        store.getMessage("late-arrival"),
+        "initial sweep was before insert",
+      );
       mock.timers.tick(24 * 60 * 60 * 1000);
       assert.equal(
         store.getMessage("late-arrival"),
@@ -129,7 +136,11 @@ describe("message-cleanup — unprocessed TTL sweep", () => {
     mock.timers.enable({ apis: ["setInterval"] });
     try {
       const handle = startMessageCleanup(store, 0);
-      assert.equal(handle.armed, false, "handle.armed should be false when ttl=0");
+      assert.equal(
+        handle.armed,
+        false,
+        "handle.armed should be false when ttl=0",
+      );
       handle.stop();
     } finally {
       mock.timers.reset();

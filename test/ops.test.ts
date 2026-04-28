@@ -9,20 +9,30 @@ import { Store } from "../src/store.ts";
 import { SessionManager } from "../src/session-manager.ts";
 import { createRequestHandler } from "../src/routes.ts";
 import type { ConfigOption } from "../src/types.ts";
+import { mockBridgeStubs } from "./fixtures.ts";
 
 function makeRequest(
   port: number,
   method: string,
   path: string,
   body?: string,
+  extraHeaders?: Record<string, string>,
 ): Promise<{ status: number; body: string }> {
   return new Promise((resolve, reject) => {
     const req = http.request(
-      { hostname: "127.0.0.1", port, path, method, headers: { "Content-Type": "application/json" } },
+      {
+        hostname: "127.0.0.1",
+        port,
+        path,
+        method,
+        headers: { "Content-Type": "application/json", ...extraHeaders },
+      },
       (res) => {
         let data = "";
-        res.on("data", (chunk: Buffer) => (data += chunk));
-        res.on("end", () => resolve({ status: res.statusCode!, body: data }));
+        res.on("data", (chunk: Buffer) => (data += chunk.toString()));
+        res.on("end", () => {
+          resolve({ status: res.statusCode!, body: data });
+        });
       },
     );
     req.on("error", reject);
@@ -33,21 +43,47 @@ function makeRequest(
 
 function createMockBridge() {
   const configOptions: ConfigOption[] = [
-    { type: "select", id: "model", name: "Model", currentValue: "claude-sonnet", options: [{ value: "claude-sonnet", name: "Sonnet" }] },
-    { type: "select", id: "mode", name: "Mode", currentValue: "agent", options: [{ value: "agent", name: "Agent" }] },
+    {
+      type: "select",
+      id: "model",
+      name: "Model",
+      currentValue: "claude-sonnet",
+      options: [{ value: "claude-sonnet", name: "Sonnet" }],
+    },
+    {
+      type: "select",
+      id: "mode",
+      name: "Mode",
+      currentValue: "agent",
+      options: [{ value: "agent", name: "Agent" }],
+    },
   ];
   let idCounter = 0;
   return {
+    ...mockBridgeStubs(),
     newSession: async (_cwd: string) => {
       idCounter++;
       return `mock-session-${idCounter}`;
     },
-    loadSession: async (_sessionId: string, _cwd: string) => ({ configOptions }),
-    setConfigOption: async (_sessionId: string, configId: string, value: string) => {
-      return configOptions.map(opt => opt.id === configId ? { ...opt, currentValue: value } : opt);
+    loadSession: async (_sessionId: string, _cwd: string) => ({
+      sessionId: _sessionId,
+      configOptions,
+    }),
+    setConfigOption: async (
+      _sessionId: string,
+      configId: string,
+      value: string,
+    ) => {
+      return configOptions.map((opt) =>
+        opt.id === configId ? { ...opt, currentValue: value } : opt,
+      );
     },
     cancel: async (_sessionId: string) => {},
-    prompt: async (_sessionId: string, _text: string, _images?: unknown[]) => {},
+    prompt: async (
+      _sessionId: string,
+      _text: string,
+      _images?: unknown[],
+    ) => {},
     resolvePermission: async (_requestId: string, _optionId: string) => {},
     denyPermission: async (_requestId: string) => {},
   };
@@ -82,19 +118,30 @@ describe("Operations REST API", () => {
       sseManager: { broadcast() {} } as any,
     });
     server = http.createServer(handler);
-    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    await new Promise<void>((resolve) =>
+      server.listen(0, "127.0.0.1", resolve),
+    );
     port = (server.address() as { port: number }).port;
   });
 
   afterEach(async () => {
-    await new Promise<void>((resolve) => server.close(() => resolve()));
+    await new Promise<void>((resolve) =>
+      server.close(() => {
+        resolve();
+      }),
+    );
     store.close();
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
   // Helper to create a session and return its ID
   async function createSession(): Promise<string> {
-    const res = await makeRequest(port, "POST", "/api/v1/sessions", JSON.stringify({ cwd: tmpDir }));
+    const res = await makeRequest(
+      port,
+      "POST",
+      "/api/v1/sessions",
+      JSON.stringify({ cwd: tmpDir }),
+    );
     return JSON.parse(res.body).id;
   }
 
@@ -104,9 +151,15 @@ describe("Operations REST API", () => {
       sessions.activePrompts.add(sessionId);
 
       let cancelCalled = false;
-      mockBridge.cancel = async () => { cancelCalled = true; };
+      mockBridge.cancel = async () => {
+        cancelCalled = true;
+      };
 
-      const res = await makeRequest(port, "POST", `/api/v1/sessions/${sessionId}/cancel`);
+      const res = await makeRequest(
+        port,
+        "POST",
+        `/api/v1/sessions/${sessionId}/cancel`,
+      );
       assert.equal(res.status, 200);
       assert.deepEqual(JSON.parse(res.body), { ok: true });
       assert.ok(cancelCalled);
@@ -118,25 +171,40 @@ describe("Operations REST API", () => {
       let killed = false;
       const fakeProc = new EventEmitter() as any;
       fakeProc.pid = 12345;
-      fakeProc.kill = () => { killed = true; return true; };
+      fakeProc.kill = () => {
+        killed = true;
+        return true;
+      };
       fakeProc.stdout = new EventEmitter();
       fakeProc.stderr = new EventEmitter();
       sessions.runningBashProcs.set(sessionId, fakeProc);
 
-      const res = await makeRequest(port, "POST", `/api/v1/sessions/${sessionId}/cancel`);
+      const res = await makeRequest(
+        port,
+        "POST",
+        `/api/v1/sessions/${sessionId}/cancel`,
+      );
       assert.equal(res.status, 200);
       assert.ok(killed);
     });
 
     it("returns 200 even when session is idle (idempotent)", async () => {
       const sessionId = await createSession();
-      const res = await makeRequest(port, "POST", `/api/v1/sessions/${sessionId}/cancel`);
+      const res = await makeRequest(
+        port,
+        "POST",
+        `/api/v1/sessions/${sessionId}/cancel`,
+      );
       assert.equal(res.status, 200);
       assert.deepEqual(JSON.parse(res.body), { ok: true });
     });
 
     it("returns 404 for unknown session", async () => {
-      const res = await makeRequest(port, "POST", "/api/v1/sessions/nonexistent/cancel");
+      const res = await makeRequest(
+        port,
+        "POST",
+        "/api/v1/sessions/nonexistent/cancel",
+      );
       assert.equal(res.status, 404);
     });
 
@@ -145,8 +213,11 @@ describe("Operations REST API", () => {
       sessions.activePrompts.add(sessionId);
 
       const handler = createRequestHandler({
-        store, sessions, getBridge: () => null,
-        publicDir, dataDir: tmpDir,
+        store,
+        sessions,
+        getBridge: () => null,
+        publicDir,
+        dataDir: tmpDir,
         limits: { bash_output: 1024, image_upload: 1024 },
         sseManager: { broadcast() {} } as any,
       });
@@ -154,16 +225,71 @@ describe("Operations REST API", () => {
       await new Promise<void>((r) => srv.listen(0, "127.0.0.1", r));
       const p = (srv.address() as { port: number }).port;
 
-      const res = await makeRequest(p, "POST", `/api/v1/sessions/${sessionId}/cancel`);
+      const res = await makeRequest(
+        p,
+        "POST",
+        `/api/v1/sessions/${sessionId}/cancel`,
+      );
       assert.equal(res.status, 503);
-      await new Promise<void>((r) => srv.close(() => r()));
+      await new Promise<void>((r) =>
+        srv.close(() => {
+          r();
+        }),
+      );
+    });
+
+    it("is idempotent when the same X-Client-Op-Id is replayed", async () => {
+      const sessionId = await createSession();
+      sessions.activePrompts.add(sessionId);
+
+      let callCount = 0;
+      mockBridge.cancel = async () => {
+        callCount++;
+      };
+
+      const headers = { "X-Client-Op-Id": "op-cancel-1" };
+      const res1 = await makeRequest(
+        port,
+        "POST",
+        `/api/v1/sessions/${sessionId}/cancel`,
+        undefined,
+        headers,
+      );
+      assert.equal(res1.status, 200);
+      assert.equal(callCount, 1);
+
+      const res2 = await makeRequest(
+        port,
+        "POST",
+        `/api/v1/sessions/${sessionId}/cancel`,
+        undefined,
+        headers,
+      );
+      assert.equal(res2.status, 200);
+      assert.equal(res2.body, res1.body);
+      assert.equal(callCount, 1);
+
+      sessions.activePrompts.add(sessionId);
+      const res3 = await makeRequest(
+        port,
+        "POST",
+        `/api/v1/sessions/${sessionId}/cancel`,
+        undefined,
+        { "X-Client-Op-Id": "op-cancel-2" },
+      );
+      assert.equal(res3.status, 200);
+      assert.equal(callCount, 2);
     });
   });
 
   describe("GET /api/v1/sessions/:id/status", () => {
     it("returns idle status when no active work", async () => {
       const sessionId = await createSession();
-      const res = await makeRequest(port, "GET", `/api/v1/sessions/${sessionId}/status`);
+      const res = await makeRequest(
+        port,
+        "GET",
+        `/api/v1/sessions/${sessionId}/status`,
+      );
       assert.equal(res.status, 200);
       const body = JSON.parse(res.body);
       assert.equal(body.busy, false);
@@ -175,7 +301,11 @@ describe("Operations REST API", () => {
       const sessionId = await createSession();
       sessions.activePrompts.add(sessionId);
 
-      const res = await makeRequest(port, "GET", `/api/v1/sessions/${sessionId}/status`);
+      const res = await makeRequest(
+        port,
+        "GET",
+        `/api/v1/sessions/${sessionId}/status`,
+      );
       const body = JSON.parse(res.body);
       assert.equal(body.busy, true);
       assert.equal(body.busyKind, "agent");
@@ -190,14 +320,22 @@ describe("Operations REST API", () => {
       fakeProc.stderr = new EventEmitter();
       sessions.runningBashProcs.set(sessionId, fakeProc);
 
-      const res = await makeRequest(port, "GET", `/api/v1/sessions/${sessionId}/status`);
+      const res = await makeRequest(
+        port,
+        "GET",
+        `/api/v1/sessions/${sessionId}/status`,
+      );
       const body = JSON.parse(res.body);
       assert.equal(body.busy, true);
       assert.equal(body.busyKind, "bash");
     });
 
     it("returns 404 for unknown session", async () => {
-      const res = await makeRequest(port, "GET", "/api/v1/sessions/nonexistent/status");
+      const res = await makeRequest(
+        port,
+        "GET",
+        "/api/v1/sessions/nonexistent/status",
+      );
       assert.equal(res.status, 404);
     });
   });

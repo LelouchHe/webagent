@@ -10,7 +10,7 @@ import type { StoredEvent } from "../types.ts";
 import type { ShareRow } from "../store.ts";
 import { generateShareToken } from "./token.ts";
 import { assertOwner, OwnerAuthError } from "./auth.ts";
-import { SanitizeError, type SanitizeInputEvent } from "./sanitize.ts";
+import { SanitizeError } from "./sanitize.ts";
 import { getOrComputeProjection } from "./projection.ts";
 import { withSessionLock } from "./mutex.ts";
 
@@ -39,7 +39,9 @@ const IMAGE_MIME: Record<string, string> = {
  * data: URIs for images (marked emits some). Report-only when enforce=false.
  */
 function viewerCsp(enforce: boolean): { name: string; value: string } {
-  const name = enforce ? "Content-Security-Policy" : "Content-Security-Policy-Report-Only";
+  const name = enforce
+    ? "Content-Security-Policy"
+    : "Content-Security-Policy-Report-Only";
   const value = [
     "default-src 'self'",
     "script-src 'self'",
@@ -60,15 +62,25 @@ function readJson(req: IncomingMessage): Promise<unknown> {
     req.on("data", (c: Buffer) => chunks.push(c));
     req.on("end", () => {
       const s = Buffer.concat(chunks).toString();
-      if (!s) { resolve({}); return; }
-      try { resolve(JSON.parse(s)); } catch (e) { reject(e); }
+      if (!s) {
+        resolve({});
+        return;
+      }
+      try {
+        resolve(JSON.parse(s));
+      } catch (e) {
+        reject(e instanceof Error ? e : new Error(String(e)));
+      }
     });
     req.on("error", reject);
   });
 }
 
 function json(res: ServerResponse, status: number, body: unknown): void {
-  res.writeHead(status, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+  res.writeHead(status, {
+    "Content-Type": "application/json",
+    "Cache-Control": "no-store",
+  });
   res.end(JSON.stringify(body));
 }
 
@@ -85,6 +97,7 @@ function json(res: ServerResponse, status: number, body: unknown): void {
  *   /api/v1/shares, /api/v1/shares/:t   (owner list/patch — C4)
  *   /api/v1/shared/:token               (public viewer JSON — C3)
  */
+// eslint-disable-next-line complexity -- TODO: split per-method dispatch
 export async function handleShareRoutes(
   req: IncomingMessage,
   res: ServerResponse,
@@ -96,9 +109,16 @@ export async function handleShareRoutes(
   const method = req.method ?? "GET";
 
   // Viewer image proxy — must come before general /s/:token HTML match.
-  const imgMatch = url.match(/^\/s\/([A-Za-z0-9_-]{24})\/images\/([^/?]+)\/?(?:\?.*)?$/);
+  const imgMatch = url.match(
+    /^\/s\/([A-Za-z0-9_-]{24})\/images\/([^/?]+)\/?(?:\?.*)?$/,
+  );
   if (imgMatch && method === "GET") {
-    await handleViewerImage(res, deps, imgMatch[1], decodeURIComponent(imgMatch[2]));
+    await handleViewerImage(
+      res,
+      deps,
+      imgMatch[1],
+      decodeURIComponent(imgMatch[2]),
+    );
     return true;
   }
 
@@ -114,31 +134,51 @@ export async function handleShareRoutes(
     return true;
   }
 
-  const createMatch = url.match(/^\/api\/v1\/sessions\/([^/?]+)\/share\/?(?:\?.*)?$/);
+  const createMatch = url.match(
+    /^\/api\/v1\/sessions\/([^/?]+)\/share\/?(?:\?.*)?$/,
+  );
   if (createMatch && method === "POST") {
-    await handlePreviewCreate(req, res, deps, decodeURIComponent(createMatch[1]));
+    await handlePreviewCreate(
+      req,
+      res,
+      deps,
+      decodeURIComponent(createMatch[1]),
+    );
     return true;
   }
 
-  const previewMatch = url.match(/^\/api\/v1\/sessions\/([^/?]+)\/share\/preview\/?(?:\?.*)?$/);
+  const previewMatch = url.match(
+    /^\/api\/v1\/sessions\/([^/?]+)\/share\/preview\/?(?:\?.*)?$/,
+  );
   if (previewMatch && method === "GET") {
-    await handlePreviewRead(req, res, deps, decodeURIComponent(previewMatch[1]));
+    await handlePreviewRead(
+      req,
+      res,
+      deps,
+      decodeURIComponent(previewMatch[1]),
+    );
     return true;
   }
 
-  const publishMatch = url.match(/^\/api\/v1\/sessions\/([^/?]+)\/share\/publish\/?(?:\?.*)?$/);
+  const publishMatch = url.match(
+    /^\/api\/v1\/sessions\/([^/?]+)\/share\/publish\/?(?:\?.*)?$/,
+  );
   if (publishMatch && method === "POST") {
     await handlePublish(req, res, deps, decodeURIComponent(publishMatch[1]));
     return true;
   }
 
-  const sharedEventsMatch = url.match(/^\/api\/v1\/shared\/([A-Za-z0-9_-]{24})\/events\/?(?:\?.*)?$/);
+  const sharedEventsMatch = url.match(
+    /^\/api\/v1\/shared\/([A-Za-z0-9_-]{24})\/events\/?(?:\?.*)?$/,
+  );
   if (sharedEventsMatch && method === "GET") {
     await handleSharedEvents(res, deps, sharedEventsMatch[1]);
     return true;
   }
 
-  const revokeMatch = url.match(/^\/api\/v1\/sessions\/([^/?]+)\/share\/?(?:\?.*)?$/);
+  const revokeMatch = url.match(
+    /^\/api\/v1\/sessions\/([^/?]+)\/share\/?(?:\?.*)?$/,
+  );
   if (revokeMatch && method === "DELETE") {
     await handleRevoke(req, res, deps, decodeURIComponent(revokeMatch[1]));
     return true;
@@ -193,12 +233,18 @@ async function handlePreviewCreate(
   try {
     assertOwner(req);
   } catch (e) {
-    if (e instanceof OwnerAuthError) { ownerReject(res, e); return; }
+    if (e instanceof OwnerAuthError) {
+      ownerReject(res, e);
+      return;
+    }
     throw e;
   }
 
   const session = deps.store.getSession(sessionId);
-  if (!session) { json(res, 404, { error: "session not found" }); return; }
+  if (!session) {
+    json(res, 404, { error: "session not found" });
+    return;
+  }
 
   // 409 guard: block while the agent is actively streaming into this session.
   if (deps.sessions?.getBusyKind(sessionId) === "agent") {
@@ -209,11 +255,19 @@ async function handlePreviewCreate(
     return;
   }
 
-  let body: { ttl_hours?: number | null; display_name?: string | null; owner_label?: string | null };
+  let body: {
+    ttl_hours?: number | null;
+    display_name?: string | null;
+    owner_label?: string | null;
+  };
   try {
     body = (await readJson(req)) as typeof body;
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- runtime defense; cast above lies to TS
     if (body === null || typeof body !== "object") body = {};
-  } catch { json(res, 400, { error: "invalid JSON body" }); return; }
+  } catch {
+    json(res, 400, { error: "invalid JSON body" });
+    return;
+  }
 
   let ttlHours: number | null = null;
   if (body.ttl_hours != null) {
@@ -221,15 +275,24 @@ async function handlePreviewCreate(
       json(res, 400, { error: "ttl_hours must be a non-negative number" });
       return;
     }
-    ttlHours = body.ttl_hours === 0 ? 0 : Math.min(Math.floor(body.ttl_hours), MAX_TTL_HOURS);
+    ttlHours =
+      body.ttl_hours === 0
+        ? 0
+        : Math.min(Math.floor(body.ttl_hours), MAX_TTL_HOURS);
   }
 
   // Labels are validated via the same helper as PATCH (V3 unify) — bidi/
   // control/size rejected at entry rather than silently dropped.
   const dnResult = validateLabel(body.display_name, "display_name", 256);
-  if (!dnResult.ok) { json(res, 400, { error: dnResult.reason }); return; }
+  if (!dnResult.ok) {
+    json(res, 400, { error: dnResult.reason });
+    return;
+  }
   const olResult = validateLabel(body.owner_label, "owner_label", 1024);
-  if (!olResult.ok) { json(res, 400, { error: olResult.reason }); return; }
+  if (!olResult.ok) {
+    json(res, 400, { error: olResult.reason });
+    return;
+  }
   const displayName = dnResult.value === "" ? null : dnResult.value;
   const ownerLabel = olResult.value === "" ? null : olResult.value;
 
@@ -243,7 +306,8 @@ async function handlePreviewCreate(
       deps.sessions?.flushBuffers(sessionId);
 
       const allEvents = deps.store.getEvents(sessionId);
-      const snapshotSeq = allEvents.length > 0 ? Math.max(...allEvents.map(e => e.seq)) : 0;
+      const snapshotSeq =
+        allEvents.length > 0 ? Math.max(...allEvents.map((e) => e.seq)) : 0;
 
       // Gate: run the sanitizer on-write. Hard-rejects throw here so we
       // never create a preview row for a session with leaked secrets.
@@ -251,7 +315,12 @@ async function handlePreviewCreate(
 
       const token = generateShareToken();
       const row = deps.store.insertSharePreview({
-        token, sessionId, snapshotSeq, ttlHours, displayName, ownerLabel,
+        token,
+        sessionId,
+        snapshotSeq,
+        ttlHours,
+        displayName,
+        ownerLabel,
       });
       return { row, reused: false };
     });
@@ -268,7 +337,12 @@ async function handlePreviewCreate(
     });
   } catch (err: unknown) {
     if (err instanceof SanitizeError) {
-      json(res, 400, { error: "sanitize rejected", event_id: err.event_id, rule: err.rule, detail: err.message });
+      json(res, 400, {
+        error: "sanitize rejected",
+        event_id: err.event_id,
+        rule: err.rule,
+        detail: err.message,
+      });
       return;
     }
     const errorId = randomUUID();
@@ -277,11 +351,15 @@ async function handlePreviewCreate(
   }
 }
 
-function runSanitizeGate(events: StoredEvent[], cwd: string, internalHosts: string[]): void {
+function runSanitizeGate(
+  events: StoredEvent[],
+  cwd: string,
+  internalHosts: string[],
+): void {
   // getOrComputeProjection throws SanitizeError on hard-reject.
   getOrComputeProjection({
     sessionId: "__gate__",
-    events: events as SanitizeInputEvent[],
+    events: events,
     cwd,
     homeDir: homedir(),
     internalHosts,
@@ -305,37 +383,65 @@ async function handlePreviewRead(
   try {
     assertOwner(req);
   } catch (e) {
-    if (e instanceof OwnerAuthError) { ownerReject(res, e); return; }
+    if (e instanceof OwnerAuthError) {
+      ownerReject(res, e);
+      return;
+    }
     throw e;
   }
 
   const tokenHeader = req.headers["x-share-token"];
   const token = Array.isArray(tokenHeader) ? tokenHeader[0] : tokenHeader;
-  if (!token) { json(res, 400, { error: "X-Share-Token header required" }); return; }
+  if (!token) {
+    json(res, 400, { error: "X-Share-Token header required" });
+    return;
+  }
 
   const row = deps.store.getShareByToken(token);
-  if (!row) { json(res, 404, { error: "share not found" }); return; }
-  if (row.session_id !== sessionId) { json(res, 404, { error: "share not found" }); return; }
-  if (row.revoked_at != null) { json(res, 410, { error: "share revoked" }); return; }
-  if (row.shared_at != null) { json(res, 409, { error: "share already active (use public viewer)" }); return; }
+  if (!row) {
+    json(res, 404, { error: "share not found" });
+    return;
+  }
+  if (row.session_id !== sessionId) {
+    json(res, 404, { error: "share not found" });
+    return;
+  }
+  if (row.revoked_at != null) {
+    json(res, 410, { error: "share revoked" });
+    return;
+  }
+  if (row.shared_at != null) {
+    json(res, 409, { error: "share already active (use public viewer)" });
+    return;
+  }
 
   const session = deps.store.getSession(sessionId);
-  if (!session) { json(res, 404, { error: "session not found" }); return; }
+  if (!session) {
+    json(res, 404, { error: "session not found" });
+    return;
+  }
 
-  const allEvents = deps.store.getEvents(sessionId).filter(e => e.seq <= row.share_snapshot_seq);
-  const currentLastSeq = deps.store.getEvents(sessionId).reduce((m, e) => Math.max(m, e.seq), 0);
+  const allEvents = deps.store
+    .getEvents(sessionId)
+    .filter((e) => e.seq <= row.share_snapshot_seq);
+  const currentLastSeq = deps.store
+    .getEvents(sessionId)
+    .reduce((m, e) => Math.max(m, e.seq), 0);
 
   try {
     const { events, cacheHit } = getOrComputeProjection({
       sessionId,
-      events: allEvents as SanitizeInputEvent[],
+      events: allEvents,
       cwd: session.cwd,
       homeDir: homedir(),
       internalHosts: deps.config.internal_hosts,
     });
 
     // Staleness metadata drives the owner sticky bar text (§2.1 R2-c3).
-    const eventsSinceSnapshot = Math.max(0, currentLastSeq - row.share_snapshot_seq);
+    const eventsSinceSnapshot = Math.max(
+      0,
+      currentLastSeq - row.share_snapshot_seq,
+    );
 
     json(res, 200, {
       schema_version: "1.0",
@@ -357,7 +463,11 @@ async function handlePreviewRead(
     });
   } catch (err: unknown) {
     if (err instanceof SanitizeError) {
-      json(res, 400, { error: "sanitize rejected", event_id: err.event_id, rule: err.rule });
+      json(res, 400, {
+        error: "sanitize rejected",
+        event_id: err.event_id,
+        rule: err.rule,
+      });
       return;
     }
     const errorId = randomUUID();
@@ -378,6 +488,7 @@ async function handlePreviewRead(
  * Response: { token, session_id, shared_at, display_name, owner_label,
  *             public_url } on 200; 404/409/410 on state errors.
  */
+// eslint-disable-next-line complexity -- TODO: split validation / state-update / response phases
 async function handlePublish(
   req: IncomingMessage,
   res: ServerResponse,
@@ -387,26 +498,51 @@ async function handlePublish(
   try {
     assertOwner(req);
   } catch (e) {
-    if (e instanceof OwnerAuthError) { ownerReject(res, e); return; }
+    if (e instanceof OwnerAuthError) {
+      ownerReject(res, e);
+      return;
+    }
     throw e;
   }
 
-  let body: { token?: string; display_name?: string | null; owner_label?: string | null };
+  let body: {
+    token?: string;
+    display_name?: string | null;
+    owner_label?: string | null;
+  };
   try {
     body = (await readJson(req)) as typeof body;
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- runtime defense; cast above lies to TS
     if (body === null || typeof body !== "object") body = {};
-  } catch { json(res, 400, { error: "invalid JSON body" }); return; }
+  } catch {
+    json(res, 400, { error: "invalid JSON body" });
+    return;
+  }
 
   if (!body.token || typeof body.token !== "string") {
-    json(res, 400, { error: "token required" }); return;
+    json(res, 400, { error: "token required" });
+    return;
   }
 
   const row = deps.store.getShareByToken(body.token);
-  if (!row) { json(res, 404, { error: "share not found" }); return; }
-  if (row.session_id !== sessionId) { json(res, 404, { error: "share not found" }); return; }
-  if (row.revoked_at != null) { json(res, 410, { error: "share revoked" }); return; }
+  if (!row) {
+    json(res, 404, { error: "share not found" });
+    return;
+  }
+  if (row.session_id !== sessionId) {
+    json(res, 404, { error: "share not found" });
+    return;
+  }
+  if (row.revoked_at != null) {
+    json(res, 410, { error: "share revoked" });
+    return;
+  }
   if (row.shared_at != null) {
-    json(res, 409, { error: "share already active", token: row.token, shared_at: row.shared_at });
+    json(res, 409, {
+      error: "share already active",
+      token: row.token,
+      shared_at: row.shared_at,
+    });
     return;
   }
 
@@ -416,13 +552,19 @@ async function handlePublish(
   let displayName: string | null | undefined;
   if ("display_name" in body) {
     const r = validateLabel(body.display_name, "display_name", 256);
-    if (!r.ok) { json(res, 400, { error: r.reason }); return; }
+    if (!r.ok) {
+      json(res, 400, { error: r.reason });
+      return;
+    }
     displayName = r.value === "" ? null : r.value;
   }
   let ownerLabel: string | null | undefined;
   if ("owner_label" in body) {
     const r = validateLabel(body.owner_label, "owner_label", 1024);
-    if (!r.ok) { json(res, 400, { error: r.reason }); return; }
+    if (!r.ok) {
+      json(res, 400, { error: r.reason });
+      return;
+    }
     ownerLabel = r.value === "" ? null : r.value;
   }
 
@@ -433,9 +575,16 @@ async function handlePublish(
   if (!activated) {
     // Race: concurrent revoke/activate between getShareByToken and activateShare.
     const fresh = deps.store.getShareByToken(body.token);
-    if (!fresh || fresh.revoked_at != null) { json(res, 410, { error: "share revoked" }); return; }
+    if (!fresh || fresh.revoked_at != null) {
+      json(res, 410, { error: "share revoked" });
+      return;
+    }
     if (fresh.shared_at != null) {
-      json(res, 409, { error: "share already active", token: fresh.token, shared_at: fresh.shared_at });
+      json(res, 409, {
+        error: "share already active",
+        token: fresh.token,
+        shared_at: fresh.shared_at,
+      });
       return;
     }
     json(res, 500, { error: "unexpected activate failure" });
@@ -447,11 +596,15 @@ async function handlePublish(
   }
 
   const after = deps.store.getShareByToken(body.token);
-  if (!after) { json(res, 500, { error: "post-activate read failed" }); return; }
+  if (!after) {
+    json(res, 500, { error: "post-activate read failed" });
+    return;
+  }
 
-  const origin = deps.config.viewer_origin && deps.config.viewer_origin !== ""
-    ? deps.config.viewer_origin.replace(/\/$/, "")
-    : "";
+  const origin =
+    deps.config.viewer_origin && deps.config.viewer_origin !== ""
+      ? deps.config.viewer_origin.replace(/\/$/, "")
+      : "";
   json(res, 200, {
     token: after.token,
     session_id: sessionId,
@@ -481,7 +634,9 @@ async function handleViewerHtml(
       "Cache-Control": "no-store",
       "X-Robots-Tag": "noindex, nofollow",
     });
-    res.end("<!doctype html><html><body><h1>410</h1><p>此链接已撤销或过期。</p></body></html>");
+    res.end(
+      "<!doctype html><html><body><h1>410</h1><p>此链接已撤销或过期。</p></body></html>",
+    );
     return;
   }
 
@@ -493,14 +648,22 @@ async function handleViewerHtml(
       "Cache-Control": "no-store",
       "X-Robots-Tag": "noindex, nofollow",
     });
-    res.end("<!doctype html><html><body><h1>410</h1><p>此链接已过期。</p></body></html>");
+    res.end(
+      "<!doctype html><html><body><h1>410</h1><p>此链接已过期。</p></body></html>",
+    );
     return;
   }
 
-  if (!deps.publicDir) { json(res, 500, { error: "publicDir not configured" }); return; }
+  if (!deps.publicDir) {
+    json(res, 500, { error: "publicDir not configured" });
+    return;
+  }
 
   try {
-    const html = await readFile(join(deps.publicDir, "share-viewer.html"), "utf-8");
+    const html = await readFile(
+      join(deps.publicDir, "share-viewer.html"),
+      "utf-8",
+    );
     const csp = viewerCsp(deps.config.csp_enforce);
     res.writeHead(200, {
       "Content-Type": "text/html; charset=utf-8",
@@ -541,14 +704,19 @@ async function handleSharedEvents(
   }
 
   const session = deps.store.getSession(row.session_id);
-  if (!session) { json(res, 500, { error: "session vanished" }); return; }
+  if (!session) {
+    json(res, 500, { error: "session vanished" });
+    return;
+  }
 
-  const allEvents = deps.store.getEvents(row.session_id).filter(e => e.seq <= row.share_snapshot_seq);
+  const allEvents = deps.store
+    .getEvents(row.session_id)
+    .filter((e) => e.seq <= row.share_snapshot_seq);
 
   try {
     const { events, cacheHit } = getOrComputeProjection({
       sessionId: row.session_id,
-      events: allEvents as SanitizeInputEvent[],
+      events: allEvents,
       cwd: session.cwd,
       homeDir: homedir(),
       internalHosts: deps.config.internal_hosts,
@@ -560,26 +728,31 @@ async function handleSharedEvents(
       "Cache-Control": "no-store",
       "X-Content-Type-Options": "nosniff",
     });
-    res.end(JSON.stringify({
-      schema_version: "1.0",
-      share: {
-        token: row.token,
-        session_title: session.title,
-        shared_at: row.shared_at,
-        snapshot_seq: row.share_snapshot_seq,
-        display_name: row.display_name,
-        created_at: row.created_at,
-        ttl_hours: row.ttl_hours,
-      },
-      events,
-      cache_hit: cacheHit,
-    }));
+    res.end(
+      JSON.stringify({
+        schema_version: "1.0",
+        share: {
+          token: row.token,
+          session_title: session.title,
+          shared_at: row.shared_at,
+          snapshot_seq: row.share_snapshot_seq,
+          display_name: row.display_name,
+          created_at: row.created_at,
+          ttl_hours: row.ttl_hours,
+        },
+        events,
+        cache_hit: cacheHit,
+      }),
+    );
   } catch (err: unknown) {
     if (err instanceof SanitizeError) {
       // Hard-reject on a LIVE active share — owner's session gained a
       // post-publish leak. Return 410 publicly; owner sees root cause via
       // preview re-gate.
-      console.error("[share] shared_events hard-reject", { rule: err.rule, event_id: err.event_id });
+      console.error("[share] shared_events hard-reject", {
+        rule: err.rule,
+        event_id: err.event_id,
+      });
       json(res, 410, { error: "share unavailable" });
       return;
     }
@@ -600,17 +773,25 @@ async function handleViewerImage(
   token: string,
   file: string,
 ): Promise<void> {
-  if (!deps.dataDir) { json(res, 500, { error: "dataDir not configured" }); return; }
+  if (!deps.dataDir) {
+    json(res, 500, { error: "dataDir not configured" });
+    return;
+  }
 
   const row = deps.store.getShareByToken(token);
   if (!row || row.revoked_at != null || row.shared_at == null) {
-    json(res, 410, { error: "share unavailable" }); return;
+    json(res, 410, { error: "share unavailable" });
+    return;
   }
-  if (isExpired(row)) { json(res, 410, { error: "share expired" }); return; }
+  if (isExpired(row)) {
+    json(res, 410, { error: "share expired" });
+    return;
+  }
 
   // Only allow simple filenames — reject any path separators / dotfiles / traversal.
   if (!/^[A-Za-z0-9._-]+$/.test(file) || file.startsWith(".")) {
-    json(res, 404, { error: "invalid file" }); return;
+    json(res, 404, { error: "invalid file" });
+    return;
   }
 
   const imagesRoot = join(deps.dataDir, "images");
@@ -618,12 +799,15 @@ async function handleViewerImage(
   // Final realpath-style guard: must stay under dataDir/images/<session_id>.
   const sessionRoot = join(imagesRoot, row.session_id);
   if (!filePath.startsWith(sessionRoot + "/") && filePath !== sessionRoot) {
-    res.writeHead(403); res.end("Forbidden"); return;
+    res.writeHead(403);
+    res.end("Forbidden");
+    return;
   }
 
   try {
     const buf = await readFile(filePath);
-    const mime = IMAGE_MIME[extname(filePath).toLowerCase()] ?? "application/octet-stream";
+    const mime =
+      IMAGE_MIME[extname(filePath).toLowerCase()] ?? "application/octet-stream";
     res.writeHead(200, {
       "Content-Type": mime,
       "Cache-Control": "public, max-age=3600",
@@ -666,7 +850,8 @@ export function validateLabel(
   maxBytes: number = 1024,
 ): { ok: true; value: string } | { ok: false; reason: string } {
   if (input == null) return { ok: true, value: "" };
-  if (typeof input !== "string") return { ok: false, reason: `${field} must be a string` };
+  if (typeof input !== "string")
+    return { ok: false, reason: `${field} must be a string` };
   if (Buffer.byteLength(input, "utf8") > maxBytes) {
     return { ok: false, reason: `${field} exceeds ${maxBytes} bytes` };
   }
@@ -676,8 +861,10 @@ export function validateLabel(
   // would also work, but codepoint iteration keeps the code UTF-16 agnostic.
   for (const ch of input) {
     const cp = ch.codePointAt(0)!;
-    if (cp < 0x20 && cp !== 0x09) return { ok: false, reason: `${field} contains control character` };
-    if (cp === 0x7f) return { ok: false, reason: `${field} contains DEL character` };
+    if (cp < 0x20 && cp !== 0x09)
+      return { ok: false, reason: `${field} contains control character` };
+    if (cp === 0x7f)
+      return { ok: false, reason: `${field} contains DEL character` };
     if ((cp >= 0x202a && cp <= 0x202e) || (cp >= 0x2066 && cp <= 0x2069)) {
       return { ok: false, reason: `${field} contains bidi override` };
     }
@@ -698,24 +885,40 @@ async function handleRevoke(
   deps: ShareRouteDeps,
   sessionId: string,
 ): Promise<void> {
-  try { assertOwner(req); } catch (e) {
-    if (e instanceof OwnerAuthError) { ownerReject(res, e); return; }
+  try {
+    assertOwner(req);
+  } catch (e) {
+    if (e instanceof OwnerAuthError) {
+      ownerReject(res, e);
+      return;
+    }
     throw e;
   }
 
   let body: { token?: string };
   try {
     body = (await readJson(req)) as typeof body;
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- runtime defense; cast above lies to TS
     if (body === null || typeof body !== "object") body = {};
-  } catch { json(res, 400, { error: "invalid JSON body" }); return; }
+  } catch {
+    json(res, 400, { error: "invalid JSON body" });
+    return;
+  }
 
   if (!body.token || typeof body.token !== "string") {
-    json(res, 400, { error: "token required" }); return;
+    json(res, 400, { error: "token required" });
+    return;
   }
 
   const row = deps.store.getShareByToken(body.token);
-  if (!row) { json(res, 404, { error: "share not found" }); return; }
-  if (row.session_id !== sessionId) { json(res, 404, { error: "share not found" }); return; }
+  if (!row) {
+    json(res, 404, { error: "share not found" });
+    return;
+  }
+  if (row.session_id !== sessionId) {
+    json(res, 404, { error: "share not found" });
+    return;
+  }
 
   const revoked = deps.store.revokeShare(body.token);
   json(res, 200, {
@@ -740,45 +943,75 @@ async function handlePatchLabel(
   deps: ShareRouteDeps,
   sessionId: string,
 ): Promise<void> {
-  try { assertOwner(req); } catch (e) {
-    if (e instanceof OwnerAuthError) { ownerReject(res, e); return; }
+  try {
+    assertOwner(req);
+  } catch (e) {
+    if (e instanceof OwnerAuthError) {
+      ownerReject(res, e);
+      return;
+    }
     throw e;
   }
 
   let body: { token?: string; owner_label?: unknown; display_name?: unknown };
   try {
     body = (await readJson(req)) as typeof body;
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- runtime defense; cast above lies to TS
     if (body === null || typeof body !== "object") body = {};
-  } catch { json(res, 400, { error: "invalid JSON body" }); return; }
+  } catch {
+    json(res, 400, { error: "invalid JSON body" });
+    return;
+  }
 
   if (!body.token || typeof body.token !== "string") {
-    json(res, 400, { error: "token required" }); return;
+    json(res, 400, { error: "token required" });
+    return;
   }
 
   const row = deps.store.getShareByToken(body.token);
-  if (!row) { json(res, 404, { error: "share not found" }); return; }
-  if (row.session_id !== sessionId) { json(res, 404, { error: "share not found" }); return; }
-  if (row.revoked_at != null) { json(res, 410, { error: "share revoked" }); return; }
+  if (!row) {
+    json(res, 404, { error: "share not found" });
+    return;
+  }
+  if (row.session_id !== sessionId) {
+    json(res, 404, { error: "share not found" });
+    return;
+  }
+  if (row.revoked_at != null) {
+    json(res, 410, { error: "share revoked" });
+    return;
+  }
 
   let ownerLabel: string | null | undefined = undefined;
   if ("owner_label" in body) {
     const v = validateLabel(body.owner_label, "owner_label", 1024);
-    if (!v.ok) { json(res, 400, { error: v.reason }); return; }
+    if (!v.ok) {
+      json(res, 400, { error: v.reason });
+      return;
+    }
     ownerLabel = v.value === "" ? null : v.value;
   }
 
   let displayName: string | null | undefined = undefined;
   if ("display_name" in body) {
     const v = validateLabel(body.display_name, "display_name", 256);
-    if (!v.ok) { json(res, 400, { error: v.reason }); return; }
+    if (!v.ok) {
+      json(res, 400, { error: v.reason });
+      return;
+    }
     displayName = v.value === "" ? null : v.value;
   }
 
-  if (ownerLabel !== undefined) deps.store.updateShareOwnerLabel(body.token, ownerLabel);
-  if (displayName !== undefined) deps.store.updateShareDisplayName(body.token, displayName);
+  if (ownerLabel !== undefined)
+    deps.store.updateShareOwnerLabel(body.token, ownerLabel);
+  if (displayName !== undefined)
+    deps.store.updateShareDisplayName(body.token, displayName);
 
   const after = deps.store.getShareByToken(body.token);
-  if (!after) { json(res, 500, { error: "post-patch read failed" }); return; }
+  if (!after) {
+    json(res, 500, { error: "post-patch read failed" });
+    return;
+  }
   json(res, 200, {
     token: after.token,
     session_id: sessionId,
@@ -797,8 +1030,13 @@ async function handleOwnerList(
   res: ServerResponse,
   deps: ShareRouteDeps,
 ): Promise<void> {
-  try { assertOwner(req); } catch (e) {
-    if (e instanceof OwnerAuthError) { ownerReject(res, e); return; }
+  try {
+    assertOwner(req);
+  } catch (e) {
+    if (e instanceof OwnerAuthError) {
+      ownerReject(res, e);
+      return;
+    }
     throw e;
   }
   const rows = deps.store.listOwnerShares();

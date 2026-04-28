@@ -1,8 +1,14 @@
-import { spawn, ChildProcess } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
+import { spawn } from "node:child_process";
 import { Writable, Readable } from "node:stream";
 import { EventEmitter } from "node:events";
 import * as acp from "@agentclientprotocol/sdk";
-import type { AgentEvent, ConfigOption, RawInput } from "./types.ts";
+import type {
+  AgentEvent,
+  ConfigOption,
+  RawInput,
+  ToolContentItem,
+} from "./types.ts";
 import type { SessionManager } from "./session-manager.ts";
 import type { TitleService } from "./title-service.ts";
 import { interruptBashProc } from "./session-manager.ts";
@@ -10,10 +16,13 @@ import { interruptBashProc } from "./session-manager.ts";
 export class AgentBridge extends EventEmitter {
   private proc: ChildProcess | null = null;
   private conn: acp.ClientSideConnection | null = null;
-  private permissionResolvers = new Map<string, (resp: acp.RequestPermissionResponse) => void>();
-  private permissionRequestSessions = new Map<string, string>();
-  private silentSessions = new Set<string>(); // Sessions that don't emit events
-  private silentBuffers = new Map<string, string>(); // Text buffers for silent sessions
+  private readonly permissionResolvers = new Map<
+    string,
+    (resp: acp.RequestPermissionResponse) => void
+  >();
+  private readonly permissionRequestSessions = new Map<string, string>();
+  private readonly silentSessions = new Set<string>(); // Sessions that don't emit events
+  private readonly silentBuffers = new Map<string, string>(); // Text buffers for silent sessions
   readonly agentCmd: string;
   reloading = false;
 
@@ -33,25 +42,27 @@ export class AgentBridge extends EventEmitter {
     }
 
     const input = Writable.toWeb(this.proc.stdin);
-    const output = Readable.toWeb(this.proc.stdout) as ReadableStream<Uint8Array>;
+    const output = Readable.toWeb(
+      this.proc.stdout,
+    ) as ReadableStream<Uint8Array>;
     const stream = acp.ndJsonStream(input, output);
 
     const client: acp.Client = {
-      requestPermission: async (params) => this.handlePermission(params),
-      sessionUpdate: async (params) => this.handleSessionUpdate(params),
-      readTextFile: async (params) => this.handleReadFile(params),
-      writeTextFile: async (params) => this.handleWriteFile(params),
+      requestPermission: async (params: acp.RequestPermissionRequest) =>
+        this.handlePermission(params),
+      sessionUpdate: async (params: acp.SessionNotification) =>
+        this.handleSessionUpdate(params),
     };
 
     this.conn = new acp.ClientSideConnection((_agent) => client, stream);
 
-    const init = await this.conn.initialize({
+    const init = (await this.conn.initialize({
       protocolVersion: acp.PROTOCOL_VERSION,
       clientCapabilities: {
-        fs: { readTextFile: true, writeTextFile: true },
+        fs: { readTextFile: false, writeTextFile: false },
         terminal: true,
       },
-    });
+    })) as { agentInfo?: { name?: string; version?: string } };
 
     const agentInfo = init.agentInfo;
     this.emit("event", {
@@ -66,26 +77,34 @@ export class AgentBridge extends EventEmitter {
 
   async newSession(cwd: string, opts?: { silent?: boolean }): Promise<string> {
     if (!this.conn) throw new Error("Not connected");
-    const session = (await this.conn.newSession({ cwd, mcpServers: [] })) as acp.NewSessionResponse;
+    const session = (await this.conn.newSession({
+      cwd,
+      mcpServers: [],
+    })) as acp.NewSessionResponse;
     if (!opts?.silent) {
       this.emit("event", {
         type: "session_created",
         sessionId: session.sessionId,
         cwd,
-        configOptions: (session.configOptions ?? []) as unknown as ConfigOption[],
+        configOptions: (session.configOptions ??
+          []) as unknown as ConfigOption[],
       } satisfies AgentEvent);
     }
     return session.sessionId;
   }
 
-  async loadSession(sessionId: string, cwd: string): Promise<{ sessionId: string; configOptions: ConfigOption[] }> {
+  async loadSession(
+    sessionId: string,
+    cwd: string,
+  ): Promise<{ sessionId: string; configOptions: ConfigOption[] }> {
     if (!this.conn) throw new Error("Not connected");
     const session = (await this.conn.loadSession({
       sessionId,
       cwd,
       mcpServers: [],
     })) as acp.LoadSessionResponse;
-    const configOptions = (session.configOptions ?? []) as unknown as ConfigOption[];
+    const configOptions = (session.configOptions ??
+      []) as unknown as ConfigOption[];
     this.emit("event", {
       type: "session_created",
       sessionId,
@@ -95,7 +114,11 @@ export class AgentBridge extends EventEmitter {
     return { sessionId, configOptions };
   }
 
-  async setConfigOption(sessionId: string, configId: string, value: string): Promise<ConfigOption[]> {
+  async setConfigOption(
+    sessionId: string,
+    configId: string,
+    value: string,
+  ): Promise<ConfigOption[]> {
     if (!this.conn) throw new Error("Not connected");
     const result = (await this.conn.setSessionConfigOption({
       sessionId,
@@ -118,21 +141,30 @@ export class AgentBridge extends EventEmitter {
       > = [];
       if (images) {
         for (const img of images) {
-          promptParts.push({ type: "image", data: img.data, mimeType: img.mimeType });
+          promptParts.push({
+            type: "image",
+            data: img.data,
+            mimeType: img.mimeType,
+          });
         }
       }
       promptParts.push({ type: "text", text });
-      const result = await this.conn.prompt({
+      const result = (await this.conn.prompt({
         sessionId,
         prompt: promptParts,
-      });
+      })) as { stopReason?: string };
       this.emit("event", {
         type: "prompt_done",
         sessionId,
         stopReason: result.stopReason ?? "end_turn",
       } satisfies AgentEvent);
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : (typeof err === "string" ? err : JSON.stringify(err));
+      const message =
+        err instanceof Error
+          ? err.message
+          : typeof err === "string"
+            ? err
+            : JSON.stringify(err);
       if (/cancel/i.test(message)) {
         this.emit("event", {
           type: "prompt_done",
@@ -141,12 +173,17 @@ export class AgentBridge extends EventEmitter {
         } satisfies AgentEvent);
         return;
       }
-      this.emit("event", { type: "error", sessionId, message } satisfies AgentEvent);
+      this.emit("event", {
+        type: "error",
+        sessionId,
+        message,
+      } satisfies AgentEvent);
     }
   }
 
   async cancel(sessionId: string): Promise<void> {
-    for (const [requestId, requestSessionId] of this.permissionRequestSessions) {
+    for (const [requestId, requestSessionId] of this
+      .permissionRequestSessions) {
       if (requestSessionId === sessionId) {
         this.denyPermission(requestId);
       }
@@ -163,7 +200,12 @@ export class AgentBridge extends EventEmitter {
       await this.conn.prompt({ sessionId, prompt: [{ type: "text", text }] });
       return this.silentBuffers.get(sessionId) ?? "";
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : (typeof err === "string" ? err : JSON.stringify(err));
+      const message =
+        err instanceof Error
+          ? err.message
+          : typeof err === "string"
+            ? err
+            : JSON.stringify(err);
       if (/cancel/i.test(message)) {
         return "";
       }
@@ -197,11 +239,14 @@ export class AgentBridge extends EventEmitter {
    * shuts down the old process, and starts a new one. Sessions are restored
    * lazily via ensureResumed() on next user interaction.
    */
-  async restart(sessions: SessionManager, titleService: TitleService): Promise<void> {
+  async restart(
+    sessions: SessionManager,
+    titleService: TitleService,
+  ): Promise<void> {
     if (this.reloading) throw new Error("Already reloading");
     this.reloading = true;
     this.emit("event", { type: "agent_reloading" } satisfies AgentEvent);
-    console.log("[bridge] reloading agent...");
+    console.info("[bridge] reloading agent...");
 
     try {
       // 1. Cancel all active prompts + kill bash procs
@@ -211,7 +256,11 @@ export class AgentBridge extends EventEmitter {
           interruptBashProc(proc);
           sessions.runningBashProcs.delete(sessionId);
         }
-        try { await this.cancel(sessionId); } catch { /* best-effort */ }
+        try {
+          await this.cancel(sessionId);
+        } catch {
+          /* best-effort */
+        }
       }
 
       // 2. Flush buffers to persist partial content
@@ -221,6 +270,9 @@ export class AgentBridge extends EventEmitter {
 
       // 3. Clean up SessionManager state
       sessions.pendingPermissions.clear();
+      for (const id of sessions.activePrompts) {
+        sessions.state.patch(id, { runtime: { busy: null } });
+      }
       sessions.activePrompts.clear();
 
       // 4. Clean up bridge-side silent session state
@@ -232,6 +284,10 @@ export class AgentBridge extends EventEmitter {
 
       // 5. Clear liveSessions so ensureResumed() will re-register on next access
       sessions.liveSessions.clear();
+      // Also clear the global configOptions cache — a restarted agent may
+      // speak a different schema (e.g. agent upgrade removed a model). The
+      // next resumeSession will warm it from the user's stored config.
+      sessions.cachedConfigOptions = [];
 
       // 6. Shutdown old process
       await this.shutdown();
@@ -251,12 +307,16 @@ export class AgentBridge extends EventEmitter {
       }
 
       if (lastError || !this.conn) {
-        const msg = lastError instanceof Error ? lastError.message : String(lastError);
-        this.emit("event", { type: "agent_reloading_failed", error: msg } satisfies AgentEvent);
+        const msg =
+          lastError instanceof Error ? lastError.message : String(lastError);
+        this.emit("event", {
+          type: "agent_reloading_failed",
+          error: msg,
+        } satisfies AgentEvent);
         throw lastError;
       }
 
-      console.log("[bridge] agent reloaded successfully");
+      console.info("[bridge] agent reloaded successfully");
     } finally {
       this.reloading = false;
     }
@@ -264,13 +324,13 @@ export class AgentBridge extends EventEmitter {
 
   async shutdown(): Promise<void> {
     // Reject all pending permissions
-    for (const [id, resolve] of this.permissionResolvers) {
+    for (const [_id, resolve] of this.permissionResolvers) {
       resolve({ outcome: { outcome: "cancelled" } });
     }
     this.permissionResolvers.clear();
     this.permissionRequestSessions.clear();
 
-    if (this.proc && this.proc.exitCode === null) {
+    if (this.proc?.exitCode === null) {
       const proc = this.proc;
       await new Promise<void>((resolve) => {
         const timer = setTimeout(() => {
@@ -290,10 +350,15 @@ export class AgentBridge extends EventEmitter {
 
   // --- ACP Client callbacks ---
 
-  private handlePermission(params: acp.RequestPermissionRequest): Promise<acp.RequestPermissionResponse> {
+  private handlePermission(
+    params: acp.RequestPermissionRequest,
+  ): Promise<acp.RequestPermissionResponse> {
     const requestId = crypto.randomUUID();
-    const title = params.toolCall?.title ?? "Permission requested";
-    const toolCallId = params.toolCall?.toolCallId ?? null;
+    const toolCall = params.toolCall;
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- toolCall may be undefined in practice
+    const title = toolCall?.title ?? "Permission requested";
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- toolCall may be undefined in practice
+    const toolCallId = toolCall?.toolCallId;
 
     return new Promise((resolve) => {
       // Register resolver BEFORE emitting, so synchronous auto-approve can find it
@@ -314,88 +379,81 @@ export class AgentBridge extends EventEmitter {
     const update = params.update;
     const sessionId = params.sessionId;
 
-    // Silent sessions: only buffer text, don't emit events
     if (this.silentSessions.has(sessionId)) {
-      if (update.sessionUpdate === "agent_message_chunk" && update.content.type === "text") {
-        const buf = (this.silentBuffers.get(sessionId) ?? "") + update.content.text;
-        this.silentBuffers.set(sessionId, buf);
-      }
+      this.captureSilentText(sessionId, update);
       return Promise.resolve();
     }
 
-    switch (update.sessionUpdate) {
-      case "agent_message_chunk":
-        if (update.content.type === "text") {
-          this.emit("event", {
-            type: "message_chunk",
-            sessionId,
-            text: update.content.text,
-          } satisfies AgentEvent);
-        }
-        break;
-
-      case "agent_thought_chunk":
-        if (update.content.type === "text") {
-          this.emit("event", {
-            type: "thought_chunk",
-            sessionId,
-            text: update.content.text,
-          } satisfies AgentEvent);
-        }
-        break;
-
-      case "tool_call":
-        this.emit("event", {
-          type: "tool_call",
-          sessionId,
-          id: update.toolCallId ?? "",
-          title: update.title ?? "",
-          kind: update.kind ?? "unknown",
-          rawInput: update.rawInput as RawInput | undefined,
-        } satisfies AgentEvent);
-        break;
-
-      case "tool_call_update":
-        this.emit("event", {
-          type: "tool_call_update",
-          sessionId,
-          id: update.toolCallId ?? "",
-          status: update.status ?? "",
-          content: update.content ?? undefined,
-        } satisfies AgentEvent);
-        break;
-
-      case "plan":
-        this.emit("event", {
-          type: "plan",
-          sessionId,
-          entries: update.entries ?? [],
-        } satisfies AgentEvent);
-        break;
-
-      case "config_option_update":
-        this.emit("event", {
-          type: "config_option_update",
-          sessionId,
-          configOptions: (update as any).configOptions ?? [],
-        } satisfies AgentEvent);
-        break;
-    }
-
+    const event = this.sessionUpdateToEvent(sessionId, update);
+    if (event) this.emit("event", event);
     return Promise.resolve();
   }
 
-  private async handleReadFile(params: acp.ReadTextFileRequest): Promise<acp.ReadTextFileResponse> {
-    const { readFile } = await import("node:fs/promises");
-    const content = await readFile(params.path, "utf-8");
-    return { content };
+  private captureSilentText(
+    sessionId: string,
+    update: acp.SessionNotification["update"],
+  ): void {
+    if (
+      update.sessionUpdate === "agent_message_chunk" &&
+      update.content.type === "text"
+    ) {
+      const buf =
+        (this.silentBuffers.get(sessionId) ?? "") + update.content.text;
+      this.silentBuffers.set(sessionId, buf);
+    }
   }
 
-  private async handleWriteFile(params: acp.WriteTextFileRequest): Promise<acp.WriteTextFileResponse> {
-    const { writeFile, mkdir } = await import("node:fs/promises");
-    const { dirname } = await import("node:path");
-    await mkdir(dirname(params.path), { recursive: true });
-    await writeFile(params.path, params.content);
-    return {};
+  private sessionUpdateToEvent(
+    sessionId: string,
+    update: acp.SessionNotification["update"],
+  ): AgentEvent | null {
+    // eslint-disable-next-line @typescript-eslint/switch-exhaustiveness-check -- only handles events with UI effects
+    switch (update.sessionUpdate) {
+      case "agent_message_chunk":
+        return update.content.type === "text"
+          ? { type: "message_chunk", sessionId, text: update.content.text }
+          : null;
+
+      case "agent_thought_chunk":
+        return update.content.type === "text"
+          ? { type: "thought_chunk", sessionId, text: update.content.text }
+          : null;
+
+      case "tool_call":
+        return {
+          type: "tool_call",
+          sessionId,
+          id: update.toolCallId,
+          title: update.title,
+          kind: update.kind ?? "unknown",
+          rawInput: update.rawInput as RawInput | undefined,
+        };
+
+      case "tool_call_update":
+        return {
+          type: "tool_call_update",
+          sessionId,
+          id: update.toolCallId,
+          status: update.status ?? "",
+          content: (update.content ?? undefined) as
+            | ToolContentItem[]
+            | undefined,
+        };
+
+      case "plan":
+        return { type: "plan", sessionId, entries: update.entries };
+
+      case "config_option_update":
+        return {
+          type: "config_option_update",
+          sessionId,
+          configOptions:
+            (update as unknown as { configOptions?: ConfigOption[] })
+              .configOptions ?? [],
+        };
+
+      default:
+        return null;
+    }
   }
 }

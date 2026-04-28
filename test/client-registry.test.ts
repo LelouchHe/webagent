@@ -19,7 +19,9 @@ describe("ClientRegistry", () => {
     const before = r.get("c1")!.lastSeen;
     // sleep one tick
     const start = Date.now();
-    while (Date.now() === start) { /* spin */ }
+    while (Date.now() === start) {
+      /* spin */
+    }
     const e = r.register("c1", { capabilities: ["push"] });
     assert.deepEqual(e.capabilities, ["push"]);
     assert.equal(e.focus, "sess-A");
@@ -61,7 +63,9 @@ describe("ClientRegistry", () => {
     r.register("c1", { capabilities: [] });
     const before = r.get("c1")!.lastSeen;
     const start = Date.now();
-    while (Date.now() === start) { /* spin */ }
+    while (Date.now() === start) {
+      /* spin */
+    }
     r.touch("c1");
     r.touch("ghost"); // no throw
     assert.ok(r.get("c1")!.lastSeen > before);
@@ -71,7 +75,10 @@ describe("ClientRegistry", () => {
     const r = new ClientRegistry();
     r.register("c1", { capabilities: [] });
     r.register("c2", { capabilities: ["push"] });
-    const ids = r.list().map((e) => e.id).sort();
+    const ids = r
+      .list()
+      .map((e) => e.id)
+      .sort();
     assert.deepEqual(ids, ["c1", "c2"]);
   });
 });

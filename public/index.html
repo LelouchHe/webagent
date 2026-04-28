@@ -1,51 +1,66 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>>_</title>
-<link rel="icon" href="/icons/icon.svg" type="image/svg+xml">
-<link rel="apple-touch-icon" href="/icons/icon-180.png">
-<link rel="manifest" href="/manifest.json">
-<meta name="theme-color" content="#0d1117" media="(prefers-color-scheme: dark)">
-<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
-<meta name="mobile-web-app-capable" content="yes">
-<!-- Keep apple-prefixed version: iOS Safari still only recognizes this one
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>>_</title>
+    <link rel="icon" href="/icons/icon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/icons/icon-180.png" />
+    <link rel="manifest" href="/manifest.json" />
+    <meta
+      name="theme-color"
+      content="#0d1117"
+      media="(prefers-color-scheme: dark)"
+    />
+    <meta
+      name="theme-color"
+      content="#ffffff"
+      media="(prefers-color-scheme: light)"
+    />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <!-- Keep apple-prefixed version: iOS Safari still only recognizes this one
      for standalone PWA mode. Chrome's deprecation warning is satisfied by
      the standard version above. Remove once iOS supports the standard. -->
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="default">
-<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/dompurify@3.3.2/dist/purify.min.js"></script>
-<script>document.documentElement.setAttribute('data-theme', localStorage.getItem('theme') || 'auto');</script>
-<link rel="stylesheet" href="/styles.css">
-</head>
-<body>
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <script src="/theme-init.js"></script>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div id="header">
+      <div class="header-side header-left">
+        <span class="logo">>_</span>
+      </div>
+      <span id="session-info" class="status"></span>
+      <div class="header-side header-right">
+        <span
+          id="status"
+          class="status-dot is-disconnected"
+          data-state="disconnected"
+          role="status"
+          aria-live="polite"
+          aria-label="disconnected"
+          title="disconnected"
+        ></span>
+        <button id="theme-btn" title="Toggle theme">◑</button>
+      </div>
+    </div>
 
-<div id="header">
-  <div class="header-side header-left">
-    <span class="logo">>_</span>
-  </div>
-  <span id="session-info" class="status"></span>
-  <div class="header-side header-right">
-    <span id="status" class="status-dot is-disconnected" data-state="disconnected" role="status" aria-live="polite" aria-label="disconnected" title="disconnected"></span>
-    <button id="theme-btn" title="Toggle theme">◑</button>
-  </div>
-</div>
+    <div id="messages"></div>
 
-<div id="messages"></div>
+    <div id="attach-preview"></div>
+    <div id="input-area">
+      <div id="slash-menu"></div>
+      <span id="input-prompt" title="Cycle mode (Ctrl+M)"></span>
+      <textarea id="input" rows="1" placeholder="Message or ?"></textarea>
+      <button id="attach-btn" class="input-btn" title="Attach image (Ctrl+U)">
+        ^U
+      </button>
+      <button id="send-btn" class="input-btn" title="Send (Enter)">↵</button>
+      <input type="file" id="file-input" accept="image/*" multiple hidden />
+    </div>
+    <div id="status-bar"></div>
 
-<div id="attach-preview"></div>
-<div id="input-area">
-  <div id="slash-menu"></div>
-  <span id="input-prompt" title="Cycle mode (Ctrl+M)">❯ </span>
-  <textarea id="input" rows="1" placeholder="Message or ?"></textarea>
-  <button id="attach-btn" class="input-btn" title="Attach image (Ctrl+U)">^U</button>
-  <button id="send-btn" class="input-btn" title="Send (Enter)">↵</button>
-  <input type="file" id="file-input" accept="image/*" multiple hidden>
-</div>
-<div id="status-bar"></div>
-
-<script type="module" src="/js/app.js"></script>
-</body>
+    <script type="module" src="/js/app.js"></script>
+  </body>
 </html>

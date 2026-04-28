@@ -1,7 +1,14 @@
 import { test, expect } from "playwright/test";
-import { createNewSession, currentSessionId, gotoConnected, sendPrompt } from "./helpers.ts";
+import {
+  createNewSession,
+  currentSessionId,
+  gotoConnected,
+  sendPrompt,
+} from "./helpers.ts";
 
-test("status bar shows model and cwd after switching sessions", async ({ page }) => {
+test("status bar shows model and cwd after switching sessions", async ({
+  page,
+}) => {
   await gotoConnected(page);
   const sessionOneId = await createNewSession(page);
 

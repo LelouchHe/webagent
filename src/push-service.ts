@@ -54,7 +54,10 @@ export interface PushableMessage {
 
 /** Derive the push tag for an ACP event. Kept module-level so it can be
  *  reused by the close-on-handle path without instantiating the service. */
-export function pushTagForEvent(sessionId: string, event: PushableEvent): string {
+export function pushTagForEvent(
+  sessionId: string,
+  event: PushableEvent,
+): string {
   switch (event.type) {
     case "prompt_done":
       return `sess-${sessionId}-done`;
@@ -164,8 +167,13 @@ export class PushService {
   ) {
     this.store = store;
     this.vapidKeys = this.loadOrGenerateKeys(dataDir);
-    webpush.setVapidDetails(vapidSubject, this.vapidKeys.publicKey, this.vapidKeys.privateKey);
-    this.globalVisibilitySuppression = options.globalVisibilitySuppression ?? true;
+    webpush.setVapidDetails(
+      vapidSubject,
+      this.vapidKeys.publicKey,
+      this.vapidKeys.privateKey,
+    );
+    this.globalVisibilitySuppression =
+      options.globalVisibilitySuppression ?? true;
     this.visibilityTtlMs = options.visibilityTtlMs ?? 60_000;
     this.now = options.now ?? (() => Date.now());
   }
@@ -184,7 +192,9 @@ export class PushService {
     }
 
     const keys = webpush.generateVAPIDKeys();
-    writeFileSync(filePath, JSON.stringify(keys, null, 2) + "\n", { mode: 0o600 });
+    writeFileSync(filePath, JSON.stringify(keys, null, 2) + "\n", {
+      mode: 0o600,
+    });
     console.log("[push] generated new VAPID keys");
     return keys;
   }
@@ -215,9 +225,11 @@ export class PushService {
         body = "✓ Task complete";
         break;
       case "bash_done": {
-        const cmd = typeof eventData.command === "string" ? eventData.command : "command";
+        const cmd =
+          typeof eventData.command === "string" ? eventData.command : "command";
         const code =
-          typeof eventData.exitCode === "number" || typeof eventData.exitCode === "string"
+          typeof eventData.exitCode === "number" ||
+          typeof eventData.exitCode === "string"
             ? String(eventData.exitCode)
             : "?";
         body = `$ ${cmd} — exit ${code}`;
@@ -243,7 +255,8 @@ export class PushService {
    */
   updateClient(clientId: string, patch: ClientStatePatch): UpdateClientResult {
     const prev = this.clients.get(clientId) ?? emptyClientState();
-    const wasVisibleForSession = prev.visible && prev.sessionId != null ? prev.sessionId : null;
+    const wasVisibleForSession =
+      prev.visible && prev.sessionId != null ? prev.sessionId : null;
 
     const next: ClientState = { ...prev };
     if (patch.visible !== undefined) {
@@ -254,7 +267,9 @@ export class PushService {
     if (patch.endpoint !== undefined) next.endpoint = patch.endpoint;
 
     const becameVisibleForSession =
-      next.visible && next.sessionId != null && next.sessionId !== wasVisibleForSession
+      next.visible &&
+      next.sessionId != null &&
+      next.sessionId !== wasVisibleForSession
         ? next.sessionId
         : null;
     // Any transition into "visible + session X" restarts the TTL clock,
@@ -301,7 +316,8 @@ export class PushService {
   hasVisibleClient(): boolean {
     const now = this.now();
     for (const s of this.clients.values()) {
-      if (s.visible && now - s.visibleSince <= this.visibilityTtlMs) return true;
+      if (s.visible && now - s.visibleSince <= this.visibilityTtlMs)
+        return true;
     }
     return false;
   }
@@ -345,7 +361,11 @@ export class PushService {
   // High-level: decide whether to push, and if so, send
   // ---------------------------------------------------------------------------
 
-  private static readonly NOTIFIABLE = new Set(["permission_request", "prompt_done", "bash_done"]);
+  private static readonly NOTIFIABLE = new Set([
+    "permission_request",
+    "prompt_done",
+    "bash_done",
+  ]);
 
   /**
    * Check if this event should trigger a push notification.
@@ -376,7 +396,8 @@ export class PushService {
     // by which cross-device recall actually closes banners on the "losing" devices.
     if (notification.kind === "notify") {
       const targetSession = notification.data.sessionId;
-      if (targetSession && this.isSessionVisibleToAnyClient(targetSession)) return;
+      if (targetSession && this.isSessionVisibleToAnyClient(targetSession))
+        return;
     }
 
     // Skip Apple endpoints for silent close pushes to preserve iOS PWA's
@@ -413,7 +434,10 @@ export class PushService {
     const results = await Promise.allSettled(
       subs.map((sub) =>
         this.sendOne(
-          { endpoint: sub.endpoint, keys: { auth: sub.auth, p256dh: sub.p256dh } },
+          {
+            endpoint: sub.endpoint,
+            keys: { auth: sub.auth, p256dh: sub.p256dh },
+          },
           payload,
           { topic },
         ),
@@ -437,7 +461,9 @@ export class PushService {
           fail410++;
           this.store.removeSubscription(endpoint);
           this.failureCounts.delete(endpoint);
-          console.log(`[push] removed expired subscription (410): ${endpoint.slice(0, 60)}…`);
+          console.log(
+            `[push] removed expired subscription (410): ${endpoint.slice(0, 60)}…`,
+          );
         } else {
           const count = (this.failureCounts.get(endpoint) ?? 0) + 1;
           if (count >= MAX_CONSECUTIVE_FAILURES) {
@@ -486,13 +512,16 @@ export class PushService {
 
     const subs = this.store.getAllSubscriptions();
     const title = msg.from_label ?? msg.from_ref ?? "Message";
-    const body = msg.body.length > 140 ? msg.body.slice(0, 137) + "…" : msg.body;
+    const body =
+      msg.body.length > 140 ? msg.body.slice(0, 137) + "…" : msg.body;
     const tag = msg.dedup_key ? `dedup-${msg.to}-${msg.dedup_key}` : msg.id;
     // If this message targets a specific session, surface the sid in the
     // push data so SW notificationclick can route the user there. Without
     // this, clicks fall back to "/" and land on whatever session was last
     // open — a confusing UX when multiple sessions get background pushes.
-    const sessionId = msg.to.startsWith("session:") ? msg.to.slice("session:".length) : undefined;
+    const sessionId = msg.to.startsWith("session:")
+      ? msg.to.slice("session:".length)
+      : undefined;
 
     // Observability signal #7 — sendForMessage entry.
     console.log(
@@ -504,7 +533,9 @@ export class PushService {
       title,
       body,
       tag,
-      data: sessionId ? { messageId: msg.id, sessionId } : { messageId: msg.id },
+      data: sessionId
+        ? { messageId: msg.id, sessionId }
+        : { messageId: msg.id },
     });
     return true;
   }
@@ -514,7 +545,10 @@ export class PushService {
    * bash_done). Handles tag derivation, visibility suppression, and session-
    * title lookup. Returns `true` if a push attempt was made.
    */
-  async sendForEvent(sessionId: string, event: PushableEvent): Promise<boolean> {
+  async sendForEvent(
+    sessionId: string,
+    event: PushableEvent,
+  ): Promise<boolean> {
     if (!PushService.NOTIFIABLE.has(event.type)) return false;
 
     const session = this.store.getSession(sessionId);

@@ -7,7 +7,15 @@ describe("render", () => {
   let dom: any;
   let render: any;
 
-  function setMessagesScrollMetrics({ scrollTop, scrollHeight, clientHeight }: { scrollTop: number; scrollHeight: number; clientHeight: number; }) {
+  function setMessagesScrollMetrics({
+    scrollTop,
+    scrollHeight,
+    clientHeight,
+  }: {
+    scrollTop: number;
+    scrollHeight: number;
+    clientHeight: number;
+  }) {
     Object.defineProperties(dom.messages, {
       scrollTop: { value: scrollTop, writable: true, configurable: true },
       scrollHeight: { value: scrollHeight, configurable: true },
@@ -22,8 +30,12 @@ describe("render", () => {
     dom = stateMod.dom;
     render = await import("../public/js/render.ts");
   });
-  after(() => teardownDOM());
-  beforeEach(() => resetState(state, dom));
+  after(() => {
+    teardownDOM();
+  });
+  beforeEach(() => {
+    resetState(state, dom);
+  });
 
   describe("escHtml", () => {
     it("escapes HTML entities", () => {
@@ -56,6 +68,27 @@ describe("render", () => {
       const withZ = render.formatLocalTime("2024-01-01T00:00:00Z");
       const withoutZ = render.formatLocalTime("2024-01-01T00:00:00");
       assert.equal(withZ, withoutZ);
+    });
+
+    it("accepts epoch milliseconds (number) — InboxMessage.created_at is number", () => {
+      // Regression: TypeError "e.endsWith is not a function" was thrown when
+      // /inbox menu rendered InboxMessage.created_at, which the store returns
+      // as epoch ms, not an ISO string.
+      const ms = Date.UTC(2024, 5, 15, 8, 30, 0);
+      const result = render.formatLocalTime(ms);
+      assert.match(result, /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/);
+    });
+
+    it("returns empty string for invalid input", () => {
+      assert.equal(render.formatLocalTime("not-a-date"), "");
+      assert.equal(render.formatLocalTime(NaN), "");
+    });
+
+    it("preserves timestamps that already carry a timezone offset", () => {
+      // SQLite-style 'YYYY-MM-DD HH:MM:SS+00:00' should not get a redundant Z.
+      const tz = render.formatLocalTime("2024-01-01T00:00:00+00:00");
+      const z = render.formatLocalTime("2024-01-01T00:00:00Z");
+      assert.equal(tz, z);
     });
   });
 
@@ -151,7 +184,8 @@ describe("render", () => {
 
     it("clears thinking state and updates summary", () => {
       const el = globalThis.document.createElement("details");
-      el.innerHTML = '<summary class="active">⠿ thinking...</summary><div class="thinking-content">text</div>';
+      el.innerHTML =
+        '<summary class="active">⠿ thinking...</summary><div class="thinking-content">text</div>';
       dom.messages.appendChild(el);
       state.currentThinkingEl = el;
       state.currentThinkingText = "text";
@@ -160,8 +194,8 @@ describe("render", () => {
 
       assert.equal(state.currentThinkingEl, null);
       assert.equal(state.currentThinkingText, "");
-      assert.equal(el.querySelector("summary").textContent, "⠿ thought");
-      assert.ok(!el.querySelector("summary").classList.contains("active"));
+      assert.equal(el.querySelector("summary")!.textContent, "⠿ thought");
+      assert.ok(!el.querySelector("summary")!.classList.contains("active"));
     });
   });
 
@@ -190,10 +224,15 @@ describe("render", () => {
     it("does not collapse an expanded panel when clicking its content", () => {
       const details = globalThis.document.createElement("details");
       details.open = true;
-      details.innerHTML = '<summary>diff</summary><div class="diff-view">content</div>';
+      details.innerHTML =
+        '<summary>diff</summary><div class="diff-view">content</div>';
       dom.messages.appendChild(details);
 
-      details.querySelector(".diff-view").dispatchEvent(new globalThis.window.MouseEvent("click", { bubbles: true }));
+      details
+        .querySelector(".diff-view")!
+        .dispatchEvent(
+          new globalThis.window.MouseEvent("click", { bubbles: true }),
+        );
 
       assert.equal(details.open, true);
     });
@@ -201,10 +240,18 @@ describe("render", () => {
 
   describe("scrollToBottom", () => {
     it("keeps following when the user was already at the bottom", () => {
-      setMessagesScrollMetrics({ scrollTop: 400, scrollHeight: 600, clientHeight: 200 });
+      setMessagesScrollMetrics({
+        scrollTop: 400,
+        scrollHeight: 600,
+        clientHeight: 200,
+      });
       dom.messages.dispatchEvent(new globalThis.window.Event("scroll"));
 
-      setMessagesScrollMetrics({ scrollTop: dom.messages.scrollTop, scrollHeight: 1400, clientHeight: 200 });
+      setMessagesScrollMetrics({
+        scrollTop: dom.messages.scrollTop,
+        scrollHeight: 1400,
+        clientHeight: 200,
+      });
       render.scrollToBottom();
 
       assert.equal(dom.messages.scrollTop, 1400);
@@ -212,10 +259,18 @@ describe("render", () => {
     });
 
     it("does not move the viewport when the user scrolled up", () => {
-      setMessagesScrollMetrics({ scrollTop: 120, scrollHeight: 600, clientHeight: 200 });
+      setMessagesScrollMetrics({
+        scrollTop: 120,
+        scrollHeight: 600,
+        clientHeight: 200,
+      });
       dom.messages.dispatchEvent(new globalThis.window.Event("scroll"));
 
-      setMessagesScrollMetrics({ scrollTop: dom.messages.scrollTop, scrollHeight: 1400, clientHeight: 200 });
+      setMessagesScrollMetrics({
+        scrollTop: dom.messages.scrollTop,
+        scrollHeight: 1400,
+        clientHeight: 200,
+      });
       render.scrollToBottom();
 
       assert.equal(dom.messages.scrollTop, 120);
@@ -223,7 +278,11 @@ describe("render", () => {
     });
 
     it("always scrolls when forced", () => {
-      setMessagesScrollMetrics({ scrollTop: 120, scrollHeight: 600, clientHeight: 200 });
+      setMessagesScrollMetrics({
+        scrollTop: 120,
+        scrollHeight: 600,
+        clientHeight: 200,
+      });
       state.followMessages = false;
 
       render.scrollToBottom(true);
@@ -250,7 +309,11 @@ describe("render", () => {
 
     it("recomputes follow state from the pre-append position", () => {
       state.followMessages = false;
-      setMessagesScrollMetrics({ scrollTop: 400, scrollHeight: 600, clientHeight: 200 });
+      setMessagesScrollMetrics({
+        scrollTop: 400,
+        scrollHeight: 600,
+        clientHeight: 200,
+      });
 
       render.addBashBlock("npm test", true);
 

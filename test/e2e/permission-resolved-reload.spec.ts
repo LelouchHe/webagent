@@ -1,7 +1,14 @@
 import { test, expect } from "playwright/test";
-import { createNewSession, currentSessionId, gotoConnected, sendPrompt } from "./helpers.ts";
+import {
+  createNewSession,
+  currentSessionId,
+  gotoConnected,
+  sendPrompt,
+} from "./helpers.ts";
 
-test("reloading after a resolved permission shows collapsed history without buttons", async ({ page }) => {
+test("reloading after a resolved permission shows collapsed history without buttons", async ({
+  page,
+}) => {
   await gotoConnected(page);
   await createNewSession(page);
 

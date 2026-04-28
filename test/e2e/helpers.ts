@@ -7,7 +7,11 @@ export async function expectConnectionStatus(
 ): Promise<void> {
   const indicator = page.locator("#status");
   await expect(indicator).toHaveAttribute("data-state", status, options);
-  await expect(indicator).toHaveAttribute("aria-label", new RegExp(`^${status}$`, "i"), options);
+  await expect(indicator).toHaveAttribute(
+    "aria-label",
+    new RegExp(`^${status}$`, "i"),
+    options,
+  );
 }
 
 export async function gotoConnected(page: Page, path = "/"): Promise<void> {
@@ -25,8 +29,14 @@ export async function createNewSession(page: Page): Promise<string> {
   await page.locator("#input").fill("/new");
   await page.locator("#input").press("Enter");
   await expect.poll(() => currentSessionId(page)).not.toBe(previousId);
+  // Hash flips before the FE has finished switching (snapshot fetch +
+  // resetSessionUI run async after session_created arrives). Wait for the
+  // header session-info to re-render against the new id so callers see a
+  // settled UI — otherwise assertions on #send-btn race the switch.
+  const newId = await currentSessionId(page);
+  await expect(page.locator("#session-info")).toContainText(newId.slice(0, 8));
   await expectConnectionStatus(page, "connected");
-  return currentSessionId(page);
+  return newId;
 }
 
 export async function sendPrompt(page: Page, text: string): Promise<void> {

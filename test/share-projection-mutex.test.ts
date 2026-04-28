@@ -6,7 +6,11 @@ import {
   projectionCacheSize,
   configureProjectionCache,
 } from "../src/share/projection.ts";
-import { withSessionLock, __clearAllLocks, __locksSize } from "../src/share/mutex.ts";
+import {
+  withSessionLock,
+  __clearAllLocks,
+  __locksSize,
+} from "../src/share/mutex.ts";
 
 describe("projection LRU cache", () => {
   beforeEach(() => {
@@ -51,7 +55,9 @@ describe("projection LRU cache", () => {
     for (let i = 0; i < 5; i++) {
       getOrComputeProjection({
         sessionId: `s${i}`,
-        events: [{ seq: 1, type: "assistant_message", data: { text: String(i) } }],
+        events: [
+          { seq: 1, type: "assistant_message", data: { text: String(i) } },
+        ],
         ...baseCtx,
       });
     }
@@ -70,7 +76,9 @@ describe("projection LRU cache", () => {
     for (let i = 0; i < 3; i++) {
       getOrComputeProjection({
         sessionId: `s${i}`,
-        events: [{ seq: 1, type: "assistant_message", data: { text: String(i) } }],
+        events: [
+          { seq: 1, type: "assistant_message", data: { text: String(i) } },
+        ],
         ...baseCtx,
       });
     }
@@ -91,7 +99,11 @@ describe("projection LRU cache", () => {
       events: [{ seq: 1, type: "assistant_message", data: { text: "0" } }],
       ...baseCtx,
     });
-    assert.equal(r0.cacheHit, true, "s0 should still be cached (was MRU-refreshed)");
+    assert.equal(
+      r0.cacheHit,
+      true,
+      "s0 should still be cached (was MRU-refreshed)",
+    );
     const r1 = getOrComputeProjection({
       sessionId: "s1",
       events: [{ seq: 1, type: "assistant_message", data: { text: "1" } }],
@@ -103,17 +115,25 @@ describe("projection LRU cache", () => {
   it("sanitizer applied to result (rewrites cwd)", () => {
     const out = getOrComputeProjection({
       sessionId: "s1",
-      events: [{ seq: 1, type: "assistant_message", data: { text: "cd /Users/alice/proj" } }],
+      events: [
+        {
+          seq: 1,
+          type: "assistant_message",
+          data: { text: "cd /Users/alice/proj" },
+        },
+      ],
       cwd: "/Users/alice/proj",
       homeDir: "/Users/alice",
       internalHosts: [],
     });
-    assert.equal((out.events[0].data.text as string), "cd <cwd>");
+    assert.equal(out.events[0].data.text, "cd <cwd>");
   });
 });
 
 describe("withSessionLock — per-key async mutex", () => {
-  beforeEach(() => __clearAllLocks());
+  beforeEach(() => {
+    __clearAllLocks();
+  });
 
   it("serializes callers with the same key", async () => {
     const order: string[] = [];
@@ -150,7 +170,10 @@ describe("withSessionLock — per-key async mutex", () => {
 
   it("propagates exceptions without wedging the lock", async () => {
     await assert.rejects(
-      () => withSessionLock("k1", async () => { throw new Error("boom"); }),
+      () =>
+        withSessionLock("k1", async () => {
+          throw new Error("boom");
+        }),
       /boom/,
     );
     // Subsequent acquirers still work.

@@ -26,14 +26,18 @@ describe("SessionStateManager", () => {
 
   describe("patch", () => {
     it("bumps seq on each patch", () => {
-      sm.patch("s1", { runtime: { busy: { kind: "agent", since: "t0", promptId: "p1" } } });
+      sm.patch("s1", {
+        runtime: { busy: { kind: "agent", since: "t0", promptId: "p1" } },
+      });
       assert.equal(sm.getState("s1").seq, 1);
       sm.patch("s1", { runtime: { busy: null } });
       assert.equal(sm.getState("s1").seq, 2);
     });
 
     it("merges runtime fields (deep)", () => {
-      sm.patch("s1", { runtime: { busy: { kind: "agent", since: "t0", promptId: "p1" } } });
+      sm.patch("s1", {
+        runtime: { busy: { kind: "agent", since: "t0", promptId: "p1" } },
+      });
       assert.deepEqual(sm.getState("s1").runtime.busy, {
         kind: "agent",
         since: "t0",
@@ -44,7 +48,9 @@ describe("SessionStateManager", () => {
     });
 
     it("isolates state per session", () => {
-      sm.patch("s1", { runtime: { busy: { kind: "agent", since: "t0", promptId: "p1" } } });
+      sm.patch("s1", {
+        runtime: { busy: { kind: "agent", since: "t0", promptId: "p1" } },
+      });
       assert.equal(sm.getState("s2").runtime.busy, null);
       assert.notEqual(sm.getState("s1").seq, sm.getState("s2").seq);
     });
@@ -61,7 +67,9 @@ describe("SessionStateManager", () => {
     it("fires listener with patch event", () => {
       const events: StatePatchEvent[] = [];
       sm.onPatch((e) => events.push(e));
-      sm.patch("s1", { runtime: { busy: { kind: "bash", since: "t0", promptId: null } } });
+      sm.patch("s1", {
+        runtime: { busy: { kind: "bash", since: "t0", promptId: null } },
+      });
       assert.equal(events.length, 1);
       assert.equal(events[0].type, "state_patch");
       assert.equal(events[0].sessionId, "s1");
@@ -82,7 +90,9 @@ describe("SessionStateManager", () => {
       sm.onPatch(() => {
         b++;
       });
-      sm.patch("s1", { runtime: { busy: { kind: "agent", since: "t0", promptId: "p1" } } });
+      sm.patch("s1", {
+        runtime: { busy: { kind: "agent", since: "t0", promptId: "p1" } },
+      });
       assert.equal(a, 1);
       assert.equal(b, 1);
     });
@@ -90,7 +100,9 @@ describe("SessionStateManager", () => {
 
   describe("snapshot shape", () => {
     it("returns version + seq + runtime", () => {
-      sm.patch("s1", { runtime: { busy: { kind: "agent", since: "t0", promptId: "p1" } } });
+      sm.patch("s1", {
+        runtime: { busy: { kind: "agent", since: "t0", promptId: "p1" } },
+      });
       const snap = sm.getState("s1");
       assert.equal(snap.seq, 1);
       assert.ok(snap.runtime);
@@ -99,7 +111,9 @@ describe("SessionStateManager", () => {
 
   describe("delete", () => {
     it("clears state for a session", () => {
-      sm.patch("s1", { runtime: { busy: { kind: "agent", since: "t0", promptId: "p1" } } });
+      sm.patch("s1", {
+        runtime: { busy: { kind: "agent", since: "t0", promptId: "p1" } },
+      });
       assert.equal(sm.getState("s1").seq, 1);
       sm.delete("s1");
       assert.equal(sm.getState("s1").seq, 0);
@@ -116,14 +130,18 @@ describe("SessionStateManager", () => {
     });
 
     it("armCancelSafety clears busy after the timeout elapses", () => {
-      sm.patch("s1", { runtime: { busy: { kind: "agent", since: "t0", promptId: "p1" } } });
+      sm.patch("s1", {
+        runtime: { busy: { kind: "agent", since: "t0", promptId: "p1" } },
+      });
       sm.armCancelSafety("s1", 20);
       mock.timers.tick(20);
       assert.equal(sm.getState("s1").runtime.busy, null);
     });
 
     it("does nothing when busy is already cleared before timeout", () => {
-      sm.patch("s1", { runtime: { busy: { kind: "agent", since: "t0", promptId: "p1" } } });
+      sm.patch("s1", {
+        runtime: { busy: { kind: "agent", since: "t0", promptId: "p1" } },
+      });
       sm.armCancelSafety("s1", 30);
       sm.patch("s1", { runtime: { busy: null } });
       const seqAfterClear = sm.getState("s1").seq;
@@ -136,7 +154,9 @@ describe("SessionStateManager", () => {
     });
 
     it("multiple arms on the same session coalesce (no double-clear)", () => {
-      sm.patch("s1", { runtime: { busy: { kind: "agent", since: "t0", promptId: "p1" } } });
+      sm.patch("s1", {
+        runtime: { busy: { kind: "agent", since: "t0", promptId: "p1" } },
+      });
       sm.armCancelSafety("s1", 20);
       sm.armCancelSafety("s1", 20);
       mock.timers.tick(20);
@@ -146,7 +166,9 @@ describe("SessionStateManager", () => {
     });
 
     it("is a no-op when timeout <= 0", () => {
-      sm.patch("s1", { runtime: { busy: { kind: "agent", since: "t0", promptId: "p1" } } });
+      sm.patch("s1", {
+        runtime: { busy: { kind: "agent", since: "t0", promptId: "p1" } },
+      });
       sm.armCancelSafety("s1", 0);
       mock.timers.tick(50);
       assert.notEqual(sm.getState("s1").runtime.busy, null);
@@ -197,14 +219,23 @@ describe("SessionStateManager", () => {
 
   describe("streaming", () => {
     it("defaults to both false", () => {
-      assert.deepEqual(sm.getState("s1").runtime.streaming, { assistant: false, thinking: false });
+      assert.deepEqual(sm.getState("s1").runtime.streaming, {
+        assistant: false,
+        thinking: false,
+      });
     });
 
     it("patch partial field merges without clobbering the other", () => {
       sm.patch("s1", { runtime: { streaming: { assistant: true } } });
-      assert.deepEqual(sm.getState("s1").runtime.streaming, { assistant: true, thinking: false });
+      assert.deepEqual(sm.getState("s1").runtime.streaming, {
+        assistant: true,
+        thinking: false,
+      });
       sm.patch("s1", { runtime: { streaming: { thinking: true } } });
-      assert.deepEqual(sm.getState("s1").runtime.streaming, { assistant: true, thinking: true });
+      assert.deepEqual(sm.getState("s1").runtime.streaming, {
+        assistant: true,
+        thinking: true,
+      });
     });
 
     it("no-op when value equals current", () => {

@@ -15,11 +15,16 @@ function send(
   path: string,
 ): Promise<{ status: number; body: string }> {
   return new Promise((resolve, reject) => {
-    const r = http.request({ hostname: "127.0.0.1", port, path, method }, (res) => {
-      let d = "";
-      res.on("data", (c: Buffer) => (d += c.toString()));
-      res.on("end", () => resolve({ status: res.statusCode!, body: d }));
-    });
+    const r = http.request(
+      { hostname: "127.0.0.1", port, path, method },
+      (res) => {
+        let d = "";
+        res.on("data", (c: Buffer) => (d += c.toString()));
+        res.on("end", () => {
+          resolve({ status: res.statusCode!, body: d });
+        });
+      },
+    );
     r.on("error", reject);
     r.end();
   });
@@ -43,7 +48,7 @@ describe("POST /api/v1/messages/:id/consume + ack + DELETE", () => {
     const orig = sseManager.broadcast.bind(sseManager);
     sseManager.broadcast = (ev: AgentEvent) => {
       broadcasts.push(ev);
-      return orig(ev);
+      orig(ev);
     };
 
     const handler = createRequestHandler({
@@ -59,7 +64,11 @@ describe("POST /api/v1/messages/:id/consume + ack + DELETE", () => {
   });
 
   afterEach(async () => {
-    await new Promise<void>((res) => server.close(() => res()));
+    await new Promise<void>((res) =>
+      server.close(() => {
+        res();
+      }),
+    );
     store.close();
     rmSync(tmpDir, { recursive: true, force: true });
   });

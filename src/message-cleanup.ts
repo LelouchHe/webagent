@@ -14,7 +14,11 @@ const DAY_MS = 24 * 60 * 60 * 1000;
  * Returns the number of rows removed. `now` is injectable for tests.
  * ttlDays=0 means "keep forever" — returns 0 without touching the DB.
  */
-export function sweepOnce(store: Store, ttlDays: number, now: number = Date.now()): number {
+export function sweepOnce(
+  store: Store,
+  ttlDays: number,
+  now: number = Date.now(),
+): number {
   if (ttlDays <= 0) return 0;
   const threshold = now - ttlDays * DAY_MS;
   const removed = store.deleteOlderThan(threshold);
@@ -31,7 +35,10 @@ export function sweepOnce(store: Store, ttlDays: number, now: number = Date.now(
  *
  * ttlDays=0 disables the scheduler entirely (handle.armed=false).
  */
-export function startMessageCleanup(store: Store, ttlDays: number): CleanupHandle {
+export function startMessageCleanup(
+  store: Store,
+  ttlDays: number,
+): CleanupHandle {
   sweepOnce(store, ttlDays);
 
   if (ttlDays <= 0) {
@@ -50,6 +57,8 @@ export function startMessageCleanup(store: Store, ttlDays: number): CleanupHandl
 
   return {
     armed: true,
-    stop: () => clearInterval(timer),
+    stop: () => {
+      clearInterval(timer);
+    },
   };
 }

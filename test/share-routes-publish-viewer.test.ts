@@ -30,7 +30,9 @@ function mockRes(): MockRes {
       if (h) Object.assign(headers, h);
       return res;
     },
-    setHeader(k: string, v: string) { headers[k] = v; },
+    setHeader(k: string, v: string) {
+      headers[k] = v;
+    },
     end(chunk?: unknown) {
       if (chunk instanceof Buffer) body += chunk.toString("binary");
       else if (typeof chunk === "string") body += chunk;
@@ -40,18 +42,41 @@ function mockRes(): MockRes {
     res: res as unknown as ServerResponse,
     status: () => status,
     body: () => body,
-    json: () => { try { return JSON.parse(body); } catch { return null; } },
+    json: () => {
+      try {
+        return JSON.parse(body);
+      } catch {
+        return null;
+      }
+    },
     headers: () => headers,
   };
 }
 
-function ownerReq(url: string, method = "GET", opts?: { body?: unknown; headers?: Record<string, string> }): IncomingMessage {
+function ownerReq(
+  url: string,
+  method = "GET",
+  opts?: { body?: unknown; headers?: Record<string, string> },
+): IncomingMessage {
   const bodyStr = opts?.body != null ? JSON.stringify(opts.body) : "";
-  const headers = { "sec-fetch-site": "same-origin", host: "localhost:6800", ...opts?.headers };
-  const listeners: Record<string, Array<(arg?: unknown) => void>> = { data: [], end: [], error: [] };
+  const headers = {
+    "sec-fetch-site": "same-origin",
+    host: "localhost:6800",
+    ...opts?.headers,
+  };
+  const listeners: Record<string, Array<(arg?: unknown) => void>> = {
+    data: [],
+    end: [],
+    error: [],
+  };
   const req = {
-    url, method, headers,
-    on(ev: string, cb: (arg?: unknown) => void) { listeners[ev].push(cb); return req; },
+    url,
+    method,
+    headers,
+    on(ev: string, cb: (arg?: unknown) => void) {
+      listeners[ev].push(cb);
+      return req;
+    },
   };
   queueMicrotask(() => {
     if (bodyStr) for (const cb of listeners.data) cb(Buffer.from(bodyStr));
@@ -61,17 +86,32 @@ function ownerReq(url: string, method = "GET", opts?: { body?: unknown; headers?
 }
 
 function publicReq(url: string, method = "GET"): IncomingMessage {
-  const listeners: Record<string, Array<(arg?: unknown) => void>> = { data: [], end: [], error: [] };
-  const req = {
-    url, method, headers: { host: "public.example.com" } as Record<string, string>,
-    on(ev: string, cb: (arg?: unknown) => void) { listeners[ev].push(cb); return req; },
+  const listeners: Record<string, Array<(arg?: unknown) => void>> = {
+    data: [],
+    end: [],
+    error: [],
   };
-  queueMicrotask(() => { for (const cb of listeners.end) cb(); });
+  const req = {
+    url,
+    method,
+    headers: { host: "public.example.com" } as Record<string, string>,
+    on(ev: string, cb: (arg?: unknown) => void) {
+      listeners[ev].push(cb);
+      return req;
+    },
+  };
+  queueMicrotask(() => {
+    for (const cb of listeners.end) cb();
+  });
   return req as unknown as IncomingMessage;
 }
 
 const enabledCfg: Config["share"] = {
-  enabled: true, ttl_hours: 0, csp_enforce: true, viewer_origin: "", internal_hosts: [],
+  enabled: true,
+  ttl_hours: 0,
+  csp_enforce: true,
+  viewer_origin: "",
+  internal_hosts: [],
 };
 
 async function createAndPublishShare(
@@ -81,14 +121,20 @@ async function createAndPublishShare(
 ): Promise<{ token: string }> {
   // Create preview first.
   const r1 = mockRes();
-  await handleShareRoutes(ownerReq(`/api/v1/sessions/${sessionId}/share`, "POST", { body: {} }), r1.res, deps);
+  await handleShareRoutes(
+    ownerReq(`/api/v1/sessions/${sessionId}/share`, "POST", { body: {} }),
+    r1.res,
+    deps,
+  );
   assert.equal(r1.status(), 201, `preview create failed: ${r1.body()}`);
   const token = (r1.json() as { token: string }).token;
 
   // Publish.
   const r2 = mockRes();
   await handleShareRoutes(
-    ownerReq(`/api/v1/sessions/${sessionId}/share/publish`, "POST", { body: { token, ...extraBody } }),
+    ownerReq(`/api/v1/sessions/${sessionId}/share/publish`, "POST", {
+      body: { token, ...extraBody },
+    }),
     r2.res,
     deps,
   );
@@ -108,8 +154,18 @@ describe("share publish route — POST /api/v1/sessions/:id/share/publish", () =
     tmpDir = mkdtempSync(join(tmpdir(), "wa-share-pub-"));
     store = new Store(tmpDir);
     store.createSession(sessionId, "/tmp/project");
-    store.saveEvent(sessionId, "user_message", { text: "hi" });
-    store.saveEvent(sessionId, "assistant_message", { text: "hello" });
+    store.saveEvent(
+      sessionId,
+      "user_message",
+      { text: "hi" },
+      { from_ref: "agent" },
+    );
+    store.saveEvent(
+      sessionId,
+      "assistant_message",
+      { text: "hello" },
+      { from_ref: "agent" },
+    );
     clearProjectionCache();
     __clearAllLocks();
     deps = { store, config: enabledCfg, dataDir: tmpDir, publicDir: "/tmp" };
@@ -122,7 +178,11 @@ describe("share publish route — POST /api/v1/sessions/:id/share/publish", () =
 
   it("401 without owner headers", async () => {
     const r = mockRes();
-    await handleShareRoutes(publicReq(`/api/v1/sessions/${sessionId}/share/publish`, "POST"), r.res, deps);
+    await handleShareRoutes(
+      publicReq(`/api/v1/sessions/${sessionId}/share/publish`, "POST"),
+      r.res,
+      deps,
+    );
     assert.equal(r.status(), 401);
   });
 
@@ -130,17 +190,26 @@ describe("share publish route — POST /api/v1/sessions/:id/share/publish", () =
     const r1 = mockRes();
     await handleShareRoutes(
       ownerReq(`/api/v1/sessions/${sessionId}/share`, "POST", { body: {} }),
-      r1.res, deps,
+      r1.res,
+      deps,
     );
     const token = (r1.json() as { token: string }).token;
 
     const r2 = mockRes();
     await handleShareRoutes(
-      ownerReq(`/api/v1/sessions/${sessionId}/share/publish`, "POST", { body: { token, display_name: "alice" } }),
-      r2.res, deps,
+      ownerReq(`/api/v1/sessions/${sessionId}/share/publish`, "POST", {
+        body: { token, display_name: "alice" },
+      }),
+      r2.res,
+      deps,
     );
     assert.equal(r2.status(), 200);
-    const body = r2.json() as { token: string; shared_at: number; display_name: string; public_url: string };
+    const body = r2.json() as {
+      token: string;
+      shared_at: number;
+      display_name: string;
+      public_url: string;
+    };
     assert.equal(body.token, token);
     assert.ok(body.shared_at > 0);
     assert.equal(body.display_name, "alice");
@@ -158,8 +227,11 @@ describe("share publish route — POST /api/v1/sessions/:id/share/publish", () =
     const { token } = await createAndPublishShare(deps, sessionId);
     const r = mockRes();
     await handleShareRoutes(
-      ownerReq(`/api/v1/sessions/${sessionId}/share/publish`, "POST", { body: { token } }),
-      r.res, deps,
+      ownerReq(`/api/v1/sessions/${sessionId}/share/publish`, "POST", {
+        body: { token },
+      }),
+      r.res,
+      deps,
     );
     assert.equal(r.status(), 409);
   });
@@ -167,62 +239,100 @@ describe("share publish route — POST /api/v1/sessions/:id/share/publish", () =
   it("410 on publishing a revoked preview", async () => {
     const r1 = mockRes();
     await handleShareRoutes(
-      ownerReq(`/api/v1/sessions/${sessionId}/share`, "POST", { body: {} }), r1.res, deps);
+      ownerReq(`/api/v1/sessions/${sessionId}/share`, "POST", { body: {} }),
+      r1.res,
+      deps,
+    );
     const token = (r1.json() as { token: string }).token;
     store.revokeShare(token);
 
     const r2 = mockRes();
     await handleShareRoutes(
-      ownerReq(`/api/v1/sessions/${sessionId}/share/publish`, "POST", { body: { token } }), r2.res, deps);
+      ownerReq(`/api/v1/sessions/${sessionId}/share/publish`, "POST", {
+        body: { token },
+      }),
+      r2.res,
+      deps,
+    );
     assert.equal(r2.status(), 410);
   });
 
   it("404 when token does not belong to this session", async () => {
     const other = "sess-other";
     store.createSession(other, "/tmp/other");
-    store.saveEvent(other, "user_message", { text: "x" });
+    store.saveEvent(
+      other,
+      "user_message",
+      { text: "x" },
+      { from_ref: "agent" },
+    );
     const r1 = mockRes();
     await handleShareRoutes(
-      ownerReq(`/api/v1/sessions/${other}/share`, "POST", { body: {} }), r1.res, deps);
+      ownerReq(`/api/v1/sessions/${other}/share`, "POST", { body: {} }),
+      r1.res,
+      deps,
+    );
     const token = (r1.json() as { token: string }).token;
 
     const r2 = mockRes();
     await handleShareRoutes(
-      ownerReq(`/api/v1/sessions/${sessionId}/share/publish`, "POST", { body: { token } }), r2.res, deps);
+      ownerReq(`/api/v1/sessions/${sessionId}/share/publish`, "POST", {
+        body: { token },
+      }),
+      r2.res,
+      deps,
+    );
     assert.equal(r2.status(), 404);
   });
 
   it("400 when body.token missing", async () => {
     const r = mockRes();
     await handleShareRoutes(
-      ownerReq(`/api/v1/sessions/${sessionId}/share/publish`, "POST", { body: {} }), r.res, deps);
+      ownerReq(`/api/v1/sessions/${sessionId}/share/publish`, "POST", {
+        body: {},
+      }),
+      r.res,
+      deps,
+    );
     assert.equal(r.status(), 400);
   });
 
   it("V3: rejects bidi override in display_name at publish (previously silently null'd)", async () => {
     const r1 = mockRes();
     await handleShareRoutes(
-      ownerReq(`/api/v1/sessions/${sessionId}/share`, "POST", { body: { display_name: "alice" } }), r1.res, deps);
+      ownerReq(`/api/v1/sessions/${sessionId}/share`, "POST", {
+        body: { display_name: "alice" },
+      }),
+      r1.res,
+      deps,
+    );
     const token = (r1.json() as { token: string }).token;
 
     const r2 = mockRes();
     await handleShareRoutes(
       ownerReq(`/api/v1/sessions/${sessionId}/share/publish`, "POST", {
         body: { token, display_name: "evil\u202etxt" },
-      }), r2.res, deps);
+      }),
+      r2.res,
+      deps,
+    );
     assert.equal(r2.status(), 400);
     assert.match((r2.json() as { error: string }).error, /bidi override/);
 
     // Preview row's display_name is preserved (not nulled by the failed publish).
     const row = store.getShareByToken(token);
-    assert.equal(row?.display_name, "alice");
-    assert.equal(row?.shared_at, null, "publish rejected → still a preview");
+    assert.ok(row, "share row exists");
+    assert.equal(row.display_name, "alice");
+    assert.equal(row.shared_at, null, "publish rejected → still a preview");
   });
 
   it("V3: rejects over-limit owner_label at publish (UTF-8 bytes, not UTF-16 length)", async () => {
     const r1 = mockRes();
     await handleShareRoutes(
-      ownerReq(`/api/v1/sessions/${sessionId}/share`, "POST", { body: {} }), r1.res, deps);
+      ownerReq(`/api/v1/sessions/${sessionId}/share`, "POST", { body: {} }),
+      r1.res,
+      deps,
+    );
     const token = (r1.json() as { token: string }).token;
 
     const r2 = mockRes();
@@ -230,7 +340,10 @@ describe("share publish route — POST /api/v1/sessions/:id/share/publish", () =
     await handleShareRoutes(
       ownerReq(`/api/v1/sessions/${sessionId}/share/publish`, "POST", {
         body: { token, owner_label: "𝕏".repeat(300) },
-      }), r2.res, deps);
+      }),
+      r2.res,
+      deps,
+    );
     assert.equal(r2.status(), 400);
     assert.match((r2.json() as { error: string }).error, /exceeds 1024 bytes/);
   });
@@ -246,11 +359,24 @@ describe("share public viewer — GET /s/:token + /api/v1/shared/:token/events",
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), "wa-share-view-"));
     publicDir = mkdtempSync(join(tmpdir(), "wa-share-public-"));
-    writeFileSync(join(publicDir, "share-viewer.html"), "<!doctype html><html><body data-viewer>ok</body></html>");
+    writeFileSync(
+      join(publicDir, "share-viewer.html"),
+      "<!doctype html><html><body data-viewer>ok</body></html>",
+    );
     store = new Store(tmpDir);
     store.createSession(sessionId, "/tmp/project");
-    store.saveEvent(sessionId, "user_message", { text: "question" });
-    store.saveEvent(sessionId, "assistant_message", { text: "answer" });
+    store.saveEvent(
+      sessionId,
+      "user_message",
+      { text: "question" },
+      { from_ref: "agent" },
+    );
+    store.saveEvent(
+      sessionId,
+      "assistant_message",
+      { text: "answer" },
+      { from_ref: "agent" },
+    );
     clearProjectionCache();
     __clearAllLocks();
     deps = { store, config: enabledCfg, dataDir: tmpDir, publicDir };
@@ -268,14 +394,20 @@ describe("share public viewer — GET /s/:token + /api/v1/shared/:token/events",
     await handleShareRoutes(publicReq(`/s/${bogus}`), r.res, deps);
     assert.equal(r.status(), 410);
     // CSP still set on error pages.
-    assert.match(r.headers()["Content-Security-Policy"] ?? "", /default-src 'self'/);
+    assert.match(
+      r.headers()["Content-Security-Policy"] ?? "",
+      /default-src 'self'/,
+    );
   });
 
   it("GET /s/:token -> 410 for preview (not yet activated)", async () => {
     // Preview-only token; never publish.
     const r1 = mockRes();
     await handleShareRoutes(
-      ownerReq(`/api/v1/sessions/${sessionId}/share`, "POST", { body: {} }), r1.res, deps);
+      ownerReq(`/api/v1/sessions/${sessionId}/share`, "POST", { body: {} }),
+      r1.res,
+      deps,
+    );
     const token = (r1.json() as { token: string }).token;
 
     const r = mockRes();
@@ -308,18 +440,31 @@ describe("share public viewer — GET /s/:token + /api/v1/shared/:token/events",
     await handleShareRoutes(publicReq(`/s/${token}`), r.res, deps);
     assert.equal(r.status(), 200);
     const h = r.headers();
-    assert.ok(h["Content-Security-Policy-Report-Only"], "must emit report-only header");
+    assert.ok(
+      h["Content-Security-Policy-Report-Only"],
+      "must emit report-only header",
+    );
     assert.ok(!h["Content-Security-Policy"], "must not emit enforcing header");
   });
 
   it("GET /api/v1/shared/:token/events -> 200 JSON with sanitized events, NO session_id leak", async () => {
     const { token } = await createAndPublishShare(deps, sessionId);
     const r = mockRes();
-    await handleShareRoutes(publicReq(`/api/v1/shared/${token}/events`), r.res, deps);
+    await handleShareRoutes(
+      publicReq(`/api/v1/shared/${token}/events`),
+      r.res,
+      deps,
+    );
     assert.equal(r.status(), 200);
-    const body = r.json() as { share: Record<string, unknown>; events: unknown[] };
+    const body = r.json() as {
+      share: Record<string, unknown>;
+      events: unknown[];
+    };
     // session_id MUST NOT be in the public JSON.
-    assert.ok(!("session_id" in body.share), "session_id leaked to public viewer");
+    assert.ok(
+      !("session_id" in body.share),
+      "session_id leaked to public viewer",
+    );
     assert.ok(Array.isArray(body.events));
     assert.ok(body.events.length >= 2);
     assert.match(r.headers()["Content-Type"] ?? "", /application\/json/);
@@ -330,18 +475,29 @@ describe("share public viewer — GET /s/:token + /api/v1/shared/:token/events",
     const { token } = await createAndPublishShare(deps, sessionId);
     store.revokeShare(token);
     const r = mockRes();
-    await handleShareRoutes(publicReq(`/api/v1/shared/${token}/events`), r.res, deps);
+    await handleShareRoutes(
+      publicReq(`/api/v1/shared/${token}/events`),
+      r.res,
+      deps,
+    );
     assert.equal(r.status(), 410);
   });
 
   it("GET /api/v1/shared/:token/events -> 410 for preview token", async () => {
     const r1 = mockRes();
     await handleShareRoutes(
-      ownerReq(`/api/v1/sessions/${sessionId}/share`, "POST", { body: {} }), r1.res, deps);
+      ownerReq(`/api/v1/sessions/${sessionId}/share`, "POST", { body: {} }),
+      r1.res,
+      deps,
+    );
     const token = (r1.json() as { token: string }).token;
 
     const r = mockRes();
-    await handleShareRoutes(publicReq(`/api/v1/shared/${token}/events`), r.res, deps);
+    await handleShareRoutes(
+      publicReq(`/api/v1/shared/${token}/events`),
+      r.res,
+      deps,
+    );
     assert.equal(r.status(), 410);
   });
 
@@ -349,14 +505,26 @@ describe("share public viewer — GET /s/:token + /api/v1/shared/:token/events",
     // TTL 1h, publish with shared_at manually rewound 2h.
     const r1 = mockRes();
     await handleShareRoutes(
-      ownerReq(`/api/v1/sessions/${sessionId}/share`, "POST", { body: { ttl_hours: 1 } }), r1.res, deps);
+      ownerReq(`/api/v1/sessions/${sessionId}/share`, "POST", {
+        body: { ttl_hours: 1 },
+      }),
+      r1.res,
+      deps,
+    );
     const token = (r1.json() as { token: string }).token;
 
     await handleShareRoutes(
-      ownerReq(`/api/v1/sessions/${sessionId}/share/publish`, "POST", { body: { token } }), mockRes().res, deps);
+      ownerReq(`/api/v1/sessions/${sessionId}/share/publish`, "POST", {
+        body: { token },
+      }),
+      mockRes().res,
+      deps,
+    );
     // Rewind shared_at 2h past to expire.
     const twoHoursAgo = Date.now() - 2 * 3600 * 1000;
-    store["db"].prepare("UPDATE shares SET shared_at = ? WHERE token = ?").run(twoHoursAgo, token);
+    store["db"]
+      .prepare("UPDATE shares SET shared_at = ? WHERE token = ?")
+      .run(twoHoursAgo, token);
 
     const r = mockRes();
     await handleShareRoutes(publicReq(`/s/${token}`), r.res, deps);
@@ -376,11 +544,19 @@ describe("share image proxy — GET /s/:token/images/:file", () => {
     publicDir = mkdtempSync(join(tmpdir(), "wa-share-img-pub-"));
     writeFileSync(join(publicDir, "share-viewer.html"), "<!doctype html>");
     mkdirSync(join(tmpDir, "images", sessionId), { recursive: true });
-    writeFileSync(join(tmpDir, "images", sessionId, "a.png"), Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+    writeFileSync(
+      join(tmpDir, "images", sessionId, "a.png"),
+      Buffer.from([0x89, 0x50, 0x4e, 0x47]),
+    );
 
     store = new Store(tmpDir);
     store.createSession(sessionId, "/tmp/project");
-    store.saveEvent(sessionId, "user_message", { text: "see img" });
+    store.saveEvent(
+      sessionId,
+      "user_message",
+      { text: "see img" },
+      { from_ref: "agent" },
+    );
     clearProjectionCache();
     __clearAllLocks();
     deps = { store, config: enabledCfg, dataDir: tmpDir, publicDir };
@@ -405,7 +581,11 @@ describe("share image proxy — GET /s/:token/images/:file", () => {
     const { token } = await createAndPublishShare(deps, sessionId);
     // encoded %2f and ../
     const r = mockRes();
-    await handleShareRoutes(publicReq(`/s/${token}/images/..%2f..%2fetc%2fpasswd`), r.res, deps);
+    await handleShareRoutes(
+      publicReq(`/s/${token}/images/..%2f..%2fetc%2fpasswd`),
+      r.res,
+      deps,
+    );
     // route matcher won't allow / or encoded /, path regex will reject dots
     // -> either 404 from matcher (url doesn't match /s/:token/images/:file) or 404 from invalid file.
     // We assert it does NOT return 200.
@@ -415,7 +595,11 @@ describe("share image proxy — GET /s/:token/images/:file", () => {
   it("404 for invalid filename chars", async () => {
     const { token } = await createAndPublishShare(deps, sessionId);
     const r = mockRes();
-    await handleShareRoutes(publicReq(`/s/${token}/images/.hidden`), r.res, deps);
+    await handleShareRoutes(
+      publicReq(`/s/${token}/images/.hidden`),
+      r.res,
+      deps,
+    );
     assert.equal(r.status(), 404);
   });
 
@@ -430,7 +614,10 @@ describe("share image proxy — GET /s/:token/images/:file", () => {
   it("410 for preview-only token", async () => {
     const r1 = mockRes();
     await handleShareRoutes(
-      ownerReq(`/api/v1/sessions/${sessionId}/share`, "POST", { body: {} }), r1.res, deps);
+      ownerReq(`/api/v1/sessions/${sessionId}/share`, "POST", { body: {} }),
+      r1.res,
+      deps,
+    );
     const token = (r1.json() as { token: string }).token;
     const r = mockRes();
     await handleShareRoutes(publicReq(`/s/${token}/images/a.png`), r.res, deps);
