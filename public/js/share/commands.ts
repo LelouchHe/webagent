@@ -258,6 +258,20 @@ async function fetchAllSharesForRevoke(): Promise<ShareListRow[]> {
 }
 
 /**
+ * Open a share's public URL in a new tab. Used by both the slash-menu
+ * row default action and the bare `/share <token>` slash-exec path.
+ * The hostname comes from `location.origin` — for production this is
+ * the same origin the owner is logged into, which is what they'd want.
+ */
+export function openShare(token: string): void {
+  const url = `${location.origin}/s/${token}`;
+  window.open(url, "_blank", "noopener");
+  // Short, persistent breadcrumb: viewer was opened in another tab and
+  // the system message stays in the chat as a record.
+  addSystem(`share: opened ${url}`);
+}
+
+/**
  * GET /api/v1/share/by — read the owner's default display_name. Returns
  * null when unset (publish goes out anonymous). Used by the slash menu to
  * surface the current value when offering `/share by`.

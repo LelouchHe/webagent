@@ -14,7 +14,6 @@ import {
   updateModeUI,
   updateStatusBar,
   reloadSnapshot,
-  setInputValue,
 } from "./state.ts";
 import { addSystem, scrollToBottom, formatLocalTime } from "./render.ts";
 import { loadHistory, handleEvent, fallbackToNextSession } from "./events.ts";
@@ -29,6 +28,7 @@ import {
   discardPreview,
   listOwnerShares,
   revokeShare,
+  openShare,
   getDefaultDisplayName,
   setDefaultDisplayName,
   type ShareListRow,
@@ -264,6 +264,27 @@ async function notifyOff(): Promise<void> {
   addSystem("notify: disabled");
 }
 
+// Unified row layout for /share lists (both top-level and revoke child).
+// The primary slot holds the token (so Tab fills `/share <token>` for the
+// open default; in the revoke child Tab fills `/share revoke <token>`).
+// The path slot shows the URL — left-indented dim text reads as a file
+// path and matches the "this is the link" mental model. pathSecondary
+// carries the session title when present.
+function shareRowSpec(s: ShareListRow, kind: "open" | "revoke") {
+  const ago = s.shared_at ? formatLocalTime(s.shared_at) : "—";
+  return {
+    primary: s.token,
+    secondary: ago,
+    path: `/s/${s.token}`,
+    pathSecondary: s.session_title ?? undefined,
+    current: s.session_id === state.sessionId,
+    onSelect: () => {
+      if (kind === "open") openShare(s.token);
+      else void revokeShare(s.token);
+    },
+  };
+}
+
 // --- ROOT tree ---
 
 export const ROOT: CmdNode = {
@@ -497,24 +518,12 @@ export const ROOT: CmdNode = {
     },
     {
       name: "/share",
-      desc: "Share a read-only snapshot",
+      desc: "Share a read-only snapshot — Enter to open, /share revoke <token> to remove",
       // Lists active (published) shares only — preview rows never leak in.
       // Enter on the empty input creates a fresh preview (freeform fallback).
-      // Selecting a row pre-fills `/share revoke <token>` for one-tap revoke.
+      // Selecting a row opens the share's public URL in a new tab.
       fetch: listOwnerShares,
-      toSpec: (item: unknown) => {
-        const s = item as ShareListRow;
-        const ago = s.shared_at ? formatLocalTime(s.shared_at) : "—";
-        return {
-          primary: s.token,
-          secondary: ago,
-          path: s.session_title ?? s.session_id.slice(0, 8),
-          current: s.session_id === state.sessionId,
-          onSelect: () => {
-            setInputValue(`/share revoke ${s.token}`);
-          },
-        };
-      },
+      toSpec: (item: unknown) => shareRowSpec(item as ShareListRow, "open"),
       freeform: (q) => {
         if (q.trim()) return null;
         return {
@@ -551,18 +560,10 @@ export const ROOT: CmdNode = {
         },
         {
           name: "revoke",
-          desc: "Revoke a public share",
+          desc: "Take a public share offline — cannot be undone",
           fetch: listOwnerShares,
-          toSpec: (item: unknown) => {
-            const s = item as ShareListRow;
-            const ago = s.shared_at ? formatLocalTime(s.shared_at) : "—";
-            return {
-              primary: s.token,
-              secondary: ago,
-              path: s.session_title ?? s.session_id.slice(0, 8),
-              onSelect: () => revokeShare(s.token),
-            };
-          },
+          toSpec: (item: unknown) =>
+            shareRowSpec(item as ShareListRow, "revoke"),
         },
       ],
     },

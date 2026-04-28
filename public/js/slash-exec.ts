@@ -28,6 +28,7 @@ import {
   discardPreview,
   revokeShare,
   setDefaultDisplayName,
+  openShare,
 } from "./share/commands.ts";
 
 async function subscribePush(): Promise<void> {
@@ -127,8 +128,18 @@ export async function handleSlashCommand(text: string): Promise<boolean> {
         await setDefaultDisplayName(rest === "" ? null : rest);
         return true;
       }
+      // Default: bare token → open the share viewer in a new tab. The token
+      // shape is fixed (24 chars, base64url alphabet — see generateShareToken
+      // in src/share/projection.ts); typo-resistant enough that we don't need
+      // a server round-trip just to validate. Match against `subParts[0]` so
+      // we honor the original casing rather than the lower-cased `sub`.
+      const candidate = subParts[0] ?? "";
+      if (/^[A-Za-z0-9_-]{24}$/.test(candidate)) {
+        openShare(candidate);
+        return true;
+      }
       addSystem(
-        `share: unknown subcommand '${sub}' — try /share, /share by <name>, or /share revoke <token>`,
+        `share: unknown subcommand '${sub}' — try /share, /share by <name>, /share <token>, or /share revoke <token>`,
       );
       return true;
     }
