@@ -8,6 +8,7 @@ import {
   sendCancel,
   getConfigOption,
   updateModeUI,
+  refreshInputActions,
 } from "./state.ts";
 import { addMessage, addSystem, addBashBlock, showWaiting } from "./render.ts";
 import {
@@ -16,6 +17,8 @@ import {
   handleSlashMenuKey,
 } from "./commands.ts";
 import { renderAttachPreview } from "./images.ts";
+import { registerInputHandlers } from "./input-actions.ts";
+import { publishPreview, discardPreview } from "./share/commands.ts";
 import * as api from "./api.ts";
 
 function isConnected(): boolean {
@@ -140,38 +143,19 @@ function doCancel() {
 
 // --- Event listeners ---
 
-/** True when the input contains a slash command or bang-bash that can bypass busy. */
-function inputHasCommand(): boolean {
-  const text = dom.input.value.trim();
-  return (
-    text.startsWith("/") ||
-    text.startsWith("!") ||
-    text === "?" ||
-    text.startsWith("? ")
-  );
-}
-
-/** Update the send button label to reflect whether the input has a command. */
-function syncSendBtn() {
-  if (!state.busy) return;
-  if (inputHasCommand()) {
-    dom.sendBtn.textContent = "↵";
-    dom.sendBtn.title = "Send (Enter)";
-    dom.sendBtn.classList.remove("cancel");
-  } else {
-    dom.sendBtn.textContent = "^C";
-    dom.sendBtn.title = "Cancel (Ctrl+C)";
-    dom.sendBtn.classList.add("cancel");
-  }
-}
-
-dom.sendBtn.onclick = () => {
-  if (state.busy && !inputHasCommand()) {
-    doCancel();
-  } else {
-    sendMessage();
-  }
-};
+registerInputHandlers({
+  send: sendMessage,
+  cancel: doCancel,
+  attach: () => {
+    dom.fileInput.click();
+  },
+  publish: () => {
+    void publishPreview();
+  },
+  discard: discardPreview,
+});
+// Initial paint so buttons reflect default-mode state at boot.
+refreshInputActions();
 
 dom.input.addEventListener("keydown", (e) => {
   // Slash menu navigation
@@ -243,10 +227,25 @@ document.addEventListener("keydown", (e) => {
   }
 });
 
+// Preview-mode shortcuts: only active while a preview token exists.
+// Mirrors the right-side button labels (^P / ^D) for keyboard parity.
+document.addEventListener("keydown", (e) => {
+  if (!state.previewToken) return;
+  if (!(e.ctrlKey || e.metaKey) || e.shiftKey) return;
+  if (e.key === "p") {
+    e.preventDefault();
+    void publishPreview();
+  } else if (e.key === "d") {
+    e.preventDefault();
+    discardPreview();
+  }
+});
+
 // Click prompt indicator to cycle mode
 dom.prompt.addEventListener("click", cycleMode);
 
-dom.input.addEventListener("input", syncSendBtn);
+// Repaint send/cancel button when input content toggles command/non-command.
+dom.input.addEventListener("input", refreshInputActions);
 
 // Auto-resize textarea
 dom.input.addEventListener("input", () => {

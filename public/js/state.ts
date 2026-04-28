@@ -176,10 +176,14 @@ export function updateModeUI() {
   dom.inputArea.classList.remove("plan-mode", "autopilot-mode", "preview-mode");
   if (state.previewToken) {
     dom.inputArea.classList.add("preview-mode");
-    dom.input.placeholder = "preview · /publish or /discard";
+    dom.input.placeholder = "preview · publish or discard";
+    refreshInputActions();
     return;
   }
-  if (dom.input.placeholder === "preview · /publish or /discard") {
+  if (
+    dom.input.placeholder === "preview · publish or discard" ||
+    dom.input.placeholder === "preview · /publish or /discard"
+  ) {
     dom.input.placeholder = "Message or ?";
   }
   // Empty-string `currentValue` should fall through to the fallback, not
@@ -189,6 +193,7 @@ export function updateModeUI() {
   if (modeValue.includes("#plan")) dom.inputArea.classList.add("plan-mode");
   else if (modeValue.includes("#autopilot"))
     dom.inputArea.classList.add("autopilot-mode");
+  refreshInputActions();
 }
 
 export function updateStatusBar() {
@@ -310,16 +315,11 @@ export async function reloadSnapshot(
 export function setBusy(on: boolean) {
   state.busy = on;
   if (on) {
-    dom.sendBtn.textContent = "^C";
-    dom.sendBtn.title = "Cancel (Ctrl+C)";
-    dom.sendBtn.classList.add("cancel");
     dom.prompt.classList.add("busy");
   } else {
-    dom.sendBtn.textContent = "↵";
-    dom.sendBtn.title = "Send (Enter)";
-    dom.sendBtn.classList.remove("cancel");
     dom.prompt.classList.remove("busy");
   }
+  refreshInputActions();
 }
 
 export function requestNewSession({
@@ -334,6 +334,16 @@ export function requestNewSession({
 const resetHooks: (() => void)[] = [];
 export function onSessionReset(hook: () => void) {
   resetHooks.push(hook);
+}
+
+// Late-bound action repainter (registered by input-actions module to avoid
+// state.ts → input-actions.ts → state.ts at load time). No-op until set.
+let inputActionsRefresher: () => void = () => {};
+export function setInputActionsRefresher(fn: () => void): void {
+  inputActionsRefresher = fn;
+}
+export function refreshInputActions(): void {
+  inputActionsRefresher();
 }
 
 export function resetSessionUI() {

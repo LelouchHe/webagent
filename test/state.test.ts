@@ -8,6 +8,10 @@ describe("state", () => {
   before(async () => {
     setupDOM();
     mod = await import("../public/js/state.ts");
+    // Loading input-actions registers the action refresher used by setBusy /
+    // updateModeUI to repaint the send/attach buttons. Without this, those
+    // calls don't touch the DOM and assertions on button text fail.
+    await import("../public/js/input-actions.ts");
   });
   after(() => {
     teardownDOM();

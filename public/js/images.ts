@@ -48,11 +48,10 @@ export function renderAttachPreview() {
   });
 }
 
-// --- Event listeners ---
-
-dom.attachBtn.onclick = () => {
-  dom.fileInput.click();
-};
+// Event listeners
+//
+// The attach button's onclick is wired by the input-actions registry
+// (see input.ts → registerInputHandlers); we only own the file-input here.
 dom.fileInput.onchange = async () => {
   for (const f of dom.fileInput.files!) {
     if (f.type.startsWith("image/")) addPendingImage(await readFileAsBase64(f));

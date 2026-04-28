@@ -92,4 +92,12 @@ export function resetState(state: any, dom: any) {
   dom.slashMenu.className = "";
   dom.inputArea.className = "";
   if (dom.statusBar) dom.statusBar.textContent = "";
+  // Preview-mode is per-session and lives in memory only.
+  state.previewToken = null;
+  // Repaint action buttons so `dom.sendBtn.onclick` points back at "send"
+  // (the previous test may have left it on "cancel" via setBusy(true)).
+  // applyInputActions listens for `input` events on dom.input.
+  dom.input.dispatchEvent(
+    new dom.input.ownerDocument.defaultView.Event("input"),
+  );
 }

@@ -25,6 +25,12 @@ describe("images", () => {
     state = stateMod.state;
     dom = stateMod.dom;
     images = await import("../public/js/images.ts");
+    // Register input-action handlers (attach/send/...) so the attach button
+    // click routes through the handler registry to fileInput.click().
+    await import("../public/js/render.ts");
+    await import("../public/js/events.ts");
+    await import("../public/js/commands.ts");
+    await import("../public/js/input.ts");
   });
 
   after(() => {

@@ -37,9 +37,10 @@ test("share: create preview, publish, public viewer renders without CSP violatio
   expect(m, `token not found in system msg:\n${tokenText}`).not.toBeNull();
   const token = m![1];
 
-  // /publish → activate (top-level command; /share publish would be blocked
-  // because preview mode swaps the menu to PREVIEW_ROOT).
-  await sendPrompt(page, "/publish");
+  // Click the ^P button (preview mode replaces #send-btn with publish).
+  // Preview mode disables the textarea, so /publish via slash-typing won't
+  // work anymore — the button (or Ctrl+P) is the only path.
+  await page.locator("#send-btn").click();
   await expect(page.locator("#messages")).toContainText("share published", {
     timeout: 5_000,
   });
