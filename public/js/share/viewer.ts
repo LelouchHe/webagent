@@ -1,17 +1,19 @@
 // Share viewer — read-only public viewer for a session snapshot.
-// Bundled standalone: marked + DOMPurify are imported (self-hosted, no CDN).
-// Renders against the same DOM classes as the main app so styles.css carries
-// over, minus any interaction surfaces (input bar, toolbars, buttons).
+//
+// Renders content events through the SAME `renderContentEvent` module the
+// main app uses (public/js/render-event.ts), so the DOM produced here
+// matches the main UI exactly — same class names, same structure, same
+// styles.css selectors apply. The only differences are:
+//
+//  1. Image src: rewritten from `/api/v1/sessions/.../images/X` to
+//     `/s/<token>/images/X` so unauthenticated viewers can fetch them.
+//  2. Permission buttons: rendered (so the conversation looks complete)
+//     but not wired to any onclick handler. Public viewers cannot act.
+//  3. Code highlighting: lazy-loads the same hljs chunk as the main app.
 
-import { marked } from "marked";
-import DOMPurify from "dompurify";
-import {
-  interpretToolCall,
-  extractToolCallContent,
-  getStatusIcon,
-  formatPlanEntries,
-} from "../event-interpreter.ts";
-import type { StoredEvent, ToolContentItem } from "../../../src/types.ts";
+import { renderContentEvent, isContentEventType } from "../render-event.ts";
+import { enhanceCodeBlocks } from "../highlight.ts";
+import type { StoredEvent } from "../../../src/types.ts";
 
 interface SharePayload {
   schema_version: string;
@@ -26,14 +28,6 @@ interface SharePayload {
   events: StoredEvent[];
 }
 
-function el(tag: string, className?: string, text?: string): HTMLElement {
-  const e = document.createElement(tag);
-  if (className) e.className = className;
-  if (text != null) e.textContent = text;
-  return e;
-}
-
-// Parse event.data — StoredEvent.data is JSON string over the wire.
 function parseData(ev: StoredEvent): Record<string, unknown> {
   if (typeof ev.data === "string") {
     try {
@@ -45,100 +39,13 @@ function parseData(ev: StoredEvent): Record<string, unknown> {
   return ev.data;
 }
 
-function renderMarkdown(text: string, token: string): string {
-  const html = marked.parse(text, { async: false });
-  // Layer 2 defense (Layer 1a/1c already ran on the backend).
-  const clean = DOMPurify.sanitize(html, {
-    USE_PROFILES: { html: true },
-    ALLOWED_ATTR: ["href", "src", "alt", "title", "class"],
-    FORBID_ATTR: ["style", "onerror", "onload", "onclick"],
-    FORBID_TAGS: ["style", "iframe", "form", "math", "svg"],
-  });
-  // Image URL rewrite: any /api/v1/sessions/.../images/X -> /s/:token/images/X.
-  return clean.replace(
-    /\/api\/v1\/sessions\/[^/"']+\/images\/([A-Za-z0-9._-]+)/g,
-    `/s/${encodeURIComponent(token)}/images/$1`,
-  );
-}
-
-function renderEvent(ev: StoredEvent, token: string, host: HTMLElement): void {
-  const d = parseData(ev);
-  const row = el("div", `msg msg-${ev.type}`);
-  row.dataset.seq = String(ev.seq);
-
-  switch (ev.type) {
-    case "user_message": {
-      const text = typeof d.text === "string" ? d.text : "";
-      row.classList.add("user-msg");
-      const body = el("div", "msg-body");
-      body.textContent = text;
-      row.appendChild(body);
-      host.appendChild(row);
-      break;
-    }
-    case "assistant_message": {
-      const text = typeof d.text === "string" ? d.text : "";
-      row.classList.add("assistant-msg");
-      const body = el("div", "msg-body md");
-      body.innerHTML = renderMarkdown(text, token); // xss-ok: DOMPurify + Layer1/Layer2
-      row.appendChild(body);
-      host.appendChild(row);
-      break;
-    }
-    case "thinking": {
-      const text = typeof d.text === "string" ? d.text : "";
-      row.classList.add("thinking");
-      row.appendChild(el("div", "msg-body", text));
-      host.appendChild(row);
-      break;
-    }
-    case "tool_call": {
-      const kind = typeof d.kind === "string" ? d.kind : "";
-      const title = typeof d.title === "string" ? d.title : "";
-      const view = interpretToolCall(kind, title, d.rawInput as never);
-      row.classList.add("tool-call", "pending");
-      row.appendChild(el("span", "tool-icon", view.icon));
-      row.appendChild(el("span", "tool-title", view.title));
-      if (view.detail)
-        row.appendChild(
-          el("span", "tool-detail", `${view.detailPrefix ?? ""}${view.detail}`),
-        );
-      host.appendChild(row);
-      break;
-    }
-    case "tool_call_update": {
-      const status = typeof d.status === "string" ? d.status : "pending";
-      const content = Array.isArray(d.content)
-        ? (d.content as ToolContentItem[])
-        : [];
-      const text = extractToolCallContent(content);
-      const { icon, className } = getStatusIcon(status);
-      row.className = `msg msg-tool_call_update ${className}`;
-      row.appendChild(el("span", "tool-icon", icon));
-      if (text) row.appendChild(el("pre", "tool-output", text));
-      host.appendChild(row);
-      break;
-    }
-    case "plan": {
-      const entries = Array.isArray(d.entries)
-        ? formatPlanEntries(d.entries as never)
-        : [];
-      row.classList.add("plan");
-      const ul = el("ul", "plan-list");
-      for (const p of entries) {
-        const li = el("li", "plan-item");
-        li.appendChild(el("span", "plan-symbol", p.symbol));
-        li.appendChild(el("span", "plan-content", p.content));
-        ul.appendChild(li);
-      }
-      row.appendChild(ul);
-      host.appendChild(row);
-      break;
-    }
-    default:
-      // Unknown event types: skip rather than render raw JSON (avoid shape leaks).
-      return;
-  }
+function makeImageRewriter(token: string): (src: string) => string {
+  const re = /^\/api\/v1\/sessions\/[^/]+\/images\/([A-Za-z0-9._-]+)$/;
+  return (src: string): string => {
+    const m = re.exec(src);
+    if (m) return `/s/${encodeURIComponent(token)}/images/${m[1]}`;
+    return src;
+  };
 }
 
 function formatTimestamp(iso: string): string {
@@ -147,6 +54,64 @@ function formatTimestamp(iso: string): string {
     return d.toISOString().replace("T", " ").slice(0, 16) + "Z";
   } catch {
     return iso;
+  }
+}
+
+function renderEvents(
+  events: StoredEvent[],
+  host: HTMLElement,
+  token: string,
+): void {
+  // Pre-scan resolved permissions so permission_request renders without
+  // buttons when a later permission_response settled it. Mirrors the main
+  // app's replay path (events.ts: ReplayIndex.resolvedPermissions).
+  const resolved = new Set<string>();
+  for (const ev of events) {
+    if (ev.type === "permission_response") {
+      try {
+        const p = JSON.parse(ev.data) as { requestId?: string };
+        if (typeof p.requestId === "string") resolved.add(p.requestId);
+      } catch {
+        /* skip malformed */
+      }
+    }
+  }
+
+  // Per-stream lookup state: tracks tool-call / permission / bash elements
+  // by id so update events can mutate the right element. Equivalent to the
+  // main app's ReplayIndex but local to this viewer instance.
+  const toolCalls = new Map<string, HTMLElement>();
+  const permissions = new Map<string, HTMLElement>();
+  let currentBashEl: HTMLElement | null = null;
+
+  const hooks = {
+    rewriteImageSrc: makeImageRewriter(token),
+    enhanceMarkdown: enhanceCodeBlocks,
+    findToolCallEl: (id: string) => toolCalls.get(id) ?? null,
+    findPermissionEl: (reqId: string) => permissions.get(reqId) ?? null,
+    findBashEl: () => currentBashEl,
+    isPermissionResolved: (reqId: string) => resolved.has(reqId),
+  };
+
+  for (const ev of events) {
+    if (!isContentEventType(ev.type)) continue;
+    const d = parseData(ev);
+    const el = renderContentEvent(ev.type, d, hooks);
+    if (el) {
+      host.appendChild(el);
+      if (ev.type === "tool_call" && typeof d.id === "string") {
+        toolCalls.set(d.id, el);
+      } else if (
+        ev.type === "permission_request" &&
+        typeof d.requestId === "string"
+      ) {
+        permissions.set(d.requestId, el);
+      } else if (ev.type === "bash_command") {
+        currentBashEl = el;
+      }
+    } else if (ev.type === "bash_result") {
+      currentBashEl = null;
+    }
   }
 }
 
@@ -205,9 +170,7 @@ async function main(): Promise<void> {
     infoEl.textContent = name ? `shared by ${name} · ${title}` : title;
   }
 
-  for (const ev of payload.events) {
-    renderEvent(ev, token, messagesEl);
-  }
+  renderEvents(payload.events, messagesEl, token);
 
   if (footerMetaEl) {
     footerMetaEl.textContent = `snapshot #${payload.share.snapshot_seq} · ${formatTimestamp(payload.share.shared_at ?? payload.share.created_at)}`;

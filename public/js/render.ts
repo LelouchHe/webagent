@@ -2,18 +2,11 @@
 
 import { dom, state } from "./state.ts";
 import { enhanceCodeBlocks } from "./highlight.ts";
-import { marked } from "marked";
-import DOMPurify from "dompurify";
 
-import type { RawInput, DiffLine } from "../../src/types.ts";
-import { parseDiff } from "./event-interpreter.ts";
-
-// --- Markdown ---
-marked.setOptions({ breaks: true, gfm: true });
-
-export function renderMd(text: string): string {
-  return DOMPurify.sanitize(marked.parse(text) as string);
-}
+// Pure DOM helpers live in render-event.ts (single source for both main app
+// and share viewer). Re-exported here for callers that want them via render.ts.
+export { escHtml, renderMd, renderPatchDiff } from "./render-event.ts";
+import { escHtml, renderMd } from "./render-event.ts";
 
 // --- Message helpers ---
 
@@ -130,11 +123,7 @@ export function scrollToBottom(force?: boolean) {
   state.followMessages = isNearBottom(el);
 }
 
-export function escHtml(s: string): string {
-  const d = document.createElement("div");
-  d.textContent = s;
-  return d.innerHTML;
-}
+// (escHtml is exported via the re-export at the top of this file.)
 
 export function formatLocalTime(
   utc: string | number | null | undefined,
@@ -150,27 +139,6 @@ export function formatLocalTime(
   if (isNaN(d.getTime())) return "";
   const pad = (n: number) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}
-
-const DIFF_KIND_CLASS: Record<DiffLine["kind"], string | null> = {
-  file: "diff-file",
-  hunk: "diff-hunk",
-  add: "diff-add",
-  del: "diff-del",
-  context: null,
-};
-
-export function renderPatchDiff(ri: RawInput | undefined): string | null {
-  const lines = parseDiff(ri);
-  if (!lines) return null;
-  return lines
-    .map((line) => {
-      const cls = DIFF_KIND_CLASS[line.kind];
-      return cls
-        ? `<span class="${cls}">${escHtml(line.text)}</span>`
-        : escHtml(line.text);
-    })
-    .join("\n");
 }
 
 // --- Bash command UI ---
