@@ -34,18 +34,68 @@
 
 .share-viewer .share-footer-inner {
   display: flex;
-  justify-content: space-between;
-  gap: 1em;
+  /* Byline-style status line: author · time · powered-by, all on one
+     row when there's room; flex-wrap drops them to additional rows when
+     not, preserving order. Pure CSS: no @media query, the breakpoint
+     emerges from the items' intrinsic widths. */
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.3em 0.6em;
   max-width: 960px;
   margin: 0 auto;
 }
 
-.share-viewer .share-footer-note {
+/* Hide author/meta entirely while empty (loading state, or no
+   display_name). :empty matches when textContent is "". */
+.share-viewer .share-footer-author:empty,
+.share-viewer .share-footer-meta:empty {
+  display: none;
+}
+
+/* Bullet separator: placed AFTER a non-empty element rather than before
+   the next one. Two consequences:
+   1. The bullet inherits color from its host element (gray author / gray
+      meta), so it can never appear in the link's green.
+   2. :not(:empty) makes the bullet auto-disappear during loading and
+      whenever a slot has no content — no orphan bullets, no JS coordination.
+   Display: inline-block stops the meta span's dotted underline from
+   bleeding onto the bullet (text-decoration only blocks at non-inline
+   formatting contexts). */
+.share-viewer .share-footer-author:not(:empty)::after,
+.share-viewer .share-footer-meta:not(:empty)::after {
+  content: " ·";
+  opacity: 0.5;
+  margin-left: 0.05em;
+  display: inline-block;
+  text-decoration: none;
+}
+
+.share-viewer .share-footer-author {
   opacity: 0.85;
 }
+
+.share-viewer .share-footer-promo {
+  /* Visible link: green accent (matches the >_ logo) + persistent
+     underline. No external-link icon — this app's terminal aesthetic
+     uses underline as the sole click affordance. */
+  color: var(--green);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.share-viewer .share-footer-promo:hover,
+.share-viewer .share-footer-promo:focus-visible {
+  filter: brightness(1.2);
+}
+
 .share-viewer .share-footer-meta {
   opacity: 0.6;
   font-family: var(--mono, monospace);
+  /* Subtle dotted underline + help cursor signals "hover for more" —
+     the tooltip reveals the exact UTC timestamp behind the relative
+     label ("5m ago" → "2026-04-28 05:19 UTC"). */
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
+  cursor: help;
 }
 
 .share-gone {

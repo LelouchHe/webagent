@@ -13,6 +13,7 @@
 
 import { renderContentEvent, isContentEventType } from "../render-event.ts";
 import { enhanceCodeBlocks } from "../highlight.ts";
+import { formatRelativeTime, formatExactUtc } from "./relative-time.ts";
 import type { StoredEvent } from "../../../src/types.ts";
 
 interface SharePayload {
@@ -46,15 +47,6 @@ function makeImageRewriter(token: string): (src: string) => string {
     if (m) return `/s/${encodeURIComponent(token)}/images/${m[1]}`;
     return src;
   };
-}
-
-function formatTimestamp(iso: string): string {
-  try {
-    const d = new Date(iso);
-    return d.toISOString().replace("T", " ").slice(0, 16) + "Z";
-  } catch {
-    return iso;
-  }
 }
 
 function renderEvents(
@@ -133,6 +125,7 @@ async function main(): Promise<void> {
 
   const infoEl = document.getElementById("session-info");
   const messagesEl = document.getElementById("messages");
+  const footerAuthorEl = document.querySelector(".share-footer-author");
   const footerMetaEl = document.querySelector(".share-footer-meta");
   if (!messagesEl) return;
 
@@ -165,17 +158,31 @@ async function main(): Promise<void> {
     : "shared session";
 
   if (infoEl) {
+    // Header shows ONLY the title (already truncated on mobile).
+    // The "shared by ..." attribution moved to the footer where it
+    // gets its own line on narrow screens via flex-wrap.
+    infoEl.textContent = payload.share.session_title ?? "(untitled)";
+  }
+
+  if (footerAuthorEl) {
     const name = payload.share.display_name ?? "";
-    const title = payload.share.session_title ?? "(untitled)";
-    infoEl.textContent = name ? `shared by ${name} · ${title}` : title;
+    // Empty textContent is fine: CSS `.share-footer-author:empty {
+    // display: none }` removes it from layout, and the ::after-bullet
+    // rule's `:not(:empty)` predicate suppresses the separator in turn.
+    footerAuthorEl.textContent = name ? `shared by ${name}` : "";
   }
 
   renderEvents(payload.events, messagesEl, token);
 
   if (footerMetaEl) {
-    footerMetaEl.textContent = formatTimestamp(
-      payload.share.shared_at ?? payload.share.created_at,
-    );
+    const iso = payload.share.shared_at ?? payload.share.created_at;
+    footerMetaEl.textContent = formatRelativeTime(iso, new Date());
+    // Hover tooltip shows the precise UTC timestamp for readers who want
+    // exact provenance — keeps the visible label short while preserving
+    // the discoverable detail.
+    if (footerMetaEl instanceof HTMLElement) {
+      footerMetaEl.title = formatExactUtc(iso);
+    }
   }
 }
 
