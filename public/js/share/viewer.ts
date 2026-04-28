@@ -173,7 +173,9 @@ async function main(): Promise<void> {
   renderEvents(payload.events, messagesEl, token);
 
   if (footerMetaEl) {
-    footerMetaEl.textContent = `snapshot #${payload.share.snapshot_seq} · ${formatTimestamp(payload.share.shared_at ?? payload.share.created_at)}`;
+    footerMetaEl.textContent = formatTimestamp(
+      payload.share.shared_at ?? payload.share.created_at,
+    );
   }
 }
 

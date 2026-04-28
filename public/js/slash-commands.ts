@@ -505,7 +505,7 @@ export const ROOT: CmdNode = {
         const ago = s.shared_at ? formatLocalTime(s.shared_at) : "—";
         return {
           primary: s.token,
-          secondary: `#${s.share_snapshot_seq} · ${ago}`,
+          secondary: ago,
           path: s.session_title ?? s.session_id.slice(0, 8),
           current: s.session_id === state.sessionId,
           onSelect: () => {
@@ -530,7 +530,7 @@ export const ROOT: CmdNode = {
             const ago = s.shared_at ? formatLocalTime(s.shared_at) : "—";
             return {
               primary: s.token,
-              secondary: `#${s.share_snapshot_seq} · ${ago}`,
+              secondary: ago,
               path: s.session_title ?? s.session_id.slice(0, 8),
               onSelect: () => revokeShare(s.token),
             };

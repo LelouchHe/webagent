@@ -109,7 +109,6 @@ export async function createPreview(): Promise<void> {
     addSystem(
       `preview ${action}:\n` +
         `  token         ${data.token}\n` +
-        `  snapshot      #${data.snapshot_seq}\n` +
         `  preview URL   ${previewUrl(data.token)}     (only you can see this)\n` +
         `\n` +
         `  /publish    freeze and make public\n` +
