@@ -31,5 +31,5 @@ export async function replaceCurrentSession({
     addSystem("err: Failed to clear session");
     return;
   }
-  void api.deleteSession(oldId);
+  api.deleteSession(oldId).catch(() => {});
 }
