@@ -209,7 +209,7 @@ describe("input", () => {
       previewUrl: "data:image/png;base64,abc123",
     });
     setFetch(async (url: string) => {
-      if (url.includes("/api/v1/sessions/") && url.includes("/images")) {
+      if (url.includes("/api/v1/sessions/") && url.includes("/attachments")) {
         return {
           ok: true,
           json: async () => ({
@@ -228,7 +228,8 @@ describe("input", () => {
     await new Promise((resolve) => setImmediate(resolve));
 
     const imageCall = fetchCalls.find(
-      (c) => c.url.includes("/api/v1/sessions/") && c.url.includes("/images"),
+      (c) =>
+        c.url.includes("/api/v1/sessions/") && c.url.includes("/attachments"),
     );
     assert.ok(imageCall, "expected an image upload call");
     const msgCall = fetchCalls.find((c) => c.url.includes("/prompt"));

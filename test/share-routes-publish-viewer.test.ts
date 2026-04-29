@@ -527,9 +527,11 @@ describe("share image proxy — GET /s/:token/attachments/:file", () => {
     tmpDir = mkdtempSync(join(tmpdir(), "wa-share-img-"));
     publicDir = mkdtempSync(join(tmpdir(), "wa-share-img-pub-"));
     writeFileSync(join(publicDir, "share-viewer.html"), "<!doctype html>");
-    mkdirSync(join(tmpDir, "images", sessionId), { recursive: true });
+    mkdirSync(join(tmpDir, "sessions", sessionId, "attachments"), {
+      recursive: true,
+    });
     writeFileSync(
-      join(tmpDir, "images", sessionId, "a.png"),
+      join(tmpDir, "sessions", sessionId, "attachments", "a.png"),
       Buffer.from([0x89, 0x50, 0x4e, 0x47]),
     );
 

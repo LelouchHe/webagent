@@ -199,13 +199,13 @@ data/
 ├── webagent.db-shm    # SQLite shared-memory (transient)
 ├── webagent.db-wal    # SQLite write-ahead log (transient)
 ├── vapid.json         # VAPID keypair for Web Push (regenerated if deleted)
-└── images/
-    └── sess/<sessionId>/<eventId>.<ext>   # uploaded images, no per-image metadata
+└── sessions/
+    └── <sessionId>/attachments/<file>   # uploaded files (images, docs, etc.)
 ```
 
 - All paths are inside `data_dir` (defaults to `./data`). The dev config uses `./data-dev`. The E2E suite uses `./test/e2e-data`.
 - `auth.json` is the only file with mode `0600`. The SQLite files inherit umask defaults — that is intentional: SQLite holds session content, not credentials, and tightening the mode breaks `litecli`-style introspection. If your OS user is shared, restrict the parent directory instead.
-- **Backup**: `auth.json` + `webagent.db` are sufficient. The WAL/SHM are transient. Image files in `images/` are referenced by events but the app degrades gracefully (renders broken-image placeholder) if they're missing.
+- **Backup**: `auth.json` + `webagent.db` are sufficient. The WAL/SHM are transient. Attachment files under `sessions/` are referenced by events but the app degrades gracefully (renders broken-image placeholder) if they're missing.
 - **Reset**: `rm -rf data/` and start over. The server will refuse to serve until you `--create-token` again.
 
 ## E2E Test Setup

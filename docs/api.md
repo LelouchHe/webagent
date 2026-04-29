@@ -850,7 +850,7 @@ Upload an image (base64-encoded) for use in prompts.
 
 ```json
 {
-  "path": "images/abc-123/1705312260000.png",
+  "path": "sessions/abc-123/attachments/1705312260000.png",
   "url": "/api/v1/sessions/abc-123/attachments/1705312260000.png"
 }
 ```

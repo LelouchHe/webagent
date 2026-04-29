@@ -440,7 +440,7 @@ describe("Image upload", () => {
       body.url.startsWith("/api/v1/sessions/test-session/attachments/"),
     );
     assert.ok(body.url.endsWith(".png"));
-    assert.ok(body.path.startsWith("images/test-session/"));
+    assert.ok(body.path.startsWith("sessions/test-session/attachments/"));
   });
 
   it("serves uploaded images back via GET", async () => {

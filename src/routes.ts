@@ -1543,9 +1543,9 @@ export function createRequestHandler(
         const ext = mimeType.split("/")[1]?.replace("jpeg", "jpg") ?? "png";
         const seq = Date.now();
         const fileName = `${seq}.${ext}`;
-        const relPath = `images/${sessionId}/${fileName}`;
+        const relPath = `sessions/${sessionId}/attachments/${fileName}`;
         const absPath = join(deps.dataDir, relPath);
-        await mkdir(join(deps.dataDir, "images", sessionId), {
+        await mkdir(join(deps.dataDir, "sessions", sessionId, "attachments"), {
           recursive: true,
         });
         await writeFile(absPath, Buffer.from(data, "base64"));
@@ -1581,8 +1581,14 @@ export function createRequestHandler(
             return;
           }
         }
-        const filePath = join(deps.dataDir, "images", sessionId, file);
-        if (!filePath.startsWith(join(deps.dataDir, "images"))) {
+        const filePath = join(
+          deps.dataDir,
+          "sessions",
+          sessionId,
+          "attachments",
+          file,
+        );
+        if (!filePath.startsWith(join(deps.dataDir, "sessions"))) {
           res.writeHead(403);
           res.end("Forbidden");
           return;

@@ -867,10 +867,14 @@ async function handleViewerImage(
     return;
   }
 
-  const imagesRoot = join(deps.dataDir, "images");
-  const filePath = join(imagesRoot, row.session_id, file);
-  // Final realpath-style guard: must stay under dataDir/attachments/<session_id>.
-  const sessionRoot = join(imagesRoot, row.session_id);
+  const sessionRoot = join(
+    deps.dataDir,
+    "sessions",
+    row.session_id,
+    "attachments",
+  );
+  const filePath = join(sessionRoot, file);
+  // Final realpath-style guard: must stay under <dataDir>/sessions/<sid>/attachments.
   if (!filePath.startsWith(sessionRoot + "/") && filePath !== sessionRoot) {
     res.writeHead(403);
     res.end("Forbidden");
@@ -997,8 +1001,8 @@ async function handleRevoke(
   if (revoked) {
     const reaped = deps.store.reapTombstoneIfOrphaned(row.session_id);
     if (reaped && deps.dataDir) {
-      // Tombstoned session is fully gone; sweep its image directory too.
-      rm(join(deps.dataDir, "images", row.session_id), {
+      // Tombstoned session is fully gone; sweep its attachments directory too.
+      rm(join(deps.dataDir, "sessions", row.session_id), {
         recursive: true,
         force: true,
       }).catch(() => {});

@@ -85,7 +85,7 @@ secret-pattern updates.
 - **Image proxy:** images are served from
   `/s/<token>/attachments/<file>`. Filenames are validated against
   `[A-Za-z0-9._-]+` and the final path must stay under
-  `<data_dir>/attachments/<session_id>/`.
+  `<data_dir>/sessions/<session_id>/attachments/`.
 - **Revoke is immediate and destructive:** `DELETE /api/v1/sessions/<id>/share`
   hard-deletes the row from the `shares` table; subsequent viewer hits
   get HTTP 410. There is no `revoked_at` audit column — revoke is a
