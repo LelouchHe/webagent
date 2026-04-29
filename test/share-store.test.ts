@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Store } from "../src/store.ts";
-import { generateShareToken } from "../src/share/token.ts";
+import { generateShareToken } from "../src/tokens.ts";
 
 describe("shares store", () => {
   let tmpDir: string;

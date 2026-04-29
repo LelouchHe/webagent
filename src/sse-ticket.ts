@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto";
+import { generateSseTicket } from "./tokens.ts";
 
 export interface TicketPrincipal {
   tokenName: string;
@@ -32,7 +32,7 @@ export class TicketStore {
   }
 
   mint(principal: TicketPrincipal): string {
-    const ticket = randomBytes(24).toString("base64url");
+    const ticket = generateSseTicket();
     this.tickets.set(ticket, {
       tokenName: principal.tokenName,
       scope: principal.scope,

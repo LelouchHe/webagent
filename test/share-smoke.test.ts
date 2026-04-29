@@ -147,7 +147,7 @@ describe("share smoke — end-to-end lifecycle", () => {
     );
     assert.equal(r1.status(), 201);
     const token = (r1.json() as { token: string }).token;
-    assert.match(token, /^[A-Za-z0-9_-]{24}$/);
+    assert.match(token, /^[0-9a-f]{36}$/);
 
     // 2. Publish.
     const r2 = mockRes();

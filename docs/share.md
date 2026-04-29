@@ -74,8 +74,10 @@ post-publish rule update is picked up without any migration.
   `default-src 'self'; script-src 'self'; ...`. No inline scripts, no
   CDNs, no remote fetches. The viewer bundle ships `marked` and
   `DOMPurify` as self-hosted ESM.
-- **Token is the capability.** 144-bit random (`randomBytes(18)`,
-  base64url). There is no per-viewer identity; knowledge of the token
+- **Token is the capability.** 144-bit random (`randomBytes(18)` →
+  36 lowercase hex chars). The hex charset is chosen so double-click
+  in a browser selects the whole token (base64url's `-` is a word
+  boundary). There is no per-viewer identity; knowledge of the token
   is sufficient. Treat the URL like a password.
 - **Frame-ancestors deny:** the viewer cannot be embedded.
 - **Referrer-Policy no-referrer**, **X-Robots-Tag noindex, nofollow**.

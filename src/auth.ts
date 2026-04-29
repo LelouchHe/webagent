@@ -1,17 +1,15 @@
-import {
-  randomBytes,
-  createHash,
-  createHmac,
-  timingSafeEqual,
-} from "node:crypto";
+import { createHash, createHmac, timingSafeEqual } from "node:crypto";
+import { generateApiToken } from "./tokens.ts";
 
-const TOKEN_PREFIX = "wat_";
-const TOKEN_BYTES = 32; // 32 bytes -> 43 base64url chars
 const HASH_HEX_LEN = 64; // SHA-256 hex
 
-/** Generate a fresh API token: "wat_" + 43 base64url chars (32 random bytes). */
+/**
+ * Generate a fresh API token. Thin re-export — the canonical generator
+ * lives in `src/tokens.ts` alongside the other auth-bearing token
+ * generators (share, SSE) for a single audit surface.
+ */
 export function generateToken(): string {
-  return TOKEN_PREFIX + randomBytes(TOKEN_BYTES).toString("base64url");
+  return generateApiToken();
 }
 
 /** Hash a token with SHA-256 -> 64-char lowercase hex. */

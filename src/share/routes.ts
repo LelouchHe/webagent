@@ -8,7 +8,7 @@ import type { SessionManager } from "../session-manager.ts";
 import type { Config } from "../config.ts";
 import type { StoredEvent } from "../types.ts";
 import type { ShareRow } from "../store.ts";
-import { generateShareToken } from "./token.ts";
+import { generateShareToken } from "../tokens.ts";
 import { SanitizeError } from "./sanitize.ts";
 import { getOrComputeProjection } from "./projection.ts";
 import { withSessionLock } from "./mutex.ts";
@@ -119,7 +119,7 @@ export async function handleShareRoutes(
 
   // Viewer image proxy — must come before general /s/:token HTML match.
   const imgMatch = url.match(
-    /^\/s\/([A-Za-z0-9_-]{24})\/images\/([^/?]+)\/?(?:\?.*)?$/,
+    /^\/s\/((?:[0-9a-f]{36}|[A-Za-z0-9_-]{24}))\/images\/([^/?]+)\/?(?:\?.*)?$/,
   );
   if (imgMatch && method === "GET") {
     await handleViewerImage(
@@ -132,7 +132,9 @@ export async function handleShareRoutes(
   }
 
   // Viewer HTML shell.
-  const viewerMatch = url.match(/^\/s\/([A-Za-z0-9_-]{24})\/?(?:\?.*)?$/);
+  const viewerMatch = url.match(
+    /^\/s\/((?:[0-9a-f]{36}|[A-Za-z0-9_-]{24}))\/?(?:\?.*)?$/,
+  );
   if (viewerMatch && method === "GET") {
     await handleViewerHtml(res, deps, viewerMatch[1]);
     return true;
@@ -178,7 +180,7 @@ export async function handleShareRoutes(
   }
 
   const sharedEventsMatch = url.match(
-    /^\/api\/v1\/shared\/([A-Za-z0-9_-]{24})\/events\/?(?:\?.*)?$/,
+    /^\/api\/v1\/shared\/((?:[0-9a-f]{36}|[A-Za-z0-9_-]{24}))\/events\/?(?:\?.*)?$/,
   );
   if (sharedEventsMatch && method === "GET") {
     await handleSharedEvents(res, deps, sharedEventsMatch[1]);
