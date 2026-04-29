@@ -209,16 +209,6 @@ describe("DELETE /api/v1/sessions/:id/share — revoke", () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("401 without owner headers", async () => {
-    const r = mockRes();
-    await handleShareRoutes(
-      publicReq(`/api/v1/sessions/${sid}/share`, "DELETE"),
-      r.res,
-      deps,
-    );
-    assert.equal(r.status(), 401);
-  });
-
   it("400 when token missing", async () => {
     const r = mockRes();
     await handleShareRoutes(
@@ -314,16 +304,6 @@ describe("PATCH /api/v1/sessions/:id/share — label/display_name", () => {
   afterEach(() => {
     store.close();
     rmSync(tmpDir, { recursive: true, force: true });
-  });
-
-  it("401 without owner", async () => {
-    const r = mockRes();
-    await handleShareRoutes(
-      publicReq(`/api/v1/sessions/${sid}/share`, "PATCH"),
-      r.res,
-      deps,
-    );
-    assert.equal(r.status(), 401);
   });
 
   it("updates owner_label on active share", async () => {
@@ -460,12 +440,6 @@ describe("GET /api/v1/shares — owner list", () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("401 without owner", async () => {
-    const r = mockRes();
-    await handleShareRoutes(publicReq("/api/v1/shares"), r.res, deps);
-    assert.equal(r.status(), 401);
-  });
-
   it("returns empty list initially", async () => {
     const r = mockRes();
     await handleShareRoutes(ownerReq("/api/v1/shares"), r.res, deps);
@@ -524,12 +498,6 @@ describe("GET/PUT /api/v1/share/by — default display_name", () => {
   afterEach(() => {
     store.close();
     rmSync(tmpDir, { recursive: true, force: true });
-  });
-
-  it("401 without owner headers", async () => {
-    const r = mockRes();
-    await handleShareRoutes(publicReq("/api/v1/share/by"), r.res, deps);
-    assert.equal(r.status(), 401);
   });
 
   it("GET returns null when unset", async () => {

@@ -124,10 +124,12 @@ internal_hosts = []             # sanitizer will scrub these hostnames
 | `GET  /s/:token/images/:file` | public | Image proxy |
 | `GET  /api/v1/shared/:token/events` | public | Viewer JSON |
 
-All owner routes go through `assertOwner()` which requires either
-`Sec-Fetch-Site: same-origin` OR an Origin/Host match. All tokens in
-owner reads use the `X-Share-Token` header; tokens never appear in
-owner-side URLs.
+All owner routes are gated by the global Bearer-token middleware (see
+[Security](security.md)). There is no extra `Sec-Fetch-Site` /
+Origin check on top — Bearer in `Authorization` is sufficient (it can't
+be read cross-origin from `localStorage`, so CSRF can't reach these
+routes). All tokens in owner reads use the `X-Share-Token` header;
+tokens never appear in owner-side URLs.
 
 ## Operational notes
 

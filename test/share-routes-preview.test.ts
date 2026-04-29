@@ -122,24 +122,6 @@ describe("share preview routes — POST /api/v1/sessions/:id/share", () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("401 when owner-auth fails (naked curl)", async () => {
-    const m = mockRes();
-    await handleShareRoutes(
-      {
-        url: `/api/v1/sessions/${sessionId}/share`,
-        method: "POST",
-        headers: {},
-        on(_ev: string, cb: () => void) {
-          setImmediate(cb);
-          return this;
-        },
-      } as unknown as IncomingMessage,
-      m.res,
-      deps,
-    );
-    assert.equal(m.status(), 401);
-  });
-
   it("404 when session does not exist", async () => {
     const m = mockRes();
     await handleShareRoutes(

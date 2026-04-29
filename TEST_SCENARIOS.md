@@ -256,11 +256,6 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - `revoked_at` column migration (drop on existing DBs)
   - revoke is hard delete; preview-GC sweep deletes only stale unactivated rows
 
-- `test/share-auth.test.ts`
-  - `assertOwner` honors `Sec-Fetch-Site: same-origin` and Origin/Host match
-  - cross-origin / no-origin requests are 403
-  - viewer routes are public (no owner check)
-
 - `test/share-sanitize.test.ts` / `test/share-sanitize-secrets.test.ts`
   - secret detection → hard-reject with `event_id` + `rule`
   - path / hostname soft-redact placeholders

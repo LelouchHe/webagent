@@ -9,7 +9,6 @@ import type { Config } from "../config.ts";
 import type { StoredEvent } from "../types.ts";
 import type { ShareRow } from "../store.ts";
 import { generateShareToken } from "./token.ts";
-import { assertOwner, OwnerAuthError } from "./auth.ts";
 import { SanitizeError } from "./sanitize.ts";
 import { getOrComputeProjection } from "./projection.ts";
 import { withSessionLock } from "./mutex.ts";
@@ -232,10 +231,6 @@ export async function handleShareRoutes(
   return false;
 }
 
-function ownerReject(res: ServerResponse, err: OwnerAuthError): void {
-  json(res, err.status, { error: "owner auth required", reason: err.reason });
-}
-
 const DEFAULT_DISPLAY_NAME_KEY = "share.default_display_name";
 
 function resolveDisplayName(
@@ -264,16 +259,6 @@ async function handlePreviewCreate(
   deps: ShareRouteDeps,
   sessionId: string,
 ): Promise<void> {
-  try {
-    assertOwner(req);
-  } catch (e) {
-    if (e instanceof OwnerAuthError) {
-      ownerReject(res, e);
-      return;
-    }
-    throw e;
-  }
-
   const session = deps.store.getSession(sessionId);
   if (!session) {
     json(res, 404, { error: "session not found" });
@@ -414,16 +399,6 @@ async function handlePreviewRead(
   deps: ShareRouteDeps,
   sessionId: string,
 ): Promise<void> {
-  try {
-    assertOwner(req);
-  } catch (e) {
-    if (e instanceof OwnerAuthError) {
-      ownerReject(res, e);
-      return;
-    }
-    throw e;
-  }
-
   const tokenHeader = req.headers["x-share-token"];
   const token = Array.isArray(tokenHeader) ? tokenHeader[0] : tokenHeader;
   if (!token) {
@@ -525,16 +500,6 @@ async function handlePublish(
   deps: ShareRouteDeps,
   sessionId: string,
 ): Promise<void> {
-  try {
-    assertOwner(req);
-  } catch (e) {
-    if (e instanceof OwnerAuthError) {
-      ownerReject(res, e);
-      return;
-    }
-    throw e;
-  }
-
   let body: {
     token?: string;
     display_name?: string | null;
@@ -975,16 +940,6 @@ async function handleRevoke(
   deps: ShareRouteDeps,
   sessionId: string,
 ): Promise<void> {
-  try {
-    assertOwner(req);
-  } catch (e) {
-    if (e instanceof OwnerAuthError) {
-      ownerReject(res, e);
-      return;
-    }
-    throw e;
-  }
-
   let body: { token?: string };
   try {
     body = (await readJson(req)) as typeof body;
@@ -1053,16 +1008,6 @@ async function handlePatchLabel(
   deps: ShareRouteDeps,
   sessionId: string,
 ): Promise<void> {
-  try {
-    assertOwner(req);
-  } catch (e) {
-    if (e instanceof OwnerAuthError) {
-      ownerReject(res, e);
-      return;
-    }
-    throw e;
-  }
-
   let body: { token?: string; owner_label?: unknown; display_name?: unknown };
   try {
     body = (await readJson(req)) as typeof body;
@@ -1136,15 +1081,6 @@ async function handleOwnerList(
   res: ServerResponse,
   deps: ShareRouteDeps,
 ): Promise<void> {
-  try {
-    assertOwner(req);
-  } catch (e) {
-    if (e instanceof OwnerAuthError) {
-      ownerReject(res, e);
-      return;
-    }
-    throw e;
-  }
   const rows = deps.store.listOwnerShares();
   json(res, 200, { shares: rows });
 }
@@ -1159,15 +1095,6 @@ async function handleByGet(
   res: ServerResponse,
   deps: ShareRouteDeps,
 ): Promise<void> {
-  try {
-    assertOwner(req);
-  } catch (e) {
-    if (e instanceof OwnerAuthError) {
-      ownerReject(res, e);
-      return;
-    }
-    throw e;
-  }
   const value = deps.store.getOwnerPref(DEFAULT_DISPLAY_NAME_KEY) ?? null;
   json(res, 200, { value });
 }
@@ -1182,16 +1109,6 @@ async function handleByPut(
   res: ServerResponse,
   deps: ShareRouteDeps,
 ): Promise<void> {
-  try {
-    assertOwner(req);
-  } catch (e) {
-    if (e instanceof OwnerAuthError) {
-      ownerReject(res, e);
-      return;
-    }
-    throw e;
-  }
-
   let body: { value?: unknown };
   try {
     body = (await readJson(req)) as typeof body;

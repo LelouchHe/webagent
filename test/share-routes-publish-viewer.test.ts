@@ -176,16 +176,6 @@ describe("share publish route — POST /api/v1/sessions/:id/share/publish", () =
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("401 without owner headers", async () => {
-    const r = mockRes();
-    await handleShareRoutes(
-      publicReq(`/api/v1/sessions/${sessionId}/share/publish`, "POST"),
-      r.res,
-      deps,
-    );
-    assert.equal(r.status(), 401);
-  });
-
   it("activates preview, flips shared_at, returns public_url", async () => {
     const r1 = mockRes();
     await handleShareRoutes(
