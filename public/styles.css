@@ -379,6 +379,15 @@ body {
   font-size: 15px;
   padding: 2px 14px;
   color: var(--text-dim);
+  white-space: pre-wrap;
+}
+.system-msg a {
+  color: var(--accent);
+  text-decoration: underline;
+  word-break: break-all;
+}
+.system-msg a:hover {
+  color: var(--text);
 }
 
 /* Tool calls */

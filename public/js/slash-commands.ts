@@ -24,8 +24,6 @@ import type { SessionSummary } from "../../src/types.ts";
 import { TOKEN_STORAGE_KEY } from "./login-core.ts";
 import {
   createPreview,
-  publishPreview,
-  cancelPreview,
   listOwnerShares,
   revokeShare,
   openShare,
@@ -689,29 +687,6 @@ export const SHORTCUTS = [
 ];
 
 export const TIPS = [{ text: "Tap ❯ prompt to cycle mode" }];
-
-// Strict modal menu used while a /share preview is active. The walker reads
-// `state.previewToken` in commands.ts and swaps ROOT → PREVIEW_ROOT, so the
-// menu only ever shows /publish + /cancel. Other slash text is intercepted
-// in slash-exec.ts. Refresh / session-switch clears state.previewToken (see
-// resetSessionUI) and the backend preview row TTLs out.
-export const PREVIEW_ROOT: CmdNode = {
-  name: "<preview>",
-  children: [
-    {
-      name: "/publish",
-      desc: "Publish preview",
-      onSelect: () => publishPreview(),
-    },
-    {
-      name: "/cancel",
-      desc: "Cancel preview",
-      onSelect: () => {
-        cancelPreview();
-      },
-    },
-  ],
-};
 
 // expose for tests
 export function __resetNotifyActive(): void {

@@ -25,26 +25,29 @@ test("share: create preview, publish, public viewer renders without CSP violatio
     timeout: 10_000,
   });
 
-  // /share → owner-side preview (strict modal: only /publish or /cancel accepted)
+  // /share → owner-side preview. Input is disabled in preview mode; only
+  // the ^P / ^C buttons (or Ctrl+P / Ctrl+C) work.
   await sendPrompt(page, "/share");
   await expect(page.locator("#messages")).toContainText("preview ready", {
     timeout: 5_000,
   });
-
-  // Extract token from the system message body.
-  const tokenText = await page.locator(".system-msg").last().innerText();
-  const m = /token\s+([A-Za-z0-9_-]{24})/.exec(tokenText);
-  expect(m, `token not found in system msg:\n${tokenText}`).not.toBeNull();
-  const token = m![1];
 
   // Click the ^P button (preview mode places publish in the LEFT slot,
   // i.e. #attach-btn; #send-btn becomes ^C cancel). Preview mode disables
   // the textarea, so /publish via slash-typing won't work — the button
   // (or Ctrl+P) is the only path.
   await page.locator("#attach-btn").click();
-  await expect(page.locator("#messages")).toContainText("share published", {
+  await expect(page.locator("#messages")).toContainText("share: published", {
     timeout: 5_000,
   });
+
+  // Extract token from the published anchor's href (clickable link is the
+  // canonical surface; published msg doesn't print the token separately).
+  const href = await page.locator(".system-msg a").last().getAttribute("href");
+  expect(href, "published anchor has no href").not.toBeNull();
+  const m = /\/s\/([A-Za-z0-9_-]{24})$/.exec(href!);
+  expect(m, `token not found in href: ${href}`).not.toBeNull();
+  const token = m![1];
 
   // Hit the public JSON API first — confirms session_id is NOT leaked.
   const jsonRes = await request.get(`/api/v1/shared/${token}/events`);

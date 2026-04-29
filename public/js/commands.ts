@@ -5,7 +5,7 @@
 // plus Tab/Click/keyboard dispatch. Execution paths (onSelect handlers) live
 // in slash-commands.ts so this file stays a thin pipeline.
 
-import { dom, setInputValue, state } from "./state.ts";
+import { dom, setInputValue } from "./state.ts";
 import { addSystem } from "./render.ts";
 import {
   resolvePath,
@@ -15,16 +15,10 @@ import {
   type FetchData,
 } from "./slash-tree.ts";
 import { renderItem } from "./slash-render.ts";
-import { ROOT, PREVIEW_ROOT } from "./slash-commands.ts";
+import { ROOT } from "./slash-commands.ts";
 import { handleSlashCommand } from "./slash-exec.ts";
 
 export { handleSlashCommand };
-
-// Active root depends on /share preview mode. While previewToken is set,
-// the menu is a strict modal showing only /publish and /cancel.
-function activeRoot(): CmdNode {
-  return state.previewToken ? PREVIEW_ROOT : ROOT;
-}
 
 // --- walker state ---
 
@@ -59,7 +53,7 @@ export function updateSlashMenu(): void {
     return;
   }
 
-  const { node, pathPrefix, tailQuery } = resolvePath(text, activeRoot());
+  const { node, pathPrefix, tailQuery } = resolvePath(text, ROOT);
 
   // Path changed → reset data, kick fresh fetch if node has one.
   // Active-path guard: stale fetch responses are dropped if currentPath has
@@ -106,7 +100,7 @@ export function updateSlashMenu(): void {
 // Re-resolve tailQuery from current input (used by async fetch callbacks
 // that may fire after input has changed but currentPath is still valid).
 function currentTailQueryFromInput(): string {
-  const { tailQuery } = resolvePath(dom.input.value, activeRoot());
+  const { tailQuery } = resolvePath(dom.input.value, ROOT);
   return tailQuery;
 }
 
@@ -167,7 +161,7 @@ export function hideSlashMenu(): void {
   selectedIdx = -1;
   candidates = [];
   currentPath = null;
-  currentNode = activeRoot();
+  currentNode = ROOT;
   currentData = undefined;
   dismissedFor = dom.input.value;
 }

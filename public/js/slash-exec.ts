@@ -24,8 +24,6 @@ import { TOKEN_STORAGE_KEY } from "./login-core.ts";
 import { ROOT, consumeInbox } from "./slash-commands.ts";
 import {
   createPreview,
-  publishPreview,
-  cancelPreview,
   revokeShare,
   setDefaultDisplayName,
   openShare,
@@ -98,17 +96,9 @@ export async function handleSlashCommand(text: string): Promise<boolean> {
   const cmd = parts[0].toLowerCase();
   const arg = parts.slice(1).join(" ").trim();
 
-  // /share preview-mode strict modal: only /publish and /cancel are
-  // accepted. Any other slash is intercepted with a hint; it does NOT
-  // fall through to the agent (the typed text starts with `/` so users
-  // clearly meant a command). Non-slash text is handled by the caller
-  // (input.ts) and still goes to the agent — preview mode never blocks
-  // the conversation flow itself.
-  if (state.previewToken && cmd !== "/publish" && cmd !== "/cancel") {
-    addSystem("share: in preview mode — /publish or /cancel first");
-    return true;
-  }
-
+  // Preview mode disables the input textarea, so this dispatch is only
+  // reachable from the regular conversation flow — there's no need to
+  // intercept "what if user types /publish in preview" anymore.
   switch (cmd) {
     case "/share": {
       const subParts = arg.split(/\s+/);
@@ -141,11 +131,6 @@ export async function handleSlashCommand(text: string): Promise<boolean> {
       addSystem(
         `share: unknown subcommand '${sub}' — try /share, /share by <name>, /share <token>, or /share revoke <token>`,
       );
-      return true;
-    }
-
-    case "/publish": {
-      await publishPreview();
       return true;
     }
 
@@ -362,12 +347,10 @@ export async function handleSlashCommand(text: string): Promise<boolean> {
     }
 
     case "/cancel":
-      // Context-dispatched: preview mode → cancel the preview; busy turn →
-      // cancel the prompt; otherwise nothing to cancel. Preview and busy
-      // are mutex (preview create requires not-busy), so this is safe.
-      if (state.previewToken) {
-        cancelPreview();
-      } else if (state.busy) {
+      // Preview mode disables the input, so /cancel from typed slash can
+      // only mean "cancel the busy turn". The ^C button covers the
+      // preview-cancel case.
+      if (state.busy) {
         sendCancel();
         addSystem("^C");
       } else {

@@ -3,10 +3,11 @@
 // Per /share v1.1 spec (locked):
 //   • `/share` (no arg)   → list active shares; Enter = create new preview
 //   • `/share revoke <t>` → revoke a public share
-//   • Preview mode (set by createPreview): menu switches to PREVIEW_ROOT,
-//     only `/publish` and `/cancel` are accepted. Other slash commands
-//     reply "share: in preview mode — /publish or /cancel first".
-//   • Discard does NOT call backend — TTL cleans the unused preview row.
+//   • Preview mode (set by createPreview) disables the input textarea.
+//     The only paths out are the ^P (publish) / ^C (cancel) buttons or
+//     their Ctrl+P / Ctrl+C shortcuts. There is no slash channel into
+//     preview-mode actions — slash text reaches the agent as normal.
+//   • Cancel does NOT call backend — TTL cleans the unused preview row.
 //   • Page refresh / session switch loses previewToken (resetSessionUI
 //     clears it); the backend preview row TTLs out the same way.
 //
@@ -53,10 +54,6 @@ export interface ShareListRow {
   last_accessed_at: number | null;
 }
 
-function previewUrl(token: string): string {
-  return `${location.origin}/s/${token}`;
-}
-
 function publicUrl(rawPath: string, token: string): string {
   if (rawPath.startsWith("http")) return rawPath;
   if (rawPath) return `${location.origin}${rawPath}`;
@@ -66,7 +63,8 @@ function publicUrl(rawPath: string, token: string): string {
 /**
  * POST /api/v1/sessions/:id/share — create (or reuse) a preview snapshot.
  * On success: sets `state.previewToken` so the slash menu switches to
- * PREVIEW_ROOT and prints an inline owner-side report.
+ * On success: sets `state.previewToken` so the input area enters preview
+ * mode (textarea disabled, ^P/^C buttons) and prints an inline summary.
  */
 export async function createPreview(): Promise<void> {
   if (!state.sessionId) {
@@ -105,17 +103,10 @@ export async function createPreview(): Promise<void> {
     state.previewToken = data.token;
     updateModeUI();
 
+    // Input is disabled in preview mode — the only paths out are the
+    // ^P/^C buttons (or their Ctrl shortcuts). Slash hints would be wrong.
     const action = data.reused ? "reused" : "ready";
-    addSystem(
-      `preview ${action}:\n` +
-        `  token         ${data.token}\n` +
-        `  preview URL   ${previewUrl(data.token)}     (only you can see this)\n` +
-        `\n` +
-        `  /publish    freeze and make public\n` +
-        `  /cancel     drop this preview\n` +
-        `\n` +
-        `  to keep chatting, open this session in a new tab`,
-    );
+    addSystem(`share: preview ${action} — ^P publish · ^C cancel`);
   } catch (err) {
     slog.error("preview create error", { err });
     addSystem(`share: network error — ${String(err)}`);
@@ -164,13 +155,18 @@ export async function publishPreview(): Promise<void> {
     const url = publicUrl(data.public_url, data.token);
     state.previewToken = null;
     updateModeUI();
-    addSystem(
-      `share published:\n` +
-        `  public URL    ${url}\n` +
-        `  token         ${data.token}\n` +
-        `\n` +
-        `  ›  /share revoke ${data.token}    take this link down`,
-    );
+
+    // Render the URL as a real anchor: clickable, right-click → Copy Link
+    // works, and selecting just the link is easier than scraping a pre-wrap
+    // text block. Token isn't shown — it's the URL suffix; revoke happens
+    // later via the `/share` list.
+    const el = addSystem("share: published\n");
+    const a = document.createElement("a");
+    a.href = url;
+    a.textContent = url;
+    a.target = "_blank";
+    a.rel = "noopener noreferrer";
+    el.appendChild(a);
   } catch (err) {
     slog.error("publish error", { err });
     addSystem(`share: network error — ${String(err)}`);

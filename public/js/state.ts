@@ -105,9 +105,9 @@ export const state = {
   replayQueue: [] as AgentEvent[],
   agentReloading: false,
   recentPathsLimit: 10,
-  // /share preview mode: when non-null, the slash menu switches to
-  // PREVIEW_ROOT (/publish, /discard only) and other slash commands are
-  // blocked. Set by createPreview, cleared by publishPreview / discardPreview.
+  // /share preview mode: when non-null, the input area switches to
+  // preview UI (textarea disabled, ^P publish / ^C cancel buttons).
+  // Set by createPreview, cleared by publishPreview / cancelPreview.
   // Lost on refresh / session switch (TTL prunes preview backend-side).
   previewToken: null as string | null,
 };
