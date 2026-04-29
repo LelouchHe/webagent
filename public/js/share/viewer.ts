@@ -14,6 +14,7 @@
 import { renderContentEvent, isContentEventType } from "../render-event.ts";
 import { enhanceCodeBlocks } from "../highlight.ts";
 import { formatRelativeTime, formatExactUtc } from "./relative-time.ts";
+import { makeImageRewriter } from "./image-rewriter.ts";
 import type { StoredEvent } from "../../../src/types.ts";
 
 interface SharePayload {
@@ -38,15 +39,6 @@ function parseData(ev: StoredEvent): Record<string, unknown> {
     }
   }
   return ev.data;
-}
-
-function makeImageRewriter(token: string): (src: string) => string {
-  const re = /^\/api\/v1\/sessions\/[^/]+\/images\/([A-Za-z0-9._-]+)$/;
-  return (src: string): string => {
-    const m = re.exec(src);
-    if (m) return `/s/${encodeURIComponent(token)}/images/${m[1]}`;
-    return src;
-  };
 }
 
 function renderEvents(
