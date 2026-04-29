@@ -265,16 +265,17 @@ async function notifyOff(): Promise<void> {
 // Unified row layout for /share lists (both top-level and revoke child).
 // The primary slot holds the token (so Tab fills `/share <token>` for the
 // open default; in the revoke child Tab fills `/share revoke <token>`).
-// The path slot shows the URL — left-indented dim text reads as a file
-// path and matches the "this is the link" mental model. pathSecondary
-// carries the session title when present.
+// Secondary carries the session title (line 1, prominent). The path slot
+// shows the URL — left-indented dim text reads as a file path and matches
+// the "this is the link" mental model. pathSecondary carries the timestamp
+// (line 2, dim, right-aligned).
 function shareRowSpec(s: ShareListRow, kind: "open" | "revoke") {
   const ago = s.shared_at ? formatLocalTime(s.shared_at) : "—";
   return {
     primary: s.token,
-    secondary: ago,
+    secondary: s.session_title ?? undefined,
     path: `/s/${s.token}`,
-    pathSecondary: s.session_title ?? undefined,
+    pathSecondary: ago,
     onSelect: () => {
       if (kind === "open") openShare(s.token);
       else void revokeShare(s.token);
@@ -522,10 +523,18 @@ export const ROOT: CmdNode = {
       fetch: listOwnerShares,
       toSpec: (item: unknown) => shareRowSpec(item as ShareListRow, "open"),
       freeform: (q) => {
-        if (q.trim()) return null;
+        const trimmed = q.trim();
+        if (!trimmed) {
+          return {
+            primary: "create new share preview",
+            onSelect: () => createPreview(),
+          };
+        }
         return {
-          primary: "create new share preview",
-          onSelect: () => createPreview(),
+          primary: `open share '${trimmed}'`,
+          onSelect: () => {
+            openShare(trimmed);
+          },
         };
       },
       children: [
