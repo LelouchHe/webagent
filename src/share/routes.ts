@@ -10,7 +10,15 @@ import type { StoredEvent } from "../types.ts";
 import type { ShareRow } from "../store.ts";
 import { generateShareToken } from "../tokens.ts";
 import { SanitizeError, sanitizeEventsForShare } from "./sanitize.ts";
-import { withSessionLock } from "./mutex.ts";
+
+// In-flight dedup for concurrent POST /share on the same session.
+// First caller does the work; concurrent callers await the same promise.
+// Idempotent because the body re-checks for an existing preview before
+// inserting.
+const pendingShareCreates = new Map<
+  string,
+  Promise<{ row: ShareRow; reused: boolean }>
+>();
 
 export interface ShareRouteDeps {
   store: Store;
@@ -317,33 +325,40 @@ async function handlePreviewCreate(
   const ownerLabel = olResult.value === "" ? null : olResult.value;
 
   try {
-    const result = await withSessionLock(`share:${sessionId}`, async () => {
-      // Dedup first — existing preview short-circuits the gate.
-      const existing = deps.store.findActivePreviewBySession(sessionId);
-      if (existing) return { row: existing, reused: true };
+    const existingInflight = pendingShareCreates.get(sessionId);
+    const inflight =
+      existingInflight ??
+      (async () => {
+        // Dedup first — existing preview short-circuits the gate.
+        const existing = deps.store.findActivePreviewBySession(sessionId);
+        if (existing) return { row: existing, reused: true };
 
-      // Flush buffered chunks so snapshot_seq includes the streaming tail.
-      deps.sessions?.flushBuffers(sessionId);
+        // Flush buffered chunks so snapshot_seq includes the streaming tail.
+        deps.sessions?.flushBuffers(sessionId);
 
-      const allEvents = deps.store.getEvents(sessionId);
-      const snapshotSeq =
-        allEvents.length > 0 ? Math.max(...allEvents.map((e) => e.seq)) : 0;
+        const allEvents = deps.store.getEvents(sessionId);
+        const snapshotSeq =
+          allEvents.length > 0 ? Math.max(...allEvents.map((e) => e.seq)) : 0;
 
-      // Gate: run the sanitizer on-write. Hard-rejects throw here so we
-      // never create a preview row for a session with leaked secrets.
-      runSanitizeGate(allEvents, session.cwd, deps.config.internal_hosts);
+        // Gate: run the sanitizer on-write. Hard-rejects throw here so we
+        // never create a preview row for a session with leaked secrets.
+        runSanitizeGate(allEvents, session.cwd, deps.config.internal_hosts);
 
-      const token = generateShareToken();
-      const row = deps.store.insertSharePreview({
-        token,
-        sessionId,
-        snapshotSeq,
-        ttlHours,
-        displayName,
-        ownerLabel,
+        const token = generateShareToken();
+        const row = deps.store.insertSharePreview({
+          token,
+          sessionId,
+          snapshotSeq,
+          ttlHours,
+          displayName,
+          ownerLabel,
+        });
+        return { row, reused: false };
+      })().finally(() => {
+        pendingShareCreates.delete(sessionId);
       });
-      return { row, reused: false };
-    });
+    if (!existingInflight) pendingShareCreates.set(sessionId, inflight);
+    const result = await inflight;
 
     json(res, result.reused ? 200 : 201, {
       token: result.row.token,

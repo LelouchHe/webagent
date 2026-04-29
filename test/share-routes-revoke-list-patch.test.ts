@@ -10,7 +10,6 @@ import {
   type ShareRouteDeps,
   validateLabel,
 } from "../src/share/routes.ts";
-import { __clearAllLocks } from "../src/share/mutex.ts";
 import type { Config } from "../src/config.ts";
 
 interface MockRes {
@@ -199,7 +198,6 @@ describe("DELETE /api/v1/sessions/:id/share — revoke", () => {
     store = new Store(tmpDir);
     store.createSession(sid, "/tmp/p");
     store.saveEvent(sid, "user_message", { text: "hi" }, { from_ref: "agent" });
-    __clearAllLocks();
     deps = { store, config: cfg, dataDir: tmpDir, publicDir: "/tmp" };
   });
   afterEach(() => {
@@ -295,7 +293,6 @@ describe("PATCH /api/v1/sessions/:id/share — label/display_name", () => {
     store = new Store(tmpDir);
     store.createSession(sid, "/tmp/p");
     store.saveEvent(sid, "user_message", { text: "hi" }, { from_ref: "agent" });
-    __clearAllLocks();
     deps = { store, config: cfg, dataDir: tmpDir, publicDir: "/tmp" };
   });
   afterEach(() => {
@@ -428,7 +425,6 @@ describe("GET /api/v1/shares — owner list", () => {
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), "wa-share-ls-"));
     store = new Store(tmpDir);
-    __clearAllLocks();
     deps = { store, config: cfg, dataDir: tmpDir, publicDir: "/tmp" };
   });
   afterEach(() => {
@@ -487,7 +483,6 @@ describe("GET/PUT /api/v1/share/by — default display_name", () => {
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), "wa-share-by-"));
     store = new Store(tmpDir);
-    __clearAllLocks();
     deps = { store, config: cfg, dataDir: tmpDir, publicDir: "/tmp" };
   });
   afterEach(() => {

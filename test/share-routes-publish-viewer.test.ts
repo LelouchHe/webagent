@@ -6,7 +6,6 @@ import { tmpdir } from "node:os";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { Store } from "../src/store.ts";
 import { handleShareRoutes, type ShareRouteDeps } from "../src/share/routes.ts";
-import { __clearAllLocks } from "../src/share/mutex.ts";
 import type { Config } from "../src/config.ts";
 
 // --- test doubles ---
@@ -165,7 +164,6 @@ describe("share publish route — POST /api/v1/sessions/:id/share/publish", () =
       { text: "hello" },
       { from_ref: "agent" },
     );
-    __clearAllLocks();
     deps = { store, config: enabledCfg, dataDir: tmpDir, publicDir: "/tmp" };
   });
 
@@ -365,7 +363,6 @@ describe("share public viewer — GET /s/:token + /api/v1/shared/:token/events",
       { text: "answer" },
       { from_ref: "agent" },
     );
-    __clearAllLocks();
     deps = { store, config: enabledCfg, dataDir: tmpDir, publicDir };
   });
 
@@ -544,7 +541,6 @@ describe("share image proxy — GET /s/:token/images/:file", () => {
       { text: "see img" },
       { from_ref: "agent" },
     );
-    __clearAllLocks();
     deps = { store, config: enabledCfg, dataDir: tmpDir, publicDir };
   });
 
