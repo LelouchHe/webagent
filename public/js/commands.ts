@@ -21,7 +21,7 @@ import { handleSlashCommand } from "./slash-exec.ts";
 export { handleSlashCommand };
 
 // Active root depends on /share preview mode. While previewToken is set,
-// the menu is a strict modal showing only /publish and /discard.
+// the menu is a strict modal showing only /publish and /cancel.
 function activeRoot(): CmdNode {
   return state.previewToken ? PREVIEW_ROOT : ROOT;
 }

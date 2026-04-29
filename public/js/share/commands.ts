@@ -1,11 +1,11 @@
-// Share UI helpers — owner-side preview/publish/discard/list/revoke.
+// Share UI helpers — owner-side preview/publish/cancel/list/revoke.
 //
 // Per /share v1.1 spec (locked):
 //   • `/share` (no arg)   → list active shares; Enter = create new preview
 //   • `/share revoke <t>` → revoke a public share
 //   • Preview mode (set by createPreview): menu switches to PREVIEW_ROOT,
-//     only `/publish` and `/discard` are accepted. Other slash commands
-//     reply "share: in preview mode — /publish or /discard first".
+//     only `/publish` and `/cancel` are accepted. Other slash commands
+//     reply "share: in preview mode — /publish or /cancel first".
 //   • Discard does NOT call backend — TTL cleans the unused preview row.
 //   • Page refresh / session switch loses previewToken (resetSessionUI
 //     clears it); the backend preview row TTLs out the same way.
@@ -112,7 +112,7 @@ export async function createPreview(): Promise<void> {
         `  preview URL   ${previewUrl(data.token)}     (only you can see this)\n` +
         `\n` +
         `  /publish    freeze and make public\n` +
-        `  /discard    drop this preview\n` +
+        `  /cancel     drop this preview\n` +
         `\n` +
         `  to keep chatting, open this session in a new tab`,
     );
@@ -124,7 +124,7 @@ export async function createPreview(): Promise<void> {
 
 /**
  * POST /api/v1/sessions/:id/share/publish — freeze the active preview.
- * Failure keeps preview mode active so the user can retry or `/discard`.
+ * Failure keeps preview mode active so the user can retry or `/cancel`.
  */
 export async function publishPreview(): Promise<void> {
   if (!state.sessionId) {
@@ -178,17 +178,17 @@ export async function publishPreview(): Promise<void> {
 }
 
 /**
- * Drop the in-memory preview token. The backend row is left to TTL prune;
+ * Cancel the in-memory preview token. The backend row is left to TTL prune;
  * we deliberately don't call DELETE so a click slip doesn't burn a slot.
  */
-export function discardPreview(): void {
+export function cancelPreview(): void {
   if (!state.previewToken) {
     addSystem("share: no preview active");
     return;
   }
   state.previewToken = null;
   updateModeUI();
-  addSystem("share: preview dropped");
+  addSystem("share: preview canceled");
 }
 
 /**

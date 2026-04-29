@@ -55,7 +55,7 @@ Commands with submenus (`/model`, `/mode`, `/think`, `/notify`, `/switch`, `/new
 | `/notify [on\|off]`   | Toggle push notifications                                                                                                     |
 | `/inbox`              | Manage inbox — pick a pending message to consume (opens a new session) or ack (dismiss). See [Messages / Inbox](messages.md). |
 | `/log [level]`        | Set log level (`off`, `debug`, `info`, `warn`, `error`). Log records render inline as system messages.                        |
-| `/cancel`             | Cancel current response                                                                                                       |
+| `/cancel`             | Cancel current response · inside a `/share` preview: drop the preview (TTL cleans the backend row)                            |
 | `/clear`              | Reset session in same cwd — delete current and start fresh (model/think inherited)                                            |
 | `/switch <title\|id>` | Switch session (match by title or ID prefix)                                                                                  |
 | `/rename <new title>` | Rename session                                                                                                                |
@@ -63,9 +63,8 @@ Commands with submenus (`/model`, `/mode`, `/think`, `/notify`, `/switch`, `/new
 | `/reload`             | Reload agent subprocess (pick up CLI upgrades, new skills)                                                                    |
 | `/logout`             | Log out — clear local token and return to login page                                                                          |
 | `/token`              | Manage API tokens (list, create, revoke) — see [Auth & Security](security.md)                                                 |
-| `/share`              | List active public shares · Enter creates a read-only snapshot (preview → /publish or /discard). See [Share Links](share.md). |
+| `/share`              | List active public shares · Enter creates a read-only snapshot (preview → /publish or /cancel). See [Share Links](share.md).  |
 | `/publish`            | Available only inside a `/share` preview: freeze the snapshot and publish a public read-only URL                              |
-| `/discard`            | Available only inside a `/share` preview: drop the preview (TTL cleans the backend row)                                       |
 
 Type `?` for inline help listing all commands and shortcuts.
 

@@ -174,18 +174,16 @@ export function getFallback(key: "mode" | "model"): string | null {
 
 export function updateModeUI() {
   dom.inputArea.classList.remove("plan-mode", "autopilot-mode", "preview-mode");
+  // Placeholder is owned here — anyone who needs to "restore the default"
+  // calls updateModeUI() instead of writing a literal string. Keeps the
+  // truth table for what shows in each mode in exactly one place.
   if (state.previewToken) {
     dom.inputArea.classList.add("preview-mode");
-    dom.input.placeholder = "preview · publish or discard";
+    dom.input.placeholder = "publish or cancel";
     refreshInputActions();
     return;
   }
-  if (
-    dom.input.placeholder === "preview · publish or discard" ||
-    dom.input.placeholder === "preview · /publish or /discard"
-  ) {
-    dom.input.placeholder = "Message or ?";
-  }
+  dom.input.placeholder = "Message or ?";
   // Empty-string `currentValue` should fall through to the fallback, not
   // terminate the chain. `??` would keep `""` as the winner; `||` skips it.
   // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing
@@ -376,7 +374,9 @@ export function resetSessionUI() {
   dom.attachPreview.classList.remove("active");
   dom.input.disabled = false;
   dom.sendBtn.disabled = false;
-  dom.input.placeholder = "Message or ?";
+  // updateModeUI owns placeholder + input-area mode classes; previewToken
+  // was just cleared so this collapses preview-mode → default in one go.
+  updateModeUI();
   setBusy(false);
   // Clear session metadata so stale title/model don't linger on switch failure
   state.sessionTitle = null;

@@ -748,16 +748,6 @@ body {
   color: var(--blue);
   border-color: var(--blue);
 }
-.input-btn.discard {
-  color: var(--text-dim);
-  border-color: var(--border);
-}
-.input-btn.discard:hover,
-.input-btn.discard:focus,
-.input-btn.discard:active {
-  color: var(--red);
-  border-color: var(--red);
-}
 #input-area.preview-mode #input {
   opacity: 0.5;
   cursor: not-allowed;

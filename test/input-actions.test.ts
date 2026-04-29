@@ -56,16 +56,16 @@ describe("input-actions", () => {
   });
 
   describe("preview mode", () => {
-    it("paints discard + publish and disables textarea", () => {
+    it("paints publish + cancel and disables textarea", () => {
       state.previewToken = "tok123";
       actions.applyInputActions();
-      assert.equal(dom.attachBtn.textContent, "^D");
-      assert.ok(dom.attachBtn.classList.contains("discard"));
-      assert.equal(dom.attachBtn.title, "Discard preview (Ctrl+D)");
+      assert.equal(dom.attachBtn.textContent, "^P");
+      assert.ok(dom.attachBtn.classList.contains("publish"));
+      assert.equal(dom.attachBtn.title, "Publish preview (Ctrl+P)");
 
-      assert.equal(dom.sendBtn.textContent, "^P");
-      assert.ok(dom.sendBtn.classList.contains("publish"));
-      assert.equal(dom.sendBtn.title, "Publish preview (Ctrl+P)");
+      assert.equal(dom.sendBtn.textContent, "^C");
+      assert.ok(dom.sendBtn.classList.contains("cancel"));
+      assert.equal(dom.sendBtn.title, "Cancel preview (Ctrl+C)");
 
       assert.equal(dom.input.disabled, true);
     });
@@ -73,12 +73,12 @@ describe("input-actions", () => {
     it("clears modifier classes when leaving preview mode", () => {
       state.previewToken = "tok123";
       actions.applyInputActions();
-      assert.ok(dom.sendBtn.classList.contains("publish"));
+      assert.ok(dom.attachBtn.classList.contains("publish"));
 
       state.previewToken = null;
       actions.applyInputActions();
-      assert.ok(!dom.sendBtn.classList.contains("publish"));
-      assert.ok(!dom.attachBtn.classList.contains("discard"));
+      assert.ok(!dom.attachBtn.classList.contains("publish"));
+      assert.ok(!dom.sendBtn.classList.contains("cancel"));
       assert.equal(dom.input.disabled, false);
     });
 
@@ -86,9 +86,9 @@ describe("input-actions", () => {
       state.busy = true;
       state.previewToken = "tok123";
       actions.applyInputActions();
-      // Should NOT show ^C — preview slots win.
-      assert.equal(dom.sendBtn.textContent, "^P");
-      assert.equal(dom.attachBtn.textContent, "^D");
+      // Should NOT show ^U / ↵ — preview slots win.
+      assert.equal(dom.attachBtn.textContent, "^P");
+      assert.equal(dom.sendBtn.textContent, "^C");
     });
   });
 
@@ -101,7 +101,7 @@ describe("input-actions", () => {
         cancel: () => canceled++,
         attach: () => {},
         publish: () => {},
-        discard: () => {},
+        cancelPreview: () => {},
       });
       state.busy = true;
       actions.applyInputActions();
@@ -118,7 +118,7 @@ describe("input-actions", () => {
         cancel: () => canceled++,
         attach: () => {},
         publish: () => {},
-        discard: () => {},
+        cancelPreview: () => {},
       });
       state.busy = true;
       actions.applyInputActions(); // paints as ^C (no command yet)

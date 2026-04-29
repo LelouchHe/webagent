@@ -25,7 +25,7 @@ test("share: create preview, publish, public viewer renders without CSP violatio
     timeout: 10_000,
   });
 
-  // /share → owner-side preview (strict modal: only /publish or /discard accepted)
+  // /share → owner-side preview (strict modal: only /publish or /cancel accepted)
   await sendPrompt(page, "/share");
   await expect(page.locator("#messages")).toContainText("preview ready", {
     timeout: 5_000,
@@ -37,10 +37,11 @@ test("share: create preview, publish, public viewer renders without CSP violatio
   expect(m, `token not found in system msg:\n${tokenText}`).not.toBeNull();
   const token = m![1];
 
-  // Click the ^P button (preview mode replaces #send-btn with publish).
-  // Preview mode disables the textarea, so /publish via slash-typing won't
-  // work anymore — the button (or Ctrl+P) is the only path.
-  await page.locator("#send-btn").click();
+  // Click the ^P button (preview mode places publish in the LEFT slot,
+  // i.e. #attach-btn; #send-btn becomes ^C cancel). Preview mode disables
+  // the textarea, so /publish via slash-typing won't work — the button
+  // (or Ctrl+P) is the only path.
+  await page.locator("#attach-btn").click();
   await expect(page.locator("#messages")).toContainText("share published", {
     timeout: 5_000,
   });

@@ -5,7 +5,11 @@
 // Slots are by *position*; their content varies per mode:
 //   default (idle)   left=attach        right=send
 //   default (busy)   left=attach        right=cancel  (when no /command queued)
-//   preview          left=discard       right=publish
+//   preview          left=publish       right=cancel  (cancel ⇒ drop preview)
+//
+// The right slot is conceptually the "abort/cancel slot" — ^C in busy turn,
+// ^C in preview both mean "back out of the current modal state". The left
+// slot holds the primary positive action of the current mode.
 //
 // Handlers are registered at boot (see app.ts) to keep this module free of
 // imports from input.ts / share/commands.ts — both of those import state,
@@ -16,7 +20,7 @@ import { dom, state, setInputActionsRefresher } from "./state.ts";
 export type InputAction = {
   label: string;
   title: string;
-  /** Single CSS modifier added to the button: "cancel" | "publish" | "discard" */
+  /** Single CSS modifier added to the button: "cancel" | "publish" */
   className?: string;
   disabled?: boolean;
   onClick: () => void;
@@ -27,7 +31,7 @@ type Handlers = {
   cancel: () => void;
   attach: () => void;
   publish: () => void;
-  discard: () => void;
+  cancelPreview: () => void;
 };
 
 let handlers: Handlers = {
@@ -35,7 +39,7 @@ let handlers: Handlers = {
   cancel: () => {},
   attach: () => {},
   publish: () => {},
-  discard: () => {},
+  cancelPreview: () => {},
 };
 
 export function registerInputHandlers(h: Handlers): void {
@@ -53,19 +57,19 @@ export function resolveInputActions(): [InputAction, InputAction] {
   if (state.previewToken) {
     return [
       {
-        label: "^D",
-        title: "Discard preview (Ctrl+D)",
-        className: "discard",
-        onClick: () => {
-          handlers.discard();
-        },
-      },
-      {
         label: "^P",
         title: "Publish preview (Ctrl+P)",
         className: "publish",
         onClick: () => {
           handlers.publish();
+        },
+      },
+      {
+        label: "^C",
+        title: "Cancel preview (Ctrl+C)",
+        className: "cancel",
+        onClick: () => {
+          handlers.cancelPreview();
         },
       },
     ];
@@ -105,7 +109,7 @@ export function resolveInputActions(): [InputAction, InputAction] {
   ];
 }
 
-const MODIFIER_CLASSES = ["cancel", "publish", "discard"];
+const MODIFIER_CLASSES = ["cancel", "publish"];
 
 function paint(btn: HTMLButtonElement, action: InputAction): void {
   btn.textContent = action.label;
