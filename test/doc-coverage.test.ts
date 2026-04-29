@@ -28,19 +28,29 @@ function toAnchor(heading: string): string {
 const ROOT = join(import.meta.dirname, "..");
 
 describe("doc coverage", () => {
-  const routesSrc = readFileSync(join(ROOT, "src/routes.ts"), "utf-8");
+  // Scan all top-level route files. Each must use the `// METHOD /api/...`
+  // comment convention to declare its endpoints (the existing scheme on
+  // src/routes.ts; src/share/routes.ts adopts it too).
+  const ROUTE_FILES = ["src/routes.ts", "src/share/routes.ts"];
+  const routesSrc = ROUTE_FILES.map((p) =>
+    readFileSync(join(ROOT, p), "utf-8"),
+  ).join("\n");
   const apiDoc = readFileSync(join(ROOT, "docs/api.md"), "utf-8");
 
-  // Extract endpoint paths from route comments and URL patterns in routes.ts.
-  // Matches patterns like:
+  // Extract endpoint paths from route comments in routes.ts files.
+  // Both styles accepted (existing convention in src/routes.ts):
   //   // GET /api/v1/sessions
-  //   // POST /api/v1/sessions/:id/messages
-  //   // PATCH /api/v1/sessions/:id
+  //   // --- POST /api/v1/bridge/reload ---
   const commentRoutes = [
     ...routesSrc.matchAll(
-      /\/\/\s*---?\s*(GET|POST|PUT|PATCH|DELETE)\s+(\/api\/\S+)/g,
+      /\/\/\s*(?:---?\s*)?(GET|POST|PUT|PATCH|DELETE)\s+(\/api\/\S+)/g,
     ),
-  ].map((m) => ({ method: m[1], path: m[2].replace(/\s*---.*$/, "") }));
+  ].map((m) => ({
+    method: m[1],
+    path: m[2]
+      .replace(/\s*---.*$/, "") // strip trailing fence dashes
+      .replace(/\?.*$/, ""), // strip query string — endpoint is the path
+  }));
 
   // Also find routes from url === "/api/v1/..." patterns
   const literalRoutes = [

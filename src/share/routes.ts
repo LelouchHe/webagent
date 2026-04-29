@@ -152,6 +152,7 @@ export async function handleShareRoutes(
     return true;
   }
 
+  // POST /api/v1/sessions/:id/share — create preview
   const createMatch = url.match(
     /^\/api\/v1\/sessions\/([^/?]+)\/share\/?(?:\?.*)?$/,
   );
@@ -165,6 +166,7 @@ export async function handleShareRoutes(
     return true;
   }
 
+  // GET /api/v1/sessions/:id/share/preview — read preview + staleness
   const previewMatch = url.match(
     /^\/api\/v1\/sessions\/([^/?]+)\/share\/preview\/?(?:\?.*)?$/,
   );
@@ -178,6 +180,7 @@ export async function handleShareRoutes(
     return true;
   }
 
+  // POST /api/v1/sessions/:id/share/publish — promote preview to public
   const publishMatch = url.match(
     /^\/api\/v1\/sessions\/([^/?]+)\/share\/publish\/?(?:\?.*)?$/,
   );
@@ -186,6 +189,7 @@ export async function handleShareRoutes(
     return true;
   }
 
+  // GET /api/v1/shared/:token/events — public viewer JSON (no auth)
   const sharedEventsMatch = url.match(
     /^\/api\/v1\/shared\/((?:[0-9a-f]{36}|[A-Za-z0-9_-]{24}))\/events\/?(?:\?.*)?$/,
   );
@@ -197,10 +201,12 @@ export async function handleShareRoutes(
   const revokeMatch = url.match(
     /^\/api\/v1\/sessions\/([^/?]+)\/share\/?(?:\?.*)?$/,
   );
+  // DELETE /api/v1/sessions/:id/share — hard-delete share row
   if (revokeMatch && method === "DELETE") {
     await handleRevoke(req, res, deps, decodeURIComponent(revokeMatch[1]));
     return true;
   }
+  // PATCH /api/v1/sessions/:id/share — update display_name / owner_label
   if (revokeMatch && method === "PATCH") {
     await handlePatchLabel(req, res, deps, decodeURIComponent(revokeMatch[1]));
     return true;
@@ -211,13 +217,16 @@ export async function handleShareRoutes(
     (method === "GET" || method === "PUT")
   ) {
     if (method === "GET") {
+      // GET /api/v1/share/by — read default display_name preference
       await handleByGet(req, res, deps);
     } else {
+      // PUT /api/v1/share/by — update default display_name preference
       await handleByPut(req, res, deps);
     }
     return true;
   }
 
+  // GET /api/v1/shares — owner's active share list
   if (url.match(/^\/api\/v1\/shares\/?(?:\?.*)?$/) && method === "GET") {
     await handleOwnerList(req, res, deps);
     return true;

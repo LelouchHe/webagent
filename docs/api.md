@@ -27,6 +27,7 @@ WebAgent exposes a **REST + SSE** API for managing agent sessions, sending promp
   - [Inbox](#inbox)
   - [Images](#images)
   - [SSE Streams](#sse-streams)
+  - [Share](#share)
 - [Beta Endpoints (`/api/beta/`)](#beta-endpoints-apibeta)
   - [One-Shot Prompt](#one-shot-prompt)
   - [Push Notifications](#push-notifications)
@@ -908,6 +909,181 @@ Events include an `id` field (the seq number) for automatic reconnection:
 id: 42
 data: {"type":"message_chunk","sessionId":"abc-123","text":"Hello"}
 ```
+
+---
+
+---
+
+### Share
+
+Public read-only session snapshots. Gated by `[share] enabled = true` in
+config (default `false`); when disabled, all endpoints below return `404`.
+Owner endpoints require Bearer auth like the rest of the API. Public
+viewer endpoints (`GET /api/v1/shared/:token/events`) are unauthenticated
+— knowledge of the token is the entire capability.
+
+Tokens are 144-bit `randomBytes(18)` lowercase hex (36 chars). For the
+full sanitizer / CSP / image-proxy design and security model, see
+[`docs/share.md`](share.md). For the `/s/:token` HTML viewer and image
+proxy URLs (not part of the JSON API), also see `docs/share.md`.
+
+#### `POST /api/v1/sessions/:id/share`
+
+Create a **preview** share (token issued, snapshot frozen, but not yet
+publicly listed — preview rows expire after 24h if not published).
+Concurrent calls for the same session dedup to a single in-flight build.
+
+**Request body:**
+
+| Field          | Type    | Required | Description                                                                              |
+| -------------- | ------- | -------- | ---------------------------------------------------------------------------------------- |
+| `ttl_hours`    | number  | No       | Lifetime cap. `0` = never expire; positive values clamped to `[share].ttl_hours` (≤ 168) |
+| `display_name` | string  | No       | Public footer label. Falls back to owner's saved default. Max 256 UTF-8 bytes            |
+| `owner_label`  | string  | No       | Private owner-only label (search/filter). Max 1024 UTF-8 bytes                           |
+
+**Response** `201` (new) / `200` (deduped):
+
+```json
+{
+  "token": "a1b2…36hex",
+  "session_id": "abc-123",
+  "snapshot_seq": 42,
+  "ttl_hours": 24,
+  "display_name": "demo run",
+  "owner_label": null,
+  "shared_at": null,
+  "reused": false
+}
+```
+
+**Errors:** `400` (sanitizer rejected — body includes `event_id` + `rule`; or label validation: bidi override / control char / size cap), `404` (session), `503` (share disabled).
+
+#### `GET /api/v1/sessions/:id/share/preview`
+
+Read the active preview row (if any) and re-run the sanitizer to expose
+a `stale: true` flag when underlying events have changed since the
+snapshot was frozen.
+
+**Response** `200`:
+
+```json
+{
+  "token": "…",
+  "snapshot_seq": 42,
+  "current_seq": 47,
+  "stale": true,
+  "ttl_hours": 24,
+  "display_name": "demo",
+  "owner_label": null,
+  "shared_at": null
+}
+```
+
+**Errors:** `404` (no active preview).
+
+#### `POST /api/v1/sessions/:id/share/publish`
+
+Promote the preview to a public share — sets `shared_at`, refreshes
+`snapshot_seq` to current head. After this call the URL `/s/<token>`
+serves the viewer.
+
+**Response** `200`:
+
+```json
+{
+  "token": "…",
+  "snapshot_seq": 47,
+  "shared_at": "2026-04-28 21:00:00.000",
+  "ttl_hours": 24
+}
+```
+
+**Errors:** `400` (sanitizer rejected at publish time; preview row is left intact), `404` (no preview to publish).
+
+#### `DELETE /api/v1/sessions/:id/share`
+
+Hard-delete the share row. Idempotent: `200` whether or not the row
+existed (no `revoked_at` audit trail by design — public surface stays
+minimal). Subsequent viewer hits get `410 Gone`.
+
+**Response** `200`: `{ "ok": true }`
+
+#### `PATCH /api/v1/sessions/:id/share`
+
+Update `display_name` or `owner_label` on an existing share.
+
+**Request body:**
+
+| Field          | Type            | Required | Description                                |
+| -------------- | --------------- | -------- | ------------------------------------------ |
+| `display_name` | string \| null  | No       | `null` clears (footer falls back to owner default) |
+| `owner_label`  | string \| null  | No       | `null` clears                              |
+
+Both fields go through the same validator as create — bidi override,
+control characters, and size caps reject with `400`.
+
+**Response** `200`: updated row (same shape as `POST` response).
+
+**Errors:** `400` (validation), `404` (no share).
+
+#### `GET /api/v1/shares`
+
+List the caller's active shares (both previews and published).
+
+**Response** `200`:
+
+```json
+{
+  "shares": [
+    {
+      "token": "…",
+      "session_id": "…",
+      "snapshot_seq": 42,
+      "ttl_hours": 24,
+      "display_name": "demo",
+      "owner_label": null,
+      "shared_at": "2026-04-28 21:00:00.000",
+      "created_at": "2026-04-28 20:55:00.000"
+    }
+  ]
+}
+```
+
+#### `GET /api/v1/share/by`
+
+Read the owner's saved default `display_name` (used as the fallback for
+new shares when no per-share `display_name` is provided).
+
+**Response** `200`: `{ "display_name": "alice" }` or `{ "display_name": null }`.
+
+#### `PUT /api/v1/share/by`
+
+Set or clear the owner's default `display_name`.
+
+**Request body:** `{ "display_name": string | null }` — `null` clears.
+
+**Response** `200`: `{ "display_name": "alice" }` (or `null`).
+
+**Errors:** `400` (validation: bidi / control / size cap).
+
+#### `GET /api/v1/shared/:token/events`
+
+**Public viewer JSON** — no Bearer auth. The sanitizer re-runs on every
+fetch (no projection cache); `session_id` is stripped from the response.
+
+**Response** `200`:
+
+```json
+{
+  "display_name": "demo",
+  "shared_at": "2026-04-28 21:00:00.000",
+  "events": [
+    { "seq": 1, "type": "user_message", "data": { "text": "…" } }
+  ]
+}
+```
+
+**Errors:** `404` (token unknown), `410` (share revoked or expired).
 
 ---
 
