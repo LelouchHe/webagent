@@ -536,7 +536,7 @@ Triggered by `/` prefix in input. Handled in `commands.ts`.
 | `/think [level]`    | `api.setConfig(sessionId, 'reasoning_effort', value)`       | Set reasoning effort                 |
 | `/compact`          | `api.sendMessage(sessionId, '/compact')`                    | Send as prompt (agent handles)       |
 | `/notify [on\|off]` | Push API + `/api/beta/push/subscribe`                       | Manage push notifications            |
-| `/clear`            | —                                                           | Clear the DOM (no API call)          |
+| `/clear [path]`     | `api.createSession()` + `api.deleteSession()`               | Clear and start fresh                |
 | `/? [query]`        | —                                                           | Search sessions by title             |
 
 The slash menu provides autocomplete with keyboard navigation (arrow keys, Tab to fill, Enter to send).

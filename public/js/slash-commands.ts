@@ -22,6 +22,7 @@ import { log, setLogLevel, getLogLevel, type LogLevel } from "./log.ts";
 import type { CmdNode } from "./slash-tree.ts";
 import type { SessionSummary } from "../../src/types.ts";
 import { TOKEN_STORAGE_KEY } from "./login-core.ts";
+import { replaceCurrentSession } from "./session-actions.ts";
 import {
   createPreview,
   listOwnerShares,
@@ -300,26 +301,29 @@ export const ROOT: CmdNode = {
     },
     {
       name: "/clear",
-      desc: "Reset session in same cwd",
-      onSelect: async () => {
-        if (!state.sessionId) {
-          addSystem("warn: No active session");
-          return;
-        }
-        const oldId = state.sessionId;
-        const cwd = state.sessionCwd ?? undefined;
-        if (state.busy) sendCancel();
-        resetSessionUI();
-        addSystem("Clearing session…");
-        state.awaitingNewSession = true;
-        try {
-          await api.createSession({ cwd, inheritFromSessionId: oldId });
-        } catch {
-          state.awaitingNewSession = false;
-          addSystem("err: Failed to clear session");
-          return;
-        }
-        void api.deleteSession(oldId);
+      desc: "Clear current session",
+      fetch: listRecentPaths,
+      toSpec: (item: unknown) => {
+        const p = item as PathItem;
+        const isCurrent =
+          p.cwd.toLowerCase() === (state.sessionCwd ?? "").toLowerCase();
+        return {
+          primary: p.cwd,
+          current: isCurrent,
+          onSelect: () => {
+            void replaceCurrentSession({ cwd: p.cwd, showCwd: true });
+          },
+        };
+      },
+      freeform: (q) => {
+        const trimmed = q.trim();
+        if (!trimmed) return null;
+        return {
+          primary: `clear and start at '${trimmed}'`,
+          onSelect: () => {
+            void replaceCurrentSession({ cwd: trimmed, showCwd: true });
+          },
+        };
       },
     },
     {

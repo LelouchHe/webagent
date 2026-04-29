@@ -22,6 +22,7 @@ import * as api from "./api.ts";
 import { log, setLogLevel, getLogLevel, type LogLevel } from "./log.ts";
 import { TOKEN_STORAGE_KEY } from "./login-core.ts";
 import { ROOT, consumeInbox } from "./slash-commands.ts";
+import { replaceCurrentSession } from "./session-actions.ts";
 import {
   createPreview,
   revokeShare,
@@ -171,24 +172,10 @@ export async function handleSlashCommand(text: string): Promise<boolean> {
       return true;
 
     case "/clear": {
-      if (!state.sessionId) {
-        addSystem("warn: No active session");
-        return true;
-      }
-      const oldId = state.sessionId;
-      const cwd = state.sessionCwd ?? undefined;
-      if (state.busy) sendCancel();
-      resetSessionUI();
-      addSystem("Clearing session…");
-      state.awaitingNewSession = true;
-      try {
-        await api.createSession({ cwd, inheritFromSessionId: oldId });
-      } catch {
-        state.awaitingNewSession = false;
-        addSystem("err: Failed to clear session");
-        return true;
-      }
-      api.deleteSession(oldId).catch(() => {});
+      await replaceCurrentSession({
+        cwd: arg || undefined,
+        showCwd: Boolean(arg),
+      });
       return true;
     }
 

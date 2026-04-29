@@ -151,6 +151,42 @@ describe("slash menu — Tab vs Click behavior", () => {
     );
   });
 
+  it("/clear menu lists recent paths", async () => {
+    state.sessionCwd = "/current";
+    globalThis.fetch = ((url: string, init?: any) => {
+      fetchCalls.push({ url, init });
+      const data = [
+        { cwd: "/current", last_used_at: "2026-04-29 09:00:00" },
+        { cwd: "/tmp/other", last_used_at: "2026-04-29 08:00:00" },
+      ];
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve(data),
+      });
+    }) as any;
+
+    dom.input.value = "/clear ";
+    commands.updateSlashMenu();
+    await new Promise((r) => setTimeout(r, 10));
+
+    assert.ok(
+      fetchCalls.some((c) => c.url === "/api/v1/recent-paths?limit=10"),
+      "should fetch recent paths",
+    );
+    assert.ok(dom.slashMenu.textContent.includes("/current"));
+    assert.ok(dom.slashMenu.textContent.includes("/tmp/other"));
+  });
+
+  it("/clear freeform row uses clear wording when typing a path", () => {
+    dom.input.value = "/clear /tmp/new-place";
+    commands.updateSlashMenu();
+
+    assert.ok(
+      dom.slashMenu.textContent.includes("clear and start at '/tmp/new-place'"),
+      `expected clear freeform row, got: ${dom.slashMenu.textContent}`,
+    );
+  });
+
   // -----------------------------------------------------------------------
   // Click: fills input AND executes (tab + enter)
   // -----------------------------------------------------------------------

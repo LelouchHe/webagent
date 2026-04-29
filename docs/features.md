@@ -43,7 +43,7 @@ Type `/` to trigger an autocomplete menu with arrow keys to navigate, Esc to clo
 | `Enter`   | Send current input            | Send current input |
 | Click/Tap | Fill and send (Tab + Enter)   | —                  |
 
-Commands with submenus (`/model`, `/mode`, `/think`, `/notify`, `/switch`, `/new`, `/inbox`, `/log`) show a picker after typing the command and a space. Tab completes the selection into the input so you can review or edit before pressing Enter to send.
+Commands with submenus (`/model`, `/mode`, `/think`, `/notify`, `/switch`, `/new`, `/clear`, `/inbox`, `/log`) show a picker after typing the command and a space. Tab completes the selection into the input so you can review or edit before pressing Enter to send.
 
 | Command               | Description                                                                                                                   |
 | --------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
@@ -56,7 +56,7 @@ Commands with submenus (`/model`, `/mode`, `/think`, `/notify`, `/switch`, `/new
 | `/inbox`              | Manage inbox — pick a pending message to consume (opens a new session) or ack (dismiss). See [Messages / Inbox](messages.md). |
 | `/log [level]`        | Set log level (`off`, `debug`, `info`, `warn`, `error`). Log records render inline as system messages.                        |
 | `/cancel`             | Cancel current response                                                                                                       |
-| `/clear`              | Reset session in same cwd — delete current and start fresh (model/think inherited)                                            |
+| `/clear [cwd]`        | Clear current session and start fresh, optionally in another cwd (model/think inherited)                                      |
 | `/switch <title\|id>` | Switch session (match by title or ID prefix)                                                                                  |
 | `/rename <new title>` | Rename session                                                                                                                |
 | `/exit`               | End current session (delete + switch to previous)                                                                             |

@@ -326,6 +326,43 @@ describe("commands", () => {
       assert.ok(messageLines().includes("Clearing session…"));
     });
 
+    it("clears current session into the provided cwd", async () => {
+      state.clientId = "cl-1";
+      state.sessionId = "old-1";
+      state.sessionCwd = "/home/project";
+      setFetch(async (url: string, init?: any) => {
+        const body = (data: any) => {
+          const json = JSON.stringify(data);
+          return {
+            ok: true,
+            status: 200,
+            json: async () => data,
+            text: async () => json,
+          };
+        };
+        if (url === "/api/v1/sessions" && init?.method === "POST")
+          return body({ id: "new-2" });
+        if (url === "/api/v1/sessions/old-1" && init?.method === "DELETE")
+          return body({});
+        return body({});
+      });
+
+      const handled = await commands.handleSlashCommand("/clear /tmp/other");
+      await new Promise((r) => setTimeout(r, 0));
+
+      assert.equal(handled, true);
+      const createCall = fetchCalls.find(
+        (c) => c.url === "/api/v1/sessions" && c.init?.method === "POST",
+      );
+      assert.ok(createCall, "expected POST /api/v1/sessions");
+      const createBody = JSON.parse(createCall.init.body);
+      assert.equal(createBody.cwd, "/tmp/other");
+      assert.equal(createBody.inheritFromSessionId, "old-1");
+      assert.ok(
+        messageLines().includes("Clearing session and starting at /tmp/other…"),
+      );
+    });
+
     // Regression: /clear used to fire createSession and deleteSession in parallel, relying
     // on dispatch order. But the server processes delete (DB row removal) faster than
     // create (ACP session spinup), so the resulting `session_deleted` SSE arrived first,
