@@ -212,8 +212,11 @@ describe("input", () => {
       if (url.includes("/api/v1/sessions/") && url.includes("/images")) {
         return {
           ok: true,
-          json: async () => ({ url: "/api/v1/sessions/s1/images/image.png" }),
-          text: async () => '{"url":"/api/v1/sessions/s1/images/image.png"}',
+          json: async () => ({
+            url: "/api/v1/sessions/s1/attachments/image.png",
+          }),
+          text: async () =>
+            '{"url":"/api/v1/sessions/s1/attachments/image.png"}',
         };
       }
       // sendMessage call
@@ -236,7 +239,7 @@ describe("input", () => {
       {
         data: "abc123",
         mimeType: "image/png",
-        path: "/api/v1/sessions/s1/images/image.png",
+        path: "/api/v1/sessions/s1/attachments/image.png",
       },
     ]);
   });
@@ -382,8 +385,8 @@ describe("input", () => {
     });
     setFetch(async () => ({
       ok: true,
-      json: async () => ({ url: "/api/v1/sessions/s1/images/image.png" }),
-      text: async () => '{"url":"/api/v1/sessions/s1/images/image.png"}',
+      json: async () => ({ url: "/api/v1/sessions/s1/attachments/image.png" }),
+      text: async () => '{"url":"/api/v1/sessions/s1/attachments/image.png"}',
     }));
 
     clickSend();

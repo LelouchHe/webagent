@@ -296,7 +296,7 @@ export class SessionManager {
     this.state.delete(sessionId);
     if (mode === "hard") {
       // Tombstoned sessions keep their images alive for the share viewer
-      // (shared images still resolve via /s/:token/images/...). The reap
+      // (shared images still resolve via /s/:token/attachments/...). The reap
       // path in share/routes.ts removes them once the last share is gone.
       rm(join(this.dataDir, "images", sessionId), {
         recursive: true,

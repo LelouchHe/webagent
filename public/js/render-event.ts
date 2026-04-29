@@ -85,7 +85,7 @@ export function isContentEventType(t: string): t is ContentEventType {
 }
 
 export interface RenderHooks {
-  /** Rewrite an image URL (viewer maps `image://` / API paths to `/s/<token>/images/...`). */
+  /** Rewrite an image URL (viewer maps `image://` / API paths to `/s/<token>/attachments/...`). */
   rewriteImageSrc?: (src: string) => string;
   /** Post-render hook for the assistant_message element (e.g. hljs lazy enhance). */
   enhanceMarkdown?: (el: HTMLElement) => void;

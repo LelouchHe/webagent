@@ -50,7 +50,9 @@ const WHITELIST: readonly WhitelistEntry[] = [
   {
     method: "GET",
     test: (p) =>
-      /^\/api\/v1\/sessions\/[A-Za-z0-9_-]+\/images\/[A-Za-z0-9._-]+$/.test(p),
+      /^\/api\/v1\/sessions\/[A-Za-z0-9_-]+\/attachments\/[A-Za-z0-9._-]+$/.test(
+        p,
+      ),
   },
 
   // --- Share viewer (public read-only snapshots) ---

@@ -126,7 +126,7 @@ export async function handleShareRoutes(
 
   // Viewer image proxy — must come before general /s/:token HTML match.
   const imgMatch = url.match(
-    /^\/s\/([A-Za-z0-9_-]{24})\/images\/([^/?]+)\/?(?:\?.*)?$/,
+    /^\/s\/([A-Za-z0-9_-]{24})\/attachments\/([^/?]+)\/?(?:\?.*)?$/,
   );
   if (imgMatch && method === "GET") {
     await handleViewerImage(
@@ -836,7 +836,7 @@ async function handleViewerAsset(
 }
 
 /**
- * GET /s/:token/images/:file — token-scoped image proxy. Resolves the token
+ * GET /s/:token/attachments/:file — token-scoped image proxy. Resolves the token
  * to a session_id on-demand; directly serving /api/v1/sessions/:id/images
  * would leak session_id.
  */
@@ -869,7 +869,7 @@ async function handleViewerImage(
 
   const imagesRoot = join(deps.dataDir, "images");
   const filePath = join(imagesRoot, row.session_id, file);
-  // Final realpath-style guard: must stay under dataDir/images/<session_id>.
+  // Final realpath-style guard: must stay under dataDir/attachments/<session_id>.
   const sessionRoot = join(imagesRoot, row.session_id);
   if (!filePath.startsWith(sessionRoot + "/") && filePath !== sessionRoot) {
     res.writeHead(403);

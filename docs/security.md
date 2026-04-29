@@ -69,7 +69,7 @@ Whitelisted paths (no auth required):
 | `GET /manifest.json`, `/sw.js`, `/favicon.ico`, `/theme-init.js` | PWA + early-paint helpers needed before login                             |
 | `GET /js/*.js`, `/styles*.css`, `/icons/*`                       | Static bundles (content-hashed)                                           |
 | `GET /api/v1/events/stream`                                      | SSE — auth via short-lived ticket in query string instead (see below)     |
-| `GET /api/v1/images/*`                                           | Auth via HMAC signature in query string instead (see below)               |
+| `GET /api/v1/attachments/*`                                           | Auth via HMAC signature in query string instead (see below)               |
 
 Anything else (chat history, prompt submission, model selection, bash, push subscriptions) requires a Bearer token.
 
@@ -100,7 +100,7 @@ Tickets are in-memory only; restarting the server invalidates all of them. Clien
 
 ## Signed Image URLs
 
-Images uploaded to a session render as `<img src="/api/v1/images/sess/abc/xyz.png?sig=...&exp=...">`. The image route is whitelisted; auth is in the URL itself:
+Images uploaded to a session render as `<img src="/api/v1/attachments/sess/abc/xyz.png?sig=...&exp=...">`. The image route is whitelisted; auth is in the URL itself:
 
 - The server holds a per-restart HMAC secret (random 32 bytes, never persisted).
 - When an image event is serialized for history or SSE, the path is signed: `sig = HMAC-SHA256(secret, "<path>|<exp>")` with `exp = now + 1h`.

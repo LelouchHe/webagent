@@ -42,6 +42,6 @@ test("uploaded images are sent and restored in reloaded history", async ({
   await expect(restoredImage).toBeVisible();
   await expect(restoredImage).toHaveAttribute(
     "src",
-    /\/api\/v1\/sessions\/[^/]+\/images\//,
+    /\/api\/v1\/sessions\/[^/]+\/attachments\//,
   );
 });

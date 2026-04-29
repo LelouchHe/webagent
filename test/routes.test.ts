@@ -431,12 +431,14 @@ describe("Image upload", () => {
     const res = await makeRequest(
       port,
       "POST",
-      "/api/v1/sessions/test-session/images",
+      "/api/v1/sessions/test-session/attachments",
       payload,
     );
     assert.equal(res.status, 200);
     const body = JSON.parse(res.body);
-    assert.ok(body.url.startsWith("/api/v1/sessions/test-session/images/"));
+    assert.ok(
+      body.url.startsWith("/api/v1/sessions/test-session/attachments/"),
+    );
     assert.ok(body.url.endsWith(".png"));
     assert.ok(body.path.startsWith("images/test-session/"));
   });
@@ -447,7 +449,7 @@ describe("Image upload", () => {
     const uploadRes = await makeRequest(
       port,
       "POST",
-      "/api/v1/sessions/test-session/images",
+      "/api/v1/sessions/test-session/attachments",
       payload,
     );
     const { url } = JSON.parse(uploadRes.body);
@@ -461,7 +463,7 @@ describe("Image upload", () => {
     const res = await makeRequest(
       port,
       "POST",
-      "/api/v1/sessions/bad%20id!/images",
+      "/api/v1/sessions/bad%20id!/attachments",
       payload,
     );
     assert.equal(res.status, 400);
@@ -476,7 +478,7 @@ describe("Image upload", () => {
     const res = await makeRequest(
       port,
       "POST",
-      "/api/v1/sessions/s1/images",
+      "/api/v1/sessions/s1/attachments",
       bigPayload,
     );
     assert.equal(res.status, 413);
@@ -489,7 +491,7 @@ describe("Image upload", () => {
     const res = await makeRequest(
       port,
       "POST",
-      "/api/v1/sessions/s1/images",
+      "/api/v1/sessions/s1/attachments",
       payload,
     );
     assert.equal(res.status, 413);
@@ -499,7 +501,7 @@ describe("Image upload", () => {
     const res = await makeRequest(
       port,
       "POST",
-      "/api/v1/sessions/s1/images",
+      "/api/v1/sessions/s1/attachments",
       "not-json",
     );
     assert.equal(res.status, 400);
@@ -514,7 +516,7 @@ describe("Image upload", () => {
     const res = await makeRequest(
       port,
       "POST",
-      "/api/v1/sessions/s1/images",
+      "/api/v1/sessions/s1/attachments",
       payload,
     );
     assert.equal(res.status, 200);

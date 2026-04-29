@@ -47,7 +47,7 @@ function canonical(path: string, exp: number | string): string {
  * Returns "exp=<unix>&sig=<hex>" — appendable as a query string to the path.
  * ttlSeconds may be negative (yields an already-expired URL, useful in tests).
  */
-export function signImageUrl(
+export function signAttachmentUrl(
   path: string,
   secret: Buffer,
   ttlSeconds: number,
@@ -61,7 +61,7 @@ export function signImageUrl(
  * Verify a signed image URL. Returns false on any malformed input or expired/tampered URL.
  * HMAC binds (path, exp) so altering either invalidates the signature.
  */
-export function verifyImageSig(
+export function verifyAttachmentSig(
   path: string,
   expRaw: string,
   sigHex: string,
@@ -87,21 +87,21 @@ export function verifyImageSig(
 }
 
 /**
- * Rewrite every `/api/v1/sessions/:id/images/:file` URL inside a JSON-serialized
+ * Rewrite every `/api/v1/sessions/:id/attachments/:file` URL inside a JSON-serialized
  * payload to carry a fresh `?exp=&sig=`. Applied at egress (history GET, SSE
  * push) so a 1h-old stored URL is re-signed on the way out — the user can
  * reload history days later and images still resolve.
  */
-const IMAGE_URL_RE =
-  /\/api\/v1\/sessions\/[A-Za-z0-9_-]+\/images\/[A-Za-z0-9._-]+(?:\?(?:exp=\d+&sig=[a-f0-9]+|sig=[a-f0-9]+&exp=\d+))?/g;
+const ATTACHMENT_URL_RE =
+  /\/api\/v1\/sessions\/[A-Za-z0-9_-]+\/attachments\/[A-Za-z0-9._-]+(?:\?(?:exp=\d+&sig=[a-f0-9]+|sig=[a-f0-9]+&exp=\d+))?/g;
 
-export function reSignImageUrlsInJson(
+export function reSignAttachmentUrlsInJson(
   json: string,
   secret: Buffer,
   ttlSeconds = 3600,
 ): string {
-  return json.replace(IMAGE_URL_RE, (match) => {
+  return json.replace(ATTACHMENT_URL_RE, (match) => {
     const basePath = match.split("?")[0];
-    return `${basePath}?${signImageUrl(basePath, secret, ttlSeconds)}`;
+    return `${basePath}?${signAttachmentUrl(basePath, secret, ttlSeconds)}`;
   });
 }

@@ -19,7 +19,11 @@ import { handleShareRoutes } from "./share/routes.ts";
 import { authenticate, isWhitelistedPath } from "./auth-middleware.ts";
 import type { AuthStore, TokenRecord } from "./auth-store.ts";
 import type { TicketStore } from "./sse-ticket.ts";
-import { signImageUrl, verifyImageSig, reSignImageUrlsInJson } from "./auth.ts";
+import {
+  signAttachmentUrl,
+  verifyAttachmentSig,
+  reSignAttachmentUrlsInJson,
+} from "./auth.ts";
 
 const IS_WIN = process.platform === "win32";
 
@@ -121,7 +125,7 @@ export interface RequestHandlerDeps {
   /** Optional secret for HMAC-signed image URLs. When present, image GET
    *  requires `?sig=&exp=`; image upload returns a signed URL. When absent
    *  (legacy/tests), images are served unauthenticated. */
-  imageSecret?: Buffer;
+  attachmentSecret?: Buffer;
 }
 
 /** Read the full request body as a string. */
@@ -1340,10 +1344,16 @@ export function createRequestHandler(
         // again — the user can reload history days later and images still
         // resolve. Mutates `data` in-place; safe because store.getEvents
         // returns fresh records.
-        if (deps.imageSecret) {
+        if (deps.attachmentSecret) {
           for (const ev of events) {
-            if (typeof ev.data === "string" && ev.data.includes("/images/")) {
-              ev.data = reSignImageUrlsInJson(ev.data, deps.imageSecret);
+            if (
+              typeof ev.data === "string" &&
+              ev.data.includes("/attachments/")
+            ) {
+              ev.data = reSignAttachmentUrlsInJson(
+                ev.data,
+                deps.attachmentSecret,
+              );
             }
           }
         }
@@ -1490,9 +1500,9 @@ export function createRequestHandler(
 
       // --- Images (session-scoped) ---
 
-      // POST /api/v1/sessions/:id/images
+      // POST /api/v1/sessions/:id/attachments
       const imgUploadMatch = url.match(
-        /^\/api\/v1\/sessions\/([^/]+)\/images\/?$/,
+        /^\/api\/v1\/sessions\/([^/]+)\/attachments\/?$/,
       );
       if (imgUploadMatch && req.method === "POST") {
         const sessionId = decodeURIComponent(imgUploadMatch[1]);
@@ -1539,20 +1549,20 @@ export function createRequestHandler(
           recursive: true,
         });
         await writeFile(absPath, Buffer.from(data, "base64"));
-        const basePath = `/api/v1/sessions/${sessionId}/images/${fileName}`;
+        const basePath = `/api/v1/sessions/${sessionId}/attachments/${fileName}`;
         // 1h signed URL — long enough that the browser holds the rendered
         // image in <img> cache for the full session lifetime, short enough
         // that a leaked URL (screenshot, link share) expires within the day.
-        const imgUrl = deps.imageSecret
-          ? `${basePath}?${signImageUrl(basePath, deps.imageSecret, 3600)}`
+        const imgUrl = deps.attachmentSecret
+          ? `${basePath}?${signAttachmentUrl(basePath, deps.attachmentSecret, 3600)}`
           : basePath;
         json(res, 200, { path: relPath, url: imgUrl });
         return;
       }
 
-      // GET /api/v1/sessions/:id/images/:file
+      // GET /api/v1/sessions/:id/attachments/:file
       const imgGetMatch = url.match(
-        /^\/api\/v1\/sessions\/([^/]+)\/images\/([^/?]+)(\?.*)?$/,
+        /^\/api\/v1\/sessions\/([^/]+)\/attachments\/([^/?]+)(\?.*)?$/,
       );
       if (imgGetMatch && req.method === "GET") {
         const sessionId = decodeURIComponent(imgGetMatch[1]);
@@ -1560,12 +1570,12 @@ export function createRequestHandler(
         // When secret is configured, image GET requires sig+exp in query —
         // there is no Bearer fallback because <img src=...> can't carry
         // headers. Verify before any disk I/O.
-        if (deps.imageSecret) {
+        if (deps.attachmentSecret) {
           const params = new URLSearchParams(url.split("?")[1] ?? "");
           const sig = params.get("sig") ?? "";
           const exp = params.get("exp") ?? "";
-          const basePath = `/api/v1/sessions/${sessionId}/images/${file}`;
-          if (!verifyImageSig(basePath, exp, sig, deps.imageSecret)) {
+          const basePath = `/api/v1/sessions/${sessionId}/attachments/${file}`;
+          if (!verifyAttachmentSig(basePath, exp, sig, deps.attachmentSecret)) {
             res.writeHead(401, { "Content-Type": "application/json" });
             res.end(JSON.stringify({ error: "Unauthorized" }));
             return;

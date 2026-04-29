@@ -77,13 +77,13 @@ const authStore = new AuthStore(pathJoin(config.data_dir, "auth.json"));
 const ticketStore = new TicketStore();
 // In-memory image signing secret; regenerated on every restart so previously
 // leaked URLs become invalid the moment the server is bounced.
-const imageSecret = randomBytes(32);
+const attachmentSecret = randomBytes(32);
 // SSE heartbeat re-checks token revocation; revoked → connection closed
 // within one heartbeat interval (≤15s).
 sseManager.setRevocationCheck(
   (tokenName) => !authStore.hasTokenName(tokenName),
 );
-sseManager.setImageSecret(imageSecret);
+sseManager.setAttachmentSecret(attachmentSecret);
 
 // Broadcast runtime state patches to all SSE clients interested in the session.
 sessions.state.onPatch((event) => {
@@ -112,7 +112,7 @@ const server = createServer((req, res) => {
     debugLevel: config.debug.level,
     authStore,
     ticketStore,
-    imageSecret,
+    attachmentSecret,
     shareConfig: config.share,
   })(req, res);
 });

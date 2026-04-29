@@ -833,7 +833,7 @@ Ack (dismiss) a message without consuming. Deletes the row.
 
 ### Images
 
-#### `POST /api/v1/sessions/:id/images`
+#### `POST /api/v1/sessions/:id/attachments`
 
 Upload an image (base64-encoded) for use in prompts.
 
@@ -851,7 +851,7 @@ Upload an image (base64-encoded) for use in prompts.
 ```json
 {
   "path": "images/abc-123/1705312260000.png",
-  "url": "/api/v1/sessions/abc-123/images/1705312260000.png"
+  "url": "/api/v1/sessions/abc-123/attachments/1705312260000.png"
 }
 ```
 
@@ -859,7 +859,7 @@ Upload an image (base64-encoded) for use in prompts.
 
 ---
 
-#### `GET /api/v1/sessions/:id/images/:file`
+#### `GET /api/v1/sessions/:id/attachments/:file`
 
 Retrieve a previously uploaded image. Responses are immutably cached (`Cache-Control: public, max-age=31536000, immutable`).
 

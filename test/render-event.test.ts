@@ -97,12 +97,15 @@ describe("render-event", () => {
       const el = append(
         mod.renderContentEvent(
           "user_message",
-          { text: "x", images: [{ path: "/api/v1/sessions/S/images/a.png" }] },
-          makeHooks({ rewriteImageSrc: () => "/s/T/images/a.png" }),
+          {
+            text: "x",
+            images: [{ path: "/api/v1/sessions/S/attachments/a.png" }],
+          },
+          makeHooks({ rewriteImageSrc: () => "/s/T/attachments/a.png" }),
         ),
       )!;
       const img = el.querySelector("img.user-image") as HTMLImageElement;
-      assert.equal(img.getAttribute("src"), "/s/T/images/a.png");
+      assert.equal(img.getAttribute("src"), "/s/T/attachments/a.png");
     });
   });
 

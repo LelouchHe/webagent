@@ -8,7 +8,7 @@ import { tmpdir } from "node:os";
 import { Store } from "../src/store.ts";
 import { createRequestHandler } from "../src/routes.ts";
 import { AuthStore } from "../src/auth-store.ts";
-import { signImageUrl } from "../src/auth.ts";
+import { signAttachmentUrl } from "../src/auth.ts";
 
 interface Resp {
   status: number;
@@ -51,7 +51,7 @@ describe("image signed URLs", () => {
   let server: http.Server;
   let port: number;
   let token: string;
-  const imageSecret = randomBytes(32);
+  const attachmentSecret = randomBytes(32);
 
   before(async () => {
     tmpDir = mkdtempSync(join(tmpdir(), "webagent-img-sign-"));
@@ -70,7 +70,7 @@ describe("image signed URLs", () => {
     const handler = createRequestHandler({
       store,
       authStore,
-      imageSecret,
+      attachmentSecret,
       publicDir,
       dataDir: tmpDir,
       limits: { bash_output: 1024, image_upload: 10 * 1024 * 1024 },
@@ -102,7 +102,7 @@ describe("image signed URLs", () => {
     const r = await req(
       port,
       "POST",
-      "/api/v1/sessions/sess1/images",
+      "/api/v1/sessions/sess1/attachments",
       {
         Authorization: `Bearer ${token}`,
         "Content-Type": "application/json",
@@ -120,7 +120,7 @@ describe("image signed URLs", () => {
     const upload = await req(
       port,
       "POST",
-      "/api/v1/sessions/sess1/images",
+      "/api/v1/sessions/sess1/attachments",
       { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
       JSON.stringify({ data: png, mimeType: "image/png" }),
     );
@@ -135,7 +135,7 @@ describe("image signed URLs", () => {
     const r = await req(
       port,
       "GET",
-      "/api/v1/sessions/sess1/images/anything.png",
+      "/api/v1/sessions/sess1/attachments/anything.png",
     );
     assert.equal(r.status, 401);
   });
@@ -145,7 +145,7 @@ describe("image signed URLs", () => {
     const upload = await req(
       port,
       "POST",
-      "/api/v1/sessions/sess1/images",
+      "/api/v1/sessions/sess1/attachments",
       { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
       JSON.stringify({ data: png, mimeType: "image/png" }),
     );
@@ -161,15 +161,17 @@ describe("image signed URLs", () => {
     const upload = await req(
       port,
       "POST",
-      "/api/v1/sessions/sess1/images",
+      "/api/v1/sessions/sess1/attachments",
       { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
       JSON.stringify({ data: png, mimeType: "image/png" }),
     );
-    const fileMatch = JSON.parse(upload.body).url.match(/\/images\/([^/?]+)\?/);
+    const fileMatch = JSON.parse(upload.body).url.match(
+      /\/attachments\/([^/?]+)\?/,
+    );
     const fileName = fileMatch![1];
-    const path = `/api/v1/sessions/sess1/images/${fileName}`;
+    const path = `/api/v1/sessions/sess1/attachments/${fileName}`;
     // Sign with negative TTL
-    const expiredQs = signImageUrl(path, imageSecret, -10);
+    const expiredQs = signAttachmentUrl(path, attachmentSecret, -10);
     const r = await req(port, "GET", `${path}?${expiredQs}`);
     assert.equal(r.status, 401);
   });
@@ -179,7 +181,7 @@ describe("image signed URLs", () => {
     const upload = await req(
       port,
       "POST",
-      "/api/v1/sessions/sess1/images",
+      "/api/v1/sessions/sess1/attachments",
       { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
       JSON.stringify({ data: png, mimeType: "image/png" }),
     );
@@ -189,7 +191,7 @@ describe("image signed URLs", () => {
     const r = await req(
       port,
       "GET",
-      `/api/v1/sessions/sess1/images/other.png?${qs}`,
+      `/api/v1/sessions/sess1/attachments/other.png?${qs}`,
     );
     assert.equal(r.status, 401);
   });

@@ -252,7 +252,7 @@ User types text + Enter
   input.ts: sendMessage()
         │
         ├── Show user message in DOM (optimistic)
-        ├── Upload images if any: POST /api/v1/sessions/:id/images
+        ├── Upload images if any: POST /api/v1/sessions/:id/attachments
         ├── api.sendMessage(): POST /api/v1/sessions/:id/prompt
         ├── setBusy(true)
         ├── showWaiting()

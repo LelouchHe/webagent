@@ -83,9 +83,9 @@ secret-pattern updates.
   (`/api/v1/shared/<token>/events`) strips session_id from its
   response. Viewers have no way to find the original session.
 - **Image proxy:** images are served from
-  `/s/<token>/images/<file>`. Filenames are validated against
+  `/s/<token>/attachments/<file>`. Filenames are validated against
   `[A-Za-z0-9._-]+` and the final path must stay under
-  `<data_dir>/images/<session_id>/`.
+  `<data_dir>/attachments/<session_id>/`.
 - **Revoke is immediate and destructive:** `DELETE /api/v1/sessions/<id>/share`
   hard-deletes the row from the `shares` table; subsequent viewer hits
   get HTTP 410. There is no `revoked_at` audit column — revoke is a
@@ -120,7 +120,7 @@ internal_hosts = []             # sanitizer will scrub these hostnames
 | `PATCH /api/v1/sessions/:id/share` | owner | Update owner_label / display_name |
 | `GET  /api/v1/shares` | owner | List live shares |
 | `GET  /s/:token` | public | Viewer HTML (strict CSP) |
-| `GET  /s/:token/images/:file` | public | Image proxy |
+| `GET  /s/:token/attachments/:file` | public | Image proxy |
 | `GET  /api/v1/shared/:token/events` | public | Viewer JSON |
 
 All owner routes are gated by the global Bearer-token middleware (see
