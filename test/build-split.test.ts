@@ -21,10 +21,12 @@ import { gzipSync } from "node:zlib";
  *   3. Every chunk that `app.[hash].js` statically imports must be referenced
  *      by `<link rel="modulepreload">` in `dist/index.html`, so the browser
  *      starts fetching it in parallel with app.js.
- *   4. Prune is reachability-aware: when a new build replaces the previous
- *      one, the chunk files referenced by the *retained* old `app.[hash].js`
- *      MUST still exist on disk. Otherwise tabs that loaded the old HTML
- *      will fail to fetch the chunk on lazy import during a deploy.
+ *   4. Prune is reachability-aware AND transitive: when a new build replaces
+ *      the previous one, every chunk reachable from a *retained* old entry
+ *      bundle (app/login/viewer) — directly OR via chunk → chunk imports —
+ *      MUST still exist on disk. esbuild can split a lazy `import()` out of
+ *      an already-shared chunk (real example: hljs from highlight.ts), so
+ *      a non-recursive prune walk silently 404s on lazy imports during deploy.
  *
  * These tests run a full `node scripts/build.js` against the real source tree
  * and inspect `dist/`. They are slow-ish (~3-5s) but catch regressions that
@@ -132,6 +134,56 @@ describe("build output: hljs split", () => {
         html,
         re,
         `dist/index.html missing <link rel="modulepreload" href="/js/${chunk}">`,
+      );
+    }
+  });
+
+  it("transitively-reachable chunks survive prune (chunk → chunk dynamic imports)", () => {
+    // Real-world bug: highlight.ts dynamically imports hljs, esbuild splits
+    // hljs into its own chunk, but highlight.ts itself lives in a SHARED
+    // chunk (not the entry). So the hljs chunk is reachable only via
+    // chunk → chunk, never directly from app.[hash].js. A non-recursive
+    // reachability scan in scripts/build.js prunes it → 404 at runtime.
+    // This test guards against that regression.
+    const { src: appSrc } = readApp();
+    const directChunks = extractChunkRefs(appSrc);
+    assert.ok(
+      directChunks.length >= 1,
+      "app must reference at least one chunk for this test to be meaningful",
+    );
+
+    // BFS the chunk graph from the app's direct refs.
+    const reachable = new Set<string>(directChunks);
+    const queue = [...directChunks];
+    while (queue.length > 0) {
+      const c = queue.shift()!;
+      const p = join(DIST, "js", c);
+      if (!existsSync(p)) continue;
+      for (const inner of extractChunkRefs(readFileSync(p, "utf-8"))) {
+        if (!reachable.has(inner)) {
+          reachable.add(inner);
+          queue.push(inner);
+        }
+      }
+    }
+
+    // Force a rebuild that keeps the old app retained, then verify the
+    // full transitive set still exists.
+    writeFileSync(
+      APP_TS,
+      originalAppTs + `\n// transitive marker ${Date.now()}\n`,
+    );
+    runBuild();
+
+    const surviving = new Set(listJs());
+    for (const chunk of reachable) {
+      assert.ok(
+        surviving.has(chunk),
+        `transitively-reachable chunk ${chunk} was pruned after rebuild. ` +
+          `If a chunk is reachable via chunk → chunk imports (e.g. hljs lazy ` +
+          `import from a shared chunk), the prune walk in scripts/build.js ` +
+          `must be transitive, not single-level. ` +
+          `Surviving: ${[...surviving].join(", ")}`,
       );
     }
   });

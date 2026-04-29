@@ -233,10 +233,43 @@ async function pruneOldHashedAssets() {
   // login, or viewer bundle MUST be kept, even if older by mtime. This
   // prevents in-flight tabs (loaded against the previous [name].[hash].js)
   // from 404-ing on lazy imports during a deploy. Anything else can be deleted.
+  //
+  // CRITICAL: the walk MUST be transitive. esbuild can split a lazy
+  // `import()` out of an already-shared chunk, producing a 3rd-level chunk
+  // that NO entry bundle imports directly (real example: hljs is dynamically
+  // imported from highlight.ts, which itself lives in a shared chunk →
+  // chunk → chunk path). A non-recursive scan would prune that grand-child
+  // chunk and break dynamic imports at runtime (silent feature breakage +
+  // console 404). Walk via BFS until the reachable set stops growing.
   const reachableChunks = new Set();
+  const queue = [];
   for (const f of [...keepApp, ...keepLogin, ...keepViewer]) {
     const src = await readFile(join(jsDir, f), "utf-8");
-    for (const c of extractChunkRefs(src)) reachableChunks.add(c);
+    for (const c of extractChunkRefs(src)) {
+      if (!reachableChunks.has(c)) {
+        reachableChunks.add(c);
+        queue.push(c);
+      }
+    }
+  }
+  while (queue.length > 0) {
+    const c = queue.shift();
+    let src;
+    try {
+      src = await readFile(join(jsDir, c), "utf-8");
+    } catch {
+      // Chunk was already pruned in a previous run (or was never emitted
+      // because of a partial build). Nothing to walk; downstream chunks
+      // it would have referenced are already broken — surfacing that as a
+      // build failure is out of scope here.
+      continue;
+    }
+    for (const inner of extractChunkRefs(src)) {
+      if (!reachableChunks.has(inner)) {
+        reachableChunks.add(inner);
+        queue.push(inner);
+      }
+    }
   }
   const chunkEntries = (await readdir(jsDir, { withFileTypes: true })).filter(
     (e) => e.isFile() && /^chunk\.[A-Za-z0-9_-]+\.js$/.test(e.name),
