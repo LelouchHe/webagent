@@ -15,6 +15,7 @@ import { errorMessage, MessageIngressSchema } from "./types.ts";
 import type { AgentEvent } from "./types.ts";
 import { interruptBashProc } from "./session-manager.ts";
 import { randomUUID } from "node:crypto";
+import { handleShareRoutes } from "./share/routes.ts";
 import { authenticate, isWhitelistedPath } from "./auth-middleware.ts";
 import type { AuthStore, TokenRecord } from "./auth-store.ts";
 import type { TicketStore } from "./sse-ticket.ts";
@@ -46,6 +47,11 @@ const MIME: Record<string, string> = {
 export const HTML_ENTRYPOINTS = [
   { urlPath: "/", file: "index.html" },
   { urlPath: "/login", file: "login.html" },
+  // Share viewer — served by share's own dispatcher at /s/:token
+  // (see src/share/routes.ts → handleViewerHtml). The urlPath here is a
+  // pseudo-path used only by the test invariants (CSP/inline checks); the
+  // real route is /s/:token. Keep both views in sync if either changes.
+  { urlPath: "/s", file: "share-viewer.html" },
 ] as const;
 
 /**
@@ -100,6 +106,8 @@ export interface RequestHandlerDeps {
   pushService?: PushService;
   serverVersion?: string;
   debugLevel?: string;
+  /** Share feature config. When `enabled=false`, share routes are invisible. */
+  shareConfig?: Config["share"];
   /**
    * Optional auth store. When set, every request to `/api/**` outside the
    * whitelist (see auth-middleware.ts) requires a valid Bearer token.
@@ -237,6 +245,26 @@ export function createRequestHandler(
         }
         principalByRequest.set(req, result.principal);
       }
+    }
+
+    // Share routes — early dispatch so /s/* and /api/v1/shares* claim
+    // their URL space before the generic /api/v1 branch. When
+    // `shareConfig.enabled === false` handleShareRoutes is a no-op.
+    // The auth gate above has already enforced Bearer on owner endpoints
+    // (/api/v1/sessions/:id/share*, /api/v1/shares); viewer endpoints
+    // (/s/:token, /api/v1/shared/:token/events) must be whitelisted in
+    // auth-middleware.ts so they remain public.
+    if (
+      deps.shareConfig &&
+      (await handleShareRoutes(req, res, {
+        store,
+        sessions,
+        config: deps.shareConfig,
+        dataDir: deps.dataDir,
+        publicDir: deps.publicDir,
+      }))
+    ) {
+      return;
     }
 
     // --- API routes ---

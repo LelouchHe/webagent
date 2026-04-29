@@ -259,7 +259,7 @@ describe("slash-tree — buildCandidates", () => {
     assert.equal(c[0].spec.primary, "(no match)");
   });
 
-  it("freeform appended after subcommands, before data, with prefix '›'", () => {
+  it("freeform appended after subcommands, before data, with prefix '↵'", () => {
     const token: CmdNode = {
       name: "/token",
       children: [{ name: "rev", desc: "Revoke", onSelect: async () => {} }],
@@ -277,7 +277,7 @@ describe("slash-tree — buildCandidates", () => {
     assert.ok(subIdx >= 0 && ffIdx >= 0);
     assert.ok(subIdx < ffIdx, "subcommand precedes freeform");
     const ffCand = c[ffIdx];
-    assert.equal(ffCand.prefix, "›");
+    assert.equal(ffCand.prefix, "↵");
     assert.match(ffCand.spec.primary, /create 're'/);
   });
 

@@ -22,6 +22,12 @@ import * as api from "./api.ts";
 import { log, setLogLevel, getLogLevel, type LogLevel } from "./log.ts";
 import { TOKEN_STORAGE_KEY } from "./login-core.ts";
 import { ROOT, consumeInbox } from "./slash-commands.ts";
+import {
+  createPreview,
+  revokeShare,
+  setDefaultDisplayName,
+  openShare,
+} from "./share/commands.ts";
 
 async function subscribePush(): Promise<void> {
   try {
@@ -90,7 +96,48 @@ export async function handleSlashCommand(text: string): Promise<boolean> {
   const cmd = parts[0].toLowerCase();
   const arg = parts.slice(1).join(" ").trim();
 
+  // Preview mode disables the input textarea, so this dispatch is only
+  // reachable from the regular conversation flow — there's no need to
+  // intercept "what if user types /publish in preview" anymore.
   switch (cmd) {
+    case "/share": {
+      const subParts = arg.split(/\s+/);
+      const sub = (subParts[0] ?? "").toLowerCase();
+      if (sub === "") {
+        await createPreview();
+        return true;
+      }
+      if (sub === "revoke") {
+        const token = subParts[1] ?? "";
+        await revokeShare(token);
+        return true;
+      }
+      if (sub === "by") {
+        // Everything after "by" is the name; preserve original casing/spaces.
+        const rest = arg.replace(/^by(\s+|$)/i, "").trim();
+        await setDefaultDisplayName(rest === "" ? null : rest);
+        return true;
+      }
+      // Default: bare token → open the share viewer in a new tab.
+      // Accept both formats so old base64url links still paste:
+      //   - new: 36 lowercase hex chars (see generateShareToken in src/tokens.ts)
+      //   - legacy: 24 base64url chars (pre-hex switch)
+      // Match against `subParts[0]` so we honor original casing rather than
+      // the lower-cased `sub`.
+      const candidate = subParts[0] ?? "";
+      if (
+        /^[0-9a-f]{36}$/.test(candidate) ||
+        /^[A-Za-z0-9_-]{24}$/.test(candidate)
+      ) {
+        openShare(candidate);
+        return true;
+      }
+      addSystem(
+        `share: unknown subcommand '${sub}' — try /share, /share by <name>, /share <token>, or /share revoke <token>`,
+      );
+      return true;
+    }
+
     case "/new": {
       // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- empty string should fall through
       const cwd = arg || state.sessionCwd || undefined;
@@ -304,6 +351,9 @@ export async function handleSlashCommand(text: string): Promise<boolean> {
     }
 
     case "/cancel":
+      // Preview mode disables the input, so /cancel from typed slash can
+      // only mean "cancel the busy turn". The ^C button covers the
+      // preview-cancel case.
       if (state.busy) {
         sendCancel();
         addSystem("^C");

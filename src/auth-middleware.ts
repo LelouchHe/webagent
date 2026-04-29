@@ -52,6 +52,19 @@ const WHITELIST: readonly WhitelistEntry[] = [
     test: (p) =>
       /^\/api\/v1\/sessions\/[A-Za-z0-9_-]+\/images\/[A-Za-z0-9._-]+$/.test(p),
   },
+
+  // --- Share viewer (public read-only snapshots) ---
+  // Viewer HTML shell + image proxy + viewer-namespaced static assets
+  // (CSS/JS) all live under /s/* — see src/share/routes.ts. The auth gate
+  // only applies to /api/**, so /s/* paths fall through to share routes
+  // without needing a whitelist entry. The viewer's event stream is the
+  // only public /api/ path: it serves a frozen snapshot identified solely
+  // by the share token in the URL.
+  {
+    method: "GET",
+    test: (p) =>
+      /^\/api\/v1\/shared\/(?:[0-9a-f]{36}|[A-Za-z0-9_-]{24})\/events$/.test(p),
+  },
 ];
 
 /**

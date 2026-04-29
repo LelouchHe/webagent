@@ -282,7 +282,7 @@ export class SessionManager {
 
   /** Delete a session from store and clean up all state (including images). */
   deleteSession(sessionId: string): void {
-    this.store.deleteSession(sessionId);
+    const mode = this.store.deleteSession(sessionId);
     this.liveSessions.delete(sessionId);
     this.sessionHasTitle.delete(sessionId);
     this.assistantBuffers.delete(sessionId);
@@ -294,11 +294,15 @@ export class SessionManager {
       if (perm.sessionId === sessionId) this.pendingPermissions.delete(reqId);
     }
     this.state.delete(sessionId);
-    // Remove uploaded images for this session
-    rm(join(this.dataDir, "images", sessionId), {
-      recursive: true,
-      force: true,
-    }).catch(() => {});
+    if (mode === "hard") {
+      // Tombstoned sessions keep their images alive for the share viewer
+      // (shared images still resolve via /s/:token/images/...). The reap
+      // path in share/routes.ts removes them once the last share is gone.
+      rm(join(this.dataDir, "images", sessionId), {
+        recursive: true,
+        force: true,
+      }).catch(() => {});
+    }
   }
 
   /** Flush assistant/thinking buffers to store. */

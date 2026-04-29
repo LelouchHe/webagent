@@ -379,6 +379,15 @@ body {
   font-size: 15px;
   padding: 2px 14px;
   color: var(--text-dim);
+  white-space: pre-wrap;
+}
+.system-msg a {
+  color: var(--accent);
+  text-decoration: underline;
+  word-break: break-all;
+}
+.system-msg a:hover {
+  color: var(--text);
 }
 
 /* Tool calls */
@@ -635,6 +644,26 @@ body {
   --prompt-color: var(--red);
   color: var(--prompt-color);
 }
+#input-area.preview-mode {
+  border-top: 2px solid var(--blue);
+}
+#input-area.preview-mode::before {
+  content: "preview";
+  position: absolute;
+  top: -7px;
+  left: 16px;
+  font-size: 10px;
+  line-height: 1;
+  padding: 0 4px;
+  background: var(--bg);
+  color: var(--blue);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+#input-area.preview-mode #input-prompt {
+  --prompt-color: var(--blue);
+  color: var(--prompt-color);
+}
 #status-bar {
   display: flex;
   padding: 0 16px 10px;
@@ -716,6 +745,21 @@ body {
 #send-btn.cancel:active {
   color: var(--red);
   border-color: var(--red);
+}
+.input-btn.publish {
+  color: var(--blue);
+  border-color: var(--blue);
+  font-weight: bold;
+}
+.input-btn.publish:hover,
+.input-btn.publish:focus,
+.input-btn.publish:active {
+  color: var(--blue);
+  border-color: var(--blue);
+}
+#input-area.preview-mode #input {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 @keyframes spinner {
   0% {

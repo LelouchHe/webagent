@@ -66,21 +66,25 @@ function extractChunkRefs(src) {
  * Inject <link rel="modulepreload"> tags for each chunk into the HTML <head>,
  * just before </head>. Idempotent: existing modulepreload tags for chunks
  * not in `chunks` are stripped first.
+ *
+ * `prefix` controls the URL path used in href; default `/js/` (main app),
+ * `/s/_/` for the share viewer so all its assets stay under one prefix.
  */
-function injectModulePreload(html, chunks) {
-  // Strip any pre-existing modulepreload tags pointing at /js/chunk.*
+function injectModulePreload(html, chunks, prefix = "/js/") {
+  // Strip any pre-existing modulepreload tags pointing at ANY chunk path.
   html = html.replace(
-    /\s*<link\s+rel=["']modulepreload["']\s+href=["']\/js\/chunk\.[A-Za-z0-9_-]+\.js["']\s*\/?\s*>/g,
+    /\s*<link\s+rel=["']modulepreload["']\s+href=["'][^"']*chunk\.[A-Za-z0-9_-]+\.js["']\s*\/?\s*>/g,
     "",
   );
   if (chunks.length === 0) return html;
   const tags = chunks
-    .map((c) => `<link rel="modulepreload" href="/js/${c}">`)
+    .map((c) => `<link rel="modulepreload" href="${prefix}${c}">`)
     .join("\n");
   return html.replace("</head>", `${tags}\n</head>`);
 }
 
-async function copyStaticAssets(bundleFile, loginBundleFile) {
+async function copyStaticAssets(bundles) {
+  // bundles = { app, login, viewer } — each is the JS filename (hashed in prod).
   // Copy static assets (everything except js/)
   for (const entry of await readdir(SRC)) {
     if (entry === "js") continue;
@@ -88,41 +92,71 @@ async function copyStaticAssets(bundleFile, loginBundleFile) {
   }
 
   if (isDev) {
-    // Dev: write bundled CSS + rewrite index.html + login.html to point to un-hashed bundles
+    // Dev: write bundled CSS + rewrite index.html + login.html + share-viewer.html
+    // to point to un-hashed bundles.
     const cssContent = await buildBundledCss();
     await writeFile(join(OUT, "styles.css"), cssContent);
 
     let html = await readFile(join(OUT, "index.html"), "utf-8");
     html = html.replace(
       'type="module" src="/js/app.js"',
-      `type="module" src="/js/${bundleFile}"`,
+      `type="module" src="/js/${bundles.app}"`,
     );
     await writeFile(join(OUT, "index.html"), html);
 
     let loginHtml = await readFile(join(OUT, "login.html"), "utf-8");
     loginHtml = loginHtml.replace(
       'type="module" src="/js/login.js"',
-      `type="module" src="/js/${loginBundleFile}"`,
+      `type="module" src="/js/${bundles.login}"`,
     );
     await writeFile(join(OUT, "login.html"), loginHtml);
+
+    // share-viewer.html: rewrite asset URLs to /s/_/ namespace so the viewer
+    // is fully self-contained (single CF Access bypass / proxy rule on /s/*).
+    const sv = join(OUT, "share-viewer.html");
+    let svHtml = await readFile(sv, "utf-8");
+    svHtml = svHtml.replace("/styles.css", "/s/_/styles.css");
+    svHtml = svHtml.replace("/share-viewer.css", "/s/_/share-viewer.css");
+    if (!svHtml.includes('src="/js/share/viewer')) {
+      svHtml = svHtml.replace(
+        "</body>",
+        `<script type="module" src="/s/_/${bundles.viewer}"></script>\n</body>`,
+      );
+    }
+    // Dev splitting still emits hashed chunk.*.js — rewrite modulepreload too.
+    const viewerSrcDev = await readFile(
+      join(OUT, "js", bundles.viewer),
+      "utf-8",
+    );
+    const viewerChunksDev = extractChunkRefs(viewerSrcDev);
+    svHtml = injectModulePreload(svHtml, viewerChunksDev, "/s/_/");
+    await writeFile(sv, svHtml);
   } else {
-    // Production: bundle + hash CSS, rewrite HTML
+    // Production: bundle + hash CSS, hash share-viewer.css, rewrite HTML.
     const cssContent = await buildBundledCss();
     const cssHash = hashString(cssContent);
     const newCss = `styles.${cssHash}.css`;
     await writeFile(join(OUT, newCss), cssContent);
     await rm(join(OUT, "styles.css"));
 
-    // Discover chunks the app bundle dynamically/statically imports, so we can
-    // emit <link rel="modulepreload"> for parallel download.
-    const appSrc = await readFile(join(OUT, "js", bundleFile), "utf-8");
+    // share-viewer.css gets its own hash (separate file, no hljs bundling).
+    const svCssContent = await readFile(join(OUT, "share-viewer.css"), "utf-8");
+    const svCssHash = hashString(svCssContent);
+    const newSvCss = `share-viewer.${svCssHash}.css`;
+    await writeFile(join(OUT, newSvCss), svCssContent);
+    await rm(join(OUT, "share-viewer.css"));
+
+    // Discover chunks each entry bundle statically imports, for modulepreload.
+    const appSrc = await readFile(join(OUT, "js", bundles.app), "utf-8");
     const appChunks = extractChunkRefs(appSrc);
+    const viewerSrc = await readFile(join(OUT, "js", bundles.viewer), "utf-8");
+    const viewerChunks = extractChunkRefs(viewerSrc);
 
     let html = await readFile(join(OUT, "index.html"), "utf-8");
     html = html.replace("/styles.css", `/${newCss}`);
     html = html.replace(
       'type="module" src="/js/app.js"',
-      `type="module" src="/js/${bundleFile}"`,
+      `type="module" src="/js/${bundles.app}"`,
     );
     html = injectModulePreload(html, appChunks);
     await writeFile(join(OUT, "index.html"), html);
@@ -131,12 +165,24 @@ async function copyStaticAssets(bundleFile, loginBundleFile) {
     loginHtml = loginHtml.replace("/styles.css", `/${newCss}`);
     loginHtml = loginHtml.replace(
       'type="module" src="/js/login.js"',
-      `type="module" src="/js/${loginBundleFile}"`,
+      `type="module" src="/js/${bundles.login}"`,
     );
     await writeFile(join(OUT, "login.html"), loginHtml);
 
+    let svHtml = await readFile(join(OUT, "share-viewer.html"), "utf-8");
+    svHtml = svHtml.replace("/styles.css", `/s/_/${newCss}`);
+    svHtml = svHtml.replace("/share-viewer.css", `/s/_/${newSvCss}`);
+    if (!svHtml.includes('src="/js/share/viewer')) {
+      svHtml = svHtml.replace(
+        "</body>",
+        `<script type="module" src="/s/_/${bundles.viewer}"></script>\n</body>`,
+      );
+    }
+    svHtml = injectModulePreload(svHtml, viewerChunks, "/s/_/");
+    await writeFile(join(OUT, "share-viewer.html"), svHtml);
+
     console.log(
-      `Build complete → ${bundleFile} (+${appChunks.length} chunk${appChunks.length === 1 ? "" : "s"}), ${loginBundleFile}, ${newCss}`,
+      `Build complete → ${bundles.app} (+${appChunks.length} chunk${appChunks.length === 1 ? "" : "s"}), ${bundles.login}, ${bundles.viewer} (+${viewerChunks.length} chunk${viewerChunks.length === 1 ? "" : "s"}), ${newCss}, ${newSvCss}`,
     );
   }
 }
@@ -171,14 +217,59 @@ async function pruneOldHashedAssets() {
     await rm(join(jsDir, f), { force: true });
   }
 
-  // Reachability-aware chunk prune: any chunk referenced by a retained app or
-  // login bundle MUST be kept, even if older by mtime. This prevents in-flight
-  // tabs (loaded against the previous app.[hash].js) from 404-ing on lazy
-  // imports during a deploy. Anything else can be deleted.
+  const viewerEntries = (await readdir(jsDir, { withFileTypes: true })).filter(
+    (e) => e.isFile() && /^viewer\.[a-zA-Z0-9]+\.js$/.test(e.name),
+  );
+  const viewerSorted = await sortByMtimeDesc(
+    jsDir,
+    viewerEntries.map((e) => e.name),
+  );
+  const keepViewer = viewerSorted.slice(0, KEEP_HASHED_VERSIONS);
+  for (const f of viewerSorted.slice(KEEP_HASHED_VERSIONS)) {
+    await rm(join(jsDir, f), { force: true });
+  }
+
+  // Reachability-aware chunk prune: any chunk referenced by a retained app,
+  // login, or viewer bundle MUST be kept, even if older by mtime. This
+  // prevents in-flight tabs (loaded against the previous [name].[hash].js)
+  // from 404-ing on lazy imports during a deploy. Anything else can be deleted.
+  //
+  // CRITICAL: the walk MUST be transitive. esbuild can split a lazy
+  // `import()` out of an already-shared chunk, producing a 3rd-level chunk
+  // that NO entry bundle imports directly (real example: hljs is dynamically
+  // imported from highlight.ts, which itself lives in a shared chunk →
+  // chunk → chunk path). A non-recursive scan would prune that grand-child
+  // chunk and break dynamic imports at runtime (silent feature breakage +
+  // console 404). Walk via BFS until the reachable set stops growing.
   const reachableChunks = new Set();
-  for (const f of [...keepApp, ...keepLogin]) {
+  const queue = [];
+  for (const f of [...keepApp, ...keepLogin, ...keepViewer]) {
     const src = await readFile(join(jsDir, f), "utf-8");
-    for (const c of extractChunkRefs(src)) reachableChunks.add(c);
+    for (const c of extractChunkRefs(src)) {
+      if (!reachableChunks.has(c)) {
+        reachableChunks.add(c);
+        queue.push(c);
+      }
+    }
+  }
+  while (queue.length > 0) {
+    const c = queue.shift();
+    let src;
+    try {
+      src = await readFile(join(jsDir, c), "utf-8");
+    } catch {
+      // Chunk was already pruned in a previous run (or was never emitted
+      // because of a partial build). Nothing to walk; downstream chunks
+      // it would have referenced are already broken — surfacing that as a
+      // build failure is out of scope here.
+      continue;
+    }
+    for (const inner of extractChunkRefs(src)) {
+      if (!reachableChunks.has(inner)) {
+        reachableChunks.add(inner);
+        queue.push(inner);
+      }
+    }
   }
   const chunkEntries = (await readdir(jsDir, { withFileTypes: true })).filter(
     (e) => e.isFile() && /^chunk\.[A-Za-z0-9_-]+\.js$/.test(e.name),
@@ -190,14 +281,23 @@ async function pruneOldHashedAssets() {
   }
 
   const rootEntries = (await readdir(OUT, { withFileTypes: true })).filter(
-    (e) => e.isFile() && /^styles\.[a-zA-Z0-9]+\.css$/.test(e.name),
+    (e) =>
+      e.isFile() && /^(styles|share-viewer)\.[a-zA-Z0-9]+\.css$/.test(e.name),
   );
   const cssSorted = await sortByMtimeDesc(
     OUT,
     rootEntries.map((e) => e.name),
   );
-  for (const f of cssSorted.slice(KEEP_HASHED_VERSIONS)) {
-    await rm(join(OUT, f), { force: true });
+  // Group by family so we keep N of each, not N total.
+  const byFamily = { styles: [], "share-viewer": [] };
+  for (const f of cssSorted) {
+    const fam = f.startsWith("styles.") ? "styles" : "share-viewer";
+    byFamily[fam].push(f);
+  }
+  for (const fam of Object.keys(byFamily)) {
+    for (const f of byFamily[fam].slice(KEEP_HASHED_VERSIONS)) {
+      await rm(join(OUT, f), { force: true });
+    }
   }
 }
 
@@ -220,7 +320,11 @@ async function main() {
   }
 
   const esbuildOptions = {
-    entryPoints: [join(SRC, "js", "app.ts"), join(SRC, "js", "login.ts")],
+    entryPoints: [
+      join(SRC, "js", "app.ts"),
+      join(SRC, "js", "login.ts"),
+      join(SRC, "js", "share", "viewer.ts"),
+    ],
     bundle: true,
     format: "esm",
     platform: "browser",
@@ -238,7 +342,11 @@ async function main() {
     await ctx.watch();
     // Initial build
     await ctx.rebuild();
-    await copyStaticAssets("app.js", "login.js");
+    await copyStaticAssets({
+      app: "app.js",
+      login: "login.js",
+      viewer: "share/viewer.js",
+    });
     console.log(`Dev build ready (watching for changes)…`);
 
     // Also watch static assets (HTML, CSS) for changes
@@ -248,7 +356,11 @@ async function main() {
         const watcher = fsWatch(SRC, { recursive: true, signal: ac.signal });
         for await (const event of watcher) {
           if (event.filename && !event.filename.startsWith("js/")) {
-            await copyStaticAssets("app.js", "login.js");
+            await copyStaticAssets({
+              app: "app.js",
+              login: "login.js",
+              viewer: "share/viewer.js",
+            });
           }
         }
       } catch (e) {
@@ -270,16 +382,29 @@ async function main() {
     const loginCandidates = jsFiles.filter(
       (f) => /^login\.[A-Za-z0-9]+\.js$/.test(f) || f === "login.js",
     );
+    // esbuild flattens nested entry paths: share/viewer.ts → js/viewer.[hash].js
+    const viewerCandidates = jsFiles.filter(
+      (f) => /^viewer\.[A-Za-z0-9]+\.js$/.test(f) || f === "viewer.js",
+    );
     // esbuild may have left older hashed bundles; pick newest by mtime per family.
     const appSorted = await sortByMtimeDesc(join(OUT, "js"), appCandidates);
     const loginSorted = await sortByMtimeDesc(join(OUT, "js"), loginCandidates);
-    const bundleFile = appSorted[0];
-    const loginBundleFile = loginSorted[0];
-    await copyStaticAssets(bundleFile, loginBundleFile);
+    const viewerSorted = await sortByMtimeDesc(
+      join(OUT, "js"),
+      viewerCandidates,
+    );
+    const bundles = {
+      app: appSorted[0],
+      login: loginSorted[0],
+      viewer: viewerSorted[0],
+    };
+    await copyStaticAssets(bundles);
     await pruneOldHashedAssets();
 
     if (isDev)
-      console.log(`Dev build complete → ${bundleFile}, ${loginBundleFile}`);
+      console.log(
+        `Dev build complete → ${bundles.app}, ${bundles.login}, ${bundles.viewer}`,
+      );
   }
 }
 

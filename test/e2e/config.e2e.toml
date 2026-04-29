@@ -6,3 +6,10 @@ agent_cmd = "node --experimental-strip-types test/e2e/mock-agent.ts"
 [limits]
 bash_output = 1_048_576
 image_upload = 10_485_760
+
+[share]
+enabled = true
+ttl_hours = 0
+csp_enforce = true
+viewer_origin = ""
+internal_hosts = []

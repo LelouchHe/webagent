@@ -22,7 +22,7 @@ export interface SlashItemSpec {
 }
 
 /** Prefix glyph chosen by the walker, not the spec author. */
-export type SlashPrefix = "" | "›" | "*";
+export type SlashPrefix = "" | "›" | "↵" | "*";
 
 // Step 2 implements this. Stub so other modules can import the type now.
 export function renderItem(

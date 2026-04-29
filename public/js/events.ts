@@ -38,25 +38,24 @@ import {
   scrollToBottom,
   renderMd,
   escHtml,
-  renderPatchDiff,
-  addBashBlock,
   finishBash,
   appendMessageElement,
 } from "./render.ts";
 import * as api from "./api.ts";
 import { applyConnectedLogLevel } from "./log.ts";
 import {
-  interpretToolCall,
-  extractToolCallContent,
-  getStatusIcon,
   classifyPermissionOption,
-  resolvePermissionLabel,
-  formatPlanEntries,
   normalizeEventsResponse,
   isPromptIdle,
 } from "./event-interpreter.ts";
+import {
+  renderContentEvent,
+  isContentEventType,
+  type RenderHooks,
+  type ContentEventType,
+} from "./render-event.ts";
 import { enhanceCodeBlocks } from "./highlight.ts";
-import type { AgentEvent, PlanEntry, StoredEvent } from "../../src/types.ts";
+import type { AgentEvent, StoredEvent } from "../../src/types.ts";
 
 /**
  * When the current session is gone (expired, deleted), try to switch to the
@@ -620,7 +619,6 @@ function renderMessageCard(msg: AgentEvent & { type: "message" }) {
   if (content) enhanceCodeBlocks(content);
 }
 
-// eslint-disable-next-line complexity -- TODO: refactor event type switch with helper functions
 export function replayEvent(
   type: string,
   data: unknown,
@@ -629,31 +627,112 @@ export function replayEvent(
   ri?: ReplayIndex,
 ) {
   const d = data as Record<string, unknown>;
+  if (isContentEventType(type)) {
+    handleReplayContentEvent(type, d, events, idx, ri);
+    return;
+  }
   switch (type) {
-    case "user_message": {
-      const el = addMessage("user", d.text as string);
-      if (d.images && Array.isArray(d.images)) {
-        for (const img of d.images) {
-          const imgObj = img as { path: string };
-          const imgEl = document.createElement("img");
-          imgEl.className = "user-image";
-          imgEl.src = imgObj.path;
-          el.appendChild(imgEl);
-        }
-      }
+    case "prompt_done":
+      state.pendingToolCallIds.clear();
+      state.pendingPermissionRequestIds.clear();
+      state.pendingPromptDone = false;
+      setBusy(false);
       break;
-    }
+    case "message":
+      renderMessageCard(d as unknown as AgentEvent & { type: "message" });
+      break;
+  }
+}
+
+/** Build hooks for the live (handleEvent) path — looks up elements in the live DOM. */
+function liveHooks(): RenderHooks {
+  return {
+    findToolCallEl: (id) => document.getElementById(`tc-${id}`),
+    findPermissionEl: (reqId) =>
+      document.querySelector<HTMLElement>(
+        `.permission[data-request-id="${reqId}"]`,
+      ),
+    findBashEl: () => state.currentBashEl,
+    enhanceMarkdown: enhanceCodeBlocks,
+  };
+}
+
+/** Build hooks for the replay path (driven by ReplayIndex when present). */
+function replayHooks(
+  ri: ReplayIndex | undefined,
+  events: StoredEvent[],
+  idx: number,
+): RenderHooks {
+  return {
+    findToolCallEl: (id) =>
+      ri ? (ri.toolCalls.get(id) ?? null) : replayById(`tc-${id}`),
+    findPermissionEl: (reqId) =>
+      ri
+        ? (ri.permissions.get(reqId) ?? null)
+        : (replayQuery(
+            `.permission[data-request-id="${reqId}"]`,
+          ) as HTMLElement | null),
+    findBashEl: () =>
+      ri ? ri.currentBashEl : replayById("bash-replay-pending"),
+    isPermissionResolved: (reqId) =>
+      ri
+        ? ri.resolvedPermissions.has(reqId)
+        : events.slice(idx + 1).some((e) => {
+            const parsed = JSON.parse(e.data) as { requestId: string };
+            return (
+              e.type === "permission_response" && parsed.requestId === reqId
+            );
+          }),
+    enhanceMarkdown: enhanceCodeBlocks,
+  };
+}
+
+/** Wire onclick handlers onto unresolved permission buttons rendered by render-event.ts. */
+function bindPermissionButtons(
+  el: HTMLElement,
+  reqId: string,
+  title: string,
+  onResolved?: () => void,
+): void {
+  const buttons = el.querySelectorAll("button");
+  buttons.forEach((btn) => {
+    const optionId = btn.dataset.optionId ?? "";
+    const optKind = btn.dataset.optionKind ?? "";
+    const optName = btn.textContent || "";
+    btn.onclick = () => {
+      const perm = classifyPermissionOption(optKind);
+      if (perm.apiAction === "deny") {
+        api.denyPermission(state.sessionId!, reqId).catch(() => {});
+      } else {
+        api
+          .resolvePermission(state.sessionId!, reqId, optionId)
+          .catch(() => {});
+      }
+      el.innerHTML = `<span class="dim">⚿ ${escHtml(title)} — ${escHtml(optName)}</span>`;
+      onResolved?.();
+    };
+  });
+}
+
+// eslint-disable-next-line complexity -- TODO: refactor event type switch with helper functions
+function handleReplayContentEvent(
+  type: ContentEventType,
+  d: Record<string, unknown>,
+  events: StoredEvent[],
+  idx: number,
+  ri: ReplayIndex | undefined,
+): void {
+  const hooks = replayHooks(ri, events, idx);
+  switch (type) {
     case "assistant_message": {
-      // Merge consecutive assistant messages into one bubble (buffer flushes can split them)
+      // Merge consecutive assistant messages into one bubble (buffer flushes can split them).
       const container = state.replayTarget ?? dom.messages;
       const lastChild = container.lastElementChild as HTMLElement | null;
-      const textVal = d.text as string;
+      const textVal = (d.text as string | undefined) ?? "";
       if (
-        lastChild &&
-        lastChild.classList.contains("msg") &&
+        lastChild?.classList.contains("msg") &&
         lastChild.classList.contains("assistant")
       ) {
-        // Re-render with combined text by extracting existing text and appending
         const existing = lastChild.getAttribute("data-raw") ?? "";
         const combined = existing + textVal;
         lastChild.setAttribute("data-raw", combined);
@@ -661,16 +740,14 @@ export function replayEvent(
         enhanceCodeBlocks(lastChild);
         break;
       }
-      const el = addMessage("assistant", textVal);
-      el.setAttribute("data-raw", textVal);
-      enhanceCodeBlocks(el);
+      const el = renderContentEvent(type, d, hooks);
+      if (el) appendMessageElement(el);
       break;
     }
     case "thinking": {
-      // Merge consecutive thinking blocks into one (buffer flushes can split them)
       const container = state.replayTarget ?? dom.messages;
       const lastChild = container.lastElementChild as HTMLElement | null;
-      const textVal = d.text as string;
+      const textVal = (d.text as string | undefined) ?? "";
       if (lastChild?.classList.contains("thinking")) {
         const content = lastChild.querySelector(".thinking-content");
         if (content) {
@@ -681,204 +758,60 @@ export function replayEvent(
           break;
         }
       }
-      const el = document.createElement("details");
-      el.className = "thinking";
-      el.setAttribute("data-raw", textVal);
-      el.innerHTML = `<summary>⠿ thought</summary><div class="thinking-content">${escHtml(textVal)}</div>`;
-      appendMessageElement(el);
+      const el = renderContentEvent(type, d, hooks);
+      if (el) appendMessageElement(el);
       break;
     }
     case "tool_call": {
-      const tc = interpretToolCall(
-        d.kind as string,
-        d.title as string,
-        d.rawInput as string | Record<string, unknown> | undefined,
-      );
-      const el = document.createElement("div");
-      el.className = "tool-call";
-      el.id = `tc-${d.id as string}`;
-      el.dataset.kind = d.kind as string;
-      let label = `<span class="icon">${tc.icon}</span> ${escHtml(tc.title)}`;
-      if (tc.detail) {
-        label += `<span class="tc-detail">${tc.detailPrefix ?? ""}${escHtml(tc.detail)}</span>`;
+      const el = renderContentEvent(type, d, hooks);
+      if (el) {
+        appendMessageElement(el);
+        if (ri) ri.toolCalls.set(d.id as string, el);
       }
-      el.innerHTML = label;
-      if (tc.showDiff) {
-        const diffHtml = renderPatchDiff(
-          d.rawInput as string | Record<string, unknown> | undefined,
-        );
-        if (diffHtml) {
-          const details = document.createElement("details");
-          details.innerHTML = `<summary>diff</summary><div class="diff-view">${diffHtml}</div>`;
-          el.appendChild(details);
-        }
-      }
-      const detail = el.querySelector(".tc-detail");
-      if (detail) {
-        el.addEventListener("click", (e) => {
-          if ((e.target as HTMLElement).closest("details")) return;
-          detail.classList.toggle("expanded");
-        });
-      }
-      appendMessageElement(el);
-      if (ri) ri.toolCalls.set(d.id as string, el);
       break;
     }
     case "tool_call_update": {
-      const idVal = d.id as string;
-      const el = ri ? ri.toolCalls.get(idVal) : replayById(`tc-${idVal}`);
-      if (el) {
-        const si = getStatusIcon(d.status as string);
-        el.className = si.className;
-        const iconSpan = el.querySelector(".icon");
-        if (iconSpan) iconSpan.textContent = si.icon;
-        const contentArr = d.content as
-          | Array<{ type: string; text?: string }>
-          | undefined;
-        if (
-          contentArr?.length &&
-          !el.querySelector("details") &&
-          !el.querySelector(".tc-summary")
-        ) {
-          const text = extractToolCallContent(contentArr);
-          if (text) {
-            if (el.dataset.kind === "task_complete") {
-              const div = document.createElement("div");
-              div.className = "tc-summary";
-              div.textContent = text;
-              el.appendChild(div);
-            } else {
-              const details = document.createElement("details");
-              details.innerHTML = `<summary>output</summary><div class="tc-content">${escHtml(text)}</div>`;
-              el.appendChild(details);
-            }
-          }
-        }
-      }
-      // Clear pending state so prompt_done can finish after reconnect replay
+      renderContentEvent(type, d, hooks);
       if (d.status === "completed" || d.status === "failed") {
-        state.pendingToolCallIds.delete(idVal);
+        state.pendingToolCallIds.delete(d.id as string);
       }
-      break;
-    }
-    case "plan": {
-      const el = document.createElement("div");
-      el.className = "plan";
-      const planViews = formatPlanEntries(
-        (d.entries as PlanEntry[] | undefined) ?? [],
-      );
-      el.innerHTML =
-        '<div class="plan-title">― plan</div>' +
-        planViews
-          .map(
-            (pv) =>
-              `<div class="plan-entry">${pv.symbol} ${escHtml(pv.content)}</div>`,
-          )
-          .join("");
-      appendMessageElement(el);
       break;
     }
     case "permission_request": {
       const reqId = d.requestId as string;
       const titleVal = (d.title as string | undefined) ?? "";
-      const el = document.createElement("div");
-      el.className = "permission";
-      el.dataset.requestId = reqId;
-      el.dataset.title = titleVal;
-      el.innerHTML = `<span class="title dim">⚿ ${escHtml(titleVal)}</span> `;
-      // During replay, check the pre-built set to see if a later permission_response
-      // already resolved this request (avoids forward-scanning the events array).
-      const wasResolved = ri
-        ? ri.resolvedPermissions.has(reqId)
-        : events.slice(idx + 1).some((e) => {
-            const parsed = JSON.parse(e.data) as { requestId: string };
-            return (
-              e.type === "permission_response" && parsed.requestId === reqId
-            );
-          });
-      const options = d.options as
-        | Array<{ kind?: string; name: string; optionId: string }>
-        | undefined;
-      if (!wasResolved && options) {
-        const titleSpan = el.querySelector(".title");
-        if (titleSpan) (titleSpan as HTMLElement).style.opacity = "1";
-        options.forEach((opt) => {
-          const btn = document.createElement("button");
-          const perm = classifyPermissionOption(opt.kind ?? "");
-          btn.className = perm.cssClass;
-          btn.textContent = opt.name;
-          btn.onclick = () => {
-            if (perm.apiAction === "deny") {
-              void api.denyPermission(state.sessionId!, reqId);
-            } else {
-              void api.resolvePermission(state.sessionId!, reqId, opt.optionId);
-            }
-            el.innerHTML = `<span class="dim">⚿ ${escHtml(titleVal)} — ${escHtml(opt.name)}</span>`;
-          };
-          el.appendChild(btn);
-        });
-      }
-      appendMessageElement(el);
-      // Store after append so permission_response can find it
-      if (ri) ri.permissions.set(reqId, el);
-      break;
-    }
-    case "permission_response": {
-      const respReqId = d.requestId as string;
-      const el = ri
-        ? ri.permissions.get(respReqId)
-        : replayQuery(`.permission[data-request-id="${respReqId}"]`);
+      const el = renderContentEvent(type, d, hooks);
       if (el) {
-        const title = (el as HTMLElement).dataset.title
-          ? `⚿ ${(el as HTMLElement).dataset.title}`
-          : "⚿";
-        const action = resolvePermissionLabel(
-          d.optionName as string | undefined,
-          d.denied as boolean | undefined,
-        );
-        el.innerHTML = `<span class="dim">${escHtml(title)} — ${escHtml(action)}</span>`;
+        const wasResolved = hooks.isPermissionResolved?.(reqId) ?? false;
+        if (!wasResolved) bindPermissionButtons(el, reqId, titleVal);
+        appendMessageElement(el);
+        if (ri) ri.permissions.set(reqId, el);
       }
       break;
     }
     case "bash_command": {
-      const el = addBashBlock(d.command as string, false);
-      if (ri) {
-        ri.currentBashEl = el;
-      } else {
-        el.id = "bash-replay-pending";
+      const el = renderContentEvent(type, d, hooks);
+      if (el) {
+        if (ri) ri.currentBashEl = el;
+        else el.id = "bash-replay-pending";
+        appendMessageElement(el);
       }
       break;
     }
     case "bash_result": {
-      const el = ri ? ri.currentBashEl : replayById("bash-replay-pending");
-      if (el) {
-        if (!ri) el.removeAttribute("id");
-        const outputVal = d.output as string | undefined;
-        if (outputVal) {
-          const out = el.querySelector(".bash-output");
-          if (out) {
-            out.textContent = outputVal;
-            out.classList.add("has-content");
-          }
-        }
-        finishBash(
-          el,
-          (d.code as number | null | undefined) ?? null,
-          (d.signal as string | null | undefined) ?? null,
-        );
-        if (ri) ri.currentBashEl = null;
-      }
+      const target = ri ? ri.currentBashEl : replayById("bash-replay-pending");
+      if (target && !ri) target.removeAttribute("id");
+      renderContentEvent(type, d, hooks);
+      if (ri) ri.currentBashEl = null;
       break;
     }
-    case "prompt_done":
-      state.pendingToolCallIds.clear();
-      state.pendingPermissionRequestIds.clear();
-      state.pendingPromptDone = false;
-      setBusy(false);
+    case "user_message":
+    case "plan":
+    case "permission_response": {
+      const el = renderContentEvent(type, d, hooks);
+      if (el) appendMessageElement(el);
       break;
-    case "message":
-      renderMessageCard(d as unknown as AgentEvent & { type: "message" });
-      break;
+    }
   }
 }
 
@@ -999,7 +932,7 @@ export function handleEvent(msg: AgentEvent) {
       setConnectionStatus("connected", "connected");
       dom.input.disabled = false;
       dom.sendBtn.disabled = false;
-      dom.input.placeholder = "Message or ?";
+      // Placeholder is owned by updateModeUI (called above). No literal here.
       state.newTurnStarted = false;
       // Adopt any in-flight bash block from history replay (snapshot carries
       // the busy truth; we just need to hook up the DOM element if present).
@@ -1037,15 +970,8 @@ export function handleEvent(msg: AgentEvent) {
       state.newTurnStarted = true;
       state.turnEnded = false;
       if (msg.sessionId === state.sessionId) {
-        const el = addMessage("user", msg.text);
-        if (msg.images) {
-          for (const img of msg.images) {
-            const imgEl = document.createElement("img");
-            imgEl.className = "user-image";
-            imgEl.src = img.path;
-            el.appendChild(imgEl);
-          }
-        }
+        const el = renderContentEvent("user_message", msg, liveHooks());
+        if (el) appendMessageElement(el);
       }
       break;
     }
@@ -1087,66 +1013,16 @@ export function handleEvent(msg: AgentEvent) {
       hideWaiting();
       finishThinking();
       finishAssistant();
-      const tc = interpretToolCall(msg.kind, msg.title, msg.rawInput);
-      const el = document.createElement("div");
-      el.className = "tool-call";
-      el.id = `tc-${msg.id}`;
-      el.dataset.kind = msg.kind;
-      let label = `<span class="icon">${tc.icon}</span> ${escHtml(tc.title)}`;
-      if (tc.detail) {
-        label += `<span class="tc-detail">${tc.detailPrefix ?? ""}${escHtml(tc.detail)}</span>`;
-      }
-      el.innerHTML = label;
-      if (tc.showDiff) {
-        const diffHtml = renderPatchDiff(msg.rawInput);
-        if (diffHtml) {
-          const details = document.createElement("details");
-          details.innerHTML = `<summary>diff</summary><div class="diff-view">${diffHtml}</div>`;
-          el.appendChild(details);
-        }
-      }
-      const detail = el.querySelector(".tc-detail");
-      if (detail) {
-        el.addEventListener("click", (e) => {
-          // Don't toggle tc-detail when clicking inside a <details> element
-          if ((e.target as Element).closest("details")) return;
-          detail.classList.toggle("expanded");
-        });
-      }
-      appendMessageElement(el);
+      const el = renderContentEvent("tool_call", msg, liveHooks());
+      if (el) appendMessageElement(el);
       break;
     }
 
     case "tool_call_update": {
-      const el = document.getElementById(`tc-${msg.id}`);
       if (msg.status === "completed" || msg.status === "failed") {
         state.pendingToolCallIds.delete(msg.id);
       }
-      if (el) {
-        const si = getStatusIcon(msg.status);
-        el.className = si.className;
-        const iconSpan = el.querySelector(".icon");
-        if (iconSpan) iconSpan.textContent = si.icon;
-        if (
-          msg.content?.length &&
-          !el.querySelector("details") &&
-          !el.querySelector(".tc-summary")
-        ) {
-          const text = extractToolCallContent(msg.content);
-          if (text) {
-            if (el.dataset.kind === "task_complete") {
-              const div = document.createElement("div");
-              div.className = "tc-summary";
-              div.textContent = text;
-              el.appendChild(div);
-            } else {
-              const details = document.createElement("details");
-              details.innerHTML = `<summary>output</summary><div class="tc-content">${escHtml(text)}</div>`;
-              el.appendChild(details);
-            }
-          }
-        }
-      }
+      renderContentEvent("tool_call_update", msg, liveHooks());
       finishPromptIfIdle();
       scrollToBottom();
       break;
@@ -1155,18 +1031,8 @@ export function handleEvent(msg: AgentEvent) {
     case "plan": {
       finishThinking();
       finishAssistant();
-      const el = document.createElement("div");
-      el.className = "plan";
-      const planViews = formatPlanEntries(msg.entries);
-      el.innerHTML =
-        '<div class="plan-title">― plan</div>' +
-        planViews
-          .map(
-            (pv) =>
-              `<div class="plan-entry">${pv.symbol} ${escHtml(pv.content)}</div>`,
-          )
-          .join("");
-      appendMessageElement(el);
+      const el = renderContentEvent("plan", msg, liveHooks());
+      if (el) appendMessageElement(el);
       break;
     }
 
@@ -1182,48 +1048,22 @@ export function handleEvent(msg: AgentEvent) {
       state.pendingPermissionRequestIds.add(msg.requestId);
       setBusy(true);
       finishThinking();
-      const permEl = document.createElement("div");
-      permEl.className = "permission";
-      permEl.dataset.requestId = msg.requestId;
-      permEl.dataset.title = msg.title;
-      permEl.innerHTML = `<span class="title">⚿ ${escHtml(msg.title)}</span> `;
-      msg.options.forEach((opt) => {
-        const btn = document.createElement("button");
-        const perm = classifyPermissionOption(opt.kind);
-        btn.className = perm.cssClass;
-        btn.textContent = opt.name;
-        btn.onclick = () => {
-          if (perm.apiAction === "deny") {
-            api.denyPermission(state.sessionId!, msg.requestId).catch(() => {});
-          } else {
-            api
-              .resolvePermission(state.sessionId!, msg.requestId, opt.optionId)
-              .catch(() => {});
-          }
-          state.pendingPermissionRequestIds.delete(msg.requestId);
-          permEl.innerHTML = `<span class="dim">⚿ ${escHtml(msg.title)} — ${escHtml(opt.name)}</span>`;
+      const permEl = renderContentEvent("permission_request", msg, liveHooks());
+      if (permEl) {
+        const reqId = msg.requestId;
+        bindPermissionButtons(permEl, reqId, msg.title, () => {
+          state.pendingPermissionRequestIds.delete(reqId);
           finishPromptIfIdle();
-        };
-        permEl.appendChild(btn);
-      });
-      appendMessageElement(permEl);
+        });
+        appendMessageElement(permEl);
+      }
       break;
     }
 
     case "permission_response": {
       state.pendingPermissionRequestIds.delete(msg.requestId);
-      const permTarget = document.querySelector(
-        `.permission[data-request-id="${msg.requestId}"]`,
-      );
-      if (
-        msg.sessionId === state.sessionId &&
-        permTarget instanceof HTMLElement
-      ) {
-        const title = permTarget.dataset.title
-          ? `⚿ ${permTarget.dataset.title}`
-          : "⚿";
-        const action = resolvePermissionLabel(msg.optionName, msg.denied);
-        permTarget.innerHTML = `<span class="dim">${escHtml(title)} — ${escHtml(action)}</span>`;
+      if (msg.sessionId === state.sessionId) {
+        renderContentEvent("permission_response", msg, liveHooks());
       }
       finishPromptIfIdle();
       break;
@@ -1236,7 +1076,14 @@ export function handleEvent(msg: AgentEvent) {
         break;
       }
       if (msg.sessionId === state.sessionId) {
-        addBashBlock(msg.command, true);
+        const el = renderContentEvent("bash_command", msg, liveHooks());
+        if (el) {
+          // Live: command is in flight; the shared renderer produces a "not
+          // running" block, so we mark it running here before appending.
+          el.querySelector(".bash-cmd")!.classList.add("running");
+          appendMessageElement(el);
+          state.currentBashEl = el;
+        }
         setBusy(true);
       }
       break;

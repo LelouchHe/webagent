@@ -18,6 +18,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - bash execution lifecycle
   - slash command and picker UX
   - REST API surface (sessions, prompt, bash, permissions, ops, SSE, push)
+  - Share links (token issue, owner auth, sanitizer, viewer routes, image proxy, build prune)
 
 ## Unit / Integration Scenarios
 
@@ -245,6 +246,56 @@ spot gaps, and decide what still needs to be added without reading every spec.
 - `test/types.test.ts`
   - errorMessage helper (Error, string, object, null)
 
+### Share links
+
+- `test/share-token.test.ts`
+  - 144-bit token shape, base64url alphabet, uniqueness across many draws
+
+- `test/share-store.test.ts`
+  - DDL + state machine: preview (`shared_at IS NULL`) → activated (`shared_at` set)
+  - `revoked_at` column migration (drop on existing DBs)
+  - revoke is hard delete; preview-GC sweep deletes only stale unactivated rows
+
+- `test/share-sanitize.test.ts` / `test/share-sanitize-secrets.test.ts`
+  - secret detection → hard-reject with `event_id` + `rule`
+  - path / hostname soft-redact placeholders
+  - markdown raw-HTML disabled; URL allowlist applied
+
+- `test/share-mutex.test.ts`
+  - per-key async mutex serializes same-key callers, parallelizes different keys
+  - propagates exceptions, cleans up Map entries (no leak)
+
+- `test/share-routes-preview.test.ts` / `test/share-routes-publish-viewer.test.ts`
+  - preview create / read / staleness flag
+  - publish freezes snapshot; viewer JSON strips `session_id`
+  - 410 when share row is missing or `enabled=false`
+
+- `test/share-routes-revoke-list-patch.test.ts`
+  - DELETE is idempotent; PATCH updates `owner_label` / `display_name`
+  - GET `/api/v1/shares` returns owner's live shares
+
+- `test/share-routes-skeleton.test.ts`
+  - 410-by-default when `[share] enabled=false`
+
+- `test/share-cleanup.test.ts`
+  - 24h preview-GC sweep removes rows with `shared_at IS NULL AND created_at < now-24h`
+  - activated rows are never swept
+
+- `test/share-smoke.test.ts`
+  - end-to-end: create preview → publish → public fetch → revoke → 410
+
+- `test/share-xss-grep.test.ts`
+  - CI gate: viewer source must not contain `innerHTML` / `eval` / inline event handlers
+
+- `test/share-viewer-image-rewriter.test.ts`
+  - viewer rewrites `/api/v1/sessions/<id>/images/<file>` → `/s/<token>/images/<file>`
+  - rewriter accepts a query-string tail (signed image URLs from owner side)
+
+- `test/build-split.test.ts`
+  - chunk prune is reachability-aware AND transitive — chunks reachable
+    only via chunk → chunk dynamic imports (e.g. hljs lazy load) survive
+    a rebuild that retains the previous app bundle
+
 ## Playwright E2E Scenarios
 
 ### Basic session and messaging flow
@@ -417,6 +468,14 @@ spot gaps, and decide what still needs to be added without reading every spec.
 
 - `switch-status-bar.spec.ts`
   - status bar shows model and cwd after switching sessions
+
+### Share links
+
+- `share-publish.spec.ts`
+  - `/share` creates a preview; input enters preview mode (textarea disabled, ^P/^C buttons)
+  - `^P` button publishes; viewer page (`/s/<token>`) loads under strict CSP with no violations and renders the sanitized event stream
+  - public JSON (`/api/v1/shared/<token>/events`) does not leak `session_id`
+  - unknown token → HTTP 410
 
 ### Screenshots (separate script, not in E2E suite)
 

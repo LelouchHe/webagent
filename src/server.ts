@@ -15,6 +15,10 @@ import { TicketStore } from "./sse-ticket.ts";
 import { randomBytes } from "node:crypto";
 import { ClientRegistry } from "./client-registry.ts";
 import { startMessageCleanup, type CleanupHandle } from "./message-cleanup.ts";
+import {
+  startSharePreviewCleanup,
+  type SharePreviewCleanupHandle,
+} from "./share/cleanup.ts";
 import { AuthStore } from "./auth-store.ts";
 import { join as pathJoin } from "node:path";
 import type { AgentEvent } from "./types.ts";
@@ -88,6 +92,7 @@ sessions.state.onPatch((event) => {
 
 let bridge: AgentBridge | null = null;
 let messageCleanup: CleanupHandle | null = null;
+let sharePreviewCleanup: SharePreviewCleanupHandle | null = null;
 
 // --- HTTP server ---
 
@@ -108,6 +113,7 @@ const server = createServer((req, res) => {
     authStore,
     ticketStore,
     imageSecret,
+    shareConfig: config.share,
   })(req, res);
 });
 
@@ -141,6 +147,7 @@ async function shutdown() {
   console.log("\n[server] shutting down...");
   sseManager.stopHeartbeat();
   messageCleanup?.stop();
+  sharePreviewCleanup?.stop();
   sessions.killAllBashProcs();
   await bridge?.shutdown();
   await authStore.close();
@@ -205,6 +212,10 @@ server.listen(config.port, "0.0.0.0", () => {
       store,
       config.messages.unprocessed_ttl_days,
     );
+    if (config.share.enabled) {
+      sharePreviewCleanup = startSharePreviewCleanup(store);
+      console.log(`[share] preview gc armed (24h interval)`);
+    }
     console.log(`[bridge] starting: ${config.agent_cmd}...`);
     try {
       await initBridge();

@@ -86,7 +86,12 @@ export function resolvePath(
 /**
  * Build the candidate list for a resolved node + tail query.
  *
- * Order: subcommands (›) → freeform (›) → [separator] → data rows / placeholder.
+ * Prefix glyphs:
+ *   ›   navigate — subcommand; Tab/Enter drills deeper
+ *   ↵   commit   — freeform; Tab fills, Enter runs the typed action
+ *   ``  data row, placeholder, separator
+ *
+ * Order: subcommands (›) → freeform (↵) → [separator] → data rows / placeholder.
  *
  * Data argument semantics (only meaningful when node has fetch):
  *   undefined → no data section rendered (caller hasn't provided yet)
@@ -176,13 +181,13 @@ export function buildCandidates(
     if (!collision) {
       const fspec = node.freeform(tailQuery);
       if (fspec) {
-        freeformCand = { spec: fspec, prefix: "›", kind: "freeform" };
+        freeformCand = { spec: fspec, prefix: "↵", kind: "freeform" };
         out.push(freeformCand);
       }
     }
   }
 
-  // 4. Separator: only when › group AND data section both present
+  // 4. Separator: only when navigate/commit group AND data section both present
   const hasArrowGroup = subcommands.length > 0 || freeformCand !== null;
   const hasDataSection = dataState !== "none";
   if (hasArrowGroup && hasDataSection) {

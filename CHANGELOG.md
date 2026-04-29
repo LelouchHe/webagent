@@ -6,6 +6,45 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## Unreleased
 
+### Added — Share links (default off)
+
+Public read-only session snapshots via `/share` + `/s/<token>`. **Off by
+default** (`[share] enabled = false`); flip to `true` to expose the routes.
+See [`docs/share.md`](docs/share.md) for the full surface.
+
+- **Owner CLI** — `/share` lists active shares (Enter creates a preview);
+  `/share by <name>` sets a default `display_name` for new shares;
+  `/share <token>` opens a share's viewer in a new tab; `/share revoke
+  <token>` hard-deletes a published share.
+- **Preview mode** — creating a preview puts the input area in preview
+  mode with `^P` (publish) and `^C` (cancel) buttons; the textarea is
+  disabled so the next interaction is intentional.
+- **Public viewer** — `/s/<token>` is a separate HTML entry (`viewer.[hash].js`)
+  with strict CSP (`default-src 'self'`, no inline scripts, no third-party
+  origins). Frame-ancestors deny, `noindex, nofollow`, and `Referrer-Policy:
+  no-referrer`. Tokens are 144-bit `randomBytes(18)` lowercase hex (36
+  chars; double-click in browser selects the whole token); knowledge of
+  the token is the entire capability.
+- **Multi-layer sanitizer** — secrets (API keys, private keys, OAuth tokens)
+  hard-reject the share with HTTP 400 + `event_id`/`rule`. Paths outside
+  cwd, `/Users/...` / `/home/...` prefixes, and `share.internal_hosts`
+  hostnames are soft-redacted. Sanitizer re-runs on every public fetch
+  so post-publish rule updates take effect with no migration.
+- **Image proxy** — `/s/<token>/images/<file>` enforces filename
+  `[A-Za-z0-9._-]+` and a chroot check to `<data_dir>/images/<session_id>/`.
+  Viewer rewrites image URLs in `user_message.path` automatically.
+- **Preview GC** — when `enabled=true`, a 24h interval deletes preview
+  rows (`shared_at IS NULL AND created_at < now - 24h`). Activated rows
+  are never swept; `/share revoke` is the only way to remove them.
+- **Config** — new `[share]` section: `enabled`, `ttl_hours` (cap 168),
+  `csp_enforce`, `viewer_origin`, `internal_hosts`. Detail in
+  [`docs/configuration.md`](docs/configuration.md).
+- **Build invariant** — chunk prune in `scripts/build.js` is now
+  reachability-aware **and transitive** (BFS over chunk → chunk imports),
+  so lazy `import()` chunks reachable only via shared chunks (e.g. hljs
+  via `highlight.ts`) are never deleted during deploy. Regression test:
+  `test/build-split.test.ts`.
+
 ### ⚠️ BREAKING — 0.4.0
 
 **Bearer token auth is now required.** webagent will refuse to start without

@@ -1,0 +1,342 @@
+// Share UI helpers — owner-side preview/publish/cancel/list/revoke.
+//
+// Per /share v1.1 spec (locked):
+//   • `/share` (no arg)   → list active shares; Enter = create new preview
+//   • `/share revoke <t>` → revoke a public share
+//   • Preview mode (set by createPreview) disables the input textarea.
+//     The only paths out are the ^P (publish) / ^C (cancel) buttons or
+//     their Ctrl+P / Ctrl+C shortcuts. There is no slash channel into
+//     preview-mode actions — slash text reaches the agent as normal.
+//   • Cancel does NOT call backend — TTL cleans the unused preview row.
+//   • Page refresh / session switch loses previewToken (resetSessionUI
+//     clears it); the backend preview row TTLs out the same way.
+//
+// All mutating endpoints live under `/api/v1/sessions/:id/share*` and
+// `/api/v1/shares` — gated by Bearer via the global authFetch monkey-patch.
+// Viewer endpoints (`/s/:token`, `/api/v1/shared/:token/events`) are public
+// and never touched from owner code.
+
+import { state } from "../state.ts";
+import { updateModeUI } from "../state.ts";
+import { addSystem } from "../render.ts";
+import { log } from "../log.ts";
+
+const slog = log.scope("share");
+
+interface PreviewResponse {
+  token: string;
+  session_id: string;
+  snapshot_seq: number;
+  ttl_hours: number | null;
+  display_name: string | null;
+  owner_label: string | null;
+  shared_at: number | null;
+  reused: boolean;
+}
+
+interface PublishResponse {
+  token: string;
+  shared_at: number;
+  public_url: string;
+  display_name: string | null;
+}
+
+export interface ShareListRow {
+  token: string;
+  session_id: string;
+  session_title: string | null;
+  shared_at: number | null;
+  created_at: number;
+  display_name: string | null;
+  owner_label: string | null;
+  share_snapshot_seq: number;
+  ttl_hours: number | null;
+  last_accessed_at: number | null;
+}
+
+function publicUrl(rawPath: string, token: string): string {
+  if (rawPath.startsWith("http")) return rawPath;
+  if (rawPath) return `${location.origin}${rawPath}`;
+  return `${location.origin}/s/${token}`;
+}
+
+/**
+ * POST /api/v1/sessions/:id/share — create (or reuse) a preview snapshot.
+ * On success: sets `state.previewToken` so the slash menu switches to
+ * On success: sets `state.previewToken` so the input area enters preview
+ * mode (textarea disabled, ^P/^C buttons) and prints an inline summary.
+ */
+export async function createPreview(): Promise<void> {
+  if (!state.sessionId) {
+    addSystem("share: no active session");
+    return;
+  }
+  const sessionId = state.sessionId;
+  try {
+    const res = await fetch(
+      `/api/v1/sessions/${encodeURIComponent(sessionId)}/share`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+        credentials: "same-origin",
+      },
+    );
+    if (!res.ok) {
+      const errText = await res.text();
+      if (res.status === 409) {
+        addSystem(
+          "share: session busy (agent streaming) — retry after the response completes",
+        );
+      } else if (res.status === 403) {
+        addSystem("share: forbidden (not owner)");
+      } else if (res.status === 400 && errText.includes("sanitize")) {
+        addSystem(`share: ✗ sanitize blocked this session — ${errText}`);
+      } else {
+        addSystem(
+          `share: create failed ${res.status} — ${errText.slice(0, 200)}`,
+        );
+      }
+      return;
+    }
+    const data = (await res.json()) as PreviewResponse;
+    state.previewToken = data.token;
+    updateModeUI();
+
+    // Input is disabled in preview mode — the only paths out are the
+    // ^P/^C buttons (or their Ctrl shortcuts). Slash hints would be wrong.
+    const action = data.reused ? "reused" : "ready";
+    addSystem(`share: preview ${action} — ^P publish · ^C cancel`);
+  } catch (err) {
+    slog.error("preview create error", { err });
+    addSystem(`share: network error — ${String(err)}`);
+  }
+}
+
+/**
+ * POST /api/v1/sessions/:id/share/publish — freeze the active preview.
+ * Failure keeps preview mode active so the user can retry or `/cancel`.
+ */
+export async function publishPreview(): Promise<void> {
+  if (!state.sessionId) {
+    addSystem("share: no active session");
+    return;
+  }
+  if (!state.previewToken) {
+    addSystem("share: no preview to publish — run /share first");
+    return;
+  }
+  const sessionId = state.sessionId;
+  const token = state.previewToken;
+  try {
+    const res = await fetch(
+      `/api/v1/sessions/${encodeURIComponent(sessionId)}/share/publish`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token }),
+        credentials: "same-origin",
+      },
+    );
+    if (!res.ok) {
+      const text = await res.text();
+      if (res.status === 403) {
+        addSystem("share: forbidden (not owner)");
+      } else if (res.status === 404) {
+        addSystem("share: token not found (already revoked?)");
+      } else {
+        addSystem(
+          `share: publish failed ${res.status} — ${text.slice(0, 200)}`,
+        );
+      }
+      return;
+    }
+    const data = (await res.json()) as PublishResponse;
+    const url = publicUrl(data.public_url, data.token);
+    state.previewToken = null;
+    updateModeUI();
+
+    // Render the URL as a real anchor: clickable, right-click → Copy Link
+    // works, and selecting just the link is easier than scraping a pre-wrap
+    // text block. Token isn't shown — it's the URL suffix; revoke happens
+    // later via the `/share` list.
+    const el = addSystem("share: published\n");
+    const a = document.createElement("a");
+    a.href = url;
+    a.textContent = url;
+    a.target = "_blank";
+    a.rel = "noopener noreferrer";
+    el.appendChild(a);
+  } catch (err) {
+    slog.error("publish error", { err });
+    addSystem(`share: network error — ${String(err)}`);
+  }
+}
+
+/**
+ * Cancel the in-memory preview token. The backend row is left to TTL prune;
+ * we deliberately don't call DELETE so a click slip doesn't burn a slot.
+ */
+export function cancelPreview(): void {
+  if (!state.previewToken) {
+    addSystem("share: no preview active");
+    return;
+  }
+  state.previewToken = null;
+  updateModeUI();
+  addSystem("share: preview canceled");
+}
+
+/**
+ * GET /api/v1/shares — list active (published) shares for current owner.
+ * Preview rows (shared_at == null) are filtered out so they never leak
+ * into the menu / list view.
+ */
+export async function listOwnerShares(): Promise<ShareListRow[]> {
+  const res = await fetch("/api/v1/shares", { credentials: "same-origin" });
+  if (!res.ok) {
+    throw new Error(`list failed ${res.status}`);
+  }
+  const data = (await res.json()) as { shares: ShareListRow[] };
+  return data.shares.filter((s) => s.shared_at != null);
+}
+
+/**
+ * Revoke a public share. We need the row's session_id so look it up via
+ * the list endpoint first; preview-only rows (shared_at == null) are
+ * intentionally not revocable through here — they only TTL out.
+ */
+export async function revokeShare(token: string): Promise<void> {
+  if (!token) {
+    addSystem("share: usage — /share revoke <token>");
+    return;
+  }
+  try {
+    const all = await fetchAllSharesForRevoke();
+    const row = all.find((s) => s.token === token);
+    if (!row) {
+      addSystem("share: token not found (already revoked?)");
+      return;
+    }
+    const res = await fetch(
+      `/api/v1/sessions/${encodeURIComponent(row.session_id)}/share`,
+      {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token }),
+        credentials: "same-origin",
+      },
+    );
+    if (!res.ok) {
+      if (res.status === 403) addSystem("share: forbidden (not owner)");
+      else if (res.status === 404) addSystem(`share: ${token} already revoked`);
+      else addSystem(`share: revoke failed ${res.status}`);
+      return;
+    }
+    const j = (await res.json()) as { revoked: boolean };
+    addSystem(
+      j.revoked ? `share: revoked ${token}` : `share: ${token} already revoked`,
+    );
+  } catch (err) {
+    slog.error("revoke error", { err });
+    addSystem(`share: network error — ${String(err)}`);
+  }
+}
+
+// Revoke needs the full list (including any active rows the caller may
+// have for other sessions); listOwnerShares already filters that, so this
+// internal helper hits the raw endpoint.
+async function fetchAllSharesForRevoke(): Promise<ShareListRow[]> {
+  const res = await fetch("/api/v1/shares", { credentials: "same-origin" });
+  if (!res.ok) throw new Error(`list failed ${res.status}`);
+  const data = (await res.json()) as { shares: ShareListRow[] };
+  return data.shares.filter((s) => s.shared_at != null);
+}
+
+/**
+ * Open a share's public URL in a new tab. Used by both the slash-menu
+ * row default action and the bare `/share <token>` slash-exec path.
+ * The hostname comes from `location.origin` — for production this is
+ * the same origin the owner is logged into, which is what they'd want.
+ */
+export function openShare(token: string): void {
+  const url = `${location.origin}/s/${token}`;
+  window.open(url, "_blank", "noopener");
+  // Short, persistent breadcrumb: viewer was opened in another tab and
+  // the system message stays in the chat as a record.
+  addSystem(`share: opened ${url}`);
+}
+
+/**
+ * GET /api/v1/share/by — read the owner's default display_name. Returns
+ * null when unset (publish goes out anonymous). Used by the slash menu to
+ * surface the current value when offering `/share by`.
+ */
+export async function getDefaultDisplayName(): Promise<string | null> {
+  try {
+    const res = await fetch("/api/v1/share/by", {
+      credentials: "same-origin",
+    });
+    if (!res.ok) return null;
+    const data = (await res.json()) as { value: string | null };
+    return data.value;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Set (or clear with `null`) the owner's default display_name. Also patches
+ * the active preview (if any) so the change is visible in the current
+ * session before /publish. Already-published shares are left untouched —
+ * snapshot semantics.
+ */
+export async function setDefaultDisplayName(
+  name: string | null,
+): Promise<void> {
+  try {
+    const res = await fetch("/api/v1/share/by", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ value: name }),
+      credentials: "same-origin",
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      addSystem(
+        `share: set author failed ${res.status} — ${text.slice(0, 200)}`,
+      );
+      return;
+    }
+    const data = (await res.json()) as { value: string | null };
+
+    // Best-effort: reflect the change on the in-flight preview, if any.
+    if (state.previewToken && state.sessionId) {
+      try {
+        await fetch(
+          `/api/v1/sessions/${encodeURIComponent(state.sessionId)}/share`,
+          {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              token: state.previewToken,
+              display_name: data.value ?? "",
+            }),
+            credentials: "same-origin",
+          },
+        );
+      } catch (err) {
+        slog.warn("by: preview patch failed", { err });
+      }
+    }
+
+    addSystem(
+      data.value
+        ? `share: author set to '${data.value}'`
+        : "share: author cleared (publish anonymously)",
+    );
+  } catch (err) {
+    slog.error("by error", { err });
+    addSystem(`share: network error — ${String(err)}`);
+  }
+}

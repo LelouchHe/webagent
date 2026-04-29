@@ -22,6 +22,15 @@ import { log, setLogLevel, getLogLevel, type LogLevel } from "./log.ts";
 import type { CmdNode } from "./slash-tree.ts";
 import type { SessionSummary } from "../../src/types.ts";
 import { TOKEN_STORAGE_KEY } from "./login-core.ts";
+import {
+  createPreview,
+  listOwnerShares,
+  revokeShare,
+  openShare,
+  getDefaultDisplayName,
+  setDefaultDisplayName,
+  type ShareListRow,
+} from "./share/commands.ts";
 
 // --- shared helpers used by onSelect handlers ---
 
@@ -251,6 +260,27 @@ async function notifyOff(): Promise<void> {
   await unsubscribePush();
   notifyActive = false;
   addSystem("notify: disabled");
+}
+
+// Unified row layout for /share lists (both top-level and revoke child).
+// The primary slot holds the token (so Tab fills `/share <token>` for the
+// open default; in the revoke child Tab fills `/share revoke <token>`).
+// Secondary carries the session title (line 1, prominent). The path slot
+// shows the URL — left-indented dim text reads as a file path and matches
+// the "this is the link" mental model. pathSecondary carries the timestamp
+// (line 2, dim, right-aligned).
+function shareRowSpec(s: ShareListRow, kind: "open" | "revoke") {
+  const ago = s.shared_at ? formatLocalTime(s.shared_at) : "—";
+  return {
+    primary: s.token,
+    secondary: s.session_title ?? undefined,
+    path: `/s/${s.token}`,
+    pathSecondary: ago,
+    onSelect: () => {
+      if (kind === "open") openShare(s.token);
+      else void revokeShare(s.token);
+    },
+  };
 }
 
 // --- ROOT tree ---
@@ -483,6 +513,65 @@ export const ROOT: CmdNode = {
           },
         };
       },
+    },
+    {
+      name: "/share",
+      desc: "Share a read-only snapshot",
+      // Lists active (published) shares only — preview rows never leak in.
+      // Enter on the empty input creates a fresh preview (freeform fallback).
+      // Selecting a row opens the share's public URL in a new tab.
+      fetch: listOwnerShares,
+      toSpec: (item: unknown) => shareRowSpec(item as ShareListRow, "open"),
+      freeform: (q) => {
+        const trimmed = q.trim();
+        if (!trimmed) {
+          return {
+            primary: "create new share preview",
+            onSelect: () => createPreview(),
+          };
+        }
+        return {
+          primary: `open share '${trimmed}'`,
+          onSelect: () => {
+            openShare(trimmed);
+          },
+        };
+      },
+      children: [
+        {
+          name: "by",
+          desc: "Set author",
+          // fetch returns a single-row list with the current value so the
+          // submenu surfaces it; freeform handles "type a name + Enter".
+          fetch: async () => {
+            const value = await getDefaultDisplayName();
+            return [{ value }];
+          },
+          toSpec: (item: unknown) => {
+            const v = (item as { value: string | null }).value;
+            return {
+              primary: v ?? "(none)",
+              secondary: v ? "current — Enter to clear" : "currently anonymous",
+              onSelect: () => setDefaultDisplayName(null),
+            };
+          },
+          freeform: (q) => {
+            const trimmed = q.trim();
+            if (!trimmed) return null;
+            return {
+              primary: `set author to '${trimmed}'`,
+              onSelect: () => setDefaultDisplayName(trimmed),
+            };
+          },
+        },
+        {
+          name: "revoke",
+          desc: "Revoke a share",
+          fetch: listOwnerShares,
+          toSpec: (item: unknown) =>
+            shareRowSpec(item as ShareListRow, "revoke"),
+        },
+      ],
     },
     {
       name: "/switch",

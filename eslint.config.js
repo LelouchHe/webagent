@@ -155,6 +155,34 @@ export default tseslint.config(
     },
   },
 
+  // Share viewer must funnel ALL content event rendering through render-event.ts
+  // (the shared dispatcher used by both main app and viewer). Any local switch
+  // over the event type in viewer.ts means we're rebuilding DOM in a second
+  // place, which is exactly the drift the shared module exists to prevent.
+  // Allowed: switching on `ev.type` is fine in event-interpreter.ts (which is
+  // pure data) or in events.ts (which has additional live-only side effects),
+  // but NOT in the viewer.
+  {
+    files: ["public/js/share/viewer.ts"],
+    rules: {
+      "no-restricted-syntax": [
+        "error",
+        {
+          selector:
+            "SwitchStatement > MemberExpression.discriminant[property.name='type']",
+          message:
+            "Do not switch on event.type in viewer.ts — route ALL content-event rendering through renderContentEvent() in render-event.ts so viewer and main app cannot drift. Add new event types to CONTENT_EVENT_TYPES in render-event.ts instead.",
+        },
+        {
+          selector:
+            "SwitchStatement > MemberExpression.discriminant[property.name='kind']",
+          message:
+            "Do not switch on event.kind in viewer.ts — route through renderContentEvent() in render-event.ts.",
+        },
+      ],
+    },
+  },
+
   // Tests + bench: relax noisy rules (mocks, dynamic JSON, console.log fine)
   {
     files: ["test/**/*.ts", "bench/**/*.ts"],
