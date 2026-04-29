@@ -7,20 +7,29 @@ public audience without giving them any access to the live session.
 ## Quick start
 
 ```
-/share                       # create a preview (owner-only)
-/share publish               # freeze + publish → public URL
-/share list                  # enumerate your live shares
+/share                       # list active shares · Enter creates a new preview
+/share <token>               # open viewer for a public token in a new tab
+/share by <name>             # set default display_name for new shares (owner-wide, persisted)
 /share revoke <token>        # kill a link
-/share label <token> <text>  # rename (private owner label)
 ```
+
+Inside a preview, the input area enters **preview mode** and exposes two
+buttons (and matching shortcuts):
+
+- **`^P` (Ctrl+P)** — publish the preview, freeze the snapshot, print the
+  public `/s/<token>` URL.
+- **`^C` (Ctrl+C)** — cancel the preview locally. The unused preview row
+  is deleted by the next preview-GC sweep; the slash channel is otherwise
+  inert in preview mode (free-form text routes to the agent, not to share
+  ops).
 
 The workflow has two explicit gates:
 
 1. **Preview.** `/share` produces a *preview* that only the owner can
    fetch. It runs the sanitizer eagerly and reports staleness.
-2. **Publish.** `/share publish` freezes the snapshot (`shared_at` is
-   set) and returns the public `/s/<token>` URL. Publishing is a
-   separate, conscious step so you can inspect the preview first.
+2. **Publish.** `^P` freezes the snapshot (`shared_at` is set) and
+   returns the public `/s/<token>` URL. Publishing is a separate,
+   conscious step so you can inspect the preview first.
 
 A published share is a **frozen snapshot**: new session events after
 `shared_at` are not visible to viewers. To refresh, create a new share.
@@ -77,9 +86,12 @@ post-publish rule update is picked up without any migration.
   `/s/<token>/images/<file>`. Filenames are validated against
   `[A-Za-z0-9._-]+` and the final path must stay under
   `<data_dir>/images/<session_id>/`.
-- **Revoke is immediate:** `DELETE /api/v1/sessions/<id>/share` flips
-  `revoked_at`; subsequent viewer hits get HTTP 410. Image proxy and
-  JSON endpoint both enforce the same check.
+- **Revoke is immediate and destructive:** `DELETE /api/v1/sessions/<id>/share`
+  hard-deletes the row from the `shares` table; the projection cache entry
+  is evicted and subsequent viewer hits get HTTP 410. There is no
+  `revoked_at` audit column — revoke is a tombstone-free delete by design,
+  to keep the public surface as small as possible. Image proxy and JSON
+  endpoint both enforce the same check.
 - **Owner label validation:** `owner_label` and `display_name` reject
   control characters (except `\t`), DEL, unpaired surrogates, and bidi
   override codepoints (`U+202A..U+202E`, `U+2066..U+2069`). UTF-8
@@ -121,18 +133,19 @@ owner-side URLs.
 
 - **Preview GC**: when `[share] enabled = true`, the server arms a
   24-hour sweep on startup that deletes preview rows older than 24h
-  which were never activated (`shared_at IS NULL AND revoked_at IS NULL
-  AND created_at < now - 24h`). Activated and revoked shares are never
-  touched — audit trail is preserved. Log lines:
+  which were never activated (`shared_at IS NULL AND created_at <
+  now - 24h`). Activated shares (`shared_at IS NOT NULL`) are never
+  swept — only an explicit `/share revoke <token>` removes them, and
+  revoke is a hard delete with no audit trail. Log lines:
   - `[share] preview gc armed (24h interval)` on bootstrap
   - `[share] preview gc removed=N` whenever the sweep deletes rows
 - **Manual prune**: `sqlite3 <data_dir>/wa.db "DELETE FROM shares WHERE
-  shared_at IS NULL AND revoked_at IS NULL AND created_at < strftime('%s','now')*1000 - 86400000"`
+  shared_at IS NULL AND created_at < strftime('%s','now')*1000 - 86400000"`
 - **Image GC (manual)**: images referenced by live shares live under
   `<data_dir>/uploads/`. Revoke does NOT delete image files (route-edge
-  check blocks access). To reclaim disk, enumerate files not referenced
-  by any non-revoked share and delete them manually. Future hardening
-  will add an automated pass.
+  check blocks access via the missing `shares` row). To reclaim disk,
+  enumerate files not referenced by any live share row and delete them
+  manually. Future hardening will add an automated pass.
 
 ## Known limitations (v1)
 
