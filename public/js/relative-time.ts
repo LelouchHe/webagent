@@ -1,7 +1,6 @@
-// Public viewer's relative-time formatter.
-//
-// Renders a stored ISO timestamp as a short, reader-friendly string for
-// the share-viewer footer. Tiered output:
+// Relative-time formatter — shared between the share viewer and any
+// other frontend surface that needs short, reader-friendly elapsed
+// strings. Tiered output:
 //
 //   < 1 min  → "just now"
 //   < 1 hour → "5m ago"
@@ -13,11 +12,12 @@
 // Pure function — takes an explicit "now" so tests don't depend on the
 // real clock. Production callers pass `new Date()`.
 //
-// Intentionally English-only: viewer pages are public links shared with
-// readers of unknown locale; English relative-time strings are the
-// internet lingua franca (GitHub / Slack / Discord all use them). The
-// owner-facing main app uses formatLocalTime() for its own formatting,
-// and may localize independently.
+// Intentionally English-only and clock-injected: the share viewer is a
+// public link shared with readers of unknown locale, so English
+// relative-time strings (the GitHub / Slack / Discord lingua franca)
+// are the right default for anything externally visible. Owner-facing
+// surfaces in the main app are free to localize independently using
+// their own helpers (see formatLocalTime in date-format.ts).
 
 const MONTHS = [
   "Jan",

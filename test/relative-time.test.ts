@@ -9,7 +9,7 @@ import assert from "node:assert";
 import {
   formatRelativeTime,
   formatExactUtc,
-} from "../public/js/share/relative-time.ts";
+} from "../public/js/relative-time.ts";
 
 const NOW = new Date("2026-04-28T12:00:00Z");
 
