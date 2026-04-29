@@ -152,8 +152,10 @@ async function main(): Promise<void> {
 
   if (infoEl) {
     // Header shows ONLY the title (already truncated on mobile).
-    // The "shared by ..." attribution moved to the footer where it
-    // gets its own line on narrow screens via flex-wrap.
+    // The author attribution moved to the footer where it
+    // gets its own line on narrow screens via flex-wrap. The header
+    // [shared] badge already conveys "this is a shared snapshot",
+    // so the footer line is just `by <name>` (no repeated "shared").
     infoEl.textContent = payload.share.session_title ?? "(untitled)";
   }
 
@@ -162,7 +164,7 @@ async function main(): Promise<void> {
     // Empty textContent is fine: CSS `.share-footer-author:empty {
     // display: none }` removes it from layout, and the ::after-bullet
     // rule's `:not(:empty)` predicate suppresses the separator in turn.
-    footerAuthorEl.textContent = name ? `shared by ${name}` : "";
+    footerAuthorEl.textContent = name ? `by ${name}` : "";
   }
 
   renderEvents(payload.events, messagesEl, token);

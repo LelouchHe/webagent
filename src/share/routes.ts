@@ -255,7 +255,7 @@ function resolveDisplayName(
  * Body (all optional):
  *   ttl_hours: number   — NULL/omitted falls back to config; 0 = never
  *                         expire; >0 clamped to MAX_TTL_HOURS (168)
- *   display_name: str   — shown as "shared by @<name>"
+ *   display_name: str   — shown as "by @<name>" in viewer footer
  *   owner_label: str    — private owner-side label (full validation in C4)
  */
 async function handlePreviewCreate(
