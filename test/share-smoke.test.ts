@@ -6,7 +6,6 @@ import { tmpdir } from "node:os";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { Store } from "../src/store.ts";
 import { handleShareRoutes, type ShareRouteDeps } from "../src/share/routes.ts";
-import { clearProjectionCache } from "../src/share/projection.ts";
 import { __clearAllLocks } from "../src/share/mutex.ts";
 import type { Config } from "../src/config.ts";
 
@@ -121,7 +120,6 @@ describe("share smoke — end-to-end lifecycle", () => {
       },
       { from_ref: "agent" },
     );
-    clearProjectionCache();
     __clearAllLocks();
     const cfg: Config["share"] = {
       enabled: true,

@@ -18,7 +18,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - bash execution lifecycle
   - slash command and picker UX
   - REST API surface (sessions, prompt, bash, permissions, ops, SSE, push)
-  - Share links (token issue, owner auth, sanitizer, projection cache, viewer routes, image proxy, build prune)
+  - Share links (token issue, owner auth, sanitizer, viewer routes, image proxy, build prune)
 
 ## Unit / Integration Scenarios
 
@@ -261,9 +261,9 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - path / hostname soft-redact placeholders
   - markdown raw-HTML disabled; URL allowlist applied
 
-- `test/share-projection-mutex.test.ts`
-  - concurrent same-token requests share the same projection build (single-flight)
-  - cache key includes `SANITIZER_VERSION`; bumping it invalidates entries
+- `test/share-mutex.test.ts`
+  - per-key async mutex serializes same-key callers, parallelizes different keys
+  - propagates exceptions, cleans up Map entries (no leak)
 
 - `test/share-routes-preview.test.ts` / `test/share-routes-publish-viewer.test.ts`
   - preview create / read / staleness flag

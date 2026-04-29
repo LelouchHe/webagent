@@ -3,7 +3,6 @@ import assert from "node:assert/strict";
 import {
   sanitizeEventsForShare,
   SanitizeError,
-  SANITIZER_VERSION,
   type SanitizeInputEvent,
 } from "../src/share/sanitize.ts";
 
@@ -236,11 +235,6 @@ describe("sanitize — Layer 1c hard reject", () => {
 });
 
 describe("sanitize — API", () => {
-  it("SANITIZER_VERSION is a stable string (projection cache key)", () => {
-    assert.equal(typeof SANITIZER_VERSION, "string");
-    assert.ok(SANITIZER_VERSION.length > 0);
-  });
-
   it("accepts StoredEvent shape (data as JSON string)", () => {
     const out = sanitizeEventsForShare({
       events: [

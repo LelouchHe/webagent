@@ -61,12 +61,12 @@ reaches a viewer:
 - **Layer 1c (soft redact):** paths outside the project cwd, absolute
   `/Users/...` / `/home/...` prefixes, and internal hostnames are
   replaced with placeholders.
-- **Projection cache:** sanitized output is keyed by
-  `session_id + snapshot_seq + SANITIZER_VERSION` and cached in a
-  LRU(100). Bumping the sanitizer version invalidates everything.
 
-The sanitizer re-runs on **every** public fetch (cache-backed), so a
-post-publish rule update is picked up without any migration.
+The sanitizer re-runs on **every** public fetch, so a post-publish
+rule update is picked up without any migration. There is no
+projection cache: sanitize is a pure O(events) regex sweep, and we
+prefer "fresh on every read" over a cache that could mask stale
+secret-pattern updates.
 
 ## Security model
 
@@ -89,11 +89,10 @@ post-publish rule update is picked up without any migration.
   `[A-Za-z0-9._-]+` and the final path must stay under
   `<data_dir>/images/<session_id>/`.
 - **Revoke is immediate and destructive:** `DELETE /api/v1/sessions/<id>/share`
-  hard-deletes the row from the `shares` table; the projection cache entry
-  is evicted and subsequent viewer hits get HTTP 410. There is no
-  `revoked_at` audit column — revoke is a tombstone-free delete by design,
-  to keep the public surface as small as possible. Image proxy and JSON
-  endpoint both enforce the same check.
+  hard-deletes the row from the `shares` table; subsequent viewer hits
+  get HTTP 410. There is no `revoked_at` audit column — revoke is a
+  tombstone-free delete by design, to keep the public surface as small
+  as possible. Image proxy and JSON endpoint both enforce the same check.
 - **Owner label validation:** `owner_label` and `display_name` reject
   control characters (except `\t`), DEL, unpaired surrogates, and bidi
   override codepoints (`U+202A..U+202E`, `U+2066..U+2069`). UTF-8
@@ -161,6 +160,6 @@ tokens never appear in owner-side URLs.
 - **No CSP violation reporting endpoint yet:** `csp_enforce=false`
   logs to `Content-Security-Policy-Report-Only` but we don't ingest
   reports. The browser console shows violations for development.
-- **No rate limiting:** unauth public fetches are served directly from
-  the projection cache. Put a reverse proxy rate-limit in front of
+- **No rate limiting:** unauth public fetches re-sanitize on every
+  request. Put a reverse proxy rate-limit in front of
   `/s/*` + `/api/v1/shared/*` for production exposure.

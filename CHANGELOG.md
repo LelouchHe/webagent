@@ -22,14 +22,14 @@ See [`docs/share.md`](docs/share.md) for the full surface.
 - **Public viewer** — `/s/<token>` is a separate HTML entry (`viewer.[hash].js`)
   with strict CSP (`default-src 'self'`, no inline scripts, no third-party
   origins). Frame-ancestors deny, `noindex, nofollow`, and `Referrer-Policy:
-  no-referrer`. Tokens are 144-bit `randomBytes(18)` base64url; knowledge of
+  no-referrer`. Tokens are 144-bit `randomBytes(18)` lowercase hex (36
+  chars; double-click in browser selects the whole token); knowledge of
   the token is the entire capability.
 - **Multi-layer sanitizer** — secrets (API keys, private keys, OAuth tokens)
   hard-reject the share with HTTP 400 + `event_id`/`rule`. Paths outside
   cwd, `/Users/...` / `/home/...` prefixes, and `share.internal_hosts`
-  hostnames are soft-redacted. Sanitized output is cached by `session_id +
-  snapshot_seq + SANITIZER_VERSION` (LRU 100); bumping the version
-  invalidates everything.
+  hostnames are soft-redacted. Sanitizer re-runs on every public fetch
+  so post-publish rule updates take effect with no migration.
 - **Image proxy** — `/s/<token>/images/<file>` enforces filename
   `[A-Za-z0-9._-]+` and a chroot check to `<data_dir>/images/<session_id>/`.
   Viewer rewrites image URLs in `user_message.path` automatically.

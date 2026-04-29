@@ -9,8 +9,7 @@ import type { Config } from "../config.ts";
 import type { StoredEvent } from "../types.ts";
 import type { ShareRow } from "../store.ts";
 import { generateShareToken } from "../tokens.ts";
-import { SanitizeError } from "./sanitize.ts";
-import { getOrComputeProjection } from "./projection.ts";
+import { SanitizeError, sanitizeEventsForShare } from "./sanitize.ts";
 import { withSessionLock } from "./mutex.ts";
 
 export interface ShareRouteDeps {
@@ -377,10 +376,9 @@ function runSanitizeGate(
   cwd: string,
   internalHosts: string[],
 ): void {
-  // getOrComputeProjection throws SanitizeError on hard-reject.
-  getOrComputeProjection({
-    sessionId: "__gate__",
-    events: events,
+  // sanitizeEventsForShare throws SanitizeError on hard-reject.
+  sanitizeEventsForShare({
+    events,
     cwd,
     homeDir: homedir(),
     internalHosts,
@@ -436,8 +434,7 @@ async function handlePreviewRead(
     .reduce((m, e) => Math.max(m, e.seq), 0);
 
   try {
-    const { events, cacheHit } = getOrComputeProjection({
-      sessionId,
+    const { events } = sanitizeEventsForShare({
       events: allEvents,
       cwd: session.cwd,
       homeDir: homedir(),
@@ -466,7 +463,6 @@ async function handlePreviewRead(
         ttl_hours: row.ttl_hours,
       },
       events,
-      cache_hit: cacheHit,
     });
   } catch (err: unknown) {
     if (err instanceof SanitizeError) {
@@ -710,8 +706,7 @@ async function handleSharedEvents(
     .filter((e) => e.seq <= row.share_snapshot_seq);
 
   try {
-    const { events, cacheHit } = getOrComputeProjection({
-      sessionId: row.session_id,
+    const { events } = sanitizeEventsForShare({
       events: allEvents,
       cwd: session.cwd,
       homeDir: homedir(),
@@ -737,7 +732,6 @@ async function handleSharedEvents(
           ttl_hours: row.ttl_hours,
         },
         events,
-        cache_hit: cacheHit,
       }),
     );
   } catch (err: unknown) {

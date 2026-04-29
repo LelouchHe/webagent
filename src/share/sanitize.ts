@@ -4,7 +4,7 @@
  * Two-stage deterministic scan, run write-time (gate) and read-time
  * (re-sanitize for each public request so rule upgrades apply to old
  * shares). No blob, no `sanitizer_version` field in DB — rules are
- * const pure functions, `SANITIZER_VERSION` is projection-cache key only.
+ * const pure functions and we re-run on every read.
  *
  *   Layer 1a — structured rewrite (zero false-positive):
  *     - homedir → "<home>"
@@ -26,8 +26,6 @@
  * with html:false / DOMPurify.
  */
 import type { StoredEvent } from "../types.ts";
-
-export const SANITIZER_VERSION = "2026-04-24";
 
 /**
  * Input event shape — either a raw StoredEvent (with JSON-string data)

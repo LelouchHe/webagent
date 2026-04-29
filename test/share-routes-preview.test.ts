@@ -6,7 +6,6 @@ import { tmpdir } from "node:os";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { Store } from "../src/store.ts";
 import { handleShareRoutes, type ShareRouteDeps } from "../src/share/routes.ts";
-import { clearProjectionCache } from "../src/share/projection.ts";
 import { __clearAllLocks } from "../src/share/mutex.ts";
 import type { Config } from "../src/config.ts";
 import type { SessionManager } from "../src/session-manager.ts";
@@ -108,7 +107,6 @@ describe("share preview routes — POST /api/v1/sessions/:id/share", () => {
     tmpDir = mkdtempSync(join(tmpdir(), "wa-share-routes-"));
     store = new Store(tmpDir);
     store.createSession(sessionId, "/tmp/project");
-    clearProjectionCache();
     __clearAllLocks();
     deps = {
       store,
@@ -324,7 +322,6 @@ describe("share preview routes — GET /api/v1/sessions/:id/share/preview", () =
     store = new Store(tmpDir);
     store.createSession(sessionId, "/tmp/project");
     store.updateSessionTitle(sessionId, "Test session");
-    clearProjectionCache();
     __clearAllLocks();
     deps = {
       store,
