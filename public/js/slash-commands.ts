@@ -361,7 +361,7 @@ export const ROOT: CmdNode = {
         const exitId = state.sessionId;
         try {
           if (state.busy) sendCancel();
-          void api.deleteSession(exitId);
+          api.deleteSession(exitId).catch(() => {});
           await fallbackToNextSession(exitId, state.sessionCwd ?? undefined);
         } catch {
           addSystem("err: Failed to exit session");

@@ -6,6 +6,7 @@ describe("slash menu — Tab vs Click behavior", () => {
   let state: any;
   let dom: any;
   let commands: any;
+  let slashCommands: any;
   let fetchCalls: Array<{ url: string; init?: any }>;
 
   before(async () => {
@@ -18,6 +19,7 @@ describe("slash menu — Tab vs Click behavior", () => {
     state = stateMod.state;
     dom = stateMod.dom;
     await import("../public/js/render.ts");
+    slashCommands = await import("../public/js/slash-commands.ts");
     commands = await import("../public/js/commands.ts");
   });
 
@@ -246,6 +248,49 @@ describe("slash menu — Tab vs Click behavior", () => {
     assert.ok(putCall, "click should execute config change via REST");
     const body = JSON.parse(putCall.init.body);
     assert.equal(body.value, "opus");
+  });
+
+  it("menu /exit suppresses failed delete cleanup", async () => {
+    state.sessionId = "s1";
+    state.sessionCwd = "/tmp/project";
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => {
+      unhandled.push(reason);
+    };
+    process.on("unhandledRejection", onUnhandled);
+    try {
+      globalThis.fetch = ((url: string, init?: any) => {
+        fetchCalls.push({ url, init });
+        if (url === "/api/v1/sessions/s1" && init?.method === "DELETE") {
+          return Promise.reject(new Error("delete failed"));
+        }
+        const respond = (obj: any) =>
+          Promise.resolve({
+            ok: true,
+            status: 200,
+            json: () => Promise.resolve(obj),
+            text: () => Promise.resolve(JSON.stringify(obj)),
+          });
+        if (url === "/api/v1/sessions" && !init?.method) {
+          return respond([{ id: "s1" }]);
+        }
+        if (url === "/api/v1/sessions" && init?.method === "POST") {
+          return respond({ id: "new-session" });
+        }
+        return respond({});
+      }) as any;
+
+      const exitNode = slashCommands.ROOT.children.find(
+        (node: any) => node.name === "/exit",
+      );
+      assert.ok(exitNode, "expected /exit command node");
+      await exitNode.onSelect();
+      await new Promise((r) => setTimeout(r, 0));
+
+      assert.deepEqual(unhandled, []);
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+    }
   });
 });
 
