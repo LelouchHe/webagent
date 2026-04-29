@@ -126,7 +126,7 @@ export async function handleShareRoutes(
 
   // Viewer image proxy — must come before general /s/:token HTML match.
   const imgMatch = url.match(
-    /^\/s\/((?:[0-9a-f]{36}|[A-Za-z0-9_-]{24}))\/images\/([^/?]+)\/?(?:\?.*)?$/,
+    /^\/s\/([A-Za-z0-9_-]{24})\/images\/([^/?]+)\/?(?:\?.*)?$/,
   );
   if (imgMatch && method === "GET") {
     await handleViewerImage(
@@ -139,9 +139,7 @@ export async function handleShareRoutes(
   }
 
   // Viewer HTML shell.
-  const viewerMatch = url.match(
-    /^\/s\/((?:[0-9a-f]{36}|[A-Za-z0-9_-]{24}))\/?(?:\?.*)?$/,
-  );
+  const viewerMatch = url.match(/^\/s\/([A-Za-z0-9_-]{24})\/?(?:\?.*)?$/);
   if (viewerMatch && method === "GET") {
     await handleViewerHtml(res, deps, viewerMatch[1]);
     return true;
@@ -191,7 +189,7 @@ export async function handleShareRoutes(
 
   // GET /api/v1/shared/:token/events — public viewer JSON (no auth)
   const sharedEventsMatch = url.match(
-    /^\/api\/v1\/shared\/((?:[0-9a-f]{36}|[A-Za-z0-9_-]{24}))\/events\/?(?:\?.*)?$/,
+    /^\/api\/v1\/shared\/([A-Za-z0-9_-]{24})\/events\/?(?:\?.*)?$/,
   );
   if (sharedEventsMatch && method === "GET") {
     await handleSharedEvents(res, deps, sharedEventsMatch[1]);

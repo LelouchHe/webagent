@@ -119,16 +119,11 @@ export async function handleSlashCommand(text: string): Promise<boolean> {
         return true;
       }
       // Default: bare token → open the share viewer in a new tab.
-      // Accept both formats so old base64url links still paste:
-      //   - new: 36 lowercase hex chars (see generateShareToken in src/tokens.ts)
-      //   - legacy: 24 base64url chars (pre-hex switch)
+      // Tokens are 24 base64url chars (see generateShareToken in src/tokens.ts).
       // Match against `subParts[0]` so we honor original casing rather than
       // the lower-cased `sub`.
       const candidate = subParts[0] ?? "";
-      if (
-        /^[0-9a-f]{36}$/.test(candidate) ||
-        /^[A-Za-z0-9_-]{24}$/.test(candidate)
-      ) {
+      if (/^[A-Za-z0-9_-]{24}$/.test(candidate)) {
         openShare(candidate);
         return true;
       }

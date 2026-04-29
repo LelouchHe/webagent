@@ -45,7 +45,7 @@ test("share: create preview, publish, public viewer renders without CSP violatio
   // canonical surface; published msg doesn't print the token separately).
   const href = await page.locator(".system-msg a").last().getAttribute("href");
   expect(href, "published anchor has no href").not.toBeNull();
-  const m = /\/s\/((?:[0-9a-f]{36}|[A-Za-z0-9_-]{24}))$/.exec(href!);
+  const m = /\/s\/([A-Za-z0-9_-]{24})$/.exec(href!);
   expect(m, `token not found in href: ${href}`).not.toBeNull();
   const token = m![1];
 
@@ -94,7 +94,7 @@ test("share: create preview, publish, public viewer renders without CSP violatio
 
   // URL contract: no session_id leaked in the URL.
   expect(viewer.url()).not.toContain(sessionId);
-  expect(viewer.url()).toMatch(/\/s\/(?:[0-9a-f]{36}|[A-Za-z0-9_-]{24})/);
+  expect(viewer.url()).toMatch(/\/s\/[A-Za-z0-9_-]{24}/);
 
   await viewer.close();
   expect(

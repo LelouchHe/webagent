@@ -922,7 +922,7 @@ Owner endpoints require Bearer auth like the rest of the API. Public
 viewer endpoints (`GET /api/v1/shared/:token/events`) are unauthenticated
 — knowledge of the token is the entire capability.
 
-Tokens are 144-bit `randomBytes(18)` lowercase hex (36 chars). For the
+Tokens are 144-bit `randomBytes(18)` base64url (24 chars). For the
 full sanitizer / CSP / image-proxy design and security model, see
 [`docs/share.md`](share.md). For the `/s/:token` HTML viewer and image
 proxy URLs (not part of the JSON API), also see `docs/share.md`.
@@ -945,7 +945,7 @@ Concurrent calls for the same session dedup to a single in-flight build.
 
 ```json
 {
-  "token": "a1b2…36hex",
+  "token": "a1b2…24url",
   "session_id": "abc-123",
   "snapshot_seq": 42,
   "ttl_hours": 24,

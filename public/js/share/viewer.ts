@@ -110,9 +110,7 @@ async function main(): Promise<void> {
     /* ignore storage failures */
   }
 
-  const m = /^\/s\/((?:[0-9a-f]{36}|[A-Za-z0-9_-]{24}))(?:[/?#]|$)/.exec(
-    location.pathname,
-  );
+  const m = /^\/s\/([A-Za-z0-9_-]{24})(?:[/?#]|$)/.exec(location.pathname);
   if (!m) {
     document.body.textContent = "invalid share URL";
     return;

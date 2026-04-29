@@ -62,8 +62,7 @@ const WHITELIST: readonly WhitelistEntry[] = [
   // by the share token in the URL.
   {
     method: "GET",
-    test: (p) =>
-      /^\/api\/v1\/shared\/(?:[0-9a-f]{36}|[A-Za-z0-9_-]{24})\/events$/.test(p),
+    test: (p) => /^\/api\/v1\/shared\/[A-Za-z0-9_-]{24}\/events$/.test(p),
   },
 ];
 

@@ -21,14 +21,16 @@ import { randomBytes } from "node:crypto";
 const API_TOKEN_PREFIX = "wat_";
 
 /**
- * Share viewer token. 36 lowercase hex chars / 144 bits of entropy.
+ * Share viewer token. 24 base64url chars / 144 bits of entropy.
  *
- * Hex (not base64url) so double-click in a browser selects the whole
- * token — base64url's `-` is a word boundary on every major engine,
- * and share tokens are routinely copy-pasted from URL bars.
+ * Base64url (`[A-Za-z0-9_-]`) is the RFC 4648 standard, has Node
+ * built-in support, and is 33% shorter than the hex form at the same
+ * entropy. Share links are produced as full URLs by the client
+ * (copy-link affordance, no manual retyping), so the double-click
+ * selection that hex previously enabled is no longer relevant.
  */
 export function generateShareToken(): string {
-  return randomBytes(18).toString("hex");
+  return randomBytes(18).toString("base64url");
 }
 
 /**

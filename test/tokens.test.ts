@@ -8,22 +8,21 @@ import {
 
 describe("tokens — auth-bearing token generators", () => {
   describe("generateShareToken", () => {
-    it("produces 36 lowercase hex characters (144 bits / double-click-friendly)", () => {
-      const pattern = /^[0-9a-f]{36}$/;
+    it("produces 24 base64url characters (144 bits)", () => {
+      const pattern = /^[A-Za-z0-9_-]{24}$/;
       for (let i = 0; i < 50; i++) {
         const t = generateShareToken();
-        assert.equal(t.length, 36, `wrong length: ${t}`);
-        assert.ok(pattern.test(t), `non-hex chars in ${t}`);
+        assert.equal(t.length, 24, `wrong length: ${t}`);
+        assert.ok(pattern.test(t), `non-base64url chars in ${t}`);
       }
     });
 
-    it("contains no word-boundary chars (double-click selects whole token)", () => {
-      // Hex is a strict subset of [A-Za-z0-9]; no '-' or '_' which break
-      // double-click word selection in browsers.
+    it("never includes base64 padding or non-url-safe chars", () => {
       for (let i = 0; i < 50; i++) {
         const t = generateShareToken();
-        assert.ok(!t.includes("-"), `share token has '-': ${t}`);
-        assert.ok(!t.includes("_"), `share token has '_': ${t}`);
+        assert.ok(!t.includes("="), `padding in ${t}`);
+        assert.ok(!t.includes("+"), `'+' in ${t}`);
+        assert.ok(!t.includes("/"), `'/' in ${t}`);
       }
     });
 
