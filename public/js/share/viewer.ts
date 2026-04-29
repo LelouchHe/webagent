@@ -16,6 +16,7 @@ import { enhanceCodeBlocks } from "../highlight.ts";
 import { formatRelativeTime, formatExactUtc } from "./relative-time.ts";
 import { makeImageRewriter } from "./image-rewriter.ts";
 import "../lightbox.ts"; // click-to-enlarge user-image, same as main app
+import "../theme.ts"; // wires #theme-btn click + applies saved theme
 import type { StoredEvent } from "../../../src/types.ts";
 
 interface SharePayload {

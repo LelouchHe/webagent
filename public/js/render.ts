@@ -186,35 +186,10 @@ export function finishBash(
 }
 
 // --- Theme ---
+//
+// Theme cycling, persistence, and the `#theme-btn` click handler all live
+// in `./theme.ts` (also imported by the share viewer). Re-export
+// `onThemeChange` here so callers (app.ts) can keep using the existing
+// import path.
 
-const THEME_ICONS: Record<string, string> = {
-  auto: "◑",
-  light: "☀",
-  dark: "☾",
-};
-const THEME_CYCLE = ["auto", "light", "dark"] as const;
-function getTheme(): string {
-  return localStorage.getItem("theme") ?? "auto";
-}
-function applyTheme(t: string) {
-  document.documentElement.setAttribute("data-theme", t);
-  dom.themeBtn.textContent = THEME_ICONS[t];
-  dom.themeBtn.title = `Theme: ${t}`;
-  localStorage.setItem("theme", t);
-  // Notify listeners (e.g. hljs theme swap)
-  for (const cb of themeChangeCallbacks) cb();
-}
-
-const themeChangeCallbacks: Array<() => void> = [];
-export function onThemeChange(cb: () => void) {
-  themeChangeCallbacks.push(cb);
-}
-dom.themeBtn.onclick = () => {
-  const cur = getTheme();
-  applyTheme(
-    THEME_CYCLE[
-      (THEME_CYCLE.indexOf(cur as (typeof THEME_CYCLE)[number]) + 1) % 3
-    ],
-  );
-};
-applyTheme(getTheme());
+export { onThemeChange } from "./theme.ts";
