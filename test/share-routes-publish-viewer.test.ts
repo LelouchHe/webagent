@@ -565,6 +565,37 @@ describe("share image proxy — GET /s/:token/attachments/:file", () => {
     assert.equal(r.headers()["X-Content-Type-Options"], "nosniff");
   });
 
+  it("uses attachment row mime + Content-Disposition with displayName", async () => {
+    // Regression: iOS Safari was appending ".bin" to share-side downloads
+    // because the share viewer served Content-Type: octet-stream and no
+    // Content-Disposition. With an attachments row present, mime + filename
+    // should round-trip from DB so iOS uses the original name as-is.
+    const attDir = join(tmpDir, "sessions", sessionId, "attachments");
+    writeFileSync(join(attDir, "att-1.bin"), Buffer.from("// userscript"));
+    store.insertAttachment({
+      id: "att-1",
+      sessionId,
+      kind: "file",
+      name: "zhihu.user.js",
+      mime: "text/javascript",
+      size: 14,
+      realpath: join(attDir, "att-1.bin"),
+    });
+    const { token } = await createAndPublishShare(deps, sessionId);
+    const r = mockRes();
+    await handleShareRoutes(
+      publicReq(`/s/${token}/attachments/att-1.bin`),
+      r.res,
+      deps,
+    );
+    assert.equal(r.status(), 200);
+    assert.equal(r.headers()["Content-Type"], "text/javascript");
+    const cd = r.headers()["Content-Disposition"];
+    assert.match(cd, /^attachment;/);
+    assert.match(cd, /filename="zhihu\.user\.js"/);
+    assert.match(cd, /filename\*=UTF-8''zhihu\.user\.js/);
+  });
+
   it("rejects path traversal", async () => {
     const { token } = await createAndPublishShare(deps, sessionId);
     // encoded %2f and ../

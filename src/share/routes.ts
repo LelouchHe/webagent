@@ -10,6 +10,7 @@ import type { StoredEvent } from "../types.ts";
 import type { ShareRow } from "../store.ts";
 import { generateShareToken } from "../tokens.ts";
 import { SanitizeError, sanitizeEventsForShare } from "./sanitize.ts";
+import { buildContentDisposition, isInlineMime } from "../attachments.ts";
 
 // In-flight dedup for concurrent POST /share on the same session.
 // First caller does the work; concurrent callers await the same promise.
@@ -883,15 +884,31 @@ async function handleViewerImage(
 
   try {
     const buf = await readFile(filePath);
-    const mime =
-      IMAGE_MIME[extname(filePath).toLowerCase()] ?? "application/octet-stream";
-    res.writeHead(200, {
+    // Look up the attachment row to recover the original mime + display
+    // name. Without this iOS Safari sees Content-Type: octet-stream and
+    // appends ".bin" to the <a download> name (e.g. zhihu.user.js →
+    // zhihu.user.js.bin). The owner-side route at routes.ts does the
+    // same lookup; share viewer needs parity for non-image attachments.
+    const att = deps.store.getAttachmentByFile(row.session_id, file);
+    const ext = extname(filePath).toLowerCase();
+    let mime = att?.mime;
+    mime ??= IMAGE_MIME[ext];
+    mime ??= "application/octet-stream";
+    const headers: Record<string, string> = {
       "Content-Type": mime,
       "Cache-Control": "public, max-age=3600",
       "X-Content-Type-Options": "nosniff",
       "Content-Security-Policy": "default-src 'none'",
       "X-Robots-Tag": "noindex, nofollow",
-    });
+    };
+    if (att) {
+      const disposition = isInlineMime(mime) ? "inline" : "attachment";
+      headers["Content-Disposition"] = buildContentDisposition(
+        disposition,
+        att.name,
+      );
+    }
+    res.writeHead(200, headers);
     res.end(buf);
   } catch {
     res.writeHead(404, { "Content-Type": "text/plain" });
