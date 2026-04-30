@@ -1,6 +1,6 @@
 import { readFile, mkdir, rename, unlink, realpath } from "node:fs/promises";
 import { spawn } from "node:child_process";
-import { join, extname } from "node:path";
+import { join, extname, basename } from "node:path";
 import { gzipSync } from "node:zlib";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import busboy from "busboy";
@@ -1030,15 +1030,27 @@ export function createRequestHandler(
           }
         }
 
-        // Stored shape mirrors the wire shape — the user_message event is
-        // replayed on session restore so future bridge dispatches can rebuild
-        // ACP blocks from the same attachmentIds.
-        const storedAttachments = attachments?.map((a) => ({
-          kind: a.kind,
-          attachmentId: a.attachmentId,
-          displayName: a.displayName,
-          mimeType: a.mimeType,
-        }));
+        // Stored shape mirrors the wire shape PLUS a server-derived `path`
+        // for renderers. The path is the unsigned base URL
+        // (`/api/v1/sessions/<sid>/attachments/<filename>`); reSign on
+        // egress (history GET + SSE broadcast) appends a fresh `?sig=&exp=`.
+        // Renderers use it to mount `<img>` (kind=image) or `<a>` (kind=file).
+        // Refs whose attachment row is missing are dropped (defense — the
+        // dispatcher's [attachment removed] fallback covers that case).
+        const storedAttachments = attachments?.flatMap((a) => {
+          const row = store.getAttachment(sessionId, a.attachmentId);
+          if (!row) return [];
+          const fileName = basename(row.realpath);
+          return [
+            {
+              kind: a.kind,
+              attachmentId: a.attachmentId,
+              displayName: a.displayName,
+              mimeType: a.mimeType,
+              path: `/api/v1/sessions/${sessionId}/attachments/${fileName}`,
+            },
+          ];
+        });
         store.saveEvent(
           sessionId,
           "user_message",

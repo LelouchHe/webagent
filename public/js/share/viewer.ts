@@ -71,7 +71,7 @@ function renderEvents(
   let currentBashEl: HTMLElement | null = null;
 
   const hooks = {
-    rewriteImageSrc: makeAttachmentRewriter(token),
+    rewriteAttachmentSrc: makeAttachmentRewriter(token),
     enhanceMarkdown: enhanceCodeBlocks,
     findToolCallEl: (id: string) => toolCalls.get(id) ?? null,
     findPermissionEl: (reqId: string) => permissions.get(reqId) ?? null,

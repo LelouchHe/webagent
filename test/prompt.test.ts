@@ -381,6 +381,89 @@ describe("Prompt REST API", () => {
       assert.deepEqual(mockBridge.lastPromptArgs?.attachments, [att]);
     });
 
+    // Regression guard for the slice-4 user_message rendering bug:
+    // routes.ts must enrich storedAttachments with a server-derived
+    // `path` field so the frontend renderer can mount <img>/<a>. Slice 4
+    // dropped this field, downgrading attachments to a [kind: name] text
+    // marker. Re-introducing it would silently break image preview on
+    // both the main app and share viewer. See test/render-event.test.ts
+    // for the renderer-level guard and docs/uploads.md for the contract.
+    it("stored user_message.attachments includes server-derived path", async () => {
+      const sessionId = await createSession();
+      // Pre-populate an attachment row as if upload had succeeded.
+      const dir = join(tmpDir, "sessions", sessionId, "attachments");
+      mkdirSync(dir, { recursive: true });
+      const realpath = join(dir, "att-X.png");
+      writeFileSync(realpath, Buffer.from("PNG"));
+      store.insertAttachment({
+        id: "att-X",
+        sessionId,
+        kind: "image",
+        name: "tiny.png",
+        mime: "image/png",
+        size: 3,
+        realpath,
+      });
+
+      const res = await makeRequest(
+        port,
+        "POST",
+        `/api/v1/sessions/${sessionId}/prompt`,
+        JSON.stringify({
+          text: "describe",
+          attachments: [
+            {
+              kind: "image",
+              attachmentId: "att-X",
+              displayName: "tiny.png",
+              mimeType: "image/png",
+            },
+          ],
+        }),
+      );
+      assert.equal(res.status, 202);
+
+      const events = store.getEvents(sessionId);
+      const userMsg = events.find((e) => e.type === "user_message");
+      assert.ok(userMsg);
+      const data = JSON.parse(userMsg.data) as {
+        attachments?: Array<{ path?: string }>;
+      };
+      assert.ok(data.attachments?.[0]);
+      assert.equal(
+        data.attachments[0].path,
+        `/api/v1/sessions/${sessionId}/attachments/att-X.png`,
+      );
+    });
+
+    it("drops attachment refs whose row is missing (defense)", async () => {
+      const sessionId = await createSession();
+      const res = await makeRequest(
+        port,
+        "POST",
+        `/api/v1/sessions/${sessionId}/prompt`,
+        JSON.stringify({
+          text: "x",
+          attachments: [
+            {
+              kind: "image",
+              attachmentId: "ghost",
+              displayName: "ghost.png",
+              mimeType: "image/png",
+            },
+          ],
+        }),
+      );
+      assert.equal(res.status, 202);
+      const events = store.getEvents(sessionId);
+      const userMsg = events.find((e) => e.type === "user_message");
+      const data = JSON.parse(userMsg!.data) as {
+        attachments?: unknown[];
+      };
+      // No attachments field at all when all refs failed lookup.
+      assert.equal(data.attachments, undefined);
+    });
+
     it("rejects attachments smuggling uri/data/path", async () => {
       const sessionId = await createSession();
       const res = await makeRequest(

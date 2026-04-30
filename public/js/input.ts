@@ -86,10 +86,21 @@ function sendMessage() {
   // bubble matches the shape SSE replay produces after reload.
   const msgEl = addMessage("user", text || "(attachment)");
   for (const att of state.pendingAttachments) {
-    const note = document.createElement("div");
-    note.className = "user-attachment";
-    note.textContent = `[${att.kind}: ${att.name}]`;
-    msgEl.appendChild(note);
+    if (att.kind === "image" && att.previewUrl) {
+      const imgEl = document.createElement("img");
+      imgEl.className = "user-image";
+      imgEl.src = att.previewUrl;
+      imgEl.alt = att.name;
+      msgEl.appendChild(imgEl);
+    } else {
+      // Local optimistic render for non-image: text chip until the upload
+      // resolves (we replace nothing — SSE replay also renders <a> the
+      // moment the server broadcasts user_message with `path`).
+      const note = document.createElement("div");
+      note.className = "user-attachment";
+      note.textContent = `[${att.kind}: ${att.name}]`;
+      msgEl.appendChild(note);
+    }
   }
 
   // Upload attachments to server, then send prompt via REST

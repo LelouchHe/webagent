@@ -163,6 +163,12 @@ export type AgentEvent =
         attachmentId: string;
         displayName: string;
         mimeType: string;
+        // Owner-side base URL `/api/v1/sessions/<sid>/attachments/<file>`.
+        // Server-emitted only — clients posting /prompt must NOT include
+        // this field; routes.ts strict-rejects uri/data/path on ingress.
+        // reSignAttachmentUrlsInJson at egress appends ?sig=&exp= so the
+        // browser can fetch with a fresh 1h signature.
+        path?: string;
       }>;
     }
   | {
