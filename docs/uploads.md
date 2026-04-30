@@ -163,3 +163,122 @@ data dir moved out from under a live process.
 
 The 413 response is emitted the moment the running byte total crosses
 the cap, before the rest of the body is buffered.
+
+## Filename & MIME hardening
+
+The user-supplied filename and content-type are both treated as hostile
+input. Two independent normalizations:
+
+**Display name** (`normalizeDisplayName` in `src/attachments.ts`) — used
+for chat bubble text, permission dialog, and `Content-Disposition:
+filename=`. NFC-normalize Unicode, strip ASCII control chars, strip path
+separators (`/`, `\`), reject `.` and `..`, cap at 255 UTF-8 bytes
+(POSIX `NAME_MAX`). Returns null on empty / forbidden — caller
+substitutes a generated default like `image-N` / `file-N`.
+
+**On-disk extension** (`mimeToExt`) — derived from server-sniffed MIME
+against a fixed allow-list (`png/jpg/gif/webp/svg/pdf/txt/md/html/csv/
+json/zip`). Anything else falls through to `.bin`. The user-supplied
+extension is **never** trusted — a `.txt` claiming to be `image/png`
+gets stored as `<uuid>.png`, which defeats extension-based heuristics
+that downstream tooling might apply.
+
+**Inline rendering allow-list** (`isInlineMime`) — only
+`png/jpeg/gif/webp` are served with `Content-Disposition: inline`.
+Everything else (including `image/svg+xml` and `text/html`) is forced
+to `attachment` so a malicious upload cannot script the page when the
+user clicks the link. Combined with `X-Content-Type-Options: nosniff`,
+this neutralizes Chrome's MIME-sniffing fallback.
+
+## Signed URLs (egress)
+
+Attachment URLs are HMAC-signed; only the server has the secret
+(`data/attachment-secret.bin`, regenerated if missing).
+
+```
+/api/v1/sessions/<sid>/attachments/<uuid>.<ext>?sig=<hmac>&exp=<unix-ts>
+```
+
+Three primitives in `src/auth.ts`:
+
+| Function                       | Where                                                  |
+| ------------------------------ | ------------------------------------------------------ |
+| `signAttachmentUrl`            | Upload response, history GET, SSE broadcast            |
+| `verifyAttachmentSig`          | `GET /attachments/:file` egress                         |
+| `reSignAttachmentUrlsInJson`   | Stored events on the way out — refreshes every URL     |
+
+Stored event JSON in SQLite carries the **unsigned base path**
+(`/api/v1/sessions/<sid>/attachments/<file>`); re-sign happens at
+egress. Two consequences:
+
+- DB rows don't expire — moving the data dir, restoring a backup, or
+  rotating the secret invalidates **only the live signed URLs**, not
+  the stored history. A reload re-signs and the chat works again.
+- Rotating `attachment-secret.bin` is effectively a "log everyone out
+  of attachments" — all currently-pasted-into-chat URLs go 401 until
+  the page reloads.
+
+TTL is 1 hour. Long enough for the browser's `<img>` cache to keep the
+rendered image alive across a typical session, short enough that a
+leaked URL (screenshot, accidental link share) expires within a day.
+
+## Rendering — `user_message` egress
+
+The stored `user_message` event keeps `attachments[]` with these
+fields: `kind`, `attachmentId`, `displayName`, `mimeType`, and a
+server-derived **`path`** (the unsigned base URL — see above). The
+client-only payload is the wire-shape ref minus `path`; `path` is
+added server-side at store time so the renderer doesn't need a second
+DB round-trip.
+
+The `path` field is what the renderer keys on. Three branches in
+`public/js/render-event.ts → buildUserMessage`:
+
+| `kind`  | renders                                                                      |
+| ------- | ---------------------------------------------------------------------------- |
+| `image` | `<img class="user-image" src={signed URL} alt={displayName}>`               |
+| `file`  | `<a class="user-file" href={signed URL} target="_blank" download={name}>`   |
+| (any, missing path) | `<div class="user-attachment">[<kind>: <name>]</div>` — pre-fix data only |
+
+`<img class="user-image">` is also the click-delegation hook that
+`public/js/lightbox.ts` listens for to open the click-to-zoom overlay.
+The `<a class="user-file">.download` attribute is a hint only; the
+actual download enforcement is the server's `Content-Disposition:
+attachment` header (see "Filename & MIME hardening" above). The two
+defenses are independent so a regression in either one is caught by
+`test/e2e/file-attachment-download.spec.ts`.
+
+### Send-time vs reload — same shape, different source
+
+When the user hits Enter, the browser does an **optimistic** local
+render and only afterwards uploads + sends the prompt. To make the
+optimistic bubble look identical to the post-reload SSE-replay bubble,
+the two render paths agree on classes:
+
+| Stage                | Image rendering                  | File rendering                              |
+| -------------------- | -------------------------------- | ------------------------------------------- |
+| Send-time (`input.ts`) | `<img class=user-image src={dataURL}>` (FileReader local URL) | `<div class=user-attachment>[file: name]</div>` (text chip — no signed URL yet) |
+| Reload (`render-event.ts`) | `<img class=user-image src={signed URL}>` | `<a class=user-file href={signed URL}>` |
+
+The sender's own SSE-broadcast `user_message` echo is suppressed
+(`sentMessageForSession` in `events.ts`) so the optimistic bubble is
+never replaced live; only a reload swaps the file-side text chip for
+the real anchor. This is intentional — it keeps the send path one-shot
+rather than introducing a re-render cycle.
+
+## Tests — what guards what
+
+| Layer        | Test                                            | Pins                                                                            |
+| ------------ | ----------------------------------------------- | ------------------------------------------------------------------------------- |
+| Server unit  | `test/attachments.test.ts`                      | `mimeToExt`, `isInlineMime`, `classifyKind`, `normalizeDisplayName`             |
+| Server unit  | `test/store-attachments.test.ts`                | DB row insert / lookup / `ON DELETE CASCADE`                                     |
+| Server unit  | `test/attachment-dispatch.test.ts`              | ref → ACP block conversion, fallback paths, anchor check, cross-session reject |
+| Server unit  | `test/attachment-interceptor.test.ts`           | F1–F7 auto-approve defenses                                                     |
+| Frontend unit| `test/attachments.test.ts` (frontend twin)      | `renderAttachPreview` — preview thumbs + remove button                          |
+| Frontend unit| `test/render-event.test.ts`                     | `<img.user-image>` and `<a.user-file>` shape per `kind` / missing-path fallback |
+| E2E          | `test/e2e/image-upload-reload.spec.ts`          | Upload → optimistic preview → reload → signed-URL `<img>` survives              |
+| E2E          | `test/e2e/image-lightbox.spec.ts`               | Click `<img.user-image>` → overlay; backdrop / Escape close; wheel zoom         |
+| E2E          | `test/e2e/file-attachment-download.spec.ts`     | `<a.user-file>` post-reload, click triggers download, `Content-Disposition: attachment; filename=` from server |
+
+Touching anything in the attachment chain → grep this table for the
+relevant tests, run them first.
