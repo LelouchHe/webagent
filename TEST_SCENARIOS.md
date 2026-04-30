@@ -212,7 +212,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - scroll-to-bottom follow / manual / forced modes
   - bash block creation and running state
 
-- `test/images.test.ts`
+- `test/attachments.test.ts`
   - attach preview and image-management behavior
   - file picker and paste handling
 

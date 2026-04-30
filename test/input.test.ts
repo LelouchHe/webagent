@@ -19,7 +19,7 @@ describe("input", () => {
     await import("../public/js/render.ts");
     await import("../public/js/events.ts");
     commandsMod = await import("../public/js/commands.ts");
-    await import("../public/js/images.ts");
+    await import("../public/js/attachments.ts");
     inputModule = await import("../public/js/input.ts");
     void inputModule;
   });

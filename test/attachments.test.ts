@@ -2,10 +2,10 @@ import { after, before, beforeEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { setupDOM, teardownDOM, resetState } from "./frontend-setup.ts";
 
-describe("images", () => {
+describe("attachments", () => {
   let state: any;
   let dom: any;
-  let images: any;
+  let attachments: any;
   let clicked = 0;
 
   class MockFileReader {
@@ -24,7 +24,7 @@ describe("images", () => {
     const stateMod = await import("../public/js/state.ts");
     state = stateMod.state;
     dom = stateMod.dom;
-    images = await import("../public/js/images.ts");
+    attachments = await import("../public/js/attachments.ts");
     // Register input-action handlers (attach/send/...) so the attach button
     // click routes through the handler registry to fileInput.click().
     await import("../public/js/render.ts");
@@ -57,7 +57,7 @@ describe("images", () => {
       previewUrl: "data:image/png;base64,abc",
     });
 
-    images.renderAttachPreview();
+    attachments.renderAttachPreview();
     assert.equal(dom.attachPreview.classList.contains("active"), true);
     assert.equal(dom.attachPreview.querySelectorAll(".attach-thumb").length, 1);
     assert.equal(
@@ -78,7 +78,7 @@ describe("images", () => {
       name: "notes.txt",
     });
 
-    images.renderAttachPreview();
+    attachments.renderAttachPreview();
     assert.equal(
       dom.attachPreview.querySelectorAll(".attach-thumb.attach-file").length,
       1,

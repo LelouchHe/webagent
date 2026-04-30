@@ -16,7 +16,7 @@ import {
   hideSlashMenu,
   handleSlashMenuKey,
 } from "./commands.ts";
-import { renderAttachPreview } from "./images.ts";
+import { renderAttachPreview } from "./attachments.ts";
 import { registerInputHandlers } from "./input-actions.ts";
 import { publishPreview, cancelPreview } from "./share/commands.ts";
 import * as api from "./api.ts";

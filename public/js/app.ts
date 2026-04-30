@@ -14,7 +14,7 @@ installAuthFetch();
 
 import "./render.ts"; // theme, click-to-collapse listeners
 import "./commands.ts"; // slash menu listeners
-import "./images.ts"; // attach/paste listeners
+import "./attachments.ts"; // attach/paste listeners
 import "./lightbox.ts"; // click-to-enlarge image viewer
 import "./input.ts"; // keyboard/send listeners
 import { connect } from "./connection.ts";

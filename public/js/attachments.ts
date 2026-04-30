@@ -1,8 +1,8 @@
 // Attachment attach, preview, and paste handling.
 //
-// Module name kept as "images" for legacy reasons; it now handles both
-// image and non-image file attachments. Images get an inline preview
-// thumbnail; other files render as a text chip with name + remove button.
+// Handles both image and non-image file attachments. Images get an
+// inline preview thumbnail; other files render as a text chip with
+// name + remove button.
 
 import { state, dom, type PendingAttachment } from "./state.ts";
 
