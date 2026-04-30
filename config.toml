@@ -20,8 +20,11 @@ agent_cmd = "copilot --acp"
 # Max bash output stored in DB per command (bytes, default 1 MB)
 bash_output = 1_048_576
 
-# Max image upload size (bytes, default 10 MB)
+# Max image upload size (bytes, default 10 MB). Applies to image/* attachments.
 image_upload = 10_485_760
+
+# Max non-image upload size (bytes, default 50 MB). Applies to all other mime types.
+file_upload = 52_428_800
 
 # Cancel timeout (ms, default 10s). After sending cancel, if the agent
 # does not respond within this time the UI resets to idle. Set to 0 to disable.

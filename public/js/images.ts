@@ -6,6 +6,9 @@ interface PendingImage {
   data: string;
   mimeType: string;
   previewUrl: string;
+  // Kept around so the upload step can ship the raw bytes via FormData
+  // instead of re-encoding the base64 back into a Blob.
+  file: File;
 }
 
 function readFileAsBase64(file: File): Promise<PendingImage> {
@@ -17,6 +20,7 @@ function readFileAsBase64(file: File): Promise<PendingImage> {
         data: base64,
         mimeType: file.type,
         previewUrl: reader.result as string,
+        file,
       });
     };
     reader.readAsDataURL(file);

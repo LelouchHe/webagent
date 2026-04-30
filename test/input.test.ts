@@ -207,6 +207,9 @@ describe("input", () => {
       data: "abc123",
       mimeType: "image/png",
       previewUrl: "data:image/png;base64,abc123",
+      file: new File([new Uint8Array([1, 2, 3])], "image.png", {
+        type: "image/png",
+      }),
     });
     setFetch(async (url: string) => {
       if (url.includes("/api/v1/sessions/") && url.includes("/attachments")) {
@@ -383,6 +386,9 @@ describe("input", () => {
       data: "abc123",
       mimeType: "image/png",
       previewUrl: "data:image/png;base64,abc123",
+      file: new File([new Uint8Array([1, 2, 3])], "image.png", {
+        type: "image/png",
+      }),
     });
     setFetch(async () => ({
       ok: true,

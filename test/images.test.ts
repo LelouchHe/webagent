@@ -81,7 +81,7 @@ describe("images", () => {
     await dom.fileInput.onchange();
 
     assert.equal(state.pendingImages.length, 1);
-    assert.deepEqual(state.pendingImages[0], {
+    assert.partialDeepStrictEqual(state.pendingImages[0], {
       data: "abc123",
       mimeType: "image/png",
       previewUrl: "data:image/png;base64,abc123",
@@ -111,7 +111,7 @@ describe("images", () => {
 
     assert.equal(event.defaultPrevented, true);
     assert.equal(state.pendingImages.length, 1);
-    assert.deepEqual(state.pendingImages[0], {
+    assert.partialDeepStrictEqual(state.pendingImages[0], {
       data: "xyz789",
       mimeType: "image/png",
       previewUrl: "data:image/png;base64,xyz789",

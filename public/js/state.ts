@@ -9,6 +9,7 @@ interface PendingImage {
   data: string;
   mimeType: string;
   previewUrl: string;
+  file: File;
 }
 
 const $ = <T extends HTMLElement>(s: string) => document.querySelector<T>(s)!;

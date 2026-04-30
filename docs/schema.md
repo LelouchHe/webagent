@@ -163,6 +163,25 @@ Revocation is hard-delete; no audit trail.
 Multi-share per session is allowed, but a partial unique index
 (`shares_one_active_preview`) caps un-activated previews to one per session.
 
+### `attachments`
+
+Per-session uploaded files (images and arbitrary files) — see
+[docs/uploads.md](./uploads.md) for the upload pipeline and lifecycle.
+Lifecycle is tied to the session: rows live as long as the session row
+does, even when the session is tombstoned for an active share.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | TEXT PRIMARY KEY | UUID — also forms the on-disk filename `<id>.<ext>` |
+| `session_id` | TEXT NOT NULL REFERENCES `sessions(id)` ON DELETE CASCADE | Hard-delete cascade |
+| `kind` | TEXT NOT NULL | `image` or `file` (drives 10MB vs 50MB cap and auto-approve gating) |
+| `name` | TEXT NOT NULL | Display name (NFC, control chars stripped, slashes stripped, ≤255 bytes) |
+| `mime` | TEXT NOT NULL | Server-trusted MIME (drives Content-Disposition + extension) |
+| `size` | INTEGER NOT NULL | Bytes on disk |
+| `realpath` | TEXT NOT NULL | Resolved absolute path (used by share gate + agent dispatch) |
+| `upload_seq` | INTEGER NOT NULL | `MAX(events.seq)` at insert time — share gate compares against `share_snapshot_seq` |
+| `created_at` | TEXT NOT NULL DEFAULT now() | ISO timestamp |
+
 ### `owner_prefs`
 
 Owner-scoped key-value store for client defaults (`display_name`, last `/by`
@@ -186,6 +205,7 @@ selection, etc.). Single-user model = single owner scope.
 | `idx_messages_dedup` | `messages` | `(to_ref, dedup_key)` | Idempotency lookup |
 | `idx_shares_session` | `shares` | `(session_id, created_at DESC)` | Owner share-list view |
 | `shares_one_active_preview` | `shares` | `(session_id) WHERE shared_at IS NULL` | At most one preview per session (partial UNIQUE) |
+| `idx_attachments_session` | `attachments` | `(session_id)` | Per-session listing + GC sweep |
 
 ---
 

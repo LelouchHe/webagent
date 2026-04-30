@@ -98,19 +98,20 @@ function sendMessage() {
 
   if (images.length > 0) {
     void Promise.all(
-      images.map((img) =>
-        fetch(`/api/v1/sessions/${state.sessionId}/attachments`, {
+      images.map((img) => {
+        const fd = new FormData();
+        fd.append("file", img.file, img.file.name || "image");
+        return fetch(`/api/v1/sessions/${state.sessionId}/attachments`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ data: img.data, mimeType: img.mimeType }),
+          body: fd,
         })
           .then((r) => r.json() as Promise<{ url: string }>)
           .then((j) => ({
             data: img.data,
             mimeType: img.mimeType,
             path: j.url,
-          })),
-      ),
+          }));
+      }),
     ).then((uploaded) => {
       if (!isConnected()) {
         msgEl.remove();

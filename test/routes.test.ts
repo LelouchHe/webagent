@@ -12,7 +12,7 @@ function makeRequest(
   port: number,
   method: string,
   path: string,
-  body?: string,
+  body?: string | Buffer,
   headers?: Record<string, string>,
 ): Promise<{
   status: number;
@@ -35,9 +35,30 @@ function makeRequest(
       },
     );
     req.on("error", reject);
-    if (body) req.write(body);
+    if (body !== undefined) req.write(body);
     req.end();
   });
+}
+
+/** Build a minimal multipart/form-data body with one file field. */
+function multipartFile(
+  fieldName: string,
+  filename: string,
+  mimeType: string,
+  data: Buffer,
+): { body: Buffer; contentType: string } {
+  const boundary = `----test-${Math.random().toString(36).slice(2)}`;
+  const head = Buffer.from(
+    `--${boundary}\r\n` +
+      `Content-Disposition: form-data; name="${fieldName}"; filename="${filename}"\r\n` +
+      `Content-Type: ${mimeType}\r\n\r\n`,
+    "utf8",
+  );
+  const tail = Buffer.from(`\r\n--${boundary}--\r\n`, "utf8");
+  return {
+    body: Buffer.concat([head, data, tail]),
+    contentType: `multipart/form-data; boundary=${boundary}`,
+  };
 }
 
 describe("HTTP routes", () => {
@@ -395,6 +416,11 @@ describe("Image upload", () => {
     writeFileSync(join(publicDir, "index.html"), "<h1>Test</h1>");
 
     store = new Store(tmpDir);
+    // Make sessions exist so the upload handler doesn't 404. Multiple session
+    // IDs are used across tests, register all of them up front.
+    for (const sid of ["test-session", "s1"]) {
+      store.createSession(sid, "/tmp");
+    }
     const handler = createRequestHandler({
       store,
       publicDir,
@@ -402,6 +428,7 @@ describe("Image upload", () => {
       limits: {
         bash_output: 1_048_576,
         image_upload: UPLOAD_LIMIT,
+        file_upload: UPLOAD_LIMIT,
         cancel_timeout: 10_000,
       },
       sseManager: { broadcast() {} } as any,
@@ -423,104 +450,125 @@ describe("Image upload", () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("uploads an image and returns its URL", async () => {
-    const payload = JSON.stringify({
-      data: Buffer.from("fake-png").toString("base64"),
-      mimeType: "image/png",
-    });
-    const res = await makeRequest(
+  // Wrap multipart upload in one helper so each test stays focused on what
+  // it's actually exercising rather than the request shape.
+  async function uploadFile(
+    sessionId: string,
+    filename: string,
+    mimeType: string,
+    bytes: Buffer,
+    sendContentLength = true,
+  ) {
+    const { body, contentType } = multipartFile(
+      "file",
+      filename,
+      mimeType,
+      bytes,
+    );
+    const headers: Record<string, string> = { "Content-Type": contentType };
+    if (sendContentLength) headers["Content-Length"] = String(body.length);
+    return makeRequest(
       port,
       "POST",
-      "/api/v1/sessions/test-session/attachments",
-      payload,
+      `/api/v1/sessions/${sessionId}/attachments`,
+      body,
+      headers,
+    );
+  }
+
+  it("uploads an image and returns its URL", async () => {
+    const res = await uploadFile(
+      "test-session",
+      "tiny.png",
+      "image/png",
+      Buffer.from("fake-png"),
     );
     assert.equal(res.status, 200);
     const body = JSON.parse(res.body);
     assert.ok(
       body.url.startsWith("/api/v1/sessions/test-session/attachments/"),
     );
-    assert.ok(body.url.endsWith(".png"));
+    assert.ok(/\.png(\?|$)/.test(body.url as string));
     assert.ok(body.path.startsWith("sessions/test-session/attachments/"));
+    assert.equal(body.kind, "image");
+    assert.equal(body.mimeType, "image/png");
+    assert.equal(body.displayName, "tiny.png");
+    assert.equal(typeof body.attachmentId, "string");
+    assert.equal(body.size, "fake-png".length);
   });
 
   it("serves uploaded images back via GET", async () => {
-    const imageData = Buffer.from("fake-png-data").toString("base64");
-    const payload = JSON.stringify({ data: imageData, mimeType: "image/png" });
-    const uploadRes = await makeRequest(
-      port,
-      "POST",
-      "/api/v1/sessions/test-session/attachments",
-      payload,
+    const uploadRes = await uploadFile(
+      "test-session",
+      "tiny.png",
+      "image/png",
+      Buffer.from("fake-png-data"),
     );
     const { url } = JSON.parse(uploadRes.body);
 
     const res = await makeRequest(port, "GET", url);
     assert.equal(res.status, 200);
+    // Inline display for images, plus the nosniff hardening header.
+    assert.match(String(res.headers["content-disposition"] ?? ""), /^inline/);
+    assert.equal(res.headers["x-content-type-options"], "nosniff");
   });
 
   it("rejects invalid session ID with 400", async () => {
-    const payload = JSON.stringify({ data: "abc", mimeType: "image/png" });
-    const res = await makeRequest(
-      port,
-      "POST",
-      "/api/v1/sessions/bad%20id!/attachments",
-      payload,
+    const res = await uploadFile(
+      "bad%20id!",
+      "tiny.png",
+      "image/png",
+      Buffer.from("abc"),
     );
     assert.equal(res.status, 400);
     assert.ok(JSON.parse(res.body).error.includes("Invalid session ID"));
   });
 
   it("rejects oversized upload via content-length header", async () => {
-    const bigPayload = JSON.stringify({
-      data: "x".repeat(UPLOAD_LIMIT),
-      mimeType: "image/png",
-    });
-    const res = await makeRequest(
-      port,
-      "POST",
-      "/api/v1/sessions/s1/attachments",
-      bigPayload,
+    const res = await uploadFile(
+      "s1",
+      "big.png",
+      "image/png",
+      Buffer.alloc(UPLOAD_LIMIT + 4096, 0x41),
     );
     assert.equal(res.status, 413);
   });
 
   it("rejects oversized upload detected during streaming", async () => {
-    const bigData = "x".repeat(UPLOAD_LIMIT + 100);
-    const payload = JSON.stringify({ data: bigData, mimeType: "image/png" });
-    // Don't send content-length to bypass header check, let streaming check catch it
-    const res = await makeRequest(
-      port,
-      "POST",
-      "/api/v1/sessions/s1/attachments",
-      payload,
+    // Skip Content-Length so the size cap fires inside busboy's streaming
+    // loop rather than at the header pre-check.
+    const res = await uploadFile(
+      "s1",
+      "big.png",
+      "image/png",
+      Buffer.alloc(UPLOAD_LIMIT + 4096, 0x41),
+      false,
     );
     assert.equal(res.status, 413);
   });
 
-  it("rejects invalid JSON body with 400", async () => {
+  it("rejects request without Content-Type header with 400", async () => {
     const res = await makeRequest(
       port,
       "POST",
       "/api/v1/sessions/s1/attachments",
-      "not-json",
+      "raw-body",
+      // No Content-Type — handler should refuse rather than crash.
     );
     assert.equal(res.status, 400);
-    assert.ok(JSON.parse(res.body).error.includes("Invalid JSON"));
   });
 
   it("normalizes jpeg extension to jpg", async () => {
-    const payload = JSON.stringify({
-      data: Buffer.from("fake").toString("base64"),
-      mimeType: "image/jpeg",
-    });
-    const res = await makeRequest(
-      port,
-      "POST",
-      "/api/v1/sessions/s1/attachments",
-      payload,
+    const res = await uploadFile(
+      "s1",
+      "snap.jpeg",
+      "image/jpeg",
+      Buffer.from("fake"),
     );
     assert.equal(res.status, 200);
-    assert.ok(JSON.parse(res.body).url.endsWith(".jpg"));
+    const body = JSON.parse(res.body);
+    // The file on disk uses .jpg even though the client sent .jpeg.
+    assert.ok(body.path.endsWith(".jpg"));
   });
 });
 
