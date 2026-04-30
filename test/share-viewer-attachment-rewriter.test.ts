@@ -16,7 +16,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { makeAttachmentRewriter } from "../public/js/share/image-rewriter.ts";
+import { makeAttachmentRewriter } from "../public/js/share/attachment-rewriter.ts";
 
 test("rewrites signed /api/v1/sessions image URL to viewer proxy", () => {
   const rw = makeAttachmentRewriter("abcdefghijklmnopqrstuvwx");

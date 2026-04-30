@@ -287,7 +287,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
 - `test/share-xss-grep.test.ts`
   - CI gate: viewer source must not contain `innerHTML` / `eval` / inline event handlers
 
-- `test/share-viewer-image-rewriter.test.ts`
+- `test/share-viewer-attachment-rewriter.test.ts`
   - viewer rewrites `/api/v1/sessions/<id>/images/<file>` → `/s/<token>/images/<file>`
   - rewriter accepts a query-string tail (signed image URLs from owner side)
 
