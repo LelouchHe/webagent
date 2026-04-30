@@ -84,7 +84,14 @@ function sendMessage() {
 
   // Render user_message body locally with attachment markers so the on-send
   // bubble matches the shape SSE replay produces after reload.
+  //
+  // For files we render a placeholder chip first, then swap it for a real
+  // <a class=user-file> the moment the upload resolves and we have the
+  // signed URL — without this swap the sender would be stuck on the text
+  // chip until reload (sender's own SSE echo is suppressed below via
+  // sentMessageForSession). See test/e2e/file-attachment-download.spec.ts.
   const msgEl = addMessage("user", text || "(attachment)");
+  const fileChips: (HTMLElement | null)[] = [];
   for (const att of state.pendingAttachments) {
     if (att.kind === "image" && att.previewUrl) {
       const imgEl = document.createElement("img");
@@ -92,14 +99,13 @@ function sendMessage() {
       imgEl.src = att.previewUrl;
       imgEl.alt = att.name;
       msgEl.appendChild(imgEl);
+      fileChips.push(null);
     } else {
-      // Local optimistic render for non-image: text chip until the upload
-      // resolves (we replace nothing — SSE replay also renders <a> the
-      // moment the server broadcasts user_message with `path`).
       const note = document.createElement("div");
       note.className = "user-attachment";
       note.textContent = `[${att.kind}: ${att.name}]`;
       msgEl.appendChild(note);
+      fileChips.push(note);
     }
   }
 
@@ -124,6 +130,7 @@ function sendMessage() {
                 displayName: string;
                 mimeType: string;
                 kind: "image" | "file";
+                url: string;
               }>,
           )
           .then((j) => ({
@@ -131,6 +138,7 @@ function sendMessage() {
             attachmentId: j.attachmentId,
             displayName: j.displayName,
             mimeType: j.mimeType,
+            url: j.url,
           }));
       }),
     ).then((uploaded) => {
@@ -140,10 +148,38 @@ function sendMessage() {
         setBusy(false);
         return;
       }
+      // Swap each file chip for a real <a class=user-file> using the
+      // signed URL the server just returned. After this the on-send
+      // bubble matches the post-reload SSE-replay bubble exactly, so
+      // the user sees a real link without having to switch sessions.
+      for (let i = 0; i < uploaded.length; i++) {
+        const chip = fileChips[i];
+        if (!chip) continue;
+        const u = uploaded[i];
+        if (u.kind === "image" || !u.url) continue;
+        const link = document.createElement("a");
+        link.className = "user-file";
+        link.href = u.url;
+        link.target = "_blank";
+        link.rel = "noopener";
+        link.download = u.displayName;
+        link.textContent = u.displayName;
+        chip.replaceWith(link);
+      }
+      // url is a frontend-only convenience for the swap above; the
+      // server contract for /prompt does not include it.
+      const refs = uploaded.map(
+        ({ kind, attachmentId, displayName, mimeType }) => ({
+          kind,
+          attachmentId,
+          displayName,
+          mimeType,
+        }),
+      );
       void api.sendMessage(
         state.sessionId!,
         text || "What is in this attachment?",
-        uploaded,
+        refs,
       );
     });
   } else {

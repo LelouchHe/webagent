@@ -26,15 +26,22 @@ test("uploaded files render as <a class=user-file>, download with original name,
   await page.locator("#input").fill("look at this file");
   await page.locator("#input").press("Enter");
 
-  // At send time the local optimistic render shows a [file: name] text
-  // chip — the <a class=user-file> anchor only materializes after SSE
-  // replay (post-reload), because the sender's own user_message broadcast
-  // is suppressed (see public/js/events.ts:961, sentMessageForSession).
-  // Pin that chip so a future change to the optimistic path can't silently
-  // drop the user's filename.
-  await expect(page.locator(".msg.user .user-attachment").last()).toHaveText(
-    "[file: notes.txt]",
+  // After the upload resolves the on-send bubble must swap its
+  // [file: name] placeholder chip for the real <a class=user-file>
+  // anchor — without this the sender would be stuck on the chip
+  // until a reload (because the sender's own SSE echo is suppressed
+  // by sentMessageForSession). This assertion fails the moment that
+  // swap regresses; the post-reload assertions below catch the
+  // separate SSE-replay path.
+  const liveLink = page.locator(".msg.user a.user-file").last();
+  await expect(liveLink).toBeVisible();
+  await expect(liveLink).toHaveText("notes.txt");
+  await expect(liveLink).toHaveAttribute("download", "notes.txt");
+  await expect(liveLink).toHaveAttribute(
+    "href",
+    /\/api\/v1\/sessions\/[^/]+\/attachments\/[^/?]+\?[^"]*sig=/,
   );
+
   await expect(page.locator(".msg.assistant").last()).toContainText(
     "Echo: look at this file",
   );
@@ -43,8 +50,8 @@ test("uploaded files render as <a class=user-file>, download with original name,
   await page.reload();
   await expect.poll(() => currentSessionId(page)).toBe(sessionId);
 
-  // After reload, SSE replay renders the anchor. This is the click-to-
-  // download surface.
+  // After reload, SSE replay re-renders the anchor independently. This
+  // is the click-to-download surface.
   const link = page.locator(".msg.user a.user-file").last();
   await expect(link).toBeVisible();
   await expect(link).toHaveText("notes.txt");

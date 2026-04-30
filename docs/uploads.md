@@ -257,14 +257,18 @@ the two render paths agree on classes:
 
 | Stage                | Image rendering                  | File rendering                              |
 | -------------------- | -------------------------------- | ------------------------------------------- |
-| Send-time (`input.ts`) | `<img class=user-image src={dataURL}>` (FileReader local URL) | `<div class=user-attachment>[file: name]</div>` (text chip — no signed URL yet) |
+| Send-time, before upload resolves (`input.ts`) | `<img class=user-image src={dataURL}>` (FileReader local URL) | `<div class=user-attachment>[file: name]</div>` (placeholder chip) |
+| Send-time, after upload resolves (`input.ts`) | unchanged — dataURL stays until reload | `<a class=user-file href={signed URL}>` (placeholder swapped in place) |
 | Reload (`render-event.ts`) | `<img class=user-image src={signed URL}>` | `<a class=user-file href={signed URL}>` |
 
 The sender's own SSE-broadcast `user_message` echo is suppressed
 (`sentMessageForSession` in `events.ts`) so the optimistic bubble is
-never replaced live; only a reload swaps the file-side text chip for
-the real anchor. This is intentional — it keeps the send path one-shot
-rather than introducing a re-render cycle.
+never replaced live. To stop the file branch from being stuck on the
+text chip until the user reloads, `input.ts` actively swaps each chip
+for a real `<a>` the moment the upload promise resolves — using the
+signed URL the server returned in the upload response. Reload is the
+independent SSE-replay path; the two paths now produce identical
+shapes.
 
 ## Tests — what guards what
 
