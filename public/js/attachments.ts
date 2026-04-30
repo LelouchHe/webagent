@@ -45,24 +45,24 @@ export function renderAttachPreview() {
     const thumb = document.createElement("span");
     thumb.className = "attach-thumb";
     if (att.kind === "image" && att.previewUrl) {
-      thumb.innerHTML = `<img src="${att.previewUrl}"><button class="remove">×</button>`;
+      const imgEl = document.createElement("img");
+      imgEl.src = att.previewUrl;
+      thumb.appendChild(imgEl);
     } else {
-      const safeName = att.name.replace(/[<>&"]/g, (c) =>
-        c === "<"
-          ? "&lt;"
-          : c === ">"
-            ? "&gt;"
-            : c === "&"
-              ? "&amp;"
-              : "&quot;",
-      );
       thumb.classList.add("attach-file");
-      thumb.innerHTML = `<span class="attach-file-name">${safeName}</span><button class="remove">×</button>`;
+      const nameEl = document.createElement("span");
+      nameEl.className = "attach-file-name";
+      nameEl.textContent = att.name;
+      thumb.appendChild(nameEl);
     }
-    thumb.querySelector(".remove")!.addEventListener("click", () => {
+    const removeBtn = document.createElement("button");
+    removeBtn.className = "remove";
+    removeBtn.textContent = "×";
+    removeBtn.addEventListener("click", () => {
       state.pendingAttachments.splice(i, 1);
       renderAttachPreview();
     });
+    thumb.appendChild(removeBtn);
     dom.attachPreview.appendChild(thumb);
   });
 }
