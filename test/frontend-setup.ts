@@ -51,7 +51,7 @@ export function resetState(state: any, dom: any) {
   state.currentThinkingEl = null;
   state.currentThinkingText = "";
   state.busy = false;
-  state.pendingImages.length = 0;
+  state.pendingAttachments.length = 0;
   state.currentBashEl = null;
   state.followMessages = true;
   state.pendingToolCallIds.clear();

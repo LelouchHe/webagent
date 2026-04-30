@@ -140,6 +140,13 @@ export type AgentEvent =
       title: string;
       toolCallId?: string | null;
       options: acp.PermissionOption[];
+      // Forwarded from ACP toolCall for the auto-approve interceptor (F4
+      // schema gate). All optional — older Copilot builds may not include
+      // them.
+      toolKind?: string;
+      toolName?: string;
+      locations?: { path: string; line?: number | null }[];
+      rawInput?: Record<string, unknown>;
     }
   | { type: "prompt_done"; sessionId: string; stopReason: string }
   | { type: "session_deleted"; sessionId: string }
@@ -151,7 +158,18 @@ export type AgentEvent =
       type: "user_message";
       sessionId: string;
       text: string;
-      images?: Array<{ path: string; mimeType: string }>;
+      attachments?: Array<{
+        kind: "image" | "file";
+        attachmentId: string;
+        displayName: string;
+        mimeType: string;
+        // Owner-side base URL `/api/v1/sessions/<sid>/attachments/<file>`.
+        // Server-emitted only — clients posting /prompt must NOT include
+        // this field; routes.ts strict-rejects uri/data/path on ingress.
+        // reSignAttachmentUrlsInJson at egress appends ?sig=&exp= so the
+        // browser can fetch with a fresh 1h signature.
+        path?: string;
+      }>;
     }
   | {
       type: "permission_response";

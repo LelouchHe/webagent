@@ -516,7 +516,7 @@ describe("share public viewer — GET /s/:token + /api/v1/shared/:token/events",
   });
 });
 
-describe("share image proxy — GET /s/:token/images/:file", () => {
+describe("share image proxy — GET /s/:token/attachments/:file", () => {
   let tmpDir: string;
   let publicDir: string;
   let store: Store;
@@ -527,9 +527,11 @@ describe("share image proxy — GET /s/:token/images/:file", () => {
     tmpDir = mkdtempSync(join(tmpdir(), "wa-share-img-"));
     publicDir = mkdtempSync(join(tmpdir(), "wa-share-img-pub-"));
     writeFileSync(join(publicDir, "share-viewer.html"), "<!doctype html>");
-    mkdirSync(join(tmpDir, "images", sessionId), { recursive: true });
+    mkdirSync(join(tmpDir, "sessions", sessionId, "attachments"), {
+      recursive: true,
+    });
     writeFileSync(
-      join(tmpDir, "images", sessionId, "a.png"),
+      join(tmpDir, "sessions", sessionId, "attachments", "a.png"),
       Buffer.from([0x89, 0x50, 0x4e, 0x47]),
     );
 
@@ -553,10 +555,45 @@ describe("share image proxy — GET /s/:token/images/:file", () => {
   it("serves image for active share", async () => {
     const { token } = await createAndPublishShare(deps, sessionId);
     const r = mockRes();
-    await handleShareRoutes(publicReq(`/s/${token}/images/a.png`), r.res, deps);
+    await handleShareRoutes(
+      publicReq(`/s/${token}/attachments/a.png`),
+      r.res,
+      deps,
+    );
     assert.equal(r.status(), 200);
     assert.equal(r.headers()["Content-Type"], "image/png");
     assert.equal(r.headers()["X-Content-Type-Options"], "nosniff");
+  });
+
+  it("uses attachment row mime + Content-Disposition with displayName", async () => {
+    // Regression: iOS Safari was appending ".bin" to share-side downloads
+    // because the share viewer served Content-Type: octet-stream and no
+    // Content-Disposition. With an attachments row present, mime + filename
+    // should round-trip from DB so iOS uses the original name as-is.
+    const attDir = join(tmpDir, "sessions", sessionId, "attachments");
+    writeFileSync(join(attDir, "att-1.bin"), Buffer.from("// userscript"));
+    store.insertAttachment({
+      id: "att-1",
+      sessionId,
+      kind: "file",
+      name: "zhihu.user.js",
+      mime: "text/javascript",
+      size: 14,
+      realpath: join(attDir, "att-1.bin"),
+    });
+    const { token } = await createAndPublishShare(deps, sessionId);
+    const r = mockRes();
+    await handleShareRoutes(
+      publicReq(`/s/${token}/attachments/att-1.bin`),
+      r.res,
+      deps,
+    );
+    assert.equal(r.status(), 200);
+    assert.equal(r.headers()["Content-Type"], "text/javascript");
+    const cd = r.headers()["Content-Disposition"];
+    assert.match(cd, /^attachment;/);
+    assert.match(cd, /filename="zhihu\.user\.js"/);
+    assert.match(cd, /filename\*=UTF-8''zhihu\.user\.js/);
   });
 
   it("rejects path traversal", async () => {
@@ -564,12 +601,12 @@ describe("share image proxy — GET /s/:token/images/:file", () => {
     // encoded %2f and ../
     const r = mockRes();
     await handleShareRoutes(
-      publicReq(`/s/${token}/images/..%2f..%2fetc%2fpasswd`),
+      publicReq(`/s/${token}/attachments/..%2f..%2fetc%2fpasswd`),
       r.res,
       deps,
     );
     // route matcher won't allow / or encoded /, path regex will reject dots
-    // -> either 404 from matcher (url doesn't match /s/:token/images/:file) or 404 from invalid file.
+    // -> either 404 from matcher (url doesn't match /s/:token/attachments/:file) or 404 from invalid file.
     // We assert it does NOT return 200.
     assert.notEqual(r.status(), 200);
   });
@@ -578,7 +615,7 @@ describe("share image proxy — GET /s/:token/images/:file", () => {
     const { token } = await createAndPublishShare(deps, sessionId);
     const r = mockRes();
     await handleShareRoutes(
-      publicReq(`/s/${token}/images/.hidden`),
+      publicReq(`/s/${token}/attachments/.hidden`),
       r.res,
       deps,
     );
@@ -589,7 +626,11 @@ describe("share image proxy — GET /s/:token/images/:file", () => {
     const { token } = await createAndPublishShare(deps, sessionId);
     store.revokeShare(token);
     const r = mockRes();
-    await handleShareRoutes(publicReq(`/s/${token}/images/a.png`), r.res, deps);
+    await handleShareRoutes(
+      publicReq(`/s/${token}/attachments/a.png`),
+      r.res,
+      deps,
+    );
     assert.equal(r.status(), 410);
   });
 
@@ -602,7 +643,11 @@ describe("share image proxy — GET /s/:token/images/:file", () => {
     );
     const token = (r1.json() as { token: string }).token;
     const r = mockRes();
-    await handleShareRoutes(publicReq(`/s/${token}/images/a.png`), r.res, deps);
+    await handleShareRoutes(
+      publicReq(`/s/${token}/attachments/a.png`),
+      r.res,
+      deps,
+    );
     assert.equal(r.status(), 410);
   });
 });

@@ -4,8 +4,8 @@ import {
   generateToken,
   hashToken,
   verifyToken,
-  signImageUrl,
-  verifyImageSig,
+  signAttachmentUrl,
+  verifyAttachmentSig,
 } from "../src/auth.ts";
 
 describe("auth - token primitives", () => {
@@ -77,18 +77,18 @@ describe("auth - token primitives", () => {
 
 describe("auth - image URL signing", () => {
   const SECRET = Buffer.from("a".repeat(64), "hex");
-  const PATH = "sess-abc/images/photo.png";
+  const PATH = "sess-abc/attachments/photo.png";
 
-  describe("signImageUrl", () => {
+  describe("signAttachmentUrl", () => {
     it("returns a query string containing exp and sig", () => {
-      const qs = signImageUrl(PATH, SECRET, 3600);
+      const qs = signAttachmentUrl(PATH, SECRET, 3600);
       assert.match(qs, /exp=\d+/);
       assert.match(qs, /sig=[a-f0-9]+/);
     });
 
     it("exp is roughly now + ttl seconds", () => {
       const before = Math.floor(Date.now() / 1000);
-      const qs = signImageUrl(PATH, SECRET, 3600);
+      const qs = signAttachmentUrl(PATH, SECRET, 3600);
       const after = Math.floor(Date.now() / 1000);
       const exp = Number(new URLSearchParams(qs).get("exp"));
       assert.ok(
@@ -98,19 +98,19 @@ describe("auth - image URL signing", () => {
     });
 
     it("different paths produce different signatures", () => {
-      const a = signImageUrl("a/b.png", SECRET, 3600);
-      const b = signImageUrl("a/c.png", SECRET, 3600);
+      const a = signAttachmentUrl("a/b.png", SECRET, 3600);
+      const b = signAttachmentUrl("a/c.png", SECRET, 3600);
       const sigA = new URLSearchParams(a).get("sig");
       const sigB = new URLSearchParams(b).get("sig");
       assert.notEqual(sigA, sigB);
     });
   });
 
-  describe("verifyImageSig", () => {
+  describe("verifyAttachmentSig", () => {
     it("accepts a freshly signed URL", () => {
-      const qs = signImageUrl(PATH, SECRET, 3600);
+      const qs = signAttachmentUrl(PATH, SECRET, 3600);
       const params = new URLSearchParams(qs);
-      const ok = verifyImageSig(
+      const ok = verifyAttachmentSig(
         PATH,
         params.get("exp")!,
         params.get("sig")!,
@@ -120,9 +120,9 @@ describe("auth - image URL signing", () => {
     });
 
     it("rejects when path differs (HMAC binds path)", () => {
-      const qs = signImageUrl(PATH, SECRET, 3600);
+      const qs = signAttachmentUrl(PATH, SECRET, 3600);
       const params = new URLSearchParams(qs);
-      const ok = verifyImageSig(
+      const ok = verifyAttachmentSig(
         "other/file.png",
         params.get("exp")!,
         params.get("sig")!,
@@ -132,12 +132,12 @@ describe("auth - image URL signing", () => {
     });
 
     it("rejects when sig is tampered", () => {
-      const qs = signImageUrl(PATH, SECRET, 3600);
+      const qs = signAttachmentUrl(PATH, SECRET, 3600);
       const params = new URLSearchParams(qs);
       const sig = params.get("sig")!;
       const tampered = sig.slice(0, -1) + (sig.endsWith("0") ? "1" : "0");
       assert.equal(
-        verifyImageSig(PATH, params.get("exp")!, tampered, SECRET),
+        verifyAttachmentSig(PATH, params.get("exp")!, tampered, SECRET),
         false,
       );
     });
@@ -145,42 +145,42 @@ describe("auth - image URL signing", () => {
     it("rejects when exp is in the past", () => {
       const past = String(Math.floor(Date.now() / 1000) - 10);
       // sign with negative ttl to get expired URL
-      const qs = signImageUrl(PATH, SECRET, -10);
+      const qs = signAttachmentUrl(PATH, SECRET, -10);
       const params = new URLSearchParams(qs);
       assert.equal(
-        verifyImageSig(PATH, past, params.get("sig")!, SECRET),
+        verifyAttachmentSig(PATH, past, params.get("sig")!, SECRET),
         false,
       );
     });
 
     it("rejects when exp is altered (HMAC binds exp)", () => {
-      const qs = signImageUrl(PATH, SECRET, 3600);
+      const qs = signAttachmentUrl(PATH, SECRET, 3600);
       const params = new URLSearchParams(qs);
       const futureExp = String(Math.floor(Date.now() / 1000) + 99999);
       assert.equal(
-        verifyImageSig(PATH, futureExp, params.get("sig")!, SECRET),
+        verifyAttachmentSig(PATH, futureExp, params.get("sig")!, SECRET),
         false,
       );
     });
 
     it("rejects malformed inputs without throwing", () => {
       assert.equal(
-        verifyImageSig(PATH, "not-a-number", "deadbeef", SECRET),
+        verifyAttachmentSig(PATH, "not-a-number", "deadbeef", SECRET),
         false,
       );
       assert.equal(
-        verifyImageSig(PATH, "1234567890", "not-hex!!", SECRET),
+        verifyAttachmentSig(PATH, "1234567890", "not-hex!!", SECRET),
         false,
       );
-      assert.equal(verifyImageSig(PATH, "", "", SECRET), false);
+      assert.equal(verifyAttachmentSig(PATH, "", "", SECRET), false);
     });
 
     it("uses different secret = rejected", () => {
-      const qs = signImageUrl(PATH, SECRET, 3600);
+      const qs = signAttachmentUrl(PATH, SECRET, 3600);
       const params = new URLSearchParams(qs);
       const otherSecret = Buffer.from("b".repeat(64), "hex");
       assert.equal(
-        verifyImageSig(
+        verifyAttachmentSig(
           PATH,
           params.get("exp")!,
           params.get("sig")!,
@@ -192,38 +192,39 @@ describe("auth - image URL signing", () => {
   });
 });
 
-import { reSignImageUrlsInJson } from "../src/auth.ts";
+import { reSignAttachmentUrlsInJson } from "../src/auth.ts";
 
-describe("reSignImageUrlsInJson", () => {
+describe("reSignAttachmentUrlsInJson", () => {
   const secret = Buffer.from("a".repeat(64), "hex");
 
   it("re-signs a bare image URL inside JSON string", () => {
-    const json = '{"path":"/api/v1/sessions/abc/images/123.png"}';
-    const out = reSignImageUrlsInJson(json, secret, 3600);
+    const json = '{"path":"/api/v1/sessions/abc/attachments/123.png"}';
+    const out = reSignAttachmentUrlsInJson(json, secret, 3600);
     assert.match(out, /\?exp=\d+&sig=[a-f0-9]+/);
   });
 
   it("re-signs an already-signed URL with fresh exp/sig", () => {
-    const json = '{"u":"/api/v1/sessions/x/images/foo.png?exp=1&sig=deadbeef"}';
-    const out = reSignImageUrlsInJson(json, secret, 3600);
+    const json =
+      '{"u":"/api/v1/sessions/x/attachments/foo.png?exp=1&sig=deadbeef"}';
+    const out = reSignAttachmentUrlsInJson(json, secret, 3600);
     assert.doesNotMatch(out, /exp=1&sig=deadbeef/);
     assert.match(out, /\?exp=\d{10,}&sig=[a-f0-9]+/);
   });
 
   it("leaves unrelated URLs untouched", () => {
     const json = '{"a":"/api/v1/sessions/x","b":"/foo/bar"}';
-    const out = reSignImageUrlsInJson(json, secret, 3600);
+    const out = reSignAttachmentUrlsInJson(json, secret, 3600);
     assert.equal(out, json);
   });
 
   it("handles multiple images in one payload", () => {
     const json = JSON.stringify({
       images: [
-        { path: "/api/v1/sessions/s1/images/a.png" },
-        { path: "/api/v1/sessions/s1/images/b.jpg" },
+        { path: "/api/v1/sessions/s1/attachments/a.png" },
+        { path: "/api/v1/sessions/s1/attachments/b.jpg" },
       ],
     });
-    const out = reSignImageUrlsInJson(json, secret, 3600);
+    const out = reSignAttachmentUrlsInJson(json, secret, 3600);
     const matches = out.match(/\?exp=\d+&sig=[a-f0-9]+/g);
     assert.equal(matches?.length, 2);
   });

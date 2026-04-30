@@ -69,7 +69,7 @@ Whitelisted paths (no auth required):
 | `GET /manifest.json`, `/sw.js`, `/favicon.ico`, `/theme-init.js` | PWA + early-paint helpers needed before login                             |
 | `GET /js/*.js`, `/styles*.css`, `/icons/*`                       | Static bundles (content-hashed)                                           |
 | `GET /api/v1/events/stream`                                      | SSE — auth via short-lived ticket in query string instead (see below)     |
-| `GET /api/v1/images/*`                                           | Auth via HMAC signature in query string instead (see below)               |
+| `GET /api/v1/attachments/*`                                           | Auth via HMAC signature in query string instead (see below)               |
 
 Anything else (chat history, prompt submission, model selection, bash, push subscriptions) requires a Bearer token.
 
@@ -100,7 +100,7 @@ Tickets are in-memory only; restarting the server invalidates all of them. Clien
 
 ## Signed Image URLs
 
-Images uploaded to a session render as `<img src="/api/v1/images/sess/abc/xyz.png?sig=...&exp=...">`. The image route is whitelisted; auth is in the URL itself:
+Images uploaded to a session render as `<img src="/api/v1/attachments/sess/abc/xyz.png?sig=...&exp=...">`. The image route is whitelisted; auth is in the URL itself:
 
 - The server holds a per-restart HMAC secret (random 32 bytes, never persisted).
 - When an image event is serialized for history or SSE, the path is signed: `sig = HMAC-SHA256(secret, "<path>|<exp>")` with `exp = now + 1h`.
@@ -199,13 +199,13 @@ data/
 ├── webagent.db-shm    # SQLite shared-memory (transient)
 ├── webagent.db-wal    # SQLite write-ahead log (transient)
 ├── vapid.json         # VAPID keypair for Web Push (regenerated if deleted)
-└── images/
-    └── sess/<sessionId>/<eventId>.<ext>   # uploaded images, no per-image metadata
+└── sessions/
+    └── <sessionId>/attachments/<file>   # uploaded files (images, docs, etc.)
 ```
 
 - All paths are inside `data_dir` (defaults to `./data`). The dev config uses `./data-dev`. The E2E suite uses `./test/e2e-data`.
 - `auth.json` is the only file with mode `0600`. The SQLite files inherit umask defaults — that is intentional: SQLite holds session content, not credentials, and tightening the mode breaks `litecli`-style introspection. If your OS user is shared, restrict the parent directory instead.
-- **Backup**: `auth.json` + `webagent.db` are sufficient. The WAL/SHM are transient. Image files in `images/` are referenced by events but the app degrades gracefully (renders broken-image placeholder) if they're missing.
+- **Backup**: `auth.json` + `webagent.db` are sufficient. The WAL/SHM are transient. Attachment files under `sessions/` are referenced by events but the app degrades gracefully (renders broken-image placeholder) if they're missing.
 - **Reset**: `rm -rf data/` and start over. The server will refuse to serve until you `--create-token` again.
 
 ## E2E Test Setup

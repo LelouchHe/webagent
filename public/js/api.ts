@@ -95,13 +95,20 @@ export function getSnapshot(id: string): Promise<Record<string, unknown>> {
 
 // --- Prompt ---
 
+export interface AttachmentRefForSend {
+  kind: "image" | "file";
+  attachmentId: string;
+  displayName: string;
+  mimeType: string;
+}
+
 export function sendMessage(
   sessionId: string,
   text: string,
-  images?: Array<{ data: string; mimeType: string; path?: string }>,
+  attachments?: AttachmentRefForSend[],
 ): Promise<unknown> {
   const body: Record<string, unknown> = { text };
-  if (images?.length) body.images = images;
+  if (attachments?.length) body.attachments = attachments;
   return post("/api/v1/sessions/" + sessionId + "/prompt", body, newOpId());
 }
 

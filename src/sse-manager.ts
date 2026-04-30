@@ -1,7 +1,7 @@
 import type { ServerResponse } from "node:http";
 import { randomBytes } from "node:crypto";
 import type { AgentEvent } from "./types.ts";
-import { reSignImageUrlsInJson } from "./auth.ts";
+import { reSignAttachmentUrlsInJson } from "./auth.ts";
 
 /**
  * SSE heartbeat frame — a NAMED event so the frontend can hook
@@ -31,7 +31,7 @@ export class SseManager {
   private readonly heartbeatInterval: number;
   private onRemoveCallback: ((clientId: string) => void) | null = null;
   private isTokenRevoked: ((tokenName: string) => boolean) | null = null;
-  private imageSecret: Buffer | null = null;
+  private attachmentSecret: Buffer | null = null;
 
   constructor(heartbeatMs = 15_000) {
     this.heartbeatInterval = heartbeatMs;
@@ -45,8 +45,8 @@ export class SseManager {
   /** When set, every outgoing SSE message has its image URLs re-signed with
    *  a fresh exp/sig — required for stored events to render past the
    *  original 1h signature TTL. */
-  setImageSecret(secret: Buffer): void {
-    this.imageSecret = secret;
+  setAttachmentSecret(secret: Buffer): void {
+    this.attachmentSecret = secret;
   }
 
   /** Install a revocation check called on every heartbeat. If it returns
@@ -122,8 +122,8 @@ export class SseManager {
   sendEvent(client: SseClient, event: AgentEvent, seq?: number): void {
     if (client.res.writableEnded) return;
     let data = JSON.stringify(event);
-    if (this.imageSecret && data.includes("/images/")) {
-      data = reSignImageUrlsInJson(data, this.imageSecret);
+    if (this.attachmentSecret && data.includes("/attachments/")) {
+      data = reSignAttachmentUrlsInJson(data, this.attachmentSecret);
     }
     let msg = "";
     if (seq != null) msg += `id: ${seq}\n`;

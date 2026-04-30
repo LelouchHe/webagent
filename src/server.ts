@@ -21,6 +21,12 @@ import {
 } from "./share/cleanup.ts";
 import { AuthStore } from "./auth-store.ts";
 import { join as pathJoin } from "node:path";
+import { resolveSessionsAnchor } from "./sessions-anchor.ts";
+import { AttachmentDispatcher } from "./attachment-dispatch.ts";
+import {
+  createCounters as createAttachmentInterceptorCounters,
+  type InterceptorCounters,
+} from "./attachment-interceptor.ts";
 import type { AgentEvent } from "./types.ts";
 
 // Prefix all console output with ISO-ish timestamps (YYYY-MM-DD HH:MM:SS)
@@ -53,6 +59,30 @@ const PKG_VERSION = (() => {
 const store = new Store(config.data_dir);
 console.log(`[store] using ${config.data_dir}/`);
 
+// Pin <data_dir>/sessions realpath at boot so all later anchor checks
+// (file:// URI construction, permission interceptor) compare against the
+// same canonical path. Defends against macOS /var → /private/var.
+const sessionsAnchor = resolveSessionsAnchor(config.data_dir);
+const attachmentDispatcher = new AttachmentDispatcher(store, sessionsAnchor, {
+  warn: (msg) => {
+    console.warn(msg);
+  },
+});
+
+// Counters + once-per-process schemaDrift signal for the permission
+// auto-approve interceptor (uploads-plan v2.6 §1.4 F7). Dumped hourly.
+const attachmentInterceptorCounters: InterceptorCounters =
+  createAttachmentInterceptorCounters();
+let lastSchemaDriftAt = 0;
+const SCHEMA_DRIFT_THROTTLE_MS = 24 * 60 * 60 * 1000;
+const ATTACHMENT_INTERCEPTOR_DUMP_MS = 60 * 60 * 1000;
+setInterval(() => {
+  console.log(
+    "[attachment-interceptor] counters",
+    JSON.stringify(attachmentInterceptorCounters),
+  );
+}, ATTACHMENT_INTERCEPTOR_DUMP_MS).unref();
+
 const sessions = new SessionManager(store, config.default_cwd, config.data_dir);
 const titleService = new TitleService(store, sessions, config.default_cwd);
 const pushService = new PushService(
@@ -77,13 +107,13 @@ const authStore = new AuthStore(pathJoin(config.data_dir, "auth.json"));
 const ticketStore = new TicketStore();
 // In-memory image signing secret; regenerated on every restart so previously
 // leaked URLs become invalid the moment the server is bounced.
-const imageSecret = randomBytes(32);
+const attachmentSecret = randomBytes(32);
 // SSE heartbeat re-checks token revocation; revoked → connection closed
 // within one heartbeat interval (≤15s).
 sseManager.setRevocationCheck(
   (tokenName) => !authStore.hasTokenName(tokenName),
 );
-sseManager.setImageSecret(imageSecret);
+sseManager.setAttachmentSecret(attachmentSecret);
 
 // Broadcast runtime state patches to all SSE clients interested in the session.
 sessions.state.onPatch((event) => {
@@ -112,13 +142,14 @@ const server = createServer((req, res) => {
     debugLevel: config.debug.level,
     authStore,
     ticketStore,
-    imageSecret,
+    attachmentSecret,
     shareConfig: config.share,
   })(req, res);
 });
 
 async function initBridge(): Promise<AgentBridge> {
   const b = new AgentBridge(config.agent_cmd);
+  b.setAttachmentDispatcher(attachmentDispatcher);
 
   b.on("event", (event: AgentEvent) => {
     handleAgentEvent(
@@ -129,6 +160,32 @@ async function initBridge(): Promise<AgentBridge> {
       {
         cancelTimeout: config.limits.cancel_timeout,
         recentPathsLimit: config.limits.recent_paths,
+        attachmentInterceptor: {
+          counters: attachmentInterceptorCounters,
+          logger: {
+            debug: (msg, ctx) => {
+              if (config.debug.level === "debug") console.debug(msg, ctx);
+            },
+            info: (msg, ctx) => {
+              console.log(msg, ctx);
+            },
+            warn: (msg, ctx) => {
+              console.warn(msg, ctx);
+            },
+            error: (msg, ctx) => {
+              console.error(msg, ctx);
+            },
+          },
+          onSchemaDrift: (ctx) => {
+            const now = Date.now();
+            if (now - lastSchemaDriftAt < SCHEMA_DRIFT_THROTTLE_MS) return;
+            lastSchemaDriftAt = now;
+            console.error(
+              "[attachment-interceptor] schema drift detected — rawInput has no known path key",
+              ctx,
+            );
+          },
+        },
       },
       sseManager,
       pushService,

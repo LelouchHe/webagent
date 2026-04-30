@@ -19,7 +19,7 @@ describe("input", () => {
     await import("../public/js/render.ts");
     await import("../public/js/events.ts");
     commandsMod = await import("../public/js/commands.ts");
-    await import("../public/js/images.ts");
+    await import("../public/js/attachments.ts");
     inputModule = await import("../public/js/input.ts");
     void inputModule;
   });
@@ -203,20 +203,31 @@ describe("input", () => {
   it("uploads pending images before sending the prompt", async () => {
     state.sessionId = "s1";
     state.clientId = "cl-1";
-    state.pendingImages.push({
-      data: "abc123",
+    state.pendingAttachments.push({
+      kind: "image",
       mimeType: "image/png",
+      name: "image.png",
       previewUrl: "data:image/png;base64,abc123",
+      file: new File([new Uint8Array([1, 2, 3])], "image.png", {
+        type: "image/png",
+      }),
     });
     setFetch(async (url: string) => {
-      if (url.includes("/api/v1/sessions/") && url.includes("/images")) {
+      if (url.includes("/api/v1/sessions/") && url.includes("/attachments")) {
+        const payload = {
+          attachmentId: "att-1",
+          displayName: "image.png",
+          mimeType: "image/png",
+          kind: "image",
+          path: "sessions/s1/attachments/att-1.png",
+          url: "/api/v1/sessions/s1/attachments/att-1.png",
+        };
         return {
           ok: true,
-          json: async () => ({ url: "/api/v1/sessions/s1/images/image.png" }),
-          text: async () => '{"url":"/api/v1/sessions/s1/images/image.png"}',
+          json: async () => payload,
+          text: async () => JSON.stringify(payload),
         };
       }
-      // sendMessage call
       return { ok: true, json: async () => ({}), text: async () => "{}" };
     });
 
@@ -225,18 +236,20 @@ describe("input", () => {
     await new Promise((resolve) => setImmediate(resolve));
 
     const imageCall = fetchCalls.find(
-      (c) => c.url.includes("/api/v1/sessions/") && c.url.includes("/images"),
+      (c) =>
+        c.url.includes("/api/v1/sessions/") && c.url.includes("/attachments"),
     );
     assert.ok(imageCall, "expected an image upload call");
     const msgCall = fetchCalls.find((c) => c.url.includes("/prompt"));
     assert.ok(msgCall, "expected a prompt call");
     const body = JSON.parse(msgCall.init?.body);
-    assert.equal(body.text, "What is in this image?");
-    assert.deepEqual(body.images, [
+    assert.equal(body.text, "What is in this attachment?");
+    assert.deepEqual(body.attachments, [
       {
-        data: "abc123",
+        kind: "image",
+        attachmentId: "att-1",
+        displayName: "image.png",
         mimeType: "image/png",
-        path: "/api/v1/sessions/s1/images/image.png",
       },
     ]);
   });
@@ -375,15 +388,19 @@ describe("input", () => {
   it("does not send prompt with images when not connected", async () => {
     state.sessionId = "s1";
     // clientId is null → not connected
-    state.pendingImages.push({
-      data: "abc123",
+    state.pendingAttachments.push({
+      kind: "image",
       mimeType: "image/png",
+      name: "image.png",
       previewUrl: "data:image/png;base64,abc123",
+      file: new File([new Uint8Array([1, 2, 3])], "image.png", {
+        type: "image/png",
+      }),
     });
     setFetch(async () => ({
       ok: true,
-      json: async () => ({ url: "/api/v1/sessions/s1/images/image.png" }),
-      text: async () => '{"url":"/api/v1/sessions/s1/images/image.png"}',
+      json: async () => ({ url: "/api/v1/sessions/s1/attachments/image.png" }),
+      text: async () => '{"url":"/api/v1/sessions/s1/attachments/image.png"}',
     }));
 
     clickSend();

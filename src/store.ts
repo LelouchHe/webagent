@@ -91,6 +91,28 @@ export interface ShareSummaryRow {
   last_accessed_at: number | null;
 }
 
+export interface AttachmentRow {
+  id: string;
+  session_id: string;
+  kind: string;
+  name: string;
+  mime: string;
+  size: number;
+  realpath: string;
+  upload_seq: number;
+  created_at: string;
+}
+
+export interface AttachmentInput {
+  id: string;
+  sessionId: string;
+  kind: "image" | "file";
+  name: string;
+  mime: string;
+  size: number;
+  realpath: string;
+}
+
 export class Store {
   private readonly db: Database.Database;
 
@@ -303,6 +325,34 @@ export class Store {
       CREATE UNIQUE INDEX IF NOT EXISTS shares_one_active_preview
         ON shares(session_id)
         WHERE shared_at IS NULL;
+    `);
+
+    // attachments — server-managed file uploads bound to a session.
+    // Lifecycle = session lifecycle: FK CASCADE removes the row when the
+    // session row is deleted (hard-delete path). Tombstoned (soft-deleted)
+    // sessions keep the row alive so the share viewer can still resolve
+    // file references for active shares.
+    //
+    // upload_seq = MAX(events.seq) at upload time. The share proxy uses
+    // `upload_seq <= shares.share_snapshot_seq` to refuse files uploaded
+    // after the share was published, without growing a second seq axis.
+    //
+    // realpath is stored after fs.realpath so the bridge / permission
+    // interceptor can compare paths without re-resolving symlinks on
+    // every request.
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS attachments (
+        id           TEXT PRIMARY KEY,
+        session_id   TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+        kind         TEXT NOT NULL,
+        name         TEXT NOT NULL,
+        mime         TEXT NOT NULL,
+        size         INTEGER NOT NULL,
+        realpath     TEXT NOT NULL,
+        upload_seq   INTEGER NOT NULL,
+        created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_attachments_session ON attachments(session_id);
     `);
 
     // owner_prefs — key-value store for owner-scoped defaults (display_name,
@@ -823,6 +873,77 @@ export class Store {
       )
       .run(seconds);
     return info.changes;
+  }
+
+  // ===== attachments (uploads-plan v2.6 §1.2) =====
+
+  /**
+   * Insert a new attachment row. upload_seq is computed as
+   * `COALESCE(MAX(events.seq), 0)` for the session at insert time. Callers
+   * must have already written the file under
+   * <data_dir>/sessions/<sid>/attachments/<id>.<ext> and resolved its
+   * realpath. The row is bound by FK CASCADE to its session.
+   */
+  insertAttachment(input: AttachmentInput): AttachmentRow {
+    const seqRow = this.db
+      .prepare(
+        "SELECT COALESCE(MAX(seq), 0) AS s FROM events WHERE session_id = ?",
+      )
+      .get(input.sessionId) as { s: number };
+    const uploadSeq = seqRow.s;
+    this.db
+      .prepare(
+        `INSERT INTO attachments
+           (id, session_id, kind, name, mime, size, realpath, upload_seq)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        input.id,
+        input.sessionId,
+        input.kind,
+        input.name,
+        input.mime,
+        input.size,
+        input.realpath,
+        uploadSeq,
+      );
+    return this.db
+      .prepare("SELECT * FROM attachments WHERE id = ?")
+      .get(input.id) as AttachmentRow;
+  }
+
+  /** Look up an attachment row by (session_id, id). */
+  getAttachment(sessionId: string, id: string): AttachmentRow | undefined {
+    return this.db
+      .prepare("SELECT * FROM attachments WHERE session_id = ? AND id = ?")
+      .get(sessionId, id) as AttachmentRow | undefined;
+  }
+
+  /**
+   * For the permission interceptor: list all attachment realpaths for a
+   * session so we can compare against `toolCall.locations[].path` after
+   * realpath-ing each side. The set is small (≤ a few hundred per
+   * session) so we hand back an in-memory array.
+   */
+  listAttachmentRealpaths(sessionId: string): string[] {
+    const rows = this.db
+      .prepare("SELECT realpath FROM attachments WHERE session_id = ?")
+      .all(sessionId) as { realpath: string }[];
+    return rows.map((r) => r.realpath);
+  }
+
+  /**
+   * For the share viewer / GET serve path: look up an attachment by the
+   * filename portion of its URL (`<id>.<ext>`). The id is the uuid prefix
+   * of the file segment.
+   */
+  getAttachmentByFile(
+    sessionId: string,
+    file: string,
+  ): AttachmentRow | undefined {
+    const dot = file.indexOf(".");
+    const id = dot === -1 ? file : file.slice(0, dot);
+    return this.getAttachment(sessionId, id);
   }
 
   close(): void {

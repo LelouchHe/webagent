@@ -10,6 +10,7 @@ import type { StoredEvent } from "../types.ts";
 import type { ShareRow } from "../store.ts";
 import { generateShareToken } from "../tokens.ts";
 import { SanitizeError, sanitizeEventsForShare } from "./sanitize.ts";
+import { buildContentDisposition, isInlineMime } from "../attachments.ts";
 
 // In-flight dedup for concurrent POST /share on the same session.
 // First caller does the work; concurrent callers await the same promise.
@@ -126,7 +127,7 @@ export async function handleShareRoutes(
 
   // Viewer image proxy — must come before general /s/:token HTML match.
   const imgMatch = url.match(
-    /^\/s\/([A-Za-z0-9_-]{24})\/images\/([^/?]+)\/?(?:\?.*)?$/,
+    /^\/s\/([A-Za-z0-9_-]{24})\/attachments\/([^/?]+)\/?(?:\?.*)?$/,
   );
   if (imgMatch && method === "GET") {
     await handleViewerImage(
@@ -836,7 +837,7 @@ async function handleViewerAsset(
 }
 
 /**
- * GET /s/:token/images/:file — token-scoped image proxy. Resolves the token
+ * GET /s/:token/attachments/:file — token-scoped image proxy. Resolves the token
  * to a session_id on-demand; directly serving /api/v1/sessions/:id/images
  * would leak session_id.
  */
@@ -867,10 +868,14 @@ async function handleViewerImage(
     return;
   }
 
-  const imagesRoot = join(deps.dataDir, "images");
-  const filePath = join(imagesRoot, row.session_id, file);
-  // Final realpath-style guard: must stay under dataDir/images/<session_id>.
-  const sessionRoot = join(imagesRoot, row.session_id);
+  const sessionRoot = join(
+    deps.dataDir,
+    "sessions",
+    row.session_id,
+    "attachments",
+  );
+  const filePath = join(sessionRoot, file);
+  // Final realpath-style guard: must stay under <dataDir>/sessions/<sid>/attachments.
   if (!filePath.startsWith(sessionRoot + "/") && filePath !== sessionRoot) {
     res.writeHead(403);
     res.end("Forbidden");
@@ -879,15 +884,31 @@ async function handleViewerImage(
 
   try {
     const buf = await readFile(filePath);
-    const mime =
-      IMAGE_MIME[extname(filePath).toLowerCase()] ?? "application/octet-stream";
-    res.writeHead(200, {
+    // Look up the attachment row to recover the original mime + display
+    // name. Without this iOS Safari sees Content-Type: octet-stream and
+    // appends ".bin" to the <a download> name (e.g. zhihu.user.js →
+    // zhihu.user.js.bin). The owner-side route at routes.ts does the
+    // same lookup; share viewer needs parity for non-image attachments.
+    const att = deps.store.getAttachmentByFile(row.session_id, file);
+    const ext = extname(filePath).toLowerCase();
+    let mime = att?.mime;
+    mime ??= IMAGE_MIME[ext];
+    mime ??= "application/octet-stream";
+    const headers: Record<string, string> = {
       "Content-Type": mime,
       "Cache-Control": "public, max-age=3600",
       "X-Content-Type-Options": "nosniff",
       "Content-Security-Policy": "default-src 'none'",
       "X-Robots-Tag": "noindex, nofollow",
-    });
+    };
+    if (att) {
+      const disposition = isInlineMime(mime) ? "inline" : "attachment";
+      headers["Content-Disposition"] = buildContentDisposition(
+        disposition,
+        att.name,
+      );
+    }
+    res.writeHead(200, headers);
     res.end(buf);
   } catch {
     res.writeHead(404, { "Content-Type": "text/plain" });
@@ -997,8 +1018,8 @@ async function handleRevoke(
   if (revoked) {
     const reaped = deps.store.reapTombstoneIfOrphaned(row.session_id);
     if (reaped && deps.dataDir) {
-      // Tombstoned session is fully gone; sweep its image directory too.
-      rm(join(deps.dataDir, "images", row.session_id), {
+      // Tombstoned session is fully gone; sweep its attachments directory too.
+      rm(join(deps.dataDir, "sessions", row.session_id), {
         recursive: true,
         force: true,
       }).catch(() => {});

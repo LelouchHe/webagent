@@ -25,7 +25,7 @@ WebAgent exposes a **REST + SSE** API for managing agent sessions, sending promp
   - [Bash](#bash)
   - [Bridge](#bridge)
   - [Inbox](#inbox)
-  - [Images](#images)
+  - [Attachments](#attachments)
   - [SSE Streams](#sse-streams)
   - [Share](#share)
 - [Beta Endpoints (`/api/beta/`)](#beta-endpoints-apibeta)
@@ -203,7 +203,7 @@ Get session details. **Auto-resumes** the session in the ACP agent if it's not a
 
 #### `DELETE /api/v1/sessions/:id`
 
-Delete a session and all its events, images, and in-memory state.
+Delete a session and all its events, attachments, and in-memory state.
 
 **Response** `204` (no body)
 
@@ -339,10 +339,10 @@ Send a user prompt to the agent. Returns immediately; the agent's response strea
 
 **Request body:**
 
-| Field    | Type   | Required | Description                                             |
-| -------- | ------ | -------- | ------------------------------------------------------- |
-| `text`   | string | Yes      | The user's message                                      |
-| `images` | array  | No       | Images: `[{ data: "<base64>", mimeType: "image/png" }]` |
+| Field         | Type   | Required | Description                                                                          |
+| ------------- | ------ | -------- | ------------------------------------------------------------------------------------ |
+| `text`        | string | Yes      | The user's message                                                                   |
+| `attachments` | array  | No       | `[{ kind: "image"\|"file", attachmentId, displayName, mimeType }]`. Server resolves the on-disk path from `(sessionId, attachmentId)`. Clients **must not** send `uri`, `data`, or `path` — strict validation rejects them with `400`. |
 
 **Response** `202`:
 
@@ -831,39 +831,65 @@ Ack (dismiss) a message without consuming. Deletes the row.
 
 ---
 
-### Images
+### Attachments
 
-#### `POST /api/v1/sessions/:id/images`
+#### `POST /api/v1/sessions/:id/attachments`
 
-Upload an image (base64-encoded) for use in prompts.
+Upload a file (image or arbitrary) for use in a subsequent prompt. Streamed via
+multipart/form-data — no base64 round-trip.
 
-**Request body:**
+**Request:** `multipart/form-data` with a single `file` part.
 
-```json
-{
-  "data": "<base64-encoded image data>",
-  "mimeType": "image/png"
-}
+```
+POST /api/v1/sessions/abc-123/attachments
+Content-Type: multipart/form-data; boundary=...
+
+--...
+Content-Disposition: form-data; name="file"; filename="report.pdf"
+Content-Type: application/pdf
+
+<binary bytes>
+--...--
 ```
 
 **Response** `200`:
 
 ```json
 {
-  "path": "images/abc-123/1705312260000.png",
-  "url": "/api/v1/sessions/abc-123/images/1705312260000.png"
+  "attachmentId": "9b0c7e1a-7d35-4a7f-8c11-...",
+  "displayName": "report.pdf",
+  "mimeType": "application/pdf",
+  "kind": "file",
+  "path": "sessions/abc-123/attachments/9b0c7e1a-...pdf",
+  "url": "/api/v1/sessions/abc-123/attachments/9b0c7e1a-...pdf"
 }
 ```
 
-**Errors:** `400` (invalid session ID or JSON), `413` (upload exceeds `limits.image_upload`)
+`kind` is server-classified from sniffed MIME: `image` for `image/*`, `file`
+otherwise. The classification drives both the size cap (image cap vs file cap)
+and the per-prompt permission auto-approve gate (only `kind: "image"` and
+the on-disk path matching the per-session attachments directory may be
+auto-approved when the agent later issues a read tool call against this file).
+
+The returned `attachmentId` is the **only** handle the client needs. To
+reference the file in the next prompt, send back
+`{ kind, attachmentId, displayName, mimeType }` as one element of the
+`attachments` array on `POST /prompt` — the server resolves the real path
+internally.
+
+**Errors:** `400` (invalid session ID or malformed multipart, including a
+non-`file` field name or extra files), `404` (session not found), `413`
+(upload exceeds `limits.image_upload` for images or `limits.file_upload`
+for non-images).
 
 ---
 
-#### `GET /api/v1/sessions/:id/images/:file`
+#### `GET /api/v1/sessions/:id/attachments/:file`
 
-Retrieve a previously uploaded image. Responses are immutably cached (`Cache-Control: public, max-age=31536000, immutable`).
+Retrieve a previously uploaded attachment. Responses are immutably cached
+(`Cache-Control: public, max-age=31536000, immutable`).
 
-**Response** `200`: Image binary with appropriate `Content-Type`.
+**Response** `200`: Binary with appropriate `Content-Type`.
 
 **Errors:** `403` (path traversal), `404` (not found)
 
@@ -1240,7 +1266,7 @@ These events are streamed in real-time via SSE as the agent works.
 | `permission_response`   | `requestId`, `sessionId`, `optionName`, `denied`                                         | Permission was resolved (server-generated)                                                                          |
 | `prompt_done`           | `sessionId`, `stopReason`                                                                | Agent turn complete                                                                                                 |
 | `error`                 | `message`, `sessionId?`                                                                  | Error occurred                                                                                                      |
-| `user_message`          | `sessionId`, `text`, `images?`                                                           | User message broadcast (for multi-client sync)                                                                      |
+| `user_message`          | `sessionId`, `text`, `attachments?` (array of `{kind, attachmentId, displayName, mimeType}`) | User message broadcast (for multi-client sync)                                                                      |
 | `bash_command`          | `sessionId`, `command`                                                                   | Bash command started                                                                                                |
 | `bash_output`           | `sessionId`, `text`, `stream`                                                            | Bash output chunk (`stream`: `"stdout"` or `"stderr"`)                                                              |
 | `bash_done`             | `sessionId`, `code`, `signal`, `error?`                                                  | Bash command completed                                                                                              |

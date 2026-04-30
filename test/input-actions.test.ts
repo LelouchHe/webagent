@@ -16,7 +16,7 @@ describe("input-actions", () => {
     await import("../public/js/render.ts");
     await import("../public/js/events.ts");
     await import("../public/js/commands.ts");
-    await import("../public/js/images.ts");
+    await import("../public/js/attachments.ts");
     inputModule = await import("../public/js/input.ts");
     void inputModule;
     actions = await import("../public/js/input-actions.ts");

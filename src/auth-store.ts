@@ -2,6 +2,7 @@ import { promises as fs, existsSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
 import lockfile from "proper-lockfile";
 import { generateToken, hashToken, verifyToken } from "./auth.ts";
+import { atomicWriteFile } from "./atomic-write.ts";
 
 export type Scope = "admin" | "api";
 
@@ -240,17 +241,7 @@ export class AuthStore {
   }
 
   private async writeToDisk(data: AuthFileShape): Promise<void> {
-    const tmp = `${this.path}.tmp`;
-    // Open with explicit mode so the temp file is born 0600.
-    const fh = await fs.open(tmp, "w", FILE_MODE);
-    try {
-      await fh.writeFile(JSON.stringify(data, null, 2));
-    } finally {
-      await fh.close();
-    }
-    // chmod again in case umask interfered or the file pre-existed.
-    await fs.chmod(tmp, FILE_MODE);
-    await fs.rename(tmp, this.path);
+    await atomicWriteFile(this.path, JSON.stringify(data, null, 2), FILE_MODE);
   }
 
   private async withLock<T>(fn: () => Promise<T>): Promise<T> {

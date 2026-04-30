@@ -16,7 +16,7 @@ import {
   hideSlashMenu,
   handleSlashMenuKey,
 } from "./commands.ts";
-import { renderAttachPreview } from "./images.ts";
+import { renderAttachPreview } from "./attachments.ts";
 import { registerInputHandlers } from "./input-actions.ts";
 import { publishPreview, cancelPreview } from "./share/commands.ts";
 import * as api from "./api.ts";
@@ -31,12 +31,12 @@ state._onCancelTimeout = () =>
 
 function sendMessage() {
   const text = dom.input.value.trim();
-  if (!text && state.pendingImages.length === 0) return;
+  if (!text && state.pendingAttachments.length === 0) return;
 
   // Slash commands and bash always go through, even while busy
   if (
     (text.startsWith("/") || text === "?" || text.startsWith("? ")) &&
-    state.pendingImages.length === 0
+    state.pendingAttachments.length === 0
   ) {
     setInputValue("");
     dom.input.style.height = "auto";
@@ -44,7 +44,7 @@ function sendMessage() {
     return;
   }
 
-  if (text.startsWith("!") && state.pendingImages.length === 0) {
+  if (text.startsWith("!") && state.pendingAttachments.length === 0) {
     const command = text.slice(1).trim();
     if (!command) return;
     if (!state.sessionId) {
@@ -82,35 +82,65 @@ function sendMessage() {
     return;
   }
 
-  // Show user message with image thumbnails
-  const msgEl = addMessage("user", text || "(image)");
-  for (const img of state.pendingImages) {
-    const imgEl = document.createElement("img");
-    imgEl.className = "user-image";
-    imgEl.src = img.previewUrl;
-    msgEl.appendChild(imgEl);
+  // Render user_message body locally with attachment markers so the on-send
+  // bubble matches the shape SSE replay produces after reload.
+  //
+  // For files we render a placeholder chip first, then swap it for a real
+  // <a class=user-file> the moment the upload resolves and we have the
+  // signed URL — without this swap the sender would be stuck on the text
+  // chip until reload (sender's own SSE echo is suppressed below via
+  // sentMessageForSession). See test/e2e/file-attachment-download.spec.ts.
+  const msgEl = addMessage("user", text || "(attachment)");
+  const fileChips: (HTMLElement | null)[] = [];
+  for (const att of state.pendingAttachments) {
+    if (att.kind === "image" && att.previewUrl) {
+      const imgEl = document.createElement("img");
+      imgEl.className = "user-image";
+      imgEl.src = att.previewUrl;
+      imgEl.alt = att.name;
+      msgEl.appendChild(imgEl);
+      fileChips.push(null);
+    } else {
+      const note = document.createElement("div");
+      note.className = "user-attachment";
+      note.textContent = `[${att.kind}: ${att.name}]`;
+      msgEl.appendChild(note);
+      fileChips.push(note);
+    }
   }
 
-  // Upload images to server, then send prompt via REST
-  const images = state.pendingImages.slice();
-  state.pendingImages.length = 0;
+  // Upload attachments to server, then send prompt via REST
+  const attachments = state.pendingAttachments.slice();
+  state.pendingAttachments.length = 0;
   renderAttachPreview();
 
-  if (images.length > 0) {
+  if (attachments.length > 0) {
     void Promise.all(
-      images.map((img) =>
-        fetch(`/api/v1/sessions/${state.sessionId}/images`, {
+      attachments.map((att) => {
+        const fd = new FormData();
+        fd.append("file", att.file, att.name);
+        return fetch(`/api/v1/sessions/${state.sessionId}/attachments`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ data: img.data, mimeType: img.mimeType }),
+          body: fd,
         })
-          .then((r) => r.json() as Promise<{ url: string }>)
+          .then(
+            (r) =>
+              r.json() as Promise<{
+                attachmentId: string;
+                displayName: string;
+                mimeType: string;
+                kind: "image" | "file";
+                url: string;
+              }>,
+          )
           .then((j) => ({
-            data: img.data,
-            mimeType: img.mimeType,
-            path: j.url,
-          })),
-      ),
+            kind: j.kind,
+            attachmentId: j.attachmentId,
+            displayName: j.displayName,
+            mimeType: j.mimeType,
+            url: j.url,
+          }));
+      }),
     ).then((uploaded) => {
       if (!isConnected()) {
         msgEl.remove();
@@ -118,14 +148,38 @@ function sendMessage() {
         setBusy(false);
         return;
       }
+      // Swap each file chip for a real <a class=user-file> using the
+      // signed URL the server just returned. After this the on-send
+      // bubble matches the post-reload SSE-replay bubble exactly, so
+      // the user sees a real link without having to switch sessions.
+      for (let i = 0; i < uploaded.length; i++) {
+        const chip = fileChips[i];
+        if (!chip) continue;
+        const u = uploaded[i];
+        if (u.kind === "image" || !u.url) continue;
+        const link = document.createElement("a");
+        link.className = "user-file";
+        link.href = u.url;
+        link.target = "_blank";
+        link.rel = "noopener";
+        link.download = u.displayName;
+        link.textContent = u.displayName;
+        chip.replaceWith(link);
+      }
+      // url is a frontend-only convenience for the swap above; the
+      // server contract for /prompt does not include it.
+      const refs = uploaded.map(
+        ({ kind, attachmentId, displayName, mimeType }) => ({
+          kind,
+          attachmentId,
+          displayName,
+          mimeType,
+        }),
+      );
       void api.sendMessage(
         state.sessionId!,
-        text || "What is in this image?",
-        uploaded.map((u) => ({
-          data: u.data,
-          mimeType: u.mimeType,
-          path: u.path,
-        })),
+        text || "What is in this attachment?",
+        refs,
       );
     });
   } else {

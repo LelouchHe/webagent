@@ -85,8 +85,10 @@ export function isContentEventType(t: string): t is ContentEventType {
 }
 
 export interface RenderHooks {
-  /** Rewrite an image URL (viewer maps `image://` / API paths to `/s/<token>/images/...`). */
-  rewriteImageSrc?: (src: string) => string;
+  /** Rewrite an attachment URL (share viewer maps owner-side
+   *  `/api/v1/sessions/.../attachments/X` to public `/s/<token>/attachments/X`).
+   *  Applies to user_message `<img>` and `<a>` elements alike. */
+  rewriteAttachmentSrc?: (src: string) => string;
   /** Post-render hook for the assistant_message element (e.g. hljs lazy enhance). */
   enhanceMarkdown?: (el: HTMLElement) => void;
   /** Locate an existing tool-call element (by id) for `tool_call_update`. */
@@ -159,17 +161,42 @@ function buildUserMessage(
   const el = document.createElement("div");
   el.className = "msg user";
   el.innerHTML = escHtml(text).replace(/\n/g, "<br>");
-  const images = Array.isArray(data.images) ? data.images : [];
-  for (const img of images) {
-    const path =
-      img && typeof img === "object" && "path" in img
-        ? String((img as { path: unknown }).path)
-        : "";
-    if (!path) continue;
-    const imgEl = document.createElement("img");
-    imgEl.className = "user-image";
-    imgEl.src = hooks.rewriteImageSrc ? hooks.rewriteImageSrc(path) : path;
-    el.appendChild(imgEl);
+  const attachments = Array.isArray(data.attachments) ? data.attachments : [];
+  for (const att of attachments) {
+    if (!att || typeof att !== "object") continue;
+    const a = att as Record<string, unknown>;
+    const name = typeof a.displayName === "string" ? a.displayName : "file";
+    const kind = a.kind === "image" ? "image" : "file";
+    const rawPath = typeof a.path === "string" ? a.path : "";
+    const src = rawPath
+      ? hooks.rewriteAttachmentSrc
+        ? hooks.rewriteAttachmentSrc(rawPath)
+        : rawPath
+      : "";
+
+    if (kind === "image" && src) {
+      const imgEl = document.createElement("img");
+      imgEl.className = "user-image";
+      imgEl.src = src;
+      imgEl.alt = name;
+      el.appendChild(imgEl);
+    } else if (kind === "file" && src) {
+      const link = document.createElement("a");
+      link.className = "user-file";
+      link.href = src;
+      link.target = "_blank";
+      link.rel = "noopener";
+      link.download = name;
+      link.textContent = name;
+      el.appendChild(link);
+    } else {
+      // Fallback for events stored without `path` (only happens for
+      // pre-fix data on disk; new events always carry path).
+      const note = document.createElement("div");
+      note.className = "user-attachment";
+      note.textContent = `[${kind}: ${name}]`;
+      el.appendChild(note);
+    }
   }
   return el;
 }

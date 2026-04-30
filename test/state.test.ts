@@ -170,7 +170,12 @@ describe("state", () => {
       mod.dom.messages.innerHTML = "<div>test</div>";
       mod.state.currentAssistantEl = {};
       mod.state.currentAssistantText = "text";
-      mod.state.pendingImages.push({ data: "x" });
+      mod.state.pendingAttachments.push({
+        kind: "image",
+        file: { name: "x.png", type: "image/png" },
+        mimeType: "image/png",
+        name: "x.png",
+      });
       mod.state.followMessages = false;
       mod.setBusy(true);
 
@@ -179,7 +184,7 @@ describe("state", () => {
       assert.equal(mod.dom.messages.innerHTML, "");
       assert.equal(mod.state.currentAssistantEl, null);
       assert.equal(mod.state.currentAssistantText, "");
-      assert.equal(mod.state.pendingImages.length, 0);
+      assert.equal(mod.state.pendingAttachments.length, 0);
       assert.equal(mod.state.followMessages, true);
       assert.equal(mod.state.busy, false);
     });

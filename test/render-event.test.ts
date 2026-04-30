@@ -80,29 +80,142 @@ describe("render-event", () => {
       assert.ok(el.innerHTML.includes("<br>"));
     });
 
-    it("appends user-image children for images", () => {
+    // Regression guard for the slice-4 user_message rendering bug:
+    // attachments used to be `<img class=user-image>` / `<a class=user-file>`,
+    // and slice 4 silently downgraded both to a plain text marker
+    // `[image: name]`. The share viewer (which shares this renderer) lost
+    // its only image-display surface as a result. These tests pin the
+    // expected DOM shape AND the hooks.rewriteAttachmentSrc plumbing the
+    // share viewer relies on. If you find yourself "fixing" them by
+    // expecting `.user-attachment` text again, you are repeating the
+    // regression — see TEST_SCENARIOS.md / docs/uploads.md instead.
+    it("renders image attachment as <img class=user-image> using path", () => {
       const el = append(
         mod.renderContentEvent(
           "user_message",
-          { text: "see", images: [{ path: "/img/a.png" }] },
+          {
+            text: "see",
+            attachments: [
+              {
+                kind: "image",
+                attachmentId: "a1",
+                displayName: "a.png",
+                mimeType: "image/png",
+                path: "/api/v1/sessions/s1/attachments/a1.png",
+              },
+            ],
+          },
           makeHooks(),
         ),
       )!;
-      const img = el.querySelector("img.user-image") as HTMLImageElement;
-      assert.ok(img);
-      assert.equal(img.getAttribute("src"), "/img/a.png");
+      const img = el.querySelector("img.user-image");
+      assert.ok(img, "image attachment must render as <img.user-image>");
+      assert.ok(
+        img
+          .getAttribute("src")!
+          .endsWith("/api/v1/sessions/s1/attachments/a1.png"),
+      );
+      assert.equal(img.getAttribute("alt"), "a.png");
+      assert.equal(
+        el.querySelector(".user-attachment"),
+        null,
+        "must NOT fall back to text marker when path is present",
+      );
     });
 
-    it("rewrites image src via hook", () => {
+    it("renders file attachment as <a class=user-file> link", () => {
       const el = append(
         mod.renderContentEvent(
           "user_message",
-          { text: "x", images: [{ path: "/api/v1/sessions/S/images/a.png" }] },
-          makeHooks({ rewriteImageSrc: () => "/s/T/images/a.png" }),
+          {
+            text: "x",
+            attachments: [
+              {
+                kind: "file",
+                attachmentId: "a2",
+                displayName: "notes.txt",
+                mimeType: "text/plain",
+                path: "/api/v1/sessions/s1/attachments/a2.txt",
+              },
+            ],
+          },
+          makeHooks(),
         ),
       )!;
-      const img = el.querySelector("img.user-image") as HTMLImageElement;
-      assert.equal(img.getAttribute("src"), "/s/T/images/a.png");
+      const link = el.querySelector("a.user-file");
+      assert.ok(link, "file attachment must render as <a.user-file>");
+      assert.equal(link.textContent, "notes.txt");
+      assert.equal(link.getAttribute("target"), "_blank");
+      assert.equal(link.getAttribute("rel"), "noopener");
+      assert.equal(link.getAttribute("download"), "notes.txt");
+      assert.ok(
+        link
+          .getAttribute("href")!
+          .endsWith("/api/v1/sessions/s1/attachments/a2.txt"),
+      );
+    });
+
+    it("rewriteAttachmentSrc hook rewrites both image and file URLs (share viewer plumbing)", () => {
+      const el = append(
+        mod.renderContentEvent(
+          "user_message",
+          {
+            text: "x",
+            attachments: [
+              {
+                kind: "image",
+                attachmentId: "a1",
+                displayName: "a.png",
+                mimeType: "image/png",
+                path: "/api/v1/sessions/s1/attachments/a1.png",
+              },
+              {
+                kind: "file",
+                attachmentId: "a2",
+                displayName: "n.txt",
+                mimeType: "text/plain",
+                path: "/api/v1/sessions/s1/attachments/a2.txt",
+              },
+            ],
+          },
+          makeHooks({
+            rewriteAttachmentSrc: (src) =>
+              src.replace(
+                /^\/api\/v1\/sessions\/[^/]+\/attachments\//,
+                "/s/TKN/attachments/",
+              ),
+          }),
+        ),
+      )!;
+      const img = el.querySelector("img.user-image");
+      const a = el.querySelector("a.user-file");
+      assert.ok(
+        img?.getAttribute("src")?.endsWith("/s/TKN/attachments/a1.png"),
+      );
+      assert.ok(a?.getAttribute("href")?.endsWith("/s/TKN/attachments/a2.txt"));
+    });
+
+    it("falls back to [kind: name] text marker only when path is missing", () => {
+      const el = append(
+        mod.renderContentEvent(
+          "user_message",
+          {
+            text: "legacy",
+            attachments: [
+              {
+                kind: "image",
+                attachmentId: "a1",
+                displayName: "old.png",
+                mimeType: "image/png",
+              },
+            ],
+          },
+          makeHooks(),
+        ),
+      )!;
+      assert.equal(el.querySelector("img.user-image"), null);
+      const note = el.querySelector(".user-attachment");
+      assert.equal(note?.textContent, "[image: old.png]");
     });
   });
 

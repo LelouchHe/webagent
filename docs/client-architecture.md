@@ -55,7 +55,7 @@ WebAgent is a terminal-style web UI for ACP-compatible agents. This document des
 │    ├── events.ts      ←  event dispatch       │
 │    ├── input.ts       →  user messages        │
 │    ├── commands.ts    →  slash commands        │
-│    ├── images.ts      →  image attach/paste   │
+│    ├── attachments.ts ←  attach/paste (img+file)│
 │    ├── render.ts      →  DOM manipulation     │
 │    ├── state.ts       ←→ shared state + refs  │
 │    └── api.ts         →  REST client          │
@@ -92,7 +92,7 @@ All frontend source lives in `public/js/*.ts`. esbuild bundles it into a content
 | **`constants.ts`**         | Display constants (tool icons, plan status icons)                                                   | `TOOL_ICONS`, `PLAN_STATUS_ICONS`                                                               |
 | **`input.ts`**             | User input: send messages, cancel, keyboard shortcuts, mode cycling                                 | —                                                                                               |
 | **`commands.ts`**          | Slash command parsing, menu UI, `/switch`, `/new`, `/exit`, `/rename`, `/model`, `/mode`, `/notify` | `handleSlashCommand()`, `hideSlashMenu()`                                                       |
-| **`images.ts`**            | Image attach (click/drag/paste), preview, upload to server                                          | `renderAttachPreview()`                                                                         |
+| **`attachments.ts`**       | Attach (click/drag/paste) for images and files, preview, upload to server                          | `renderAttachPreview()`                                                                         |
 | **`render.ts`**            | DOM helpers: add messages, markdown rendering, theme, scroll, diff HTML generation                  | `addMessage()`, `addSystem()`, `scrollToBottom()`, `renderMd()`                                 |
 | **`api.ts`**               | REST client — typed `fetch` wrappers for every server endpoint                                      | `createSession()`, `sendMessage()`, `cancelSession()`, etc.                                     |
 
@@ -103,9 +103,9 @@ app.ts
   ├── connection.ts        → state, render, events, api
   ├── events.ts            → state, render, api, event-interpreter, types
   ├── event-interpreter.ts → constants, types  (ZERO DOM dependency)
-  ├── input.ts             → state, render, commands, images, api
+  ├── input.ts             → state, render, commands, attachments, api
   ├── commands.ts          → state, render, events, api
-  ├── images.ts            → state, render
+  ├── attachments.ts       → state, render
   └── render.ts            → state, event-interpreter
 ```
 
@@ -120,7 +120,7 @@ app.ts
 ```typescript
 import './render.ts';    // theme, click-to-collapse listeners
 import './commands.ts';  // slash menu listeners
-import './images.ts';    // attach/paste listeners
+import './attachments.ts'; // attach/paste listeners
 import './input.ts';     // keyboard/send listeners
 import { connect } from './connection.ts';
 
@@ -252,7 +252,7 @@ User types text + Enter
   input.ts: sendMessage()
         │
         ├── Show user message in DOM (optimistic)
-        ├── Upload images if any: POST /api/v1/sessions/:id/images
+        ├── Upload images if any: POST /api/v1/sessions/:id/attachments
         ├── api.sendMessage(): POST /api/v1/sessions/:id/prompt
         ├── setBusy(true)
         ├── showWaiting()

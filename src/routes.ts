@@ -1,8 +1,9 @@
-import { readFile, writeFile, mkdir } from "node:fs/promises";
+import { readFile, mkdir, rename, unlink, realpath } from "node:fs/promises";
 import { spawn } from "node:child_process";
-import { join, extname } from "node:path";
+import { join, extname, basename } from "node:path";
 import { gzipSync } from "node:zlib";
 import type { IncomingMessage, ServerResponse } from "node:http";
+import busboy from "busboy";
 import type { Store } from "./store.ts";
 import type { SessionManager } from "./session-manager.ts";
 import type { SseManager } from "./sse-manager.ts";
@@ -15,11 +16,24 @@ import { errorMessage, MessageIngressSchema } from "./types.ts";
 import type { AgentEvent } from "./types.ts";
 import { interruptBashProc } from "./session-manager.ts";
 import { randomUUID } from "node:crypto";
+import { createWriteStream } from "node:fs";
 import { handleShareRoutes } from "./share/routes.ts";
 import { authenticate, isWhitelistedPath } from "./auth-middleware.ts";
 import type { AuthStore, TokenRecord } from "./auth-store.ts";
 import type { TicketStore } from "./sse-ticket.ts";
-import { signImageUrl, verifyImageSig, reSignImageUrlsInJson } from "./auth.ts";
+import {
+  signAttachmentUrl,
+  verifyAttachmentSig,
+  reSignAttachmentUrlsInJson,
+} from "./auth.ts";
+import {
+  buildContentDisposition,
+  classifyKind,
+  isInlineMime,
+  mimeToExt,
+  normalizeDisplayName,
+  sniffMime,
+} from "./attachments.ts";
 
 const IS_WIN = process.platform === "win32";
 
@@ -100,7 +114,7 @@ export interface RequestHandlerDeps {
     Partial<
       Pick<
         Config["limits"],
-        "cancel_timeout" | "recent_paths" | "recent_paths_ttl"
+        "file_upload" | "cancel_timeout" | "recent_paths" | "recent_paths_ttl"
       >
     >;
   pushService?: PushService;
@@ -121,7 +135,7 @@ export interface RequestHandlerDeps {
   /** Optional secret for HMAC-signed image URLs. When present, image GET
    *  requires `?sig=&exp=`; image upload returns a signed URL. When absent
    *  (legacy/tests), images are served unauthenticated. */
-  imageSecret?: Buffer;
+  attachmentSecret?: Buffer;
 }
 
 /** Read the full request body as a string. */
@@ -216,6 +230,242 @@ const principalByRequest = new WeakMap<IncomingMessage, TokenRecord>();
 
 export function getPrincipal(req: IncomingMessage): TokenRecord | undefined {
   return principalByRequest.get(req);
+}
+
+/**
+ * Multipart upload handler. Streams the `file` field straight to disk under
+ * <data_dir>/sessions/<sid>/attachments/<uuid>.<ext>.tmp, atomic-renames on
+ * success, deletes on any failure path. Inserts an attachments row with the
+ * resolved realpath so the bridge / permission interceptor can match it
+ * later.
+ *
+ * Wire format expected:
+ *   - Content-Type: multipart/form-data; boundary=...
+ *   - One file field named `file` (additional file fields are rejected).
+ *   - Optional text fields are ignored — displayName comes from the file
+ *     part's filename header, classification comes from its content-type.
+ */
+async function handleAttachmentUpload(
+  req: IncomingMessage,
+  res: ServerResponse,
+  sessionId: string,
+  deps: RequestHandlerDeps,
+): Promise<void> {
+  const { store, dataDir, limits } = deps;
+  const fileUploadLimit = limits.file_upload ?? 52_428_800;
+  if (!store.getSession(sessionId)) {
+    json(res, 404, { error: "Session not found" });
+    return;
+  }
+  const dir = join(dataDir, "sessions", sessionId, "attachments");
+  await mkdir(dir, { recursive: true });
+
+  const uploadId = randomUUID();
+  let tmpPath: string | null = null;
+  let finalPath: string | null = null;
+  let bytesWritten = 0;
+  let fileMime = "";
+  let fileExt = "bin";
+  let displayName: string | null = null;
+  let kind: "image" | "file" = "file";
+  let limit = Math.max(limits.image_upload, fileUploadLimit);
+  let limitExceeded = false;
+  let sawFile = false;
+  let aborted = false;
+  let writeError: Error | null = null;
+  let resolved = false;
+  // Resolves when the write stream backing the file part has flushed and
+  // closed. busboy's `close` can fire before fs has finished writing the
+  // last chunk to disk, so we must await this before renaming the .tmp.
+  let writeDone: Promise<void> = Promise.resolve();
+
+  // Single-shot response. We only ever respond to the request once even
+  // though multiple busboy callbacks could converge on the same outcome
+  // (e.g. file-too-large + close-after-finish).
+  const respond = (status: number, body: Record<string, unknown>): void => {
+    if (resolved) return;
+    resolved = true;
+    json(res, status, body);
+  };
+
+  const cleanupTmp = async (): Promise<void> => {
+    if (tmpPath) {
+      await unlink(tmpPath).catch(() => {});
+      tmpPath = null;
+    }
+  };
+
+  return new Promise<void>((resolveOuter) => {
+    const finish = async (
+      status: number,
+      body: Record<string, unknown>,
+    ): Promise<void> => {
+      respond(status, body);
+      resolveOuter();
+    };
+
+    let bb: ReturnType<typeof busboy>;
+    try {
+      bb = busboy({
+        headers: req.headers,
+        defParamCharset: "utf8",
+        limits: {
+          // We enforce the size cap manually via per-file byte tracking
+          // (so we can pick the right cap based on classified kind and
+          // emit a 413 the moment we cross the line). Cap files = 1
+          // and field count = 16 as belt-and-suspenders.
+          files: 1,
+          fields: 16,
+          fieldNameSize: 100,
+          fieldSize: 1024,
+        },
+      });
+    } catch {
+      void finish(400, { error: "Invalid multipart" });
+      return;
+    }
+
+    bb.on("file", (fieldName, stream, info) => {
+      if (sawFile) {
+        // Extra file part — drain and ignore (busboy `files: 1` should
+        // already prevent this, but be defensive).
+        stream.resume();
+        return;
+      }
+      sawFile = true;
+      if (fieldName !== "file") {
+        stream.resume();
+        void finish(400, { error: "Unexpected field name" });
+        return;
+      }
+      fileMime = (info.mimeType || "application/octet-stream").toLowerCase();
+      kind = classifyKind(fileMime);
+      limit = kind === "image" ? limits.image_upload : fileUploadLimit;
+      fileExt = mimeToExt(fileMime);
+      displayName = info.filename ? normalizeDisplayName(info.filename) : null;
+      displayName ??= kind === "image" ? "image" : "file";
+      tmpPath = join(dir, `${uploadId}.${fileExt}.tmp`);
+      finalPath = join(dir, `${uploadId}.${fileExt}`);
+      const ws = createWriteStream(tmpPath);
+      writeDone = new Promise<void>((resolveWs) => {
+        ws.on("close", () => {
+          resolveWs();
+        });
+      });
+      stream.on("data", (chunk: Buffer) => {
+        bytesWritten += chunk.length;
+        if (bytesWritten > limit) {
+          limitExceeded = true;
+          stream.unpipe(ws);
+          ws.destroy();
+          stream.resume();
+          // Abort the whole busboy pipeline. We respond on `close`.
+          req.unpipe(bb);
+          req.resume();
+        }
+      });
+      stream.on("error", (err: Error) => {
+        writeError = err;
+      });
+      ws.on("error", (err: Error) => {
+        writeError = err;
+      });
+      stream.pipe(ws);
+    });
+
+    bb.on("error", (err: unknown) => {
+      writeError = err instanceof Error ? err : new Error(String(err));
+    });
+
+    req.on("aborted", () => {
+      aborted = true;
+    });
+
+    bb.on("close", () => {
+      void (async () => {
+        try {
+          await writeDone;
+          if (aborted) {
+            await cleanupTmp();
+            await finish(400, { error: "Upload aborted" });
+            return;
+          }
+          if (limitExceeded) {
+            await cleanupTmp();
+            await finish(413, { error: "Upload too large" });
+            return;
+          }
+          if (writeError) {
+            await cleanupTmp();
+            await finish(500, { error: "Upload failed" });
+            return;
+          }
+          if (!sawFile || !tmpPath || !finalPath || !displayName) {
+            await cleanupTmp();
+            await finish(400, { error: "Missing file part" });
+            return;
+          }
+          // Sniff the actual mime from file content (magic bytes + UTF-8
+          // text fallback). Clients lie about Content-Type — browsers send
+          // application/octet-stream for any extension the OS doesn't know
+          // (.clj, .lua, .rs, ...), and ACP agents (Copilot CLI) refuse to
+          // read attachments tagged octet-stream. The sniffed mime wins
+          // silently; we override fileMime / kind / extension / final path
+          // before insertAttachment so DB and disk reflect reality.
+          const head = await readFile(tmpPath).catch(() => Buffer.alloc(0));
+          const headSlice = head.subarray(0, 4096);
+          const sniffed = await sniffMime(headSlice);
+          if (sniffed !== fileMime) {
+            fileMime = sniffed;
+            kind = classifyKind(fileMime);
+            const newExt = mimeToExt(fileMime);
+            if (newExt !== fileExt) {
+              fileExt = newExt;
+              const newTmp = join(dir, `${uploadId}.${fileExt}.tmp`);
+              if (newTmp !== tmpPath) {
+                await rename(tmpPath, newTmp);
+                tmpPath = newTmp;
+              }
+              finalPath = join(dir, `${uploadId}.${fileExt}`);
+            }
+          }
+          await rename(tmpPath, finalPath);
+          const rp = await realpath(finalPath);
+          const row = store.insertAttachment({
+            id: uploadId,
+            sessionId,
+            kind,
+            name: displayName,
+            mime: fileMime,
+            size: bytesWritten,
+            realpath: rp,
+          });
+          const fileName = `${row.id}.${fileExt}`;
+          const basePath = `/api/v1/sessions/${sessionId}/attachments/${fileName}`;
+          // 1h signed URL — long enough that the browser holds the rendered
+          // image in <img> cache for the full session lifetime, short enough
+          // that a leaked URL (screenshot, link share) expires within the day.
+          const fileUrl = deps.attachmentSecret
+            ? `${basePath}?${signAttachmentUrl(basePath, deps.attachmentSecret, 3600)}`
+            : basePath;
+          await finish(200, {
+            attachmentId: row.id,
+            displayName: row.name,
+            mimeType: row.mime,
+            size: row.size,
+            kind: row.kind,
+            path: `sessions/${sessionId}/attachments/${fileName}`,
+            url: fileUrl,
+          });
+        } catch (err) {
+          await cleanupTmp();
+          await finish(500, { error: errorMessage(err) });
+        }
+      })();
+    });
+
+    req.pipe(bb);
+  });
 }
 
 export function createRequestHandler(
@@ -753,13 +1003,15 @@ export function createRequestHandler(
 
         let body: {
           text?: string;
-          images?: Array<{ data: string; mimeType: string; path?: string }>;
+          attachments?: Array<{
+            kind: "image" | "file";
+            attachmentId: string;
+            displayName: string;
+            mimeType: string;
+          }>;
         };
         try {
-          body = JSON.parse(await readBody(req)) as {
-            text?: string;
-            images?: Array<{ data: string; mimeType: string; path?: string }>;
-          };
+          body = JSON.parse(await readBody(req)) as typeof body;
         } catch {
           json(res, 400, { error: "Invalid JSON" });
           return;
@@ -769,17 +1021,70 @@ export function createRequestHandler(
           return;
         }
 
-        // Store user_message event (strip base64 data, keep only path + mimeType)
-        const storedImages = body.images?.map((i) => ({
-          path: i.path,
-          mimeType: i.mimeType,
-        }));
+        // Validate attachment shape: client must NEVER supply uri/data/path,
+        // only the four canonical fields. Anything else → 400 immediately so
+        // we don't even hand it to the dispatcher fallback.
+        const attachments = body.attachments;
+        if (attachments) {
+          if (!Array.isArray(attachments)) {
+            json(res, 400, { error: "attachments must be an array" });
+            return;
+          }
+          for (const raw of attachments) {
+            const att = raw as unknown as Record<string, unknown> | null;
+            if (
+              !att ||
+              typeof att !== "object" ||
+              (att.kind !== "image" && att.kind !== "file") ||
+              typeof att.attachmentId !== "string" ||
+              typeof att.displayName !== "string" ||
+              typeof att.mimeType !== "string"
+            ) {
+              json(res, 400, { error: "Invalid attachment entry" });
+              return;
+            }
+            if (
+              typeof att.uri === "string" ||
+              typeof att.data === "string" ||
+              typeof att.path === "string"
+            ) {
+              json(res, 400, {
+                error: "Client must not supply uri/data/path",
+              });
+              return;
+            }
+          }
+        }
+
+        // Stored shape mirrors the wire shape PLUS a server-derived `path`
+        // for renderers. The path is the unsigned base URL
+        // (`/api/v1/sessions/<sid>/attachments/<filename>`); reSign on
+        // egress (history GET + SSE broadcast) appends a fresh `?sig=&exp=`.
+        // Renderers use it to mount `<img>` (kind=image) or `<a>` (kind=file).
+        // Refs whose attachment row is missing are dropped (defense — the
+        // dispatcher's [attachment removed] fallback covers that case).
+        const storedAttachments = attachments?.flatMap((a) => {
+          const row = store.getAttachment(sessionId, a.attachmentId);
+          if (!row) return [];
+          const fileName = basename(row.realpath);
+          return [
+            {
+              kind: a.kind,
+              attachmentId: a.attachmentId,
+              displayName: a.displayName,
+              mimeType: a.mimeType,
+              path: `/api/v1/sessions/${sessionId}/attachments/${fileName}`,
+            },
+          ];
+        });
         store.saveEvent(
           sessionId,
           "user_message",
           {
             text: body.text,
-            ...(storedImages?.length ? { images: storedImages } : {}),
+            ...(storedAttachments?.length
+              ? { attachments: storedAttachments }
+              : {}),
           },
           { from_ref: "user" },
         );
@@ -789,7 +1094,7 @@ export function createRequestHandler(
           type: "user_message",
           sessionId,
           text: body.text,
-          images: storedImages,
+          attachments: storedAttachments,
         } as AgentEvent;
         sseManager.broadcast(userMsgEvent);
 
@@ -818,7 +1123,7 @@ export function createRequestHandler(
         sessions.activePrompts.add(sessionId);
         sessions.syncBusy(sessionId);
         bridge
-          .prompt(sessionId, body.text, body.images)
+          .prompt(sessionId, body.text, attachments)
           .catch((err: unknown) => {
             console.error(`[prompt] error for ${sessionId}:`, err);
           })
@@ -1340,10 +1645,16 @@ export function createRequestHandler(
         // again — the user can reload history days later and images still
         // resolve. Mutates `data` in-place; safe because store.getEvents
         // returns fresh records.
-        if (deps.imageSecret) {
+        if (deps.attachmentSecret) {
           for (const ev of events) {
-            if (typeof ev.data === "string" && ev.data.includes("/images/")) {
-              ev.data = reSignImageUrlsInJson(ev.data, deps.imageSecret);
+            if (
+              typeof ev.data === "string" &&
+              ev.data.includes("/attachments/")
+            ) {
+              ev.data = reSignAttachmentUrlsInJson(
+                ev.data,
+                deps.attachmentSecret,
+              );
             }
           }
         }
@@ -1488,11 +1799,17 @@ export function createRequestHandler(
         return;
       }
 
-      // --- Images (session-scoped) ---
+      // --- Attachments (session-scoped) ---
 
-      // POST /api/v1/sessions/:id/images
+      // POST /api/v1/sessions/:id/attachments — multipart/form-data upload.
+      //
+      // Wire format: a single `file` field. busboy streams chunks straight
+      // to <data_dir>/sessions/<sid>/attachments/<uuid>.<ext>.tmp; on close
+      // we atomic-rename to the final name and insert an attachments row.
+      // Aborts / mid-stream errors / oversize / wrong field name all leave
+      // the .tmp removed before responding.
       const imgUploadMatch = url.match(
-        /^\/api\/v1\/sessions\/([^/]+)\/images\/?$/,
+        /^\/api\/v1\/sessions\/([^/]+)\/attachments\/?$/,
       );
       if (imgUploadMatch && req.method === "POST") {
         const sessionId = decodeURIComponent(imgUploadMatch[1]);
@@ -1500,90 +1817,73 @@ export function createRequestHandler(
           json(res, 400, { error: "Invalid session ID" });
           return;
         }
-        // Enforce upload size limit
-        const contentLength = parseInt(
-          req.headers["content-length"] ?? "0",
-          10,
-        );
-        if (contentLength > deps.limits.image_upload) {
-          json(res, 413, { error: "Upload too large" });
+        const ctype = req.headers["content-type"] ?? "";
+        if (!ctype.toLowerCase().startsWith("multipart/form-data")) {
+          json(res, 400, { error: "Expected multipart/form-data" });
           return;
         }
-        const chunks: Buffer[] = [];
-        let totalSize = 0;
-        for await (const chunk of req) {
-          totalSize += (chunk as Buffer).length;
-          if (totalSize > deps.limits.image_upload) {
-            json(res, 413, { error: "Upload too large" });
-            return;
-          }
-          chunks.push(chunk as Buffer);
-        }
-        let body: { data: string; mimeType: string };
-        try {
-          body = JSON.parse(Buffer.concat(chunks).toString()) as {
-            data: string;
-            mimeType: string;
-          };
-        } catch {
-          json(res, 400, { error: "Invalid JSON" });
-          return;
-        }
-        const { data, mimeType } = body;
-        const ext = mimeType.split("/")[1]?.replace("jpeg", "jpg") ?? "png";
-        const seq = Date.now();
-        const fileName = `${seq}.${ext}`;
-        const relPath = `images/${sessionId}/${fileName}`;
-        const absPath = join(deps.dataDir, relPath);
-        await mkdir(join(deps.dataDir, "images", sessionId), {
-          recursive: true,
-        });
-        await writeFile(absPath, Buffer.from(data, "base64"));
-        const basePath = `/api/v1/sessions/${sessionId}/images/${fileName}`;
-        // 1h signed URL — long enough that the browser holds the rendered
-        // image in <img> cache for the full session lifetime, short enough
-        // that a leaked URL (screenshot, link share) expires within the day.
-        const imgUrl = deps.imageSecret
-          ? `${basePath}?${signImageUrl(basePath, deps.imageSecret, 3600)}`
-          : basePath;
-        json(res, 200, { path: relPath, url: imgUrl });
+        await handleAttachmentUpload(req, res, sessionId, deps);
         return;
       }
 
-      // GET /api/v1/sessions/:id/images/:file
+      // GET /api/v1/sessions/:id/attachments/:file — serve a previously
+      // uploaded attachment. Mime + displayName are looked up from the
+      // attachments table so the response carries the original filename
+      // (RFC 5987) and the per-mime inline/attachment disposition.
       const imgGetMatch = url.match(
-        /^\/api\/v1\/sessions\/([^/]+)\/images\/([^/?]+)(\?.*)?$/,
+        /^\/api\/v1\/sessions\/([^/]+)\/attachments\/([^/?]+)(\?.*)?$/,
       );
       if (imgGetMatch && req.method === "GET") {
         const sessionId = decodeURIComponent(imgGetMatch[1]);
         const file = decodeURIComponent(imgGetMatch[2]);
-        // When secret is configured, image GET requires sig+exp in query —
-        // there is no Bearer fallback because <img src=...> can't carry
-        // headers. Verify before any disk I/O.
-        if (deps.imageSecret) {
+        // When secret is configured, GET requires sig+exp in query — there
+        // is no Bearer fallback because <img src=...> / <a href=...> can't
+        // carry headers. Verify before any disk I/O.
+        if (deps.attachmentSecret) {
           const params = new URLSearchParams(url.split("?")[1] ?? "");
           const sig = params.get("sig") ?? "";
           const exp = params.get("exp") ?? "";
-          const basePath = `/api/v1/sessions/${sessionId}/images/${file}`;
-          if (!verifyImageSig(basePath, exp, sig, deps.imageSecret)) {
+          const basePath = `/api/v1/sessions/${sessionId}/attachments/${file}`;
+          if (!verifyAttachmentSig(basePath, exp, sig, deps.attachmentSecret)) {
             res.writeHead(401, { "Content-Type": "application/json" });
             res.end(JSON.stringify({ error: "Unauthorized" }));
             return;
           }
         }
-        const filePath = join(deps.dataDir, "images", sessionId, file);
-        if (!filePath.startsWith(join(deps.dataDir, "images"))) {
+        const filePath = join(
+          deps.dataDir,
+          "sessions",
+          sessionId,
+          "attachments",
+          file,
+        );
+        if (!filePath.startsWith(join(deps.dataDir, "sessions"))) {
           res.writeHead(403);
           res.end("Forbidden");
           return;
         }
+        // Look up the row to recover the original mime + display name.
+        // Pre-attachments-table uploads (none in v0.4+) would miss here;
+        // we degrade gracefully to extension-based mime.
+        const row = store.getAttachmentByFile(sessionId, file);
         try {
           const fileData = await readFile(filePath);
-          const ext = extname(filePath);
-          res.writeHead(200, {
-            "Content-Type": MIME[ext] ?? "application/octet-stream",
+          const mime =
+            row?.mime ??
+            (MIME[extname(filePath)] || "application/octet-stream");
+          const headers: Record<string, string> = {
+            "Content-Type": mime,
             "Cache-Control": "public, max-age=31536000, immutable",
-          });
+            "X-Content-Type-Options": "nosniff",
+          };
+          if (row) {
+            const disposition = isInlineMime(mime) ? "inline" : "attachment";
+            headers["Content-Disposition"] = buildContentDisposition(
+              disposition,
+              row.name,
+            );
+          }
+          res.writeHead(200, headers);
           res.end(fileData);
         } catch {
           res.writeHead(404);

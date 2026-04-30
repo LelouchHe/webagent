@@ -12,7 +12,7 @@ function makeRequest(
   port: number,
   method: string,
   path: string,
-  body?: string,
+  body?: string | Buffer,
   headers?: Record<string, string>,
 ): Promise<{
   status: number;
@@ -35,9 +35,30 @@ function makeRequest(
       },
     );
     req.on("error", reject);
-    if (body) req.write(body);
+    if (body !== undefined) req.write(body);
     req.end();
   });
+}
+
+/** Build a minimal multipart/form-data body with one file field. */
+function multipartFile(
+  fieldName: string,
+  filename: string,
+  mimeType: string,
+  data: Buffer,
+): { body: Buffer; contentType: string } {
+  const boundary = `----test-${Math.random().toString(36).slice(2)}`;
+  const head = Buffer.from(
+    `--${boundary}\r\n` +
+      `Content-Disposition: form-data; name="${fieldName}"; filename="${filename}"\r\n` +
+      `Content-Type: ${mimeType}\r\n\r\n`,
+    "utf8",
+  );
+  const tail = Buffer.from(`\r\n--${boundary}--\r\n`, "utf8");
+  return {
+    body: Buffer.concat([head, data, tail]),
+    contentType: `multipart/form-data; boundary=${boundary}`,
+  };
 }
 
 describe("HTTP routes", () => {
@@ -388,6 +409,21 @@ describe("Image upload", () => {
   let port: number;
   const UPLOAD_LIMIT = 1024;
 
+  // Minimal valid PNG (8-byte signature + empty IHDR-ish padding) — large
+  // enough for sniffMime to detect the magic bytes. The contents need not
+  // be a fully valid image, only the leading bytes.
+  const PNG_MAGIC = Buffer.from([
+    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d,
+    0x49, 0x48, 0x44, 0x52,
+  ]);
+  const fakePngBytes = (extra: string | number = 0) => {
+    const tail =
+      typeof extra === "number"
+        ? Buffer.alloc(extra)
+        : Buffer.from(String(extra));
+    return Buffer.concat([PNG_MAGIC, tail]);
+  };
+
   beforeEach(async () => {
     tmpDir = mkdtempSync(join(tmpdir(), "webagent-img-"));
     publicDir = join(tmpDir, "public");
@@ -395,6 +431,11 @@ describe("Image upload", () => {
     writeFileSync(join(publicDir, "index.html"), "<h1>Test</h1>");
 
     store = new Store(tmpDir);
+    // Make sessions exist so the upload handler doesn't 404. Multiple session
+    // IDs are used across tests, register all of them up front.
+    for (const sid of ["test-session", "s1"]) {
+      store.createSession(sid, "/tmp");
+    }
     const handler = createRequestHandler({
       store,
       publicDir,
@@ -402,6 +443,7 @@ describe("Image upload", () => {
       limits: {
         bash_output: 1_048_576,
         image_upload: UPLOAD_LIMIT,
+        file_upload: UPLOAD_LIMIT,
         cancel_timeout: 10_000,
       },
       sseManager: { broadcast() {} } as any,
@@ -423,102 +465,194 @@ describe("Image upload", () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("uploads an image and returns its URL", async () => {
-    const payload = JSON.stringify({
-      data: Buffer.from("fake-png").toString("base64"),
-      mimeType: "image/png",
-    });
-    const res = await makeRequest(
+  // Wrap multipart upload in one helper so each test stays focused on what
+  // it's actually exercising rather than the request shape.
+  async function uploadFile(
+    sessionId: string,
+    filename: string,
+    mimeType: string,
+    bytes: Buffer,
+    sendContentLength = true,
+  ) {
+    const { body, contentType } = multipartFile(
+      "file",
+      filename,
+      mimeType,
+      bytes,
+    );
+    const headers: Record<string, string> = { "Content-Type": contentType };
+    if (sendContentLength) headers["Content-Length"] = String(body.length);
+    return makeRequest(
       port,
       "POST",
-      "/api/v1/sessions/test-session/images",
-      payload,
+      `/api/v1/sessions/${sessionId}/attachments`,
+      body,
+      headers,
+    );
+  }
+
+  it("uploads an image and returns its URL", async () => {
+    const data = fakePngBytes("payload");
+    const res = await uploadFile("test-session", "tiny.png", "image/png", data);
+    assert.equal(res.status, 200);
+    const body = JSON.parse(res.body);
+    assert.ok(
+      body.url.startsWith("/api/v1/sessions/test-session/attachments/"),
+    );
+    assert.ok(/\.png(\?|$)/.test(body.url as string));
+    assert.ok(body.path.startsWith("sessions/test-session/attachments/"));
+    assert.equal(body.kind, "image");
+    assert.equal(body.mimeType, "image/png");
+    assert.equal(body.displayName, "tiny.png");
+    assert.equal(typeof body.attachmentId, "string");
+    assert.equal(body.size, data.length);
+  });
+
+  it("preserves UTF-8 (e.g. Chinese) filenames through multipart parsing", async () => {
+    const res = await uploadFile(
+      "test-session",
+      "中文文档.txt",
+      "text/plain",
+      Buffer.from("hi"),
     );
     assert.equal(res.status, 200);
     const body = JSON.parse(res.body);
-    assert.ok(body.url.startsWith("/api/v1/sessions/test-session/images/"));
-    assert.ok(body.url.endsWith(".png"));
-    assert.ok(body.path.startsWith("images/test-session/"));
+    assert.equal(body.displayName, "中文文档.txt");
+    assert.equal(body.mimeType, "text/plain");
+  });
+
+  it("sniffs PDF magic bytes even when client sends application/octet-stream", async () => {
+    // Repro: browser uploads file.clj with no recognized extension → it
+    // sends Content-Type: application/octet-stream → ACP agents (Copilot
+    // CLI) refuse to read it. Server must sniff the actual mime from
+    // content. Here we send a PDF body but lie about the mime; server
+    // should land on application/pdf in the DB row + response.
+    const pdfBody = Buffer.concat([
+      Buffer.from([0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x34, 0x0a]),
+      Buffer.alloc(64),
+    ]);
+    const res = await uploadFile(
+      "test-session",
+      "stealth.bin",
+      "application/octet-stream",
+      pdfBody,
+    );
+    assert.equal(res.status, 200);
+    const body = JSON.parse(res.body);
+    assert.equal(body.mimeType, "application/pdf");
+    assert.equal(body.kind, "file");
+    assert.match(body.url as string, /\.pdf(\?|$)/);
+  });
+
+  it("classifies source code (no recognized magic) as text/plain", async () => {
+    // Repro for the Clojure / Lua / .clj failure mode.
+    const cljBody = Buffer.from(
+      `(defn hello [] (println "hi"))\n(+ 1 2)\n`,
+      "utf8",
+    );
+    const res = await uploadFile(
+      "test-session",
+      "todo.clj",
+      "application/octet-stream",
+      cljBody,
+    );
+    assert.equal(res.status, 200);
+    const body = JSON.parse(res.body);
+    assert.equal(body.mimeType, "text/plain");
+    assert.equal(body.kind, "file");
+    assert.match(body.url as string, /\.txt(\?|$)/);
+  });
+
+  it("sniffer overrides a lying client mime: PNG buffer beats application/pdf claim", async () => {
+    const data = fakePngBytes(64);
+    const res = await uploadFile(
+      "test-session",
+      "lie.pdf",
+      "application/pdf",
+      data,
+    );
+    assert.equal(res.status, 200);
+    const body = JSON.parse(res.body);
+    assert.equal(body.mimeType, "image/png");
+    assert.equal(body.kind, "image");
   });
 
   it("serves uploaded images back via GET", async () => {
-    const imageData = Buffer.from("fake-png-data").toString("base64");
-    const payload = JSON.stringify({ data: imageData, mimeType: "image/png" });
-    const uploadRes = await makeRequest(
-      port,
-      "POST",
-      "/api/v1/sessions/test-session/images",
-      payload,
+    const uploadRes = await uploadFile(
+      "test-session",
+      "tiny.png",
+      "image/png",
+      fakePngBytes("data"),
     );
     const { url } = JSON.parse(uploadRes.body);
 
     const res = await makeRequest(port, "GET", url);
     assert.equal(res.status, 200);
+    // Inline display for images, plus the nosniff hardening header.
+    assert.match(String(res.headers["content-disposition"] ?? ""), /^inline/);
+    assert.equal(res.headers["x-content-type-options"], "nosniff");
   });
 
   it("rejects invalid session ID with 400", async () => {
-    const payload = JSON.stringify({ data: "abc", mimeType: "image/png" });
-    const res = await makeRequest(
-      port,
-      "POST",
-      "/api/v1/sessions/bad%20id!/images",
-      payload,
+    const res = await uploadFile(
+      "bad%20id!",
+      "tiny.png",
+      "image/png",
+      fakePngBytes(),
     );
     assert.equal(res.status, 400);
     assert.ok(JSON.parse(res.body).error.includes("Invalid session ID"));
   });
 
   it("rejects oversized upload via content-length header", async () => {
-    const bigPayload = JSON.stringify({
-      data: "x".repeat(UPLOAD_LIMIT),
-      mimeType: "image/png",
-    });
-    const res = await makeRequest(
-      port,
-      "POST",
-      "/api/v1/sessions/s1/images",
-      bigPayload,
+    const res = await uploadFile(
+      "s1",
+      "big.png",
+      "image/png",
+      Buffer.alloc(UPLOAD_LIMIT + 4096, 0x41),
     );
     assert.equal(res.status, 413);
   });
 
   it("rejects oversized upload detected during streaming", async () => {
-    const bigData = "x".repeat(UPLOAD_LIMIT + 100);
-    const payload = JSON.stringify({ data: bigData, mimeType: "image/png" });
-    // Don't send content-length to bypass header check, let streaming check catch it
-    const res = await makeRequest(
-      port,
-      "POST",
-      "/api/v1/sessions/s1/images",
-      payload,
+    // Skip Content-Length so the size cap fires inside busboy's streaming
+    // loop rather than at the header pre-check.
+    const res = await uploadFile(
+      "s1",
+      "big.png",
+      "image/png",
+      Buffer.alloc(UPLOAD_LIMIT + 4096, 0x41),
+      false,
     );
     assert.equal(res.status, 413);
   });
 
-  it("rejects invalid JSON body with 400", async () => {
+  it("rejects request without Content-Type header with 400", async () => {
     const res = await makeRequest(
       port,
       "POST",
-      "/api/v1/sessions/s1/images",
-      "not-json",
+      "/api/v1/sessions/s1/attachments",
+      "raw-body",
+      // No Content-Type — handler should refuse rather than crash.
     );
     assert.equal(res.status, 400);
-    assert.ok(JSON.parse(res.body).error.includes("Invalid JSON"));
   });
 
   it("normalizes jpeg extension to jpg", async () => {
-    const payload = JSON.stringify({
-      data: Buffer.from("fake").toString("base64"),
-      mimeType: "image/jpeg",
-    });
-    const res = await makeRequest(
-      port,
-      "POST",
-      "/api/v1/sessions/s1/images",
-      payload,
-    );
+    // Real JPEG magic bytes (SOI marker + APP0/JFIF) so the sniffer
+    // identifies it as image/jpeg.
+    const jpgBody = Buffer.concat([
+      Buffer.from([
+        0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01,
+        0x01, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00,
+      ]),
+      Buffer.alloc(32),
+    ]);
+    const res = await uploadFile("s1", "snap.jpeg", "image/jpeg", jpgBody);
     assert.equal(res.status, 200);
-    assert.ok(JSON.parse(res.body).url.endsWith(".jpg"));
+    const body = JSON.parse(res.body);
+    // The file on disk uses .jpg even though the client sent .jpeg.
+    assert.ok(body.path.endsWith(".jpg"));
   });
 });
 

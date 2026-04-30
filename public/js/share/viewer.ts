@@ -5,8 +5,8 @@
 // matches the main UI exactly — same class names, same structure, same
 // styles.css selectors apply. The only differences are:
 //
-//  1. Image src: rewritten from `/api/v1/sessions/.../images/X` to
-//     `/s/<token>/images/X` so unauthenticated viewers can fetch them.
+//  1. Image src: rewritten from `/api/v1/sessions/.../attachments/X` to
+//     `/s/<token>/attachments/X` so unauthenticated viewers can fetch them.
 //  2. Permission buttons: rendered (so the conversation looks complete)
 //     but not wired to any onclick handler. Public viewers cannot act.
 //  3. Code highlighting: lazy-loads the same hljs chunk as the main app.
@@ -14,7 +14,7 @@
 import { renderContentEvent, isContentEventType } from "../render-event.ts";
 import { enhanceCodeBlocks } from "../highlight.ts";
 import { formatRelativeTime, formatExactUtc } from "../relative-time.ts";
-import { makeImageRewriter } from "./image-rewriter.ts";
+import { makeAttachmentRewriter } from "./attachment-rewriter.ts";
 import "../lightbox.ts"; // click-to-enlarge user-image, same as main app
 import "../theme.ts"; // wires #theme-btn click + applies saved theme
 import type { StoredEvent } from "../../../src/types.ts";
@@ -71,7 +71,7 @@ function renderEvents(
   let currentBashEl: HTMLElement | null = null;
 
   const hooks = {
-    rewriteImageSrc: makeImageRewriter(token),
+    rewriteAttachmentSrc: makeAttachmentRewriter(token),
     enhanceMarkdown: enhanceCodeBlocks,
     findToolCallEl: (id: string) => toolCalls.get(id) ?? null,
     findPermissionEl: (reqId: string) => permissions.get(reqId) ?? null,

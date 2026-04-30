@@ -63,7 +63,9 @@
     "@types/proper-lockfile": "^4.1.4",
     "@types/web-push": "^3.6.4",
     "better-sqlite3": "^12.6.2",
+    "busboy": "^1.6.0",
     "dompurify": "^3.4.1",
+    "file-type": "^22.0.1",
     "highlight.js": "^11.11.1",
     "marked": "^18.0.2",
     "proper-lockfile": "^4.1.2",
@@ -74,6 +76,7 @@
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@types/better-sqlite3": "^7.6.13",
+    "@types/busboy": "^1.5.4",
     "@types/dompurify": "^3.0.5",
     "@types/node": "^25.3.3",
     "esbuild": "^0.27.3",

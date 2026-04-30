@@ -2,10 +2,10 @@ import { after, before, beforeEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { setupDOM, teardownDOM, resetState } from "./frontend-setup.ts";
 
-describe("images", () => {
+describe("attachments", () => {
   let state: any;
   let dom: any;
-  let images: any;
+  let attachments: any;
   let clicked = 0;
 
   class MockFileReader {
@@ -24,7 +24,7 @@ describe("images", () => {
     const stateMod = await import("../public/js/state.ts");
     state = stateMod.state;
     dom = stateMod.dom;
-    images = await import("../public/js/images.ts");
+    attachments = await import("../public/js/attachments.ts");
     // Register input-action handlers (attach/send/...) so the attach button
     // click routes through the handler registry to fileInput.click().
     await import("../public/js/render.ts");
@@ -48,20 +48,49 @@ describe("images", () => {
     };
   });
 
-  it("renders thumbnails and removes them when requested", () => {
-    state.pendingImages.push({
-      data: "abc",
+  it("renders image thumbnails and removes them when requested", () => {
+    state.pendingAttachments.push({
+      kind: "image",
+      file: { name: "x.png", type: "image/png" },
       mimeType: "image/png",
+      name: "x.png",
       previewUrl: "data:image/png;base64,abc",
     });
 
-    images.renderAttachPreview();
+    attachments.renderAttachPreview();
     assert.equal(dom.attachPreview.classList.contains("active"), true);
     assert.equal(dom.attachPreview.querySelectorAll(".attach-thumb").length, 1);
+    assert.equal(
+      dom.attachPreview.querySelectorAll(".attach-thumb img").length,
+      1,
+    );
 
     dom.attachPreview.querySelector(".remove").click();
-    assert.equal(state.pendingImages.length, 0);
+    assert.equal(state.pendingAttachments.length, 0);
     assert.equal(dom.attachPreview.classList.contains("active"), false);
+  });
+
+  it("renders non-image attachments as a text chip", () => {
+    state.pendingAttachments.push({
+      kind: "file",
+      file: { name: "notes.txt", type: "text/plain" },
+      mimeType: "text/plain",
+      name: "notes.txt",
+    });
+
+    attachments.renderAttachPreview();
+    assert.equal(
+      dom.attachPreview.querySelectorAll(".attach-thumb.attach-file").length,
+      1,
+    );
+    assert.equal(
+      dom.attachPreview.querySelectorAll(".attach-thumb img").length,
+      0,
+    );
+    assert.ok(
+      dom.attachPreview.textContent.includes("notes.txt"),
+      "chip shows file name",
+    );
   });
 
   it("opens the file picker from the attach button", () => {
@@ -69,24 +98,30 @@ describe("images", () => {
     assert.equal(clicked, 100);
   });
 
-  it("adds selected image files to pending images", async () => {
+  it("adds selected files (any type) to pending attachments", async () => {
     Object.defineProperty(dom.fileInput, "files", {
       configurable: true,
       value: [
-        { type: "image/png", base64: "abc123" },
-        { type: "text/plain", base64: "ignored" },
+        { type: "image/png", base64: "abc123", name: "p.png" },
+        { type: "text/plain", base64: "ignored", name: "n.txt" },
       ],
     });
 
     await dom.fileInput.onchange();
 
-    assert.equal(state.pendingImages.length, 1);
-    assert.deepEqual(state.pendingImages[0], {
-      data: "abc123",
+    assert.equal(state.pendingAttachments.length, 2);
+    assert.partialDeepStrictEqual(state.pendingAttachments[0], {
+      kind: "image",
       mimeType: "image/png",
+      name: "p.png",
       previewUrl: "data:image/png;base64,abc123",
     });
-    assert.equal(clicked, 1);
+    assert.partialDeepStrictEqual(state.pendingAttachments[1], {
+      kind: "file",
+      mimeType: "text/plain",
+      name: "n.txt",
+    });
+    assert.equal(state.pendingAttachments[1].previewUrl, undefined);
     assert.equal(dom.fileInput.value, "");
   });
 
@@ -100,7 +135,7 @@ describe("images", () => {
         {
           type: "image/png",
           getAsFile() {
-            return { type: "image/png", base64: "xyz789" };
+            return { type: "image/png", base64: "xyz789", name: "pasted.png" };
           },
         },
       ],
@@ -110,12 +145,11 @@ describe("images", () => {
     await new Promise((resolve) => setImmediate(resolve));
 
     assert.equal(event.defaultPrevented, true);
-    assert.equal(state.pendingImages.length, 1);
-    assert.deepEqual(state.pendingImages[0], {
-      data: "xyz789",
+    assert.equal(state.pendingAttachments.length, 1);
+    assert.partialDeepStrictEqual(state.pendingAttachments[0], {
+      kind: "image",
       mimeType: "image/png",
       previewUrl: "data:image/png;base64,xyz789",
     });
-    assert.equal(clicked, 1);
   });
 });

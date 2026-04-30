@@ -7,7 +7,7 @@ describe("AgentBridge", () => {
     mock.restoreAll();
   });
 
-  it("emits prompt_done after a successful prompt with images", async () => {
+  it("emits prompt_done after a successful prompt with attachments", async () => {
     const bridge = new AgentBridge("fake-agent");
     const promptCalls: any[] = [];
     const events: any[] = [];
@@ -20,8 +20,23 @@ describe("AgentBridge", () => {
       },
     };
 
+    // Stub dispatcher: turns refs into the same image block the old test
+    // verified, without needing a real Store on disk.
+    bridge.setAttachmentDispatcher({
+      dispatch: async (_sid: string, ref: { mimeType: string }) => ({
+        type: "image",
+        data: "abc",
+        mimeType: ref.mimeType,
+      }),
+    } as any);
+
     await bridge.prompt("s1", "hello", [
-      { data: "abc", mimeType: "image/png" },
+      {
+        kind: "image",
+        attachmentId: "img-1",
+        displayName: "tiny.png",
+        mimeType: "image/png",
+      },
     ]);
 
     assert.deepEqual(promptCalls, [

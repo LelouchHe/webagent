@@ -74,10 +74,11 @@ Frontend source lives in `public/js/*.ts`, bundled by esbuild into a single cont
 
 | Document                                                | Contents                                                                       |
 | ------------------------------------------------------- | ------------------------------------------------------------------------------ |
-| **[Features](docs/features.md)**                        | Chat, images, bash, sessions, slash commands, keyboard shortcuts, themes       |
+| **[Features](docs/features.md)**                        | Chat, attachments, bash, sessions, slash commands, keyboard shortcuts, themes  |
 | **[Configuration & Operations](docs/configuration.md)** | TOML config, daemon commands, agent setup, upgrading                           |
 | **[Security](docs/security.md)**                        | Bearer auth, token storage, SSE ticket, signed image URLs, CSP, data layout    |
 | **[API Reference](docs/api.md)**                        | REST endpoints, SSE events, implementation details                             |
+| **[Attachments](docs/uploads.md)**                      | Upload pipeline, on-disk layout, lifecycle, permission auto-approve, observability |
 | **[ACP Integration](docs/acp.md)**                      | Client extensions, protocol scope, current limits                              |
 | **[Client Architecture](docs/client-architecture.md)**  | Frontend modules, data flow, conventions                                       |
 | **[Slash Menu](docs/slash-menu.md)**                    | Walker pipeline, `CmdNode` tree, Tab/Enter/Click contract, how to add commands |

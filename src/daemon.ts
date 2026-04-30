@@ -10,6 +10,8 @@ import {
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { atomicWriteFileSync } from "./atomic-write.ts";
+
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 // ---------------------------------------------------------------------------
@@ -58,7 +60,7 @@ export function readPidInfo(filePath: string): PidInfo | null {
 
 /** Write PID info to `filePath`. */
 export function writePidInfo(filePath: string, info: PidInfo): void {
-  writeFileSync(filePath, JSON.stringify(info) + "\n");
+  atomicWriteFileSync(filePath, JSON.stringify(info) + "\n");
 }
 
 // ---------------------------------------------------------------------------
