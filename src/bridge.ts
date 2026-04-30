@@ -12,6 +12,11 @@ import type {
 import type { SessionManager } from "./session-manager.ts";
 import type { TitleService } from "./title-service.ts";
 import { interruptBashProc } from "./session-manager.ts";
+import type {
+  AttachmentDispatcher,
+  AttachmentRef,
+  PromptBlock,
+} from "./attachment-dispatch.ts";
 
 export class AgentBridge extends EventEmitter {
   private proc: ChildProcess | null = null;
@@ -25,10 +30,20 @@ export class AgentBridge extends EventEmitter {
   private readonly silentBuffers = new Map<string, string>(); // Text buffers for silent sessions
   readonly agentCmd: string;
   reloading = false;
+  private attachmentDispatcher: AttachmentDispatcher | null = null;
 
   constructor(agentCmd: string) {
     super();
     this.agentCmd = agentCmd;
+  }
+
+  /**
+   * Inject the dispatcher used to translate client attachment refs into
+   * ACP prompt blocks. Set once at server boot; staying optional so unit
+   * tests that don't exercise attachments can construct a bare bridge.
+   */
+  setAttachmentDispatcher(dispatcher: AttachmentDispatcher): void {
+    this.attachmentDispatcher = dispatcher;
   }
 
   async start(): Promise<void> {
@@ -131,21 +146,24 @@ export class AgentBridge extends EventEmitter {
   async prompt(
     sessionId: string,
     text: string,
-    images?: Array<{ data: string; mimeType: string }>,
+    attachments?: AttachmentRef[],
   ): Promise<void> {
     if (!this.conn) throw new Error("Not connected");
     try {
-      const promptParts: Array<
-        | { type: "text"; text: string }
-        | { type: "image"; data: string; mimeType: string }
-      > = [];
-      if (images) {
-        for (const img of images) {
-          promptParts.push({
-            type: "image",
-            data: img.data,
-            mimeType: img.mimeType,
-          });
+      const promptParts: PromptBlock[] = [];
+      if (attachments && attachments.length > 0) {
+        if (!this.attachmentDispatcher) {
+          // Misconfiguration: routes accepted attachments but bridge has no
+          // dispatcher wired. Fail loud so tests / dev catch it; production
+          // server.ts always calls setAttachmentDispatcher().
+          throw new Error("attachment dispatcher not configured");
+        }
+        for (const ref of attachments) {
+          const block = await this.attachmentDispatcher.dispatch(
+            sessionId,
+            ref,
+          );
+          promptParts.push(block);
         }
       }
       promptParts.push({ type: "text", text });

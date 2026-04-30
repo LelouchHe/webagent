@@ -21,6 +21,8 @@ import {
 } from "./share/cleanup.ts";
 import { AuthStore } from "./auth-store.ts";
 import { join as pathJoin } from "node:path";
+import { resolveSessionsAnchor } from "./sessions-anchor.ts";
+import { AttachmentDispatcher } from "./attachment-dispatch.ts";
 import type { AgentEvent } from "./types.ts";
 
 // Prefix all console output with ISO-ish timestamps (YYYY-MM-DD HH:MM:SS)
@@ -52,6 +54,16 @@ const PKG_VERSION = (() => {
 
 const store = new Store(config.data_dir);
 console.log(`[store] using ${config.data_dir}/`);
+
+// Pin <data_dir>/sessions realpath at boot so all later anchor checks
+// (file:// URI construction, permission interceptor) compare against the
+// same canonical path. Defends against macOS /var → /private/var.
+const sessionsAnchor = resolveSessionsAnchor(config.data_dir);
+const attachmentDispatcher = new AttachmentDispatcher(store, sessionsAnchor, {
+  warn: (msg) => {
+    console.warn(msg);
+  },
+});
 
 const sessions = new SessionManager(store, config.default_cwd, config.data_dir);
 const titleService = new TitleService(store, sessions, config.default_cwd);
@@ -119,6 +131,7 @@ const server = createServer((req, res) => {
 
 async function initBridge(): Promise<AgentBridge> {
   const b = new AgentBridge(config.agent_cmd);
+  b.setAttachmentDispatcher(attachmentDispatcher);
 
   b.on("event", (event: AgentEvent) => {
     handleAgentEvent(

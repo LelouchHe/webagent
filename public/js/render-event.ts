@@ -153,23 +153,22 @@ export function renderContentEvent(
 
 function buildUserMessage(
   data: Record<string, unknown>,
-  hooks: RenderHooks,
+  _hooks: RenderHooks,
 ): HTMLElement {
   const text = typeof data.text === "string" ? data.text : "";
   const el = document.createElement("div");
   el.className = "msg user";
   el.innerHTML = escHtml(text).replace(/\n/g, "<br>");
-  const images = Array.isArray(data.images) ? data.images : [];
-  for (const img of images) {
-    const path =
-      img && typeof img === "object" && "path" in img
-        ? String((img as { path: unknown }).path)
-        : "";
-    if (!path) continue;
-    const imgEl = document.createElement("img");
-    imgEl.className = "user-image";
-    imgEl.src = hooks.rewriteImageSrc ? hooks.rewriteImageSrc(path) : path;
-    el.appendChild(imgEl);
+  const attachments = Array.isArray(data.attachments) ? data.attachments : [];
+  for (const att of attachments) {
+    if (!att || typeof att !== "object") continue;
+    const a = att as Record<string, unknown>;
+    const name = typeof a.displayName === "string" ? a.displayName : "file";
+    const kind = a.kind === "image" ? "image" : "file";
+    const note = document.createElement("div");
+    note.className = "user-attachment";
+    note.textContent = `[${kind}: ${name}]`;
+    el.appendChild(note);
   }
   return el;
 }

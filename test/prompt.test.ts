@@ -69,7 +69,7 @@ function createMockBridge() {
   let lastPromptArgs: {
     sessionId: string;
     text: string;
-    images?: unknown[];
+    attachments?: unknown[];
   } | null = null;
   return {
     ...mockBridgeStubs(),
@@ -91,8 +91,12 @@ function createMockBridge() {
       );
     },
     cancel: async () => {},
-    prompt: async (sessionId: string, text: string, images?: unknown[]) => {
-      lastPromptArgs = { sessionId, text, images };
+    prompt: async (
+      sessionId: string,
+      text: string,
+      attachments?: unknown[],
+    ) => {
+      lastPromptArgs = { sessionId, text, attachments };
     },
     resolvePermission: async () => {},
     denyPermission: async () => {},
@@ -356,21 +360,47 @@ describe("Prompt REST API", () => {
       );
     });
 
-    it("accepts images alongside text", async () => {
+    it("accepts attachments alongside text", async () => {
       const sessionId = await createSession();
+      const att = {
+        kind: "image",
+        attachmentId: "a1",
+        displayName: "tiny.png",
+        mimeType: "image/png",
+      };
       const res = await makeRequest(
         port,
         "POST",
         `/api/v1/sessions/${sessionId}/prompt`,
         JSON.stringify({
           text: "describe this",
-          images: [{ data: "base64data", mimeType: "image/png" }],
+          attachments: [att],
         }),
       );
       assert.equal(res.status, 202);
-      assert.deepEqual(mockBridge.lastPromptArgs?.images, [
-        { data: "base64data", mimeType: "image/png" },
-      ]);
+      assert.deepEqual(mockBridge.lastPromptArgs?.attachments, [att]);
+    });
+
+    it("rejects attachments smuggling uri/data/path", async () => {
+      const sessionId = await createSession();
+      const res = await makeRequest(
+        port,
+        "POST",
+        `/api/v1/sessions/${sessionId}/prompt`,
+        JSON.stringify({
+          text: "x",
+          attachments: [
+            {
+              kind: "image",
+              attachmentId: "a1",
+              displayName: "x.png",
+              mimeType: "image/png",
+              path: "/etc/passwd",
+            },
+          ],
+        }),
+      );
+      assert.equal(res.status, 400);
     });
 
     it("is idempotent when X-Client-Op-Id is replayed", async () => {

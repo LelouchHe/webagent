@@ -82,13 +82,14 @@ function sendMessage() {
     return;
   }
 
-  // Show user message with image thumbnails
+  // Render user_message body locally with attachment markers so the on-send
+  // bubble matches the shape SSE replay produces after reload.
   const msgEl = addMessage("user", text || "(image)");
   for (const img of state.pendingImages) {
-    const imgEl = document.createElement("img");
-    imgEl.className = "user-image";
-    imgEl.src = img.previewUrl;
-    msgEl.appendChild(imgEl);
+    const note = document.createElement("div");
+    note.className = "user-attachment";
+    note.textContent = `[image: ${img.file.name || "image"}]`;
+    msgEl.appendChild(note);
   }
 
   // Upload images to server, then send prompt via REST
@@ -105,11 +106,20 @@ function sendMessage() {
           method: "POST",
           body: fd,
         })
-          .then((r) => r.json() as Promise<{ url: string }>)
+          .then(
+            (r) =>
+              r.json() as Promise<{
+                attachmentId: string;
+                displayName: string;
+                mimeType: string;
+                kind: "image" | "file";
+              }>,
+          )
           .then((j) => ({
-            data: img.data,
-            mimeType: img.mimeType,
-            path: j.url,
+            kind: j.kind,
+            attachmentId: j.attachmentId,
+            displayName: j.displayName,
+            mimeType: j.mimeType,
           }));
       }),
     ).then((uploaded) => {
@@ -122,11 +132,7 @@ function sendMessage() {
       void api.sendMessage(
         state.sessionId!,
         text || "What is in this image?",
-        uploaded.map((u) => ({
-          data: u.data,
-          mimeType: u.mimeType,
-          path: u.path,
-        })),
+        uploaded,
       );
     });
   } else {

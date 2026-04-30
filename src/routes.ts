@@ -977,13 +977,15 @@ export function createRequestHandler(
 
         let body: {
           text?: string;
-          images?: Array<{ data: string; mimeType: string; path?: string }>;
+          attachments?: Array<{
+            kind: "image" | "file";
+            attachmentId: string;
+            displayName: string;
+            mimeType: string;
+          }>;
         };
         try {
-          body = JSON.parse(await readBody(req)) as {
-            text?: string;
-            images?: Array<{ data: string; mimeType: string; path?: string }>;
-          };
+          body = JSON.parse(await readBody(req)) as typeof body;
         } catch {
           json(res, 400, { error: "Invalid JSON" });
           return;
@@ -993,17 +995,58 @@ export function createRequestHandler(
           return;
         }
 
-        // Store user_message event (strip base64 data, keep only path + mimeType)
-        const storedImages = body.images?.map((i) => ({
-          path: i.path,
-          mimeType: i.mimeType,
+        // Validate attachment shape: client must NEVER supply uri/data/path,
+        // only the four canonical fields. Anything else → 400 immediately so
+        // we don't even hand it to the dispatcher fallback.
+        const attachments = body.attachments;
+        if (attachments) {
+          if (!Array.isArray(attachments)) {
+            json(res, 400, { error: "attachments must be an array" });
+            return;
+          }
+          for (const raw of attachments) {
+            const att = raw as unknown as Record<string, unknown> | null;
+            if (
+              !att ||
+              typeof att !== "object" ||
+              (att.kind !== "image" && att.kind !== "file") ||
+              typeof att.attachmentId !== "string" ||
+              typeof att.displayName !== "string" ||
+              typeof att.mimeType !== "string"
+            ) {
+              json(res, 400, { error: "Invalid attachment entry" });
+              return;
+            }
+            if (
+              typeof att.uri === "string" ||
+              typeof att.data === "string" ||
+              typeof att.path === "string"
+            ) {
+              json(res, 400, {
+                error: "Client must not supply uri/data/path",
+              });
+              return;
+            }
+          }
+        }
+
+        // Stored shape mirrors the wire shape — the user_message event is
+        // replayed on session restore so future bridge dispatches can rebuild
+        // ACP blocks from the same attachmentIds.
+        const storedAttachments = attachments?.map((a) => ({
+          kind: a.kind,
+          attachmentId: a.attachmentId,
+          displayName: a.displayName,
+          mimeType: a.mimeType,
         }));
         store.saveEvent(
           sessionId,
           "user_message",
           {
             text: body.text,
-            ...(storedImages?.length ? { images: storedImages } : {}),
+            ...(storedAttachments?.length
+              ? { attachments: storedAttachments }
+              : {}),
           },
           { from_ref: "user" },
         );
@@ -1013,7 +1056,7 @@ export function createRequestHandler(
           type: "user_message",
           sessionId,
           text: body.text,
-          images: storedImages,
+          attachments: storedAttachments,
         } as AgentEvent;
         sseManager.broadcast(userMsgEvent);
 
@@ -1042,7 +1085,7 @@ export function createRequestHandler(
         sessions.activePrompts.add(sessionId);
         sessions.syncBusy(sessionId);
         bridge
-          .prompt(sessionId, body.text, body.images)
+          .prompt(sessionId, body.text, attachments)
           .catch((err: unknown) => {
             console.error(`[prompt] error for ${sessionId}:`, err);
           })

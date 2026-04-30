@@ -80,32 +80,49 @@ describe("render-event", () => {
       assert.ok(el.innerHTML.includes("<br>"));
     });
 
-    it("appends user-image children for images", () => {
+    it("renders user-attachment notes for attachments", () => {
       const el = append(
         mod.renderContentEvent(
           "user_message",
-          { text: "see", images: [{ path: "/img/a.png" }] },
+          {
+            text: "see",
+            attachments: [
+              {
+                kind: "image",
+                attachmentId: "a1",
+                displayName: "a.png",
+                mimeType: "image/png",
+              },
+            ],
+          },
           makeHooks(),
         ),
       )!;
-      const img = el.querySelector("img.user-image") as HTMLImageElement;
-      assert.ok(img);
-      assert.equal(img.getAttribute("src"), "/img/a.png");
+      const note = el.querySelector(".user-attachment");
+      assert.ok(note);
+      assert.equal(note.textContent, "[image: a.png]");
     });
 
-    it("rewrites image src via hook", () => {
+    it("renders file kind attachment as [file: name]", () => {
       const el = append(
         mod.renderContentEvent(
           "user_message",
           {
             text: "x",
-            images: [{ path: "/api/v1/sessions/S/attachments/a.png" }],
+            attachments: [
+              {
+                kind: "file",
+                attachmentId: "a2",
+                displayName: "notes.txt",
+                mimeType: "text/plain",
+              },
+            ],
           },
-          makeHooks({ rewriteImageSrc: () => "/s/T/attachments/a.png" }),
+          makeHooks(),
         ),
       )!;
-      const img = el.querySelector("img.user-image") as HTMLImageElement;
-      assert.equal(img.getAttribute("src"), "/s/T/attachments/a.png");
+      const note = el.querySelector(".user-attachment");
+      assert.equal(note?.textContent, "[file: notes.txt]");
     });
   });
 

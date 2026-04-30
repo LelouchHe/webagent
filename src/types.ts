@@ -151,7 +151,12 @@ export type AgentEvent =
       type: "user_message";
       sessionId: string;
       text: string;
-      images?: Array<{ path: string; mimeType: string }>;
+      attachments?: Array<{
+        kind: "image" | "file";
+        attachmentId: string;
+        displayName: string;
+        mimeType: string;
+      }>;
     }
   | {
       type: "permission_response";

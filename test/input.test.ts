@@ -213,16 +213,20 @@ describe("input", () => {
     });
     setFetch(async (url: string) => {
       if (url.includes("/api/v1/sessions/") && url.includes("/attachments")) {
+        const payload = {
+          attachmentId: "att-1",
+          displayName: "image.png",
+          mimeType: "image/png",
+          kind: "image",
+          path: "sessions/s1/attachments/att-1.png",
+          url: "/api/v1/sessions/s1/attachments/att-1.png",
+        };
         return {
           ok: true,
-          json: async () => ({
-            url: "/api/v1/sessions/s1/attachments/image.png",
-          }),
-          text: async () =>
-            '{"url":"/api/v1/sessions/s1/attachments/image.png"}',
+          json: async () => payload,
+          text: async () => JSON.stringify(payload),
         };
       }
-      // sendMessage call
       return { ok: true, json: async () => ({}), text: async () => "{}" };
     });
 
@@ -239,11 +243,12 @@ describe("input", () => {
     assert.ok(msgCall, "expected a prompt call");
     const body = JSON.parse(msgCall.init?.body);
     assert.equal(body.text, "What is in this image?");
-    assert.deepEqual(body.images, [
+    assert.deepEqual(body.attachments, [
       {
-        data: "abc123",
+        kind: "image",
+        attachmentId: "att-1",
+        displayName: "image.png",
         mimeType: "image/png",
-        path: "/api/v1/sessions/s1/attachments/image.png",
       },
     ]);
   });

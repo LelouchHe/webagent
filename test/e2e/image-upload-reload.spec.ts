@@ -26,7 +26,10 @@ test("uploaded images are sent and restored in reloaded history", async ({
   await page.locator("#input").fill("describe this image");
   await page.locator("#input").press("Enter");
 
-  await expect(page.locator(".msg.user .user-image")).toHaveCount(1);
+  await expect(page.locator(".msg.user .user-attachment")).toHaveCount(1);
+  await expect(page.locator(".msg.user .user-attachment").last()).toHaveText(
+    "[image: tiny.png]",
+  );
   await expect(page.locator(".msg.assistant").last()).toContainText(
     "Echo: describe this image",
   );
@@ -38,10 +41,7 @@ test("uploaded images are sent and restored in reloaded history", async ({
   await expect(page.locator(".msg.user")).toContainText([
     "describe this image",
   ]);
-  const restoredImage = page.locator(".msg.user .user-image").last();
-  await expect(restoredImage).toBeVisible();
-  await expect(restoredImage).toHaveAttribute(
-    "src",
-    /\/api\/v1\/sessions\/[^/]+\/attachments\//,
-  );
+  const restoredAttachment = page.locator(".msg.user .user-attachment").last();
+  await expect(restoredAttachment).toBeVisible();
+  await expect(restoredAttachment).toHaveText("[image: tiny.png]");
 });
