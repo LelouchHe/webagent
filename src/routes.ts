@@ -32,6 +32,7 @@ import {
   isInlineMime,
   mimeToExt,
   normalizeDisplayName,
+  sniffMime,
 } from "./attachments.ts";
 
 const IS_WIN = process.platform === "win32";
@@ -403,6 +404,30 @@ async function handleAttachmentUpload(
             await cleanupTmp();
             await finish(400, { error: "Missing file part" });
             return;
+          }
+          // Sniff the actual mime from file content (magic bytes + UTF-8
+          // text fallback). Clients lie about Content-Type — browsers send
+          // application/octet-stream for any extension the OS doesn't know
+          // (.clj, .lua, .rs, ...), and ACP agents (Copilot CLI) refuse to
+          // read attachments tagged octet-stream. The sniffed mime wins
+          // silently; we override fileMime / kind / extension / final path
+          // before insertAttachment so DB and disk reflect reality.
+          const head = await readFile(tmpPath).catch(() => Buffer.alloc(0));
+          const headSlice = head.subarray(0, 4096);
+          const sniffed = await sniffMime(headSlice);
+          if (sniffed !== fileMime) {
+            fileMime = sniffed;
+            kind = classifyKind(fileMime);
+            const newExt = mimeToExt(fileMime);
+            if (newExt !== fileExt) {
+              fileExt = newExt;
+              const newTmp = join(dir, `${uploadId}.${fileExt}.tmp`);
+              if (newTmp !== tmpPath) {
+                await rename(tmpPath, newTmp);
+                tmpPath = newTmp;
+              }
+              finalPath = join(dir, `${uploadId}.${fileExt}`);
+            }
           }
           await rename(tmpPath, finalPath);
           const rp = await realpath(finalPath);

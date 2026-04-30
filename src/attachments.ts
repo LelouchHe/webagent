@@ -3,6 +3,8 @@
 // these primitives. Everything here is server-only; clients never see
 // realpaths or temp filenames.
 
+import { fileTypeFromBuffer } from "file-type";
+
 /**
  * Server-controlled mime → file extension map (uploads-plan v2.6 §14).
  *
@@ -22,12 +24,60 @@ const MIME_TO_EXT: Record<string, string> = {
   "text/markdown": "md",
   "text/html": "html",
   "text/csv": "csv",
+  "text/javascript": "js",
   "application/json": "json",
+  "application/javascript": "js",
+  "application/xml": "xml",
+  "text/xml": "xml",
   "application/zip": "zip",
+  "application/gzip": "gz",
+  "application/x-tar": "tar",
+  "application/x-7z-compressed": "7z",
+  "application/x-rar-compressed": "rar",
 };
 
 export function mimeToExt(mime: string): string {
   return MIME_TO_EXT[mime.toLowerCase()] ?? "bin";
+}
+
+/**
+ * Detect the real mime type of an uploaded file by inspecting its content,
+ * not the client-supplied Content-Type or filename extension. Resolves the
+ * "user uploads `.clj` → browser sends application/octet-stream → agents
+ * skip reading binary blobs" failure mode (uploads-plan dev log 2026-04-30).
+ *
+ * Strategy:
+ *   1. `file-type` checks magic bytes for ~200 binary formats (PDF, PNG,
+ *      ZIP, office, audio, video, ...). If it hits, trust that.
+ *   2. No magic match → check whether the buffer is plausibly text:
+ *      - no NUL bytes (binary marker)
+ *      - decodes cleanly as UTF-8
+ *      → return "text/plain". Source code (Clojure, Lua, Rust, Go, ...)
+ *        all land here regardless of how the OS / browser tagged them.
+ *   3. Otherwise fall through to "application/octet-stream".
+ *
+ * Pass `head` as a buffer of at least the first 4 KB of file content; that's
+ * enough for every magic signature `file-type` knows about.
+ */
+export async function sniffMime(head: Buffer): Promise<string> {
+  const detected = await fileTypeFromBuffer(head);
+  if (detected) return detected.mime;
+  if (looksLikeUtf8Text(head)) return "text/plain";
+  return "application/octet-stream";
+}
+
+function looksLikeUtf8Text(buf: Buffer): boolean {
+  if (buf.length === 0) return true;
+  for (const byte of buf) {
+    if (byte === 0) return false;
+  }
+  try {
+    const decoder = new TextDecoder("utf-8", { fatal: true });
+    decoder.decode(buf);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /**
