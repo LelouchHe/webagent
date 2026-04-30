@@ -377,6 +377,14 @@ export class AgentBridge extends EventEmitter {
     const title = toolCall?.title ?? "Permission requested";
     // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- toolCall may be undefined in practice
     const toolCallId = toolCall?.toolCallId;
+    const tc = toolCall as
+      | (typeof toolCall & {
+          kind?: string;
+          name?: string;
+          locations?: { path: string; line?: number | null }[];
+          rawInput?: Record<string, unknown>;
+        })
+      | undefined;
 
     return new Promise((resolve) => {
       // Register resolver BEFORE emitting, so synchronous auto-approve can find it
@@ -389,6 +397,10 @@ export class AgentBridge extends EventEmitter {
         title,
         toolCallId,
         options: params.options,
+        toolKind: tc?.kind,
+        toolName: tc?.name,
+        locations: tc?.locations,
+        rawInput: tc?.rawInput,
       } satisfies AgentEvent);
     });
   }

@@ -5,10 +5,20 @@ import type { PushService } from "./push-service.ts";
 import type { SseManager } from "./sse-manager.ts";
 import type { ClientRegistry } from "./client-registry.ts";
 import type { AgentEvent } from "./types.ts";
+import {
+  shouldAutoApproveAttachmentRead,
+  type InterceptorCounters,
+  type InterceptorLogger,
+} from "./attachment-interceptor.ts";
 
 export interface EventHandlerConfig {
   cancelTimeout: number;
   recentPathsLimit: number;
+  attachmentInterceptor?: {
+    counters: InterceptorCounters;
+    logger?: InterceptorLogger;
+    onSchemaDrift?: (ctx: Record<string, unknown>) => void;
+  };
 }
 
 type ConnectedEvent = Extract<AgentEvent, { type: "connected" }>;
@@ -111,19 +121,15 @@ function handlePlan(
   );
 }
 
-function maybeAutoApprovePermission(
+function performAutoApprove(
   event: PermissionRequestEvent,
+  opt: { optionId: string; label?: string },
   sessions: SessionManager,
   store: Store,
   bridge: AgentBridge,
   sseManager: SseManager,
-): boolean {
-  const mode = store.getSession(event.sessionId)?.mode ?? "";
-  if (!mode.includes("#autopilot")) return false;
-  const opt = event.options.find(
-    (o: { kind?: string }) => o.kind === "allow_once",
-  ) as { optionId: string; label?: string } | undefined;
-  if (!opt) return false;
+  broadcastRequest: boolean,
+): void {
   bridge.resolvePermission(event.requestId, opt.optionId);
   sessions.pendingPermissions.delete(event.requestId);
   sessions.syncPendingPermissions(event.sessionId);
@@ -138,8 +144,7 @@ function maybeAutoApprovePermission(
     },
     { from_ref: "system" },
   );
-  // Broadcast both so the frontend can render then collapse the permission card
-  sseManager.broadcast(event);
+  if (broadcastRequest) sseManager.broadcast(event);
   sseManager.broadcast({
     type: "permission_response" as const,
     sessionId: event.sessionId,
@@ -147,7 +152,81 @@ function maybeAutoApprovePermission(
     optionName,
     denied: false,
   });
+}
+
+function maybeAutoApprovePermission(
+  event: PermissionRequestEvent,
+  sessions: SessionManager,
+  store: Store,
+  bridge: AgentBridge,
+  sseManager: SseManager,
+): boolean {
+  const mode = store.getSession(event.sessionId)?.mode ?? "";
+  if (!mode.includes("#autopilot")) return false;
+  const opt = event.options.find(
+    (o: { kind?: string }) => o.kind === "allow_once",
+  ) as { optionId: string; label?: string } | undefined;
+  if (!opt) return false;
+  performAutoApprove(event, opt, sessions, store, bridge, sseManager, true);
   return true;
+}
+
+function maybeAutoApproveAttachmentRead(
+  event: PermissionRequestEvent,
+  sessions: SessionManager,
+  store: Store,
+  bridge: AgentBridge,
+  sseManager: SseManager,
+  config: EventHandlerConfig,
+): void {
+  // Plan §1.4 — async attachment-read auto-approve runs *after* the
+  // permission_request has already been broadcast (so the UI shows it
+  // briefly), then if the request matches we follow up with a
+  // permission_response, identical to autopilot's collapse behavior.
+  const interceptor = config.attachmentInterceptor;
+  if (!interceptor) return;
+  const opt = event.options.find(
+    (o: { kind?: string }) => o.kind === "allow_once",
+  ) as { optionId: string; label?: string } | undefined;
+  if (!opt) return;
+
+  void shouldAutoApproveAttachmentRead(
+    {
+      sessionId: event.sessionId,
+      toolKind: event.toolKind,
+      toolName: event.toolName,
+      locations: event.locations,
+      rawInput: event.rawInput,
+    },
+    {
+      listAttachmentRealpaths: (sid) => store.listAttachmentRealpaths(sid),
+      counters: interceptor.counters,
+      logger: interceptor.logger,
+      onSchemaDrift: interceptor.onSchemaDrift,
+    },
+  ).then(
+    (approved) => {
+      if (!approved) return;
+      // Race guard: the user (or another client) may have already
+      // resolved the permission while we were realpath-ing.
+      if (!sessions.pendingPermissions.has(event.requestId)) return;
+      performAutoApprove(
+        event,
+        opt,
+        sessions,
+        store,
+        bridge,
+        sseManager,
+        false,
+      );
+    },
+    (err: unknown) => {
+      console.warn(
+        "[attachment-interceptor] unexpected error",
+        (err as Error).message,
+      );
+    },
+  );
 }
 
 function handlePermissionRequest(
@@ -156,6 +235,7 @@ function handlePermissionRequest(
   store: Store,
   bridge: AgentBridge,
   sseManager: SseManager,
+  config: EventHandlerConfig,
 ): boolean {
   sessions.flushBuffers(event.sessionId);
   sessions.state.patch(event.sessionId, {
@@ -183,7 +263,24 @@ function handlePermissionRequest(
     ),
   });
   sessions.syncPendingPermissions(event.sessionId);
-  return maybeAutoApprovePermission(event, sessions, store, bridge, sseManager);
+  const autopiloted = maybeAutoApprovePermission(
+    event,
+    sessions,
+    store,
+    bridge,
+    sseManager,
+  );
+  if (autopiloted) return true;
+  // Async attachment-read auto-approve runs after the request broadcasts.
+  maybeAutoApproveAttachmentRead(
+    event,
+    sessions,
+    store,
+    bridge,
+    sseManager,
+    config,
+  );
+  return false;
 }
 
 function handlePromptDone(
@@ -256,6 +353,7 @@ function dispatchAgentEvent(
         store,
         bridge,
         sseManager,
+        config,
       );
     case "prompt_done":
       handlePromptDone(event, sessions, store);

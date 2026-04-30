@@ -920,6 +920,19 @@ export class Store {
   }
 
   /**
+   * For the permission interceptor: list all attachment realpaths for a
+   * session so we can compare against `toolCall.locations[].path` after
+   * realpath-ing each side. The set is small (≤ a few hundred per
+   * session) so we hand back an in-memory array.
+   */
+  listAttachmentRealpaths(sessionId: string): string[] {
+    const rows = this.db
+      .prepare("SELECT realpath FROM attachments WHERE session_id = ?")
+      .all(sessionId) as { realpath: string }[];
+    return rows.map((r) => r.realpath);
+  }
+
+  /**
    * For the share viewer / GET serve path: look up an attachment by the
    * filename portion of its URL (`<id>.<ext>`). The id is the uuid prefix
    * of the file segment.

@@ -140,6 +140,13 @@ export type AgentEvent =
       title: string;
       toolCallId?: string | null;
       options: acp.PermissionOption[];
+      // Forwarded from ACP toolCall for the auto-approve interceptor (F4
+      // schema gate). All optional — older Copilot builds may not include
+      // them.
+      toolKind?: string;
+      toolName?: string;
+      locations?: { path: string; line?: number | null }[];
+      rawInput?: Record<string, unknown>;
     }
   | { type: "prompt_done"; sessionId: string; stopReason: string }
   | { type: "session_deleted"; sessionId: string }

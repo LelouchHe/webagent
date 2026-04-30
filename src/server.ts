@@ -23,6 +23,10 @@ import { AuthStore } from "./auth-store.ts";
 import { join as pathJoin } from "node:path";
 import { resolveSessionsAnchor } from "./sessions-anchor.ts";
 import { AttachmentDispatcher } from "./attachment-dispatch.ts";
+import {
+  createCounters as createAttachmentInterceptorCounters,
+  type InterceptorCounters,
+} from "./attachment-interceptor.ts";
 import type { AgentEvent } from "./types.ts";
 
 // Prefix all console output with ISO-ish timestamps (YYYY-MM-DD HH:MM:SS)
@@ -64,6 +68,20 @@ const attachmentDispatcher = new AttachmentDispatcher(store, sessionsAnchor, {
     console.warn(msg);
   },
 });
+
+// Counters + once-per-process schemaDrift signal for the permission
+// auto-approve interceptor (uploads-plan v2.6 §1.4 F7). Dumped hourly.
+const attachmentInterceptorCounters: InterceptorCounters =
+  createAttachmentInterceptorCounters();
+let lastSchemaDriftAt = 0;
+const SCHEMA_DRIFT_THROTTLE_MS = 24 * 60 * 60 * 1000;
+const ATTACHMENT_INTERCEPTOR_DUMP_MS = 60 * 60 * 1000;
+setInterval(() => {
+  console.log(
+    "[attachment-interceptor] counters",
+    JSON.stringify(attachmentInterceptorCounters),
+  );
+}, ATTACHMENT_INTERCEPTOR_DUMP_MS).unref();
 
 const sessions = new SessionManager(store, config.default_cwd, config.data_dir);
 const titleService = new TitleService(store, sessions, config.default_cwd);
@@ -142,6 +160,32 @@ async function initBridge(): Promise<AgentBridge> {
       {
         cancelTimeout: config.limits.cancel_timeout,
         recentPathsLimit: config.limits.recent_paths,
+        attachmentInterceptor: {
+          counters: attachmentInterceptorCounters,
+          logger: {
+            debug: (msg, ctx) => {
+              if (config.debug.level === "debug") console.debug(msg, ctx);
+            },
+            info: (msg, ctx) => {
+              console.log(msg, ctx);
+            },
+            warn: (msg, ctx) => {
+              console.warn(msg, ctx);
+            },
+            error: (msg, ctx) => {
+              console.error(msg, ctx);
+            },
+          },
+          onSchemaDrift: (ctx) => {
+            const now = Date.now();
+            if (now - lastSchemaDriftAt < SCHEMA_DRIFT_THROTTLE_MS) return;
+            lastSchemaDriftAt = now;
+            console.error(
+              "[attachment-interceptor] schema drift detected — rawInput has no known path key",
+              ctx,
+            );
+          },
+        },
       },
       sseManager,
       pushService,
