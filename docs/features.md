@@ -9,12 +9,14 @@
 - Permission confirmation dialog for sensitive operations (Allow / Deny), synced across devices; auto-approved in autopilot mode
 - Smart scroll: force-scrolls on load/switch/send, soft auto-scroll during streaming
 
-## Images
+## Attachments
 
-- Upload images (button or `^U` shortcut)
-- Paste images from clipboard
-- Preview before sending + removable, supports multiple images
-- Server-side storage, displayed inline in chat
+- Upload any file (button or `^U` shortcut), not just images
+- Paste images from clipboard (non-image clipboard items must use the file picker)
+- Preview before sending + removable, supports multiple files; images get an inline thumbnail and other files render as a name chip
+- Streaming multipart upload — no base64 in the browser
+- Server-side storage under `<data_dir>/sessions/<sid>/attachments/`, classified as `image` or `file` from sniffed MIME (drives size cap and per-prompt auto-approve gating)
+- Image attachments are referenced by `attachmentId` in the wire protocol; the browser never sees raw bytes after upload, and the server resolves the on-disk path itself
 
 ## Bash Execution
 
@@ -75,7 +77,7 @@ Type `?` for inline help listing all commands and shortcuts.
 | `Shift+Enter` | New line                                                    |
 | `Ctrl+C`      | Cancel current response (native copy when text is selected) |
 | `Ctrl+M`      | Cycle mode (Agent → Plan → Autopilot)                       |
-| `Ctrl+U`      | Upload image                                                |
+| `Ctrl+U`      | Attach file (any type)                                      |
 
 Tap the `❯` prompt indicator to cycle mode.
 
