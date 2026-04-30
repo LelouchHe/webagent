@@ -922,6 +922,26 @@ body {
   border-radius: 4px;
   border: 1px solid var(--border);
 }
+.attach-thumb.attach-file {
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px 22px 6px 8px;
+  font-size: 12px;
+  color: var(--fg);
+  background: var(--bg-alt, transparent);
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.attach-thumb.attach-file .attach-file-name {
+  display: inline-block;
+  max-width: 170px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: middle;
+}
 .attach-thumb .remove {
   position: absolute;
   top: -4px;

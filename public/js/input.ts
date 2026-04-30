@@ -31,12 +31,12 @@ state._onCancelTimeout = () =>
 
 function sendMessage() {
   const text = dom.input.value.trim();
-  if (!text && state.pendingImages.length === 0) return;
+  if (!text && state.pendingAttachments.length === 0) return;
 
   // Slash commands and bash always go through, even while busy
   if (
     (text.startsWith("/") || text === "?" || text.startsWith("? ")) &&
-    state.pendingImages.length === 0
+    state.pendingAttachments.length === 0
   ) {
     setInputValue("");
     dom.input.style.height = "auto";
@@ -44,7 +44,7 @@ function sendMessage() {
     return;
   }
 
-  if (text.startsWith("!") && state.pendingImages.length === 0) {
+  if (text.startsWith("!") && state.pendingAttachments.length === 0) {
     const command = text.slice(1).trim();
     if (!command) return;
     if (!state.sessionId) {
@@ -84,24 +84,24 @@ function sendMessage() {
 
   // Render user_message body locally with attachment markers so the on-send
   // bubble matches the shape SSE replay produces after reload.
-  const msgEl = addMessage("user", text || "(image)");
-  for (const img of state.pendingImages) {
+  const msgEl = addMessage("user", text || "(attachment)");
+  for (const att of state.pendingAttachments) {
     const note = document.createElement("div");
     note.className = "user-attachment";
-    note.textContent = `[image: ${img.file.name || "image"}]`;
+    note.textContent = `[${att.kind}: ${att.name}]`;
     msgEl.appendChild(note);
   }
 
-  // Upload images to server, then send prompt via REST
-  const images = state.pendingImages.slice();
-  state.pendingImages.length = 0;
+  // Upload attachments to server, then send prompt via REST
+  const attachments = state.pendingAttachments.slice();
+  state.pendingAttachments.length = 0;
   renderAttachPreview();
 
-  if (images.length > 0) {
+  if (attachments.length > 0) {
     void Promise.all(
-      images.map((img) => {
+      attachments.map((att) => {
         const fd = new FormData();
-        fd.append("file", img.file, img.file.name || "image");
+        fd.append("file", att.file, att.name);
         return fetch(`/api/v1/sessions/${state.sessionId}/attachments`, {
           method: "POST",
           body: fd,
@@ -131,7 +131,7 @@ function sendMessage() {
       }
       void api.sendMessage(
         state.sessionId!,
-        text || "What is in this image?",
+        text || "What is in this attachment?",
         uploaded,
       );
     });

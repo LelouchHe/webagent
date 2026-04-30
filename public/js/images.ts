@@ -1,51 +1,66 @@
-// Image attach, preview, and paste handling
+// Attachment attach, preview, and paste handling.
+//
+// Module name kept as "images" for legacy reasons; it now handles both
+// image and non-image file attachments. Images get an inline preview
+// thumbnail; other files render as a text chip with name + remove button.
 
-import { state, dom } from "./state.ts";
+import { state, dom, type PendingAttachment } from "./state.ts";
 
-interface PendingImage {
-  data: string;
-  mimeType: string;
-  previewUrl: string;
-  // Kept around so the upload step can ship the raw bytes via FormData
-  // instead of re-encoding the base64 back into a Blob.
-  file: File;
-}
-
-function readFileAsBase64(file: File): Promise<PendingImage> {
+function readImageAsDataUrl(file: File): Promise<string> {
   return new Promise((resolve) => {
     const reader = new FileReader();
     reader.onload = () => {
-      const base64 = (reader.result as string).split(",")[1];
-      resolve({
-        data: base64,
-        mimeType: file.type,
-        previewUrl: reader.result as string,
-        file,
-      });
+      resolve(reader.result as string);
     };
     reader.readAsDataURL(file);
   });
 }
 
-function addPendingImage(img: PendingImage) {
-  state.pendingImages.push(img);
+async function makeAttachment(file: File): Promise<PendingAttachment> {
+  const isImage = file.type.startsWith("image/");
+  const base: PendingAttachment = {
+    kind: isImage ? "image" : "file",
+    file,
+    mimeType: file.type || "application/octet-stream",
+    name: file.name || (isImage ? "image" : "file"),
+  };
+  if (isImage) base.previewUrl = await readImageAsDataUrl(file);
+  return base;
+}
+
+function addPendingAttachment(att: PendingAttachment) {
+  state.pendingAttachments.push(att);
   renderAttachPreview();
   dom.input.focus();
 }
 
 export function renderAttachPreview() {
   dom.attachPreview.innerHTML = "";
-  if (state.pendingImages.length === 0) {
+  if (state.pendingAttachments.length === 0) {
     dom.attachPreview.classList.remove("active");
     return;
   }
   dom.attachPreview.classList.add("active");
-  state.pendingImages.forEach((img, i) => {
+  state.pendingAttachments.forEach((att, i) => {
     const thumb = document.createElement("span");
     thumb.className = "attach-thumb";
-    thumb.innerHTML = `<img src="${img.previewUrl}"><button class="remove">×</button>`;
+    if (att.kind === "image" && att.previewUrl) {
+      thumb.innerHTML = `<img src="${att.previewUrl}"><button class="remove">×</button>`;
+    } else {
+      const safeName = att.name.replace(/[<>&"]/g, (c) =>
+        c === "<"
+          ? "&lt;"
+          : c === ">"
+            ? "&gt;"
+            : c === "&"
+              ? "&amp;"
+              : "&quot;",
+      );
+      thumb.classList.add("attach-file");
+      thumb.innerHTML = `<span class="attach-file-name">${safeName}</span><button class="remove">×</button>`;
+    }
     thumb.querySelector(".remove")!.addEventListener("click", () => {
-      state.pendingImages.splice(i, 1);
+      state.pendingAttachments.splice(i, 1);
       renderAttachPreview();
     });
     dom.attachPreview.appendChild(thumb);
@@ -58,7 +73,7 @@ export function renderAttachPreview() {
 // (see input.ts → registerInputHandlers); we only own the file-input here.
 dom.fileInput.onchange = async () => {
   for (const f of dom.fileInput.files!) {
-    if (f.type.startsWith("image/")) addPendingImage(await readFileAsBase64(f));
+    addPendingAttachment(await makeAttachment(f));
   }
   dom.fileInput.value = "";
 };
@@ -71,7 +86,7 @@ dom.input.addEventListener("paste", (e: ClipboardEvent) => {
       e.preventDefault();
       void (async () => {
         const file = item.getAsFile();
-        if (file) addPendingImage(await readFileAsBase64(file));
+        if (file) addPendingAttachment(await makeAttachment(file));
       })();
     }
   }

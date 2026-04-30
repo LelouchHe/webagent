@@ -5,11 +5,13 @@ import * as api from "./api.ts";
 
 export type { ConfigOption };
 
-interface PendingImage {
-  data: string;
-  mimeType: string;
-  previewUrl: string;
+export interface PendingAttachment {
+  kind: "image" | "file";
   file: File;
+  mimeType: string;
+  name: string;
+  // Present for images only; non-image attachments render as a text chip.
+  previewUrl?: string;
 }
 
 const $ = <T extends HTMLElement>(s: string) => document.querySelector<T>(s)!;
@@ -73,7 +75,7 @@ export const state = {
   currentThinkingEl: null as HTMLElement | null,
   currentThinkingText: "",
   busy: false,
-  pendingImages: [] as PendingImage[],
+  pendingAttachments: [] as PendingAttachment[],
   currentBashEl: null as HTMLElement | null,
   followMessages: true,
   pendingToolCallIds: new Set<string>(),
@@ -352,7 +354,7 @@ export function resetSessionUI() {
   state.currentAssistantText = "";
   state.currentThinkingEl = null;
   state.currentThinkingText = "";
-  state.pendingImages.length = 0;
+  state.pendingAttachments.length = 0;
   state.followMessages = true;
   state.pendingToolCallIds.clear();
   state.pendingPermissionRequestIds.clear();

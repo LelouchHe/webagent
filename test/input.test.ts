@@ -203,9 +203,10 @@ describe("input", () => {
   it("uploads pending images before sending the prompt", async () => {
     state.sessionId = "s1";
     state.clientId = "cl-1";
-    state.pendingImages.push({
-      data: "abc123",
+    state.pendingAttachments.push({
+      kind: "image",
       mimeType: "image/png",
+      name: "image.png",
       previewUrl: "data:image/png;base64,abc123",
       file: new File([new Uint8Array([1, 2, 3])], "image.png", {
         type: "image/png",
@@ -242,7 +243,7 @@ describe("input", () => {
     const msgCall = fetchCalls.find((c) => c.url.includes("/prompt"));
     assert.ok(msgCall, "expected a prompt call");
     const body = JSON.parse(msgCall.init?.body);
-    assert.equal(body.text, "What is in this image?");
+    assert.equal(body.text, "What is in this attachment?");
     assert.deepEqual(body.attachments, [
       {
         kind: "image",
@@ -387,9 +388,10 @@ describe("input", () => {
   it("does not send prompt with images when not connected", async () => {
     state.sessionId = "s1";
     // clientId is null → not connected
-    state.pendingImages.push({
-      data: "abc123",
+    state.pendingAttachments.push({
+      kind: "image",
       mimeType: "image/png",
+      name: "image.png",
       previewUrl: "data:image/png;base64,abc123",
       file: new File([new Uint8Array([1, 2, 3])], "image.png", {
         type: "image/png",
