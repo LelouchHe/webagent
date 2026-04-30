@@ -18,7 +18,8 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - bash execution lifecycle
   - slash command and picker UX
   - REST API surface (sessions, prompt, bash, permissions, ops, SSE, push)
-  - Share links (token issue, owner auth, sanitizer, viewer routes, image proxy, build prune)
+  - Share links (token issue, owner auth, sanitizer, viewer routes, attachment proxy, build prune)
+  - Attachment upload pipeline (image + file, send-time upload, atomic disk writes)
 
 ## Unit / Integration Scenarios
 
@@ -198,7 +199,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
 - `test/routes.test.ts`
   - static file / API route basics
   - events endpoint: limit/before pagination, backward-compat without limit
-  - image upload: valid PNG, size limit enforcement, non-image MIME rejection, invalid session, JPEG normalization
+  - attachment upload (`POST /api/v1/sessions/:sid/attachments`): valid PNG, file (non-image) accepted, size limit enforcement, invalid session, JPEG normalization, UTF-8 filename round-trip (busboy `defParamCharset: utf8`), Content-Disposition emitted on download
   - push API routes (`/api/beta/push/*`): VAPID key, subscribe, unsubscribe, validation, no-push-service fallback
 
 - `test/render.test.ts`
@@ -213,8 +214,9 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - bash block creation and running state
 
 - `test/attachments.test.ts`
-  - attach preview and image-management behavior
-  - file picker and paste handling
+  - attach preview: image thumbnail vs file chip rendering, × overlay removal
+  - file picker and paste handling for both image and non-image files
+  - send-time upload + AbortController cancel; file chip swap to anchor on success
 
 - `test/api-module.test.ts`
   - frontend API client: all REST endpoints (sessions, prompt, cancel, permissions, bash, config, visibility, status)
@@ -246,6 +248,11 @@ spot gaps, and decide what still needs to be added without reading every spec.
 - `test/types.test.ts`
   - errorMessage helper (Error, string, object, null)
 
+- `test/atomic-write.test.ts`
+  - sync + async API: file appears with full content after write
+  - polling-reader race regression: 200 sequential atomic writes never expose an empty / partial file to a concurrent `setImmediate` polling reader
+  - mode preservation; tmp file cleanup on rename failure
+
 ### Share links
 
 - `test/share-token.test.ts`
@@ -269,6 +276,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - preview create / read / staleness flag
   - publish freezes snapshot; viewer JSON strips `session_id`
   - 410 when share row is missing or `enabled=false`
+  - viewer attachment proxy: serves correct `Content-Type` from `attachments.mime` and emits RFC 5987 `Content-Disposition` with original filename for non-image attachments (regression: iOS Safari `.bin` suffix)
 
 - `test/share-routes-revoke-list-patch.test.ts`
   - DELETE is idempotent; PATCH updates `owner_label` / `display_name`
@@ -288,8 +296,8 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - CI gate: viewer source must not contain `innerHTML` / `eval` / inline event handlers
 
 - `test/share-viewer-attachment-rewriter.test.ts`
-  - viewer rewrites `/api/v1/sessions/<id>/images/<file>` → `/s/<token>/images/<file>`
-  - rewriter accepts a query-string tail (signed image URLs from owner side)
+  - viewer rewrites `/api/v1/sessions/<id>/attachments/<file>` → `/s/<token>/attachments/<file>`
+  - rewriter accepts a query-string tail (signed attachment URLs from owner side)
 
 - `test/build-split.test.ts`
   - chunk prune is reachability-aware AND transitive — chunks reachable
@@ -379,7 +387,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
 - `expired-session-recovery.spec.ts`
   - expired hash session falls back to a new session with a warning
 
-### Image handling
+### Attachment handling
 
 - `image-upload-reload.spec.ts`
   - uploaded images are sent and restored after reload
@@ -388,6 +396,10 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - clicking an image opens the lightbox overlay
   - backdrop click and Escape close the lightbox
   - mouse wheel zooms the lightbox image
+
+- `file-attachment-download.spec.ts`
+  - non-image attachment renders as a clickable file chip in the user message
+  - download from owner side preserves original filename (no `.bin` suffix)
 
 ### Slash menu and picker UX
 
