@@ -307,6 +307,7 @@ async function handleAttachmentUpload(
     try {
       bb = busboy({
         headers: req.headers,
+        defParamCharset: "utf8",
         limits: {
           // We enforce the size cap manually via per-file byte tracking
           // (so we can pick the right cap based on classified kind and

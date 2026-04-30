@@ -497,6 +497,18 @@ describe("Image upload", () => {
     assert.equal(body.size, "fake-png".length);
   });
 
+  it("preserves UTF-8 (e.g. Chinese) filenames through multipart parsing", async () => {
+    const res = await uploadFile(
+      "test-session",
+      "中文文档.txt",
+      "text/plain",
+      Buffer.from("hi"),
+    );
+    assert.equal(res.status, 200);
+    const body = JSON.parse(res.body);
+    assert.equal(body.displayName, "中文文档.txt");
+  });
+
   it("serves uploaded images back via GET", async () => {
     const uploadRes = await uploadFile(
       "test-session",
