@@ -115,6 +115,7 @@ sseManager.setRevocationCheck(
   (tokenName) => !authStore.hasTokenName(tokenName),
 );
 sseManager.setAttachmentSecret(attachmentSecret);
+sseManager.setLabelMapProvider((sessionId) => sessions.getLabelMap(sessionId));
 
 // Broadcast runtime state patches to all SSE clients interested in the session.
 sessions.state.onPatch((event) => {

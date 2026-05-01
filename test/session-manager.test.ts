@@ -765,4 +765,120 @@ describe("SessionManager", () => {
       assert.equal(row.model, "gpt-5.4", "DB model must stay as user's choice");
     });
   });
+
+  describe("attachment label cache", () => {
+    beforeEach(() => {
+      store.createSession("s1", "/x");
+    });
+
+    it("getLabelMap lazy-builds from store on first call", () => {
+      store.insertAttachment({
+        id: "abc12345-1111",
+        sessionId: "s1",
+        kind: "file",
+        name: "report.pdf",
+        mime: "application/pdf",
+        size: 1,
+        realpath: "/r/abc.pdf",
+      });
+      const m = sm.getLabelMap("s1");
+      assert.equal(m.get("/r/abc.pdf"), "report.pdf [#abc1]");
+    });
+
+    it("returns cached map on subsequent calls (same Map instance)", () => {
+      store.insertAttachment({
+        id: "abc12345-1111",
+        sessionId: "s1",
+        kind: "file",
+        name: "x.pdf",
+        mime: "application/pdf",
+        size: 1,
+        realpath: "/r/x.pdf",
+      });
+      const first = sm.getLabelMap("s1");
+      const second = sm.getLabelMap("s1");
+      assert.equal(first, second, "same Map reference (cached)");
+    });
+
+    it("invalidateLabelCache forces rebuild on next access", () => {
+      store.insertAttachment({
+        id: "1111aaaa",
+        sessionId: "s1",
+        kind: "file",
+        name: "a.txt",
+        mime: "text/plain",
+        size: 1,
+        realpath: "/r/a.txt",
+      });
+      const before = sm.getLabelMap("s1");
+      assert.equal(before.size, 2); // realpath + basename
+
+      store.insertAttachment({
+        id: "2222bbbb",
+        sessionId: "s1",
+        kind: "file",
+        name: "b.txt",
+        mime: "text/plain",
+        size: 1,
+        realpath: "/r/b.txt",
+      });
+      // Without invalidation, stale cache is returned.
+      assert.equal(sm.getLabelMap("s1"), before);
+
+      sm.invalidateLabelCache("s1");
+      const after = sm.getLabelMap("s1");
+      assert.notEqual(after, before, "new Map after invalidation");
+      assert.equal(after.get("/r/b.txt"), "b.txt [#2222]");
+    });
+
+    it("isolates per-session caches", () => {
+      store.createSession("s2", "/y");
+      store.insertAttachment({
+        id: "aaaa1111",
+        sessionId: "s1",
+        kind: "file",
+        name: "in1.txt",
+        mime: "text/plain",
+        size: 1,
+        realpath: "/r/1.txt",
+      });
+      store.insertAttachment({
+        id: "bbbb2222",
+        sessionId: "s2",
+        kind: "file",
+        name: "in2.txt",
+        mime: "text/plain",
+        size: 1,
+        realpath: "/r/2.txt",
+      });
+      const m1 = sm.getLabelMap("s1");
+      const m2 = sm.getLabelMap("s2");
+      assert.ok(m1.has("/r/1.txt"));
+      assert.ok(!m1.has("/r/2.txt"));
+      assert.ok(m2.has("/r/2.txt"));
+      assert.ok(!m2.has("/r/1.txt"));
+    });
+
+    it("deleteSession invalidates label cache", () => {
+      store.insertAttachment({
+        id: "abc12345",
+        sessionId: "s1",
+        kind: "file",
+        name: "x.txt",
+        mime: "text/plain",
+        size: 1,
+        realpath: "/r/x.txt",
+      });
+      sm.getLabelMap("s1"); // populate cache
+      sm.deleteSession("s1");
+      // Re-create session and request map — must NOT see stale entry.
+      store.createSession("s1", "/x");
+      const m = sm.getLabelMap("s1");
+      assert.equal(m.size, 0);
+    });
+
+    it("returns empty map for session with no attachments", () => {
+      assert.equal(sm.getLabelMap("s1").size, 0);
+    });
+  });
 });

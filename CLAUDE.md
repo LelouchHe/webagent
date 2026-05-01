@@ -93,6 +93,20 @@ agent_cmd = "my-agent --acp"
     3. If notifications stop working after a server update or VAPID key change, re-install the PWA (delete from home screen, re-add), then `/notify on` again. Simply toggling `/notify off` → `/notify on` may not be enough if the Service Worker cache is stale.
   - **iOS PWA quirks**: Apple's push service (`web.push.apple.com`) rejects VAPID subjects with `localhost` domains (`403 BadJwtToken`) — use a real-looking email like `mailto:noreply@example.com`. When changing `push.vapid_subject`, delete `data/vapid.json` to regenerate keys, then all clients must re-subscribe.
 
+## Attachment label egress rewrite
+
+When the agent reads a user-uploaded attachment, it sees and emits the internal storage path (`<dataDir>/sessions/<sid>/attachments/<uuid>.<ext>`). Showing that to the user is unhelpful — we have the original filename in the `attachments` table, so we translate it back at egress.
+
+- **Storage invariant**: the `events` table stores raw ACP data. `tool_call.title`, `tool_call.rawInput.path`, and `permission_request.title` all keep the uuid path as agent emitted them. Ops `SELECT data FROM events` sees ground truth.
+- **Egress invariant**: every code path that ships event data to a client passes it through `enrichEventForDisplay` (`src/attachment-labels.ts`), which substring-replaces internal paths with `<displayName> [#<id4>]` (e.g. `report.pdf [#abc1]`). The `[#<id4>]` suffix is unconditional — disambiguates duplicates and gives users a stable reference anchor; no collision detection needed.
+- **Two chokepoints**:
+  - **Live** (`SseManager.sendEvent` in `src/sse-manager.ts`): a label-map provider is wired at server boot (`server.ts`); every event passing through SSE — including direct `sendEvent` calls like `Last-Event-ID` replay — goes through `enrichEventForDisplay` before serialization.
+  - **Replay** (`enrichStoredEventsForDisplay` helper): `routes.ts` history GET and `share/routes.ts` viewer paths call this on `store.getEvents()` results before sending. JSON-string-level rewrite, parallel to `reSignAttachmentUrlsInJson` in `auth.ts`.
+- **Cache** (`SessionManager.getLabelMap` / `invalidateLabelCache`): per-session `Map<realpath|basename, label>`, lazy-built on first egress, invalidated on attachment INSERT (`routes.ts`) and session DELETE. Restart-safe: empty on cold start, rebuilt µs-fast.
+- **Critical safety invariant — never rewrite `permission_request.rawInput`**: the F2 attachment auto-approve in `src/attachment-interceptor.ts` reads `rawInput.path` for realpath-equality checks. Rewriting it to a label string would silently break the security gate. Tests in `test/attachment-labels.test.ts` and `test/routes-attachment-labels.test.ts` lock this down.
+- **Untouched fields**: `permission_request.rawInput`, `permission_request.locations[].path` (ACP protocol, not user-visible), `user_message.attachments[].displayName` (`<a class="user-file" download>` link, different modality). Frontend has zero changes — the rewrite happens entirely server-side.
+- **Precedent**: this is the same egress-mutation pattern as `reSignAttachmentUrlsInJson` (re-sign image URLs at egress so 1h-old stored URLs render again). Keep them aligned in mental model: storage is raw, every display path mutates on the way out.
+
 ## Auth (0.4.0+)
 
 Bearer token authentication is **required**. Server refuses to start when `data/auth.json` has zero tokens. See [docs/security.md](./docs/security.md) for the full model — bootstrap, token storage, scopes, SSE ticket flow, signed image URLs, CSP invariants, data directory layout, E2E setup, and what's deliberately not protected.

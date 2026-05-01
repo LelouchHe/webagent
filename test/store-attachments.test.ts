@@ -167,4 +167,58 @@ describe("Store attachments", () => {
     assert.ok(row);
     assert.equal(row.id, "deadbeef-1234");
   });
+
+  describe("listAttachmentLabels", () => {
+    it("returns {realpath, name, id} rows scoped to session", () => {
+      store.insertAttachment({
+        id: "abc12345-1111-2222-3333-444455556666",
+        sessionId: "s1",
+        kind: "file",
+        name: "report.pdf",
+        mime: "application/pdf",
+        size: 100,
+        realpath: "/r/abc.pdf",
+      });
+      store.insertAttachment({
+        id: "def67890-aaaa-bbbb-cccc-ddddeeeeffff",
+        sessionId: "s1",
+        kind: "file",
+        name: "notes.md",
+        mime: "text/markdown",
+        size: 50,
+        realpath: "/r/def.md",
+      });
+      store.insertAttachment({
+        id: "ffffffff-0000-0000-0000-000000000000",
+        sessionId: "s2",
+        kind: "file",
+        name: "other.txt",
+        mime: "text/plain",
+        size: 1,
+        realpath: "/r/other.txt",
+      });
+      const s1 = store
+        .listAttachmentLabels("s1")
+        .sort((a, b) => a.realpath.localeCompare(b.realpath));
+      assert.equal(s1.length, 2);
+      assert.deepEqual(s1[0], {
+        id: "abc12345-1111-2222-3333-444455556666",
+        name: "report.pdf",
+        realpath: "/r/abc.pdf",
+      });
+      assert.deepEqual(s1[1], {
+        id: "def67890-aaaa-bbbb-cccc-ddddeeeeffff",
+        name: "notes.md",
+        realpath: "/r/def.md",
+      });
+    });
+
+    it("returns [] for unknown session", () => {
+      assert.deepEqual(store.listAttachmentLabels("nope"), []);
+    });
+
+    it("returns [] for session with no attachments", () => {
+      assert.deepEqual(store.listAttachmentLabels("s1"), []);
+    });
+  });
 });

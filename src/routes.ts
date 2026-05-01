@@ -19,6 +19,7 @@ import { randomUUID } from "node:crypto";
 import { createWriteStream } from "node:fs";
 import { handleShareRoutes } from "./share/routes.ts";
 import { authenticate, isWhitelistedPath } from "./auth-middleware.ts";
+import { enrichStoredEventsForDisplay } from "./attachment-labels.ts";
 import { log } from "./log.ts";
 
 const rlog = log.scope("routes");
@@ -257,7 +258,7 @@ async function handleAttachmentUpload(
   sessionId: string,
   deps: RequestHandlerDeps,
 ): Promise<void> {
-  const { store, dataDir, limits } = deps;
+  const { store, dataDir, limits, sessions } = deps;
   const fileUploadLimit = limits.file_upload ?? 52_428_800;
   if (!store.getSession(sessionId)) {
     json(res, 404, { error: "Session not found" });
@@ -446,6 +447,9 @@ async function handleAttachmentUpload(
             size: bytesWritten,
             realpath: rp,
           });
+          // Invalidate the per-session attachment label cache so the
+          // next egress (SSE broadcast or replay) sees this new row.
+          sessions?.invalidateLabelCache(sessionId);
           const fileName = `${row.id}.${fileExt}`;
           const basePath = `/api/v1/sessions/${sessionId}/attachments/${fileName}`;
           // 1h signed URL — long enough that the browser holds the rendered
@@ -1647,6 +1651,12 @@ export function createRequestHandler(
           beforeSeq,
           limit,
         });
+        // Replace internal uuid attachment paths with `<name> [#<id4>]`
+        // labels at egress (CLAUDE.md "Attachment label egress
+        // rewrite"). DB rows still hold raw paths.
+        if (sessions) {
+          enrichStoredEventsForDisplay(events, sessions.getLabelMap(sessionId));
+        }
         // Re-sign image URLs at egress so 1h-old stored URLs become valid
         // again — the user can reload history days later and images still
         // resolve. Mutates `data` in-place; safe because store.getEvents

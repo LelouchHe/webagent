@@ -93,6 +93,10 @@ function makeSessionsMock(opts?: { busy?: boolean }): Partial<SessionManager> {
       return opts?.busy ? "agent" : null;
     },
     flushBuffers(_id: string) {},
+    getLabelMap(_id: string) {
+      return new Map();
+    },
+    invalidateLabelCache(_id: string) {},
   };
 }
 

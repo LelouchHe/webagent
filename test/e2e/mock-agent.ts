@@ -153,6 +153,42 @@ class MockAgent implements Agent {
       });
     }
 
+    // Reads each attachment in the prompt and emits a tool_call whose
+    // title + rawInput.path reference the absolute uuid path. Used by
+    // the attachment-label-egress E2E spec to verify the server
+    // rewrites the path to `<name> [#<id4>]` at egress.
+    if (text.startsWith("E2E_READ_ATTACHMENT")) {
+      const fileUris = params.prompt
+        .filter((p) => p.type === "resource_link")
+        .map((p) => (p as { type: "resource_link"; uri: string }).uri)
+        .filter((u): u is string => typeof u === "string");
+      for (const uri of fileUris) {
+        const path = uri.startsWith("file://")
+          ? decodeURIComponent(uri.slice(7))
+          : uri;
+        const toolCallId = `tool-${++this.toolCallCounter}`;
+        await this.conn.sessionUpdate({
+          sessionId: params.sessionId,
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId,
+            title: `Read ${path}`,
+            kind: "read",
+            rawInput: { path },
+          },
+        });
+        await this.conn.sessionUpdate({
+          sessionId: params.sessionId,
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId,
+            status: "completed",
+          },
+        });
+      }
+      return { stopReason: "end_turn" };
+    }
+
     if (text.startsWith("E2E_PERMISSION")) {
       if (text.startsWith("E2E_PERMISSION_TWICE")) {
         const first = await this.runPermissionStep(

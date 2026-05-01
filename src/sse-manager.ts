@@ -2,6 +2,7 @@ import type { ServerResponse } from "node:http";
 import { randomBytes } from "node:crypto";
 import type { AgentEvent } from "./types.ts";
 import { reSignAttachmentUrlsInJson } from "./auth.ts";
+import { enrichEventForDisplay, type LabelMap } from "./attachment-labels.ts";
 
 /**
  * SSE heartbeat frame — a NAMED event so the frontend can hook
@@ -32,6 +33,7 @@ export class SseManager {
   private onRemoveCallback: ((clientId: string) => void) | null = null;
   private isTokenRevoked: ((tokenName: string) => boolean) | null = null;
   private attachmentSecret: Buffer | null = null;
+  private getLabelMap: ((sessionId: string) => LabelMap) | null = null;
 
   constructor(heartbeatMs = 15_000) {
     this.heartbeatInterval = heartbeatMs;
@@ -47,6 +49,18 @@ export class SseManager {
    *  original 1h signature TTL. */
   setAttachmentSecret(secret: Buffer): void {
     this.attachmentSecret = secret;
+  }
+
+  /**
+   * Wire a label-map provider to enrich attachment uuid paths with
+   * user-friendly labels at egress (CLAUDE.md "Attachment label
+   * egress rewrite"). Applied per-event-session inside `sendEvent`,
+   * so both `broadcast()` and direct `sendEvent()` callers (e.g.
+   * SSE Last-Event-ID replay) get enriched output. DB still stores
+   * raw events.
+   */
+  setLabelMapProvider(fn: (sessionId: string) => LabelMap): void {
+    this.getLabelMap = fn;
   }
 
   /** Install a revocation check called on every heartbeat. If it returns
@@ -121,7 +135,17 @@ export class SseManager {
   /** Send an SSE event to a single client. */
   sendEvent(client: SseClient, event: AgentEvent, seq?: number): void {
     if (client.res.writableEnded) return;
-    let data = JSON.stringify(event);
+    let outEvent = event;
+    if (this.getLabelMap) {
+      const sid = (event as Record<string, unknown>).sessionId as
+        | string
+        | undefined;
+      if (sid) {
+        const map = this.getLabelMap(sid);
+        if (map.size > 0) outEvent = enrichEventForDisplay(event, map);
+      }
+    }
+    let data = JSON.stringify(outEvent);
     if (this.attachmentSecret && data.includes("/attachments/")) {
       data = reSignAttachmentUrlsInJson(data, this.attachmentSecret);
     }

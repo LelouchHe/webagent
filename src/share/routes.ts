@@ -11,6 +11,7 @@ import type { ShareRow } from "../store.ts";
 import { generateShareToken } from "../tokens.ts";
 import { SanitizeError, sanitizeEventsForShare } from "./sanitize.ts";
 import { buildContentDisposition, isInlineMime } from "../attachments.ts";
+import { enrichStoredEventsForDisplay } from "../attachment-labels.ts";
 import { log } from "../log.ts";
 
 const slog = log.scope("share");
@@ -455,6 +456,12 @@ async function handlePreviewRead(
   const allEvents = deps.store
     .getEvents(sessionId)
     .filter((e) => e.seq <= row.share_snapshot_seq);
+  if (deps.sessions) {
+    enrichStoredEventsForDisplay(
+      allEvents,
+      deps.sessions.getLabelMap(sessionId),
+    );
+  }
   const currentLastSeq = deps.store
     .getEvents(sessionId)
     .reduce((m, e) => Math.max(m, e.seq), 0);
@@ -730,6 +737,12 @@ async function handleSharedEvents(
   const allEvents = deps.store
     .getEvents(row.session_id)
     .filter((e) => e.seq <= row.share_snapshot_seq);
+  if (deps.sessions) {
+    enrichStoredEventsForDisplay(
+      allEvents,
+      deps.sessions.getLabelMap(row.session_id),
+    );
+  }
 
   try {
     const { events } = sanitizeEventsForShare({

@@ -8,6 +8,7 @@ import type { AgentBridge } from "./bridge.ts";
 import type { AgentEvent, ConfigOption, PendingPermission } from "./types.ts";
 
 import { SessionStateManager } from "./session-state.ts";
+import { buildLabelMap, type LabelMap } from "./attachment-labels.ts";
 import { log } from "./log.ts";
 
 const slog = log.scope("session");
@@ -63,6 +64,13 @@ export class SessionManager {
   readonly state = new SessionStateManager();
   /** Deduplicates concurrent resume calls for the same session. */
   private readonly pendingResumes = new Map<string, Promise<void>>();
+  /**
+   * Per-session attachment label map (CLAUDE.md "Attachment label
+   * egress rewrite"). Built lazily from the `attachments` table on
+   * first read; invalidated on attachment INSERT and session
+   * DELETE. Lookup is cheap (Map.get); rebuild is one SQLite query.
+   */
+  private readonly attachmentLabelCache = new Map<string, LabelMap>();
 
   cachedConfigOptions: ConfigOption[] = [];
   agentInfo: { name: string; version: string } | null = null;
@@ -281,6 +289,28 @@ export class SessionManager {
     });
   }
 
+  /**
+   * Lazy-build and return the attachment label map for a session.
+   * Used by both egress chokepoints (SSE broadcast + replay helper)
+   * to translate uuid paths into `<name> [#<id4>]` labels.
+   *
+   * Cached; call `invalidateLabelCache(sid)` after any attachments
+   * INSERT/DELETE to force rebuild. Restart-safe: empty on cold
+   * start, rebuilt on first egress per session.
+   */
+  getLabelMap(sessionId: string): LabelMap {
+    const hit = this.attachmentLabelCache.get(sessionId);
+    if (hit) return hit;
+    const map = buildLabelMap(this.store.listAttachmentLabels(sessionId));
+    this.attachmentLabelCache.set(sessionId, map);
+    return map;
+  }
+
+  /** Invalidate label cache for a session (call after attachment write). */
+  invalidateLabelCache(sessionId: string): void {
+    this.attachmentLabelCache.delete(sessionId);
+  }
+
   /** Delete a session from store and clean up all state (including images). */
   deleteSession(sessionId: string): void {
     const mode = this.store.deleteSession(sessionId);
@@ -290,6 +320,7 @@ export class SessionManager {
     this.thinkingBuffers.delete(sessionId);
     this.activePrompts.delete(sessionId);
     this.runningBashProcs.delete(sessionId);
+    this.attachmentLabelCache.delete(sessionId);
     // Clean pending permissions for this session
     for (const [reqId, perm] of this.pendingPermissions) {
       if (perm.sessionId === sessionId) this.pendingPermissions.delete(reqId);

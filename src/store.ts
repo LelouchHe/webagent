@@ -933,6 +933,25 @@ export class Store {
   }
 
   /**
+   * For the egress label-rewrite (CLAUDE.md "Attachment label egress
+   * rewrite"): list each attachment's id, user-supplied name, and
+   * realpath for a session. Caller (session-manager label cache)
+   * derives the label string `<name> [#<id4>]`. Pure DB read; no
+   * realpath syscalls (the stored realpath is already resolved at
+   * upload time).
+   */
+  listAttachmentLabels(
+    sessionId: string,
+  ): Array<{ id: string; name: string; realpath: string }> {
+    const rows = this.db
+      .prepare(
+        "SELECT id, name, realpath FROM attachments WHERE session_id = ?",
+      )
+      .all(sessionId) as Array<{ id: string; name: string; realpath: string }>;
+    return rows;
+  }
+
+  /**
    * For the share viewer / GET serve path: look up an attachment by the
    * filename portion of its URL (`<id>.<ext>`). The id is the uuid prefix
    * of the file segment.
