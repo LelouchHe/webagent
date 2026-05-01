@@ -19,6 +19,12 @@ import { randomUUID } from "node:crypto";
 import { createWriteStream } from "node:fs";
 import { handleShareRoutes } from "./share/routes.ts";
 import { authenticate, isWhitelistedPath } from "./auth-middleware.ts";
+import { log } from "./log.ts";
+
+const rlog = log.scope("routes");
+const plog = rlog.scope("prompt");
+const slog = rlog.scope("session");
+const mlog = rlog.scope("msg");
 import type { AuthStore, TokenRecord } from "./auth-store.ts";
 import type { TicketStore } from "./sse-ticket.ts";
 import {
@@ -1125,7 +1131,7 @@ export function createRequestHandler(
         bridge
           .prompt(sessionId, body.text, attachments)
           .catch((err: unknown) => {
-            console.error(`[prompt] error for ${sessionId}:`, err);
+            plog.error("error", { sessionId, error: err });
           })
           .finally(() => {
             sessions.activePrompts.delete(sessionId);
@@ -1450,10 +1456,10 @@ export function createRequestHandler(
                   });
               } else {
                 resumePromise.catch((err) => {
-                  console.error(
-                    `[session] background resume failed for ${sessionId.slice(0, 8)}…:`,
-                    err,
-                  );
+                  slog.error("background resume failed", {
+                    sessionId: sessionId.slice(0, 8) + "…",
+                    error: err,
+                  });
                 });
               }
             }
@@ -1967,9 +1973,10 @@ export function createRequestHandler(
               dedup_key: input.dedup_key ?? null,
             });
           }
-          console.info(
-            `[msg] ingress bound msg_id=${id} sess_id=${targetSid.slice(0, 8)}`,
-          );
+          mlog.info("ingress bound", {
+            msg_id: id,
+            sess_id: targetSid.slice(0, 8),
+          });
           const boundBody = { id, delivered: "session" };
           saveClientOpResult(store, opId, "__ingress__", 200, boundBody);
           json(res, 200, boundBody);
@@ -1982,9 +1989,12 @@ export function createRequestHandler(
           const prior = store.findBySupersede(input.to, dedupKey);
           if (prior) {
             store.deleteMessage(prior.id);
-            console.info(
-              `[msg] dedup_key supersede to=${input.to} dedup_key=${dedupKey} old_msg_id=${prior.id} new_msg_id=${id}`,
-            );
+            mlog.info("dedup_key supersede", {
+              to: input.to,
+              dedup_key: dedupKey,
+              old_msg_id: prior.id,
+              new_msg_id: id,
+            });
           }
         }
         store.createMessage({
@@ -2011,9 +2021,10 @@ export function createRequestHandler(
             dedup_key: dedupKey,
           });
         }
-        console.info(
-          `[msg] ingress unbound msg_id=${id} from_ref=${input.from_ref}`,
-        );
+        mlog.info("ingress unbound", {
+          msg_id: id,
+          from_ref: input.from_ref,
+        });
         const unboundBody = { id, delivered: "pending" };
         saveClientOpResult(store, opId, "__ingress__", 200, unboundBody);
         json(res, 200, unboundBody);
@@ -2052,9 +2063,11 @@ export function createRequestHandler(
           if (!out.alreadyConsumed && deps.pushService) {
             void deps.pushService.sendClose(id);
           }
-          console.info(
-            `[msg] consume msg_id=${id} sess_id=${out.sessionId.slice(0, 8)} already_consumed=${out.alreadyConsumed}`,
-          );
+          mlog.info("consume", {
+            msg_id: id,
+            sess_id: out.sessionId.slice(0, 8),
+            already_consumed: out.alreadyConsumed,
+          });
           json(res, 200, {
             sessionId: out.sessionId,
             alreadyConsumed: out.alreadyConsumed,
@@ -2076,7 +2089,7 @@ export function createRequestHandler(
           }
           sseManager.broadcast({ type: "message_acked", messageId: id });
           if (deps.pushService) void deps.pushService.sendClose(id);
-          console.info(`[msg] ack msg_id=${id}`);
+          mlog.info("ack", { msg_id: id });
           json(res, 200, { ok: true });
           return;
         }

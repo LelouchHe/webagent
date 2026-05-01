@@ -1,6 +1,9 @@
 import type { AgentBridge } from "./bridge.ts";
 import type { SessionManager } from "./session-manager.ts";
 import type { Store } from "./store.ts";
+import { log } from "./log.ts";
+
+const tlog = log.scope("title");
 
 const TITLE_MODEL = "claude-haiku-4.5";
 
@@ -36,7 +39,7 @@ export class TitleService {
         if (title && onTitle) onTitle(title);
       })
       .catch((err) => {
-        console.error(`[title] generation failed:`, err);
+        tlog.error("generation failed", { error: err });
       });
   }
 

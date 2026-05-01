@@ -11,6 +11,9 @@ import type { ShareRow } from "../store.ts";
 import { generateShareToken } from "../tokens.ts";
 import { SanitizeError, sanitizeEventsForShare } from "./sanitize.ts";
 import { buildContentDisposition, isInlineMime } from "../attachments.ts";
+import { log } from "../log.ts";
+
+const slog = log.scope("share");
 
 // In-flight dedup for concurrent POST /share on the same session.
 // First caller does the work; concurrent callers await the same promise.
@@ -389,7 +392,7 @@ async function handlePreviewCreate(
       return;
     }
     const errorId = randomUUID();
-    console.error(`[share] preview_create error_id=${errorId}`, err);
+    slog.error("preview_create", { error_id: errorId, error: err });
     json(res, 500, { error: "internal error", error_id: errorId });
   }
 }
@@ -497,7 +500,7 @@ async function handlePreviewRead(
       return;
     }
     const errorId = randomUUID();
-    console.error(`[share] preview_read error_id=${errorId}`, err);
+    slog.error("preview_read", { error_id: errorId, error: err });
     json(res, 500, { error: "internal error", error_id: errorId });
   }
 }
@@ -690,7 +693,7 @@ async function handleViewerHtml(
     deps.store.touchShareAccessed(token);
   } catch (err: unknown) {
     const errorId = randomUUID();
-    console.error(`[share] viewer_html error_id=${errorId}`, err);
+    slog.error("viewer_html", { error_id: errorId, error: err });
     res.writeHead(500, { "Content-Type": "text/plain" });
     res.end(`viewer unavailable (error_id=${errorId})`);
   }
@@ -762,7 +765,7 @@ async function handleSharedEvents(
       // Hard-reject on a LIVE active share — owner's session gained a
       // post-publish leak. Return 410 publicly; owner sees root cause via
       // preview re-gate.
-      console.error("[share] shared_events hard-reject", {
+      slog.error("shared_events hard-reject", {
         rule: err.rule,
         event_id: err.event_id,
       });
@@ -770,7 +773,7 @@ async function handleSharedEvents(
       return;
     }
     const errorId = randomUUID();
-    console.error(`[share] shared_events error_id=${errorId}`, err);
+    slog.error("shared_events", { error_id: errorId, error: err });
     json(res, 500, { error: "internal error", error_id: errorId });
   }
 }

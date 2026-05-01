@@ -8,6 +8,9 @@
  * Mirrors the shape of `message-cleanup.ts` (immediate + interval + unref).
  */
 import type { Store } from "../store.ts";
+import { log } from "../log.ts";
+
+const slog = log.scope("share");
 
 export interface SharePreviewCleanupHandle {
   armed: boolean;
@@ -26,7 +29,7 @@ export function sweepStaleSharePreviewsOnce(
 ): number {
   const removed = store.pruneStalePreviews(now);
   if (removed > 0) {
-    console.info(`[share] preview gc removed=${removed}`);
+    slog.info("preview gc", { removed });
   }
   return removed;
 }
@@ -44,14 +47,14 @@ export function startSharePreviewCleanup(
   try {
     sweepStaleSharePreviewsOnce(store);
   } catch (err) {
-    console.error("[share] preview gc initial sweep failed:", err);
+    slog.error("preview gc initial sweep failed", { error: err });
   }
 
   const timer = setInterval(() => {
     try {
       sweepStaleSharePreviewsOnce(store);
     } catch (err) {
-      console.error("[share] preview gc sweep failed:", err);
+      slog.error("preview gc sweep failed", { error: err });
     }
   }, DAY_MS);
   if (typeof timer.unref === "function") timer.unref();

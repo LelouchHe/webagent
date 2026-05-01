@@ -3,6 +3,10 @@ import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import type { Store } from "./store.ts";
+import { log } from "./log.ts";
+
+const slog = log.scope("push");
+const elog = log.scope("egress");
 
 const VAPID_FILE = "vapid.json";
 /** Remove a subscription after this many consecutive send failures. */
@@ -187,7 +191,7 @@ export class PushService {
     if (existsSync(filePath)) {
       chmodSync(filePath, 0o600);
       const keys = JSON.parse(readFileSync(filePath, "utf8")) as VapidKeys;
-      console.log("[push] loaded VAPID keys");
+      slog.info("loaded VAPID keys");
       return keys;
     }
 
@@ -195,7 +199,7 @@ export class PushService {
     writeFileSync(filePath, JSON.stringify(keys, null, 2) + "\n", {
       mode: 0o600,
     });
-    console.log("[push] generated new VAPID keys");
+    slog.info("generated new VAPID keys");
     return keys;
   }
 
@@ -413,9 +417,14 @@ export class PushService {
         return true;
       });
       if (subs.length === 0) {
-        console.log(
-          `[egress] sendClose tag=${notification.tag} endpoints=0 ok=0 fail=0 fail_410=0 filtered_apple=${filteredApple}`,
-        );
+        elog.info("sendClose", {
+          tag: notification.tag,
+          endpoints: 0,
+          ok: 0,
+          fail: 0,
+          fail_410: 0,
+          filtered_apple: filteredApple,
+        });
         return;
       }
     }
@@ -461,23 +470,26 @@ export class PushService {
           fail410++;
           this.store.removeSubscription(endpoint);
           this.failureCounts.delete(endpoint);
-          console.log(
-            `[push] removed expired subscription (410): ${endpoint.slice(0, 60)}…`,
-          );
+          slog.info("removed expired subscription (410)", {
+            endpoint: endpoint.slice(0, 60) + "…",
+          });
         } else {
           const count = (this.failureCounts.get(endpoint) ?? 0) + 1;
           if (count >= MAX_CONSECUTIVE_FAILURES) {
             this.store.removeSubscription(endpoint);
             this.failureCounts.delete(endpoint);
-            console.log(
-              `[push] removed subscription after ${count} consecutive failures: ${endpoint.slice(0, 60)}…`,
-            );
+            slog.info("removed subscription after consecutive failures", {
+              count,
+              endpoint: endpoint.slice(0, 60) + "…",
+            });
           } else {
             this.failureCounts.set(endpoint, count);
-            console.error(
-              `[push] send failed (${count}/${MAX_CONSECUTIVE_FAILURES}) for ${endpoint.slice(0, 60)}…:`,
-              result.reason,
-            );
+            slog.error("send failed", {
+              count,
+              max: MAX_CONSECUTIVE_FAILURES,
+              endpoint: endpoint.slice(0, 60) + "…",
+              error: result.reason,
+            });
           }
         }
       }
@@ -485,9 +497,14 @@ export class PushService {
 
     if (notification.kind === "close") {
       // Observability signal #6 — aggregated per-call close outcome.
-      console.log(
-        `[egress] sendClose tag=${notification.tag} endpoints=${subs.length} ok=${ok} fail=${fail} fail_410=${fail410} filtered_apple=${filteredApple}`,
-      );
+      elog.info("sendClose", {
+        tag: notification.tag,
+        endpoints: subs.length,
+        ok,
+        fail,
+        fail_410: fail410,
+        filtered_apple: filteredApple,
+      });
     }
   }
 
@@ -524,9 +541,13 @@ export class PushService {
       : undefined;
 
     // Observability signal #7 — sendForMessage entry.
-    console.log(
-      `[egress] sendForMessage msg_id=${msg.id} tag=${tag} deliver=${deliver} endpoints=${subs.length} suppressed_by_visibility=false`,
-    );
+    elog.info("sendForMessage", {
+      msg_id: msg.id,
+      tag,
+      deliver,
+      endpoints: subs.length,
+      suppressed_by_visibility: false,
+    });
 
     await this.sendToAll({
       kind: "notify",
@@ -566,9 +587,13 @@ export class PushService {
 
     const suppressed = this.isSessionVisibleToAnyClient(sessionId);
     const subs = this.store.getAllSubscriptions();
-    console.log(
-      `[egress] sendForEvent sess_id=${sessionId.slice(0, 8)} type=${event.type} tag=${tag} endpoints=${subs.length} suppressed_by_visibility=${suppressed}`,
-    );
+    elog.info("sendForEvent", {
+      sess_id: sessionId.slice(0, 8),
+      type: event.type,
+      tag,
+      endpoints: subs.length,
+      suppressed_by_visibility: suppressed,
+    });
 
     const notification = this.formatNotification(
       sessionId,

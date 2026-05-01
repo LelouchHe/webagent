@@ -1,4 +1,4 @@
-import { describe, it, beforeEach, afterEach, mock } from "node:test";
+import { describe, it, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
@@ -287,9 +287,11 @@ describe("PushService — PushNotification payload shape", () => {
   it("[egress] log emitted on sendForMessage entry", async () => {
     store.saveSubscription("https://push.example.com/1", "auth1", "p256dh1");
     const logs: string[] = [];
-    const origLog = console.log;
-    console.log = mock.fn((...args: unknown[]) => {
-      logs.push(args.map(String).join(" "));
+    const { setLogLevel, setLogSink } = await import("../src/log.ts");
+    const prevLevel = (await import("../src/log.ts")).getLogLevel();
+    setLogLevel("info");
+    setLogSink((_stream, line) => {
+      logs.push(line);
     });
     try {
       await push.sendForMessage({
@@ -299,7 +301,8 @@ describe("PushService — PushNotification payload shape", () => {
         deliver: "push",
       });
     } finally {
-      console.log = origLog;
+      setLogSink(null);
+      setLogLevel(prevLevel);
     }
     const egressLine = logs.find(
       (l) => l.includes("[egress]") && l.includes("sendForMessage"),
@@ -308,8 +311,8 @@ describe("PushService — PushNotification payload shape", () => {
       egressLine,
       `expected [egress] sendForMessage log, got: ${logs.join(" | ")}`,
     );
-    assert.ok(egressLine.includes("msg_id=msg-m1"));
-    assert.ok(egressLine.includes("tag=msg-m1"));
+    assert.ok(egressLine.includes('"msg_id":"msg-m1"'));
+    assert.ok(egressLine.includes('"tag":"msg-m1"'));
   });
 });
 

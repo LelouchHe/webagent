@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadConfig } from "./config.ts";
+import { setLogLevel, log } from "./log.ts";
 import { AgentBridge } from "./bridge.ts";
 import { Store } from "./store.ts";
 import { SessionManager } from "./session-manager.ts";
@@ -41,6 +42,7 @@ for (const method of ["log", "error", "warn"] as const) {
 }
 
 const config = loadConfig();
+setLogLevel(config.debug.level);
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const PUBLIC_DIR = join(__dirname, "..", config.public_dir);
 const PKG_VERSION = (() => {
@@ -77,10 +79,9 @@ let lastSchemaDriftAt = 0;
 const SCHEMA_DRIFT_THROTTLE_MS = 24 * 60 * 60 * 1000;
 const ATTACHMENT_INTERCEPTOR_DUMP_MS = 60 * 60 * 1000;
 setInterval(() => {
-  console.log(
-    "[attachment-interceptor] counters",
-    JSON.stringify(attachmentInterceptorCounters),
-  );
+  log
+    .scope("attachment-interceptor")
+    .info("counters", { ...attachmentInterceptorCounters });
 }, ATTACHMENT_INTERCEPTOR_DUMP_MS).unref();
 
 const sessions = new SessionManager(store, config.default_cwd, config.data_dir);
@@ -162,28 +163,16 @@ async function initBridge(): Promise<AgentBridge> {
         recentPathsLimit: config.limits.recent_paths,
         attachmentInterceptor: {
           counters: attachmentInterceptorCounters,
-          logger: {
-            debug: (msg, ctx) => {
-              if (config.debug.level === "debug") console.debug(msg, ctx);
-            },
-            info: (msg, ctx) => {
-              console.log(msg, ctx);
-            },
-            warn: (msg, ctx) => {
-              console.warn(msg, ctx);
-            },
-            error: (msg, ctx) => {
-              console.error(msg, ctx);
-            },
-          },
+          logger: log.scope("attachment-interceptor"),
           onSchemaDrift: (ctx) => {
             const now = Date.now();
             if (now - lastSchemaDriftAt < SCHEMA_DRIFT_THROTTLE_MS) return;
             lastSchemaDriftAt = now;
-            console.error(
-              "[attachment-interceptor] schema drift detected — rawInput has no known path key",
-              ctx,
-            );
+            log
+              .scope("attachment-interceptor")
+              .error("schema drift detected — rawInput has no known path key", {
+                ctx,
+              });
           },
         },
       },

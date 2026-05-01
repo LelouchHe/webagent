@@ -10,6 +10,10 @@ import {
   type InterceptorCounters,
   type InterceptorLogger,
 } from "./attachment-interceptor.ts";
+import { log } from "./log.ts";
+
+const ailog = log.scope("attachment-interceptor");
+const plog = log.scope("push");
 
 export interface EventHandlerConfig {
   cancelTimeout: number;
@@ -221,10 +225,7 @@ function maybeAutoApproveAttachmentRead(
       );
     },
     (err: unknown) => {
-      console.warn(
-        "[attachment-interceptor] unexpected error",
-        (err as Error).message,
-      );
+      ailog.warn("unexpected error", { error: (err as Error).message });
     },
   );
 }
@@ -384,7 +385,7 @@ function maybePushNotify(event: AgentEvent, pushService: PushService): void {
     pushEvent.exitCode = event.code ?? undefined;
   }
   pushService.sendForEvent(event.sessionId, pushEvent).catch((err) => {
-    console.error("[push] failed to send:", err);
+    plog.error("failed to send", { error: err });
   });
 }
 

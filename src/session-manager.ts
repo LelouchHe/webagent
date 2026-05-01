@@ -8,6 +8,9 @@ import type { AgentBridge } from "./bridge.ts";
 import type { AgentEvent, ConfigOption, PendingPermission } from "./types.ts";
 
 import { SessionStateManager } from "./session-state.ts";
+import { log } from "./log.ts";
+
+const slog = log.scope("session");
 
 const IS_WIN = process.platform === "win32";
 
@@ -100,7 +103,7 @@ export class SessionManager {
     const cleaned = this.store.deleteEmptySessions(EMPTY_SESSION_MIN_AGE_S);
     for (const id of cleaned) this.liveSessions.delete(id);
     if (cleaned.length > 0)
-      console.info(`[session] cleaned ${cleaned.length} empty session(s)`);
+      slog.info("cleaned empty session(s)", { count: cleaned.length });
 
     const sourceSession = inheritFromSessionId
       ? this.store.getSession(inheritFromSessionId)
@@ -169,7 +172,7 @@ export class SessionManager {
         this.cachedConfigOptions,
         session,
       );
-      console.info(`[session] restored: ${sessionId.slice(0, 8)}…`);
+      slog.info("restored", { sessionId: sessionId.slice(0, 8) + "…" });
       return {
         type: "session_created",
         sessionId,
@@ -178,7 +181,7 @@ export class SessionManager {
         configOptions,
       };
     } catch (err) {
-      console.error(`[session] restore failed:`, err);
+      slog.error("restore failed", { error: err });
       throw err;
     } finally {
       this.restoringSessions.delete(sessionId);
@@ -219,15 +222,13 @@ export class SessionManager {
       const opts = await bridge.setConfigOption(sessionId, pick.id, pick.value);
       if (opts.length > 0) {
         this.cachedConfigOptions = opts;
-        console.info(
-          `[session] warmed cache on resume (${opts.length} options)`,
-        );
+        slog.info("warmed cache on resume", { options: opts.length });
       }
     } catch (err) {
-      console.warn(
-        `[session] cache warming failed for ${sessionId.slice(0, 8)}…:`,
-        err,
-      );
+      slog.warn("cache warming failed", {
+        sessionId: sessionId.slice(0, 8) + "…",
+        error: err,
+      });
     }
   }
 
@@ -406,9 +407,9 @@ export class SessionManager {
     if (this.activePrompts.has(sessionId)) return false;
     if (!this.store.hasInterruptedTurn(sessionId)) return false;
 
-    console.info(
-      `[session] auto-retrying interrupted turn for ${sessionId.slice(0, 8)}…`,
-    );
+    slog.info("auto-retrying interrupted turn", {
+      sessionId: sessionId.slice(0, 8) + "…",
+    });
     this.activePrompts.add(sessionId);
     this.syncBusy(sessionId);
     bridge
@@ -417,10 +418,10 @@ export class SessionManager {
         "Continue your previous response — it was interrupted mid-way.",
       )
       .catch((err: unknown) => {
-        console.error(
-          `[session] auto-retry failed for ${sessionId.slice(0, 8)}…:`,
-          err,
-        );
+        slog.error("auto-retry failed", {
+          sessionId: sessionId.slice(0, 8) + "…",
+          error: err,
+        });
         this.activePrompts.delete(sessionId);
         this.syncBusy(sessionId);
       });

@@ -17,6 +17,9 @@ import type {
   AttachmentRef,
   PromptBlock,
 } from "./attachment-dispatch.ts";
+import { log } from "./log.ts";
+
+const blog = log.scope("bridge");
 
 export class AgentBridge extends EventEmitter {
   private proc: ChildProcess | null = null;
@@ -264,7 +267,7 @@ export class AgentBridge extends EventEmitter {
     if (this.reloading) throw new Error("Already reloading");
     this.reloading = true;
     this.emit("event", { type: "agent_reloading" } satisfies AgentEvent);
-    console.info("[bridge] reloading agent...");
+    blog.info("reloading agent...");
 
     try {
       // 1. Cancel all active prompts + kill bash procs
@@ -319,7 +322,7 @@ export class AgentBridge extends EventEmitter {
           break;
         } catch (err) {
           lastError = err;
-          console.error(`[bridge] start attempt ${i + 1} failed:`, err);
+          blog.error("start attempt failed", { attempt: i + 1, error: err });
           if (i < 2) await new Promise((r) => setTimeout(r, 1000 * 2 ** i));
         }
       }
@@ -334,7 +337,7 @@ export class AgentBridge extends EventEmitter {
         throw lastError;
       }
 
-      console.info("[bridge] agent reloaded successfully");
+      blog.info("agent reloaded successfully");
     } finally {
       this.reloading = false;
     }

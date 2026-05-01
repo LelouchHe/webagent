@@ -75,7 +75,7 @@ export default tseslint.config(
       eqeqeq: ["error", "always", { null: "ignore" }],
       "no-implicit-coercion": "error",
       "prefer-const": "error",
-      "no-console": ["error", { allow: ["warn", "error", "info"] }],
+      "no-console": "error",
 
       // Medium value — promoted to error (0 violations after cleanup)
       "@typescript-eslint/no-unsafe-assignment": "error",
@@ -201,12 +201,17 @@ export default tseslint.config(
   },
 
   // CLI / bootstrap files: console.log is the intended user-facing output.
+  // - daemon.ts: CLI commands (start/stop/status/restart) emit human-readable
+  //   text to the operator's terminal — UX, not service runtime debug.
+  // - server.ts: operational lifecycle output (listen, shutdown, bridge start)
+  //   visible to whoever launched the process. Runtime debug callbacks inside
+  //   server.ts use `log.scope(...)`.
+  // - config.ts: bootstrap output, runs before setLogLevel() can be called.
   {
     files: [
       "src/daemon.ts",
       "src/server.ts",
       "src/config.ts",
-      "src/push-service.ts",
       "scripts/**/*.ts",
     ],
     rules: { "no-console": "off" },

@@ -1,4 +1,7 @@
 import type { Store } from "./store.ts";
+import { log } from "./log.ts";
+
+const mlog = log.scope("msg");
 
 /** Cleanup handle returned by startMessageCleanup. */
 export interface CleanupHandle {
@@ -23,7 +26,7 @@ export function sweepOnce(
   const threshold = now - ttlDays * DAY_MS;
   const removed = store.deleteOlderThan(threshold);
   if (removed > 0) {
-    console.info(`[msg] ttl sweep removed=${removed} ttl_days=${ttlDays}`);
+    mlog.info("ttl sweep", { removed, ttl_days: ttlDays });
   }
   return removed;
 }
@@ -49,7 +52,7 @@ export function startMessageCleanup(
     try {
       sweepOnce(store, ttlDays);
     } catch (err) {
-      console.error("[msg] ttl sweep failed:", err);
+      mlog.error("ttl sweep failed", { error: err });
     }
   }, DAY_MS);
   // Don't keep the event loop alive for this interval alone (let server.ts own lifecycle).
