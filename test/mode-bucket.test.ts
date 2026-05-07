@@ -44,6 +44,10 @@ describe("mode-bucket", () => {
       assert.ok(isPlanMode("plan"));
     });
 
+    it("matches Codex read-only hyphenated form", () => {
+      assert.ok(isPlanMode("read-only"));
+    });
+
     it("rejects everything else", () => {
       assert.ok(!isPlanMode("autopilot"));
       assert.ok(!isPlanMode("default"));
@@ -63,6 +67,10 @@ describe("mode-bucket", () => {
 
     it("matches Claude bypassPermissions bare form", () => {
       assert.ok(isAutopilotMode("bypassPermissions"));
+    });
+
+    it("matches Codex full-access hyphenated form", () => {
+      assert.ok(isAutopilotMode("full-access"));
     });
 
     it("does NOT match Claude acceptEdits / dontAsk / auto", () => {
@@ -98,6 +106,14 @@ describe("mode-bucket", () => {
       assert.ok(shouldShowModePill("bypassPermissions"));
     });
 
+    it("shows for Codex read-only / auto / full-access (none are canonical defaults)", () => {
+      // Codex's default is read-only — but it's a meaningful safety state,
+      // so we show the pill even though it's the "resting" mode.
+      assert.ok(shouldShowModePill("read-only"));
+      assert.ok(shouldShowModePill("auto"));
+      assert.ok(shouldShowModePill("full-access"));
+    });
+
     it("shows for default-bucket members other than canonical default", () => {
       assert.ok(shouldShowModePill("acceptEdits"));
       assert.ok(shouldShowModePill("dontAsk"));
@@ -116,6 +132,11 @@ describe("mode-bucket", () => {
       assert.equal(formatModeLabel("plan"), "plan");
       assert.equal(formatModeLabel("autopilot"), "autopilot");
       assert.equal(formatModeLabel("default"), "default");
+    });
+
+    it("leaves Codex hyphenated ids alone (CSS uppercase handles them)", () => {
+      assert.equal(formatModeLabel("read-only"), "read-only");
+      assert.equal(formatModeLabel("full-access"), "full-access");
     });
 
     it("strips URL prefix before splitting", () => {

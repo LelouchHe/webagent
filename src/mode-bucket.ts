@@ -3,6 +3,7 @@
 // Different agents emit `currentModeId` in different forms:
 //   - Copilot CLI:   "https://agentclientprotocol.com/protocol/session-modes#autopilot"
 //   - Claude Code:   "bypassPermissions" (bare string)
+//   - Codex:         "read-only" / "auto" / "full-access" (bare hyphenated)
 //
 // `extractModeId` normalizes both into a short id ("autopilot" / "bypassPermissions" / "plan" / ...).
 // All bucket / display logic flows through `extractModeId`, so adding a new
@@ -18,8 +19,12 @@
 // internally whether to emit a permission_request, and we just respond to
 // what arrives.
 
-const PLAN_IDS = new Set(["plan"]);
-const AUTOPILOT_IDS = new Set(["autopilot", "bypassPermissions"]);
+const PLAN_IDS = new Set(["plan", "read-only"]);
+const AUTOPILOT_IDS = new Set([
+  "autopilot",
+  "bypassPermissions",
+  "full-access",
+]);
 
 // IDs that should hide the pill entirely (the canonical "default" of each
 // agent — showing it adds noise because it's the resting state).
