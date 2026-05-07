@@ -31,6 +31,9 @@ export class AgentBridge extends EventEmitter {
   private readonly permissionRequestSessions = new Map<string, string>();
   private readonly silentSessions = new Set<string>(); // Sessions that don't emit events
   private readonly silentBuffers = new Map<string, string>(); // Text buffers for silent sessions
+  private readonly pendingAborts = new Map<string, (e: Error) => void>();
+  private deadReason: string | null = null;
+  private stderrTail = "";
   readonly agentCmd: string;
   reloading = false;
   private attachmentDispatcher: AttachmentDispatcher | null = null;
@@ -52,12 +55,40 @@ export class AgentBridge extends EventEmitter {
   async start(): Promise<void> {
     const [cmd, ...args] = this.agentCmd.split(/\s+/);
     this.proc = spawn(cmd, args, {
-      stdio: ["pipe", "pipe", "inherit"],
+      stdio: ["pipe", "pipe", "pipe"],
     });
 
-    if (!this.proc.stdin || !this.proc.stdout) {
+    if (!this.proc.stdin || !this.proc.stdout || !this.proc.stderr) {
       throw new Error(`Failed to start: ${this.agentCmd}`);
     }
+
+    // Reset dead state for fresh start, and capture stderr for diagnostics.
+    this.deadReason = null;
+    this.stderrTail = "";
+    this.proc.stderr.on("data", (chunk: Buffer) => {
+      process.stderr.write(chunk);
+      this.stderrTail = (this.stderrTail + chunk.toString()).slice(-4096);
+    });
+
+    // Detect unexpected agent death. restart() and shutdown() set
+    // `reloading=true` so they own the lifecycle and we skip auto-marking.
+    const proc = this.proc;
+    proc.on("exit", (code, signal) => {
+      if (this.reloading) return;
+      if (proc !== this.proc) return; // already replaced
+      const tail = this.stderrTail.trim().split("\n").slice(-3).join("\n");
+      const why = signal ? `signal=${signal}` : `code=${code}`;
+      const reason =
+        `Agent process exited unexpectedly (${why}).` +
+        (tail ? `\nLast stderr:\n${tail}` : "") +
+        `\nCheck '${this.agentCmd}' is properly configured (e.g. authenticated).`;
+      this.markAgentDead(reason);
+    });
+    proc.on("error", (err: Error) => {
+      if (this.reloading) return;
+      if (proc !== this.proc) return;
+      this.markAgentDead(`Agent process error: ${err.message}`);
+    });
 
     const input = Writable.toWeb(this.proc.stdin);
     const output = Readable.toWeb(
@@ -116,11 +147,28 @@ export class AgentBridge extends EventEmitter {
     cwd: string,
   ): Promise<{ sessionId: string; configOptions: ConfigOption[] }> {
     if (!this.conn) throw new Error("Not connected");
-    const session = (await this.conn.loadSession({
-      sessionId,
-      cwd,
-      mcpServers: [],
-    })) as acp.LoadSessionResponse;
+    let session: acp.LoadSessionResponse;
+    try {
+      session = (await this.conn.loadSession({
+        sessionId,
+        cwd,
+        mcpServers: [],
+      })) as acp.LoadSessionResponse;
+    } catch (err: unknown) {
+      // -32002 = Resource not found. Some agents (e.g. claude-agent-acp) don't
+      // persist sessions across process restarts, so a session in our DB may
+      // be unknown to the live agent. Translate the JSON-RPC error into a
+      // user-actionable message; routes returns it as 500 / SSE 'error' event.
+      const code = (err as { code?: number }).code;
+      if (code === -32002) {
+        throw new Error(
+          `The agent no longer remembers session ${sessionId.slice(0, 8)}… ` +
+            `(it may not persist sessions across restarts). Use /new to start a fresh one.`,
+          { cause: err },
+        );
+      }
+      throw err;
+    }
     const configOptions = (session.configOptions ??
       []) as unknown as ConfigOption[];
     this.emit("event", {
@@ -151,7 +199,20 @@ export class AgentBridge extends EventEmitter {
     text: string,
     attachments?: AttachmentRef[],
   ): Promise<void> {
+    if (this.deadReason) {
+      this.emit("event", {
+        type: "error",
+        sessionId,
+        message: this.deadReason,
+      } satisfies AgentEvent);
+      return;
+    }
     if (!this.conn) throw new Error("Not connected");
+    let abortReject: (e: Error) => void = () => {};
+    const abortPromise = new Promise<never>((_, rej) => {
+      abortReject = rej;
+    });
+    this.pendingAborts.set(sessionId, abortReject);
     try {
       const promptParts: PromptBlock[] = [];
       if (attachments && attachments.length > 0) {
@@ -170,10 +231,13 @@ export class AgentBridge extends EventEmitter {
         }
       }
       promptParts.push({ type: "text", text });
-      const result = (await this.conn.prompt({
-        sessionId,
-        prompt: promptParts,
-      })) as { stopReason?: string };
+      const result = (await Promise.race([
+        this.conn.prompt({
+          sessionId,
+          prompt: promptParts,
+        }),
+        abortPromise,
+      ])) as { stopReason?: string };
       this.emit("event", {
         type: "prompt_done",
         sessionId,
@@ -199,6 +263,8 @@ export class AgentBridge extends EventEmitter {
         sessionId,
         message,
       } satisfies AgentEvent);
+    } finally {
+      this.pendingAborts.delete(sessionId);
     }
   }
 
@@ -212,13 +278,50 @@ export class AgentBridge extends EventEmitter {
     await this.conn?.cancel({ sessionId });
   }
 
+  /**
+   * Mark the agent subprocess as dead. Rejects in-flight prompts and emits
+   * an `error` event for each so the frontend can exit the busy state and
+   * show a useful message instead of hanging forever.
+   *
+   * Called from `start()`'s `proc.on("exit"|"error")` handlers when the
+   * subprocess dies outside of `restart()` / `shutdown()` (which set
+   * `reloading=true` to claim the lifecycle). Does NOT auto-restart — for
+   * config errors like missing auth, restart would loop into the same
+   * failure. User fixes the config and runs `/reload`.
+   */
+  private markAgentDead(reason: string): void {
+    if (this.deadReason) return;
+    this.deadReason = reason;
+    blog.error("agent subprocess dead", { reason });
+    const aborts = [...this.pendingAborts.entries()];
+    this.pendingAborts.clear();
+    for (const [sessionId, abort] of aborts) {
+      this.emit("event", {
+        type: "error",
+        sessionId,
+        message: reason,
+      } satisfies AgentEvent);
+      abort(new Error(reason));
+    }
+    this.conn = null;
+  }
+
   /** Send a prompt and collect the full text response without emitting events. */
   async promptForText(sessionId: string, text: string): Promise<string> {
+    if (this.deadReason) throw new Error(this.deadReason);
     if (!this.conn) throw new Error("Not connected");
     this.silentSessions.add(sessionId);
     this.silentBuffers.set(sessionId, "");
+    let abortReject: (e: Error) => void = () => {};
+    const abortPromise = new Promise<never>((_, rej) => {
+      abortReject = rej;
+    });
+    this.pendingAborts.set(sessionId, abortReject);
     try {
-      await this.conn.prompt({ sessionId, prompt: [{ type: "text", text }] });
+      await Promise.race([
+        this.conn.prompt({ sessionId, prompt: [{ type: "text", text }] }),
+        abortPromise,
+      ]);
       return this.silentBuffers.get(sessionId) ?? "";
     } catch (err: unknown) {
       const message =
@@ -234,6 +337,7 @@ export class AgentBridge extends EventEmitter {
     } finally {
       this.silentSessions.delete(sessionId);
       this.silentBuffers.delete(sessionId);
+      this.pendingAborts.delete(sessionId);
     }
   }
 

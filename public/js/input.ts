@@ -10,7 +10,13 @@ import {
   updateModeUI,
   refreshInputActions,
 } from "./state.ts";
-import { addMessage, addSystem, addBashBlock, showWaiting } from "./render.ts";
+import {
+  addMessage,
+  addSystem,
+  addBashBlock,
+  showWaiting,
+  hideWaiting,
+} from "./render.ts";
 import {
   handleSlashCommand,
   hideSlashMenu,
@@ -176,19 +182,31 @@ function sendMessage() {
           mimeType,
         }),
       );
-      void api.sendMessage(
-        state.sessionId!,
-        text || "What is in this attachment?",
-        refs,
-      );
+      api
+        .sendMessage(
+          state.sessionId!,
+          text || "What is in this attachment?",
+          refs,
+        )
+        .catch(handleSendError);
     });
   } else {
-    void api.sendMessage(state.sessionId, text);
+    api.sendMessage(state.sessionId, text).catch(handleSendError);
   }
   state.turnEnded = false;
   state.sentMessageForSession = state.sessionId;
   setBusy(true);
   showWaiting();
+}
+
+function handleSendError(err: unknown) {
+  // Without this, a fire-and-forget POST that returns non-2xx (e.g. 500
+  // when ensureResumed fails because the agent doesn't recognize the
+  // session) leaves the UI stuck in busy state with no visible reason.
+  setBusy(false);
+  hideWaiting();
+  const msg = err instanceof Error ? err.message : String(err);
+  addSystem(`err: ${msg}`);
 }
 
 function doCancel() {

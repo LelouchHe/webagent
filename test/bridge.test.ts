@@ -324,6 +324,108 @@ describe("AgentBridge", () => {
     ]);
   });
 
+  describe("subprocess death", () => {
+    it("rejects in-flight prompts and emits error event when agent dies", async () => {
+      const bridge = new AgentBridge("fake-agent");
+      const events: any[] = [];
+      bridge.on("event", (e: any) => events.push(e));
+
+      let resolveConnPrompt: ((v: { stopReason: string }) => void) | null =
+        null;
+      (bridge as any).conn = {
+        prompt: () =>
+          new Promise<{ stopReason: string }>((resolve) => {
+            resolveConnPrompt = resolve;
+          }),
+      };
+
+      const promptPromise = bridge.prompt("s1", "hello");
+      // Give prompt() a turn to register its abort handler
+      await new Promise((r) => setImmediate(r));
+
+      (bridge as any).markAgentDead(
+        "Agent process exited unexpectedly (code=1).\nLast stderr:\nauth failed",
+      );
+
+      await promptPromise;
+
+      const err = events.find((e: any) => e.type === "error");
+      assert.ok(err, "expected error event");
+      assert.equal(err.sessionId, "s1");
+      assert.match(err.message, /exited unexpectedly/);
+      assert.match(err.message, /auth failed/);
+      assert.ok(
+        !events.some((e: any) => e.type === "prompt_done"),
+        "should NOT emit prompt_done when subprocess dies",
+      );
+
+      // Cleanup pending conn.prompt promise
+      (resolveConnPrompt as ((v: { stopReason: string }) => void) | null)?.({
+        stopReason: "end_turn",
+      });
+    });
+
+    it("fails fast on new prompt after agent died", async () => {
+      const bridge = new AgentBridge("fake-agent");
+      const events: any[] = [];
+      bridge.on("event", (e: any) => events.push(e));
+
+      (bridge as any).markAgentDead("Agent process exited unexpectedly.");
+
+      await bridge.prompt("s2", "hello");
+
+      const err = events.find((e: any) => e.type === "error");
+      assert.ok(err, "expected error event");
+      assert.equal(err.sessionId, "s2");
+      assert.match(err.message, /exited unexpectedly/);
+    });
+
+    it("clears dead state after successful start()", async () => {
+      const bridge = new AgentBridge("fake-agent");
+      (bridge as any).markAgentDead("died");
+      assert.equal((bridge as any).deadReason, "died");
+
+      // Simulate start() success path
+      (bridge as any).deadReason = null;
+      (bridge as any).conn = {
+        prompt: async () => ({ stopReason: "end_turn" }),
+      };
+
+      const events: any[] = [];
+      bridge.on("event", (e: any) => events.push(e));
+      await bridge.prompt("s3", "hi");
+      assert.ok(events.find((e: any) => e.type === "prompt_done"));
+    });
+
+    it("loadSession rethrows resource-not-found with friendly message", async () => {
+      const bridge = new AgentBridge("fake-agent");
+      class FakeReqErr extends Error {
+        code = -32002;
+        constructor(uri: string) {
+          super(`Resource not found: ${uri}`);
+          this.name = "RequestError";
+        }
+      }
+      (bridge as any).conn = {
+        loadSession: async () => {
+          throw new FakeReqErr("abc-123");
+        },
+      };
+
+      await assert.rejects(
+        () => bridge.loadSession("abc-123", "/tmp"),
+        (err: Error) => {
+          assert.match(
+            err.message,
+            /agent (no longer )?(remembers|recognizes|persist)/i,
+          );
+          assert.match(err.message, /\/new/);
+          return true;
+        },
+      );
+    });
+  });
+
   describe("restart()", () => {
     function createMockSessions() {
       return {
