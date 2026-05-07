@@ -76,7 +76,7 @@ export function resolveInputActions(): [InputAction, InputAction] {
   }
   const left: InputAction = {
     label: "^U",
-    title: "Attach image (Ctrl+U)",
+    title: "Attach file (Ctrl+U)",
     onClick: () => {
       handlers.attach();
     },

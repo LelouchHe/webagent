@@ -379,7 +379,7 @@ export async function handleSlashCommand(text: string): Promise<boolean> {
       addSystem("Shift+Enter — New line");
       addSystem("^C — Cancel current response");
       addSystem("^M — Cycle mode (Agent → Plan → Autopilot)");
-      addSystem("^U — Upload image");
+      addSystem("^U — Attach file (any type)");
       addSystem("--- Tips ---");
       addSystem("Tap ❯ prompt to cycle mode");
       return true;

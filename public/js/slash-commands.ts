@@ -696,7 +696,7 @@ export const SHORTCUTS = [
   { key: "Shift+Enter", desc: "New line" },
   { key: "^C", desc: "Cancel current response" },
   { key: "^M", desc: "Cycle mode (Agent → Plan → Autopilot)" },
-  { key: "^U", desc: "Upload image" },
+  { key: "^U", desc: "Attach file (any type)" },
 ];
 
 export const TIPS = [{ text: "Tap ❯ prompt to cycle mode" }];
