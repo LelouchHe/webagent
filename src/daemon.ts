@@ -87,6 +87,53 @@ export function resolveArgs(args: string[]): string[] {
 }
 
 // ---------------------------------------------------------------------------
+// Restart decision (pure)
+// ---------------------------------------------------------------------------
+
+/**
+ * Sysexits.h EX_CONFIG. Server exits 78 when configuration is bad
+ * (missing auth.json + non-TTY, preflight failures, etc.). Restarting
+ * cannot fix configuration — supervisor must surface and stop.
+ */
+const EX_CONFIG = 78;
+
+export type RestartAction =
+  | { kind: "restart"; delayMs: number }
+  | { kind: "stop"; reason: string };
+
+export interface RestartCtx {
+  stopping: boolean;
+  lastStart: number;
+  now: number;
+  currentDelay: number;
+}
+
+/**
+ * Pure decision: should the supervisor restart the child, and with what
+ * delay? Side effects (logging, scheduling) live in `runSupervisor`.
+ */
+export function decideRestart(
+  code: number | null,
+  _signal: string | null,
+  ctx: RestartCtx,
+): RestartAction {
+  if (ctx.stopping) {
+    return { kind: "stop", reason: "supervisor shutting down" };
+  }
+  if (code === EX_CONFIG) {
+    return {
+      kind: "stop",
+      reason: `child exited with EX_CONFIG (${EX_CONFIG}) — not restarting`,
+    };
+  }
+  const stable = ctx.now - ctx.lastStart > STABLE_THRESHOLD_MS;
+  const delay = stable
+    ? RESTART_DELAY_INITIAL
+    : Math.min(ctx.currentDelay * 2, RESTART_DELAY_MAX);
+  return { kind: "restart", delayMs: delay };
+}
+
+// ---------------------------------------------------------------------------
 // Command dispatch
 // ---------------------------------------------------------------------------
 
@@ -306,14 +353,25 @@ function runSupervisor(serverArgs: string[]): void {
 
   function onChildExit(code: number | null, signal: string | null): void {
     child = null;
-    if (stopping) return;
-
-    if (Date.now() - lastStart > STABLE_THRESHOLD_MS) {
-      delay = RESTART_DELAY_INITIAL;
-    } else {
-      delay = Math.min(delay * 2, RESTART_DELAY_MAX);
+    const action = decideRestart(code, signal, {
+      stopping,
+      lastStart,
+      now: Date.now(),
+      currentDelay: delay,
+    });
+    if (action.kind === "stop") {
+      if (stopping) return;
+      console.error(
+        `[supervisor] ${action.reason} (code=${code} signal=${signal})`,
+      );
+      try {
+        unlinkSync(pidFile);
+      } catch {
+        /* ignore */
+      }
+      process.exit(code ?? 1);
     }
-
+    delay = action.delayMs;
     console.log(
       `[supervisor] server exited (code=${code} signal=${signal}), restarting in ${delay}ms`,
     );

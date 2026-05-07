@@ -16,6 +16,7 @@ import {
   resolveArgs,
   readPidInfo,
   writePidInfo,
+  decideRestart,
   type PidInfo,
 } from "../src/daemon.ts";
 
@@ -153,6 +154,84 @@ describe("daemon", () => {
 
       const result = readPidInfo(pidFile);
       assert.equal(result, null);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Unit: decideRestart — supervisor's restart decision in isolation
+  // ---------------------------------------------------------------------------
+
+  describe("decideRestart", () => {
+    const baseCtx = {
+      stopping: false,
+      lastStart: 1_000,
+      now: 5_000, // 4s after start; well below STABLE_THRESHOLD_MS
+      currentDelay: 1_000,
+    };
+
+    it("stops (kind=stop) when child exits with EX_CONFIG (78)", () => {
+      // 这是核心修复:supervisor 看到 78 不应该重启,因为 78 = 配置错误,
+      // 没人来修配置之前重启只会撞回原地,产生无限循环 + PID 文件假活。
+      const r = decideRestart(78, null, baseCtx);
+      assert.equal(r.kind, "stop");
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+      if (r.kind === "stop") {
+        assert.match(r.reason, /EX_CONFIG|78|config/i);
+      }
+    });
+
+    it("does NOT stop on adjacent codes (77, 79) — exact 78 only", () => {
+      assert.equal(decideRestart(77, null, baseCtx).kind, "restart");
+      assert.equal(decideRestart(79, null, baseCtx).kind, "restart");
+    });
+
+    it("stops when stopping flag is set, regardless of code", () => {
+      const r = decideRestart(0, null, { ...baseCtx, stopping: true });
+      assert.equal(r.kind, "stop");
+    });
+
+    it("restarts with backoff when child crashed quickly", () => {
+      const r = decideRestart(1, null, {
+        ...baseCtx,
+        currentDelay: 1_000,
+      });
+      assert.equal(r.kind, "restart");
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+      if (r.kind === "restart") {
+        // 4s 后崩 → 不算稳定 → delay 翻倍
+        assert.equal(r.delayMs, 2_000);
+      }
+    });
+
+    it("resets delay to initial when child was stable (>STABLE_THRESHOLD)", () => {
+      const r = decideRestart(1, null, {
+        ...baseCtx,
+        lastStart: 1_000,
+        now: 1_000 + 70_000, // 70s — stable
+        currentDelay: 16_000,
+      });
+      assert.equal(r.kind, "restart");
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+      if (r.kind === "restart") {
+        assert.equal(r.delayMs, 1_000);
+      }
+    });
+
+    it("caps backoff at RESTART_DELAY_MAX (30s)", () => {
+      const r = decideRestart(1, null, {
+        ...baseCtx,
+        currentDelay: 30_000,
+      });
+      assert.equal(r.kind, "restart");
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+      if (r.kind === "restart") {
+        assert.equal(r.delayMs, 30_000);
+      }
+    });
+
+    it("treats null code (signal-only) as non-config exit and restarts", () => {
+      const r = decideRestart(null, "SIGKILL", baseCtx);
+      assert.equal(r.kind, "restart");
     });
   });
 
