@@ -32,6 +32,31 @@ agent_cmd = "claude-agent-acp"
 
 See the [ACP Registry](https://agentclientprotocol.com/get-started/registry) for the full list (30+ agents).
 
+### Per-agent caveats
+
+Different agents implement ACP with different conventions. Things that have surprised us in dogfood:
+
+**Codex (`@zed-industries/codex-acp`) — shell exec uses process cwd.**
+Codex runs normally under WebAgent — session listing, file edits, and permission scoping all honor the per-session `cwd` from ACP `newSession`. The only subtle point is that Codex's shell sandbox uses the **process working directory** (whatever cwd `codex-acp` was spawned in) for *shell-relative* paths:
+
+- `pwd`, `ls *.md`, `cat a.txt`, `find .` all run from the directory where you launched `webagent`, not from the session's chosen cwd.
+- Absolute paths and file-edit tools (which take absolute paths anyway) work correctly per-session, including permission boundary checks against `session.cwd`.
+- In practice the agent uses absolute paths most of the time, so this is rarely visible. If you want `pwd` and shell-relative paths to also match the session cwd, launch `webagent` from your project directory (`cd ~/myproject && webagent`).
+
+This is by design in `codex-rs` (Zed's editor spawns one `codex-acp` per project, so process cwd ≡ session cwd by construction). Copilot CLI and Claude Code instead honor ACP `session.cwd` for shell exec too.
+
+**Codex mode names differ from Copilot/Claude:**
+
+| Concept     | Copilot CLI | Claude Code         | Codex          |
+| ----------- | ----------- | ------------------- | -------------- |
+| Default     | `agent`     | `default`           | `read-only`    |
+| Plan-only   | `plan`      | `plan`              | `read-only`*   |
+| Auto-allow  | `autopilot` | `bypassPermissions` | `full-access`  |
+
+*Codex doesn't have a separate plan mode; `read-only` is both the default and the read-only mode. WebAgent shows the `READ-ONLY` pill for it (as a meaningful safety state), not as a hidden default.
+
+In auto-allow modes, both Claude (`bypassPermissions`) and Codex (`full-access`) skip emitting `permission_request` entirely — the agent self-handles it. WebAgent's auto-approve code path is therefore mostly relevant to Copilot-style agents that still emit permission requests in autopilot.
+
 ## Configuration
 
 Configuration is via TOML files, passed with `--config`:
