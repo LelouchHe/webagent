@@ -114,13 +114,13 @@ describe("preflight", () => {
     let blockedPort = 0;
 
     beforeEach(async () => {
-      // Bind on a random port; that's the port we'll claim is busy
-      // when calling runPreflight. Listening on 0 lets the OS pick an
-      // unused port — the test then reuses that exact number.
+      // Bind on 0.0.0.0 because that's what real webagent uses; binding
+      // 127.0.0.1 would only catch loopback-vs-loopback conflicts and
+      // miss the common case of "another webagent on *:PORT".
       blocker = createServer();
       await new Promise<void>((settle, reject) => {
         blocker!.once("error", reject);
-        blocker!.listen(0, "127.0.0.1", () => {
+        blocker!.listen(0, "0.0.0.0", () => {
           settle();
         });
       });
@@ -168,6 +168,50 @@ describe("preflight", () => {
         /port|config\.toml|already.*use|busy|EADDRINUSE/i,
         "hint should explain the conflict",
       );
+    });
+
+    it("detects 0.0.0.0-bound conflict (server.listen uses 0.0.0.0)", async () => {
+      // Real server binds to 0.0.0.0, so probe must too — otherwise a
+      // process listening on *:PORT (e.g. another webagent instance)
+      // slips past preflight and surfaces only as EADDRINUSE on real
+      // listen. Reproduce by binding the blocker on 0.0.0.0.
+      const wideBlocker = createServer();
+      const widePort: number = await new Promise((settle, reject) => {
+        wideBlocker.once("error", reject);
+        wideBlocker.listen(0, "0.0.0.0", () => {
+          const a = wideBlocker.address();
+          if (typeof a !== "object" || !a) {
+            reject(new Error("no addr"));
+            return;
+          }
+          settle(a.port);
+        });
+      });
+      try {
+        const dir = mkdtempSync(join(tmpdir(), "preflight-"));
+        tmpDirs.push(dir);
+        let stderr = "";
+        console.error = ((msg: string) => {
+          stderr += String(msg) + "\n";
+        }) as never;
+        await assert.rejects(
+          async () =>
+            runPreflight({
+              data_dir: dir,
+              agent_cmd: "node",
+              port: widePort,
+            }),
+          /exit:78/,
+        );
+        assert.equal(exited, 78);
+        assert.match(stderr, new RegExp(String(widePort)));
+      } finally {
+        await new Promise<void>((settle) => {
+          wideBlocker.close(() => {
+            settle();
+          });
+        });
+      }
     });
 
     it("passes when port is free (port 0 = OS-assigned, always free)", async () => {

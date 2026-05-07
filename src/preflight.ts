@@ -137,8 +137,9 @@ function checkAgent(agentCmd: string): CheckResult & { resolved?: string } {
 }
 
 /**
- * Probe whether `port` can be bound on 127.0.0.1. Listens, then closes
- * immediately. There's a tiny race window between close and the real
+ * Probe whether `port` can be bound on 0.0.0.0 (matching what
+ * `server.listen` actually uses). Listens, then closes immediately.
+ * There's a tiny race window between close and the real
  * server.listen() — that's fine for diagnostics: the goal is a friendly
  * "port already in use" hint, not a hard guarantee.
  *
@@ -148,12 +149,17 @@ async function checkPort(port: number): Promise<CheckResult> {
   if (port === 0) {
     return { ok: true, name: "port", detail: "0 (OS-assigned)" };
   }
+  // Probe must bind to the same address family as the real server
+  // (server.ts uses "0.0.0.0"). Probing 127.0.0.1 lets a foreign
+  // listener on 0.0.0.0:PORT slip past preflight and only surface as
+  // EADDRINUSE during the real server.listen() — exactly the case
+  // we're trying to catch.
   const result = await new Promise<{ code?: string }>((settle) => {
     const probe = createServer();
     probe.once("error", (err: NodeJS.ErrnoException) => {
       settle({ code: err.code ?? "unknown" });
     });
-    probe.listen(port, "127.0.0.1", () => {
+    probe.listen(port, "0.0.0.0", () => {
       probe.close(() => {
         settle({});
       });
