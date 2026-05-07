@@ -102,17 +102,19 @@ export const ConfigSchema = z.object({
 
   // [auth] — bearer-token auth knobs.
   // first_run_bootstrap controls the zero-config first-run UX:
-  //   true  (default) — when auth.json file does NOT exist AND stdin is a
-  //                     TTY, server auto-mints a one-time admin token and
-  //                     prints a login URL like
-  //                     `http://localhost:<port>/#t=wat_<...>`. The fragment
-  //                     never reaches the server in network requests.
-  //   false           — restore old behavior: refuse to serve, print
-  //                     `--create-token` hint, exit 78. Use this when
-  //                     deploying behind a supervisor that provisions
-  //                     auth.json out-of-band.
-  // Either way: if auth.json exists but list is empty (deleted/parse-error),
-  // server still exits 78 — that's a config anomaly, not a fresh install.
+  //   true  (default) — when auth.json file does NOT exist AND stdin
+  //                     is a TTY, server auto-mints a one-time admin
+  //                     token and prints it as part of the startup-
+  //                     doctor stream. Operator copies the token from
+  //                     terminal scrollback and pastes it into the
+  //                     /login form.
+  //   false           — refuse to serve, print `--create-token` hint,
+  //                     exit 78. Use this when deploying behind a
+  //                     supervisor that provisions auth.json
+  //                     out-of-band (CI, Ansible, k8s init container).
+  // Either way: if auth.json exists but list is empty (deleted/parse-
+  // error), server still exits 78 — that's a config anomaly, not a
+  // fresh install.
   auth: z
     .object({
       first_run_bootstrap: z.boolean().default(true),
