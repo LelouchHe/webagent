@@ -17,8 +17,7 @@ import {
   readPidInfo,
   writePidInfo,
   decideRestart,
-  decideStartFirstRun,
-  resolveDataDirFromArgs,
+  extractConfigPath,
   type PidInfo,
 } from "../src/daemon.ts";
 
@@ -238,69 +237,31 @@ describe("daemon", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // Unit: decideStartFirstRun — pre-fork auth.json existence gate
+  // Unit: extractConfigPath — parent uses this to load same config as child
   // ---------------------------------------------------------------------------
 
-  describe("decideStartFirstRun", () => {
-    it("proceeds when auth.json exists", () => {
-      const r = decideStartFirstRun({ authJsonExists: true });
-      assert.equal(r.kind, "proceed");
+  describe("extractConfigPath", () => {
+    it("returns null when no --config in args", () => {
+      assert.equal(extractConfigPath([], "/cwd"), null);
+      assert.equal(extractConfigPath(["start"], "/cwd"), null);
     });
 
-    it("aborts with --create-token hint when auth.json missing", () => {
-      const r = decideStartFirstRun({ authJsonExists: false });
-      assert.equal(r.kind, "abort");
-      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-      if (r.kind === "abort") {
-        assert.match(r.message, /--create-token/);
-      }
-    });
-  });
-
-  // ---------------------------------------------------------------------------
-  // Unit: resolveDataDirFromArgs — extract data_dir from CLI/TOML for pre-fork
-  // ---------------------------------------------------------------------------
-
-  describe("resolveDataDirFromArgs", () => {
-    const tmpDirs: string[] = [];
-    afterEach(() => {
-      while (tmpDirs.length)
-        rmSync(tmpDirs.pop()!, { recursive: true, force: true });
-    });
-
-    it("returns default 'data' (relative to cwd) when no --config", () => {
-      const cwd = mkdtempSync(join(tmpdir(), "dd-"));
-      tmpDirs.push(cwd);
-      const got = resolveDataDirFromArgs([], cwd);
-      assert.equal(got, join(cwd, "data"));
-    });
-
-    it("reads data_dir from --config TOML", () => {
-      const cwd = mkdtempSync(join(tmpdir(), "dd-"));
-      tmpDirs.push(cwd);
-      const cfgPath = join(cwd, "c.toml");
-      writeFileSync(cfgPath, 'data_dir = "/tmp/custom-dd"\n');
-      const got = resolveDataDirFromArgs(["--config", cfgPath], cwd);
-      assert.equal(got, "/tmp/custom-dd");
-    });
-
-    it("resolves relative data_dir relative to cwd", () => {
-      const cwd = mkdtempSync(join(tmpdir(), "dd-"));
-      tmpDirs.push(cwd);
-      const cfgPath = join(cwd, "c.toml");
-      writeFileSync(cfgPath, 'data_dir = "mydata"\n');
-      const got = resolveDataDirFromArgs(["--config", cfgPath], cwd);
-      assert.equal(got, join(cwd, "mydata"));
-    });
-
-    it("falls back to default 'data' when --config TOML cannot be read", () => {
-      const cwd = mkdtempSync(join(tmpdir(), "dd-"));
-      tmpDirs.push(cwd);
-      const got = resolveDataDirFromArgs(
-        ["--config", join(cwd, "nope.toml")],
-        cwd,
+    it("returns absolute path verbatim", () => {
+      assert.equal(
+        extractConfigPath(["--config", "/abs/c.toml"], "/cwd"),
+        "/abs/c.toml",
       );
-      assert.equal(got, join(cwd, "data"));
+    });
+
+    it("resolves relative path against cwd", () => {
+      assert.equal(
+        extractConfigPath(["--config", "c.toml"], "/cwd"),
+        "/cwd/c.toml",
+      );
+    });
+
+    it("handles --config at end of argv (missing value) by returning null", () => {
+      assert.equal(extractConfigPath(["--config"], "/cwd"), null);
     });
   });
 

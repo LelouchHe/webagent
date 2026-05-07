@@ -22,10 +22,8 @@ import {
 } from "./share/cleanup.ts";
 import { AuthStore } from "./auth-store.ts";
 import { join as pathJoin } from "node:path";
-import { existsSync } from "node:fs";
-import { decideBootstrap, formatBootstrapBanner } from "./bootstrap.ts";
 import { resolveSessionsAnchor } from "./sessions-anchor.ts";
-import { runPreflight } from "./preflight.ts";
+import { runStartupChecks } from "./startup-checks.ts";
 import { AttachmentDispatcher } from "./attachment-dispatch.ts";
 import {
   createCounters as createAttachmentInterceptorCounters,
@@ -47,15 +45,11 @@ for (const method of ["log", "error", "warn"] as const) {
 const config = loadConfig();
 setLogLevel(config.debug.level);
 
-// Preflight: node version / data_dir writable / agent resolvable.
-// Each printed as `[check] <name>: <detail>  ✓|✗`. First ✗ exits 78
-// before any heavy init, so failures are the first thing the operator
-// sees on a fresh install.
-const preflight = await runPreflight({
-  data_dir: config.data_dir,
-  agent_cmd: config.agent_cmd,
-  port: config.port,
-});
+// Unified startup gate: preflight (node, data_dir, agent, port) + auth
+// bootstrap (mint or refuse). Skipped via WEBAGENT_STARTUP_CHECKED=1
+// when a parent process (daemon supervisor) already ran the gate in
+// the operator's foreground TTY before forking.
+const preflight = await runStartupChecks(config);
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const PUBLIC_DIR = join(__dirname, "..", config.public_dir);
@@ -240,60 +234,11 @@ process.on("SIGHUP", () => {
 
 server.listen(config.port, "0.0.0.0", () => {
   void (async () => {
-    // Auth bootstrap is part of the same startup-doctor stream:
-    // preflight checks → auth check → "[server] listening". Output uses
-    // the same [check] prefix so operator sees one continuous boot
-    // diagnostic, not three disjoint phases.
+    // The auth gate already ran in runStartupChecks (above) — either in
+    // this process or in a parent that handed off via WEBAGENT_STARTUP_
+    // CHECKED. Just open the AuthStore handle the rest of the server
+    // will use. If the gate ran, auth.json exists and has ≥ 1 token.
     await authStore.load();
-    const tokenCount = authStore.list().length;
-    const authJsonPath = pathJoin(config.data_dir, "auth.json");
-    const action = decideBootstrap({
-      authJsonExists: existsSync(authJsonPath),
-      tokenCount,
-      isTTY: Boolean(process.stdin.isTTY),
-      firstRunEnabled: config.auth.first_run_bootstrap,
-    });
-    if (action.kind === "exit-config") {
-      // Either: daemon mode + no auth.json (use --create-token), or
-      // file exists but token list is empty (config anomaly — manual
-      // wipe / parse fail / perm error). Refuse to serve and exit 78
-      // (sysexits EX_CONFIG). Daemon supervisor recognizes 78 and
-      // stops restart loop (see decideRestart in daemon.ts).
-      console.error(
-        `[check] auth: no tokens in auth.json — refusing to serve  ✗`,
-      );
-      console.error(`        create one with:  webagent --create-token <name>`);
-      console.error(
-        `        then start the server again (or send SIGHUP to the running process).`,
-      );
-      process.exit(78);
-    }
-    if (action.kind === "mint") {
-      // First-run zero-config UX: mint a one-time admin token and print
-      // it as a doctor-style check, followed by a banner instructing
-      // the operator to copy + paste it into the /login form. Token
-      // is NOT embedded in a clickable URL — that would leak via
-      // browser history sync and history-permission extensions.
-      try {
-        const created = await authStore.addToken("first-run", "admin");
-        console.log(`[check] auth: minted first-run admin token  ✓`);
-        console.log(
-          formatBootstrapBanner({
-            token: created.token,
-            port: config.port,
-            isTTY: Boolean(process.stdout.isTTY),
-          }),
-        );
-        log.scope("bootstrap").info("first-run admin token minted", {
-          name: created.record.name,
-        });
-      } catch (err) {
-        console.error(`[check] auth: mint failed: ${String(err)}  ✗`);
-        process.exit(78);
-      }
-    } else {
-      console.log(`[check] auth: ${tokenCount} token(s) loaded  ✓`);
-    }
     console.log(`[server] listening on http://localhost:${config.port}`);
     messageCleanup = startMessageCleanup(
       store,

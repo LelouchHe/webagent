@@ -135,7 +135,15 @@ function parseArgs(): string | null {
 }
 
 export function loadConfig(): Config {
-  const configPath = parseArgs();
+  return loadConfigFromPath(parseArgs());
+}
+
+/**
+ * Load + validate config from an explicit path (or defaults if null).
+ * Lets non-CLI callers (daemon parent) load the same effective config
+ * the server would, without needing to mutate process.argv.
+ */
+export function loadConfigFromPath(configPath: string | null): Config {
   let raw: Record<string, unknown> = {};
 
   if (configPath) {

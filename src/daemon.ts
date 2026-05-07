@@ -9,9 +9,10 @@ import {
 } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { parse as parseTOML } from "smol-toml";
 
 import { atomicWriteFileSync } from "./atomic-write.ts";
+import { loadConfigFromPath } from "./config.ts";
+import { runStartupChecks, STARTUP_CHECKED_ENV } from "./startup-checks.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -88,59 +89,21 @@ export function resolveArgs(args: string[]): string[] {
 }
 
 // ---------------------------------------------------------------------------
-// Pre-fork start gate (pure)
+// Config-path extraction for parent-side checks
 // ---------------------------------------------------------------------------
 
 /**
- * Resolve effective `data_dir` from CLI args without spawning the server.
- * Used by the daemon parent process to know where to look for `auth.json`
- * before forking. Mirrors the resolution rules in `src/config.ts` but
- * stays minimal: parse `--config` if present, read `data_dir` from TOML,
- * resolve relative paths against `cwd`. On any error, fall back to the
- * default `<cwd>/data`. Failure to parse here is non-fatal — the child
- * server will surface the real config error with full diagnostics.
+ * Pull the `--config <path>` value out of the daemon's argv (resolving
+ * relative paths against cwd). Used by `cmdStart` to load the same
+ * config the server child would, so the parent process can run the
+ * unified startup checks (preflight + auth bootstrap) in the operator's
+ * TTY before forking. Returns null if no `--config` was passed.
  */
-export function resolveDataDirFromArgs(args: string[], cwd: string): string {
-  let dataDir = "data";
+export function extractConfigPath(args: string[], cwd: string): string | null {
   const idx = args.indexOf("--config");
-  if (idx >= 0 && idx + 1 < args.length) {
-    const cfgPath = isAbsolute(args[idx + 1])
-      ? args[idx + 1]
-      : resolve(cwd, args[idx + 1]);
-    try {
-      const raw = parseTOML(readFileSync(cfgPath, "utf-8")) as {
-        data_dir?: unknown;
-      };
-      if (typeof raw.data_dir === "string" && raw.data_dir.length > 0) {
-        dataDir = raw.data_dir;
-      }
-    } catch {
-      /* fall back to default — child will report real error */
-    }
-  }
-  return isAbsolute(dataDir) ? dataDir : resolve(cwd, dataDir);
-}
-
-/**
- * Decide whether `webagent start` (daemon mode) can proceed. The forked
- * server has no TTY, so first-run bootstrap can't mint a token there;
- * fail fast in the parent with a friendlier message instead of letting
- * the child exit 78 silently into the log.
- */
-export function decideStartFirstRun(opts: {
-  authJsonExists: boolean;
-}): { kind: "proceed" } | { kind: "abort"; message: string } {
-  if (opts.authJsonExists) return { kind: "proceed" };
-  return {
-    kind: "abort",
-    message:
-      "no auth tokens found (auth.json missing).\n" +
-      "daemon mode cannot mint a first-run token because the forked server has no TTY.\n" +
-      "create one first, then start the daemon:\n" +
-      "  webagent --create-token <name>\n" +
-      "  webagent start\n" +
-      "(or run `webagent` in the foreground to use first-run bootstrap.)",
-  };
+  if (idx < 0 || idx + 1 >= args.length) return null;
+  const v = args[idx + 1];
+  return isAbsolute(v) ? v : resolve(cwd, v);
 }
 
 // ---------------------------------------------------------------------------
@@ -226,20 +189,15 @@ async function cmdStart(
     return;
   }
 
-  // Pre-fork auth gate: daemon-spawned server has no TTY, so first-run
-  // bootstrap cannot mint a token there. Surface the missing-auth case
-  // with a clear message in the parent terminal instead of letting the
-  // child exit 78 into the log file.
-  const dataDir = resolveDataDirFromArgs(args, process.cwd());
-  const authJsonPath = join(dataDir, "auth.json");
-  const gate = decideStartFirstRun({
-    authJsonExists: existsSync(authJsonPath),
-  });
-  if (gate.kind === "abort") {
-    console.error(gate.message);
-    process.exitCode = 1;
-    return;
-  }
+  // Run the unified startup gate in this (foreground) process before
+  // forking. This is the operator's TTY, so first-run mint banners
+  // and `[check]` failures land where they can actually be seen and
+  // copy-pasted, instead of being entombed in the daemon log file.
+  // Pass WEBAGENT_STARTUP_CHECKED=1 to the supervisor child so it (and
+  // the server it spawns) skip re-running the gate.
+  const cfgPath = extractConfigPath(args, process.cwd());
+  const config = loadConfigFromPath(cfgPath);
+  await runStartupChecks(config);
 
   const serverJs = join(__dirname, "server.js");
   if (!existsSync(serverJs)) {
@@ -276,6 +234,7 @@ async function cmdStart(
       stdio: ["ignore", log, log],
       cwd: process.cwd(),
       windowsHide: true,
+      env: { ...process.env, [STARTUP_CHECKED_ENV]: "1" },
     },
   );
   child.unref();

@@ -215,6 +215,7 @@ export default tseslint.config(
       "src/server.ts",
       "src/config.ts",
       "src/preflight.ts",
+      "src/startup-checks.ts",
       "scripts/**/*.ts",
     ],
     rules: { "no-console": "off" },
