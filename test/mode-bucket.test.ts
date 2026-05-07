@@ -73,11 +73,19 @@ describe("mode-bucket", () => {
       assert.ok(isAutopilotMode("full-access"));
     });
 
+    it("matches Gemini yolo bare form", () => {
+      assert.ok(isAutopilotMode("yolo"));
+    });
+
     it("does NOT match Claude acceptEdits / dontAsk / auto", () => {
       // These are agent-internal — webagent should not auto-approve.
       assert.ok(!isAutopilotMode("acceptEdits"));
       assert.ok(!isAutopilotMode("dontAsk"));
       assert.ok(!isAutopilotMode("auto"));
+    });
+
+    it("does NOT match Gemini autoEdit (only auto-approves edits, not all tools)", () => {
+      assert.ok(!isAutopilotMode("autoEdit"));
     });
 
     it("rejects default / agent / plan / empty", () => {
@@ -92,6 +100,7 @@ describe("mode-bucket", () => {
     it("hides for canonical defaults", () => {
       assert.ok(!shouldShowModePill("agent"));
       assert.ok(!shouldShowModePill("default"));
+      assert.ok(!shouldShowModePill("build"));
       assert.ok(!shouldShowModePill("https://x/modes#agent"));
     });
 
@@ -100,10 +109,16 @@ describe("mode-bucket", () => {
       assert.ok(!shouldShowModePill(null));
     });
 
-    it("shows for plan / autopilot", () => {
+    it("shows for plan / autopilot / yolo", () => {
       assert.ok(shouldShowModePill("plan"));
       assert.ok(shouldShowModePill("autopilot"));
       assert.ok(shouldShowModePill("bypassPermissions"));
+      assert.ok(shouldShowModePill("yolo"));
+    });
+
+    it("shows for Gemini autoEdit and OpenCode general (default-bucket but not canonical default)", () => {
+      assert.ok(shouldShowModePill("autoEdit"));
+      assert.ok(shouldShowModePill("general"));
     });
 
     it("shows for Codex read-only / auto / full-access (none are canonical defaults)", () => {

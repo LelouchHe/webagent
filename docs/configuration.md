@@ -47,17 +47,20 @@ Codex runs normally under WebAgent — session listing, file edits, and permissi
 
 This is by design in `codex-rs` (Zed's editor spawns one `codex-acp` per project, so process cwd ≡ session cwd by construction). Copilot CLI and Claude Code instead honor ACP `session.cwd` in their own shell tools too.
 
-**Codex mode names differ from Copilot/Claude:**
+**Codex mode names differ from Copilot/Claude/Gemini/OpenCode:**
 
-| Concept     | Copilot CLI | Claude Code         | Codex          |
-| ----------- | ----------- | ------------------- | -------------- |
-| Default     | `agent`     | `default`           | `read-only`    |
-| Plan-only   | `plan`      | `plan`              | `read-only`*   |
-| Auto-allow  | `autopilot` | `bypassPermissions` | `full-access`  |
+| Concept           | Copilot CLI | Claude Code         | Codex          | Gemini CLI         | OpenCode               |
+| ----------------- | ----------- | ------------------- | -------------- | ------------------ | ---------------------- |
+| Default           | `agent`     | `default`           | `read-only`    | `default`          | `build`                |
+| Plan-only         | `plan`      | `plan`              | `read-only`*   | `plan`             | `plan`                 |
+| Auto-allow (full) | `autopilot` | `bypassPermissions` | `full-access`  | `yolo`             | (configurable agent)   |
+| Other built-ins   | —           | `acceptEdits`, `dontAsk`, `auto` | `auto` | `autoEdit`         | `general` + user-defined |
 
 *Codex doesn't have a separate plan mode; `read-only` is both the default and the read-only mode. WebAgent shows the `READ-ONLY` pill for it (as a meaningful safety state), not as a hidden default.
 
-In auto-allow modes, both Claude (`bypassPermissions`) and Codex (`full-access`) skip emitting `permission_request` entirely — the agent self-handles it. WebAgent's auto-approve code path is therefore mostly relevant to Copilot-style agents that still emit permission requests in autopilot.
+**OpenCode modes are user-extensible.** Beyond the built-in `build` / `plan` / `general`, anything the user defines under `~/.config/opencode/` as a non-subagent, non-hidden agent will appear as a selectable mode. WebAgent treats them as default-bucket modes (shown in the pill, no auto-approve).
+
+In auto-allow modes (`bypassPermissions`, `full-access`, `yolo`), the agent itself skips emitting `permission_request` entirely — the agent self-handles it. WebAgent's auto-approve code path is therefore mostly relevant to Copilot-style agents that still emit permission requests in autopilot. Gemini's `autoEdit` is a partial autopilot (auto-approves edits only, still prompts for shell/web) — WebAgent treats it as a default-bucket mode and forwards permission requests as-is.
 
 ## Configuration
 

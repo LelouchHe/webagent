@@ -2,33 +2,39 @@
 //
 // Different agents emit `currentModeId` in different forms:
 //   - Copilot CLI:   "https://agentclientprotocol.com/protocol/session-modes#autopilot"
-//   - Claude Code:   "bypassPermissions" (bare string)
+//   - Claude Code:   "bypassPermissions" (bare camelCase string)
 //   - Codex:         "read-only" / "auto" / "full-access" (bare hyphenated)
+//   - Gemini CLI:    "default" / "autoEdit" / "yolo" / "plan" (bare; enum-based)
+//   - OpenCode:      "build" / "plan" / "general" + user-defined agent names
 //
-// `extractModeId` normalizes both into a short id ("autopilot" / "bypassPermissions" / "plan" / ...).
-// All bucket / display logic flows through `extractModeId`, so adding a new
-// mode means adding one entry to one of the small constant sets below.
+// `extractModeId` normalizes URL forms into a short id. All bucket / display
+// logic flows through `extractModeId`, so adding a new mode means adding one
+// entry to one of the small constant sets below.
 //
 // Buckets webagent cares about:
 //   - plan       → read-only; visual hint only, no permission interception
 //   - autopilot  → all permission_requests auto-approved with `allow_once`
 //   - default    → forwarded as-is to the user (anything that's neither plan nor autopilot)
 //
-// The agent's own internal modes (acceptEdits, dontAsk, auto on Claude) all
-// fall into the default bucket from webagent's perspective: the agent decides
-// internally whether to emit a permission_request, and we just respond to
-// what arrives.
+// The agent's own internal modes (Claude acceptEdits/dontAsk/auto, Gemini
+// autoEdit, OpenCode user-defined agents) all fall into the default bucket
+// from webagent's perspective: the agent decides internally whether to emit
+// a permission_request, and we just respond to what arrives.
 
 const PLAN_IDS = new Set(["plan", "read-only"]);
 const AUTOPILOT_IDS = new Set([
   "autopilot",
   "bypassPermissions",
   "full-access",
+  "yolo",
 ]);
 
 // IDs that should hide the pill entirely (the canonical "default" of each
 // agent — showing it adds noise because it's the resting state).
-const HIDDEN_DEFAULT_IDS = new Set(["agent", "default"]);
+//   - "agent"   → Copilot default
+//   - "default" → Claude default + Gemini default
+//   - "build"   → OpenCode default
+const HIDDEN_DEFAULT_IDS = new Set(["agent", "default", "build"]);
 
 export function extractModeId(raw: string | null | undefined): string {
   if (!raw) return "";
