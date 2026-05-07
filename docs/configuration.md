@@ -36,14 +36,16 @@ See the [ACP Registry](https://agentclientprotocol.com/get-started/registry) for
 
 Different agents implement ACP with different conventions. Things that have surprised us in dogfood:
 
-**Codex (`@zed-industries/codex-acp`) — shell exec uses process cwd.**
-Codex runs normally under WebAgent — session listing, file edits, and permission scoping all honor the per-session `cwd` from ACP `newSession`. The only subtle point is that Codex's shell sandbox uses the **process working directory** (whatever cwd `codex-acp` was spawned in) for *shell-relative* paths:
+**Codex (`@zed-industries/codex-acp`) — agent's shell tool uses process cwd.**
+Codex runs normally under WebAgent — session listing, file edits, and permission scoping all honor the per-session `cwd` from ACP `newSession`. The only subtle point is **Codex's own internal shell tool** (the `/bin/bash -lc` calls the LLM makes via codex-rs) uses the **process working directory** of `codex-acp` itself, not the per-session cwd:
 
-- `pwd`, `ls *.md`, `cat a.txt`, `find .` all run from the directory where you launched `webagent`, not from the session's chosen cwd.
+- Inside the agent's shell tool, `pwd`, `ls *.md`, `cat a.txt`, `find .` all resolve from the directory where you launched `webagent`, not from the session's chosen cwd.
 - Absolute paths and file-edit tools (which take absolute paths anyway) work correctly per-session, including permission boundary checks against `session.cwd`.
 - In practice the agent uses absolute paths most of the time, so this is rarely visible. If you want `pwd` and shell-relative paths to also match the session cwd, launch `webagent` from your project directory (`cd ~/myproject && webagent`).
 
-This is by design in `codex-rs` (Zed's editor spawns one `codex-acp` per project, so process cwd ≡ session cwd by construction). Copilot CLI and Claude Code instead honor ACP `session.cwd` for shell exec too.
+**This does NOT affect WebAgent's own `!command` shell** — that always honors the current session's cwd (`spawn(..., { cwd: session.cwd })` in `routes.ts`), regardless of which agent is in use. The caveat above is purely about the shell tool that the Codex *agent itself* invokes.
+
+This is by design in `codex-rs` (Zed's editor spawns one `codex-acp` per project, so process cwd ≡ session cwd by construction). Copilot CLI and Claude Code instead honor ACP `session.cwd` in their own shell tools too.
 
 **Codex mode names differ from Copilot/Claude:**
 
