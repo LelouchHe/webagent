@@ -607,48 +607,38 @@ body {
 #input-area.plan-mode {
   border-top: 2px solid var(--green);
 }
-#input-area.plan-mode::before {
-  content: "plan";
-  position: absolute;
-  top: -7px;
-  left: 16px;
-  font-size: 10px;
-  line-height: 1;
-  padding: 0 4px;
-  background: var(--bg);
-  color: var(--green);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
 #input-area.plan-mode #input-prompt {
   --prompt-color: var(--green);
   color: var(--prompt-color);
 }
+#input-area.plan-mode #mode-pill {
+  color: var(--green);
+}
 #input-area.autopilot-mode {
   border-top: 2px solid var(--red);
-}
-#input-area.autopilot-mode::before {
-  content: "autopilot";
-  position: absolute;
-  top: -7px;
-  left: 16px;
-  font-size: 10px;
-  line-height: 1;
-  padding: 0 4px;
-  background: var(--bg);
-  color: var(--red);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
 }
 #input-area.autopilot-mode #input-prompt {
   --prompt-color: var(--red);
   color: var(--prompt-color);
 }
+#input-area.autopilot-mode #mode-pill {
+  color: var(--red);
+}
 #input-area.preview-mode {
   border-top: 2px solid var(--blue);
 }
-#input-area.preview-mode::before {
-  content: "preview";
+#input-area.preview-mode #input-prompt {
+  --prompt-color: var(--blue);
+  color: var(--prompt-color);
+}
+#input-area.preview-mode #mode-pill {
+  color: var(--blue);
+}
+/* Mode pill: JS writes the actual mode name (#plan, autopilot, default,
+   acceptEdits, etc.) into textContent. The :empty selector hides the
+   element when there's no mode to show (e.g. before configOptions land).
+   Color comes from the bucket-specific rules above; default is dim. */
+#mode-pill {
   position: absolute;
   top: -7px;
   left: 16px;
@@ -656,13 +646,12 @@ body {
   line-height: 1;
   padding: 0 4px;
   background: var(--bg);
-  color: var(--blue);
+  color: var(--text-dim);
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
-#input-area.preview-mode #input-prompt {
-  --prompt-color: var(--blue);
-  color: var(--prompt-color);
+#mode-pill:empty {
+  display: none;
 }
 #status-bar {
   display: flex;

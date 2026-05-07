@@ -1,6 +1,12 @@
 // Shared state, DOM refs, config helpers, routing, session management
 
 import type { ConfigOption, AgentEvent } from "../../src/types.ts";
+import {
+  isPlanMode,
+  isAutopilotMode,
+  shouldShowModePill,
+  formatModeLabel,
+} from "../../src/mode-bucket.ts";
 import * as api from "./api.ts";
 
 export type { ConfigOption };
@@ -29,6 +35,7 @@ export const dom = {
   themeBtn: $<HTMLButtonElement>("#theme-btn"),
   slashMenu: $<HTMLDivElement>("#slash-menu"),
   inputArea: $<HTMLDivElement>("#input-area"),
+  modePill: $<HTMLSpanElement>("#mode-pill"),
   statusBar: $<HTMLDivElement>("#status-bar"),
 };
 
@@ -183,6 +190,7 @@ export function updateModeUI() {
   if (state.previewToken) {
     dom.inputArea.classList.add("preview-mode");
     dom.input.placeholder = "publish or cancel";
+    dom.modePill.textContent = "preview";
     refreshInputActions();
     return;
   }
@@ -191,9 +199,17 @@ export function updateModeUI() {
   // terminate the chain. `??` would keep `""` as the winner; `||` skips it.
   // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing
   const modeValue = getConfigValue("mode") || getFallback("mode") || "";
-  if (modeValue.includes("#plan")) dom.inputArea.classList.add("plan-mode");
-  else if (modeValue.includes("#autopilot"))
+  if (isPlanMode(modeValue)) dom.inputArea.classList.add("plan-mode");
+  else if (isAutopilotMode(modeValue))
     dom.inputArea.classList.add("autopilot-mode");
+  // Pill text is owned by mode-bucket helpers. Hidden for the canonical
+  // default of each agent (Copilot `agent`, Claude `default`) — those are
+  // the resting state, showing them is noise. Everything else (plan,
+  // autopilot, acceptEdits, dontAsk, unknown modes) renders the camelCase-
+  // split label and CSS uppercases it.
+  dom.modePill.textContent = shouldShowModePill(modeValue)
+    ? formatModeLabel(modeValue)
+    : "";
   refreshInputActions();
 }
 

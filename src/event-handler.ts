@@ -11,6 +11,7 @@ import {
   type InterceptorLogger,
 } from "./attachment-interceptor.ts";
 import { log } from "./log.ts";
+import { isAutopilotMode } from "./mode-bucket.ts";
 
 const ailog = log.scope("attachment-interceptor");
 const plog = log.scope("push");
@@ -166,7 +167,7 @@ function maybeAutoApprovePermission(
   sseManager: SseManager,
 ): boolean {
   const mode = store.getSession(event.sessionId)?.mode ?? "";
-  if (!mode.includes("#autopilot")) return false;
+  if (!isAutopilotMode(mode)) return false;
   const opt = event.options.find(
     (o: { kind?: string }) => o.kind === "allow_once",
   ) as { optionId: string; label?: string } | undefined;

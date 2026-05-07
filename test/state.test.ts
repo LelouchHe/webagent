@@ -128,6 +128,73 @@ describe("state", () => {
       assert.ok(!mod.dom.inputArea.classList.contains("plan-mode"));
       assert.ok(!mod.dom.inputArea.classList.contains("autopilot-mode"));
     });
+
+    it("adds autopilot-mode class for Claude bypassPermissions", () => {
+      mod.state.configOptions = [
+        { id: "mode", currentValue: "bypassPermissions", options: [] },
+      ];
+      mod.updateModeUI();
+      assert.ok(mod.dom.inputArea.classList.contains("autopilot-mode"));
+    });
+
+    it("adds plan-mode class for Claude bare 'plan'", () => {
+      mod.state.configOptions = [
+        { id: "mode", currentValue: "plan", options: [] },
+      ];
+      mod.updateModeUI();
+      assert.ok(mod.dom.inputArea.classList.contains("plan-mode"));
+    });
+
+    it("hides pill for Copilot agent (canonical default)", () => {
+      mod.state.configOptions = [
+        {
+          id: "mode",
+          currentValue: "https://x.example/modes#agent",
+          options: [],
+        },
+      ];
+      mod.updateModeUI();
+      assert.equal(mod.dom.modePill.textContent, "");
+    });
+
+    it("hides pill for Claude default (canonical default)", () => {
+      mod.state.configOptions = [
+        { id: "mode", currentValue: "default", options: [] },
+      ];
+      mod.updateModeUI();
+      assert.equal(mod.dom.modePill.textContent, "");
+    });
+
+    it("shows camelCase-split label for bypassPermissions", () => {
+      mod.state.configOptions = [
+        { id: "mode", currentValue: "bypassPermissions", options: [] },
+      ];
+      mod.updateModeUI();
+      assert.equal(mod.dom.modePill.textContent, "bypass Permissions");
+    });
+
+    it("shows label for acceptEdits (default bucket but not canonical)", () => {
+      mod.state.configOptions = [
+        { id: "mode", currentValue: "acceptEdits", options: [] },
+      ];
+      mod.updateModeUI();
+      assert.equal(mod.dom.modePill.textContent, "accept Edits");
+      // acceptEdits is in default bucket — neither plan-mode nor autopilot-mode
+      assert.ok(!mod.dom.inputArea.classList.contains("plan-mode"));
+      assert.ok(!mod.dom.inputArea.classList.contains("autopilot-mode"));
+    });
+
+    it("shows short label for Copilot URL form", () => {
+      mod.state.configOptions = [
+        {
+          id: "mode",
+          currentValue: "https://x.example/modes#autopilot",
+          options: [],
+        },
+      ];
+      mod.updateModeUI();
+      assert.equal(mod.dom.modePill.textContent, "autopilot");
+    });
   });
 
   describe("requestNewSession", () => {

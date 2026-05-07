@@ -259,6 +259,78 @@ describe("handleAgentEvent", () => {
     assert.ok(events.some((e) => e.type === "permission_response"));
   });
 
+  it("auto-approves permission for Claude bypassPermissions mode (bare string)", () => {
+    store.createSession("s1", "/tmp");
+    store.updateSessionConfig("s1", "mode", "bypassPermissions");
+    const { bridge, calls } = createMockBridge();
+    const { sseManager, broadcasted } = createMockSseManager();
+
+    handleAgentEvent(
+      {
+        type: "permission_request",
+        sessionId: "s1",
+        requestId: "req1",
+        title: "Run command",
+        options: [
+          { optionId: "allow_once", kind: "allow_once", label: "Allow once" },
+          { optionId: "deny", kind: "deny", label: "Deny" },
+        ],
+      } as any,
+      sessions,
+      store,
+      bridge,
+      makeEventHandlerConfig(),
+      sseManager as any,
+    );
+
+    assert.deepEqual(calls.resolvePermission, [
+      { requestId: "req1", optionId: "allow_once" },
+    ]);
+    assert.equal(broadcasted.length, 2);
+    assert.equal(broadcasted[1].type, "permission_response");
+  });
+
+  it("does NOT auto-approve for Claude acceptEdits / dontAsk", () => {
+    // These are agent-internal modes — the agent decides what to skip.
+    // Webagent should forward permission_requests it does receive.
+    for (const mode of ["acceptEdits", "dontAsk", "auto"]) {
+      store.createSession("s_" + mode, "/tmp");
+      store.updateSessionConfig("s_" + mode, "mode", mode);
+      const { bridge, calls } = createMockBridge();
+      const { sseManager, broadcasted } = createMockSseManager();
+
+      handleAgentEvent(
+        {
+          type: "permission_request",
+          sessionId: "s_" + mode,
+          requestId: "req_" + mode,
+          title: "Run command",
+          options: [
+            { optionId: "allow_once", kind: "allow_once", label: "Allow once" },
+            { optionId: "deny", kind: "deny", label: "Deny" },
+          ],
+        } as any,
+        sessions,
+        store,
+        bridge,
+        makeEventHandlerConfig(),
+        sseManager as any,
+      );
+
+      assert.deepEqual(
+        calls.resolvePermission,
+        [],
+        `mode=${mode} should not auto-resolve`,
+      );
+      assert.equal(
+        broadcasted.length,
+        1,
+        `mode=${mode} should only broadcast request`,
+      );
+      assert.equal(broadcasted[0].type, "permission_request");
+    }
+  });
+
   it("broadcasts permission_request normally when not in autopilot mode", () => {
     store.createSession("s1", "/tmp");
     store.updateSessionConfig("s1", "mode", "agent");
