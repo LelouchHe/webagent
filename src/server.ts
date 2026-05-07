@@ -51,9 +51,10 @@ setLogLevel(config.debug.level);
 // Each printed as `[check] <name>: <detail>  ✓|✗`. First ✗ exits 78
 // before any heavy init, so failures are the first thing the operator
 // sees on a fresh install.
-const preflight = runPreflight({
+const preflight = await runPreflight({
   data_dir: config.data_dir,
   agent_cmd: config.agent_cmd,
+  port: config.port,
 });
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));

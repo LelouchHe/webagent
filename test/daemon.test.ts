@@ -17,6 +17,8 @@ import {
   readPidInfo,
   writePidInfo,
   decideRestart,
+  decideStartFirstRun,
+  resolveDataDirFromArgs,
   type PidInfo,
 } from "../src/daemon.ts";
 
@@ -232,6 +234,73 @@ describe("daemon", () => {
     it("treats null code (signal-only) as non-config exit and restarts", () => {
       const r = decideRestart(null, "SIGKILL", baseCtx);
       assert.equal(r.kind, "restart");
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Unit: decideStartFirstRun — pre-fork auth.json existence gate
+  // ---------------------------------------------------------------------------
+
+  describe("decideStartFirstRun", () => {
+    it("proceeds when auth.json exists", () => {
+      const r = decideStartFirstRun({ authJsonExists: true });
+      assert.equal(r.kind, "proceed");
+    });
+
+    it("aborts with --create-token hint when auth.json missing", () => {
+      const r = decideStartFirstRun({ authJsonExists: false });
+      assert.equal(r.kind, "abort");
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+      if (r.kind === "abort") {
+        assert.match(r.message, /--create-token/);
+      }
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Unit: resolveDataDirFromArgs — extract data_dir from CLI/TOML for pre-fork
+  // ---------------------------------------------------------------------------
+
+  describe("resolveDataDirFromArgs", () => {
+    const tmpDirs: string[] = [];
+    afterEach(() => {
+      while (tmpDirs.length)
+        rmSync(tmpDirs.pop()!, { recursive: true, force: true });
+    });
+
+    it("returns default 'data' (relative to cwd) when no --config", () => {
+      const cwd = mkdtempSync(join(tmpdir(), "dd-"));
+      tmpDirs.push(cwd);
+      const got = resolveDataDirFromArgs([], cwd);
+      assert.equal(got, join(cwd, "data"));
+    });
+
+    it("reads data_dir from --config TOML", () => {
+      const cwd = mkdtempSync(join(tmpdir(), "dd-"));
+      tmpDirs.push(cwd);
+      const cfgPath = join(cwd, "c.toml");
+      writeFileSync(cfgPath, 'data_dir = "/tmp/custom-dd"\n');
+      const got = resolveDataDirFromArgs(["--config", cfgPath], cwd);
+      assert.equal(got, "/tmp/custom-dd");
+    });
+
+    it("resolves relative data_dir relative to cwd", () => {
+      const cwd = mkdtempSync(join(tmpdir(), "dd-"));
+      tmpDirs.push(cwd);
+      const cfgPath = join(cwd, "c.toml");
+      writeFileSync(cfgPath, 'data_dir = "mydata"\n');
+      const got = resolveDataDirFromArgs(["--config", cfgPath], cwd);
+      assert.equal(got, join(cwd, "mydata"));
+    });
+
+    it("falls back to default 'data' when --config TOML cannot be read", () => {
+      const cwd = mkdtempSync(join(tmpdir(), "dd-"));
+      tmpDirs.push(cwd);
+      const got = resolveDataDirFromArgs(
+        ["--config", join(cwd, "nope.toml")],
+        cwd,
+      );
+      assert.equal(got, join(cwd, "data"));
     });
   });
 

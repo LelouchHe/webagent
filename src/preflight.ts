@@ -11,6 +11,7 @@
 import { accessSync, constants, mkdirSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import { spawnSync } from "node:child_process";
+import { createServer } from "node:net";
 import { detectAgent, formatDetectionFailure } from "./agent-detect.ts";
 
 interface CheckOk {
@@ -135,6 +136,52 @@ function checkAgent(agentCmd: string): CheckResult & { resolved?: string } {
   };
 }
 
+/**
+ * Probe whether `port` can be bound on 127.0.0.1. Listens, then closes
+ * immediately. There's a tiny race window between close and the real
+ * server.listen() — that's fine for diagnostics: the goal is a friendly
+ * "port already in use" hint, not a hard guarantee.
+ *
+ * Port 0 means "let the OS pick"; we treat it as always-free.
+ */
+async function checkPort(port: number): Promise<CheckResult> {
+  if (port === 0) {
+    return { ok: true, name: "port", detail: "0 (OS-assigned)" };
+  }
+  const result = await new Promise<{ code?: string }>((settle) => {
+    const probe = createServer();
+    probe.once("error", (err: NodeJS.ErrnoException) => {
+      settle({ code: err.code ?? "unknown" });
+    });
+    probe.listen(port, "127.0.0.1", () => {
+      probe.close(() => {
+        settle({});
+      });
+    });
+  });
+  if (!result.code) {
+    return { ok: true, name: "port", detail: String(port) };
+  }
+  if (result.code === "EADDRINUSE") {
+    return {
+      ok: false,
+      name: "port",
+      detail: `${port} (in use)`,
+      hint: `port ${port} is already in use (EADDRINUSE).\nfind the owner: ${
+        process.platform === "win32"
+          ? `netstat -ano | findstr :${port}`
+          : `lsof -nP -iTCP:${port} -sTCP:LISTEN`
+      }\nor change \`port\` in config.toml to a free port.`,
+    };
+  }
+  return {
+    ok: false,
+    name: "port",
+    detail: `${port} (${result.code})`,
+    hint: `cannot bind port ${port}: ${result.code}\ncheck firewall / permissions, or change \`port\` in config.toml.`,
+  };
+}
+
 export interface PreflightResult {
   agentCmd: string;
 }
@@ -144,15 +191,17 @@ export interface PreflightResult {
  * (78) on first failure. On success, returns the resolved agent command
  * so the caller doesn't need to re-detect.
  */
-export function runPreflight(opts: {
+export async function runPreflight(opts: {
   data_dir: string;
   agent_cmd: string;
-}): PreflightResult {
+  port: number;
+}): Promise<PreflightResult> {
   const checks: CheckResult[] = [];
   checks.push(checkNodeVersion());
   checks.push(checkDataDir(opts.data_dir));
   const agent = checkAgent(opts.agent_cmd);
   checks.push(agent);
+  checks.push(await checkPort(opts.port));
 
   for (const c of checks) {
     if (c.ok) printOk(c);
