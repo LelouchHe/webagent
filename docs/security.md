@@ -14,7 +14,7 @@ webagent **refuses to serve unauthenticated traffic.** Behavior on startup depen
 
 ### First-run zero-config (default)
 
-When `data/auth.json` does **not** exist AND stdin is a TTY (i.e. you ran `webagent` interactively), the server:
+When `data/auth.json` does **not** exist AND stdin is a TTY (i.e. you launched `webagent` or `webagent start` from an interactive shell), the server:
 
 1. Mints a one-time `admin` token named `first-run`.
 2. Prints it as part of the startup-doctor stream:
@@ -52,11 +52,17 @@ Threat model:
 
 Disable with `[auth] first_run_bootstrap = false` in your config — useful when a supervisor / CI / Ansible playbook provisions `auth.json` out of band.
 
-### Daemon / opted-out / config-anomaly fallback
+### Daemon
+
+`webagent start` runs the same startup gate (preflight + auth bootstrap) in the **parent** process before forking the supervisor — i.e. in your operator terminal. A first-run mint banner therefore lands on your TTY exactly as it does for foreground `webagent`, not in `webagent.log`. The supervisor and child server inherit `WEBAGENT_STARTUP_CHECKED=1` and skip re-running the gate.
+
+If you launch `webagent start` from an init system / cron / systemd unit where stdin is not a TTY, the gate falls through to the fallback below.
+
+### Headless / opted-out / config-anomaly fallback
 
 When **any** of these is true:
 
-- `data/auth.json` does not exist AND stdin is not a TTY (daemon mode), OR
+- `data/auth.json` does not exist AND stdin is not a TTY (init-system / cron / piped launch), OR
 - `data/auth.json` does not exist AND `[auth] first_run_bootstrap = false`, OR
 - `data/auth.json` exists but the token list is empty (manual edit / parse failure / permission error — config anomaly, not a fresh install)
 

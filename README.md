@@ -51,7 +51,8 @@ just run `webagent` again — the token persists in `data/auth.json`.
 Other ways to start:
 
 ```bash
-webagent --config /path/to/config.toml       # custom config
+webagent start                               # run as background daemon (same first-run UX in your terminal)
+webagent --config /path/to/config.toml       # custom config (see `webagent config init`)
 npx @lelouchhe/webagent                      # one-shot, no global install
 webagent --create-token laptop               # mint extra tokens for other devices / CI
 ```

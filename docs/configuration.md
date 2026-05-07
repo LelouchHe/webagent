@@ -72,6 +72,20 @@ To use a different ACP-compatible agent backend:
 agent_cmd = "claude-agent-acp"
 ```
 
+## Generating a Config
+
+WebAgent runs zero-config by default — no `config.toml` is required. Generate one only when you want to override defaults (custom port, data directory, etc.):
+
+```bash
+webagent config init                  # write ./config.toml (well-commented template)
+webagent config init --force          # overwrite an existing config.toml
+
+webagent config show                          # print the effective merged config (defaults + any overrides) as TOML
+webagent config show --config /path/to.toml   # show what a specific config file resolves to
+```
+
+`config init` copies the package's bundled `config.toml` — the single source of truth that documents every key with its default and a one-line description. `config show` is useful for "what is actually in effect right now" — handy for debugging an override that isn't taking.
+
 ## Service Management
 
 WebAgent includes a built-in daemon with crash recovery:
