@@ -207,11 +207,14 @@ export default tseslint.config(
   //   visible to whoever launched the process. Runtime debug callbacks inside
   //   server.ts use `log.scope(...)`.
   // - config.ts: bootstrap output, runs before setLogLevel() can be called.
+  // - preflight.ts: same — runs even before config-derived log level is
+  //   applied, and the whole point is operator-facing ✓/✗ lines.
   {
     files: [
       "src/daemon.ts",
       "src/server.ts",
       "src/config.ts",
+      "src/preflight.ts",
       "scripts/**/*.ts",
     ],
     rules: { "no-console": "off" },

@@ -23,6 +23,7 @@ import {
 import { AuthStore } from "./auth-store.ts";
 import { join as pathJoin } from "node:path";
 import { resolveSessionsAnchor } from "./sessions-anchor.ts";
+import { runPreflight } from "./preflight.ts";
 import { AttachmentDispatcher } from "./attachment-dispatch.ts";
 import {
   createCounters as createAttachmentInterceptorCounters,
@@ -43,6 +44,16 @@ for (const method of ["log", "error", "warn"] as const) {
 
 const config = loadConfig();
 setLogLevel(config.debug.level);
+
+// Preflight: node version / data_dir writable / agent resolvable.
+// Each printed as `[check] <name>: <detail>  ✓|✗`. First ✗ exits 78
+// before any heavy init, so failures are the first thing the operator
+// sees on a fresh install.
+const preflight = runPreflight({
+  data_dir: config.data_dir,
+  agent_cmd: config.agent_cmd,
+});
+
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const PUBLIC_DIR = join(__dirname, "..", config.public_dir);
 const PKG_VERSION = (() => {
@@ -149,8 +160,8 @@ const server = createServer((req, res) => {
   })(req, res);
 });
 
-async function initBridge(): Promise<AgentBridge> {
-  const b = new AgentBridge(config.agent_cmd);
+async function initBridge(agentCmd: string): Promise<AgentBridge> {
+  const b = new AgentBridge(agentCmd);
   b.setAttachmentDispatcher(attachmentDispatcher);
 
   b.on("event", (event: AgentEvent) => {
@@ -263,9 +274,11 @@ server.listen(config.port, "0.0.0.0", () => {
       sharePreviewCleanup = startSharePreviewCleanup(store);
       console.log(`[share] preview gc armed (24h interval)`);
     }
-    console.log(`[bridge] starting: ${config.agent_cmd}...`);
+    // agent_cmd resolved by preflight (handles the "auto" sentinel).
+    const agentCmd = preflight.agentCmd;
+    console.log(`[bridge] starting: ${agentCmd}...`);
     try {
-      await initBridge();
+      await initBridge(agentCmd);
       console.log(`[bridge] ready`);
       sessions.hydrate();
     } catch (err) {
