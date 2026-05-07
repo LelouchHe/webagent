@@ -2,10 +2,7 @@
 
 // Pre-bootstrap: bounce to /login if no token. Done before any other module
 // runs so we don't waste time spinning up the app for an unauthenticated user.
-import { TOKEN_STORAGE_KEY, consumeUrlHashToken } from "./login-core.ts";
-// First-run banner URL → consume `#t=...` so a fresh page-load can land
-// straight on `/` with the token persisted, no /login bounce needed.
-consumeUrlHashToken();
+import { TOKEN_STORAGE_KEY } from "./login-core.ts";
 if (!localStorage.getItem(TOKEN_STORAGE_KEY)) {
   location.replace("/login");
   // Throw to halt the rest of the bundle in case replace() is async.

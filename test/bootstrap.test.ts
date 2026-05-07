@@ -1,10 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import {
-  decideBootstrap,
-  buildBootstrapUrl,
-  formatBootstrapBanner,
-} from "../src/bootstrap.ts";
+import { decideBootstrap, formatBootstrapBanner } from "../src/bootstrap.ts";
 
 describe("bootstrap.decideBootstrap", () => {
   it("proceeds when tokens already exist (regardless of other flags)", () => {
@@ -81,47 +77,46 @@ describe("bootstrap.decideBootstrap", () => {
   });
 });
 
-describe("bootstrap.buildBootstrapUrl", () => {
-  it("places token only in URL fragment, not path or query", () => {
-    const url = buildBootstrapUrl(6800, "wat_abc123");
-    assert.equal(url, "http://localhost:6800/#t=wat_abc123");
-    const u = new URL(url);
-    assert.equal(u.search, "");
-    assert.equal(u.pathname, "/");
-    assert.equal(u.hash, "#t=wat_abc123");
-  });
+describe("bootstrap.formatBootstrapBanner", () => {
+  const token = "wat_AbCdEf0123456789";
+  const port = 6800;
 
-  it("respects custom port", () => {
-    assert.equal(
-      buildBootstrapUrl(8080, "wat_xyz"),
-      "http://localhost:8080/#t=wat_xyz",
+  it("contains the raw token verbatim (operator pastes it into login form)", () => {
+    const out = formatBootstrapBanner({ token, port, isTTY: false });
+    assert.ok(
+      out.includes(token),
+      `banner should print the token verbatim, got: ${out}`,
     );
   });
-});
 
-describe("bootstrap.formatBootstrapBanner", () => {
-  const url = "http://localhost:6800/#t=wat_xx";
+  it("contains the login URL (host root, no fragment)", () => {
+    const out = formatBootstrapBanner({ token, port, isTTY: false });
+    assert.match(out, /http:\/\/localhost:6800\/?(?!#)/);
+    assert.ok(
+      !out.includes("#t="),
+      "banner must NOT embed token in URL fragment — operator pastes manually",
+    );
+  });
 
   it("plain text (no ANSI) when isTTY=false", () => {
-    const out = formatBootstrapBanner({ url, isTTY: false });
-    assert.match(out, /http:\/\/localhost:6800\/#t=wat_xx/);
+    const out = formatBootstrapBanner({ token, port, isTTY: false });
     // eslint-disable-next-line no-control-regex
     assert.doesNotMatch(out, /\u001b\[/, "should not contain ANSI escapes");
   });
 
   it("includes ANSI escapes when isTTY=true", () => {
-    const out = formatBootstrapBanner({ url, isTTY: true });
+    const out = formatBootstrapBanner({ token, port, isTTY: true });
     // eslint-disable-next-line no-control-regex
     assert.match(out, /\u001b\[/);
-    assert.match(out, /http:\/\/localhost:6800\/#t=wat_xx/);
+    assert.ok(out.includes(token), "still includes the token under ANSI");
   });
 
-  it("mentions URL fragment safety so operators understand why it's safe-ish", () => {
-    const out = formatBootstrapBanner({ url, isTTY: false });
+  it("instructs operator how to use the token (paste into login form)", () => {
+    const out = formatBootstrapBanner({ token, port, isTTY: false });
     assert.match(
       out,
-      /fragment|after `#`|never sent|not.*server/i,
-      "banner should explain the # property",
+      /paste|login|copy/i,
+      "banner should tell operator what to do with the token",
     );
   });
 });

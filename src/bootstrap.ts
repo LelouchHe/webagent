@@ -15,6 +15,14 @@
 //   tokenCount = 0  +  !authJsonExists  +  isTTY  +  !enabled   → exit-config
 //                      (operator opted out; preserve old UX)
 //   tokenCount = 0  +  !authJsonExists  +  isTTY  +  enabled    → mint
+//
+// On mint, the banner prints the token verbatim and asks the operator
+// to paste it into the /login form. We deliberately do NOT print a
+// clickable URL with the token in the fragment: although fragments
+// don't reach the server in HTTP requests, they do leak via browser
+// history sync, history-permission extensions, and "looks like a link
+// → click it" muscle memory. Plain-token + manual paste matches the
+// existing `--create-token` flow's mental model.
 
 export type BootstrapAction =
   | { kind: "mint" }
@@ -37,40 +45,38 @@ export function decideBootstrap(input: DecideInput): BootstrapAction {
 }
 
 /**
- * Login URL for a freshly minted admin token. Token is placed ONLY in
- * the URL fragment so it never reaches the server in network requests
- * (Referer, access logs, proxy logs all stop at the path+query).
- */
-export function buildBootstrapUrl(port: number, token: string): string {
-  return `http://localhost:${port}/#t=${token}`;
-}
-
-/**
- * Banner printed to stdout on first-run mint. ANSI is gated on isTTY so
- * log capture / journald / supervisor pipes get plain text.
+ * Banner printed to stdout on first-run mint. Token is printed verbatim
+ * and the operator is asked to paste it into the /login form. ANSI is
+ * gated on isTTY so log capture / journald / supervisor pipes get plain
+ * text.
  */
 export function formatBootstrapBanner(opts: {
-  url: string;
+  token: string;
+  port: number;
   isTTY: boolean;
 }): string {
-  const { url, isTTY } = opts;
+  const { token, port, isTTY } = opts;
   const bold = isTTY ? "\x1b[1m" : "";
   const cyan = isTTY ? "\x1b[36m" : "";
   const dim = isTTY ? "\x1b[2m" : "";
   const reset = isTTY ? "\x1b[0m" : "";
+  const url = `http://localhost:${port}/`;
   const lines = [
     "",
     `${bold}┌─ first-run ──────────────────────────────────────────────${reset}`,
     `${bold}│${reset}`,
     `${bold}│${reset}  Welcome. WebAgent has minted a one-time admin token`,
-    `${bold}│${reset}  for this device. Open this URL in your browser:`,
+    `${bold}│${reset}  for this device. Copy it and paste it into the`,
+    `${bold}│${reset}  login form:`,
     `${bold}│${reset}`,
-    `${bold}│${reset}    ${cyan}${bold}${url}${reset}`,
+    `${bold}│${reset}    1. open ${cyan}${url}${reset} in your browser`,
+    `${bold}│${reset}    2. paste this token:`,
     `${bold}│${reset}`,
-    `${bold}│${reset}  ${dim}The token lives in the URL fragment (after \`#\`) and is${reset}`,
-    `${bold}│${reset}  ${dim}never sent to the server in network requests.${reset}`,
-    `${bold}│${reset}  ${dim}It still appears in your terminal scrollback — treat${reset}`,
-    `${bold}│${reset}  ${dim}this URL like a password until you redeem it.${reset}`,
+    `${bold}│${reset}       ${bold}${cyan}${token}${reset}`,
+    `${bold}│${reset}`,
+    `${bold}│${reset}  ${dim}Treat this token like a password — it appears in${reset}`,
+    `${bold}│${reset}  ${dim}your terminal scrollback. Revoke from /tokens later${reset}`,
+    `${bold}│${reset}  ${dim}if needed.${reset}`,
     `${bold}└──────────────────────────────────────────────────────────${reset}`,
     "",
   ];

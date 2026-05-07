@@ -43,11 +43,10 @@ npm install -g @lelouchhe/webagent
 webagent                                     # start on port 6800
 ```
 
-On first run the server prints a one-time login URL like
-`http://localhost:6800/#t=wat_<...>`. Open it in your browser — the token
-lives in the URL fragment (after `#`), which the browser keeps locally and
-never sends to the server. Re-run `webagent` later for the normal login
-form.
+On first run, the server prints a one-time admin token in the startup
+diagnostic. Open `http://localhost:6800` in your browser, then copy the
+token from the terminal and paste it into the login form. After that,
+just run `webagent` again — the token persists in `data/auth.json`.
 
 Other ways to start:
 

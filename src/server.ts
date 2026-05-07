@@ -23,11 +23,7 @@ import {
 import { AuthStore } from "./auth-store.ts";
 import { join as pathJoin } from "node:path";
 import { existsSync } from "node:fs";
-import {
-  decideBootstrap,
-  buildBootstrapUrl,
-  formatBootstrapBanner,
-} from "./bootstrap.ts";
+import { decideBootstrap, formatBootstrapBanner } from "./bootstrap.ts";
 import { resolveSessionsAnchor } from "./sessions-anchor.ts";
 import { runPreflight } from "./preflight.ts";
 import { AttachmentDispatcher } from "./attachment-dispatch.ts";
@@ -243,10 +239,12 @@ process.on("SIGHUP", () => {
 
 server.listen(config.port, "0.0.0.0", () => {
   void (async () => {
-    console.log(`[server] listening on http://localhost:${config.port}`);
+    // Auth bootstrap is part of the same startup-doctor stream:
+    // preflight checks → auth check → "[server] listening". Output uses
+    // the same [check] prefix so operator sees one continuous boot
+    // diagnostic, not three disjoint phases.
     await authStore.load();
     const tokenCount = authStore.list().length;
-    console.log(`[auth] loaded ${tokenCount} token(s) from auth.json`);
     const authJsonPath = pathJoin(config.data_dir, "auth.json");
     const action = decideBootstrap({
       authJsonExists: existsSync(authJsonPath),
@@ -257,36 +255,45 @@ server.listen(config.port, "0.0.0.0", () => {
     if (action.kind === "exit-config") {
       // Either: daemon mode + no auth.json (use --create-token), or
       // file exists but token list is empty (config anomaly — manual
-      // wipe / parse fail / perm error). Either way, refuse to serve
-      // and exit 78 (sysexits EX_CONFIG). Daemon supervisor recognizes
-      // 78 and stops restart loop (see decideRestart in daemon.ts).
+      // wipe / parse fail / perm error). Refuse to serve and exit 78
+      // (sysexits EX_CONFIG). Daemon supervisor recognizes 78 and
+      // stops restart loop (see decideRestart in daemon.ts).
       console.error(
-        "[auth] no tokens in auth.json — refusing to serve unauthenticated.",
+        `[check] auth: no tokens in auth.json — refusing to serve  ✗`,
       );
-      console.error("[auth] create one with:  webagent --create-token <name>");
+      console.error(`        create one with:  webagent --create-token <name>`);
       console.error(
-        "[auth] then start the server again (or send SIGHUP to the running process).",
+        `        then start the server again (or send SIGHUP to the running process).`,
       );
       process.exit(78);
     }
     if (action.kind === "mint") {
-      // First-run zero-config UX: mint a one-time admin token, print a
-      // login URL with the token in the URL fragment. Fragments stop
-      // at the browser — never sent to the server in network requests.
+      // First-run zero-config UX: mint a one-time admin token and print
+      // it as a doctor-style check, followed by a banner instructing
+      // the operator to copy + paste it into the /login form. Token
+      // is NOT embedded in a clickable URL — that would leak via
+      // browser history sync and history-permission extensions.
       try {
         const created = await authStore.addToken("first-run", "admin");
-        const url = buildBootstrapUrl(config.port, created.token);
+        console.log(`[check] auth: minted first-run admin token  ✓`);
         console.log(
-          formatBootstrapBanner({ url, isTTY: Boolean(process.stdout.isTTY) }),
+          formatBootstrapBanner({
+            token: created.token,
+            port: config.port,
+            isTTY: Boolean(process.stdout.isTTY),
+          }),
         );
         log.scope("bootstrap").info("first-run admin token minted", {
           name: created.record.name,
         });
       } catch (err) {
-        console.error("[bootstrap] failed to mint first-run token:", err);
+        console.error(`[check] auth: mint failed: ${String(err)}  ✗`);
         process.exit(78);
       }
+    } else {
+      console.log(`[check] auth: ${tokenCount} token(s) loaded  ✓`);
     }
+    console.log(`[server] listening on http://localhost:${config.port}`);
     messageCleanup = startMessageCleanup(
       store,
       config.messages.unprocessed_ttl_days,

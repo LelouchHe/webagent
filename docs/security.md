@@ -17,20 +17,40 @@ webagent **refuses to serve unauthenticated traffic.** Behavior on startup depen
 When `data/auth.json` does **not** exist AND stdin is a TTY (i.e. you ran `webagent` interactively), the server:
 
 1. Mints a one-time `admin` token named `first-run`.
-2. Prints a banner with a login URL of the form `http://localhost:<port>/#t=wat_<token>`.
+2. Prints it as part of the startup-doctor stream:
+
+   ```
+   [check] node: v22.6.0                      ✓
+   [check] data_dir: /path/to/data            ✓
+   [check] acp agent: copilot --acp           ✓
+   [check] auth: minted first-run admin token  ✓
+
+   ┌─ first-run ──────────────────────────────────────
+   │  Welcome. WebAgent has minted a one-time admin token
+   │  for this device. Copy it and paste it into the
+   │  login form:
+   │
+   │    1. open http://localhost:6800/ in your browser
+   │    2. paste this token:
+   │
+   │       wat_<43-char-token>
+   │
+   │  Treat this token like a password — it appears in
+   │  your terminal scrollback. Revoke from /tokens later
+   │  if needed.
+   └──────────────────────────────────────────────────
+   ```
 3. Continues serving normally.
 
-The token lives in the URL **fragment** (after `#`). Browsers keep fragments client-side — they are not included in the HTTP request line, `Referer` header, server access logs, or upstream proxy logs. The frontend reads `location.hash`, immediately calls `history.replaceState` to scrub the URL, then writes the token to `localStorage` under `wa_token`.
+The operator copies the token from the terminal and pastes it into the `/login` form. We deliberately do **not** print a clickable URL with the token embedded (e.g. `http://host/#t=...`): although URL fragments don't reach the server in HTTP requests, they do leak via browser history sync, "history-permission" extensions, and the "looks clickable → click it" muscle memory. Plain-token + manual paste matches the existing `--create-token` flow's mental model.
 
 Threat model:
 
-- ✅ The token does **not** appear in network logs (Referer / access logs / proxy logs / corporate TLS-MITM logs).
-- ⚠️ The token **does** appear in the operator's terminal scrollback — same exposure as `--create-token`. Treat the URL like a password until you click it once.
-- ⚠️ Browsers with history sync (e.g. signed-in Chrome) replicate URL fragments to other devices on the same account. If that's a concern, mint via `--create-token` and paste manually.
-- ⚠️ Any browser extension granted the `history` permission can read fragments. Same caveat as above.
+- ✅ The token does not appear in network logs (it's never sent in a URL).
+- ⚠️ The token **does** appear in the operator's terminal scrollback — same exposure as `webagent --create-token`. Treat it like a password until you've used it once.
 - The minted token is a regular admin token; revoke from `/tokens` once you're done with it (e.g. after adding a per-device `api` token), or leave it in place — it's no different from any other token after redemption.
 
-You can disable first-run minting with `[auth] first_run_bootstrap = false` in your config — useful when a supervisor / CI / Ansible playbook provisions `auth.json` out of band.
+Disable with `[auth] first_run_bootstrap = false` in your config — useful when a supervisor / CI / Ansible playbook provisions `auth.json` out of band.
 
 ### Daemon / opted-out / config-anomaly fallback
 

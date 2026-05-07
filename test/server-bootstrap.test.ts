@@ -52,6 +52,10 @@ describe("server first-run bootstrap (integration)", () => {
       assert.equal(r.status, 78, `stderr: ${r.stderr}`);
       const all = r.stdout + r.stderr;
       assert.match(all, /--create-token/);
+      // Output must use the same [check] doctor prefix as preflight, so
+      // operator sees one continuous boot diagnostic — not a separate
+      // "[auth]" or "[bootstrap]" phase.
+      assert.match(all, /\[check\] auth:/);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

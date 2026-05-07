@@ -72,32 +72,3 @@ export async function verifyAndStoreToken(
 
   return { ok: false, error: `Unexpected response (status ${res.status})` };
 }
-
-/**
- * If the page was opened via the first-run banner URL
- * (`http://host:port/#t=wat_<...>`), consume the fragment:
- *
- *  1. Strip the hash via `history.replaceState` BEFORE writing localStorage,
- *     so even if `setItem` throws (private browsing quota etc.) the URL
- *     bar is already neutralized — no second-chance leak from a rendered
- *     login form with the token still in the address bar.
- *  2. Persist token to `wa_token`.
- *  3. Return `{ ok: true }` so the caller can `location.replace("/")`.
- *
- * Reject anything that doesn't match the strict shape — token prefix `wat_`
- * plus URL-safe base64 alphabet. Hash is left intact on rejection so
- * misformed fragments are visible during debugging instead of silently
- * eaten.
- */
-export function consumeUrlHashToken(): { ok: true } | { ok: false } {
-  const m = /^#t=(wat_[A-Za-z0-9_-]+)$/.exec(location.hash);
-  if (!m) return { ok: false };
-  const token = m[1];
-  history.replaceState(null, "", location.pathname + location.search);
-  try {
-    localStorage.setItem(TOKEN_STORAGE_KEY, token);
-  } catch {
-    return { ok: false };
-  }
-  return { ok: true };
-}
