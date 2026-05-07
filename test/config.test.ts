@@ -36,7 +36,7 @@ describe("config", () => {
     assert.equal(config.port, 6800);
     assert.equal(config.data_dir, "data");
     assert.equal(config.public_dir, "dist");
-    assert.equal(config.agent_cmd, "copilot --acp");
+    assert.equal(config.agent_cmd, "auto");
     assert.deepEqual(config.limits, {
       bash_output: 1_048_576,
       image_upload: 10_485_760,

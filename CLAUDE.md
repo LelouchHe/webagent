@@ -57,7 +57,7 @@ If no `--config` is provided, all settings use built-in defaults. See `config.to
 | `data_dir`                | `data`             | SQLite + uploads directory                                      |
 | `default_cwd`             | `process.cwd()`    | Working directory for new sessions                              |
 | `public_dir`              | `dist`             | Static assets directory                                         |
-| `agent_cmd`               | `copilot --acp`    | ACP agent command (binary + args, space-separated)              |
+| `agent_cmd`               | `auto`             | ACP agent command — `auto` scans PATH; otherwise verbatim command  |
 | `limits.bash_output`      | `1048576` (1 MB)   | Max bash output stored in DB per command                        |
 | `limits.image_upload`     | `10485760` (10 MB) | Max image upload size                                           |
 | `limits.cancel_timeout`   | `10000` (10s)      | Cancel timeout in ms; 0 disables                                |

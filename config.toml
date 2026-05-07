@@ -13,8 +13,14 @@ data_dir = "data"
 # Static assets directory (default: "dist")
 public_dir = "dist"
 
-# ACP agent command (binary + args, space-separated) (default: "copilot --acp")
-agent_cmd = "copilot --acp"
+# ACP agent command (binary + args, space-separated).
+# Default "auto" scans PATH for known ACP-ready agents (in priority order):
+#   copilot, gemini, opencode, claude-agent-acp, codex-acp, qwen
+# Set explicitly to override:
+#   agent_cmd = "claude-agent-acp"
+#   agent_cmd = "codex-acp"
+#   agent_cmd = "gemini --acp"
+agent_cmd = "auto"
 
 [limits]
 # Max bash output stored in DB per command (bytes, default 1 MB)

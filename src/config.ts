@@ -7,7 +7,7 @@ export const ConfigSchema = z.object({
   data_dir: z.string().default("data"),
   default_cwd: z.string().default(process.cwd()),
   public_dir: z.string().default("dist"),
-  agent_cmd: z.string().default("copilot --acp"),
+  agent_cmd: z.string().default("auto"),
 
   limits: z
     .object({

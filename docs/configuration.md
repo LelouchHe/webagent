@@ -2,33 +2,35 @@
 
 ## ACP-Compatible Agents
 
-WebAgent works with any agent that implements the [Agent Client Protocol](https://agentclientprotocol.com/). Not all coding CLIs support ACP natively — some require a wrapper or adapter.
+WebAgent works with any agent that implements the [Agent Client Protocol](https://agentclientprotocol.com/). On startup, when `agent_cmd = "auto"` (the default), WebAgent scans `PATH` for known ACP-ready binaries in priority order and uses the first one it finds. To override, set `agent_cmd` explicitly in `config.toml`.
 
 ### Native ACP support
 
-These agents have built-in ACP and work directly with `agent_cmd`:
+These agents speak ACP directly — install one and `webagent` picks it up:
 
-| Agent                                                     | Command                     | Notes                                                             |
-| --------------------------------------------------------- | --------------------------- | ----------------------------------------------------------------- |
-| [Copilot CLI](https://github.com/github/copilot-cli)      | `copilot --acp`             | Default. GitHub's AI pair programmer                              |
-| [Gemini CLI](https://github.com/google-gemini/gemini-cli) | `gemini --experimental-acp` | Google's Gemini models (experimental flag, no stable `--acp` yet) |
-| [OpenCode](https://opencode.ai/)                          | `opencode acp`              | Open-source, extensible (note: subcommand, not flag)              |
+| Agent                                                     | Command          | Install                            |
+| --------------------------------------------------------- | ---------------- | ---------------------------------- |
+| [Copilot CLI](https://github.com/github/copilot-cli)      | `copilot --acp`  | `npm i -g @github/copilot`         |
+| [Gemini CLI](https://github.com/google-gemini/gemini-cli) | `gemini --acp`   | `npm i -g @google/gemini-cli`      |
+| [OpenCode](https://opencode.ai/)                          | `opencode acp`   | `npm i -g opencode-ai`             |
 
 ### Via ACP adapter
 
-These agents do not have a native `--acp` flag. Use a community adapter that wraps the CLI into an ACP-compatible process:
+These agents need a separate adapter package that wraps the underlying CLI into an ACP-compatible process. Install the adapter — its binary is what WebAgent talks to.
 
-| Agent                                                                | Adapter                                                                                              | Install                                     |
-| -------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- | ------------------------------------------- |
-| [Claude Code](https://docs.anthropic.com/en/docs/agents/claude-code) | [`@zed-industries/claude-agent-acp`](https://www.npmjs.com/package/@zed-industries/claude-agent-acp) | `npm i -g @zed-industries/claude-agent-acp` |
+| Agent                                                                | Adapter binary       | Install                                            |
+| -------------------------------------------------------------------- | -------------------- | -------------------------------------------------- |
+| [Claude Code](https://docs.anthropic.com/en/docs/agents/claude-code) | `claude-agent-acp`   | `npm i -g @agentclientprotocol/claude-agent-acp`   |
+| [Codex](https://github.com/openai/codex)                             | `codex-acp`          | `npm i -g @zed-industries/codex-acp`               |
+| [Qwen Code](https://github.com/QwenLM/qwen-code)                     | `qwen --acp`         | `npm i -g @qwen-code/qwen-code`                    |
 
-To use Claude Code with WebAgent via the adapter:
+To pin an agent explicitly:
 
 ```toml
 agent_cmd = "claude-agent-acp"
 ```
 
-See the [ACP Registry](https://agentclientprotocol.com/get-started/registry) for the full list of agents and adapters.
+See the [ACP Registry](https://agentclientprotocol.com/get-started/registry) for the full list (30+ agents).
 
 ## Configuration
 
@@ -46,7 +48,7 @@ If no `--config` is provided, all settings use built-in defaults. See `config.to
 | `data_dir`                           | `data`                      | SQLite + uploads directory                                                                                                                                                                                                                                                                                           |
 | `default_cwd`                        | `process.cwd()`             | Working directory for new sessions                                                                                                                                                                                                                                                                                   |
 | `public_dir`                         | `dist`                      | Static assets directory                                                                                                                                                                                                                                                                                              |
-| `agent_cmd`                          | `copilot --acp`             | ACP agent command (binary + args, space-separated)                                                                                                                                                                                                                                                                   |
+| `agent_cmd`                          | `auto`                      | ACP agent command. `auto` scans PATH for known ACP-ready binaries; otherwise the literal command (binary + args, space-separated).                                                                                                                                                                                   |
 | `limits.bash_output`                 | `1048576` (1 MB)            | Max bash output stored in DB per command                                                                                                                                                                                                                                                                             |
 | `limits.image_upload`                | `10485760` (10 MB)          | Max image upload size                                                                                                                                                                                                                                                                                                |
 | `limits.file_upload`                 | `52428800` (50 MB)          | Max non-image attachment upload size. Server picks the cap from sniffed MIME (`image/*` → `image_upload`, otherwise → `file_upload`).                                                                                                                                                                                |
@@ -67,7 +69,7 @@ If no `--config` is provided, all settings use built-in defaults. See `config.to
 To use a different ACP-compatible agent backend:
 
 ```toml
-agent_cmd = "claude --acp"
+agent_cmd = "claude-agent-acp"
 ```
 
 ## Service Management
