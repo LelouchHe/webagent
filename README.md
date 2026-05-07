@@ -41,10 +41,21 @@ A terminal-style web UI for [ACP](https://agentclientprotocol.com/)-compatible a
 ```bash
 npm install -g @lelouchhe/webagent
 webagent                                     # start on port 6800
-webagent --config /path/to/config.toml       # custom config
 ```
 
-Or run directly: `npx @lelouchhe/webagent`
+On first run the server prints a one-time login URL like
+`http://localhost:6800/#t=wat_<...>`. Open it in your browser — the token
+lives in the URL fragment (after `#`), which the browser keeps locally and
+never sends to the server. Re-run `webagent` later for the normal login
+form.
+
+Other ways to start:
+
+```bash
+webagent --config /path/to/config.toml       # custom config
+npx @lelouchhe/webagent                      # one-shot, no global install
+webagent --create-token laptop               # mint extra tokens for other devices / CI
+```
 
 Data (SQLite database, uploaded images) is stored in `./data/` by default. See [Configuration & Operations](docs/configuration.md) for daemon mode, TOML settings, and agent setup.
 

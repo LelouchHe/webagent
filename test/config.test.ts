@@ -97,4 +97,20 @@ recent_paths_ttl = 60
 
     assert.throws(() => loadConfig(), /exit:1/);
   });
+
+  it("[auth] first_run_bootstrap defaults to true (zero-config first run mints)", () => {
+    process.argv = ["node", "test"];
+    const config = loadConfig();
+    assert.equal(config.auth.first_run_bootstrap, true);
+  });
+
+  it("[auth] first_run_bootstrap respects explicit false (operator opts out)", () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), "webagent-config-"));
+    tmpDirs.push(tmpDir);
+    const configPath = join(tmpDir, "config.toml");
+    writeFileSync(configPath, `[auth]\nfirst_run_bootstrap = false\n`);
+    process.argv = ["node", "test", "--config", configPath];
+    const config = loadConfig();
+    assert.equal(config.auth.first_run_bootstrap, false);
+  });
 });

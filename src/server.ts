@@ -22,6 +22,12 @@ import {
 } from "./share/cleanup.ts";
 import { AuthStore } from "./auth-store.ts";
 import { join as pathJoin } from "node:path";
+import { existsSync } from "node:fs";
+import {
+  decideBootstrap,
+  buildBootstrapUrl,
+  formatBootstrapBanner,
+} from "./bootstrap.ts";
 import { resolveSessionsAnchor } from "./sessions-anchor.ts";
 import { runPreflight } from "./preflight.ts";
 import { AttachmentDispatcher } from "./attachment-dispatch.ts";
@@ -241,28 +247,43 @@ server.listen(config.port, "0.0.0.0", () => {
     await authStore.load();
     const tokenCount = authStore.list().length;
     console.log(`[auth] loaded ${tokenCount} token(s) from auth.json`);
-    if (tokenCount === 0) {
-      // First-run / wiped state. Refuse to serve traffic without auth — the
-      // whole point of this build is "no token, no access". Two modes:
-      //   - foreground (TTY): immediate exit so the operator sees the
-      //     prompt and runs the recovery command.
-      //   - daemon (no TTY): sleep first to throttle supervisor restart
-      //     storms, then exit 78 (sysexits.h: configuration error). The
-      //     supervisor logs the message instead of restarting in a tight loop.
-      const msg = [
+    const authJsonPath = pathJoin(config.data_dir, "auth.json");
+    const action = decideBootstrap({
+      authJsonExists: existsSync(authJsonPath),
+      tokenCount,
+      isTTY: Boolean(process.stdin.isTTY),
+      firstRunEnabled: config.auth.first_run_bootstrap,
+    });
+    if (action.kind === "exit-config") {
+      // Either: daemon mode + no auth.json (use --create-token), or
+      // file exists but token list is empty (config anomaly — manual
+      // wipe / parse fail / perm error). Either way, refuse to serve
+      // and exit 78 (sysexits EX_CONFIG). Daemon supervisor recognizes
+      // 78 and stops restart loop (see decideRestart in daemon.ts).
+      console.error(
         "[auth] no tokens in auth.json — refusing to serve unauthenticated.",
-        "[auth] create one with:  webagent --create-token <name>",
+      );
+      console.error("[auth] create one with:  webagent --create-token <name>");
+      console.error(
         "[auth] then start the server again (or send SIGHUP to the running process).",
-      ].join("\n");
-      if (process.stdin.isTTY) {
-        console.error(msg);
-        process.exit(1);
-      } else {
-        console.error(msg);
-        console.error(
-          "[auth] sleeping 60s to avoid supervisor restart loop...",
+      );
+      process.exit(78);
+    }
+    if (action.kind === "mint") {
+      // First-run zero-config UX: mint a one-time admin token, print a
+      // login URL with the token in the URL fragment. Fragments stop
+      // at the browser — never sent to the server in network requests.
+      try {
+        const created = await authStore.addToken("first-run", "admin");
+        const url = buildBootstrapUrl(config.port, created.token);
+        console.log(
+          formatBootstrapBanner({ url, isTTY: Boolean(process.stdout.isTTY) }),
         );
-        await new Promise((r) => setTimeout(r, 60_000));
+        log.scope("bootstrap").info("first-run admin token minted", {
+          name: created.record.name,
+        });
+      } catch (err) {
+        console.error("[bootstrap] failed to mint first-run token:", err);
         process.exit(78);
       }
     }

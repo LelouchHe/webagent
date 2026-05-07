@@ -1,7 +1,16 @@
 /* Login page DOM wiring. Bundled separately from app.ts.
    Loads on /login when user has no token in localStorage. */
 
-import { verifyAndStoreToken, TOKEN_STORAGE_KEY } from "./login-core.ts";
+import {
+  verifyAndStoreToken,
+  consumeUrlHashToken,
+  TOKEN_STORAGE_KEY,
+} from "./login-core.ts";
+
+// First-run banner may land on /login directly (e.g. user typed
+// http://host:port/login#t=...). Consume hash before the
+// already-logged-in check so the redirect happens correctly.
+consumeUrlHashToken();
 
 // If already logged in, skip the form entirely.
 if (localStorage.getItem(TOKEN_STORAGE_KEY)) {

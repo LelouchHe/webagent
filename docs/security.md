@@ -10,12 +10,39 @@ This document covers the auth model, data layout, and operational practices that
 
 ## Bootstrap
 
-webagent **refuses to serve unauthenticated traffic.** On startup, if `data/auth.json` has zero tokens, the server logs a recovery message and exits:
+webagent **refuses to serve unauthenticated traffic.** Behavior on startup depends on whether `data/auth.json` exists.
 
-- Foreground (TTY): exit 1 immediately.
-- Daemon (no TTY): sleep 60s then exit 78 (`sysexits.h: configuration error`). The 60s pause throttles supervisor restart loops so logs stay readable.
+### First-run zero-config (default)
 
-First-time setup:
+When `data/auth.json` does **not** exist AND stdin is a TTY (i.e. you ran `webagent` interactively), the server:
+
+1. Mints a one-time `admin` token named `first-run`.
+2. Prints a banner with a login URL of the form `http://localhost:<port>/#t=wat_<token>`.
+3. Continues serving normally.
+
+The token lives in the URL **fragment** (after `#`). Browsers keep fragments client-side — they are not included in the HTTP request line, `Referer` header, server access logs, or upstream proxy logs. The frontend reads `location.hash`, immediately calls `history.replaceState` to scrub the URL, then writes the token to `localStorage` under `wa_token`.
+
+Threat model:
+
+- ✅ The token does **not** appear in network logs (Referer / access logs / proxy logs / corporate TLS-MITM logs).
+- ⚠️ The token **does** appear in the operator's terminal scrollback — same exposure as `--create-token`. Treat the URL like a password until you click it once.
+- ⚠️ Browsers with history sync (e.g. signed-in Chrome) replicate URL fragments to other devices on the same account. If that's a concern, mint via `--create-token` and paste manually.
+- ⚠️ Any browser extension granted the `history` permission can read fragments. Same caveat as above.
+- The minted token is a regular admin token; revoke from `/tokens` once you're done with it (e.g. after adding a per-device `api` token), or leave it in place — it's no different from any other token after redemption.
+
+You can disable first-run minting with `[auth] first_run_bootstrap = false` in your config — useful when a supervisor / CI / Ansible playbook provisions `auth.json` out of band.
+
+### Daemon / opted-out / config-anomaly fallback
+
+When **any** of these is true:
+
+- `data/auth.json` does not exist AND stdin is not a TTY (daemon mode), OR
+- `data/auth.json` does not exist AND `[auth] first_run_bootstrap = false`, OR
+- `data/auth.json` exists but the token list is empty (manual edit / parse failure / permission error — config anomaly, not a fresh install)
+
+…the server logs a recovery hint and exits with code 78 (`sysexits.h: configuration error`). The daemon supervisor recognizes 78 and stops the restart loop instead of churning forever.
+
+Recover with:
 
 ```sh
 webagent --create-token <name>

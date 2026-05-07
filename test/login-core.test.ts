@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { setupDOM, teardownDOM } from "./frontend-setup.ts";
 import {
   verifyAndStoreToken,
+  consumeUrlHashToken,
   TOKEN_STORAGE_KEY,
 } from "../public/js/login-core.ts";
 
@@ -108,6 +109,67 @@ describe("login-core", () => {
         assert.equal(r.name, "phone");
         assert.equal(r.scope, "api");
       }
+    });
+  });
+
+  describe("consumeUrlHashToken", () => {
+    function setHash(hash: string): void {
+      // happy-dom 接受 location.hash 直接赋值
+      location.hash = hash;
+    }
+
+    it("consumes a valid #t= fragment and stores token", () => {
+      setHash("#t=wat_AbCdEf123-_");
+      const r = consumeUrlHashToken();
+      assert.equal(r.ok, true);
+      assert.equal(localStorage.getItem(TOKEN_STORAGE_KEY), "wat_AbCdEf123-_");
+      assert.equal(location.hash, "", "hash should be cleared");
+    });
+
+    it("preserves pathname and search when clearing the hash", () => {
+      // happy-dom 不允许直接改 location.pathname,只能用 history API
+      history.pushState(null, "", "/login?next=foo#t=wat_xyz");
+      const r = consumeUrlHashToken();
+      assert.equal(r.ok, true);
+      assert.equal(location.pathname, "/login");
+      assert.equal(location.search, "?next=foo");
+      assert.equal(location.hash, "");
+    });
+
+    it("rejects hash without wat_ prefix", () => {
+      setHash("#t=notatoken");
+      const r = consumeUrlHashToken();
+      assert.equal(r.ok, false);
+      assert.equal(localStorage.getItem(TOKEN_STORAGE_KEY), null);
+      assert.equal(location.hash, "#t=notatoken", "hash should be preserved");
+    });
+
+    it("rejects hash with disallowed characters in token body", () => {
+      setHash("#t=wat_with spaces");
+      const r = consumeUrlHashToken();
+      assert.equal(r.ok, false);
+      assert.equal(localStorage.getItem(TOKEN_STORAGE_KEY), null);
+    });
+
+    it("rejects hash with wrong key (e.g. #token=...)", () => {
+      setHash("#token=wat_xyz");
+      const r = consumeUrlHashToken();
+      assert.equal(r.ok, false);
+      assert.equal(localStorage.getItem(TOKEN_STORAGE_KEY), null);
+    });
+
+    it("rejects empty hash", () => {
+      // 默认无 hash
+      const r = consumeUrlHashToken();
+      assert.equal(r.ok, false);
+      assert.equal(localStorage.getItem(TOKEN_STORAGE_KEY), null);
+    });
+
+    it("rejects hash with extra trailing junk after token", () => {
+      setHash("#t=wat_xyz&other=1");
+      const r = consumeUrlHashToken();
+      assert.equal(r.ok, false);
+      assert.equal(localStorage.getItem(TOKEN_STORAGE_KEY), null);
     });
   });
 });

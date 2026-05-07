@@ -97,3 +97,22 @@ viewer_origin = ""
 # get rewritten to `<internal-host>` before publishing. Example:
 # internal_hosts = ["corp.example.com", "internal-db"]
 internal_hosts = []
+
+[auth]
+# Bearer-token auth knobs.
+#
+# first_run_bootstrap controls the zero-config first-run UX. When true
+# (default), if auth.json does NOT exist AND stdin is a TTY, the server
+# auto-mints a one-time admin token and prints a login URL with the token
+# in the URL fragment (after `#`). Fragments never reach the server in
+# network requests, so the token does not appear in access logs / Referer
+# headers / proxy logs.
+#
+# Set to false when deploying behind a supervisor that provisions auth.json
+# out-of-band (CI, Ansible, k8s init container) — server falls back to
+# the old "exit 78 + use --create-token" behavior.
+#
+# Note: this only kicks in for missing auth.json. If the file exists but
+# the token list is empty (manual edit, parse failure), server still exits
+# 78 — that's a config anomaly, not a fresh install.
+first_run_bootstrap = true
