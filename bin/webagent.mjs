@@ -3,8 +3,59 @@
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { copyFileSync, existsSync } from "node:fs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+
+// ---- Subcommand: `webagent config <init|show>` ------------------------------
+//
+// `config init` copies the package's bundled config.toml (the same
+// well-commented file that documents every key + its default) to
+// ./config.toml. Refuses to overwrite without --force. The bundled
+// file is the single source of truth, so what users get always matches
+// the schema (test/config-coverage.test.ts guards that alignment).
+//
+// `config show` dumps the effective merged configuration (defaults
+// overlaid with whatever --config provided) as TOML to stdout. Useful
+// for "what is actually in effect right now".
+if (process.argv[2] === "config") {
+  const sub = process.argv[3];
+  if (sub === "init") {
+    const force = process.argv.includes("--force");
+    const src = fileURLToPath(new URL("../config.toml", import.meta.url));
+    const dst = join(process.cwd(), "config.toml");
+    if (existsSync(dst) && !force) {
+      console.error(
+        `config.toml already exists at ${dst}. Use --force to overwrite.`,
+      );
+      process.exit(1);
+    }
+    try {
+      copyFileSync(src, dst);
+    } catch (err) {
+      console.error(`Failed to write ${dst}:`, err.message ?? err);
+      process.exit(1);
+    }
+    console.log(`wrote ${dst}`);
+    console.log(`edit it, then run:  webagent --config config.toml`);
+    process.exit(0);
+  }
+  if (sub === "show") {
+    // Silence loadConfig's [config] log so stdout contains only TOML.
+    const origLog = console.log;
+    console.log = () => {};
+    const cfgUrl = new URL("../lib/config.js", import.meta.url).href;
+    const tomlUrl = "smol-toml";
+    const { loadConfig } = await import(cfgUrl);
+    const { stringify } = await import(tomlUrl);
+    const cfg = loadConfig();
+    console.log = origLog;
+    process.stdout.write(stringify(cfg));
+    process.exit(0);
+  }
+  console.error("Usage: webagent config <init|show> [--force]");
+  process.exit(64);
+}
 
 // ---- One-shot: --create-token <name> ---------------------------------------
 //
