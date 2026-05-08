@@ -420,6 +420,9 @@ function runSupervisor(serverArgs: string[]): void {
         return;
       }
       const c = child;
+      // Take ownership of this exit — don't let the auto-restart listener
+      // race with the explicit respawn (SIGHUP path) or shutdown.
+      c.removeListener("exit", onChildExit);
       c.once("exit", () => {
         innerResolve();
       });
