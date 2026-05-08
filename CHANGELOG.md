@@ -4,75 +4,48 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/), and this project adheres to [Semantic Versioning](https://semver.org/).
 
-## Unreleased
+## [0.4.0] - 2026-05-07
 
-### Added — Share links (default off)
+### ⚠️ BREAKING
 
-Public read-only session snapshots via `/share` + `/s/<token>`. **Off by
-default** (`[share] enabled = false`); flip to `true` to expose the routes.
-See [`docs/share.md`](docs/share.md) for the full surface.
+- **Bearer token auth is required.** Server refuses to start without a token in `data/auth.json`; first run mints an admin token and prints a clickable login URL. All `/api/**` endpoints require `Authorization: Bearer <token>`. See [`docs/security.md`](docs/security.md).
 
-- **Owner CLI** — `/share` lists active shares (Enter creates a preview);
-  `/share by <name>` sets a default `display_name` for new shares;
-  `/share <token>` opens a share's viewer in a new tab; `/share revoke
-  <token>` hard-deletes a published share.
-- **Preview mode** — creating a preview puts the input area in preview
-  mode with `^P` (publish) and `^C` (cancel) buttons; the textarea is
-  disabled so the next interaction is intentional.
-- **Public viewer** — `/s/<token>` is a separate HTML entry (`viewer.[hash].js`)
-  with strict CSP (`default-src 'self'`, no inline scripts, no third-party
-  origins). Frame-ancestors deny, `noindex, nofollow`, and `Referrer-Policy:
-  no-referrer`. Tokens are 144-bit `randomBytes(18)` lowercase hex (36
-  chars; double-click in browser selects the whole token); knowledge of
-  the token is the entire capability.
-- **Multi-layer sanitizer** — secrets (API keys, private keys, OAuth tokens)
-  hard-reject the share with HTTP 400 + `event_id`/`rule`. Paths outside
-  cwd, `/Users/...` / `/home/...` prefixes, and `share.internal_hosts`
-  hostnames are soft-redacted. Sanitizer re-runs on every public fetch
-  so post-publish rule updates take effect with no migration.
-- **Image proxy** — `/s/<token>/images/<file>` enforces filename
-  `[A-Za-z0-9._-]+` and a chroot check to `<data_dir>/images/<session_id>/`.
-  Viewer rewrites image URLs in `user_message.path` automatically.
-- **Preview GC** — when `enabled=true`, a 24h interval deletes preview
-  rows (`shared_at IS NULL AND created_at < now - 24h`). Activated rows
-  are never swept; `/share revoke` is the only way to remove them.
-- **Config** — new `[share]` section: `enabled`, `ttl_hours` (cap 168),
-  `csp_enforce`, `viewer_origin`, `internal_hosts`. Detail in
-  [`docs/configuration.md`](docs/configuration.md).
-- **Build invariant** — chunk prune in `scripts/build.js` is now
-  reachability-aware **and transitive** (BFS over chunk → chunk imports),
-  so lazy `import()` chunks reachable only via shared chunks (e.g. hljs
-  via `highlight.ts`) are never deleted during deploy. Regression test:
-  `test/build-split.test.ts`.
+### Added
 
-### ⚠️ BREAKING — 0.4.0
-
-**Bearer token auth is now required.** webagent will refuse to start without
-at least one token in `data/auth.json`. Existing installs upgrading from
-0.3.x must seed a token before the next start:
-
-```sh
-webagent --create-token <name>
-# prints the raw token ONCE — paste it into the new login page
-```
-
-Notes:
-
-- All `/api/**` endpoints (except `/api/v1/version` and `/api/beta/push/vapid-key`) require `Authorization: Bearer <token>`.
-- Browsers store the token in `localStorage` under `wa_token`.
-- SSE streams use a short-lived ticket (`POST /api/v1/sse-ticket`) instead of carrying the bearer.
-- Image URLs are HMAC-signed with a 1h expiry. The HMAC secret regenerates on every server restart, invalidating any previously rendered URLs.
-- Strict CSP (`default-src 'self'`, no `unsafe-inline` for scripts) is now applied to every HTML response. `highlight.js` is vendored (12 common languages) so no third-party origin is needed at runtime.
-- Multi-token CRUD is exposed via `GET/POST /api/v1/tokens` and `DELETE /api/v1/tokens/:name` (admin scope only). The `/token` slash command provides a UI.
-- `SIGHUP` reloads `auth.json` without dropping live sessions.
+- **Zero-config first-run deployment** — `webagent` with no flags Just Works: auto-detects an installed ACP agent in `PATH` (Copilot / Claude Code / Codex / Gemini / OpenCode / Qwen Code), runs preflight (port, writeability, agent reachability), mints the admin token, prints the login URL.
+- **Daemon mode** — `webagent start` / `stop` / `status` / `restart` with crash recovery, exponential backoff, and atomic `SIGHUP` reload. PID file lives in `data_dir` so multiple instances coexist from the same shell.
+- **Config CLI** — `webagent config init` (copy starter `config.toml`) and `webagent config show` (print effective merged config).
+- **Share links** (off by default) — public read-only session snapshots via `/share` + `/s/<token>`, with secret hard-reject + path/host soft-redact sanitizer. See [`docs/share.md`](docs/share.md).
+- **Attachments** — drag/paste/upload any file type into the input area; storage under `<data_dir>/sessions/<sid>/attachments/`, real MIME sniffing, 10 MB cap.
+- **Inbox** — `/inbox` cross-session message picker for "build done" / "tests failed" style notifications. New `messages` table + REST + push.
+- **Cross-agent mode classifier** — mode pill (plan / autopilot / read-only) renders correctly across every ACP agent, not just Copilot CLI.
+- **Title generation works on third-party / litellm models** — `[title] model` picks a cheap model from the agent's `availableModels` via substring match (default `["haiku", "flash-lite", "nano", "mini", "flash", "lite"]`); empty array inherits agent default.
+- Slash commands: `/clear`, `/logout`, `/token`, `/debug`, `/inbox`, `/share`.
+- Inline conversation-flow log records driven by `config.debug.level` / `?debug=<level>` / `/debug`.
+- Auto-resume last active session on page open.
 
 ### Changed
 
-- Frontend assets are now fully self-hosted: `marked` and `dompurify` are bundled into `dist/js/app.[hash].js` via esbuild instead of loaded from `cdn.jsdelivr.net`. Enables offline PWA, removes third-party SRI risk, and lets CSP drop `script-src https://cdn.jsdelivr.net`.
-- Production builds keep the 2 newest hashed bundles (`app.*.js` / `styles.*.css`) in `dist/` so in-flight page loads during an upgrade can still fetch their pinned version.
-- Static file handler in `routes.ts` now sets `Cache-Control`:
-  - Hashed assets (`*.[8+ hex].{js,css}`): `public, max-age=31536000, immutable`
-  - `index.html`, `manifest.json`, `sw.js`, icons, favicon: `no-cache` (revalidate every request)
+- **Frontend bundling** — `marked` + `dompurify` + `highlight.js` are bundled via esbuild instead of loaded from CDN. Hashed assets serve `Cache-Control: immutable`; HTML / SW / icons serve `no-cache`.
+- Mode pill colors distinguish read-only / plan / agent / autopilot.
+- TypeScript strict mode enforced; CI gates on `typecheck` + full-tree lint.
+- Node 24 CI baseline (was 22).
+
+### Fixed
+
+- Daemon SIGHUP race that left a zombie child crashing with `EADDRINUSE`.
+- Daemon supervisor no longer infinite-restarts on `EX_CONFIG` (78).
+- Port preflight now probes `0.0.0.0` (matches `server.listen`).
+- Bridge subprocess death surfaced as a user error instead of hanging input.
+- Cold-cache `GET /api/v1/sessions/:id` blocks on restore so the frontend doesn't race the bridge.
+- Assistant / thinking messages no longer duplicate on SSE reconnect.
+- iOS WebKit busy-state double-glyph race on the input chevron.
+- Misc: `/switch` untitled-session id, `/inbox` consumed-message switch, `/clear` wrong-session race, attach chip clipping, visibility endpoint bearer, `formatLocalTime` epoch input, `from_ref` orphans on boot.
+
+### Removed
+
+- ACP `fs` client capability handlers (no observed agent uses them).
+- `/prune` slash command.
 
 ## [0.3.0] - 2026-04-15
 
@@ -332,6 +305,7 @@ Initial release of WebAgent — a terminal-style web UI for ACP-compatible agent
 - **CI/CD**: GitHub Actions for CI (unit + E2E tests) and npm publishing on tag push
 - **npm package**: Published as `@lelouchhe/webagent`
 
+[0.4.0]: https://github.com/LelouchHe/webagent/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/LelouchHe/webagent/compare/v0.2.6...v0.3.0
 [0.2.6]: https://github.com/LelouchHe/webagent/compare/v0.2.5...v0.2.6
 [0.2.5]: https://github.com/LelouchHe/webagent/compare/v0.2.4...v0.2.5
