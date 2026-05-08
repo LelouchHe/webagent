@@ -93,7 +93,12 @@ setInterval(() => {
 }, ATTACHMENT_INTERCEPTOR_DUMP_MS).unref();
 
 const sessions = new SessionManager(store, config.default_cwd, config.data_dir);
-const titleService = new TitleService(store, sessions, config.default_cwd);
+const titleService = new TitleService(
+  store,
+  sessions,
+  config.default_cwd,
+  config.title.model,
+);
 const pushService = new PushService(
   store,
   config.data_dir,

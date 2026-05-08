@@ -844,7 +844,7 @@ describe("POST /api/v1/bridge/reload", () => {
     mockBridge = {
       reloading: false,
       restart: async () => {},
-      newSession: async () => "s1",
+      newSession: async () => ({ sessionId: "s1", configOptions: [] }),
       loadSession: async () => ({ configOptions: [] }),
       setConfigOption: async () => [],
       cancel: async () => {},

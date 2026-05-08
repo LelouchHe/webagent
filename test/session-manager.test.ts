@@ -97,7 +97,7 @@ describe("SessionManager", () => {
       const bridge = {
         async newSession(cwd: string) {
           assert.equal(cwd, tmpDir);
-          return "s2";
+          return { sessionId: "s2", configOptions: [] };
         },
         async setConfigOption(
           sessionId: string,
@@ -140,7 +140,7 @@ describe("SessionManager", () => {
       let configCalled = false;
       const bridge = {
         async newSession() {
-          return "s2";
+          return { sessionId: "s2", configOptions: [] };
         },
         async setConfigOption() {
           configCalled = true;
@@ -162,7 +162,7 @@ describe("SessionManager", () => {
     it("rejects a non-existent cwd", async () => {
       const bridge = {
         async newSession() {
-          return "s2";
+          return { sessionId: "s2", configOptions: [] };
         },
         async setConfigOption() {
           return [];
@@ -201,7 +201,7 @@ describe("SessionManager", () => {
       let nextId = 0;
       const bridge = {
         async newSession() {
-          return `new-${nextId++}`;
+          return { sessionId: `new-${nextId++}`, configOptions: [] };
         },
         async setConfigOption() {
           return [];
@@ -228,7 +228,7 @@ describe("SessionManager", () => {
 
       const bridge = {
         async newSession() {
-          return "new-1";
+          return { sessionId: "new-1", configOptions: [] };
         },
         async setConfigOption() {
           return [];
@@ -457,7 +457,7 @@ describe("SessionManager", () => {
       let loadCalled = false;
       const bridge = {
         async newSession() {
-          return "";
+          return { sessionId: "", configOptions: [] };
         },
         async setConfigOption() {
           return [];
@@ -487,7 +487,7 @@ describe("SessionManager", () => {
       let loadCalled = false;
       const bridge = {
         async newSession() {
-          return "";
+          return { sessionId: "", configOptions: [] };
         },
         async setConfigOption() {
           return [];
@@ -511,7 +511,7 @@ describe("SessionManager", () => {
       let resolveLoad: (() => void) | undefined;
       const bridge = {
         async newSession() {
-          return "";
+          return { sessionId: "", configOptions: [] };
         },
         async setConfigOption() {
           return [];
@@ -545,7 +545,7 @@ describe("SessionManager", () => {
 
       const bridge = {
         async newSession() {
-          return "";
+          return { sessionId: "", configOptions: [] };
         },
         async setConfigOption() {
           return [];
@@ -579,7 +579,7 @@ describe("SessionManager", () => {
       const setCalls: Array<{ id: string; value: string }> = [];
       const bridge = {
         async newSession() {
-          return "";
+          return { sessionId: "", configOptions: [] };
         },
         async setConfigOption(_sid: string, id: string, value: string) {
           setCalls.push({ id, value });
@@ -633,7 +633,7 @@ describe("SessionManager", () => {
       let setCalled = false;
       const bridge = {
         async newSession() {
-          return "";
+          return { sessionId: "", configOptions: [] };
         },
         async setConfigOption() {
           setCalled = true;
@@ -655,7 +655,7 @@ describe("SessionManager", () => {
       let setCalled = false;
       const bridge = {
         async newSession() {
-          return "";
+          return { sessionId: "", configOptions: [] };
         },
         async setConfigOption() {
           setCalled = true;
@@ -681,7 +681,7 @@ describe("SessionManager", () => {
       let picked: { id: string; value: string } | null = null;
       const bridge = {
         async newSession() {
-          return "";
+          return { sessionId: "", configOptions: [] };
         },
         async setConfigOption(_sid: string, id: string, value: string) {
           picked = { id, value };
@@ -703,7 +703,7 @@ describe("SessionManager", () => {
 
       const bridge = {
         async newSession() {
-          return "";
+          return { sessionId: "", configOptions: [] };
         },
         async setConfigOption() {
           throw new Error("agent boom");
@@ -732,7 +732,7 @@ describe("SessionManager", () => {
 
       const bridge = {
         async newSession() {
-          return "";
+          return { sessionId: "", configOptions: [] };
         },
         async setConfigOption() {
           return [

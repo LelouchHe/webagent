@@ -22,7 +22,21 @@ describe("TitleService", () => {
     const bridge = {
       async newSession(cwd: string, opts: any) {
         bridgeCalls.newSession.push({ cwd, opts });
-        return "title-session";
+        return {
+          sessionId: "title-session",
+          configOptions: [
+            {
+              type: "select",
+              id: "model",
+              name: "Model",
+              currentValue: "claude-sonnet-4.5",
+              options: [
+                { value: "claude-sonnet-4.5", name: "Sonnet" },
+                { value: "claude-haiku-4.5", name: "Haiku" },
+              ],
+            },
+          ],
+        };
       },
       async setConfigOption(
         sessionId: string,
@@ -36,7 +50,12 @@ describe("TitleService", () => {
         return `"  A very useful title that is definitely too long  "`;
       },
     };
-    const service = new TitleService(store as any, sessions as any, "/repo");
+    const service = new TitleService(
+      store as any,
+      sessions as any,
+      "/repo",
+      "claude-haiku-4.5",
+    );
 
     const title = await (service as any)._generate(
       bridge,
@@ -65,6 +84,171 @@ describe("TitleService", () => {
     assert.equal(bridgeCalls.newSession.length, 1);
   });
 
+  it("skips setConfigOption when modelPatterns is empty (inherit currentModelId)", async () => {
+    const store = { updateSessionTitle() {} };
+    const sessions = {
+      sessionHasTitle: new Set<string>(),
+      liveSessions: new Set<string>(),
+    };
+    const bridgeCalls = {
+      setConfigOption: [] as Array<{ sessionId: string; configId: string }>,
+    };
+    const bridge = {
+      async newSession() {
+        return {
+          sessionId: "title-session",
+          configOptions: [
+            {
+              type: "select",
+              id: "model",
+              name: "Model",
+              currentValue: "gpt-5",
+              options: [{ value: "gpt-5", name: "GPT-5" }],
+            },
+          ],
+        };
+      },
+      async setConfigOption(sessionId: string, configId: string) {
+        bridgeCalls.setConfigOption.push({ sessionId, configId });
+        return [];
+      },
+      async promptForText() {
+        return `"hi"`;
+      },
+    };
+    // Empty patterns = skip setConfigOption (inherit agent's currentModelId).
+    const service = new TitleService(
+      store as any,
+      sessions as any,
+      "/repo",
+      "",
+    );
+
+    await (service as any)._generate(bridge, "hello", "session-1");
+
+    assert.deepEqual(
+      bridgeCalls.setConfigOption,
+      [],
+      "should not call setConfigOption when modelPatterns is empty",
+    );
+  });
+
+  it("picks first matching model by case-insensitive substring (cheap-tier preference)", async () => {
+    const store = { updateSessionTitle() {} };
+    const sessions = {
+      sessionHasTitle: new Set<string>(),
+      liveSessions: new Set<string>(),
+    };
+    const bridgeCalls = {
+      setConfigOption: [] as Array<{
+        sessionId: string;
+        configId: string;
+        value: string;
+      }>,
+    };
+    const bridge = {
+      async newSession() {
+        // Codex+litellm style: capitalized id, "Mini" suffix means cheap.
+        return {
+          sessionId: "title-session",
+          configOptions: [
+            {
+              type: "select",
+              id: "model",
+              name: "Model",
+              currentValue: "GPT-5.5",
+              options: [
+                { value: "GPT-5.5", name: "GPT-5.5" },
+                { value: "gpt-5.4", name: "gpt-5.4" },
+                { value: "GPT-5.4-Mini", name: "GPT-5.4-Mini" },
+                { value: "gpt-5.3-codex", name: "gpt-5.3-codex" },
+              ],
+            },
+          ],
+        };
+      },
+      async setConfigOption(
+        sessionId: string,
+        configId: string,
+        value: string,
+      ) {
+        bridgeCalls.setConfigOption.push({ sessionId, configId, value });
+        return [];
+      },
+      async promptForText() {
+        return `"hi"`;
+      },
+    };
+    // Default pattern list (cheap-tier suffixes).
+    const service = new TitleService(store as any, sessions as any, "/repo", [
+      "haiku",
+      "flash-lite",
+      "nano",
+      "mini",
+      "flash",
+      "lite",
+    ]);
+
+    await (service as any)._generate(bridge, "hello", "session-1");
+
+    // "mini" matches "GPT-5.4-Mini" (case-insensitive). "haiku"/"flash-lite"/
+    // "nano" come earlier in the pattern list but don't match any option, so
+    // we walk down to "mini".
+    assert.deepEqual(bridgeCalls.setConfigOption, [
+      {
+        sessionId: "title-session",
+        configId: "model",
+        value: "GPT-5.4-Mini",
+      },
+    ]);
+  });
+
+  it("falls back to currentModelId (no setConfigOption) when no pattern matches", async () => {
+    const store = { updateSessionTitle() {} };
+    const sessions = {
+      sessionHasTitle: new Set<string>(),
+      liveSessions: new Set<string>(),
+    };
+    const bridgeCalls = {
+      setConfigOption: [] as any[],
+    };
+    const bridge = {
+      async newSession() {
+        return {
+          sessionId: "title-session",
+          configOptions: [
+            {
+              type: "select",
+              id: "model",
+              name: "Model",
+              currentValue: "custom-model-1",
+              options: [
+                { value: "custom-model-1", name: "C1" },
+                { value: "custom-model-2", name: "C2" },
+              ],
+            },
+          ],
+        };
+      },
+      async setConfigOption(...args: any[]) {
+        bridgeCalls.setConfigOption.push(args);
+        return [];
+      },
+      async promptForText() {
+        return `"hi"`;
+      },
+    };
+    const service = new TitleService(store as any, sessions as any, "/repo", [
+      "haiku",
+      "mini",
+      "flash",
+    ]);
+
+    await (service as any)._generate(bridge, "hello", "session-1");
+
+    assert.deepEqual(bridgeCalls.setConfigOption, []);
+  });
+
   it("swallows title-session setup failure and returns nothing", async () => {
     const store = {
       updateSessionTitle() {
@@ -84,7 +268,12 @@ describe("TitleService", () => {
         throw new Error("should not be called");
       },
     };
-    const service = new TitleService(store as any, sessions as any, "/repo");
+    const service = new TitleService(
+      store as any,
+      sessions as any,
+      "/repo",
+      "claude-haiku-4.5",
+    );
 
     const title = await (service as any)._generate(
       bridge,
@@ -104,14 +293,19 @@ describe("TitleService", () => {
     };
     const bridge = {
       async newSession() {
-        return "title-session";
+        return { sessionId: "title-session", configOptions: [] };
       },
       async setConfigOption() {},
       async promptForText() {
         return "Generated";
       },
     };
-    const service = new TitleService(store as any, sessions as any, "/repo");
+    const service = new TitleService(
+      store as any,
+      sessions as any,
+      "/repo",
+      "claude-haiku-4.5",
+    );
     const titles: string[] = [];
 
     service.generate(bridge as any, "hello", "session-1", (title) =>
@@ -132,7 +326,7 @@ describe("TitleService", () => {
     let releasePrompt: ((value: string) => void) | null = null;
     const bridge = {
       async newSession() {
-        return "title-session";
+        return { sessionId: "title-session", configOptions: [] };
       },
       async setConfigOption() {},
       async promptForText() {
@@ -145,7 +339,12 @@ describe("TitleService", () => {
         releasePrompt?.("");
       },
     };
-    const service = new TitleService(store as any, sessions as any, "/repo");
+    const service = new TitleService(
+      store as any,
+      sessions as any,
+      "/repo",
+      "claude-haiku-4.5",
+    );
 
     service.generate(bridge as any, "hello", "session-1");
     await new Promise((resolve) => setImmediate(resolve));
@@ -170,7 +369,7 @@ describe("TitleService", () => {
     let releasePrompt: ((value: string) => void) | null = null;
     const bridge = {
       async newSession() {
-        return "title-session";
+        return { sessionId: "title-session", configOptions: [] };
       },
       async setConfigOption() {},
       async promptForText() {
@@ -183,7 +382,12 @@ describe("TitleService", () => {
         releasePrompt?.("");
       },
     };
-    const service = new TitleService(store as any, sessions as any, "/repo");
+    const service = new TitleService(
+      store as any,
+      sessions as any,
+      "/repo",
+      "claude-haiku-4.5",
+    );
 
     service.generate(bridge as any, "hello", "session-1");
     await new Promise((resolve) => setImmediate(resolve));
@@ -212,7 +416,7 @@ describe("TitleService", () => {
     let releasePrompt: ((value: string) => void) | null = null;
     const bridge = {
       async newSession() {
-        return "title-session";
+        return { sessionId: "title-session", configOptions: [] };
       },
       async setConfigOption() {},
       async promptForText() {
@@ -221,7 +425,12 @@ describe("TitleService", () => {
         });
       },
     };
-    const service = new TitleService(store as any, sessions as any, "/repo");
+    const service = new TitleService(
+      store as any,
+      sessions as any,
+      "/repo",
+      "claude-haiku-4.5",
+    );
 
     // Start generation
     const titles: string[] = [];
@@ -252,14 +461,22 @@ describe("TitleService", () => {
     const bridge = {
       async newSession() {
         newSessionCalls++;
-        return `title-session-${newSessionCalls}`;
+        return {
+          sessionId: `title-session-${newSessionCalls}`,
+          configOptions: [],
+        };
       },
       async setConfigOption() {},
       async promptForText() {
         return "Title";
       },
     };
-    const service = new TitleService(store as any, sessions as any, "/repo");
+    const service = new TitleService(
+      store as any,
+      sessions as any,
+      "/repo",
+      "claude-haiku-4.5",
+    );
 
     // First generation creates a title session
     await (service as any)._generate(bridge, "hello", "session-1");

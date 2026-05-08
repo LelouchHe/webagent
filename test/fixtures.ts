@@ -72,7 +72,7 @@ export function asMockBridge<T extends MockBridge>(mock: T): T {
 export function mockBridgeStubs(): MockBridge {
   return {
     reloading: false,
-    newSession: async () => "",
+    newSession: async () => ({ sessionId: "", configOptions: [] }),
     loadSession: async () => ({ sessionId: "", configOptions: [] }),
     setConfigOption: async () => [],
     prompt: async () => {},

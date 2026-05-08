@@ -1,25 +1,35 @@
 import type { AgentBridge } from "./bridge.ts";
 import type { SessionManager } from "./session-manager.ts";
 import type { Store } from "./store.ts";
+import type { ConfigOption } from "./types.ts";
 import { log } from "./log.ts";
 
 const tlog = log.scope("title");
-
-const TITLE_MODEL = "claude-haiku-4.5";
 
 export class TitleService {
   private titleSessionId: string | null = null;
   private readonly activeSourceSessions = new Set<string>();
   private readonly cancelledSourceSessions = new Set<string>();
   private readonly defaultCwd: string;
+  private readonly modelPatterns: string[];
 
   private readonly store: Store;
   private readonly sessions: SessionManager;
 
-  constructor(store: Store, sessions: SessionManager, defaultCwd: string) {
+  constructor(
+    store: Store,
+    sessions: SessionManager,
+    defaultCwd: string,
+    modelPatterns: string | string[] = [],
+  ) {
     this.store = store;
     this.sessions = sessions;
     this.defaultCwd = defaultCwd;
+    // Normalize: drop empty strings, lowercase for case-insensitive match.
+    const list = Array.isArray(modelPatterns) ? modelPatterns : [modelPatterns];
+    this.modelPatterns = list
+      .map((p) => p.trim().toLowerCase())
+      .filter((p) => p.length > 0);
   }
 
   /** Generate a title for the session (non-blocking, fire-and-forget). */
@@ -97,13 +107,37 @@ export class TitleService {
   ): Promise<string | null> {
     if (this.titleSessionId) return this.titleSessionId;
     try {
-      const id = await bridge.newSession(this.defaultCwd, { silent: true });
+      const { sessionId: id, configOptions } = await bridge.newSession(
+        this.defaultCwd,
+        { silent: true },
+      );
       this.sessions.liveSessions.add(id);
-      await bridge.setConfigOption(id, "model", TITLE_MODEL).catch(() => []);
+      // Pick the cheapest available model by matching id substrings against
+      // the agent's reported availableModels (`configOptions[id=model].options`).
+      // Empty pattern list, no model option, or no match → skip the call and
+      // inherit the agent's default model (`currentModelId`).
+      const picked = this.pickTitleModel(configOptions);
+      if (picked) {
+        await bridge.setConfigOption(id, "model", picked).catch(() => []);
+      }
       this.titleSessionId = id;
       return id;
     } catch {
       return null;
     }
+  }
+
+  /** Find the first available model whose id matches any pattern (case-insensitive). */
+  private pickTitleModel(configOptions: ConfigOption[]): string | null {
+    if (this.modelPatterns.length === 0) return null;
+    const modelOpt = configOptions.find((c) => c.id === "model");
+    if (!modelOpt || modelOpt.options.length === 0) return null;
+    for (const pattern of this.modelPatterns) {
+      const hit = modelOpt.options.find((o) =>
+        o.value.toLowerCase().includes(pattern),
+      );
+      if (hit) return hit.value;
+    }
+    return null;
   }
 }

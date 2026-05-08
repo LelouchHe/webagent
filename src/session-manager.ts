@@ -116,7 +116,7 @@ export class SessionManager {
     const sourceSession = inheritFromSessionId
       ? this.store.getSession(inheritFromSessionId)
       : null;
-    const sessionId = await bridge.newSession(sessionCwd);
+    const { sessionId } = await bridge.newSession(sessionCwd);
     this.liveSessions.add(sessionId);
     this.store.createSession(sessionId, sessionCwd, source);
 

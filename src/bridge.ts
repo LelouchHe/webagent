@@ -124,22 +124,26 @@ export class AgentBridge extends EventEmitter {
     } satisfies AgentEvent);
   }
 
-  async newSession(cwd: string, opts?: { silent?: boolean }): Promise<string> {
+  async newSession(
+    cwd: string,
+    opts?: { silent?: boolean },
+  ): Promise<{ sessionId: string; configOptions: ConfigOption[] }> {
     if (!this.conn) throw new Error("Not connected");
     const session = (await this.conn.newSession({
       cwd,
       mcpServers: [],
     })) as acp.NewSessionResponse;
+    const configOptions = (session.configOptions ??
+      []) as unknown as ConfigOption[];
     if (!opts?.silent) {
       this.emit("event", {
         type: "session_created",
         sessionId: session.sessionId,
         cwd,
-        configOptions: (session.configOptions ??
-          []) as unknown as ConfigOption[],
+        configOptions,
       } satisfies AgentEvent);
     }
-    return session.sessionId;
+    return { sessionId: session.sessionId, configOptions };
   }
 
   async loadSession(

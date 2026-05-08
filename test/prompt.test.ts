@@ -75,7 +75,7 @@ function createMockBridge() {
     ...mockBridgeStubs(),
     newSession: async (_cwd: string) => {
       idCounter++;
-      return `mock-session-${idCounter}`;
+      return { sessionId: `mock-session-${idCounter}`, configOptions: [] };
     },
     loadSession: async (_sessionId: string, _cwd: string) => ({
       sessionId: _sessionId,

@@ -38,14 +38,34 @@ export const ConfigSchema = z.object({
     }),
 
   // [title] — title generation sub-session configuration.
-  // `model` is sent via setConfigOption; leave as empty string to skip
-  // the call and inherit the session default (useful on CLIs that don't
-  // expose claude-haiku-4.5).
+  //
+  // `model` accepts either a string or array of case-insensitive substring
+  // patterns. When the title sub-session is created, we look at the model
+  // list the agent reports (ACP `availableModels`) and pick the first model
+  // whose id matches any pattern in order. Match → call `setConfigOption`
+  // with that model id; no match → skip the call and inherit the agent's
+  // default model (`currentModelId`).
+  //
+  // Default list targets the cheap/fast tier across major providers:
+  //   - "haiku"      → Anthropic (claude-haiku-*)
+  //   - "flash-lite" → Google Gemini (gemini-*-flash-lite)  [must precede "flash"]
+  //   - "nano"       → OpenAI (gpt-*-nano), Gemini Nano
+  //   - "mini"       → OpenAI (gpt-*-mini, 4o-mini), Mistral
+  //   - "flash"      → Google Gemini (gemini-*-flash)
+  //   - "lite"       → Cohere, generic
+  //
+  // Set `model = ""` (or `[]`) to disable substring matching entirely and
+  // always inherit the agent's default model. Set to a single string for
+  // an exact-id-or-substring match, e.g. `model = "claude-haiku-4.5"`.
   title: z
     .object({
-      model: z.string().default("claude-haiku-4.5"),
+      model: z
+        .union([z.string(), z.array(z.string())])
+        .default(["haiku", "flash-lite", "nano", "mini", "flash", "lite"]),
     })
-    .default({ model: "claude-haiku-4.5" }),
+    .default({
+      model: ["haiku", "flash-lite", "nano", "mini", "flash", "lite"],
+    }),
 
   // [debug] — frontend log level.
   // level ∈ off | debug | info | warn | error. Default "off".
