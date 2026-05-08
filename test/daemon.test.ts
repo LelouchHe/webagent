@@ -271,10 +271,15 @@ describe("daemon", () => {
 
   describe("supervisor lifecycle", { timeout: 15_000 }, () => {
     let tmpDir: string;
+    let cfgPath: string;
     let supervisor: ChildProcess | null = null;
 
     before(() => {
       tmpDir = mkdtempSync(join(tmpdir(), "webagent-supervisor-"));
+      // Write a minimal config so the daemon's pidfile resolves to
+      // <tmpDir>/webagent.pid (data_dir = "." → resolved to tmpDir).
+      cfgPath = join(tmpDir, "config.toml");
+      writeFileSync(cfgPath, 'data_dir = "."\n');
     });
 
     afterEach(async () => {
@@ -310,7 +315,7 @@ describe("daemon", () => {
           daemonTs,
           "__supervisor",
           "--config",
-          "/dev/null",
+          cfgPath,
         ],
         { cwd: tmpDir, stdio: "pipe" },
       );
@@ -355,7 +360,7 @@ describe("daemon", () => {
             daemonTs,
             "__supervisor",
             "--config",
-            "/dev/null",
+            cfgPath,
           ],
           { cwd: tmpDir, stdio: "pipe" },
         );

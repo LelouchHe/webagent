@@ -2,6 +2,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import {
   closeSync,
   existsSync,
+  mkdirSync,
   openSync,
   readFileSync,
   unlinkSync,
@@ -154,16 +155,41 @@ export function decideRestart(
 }
 
 // ---------------------------------------------------------------------------
+// PID file location
+// ---------------------------------------------------------------------------
+//
+// PID file lives in `data_dir`, NOT cwd. This lets multiple instances
+// (e.g. one per agent / port) coexist on the same machine launched from
+// the same shell — each `--config` points at its own data_dir, so each
+// gets its own pid file. The log file stays in cwd (operator-facing).
+function loadDaemonContext(
+  args: string[],
+  cwd: string,
+): { config: ReturnType<typeof loadConfigFromPath>; pidFile: string } {
+  const cfgPath = extractConfigPath(args, cwd);
+  const config = loadConfigFromPath(cfgPath);
+  const dataDir = isAbsolute(config.data_dir)
+    ? config.data_dir
+    : resolve(cwd, config.data_dir);
+  try {
+    mkdirSync(dataDir, { recursive: true });
+  } catch {
+    /* best-effort — start will surface real errors via startup checks */
+  }
+  return { config, pidFile: join(dataDir, PID_FILE) };
+}
+
+// ---------------------------------------------------------------------------
 // Command dispatch
 // ---------------------------------------------------------------------------
 
 export async function run(command: Subcommand, args: string[]): Promise<void> {
-  const pidFile = join(process.cwd(), PID_FILE);
+  const { config, pidFile } = loadDaemonContext(args, process.cwd());
   const logFile = join(process.cwd(), LOG_FILE);
 
   switch (command) {
     case "start":
-      return cmdStart(pidFile, logFile, args);
+      return cmdStart(pidFile, logFile, args, config);
     case "stop":
       return cmdStop(pidFile);
     case "status":
@@ -181,6 +207,7 @@ async function cmdStart(
   pidFile: string,
   logFile: string,
   args: string[],
+  config: ReturnType<typeof loadConfigFromPath>,
 ): Promise<void> {
   const existing = readPidInfo(pidFile);
   if (existing) {
@@ -195,8 +222,6 @@ async function cmdStart(
   // copy-pasted, instead of being entombed in the daemon log file.
   // Pass WEBAGENT_STARTUP_CHECKED=1 to the supervisor child so it (and
   // the server it spawns) skip re-running the gate.
-  const cfgPath = extractConfigPath(args, process.cwd());
-  const config = loadConfigFromPath(cfgPath);
   await runStartupChecks(config);
 
   const serverJs = join(__dirname, "server.js");
@@ -327,7 +352,8 @@ async function cmdRestart(pidFile: string, logFile: string): Promise<void> {
   if (process.platform === "win32") {
     // No SIGHUP on Windows — fall back to stop + start (non-atomic)
     await cmdStop(pidFile);
-    await cmdStart(pidFile, logFile, info.args);
+    const { config } = loadDaemonContext(info.args, process.cwd());
+    await cmdStart(pidFile, logFile, info.args, config);
     return;
   }
 
@@ -359,7 +385,7 @@ async function cmdRestart(pidFile: string, logFile: string): Promise<void> {
 
 function runSupervisor(serverArgs: string[]): void {
   const serverJs = join(__dirname, "server.js");
-  const pidFile = join(process.cwd(), PID_FILE);
+  const { pidFile } = loadDaemonContext(serverArgs, process.cwd());
 
   writePidInfo(pidFile, {
     pid: process.pid,

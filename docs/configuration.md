@@ -127,7 +127,7 @@ webagent restart                       # atomic restart (Unix) / stop+start (Win
 webagent status                        # show running state
 ```
 
-The daemon writes a PID file (`webagent.pid`) and log file (`webagent.log`) in the current directory. Run all commands from the same directory.
+The daemon writes a PID file (`webagent.pid`) into the configured `data_dir`, and a log file (`webagent.log`) in the current directory. The PID file living in `data_dir` lets multiple instances coexist on the same machine — each `--config` points at its own `data_dir` — but `stop`/`status`/`restart` must still see the same `--config` (or run from the same cwd if you rely on defaults) so they resolve to the same PID file. The log file, by contrast, is per-shell.
 
 For auto-start on boot, see [Auto-Start on Boot](autostart.md) (launchd, systemd, crontab, and Windows Task Scheduler examples).
 
