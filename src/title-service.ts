@@ -20,14 +20,13 @@ export class TitleService {
     store: Store,
     sessions: SessionManager,
     defaultCwd: string,
-    modelPatterns: string | string[] = [],
+    modelPatterns: string[] = [],
   ) {
     this.store = store;
     this.sessions = sessions;
     this.defaultCwd = defaultCwd;
-    // Normalize: drop empty strings, lowercase for case-insensitive match.
-    const list = Array.isArray(modelPatterns) ? modelPatterns : [modelPatterns];
-    this.modelPatterns = list
+    // Lowercase + drop empty strings for case-insensitive substring match.
+    this.modelPatterns = modelPatterns
       .map((p) => p.trim().toLowerCase())
       .filter((p) => p.length > 0);
   }

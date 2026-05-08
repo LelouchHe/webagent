@@ -39,11 +39,11 @@ export const ConfigSchema = z.object({
 
   // [title] — title generation sub-session configuration.
   //
-  // `model` accepts either a string or array of case-insensitive substring
-  // patterns. When the title sub-session is created, we look at the model
-  // list the agent reports (ACP `availableModels`) and pick the first model
-  // whose id matches any pattern in order. Match → call `setConfigOption`
-  // with that model id; no match → skip the call and inherit the agent's
+  // `model` is an array of case-insensitive substring patterns. When the
+  // title sub-session is created, we look at the model list the agent
+  // reports (ACP `availableModels`) and pick the first model whose id
+  // matches any pattern in order. Match → call `setConfigOption` with
+  // that model id; no match → skip the call and inherit the agent's
   // default model (`currentModelId`).
   //
   // Default list targets the cheap/fast tier across major providers:
@@ -54,13 +54,13 @@ export const ConfigSchema = z.object({
   //   - "flash"      → Google Gemini (gemini-*-flash)
   //   - "lite"       → Cohere, generic
   //
-  // Set `model = ""` (or `[]`) to disable substring matching entirely and
-  // always inherit the agent's default model. Set to a single string for
-  // an exact-id-or-substring match, e.g. `model = "claude-haiku-4.5"`.
+  // Set `model = []` to disable substring matching entirely and always
+  // inherit the agent's default model. To pin one specific model, pass a
+  // single-element array: `model = ["claude-haiku-4.5"]`.
   title: z
     .object({
       model: z
-        .union([z.string(), z.array(z.string())])
+        .array(z.string())
         .default(["haiku", "flash-lite", "nano", "mini", "flash", "lite"]),
     })
     .default({

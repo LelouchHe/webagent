@@ -50,12 +50,9 @@ describe("TitleService", () => {
         return `"  A very useful title that is definitely too long  "`;
       },
     };
-    const service = new TitleService(
-      store as any,
-      sessions as any,
-      "/repo",
+    const service = new TitleService(store as any, sessions as any, "/repo", [
       "claude-haiku-4.5",
-    );
+    ]);
 
     const title = await (service as any)._generate(
       bridge,
@@ -121,7 +118,7 @@ describe("TitleService", () => {
       store as any,
       sessions as any,
       "/repo",
-      "",
+      [],
     );
 
     await (service as any)._generate(bridge, "hello", "session-1");
@@ -268,12 +265,9 @@ describe("TitleService", () => {
         throw new Error("should not be called");
       },
     };
-    const service = new TitleService(
-      store as any,
-      sessions as any,
-      "/repo",
+    const service = new TitleService(store as any, sessions as any, "/repo", [
       "claude-haiku-4.5",
-    );
+    ]);
 
     const title = await (service as any)._generate(
       bridge,
@@ -300,12 +294,9 @@ describe("TitleService", () => {
         return "Generated";
       },
     };
-    const service = new TitleService(
-      store as any,
-      sessions as any,
-      "/repo",
+    const service = new TitleService(store as any, sessions as any, "/repo", [
       "claude-haiku-4.5",
-    );
+    ]);
     const titles: string[] = [];
 
     service.generate(bridge as any, "hello", "session-1", (title) =>
@@ -339,12 +330,9 @@ describe("TitleService", () => {
         releasePrompt?.("");
       },
     };
-    const service = new TitleService(
-      store as any,
-      sessions as any,
-      "/repo",
+    const service = new TitleService(store as any, sessions as any, "/repo", [
       "claude-haiku-4.5",
-    );
+    ]);
 
     service.generate(bridge as any, "hello", "session-1");
     await new Promise((resolve) => setImmediate(resolve));
@@ -382,12 +370,9 @@ describe("TitleService", () => {
         releasePrompt?.("");
       },
     };
-    const service = new TitleService(
-      store as any,
-      sessions as any,
-      "/repo",
+    const service = new TitleService(store as any, sessions as any, "/repo", [
       "claude-haiku-4.5",
-    );
+    ]);
 
     service.generate(bridge as any, "hello", "session-1");
     await new Promise((resolve) => setImmediate(resolve));
@@ -425,12 +410,9 @@ describe("TitleService", () => {
         });
       },
     };
-    const service = new TitleService(
-      store as any,
-      sessions as any,
-      "/repo",
+    const service = new TitleService(store as any, sessions as any, "/repo", [
       "claude-haiku-4.5",
-    );
+    ]);
 
     // Start generation
     const titles: string[] = [];
@@ -471,12 +453,9 @@ describe("TitleService", () => {
         return "Title";
       },
     };
-    const service = new TitleService(
-      store as any,
-      sessions as any,
-      "/repo",
+    const service = new TitleService(store as any, sessions as any, "/repo", [
       "claude-haiku-4.5",
-    );
+    ]);
 
     // First generation creates a title session
     await (service as any)._generate(bridge, "hello", "session-1");

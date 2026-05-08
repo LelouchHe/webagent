@@ -51,14 +51,11 @@ vapid_subject = "mailto:noreply@example.com"
 global_visibility_suppression = true
 
 [title]
-# Model used for the dedicated silent session that generates session titles.
-#
-# Accepts either a string or array of case-insensitive substring patterns.
-# When the title sub-session is created, we look at the model list the agent
-# reports (ACP availableModels) and pick the first model whose id matches
-# any pattern in order. Match → call setConfigOption with that model id;
-# no match → skip the call and inherit the agent's default model
-# (currentModelId).
+# Models matched (by case-insensitive substring) against the agent's
+# reported availableModels for the title-generation sub-session. The first
+# pattern that matches any model id wins; that model is set via
+# setConfigOption. No match → skip the call and inherit the agent's
+# default model (currentModelId).
 #
 # Default list targets the cheap/fast tier across major providers:
 #   - "haiku"      → Anthropic (claude-haiku-*)
@@ -68,9 +65,9 @@ global_visibility_suppression = true
 #   - "flash"      → Google Gemini (gemini-*-flash)
 #   - "lite"       → Cohere, generic
 #
-# Set model = "" (or model = []) to disable substring matching entirely
-# and always inherit the agent's default model. Set to a single string for
-# an exact-id-or-substring match, e.g. model = "claude-haiku-4.5".
+# Set model = [] to disable matching entirely and always inherit the
+# agent's default model. To pin one specific model, use a single-element
+# array, e.g. model = ["claude-haiku-4.5"].
 model = ["haiku", "flash-lite", "nano", "mini", "flash", "lite"]
 
 [debug]
