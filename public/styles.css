@@ -1094,13 +1094,14 @@ math:not(.tml-display) {
 /* When Temml fails to parse math, the renderer falls back to a span
    containing the literal $...$ source (instead of Temml's red inline
    error message, which breaks paragraph flow and pollutes copy/paste).
-   Style is intentionally subtle: dotted underline + faint amber so power
-   users notice the degraded state, normal users just see the source.
-   The actual error message is in the title attribute (hover to inspect). */
+   Styling is intentionally minimal — just dim text. We tried dotted /
+   wavy / dashed underlines and thicker custom strokes, but iOS Safari
+   silently drops non-solid text-decoration-style on inline spans
+   (WebKit bug #233181), and any solid/colored underline that *does*
+   render reads as "wrong" rather than "soft warning". The dim color
+   alone signals "something off here" without distracting from the
+   surrounding correct prose. The actual parse error is preserved in
+   the span's title attribute for desktop hover. */
 .math-error {
-  text-decoration: underline dotted var(--yellow);
-  text-decoration-skip-ink: none;
   color: var(--text-dim);
-  cursor: help;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
