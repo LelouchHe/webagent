@@ -37,6 +37,19 @@ async function buildBundledCss() {
     join("node_modules", "highlight.js", "styles", "github-dark.css"),
     "utf-8",
   );
+  // Bundle Temml CSS (math rendering). Temml-Local.css uses system math
+  // fonts (Cambria Math / STIX Two Math / Noto Sans Math) and only ships
+  // one woff2 (Temml.woff2 for script-style symbols). Rewrite the relative
+  // src URL to absolute /fonts/temml/ so the same CSS works for both the
+  // main app and the share viewer (mirrors the KaTeX-fonts pattern).
+  const temmlCssRaw = await readFile(
+    join("node_modules", "temml", "dist", "Temml-Local.css"),
+    "utf-8",
+  );
+  const temmlCss = temmlCssRaw.replace(
+    /url\(['"]?Temml\.woff2['"]?\)/g,
+    "url('/fonts/temml/Temml.woff2')",
+  );
   return [
     main,
     "\n/* --- highlight.js themes (vendored from highlight.js@common, BSD-3-Clause) --- */\n",
@@ -46,7 +59,20 @@ async function buildBundledCss() {
     `[data-theme="dark"] {\n${darkCss}\n}\n`,
     "\n/* dark: auto + system prefers dark */\n",
     `@media (prefers-color-scheme: dark) {\n  [data-theme="auto"] {\n${darkCss}\n  }\n}\n`,
+    "\n/* --- Temml (LaTeX → MathML rendering, MIT) --- */\n",
+    temmlCss,
   ].join("");
+}
+
+async function copyTemmlFonts() {
+  // Copy Temml.woff2 (only required font, ~9KB — for unicode script symbols)
+  // to dist/fonts/temml/. Whitelisted in src/auth-middleware.ts.
+  const dst = join(OUT, "fonts", "temml");
+  await mkdir(dst, { recursive: true });
+  await cp(
+    join("node_modules", "temml", "dist", "Temml.woff2"),
+    join(dst, "Temml.woff2"),
+  );
 }
 
 const KEEP_HASHED_VERSIONS = 2;
@@ -90,6 +116,9 @@ async function copyStaticAssets(bundles) {
     if (entry === "js") continue;
     await cp(join(SRC, entry), join(OUT, entry), { recursive: true });
   }
+
+  // Vendor Temml font (one woff2 ~9KB) so /fonts/temml/Temml.woff2 resolves.
+  await copyTemmlFonts();
 
   if (isDev) {
     // Dev: write bundled CSS + rewrite index.html + login.html + share-viewer.html

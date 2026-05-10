@@ -35,6 +35,10 @@ const WHITELIST: readonly WhitelistEntry[] = [
   // Icons directory (no traversal: enforced by the check below)
   { method: "GET", test: (p) => /^\/icons\/[A-Za-z0-9._-]+$/.test(p) },
 
+  // Temml math font (loaded from CSS @font-face, no Authorization header
+  // available). Single fixed file: dist/fonts/temml/Temml.woff2.
+  { method: "GET", test: (p) => p === "/fonts/temml/Temml.woff2" },
+
   // SSE streams — authenticated via short-lived ticket in query string
   // (EventSource cannot send custom headers).
   { method: "GET", test: (p) => p === "/api/v1/events/stream" },

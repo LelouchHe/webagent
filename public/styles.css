@@ -1075,3 +1075,19 @@ body.login-page {
   padding: 0.1rem 0.35rem;
   border-radius: 3px;
 }
+
+/* --- Math (Temml MathML output) --- */
+/* Block math is wrapped in <div class="math-block"> by the renderer.
+   Safari's overflow on <math> is broken — long equations escape the
+   element and push the parent's width, causing page-level horizontal
+   scroll. The wrapper div absorbs the overflow into a local scrollbar. */
+.math-block {
+  overflow-x: auto;
+  overflow-y: hidden;
+  max-width: 100%;
+}
+/* Long inline math: allow the host paragraph to break at math boundaries
+   so a single huge inline equation can scroll on its own line if needed. */
+math:not(.tml-display) {
+  max-width: 100%;
+}

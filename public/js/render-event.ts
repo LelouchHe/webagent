@@ -12,6 +12,7 @@
 
 import { marked } from "marked";
 import DOMPurify from "dompurify";
+import "./math.ts";
 import {
   interpretToolCall,
   extractToolCallContent,
@@ -39,7 +40,9 @@ export function escHtml(s: string): string {
 }
 
 export function renderMd(text: string): string {
-  return DOMPurify.sanitize(marked.parse(text) as string);
+  return DOMPurify.sanitize(marked.parse(text) as string, {
+    USE_PROFILES: { html: true, mathMl: true },
+  });
 }
 
 const DIFF_KIND_CLASS: Record<DiffLine["kind"], string | null> = {

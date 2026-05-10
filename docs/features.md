@@ -3,6 +3,7 @@
 ## Chat
 
 - Real-time streaming responses with Markdown rendering + syntax highlighting
+- LaTeX math rendering: inline `$E=mc^2$` and display `$$\sum_i x_i$$` (Temml → MathML, lazy-loaded). Display math must be on its own line (`$$\n…\n$$`), per GitHub/Obsidian/Jupyter convention. CSP-safe (no inline styles).
 - Collapsible thinking process display
 - Tool call display (status animation, expandable details, diff rendering)
 - Agent execution plan display (pending ○ / in-progress ◉ / done ●)
