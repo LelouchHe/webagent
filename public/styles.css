@@ -1086,8 +1086,17 @@ body.login-page {
   overflow-y: hidden;
   max-width: 100%;
 }
-/* Long inline math: allow the host paragraph to break at math boundaries
-   so a single huge inline equation can scroll on its own line if needed. */
+/* Long inline math: wrap in an inline-block box so it can carry its own
+   max-width + overflow-x without pushing page width. Applying these
+   directly to <math> doesn't work on WebKit. vertical-align: middle keeps
+   the formula visually centered with surrounding CJK/Latin text. */
+.math-inline {
+  display: inline-block;
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  vertical-align: middle;
+}
 math:not(.tml-display) {
   max-width: 100%;
 }

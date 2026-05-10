@@ -71,7 +71,13 @@ function render(token: MathToken): string {
   if (token.displayMode) {
     return `<div class="math-block">${html}</div>`;
   }
-  return html;
+  // Same Safari quirk applies to inline <math>: applying max-width /
+  // overflow-x directly on <math> doesn't constrain it on iOS, so a long
+  // inline formula pushes the page width and lets the whole page scroll
+  // horizontally. Wrapping in an inline-block <span> gives us a real box
+  // that respects max-width and provides a per-formula scrollbar without
+  // affecting page width or surrounding text flow.
+  return `<span class="math-inline">${html}</span>`;
 }
 
 const inlineMath = {
