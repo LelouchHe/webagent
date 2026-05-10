@@ -70,7 +70,27 @@ describe("math rendering (Temml)", () => {
     assert.match(html, /<math[^>]*>/);
   });
 
-  it("does not blow up on malformed LaTeX (throwOnError: false)", () => {
+  it("renders math-error span for malformed LaTeX (degrades gracefully)", () => {
+    const html = parse("before $\\frac{1}{$ after");
+    // No raw red ParseError text leaks to the rendered output.
+    assert.doesNotMatch(html, /ParseError/);
+    // Falls back to a math-error span containing the literal source.
+    assert.match(html, /<span class="math-error"/);
+    assert.match(html, /title="LaTeX parse error:/);
+    // The literal `$\frac{1}{$` is preserved (HTML-escaped) inside the span.
+    assert.match(html, /\$\\frac\{1\}\{\$/);
+    // Surrounding text intact.
+    assert.match(html, /before /);
+    assert.match(html, / after/);
+  });
+
+  it("renders math-error inside math-block wrapper for display mode", () => {
+    const html = parse("$$\n\\frac{1}{\n$$");
+    assert.match(html, /<div class="math-block"><span class="math-error"/);
+    assert.doesNotMatch(html, /ParseError/);
+  });
+
+  it("does not blow up on malformed LaTeX (returns string)", () => {
     const html = parse("$\\frac{1}{$");
     assert.equal(typeof html, "string");
     assert.ok(html.length > 0);
@@ -97,6 +117,40 @@ describe("math rendering (Temml)", () => {
       matches?.length === 3,
       `expected 3 <math> tags, got ${matches?.length}`,
     );
+  });
+
+  // CJK fullwidth punctuation (，。：；！？) MUST count as a `$` close
+  // boundary, matching upstream marked-katex-extension. A previous regex
+  // drift mangled the fullwidth chars `！，：` to their ASCII look-alikes
+  // `!,:` and silently broke common Chinese math sentences like
+  // `已知 $P(B)$，求 $P(A)$。` — the unclosed `$` got merged with the next
+  // `$` into one giant math span containing `$` literals, triggering
+  // `ParseError: Can't use function '$' in math mode`. Lock all six
+  // fullwidth chars down here.
+  for (const punct of ["，", "。", "：", "！", "？"]) {
+    it(`closes inline $...$ before fullwidth '${punct}'`, () => {
+      const html = parse(`已知 $P(A)$${punct}求 $P(B)$。`);
+      const matches = html.match(/<math/g);
+      assert.ok(
+        matches?.length === 2,
+        `expected 2 <math> tags for '${punct}', got ${matches?.length}`,
+      );
+      // No raw $ should leak through.
+      assert.doesNotMatch(html, /\$P\(/);
+    });
+  }
+
+  it("repro: original ParseError sentence renders without leaking raw $", () => {
+    // The exact phrase from session c9846c10 that triggered the bug.
+    const html = parse(
+      "已知 $P(B \\mid A)$, $P(A)$, $P(B \\mid \\neg A)$，求 $P(A \\mid B)$。",
+    );
+    const matches = html.match(/<math/g);
+    assert.ok(
+      matches?.length === 4,
+      `expected 4 <math> tags, got ${matches?.length}`,
+    );
+    assert.doesNotMatch(html, /\$P\(/);
   });
 
   it("renderMd configures DOMPurify with mathMl profile", () => {
