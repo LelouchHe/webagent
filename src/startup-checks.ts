@@ -30,6 +30,7 @@ export const STARTUP_CHECKED_ENV = "WEBAGENT_STARTUP_CHECKED";
 
 export interface StartupChecksConfig {
   port: number;
+  host: string;
   data_dir: string;
   agent_cmd: string;
   auth: { first_run_bootstrap: boolean };
@@ -63,6 +64,7 @@ export async function runStartupChecks(
     data_dir: config.data_dir,
     agent_cmd: config.agent_cmd,
     port: config.port,
+    host: config.host,
   });
 
   // 2. Auth bootstrap. Same `[check] auth: ...` style; first-run mint

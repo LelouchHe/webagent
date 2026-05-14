@@ -1,6 +1,7 @@
 # WebAgent development configuration
 
 port = 6801
+host = "127.0.0.1"
 data_dir = "data-dev"
 public_dir = "dist-dev"
 agent_cmd = "copilot --acp"

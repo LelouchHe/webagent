@@ -4,6 +4,13 @@ import { z } from "zod";
 
 export const ConfigSchema = z.object({
   port: z.number().int().positive().default(6800),
+  // Network interface to bind. Default "127.0.0.1" = loopback only
+  // (no LAN exposure). Set to "0.0.0.0" to listen on all IPv4
+  // interfaces, "::" for IPv6/dual-stack, or a specific NIC IP
+  // (e.g. "192.168.1.10") to bind one interface on a multi-homed
+  // host. Note: "localhost" works but resolves via DNS and may
+  // pick IPv6 (`::1`) over IPv4 — prefer the explicit IP form.
+  host: z.string().default("127.0.0.1"),
   data_dir: z.string().default("data"),
   default_cwd: z.string().default(process.cwd()),
   public_dir: z.string().default("dist"),

@@ -21,6 +21,7 @@ import { AuthStore } from "../src/auth-store.ts";
 
 interface TestConfig {
   port: number;
+  host: string;
   data_dir: string;
   agent_cmd: string;
   auth: { first_run_bootstrap: boolean };
@@ -93,6 +94,7 @@ describe("startup-checks", () => {
     tmpDirs.push(dir);
     return {
       port: 0,
+      host: "127.0.0.1",
       data_dir: dir,
       agent_cmd: "node",
       auth: { first_run_bootstrap: true },

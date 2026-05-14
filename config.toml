@@ -3,6 +3,15 @@
 # HTTP server port (default: 6800)
 port = 6800
 
+# Network interface to bind. Default "127.0.0.1" = loopback only
+# (not reachable from LAN; pair with a reverse proxy / tunnel like
+# cloudflared for external access). Set to "0.0.0.0" to listen on all
+# IPv4 interfaces, "::" for IPv6/dual-stack, or a specific NIC IP
+# (e.g. "192.168.1.10") on a multi-homed host. Prefer the explicit
+# "127.0.0.1" form over "localhost" — the latter goes through DNS
+# resolution and may pick IPv6 (`::1`) depending on /etc/hosts order.
+host = "127.0.0.1"
+
 # SQLite + uploads directory (default: "data")
 data_dir = "data"
 

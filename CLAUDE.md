@@ -54,6 +54,7 @@ If no `--config` is provided, all settings use built-in defaults. See `config.to
 | Key                       | Default            | Description                                                     |
 | ------------------------- | ------------------ | --------------------------------------------------------------- |
 | `port`                    | `6800`             | HTTP server port                                                |
+| `host`                    | `127.0.0.1`        | Bind interface; `0.0.0.0` exposes LAN, `::` IPv6 dual-stack     |
 | `data_dir`                | `data`             | SQLite + uploads directory                                      |
 | `default_cwd`             | `process.cwd()`    | Working directory for new sessions                              |
 | `public_dir`              | `dist`             | Static assets directory                                         |

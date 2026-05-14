@@ -43,6 +43,7 @@ describe("preflight", () => {
       data_dir: dir,
       agent_cmd: "node --version",
       port: 0,
+      host: "127.0.0.1",
     });
     assert.equal(r.agentCmd, "node --version");
   });
@@ -55,6 +56,7 @@ describe("preflight", () => {
       data_dir: child,
       agent_cmd: "node",
       port: 0,
+      host: "127.0.0.1",
     });
     assert.equal(r.agentCmd, "node");
   });
@@ -68,6 +70,7 @@ describe("preflight", () => {
           data_dir: dir,
           agent_cmd: "definitely-no-such-binary-xyzzy",
           port: 0,
+          host: "127.0.0.1",
         }),
       /exit:78/,
     );
@@ -79,7 +82,13 @@ describe("preflight", () => {
     tmpDirs.push(dir);
     process.env.PATH = "/definitely-nonexistent-xyzzy";
     await assert.rejects(
-      async () => runPreflight({ data_dir: dir, agent_cmd: "auto", port: 0 }),
+      async () =>
+        runPreflight({
+          data_dir: dir,
+          agent_cmd: "auto",
+          port: 0,
+          host: "127.0.0.1",
+        }),
       /exit:78/,
     );
     assert.equal(exited, 78);
@@ -100,6 +109,7 @@ describe("preflight", () => {
             data_dir: join(parent, "child"),
             agent_cmd: "node",
             port: 0,
+            host: "127.0.0.1",
           }),
         /exit:78/,
       );
@@ -114,13 +124,15 @@ describe("preflight", () => {
     let blockedPort = 0;
 
     beforeEach(async () => {
-      // Bind on 0.0.0.0 because that's what real webagent uses; binding
-      // 127.0.0.1 would only catch loopback-vs-loopback conflicts and
-      // miss the common case of "another webagent on *:PORT".
+      // Bind on 127.0.0.1 because that's the new default `host`. With
+      // loopback default, a 0.0.0.0 blocker would NOT conflict on
+      // macOS (kernel routes loopback to more-specific bind); the
+      // explicit-LAN exposure case (host="0.0.0.0") is a deliberate
+      // operator choice and not covered here.
       blocker = createServer();
       await new Promise<void>((settle, reject) => {
         blocker!.once("error", reject);
-        blocker!.listen(0, "0.0.0.0", () => {
+        blocker!.listen(0, "127.0.0.1", () => {
           settle();
         });
       });
@@ -153,6 +165,7 @@ describe("preflight", () => {
             data_dir: dir,
             agent_cmd: "node",
             port: blockedPort,
+            host: "127.0.0.1",
           }),
         /exit:78/,
       );
@@ -170,11 +183,11 @@ describe("preflight", () => {
       );
     });
 
-    it("detects 0.0.0.0-bound conflict (server.listen uses 0.0.0.0)", async () => {
-      // Real server binds to 0.0.0.0, so probe must too — otherwise a
-      // process listening on *:PORT (e.g. another webagent instance)
-      // slips past preflight and surfaces only as EADDRINUSE on real
-      // listen. Reproduce by binding the blocker on 0.0.0.0.
+    it("detects 0.0.0.0-bound listener when host=0.0.0.0 (LAN mode)", async () => {
+      // With host="0.0.0.0" (LAN-exposed mode), probe must catch a
+      // foreign listener already bound to *:PORT. This is the
+      // pre-loopback-default behavior — preserved for operators who
+      // opt into LAN exposure.
       const wideBlocker = createServer();
       const widePort: number = await new Promise((settle, reject) => {
         wideBlocker.once("error", reject);
@@ -200,6 +213,7 @@ describe("preflight", () => {
               data_dir: dir,
               agent_cmd: "node",
               port: widePort,
+              host: "0.0.0.0",
             }),
           /exit:78/,
         );
@@ -221,8 +235,37 @@ describe("preflight", () => {
         data_dir: dir,
         agent_cmd: "node",
         port: 0,
+        host: "127.0.0.1",
       });
       assert.equal(r.agentCmd, "node");
+    });
+
+    it("exits 78 with EADDRNOTAVAIL hint when host is not a local interface", async () => {
+      const dir = mkdtempSync(join(tmpdir(), "preflight-"));
+      tmpDirs.push(dir);
+      let stderr = "";
+      console.error = ((msg: string) => {
+        stderr += String(msg) + "\n";
+      }) as never;
+      // 203.0.113.1 is TEST-NET-3 (RFC 5737) — guaranteed not assigned
+      // to any local interface, so bind fails with EADDRNOTAVAIL.
+      await assert.rejects(
+        async () =>
+          runPreflight({
+            data_dir: dir,
+            agent_cmd: "node",
+            port: 0,
+            host: "203.0.113.1",
+          }),
+        /exit:78/,
+      );
+      assert.equal(exited, 78);
+      assert.match(stderr, /203\.0\.113\.1/, "hint should name the bad host");
+      assert.match(
+        stderr,
+        /EADDRNOTAVAIL|not assigned|local interface/i,
+        "hint should explain the bad-host failure",
+      );
     });
   });
 });

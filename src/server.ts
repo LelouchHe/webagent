@@ -237,7 +237,7 @@ process.on("SIGHUP", () => {
 
 // --- Start ---
 
-server.listen(config.port, "0.0.0.0", () => {
+server.listen(config.port, config.host, () => {
   void (async () => {
     // The auth gate already ran in runStartupChecks (above) — either in
     // this process or in a parent that handed off via WEBAGENT_STARTUP_
