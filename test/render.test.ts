@@ -37,6 +37,19 @@ describe("render", () => {
     resetState(state, dom);
   });
 
+  /**
+   * Drain one animation frame. scrollToBottom defers the actual scrollTop
+   * assignment via requestAnimationFrame to coalesce reflows; tests that
+   * assert on scrollTop must wait for the frame to fire.
+   */
+  function nextFrame(): Promise<void> {
+    return new Promise((resolve) => {
+      requestAnimationFrame(() => {
+        resolve();
+      });
+    });
+  }
+
   describe("escHtml", () => {
     it("escapes HTML entities", () => {
       assert.equal(render.escHtml("<b>test</b>"), "&lt;b&gt;test&lt;/b&gt;");
@@ -239,7 +252,7 @@ describe("render", () => {
   });
 
   describe("scrollToBottom", () => {
-    it("keeps following when the user was already at the bottom", () => {
+    it("keeps following when the user was already at the bottom", async () => {
       setMessagesScrollMetrics({
         scrollTop: 400,
         scrollHeight: 600,
@@ -253,6 +266,7 @@ describe("render", () => {
         clientHeight: 200,
       });
       render.scrollToBottom();
+      await nextFrame();
 
       assert.equal(dom.messages.scrollTop, 1400);
       assert.equal(state.followMessages, true);
@@ -277,7 +291,7 @@ describe("render", () => {
       assert.equal(state.followMessages, false);
     });
 
-    it("always scrolls when forced", () => {
+    it("always scrolls when forced", async () => {
       setMessagesScrollMetrics({
         scrollTop: 120,
         scrollHeight: 600,
@@ -286,6 +300,7 @@ describe("render", () => {
       state.followMessages = false;
 
       render.scrollToBottom(true);
+      await nextFrame();
 
       assert.equal(dom.messages.scrollTop, 600);
       assert.equal(state.followMessages, true);
@@ -307,7 +322,7 @@ describe("render", () => {
       assert.equal(state.currentBashEl, el);
     });
 
-    it("recomputes follow state from the pre-append position", () => {
+    it("recomputes follow state from the pre-append position", async () => {
       state.followMessages = false;
       setMessagesScrollMetrics({
         scrollTop: 400,
@@ -316,6 +331,7 @@ describe("render", () => {
       });
 
       render.addBashBlock("npm test", true);
+      await nextFrame();
 
       assert.equal(dom.messages.scrollTop, 600);
       assert.equal(state.followMessages, true);

@@ -23,6 +23,13 @@ export function setupDOM() {
   globalThis.HTMLElement = win.HTMLElement as any;
   // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- JSDOM may not have WebSocket
   globalThis.WebSocket = (win.WebSocket ?? class MockWS {}) as any;
+  // Hoist rAF/cancelAnimationFrame/performance to globalThis so production
+  // code that reads them as bare globals (e.g. scheduleAssistantRender) works
+  // in tests. Without this, code falls back to the typeof-guard sync path
+  // and we cannot exercise the actual rAF coalescing behavior.
+  globalThis.requestAnimationFrame = win.requestAnimationFrame.bind(win) as any;
+  globalThis.cancelAnimationFrame = win.cancelAnimationFrame.bind(win) as any;
+  globalThis.performance = win.performance;
 
   win.document.body.innerHTML = HTML;
 }
@@ -48,6 +55,14 @@ export function resetState(state: any, dom: any) {
   state.sessionModel = null;
   state.currentAssistantEl = null;
   state.currentAssistantText = "";
+  // Cancel any pending rAF from previous test so tokens don't leak across tests.
+  if (state.assistantRafToken != null) {
+    if (typeof cancelAnimationFrame === "function") {
+      cancelAnimationFrame(state.assistantRafToken);
+    }
+    state.assistantRafToken = null;
+  }
+  state.assistantLastRenderTs = 0;
   state.currentThinkingEl = null;
   state.currentThinkingText = "";
   state.busy = false;

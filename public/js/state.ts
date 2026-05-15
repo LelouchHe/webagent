@@ -79,6 +79,18 @@ export const state = {
   sessionModel: null as string | null,
   currentAssistantEl: null as HTMLElement | null,
   currentAssistantText: "",
+  // requestAnimationFrame token for the coalesced markdown render scheduler
+  // (see public/js/events.ts:scheduleAssistantRender). null = no render
+  // pending. MUST be cancelled via cancelAnimationFrame before
+  // currentAssistantEl is reassigned or nulled, otherwise the rAF callback
+  // will write stale text into a stale element. The finishAssistant() flush
+  // path and resetSessionUI both honor this contract; any new code that
+  // clears currentAssistantEl must do the same.
+  assistantRafToken: null as number | null,
+  // Timestamp of the last renderMd call (ms via performance.now()). Used by
+  // the scheduler to enforce a 33ms minimum interval between renders so
+  // 120Hz / 144Hz displays don't blow the throttle.
+  assistantLastRenderTs: 0,
   currentThinkingEl: null as HTMLElement | null,
   currentThinkingText: "",
   busy: false,
@@ -366,6 +378,15 @@ export function refreshInputActions(): void {
 export function resetSessionUI() {
   for (const hook of resetHooks) hook();
   dom.messages.innerHTML = "";
+  // Cancel any pending markdown-render rAF before clearing the element it
+  // would write into. See state.assistantRafToken docs.
+  if (state.assistantRafToken != null) {
+    if (typeof cancelAnimationFrame === "function") {
+      cancelAnimationFrame(state.assistantRafToken);
+    }
+    state.assistantRafToken = null;
+  }
+  state.assistantLastRenderTs = 0;
   state.currentAssistantEl = null;
   state.currentAssistantText = "";
   state.currentThinkingEl = null;

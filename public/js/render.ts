@@ -29,12 +29,45 @@ export function addSystem(text: string): HTMLDivElement {
 
 export function finishAssistant() {
   const assistantEl = state.currentAssistantEl;
+  const assistantText = state.currentAssistantText;
   state.currentAssistantEl = null;
   state.currentAssistantText = "";
+  // Cancel any pending coalesced rAF render and run one final sync render
+  // so the bubble shows the LATEST accumulated text, not whatever rAF
+  // happened to fire last. Capturing el+text into locals first is critical:
+  // if we left this inside the `if (assistantEl)` branch below, the state
+  // mutations above would have already wiped the text. See
+  // public/js/events.ts:scheduleAssistantRender for the partner code.
+  if (state.assistantRafToken != null) {
+    if (typeof cancelAnimationFrame === "function") {
+      cancelAnimationFrame(state.assistantRafToken);
+    }
+    state.assistantRafToken = null;
+    if (assistantEl) assistantEl.innerHTML = renderMd(assistantText);
+  }
+  state.assistantLastRenderTs = 0;
   if (assistantEl && typeof assistantEl.querySelector === "function") {
     assistantEl.removeAttribute("data-primed");
     enhanceCodeBlocks(assistantEl);
   }
+}
+
+/**
+ * Cancel any pending streaming-render rAF and sync the latest text onto the
+ * current assistant element WITHOUT clearing streaming state. Used by paths
+ * that need to capture the live text before forcibly resetting
+ * currentAssistantEl (e.g. SSE reconnect / _loadNewEventsImpl), so the
+ * subsequent revert/truncate logic operates on a deterministic DOM and the
+ * rAF callback can't fire later against a now-stale element.
+ */
+export function flushStreamingRender() {
+  if (state.assistantRafToken == null) return;
+  if (typeof cancelAnimationFrame === "function") {
+    cancelAnimationFrame(state.assistantRafToken);
+  }
+  state.assistantRafToken = null;
+  const el = state.currentAssistantEl;
+  if (el) el.innerHTML = renderMd(state.currentAssistantText);
 }
 
 export function finishThinking() {

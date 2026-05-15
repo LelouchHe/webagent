@@ -43,6 +43,7 @@ import {
 } from "./render.ts";
 import * as api from "./api.ts";
 import { applyConnectedLogLevel } from "./log.ts";
+import { log } from "./log.ts";
 import {
   classifyPermissionOption,
   normalizeEventsResponse,
@@ -267,6 +268,16 @@ function primeStreamingState(
   events: StoredEvent[],
   streaming: { thinking: boolean; assistant: boolean },
 ) {
+  // Invariant: no rAF should be pending when prime runs. The only callers
+  // (_loadNewEventsImpl, initial replay) all cancel/flush upstream. A non-
+  // null token here means a clearing path was missed and a stale rAF could
+  // fire onto the freshly-primed element. Warn (dev-only signal) but do
+  // not auto-fix — fix the upstream missing flush.
+  if (state.assistantRafToken != null) {
+    log.warn(
+      "primeStreamingState: assistantRafToken non-null at entry (missing flush upstream)",
+    );
+  }
   if (streaming.thinking) {
     let el: HTMLDetailsElement | undefined;
     if (events.length) {
@@ -354,6 +365,16 @@ export function loadNewEvents(sid: string): Promise<boolean> {
 async function _loadNewEventsImpl(sid: string): Promise<boolean> {
   state.replayInProgress = true;
   state.replayQueue = [];
+  // Cancel any pending streaming-render rAF so it doesn't fire later against
+  // an element this function is about to revert/truncate. We don't need to
+  // capture the live text — the revert at line ~377 will rebuild from
+  // data-raw (DB content), and post-boundary live DOM is removed below.
+  if (state.assistantRafToken != null) {
+    if (typeof cancelAnimationFrame === "function") {
+      cancelAnimationFrame(state.assistantRafToken);
+    }
+    state.assistantRafToken = null;
+  }
   try {
     const url = `/api/v1/sessions/${sid}/events?after=${state.lastEventSeq}`;
     const res = await fetch(url);
@@ -849,6 +870,63 @@ function isDuplicateOfReplay(msg: AgentEvent): boolean {
   }
 }
 
+// Streaming markdown render coalescer.
+//
+// Background: long markdown reports (>10KB) used to call
+// `el.innerHTML = renderMd(state.currentAssistantText)` on every chunk,
+// producing O(N²) main-thread work as each render reparses ever-growing
+// accumulated text through marked + DOMPurify + temml + hljs. A real
+// dogfood session (~989 events, three 21/34/43KB assistant_message blocks)
+// froze the UI for minutes. Solution: coalesce renders via rAF with a
+// 33ms minimum interval, so a 60Hz / 120Hz / 144Hz / 240Hz display
+// caps at ~30 renders/second regardless of refresh rate.
+//
+// Contract: callers (message_chunk handler) update
+// state.currentAssistantText synchronously, then call
+// scheduleAssistantRender(). The DOM is updated on the next rAF tick at
+// the earliest. finishAssistant() and flushStreamingRender() in render.ts
+// both cancel any pending rAF and run a final sync render so the bubble
+// reflects the latest text at turn boundary / forced reset.
+const MIN_RENDER_INTERVAL_MS = 33;
+
+function doAssistantRender() {
+  const el = state.currentAssistantEl;
+  if (!el) return;
+  const t0 = performance.now();
+  el.innerHTML = renderMd(state.currentAssistantText);
+  state.assistantLastRenderTs = performance.now();
+  log.debug("md-render", {
+    ms: Math.round(state.assistantLastRenderTs - t0),
+    len: state.currentAssistantText.length,
+  });
+  scrollToBottom();
+}
+
+function scheduleAssistantRender() {
+  // SSR / extreme environments without rAF: fall back to sync render so we
+  // never silently drop a render. Mirrors render.ts:scrollToBottom guard.
+  if (typeof requestAnimationFrame !== "function") {
+    doAssistantRender();
+    return;
+  }
+  if (state.assistantRafToken != null) return;
+  state.assistantRafToken = requestAnimationFrame(() => {
+    const now = performance.now();
+    if (now - state.assistantLastRenderTs < MIN_RENDER_INTERVAL_MS) {
+      // Too soon since the last render — re-queue on the next frame to
+      // honor the 33ms floor. This is what keeps 120/144Hz displays from
+      // sliding back to O(N²) behavior.
+      state.assistantRafToken = requestAnimationFrame(() => {
+        state.assistantRafToken = null;
+        doAssistantRender();
+      });
+      return;
+    }
+    state.assistantRafToken = null;
+    doAssistantRender();
+  });
+}
+
 // eslint-disable-next-line complexity -- TODO: refactor event type switch with helper functions
 export function handleEvent(msg: AgentEvent) {
   // Queue events that arrive while history replay is in progress to avoid duplicates
@@ -985,8 +1063,7 @@ export function handleEvent(msg: AgentEvent) {
         state.currentAssistantText = "";
       }
       state.currentAssistantText += msg.text;
-      state.currentAssistantEl.innerHTML = renderMd(state.currentAssistantText);
-      scrollToBottom();
+      scheduleAssistantRender();
       break;
 
     case "thought_chunk":
