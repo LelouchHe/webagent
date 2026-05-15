@@ -878,16 +878,13 @@ function isDuplicateOfReplay(msg: AgentEvent): boolean {
 // accumulated text through marked + DOMPurify + temml + hljs. A real
 // dogfood session (~989 events, three 21/34/43KB assistant_message blocks)
 // froze the UI for minutes. Solution: coalesce renders via rAF with a
-// 33ms minimum interval, so a 60Hz / 120Hz / 144Hz / 240Hz display
-// caps at ~30 renders/second regardless of refresh rate.
-//
-// Contract: callers (message_chunk handler) update
-// state.currentAssistantText synchronously, then call
-// scheduleAssistantRender(). The DOM is updated on the next rAF tick at
-// the earliest. finishAssistant() and flushStreamingRender() in render.ts
-// both cancel any pending rAF and run a final sync render so the bubble
-// reflects the latest text at turn boundary / forced reset.
-const MIN_RENDER_INTERVAL_MS = 33;
+// 16ms minimum interval, so a 120Hz / 144Hz / 240Hz display caps at
+// ~60 renders/second instead of trying to render on every 8ms tick.
+// 33ms (=30fps) felt visibly choppy in dogfood, 16ms (=60fps) is the
+// sweet spot: human eye perceives ≥60fps as smooth, and renderMd of
+// 30KB+ markdown takes >16ms anyway on the worst-case machine, so the
+// floor stops mattering exactly when renderMd itself becomes the limiter.
+const MIN_RENDER_INTERVAL_MS = 16;
 
 function doAssistantRender() {
   const el = state.currentAssistantEl;
