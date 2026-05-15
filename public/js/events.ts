@@ -895,10 +895,17 @@ function doAssistantRender() {
   const t0 = performance.now();
   el.innerHTML = renderMd(state.currentAssistantText);
   state.assistantLastRenderTs = performance.now();
-  log.debug("md-render", {
-    ms: Math.round(state.assistantLastRenderTs - t0),
-    len: state.currentAssistantText.length,
-  });
+  const ms = state.assistantLastRenderTs - t0;
+  // Only log when a single renderMd eats more than one 60Hz frame budget.
+  // Quiet path keeps perf instrumentation from itself becoming the bottleneck
+  // (logger writes DOM rows when level != off, so per-frame logging would
+  // re-introduce the reflow storm we just eliminated).
+  if (ms > 16) {
+    log.debug("md-render slow", {
+      ms: Math.round(ms),
+      len: state.currentAssistantText.length,
+    });
+  }
   scrollToBottom();
 }
 
