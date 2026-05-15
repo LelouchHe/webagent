@@ -115,14 +115,28 @@ describe("CSP header on HTML entrypoints", () => {
     }
   });
 
-  it("CSP does NOT include unsafe-inline or unsafe-eval", () => {
+  it("script-src allows 'wasm-unsafe-eval' for WebAssembly", () => {
+    // WASM consumers (e.g. voice pipeline VAD/STT, future image/crypto workers)
+    // require WebAssembly.instantiate(). Without 'wasm-unsafe-eval' the
+    // browser refuses to create the WASM object under strict CSP.
+    // 'wasm-unsafe-eval' is a narrow CSP3 token that does NOT re-enable
+    // eval()/new Function() — only WASM compilation.
+    assert.ok(
+      CSP_POLICY.includes("'wasm-unsafe-eval'"),
+      "CSP_POLICY script-src must include 'wasm-unsafe-eval' to allow WASM",
+    );
+  });
+
+  it("CSP does NOT include unsafe-inline or generic unsafe-eval", () => {
     assert.ok(
       !CSP_POLICY.includes("unsafe-inline"),
       "CSP_POLICY must not include 'unsafe-inline' (would allow inline scripts/styles)",
     );
+    // Match the standalone 'unsafe-eval' token, not the narrower
+    // 'wasm-unsafe-eval' which is intentionally allowed.
     assert.ok(
-      !CSP_POLICY.includes("unsafe-eval"),
-      "CSP_POLICY must not include 'unsafe-eval' (would allow eval/Function)",
+      !/[\s']unsafe-eval'/.test(CSP_POLICY),
+      "CSP_POLICY must not include the generic 'unsafe-eval' (would allow eval/Function); 'wasm-unsafe-eval' is OK",
     );
   });
 

@@ -169,7 +169,7 @@ Every HTML entrypoint response carries a strict CSP:
 ```
 default-src 'self';
 img-src 'self' data: blob:;
-script-src 'self';
+script-src 'self' 'wasm-unsafe-eval';
 style-src 'self';
 connect-src 'self';
 object-src 'none';
@@ -178,7 +178,7 @@ base-uri 'self';
 form-action 'self'
 ```
 
-No `unsafe-inline` for scripts. No third-party origins. Notable consequences:
+No `unsafe-inline` for scripts. No `unsafe-eval`. The script-src includes the narrow CSP3 token `'wasm-unsafe-eval'` (permits `WebAssembly.instantiate()` only; does NOT re-enable `eval()`/`Function()`) so wasm-backed features can run. No third-party origins. Notable consequences:
 
 - The early-paint theme bootstrap is in a separate file (`/theme-init.js`) and loaded with `<script src="...">` instead of being inline.
 - `marked` and `dompurify` are bundled into `app.[hash].js`. `highlight.js` common (36 languages) is dynamically imported into a separate `chunk.[hash].js`, preloaded via `<link rel="modulepreload">` — still all served from `'self'`, no `cdn.jsdelivr.net` at runtime.

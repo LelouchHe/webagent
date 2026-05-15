@@ -81,7 +81,10 @@ export const HTML_ENTRYPOINTS = [
  *
  *  - default-src 'self': everything same-origin only
  *  - img-src adds data: + blob: for image-upload preview
- *  - script-src 'self' (no inline; theme bootstrap is /theme-init.js)
+ *  - script-src 'self' 'wasm-unsafe-eval' (no inline; theme bootstrap is
+ *    /theme-init.js. 'wasm-unsafe-eval' is the narrow CSP3 token that
+ *    permits WebAssembly.instantiate() WITHOUT re-enabling eval()/Function;
+ *    needed by any wasm consumer.)
  *  - style-src 'self' (no inline; login styles live in /styles.css)
  *  - object-src 'none', frame-ancestors 'none', base-uri 'self', form-action 'self'
  *  - connect-src 'self' for fetch + EventSource
@@ -89,7 +92,7 @@ export const HTML_ENTRYPOINTS = [
 export const CSP_POLICY = [
   "default-src 'self'",
   "img-src 'self' data: blob:",
-  "script-src 'self'",
+  "script-src 'self' 'wasm-unsafe-eval'",
   "style-src 'self'",
   "connect-src 'self'",
   "object-src 'none'",
