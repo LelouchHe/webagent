@@ -913,13 +913,32 @@ function scheduleAssistantRender() {
     doAssistantRender();
     return;
   }
+
+  // Leading-edge: if we have not rendered in the last MIN_RENDER_INTERVAL_MS,
+  // render synchronously NOW. This makes a slow stream (one chunk every
+  // 100ms+) feel exactly like the pre-rAF behavior — zero perceived
+  // accumulation. Only fast streams that exceed the rate budget get
+  // coalesced via the trailing rAF below.
+  const now =
+    typeof performance !== "undefined" && typeof performance.now === "function"
+      ? performance.now()
+      : Date.now();
+  if (
+    state.assistantRafToken == null &&
+    now - state.assistantLastRenderTs >= MIN_RENDER_INTERVAL_MS
+  ) {
+    doAssistantRender();
+    return;
+  }
+
+  // Trailing-edge: a render happened within the budget window. Schedule a
+  // single rAF to capture subsequent chunks; the callback re-checks the
+  // time floor and re-queues if still too soon, so 120/144/240Hz displays
+  // never push past 60 renders/sec.
   if (state.assistantRafToken != null) return;
   state.assistantRafToken = requestAnimationFrame(() => {
-    const now = performance.now();
-    if (now - state.assistantLastRenderTs < MIN_RENDER_INTERVAL_MS) {
-      // Too soon since the last render — re-queue on the next frame to
-      // honor the 33ms floor. This is what keeps 120/144Hz displays from
-      // sliding back to O(N²) behavior.
+    const nowAtFrame = performance.now();
+    if (nowAtFrame - state.assistantLastRenderTs < MIN_RENDER_INTERVAL_MS) {
       state.assistantRafToken = requestAnimationFrame(() => {
         state.assistantRafToken = null;
         doAssistantRender();

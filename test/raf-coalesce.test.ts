@@ -90,15 +90,29 @@ describe("rAF-coalesced streaming render", () => {
     });
 
     it("only one rAF token outstanding at a time during burst", () => {
+      // First chunk renders synchronously via leading-edge (lastRenderTs == 0,
+      // now - 0 >= 16ms). Subsequent chunks within the budget window go
+      // through trailing-edge rAF — one token, reused across the burst.
       events.handleEvent({ type: "message_chunk", text: "a" });
-      const tokenAfter1 = state.assistantRafToken;
-      assert.notEqual(tokenAfter1, null, "first chunk should arm rAF");
-      events.handleEvent({ type: "message_chunk", text: "b" });
-      events.handleEvent({ type: "message_chunk", text: "c" });
-      // Second + third chunks should NOT re-arm — same token still pending.
+      // After leading-edge sync render, token is null but lastRenderTs is set.
       assert.equal(
         state.assistantRafToken,
-        tokenAfter1,
+        null,
+        "leading-edge first render is synchronous",
+      );
+      events.handleEvent({ type: "message_chunk", text: "b" });
+      const tokenAfter2 = state.assistantRafToken;
+      assert.notEqual(
+        tokenAfter2,
+        null,
+        "second chunk within budget should arm trailing rAF",
+      );
+      events.handleEvent({ type: "message_chunk", text: "c" });
+      events.handleEvent({ type: "message_chunk", text: "d" });
+      // Chunks 3+4 should NOT re-arm — same token still pending.
+      assert.equal(
+        state.assistantRafToken,
+        tokenAfter2,
         "subsequent chunks should reuse pending rAF token",
       );
     });
@@ -107,9 +121,14 @@ describe("rAF-coalesced streaming render", () => {
   describe("finishAssistant flush", () => {
     it("synchronously renders final state and clears token", () => {
       events.handleEvent({ type: "message_chunk", text: "# Title\n" });
+      // Second chunk inside budget window arms trailing rAF.
       events.handleEvent({ type: "message_chunk", text: "**bold**" });
       const el = state.currentAssistantEl as HTMLElement;
-      assert.notEqual(state.assistantRafToken, null, "rAF should be pending");
+      assert.notEqual(
+        state.assistantRafToken,
+        null,
+        "second chunk should arm trailing rAF",
+      );
 
       // Trigger finishAssistant via a boundary event (prompt_done).
       events.handleEvent({ type: "prompt_done", stopReason: "end_turn" });
@@ -163,7 +182,9 @@ describe("rAF-coalesced streaming render", () => {
 
   describe("invariant: guards leave token null", () => {
     it("resetSessionUI cancels pending rAF", async () => {
+      // First chunk renders sync (leading-edge); second chunk arms rAF.
       events.handleEvent({ type: "message_chunk", text: "data" });
+      events.handleEvent({ type: "message_chunk", text: " more" });
       assert.notEqual(state.assistantRafToken, null);
       const stateMod = await import("../public/js/state.ts");
       stateMod.resetSessionUI();
@@ -176,6 +197,7 @@ describe("rAF-coalesced streaming render", () => {
 
     it("finishAssistant cancels pending rAF", async () => {
       events.handleEvent({ type: "message_chunk", text: "data" });
+      events.handleEvent({ type: "message_chunk", text: " more" });
       assert.notEqual(state.assistantRafToken, null);
       render.finishAssistant();
       assert.equal(
@@ -189,14 +211,12 @@ describe("rAF-coalesced streaming render", () => {
   describe("reconnect / _loadNewEvents path", () => {
     it("no rAF residue when state.currentAssistantEl is force-cleared by reconnect", () => {
       // Simulate what _loadNewEventsImpl does: chunks arrive, then reconnect
-      // path force-clears state. The new flushStreamingRender helper should
-      // be called by reconnect; we only test that the cleanup leaves no
-      // dangling rAF token that could fire on stale el.
+      // path force-clears state. We need to drive the scheduler into the
+      // trailing-edge path (rAF pending) — first chunk is leading-edge sync.
       events.handleEvent({ type: "message_chunk", text: "live data" });
+      events.handleEvent({ type: "message_chunk", text: " more" });
       assert.notEqual(state.assistantRafToken, null);
 
-      // _loadNewEventsImpl will call render.flushStreamingRender (or
-      // equivalent) before clearing state. We test it directly.
       render.flushStreamingRender();
 
       assert.equal(
@@ -204,8 +224,6 @@ describe("rAF-coalesced streaming render", () => {
         null,
         "flushStreamingRender must cancel pending rAF",
       );
-      // currentAssistantEl/Text NOT cleared — flushStreamingRender just
-      // syncs the render and cancels token; it does not clear streaming state.
       assert.ok(state.currentAssistantEl);
     });
   });
@@ -247,16 +265,18 @@ describe("rAF-coalesced streaming render", () => {
 
   describe("primeStreamingState invariant guard", () => {
     it("does not crash when streaming state is rebuilt after reset", async () => {
-      // Simulate replay: chunk arrives, then resetSessionUI (which cancels
-      // rAF token), then a fresh chunk for a new session begins. Should not
-      // assert/throw and rAF should re-arm.
       events.handleEvent({ type: "message_chunk", text: "old session" });
+      events.handleEvent({ type: "message_chunk", text: " tail" });
       assert.notEqual(state.assistantRafToken, null);
       const stateMod = await import("../public/js/state.ts");
       stateMod.resetSessionUI();
       assert.equal(state.assistantRafToken, null);
 
+      // New session: first chunk after reset is leading-edge sync render
+      // (lastRenderTs was reset to 0).
       events.handleEvent({ type: "message_chunk", text: "new session" });
+      // Force a second chunk inside budget to arm rAF and drain it.
+      events.handleEvent({ type: "message_chunk", text: " continued" });
       assert.notEqual(state.assistantRafToken, null);
       await nextFrame();
       const txt = (state.currentAssistantEl as HTMLElement).textContent || "";
