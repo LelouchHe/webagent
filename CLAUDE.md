@@ -118,6 +118,7 @@ Quick reference for code-level work:
 - HTML entrypoint registry in `src/routes.ts` (`HTML_ENTRYPOINTS`) drives both static-file serving AND CSP injection. Adding a new HTML page means adding to that array; the three guard tests (`test/csp.test.ts`, `test/html-entrypoints.test.ts`, `test/inline-assets.test.ts`) will fail loudly otherwise.
 - Frontend token storage key is `wa_token`, exported as `TOKEN_STORAGE_KEY` from `public/js/login-core.ts`. Never hardcode the literal — import the constant.
 - Production bundle invariant: `grep -E 'wat_[A-Za-z0-9_-]{30,}' dist/` must return nothing. The literal `wat_` alone is OK (placeholder text in `login.html`).
+- **Workers / AudioWorklets / ServiceWorkers must be served as same-origin static files, never inline+blob.** `script-src 'self'` does not include `blob:`, so the common MDN "quick start" pattern of `URL.createObjectURL(new Blob([code]))` + `addModule(blobUrl)` will be blocked at runtime with "Not allowed by CSP". Put the worker source in `public/lib/<feature>/<name>.js` (or another static path under `public/`) and load by URL. The static-asset copy step in `scripts/build.js` already mirrors `public/lib/` into `dist/lib/`, so there is no build-pipeline change to make. Adding `blob:` to `script-src` is the wrong fix — it permanently widens the XSS escape hatch for the entire app to dodge one inline convenience.
 
 ## ACP Client Extensions
 
