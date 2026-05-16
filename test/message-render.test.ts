@@ -92,8 +92,8 @@ describe("message event rendering", () => {
       "details.message .message-content",
     );
     assert.ok(content);
-    // Confirm body went through renderMd: marked emits <p> wrapper and
-    // converts **bold** to <strong>bold</strong>.
+    // Confirm body went through the markdown render pipeline: marked
+    // emits <p> wrapper and converts **bold** to <strong>bold</strong>.
     assert.ok(
       content.innerHTML.includes("<p>"),
       "body rendered via marked pipeline",

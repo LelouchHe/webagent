@@ -153,7 +153,7 @@ describe("math rendering (Temml)", () => {
     assert.doesNotMatch(html, /\$P\(/);
   });
 
-  it("renderMd configures DOMPurify with mathMl profile", () => {
+  it("updateMarkdownStream configures DOMPurify with mathMl profile", () => {
     // Real-browser preservation check; happy-dom strips <math> at the
     // DOMParser level so we can't unit-test the actual output. Instead
     // assert that the source code passes USE_PROFILES.mathMl: true so

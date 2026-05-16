@@ -887,11 +887,11 @@ function isDuplicateOfReplay(msg: AgentEvent): boolean {
 // Streaming markdown render coalescer.
 //
 // Background: long markdown reports (>10KB) used to call
-// `el.innerHTML = renderMd(state.currentAssistantText)` on every chunk,
-// producing O(N²) main-thread work as each render reparses ever-growing
-// accumulated text through marked + DOMPurify + temml + hljs. A real
-// dogfood session (~989 events, three 21/34/43KB assistant_message blocks)
-// froze the UI for minutes.
+// `el.innerHTML = DOMPurify.sanitize(marked.parse(state.currentAssistantText))`
+// on every chunk, producing O(N²) main-thread work as each render
+// reparses ever-growing accumulated text through marked + DOMPurify +
+// temml + hljs. A real dogfood session (~989 events, three 21/34/43KB
+// assistant_message blocks) froze the UI for minutes.
 //
 // v6 solution: per-block memo in updateMarkdownStream (see render-event.ts)
 // makes a render of accumulated text proportional to the size of the

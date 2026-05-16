@@ -4,7 +4,7 @@ How WebAgent keeps the UI responsive during long markdown streams (many KB of te
 
 ## The Problem
 
-Every `message_chunk` SSE event delivers a small slice of text. The agent's full message is the concatenation of every chunk so far. Naive rendering — `el.innerHTML = renderMd(accumulatedText)` on every chunk — has three costs that grow as the message gets longer:
+Every `message_chunk` SSE event delivers a small slice of text. The agent's full message is the concatenation of every chunk so far. Naive rendering — `el.innerHTML = DOMPurify.sanitize(marked.parse(accumulatedText))` on every chunk — has three costs that grow as the message gets longer:
 
 1. **Lex** — `marked.lexer(text)` re-scans the entire accumulated text
 2. **Parse** — `marked.parser(tokens)` converts tokens to HTML
@@ -85,7 +85,7 @@ A `MergedBlock[]` view is exposed downstream with `{raw, type, tokens}` — Laye
 
 **File**: `public/js/render-event.ts` (`updateMarkdownStream`)
 
-`marked.parser` + `DOMPurify.sanitize` together account for 80-92% of `renderMd` cost. Layer 3 skips both for blocks whose content hasn't changed.
+`marked.parser` + `DOMPurify.sanitize` together account for 80-92% of full-render cost. Layer 3 skips both for blocks whose content hasn't changed.
 
 For each block from Layer 2:
 

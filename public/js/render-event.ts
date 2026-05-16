@@ -55,10 +55,11 @@ export function escHtml(s: string): string {
 // `host` HTMLElement via a module-level WeakMap so host detachment +
 // garbage collection auto-releases the memo.
 //
-// Why not `renderMd(fullText) → innerHTML`? That was O(N²) on long streams:
-// every chunk re-parses + re-sanitizes the entire history and DOMPurify
-// recreates every node — see bench numbers in plan.md (156 KB stream took
-// ~24 s without memo). Per-block memo brings that to ~6.5 s (-73 %).
+// Why not the naive `marked.parse(fullText) → DOMPurify.sanitize → innerHTML`
+// loop? That was O(N²) on long streams: every chunk re-parses + re-sanitizes
+// the entire history and DOMPurify recreates every node — see bench
+// numbers in plan.md (156 KB stream took ~24 s without memo). Per-block
+// memo brings that to ~6.5 s (-73 %).
 //
 // Caveats:
 //   - NOT safe across JS realms (SSR, Workers) — the WeakMap key compares by

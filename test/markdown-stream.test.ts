@@ -1,10 +1,11 @@
 // Tests for streaming markdown render — per-block memo (streamdown-style).
 //
-// Background: legacy `renderMd(fullText)` returned a full HTML string and
-// the caller did `el.innerHTML = ...`. For a long incremental stream this is
-// O(N²): every chunk re-parses + re-sanitizes everything, every chunk replaces
-// every DOM node, hljs/Temml decorations get wiped per frame. Bench numbers
-// in plan.md: 156KB stream took 23.8s without memo.
+// Background: the legacy approach returned a full HTML string from
+// `DOMPurify.sanitize(marked.parse(fullText))` and the caller did
+// `el.innerHTML = ...`. For a long incremental stream this is O(N²):
+// every chunk re-parses + re-sanitizes everything, every chunk replaces
+// every DOM node, hljs/Temml decorations get wiped per frame. Bench
+// numbers in plan.md: 156KB stream took 23.8s without memo.
 //
 // `updateMarkdownStream(host, fullText)` re-lexes per call, but only
 // re-renders blocks whose `raw` differs from last call. Unchanged blocks
@@ -116,9 +117,10 @@ describe("updateMarkdownStream", () => {
 
   it("dev-mode entry invariant fires when innerHTML is scribbled between calls", () => {
     mod.updateMarkdownStream(host, "para one\n\npara two\n");
-    // Simulate a foreign code path (e.g. someone calling renderMd directly
-    // on the same host, or some legacy flush) overwriting innerHTML without
-    // calling resetMarkdownStream. Next update must throw.
+    // Simulate a foreign code path (e.g. someone calling `marked.parse`
+    // + assigning to `host.innerHTML` directly, or some legacy flush)
+    // overwriting innerHTML without calling resetMarkdownStream. Next
+    // update must throw.
     host.innerHTML = "<p>scribble</p>";
     assert.throws(
       () => {

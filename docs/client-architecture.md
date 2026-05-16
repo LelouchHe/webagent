@@ -93,7 +93,7 @@ All frontend source lives in `public/js/*.ts`. esbuild bundles it into a content
 | **`input.ts`**             | User input: send messages, cancel, keyboard shortcuts, mode cycling                                 | —                                                                                               |
 | **`commands.ts`**          | Slash command parsing, menu UI, `/switch`, `/new`, `/exit`, `/rename`, `/model`, `/mode`, `/notify` | `handleSlashCommand()`, `hideSlashMenu()`                                                       |
 | **`attachments.ts`**       | Attach (click/drag/paste) for images and files, preview, upload to server                          | `renderAttachPreview()`                                                                         |
-| **`render.ts`**            | DOM helpers: add messages, markdown rendering, theme, scroll, diff HTML generation                  | `addMessage()`, `addSystem()`, `scrollToBottom()`, `renderMd()`                                 |
+| **`render.ts`**            | DOM helpers: add messages, streaming markdown render, theme, scroll, diff HTML generation           | `addMessage()`, `addSystem()`, `scrollToBottom()`, `updateMarkdownStream()`, `resetMarkdownStream()` |
 | **`api.ts`**               | REST client — typed `fetch` wrappers for every server endpoint                                      | `createSession()`, `sendMessage()`, `cancelSession()`, etc.                                     |
 
 **Dependency graph** (arrows = imports):

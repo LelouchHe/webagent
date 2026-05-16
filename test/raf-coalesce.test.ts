@@ -1,8 +1,9 @@
 // Tests for rAF-coalesced streaming markdown render (v6 minimal scheduler).
 //
 // Background: streaming `message_chunk` events used to call
-// `el.innerHTML = renderMd(accumulatedText)` synchronously on every chunk,
-// producing O(N²) main-thread work for long markdown reports.
+// `el.innerHTML = DOMPurify.sanitize(marked.parse(accumulatedText))`
+// synchronously on every chunk, producing O(N²) main-thread work for
+// long markdown reports.
 //
 // v6 fix: per-block memo in updateMarkdownStream (render-event.ts) bounds
 // cost to the size of the *changed* trailing block. The scheduler then
