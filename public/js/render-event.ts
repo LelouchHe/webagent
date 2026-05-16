@@ -190,6 +190,37 @@ function mergeUnclosedBlocks(fullText: string): string[] {
   return blocks;
 }
 
+// Incremental lex: count how many leading cached blocks are still a
+// verbatim prefix of fullText. Drop the LAST matched block before
+// re-lexing — in append streams the trailing paragraph token can grow
+// into a larger paragraph as new lines arrive, so re-lexing from the
+// previous-to-last boundary is the conservative split.
+//
+// Without this, every chunk re-runs marked.lexer on the entire
+// accumulated text, which is O(N) per chunk → O(N²) total. With this,
+// we lex only `lastCachedBlock + tail`, bounding per-chunk lex cost
+// to one block worth of work.
+function incrementalLex(cache: string[], fullText: string): string[] {
+  let stableLen = 0;
+  let stableCount = 0;
+  for (const raw of cache) {
+    if (fullText.startsWith(raw, stableLen)) {
+      stableLen += raw.length;
+      stableCount++;
+    } else break;
+  }
+  if (stableCount > 0) {
+    stableCount--;
+    stableLen -= cache[stableCount].length;
+  }
+  const tail = stableLen === 0 ? fullText : fullText.slice(stableLen);
+  const tailBlocks = tail ? mergeUnclosedBlocks(tail) : [];
+  const merged: string[] = [];
+  for (let i = 0; i < stableCount; i++) merged.push(cache[i]);
+  for (const b of tailBlocks) merged.push(b);
+  return merged;
+}
+
 function renderMissBlock(
   host: HTMLElement,
   raw: string,
@@ -257,15 +288,16 @@ export function updateMarkdownStream(
       ? () => performance.now()
       : () => Date.now();
 
-  const tLex0 = now();
-  const merged = mergeUnclosedBlocks(fullText);
-  timing.lex = now() - tLex0;
-  timing.blocks = merged.length;
   if (!memo) {
     memo = { cache: [], rootCounts: [] };
     markdownStreamMemos.set(host, memo);
   }
   const { cache, rootCounts } = memo;
+
+  const tLex0 = now();
+  const merged = incrementalLex(cache, fullText);
+  timing.lex = now() - tLex0;
+  timing.blocks = merged.length;
 
   let offset = 0;
   for (let i = 0; i < merged.length; i++) {

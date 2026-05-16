@@ -139,4 +139,36 @@ describe("updateMarkdownStream — byte-equal vs legacy renderMd", () => {
       "no <script> element should survive sanitize",
     );
   });
+
+  // Incremental-lex regression: after a streaming sequence builds up to
+  // fullText, a single one-shot updateMarkdownStream(fullText) must produce
+  // identical DOM. Catches bugs where the prefix-match path drops a stable
+  // block, or where re-lexing only the tail produces a different block
+  // count than re-lexing the whole text.
+  it("streaming sequence converges to one-shot output", () => {
+    const text =
+      "# Title\n\nFirst paragraph with $x$ math.\n\n" +
+      "Second paragraph.\n\n" +
+      "```js\nconst a = 1;\n```\n\n" +
+      "Third paragraph: cost $5 and $10.\n\n" +
+      "| a | b |\n| --- | --- |\n| 1 | 2 |\n";
+    const oneShot = document.createElement("div");
+    mod.updateMarkdownStream(oneShot, text);
+    const streamed = document.createElement("div");
+    // Feed in ~50-byte chunks.
+    for (let i = 50; i <= text.length; i += 50) {
+      mod.updateMarkdownStream(streamed, text.slice(0, i));
+    }
+    mod.updateMarkdownStream(streamed, text);
+    assert.equal(
+      normWs(streamed.textContent),
+      normWs(oneShot.textContent),
+      "streamed textContent diverged from one-shot",
+    );
+    assert.equal(
+      streamed.children.length,
+      oneShot.children.length,
+      "streamed block count diverged from one-shot",
+    );
+  });
 });
