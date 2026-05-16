@@ -37,6 +37,7 @@ import {
   hideWaiting,
   scrollToBottom,
   renderMd,
+  updateMarkdownStream,
   escHtml,
   finishBash,
   appendMessageElement,
@@ -890,10 +891,13 @@ function doAssistantRender() {
   const el = state.currentAssistantEl;
   if (!el) return;
   const t0 = performance.now();
-  el.innerHTML = renderMd(state.currentAssistantText);
+  // Per-block memo (see render-event.ts:updateMarkdownStream). Unchanged
+  // blocks keep their existing DOM nodes — hljs/Temml decorations stick,
+  // no innerHTML churn per chunk.
+  updateMarkdownStream(el, state.currentAssistantText);
   state.assistantLastRenderTs = performance.now();
   const ms = state.assistantLastRenderTs - t0;
-  // Only log when a single renderMd eats more than one 60Hz frame budget.
+  // Only log when a single render eats more than one 60Hz frame budget.
   // Quiet path keeps perf instrumentation from itself becoming the bottleneck
   // (logger writes DOM rows when level != off, so per-frame logging would
   // re-introduce the reflow storm we just eliminated).

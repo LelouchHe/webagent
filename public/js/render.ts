@@ -5,7 +5,13 @@ import { enhanceCodeBlocks } from "./highlight.ts";
 
 // Pure DOM helpers live in render-event.ts (single source for both main app
 // and share viewer). Re-exported here for callers that want them via render.ts.
-export { escHtml, renderMd, renderPatchDiff } from "./render-event.ts";
+export {
+  escHtml,
+  renderMd,
+  renderPatchDiff,
+  updateMarkdownStream,
+  resetMarkdownStream,
+} from "./render-event.ts";
 import { escHtml, renderMd } from "./render-event.ts";
 
 // --- Message helpers ---
