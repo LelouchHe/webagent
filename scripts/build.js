@@ -364,6 +364,14 @@ async function main() {
     splitting: true,
     minify: !isDev,
     external: [],
+    // Inject __DEV__ as a literal so dev-mode invariants (e.g. in
+    // public/js/render-event.ts updateMarkdownStream) are dead-code-eliminated
+    // from prod bundles. Browser bundle MUST NOT use `process.env.NODE_ENV` —
+    // there is no `process` global, any reference throws ReferenceError.
+    // Node test runtime bypasses esbuild; test/frontend-setup.ts sets
+    // `globalThis.__DEV__ = true` at module top so naked `__DEV__` resolves
+    // via the global scope chain.
+    define: { __DEV__: String(isDev) },
   };
 
   if (isWatch) {

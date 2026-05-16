@@ -135,7 +135,15 @@ export default tseslint.config(
   // The project-wide allow list (warn/error/info) is overridden here.
   {
     files: ["public/js/**/*.ts"],
-    languageOptions: { globals: { ...globals.browser } },
+    languageOptions: {
+      globals: {
+        ...globals.browser,
+        // Injected by esbuild `define` for browser bundles, by
+        // test/frontend-setup.ts (`globalThis.__DEV__ = true`) for the node
+        // test runtime. See public/js/render-event.ts for usage.
+        __DEV__: "readonly",
+      },
+    },
     rules: {
       "no-console": "error",
       // Ban direct `dom.input.value = ...` assignment. Programmatic value

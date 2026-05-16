@@ -3,6 +3,13 @@
 
 import { Window } from "happy-dom";
 
+// Inject __DEV__ before any frontend module is imported. Browser bundles get
+// this via esbuild `define` (see scripts/build.js); the node test runtime
+// bypasses esbuild so we set it as a globalThis property here. Naked
+// `__DEV__` references in public/js/**/*.ts then resolve via the global
+// scope chain.
+(globalThis as { __DEV__?: boolean }).__DEV__ = true;
+
 const HTML = `
 <div id="header"><div class="header-side header-left"><span class="logo">>_</span></div><span id="session-info" class="status"></span><div class="header-side header-right"><span id="status" class="status-dot is-disconnected" data-state="disconnected" role="status" aria-live="polite" aria-label="disconnected" title="disconnected"></span><button id="theme-btn">x</button></div></div>
 <div id="messages"></div>
