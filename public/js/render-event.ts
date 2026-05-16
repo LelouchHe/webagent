@@ -391,6 +391,17 @@ function renderMissBlock(
         now,
       );
     }
+    if (tok.type === "table") {
+      return renderTableBlock(
+        host,
+        tok as TableToken,
+        offset,
+        prevCount,
+        prevSubMemo,
+        timing,
+        now,
+      );
+    }
   }
 
   const tParse0 = now();
@@ -487,6 +498,10 @@ function renderMissBlock(
 
 interface ListToken extends Tokens.List {
   type: "list";
+}
+
+interface TableToken extends Tokens.Table {
+  type: "table";
 }
 
 /** Render a single list item by wrapping it in a synthetic 1-item list that
@@ -652,6 +667,202 @@ function renderListBlock(
   return {
     newCount: 1,
     newSubMemo: { type: "list", variant, containerEl, subCache },
+  };
+}
+
+// --- Table container sub-memo ---
+//
+// marked emits one <table><thead>…</thead><tbody><tr>…</tr>…</tbody></table>
+// for a single table token. When the agent streams a long table row-by-row,
+// only `rows[]` grows; `header[]` and `align[]` are stable after the second
+// chunk (the separator line). We hash header + align into the variant string
+// so an unstable header forces a full rebuild; once stable, each new row is
+// rendered in isolation via a synthetic 1-row table and the resulting <tr>
+// is spliced into the live <tbody>.
+
+/** Stable key for a row: each cell's source text joined with U+001F (unit
+ *  separator). Cell `text` is the pre-inline-tokenized literal; identical
+ *  text → identical inline parse → identical <td> HTML. */
+function tableRowKey(cells: Tokens.TableCell[]): string {
+  // U+001F never appears in marked's cell text (marked emits raw md, and
+  // ASCII control chars aren't allowed in markdown source).
+  return cells.map((c) => c.text).join("\x1f");
+}
+
+function tableVariant(tok: TableToken): string {
+  const headerKey = tableRowKey(tok.header);
+  const alignKey = tok.align.map((a) => a ?? "").join(",");
+  return `table:h=${headerKey}|a=${alignKey}`;
+}
+
+/** Render a single table row by wrapping it in a synthetic 1-row table that
+ *  copies header + align from the parent. Returns the resulting <tr> element
+ *  (from inside the synthetic <tbody>) plus per-stage timings. */
+function renderOneTableRow(
+  tableTok: TableToken,
+  row: Tokens.TableCell[],
+  now: () => number,
+): { newTr: Element | null; parseMs: number; sanMs: number; domMs: number } {
+  const synthetic: TableToken = { ...tableTok, rows: [row] };
+  const tP0 = now();
+  const html = marked.parser([synthetic], {
+    ...marked.defaults,
+    async: false,
+  }) as string;
+  const tP1 = now();
+  if (typeof html !== "string") {
+    throw new Error(
+      "renderOneTableRow: marked.parser returned non-string (async mode leaked?)",
+    );
+  }
+  const tS0 = now();
+  const sanitized = DOMPurify.sanitize(html, {
+    USE_PROFILES: { html: true, mathMl: true },
+  });
+  const tS1 = now();
+  const tD0 = now();
+  const tmp = document.createElement("template");
+  tmp.innerHTML = sanitized;
+  stripWhitespaceTextNodes(tmp.content);
+  // Resulting structure: <table><thead>...</thead><tbody><tr>...</tr></tbody></table>
+  const table = tmp.content.firstElementChild;
+  const tbody = table?.querySelector("tbody");
+  const newTr = tbody?.firstElementChild ?? null;
+  const tD1 = now();
+  return {
+    newTr,
+    parseMs: tP1 - tP0,
+    sanMs: tS1 - tS0,
+    domMs: tD1 - tD0,
+  };
+}
+
+function renderTableBlock(
+  host: HTMLElement,
+  tableTok: TableToken,
+  offset: number,
+  prevCount: number,
+  prevSubMemo: SubMemo | null,
+  timing: MarkdownStreamTiming,
+  now: () => number,
+): { newCount: number; newSubMemo: SubMemo | null } {
+  const rows = tableTok.rows;
+  const variant = tableVariant(tableTok);
+
+  let containerEl: HTMLElement;
+  let tbodyEl: HTMLElement;
+  let subCache: string[];
+  const canReuse =
+    prevSubMemo !== null &&
+    prevSubMemo.type === "table" &&
+    prevSubMemo.variant === variant &&
+    prevSubMemo.containerEl.parentNode === host;
+
+  if (canReuse) {
+    containerEl = prevSubMemo.containerEl;
+    const tb = containerEl.querySelector("tbody");
+    if (!tb) {
+      return slowPathFallback(
+        host,
+        tableTok,
+        tableTok.raw,
+        offset,
+        prevCount,
+        timing,
+        now,
+      );
+    }
+    tbodyEl = tb;
+    subCache = prevSubMemo.subCache;
+  } else {
+    // Build the table shell (thead + empty tbody) by parsing the table
+    // token with rows=[]. marked still emits <thead> + an empty <tbody>.
+    const tP0 = now();
+    const emptyHtml = marked.parser([{ ...tableTok, rows: [] }], {
+      ...marked.defaults,
+      async: false,
+    }) as string;
+    const tP1 = now();
+    timing.parse += tP1 - tP0;
+    const tS0 = now();
+    const sanitizedEmpty = DOMPurify.sanitize(emptyHtml, {
+      USE_PROFILES: { html: true, mathMl: true },
+    });
+    const tS1 = now();
+    timing.sanitize += tS1 - tS0;
+    const tmp = document.createElement("template");
+    tmp.innerHTML = sanitizedEmpty;
+    stripWhitespaceTextNodes(tmp.content);
+    const fresh = tmp.content.firstElementChild;
+    const freshTbody = fresh?.querySelector("tbody");
+    if (!fresh || !freshTbody) {
+      return slowPathFallback(
+        host,
+        tableTok,
+        tableTok.raw,
+        offset,
+        prevCount,
+        timing,
+        now,
+      );
+    }
+    for (let k = 0; k < prevCount; k++) {
+      const child = host.children.item(offset);
+      if (child) host.removeChild(child);
+    }
+    const anchor = host.children.item(offset);
+    host.insertBefore(fresh, anchor);
+    containerEl = fresh as HTMLElement;
+    tbodyEl = freshTbody;
+    subCache = [];
+  }
+
+  const tParse0 = now();
+  let parseAccMs = 0;
+  let sanAccMs = 0;
+  let domAccMs = 0;
+  for (let j = 0; j < rows.length; j++) {
+    const key = tableRowKey(rows[j]);
+    if (subCache[j] === key && tbodyEl.children.item(j)) {
+      timing.subHits++;
+      continue;
+    }
+    timing.subMisses++;
+    const r = renderOneTableRow(tableTok, rows[j], now);
+    parseAccMs += r.parseMs;
+    sanAccMs += r.sanMs;
+    domAccMs += r.domMs;
+    if (!r.newTr) continue;
+    const existing = tbodyEl.children.item(j);
+    if (existing) {
+      tbodyEl.replaceChild(r.newTr, existing);
+    } else {
+      tbodyEl.appendChild(r.newTr);
+    }
+    subCache[j] = key;
+  }
+  while (tbodyEl.children.length > rows.length) {
+    if (tbodyEl.lastElementChild)
+      tbodyEl.removeChild(tbodyEl.lastElementChild);
+  }
+  while (subCache.length > rows.length) subCache.pop();
+
+  timing.parse += parseAccMs;
+  timing.sanitize += sanAccMs;
+  timing.dom += domAccMs;
+  perfMeasure("mdstream.parse", tParse0, now());
+  timing.missDetails.push({
+    type: "table",
+    len: tableTok.raw.length,
+    snip: tableTok.raw.slice(0, 40).replace(/\n/g, "↵"),
+    parseMs: parseAccMs,
+    sanMs: sanAccMs,
+    domMs: domAccMs,
+  });
+
+  return {
+    newCount: 1,
+    newSubMemo: { type: "table", variant, containerEl, subCache },
   };
 }
 
