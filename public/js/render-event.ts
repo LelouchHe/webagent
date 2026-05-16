@@ -208,7 +208,15 @@ export function updateMarkdownStream(
         "updateMarkdownStream requires sync marked (>= 5.0); marked.parse returned a non-string (likely a Promise)",
       );
     }
-    const html = DOMPurify.sanitize(out, {
+    // DOMPurify quirk: when a per-block fragment STARTS with a <math>
+    // element (e.g. a block-math `$$ … $$` token rendered in isolation),
+    // the HTML5 parser inside DOMPurify hasn't entered "in body" insertion
+    // mode yet and treats the leading <math> as unknown content, stripping
+    // its children. Prepending an empty <math></math> sentinel warms up
+    // foreign-content parsing; the sentinel itself is auto-removed by
+    // DOMPurify, so the workaround is zero-residue and safe for non-math
+    // blocks too.
+    const html = DOMPurify.sanitize("<math></math>" + out, {
       USE_PROFILES: { html: true, mathMl: true },
     });
     const tmp = document.createElement("template");
