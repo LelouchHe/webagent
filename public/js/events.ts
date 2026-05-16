@@ -38,6 +38,7 @@ import {
   scrollToBottom,
   renderMd,
   updateMarkdownStream,
+  resetMarkdownStream,
   escHtml,
   finishBash,
   appendMessageElement,
@@ -418,6 +419,13 @@ async function _loadNewEventsImpl(sid: string): Promise<boolean> {
     const boundary = dom.messages.querySelector("[data-sync-boundary]");
     if (boundary) {
       while (boundary.nextElementSibling) boundary.nextElementSibling.remove();
+    }
+    // Sync boundary truncation may have detached the live streaming element;
+    // reset its memo defensively before nulling so a future re-render against
+    // a stale-cached host can never dev-mode-throw on entry invariant. The
+    // host is about to be GC'd in most paths, but cold-cache reset is cheap.
+    if (state.currentAssistantEl) {
+      resetMarkdownStream(state.currentAssistantEl);
     }
     state.currentAssistantEl = null;
     state.currentAssistantText = "";

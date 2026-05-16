@@ -12,7 +12,12 @@ export {
   updateMarkdownStream,
   resetMarkdownStream,
 } from "./render-event.ts";
-import { escHtml, renderMd } from "./render-event.ts";
+import {
+  escHtml,
+  renderMd,
+  updateMarkdownStream,
+  resetMarkdownStream,
+} from "./render-event.ts";
 
 // --- Message helpers ---
 
@@ -49,12 +54,19 @@ export function finishAssistant() {
       cancelAnimationFrame(state.assistantRafToken);
     }
     state.assistantRafToken = null;
-    if (assistantEl) assistantEl.innerHTML = renderMd(assistantText);
+    if (assistantEl) updateMarkdownStream(assistantEl, assistantText);
   }
   state.assistantLastRenderTs = 0;
   if (assistantEl && typeof assistantEl.querySelector === "function") {
     assistantEl.removeAttribute("data-primed");
     enhanceCodeBlocks(assistantEl);
+    // Turn boundary: drop the per-block memo. The bubble is now sealed —
+    // any future write into this element (e.g. agent-instructed user
+    // re-render, or a foreign code path) starts from a cold cache.
+    // Without this, the next updateMarkdownStream against the same element
+    // would compare against the FINAL streaming cache and skip any
+    // intentional reset (and dev-mode entry invariant would fire).
+    resetMarkdownStream(assistantEl);
   }
 }
 
@@ -73,7 +85,7 @@ export function flushStreamingRender() {
   }
   state.assistantRafToken = null;
   const el = state.currentAssistantEl;
-  if (el) el.innerHTML = renderMd(state.currentAssistantText);
+  if (el) updateMarkdownStream(el, state.currentAssistantText);
 }
 
 export function finishThinking() {
