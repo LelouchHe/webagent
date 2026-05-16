@@ -794,8 +794,7 @@ function renderTableBlock(
     tmp.innerHTML = sanitizedEmpty;
     stripWhitespaceTextNodes(tmp.content);
     const fresh = tmp.content.firstElementChild;
-    const freshTbody = fresh?.querySelector("tbody");
-    if (!fresh || !freshTbody) {
+    if (!fresh) {
       return slowPathFallback(
         host,
         tableTok,
@@ -805,6 +804,16 @@ function renderTableBlock(
         timing,
         now,
       );
+    }
+    // marked emits `<thead>…</thead></table>` with NO `<tbody>` when
+    // rows=[]. Without a tbody anchor, every table render falls into
+    // slowPathFallback and the sub-memo never works. Inject the missing
+    // tbody so subsequent rows can be appended into it. Locked by
+    // markdown-stream-cache.test.ts (table sub-memo regression).
+    let freshTbody = fresh.querySelector("tbody");
+    if (!freshTbody) {
+      freshTbody = fresh.ownerDocument.createElement("tbody");
+      fresh.appendChild(freshTbody);
     }
     for (let k = 0; k < prevCount; k++) {
       const child = host.children.item(offset);
@@ -842,8 +851,7 @@ function renderTableBlock(
     subCache[j] = key;
   }
   while (tbodyEl.children.length > rows.length) {
-    if (tbodyEl.lastElementChild)
-      tbodyEl.removeChild(tbodyEl.lastElementChild);
+    if (tbodyEl.lastElementChild) tbodyEl.removeChild(tbodyEl.lastElementChild);
   }
   while (subCache.length > rows.length) subCache.pop();
 
