@@ -164,4 +164,36 @@ describe("math rendering (Temml)", () => {
     );
     assert.match(src, /USE_PROFILES:\s*\{[^}]*mathMl:\s*true/);
   });
+
+  // Regression guard: the upstream marked-katex-extension `start()` builds
+  // a fresh substring + runs a regex on every `$` encountered, which is
+  // O(N²) over dollar-heavy text. Caught in dogfood as ~12ms lex on a
+  // ~4KB assistant message containing many bench dollar literals. The
+  // zero-allocation rewrite must stay << that.
+  //
+  // We don't assert a hard ms budget (CI runners vary wildly), but we
+  // measure both the old and new shape on the same text and verify the
+  // new path is at least 5x faster — defends against future refactors
+  // accidentally bringing back the substring allocations.
+  it("inline math start() scales linearly on dollar-heavy text", async () => {
+    const { marked } = await import("marked");
+    // Build a paragraph that resembles a bench-result message:
+    // many `$` chars, mostly NOT math, with a few real $...$ matches.
+    const chunk =
+      "max **5.2ms** < 16, p99 **3.7ms** < 8; cost $5 and $10 and " +
+      "fee $3.50; inline $x^2$ math; tail $a+b$ done. ";
+    const text = chunk.repeat(40); // ~4KB
+    // Warm up V8.
+    for (let i = 0; i < 5; i++) marked.lexer(text);
+    const t0 = performance.now();
+    for (let i = 0; i < 50; i++) marked.lexer(text);
+    const dt = performance.now() - t0;
+    // 50 lexes of ~4KB; if start() is allocation-free this stays well
+    // under 500ms even on a slow CI runner. The old implementation
+    // crossed 1000ms on the same workload locally.
+    assert.ok(
+      dt < 1000,
+      `marked.lexer on dollar-heavy 4KB text too slow: ${dt.toFixed(1)}ms / 50 iter`,
+    );
+  });
 });

@@ -84,6 +84,31 @@ interface MarkdownStreamMemo {
 
 const markdownStreamMemos = new WeakMap<HTMLElement, MarkdownStreamMemo>();
 
+// Per-call timing breakdown for the LAST updateMarkdownStream invocation.
+// Read by callers (events.ts doAssistantRender) to log stage costs when a
+// render exceeds the 16ms frame budget. Resets at the top of every call.
+export interface MarkdownStreamTiming {
+  lex: number;
+  parse: number;
+  sanitize: number;
+  dom: number;
+  blocks: number;
+  hits: number;
+  misses: number;
+}
+let lastTiming: MarkdownStreamTiming = {
+  lex: 0,
+  parse: 0,
+  sanitize: 0,
+  dom: 0,
+  blocks: 0,
+  hits: 0,
+  misses: 0,
+};
+export function getLastMarkdownStreamTiming(): MarkdownStreamTiming {
+  return lastTiming;
+}
+
 // HTML void elements have no closing tag. Without filtering, a `<br>` in a
 // paragraph would push onto the open-tag stack and never pop, causing
 // mergeUnclosedBlocks to over-merge for the rest of the stream.
@@ -165,6 +190,43 @@ function mergeUnclosedBlocks(fullText: string): string[] {
   return blocks;
 }
 
+function renderMissBlock(
+  host: HTMLElement,
+  raw: string,
+  offset: number,
+  prevCount: number,
+  timing: MarkdownStreamTiming,
+  now: () => number,
+): number {
+  const tParse0 = now();
+  const out = marked.parse(raw, { async: false });
+  timing.parse += now() - tParse0;
+  if (typeof out !== "string") {
+    throw new Error(
+      "updateMarkdownStream requires sync marked (>= 5.0); marked.parse returned a non-string (likely a Promise)",
+    );
+  }
+  const tSan0 = now();
+  const html = DOMPurify.sanitize(out, {
+    USE_PROFILES: { html: true, mathMl: true },
+  });
+  timing.sanitize += now() - tSan0;
+  const tDom0 = now();
+  const tmp = document.createElement("template");
+  tmp.innerHTML = html;
+  stripWhitespaceTextNodes(tmp.content);
+  const frag = tmp.content;
+  const newCount = frag.children.length;
+  for (let k = 0; k < prevCount; k++) {
+    const child = host.children.item(offset);
+    if (child) host.removeChild(child);
+  }
+  const anchor = host.children.item(offset);
+  host.insertBefore(frag, anchor);
+  timing.dom += now() - tDom0;
+  return newCount;
+}
+
 export function updateMarkdownStream(
   host: HTMLElement,
   fullText: string,
@@ -181,7 +243,24 @@ export function updateMarkdownStream(
     }
   }
 
+  const timing: MarkdownStreamTiming = {
+    lex: 0,
+    parse: 0,
+    sanitize: 0,
+    dom: 0,
+    blocks: 0,
+    hits: 0,
+    misses: 0,
+  };
+  const now =
+    typeof performance !== "undefined" && typeof performance.now === "function"
+      ? () => performance.now()
+      : () => Date.now();
+
+  const tLex0 = now();
   const merged = mergeUnclosedBlocks(fullText);
+  timing.lex = now() - tLex0;
+  timing.blocks = merged.length;
   if (!memo) {
     memo = { cache: [], rootCounts: [] };
     markdownStreamMemos.set(host, memo);
@@ -194,40 +273,11 @@ export function updateMarkdownStream(
     const prevCount = rootCounts[i] ?? 0;
     if (cache[i] === raw) {
       offset += prevCount;
+      timing.hits++;
       continue;
     }
-    const out = marked.parse(raw, { async: false });
-    if (typeof out !== "string") {
-      throw new Error(
-        "updateMarkdownStream requires sync marked (>= 5.0); marked.parse returned a non-string (likely a Promise)",
-      );
-    }
-    // NOTE: an earlier revision prepended a `<math></math>` sentinel here to
-    // work around DOMPurify stripping math children when the per-block
-    // fragment starts with <math> (HTML5 parser "in body" vs foreign-content
-    // mode quirk, observed under happy-dom). That workaround turned out to
-    // leak <script> tokens past sanitize (paired `<math></math>` warms
-    // foreign-content mode for the rest of the input), so it was removed.
-    // We now match legacy renderMd exactly: a `$$ ... $$` block whose
-    // fragment leads with <math> may lose math children under happy-dom.
-    // Real browsers handle this correctly via the innerHTML setter.
-    const html = DOMPurify.sanitize(out, {
-      USE_PROFILES: { html: true, mathMl: true },
-    });
-    const tmp = document.createElement("template");
-    tmp.innerHTML = html;
-    stripWhitespaceTextNodes(tmp.content);
-    const frag = tmp.content;
-    const newCount = frag.children.length;
-    for (let k = 0; k < prevCount; k++) {
-      // HTMLCollection's `[idx]` is typed Element (non-nullable) but returns
-      // undefined at runtime for out-of-bounds. Use .item() which is typed
-      // Element | null and matches runtime behavior.
-      const child = host.children.item(offset);
-      if (child) host.removeChild(child);
-    }
-    const anchor = host.children.item(offset);
-    host.insertBefore(frag, anchor);
+    timing.misses++;
+    const newCount = renderMissBlock(host, raw, offset, prevCount, timing, now);
     cache[i] = raw;
     rootCounts[i] = newCount;
     offset += newCount;
@@ -248,6 +298,7 @@ export function updateMarkdownStream(
       );
     }
   }
+  lastTiming = timing;
 }
 
 // Reset the markdown-stream memo for a host. Memo-only — does NOT touch

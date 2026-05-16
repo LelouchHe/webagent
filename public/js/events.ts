@@ -53,6 +53,7 @@ import {
 import {
   renderContentEvent,
   isContentEventType,
+  getLastMarkdownStreamTiming,
   type RenderHooks,
   type ContentEventType,
 } from "./render-event.ts";
@@ -910,9 +911,17 @@ function doAssistantRender() {
   const ms = performance.now() - t0;
   // Only log when a single render eats more than one 60Hz frame budget.
   if (ms > 16) {
+    const t = getLastMarkdownStreamTiming();
     log.debug("md-render slow", {
       ms: Math.round(ms),
       len: state.currentAssistantText.length,
+      lex: Math.round(t.lex),
+      parse: Math.round(t.parse),
+      sanitize: Math.round(t.sanitize),
+      dom: Math.round(t.dom),
+      blocks: t.blocks,
+      hits: t.hits,
+      misses: t.misses,
     });
   }
   scrollToBottom();
