@@ -57,7 +57,6 @@ export function finishAssistant() {
     state.assistantRafToken = null;
     if (assistantEl) updateMarkdownStream(assistantEl, assistantText);
   }
-  state.assistantLastRenderTs = 0;
   if (assistantEl && typeof assistantEl.querySelector === "function") {
     assistantEl.removeAttribute("data-primed");
     enhanceCodeBlocks(assistantEl);

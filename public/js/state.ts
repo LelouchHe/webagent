@@ -87,10 +87,6 @@ export const state = {
   // path and resetSessionUI both honor this contract; any new code that
   // clears currentAssistantEl must do the same.
   assistantRafToken: null as number | null,
-  // Timestamp of the last renderMd call (ms via performance.now()). Used by
-  // the scheduler to enforce a 33ms minimum interval between renders so
-  // 120Hz / 144Hz displays don't blow the throttle.
-  assistantLastRenderTs: 0,
   currentThinkingEl: null as HTMLElement | null,
   currentThinkingText: "",
   busy: false,
@@ -386,7 +382,6 @@ export function resetSessionUI() {
     }
     state.assistantRafToken = null;
   }
-  state.assistantLastRenderTs = 0;
   state.currentAssistantEl = null;
   state.currentAssistantText = "";
   state.currentThinkingEl = null;

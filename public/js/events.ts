@@ -890,29 +890,25 @@ function isDuplicateOfReplay(msg: AgentEvent): boolean {
 // producing O(N²) main-thread work as each render reparses ever-growing
 // accumulated text through marked + DOMPurify + temml + hljs. A real
 // dogfood session (~989 events, three 21/34/43KB assistant_message blocks)
-// froze the UI for minutes. Solution: coalesce renders via rAF with a
-// 16ms minimum interval, so a 120Hz / 144Hz / 240Hz display caps at
-// ~60 renders/second instead of trying to render on every 8ms tick.
-// 33ms (=30fps) felt visibly choppy in dogfood, 16ms (=60fps) is the
-// sweet spot: human eye perceives ≥60fps as smooth, and renderMd of
-// 30KB+ markdown takes >16ms anyway on the worst-case machine, so the
-// floor stops mattering exactly when renderMd itself becomes the limiter.
-const MIN_RENDER_INTERVAL_MS = 16;
+// froze the UI for minutes.
+//
+// v6 solution: per-block memo in updateMarkdownStream (see render-event.ts)
+// makes a render of accumulated text proportional to the size of the
+// *changed* trailing block, not the whole stream. With that cost ceiling,
+// the only thing the scheduler needs to do is coalesce multiple chunks
+// arriving in the same frame: one rAF, one render-per-frame, render the
+// LATEST accumulated text. No time-floor, no leading-edge sync render,
+// no nested re-queue — these existed in v2 because each render was
+// expensive enough that even a single sync render per chunk could starve
+// the main thread. After v6 they are dead weight.
 
 function doAssistantRender() {
   const el = state.currentAssistantEl;
   if (!el) return;
   const t0 = performance.now();
-  // Per-block memo (see render-event.ts:updateMarkdownStream). Unchanged
-  // blocks keep their existing DOM nodes — hljs/Temml decorations stick,
-  // no innerHTML churn per chunk.
   updateMarkdownStream(el, state.currentAssistantText);
-  state.assistantLastRenderTs = performance.now();
-  const ms = state.assistantLastRenderTs - t0;
+  const ms = performance.now() - t0;
   // Only log when a single render eats more than one 60Hz frame budget.
-  // Quiet path keeps perf instrumentation from itself becoming the bottleneck
-  // (logger writes DOM rows when level != off, so per-frame logging would
-  // re-introduce the reflow storm we just eliminated).
   if (ms > 16) {
     log.debug("md-render slow", {
       ms: Math.round(ms),
@@ -923,44 +919,14 @@ function doAssistantRender() {
 }
 
 function scheduleAssistantRender() {
+  if (state.assistantRafToken != null) return;
   // SSR / extreme environments without rAF: fall back to sync render so we
-  // never silently drop a render. Mirrors render.ts:scrollToBottom guard.
+  // never silently drop a render.
   if (typeof requestAnimationFrame !== "function") {
     doAssistantRender();
     return;
   }
-
-  // Leading-edge: if we have not rendered in the last MIN_RENDER_INTERVAL_MS,
-  // render synchronously NOW. This makes a slow stream (one chunk every
-  // 100ms+) feel exactly like the pre-rAF behavior — zero perceived
-  // accumulation. Only fast streams that exceed the rate budget get
-  // coalesced via the trailing rAF below.
-  const now =
-    typeof performance !== "undefined" && typeof performance.now === "function"
-      ? performance.now()
-      : Date.now();
-  if (
-    state.assistantRafToken == null &&
-    now - state.assistantLastRenderTs >= MIN_RENDER_INTERVAL_MS
-  ) {
-    doAssistantRender();
-    return;
-  }
-
-  // Trailing-edge: a render happened within the budget window. Schedule a
-  // single rAF to capture subsequent chunks; the callback re-checks the
-  // time floor and re-queues if still too soon, so 120/144/240Hz displays
-  // never push past 60 renders/sec.
-  if (state.assistantRafToken != null) return;
   state.assistantRafToken = requestAnimationFrame(() => {
-    const nowAtFrame = performance.now();
-    if (nowAtFrame - state.assistantLastRenderTs < MIN_RENDER_INTERVAL_MS) {
-      state.assistantRafToken = requestAnimationFrame(() => {
-        state.assistantRafToken = null;
-        doAssistantRender();
-      });
-      return;
-    }
     state.assistantRafToken = null;
     doAssistantRender();
   });

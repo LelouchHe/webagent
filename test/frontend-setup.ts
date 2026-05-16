@@ -69,7 +69,6 @@ export function resetState(state: any, dom: any) {
     }
     state.assistantRafToken = null;
   }
-  state.assistantLastRenderTs = 0;
   state.currentThinkingEl = null;
   state.currentThinkingText = "";
   state.busy = false;

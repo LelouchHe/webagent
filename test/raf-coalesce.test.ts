@@ -1,11 +1,14 @@
-// Tests for rAF-coalesced streaming markdown render.
+// Tests for rAF-coalesced streaming markdown render (v6 minimal scheduler).
 //
 // Background: streaming `message_chunk` events used to call
 // `el.innerHTML = renderMd(accumulatedText)` synchronously on every chunk,
-// producing O(N²) main-thread work for long markdown reports (~34KB in the
-// dogfood repro). We now coalesce renders via requestAnimationFrame with a
-// 33ms minimum interval to bound work per second across high-refresh
-// displays (60/120/144Hz).
+// producing O(N²) main-thread work for long markdown reports.
+//
+// v6 fix: per-block memo in updateMarkdownStream (render-event.ts) bounds
+// cost to the size of the *changed* trailing block. The scheduler then
+// only needs to coalesce same-frame chunks: one pending rAF, one render
+// per frame, render the latest accumulated text. No time-floor / no
+// leading-edge sync / no nested re-queue.
 
 import { describe, it, before, after, beforeEach } from "node:test";
 import assert from "node:assert/strict";
@@ -32,7 +35,6 @@ describe("rAF-coalesced streaming render", () => {
     resetState(state, dom);
   });
 
-  /** Wait one animation frame (drains pending rAF callbacks). */
   function nextFrame(): Promise<void> {
     return new Promise((resolve) => {
       requestAnimationFrame(() => {
@@ -47,8 +49,8 @@ describe("rAF-coalesced streaming render", () => {
 
   describe("message_chunk burst coalescing", () => {
     it("accumulates text synchronously per chunk", () => {
-      // Existing contract: state.currentAssistantText is always synchronously
-      // up-to-date so other code (cancel UI, replay primer) can read it.
+      // Contract: state.currentAssistantText is synchronously up-to-date so
+      // other code (cancel UI, replay primer) can read it without waiting.
       for (let i = 0; i < 10; i++) {
         events.handleEvent({ type: "message_chunk", text: `c${i} ` });
       }
@@ -59,8 +61,7 @@ describe("rAF-coalesced streaming render", () => {
       assert.ok(state.currentAssistantEl, "element should exist after chunks");
     });
 
-    it("burst of N chunks ends in DOM matching renderMd(fullText)", async () => {
-      // 50 chunks; rendered DOM after frame drain should reflect ALL text.
+    it("burst of N chunks ends in DOM matching full accumulated text", async () => {
       const parts: string[] = [];
       for (let i = 0; i < 50; i++) {
         const p = `word${i} `;
@@ -68,14 +69,12 @@ describe("rAF-coalesced streaming render", () => {
         events.handleEvent({ type: "message_chunk", text: p });
       }
       const fullText = parts.join("");
-      // Drain enough frames for both rAF and the 33ms time-floor re-queue
-      // (rare in synthetic burst but defensive). Wait for token to clear.
-      for (let i = 0; i < 10 && state.assistantRafToken != null; i++) {
+      // Drain frames until token clears (single rAF in v6 scheduler).
+      for (let i = 0; i < 5 && state.assistantRafToken != null; i++) {
         await nextFrame();
       }
       const dom_text =
         (state.currentAssistantEl as HTMLElement).textContent || "";
-      // Text content of rendered markdown includes all words separated by spaces.
       for (let i = 0; i < 50; i++) {
         assert.ok(
           dom_text.includes(`word${i}`),
@@ -89,31 +88,22 @@ describe("rAF-coalesced streaming render", () => {
       );
     });
 
-    it("only one rAF token outstanding at a time during burst", () => {
-      // First chunk renders synchronously via leading-edge (lastRenderTs == 0,
-      // now - 0 >= 16ms). Subsequent chunks within the budget window go
-      // through trailing-edge rAF — one token, reused across the burst.
+    it("first chunk arms a single rAF; subsequent chunks reuse it", () => {
+      // v6: every chunk goes through rAF (no leading-edge sync).
       events.handleEvent({ type: "message_chunk", text: "a" });
-      // After leading-edge sync render, token is null but lastRenderTs is set.
-      assert.equal(
-        state.assistantRafToken,
+      const tokenAfter1 = state.assistantRafToken;
+      assert.notEqual(
+        tokenAfter1,
         null,
-        "leading-edge first render is synchronous",
+        "first chunk should arm rAF (no leading-edge sync in v6)",
       );
       events.handleEvent({ type: "message_chunk", text: "b" });
-      const tokenAfter2 = state.assistantRafToken;
-      assert.notEqual(
-        tokenAfter2,
-        null,
-        "second chunk within budget should arm trailing rAF",
-      );
       events.handleEvent({ type: "message_chunk", text: "c" });
       events.handleEvent({ type: "message_chunk", text: "d" });
-      // Chunks 3+4 should NOT re-arm — same token still pending.
       assert.equal(
         state.assistantRafToken,
-        tokenAfter2,
-        "subsequent chunks should reuse pending rAF token",
+        tokenAfter1,
+        "subsequent chunks must reuse the pending rAF token (single token)",
       );
     });
   });
@@ -121,19 +111,12 @@ describe("rAF-coalesced streaming render", () => {
   describe("finishAssistant flush", () => {
     it("synchronously renders final state and clears token", () => {
       events.handleEvent({ type: "message_chunk", text: "# Title\n" });
-      // Second chunk inside budget window arms trailing rAF.
       events.handleEvent({ type: "message_chunk", text: "**bold**" });
       const el = state.currentAssistantEl as HTMLElement;
-      assert.notEqual(
-        state.assistantRafToken,
-        null,
-        "second chunk should arm trailing rAF",
-      );
+      assert.notEqual(state.assistantRafToken, null, "rAF should be armed");
 
-      // Trigger finishAssistant via a boundary event (prompt_done).
       events.handleEvent({ type: "prompt_done", stopReason: "end_turn" });
 
-      // After flush, token should be null and DOM should have the rendered HTML.
       assert.equal(
         state.assistantRafToken,
         null,
@@ -149,7 +132,6 @@ describe("rAF-coalesced streaming render", () => {
         "",
         "currentAssistantText should be cleared",
       );
-      // The detached element still has the final rendered HTML.
       assert.ok(
         el.innerHTML.includes("Title"),
         "final DOM should include rendered heading text",
@@ -161,17 +143,14 @@ describe("rAF-coalesced streaming render", () => {
     });
 
     it("flush captures the LATEST text, not the text at last rAF render", async () => {
-      // Regression guard: it would be a bug if finishAssistant cleared
-      // currentAssistantText BEFORE running the final renderMd, losing the
-      // tail. The fix is to capture both el and text into locals first.
+      // Regression guard: finishAssistant must capture `el` and `text` into
+      // locals before clearing state, otherwise the final render loses the
+      // tail that arrived after the last rAF frame.
       events.handleEvent({ type: "message_chunk", text: "first " });
-      // Wait for the rAF to fire so DOM is "first ".
       await frames(3);
       const el = state.currentAssistantEl as HTMLElement;
-      // Now add tail without waiting for another rAF.
       events.handleEvent({ type: "message_chunk", text: "TAIL" });
       assert.notEqual(state.assistantRafToken, null);
-      // Boundary fires before rAF callback runs.
       events.handleEvent({ type: "prompt_done", stopReason: "end_turn" });
       assert.ok(
         el.textContent.includes("TAIL"),
@@ -182,7 +161,6 @@ describe("rAF-coalesced streaming render", () => {
 
   describe("invariant: guards leave token null", () => {
     it("resetSessionUI cancels pending rAF", async () => {
-      // First chunk renders sync (leading-edge); second chunk arms rAF.
       events.handleEvent({ type: "message_chunk", text: "data" });
       events.handleEvent({ type: "message_chunk", text: " more" });
       assert.notEqual(state.assistantRafToken, null);
@@ -195,7 +173,7 @@ describe("rAF-coalesced streaming render", () => {
       );
     });
 
-    it("finishAssistant cancels pending rAF", async () => {
+    it("finishAssistant cancels pending rAF", () => {
       events.handleEvent({ type: "message_chunk", text: "data" });
       events.handleEvent({ type: "message_chunk", text: " more" });
       assert.notEqual(state.assistantRafToken, null);
@@ -210,9 +188,6 @@ describe("rAF-coalesced streaming render", () => {
 
   describe("reconnect / _loadNewEvents path", () => {
     it("no rAF residue when state.currentAssistantEl is force-cleared by reconnect", () => {
-      // Simulate what _loadNewEventsImpl does: chunks arrive, then reconnect
-      // path force-clears state. We need to drive the scheduler into the
-      // trailing-edge path (rAF pending) — first chunk is leading-edge sync.
       events.handleEvent({ type: "message_chunk", text: "live data" });
       events.handleEvent({ type: "message_chunk", text: " more" });
       assert.notEqual(state.assistantRafToken, null);
@@ -228,41 +203,6 @@ describe("rAF-coalesced streaming render", () => {
     });
   });
 
-  describe("33ms throttle", () => {
-    it("re-queues another frame when last render was < 33ms ago", async () => {
-      // First chunk → first rAF render. Stamp lastRenderTs.
-      events.handleEvent({ type: "message_chunk", text: "first " });
-      await nextFrame();
-      // After draining, token should be null and lastRenderTs set.
-      assert.equal(state.assistantRafToken, null);
-      const firstTs = state.assistantLastRenderTs;
-      assert.ok(firstTs > 0, "lastRenderTs should be set after first render");
-
-      // Second chunk immediately — within 33ms window. Scheduler should
-      // schedule rAF, but the callback must observe the time-floor and
-      // re-queue rather than render.
-      events.handleEvent({ type: "message_chunk", text: "second " });
-      assert.notEqual(state.assistantRafToken, null);
-
-      // Drain one frame: callback sees `now - lastRenderTs < 33ms` (almost
-      // certainly true in happy-dom which fires rAF on next microtask) and
-      // re-queues. Token should still be set after this frame.
-      await nextFrame();
-      // Either it rendered (if happy-dom's rAF clock advanced past 33ms,
-      // unlikely) or it re-queued. The contract we're locking down: scheduler
-      // does NOT drop the second chunk. Drain enough frames to converge.
-      for (let i = 0; i < 5 && state.assistantRafToken != null; i++) {
-        await nextFrame();
-      }
-      // Final state: text reflects both chunks.
-      const txt = (state.currentAssistantEl as HTMLElement).textContent || "";
-      assert.ok(
-        txt.includes("first") && txt.includes("second"),
-        `both chunks should render; got: ${txt}`,
-      );
-    });
-  });
-
   describe("primeStreamingState invariant guard", () => {
     it("does not crash when streaming state is rebuilt after reset", async () => {
       events.handleEvent({ type: "message_chunk", text: "old session" });
@@ -272,10 +212,8 @@ describe("rAF-coalesced streaming render", () => {
       stateMod.resetSessionUI();
       assert.equal(state.assistantRafToken, null);
 
-      // New session: first chunk after reset is leading-edge sync render
-      // (lastRenderTs was reset to 0).
+      // New session: chunks arm rAF and drain cleanly.
       events.handleEvent({ type: "message_chunk", text: "new session" });
-      // Force a second chunk inside budget to arm rAF and drain it.
       events.handleEvent({ type: "message_chunk", text: " continued" });
       assert.notEqual(state.assistantRafToken, null);
       await nextFrame();
