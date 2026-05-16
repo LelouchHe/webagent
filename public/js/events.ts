@@ -934,6 +934,8 @@ function doAssistantRender() {
       parse: fmt(t.parse),
       sanitize: fmt(t.sanitize),
       dom: fmt(t.dom),
+      subHits: t.subHits,
+      subMisses: t.subMisses,
       // Cap to first 5 miss blocks — covers steady-state (typically 1-2)
       // without exploding line length when an unusual frame redraws many.
       missDetails: t.missDetails.slice(0, 5).map((m) => ({

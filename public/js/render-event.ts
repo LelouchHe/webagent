@@ -10,7 +10,7 @@
 // caller; this module only constructs / mutates DOM elements via host
 // container or lookup hooks.
 
-import { marked, type Token } from "marked";
+import { marked, type Token, type Tokens } from "marked";
 import DOMPurify from "dompurify";
 import "./math.ts";
 import {
@@ -80,6 +80,29 @@ export function escHtml(s: string): string {
 interface MarkdownStreamMemo {
   cache: string[];
   rootCounts: number[];
+  /** Optional sub-block memo per top-level block index. null for non-container
+   *  blocks (paragraph, code, etc.); set for `list` (and future: `table`,
+   *  `blockquote`). When the parent block at index i transitions away from a
+   *  container type, this entry is reset to null. */
+  subMemos: Array<SubMemo | null>;
+}
+
+/** Sub-block memo for container token types (list / table / blockquote).
+ *  Holds the live container DOM element + raw cache per sub-item, so the
+ *  trailing growing container only re-parses the sub-items whose raw text
+ *  changed instead of re-rendering the whole container per chunk. */
+interface SubMemo {
+  type: "list" | "table" | "blockquote";
+  /** Discriminator for invalidation: e.g. an ordered/unordered list switch
+   *  forces a full rebuild because the container tag changes. */
+  variant: string;
+  /** The live container element currently in the host DOM (<ul>, <ol>,
+   *  <table>, or <blockquote>). */
+  containerEl: HTMLElement;
+  /** raw of each sub-item, parallel to containerEl's relevant children. For
+   *  list: items[].raw aligned with containerEl.children (<li>); for table:
+   *  header row + body rows; for blockquote: child block tokens. */
+  subCache: string[];
 }
 
 const markdownStreamMemos = new WeakMap<HTMLElement, MarkdownStreamMemo>();
@@ -120,6 +143,10 @@ export interface MarkdownStreamTiming {
   tailBlocks: number;
   /** Per-miss-block breakdown. Empty when nothing missed (all cache hits). */
   missDetails: MissDetail[];
+  /** Sub-item cache hits inside container blocks (list/table/blockquote). */
+  subHits: number;
+  /** Sub-item cache misses inside container blocks. */
+  subMisses: number;
 }
 
 function emptyTiming(): MarkdownStreamTiming {
@@ -136,6 +163,8 @@ function emptyTiming(): MarkdownStreamTiming {
     tailLen: 0,
     tailBlocks: 0,
     missDetails: [],
+    subHits: 0,
+    subMisses: 0,
   };
 }
 
@@ -339,10 +368,31 @@ function renderMissBlock(
   block: { raw: string; type: string | null; tokens: Token[] | null },
   offset: number,
   prevCount: number,
+  prevSubMemo: SubMemo | null,
   timing: MarkdownStreamTiming,
   now: () => number,
-): number {
+): { newCount: number; newSubMemo: SubMemo | null } {
   const { raw, type, tokens } = block;
+
+  // Container sub-memo dispatch (opt #3). When the miss block is a single
+  // list/table/blockquote token, route to the container-specific path that
+  // memoizes per sub-item. The container DOM element is preserved across
+  // chunks; only sub-items whose raw text changed get re-parsed.
+  if (tokens?.length === 1) {
+    const tok = tokens[0];
+    if (tok.type === "list") {
+      return renderListBlock(
+        host,
+        tok as ListToken,
+        offset,
+        prevCount,
+        prevSubMemo,
+        timing,
+        now,
+      );
+    }
+  }
+
   const tParse0 = now();
   // Fast path (opt #2): when mergeUnclosedBlocks emitted a single token
   // (no fence/HTML merge), the token's lex output is already correct —
@@ -411,7 +461,247 @@ function renderMissBlock(
     sanMs,
     domMs,
   });
-  return newCount;
+  return { newCount, newSubMemo: null };
+}
+
+// --- Container sub-memo (opt #3) ---
+//
+// A long list / table / blockquote is a SINGLE top-level marked block that
+// keeps growing chunk-after-chunk while the agent emits new items. Per-block
+// memo identifies the block as "miss" every chunk (raw changed), so v6 (no
+// sub-memo) re-parses and re-sanitizes the entire container every chunk —
+// O(container size) per chunk, which on iOS Safari produces 10-16ms frames.
+//
+// Container sub-memo splits the work: the container DOM element is preserved
+// across chunks; we walk the structured sub-items (list.items[], table.rows[],
+// blockquote.tokens[]) and only re-parse the items whose raw changed. Stable
+// items keep their existing DOM nodes — no parse, no sanitize, no DOM
+// mutation.
+//
+// Correctness: we still emit a sanitized DOM subtree for each miss sub-item,
+// and DOMPurify treats `<ul><li>...</li></ul>` per-item identically to the
+// same content embedded in a multi-item list (each <li> is self-contained at
+// the sanitize layer — there is no inline tag that can straddle <li> siblings
+// in marked's output). Byte-equal final render is locked by
+// markdown-stream-equivalence.test.ts.
+
+interface ListToken extends Tokens.List {
+  type: "list";
+}
+
+/** Render a single list item by wrapping it in a synthetic 1-item list that
+ *  copies all flags from the parent (loose, ordered, start). marked decides
+ *  loose/tight per-list, and `loose` is also stored on each item token, so
+ *  the wrapper preserves the original semantic exactly. Returns the new <li>
+ *  element to splice into the parent container, plus per-stage timings. */
+function renderOneListItem(
+  listTok: ListToken,
+  item: Tokens.ListItem,
+  now: () => number,
+): { newLi: Element | null; parseMs: number; sanMs: number; domMs: number } {
+  const synthetic: ListToken = { ...listTok, items: [item] };
+  const tP0 = now();
+  const itemHtml = marked.parser([synthetic], {
+    ...marked.defaults,
+    async: false,
+  }) as string;
+  const tP1 = now();
+  if (typeof itemHtml !== "string") {
+    throw new Error(
+      "renderOneListItem: marked.parser returned non-string (async mode leaked?)",
+    );
+  }
+  const tS0 = now();
+  const sanitized = DOMPurify.sanitize(itemHtml, {
+    USE_PROFILES: { html: true, mathMl: true },
+  });
+  const tS1 = now();
+  const tD0 = now();
+  const tmp = document.createElement("template");
+  tmp.innerHTML = sanitized;
+  stripWhitespaceTextNodes(tmp.content);
+  // tmp.content has one <ul>/<ol> with one <li> inside.
+  const wrap = tmp.content.firstElementChild;
+  const newLi = wrap?.firstElementChild ?? null;
+  const tD1 = now();
+  return {
+    newLi,
+    parseMs: tP1 - tP0,
+    sanMs: tS1 - tS0,
+    domMs: tD1 - tD0,
+  };
+}
+
+function renderListBlock(
+  host: HTMLElement,
+  listTok: ListToken,
+  offset: number,
+  prevCount: number,
+  prevSubMemo: SubMemo | null,
+  timing: MarkdownStreamTiming,
+  now: () => number,
+): { newCount: number; newSubMemo: SubMemo | null } {
+  const items = listTok.items;
+  const startVal = listTok.start === "" ? 1 : listTok.start;
+  const variant = listTok.ordered ? `ol:start=${startVal}` : "ul";
+
+  // Variant changed (ul → ol, or start attr changed) → fall through to the
+  // slow path. Bail out by returning a sentinel that tells the caller to
+  // retry without sub-memo. The simplest way: detect this here and just do
+  // a full container rebuild ourselves, fresh container goes in subMemo.
+  let containerEl: HTMLElement;
+  let subCache: string[];
+  const canReuse =
+    prevSubMemo !== null &&
+    prevSubMemo.type === "list" &&
+    prevSubMemo.variant === variant &&
+    prevSubMemo.containerEl.parentNode === host;
+
+  if (canReuse) {
+    containerEl = prevSubMemo.containerEl;
+    subCache = prevSubMemo.subCache;
+  } else {
+    // Build a fresh empty container of the right shape. We do this by
+    // parsing the listTok with no items first, so the container element
+    // inherits whatever marked produces (e.g. `<ol start="3">` attributes).
+    const emptyHtml = marked.parser([{ ...listTok, items: [] }], {
+      ...marked.defaults,
+      async: false,
+    }) as string;
+    const sanitizedEmpty = DOMPurify.sanitize(emptyHtml, {
+      USE_PROFILES: { html: true, mathMl: true },
+    });
+    const tmp = document.createElement("template");
+    tmp.innerHTML = sanitizedEmpty;
+    stripWhitespaceTextNodes(tmp.content);
+    const fresh = tmp.content.firstElementChild;
+    if (!fresh) {
+      // Marked produced no container element (degenerate case, e.g. items
+      // is empty and marked emitted nothing). Fall back to the full slow
+      // path — caller resilience via SubMemo=null on return.
+      return slowPathFallback(
+        host,
+        listTok,
+        listTok.raw,
+        offset,
+        prevCount,
+        timing,
+        now,
+      );
+    }
+    // Replace prev children at this offset with the new empty container
+    for (let k = 0; k < prevCount; k++) {
+      const child = host.children.item(offset);
+      if (child) host.removeChild(child);
+    }
+    const anchor = host.children.item(offset);
+    host.insertBefore(fresh, anchor);
+    containerEl = fresh as HTMLElement;
+    subCache = [];
+  }
+
+  // Walk items[]: for each item, if raw matches subCache[j], leave the
+  // existing <li> in containerEl.children[j] alone; otherwise re-render
+  // just that item and replace the <li>.
+  const tParse0 = now();
+  let parseAccMs = 0;
+  let sanAccMs = 0;
+  let domAccMs = 0;
+  for (let j = 0; j < items.length; j++) {
+    const itemRaw = items[j].raw;
+    if (subCache[j] === itemRaw && containerEl.children.item(j)) {
+      timing.subHits++;
+      continue;
+    }
+    timing.subMisses++;
+    const r = renderOneListItem(listTok, items[j], now);
+    parseAccMs += r.parseMs;
+    sanAccMs += r.sanMs;
+    domAccMs += r.domMs;
+    if (!r.newLi) continue;
+    const existingLi = containerEl.children.item(j);
+    if (existingLi) {
+      containerEl.replaceChild(r.newLi, existingLi);
+    } else {
+      containerEl.appendChild(r.newLi);
+    }
+    subCache[j] = itemRaw;
+  }
+  // Trim trailing items if the list shrank (LLM shouldn't but defense in
+  // depth — also handles the canReuse=false → fresh-empty branch where
+  // subCache=[] but we just appended N children).
+  while (containerEl.children.length > items.length) {
+    if (containerEl.lastElementChild)
+      containerEl.removeChild(containerEl.lastElementChild);
+  }
+  while (subCache.length > items.length) subCache.pop();
+
+  timing.parse += parseAccMs;
+  timing.sanitize += sanAccMs;
+  timing.dom += domAccMs;
+  perfMeasure("mdstream.parse", tParse0, now());
+  timing.missDetails.push({
+    type: "list",
+    len: listTok.raw.length,
+    snip: listTok.raw.slice(0, 40).replace(/\n/g, "↵"),
+    parseMs: parseAccMs,
+    sanMs: sanAccMs,
+    domMs: domAccMs,
+  });
+
+  return {
+    newCount: 1,
+    newSubMemo: { type: "list", variant, containerEl, subCache },
+  };
+}
+
+/** Fallback path used by container sub-memo when an edge case prevents the
+ *  optimized path (e.g. marked produced no container element). Does the
+ *  same work as renderMissBlock's slow path but doesn't recurse. */
+function slowPathFallback(
+  host: HTMLElement,
+  tok: Token,
+  raw: string,
+  offset: number,
+  prevCount: number,
+  timing: MarkdownStreamTiming,
+  now: () => number,
+): { newCount: number; newSubMemo: SubMemo | null } {
+  const tParse0 = now();
+  const out = marked.parse(raw, { async: false });
+  const tParse1 = now();
+  timing.parse += tParse1 - tParse0;
+  if (typeof out !== "string") {
+    throw new Error("slowPathFallback: async marked");
+  }
+  const tSan0 = now();
+  const html = DOMPurify.sanitize(out, {
+    USE_PROFILES: { html: true, mathMl: true },
+  });
+  const tSan1 = now();
+  timing.sanitize += tSan1 - tSan0;
+  const tDom0 = now();
+  const tmp = document.createElement("template");
+  tmp.innerHTML = html;
+  stripWhitespaceTextNodes(tmp.content);
+  const frag = tmp.content;
+  const newCount = frag.children.length;
+  for (let k = 0; k < prevCount; k++) {
+    const child = host.children.item(offset);
+    if (child) host.removeChild(child);
+  }
+  const anchor = host.children.item(offset);
+  host.insertBefore(frag, anchor);
+  timing.dom += now() - tDom0;
+  timing.missDetails.push({
+    type: tok.type,
+    len: raw.length,
+    snip: raw.slice(0, 40).replace(/\n/g, "↵"),
+    parseMs: tParse1 - tParse0,
+    sanMs: tSan1 - tSan0,
+    domMs: 0,
+  });
+  return { newCount, newSubMemo: null };
 }
 
 export function updateMarkdownStream(
@@ -438,10 +728,10 @@ export function updateMarkdownStream(
   const tTotal0 = now();
 
   if (!memo) {
-    memo = { cache: [], rootCounts: [] };
+    memo = { cache: [], rootCounts: [], subMemos: [] };
     markdownStreamMemos.set(host, memo);
   }
-  const { cache, rootCounts } = memo;
+  const { cache, rootCounts, subMemos } = memo;
 
   const tLex0 = now();
   const lexResult = incrementalLex(cache, fullText, now);
@@ -466,21 +756,24 @@ export function updateMarkdownStream(
       continue;
     }
     timing.misses++;
-    const newCount = renderMissBlock(
+    const { newCount, newSubMemo } = renderMissBlock(
       host,
       block,
       offset,
       prevCount,
+      subMemos[i] ?? null,
       timing,
       now,
     );
     cache[i] = raw;
     rootCounts[i] = newCount;
+    subMemos[i] = newSubMemo;
     offset += newCount;
   }
   while (cache.length > merged.length) {
     const lastCount = rootCounts.pop() ?? 0;
     cache.pop();
+    subMemos.pop();
     for (let k = 0; k < lastCount; k++) {
       if (host.lastElementChild) host.removeChild(host.lastElementChild);
     }

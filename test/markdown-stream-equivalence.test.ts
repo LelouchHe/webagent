@@ -59,6 +59,46 @@ const CASES: { name: string; text: string }[] = [
         (_, i) => `Section ${i} text **bold${i}** more.`,
       ).join("\n\n") + "\n",
   },
+  // opt #3 collapse cases — these render correctly under v6 but each
+  // is a SINGLE marked block token that grows long, defeating per-block
+  // memo. Opt #3 (container sub-memo) must preserve byte-equality on
+  // the final render while making the streaming path proportional to
+  // sub-item growth.
+  {
+    name: "long bullet list (20 items, opt #3 target)",
+    text:
+      Array.from(
+        { length: 20 },
+        (_, i) => `- item ${i + 1} with **emphasis** and \`code${i}\``,
+      ).join("\n") + "\n",
+  },
+  {
+    name: "long ordered list (20 items, opt #3 target)",
+    text:
+      Array.from(
+        { length: 20 },
+        (_, i) => `${i + 1}. point ${i + 1} with details`,
+      ).join("\n") + "\n",
+  },
+  {
+    name: "long GFM table (15 rows, opt #3 target)",
+    text:
+      "| name | value | note |\n| --- | --- | --- |\n" +
+      Array.from(
+        { length: 15 },
+        (_, i) => `| row${i + 1} | ${i * 7} | n${i + 1} |`,
+      ).join("\n") + "\n",
+  },
+  {
+    name: "blockquote containing list (opt #3 recursion)",
+    text:
+      "> Quoted intro paragraph.\n>\n> - bullet a\n> - bullet b with `code`\n> - bullet c **bold**\n>\n> Closing quote line.\n",
+  },
+  {
+    name: "nested blockquote with table (opt #3 recursion)",
+    text:
+      "> outer\n>\n> > inner with table:\n> >\n> > | k | v |\n> > | --- | --- |\n> > | a | 1 |\n> > | b | 2 |\n>\n> back to outer\n",
+  },
 ];
 
 // Whitespace between root block elements:
