@@ -171,4 +171,56 @@ describe("updateMarkdownStream — byte-equal vs legacy renderMd", () => {
       "streamed block count diverged from one-shot",
     );
   });
+
+  // Opt #2 lock — for every single-token block the streaming code can see,
+  // the fast path `marked.parser([token])` MUST produce HTML equivalent
+  // to `marked.parse(raw)`. If marked's extension hooks ever assume the
+  // parser merges options with defaults (we have to spread `defaults`
+  // manually for the parser static), this test catches the regression.
+  // The cases below cover the token types observed in dogfood traffic:
+  // paragraph, code, table, list, blockquote, heading, math.
+  it("opt #2 fast path: marked.parser([token]) ≡ marked.parse(raw)", async () => {
+    const { marked } = await import("marked");
+    const tokenCases: { name: string; raw: string }[] = [
+      { name: "paragraph", raw: "a paragraph with *em* and `code`.\n" },
+      { name: "heading", raw: "# Heading line\n" },
+      {
+        name: "GFM table (long)",
+        raw:
+          "| col a | col b | col c |\n" +
+          "| --- | --- | --- |\n" +
+          "| 0 | x0 | y0 |\n" +
+          "| 1 | x1 | y1 |\n" +
+          "| 2 | x2 | y2 |\n" +
+          "| 3 | x3 | y3 |\n",
+      },
+      {
+        name: "fenced code block (closed)",
+        raw: "```js\nconst a = 1;\nconst b = 2;\n```\n",
+      },
+      { name: "blockquote", raw: "> quoted line\n> second line\n" },
+      { name: "inline math in paragraph", raw: "cost is $x + y$ total.\n" },
+      { name: "block math", raw: "$$\nE = mc^2\n$$\n" },
+    ];
+    for (const { name, raw } of tokenCases) {
+      const tokens = marked.lexer(raw);
+      // Filter to the first block-level token — mimics what
+      // mergeUnclosedBlocks emits when a chunk yields a single block.
+      assert.equal(
+        tokens.length,
+        1,
+        `precondition: lexer should emit exactly 1 token for "${name}"`,
+      );
+      const viaParse = marked.parse(raw, { async: false });
+      const viaParser = marked.parser(tokens, {
+        ...marked.defaults,
+        async: false,
+      }) as string;
+      assert.equal(
+        normWs(viaParser),
+        normWs(viaParse),
+        `parser/parse HTML diverged for "${name}"`,
+      );
+    }
+  });
 });

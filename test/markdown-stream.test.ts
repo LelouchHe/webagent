@@ -141,12 +141,17 @@ describe("updateMarkdownStream", () => {
 
   it("rejects async marked.parse (sync contract guard)", async () => {
     const { marked } = await import("marked");
-    const orig = marked.parse;
+    const origParse = marked.parse;
+    const origParser = marked.parser;
     // Force async return — any future config flip (e.g. async extensions)
     // must announce itself loudly, not silently return Promises that we'd
-    // pass to DOMPurify as `[object Promise]`.
+    // pass to DOMPurify as `[object Promise]`. Stub both `parse` (used
+    // for merged multi-token blocks) and `parser` (the opt #2 fast path
+    // for single-token blocks) — either route must reject async output.
     marked.parse = (() =>
       Promise.resolve("<p>x</p>")) as unknown as typeof marked.parse;
+    marked.parser = (() =>
+      Promise.resolve("<p>x</p>")) as unknown as typeof marked.parser;
     try {
       const h2 = document.createElement("div");
       document.body.appendChild(h2);
@@ -154,7 +159,8 @@ describe("updateMarkdownStream", () => {
         mod.updateMarkdownStream(h2, "text");
       }, /requires sync marked/);
     } finally {
-      marked.parse = orig;
+      marked.parse = origParse;
+      marked.parser = origParser;
     }
   });
 });

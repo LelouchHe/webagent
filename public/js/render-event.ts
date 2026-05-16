@@ -10,7 +10,7 @@
 // caller; this module only constructs / mutates DOM elements via host
 // container or lookup hooks.
 
-import { marked } from "marked";
+import { marked, type Token } from "marked";
 import DOMPurify from "dompurify";
 import "./math.ts";
 import {
@@ -87,6 +87,21 @@ const markdownStreamMemos = new WeakMap<HTMLElement, MarkdownStreamMemo>();
 // Per-call timing breakdown for the LAST updateMarkdownStream invocation.
 // Read by callers (events.ts doAssistantRender) to log stage costs when a
 // render exceeds the 16ms frame budget. Resets at the top of every call.
+export interface MissDetail {
+  /** First token type in this block (paragraph, code, table, list, html, etc.) */
+  type: string;
+  /** Raw block length in chars */
+  len: number;
+  /** First ~40 chars of raw, for content-shape diagnosis */
+  snip: string;
+  /** marked.parse(raw) time in ms */
+  parseMs: number;
+  /** DOMPurify.sanitize time in ms */
+  sanMs: number;
+  /** template.innerHTML + insertBefore time in ms */
+  domMs: number;
+}
+
 export interface MarkdownStreamTiming {
   lex: number;
   parse: number;
@@ -95,18 +110,56 @@ export interface MarkdownStreamTiming {
   blocks: number;
   hits: number;
   misses: number;
+  /** Time spent walking the cache prefix (cheap loop). */
+  lexPrefix: number;
+  /** Time spent in mergeUnclosedBlocks → marked.lexer(tail). */
+  lexTail: number;
+  /** Length of the tail that was relexed. */
+  tailLen: number;
+  /** Number of blocks produced by the tail relex. */
+  tailBlocks: number;
+  /** Per-miss-block breakdown. Empty when nothing missed (all cache hits). */
+  missDetails: MissDetail[];
 }
-let lastTiming: MarkdownStreamTiming = {
-  lex: 0,
-  parse: 0,
-  sanitize: 0,
-  dom: 0,
-  blocks: 0,
-  hits: 0,
-  misses: 0,
-};
+
+function emptyTiming(): MarkdownStreamTiming {
+  return {
+    lex: 0,
+    parse: 0,
+    sanitize: 0,
+    dom: 0,
+    blocks: 0,
+    hits: 0,
+    misses: 0,
+    lexPrefix: 0,
+    lexTail: 0,
+    tailLen: 0,
+    tailBlocks: 0,
+    missDetails: [],
+  };
+}
+
+let lastTiming: MarkdownStreamTiming = emptyTiming();
 export function getLastMarkdownStreamTiming(): MarkdownStreamTiming {
   return lastTiming;
+}
+
+// User Timing markers — surfaced to Chrome DevTools "Performance" tab
+// under the User Timing track. Lets a profiler attribute each frame's
+// 19-20ms render to specific stages without manual flame-graph reading.
+// Cost when DevTools is not recording: ~5µs per call, negligible.
+function perfMeasure(name: string, start: number, end: number): void {
+  if (
+    typeof performance === "undefined" ||
+    typeof performance.measure !== "function"
+  )
+    return;
+  try {
+    performance.measure(name, { start, end });
+  } catch {
+    // Some older browsers / Safari versions reject `{start,end}` form;
+    // silently skip rather than break rendering.
+  }
 }
 
 // HTML void elements have no closing tag. Without filtering, a `<br>` in a
@@ -154,17 +207,39 @@ function stripWhitespaceTextNodes(root: DocumentFragment): void {
  * markdown so the drift case (inline code spanning paragraphs) does not
  * exist.
  */
-function mergeUnclosedBlocks(fullText: string): string[] {
+interface MergedBlock {
+  raw: string;
+  /** First token type that contributed to this merged block. */
+  type: string;
+  /** Tokens that were merged into this block. For non-merged blocks (the
+   *  common case, fence/HTML closed) `tokens.length === 1`. For merged
+   *  blocks (open fence / open HTML), tokens were lexed under the
+   *  wrong-context assumption (e.g. fence content emitted as paragraph
+   *  tokens), so parser-from-tokens is unsafe — callers must fall back
+   *  to `marked.parse(raw)` on those. */
+  tokens: Token[];
+}
+
+function mergeUnclosedBlocks(fullText: string): MergedBlock[] {
   const tokens = marked.lexer(fullText);
-  const blocks: string[] = [];
+  // marked attaches a `links` map to the TokensList for reference-style
+  // link resolution during parser walk. Preserve it on every per-block
+  // tokens array so `marked.parser(blockTokens)` resolves links correctly.
+  const links = tokens.links;
+  const blocks: MergedBlock[] = [];
   let acc = "";
+  let accType: string | null = null;
+  let accTokens: Token[] = [];
   let fenceOpen = false;
   const tagStack: string[] = [];
   const OPEN_TAG_RE = /<([a-zA-Z][\w-]*)(?:\s[^>]*)?>/g;
   const CLOSE_TAG_RE = /<\/([a-zA-Z][\w-]*)\s*>/g;
   for (const tok of tokens) {
     const raw = (tok as { raw?: string }).raw ?? "";
+    const tokType = (tok as { type?: string }).type ?? "?";
+    accType ??= tokType;
     acc += raw;
+    accTokens.push(tok);
     const fenceCount = (raw.match(/```/g) ?? []).length;
     if (fenceCount % 2 === 1) fenceOpen = !fenceOpen;
     if (!fenceOpen) {
@@ -182,11 +257,18 @@ function mergeUnclosedBlocks(fullText: string): string[] {
       }
     }
     if (!fenceOpen && tagStack.length === 0) {
-      blocks.push(acc);
+      (accTokens as Token[] & { links?: Record<string, unknown> }).links =
+        links;
+      blocks.push({ raw: acc, type: accType, tokens: accTokens });
       acc = "";
+      accType = null;
+      accTokens = [];
     }
   }
-  if (acc) blocks.push(acc);
+  if (acc) {
+    (accTokens as Token[] & { links?: Record<string, unknown> }).links = links;
+    blocks.push({ raw: acc, type: accType ?? "?", tokens: accTokens });
+  }
   return blocks;
 }
 
@@ -200,7 +282,23 @@ function mergeUnclosedBlocks(fullText: string): string[] {
 // accumulated text, which is O(N) per chunk → O(N²) total. With this,
 // we lex only `lastCachedBlock + tail`, bounding per-chunk lex cost
 // to one block worth of work.
-function incrementalLex(cache: string[], fullText: string): string[] {
+interface IncrementalLexResult {
+  /** Final block list — stable-prefix blocks have `tokens: null` (we
+   *  never re-render them, so tokens are unnecessary). Tail blocks carry
+   *  their tokens for the parser fast-path in `renderMissBlock`. */
+  blocks: Array<{ raw: string; type: string | null; tokens: Token[] | null }>;
+  prefixMs: number;
+  tailMs: number;
+  tailLen: number;
+  tailBlockCount: number;
+}
+
+function incrementalLex(
+  cache: string[],
+  fullText: string,
+  now: () => number,
+): IncrementalLexResult {
+  const tPrefix0 = now();
   let stableLen = 0;
   let stableCount = 0;
   for (const raw of cache) {
@@ -213,25 +311,69 @@ function incrementalLex(cache: string[], fullText: string): string[] {
     stableCount--;
     stableLen -= cache[stableCount].length;
   }
+  const tPrefix1 = now();
   const tail = stableLen === 0 ? fullText : fullText.slice(stableLen);
+  const tTail0 = now();
   const tailBlocks = tail ? mergeUnclosedBlocks(tail) : [];
-  const merged: string[] = [];
-  for (let i = 0; i < stableCount; i++) merged.push(cache[i]);
-  for (const b of tailBlocks) merged.push(b);
-  return merged;
+  const tTail1 = now();
+  const merged: Array<{
+    raw: string;
+    type: string | null;
+    tokens: Token[] | null;
+  }> = [];
+  for (let i = 0; i < stableCount; i++)
+    merged.push({ raw: cache[i], type: null, tokens: null });
+  for (const b of tailBlocks)
+    merged.push({ raw: b.raw, type: b.type, tokens: b.tokens });
+  return {
+    blocks: merged,
+    prefixMs: tPrefix1 - tPrefix0,
+    tailMs: tTail1 - tTail0,
+    tailLen: tail.length,
+    tailBlockCount: tailBlocks.length,
+  };
 }
 
 function renderMissBlock(
   host: HTMLElement,
-  raw: string,
+  block: { raw: string; type: string | null; tokens: Token[] | null },
   offset: number,
   prevCount: number,
   timing: MarkdownStreamTiming,
   now: () => number,
 ): number {
+  const { raw, type, tokens } = block;
   const tParse0 = now();
-  const out = marked.parse(raw, { async: false });
-  timing.parse += now() - tParse0;
+  // Fast path (opt #2): when mergeUnclosedBlocks emitted a single token
+  // (no fence/HTML merge), the token's lex output is already correct —
+  // call `marked.parser` directly to skip the inner re-lex that
+  // `marked.parse(raw)` would do. On iOS Safari this saves the bulk of
+  // the parse stage (~3ms steady on a 1KB GFM table; see md-render slow
+  // logs in checkpoint 011). Merged blocks (tokens.length > 1) must use
+  // parse(raw) because their tokens were lexed under wrong-context
+  // assumptions (open-fence content emitted as paragraph tokens).
+  let out: string | Promise<string>;
+  if (tokens?.length === 1) {
+    // NB: must spread `marked.defaults` — passing only `{async:false}`
+    // would replace the entire options object, losing the math (Temml)
+    // extension renderer registered via `marked.use(...)` in math.ts.
+    // `marked.parse(raw, opt)` internally merges opt with defaults, but
+    // the static `marked.parser(tokens, opts)` does NOT merge — it
+    // passes opts straight to `new Parser(opts)`.
+    // marked's static parser is typed as returning `string | Promise<string>`
+    // depending on opts.async; with `async:false` the runtime always
+    // returns string, but the union type leaks `any` through narrowing.
+    out = marked.parser(tokens, {
+      ...marked.defaults,
+      async: false,
+    }) as string;
+  } else {
+    out = marked.parse(raw, { async: false });
+  }
+  const tParse1 = now();
+  const parseMs = tParse1 - tParse0;
+  timing.parse += parseMs;
+  perfMeasure("mdstream.parse", tParse0, tParse1);
   if (typeof out !== "string") {
     throw new Error(
       "updateMarkdownStream requires sync marked (>= 5.0); marked.parse returned a non-string (likely a Promise)",
@@ -241,7 +383,10 @@ function renderMissBlock(
   const html = DOMPurify.sanitize(out, {
     USE_PROFILES: { html: true, mathMl: true },
   });
-  timing.sanitize += now() - tSan0;
+  const tSan1 = now();
+  const sanMs = tSan1 - tSan0;
+  timing.sanitize += sanMs;
+  perfMeasure("mdstream.sanitize", tSan0, tSan1);
   const tDom0 = now();
   const tmp = document.createElement("template");
   tmp.innerHTML = html;
@@ -254,7 +399,18 @@ function renderMissBlock(
   }
   const anchor = host.children.item(offset);
   host.insertBefore(frag, anchor);
-  timing.dom += now() - tDom0;
+  const tDom1 = now();
+  const domMs = tDom1 - tDom0;
+  timing.dom += domMs;
+  perfMeasure("mdstream.dom", tDom0, tDom1);
+  timing.missDetails.push({
+    type: type ?? "?",
+    len: raw.length,
+    snip: raw.slice(0, 40).replace(/\n/g, "↵"),
+    parseMs,
+    sanMs,
+    domMs,
+  });
   return newCount;
 }
 
@@ -274,19 +430,12 @@ export function updateMarkdownStream(
     }
   }
 
-  const timing: MarkdownStreamTiming = {
-    lex: 0,
-    parse: 0,
-    sanitize: 0,
-    dom: 0,
-    blocks: 0,
-    hits: 0,
-    misses: 0,
-  };
+  const timing: MarkdownStreamTiming = emptyTiming();
   const now =
     typeof performance !== "undefined" && typeof performance.now === "function"
       ? () => performance.now()
       : () => Date.now();
+  const tTotal0 = now();
 
   if (!memo) {
     memo = { cache: [], rootCounts: [] };
@@ -295,13 +444,21 @@ export function updateMarkdownStream(
   const { cache, rootCounts } = memo;
 
   const tLex0 = now();
-  const merged = incrementalLex(cache, fullText);
-  timing.lex = now() - tLex0;
+  const lexResult = incrementalLex(cache, fullText, now);
+  const tLex1 = now();
+  timing.lex = tLex1 - tLex0;
+  timing.lexPrefix = lexResult.prefixMs;
+  timing.lexTail = lexResult.tailMs;
+  timing.tailLen = lexResult.tailLen;
+  timing.tailBlocks = lexResult.tailBlockCount;
+  const merged = lexResult.blocks;
   timing.blocks = merged.length;
+  perfMeasure("mdstream.lex", tLex0, tLex1);
 
   let offset = 0;
   for (let i = 0; i < merged.length; i++) {
-    const raw = merged[i];
+    const block = merged[i];
+    const raw = block.raw;
     const prevCount = rootCounts[i] ?? 0;
     if (cache[i] === raw) {
       offset += prevCount;
@@ -309,7 +466,14 @@ export function updateMarkdownStream(
       continue;
     }
     timing.misses++;
-    const newCount = renderMissBlock(host, raw, offset, prevCount, timing, now);
+    const newCount = renderMissBlock(
+      host,
+      block,
+      offset,
+      prevCount,
+      timing,
+      now,
+    );
     cache[i] = raw;
     rootCounts[i] = newCount;
     offset += newCount;
@@ -331,6 +495,7 @@ export function updateMarkdownStream(
     }
   }
   lastTiming = timing;
+  perfMeasure("mdstream.total", tTotal0, now());
 }
 
 // Reset the markdown-stream memo for a host. Memo-only — does NOT touch

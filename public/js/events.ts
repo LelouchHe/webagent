@@ -908,23 +908,54 @@ function doAssistantRender() {
   if (!el) return;
   const t0 = performance.now();
   updateMarkdownStream(el, state.currentAssistantText);
-  const ms = performance.now() - t0;
-  // Only log when a single render eats more than one 60Hz frame budget.
-  if (ms > 16) {
+  const tRender = performance.now();
+  const ms = tRender - t0;
+  // Lower threshold than 16ms (1 frame) — iOS Safari often falls into
+  // the 8-16ms band on long streams; capturing those samples too gives us
+  // a population to A/B against post-optimization. Compact field names
+  // (px/sx/dx) keep the line one screen wide for copy-paste from the
+  // mobile log panel.
+  if (ms > 8) {
     const t = getLastMarkdownStreamTiming();
+    const fmt = (n: number) => Math.round(n * 10) / 10;
     log.debug("md-render slow", {
-      ms: Math.round(ms),
+      ms: fmt(ms),
       len: state.currentAssistantText.length,
-      lex: Math.round(t.lex),
-      parse: Math.round(t.parse),
-      sanitize: Math.round(t.sanitize),
-      dom: Math.round(t.dom),
       blocks: t.blocks,
       hits: t.hits,
       misses: t.misses,
+      lex: {
+        total: fmt(t.lex),
+        prefix: fmt(t.lexPrefix),
+        tail: fmt(t.lexTail),
+        tailLen: t.tailLen,
+        tailBlocks: t.tailBlocks,
+      },
+      parse: fmt(t.parse),
+      sanitize: fmt(t.sanitize),
+      dom: fmt(t.dom),
+      // Cap to first 5 miss blocks — covers steady-state (typically 1-2)
+      // without exploding line length when an unusual frame redraws many.
+      missDetails: t.missDetails.slice(0, 5).map((m) => ({
+        type: m.type,
+        len: m.len,
+        snip: m.snip,
+        p: fmt(m.parseMs),
+        s: fmt(m.sanMs),
+        d: fmt(m.domMs),
+      })),
     });
   }
   scrollToBottom();
+  const tScroll = performance.now();
+  // Per-stage User Timing markers, surfaced in DevTools Performance tab.
+  // Lets a profiler attribute the frame budget between render and scroll.
+  try {
+    performance.measure("doAssistantRender", { start: t0, end: tScroll });
+    performance.measure("scrollToBottom", { start: tRender, end: tScroll });
+  } catch {
+    /* older browsers reject {start,end} form */
+  }
 }
 
 function scheduleAssistantRender() {
