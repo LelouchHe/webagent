@@ -36,7 +36,6 @@ import {
   finishThinking,
   hideWaiting,
   scrollToBottom,
-  renderMd,
   updateMarkdownStream,
   resetMarkdownStream,
   escHtml,
@@ -397,7 +396,9 @@ async function _loadNewEventsImpl(sid: string): Promise<boolean> {
         primed.classList.contains("msg") &&
         primed.classList.contains("assistant")
       ) {
-        primed.innerHTML = renderMd(raw);
+        resetMarkdownStream(primed as HTMLElement);
+        (primed as HTMLElement).replaceChildren();
+        updateMarkdownStream(primed as HTMLElement, raw);
         enhanceCodeBlocks(primed);
       } else if (primed.classList.contains("thinking")) {
         const content = primed.querySelector(".thinking-content");
@@ -464,7 +465,9 @@ async function _loadNewEventsImpl(sid: string): Promise<boolean> {
         const newRaw = firstInFrag.getAttribute("data-raw") ?? "";
         const combined = existingRaw + newRaw;
         lastInDom.setAttribute("data-raw", combined);
-        lastInDom.innerHTML = renderMd(combined);
+        resetMarkdownStream(lastInDom);
+        lastInDom.replaceChildren();
+        updateMarkdownStream(lastInDom, combined);
         enhanceCodeBlocks(lastInDom);
         firstInFrag.remove();
       } else if (
@@ -641,11 +644,10 @@ function renderMessageCard(msg: AgentEvent & { type: "message" }) {
   el.setAttribute("data-raw", msg.body);
   const sourceLabel = msg.from_label ?? msg.from_ref;
   const title = msg.title ? ` · ${escHtml(msg.title)}` : "";
-  el.innerHTML =
-    `<summary>\u2709\uFE0E ${escHtml(sourceLabel)}${title}</summary>` +
-    `<div class="message-content">${renderMd(msg.body)}</div>`;
-  appendMessageElement(el);
+  el.innerHTML = `<summary>\u2709\uFE0E ${escHtml(sourceLabel)}${title}</summary><div class="message-content"></div>`;
   const content = el.querySelector(".message-content");
+  if (content) updateMarkdownStream(content as HTMLElement, msg.body);
+  appendMessageElement(el);
   if (content) enhanceCodeBlocks(content);
 }
 
@@ -766,7 +768,9 @@ function handleReplayContentEvent(
         const existing = lastChild.getAttribute("data-raw") ?? "";
         const combined = existing + textVal;
         lastChild.setAttribute("data-raw", combined);
-        lastChild.innerHTML = renderMd(combined);
+        resetMarkdownStream(lastChild);
+        lastChild.replaceChildren();
+        updateMarkdownStream(lastChild, combined);
         enhanceCodeBlocks(lastChild);
         break;
       }

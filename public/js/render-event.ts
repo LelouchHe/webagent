@@ -46,12 +46,6 @@ export function escHtml(s: string): string {
   return d.innerHTML;
 }
 
-export function renderMd(text: string): string {
-  return DOMPurify.sanitize(marked.parse(text) as string, {
-    USE_PROFILES: { html: true, mathMl: true },
-  });
-}
-
 // --- Streaming markdown render: per-block memo (streamdown-style) ---
 //
 // `updateMarkdownStream(host, fullText)` re-lexes the whole text on every
@@ -208,15 +202,16 @@ export function updateMarkdownStream(
         "updateMarkdownStream requires sync marked (>= 5.0); marked.parse returned a non-string (likely a Promise)",
       );
     }
-    // DOMPurify quirk: when a per-block fragment STARTS with a <math>
-    // element (e.g. a block-math `$$ … $$` token rendered in isolation),
-    // the HTML5 parser inside DOMPurify hasn't entered "in body" insertion
-    // mode yet and treats the leading <math> as unknown content, stripping
-    // its children. Prepending an empty <math></math> sentinel warms up
-    // foreign-content parsing; the sentinel itself is auto-removed by
-    // DOMPurify, so the workaround is zero-residue and safe for non-math
-    // blocks too.
-    const html = DOMPurify.sanitize("<math></math>" + out, {
+    // NOTE: an earlier revision prepended a `<math></math>` sentinel here to
+    // work around DOMPurify stripping math children when the per-block
+    // fragment starts with <math> (HTML5 parser "in body" vs foreign-content
+    // mode quirk, observed under happy-dom). That workaround turned out to
+    // leak <script> tokens past sanitize (paired `<math></math>` warms
+    // foreign-content mode for the rest of the input), so it was removed.
+    // We now match legacy renderMd exactly: a `$$ ... $$` block whose
+    // fragment leads with <math> may lose math children under happy-dom.
+    // Real browsers handle this correctly via the innerHTML setter.
+    const html = DOMPurify.sanitize(out, {
       USE_PROFILES: { html: true, mathMl: true },
     });
     const tmp = document.createElement("template");
@@ -255,6 +250,12 @@ export function updateMarkdownStream(
   }
 }
 
+// Reset the markdown-stream memo for a host. Memo-only — does NOT touch
+// host.innerHTML. Use this when sealing a bubble at turn boundary so the
+// next write starts from a cold cache. For "rewrite the whole bubble"
+// paths (e.g. merging two consecutive assistant messages), the caller
+// must also clear DOM children explicitly via `host.replaceChildren()`
+// before calling `updateMarkdownStream`.
 export function resetMarkdownStream(host: HTMLElement): void {
   markdownStreamMemos.delete(host);
 }
@@ -426,7 +427,7 @@ function buildAssistantMessage(
   const el = document.createElement("div");
   el.className = "msg assistant";
   el.setAttribute("data-raw", text);
-  el.innerHTML = renderMd(text);
+  updateMarkdownStream(el, text);
   hooks.enhanceMarkdown?.(el);
   return el;
 }

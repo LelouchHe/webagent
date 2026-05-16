@@ -75,10 +75,21 @@ function normWs(s: string | null): string {
 
 describe("updateMarkdownStream — byte-equal vs legacy renderMd", () => {
   let mod: typeof import("../public/js/render-event.ts");
+  // Inline reimpl of the deleted `renderMd` (kept as a baseline reference
+  // for byte-equal correctness across all corpora). Single source of
+  // truth lives in the equivalence test itself so the production module
+  // can drop the unused export.
+  let legacyRenderMd: (text: string) => string;
 
   before(async () => {
     setupDOM();
     mod = await import("../public/js/render-event.ts");
+    const { marked } = await import("marked");
+    const DOMPurify = (await import("dompurify")).default;
+    legacyRenderMd = (text: string) =>
+      DOMPurify.sanitize(marked.parse(text) as string, {
+        USE_PROFILES: { html: true, mathMl: true },
+      });
   });
   after(() => {
     teardownDOM();
@@ -87,7 +98,7 @@ describe("updateMarkdownStream — byte-equal vs legacy renderMd", () => {
   for (const { name, text } of CASES) {
     it(`textContent equals renderMd: ${name}`, () => {
       const ref = document.createElement("div");
-      ref.innerHTML = mod.renderMd(text);
+      ref.innerHTML = legacyRenderMd(text);
       const out = document.createElement("div");
       mod.updateMarkdownStream(out, text);
       assert.equal(
@@ -99,7 +110,7 @@ describe("updateMarkdownStream — byte-equal vs legacy renderMd", () => {
 
     it(`block-element count equals renderMd: ${name}`, () => {
       const ref = document.createElement("div");
-      ref.innerHTML = mod.renderMd(text);
+      ref.innerHTML = legacyRenderMd(text);
       const out = document.createElement("div");
       mod.updateMarkdownStream(out, text);
       assert.equal(
@@ -110,29 +121,22 @@ describe("updateMarkdownStream — byte-equal vs legacy renderMd", () => {
     });
   }
 
-  // Inline AND block math are sanitized away by DOMPurify in the legacy
-  // renderMd path: the first <math> in a sanitized fragment without prior
-  // foreign-content priming gets stripped (HTML5 parser "in body" vs "in
-  // foreign content" mode quirk). updateMarkdownStream prepends an empty
-  // <math></math> sentinel before each per-block sanitize, which warms
-  // the parser and is itself auto-removed. The math cases below are
-  // therefore tested as v6 *improvements*, not equivalences.
-  it("inline math survives in updateMarkdownStream (improvement over renderMd)", () => {
-    const text = "Energy: $E = mc^2$ done.\n";
-    const out = document.createElement("div");
-    mod.updateMarkdownStream(out, text);
-    assert.match(out.innerHTML, /<math[\s>]/);
-    const m = out.querySelector("math");
-    assert.ok(m, "inline math element should exist");
-    assert.match(m.textContent, /E/);
-  });
+  // Block math (e.g. `$$ … $$`) renders to a fragment whose first element is
+  // <math>. DOMPurify under happy-dom strips its children (HTML5 parser "in
+  // body" vs foreign-content mode quirk); this matches legacy renderMd
+  // behavior, and real browsers handle it correctly via innerHTML. We do NOT
+  // prepend a `<math></math>` sentinel — paired sentinel warms foreign-content
+  // mode and lets later <script>/<style> tokens leak past sanitize. The
+  // critical security guarantee tested below is what matters.
 
-  it("block math survives in updateMarkdownStream (improvement over renderMd)", () => {
-    const text = "before:\n\n$$\n\\int_0^1 f(x)\\,dx\n$$\n\nafter.\n";
+  it("script tags are stripped (no XSS via sentinel leak)", () => {
+    const text = "<script>alert(1)</script>\n";
     const out = document.createElement("div");
     mod.updateMarkdownStream(out, text);
-    const mathEl = out.querySelector(".math-block math");
-    assert.ok(mathEl, "block math element should exist");
-    assert.match(mathEl.textContent, /∫/);
+    assert.equal(
+      out.querySelector("script"),
+      null,
+      "no <script> element should survive sanitize",
+    );
   });
 });

@@ -7,14 +7,12 @@ import { enhanceCodeBlocks } from "./highlight.ts";
 // and share viewer). Re-exported here for callers that want them via render.ts.
 export {
   escHtml,
-  renderMd,
   renderPatchDiff,
   updateMarkdownStream,
   resetMarkdownStream,
 } from "./render-event.ts";
 import {
   escHtml,
-  renderMd,
   updateMarkdownStream,
   resetMarkdownStream,
 } from "./render-event.ts";
@@ -24,8 +22,11 @@ import {
 export function addMessage(role: string, text: string): HTMLDivElement {
   const el = document.createElement("div");
   el.className = `msg ${role}`;
-  el.innerHTML =
-    role === "user" ? escHtml(text).replace(/\n/g, "<br>") : renderMd(text);
+  if (role === "user") {
+    el.innerHTML = escHtml(text).replace(/\n/g, "<br>");
+  } else {
+    updateMarkdownStream(el, text);
+  }
   appendMessageElement(el);
   return el;
 }
