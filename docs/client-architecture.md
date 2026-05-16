@@ -593,16 +593,18 @@ All state lives in `state.ts` as a single mutable object. No state management li
 
 ### Streaming Text
 
-`message_chunk` events are appended to a growing `<div class="msg assistant">`:
+`message_chunk` events feed a growing `<div class="msg assistant">`. Rendering is **incremental**, not a full re-render per chunk:
 
 ```typescript
 state.currentAssistantText += msg.text;
-state.currentAssistantEl.innerHTML = renderMd(state.currentAssistantText);
+updateMarkdownStream(state.currentAssistantEl, state.currentAssistantText);
 ```
 
-Markdown is re-rendered on each chunk (full re-render, not incremental). `renderMd()` uses marked.js.
+`updateMarkdownStream()` (in `render-event.ts`) reuses cached tokens for the unchanged prefix, hashes each block by its raw text to skip parse/sanitize/DOM mutation for unchanged blocks, and uses a single-token fast path for the trailing miss block. A `requestAnimationFrame` coalescer batches bursts of chunks into one render per frame.
 
-When a turn boundary occurs (`tool_call`, `plan`, `prompt_done`), the streaming element is finalized via `finishAssistant()`.
+See [Streaming Render Performance](performance.md) for the full pipeline (rAF coalescing → incremental lex → per-block memo → `marked.parser` fast path), correctness invariants, observability hooks, and engine-specific notes (iOS Safari).
+
+When a turn boundary occurs (`tool_call`, `plan`, `prompt_done`), the streaming element is finalized via `finishAssistant()`, which synchronously flushes any pending rAF.
 
 ### Tool Calls
 

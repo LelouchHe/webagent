@@ -110,6 +110,7 @@ Frontend source lives in `public/js/*.ts`, bundled by esbuild into a single cont
 | **[Attachments](docs/uploads.md)**                      | Upload pipeline, on-disk layout, lifecycle, permission auto-approve, observability |
 | **[ACP Integration](docs/acp.md)**                      | Client extensions, protocol scope, current limits                              |
 | **[Client Architecture](docs/client-architecture.md)**  | Frontend modules, data flow, conventions                                       |
+| **[Streaming Render Performance](docs/performance.md)** | rAF coalescing, incremental lex, per-block memo, single-token fast path        |
 | **[Slash Menu](docs/slash-menu.md)**                    | Walker pipeline, `CmdNode` tree, Tab/Enter/Click contract, how to add commands |
 | **[Messages / Inbox](docs/messages.md)**                | `/inbox` slash command, POST ingress, bound vs unbound messages                |
 | **[Share Links](docs/share.md)**                        | Public read-only session snapshots via `/share` + `/s/<token>`                 |
