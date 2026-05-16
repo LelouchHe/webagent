@@ -87,17 +87,16 @@ const CASES: { name: string; text: string }[] = [
       Array.from(
         { length: 15 },
         (_, i) => `| row${i + 1} | ${i * 7} | n${i + 1} |`,
-      ).join("\n") + "\n",
+      ).join("\n") +
+      "\n",
   },
   {
     name: "blockquote containing list (opt #3 recursion)",
-    text:
-      "> Quoted intro paragraph.\n>\n> - bullet a\n> - bullet b with `code`\n> - bullet c **bold**\n>\n> Closing quote line.\n",
+    text: "> Quoted intro paragraph.\n>\n> - bullet a\n> - bullet b with `code`\n> - bullet c **bold**\n>\n> Closing quote line.\n",
   },
   {
     name: "nested blockquote with table (opt #3 recursion)",
-    text:
-      "> outer\n>\n> > inner with table:\n> >\n> > | k | v |\n> > | --- | --- |\n> > | a | 1 |\n> > | b | 2 |\n>\n> back to outer\n",
+    text: "> outer\n>\n> > inner with table:\n> >\n> > | k | v |\n> > | --- | --- |\n> > | a | 1 |\n> > | b | 2 |\n>\n> back to outer\n",
   },
 ];
 
