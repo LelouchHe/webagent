@@ -2401,9 +2401,14 @@ export function createRequestHandler(
       const ext = extname(filePath);
       const base = filePath.slice(filePath.lastIndexOf("/") + 1);
       const isHashedAsset = /\.[A-Za-z0-9_-]{8,}\.(js|css)$/.test(base);
-      const cacheControl = isHashedAsset
-        ? "public, max-age=31536000, immutable"
-        : "no-cache";
+      // `/lib/**` is vendored third-party content pinned by upstream SHA in
+      // package metadata — treat as immutable just like content-hashed bundles.
+      // Avoids re-downloading multi-hundred-KB wasm on every consumer init.
+      const isVendoredLib = staticPath.startsWith("/lib/");
+      const cacheControl =
+        isHashedAsset || isVendoredLib
+          ? "public, max-age=31536000, immutable"
+          : "no-cache";
       const headers: Record<string, string> = {
         "Content-Type": MIME[ext] ?? "application/octet-stream",
         "Cache-Control": cacheControl,
