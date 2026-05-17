@@ -453,6 +453,15 @@ function renderMissBlock(
   prevSubMemo: SubMemo | null,
   timing: MarkdownStreamTiming,
   now: () => number,
+  /** Telemetry label override. When set, the block is forced down the
+   *  merged-tokens slow path (parse(raw)) and the missDetails entry is
+   *  emitted under this label instead of "general". Used by the container
+   *  sub-memo paths (list/table) to delegate degenerate cases — they pass
+   *  `"slowFallback"` so the same fallback shape is identifiable in
+   *  telemetry without duplicating the renderer. Container dispatch
+   *  (tokens.length === 1 && tok.type === list/table) is skipped when set,
+   *  preventing infinite recursion. */
+  pathOverride?: "slowFallback",
 ): { newCount: number; newSubMemo: SubMemo | null } {
   const { raw, type, tokens } = block;
 
@@ -460,7 +469,7 @@ function renderMissBlock(
   // list/table/blockquote token, route to the container-specific path that
   // memoizes per sub-item. The container DOM element is preserved across
   // chunks; only sub-items whose raw text changed get re-parsed.
-  if (tokens?.length === 1) {
+  if (!pathOverride && tokens?.length === 1) {
     const tok = tokens[0];
     if (tok.type === "list") {
       return renderListBlock(
@@ -495,8 +504,10 @@ function renderMissBlock(
   // logs in checkpoint 011). Merged blocks (tokens.length > 1) must use
   // parse(raw) because their tokens were lexed under wrong-context
   // assumptions (open-fence content emitted as paragraph tokens).
+  // pathOverride callers (slowFallback) force the merged path so the
+  // fallback semantics are preserved.
   let out: string | Promise<string>;
-  if (tokens?.length === 1) {
+  if (!pathOverride && tokens?.length === 1) {
     // NB: must spread `marked.defaults` — passing only `{async:false}`
     // would replace the entire options object, losing the math (Temml)
     // extension renderer registered via `marked.use(...)` in math.ts.
@@ -516,7 +527,6 @@ function renderMissBlock(
   const tParse1 = now();
   const parseMs = tParse1 - tParse0;
   timing.parse += parseMs;
-  perfMeasure("mdstream.parse", tParse0, tParse1);
   if (typeof out !== "string") {
     throw new Error(
       "updateMarkdownStream requires sync marked (>= 5.0); marked.parse returned a non-string (likely a Promise)",
@@ -527,7 +537,6 @@ function renderMissBlock(
   const tSan1 = now();
   const sanMs = tSan1 - tSan0;
   timing.sanitize += sanMs;
-  perfMeasure("mdstream.sanitize", tSan0, tSan1);
   const tDom0 = now();
   stripWhitespaceTextNodes(frag);
   const newCount = frag.children.length;
@@ -540,7 +549,6 @@ function renderMissBlock(
   const tDom1 = now();
   const domMs = tDom1 - tDom0;
   timing.dom += domMs;
-  perfMeasure("mdstream.dom", tDom0, tDom1);
   timing.missDetails.push({
     type: type ?? "?",
     len: raw.length,
@@ -548,7 +556,7 @@ function renderMissBlock(
     parseMs,
     sanMs,
     domMs,
-    path: "general",
+    path: pathOverride ?? "general",
   });
   return { newCount, newSubMemo: null };
 }
@@ -692,14 +700,15 @@ function renderListBlock(
       // Marked produced no container element (degenerate case, e.g. items
       // is empty and marked emitted nothing). Fall back to the full slow
       // path — caller resilience via SubMemo=null on return.
-      return slowPathFallback(
+      return renderMissBlock(
         host,
-        listTok,
-        listTok.raw,
+        { raw: listTok.raw, type: listTok.type, tokens: null },
         offset,
         prevCount,
+        null,
         timing,
         now,
+        "slowFallback",
       );
     }
     // Replace prev children at this offset with the new empty container
@@ -716,7 +725,6 @@ function renderListBlock(
   // Walk items[]: for each item, if raw matches subCache[j], leave the
   // existing <li> in containerEl.children[j] alone; otherwise re-render
   // just that item and replace the <li>.
-  const tParse0 = now();
   let parseAccMs = 0;
   let sanAccMs = 0;
   let domAccMs = 0;
@@ -752,7 +760,6 @@ function renderListBlock(
   timing.parse += parseAccMs;
   timing.sanitize += sanAccMs;
   timing.dom += domAccMs;
-  perfMeasure("mdstream.parse", tParse0, now());
   timing.missDetails.push({
     type: "list",
     len: listTok.raw.length,
@@ -858,14 +865,15 @@ function renderTableBlock(
     containerEl = prevSubMemo.containerEl;
     const tb = containerEl.querySelector("tbody");
     if (!tb) {
-      return slowPathFallback(
+      return renderMissBlock(
         host,
-        tableTok,
-        tableTok.raw,
+        { raw: tableTok.raw, type: tableTok.type, tokens: null },
         offset,
         prevCount,
+        null,
         timing,
         now,
+        "slowFallback",
       );
     }
     tbodyEl = tb;
@@ -887,14 +895,15 @@ function renderTableBlock(
     stripWhitespaceTextNodes(sanitizedFrag);
     const fresh = sanitizedFrag.firstElementChild;
     if (!fresh) {
-      return slowPathFallback(
+      return renderMissBlock(
         host,
-        tableTok,
-        tableTok.raw,
+        { raw: tableTok.raw, type: tableTok.type, tokens: null },
         offset,
         prevCount,
+        null,
         timing,
         now,
+        "slowFallback",
       );
     }
     // marked emits `<thead>…</thead></table>` with NO `<tbody>` when
@@ -918,7 +927,6 @@ function renderTableBlock(
     subCache = [];
   }
 
-  const tParse0 = now();
   let parseAccMs = 0;
   let sanAccMs = 0;
   let domAccMs = 0;
@@ -950,7 +958,6 @@ function renderTableBlock(
   timing.parse += parseAccMs;
   timing.sanitize += sanAccMs;
   timing.dom += domAccMs;
-  perfMeasure("mdstream.parse", tParse0, now());
   timing.missDetails.push({
     type: "table",
     len: tableTok.raw.length,
@@ -966,51 +973,6 @@ function renderTableBlock(
     newCount: 1,
     newSubMemo: { type: "table", variant, containerEl, subCache },
   };
-}
-
-/** Fallback path used by container sub-memo when an edge case prevents the
- *  optimized path (e.g. marked produced no container element). Does the
- *  same work as renderMissBlock's slow path but doesn't recurse. */
-function slowPathFallback(
-  host: HTMLElement,
-  tok: Token,
-  raw: string,
-  offset: number,
-  prevCount: number,
-  timing: MarkdownStreamTiming,
-  now: () => number,
-): { newCount: number; newSubMemo: SubMemo | null } {
-  const tParse0 = now();
-  const out = marked.parse(raw, { async: false });
-  const tParse1 = now();
-  timing.parse += tParse1 - tParse0;
-  if (typeof out !== "string") {
-    throw new Error("slowPathFallback: async marked");
-  }
-  const tSan0 = now();
-  const frag = sanitizeToFragment(out);
-  const tSan1 = now();
-  timing.sanitize += tSan1 - tSan0;
-  const tDom0 = now();
-  stripWhitespaceTextNodes(frag);
-  const newCount = frag.children.length;
-  for (let k = 0; k < prevCount; k++) {
-    const child = host.children.item(offset);
-    if (child) host.removeChild(child);
-  }
-  const anchor = host.children.item(offset);
-  host.insertBefore(frag, anchor);
-  timing.dom += now() - tDom0;
-  timing.missDetails.push({
-    type: tok.type,
-    len: raw.length,
-    snip: raw.slice(0, 40).replace(/\n/g, "↵"),
-    parseMs: tParse1 - tParse0,
-    sanMs: tSan1 - tSan0,
-    domMs: 0,
-    path: "slowFallback",
-  });
-  return { newCount, newSubMemo: null };
 }
 
 export function updateMarkdownStream(

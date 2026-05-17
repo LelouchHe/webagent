@@ -220,7 +220,7 @@ DEBUG md-render slow   {                      // 8 < ms ≤ 16 → log.debug (pr
 
 In production, `debug` is off by default — zero overhead.
 
-User Timing markers (`mdstream.lex`, `mdstream.parse`, `mdstream.sanitize`, `mdstream.dom`, `mdstream.total`, plus `doAssistantRender` and `scrollToBottom`) are always emitted via `performance.measure()`. Open DevTools → Performance, record a long stream, and the markers appear on the timeline regardless of the debug log level.
+User Timing markers (`mdstream.lex`, `mdstream.total`, plus `doAssistantRender` and `scrollToBottom`) are always emitted via `performance.measure()`. Open DevTools → Performance, record a long stream, and the markers appear on the timeline regardless of the debug log level. Per-block parse/sanitize/dom timings are NOT emitted as User Timing marks (would fire 10-100 times per frame on streaming markdown) — read the aggregate from the `md-render budget` / `md-render slow` log records' `parse` / `sanitize` / `dom` fields and per-block from `missDetails[]`.
 
 ## Why hljs Waits Until the Turn Boundary
 
