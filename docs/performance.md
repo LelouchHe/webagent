@@ -28,21 +28,21 @@ SSE chunk
   │
   ▼
 ┌────────────────────────────────────────────────────────────┐
-│ 2. Incremental lex (render-event.ts)                       │
+│ 2. Incremental lex (markdown-stream.ts)                       │
 │    Reuse cached token list for the unchanged prefix;       │
 │    re-lex only the tail                                    │
 └────────────────────────────────────────────────────────────┘
   │
   ▼
 ┌────────────────────────────────────────────────────────────┐
-│ 3. Per-block memo (render-event.ts)                        │
+│ 3. Per-block memo (markdown-stream.ts)                        │
 │    Hash each block by its raw text; skip parse + sanitize  │
 │    + DOM mutation for blocks whose raw text is unchanged   │
 └────────────────────────────────────────────────────────────┘
   │
   ▼
 ┌────────────────────────────────────────────────────────────┐
-│ 4. Single-token fast path (render-event.ts)                │
+│ 4. Single-token fast path (markdown-stream.ts)                │
 │    For miss blocks that are exactly one token, call        │
 │    marked.parser([token]) directly — skip marked.parse's   │
 │    internal re-lex                                         │
@@ -50,7 +50,7 @@ SSE chunk
   │
   ▼
 ┌────────────────────────────────────────────────────────────┐
-│ 5. Container sub-memo (render-event.ts)                    │
+│ 5. Container sub-memo (markdown-stream.ts)                    │
 │    For list/table miss blocks, cache per <li>/<tr> by      │
 │    item raw (trailing newlines stripped). On append, only  │
 │    the new item misses; previously-rendered items are      │
@@ -59,7 +59,7 @@ SSE chunk
   │
   ▼
 ┌────────────────────────────────────────────────────────────┐
-│ 6. Sanitize-to-fragment (render-event.ts)                  │
+│ 6. Sanitize-to-fragment (markdown-stream.ts)                  │
 │    DOMPurify returns DocumentFragment directly, skipping   │
 │    its internal serialize + our innerHTML re-parse.        │
 │    One DOM tree built per miss instead of two.             │
@@ -83,7 +83,7 @@ Reset hooks (`resetSessionUI`, `_loadNewEventsImpl`, reconnect) cancel pending r
 
 ## Layer 2 — Incremental Lex
 
-**File**: `public/js/render-event.ts` (`incrementalLex`)
+**File**: `public/js/markdown-stream.ts` (`incrementalLex`)
 
 `marked.lexer(text)` is `O(text length)` — re-lexing the entire accumulated text on each chunk dominates the budget for long streams.
 
@@ -100,7 +100,7 @@ A `MergedBlock[]` view is exposed downstream with `{raw, type, tokens}` — Laye
 
 ## Layer 3 — Per-Block Memo
 
-**File**: `public/js/render-event.ts` (`updateMarkdownStream`)
+**File**: `public/js/markdown-stream.ts` (`updateMarkdownStream`)
 
 `marked.parser` + `DOMPurify.sanitize` together account for 80-92% of full-render cost. Layer 3 skips both for blocks whose content hasn't changed.
 
@@ -116,7 +116,7 @@ The memo is a `WeakMap<HTMLElement, BlockState[]>` keyed by the streaming messag
 
 ## Layer 4 — Single-Token Fast Path
 
-**File**: `public/js/render-event.ts` (`renderMissBlock`)
+**File**: `public/js/markdown-stream.ts` (`renderMissBlock`)
 
 When Layer 3 reports a cache miss, we need to render the block's HTML. The naive call is `marked.parse(raw)` — but **`marked.parse` internally runs the lexer again**, even though Layer 2 already lexed this text.
 
@@ -128,7 +128,7 @@ For miss blocks that came out as a merged group (open fenced code, open `$$...$$
 
 ## Layer 5 — Container Sub-Memo (list / table item-level)
 
-**File**: `public/js/render-event.ts` (`renderListBlock`, `renderTableBlock`, `renderOneListItem`, `renderOneTableRow`)
+**File**: `public/js/markdown-stream.ts` (`renderListBlock`, `renderTableBlock`, `renderOneListItem`, `renderOneTableRow`)
 
 Layer 3 hashes by `block.raw`. A growing list or table is a single block whose raw text changes on every chunk — Layer 3 reports it as a miss every time. Without sub-memo, that means re-parsing + re-sanitizing all N items every chunk to render one new item.
 
@@ -144,7 +144,7 @@ Locked by `test/markdown-stream-cache.test.ts` — counter-based regression test
 
 ## Layer 6 — Sanitize-to-Fragment
 
-**File**: `public/js/render-event.ts` (`sanitizeToFragment` helper, all miss-rendering paths)
+**File**: `public/js/markdown-stream.ts` (`sanitizeToFragment` helper, all miss-rendering paths)
 
 The default `DOMPurify.sanitize(html) → string` API builds the same DOM tree twice per call:
 
@@ -296,7 +296,7 @@ Other known minor inefficiencies, kept as-is:
 | Concern                              | File                                     | Key symbols                                                                  |
 | ------------------------------------ | ---------------------------------------- | ---------------------------------------------------------------------------- |
 | rAF coalescing, slow log             | `public/js/events.ts`                    | `scheduleAssistantRender`, `doAssistantRender`                               |
-| Per-message memo, lex cache, layers 2-6 | `public/js/render-event.ts`           | `updateMarkdownStream`, `incrementalLex`, `mergeUnclosedBlocks`, `renderMissBlock`, `renderListBlock`, `renderTableBlock`, `listItemKey`, `sanitizeToFragment`, `MarkdownStreamTiming` |
+| Per-message memo, lex cache, layers 2-6 | `public/js/markdown-stream.ts`         | `updateMarkdownStream`, `incrementalLex`, `mergeUnclosedBlocks`, `renderMissBlock`, `renderListBlock`, `renderTableBlock`, `listItemKey`, `sanitizeToFragment`, `MarkdownStreamTiming` |
 | Turn-boundary flush                  | `public/js/render.ts`                    | `finishAssistant`, `flushStreamingRender`                                    |
 | Memo reset hooks                     | `public/js/events.ts`, `connection.ts`   | `resetSessionUI`, reconnect handlers                                         |
 | Byte-equal correctness lock          | `test/markdown-stream-equivalence.test.ts` | 9-corpus + opt-#2 fast-path equivalence vs full `marked.parse` + DOMPurify   |

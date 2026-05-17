@@ -600,7 +600,7 @@ state.currentAssistantText += msg.text;
 updateMarkdownStream(state.currentAssistantEl, state.currentAssistantText);
 ```
 
-`updateMarkdownStream()` (in `render-event.ts`) reuses cached tokens for the unchanged prefix, hashes each block by its raw text to skip parse/sanitize/DOM mutation for unchanged blocks, and uses a single-token fast path for the trailing miss block. A `requestAnimationFrame` coalescer batches bursts of chunks into one render per frame.
+`updateMarkdownStream()` (in `markdown-stream.ts`) reuses cached tokens for the unchanged prefix, hashes each block by its raw text to skip parse/sanitize/DOM mutation for unchanged blocks, and uses a single-token fast path for the trailing miss block. A `requestAnimationFrame` coalescer batches bursts of chunks into one render per frame.
 
 See [Streaming Render Performance](performance.md) for the full pipeline (rAF coalescing → incremental lex → per-block memo → `marked.parser` fast path), correctness invariants, observability hooks, and engine-specific notes (iOS Safari).
 

@@ -159,7 +159,7 @@ describe("math rendering (Temml)", () => {
     // assert that the source code passes USE_PROFILES.mathMl: true so
     // production browsers preserve <math> tags.
     const src = readFileSync(
-      new URL("../public/js/render-event.ts", import.meta.url),
+      new URL("../public/js/markdown-stream.ts", import.meta.url),
       "utf8",
     );
     assert.match(src, /USE_PROFILES:\s*\{[^}]*mathMl:\s*true/);
