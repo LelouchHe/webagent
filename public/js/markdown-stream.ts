@@ -13,7 +13,7 @@
 //
 // See docs/performance.md for the layered architecture.
 
-import { marked, type Token, type Tokens } from "marked";
+import { marked, Lexer, type Token, type Tokens, type Links } from "marked";
 import DOMPurify from "dompurify";
 import "./math.ts";
 
@@ -72,6 +72,14 @@ interface MarkdownStreamMemo {
    *  `blockquote`). When the parent block at index i transitions away from a
    *  container type, this entry is reset to null. */
   subMemos: Array<SubMemo | null>;
+  /** Reference-link definition memo. Keys are normalized def labels; values
+   *  are marked's link-record shape ({ href, title? }). Absorbed from
+   *  completed `def` tokens (a def token is "completed" once it's no longer
+   *  the trailing block, so it can't grow further) with first-write-wins
+   *  semantics — matches `marked.parse(fullText)` baseline where duplicate
+   *  defs keep the first. Pre-loaded into a fresh `Lexer` instance before
+   *  every tail re-lex so cross-chunk reflinks resolve at lex time. */
+  links: Links;
 }
 
 /** Sub-block memo for container token types (list / table / blockquote).
@@ -274,12 +282,25 @@ interface MergedBlock {
   tokens: Token[];
 }
 
-function mergeUnclosedBlocks(fullText: string): MergedBlock[] {
-  const tokens = marked.lexer(fullText);
+function mergeUnclosedBlocks(
+  fullText: string,
+  memoLinks: Links,
+): MergedBlock[] {
+  // Use a fresh Lexer instance so we can pre-load `tokens.links` from the
+  // cross-call memo BEFORE lexing. marked resolves reflinks during inline
+  // tokenization (not parser walk), so the def map must be visible to the
+  // lexer at lex time for `[label][1]` to materialize as a token-level
+  // link rather than literal text. The static `marked.lexer(...)` shortcut
+  // gives us no hook to inject defs, so we instantiate explicitly.
+  const lexer = new Lexer(marked.defaults);
+  for (const key of Object.keys(memoLinks)) {
+    lexer.tokens.links[key] = memoLinks[key];
+  }
+  const tokens = lexer.lex(fullText);
   // marked attaches a `links` map to the TokensList for reference-style
   // link resolution during parser walk. Preserve it on every per-block
   // tokens array so `marked.parser(blockTokens)` resolves links correctly.
-  const links = tokens.links;
+  const links = lexer.tokens.links;
   const blocks: MergedBlock[] = [];
   let acc = "";
   let accType: string | null = null;
@@ -372,6 +393,7 @@ interface IncrementalLexResult {
 function incrementalLex(
   cache: string[],
   fullText: string,
+  memoLinks: Links,
   now: () => number,
 ): IncrementalLexResult {
   const tPrefix0 = now();
@@ -390,8 +412,21 @@ function incrementalLex(
   const tPrefix1 = now();
   const tail = stableLen === 0 ? fullText : fullText.slice(stableLen);
   const tTail0 = now();
-  const tailBlocks = tail ? mergeUnclosedBlocks(tail) : [];
+  const tailBlocks = tail ? mergeUnclosedBlocks(tail, memoLinks) : [];
   const tTail1 = now();
+  // Absorb `def` tokens from non-last tail blocks into the cross-call memo
+  // (first-write-wins, matching marked's full-text baseline). Skipping the
+  // last tail block is the chunk-cut guard: a def whose URL was split at
+  // the chunk boundary may still be growing in that trailing slot, so we
+  // refuse to record a potentially-truncated href until a later block has
+  // pinned it down. Once a later block arrives, the def block is no longer
+  // the last and gets absorbed normally on a subsequent call.
+  for (let i = 0; i < tailBlocks.length - 1; i++) {
+    const b = tailBlocks[i];
+    if (b.type !== "def") continue;
+    const def = b.tokens[0] as Tokens.Def;
+    memoLinks[def.tag] ??= { href: def.href, title: def.title };
+  }
   const merged: Array<{
     raw: string;
     type: string | null;
@@ -1002,13 +1037,13 @@ export function updateMarkdownStream(
   const tTotal0 = now();
 
   if (!memo) {
-    memo = { cache: [], rootCounts: [], subMemos: [] };
+    memo = { cache: [], rootCounts: [], subMemos: [], links: {} };
     markdownStreamMemos.set(host, memo);
   }
   const { cache, rootCounts, subMemos } = memo;
 
   const tLex0 = now();
-  const lexResult = incrementalLex(cache, fullText, now);
+  const lexResult = incrementalLex(cache, fullText, memo.links, now);
   const tLex1 = now();
   timing.lex = tLex1 - tLex0;
   timing.lexPrefix = lexResult.prefixMs;
