@@ -284,7 +284,31 @@ function mergeUnclosedBlocks(fullText: string): MergedBlock[] {
   let acc = "";
   let accType: string | null = null;
   let accTokens: Token[] = [];
-  let fenceOpen = false;
+  // Tag-stack tracks unclosed HTML elements that straddle block boundaries
+  // — e.g. `<details>...</details>` where marked emits the open tag, body
+  // paragraph, and close tag as three separate top-level tokens. Each
+  // wrapped in its own `.blk` div would break the parent/child DOM
+  // relationship (close tag becomes orphan, body never gets nested
+  // inside <details>). We merge until the stack rebalances so the
+  // combined raw is parsed as one unit and the nesting is preserved.
+  //
+  // Token-type guard (per `markdown-stream-segmentation.test.ts`):
+  //   - SCAN only on `paragraph` and `html` tokens. Other types
+  //     (code, list, table, blockquote, heading, hr, …) cannot
+  //     contain a literal HTML tag that opens/closes a block-level
+  //     element across the next blank line in marked's grammar.
+  //   - In particular, a `code` token's raw includes the fenced body
+  //     verbatim; `<div>` literally typed inside a code fence is
+  //     content, not an open tag, and must not poison the stack.
+  //
+  // We do NOT track fence (` ``` `) parity separately: marked's lexer
+  // already commits to a `code` token even when the closing fence is
+  // missing at the current chunk boundary (the body just grows on the
+  // next chunk and `marked.parse` renders the partial body correctly
+  // inside `<pre><code>`). Manually counting backticks across tokens
+  // mis-fires when a paragraph mentions literal triple-backticks
+  // ("use ``` to start a fence") — that paragraph's tokens are NOT a
+  // fence opener by marked's own decision; we must trust marked.
   const tagStack: string[] = [];
   const OPEN_TAG_RE = /<([a-zA-Z][\w-]*)(?:\s[^>]*)?>/g;
   const CLOSE_TAG_RE = /<\/([a-zA-Z][\w-]*)\s*>/g;
@@ -294,9 +318,7 @@ function mergeUnclosedBlocks(fullText: string): MergedBlock[] {
     accType ??= tokType;
     acc += raw;
     accTokens.push(tok);
-    const fenceCount = (raw.match(/```/g) ?? []).length;
-    if (fenceCount % 2 === 1) fenceOpen = !fenceOpen;
-    if (!fenceOpen) {
+    if (tokType === "paragraph" || tokType === "html") {
       OPEN_TAG_RE.lastIndex = 0;
       let m: RegExpExecArray | null;
       while ((m = OPEN_TAG_RE.exec(raw))) {
@@ -310,7 +332,7 @@ function mergeUnclosedBlocks(fullText: string): MergedBlock[] {
         if (idx >= 0) tagStack.splice(idx, 1);
       }
     }
-    if (!fenceOpen && tagStack.length === 0) {
+    if (tagStack.length === 0) {
       (accTokens as Token[] & { links?: Record<string, unknown> }).links =
         links;
       blocks.push({ raw: acc, type: accType, tokens: accTokens });
