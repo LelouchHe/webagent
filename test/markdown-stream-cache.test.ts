@@ -134,15 +134,11 @@ describe("markdown-stream cache-hit regression", () => {
     }
   });
 
-  it("list sub-memo: appending items keeps subHits monotonic, subMisses bounded", () => {
-    // Build a list one item at a time. Each new item should be a
-    // sub-memo MISS; all previously-stabilized items should be sub-HITs.
-    //
-    // marked quirk: when item N gains a successor, its raw gains a
-    // trailing "\n" (e.g. "- item N" → "- item N\n"). So each append
-    // invalidates TWO sub-memo entries: the newly-appended item AND the
-    // previously-last item whose raw just changed. Items 1..N-2 are
-    // stable.
+  it("list sub-memo: appending items keeps subHits monotonic, exactly 1 miss per append", () => {
+    // Build a list one item at a time. After the trailing-newline fix
+    // (listItemKey strips trailing \r\n), each new item is the ONLY
+    // sub-memo miss; previously-rendered items must all be sub-hits even
+    // though marked appends "\n" to their raw when a successor arrives.
     const items = Array.from(
       { length: 15 },
       (_, i) => `- item ${i + 1} with **emphasis**`,
@@ -163,14 +159,17 @@ describe("markdown-stream cache-hit regression", () => {
       );
       lastSubHits = s.subHits;
 
-      // ≤2: newly-appended item + previously-last item (trailing-newline flip).
-      assert.ok(
-        s.subMisses <= 2,
-        `chunk ${i}: expected ≤2 sub-misses, got ${s.subMisses}`,
+      // Exactly 1: only the newly-appended item misses. The previously-last
+      // item's raw gained a trailing "\n", but listItemKey strips it so the
+      // cache key matches.
+      assert.strictEqual(
+        s.subMisses,
+        1,
+        `chunk ${i}: expected exactly 1 sub-miss (the new item), got ${s.subMisses}`,
       );
 
       // After several items have been rendered, subHits must be > 0
-      // — confirming items 1..N-2 are being reused, not re-rendered.
+      // — confirming items 1..N-1 are being reused, not re-rendered.
       if (i >= 5) {
         assert.ok(
           s.subHits > 0,
@@ -179,11 +178,13 @@ describe("markdown-stream cache-hit regression", () => {
       }
     }
 
-    // Final chunk: 13 of 15 items must be sub-cached (15 - 2 churn).
+    // Final chunk: 14 of 15 items must be sub-cached hits (only the new
+    // 15th item is a miss).
     const final = stats[stats.length - 1];
-    assert.ok(
-      final.subHits >= 12,
-      `final chunk: expected ≥12 sub-hits across 15 items, got ${final.subHits}`,
+    assert.strictEqual(
+      final.subHits,
+      14,
+      `final chunk: expected exactly 14 sub-hits across 15 items, got ${final.subHits}`,
     );
   });
 
@@ -214,6 +215,46 @@ describe("markdown-stream cache-hit regression", () => {
     assert.ok(
       final.subHits >= 10,
       `final chunk: expected ≥10 row sub-hits across 12 rows, got ${final.subHits}`,
+    );
+  });
+
+  it("list sub-memo: tight→loose flip rebuilds container (variant invalidation)", () => {
+    // listItemKey strips trailing newlines for cache stability. That fix
+    // means a tight item and a loose item with the same inner content would
+    // produce the same listItemKey — so the variant string MUST carry the
+    // `loose` flag, otherwise stale tight `<li>X</li>` would survive when
+    // marked re-renders as loose `<li><p>X</p></li>`.
+    //
+    // Drive: render a tight 3-item list, then add a blank line that flips
+    // the whole list loose. Expect the loose-flip chunk to rebuild the
+    // container — every item becomes a sub-miss because subCache was cleared
+    // by the variant change.
+    mod.updateMarkdownStream(host, "- one\n- two\n- three");
+    const tightStats = snap();
+    assert.ok(tightStats.subHits >= 0);
+
+    // Flip to loose by inserting a blank line before a new item. marked
+    // marks the entire list `loose: true` once any blank line appears
+    // between items.
+    mod.updateMarkdownStream(host, "- one\n- two\n- three\n\n- four");
+    const looseStats = snap();
+
+    // Variant change → fresh container → subCache reset → all 4 items miss.
+    assert.strictEqual(
+      looseStats.subMisses,
+      4,
+      `loose flip: expected all 4 items to miss (container rebuilt), got subMisses=${looseStats.subMisses}, subHits=${looseStats.subHits}`,
+    );
+
+    // DOM sanity: loose list wraps items in `<p>` — confirm rebuild actually
+    // produced loose-shaped DOM, not stale tight `<li>X</li>` nodes.
+    const listEl = host.querySelector("ul");
+    assert.ok(listEl, "expected <ul> after loose flip");
+    const firstLi = listEl.querySelector("li");
+    assert.ok(firstLi, "expected <li> in list");
+    assert.ok(
+      firstLi.querySelector("p"),
+      "loose list <li> must wrap content in <p>; stale tight <li> survived variant flip",
     );
   });
 

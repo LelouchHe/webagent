@@ -505,6 +505,26 @@ interface TableToken extends Tokens.Table {
   type: "table";
 }
 
+/** Stable sub-memo key for a list item.
+ *
+ *  marked's `item.raw` is the source-text slice consumed for the token. When a
+ *  list grows ("- a" → "- a\n- b"), the previously-last item's raw gains a
+ *  trailing "\n" because the inter-item separator newline now belongs to it.
+ *  The rendered HTML for that item is identical — only the source span moved.
+ *
+ *  If we used raw verbatim as the cache key, every chunk would invalidate
+ *  TWO sub-memo entries (the newly-appended item AND the previously-last
+ *  item's trailing-newline flip), forcing a needless re-parse + DOMPurify
+ *  pass + `<li>` replaceChild for an unchanged-content node.
+ *
+ *  Stripping trailing CR/LF normalizes "- a", "- a\n", "- a\n\n" to the same
+ *  key. Loose-vs-tight rendering differences (which depend on blank-line
+ *  spacing between items) are NOT lost because tightness is a list-level
+ *  property captured in the container variant string, not per-item. */
+function listItemKey(raw: string): string {
+  return raw.replace(/[\r\n]+$/, "");
+}
+
 /** Render a single list item by wrapping it in a synthetic 1-item list that
  *  copies all flags from the parent (loose, ordered, start). marked decides
  *  loose/tight per-list, and `loose` is also stored on each item token, so
@@ -559,7 +579,15 @@ function renderListBlock(
 ): { newCount: number; newSubMemo: SubMemo | null } {
   const items = listTok.items;
   const startVal = listTok.start === "" ? 1 : listTok.start;
-  const variant = listTok.ordered ? `ol:start=${startVal}` : "ul";
+  // Include `loose` in the variant. When marked flips a list from tight to
+  // loose (or vice versa, e.g. user adds a blank line between items), every
+  // item's rendered HTML changes shape (`<li>X</li>` vs `<li><p>X</p></li>`).
+  // Without this, stale tight `<li>` would survive a flip because individual
+  // item raws may still match the cache key after \n-stripping.
+  const looseFlag = listTok.loose ? "1" : "0";
+  const variant = listTok.ordered
+    ? `ol:start=${startVal}:loose=${looseFlag}`
+    : `ul:loose=${looseFlag}`;
 
   // Variant changed (ul → ol, or start attr changed) → fall through to the
   // slow path. Bail out by returning a sentinel that tells the caller to
@@ -624,8 +652,8 @@ function renderListBlock(
   let sanAccMs = 0;
   let domAccMs = 0;
   for (let j = 0; j < items.length; j++) {
-    const itemRaw = items[j].raw;
-    if (subCache[j] === itemRaw && containerEl.children.item(j)) {
+    const itemKey = listItemKey(items[j].raw);
+    if (subCache[j] === itemKey && containerEl.children.item(j)) {
       timing.subHits++;
       continue;
     }
@@ -641,7 +669,7 @@ function renderListBlock(
     } else {
       containerEl.appendChild(r.newLi);
     }
-    subCache[j] = itemRaw;
+    subCache[j] = itemKey;
   }
   // Trim trailing items if the list shrank (LLM shouldn't but defense in
   // depth — also handles the canReuse=false → fresh-empty branch where
