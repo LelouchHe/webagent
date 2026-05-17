@@ -124,6 +124,15 @@ export interface MissDetail {
   sanMs: number;
   /** template.innerHTML + insertBefore time in ms */
   domMs: number;
+  /** Which code path handled this miss. Diagnostic for dispatch routing.
+   *  Values: "general" (renderMissBlock fallback, dispatch missed sub-memo),
+   *          "list" (renderListBlock entered),
+   *          "table" (renderTableBlock entered),
+   *          "slowFallback" (renderListBlock/renderTableBlock bailed out). */
+  path: "general" | "list" | "table" | "slowFallback";
+  /** For path="list"/"table", number of items/rows in the container token.
+   *  Surfaces "0-items list" edge case where sub-memo loop body never runs. */
+  items?: number;
 }
 
 export interface MarkdownStreamTiming {
@@ -496,6 +505,7 @@ function renderMissBlock(
     parseMs,
     sanMs,
     domMs,
+    path: "general",
   });
   return { newCount, newSubMemo: null };
 }
@@ -707,6 +717,8 @@ function renderListBlock(
     parseMs: parseAccMs,
     sanMs: sanAccMs,
     domMs: domAccMs,
+    path: "list",
+    items: items.length,
   });
 
   return {
@@ -903,6 +915,8 @@ function renderTableBlock(
     parseMs: parseAccMs,
     sanMs: sanAccMs,
     domMs: domAccMs,
+    path: "table",
+    items: rows.length,
   });
 
   return {
@@ -951,6 +965,7 @@ function slowPathFallback(
     parseMs: tParse1 - tParse0,
     sanMs: tSan1 - tSan0,
     domMs: 0,
+    path: "slowFallback",
   });
   return { newCount, newSubMemo: null };
 }

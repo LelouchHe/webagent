@@ -910,15 +910,19 @@ function doAssistantRender() {
   updateMarkdownStream(el, state.currentAssistantText);
   const tRender = performance.now();
   const ms = tRender - t0;
-  // Lower threshold than 16ms (1 frame) — iOS Safari often falls into
-  // the 8-16ms band on long streams; capturing those samples too gives us
-  // a population to A/B against post-optimization. Compact field names
-  // (px/sx/dx) keep the line one screen wide for copy-paste from the
-  // mobile log panel.
+  // Two-tier slow-frame logging:
+  //   ms > 16  → log.warn  "md-render budget"  — 60Hz frame budget (16.67ms)
+  //              exceeded. Definite drop on 120Hz ProMotion devices, edge
+  //              on 60Hz. SLA violation, not noise.
+  //   ms > 8   → log.debug "md-render slow"    — pre-warning sample. Half
+  //              the 60Hz budget, leaves headroom for scroll + other JS.
+  //              Used to build a population for A/B against post-optimization.
+  // Compact field names (p/s/d) keep the line one screen wide for copy-paste
+  // from the mobile log panel.
   if (ms > 8) {
     const t = getLastMarkdownStreamTiming();
     const fmt = (n: number) => Math.round(n * 10) / 10;
-    log.debug("md-render slow", {
+    const payload = {
       ms: fmt(ms),
       len: state.currentAssistantText.length,
       blocks: t.blocks,
@@ -945,8 +949,15 @@ function doAssistantRender() {
         p: fmt(m.parseMs),
         s: fmt(m.sanMs),
         d: fmt(m.domMs),
+        path: m.path,
+        ...(m.items !== undefined ? { items: m.items } : {}),
       })),
-    });
+    };
+    if (ms > 16) {
+      log.warn("md-render budget", payload);
+    } else {
+      log.debug("md-render slow", payload);
+    }
   }
   scrollToBottom();
   const tScroll = performance.now();
