@@ -49,6 +49,23 @@ SSE chunk
 └────────────────────────────────────────────────────────────┘
   │
   ▼
+┌────────────────────────────────────────────────────────────┐
+│ 5. Container sub-memo (render-event.ts)                    │
+│    For list/table miss blocks, cache per <li>/<tr> by      │
+│    item raw (trailing newlines stripped). On append, only  │
+│    the new item misses; previously-rendered items are      │
+│    untouched DOM nodes.                                    │
+└────────────────────────────────────────────────────────────┘
+  │
+  ▼
+┌────────────────────────────────────────────────────────────┐
+│ 6. Sanitize-to-fragment (render-event.ts)                  │
+│    DOMPurify returns DocumentFragment directly, skipping   │
+│    its internal serialize + our innerHTML re-parse.        │
+│    One DOM tree built per miss instead of two.             │
+└────────────────────────────────────────────────────────────┘
+  │
+  ▼
 HTML appended/replaced per block, sanitized once, scrolled
 ```
 
@@ -109,6 +126,39 @@ For miss blocks that came out as a merged group (open fenced code, open `$$...$$
 
 > **Critical gotcha for contributors**: `marked.parser(tokens, opts)` (static) does **not** merge `opts` with `marked.defaults` — extensions registered via `marked.use()` (e.g. our Temml math renderer) will be silently dropped if you call `marked.parser(tokens, {})`. Always spread defaults: `marked.parser(tokens, {...marked.defaults, async: false})`. `marked.parse(raw, opts)` does merge internally, which is why this trap only bites the fast path. Locked by the "opt #2 fast path" group in `markdown-stream-equivalence.test.ts`.
 
+## Layer 5 — Container Sub-Memo (list / table item-level)
+
+**File**: `public/js/render-event.ts` (`renderListBlock`, `renderTableBlock`, `renderOneListItem`, `renderOneTableRow`)
+
+Layer 3 hashes by `block.raw`. A growing list or table is a single block whose raw text changes on every chunk — Layer 3 reports it as a miss every time. Without sub-memo, that means re-parsing + re-sanitizing all N items every chunk to render one new item.
+
+Layer 5 caches **per `<li>` / `<tr>`** inside a preserved container element:
+
+- **Container preserved across chunks**: the `<ul>` / `<ol>` / `<table>` DOM element survives between renders; only its `<li>` / `<tr>` children are touched.
+- **Variant string forces full rebuild on shape changes**: `ul:loose=0`, `ol:start=3:loose=1`, table-header-hash. When the variant changes (tight→loose flip, ol start attribute change, table header edit), the container is rebuilt and sub-cache cleared.
+- **Item cache key**: list items use `listItemKey(item.raw)` which strips trailing CR/LF before lookup. marked sets `item.raw` to the source slice consumed for the token; when item N gains a successor, item N-1's raw picks up a trailing `\n` even though the rendered HTML is unchanged. Stripping the trailing newline keeps the cache stable across appends so each chunk has exactly one sub-miss (the new item). Table rows use a hash of cell text directly — rows don't trailing-flip.
+- **Sub-hit**: `<li>` / `<tr>` left in place, zero DOM mutation.
+- **Sub-miss**: re-parse just that item via a synthetic single-item list/table token, `replaceChild` the corresponding row.
+
+Locked by `test/markdown-stream-cache.test.ts` — counter-based regression tests assert `subMisses === 1` per append, plus a tight→loose flip case that asserts container rebuild produces actual `<p>`-wrapped `<li>`.
+
+## Layer 6 — Sanitize-to-Fragment
+
+**File**: `public/js/render-event.ts` (`sanitizeToFragment` helper, all miss-rendering paths)
+
+The default `DOMPurify.sanitize(html) → string` API builds the same DOM tree twice per call:
+
+1. DOMPurify internally parses the HTML string into a DOM tree
+2. DOMPurify walks + sanitizes
+3. DOMPurify serializes the sanitized tree back to a string (DOM tree #1 thrown away)
+4. We `template.innerHTML = sanitized` to re-parse the string into a DOM tree #2
+
+DOM tree #1 is built only to be serialized. `RETURN_DOM_FRAGMENT: true` makes DOMPurify return that internal fragment directly, skipping steps 3 and 4. The fragment is owned by the current `document` (DOMPurify v3+ default), so it can be passed to `host.insertBefore` / `element.appendChild` without `importNode`.
+
+Per-miss savings depend on the engine. Desktop V8: ~0.3-1 ms (innerHTML reparse is microseconds-fast there). Mobile WebKit / iOS Safari: not measured, but parse + serialize costs scale ~3-5× vs V8 so the absolute savings are likely larger on the actual problem device.
+
+Centralized via `sanitizeToFragment(html: string): DocumentFragment` — one helper, seven call sites, one place to change DOMPurify configuration.
+
 ## Performance Targets
 
 Measured on the production bench (`bench/run-prod.mjs dogfood` — esbuild-bundled production module, real corpora, real DOM, real DOMPurify, real Temml):
@@ -136,15 +186,16 @@ DEBUG md-render slow {
   ms: 19,                        // total this frame
   len: 249,                      // accumulated text length
   blocks: 11,                    // total block count
-  hits: 8, misses: 3,            // Layer 3 stats
+  hits: 8, misses: 3,            // Layer 3 stats (block-level memo)
   lex: {
     total: 14,
     prefix: 0, tail: 14,         // Layer 2 stats: prefix reused, tail re-lexed
     tailLen: 41, tailBlocks: 3
   },
   parse: 0,                      // Layer 4 stats (sum across miss blocks)
-  sanitize: 4,
-  dom: 0,
+  sanitize: 4,                   // Layer 6 stats (DOMPurify time)
+  dom: 0,                        // post-sanitize: insertBefore + strip-text-nodes
+  subHits: 17, subMisses: 1,     // Layer 5 stats (list/table item-level memo)
   missDetails: [
     { type: "paragraph", len: 29, snip: "...", p: 0, s: 2, d: 0 },
     { type: "list",      len: 10, snip: "...", p: 0, s: 2, d: 0 }
@@ -184,9 +235,10 @@ If you do implement this, gate it behind a runtime flag and A/B against the curr
 | Concern                              | File                                     | Key symbols                                                                  |
 | ------------------------------------ | ---------------------------------------- | ---------------------------------------------------------------------------- |
 | rAF coalescing, slow log             | `public/js/events.ts`                    | `scheduleAssistantRender`, `doAssistantRender`                               |
-| Per-message memo, lex cache, layers 2-4 | `public/js/render-event.ts`           | `updateMarkdownStream`, `incrementalLex`, `mergeUnclosedBlocks`, `renderMissBlock`, `MarkdownStreamTiming` |
+| Per-message memo, lex cache, layers 2-6 | `public/js/render-event.ts`           | `updateMarkdownStream`, `incrementalLex`, `mergeUnclosedBlocks`, `renderMissBlock`, `renderListBlock`, `renderTableBlock`, `listItemKey`, `sanitizeToFragment`, `MarkdownStreamTiming` |
 | Turn-boundary flush                  | `public/js/render.ts`                    | `finishAssistant`, `flushStreamingRender`                                    |
 | Memo reset hooks                     | `public/js/events.ts`, `connection.ts`   | `resetSessionUI`, reconnect handlers                                         |
 | Byte-equal correctness lock          | `test/markdown-stream-equivalence.test.ts` | 9-corpus + opt-#2 fast-path equivalence vs full `marked.parse` + DOMPurify   |
+| Cache-hit regression lock            | `test/markdown-stream-cache.test.ts`     | Counter-based assertions: prefix-skip, block-memo hit rate, list/table sub-memo bounds, loose-flip rebuild |
 | Sync-contract guard                  | `test/markdown-stream.test.ts`           | All four layers must be synchronous; no microtask gaps in render path        |
 | Worst-case bench                     | `bench/run-prod.mjs`, `bench/corpus*`    | Production module via esbuild bundle; zero fidelity gap                      |
