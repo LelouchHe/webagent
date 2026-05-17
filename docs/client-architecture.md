@@ -206,6 +206,8 @@ When SSE disconnects:
 
 Push notifications are filtered by a **global, session-scoped visibility rule**: if any client is actively viewing session X, push for session X is suppressed on **all** endpoints (e.g. laptop looking at A → phone also doesn't buzz for A). But session B completing in the background still pushes to all devices. Controlled by `push.global_visibility_suppression` (default `true`).
 
+**Server-side split (single-writer pattern):** `ClientRegistry` (`src/client-registry.ts`) is the sole writer for client identity + visibility state (one entry per `clientId` with `visible`, `active` session, `visibleSince` timestamp). `PushService` (`src/push-service.ts`) owns push endpoints (VAPID subscription, consecutive-failure counter) and delegates **all** visibility reads to the registry (`isSessionVisibleToAnyClient`, `hasVisibleClient`, `isEndpointVisible`). Splitting the writer prevents the two pieces of state from drifting; previously they were both updated from `PushService.updateClient` and a buggy code path could leave them inconsistent.
+
 Accurate visibility state is therefore critical — a stale "visible" record globally blackholes push. The fundamental limitation is that `visibilitychange` only tracks tab-switching, not actual user attention, and on iOS PWA the browser can silently kill the hidden-transition `fetch` mid-flight, leaving a permanent ghost record.
 
 **Defense is layered:**
@@ -213,14 +215,14 @@ Accurate visibility state is therefore critical — a stale "visible" record glo
 | Layer                                 | Mechanism                                                                                                                                              | File                                              |
 | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------- |
 | 1. Hidden transition survives OS kill | `navigator.sendBeacon` first, `fetch({keepalive:true})` fallback, plus `pagehide` secondary listener                                                   | `connection.ts` → `postHiddenBeacon()`            |
-| 2. Server clock on every record       | Each `/visibility` update stamps `visibleSince`; readers ignore records older than **60s**                                                             | `push-service.ts` → `isSessionVisibleToAnyClient` |
+| 2. Server clock on every record       | Each `/visibility` update stamps `visibleSince`; readers ignore records older than **60s**                                                             | `client-registry.ts` → `isSessionVisibleToAnyClient` (called via `push-service.ts`) |
 | 3. Continuous refresh while SSE alive | SSE emits a **named** `event: heartbeat` every **15s** (not a comment — `EventSource` discards those); frontend listener POSTs `/visibility` each tick | `sse-manager.ts`, `connection.ts`                 |
 
 SSE liveness is the single authoritative "this client is reachable" signal: connection alive → heartbeat fires → TTL stays fresh; connection dies or process is suspended → heartbeats stop → record expires within 60s and push correctly re-enables globally.
 
 **Edge vs level semantics on `/visibility`:**
 
-- `PushService.updateClient` returns `{ becameVisibleForSession }`, non-null **only** on the edge (invisible OR different session → visible + session=X)
+- `ClientRegistry.setVisibility` returns `{ becameVisibleFor }`, non-null **only** on the edge (invisible OR different session → visible + session=X). PushService observes that signal (via the `/visibility` handler) to fire close-banner side effects.
 - `sendClose(sess-${sid}-done)` + permission cleanup fire **only** on that edge, not on every 15s heartbeat refresh — otherwise one focused client would hammer banner recall on every device every 15s
 - Body parsing distinguishes `sessionId` omitted (preserve prior) from explicit `null` (clear) via `"sessionId" in body` on raw JSON before Zod collapses both to `undefined`
 
