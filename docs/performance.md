@@ -230,6 +230,25 @@ If you do implement this, gate it behind a runtime flag and A/B against the curr
 - **Image rendering** (re-signed attachment URLs) is handled at egress in `src/auth.ts`, not in the streaming pipeline.
 - **Reconnect / replay** uses aggregated `assistant_message` events, not `message_chunk`. The full message arrives at once; Layer 3 still applies (per-block memo on the final text), Layer 1/2 are no-ops because there's no streaming tail.
 
+## Known Limits and Deliberately-Not-Done
+
+The remaining steady-state cost lives almost entirely in **Layer 2's tail lex** (5-8 ms per chunk for a long growing list / table, dominating the 9-11 ms total seen in slow logs). The next optimization frontier is **sub-block incremental lexing** — when the tail is a single growing list with N items, items 1..N-1 are stable but Layer 2 still re-lexes the entire list raw on every chunk.
+
+This is deliberately not done because the path to fix it has poor ROI:
+
+| Option | Status | Reason |
+|---|---|---|
+| Sub-block incremental lex within marked | Investigated, rejected | No mainstream JS markdown parser exposes this (marked, markdown-it, micromark, CommonMark.js all re-lex from scratch). Implementing would require duplicating marked's lex state machine in our repo and maintaining it across marked upgrades. Tail savings 5-8ms is below frame budget. |
+| Hand-rolled "tail split + reuse prefix tokens" on top of marked | Investigated, rejected | markdown list semantics have backward dependencies (later content can change earlier item grouping via lazy continuation / indent rules). Picking a safe split point is error-prone; getting it wrong renders silently corrupt DOM. High maintenance cost for a sub-frame-budget gain. |
+| Switch to tree-sitter-markdown (true incremental parse) | Investigated, rejected | Architecturally correct (only library that actually solves the problem) but ~250 KB of WASM + grammar, no built-in HTML emitter (we'd write a tree → HTML walker plus DOMPurify integration), 1-2 weeks of work. Reserve as the nuclear option if a future feature genuinely needs editor-grade incremental parsing. |
+
+**When to reconsider**: if iOS Safari slow logs show `lex.tail > 16 ms` regularly in real sessions (currently 5-8 ms — well within budget), or if a new feature demands token-level streaming guarantees that marked cannot provide.
+
+Other known minor inefficiencies, kept as-is:
+
+- `renderListBlock` cold path (fresh container build) runs `marked.parser` once per item plus once for the empty shell — N+1 parses where 1 batched parse would suffice. Only triggers on first chunk / variant flip; steady-state appends use the single-item synthetic-list path which is correct and fast.
+- No sub-memo for paragraph / blockquote growth. Rare in practice (LLM tends to complete a paragraph before continuing), and these blocks are usually small.
+
 ## Source Map
 
 | Concern                              | File                                     | Key symbols                                                                  |
