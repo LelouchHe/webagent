@@ -25,6 +25,7 @@ import { join as pathJoin } from "node:path";
 import { resolveSessionsAnchor } from "./sessions-anchor.ts";
 import { runStartupChecks } from "./startup-checks.ts";
 import { AttachmentDispatcher } from "./attachment-dispatch.ts";
+import { buildBridgeEventHandlerConfig as _buildBridgeEventHandlerConfig } from "./bridge-event-config.ts";
 import {
   createCounters as createAttachmentInterceptorCounters,
   type InterceptorCounters,
@@ -167,30 +168,25 @@ async function initBridge(agentCmd: string): Promise<AgentBridge> {
   const b = new AgentBridge(agentCmd);
   b.setAttachmentDispatcher(attachmentDispatcher);
 
+  const eventHandlerConfig = _buildBridgeEventHandlerConfig({
+    cancelTimeout: config.limits.cancel_timeout,
+    recentPathsLimit: config.limits.recent_paths,
+    attachmentInterceptorCounters,
+    shouldLogSchemaDrift: () => {
+      const now = Date.now();
+      if (now - lastSchemaDriftAt < SCHEMA_DRIFT_THROTTLE_MS) return false;
+      lastSchemaDriftAt = now;
+      return true;
+    },
+  });
+
   b.on("event", (event: AgentEvent) => {
     handleAgentEvent(
       event,
       sessions,
       store,
       b,
-      {
-        cancelTimeout: config.limits.cancel_timeout,
-        recentPathsLimit: config.limits.recent_paths,
-        attachmentInterceptor: {
-          counters: attachmentInterceptorCounters,
-          logger: log.scope("attachment-interceptor"),
-          onSchemaDrift: (ctx) => {
-            const now = Date.now();
-            if (now - lastSchemaDriftAt < SCHEMA_DRIFT_THROTTLE_MS) return;
-            lastSchemaDriftAt = now;
-            log
-              .scope("attachment-interceptor")
-              .error("schema drift detected — rawInput has no known path key", {
-                ctx,
-              });
-          },
-        },
-      },
+      eventHandlerConfig,
       sseManager,
       pushService,
       clientRegistry,
