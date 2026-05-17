@@ -169,6 +169,15 @@ export class ClientRegistry {
     return false;
   }
 
+  /** Is this specific client currently fresh-visible (any session)? */
+  isClientVisible(id: string): boolean {
+    const entry = this.clients.get(id);
+    if (!entry) return false;
+    if (!entry.visible) return false;
+    if (this.now() - entry.visibleSince > this.visibilityTtlMs) return false;
+    return true;
+  }
+
   /** Is at least one fresh visible client connected (any session)? */
   hasAnyVisibleClient(): boolean {
     const now = this.now();

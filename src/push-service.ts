@@ -3,6 +3,7 @@ import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import type { Store } from "./store.ts";
+import type { ClientRegistry } from "./client-registry.ts";
 import { log } from "./log.ts";
 
 const slog = log.scope("push");
@@ -139,6 +140,16 @@ export interface PushServiceOptions {
   visibilityTtlMs?: number;
   /** Injection point for tests. Default Date.now. */
   now?: () => number;
+  /**
+   * Plan C Step 3: when supplied, all visibility-read methods
+   * (`hasVisibleClient`, `isSessionVisibleToAnyClient`, `isEndpointVisible`)
+   * delegate to the registry as the source of truth. The pushService's own
+   * `clients` Map keeps tracking endpoint↔clientId mapping (transport
+   * concern) and still receives double-writes for visibility/sessionId
+   * until Step 4 collapses the writers. Tests in
+   * `test/push-service-registry-delegation.test.ts` lock this contract.
+   */
+  clientRegistry?: ClientRegistry;
 }
 
 function emptyClientState(): ClientState {
@@ -162,6 +173,7 @@ export class PushService {
   private readonly globalVisibilitySuppression: boolean;
   private readonly visibilityTtlMs: number;
   private readonly now: () => number;
+  private readonly clientRegistry: ClientRegistry | null;
 
   constructor(
     store: Store,
@@ -180,6 +192,7 @@ export class PushService {
       options.globalVisibilitySuppression ?? true;
     this.visibilityTtlMs = options.visibilityTtlMs ?? 60_000;
     this.now = options.now ?? (() => Date.now());
+    this.clientRegistry = options.clientRegistry ?? null;
   }
 
   // ---------------------------------------------------------------------------
@@ -318,6 +331,8 @@ export class PushService {
   }
 
   hasVisibleClient(): boolean {
+    // Plan C Step 3: registry is source of truth when injected.
+    if (this.clientRegistry) return this.clientRegistry.hasAnyVisibleClient();
     const now = this.now();
     for (const s of this.clients.values()) {
       if (s.visible && now - s.visibleSince <= this.visibilityTtlMs)
@@ -328,6 +343,16 @@ export class PushService {
 
   /** Check if a specific endpoint has at least one visible (non-stale) client. */
   isEndpointVisible(endpoint: string): boolean {
+    // Plan C Step 3: identity (visible) comes from registry, transport
+    // (endpoint↔clientId) stays with pushService.clients.
+    if (this.clientRegistry) {
+      const reg = this.clientRegistry;
+      for (const [clientId, s] of this.clients) {
+        if (s.endpoint !== endpoint) continue;
+        if (reg.isClientVisible(clientId)) return true;
+      }
+      return false;
+    }
     const now = this.now();
     for (const s of this.clients.values()) {
       if (s.endpoint !== endpoint) continue;
@@ -351,6 +376,9 @@ export class PushService {
    */
   isSessionVisibleToAnyClient(sessionId: string): boolean {
     if (!this.globalVisibilitySuppression) return false;
+    // Plan C Step 3: registry is source of truth when injected.
+    if (this.clientRegistry)
+      return this.clientRegistry.isSessionVisibleToAnyClient(sessionId);
     const now = this.now();
     for (const s of this.clients.values()) {
       if (!s.visible) continue;

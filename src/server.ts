@@ -99,18 +99,19 @@ const titleService = new TitleService(
   config.default_cwd,
   config.title.model,
 );
+const sseManager = new SseManager();
+const clientRegistry = new ClientRegistry();
 const pushService = new PushService(
   store,
   config.data_dir,
   config.push.vapid_subject,
   {
     globalVisibilitySuppression: config.push.global_visibility_suppression,
+    clientRegistry,
   },
 );
 console.log(`[push] VAPID public key ready`);
 
-const sseManager = new SseManager();
-const clientRegistry = new ClientRegistry();
 sseManager.onRemove((clientId) => {
   pushService.removeClient(clientId);
   clientRegistry.remove(clientId);
