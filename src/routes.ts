@@ -2254,6 +2254,14 @@ export function createRequestHandler(
               sessionId: sessionIdPatch,
             },
           );
+          // Plan C Step 1: double-write to ClientRegistry so identity-layer
+          // consumers (TTS dispatch on voice branch) can read visibility
+          // from the registry. pushService remains source of truth for now;
+          // single-writer migration happens in Steps 3-4.
+          deps.clientRegistry?.setVisibility(clientId, {
+            visible: body.visible,
+            active: sessionIdPatch,
+          });
           // Edge-triggered only: heartbeat refreshes repeat the same
           // (visible:true, sessionId:X) POST every 15s — firing sendClose
           // on each would hammer banner recall. Only the first such
