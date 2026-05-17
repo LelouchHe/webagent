@@ -54,11 +54,8 @@ describe("PushService — visibility reads delegate to ClientRegistry (Plan C St
     assert.equal(svc.hasVisibleClient(), true);
   });
 
-  it("hasVisibleClient returns false when registry says invisible, even if pushService.clients legacy state says visible", () => {
-    // Legacy double-write left pushService.clients in a stale visible state.
+  it("hasVisibleClient returns false when registry has no visible client (pushService.clients empty)", () => {
     svc.updateClient("c1", {
-      visible: true,
-      sessionId: "sid-A",
       endpoint: "https://push.example/1",
     });
     // Registry — the new source of truth — has nothing.
@@ -99,13 +96,11 @@ describe("PushService — visibility reads delegate to ClientRegistry (Plan C St
     assert.equal(svc.isEndpointVisible("https://push.example/2"), false);
   });
 
-  it("isEndpointVisible returns false when registry says invisible, even if pushService.clients has legacy visible=true", () => {
+  it("isEndpointVisible returns false when registry has no visible client, even if pushService.clients owns the endpoint", () => {
     svc.updateClient("c1", {
       endpoint: "https://push.example/1",
-      visible: true,
-      sessionId: "sid-A",
     });
-    // No registry write — registry says invisible.
+    // No registry write → registry says invisible.
     assert.equal(svc.isEndpointVisible("https://push.example/1"), false);
   });
 
@@ -118,34 +113,5 @@ describe("PushService — visibility reads delegate to ClientRegistry (Plan C St
     nowMs += 61_000;
     assert.equal(svc.isSessionVisibleToAnyClient("sid-A"), false);
     assert.equal(svc.hasVisibleClient(), false);
-  });
-});
-
-describe("PushService — visibility reads fall back to legacy clients map when no registry injected", () => {
-  let store: Store;
-  let tmpDir: string;
-  let svc: PushService;
-
-  beforeEach(() => {
-    tmpDir = mkdtempSync(join(tmpdir(), "webagent-push-step3-legacy-"));
-    store = new Store(tmpDir);
-    svc = new PushService(store, tmpDir, "mailto:test@localhost");
-    // No clientRegistry option → backward-compat path.
-  });
-
-  afterEach(() => {
-    store.close();
-    rmSync(tmpDir, { recursive: true, force: true });
-  });
-
-  it("hasVisibleClient reads pushService.clients when no registry is injected", () => {
-    svc.updateClient("c1", { visible: true, sessionId: "sid-A" });
-    assert.equal(svc.hasVisibleClient(), true);
-  });
-
-  it("isSessionVisibleToAnyClient reads pushService.clients when no registry is injected", () => {
-    svc.updateClient("c1", { visible: true, sessionId: "sid-A" });
-    assert.equal(svc.isSessionVisibleToAnyClient("sid-A"), true);
-    assert.equal(svc.isSessionVisibleToAnyClient("sid-B"), false);
   });
 });

@@ -99,36 +99,18 @@ export function isAppleEndpoint(endpoint: string): boolean {
 }
 
 /**
- * Per-client presence record. Consolidates prior 3-Map state
- * (visibility/endpoint/sessionId) and adds the `visibleSince` stamp that
- * powers server-side TTL expiration of ghost visibility records.
+ * Per-client transport state. Identity-layer state (visibility, active
+ * session) lives in ClientRegistry; this struct now only tracks the push
+ * endpoint owned by a clientId.
  */
 export interface ClientState {
-  visible: boolean;
-  sessionId: string | null;
   endpoint: string | null;
-  /** ms timestamp (from injected `now()`) when `visible` last became true; 0 when not visible. */
-  visibleSince: number;
 }
 
-/** Explicit input shape for `updateClient`. Distinguish "omitted" (preserve)
- *  from "explicit null" (clear) — caller must not pass undefined to clear. */
+/** Explicit input shape for `updateClient`. Only the push endpoint —
+ *  identity-layer state goes through ClientRegistry.setVisibility. */
 export interface ClientStatePatch {
-  visible?: boolean;
-  sessionId?: string | null; // undefined = preserve, null = explicit clear
   endpoint?: string | null; // undefined = preserve, null = explicit clear
-}
-
-/** What updateClient reports back. Used by the /visibility handler to
- *  fire sendClose edge-triggered instead of on every heartbeat refresh. */
-export interface UpdateClientResult {
-  /**
-   * Non-null iff this update transitioned the client to
-   * `visible + sessionId=X` (either from invisible → visible, or from a
-   * different sessionId → X while visible). Repeated "still visible + same sid"
-   * heartbeat refreshes return `null`.
-   */
-  becameVisibleForSession: string | null;
 }
 
 export interface PushServiceOptions {
@@ -141,31 +123,23 @@ export interface PushServiceOptions {
   /** Injection point for tests. Default Date.now. */
   now?: () => number;
   /**
-   * Plan C Step 3: when supplied, all visibility-read methods
-   * (`hasVisibleClient`, `isSessionVisibleToAnyClient`, `isEndpointVisible`)
-   * delegate to the registry as the source of truth. The pushService's own
-   * `clients` Map keeps tracking endpoint↔clientId mapping (transport
-   * concern) and still receives double-writes for visibility/sessionId
-   * until Step 4 collapses the writers. Tests in
-   * `test/push-service-registry-delegation.test.ts` lock this contract.
+   * Visibility/identity-layer source of truth. Required for all visibility
+   * reads (hasVisibleClient / isSessionVisibleToAnyClient / isEndpointVisible).
+   * pushService keeps only the transport mapping (clientId → endpoint).
    */
-  clientRegistry?: ClientRegistry;
+  clientRegistry: ClientRegistry;
 }
 
 function emptyClientState(): ClientState {
-  return { visible: false, sessionId: null, endpoint: null, visibleSince: 0 };
+  return { endpoint: null };
 }
 
 export class PushService {
   private readonly store: Store;
   private readonly vapidKeys: VapidKeys;
   /**
-   * Consolidated per-client state. Previously 3 separate Maps
-   * (clientVisibility/clientEndpoints/clientSessions) which drifted under
-   * partial updates. v2 merges them; `visibleSince` stamps when the client
-   * transitioned to visible so the server can TTL-expire "ghost" visibility
-   * records left by iOS PWA process suspension (where the client never gets
-   * to POST visible:false).
+   * Per-client transport state — only the push endpoint. Visibility lives
+   * in ClientRegistry as of Plan C Step 4.
    */
   private readonly clients = new Map<string, ClientState>();
   /** endpoint → consecutive failure count (absent or 0 = healthy) */
@@ -173,13 +147,13 @@ export class PushService {
   private readonly globalVisibilitySuppression: boolean;
   private readonly visibilityTtlMs: number;
   private readonly now: () => number;
-  private readonly clientRegistry: ClientRegistry | null;
+  private readonly clientRegistry: ClientRegistry;
 
   constructor(
     store: Store,
     dataDir: string,
     vapidSubject: string,
-    options: PushServiceOptions = {},
+    options: PushServiceOptions,
   ) {
     this.store = store;
     this.vapidKeys = this.loadOrGenerateKeys(dataDir);
@@ -192,7 +166,7 @@ export class PushService {
       options.globalVisibilitySuppression ?? true;
     this.visibilityTtlMs = options.visibilityTtlMs ?? 60_000;
     this.now = options.now ?? (() => Date.now());
-    this.clientRegistry = options.clientRegistry ?? null;
+    this.clientRegistry = options.clientRegistry;
   }
 
   // ---------------------------------------------------------------------------
@@ -260,47 +234,18 @@ export class PushService {
   }
 
   // ---------------------------------------------------------------------------
-  // Client visibility tracking
+  // Endpoint mapping (transport-only as of Plan C Step 4)
   // ---------------------------------------------------------------------------
 
   /**
-   * Atomic consolidated setter. All visibility/session/endpoint updates
-   * should route through here. Callers distinguish "preserve" from "clear"
-   * by omitting the key vs passing `null`. Returns an edge flag so the
-   * caller can fire edge-triggered side effects (e.g. sendClose) without
-   * double-firing on every heartbeat refresh.
+   * Set the push endpoint for a client. Identity-layer state (visibility,
+   * active session) goes through ClientRegistry.setVisibility, not here.
    */
-  updateClient(clientId: string, patch: ClientStatePatch): UpdateClientResult {
+  updateClient(clientId: string, patch: ClientStatePatch): void {
     const prev = this.clients.get(clientId) ?? emptyClientState();
-    const wasVisibleForSession =
-      prev.visible && prev.sessionId != null ? prev.sessionId : null;
-
     const next: ClientState = { ...prev };
-    if (patch.visible !== undefined) {
-      next.visible = patch.visible;
-      next.visibleSince = patch.visible ? this.now() : 0;
-    }
-    if (patch.sessionId !== undefined) next.sessionId = patch.sessionId;
     if (patch.endpoint !== undefined) next.endpoint = patch.endpoint;
-
-    const becameVisibleForSession =
-      next.visible &&
-      next.sessionId != null &&
-      next.sessionId !== wasVisibleForSession
-        ? next.sessionId
-        : null;
-    // Any transition into "visible + session X" restarts the TTL clock,
-    // including a session-switch that arrives without an explicit
-    // visible:true in the patch (e.g. a session_created POST that only
-    // carries sessionId). Otherwise the TTL would keep counting from the
-    // previous session's first-visible moment and could prematurely
-    // declare the newly-focused session "stale".
-    if (becameVisibleForSession) {
-      next.visibleSince = this.now();
-    }
     this.clients.set(clientId, next);
-
-    return { becameVisibleForSession };
   }
 
   /**
@@ -311,54 +256,30 @@ export class PushService {
     return this.clients.get(clientId) ?? null;
   }
 
-  /** @deprecated Shim: prefer `updateClient({ visible })`. */
-  setClientVisibility(clientId: string, visible: boolean): void {
-    this.updateClient(clientId, { visible });
-  }
-
-  /** @deprecated Shim: prefer `updateClient({ sessionId })`. */
-  setClientSession(clientId: string, sessionId: string): void {
-    this.updateClient(clientId, { sessionId });
-  }
-
-  /** @deprecated Shim: prefer `updateClient({ endpoint })`. */
   registerClient(clientId: string, endpoint: string): void {
     this.updateClient(clientId, { endpoint });
   }
 
   removeClient(clientId: string): void {
     this.clients.delete(clientId);
+    // Disconnect also wipes identity-layer state so visibility queries don't
+    // leak past the SSE lifetime. Production calls removeClient on SSE close
+    // (see sse-manager); tests expect the same.
+    this.clientRegistry.remove(clientId);
   }
 
   hasVisibleClient(): boolean {
-    // Plan C Step 3: registry is source of truth when injected.
-    if (this.clientRegistry) return this.clientRegistry.hasAnyVisibleClient();
-    const now = this.now();
-    for (const s of this.clients.values()) {
-      if (s.visible && now - s.visibleSince <= this.visibilityTtlMs)
-        return true;
-    }
-    return false;
+    return this.clientRegistry.hasAnyVisibleClient();
   }
 
   /** Check if a specific endpoint has at least one visible (non-stale) client. */
   isEndpointVisible(endpoint: string): boolean {
-    // Plan C Step 3: identity (visible) comes from registry, transport
-    // (endpoint↔clientId) stays with pushService.clients.
-    if (this.clientRegistry) {
-      const reg = this.clientRegistry;
-      for (const [clientId, s] of this.clients) {
-        if (s.endpoint !== endpoint) continue;
-        if (reg.isClientVisible(clientId)) return true;
-      }
-      return false;
-    }
-    const now = this.now();
-    for (const s of this.clients.values()) {
+    // Identity (visible) comes from registry, transport (endpoint↔clientId)
+    // stays with pushService.clients.
+    const reg = this.clientRegistry;
+    for (const [clientId, s] of this.clients) {
       if (s.endpoint !== endpoint) continue;
-      if (!s.visible) continue;
-      if (now - s.visibleSince > this.visibilityTtlMs) continue;
-      return true;
+      if (reg.isClientVisible(clientId)) return true;
     }
     return false;
   }
@@ -376,17 +297,7 @@ export class PushService {
    */
   isSessionVisibleToAnyClient(sessionId: string): boolean {
     if (!this.globalVisibilitySuppression) return false;
-    // Plan C Step 3: registry is source of truth when injected.
-    if (this.clientRegistry)
-      return this.clientRegistry.isSessionVisibleToAnyClient(sessionId);
-    const now = this.now();
-    for (const s of this.clients.values()) {
-      if (!s.visible) continue;
-      if (s.sessionId !== sessionId) continue;
-      if (now - s.visibleSince > this.visibilityTtlMs) continue;
-      return true;
-    }
-    return false;
+    return this.clientRegistry.isSessionVisibleToAnyClient(sessionId);
   }
 
   // ---------------------------------------------------------------------------

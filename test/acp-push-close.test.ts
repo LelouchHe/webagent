@@ -8,6 +8,7 @@ import { Store } from "../src/store.ts";
 import { createRequestHandler } from "../src/routes.ts";
 import { SseManager } from "../src/sse-manager.ts";
 import { PushService } from "../src/push-service.ts";
+import { ClientRegistry } from "../src/client-registry.ts";
 
 /**
  * acp-push-close: handled signals from the server must fire sendClose on
@@ -68,6 +69,7 @@ describe("acp-push-close: handled signals fire sendClose", () => {
   let tmpDir: string;
   let store: Store;
   let push: SpyPushService;
+  let registry: ClientRegistry;
   let server: http.Server;
   let port: number;
   let sessionId: string;
@@ -104,9 +106,12 @@ describe("acp-push-close: handled signals fire sendClose", () => {
     mkdirSync(publicDir);
     writeFileSync(join(publicDir, "index.html"), "<h1>t</h1>");
     store = new Store(tmpDir);
+    registry = new ClientRegistry();
     sessionId = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
     store.createSession(sessionId, "/tmp");
-    push = new SpyPushService(store, tmpDir, "mailto:test@example.com");
+    push = new SpyPushService(store, tmpDir, "mailto:test@example.com", {
+      clientRegistry: registry,
+    });
 
     bridgeCalls = [];
     sessionManager = {
@@ -123,6 +128,7 @@ describe("acp-push-close: handled signals fire sendClose", () => {
       dataDir: tmpDir,
       limits: { bash_output: 1_048_576, image_upload: 10_485_760 },
       pushService: push,
+      clientRegistry: registry,
       sessions: sessionManager as unknown as Parameters<
         typeof createRequestHandler
       >[0]["sessions"],
@@ -314,7 +320,7 @@ describe("acp-push-close: handled signals fire sendClose", () => {
     await send(port, "POST", `/api/beta/clients/${clientId}/visibility`, {
       visible: true,
     });
-    assert.equal(push.getClientState(clientId)?.sessionId, sessionId);
+    assert.equal(registry.get(clientId)?.active, sessionId);
   });
 
   it("POST with sessionId:null explicitly clears the session", async () => {
@@ -330,6 +336,6 @@ describe("acp-push-close: handled signals fire sendClose", () => {
       visible: true,
       sessionId: null,
     });
-    assert.equal(push.getClientState(clientId)?.sessionId, null);
+    assert.equal(registry.get(clientId)?.active, null);
   });
 });

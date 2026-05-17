@@ -2246,35 +2246,31 @@ export function createRequestHandler(
           sessionIdPatch = null;
         }
 
-        if (deps.pushService) {
-          const { becameVisibleForSession } = deps.pushService.updateClient(
+        if (deps.clientRegistry) {
+          // setVisibility no-ops on unknown clients; auto-register here so
+          // SSE-only clients (which haven't sent /hello yet) still take
+          // effect. The trust boundary above already gated on identity.
+          if (!deps.clientRegistry.get(clientId)) {
+            deps.clientRegistry.register(clientId, { capabilities: [] });
+          }
+          const { becameVisibleFor } = deps.clientRegistry.setVisibility(
             clientId,
             {
               visible: body.visible,
-              sessionId: sessionIdPatch,
+              active: sessionIdPatch,
             },
           );
-          // Plan C Step 1: double-write to ClientRegistry so identity-layer
-          // consumers (TTS dispatch on voice branch) can read visibility
-          // from the registry. pushService remains source of truth for now;
-          // single-writer migration happens in Steps 3-4.
-          deps.clientRegistry?.setVisibility(clientId, {
-            visible: body.visible,
-            active: sessionIdPatch,
-          });
           // Edge-triggered only: heartbeat refreshes repeat the same
           // (visible:true, sessionId:X) POST every 15s — firing sendClose
           // on each would hammer banner recall. Only the first such
           // transition after a change should recall stale banners.
-          if (becameVisibleForSession) {
-            void deps.pushService.sendClose(
-              `sess-${becameVisibleForSession}-done`,
-            );
+          if (becameVisibleFor && deps.pushService) {
+            void deps.pushService.sendClose(`sess-${becameVisibleFor}-done`);
             if (sessions) {
               for (const perm of sessions.pendingPermissions.values()) {
-                if (perm.sessionId === becameVisibleForSession) {
+                if (perm.sessionId === becameVisibleFor) {
                   void deps.pushService.sendClose(
-                    `sess-${becameVisibleForSession}-perm-${perm.requestId}`,
+                    `sess-${becameVisibleFor}-perm-${perm.requestId}`,
                   );
                 }
               }

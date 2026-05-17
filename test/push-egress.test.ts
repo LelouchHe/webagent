@@ -6,6 +6,20 @@ import { tmpdir } from "node:os";
 import { Store } from "../src/store.ts";
 import { PushService, isAppleEndpoint } from "../src/push-service.ts";
 import type { PushNotification } from "../src/push-service.ts";
+import { ClientRegistry } from "../src/client-registry.ts";
+
+// Helper: post-Plan-C-Step-4, identity-layer state (visible/active) lives on
+// the registry, not pushService. Auto-register on first use so setVisibility
+// (which no-ops on unknown clients) takes effect.
+function visBoth(
+  _svc: unknown,
+  reg: ClientRegistry,
+  id: string,
+  patch: { visible?: boolean; active?: string | null },
+): void {
+  if (!reg.get(id)) reg.register(id, { capabilities: [] });
+  reg.setVisibility(id, patch);
+}
 
 class StubbedPushService extends PushService {
   public sent: Array<{ endpoint: string; payload: string; topic?: string }> =
@@ -29,11 +43,15 @@ describe("PushService — PushNotification payload shape", () => {
   let tmpDir: string;
   let store: Store;
   let push: StubbedPushService;
+  let registry: ClientRegistry;
 
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), "webagent-push-egress-"));
     store = new Store(tmpDir);
-    push = new StubbedPushService(store, tmpDir, "mailto:test@example.com");
+    registry = new ClientRegistry();
+    push = new StubbedPushService(store, tmpDir, "mailto:test@example.com", {
+      clientRegistry: registry,
+    });
   });
 
   afterEach(() => {
@@ -72,8 +90,8 @@ describe("PushService — PushNotification payload shape", () => {
   it("sendClose skips visibility suppression (close always fires)", async () => {
     store.saveSubscription("https://push.example.com/1", "auth1", "p256dh1");
     push.registerClient("c1", "https://push.example.com/1");
-    push.setClientVisibility("c1", true);
-    push.setClientSession("c1", "sess-abc");
+    visBoth(push, registry, "c1", { visible: true });
+    visBoth(push, registry, "c1", { active: "sess-abc" });
     // A notify tied to this session would be suppressed; close must NOT be.
     await push.sendClose("sess-sess-abc-done");
     assert.equal(push.sent.length, 1);
@@ -267,8 +285,8 @@ describe("PushService — PushNotification payload shape", () => {
     const sessionId = "abcd1234-aaaa-bbbb-cccc-dddddddddddd";
     store.createSession(sessionId, "/tmp");
     push.registerClient("c1", "https://push.example.com/1");
-    push.setClientVisibility("c1", true);
-    push.setClientSession("c1", sessionId);
+    visBoth(push, registry, "c1", { visible: true });
+    visBoth(push, registry, "c1", { active: sessionId });
     await push.sendForEvent(sessionId, { type: "prompt_done" });
     assert.equal(push.sent.length, 0);
   });
@@ -365,11 +383,15 @@ describe("PushService — Apple endpoint skip for kind:'close'", () => {
   let tmpDir: string;
   let store: Store;
   let push: StubbedPushService;
+  let registry: ClientRegistry;
 
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), "webagent-push-apple-filter-"));
     store = new Store(tmpDir);
-    push = new StubbedPushService(store, tmpDir, "mailto:test@example.com");
+    registry = new ClientRegistry();
+    push = new StubbedPushService(store, tmpDir, "mailto:test@example.com", {
+      clientRegistry: registry,
+    });
   });
 
   afterEach(() => {
@@ -438,145 +460,5 @@ describe("PushService — Apple endpoint skip for kind:'close'", () => {
       "https://fcm.googleapis.com/fcm/send/chrome",
       "https://web.push.apple.com/ios-token",
     ]);
-  });
-});
-
-describe("PushService — visibility v2 (TTL / edge / kill switch / preserve-vs-clear)", () => {
-  let tmpDir: string;
-  let store: Store;
-  let clock: number;
-
-  beforeEach(() => {
-    tmpDir = mkdtempSync(join(tmpdir(), "webagent-push-vis2-"));
-    store = new Store(tmpDir);
-    clock = 1_000_000;
-  });
-
-  afterEach(() => {
-    store.close();
-    rmSync(tmpDir, { recursive: true, force: true });
-  });
-
-  function makePush(
-    opts: { suppress?: boolean; ttl?: number } = {},
-  ): StubbedPushService {
-    return new StubbedPushService(store, tmpDir, "mailto:t@example.com", {
-      globalVisibilitySuppression: opts.suppress ?? true,
-      visibilityTtlMs: opts.ttl ?? 60_000,
-      now: () => clock,
-    });
-  }
-
-  it("TTL: stale visibility record stops suppressing once TTL elapses", async () => {
-    const push = makePush();
-    push.updateClient("c1", {
-      visible: true,
-      sessionId: "sX",
-      endpoint: "https://e/1",
-    });
-    assert.equal(push.isSessionVisibleToAnyClient("sX"), true);
-    clock += 61_000; // exceed 60s TTL
-    assert.equal(push.isSessionVisibleToAnyClient("sX"), false);
-  });
-
-  it("TTL: heartbeat-style refresh (visible:true unchanged) extends visibleSince", async () => {
-    const push = makePush();
-    push.updateClient("c1", { visible: true, sessionId: "sX" });
-    clock += 30_000;
-    push.updateClient("c1", { visible: true }); // refresh, sid preserved
-    clock += 40_000; // 70s since first mark but only 40s since refresh
-    assert.equal(push.isSessionVisibleToAnyClient("sX"), true);
-  });
-
-  it("kill switch: globalVisibilitySuppression=false disables cross-endpoint suppression", () => {
-    const push = makePush({ suppress: false });
-    push.updateClient("c1", { visible: true, sessionId: "sX" });
-    assert.equal(push.isSessionVisibleToAnyClient("sX"), false);
-  });
-
-  it("updateClient edge: first visible+sid transition returns becameVisibleForSession", () => {
-    const push = makePush();
-    const r1 = push.updateClient("c1", { visible: true, sessionId: "sX" });
-    assert.equal(r1.becameVisibleForSession, "sX");
-    const visibleSinceX = push.getClientState("c1")?.visibleSince ?? 0;
-    // Heartbeat refresh of same state must NOT re-fire the edge.
-    const r2 = push.updateClient("c1", { visible: true });
-    assert.equal(r2.becameVisibleForSession, null);
-    // Advance the clock so a session switch (sid-only patch with no
-    // explicit visible:true) has to actively refresh visibleSince
-    // rather than inherit the old session's timestamp. Without the
-    // reset, a switch at t=50s into session Y would expire at t=60s
-    // from Y's perspective but only 10s after the user focused it.
-    clock += 50_000;
-    const r3 = push.updateClient("c1", { sessionId: "sY" });
-    assert.equal(r3.becameVisibleForSession, "sY");
-    const visibleSinceY = push.getClientState("c1")?.visibleSince ?? 0;
-    assert.ok(
-      visibleSinceY > visibleSinceX,
-      "session switch must refresh visibleSince (TTL clock restart)",
-    );
-    // Going invisible clears; becoming visible again re-fires.
-    const r4 = push.updateClient("c1", { visible: false });
-    assert.equal(r4.becameVisibleForSession, null);
-    const r5 = push.updateClient("c1", { visible: true });
-    assert.equal(r5.becameVisibleForSession, "sY");
-  });
-
-  it("patch semantics: sessionId omitted preserves; null clears; string replaces", () => {
-    const push = makePush();
-    push.updateClient("c1", { visible: true, sessionId: "sX" });
-    assert.equal(push.getClientState("c1")?.sessionId, "sX");
-    // Omitted: preserve.
-    push.updateClient("c1", { visible: true });
-    assert.equal(push.getClientState("c1")?.sessionId, "sX");
-    // Explicit null: clear.
-    push.updateClient("c1", { sessionId: null });
-    assert.equal(push.getClientState("c1")?.sessionId, null);
-    // Replace.
-    push.updateClient("c1", { sessionId: "sY" });
-    assert.equal(push.getClientState("c1")?.sessionId, "sY");
-  });
-
-  it("removeClient wipes all state atomically", () => {
-    const push = makePush();
-    push.updateClient("c1", {
-      visible: true,
-      sessionId: "sX",
-      endpoint: "https://e/1",
-    });
-    push.removeClient("c1");
-    assert.equal(push.getClientState("c1"), null);
-    assert.equal(push.isSessionVisibleToAnyClient("sX"), false);
-  });
-
-  it("hasVisibleClient and isEndpointVisible also respect TTL", () => {
-    const push = makePush();
-    push.updateClient("c1", {
-      visible: true,
-      sessionId: "sX",
-      endpoint: "https://e/1",
-    });
-    assert.equal(push.hasVisibleClient(), true);
-    assert.equal(push.isEndpointVisible("https://e/1"), true);
-    clock += 61_000;
-    assert.equal(push.hasVisibleClient(), false);
-    assert.equal(push.isEndpointVisible("https://e/1"), false);
-  });
-
-  it("end-to-end: iOS-kill ghost expires, next sendForEvent is no longer suppressed", async () => {
-    const push = makePush();
-    store.saveSubscription("https://push.example.com/1", "auth1", "p256dh1");
-    const sessionId = "abcd1234-aaaa-bbbb-cccc-dddddddddddd";
-    store.createSession(sessionId, "/tmp");
-    push.updateClient("c1", {
-      visible: true,
-      sessionId,
-      endpoint: "https://push.example.com/1",
-    });
-    await push.sendForEvent(sessionId, { type: "prompt_done" });
-    assert.equal(push.sent.length, 0, "fresh visibility suppresses");
-    clock += 61_000; // ghost expires
-    await push.sendForEvent(sessionId, { type: "prompt_done" });
-    assert.equal(push.sent.length, 1, "ghost-expired push must go through");
   });
 });

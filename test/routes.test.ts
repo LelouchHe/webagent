@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { Store } from "../src/store.ts";
 import { createRequestHandler } from "../src/routes.ts";
 import { PushService } from "../src/push-service.ts";
+import { ClientRegistry } from "../src/client-registry.ts";
 
 function makeRequest(
   port: number,
@@ -663,6 +664,7 @@ describe("Image upload", () => {
 describe("Push API routes", () => {
   let store: Store;
   let pushService: PushService;
+  let registry: ClientRegistry;
   let tmpDir: string;
   let publicDir: string;
   let server: http.Server;
@@ -675,7 +677,10 @@ describe("Push API routes", () => {
     writeFileSync(join(publicDir, "index.html"), "<h1>Test</h1>");
 
     store = new Store(tmpDir);
-    pushService = new PushService(store, tmpDir, "mailto:test@localhost");
+    registry = new ClientRegistry();
+    pushService = new PushService(store, tmpDir, "mailto:test@localhost", {
+      clientRegistry: registry,
+    });
     const handler = createRequestHandler({
       store,
       publicDir,
@@ -686,6 +691,7 @@ describe("Push API routes", () => {
         cancel_timeout: 10_000,
       },
       pushService,
+      clientRegistry: registry,
       sseManager: { broadcast() {} } as any,
     });
     server = http.createServer(handler);

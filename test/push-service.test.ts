@@ -12,6 +12,7 @@ import {
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Store } from "../src/store.ts";
+import { ClientRegistry } from "../src/client-registry.ts";
 
 // ---------------------------------------------------------------------------
 // Store: push_subscriptions table
@@ -109,10 +110,26 @@ import { PushService } from "../src/push-service.ts";
 describe("PushService", () => {
   let tmpDir: string;
   let store: Store;
+  let registry: ClientRegistry;
+
+  // Helper: post-Plan-C, push-service's visibility was demolished. Tests that
+  // exercise hasVisibleClient / isEndpointVisible / isSessionVisibleToAnyClient
+  // need to push state into the registry; auto-register on first encounter so
+  // setVisibility (which no-ops on unknown clients) takes effect.
+  function visBoth(
+    _svc: unknown,
+    reg: ClientRegistry,
+    id: string,
+    patch: { visible?: boolean; active?: string | null },
+  ): void {
+    if (!reg.get(id)) reg.register(id, { capabilities: [] });
+    reg.setVisibility(id, patch);
+  }
 
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), "webagent-push-svc-"));
     store = new Store(tmpDir);
+    registry = new ClientRegistry();
   });
 
   afterEach(() => {
@@ -122,7 +139,9 @@ describe("PushService", () => {
 
   describe("VAPID key management", () => {
     it("generates and saves vapid.json on first init", () => {
-      new PushService(store, tmpDir, "mailto:test@localhost");
+      new PushService(store, tmpDir, "mailto:test@localhost", {
+        clientRegistry: registry,
+      });
 
       const vapidPath = join(tmpDir, "vapid.json");
       assert.ok(existsSync(vapidPath), "vapid.json should be created");
@@ -134,10 +153,14 @@ describe("PushService", () => {
     });
 
     it("loads existing keys on subsequent init", () => {
-      const svc1 = new PushService(store, tmpDir, "mailto:test@localhost");
+      const svc1 = new PushService(store, tmpDir, "mailto:test@localhost", {
+        clientRegistry: registry,
+      });
       const key1 = svc1.getPublicKey();
 
-      const svc2 = new PushService(store, tmpDir, "mailto:test@localhost");
+      const svc2 = new PushService(store, tmpDir, "mailto:test@localhost", {
+        clientRegistry: registry,
+      });
       const key2 = svc2.getPublicKey();
 
       assert.equal(key1, key2, "public key should persist across restarts");
@@ -145,18 +168,24 @@ describe("PushService", () => {
 
     it("enforces 0600 permissions when loading existing keys", () => {
       // Create keys
-      new PushService(store, tmpDir, "mailto:test@localhost");
+      new PushService(store, tmpDir, "mailto:test@localhost", {
+        clientRegistry: registry,
+      });
       const filePath = join(tmpDir, "vapid.json");
       // Loosen permissions
       chmodSync(filePath, 0o644);
       assert.equal(statSync(filePath).mode & 0o777, 0o644);
       // Re-load — should fix permissions
-      new PushService(store, tmpDir, "mailto:test@localhost");
+      new PushService(store, tmpDir, "mailto:test@localhost", {
+        clientRegistry: registry,
+      });
       assert.equal(statSync(filePath).mode & 0o777, 0o600);
     });
 
     it("getPublicKey returns the VAPID public key", () => {
-      const svc = new PushService(store, tmpDir, "mailto:test@localhost");
+      const svc = new PushService(store, tmpDir, "mailto:test@localhost", {
+        clientRegistry: registry,
+      });
       const key = svc.getPublicKey();
 
       assert.ok(typeof key === "string");
@@ -166,7 +195,9 @@ describe("PushService", () => {
 
   describe("formatNotification", () => {
     it("formats permission_request notification", () => {
-      const svc = new PushService(store, tmpDir, "mailto:test@localhost");
+      const svc = new PushService(store, tmpDir, "mailto:test@localhost", {
+        clientRegistry: registry,
+      });
       const n = svc.formatNotification(
         "session-1",
         "My Session",
@@ -184,7 +215,9 @@ describe("PushService", () => {
     });
 
     it("formats prompt_done notification", () => {
-      const svc = new PushService(store, tmpDir, "mailto:test@localhost");
+      const svc = new PushService(store, tmpDir, "mailto:test@localhost", {
+        clientRegistry: registry,
+      });
       const n = svc.formatNotification(
         "s1",
         "Title",
@@ -197,7 +230,9 @@ describe("PushService", () => {
     });
 
     it("formats bash_done notification", () => {
-      const svc = new PushService(store, tmpDir, "mailto:test@localhost");
+      const svc = new PushService(store, tmpDir, "mailto:test@localhost", {
+        clientRegistry: registry,
+      });
       const n = svc.formatNotification(
         "s1",
         "Title",
@@ -214,7 +249,9 @@ describe("PushService", () => {
     });
 
     it("uses fallback title when session title is null", () => {
-      const svc = new PushService(store, tmpDir, "mailto:test@localhost");
+      const svc = new PushService(store, tmpDir, "mailto:test@localhost", {
+        clientRegistry: registry,
+      });
       const n = svc.formatNotification(
         "s1",
         null,
@@ -229,41 +266,51 @@ describe("PushService", () => {
 
   describe("visibility tracking", () => {
     it("starts with no visible clients", () => {
-      const svc = new PushService(store, tmpDir, "mailto:test@localhost");
+      const svc = new PushService(store, tmpDir, "mailto:test@localhost", {
+        clientRegistry: registry,
+      });
       assert.equal(svc.hasVisibleClient(), false);
     });
 
     it("tracks client visibility", () => {
-      const svc = new PushService(store, tmpDir, "mailto:test@localhost");
+      const svc = new PushService(store, tmpDir, "mailto:test@localhost", {
+        clientRegistry: registry,
+      });
       const clientId = "ws-1";
 
-      svc.setClientVisibility(clientId, true);
+      visBoth(svc, registry, clientId, { visible: true });
       assert.equal(svc.hasVisibleClient(), true);
 
-      svc.setClientVisibility(clientId, false);
+      visBoth(svc, registry, clientId, { visible: false });
       assert.equal(svc.hasVisibleClient(), false);
     });
 
     it("returns true if any client is visible", () => {
-      const svc = new PushService(store, tmpDir, "mailto:test@localhost");
-      svc.setClientVisibility("ws-1", false);
-      svc.setClientVisibility("ws-2", true);
+      const svc = new PushService(store, tmpDir, "mailto:test@localhost", {
+        clientRegistry: registry,
+      });
+      visBoth(svc, registry, "ws-1", { visible: false });
+      visBoth(svc, registry, "ws-2", { visible: true });
 
       assert.equal(svc.hasVisibleClient(), true);
     });
 
     it("removes client on disconnect", () => {
-      const svc = new PushService(store, tmpDir, "mailto:test@localhost");
-      svc.setClientVisibility("ws-1", true);
+      const svc = new PushService(store, tmpDir, "mailto:test@localhost", {
+        clientRegistry: registry,
+      });
+      visBoth(svc, registry, "ws-1", { visible: true });
       svc.removeClient("ws-1");
 
       assert.equal(svc.hasVisibleClient(), false);
     });
 
     it("removeClient also clears endpoint mapping", () => {
-      const svc = new PushService(store, tmpDir, "mailto:test@localhost");
+      const svc = new PushService(store, tmpDir, "mailto:test@localhost", {
+        clientRegistry: registry,
+      });
       svc.registerClient("ws-1", "https://push.example.com/1");
-      svc.setClientVisibility("ws-1", true);
+      visBoth(svc, registry, "ws-1", { visible: true });
       assert.equal(svc.isEndpointVisible("https://push.example.com/1"), true);
 
       svc.removeClient("ws-1");
@@ -273,30 +320,38 @@ describe("PushService", () => {
 
   describe("per-subscription visibility", () => {
     it("endpoint is not visible when no client is registered", () => {
-      const svc = new PushService(store, tmpDir, "mailto:test@localhost");
+      const svc = new PushService(store, tmpDir, "mailto:test@localhost", {
+        clientRegistry: registry,
+      });
       assert.equal(svc.isEndpointVisible("https://push.example.com/1"), false);
     });
 
     it("endpoint is visible when a registered client is visible", () => {
-      const svc = new PushService(store, tmpDir, "mailto:test@localhost");
+      const svc = new PushService(store, tmpDir, "mailto:test@localhost", {
+        clientRegistry: registry,
+      });
       svc.registerClient("ws-1", "https://push.example.com/1");
-      svc.setClientVisibility("ws-1", true);
+      visBoth(svc, registry, "ws-1", { visible: true });
       assert.equal(svc.isEndpointVisible("https://push.example.com/1"), true);
     });
 
     it("endpoint is not visible when registered client is hidden", () => {
-      const svc = new PushService(store, tmpDir, "mailto:test@localhost");
+      const svc = new PushService(store, tmpDir, "mailto:test@localhost", {
+        clientRegistry: registry,
+      });
       svc.registerClient("ws-1", "https://push.example.com/1");
-      svc.setClientVisibility("ws-1", false);
+      visBoth(svc, registry, "ws-1", { visible: false });
       assert.equal(svc.isEndpointVisible("https://push.example.com/1"), false);
     });
 
     it("multiple clients on different endpoints have independent visibility", () => {
-      const svc = new PushService(store, tmpDir, "mailto:test@localhost");
+      const svc = new PushService(store, tmpDir, "mailto:test@localhost", {
+        clientRegistry: registry,
+      });
       svc.registerClient("ws-1", "https://push.example.com/desktop");
       svc.registerClient("ws-2", "https://push.example.com/phone");
-      svc.setClientVisibility("ws-1", true);
-      svc.setClientVisibility("ws-2", false);
+      visBoth(svc, registry, "ws-1", { visible: true });
+      visBoth(svc, registry, "ws-2", { visible: false });
 
       assert.equal(
         svc.isEndpointVisible("https://push.example.com/desktop"),
@@ -311,40 +366,48 @@ describe("PushService", () => {
 
   describe("global session visibility (isSessionVisibleToAnyClient)", () => {
     it("returns true when a visible client is viewing the session", () => {
-      const svc = new PushService(store, tmpDir, "mailto:test@localhost");
+      const svc = new PushService(store, tmpDir, "mailto:test@localhost", {
+        clientRegistry: registry,
+      });
       svc.registerClient("cl-1", "https://push.example.com/1");
-      svc.setClientVisibility("cl-1", true);
-      svc.setClientSession("cl-1", "session-A");
+      visBoth(svc, registry, "cl-1", { visible: true });
+      visBoth(svc, registry, "cl-1", { active: "session-A" });
 
       assert.equal(svc.isSessionVisibleToAnyClient("session-A"), true);
       assert.equal(svc.isSessionVisibleToAnyClient("session-B"), false);
     });
 
     it("client with no session does not suppress any session", () => {
-      const svc = new PushService(store, tmpDir, "mailto:test@localhost");
+      const svc = new PushService(store, tmpDir, "mailto:test@localhost", {
+        clientRegistry: registry,
+      });
       svc.registerClient("cl-1", "https://push.example.com/1");
-      svc.setClientVisibility("cl-1", true);
+      visBoth(svc, registry, "cl-1", { visible: true });
       // No setClientSession call
 
       assert.equal(svc.isSessionVisibleToAnyClient("session-A"), false);
     });
 
     it("hidden client does not suppress even for its own session", () => {
-      const svc = new PushService(store, tmpDir, "mailto:test@localhost");
+      const svc = new PushService(store, tmpDir, "mailto:test@localhost", {
+        clientRegistry: registry,
+      });
       svc.registerClient("cl-1", "https://push.example.com/1");
-      svc.setClientVisibility("cl-1", false);
-      svc.setClientSession("cl-1", "session-A");
+      visBoth(svc, registry, "cl-1", { visible: false });
+      visBoth(svc, registry, "cl-1", { active: "session-A" });
 
       assert.equal(svc.isSessionVisibleToAnyClient("session-A"), false);
     });
 
     it("two clients on different endpoints — one viewing suppresses globally", () => {
-      const svc = new PushService(store, tmpDir, "mailto:test@localhost");
+      const svc = new PushService(store, tmpDir, "mailto:test@localhost", {
+        clientRegistry: registry,
+      });
       svc.registerClient("cl-1", "https://push.example.com/desktop");
       svc.registerClient("cl-2", "https://push.example.com/phone");
-      svc.setClientVisibility("cl-1", true);
-      svc.setClientVisibility("cl-2", false);
-      svc.setClientSession("cl-1", "session-A");
+      visBoth(svc, registry, "cl-1", { visible: true });
+      visBoth(svc, registry, "cl-2", { visible: false });
+      visBoth(svc, registry, "cl-1", { active: "session-A" });
 
       // Desktop viewing session-A → globally visible
       assert.equal(svc.isSessionVisibleToAnyClient("session-A"), true);
@@ -352,13 +415,15 @@ describe("PushService", () => {
     });
 
     it("two clients viewing different sessions — each suppresses its own", () => {
-      const svc = new PushService(store, tmpDir, "mailto:test@localhost");
+      const svc = new PushService(store, tmpDir, "mailto:test@localhost", {
+        clientRegistry: registry,
+      });
       svc.registerClient("cl-1", "https://push.example.com/shared");
       svc.registerClient("cl-2", "https://push.example.com/shared");
-      svc.setClientVisibility("cl-1", true);
-      svc.setClientVisibility("cl-2", true);
-      svc.setClientSession("cl-1", "session-A");
-      svc.setClientSession("cl-2", "session-B");
+      visBoth(svc, registry, "cl-1", { visible: true });
+      visBoth(svc, registry, "cl-2", { visible: true });
+      visBoth(svc, registry, "cl-1", { active: "session-A" });
+      visBoth(svc, registry, "cl-2", { active: "session-B" });
 
       assert.equal(svc.isSessionVisibleToAnyClient("session-A"), true);
       assert.equal(svc.isSessionVisibleToAnyClient("session-B"), true);
@@ -366,10 +431,12 @@ describe("PushService", () => {
     });
 
     it("removeClient clears session mapping", () => {
-      const svc = new PushService(store, tmpDir, "mailto:test@localhost");
+      const svc = new PushService(store, tmpDir, "mailto:test@localhost", {
+        clientRegistry: registry,
+      });
       svc.registerClient("cl-1", "https://push.example.com/1");
-      svc.setClientVisibility("cl-1", true);
-      svc.setClientSession("cl-1", "session-A");
+      visBoth(svc, registry, "cl-1", { visible: true });
+      visBoth(svc, registry, "cl-1", { active: "session-A" });
       assert.equal(svc.isSessionVisibleToAnyClient("session-A"), true);
 
       svc.removeClient("cl-1");
@@ -377,16 +444,18 @@ describe("PushService", () => {
     });
 
     it("session switch updates which session is suppressed", () => {
-      const svc = new PushService(store, tmpDir, "mailto:test@localhost");
+      const svc = new PushService(store, tmpDir, "mailto:test@localhost", {
+        clientRegistry: registry,
+      });
       svc.registerClient("cl-1", "https://push.example.com/1");
-      svc.setClientVisibility("cl-1", true);
-      svc.setClientSession("cl-1", "session-A");
+      visBoth(svc, registry, "cl-1", { visible: true });
+      visBoth(svc, registry, "cl-1", { active: "session-A" });
 
       assert.equal(svc.isSessionVisibleToAnyClient("session-A"), true);
       assert.equal(svc.isSessionVisibleToAnyClient("session-B"), false);
 
       // User switches to session B
-      svc.setClientSession("cl-1", "session-B");
+      visBoth(svc, registry, "cl-1", { active: "session-B" });
       assert.equal(svc.isSessionVisibleToAnyClient("session-A"), false);
       assert.equal(svc.isSessionVisibleToAnyClient("session-B"), true);
     });
@@ -394,7 +463,9 @@ describe("PushService", () => {
 
   describe("maybeNotify", () => {
     it("returns true for notifiable event types", () => {
-      const svc = new PushService(store, tmpDir, "mailto:test@localhost");
+      const svc = new PushService(store, tmpDir, "mailto:test@localhost", {
+        clientRegistry: registry,
+      });
 
       assert.equal(svc.maybeNotify("s1", "Title", "prompt_done", {}), true);
       assert.equal(
@@ -405,7 +476,9 @@ describe("PushService", () => {
     });
 
     it("returns false for non-notifiable event types", () => {
-      const svc = new PushService(store, tmpDir, "mailto:test@localhost");
+      const svc = new PushService(store, tmpDir, "mailto:test@localhost", {
+        clientRegistry: registry,
+      });
 
       const result = svc.maybeNotify("s1", "Title", "message_chunk", {});
       assert.equal(result, false);
@@ -439,7 +512,9 @@ describe("PushService", () => {
     }
 
     it("removes subscription after 5 consecutive failures", async () => {
-      const svc = new TestPushService(store, tmpDir, "mailto:test@localhost");
+      const svc = new TestPushService(store, tmpDir, "mailto:test@localhost", {
+        clientRegistry: registry,
+      });
       store.saveSubscription("https://push.example.com/bad", "a", "b");
       store.saveSubscription("https://push.example.com/good", "c", "d");
 
@@ -472,7 +547,9 @@ describe("PushService", () => {
     });
 
     it("resets failure count on successful send", async () => {
-      const svc = new TestPushService(store, tmpDir, "mailto:test@localhost");
+      const svc = new TestPushService(store, tmpDir, "mailto:test@localhost", {
+        clientRegistry: registry,
+      });
       store.saveSubscription("https://push.example.com/flaky", "a", "b");
 
       svc.outcomes.set("https://push.example.com/flaky", "fail");
@@ -507,7 +584,9 @@ describe("PushService", () => {
     });
 
     it("still removes 410 Gone immediately", async () => {
-      const svc = new TestPushService(store, tmpDir, "mailto:test@localhost");
+      const svc = new TestPushService(store, tmpDir, "mailto:test@localhost", {
+        clientRegistry: registry,
+      });
       store.saveSubscription("https://push.example.com/gone", "a", "b");
 
       svc.outcomes.set("https://push.example.com/gone", "gone");
@@ -529,14 +608,16 @@ describe("PushService", () => {
     });
 
     it("suppresses all endpoints when any client views the session", async () => {
-      const svc = new TestPushService(store, tmpDir, "mailto:test@localhost");
+      const svc = new TestPushService(store, tmpDir, "mailto:test@localhost", {
+        clientRegistry: registry,
+      });
       store.saveSubscription("https://push.example.com/desktop", "a", "b");
       store.saveSubscription("https://push.example.com/phone", "c", "d");
 
       // Desktop client is visible, viewing session-A
       svc.registerClient("cl-1", "https://push.example.com/desktop");
-      svc.setClientVisibility("cl-1", true);
-      svc.setClientSession("cl-1", "session-A");
+      visBoth(svc, registry, "cl-1", { visible: true });
+      visBoth(svc, registry, "cl-1", { active: "session-A" });
 
       svc.outcomes.set("https://push.example.com/desktop", "ok");
       svc.outcomes.set("https://push.example.com/phone", "ok");
@@ -580,13 +661,15 @@ describe("PushService", () => {
     });
 
     it("visible client without session does not suppress push (no session = no suppression)", async () => {
-      const svc = new TestPushService(store, tmpDir, "mailto:test@localhost");
+      const svc = new TestPushService(store, tmpDir, "mailto:test@localhost", {
+        clientRegistry: registry,
+      });
       store.saveSubscription("https://push.example.com/desktop", "a", "b");
       store.saveSubscription("https://push.example.com/phone", "c", "d");
 
       // Desktop client is visible but has no session set
       svc.registerClient("cl-1", "https://push.example.com/desktop");
-      svc.setClientVisibility("cl-1", true);
+      visBoth(svc, registry, "cl-1", { visible: true });
 
       svc.outcomes.set("https://push.example.com/desktop", "ok");
       svc.outcomes.set("https://push.example.com/phone", "ok");
@@ -616,7 +699,9 @@ describe("PushService", () => {
     });
 
     it("sends to all endpoints when no client is registered", async () => {
-      const svc = new TestPushService(store, tmpDir, "mailto:test@localhost");
+      const svc = new TestPushService(store, tmpDir, "mailto:test@localhost", {
+        clientRegistry: registry,
+      });
       store.saveSubscription("https://push.example.com/a", "a", "b");
       store.saveSubscription("https://push.example.com/b", "c", "d");
 
