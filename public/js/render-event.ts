@@ -223,6 +223,35 @@ function stripWhitespaceTextNodes(root: DocumentFragment): void {
   }
 }
 
+/** Sanitize HTML directly into a DocumentFragment.
+ *
+ *  The default `DOMPurify.sanitize(html) → string` API costs two HTML
+ *  parses + one serialize per call: DOMPurify internally parses the input
+ *  into a DOM tree, walks it, serializes back to a string, then we re-parse
+ *  the string via `template.innerHTML = sanitized`. The DOM tree built
+ *  inside DOMPurify is thrown away.
+ *
+ *  `RETURN_DOM_FRAGMENT: true` makes DOMPurify return the DocumentFragment
+ *  it built internally, skipping the serialize step and our re-parse. The
+ *  returned fragment is owned by the current `document`, so it can be
+ *  passed to host.insertBefore / element.appendChild directly without
+ *  importNode (DOMPurify v3 default behavior; deprecated RETURN_DOM_IMPORT
+ *  option is no-op in v3+).
+ *
+ *  Safety unchanged: the sanitization walk is identical; only the post-walk
+ *  serialize → reparse round-trip is eliminated.
+ *
+ *  Note about timing semantics: callers that previously split sanitize-ms
+ *  vs dom-ms now see most of the work inside the sanitize call (DOMPurify's
+ *  internal parse + walk). The post-call DOM cost is just
+ *  stripWhitespaceTextNodes + insertBefore — usually sub-ms. */
+function sanitizeToFragment(html: string): DocumentFragment {
+  return DOMPurify.sanitize(html, {
+    USE_PROFILES: { html: true, mathMl: true },
+    RETURN_DOM_FRAGMENT: true,
+  });
+}
+
 /**
  * Walk lexed tokens and merge any whose accumulated raw leaves an unbalanced
  * state (open ``` fence or unclosed block-level HTML tag) into the previous
@@ -442,18 +471,13 @@ function renderMissBlock(
     );
   }
   const tSan0 = now();
-  const html = DOMPurify.sanitize(out, {
-    USE_PROFILES: { html: true, mathMl: true },
-  });
+  const frag = sanitizeToFragment(out);
   const tSan1 = now();
   const sanMs = tSan1 - tSan0;
   timing.sanitize += sanMs;
   perfMeasure("mdstream.sanitize", tSan0, tSan1);
   const tDom0 = now();
-  const tmp = document.createElement("template");
-  tmp.innerHTML = html;
-  stripWhitespaceTextNodes(tmp.content);
-  const frag = tmp.content;
+  stripWhitespaceTextNodes(frag);
   const newCount = frag.children.length;
   for (let k = 0; k < prevCount; k++) {
     const child = host.children.item(offset);
@@ -548,16 +572,12 @@ function renderOneListItem(
     );
   }
   const tS0 = now();
-  const sanitized = DOMPurify.sanitize(itemHtml, {
-    USE_PROFILES: { html: true, mathMl: true },
-  });
+  const frag = sanitizeToFragment(itemHtml);
   const tS1 = now();
   const tD0 = now();
-  const tmp = document.createElement("template");
-  tmp.innerHTML = sanitized;
-  stripWhitespaceTextNodes(tmp.content);
-  // tmp.content has one <ul>/<ol> with one <li> inside.
-  const wrap = tmp.content.firstElementChild;
+  stripWhitespaceTextNodes(frag);
+  // frag has one <ul>/<ol> with one <li> inside.
+  const wrap = frag.firstElementChild;
   const newLi = wrap?.firstElementChild ?? null;
   const tD1 = now();
   return {
@@ -612,13 +632,9 @@ function renderListBlock(
       ...marked.defaults,
       async: false,
     }) as string;
-    const sanitizedEmpty = DOMPurify.sanitize(emptyHtml, {
-      USE_PROFILES: { html: true, mathMl: true },
-    });
-    const tmp = document.createElement("template");
-    tmp.innerHTML = sanitizedEmpty;
-    stripWhitespaceTextNodes(tmp.content);
-    const fresh = tmp.content.firstElementChild;
+    const sanitizedFrag = sanitizeToFragment(emptyHtml);
+    stripWhitespaceTextNodes(sanitizedFrag);
+    const fresh = sanitizedFrag.firstElementChild;
     if (!fresh) {
       // Marked produced no container element (degenerate case, e.g. items
       // is empty and marked emitted nothing). Fall back to the full slow
@@ -745,16 +761,12 @@ function renderOneTableRow(
     );
   }
   const tS0 = now();
-  const sanitized = DOMPurify.sanitize(html, {
-    USE_PROFILES: { html: true, mathMl: true },
-  });
+  const frag = sanitizeToFragment(html);
   const tS1 = now();
   const tD0 = now();
-  const tmp = document.createElement("template");
-  tmp.innerHTML = sanitized;
-  stripWhitespaceTextNodes(tmp.content);
+  stripWhitespaceTextNodes(frag);
   // Resulting structure: <table><thead>...</thead><tbody><tr>...</tr></tbody></table>
-  const table = tmp.content.firstElementChild;
+  const table = frag.firstElementChild;
   const tbody = table?.querySelector("tbody");
   const newTr = tbody?.firstElementChild ?? null;
   const tD1 = now();
@@ -814,15 +826,11 @@ function renderTableBlock(
     const tP1 = now();
     timing.parse += tP1 - tP0;
     const tS0 = now();
-    const sanitizedEmpty = DOMPurify.sanitize(emptyHtml, {
-      USE_PROFILES: { html: true, mathMl: true },
-    });
+    const sanitizedFrag = sanitizeToFragment(emptyHtml);
     const tS1 = now();
     timing.sanitize += tS1 - tS0;
-    const tmp = document.createElement("template");
-    tmp.innerHTML = sanitizedEmpty;
-    stripWhitespaceTextNodes(tmp.content);
-    const fresh = tmp.content.firstElementChild;
+    stripWhitespaceTextNodes(sanitizedFrag);
+    const fresh = sanitizedFrag.firstElementChild;
     if (!fresh) {
       return slowPathFallback(
         host,
@@ -923,16 +931,11 @@ function slowPathFallback(
     throw new Error("slowPathFallback: async marked");
   }
   const tSan0 = now();
-  const html = DOMPurify.sanitize(out, {
-    USE_PROFILES: { html: true, mathMl: true },
-  });
+  const frag = sanitizeToFragment(out);
   const tSan1 = now();
   timing.sanitize += tSan1 - tSan0;
   const tDom0 = now();
-  const tmp = document.createElement("template");
-  tmp.innerHTML = html;
-  stripWhitespaceTextNodes(tmp.content);
-  const frag = tmp.content;
+  stripWhitespaceTextNodes(frag);
   const newCount = frag.children.length;
   for (let k = 0; k < prevCount; k++) {
     const child = host.children.item(offset);
