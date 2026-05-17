@@ -3,12 +3,8 @@
  *
  * Tracks per-client metadata that survives SSE disconnect:
  *   - capabilities advertised by the client on /hello.
- *   - focus: legacy field; superseded by visible + active. Slated for
- *     removal in Plan C Step 5 once all readers are migrated.
  *   - visible / active / visibleSince: identity-layer visibility state used
- *     by TTS dispatch (voice branch) and push suppression (main). Mirrors
- *     PushService.updateClient semantics so the /visibility handler can
- *     double-write to both during the migration window.
+ *     by TTS dispatch (voice branch) and push suppression (main).
  *
  * Lifecycle: clients call /hello on SSE connect (register) and POST
  * /visibility on visibilitychange + 15s heartbeat. SSE disconnect does
@@ -20,8 +16,6 @@
 export interface ClientEntry {
   id: string;
   capabilities: string[];
-  /** @deprecated To be removed in Plan C Step 5. Use visible + active. */
-  focus: string | null;
   /** True iff the client most-recently reported the page as visible. */
   visible: boolean;
   /** Session the client is currently viewing (null = no session pane open). */
@@ -83,7 +77,6 @@ export class ClientRegistry {
     const entry: ClientEntry = {
       id,
       capabilities: data.capabilities,
-      focus: null,
       visible: false,
       active: null,
       visibleSince: 0,
@@ -97,13 +90,6 @@ export class ClientRegistry {
     this.clients.delete(id);
   }
 
-  setFocus(id: string, sessionId: string | null): void {
-    const entry = this.clients.get(id);
-    if (!entry) return;
-    entry.focus = sessionId;
-    entry.lastSeen = this.now();
-  }
-
   /**
    * Atomic visibility setter. Mirrors PushService.updateClient semantics:
    *   - `visible` omitted = preserve; bool = set (and stamp/clear visibleSince).
@@ -114,7 +100,7 @@ export class ClientRegistry {
    *   - Session-switch while visible (active X→Y) restarts the TTL clock
    *     even when the patch doesn't carry an explicit visible:true.
    *
-   * No-op on unknown client (parallels setFocus).
+   * No-op on unknown client.
    */
   setVisibility(id: string, patch: VisibilityPatch): SetVisibilityResult {
     const entry = this.clients.get(id);

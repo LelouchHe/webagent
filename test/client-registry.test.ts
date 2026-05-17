@@ -3,19 +3,20 @@ import assert from "node:assert";
 import { ClientRegistry } from "../src/client-registry.ts";
 
 describe("ClientRegistry", () => {
-  it("register stores capabilities, focus null, fresh lastSeen", () => {
+  it("register stores capabilities, fresh lastSeen", () => {
     const r = new ClientRegistry();
     const e = r.register("c1", { capabilities: ["sse"] });
     assert.equal(e.id, "c1");
     assert.deepEqual(e.capabilities, ["sse"]);
-    assert.equal(e.focus, null);
+    assert.equal(e.visible, false);
+    assert.equal(e.active, null);
     assert.ok(e.lastSeen <= Date.now());
   });
 
-  it("re-register same id updates capabilities + lastSeen, keeps focus", () => {
+  it("re-register same id updates capabilities + lastSeen, preserves identity state", () => {
     const r = new ClientRegistry();
     r.register("c1", { capabilities: [] });
-    r.setFocus("c1", "sess-A");
+    r.setVisibility("c1", { visible: true, active: "sess-A" });
     const before = r.get("c1")!.lastSeen;
     // sleep one tick
     const start = Date.now();
@@ -24,7 +25,8 @@ describe("ClientRegistry", () => {
     }
     const e = r.register("c1", { capabilities: ["push"] });
     assert.deepEqual(e.capabilities, ["push"]);
-    assert.equal(e.focus, "sess-A");
+    assert.equal(e.visible, true);
+    assert.equal(e.active, "sess-A");
     assert.ok(e.lastSeen >= before);
   });
 
@@ -34,21 +36,6 @@ describe("ClientRegistry", () => {
     r.remove("c1");
     assert.equal(r.get("c1"), undefined);
     assert.equal(r.list().length, 0);
-  });
-
-  it("setFocus on unknown client is no-op", () => {
-    const r = new ClientRegistry();
-    r.setFocus("ghost", "sess-X");
-    assert.equal(r.get("ghost"), undefined);
-  });
-
-  it("setFocus updates focus and lastSeen", () => {
-    const r = new ClientRegistry();
-    r.register("c1", { capabilities: [] });
-    r.setFocus("c1", "sess-A");
-    assert.equal(r.get("c1")!.focus, "sess-A");
-    r.setFocus("c1", null);
-    assert.equal(r.get("c1")!.focus, null);
   });
 
   it("updateCapabilities replaces caps, touches lastSeen", () => {
