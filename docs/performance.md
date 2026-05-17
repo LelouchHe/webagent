@@ -177,12 +177,16 @@ iOS Safari (JSCore) runs marked's regex-heavy lex/parse **2.4-3.7× slower** tha
 
 ## Observability
 
-Set `[debug]\nlevel = "debug"` in your config (or `/log debug` at runtime). The frontend then emits a structured `md-render slow` log record whenever a render exceeds **8 ms**.
+Set `[debug]\nlevel = "debug"` in your config (or `/log debug` at runtime). The frontend then emits structured slow-frame log records in two tiers:
 
-Shape:
+- **`md-render slow`** (`log.debug`) — frame took >8ms but ≤16ms. Pre-warning sample, half the 60Hz frame budget. Used to build a population for A/B against post-optimization. Visible at `debug` level.
+- **`md-render budget`** (`log.warn`) — frame took >16ms. **60Hz frame budget (16.67ms) exceeded.** Guaranteed drop on 120Hz ProMotion devices, edge on 60Hz. SLA violation. Visible at `warn` level or lower — so even production users with `level = "warn"` see these.
+
+Both records share the same payload shape:
 
 ```
-DEBUG md-render slow {
+WARN  md-render budget {                      // ms > 16 → log.warn (SLA violation)
+DEBUG md-render slow   {                      // 8 < ms ≤ 16 → log.debug (pre-warning)
   ms: 19,                        // total this frame
   len: 249,                      // accumulated text length
   blocks: 11,                    // total block count
@@ -197,11 +201,22 @@ DEBUG md-render slow {
   dom: 0,                        // post-sanitize: insertBefore + strip-text-nodes
   subHits: 17, subMisses: 1,     // Layer 5 stats (list/table item-level memo)
   missDetails: [
-    { type: "paragraph", len: 29, snip: "...", p: 0, s: 2, d: 0 },
-    { type: "list",      len: 10, snip: "...", p: 0, s: 2, d: 0 }
+    { type: "paragraph", len: 29, snip: "...", p: 0, s: 2, d: 0, path: "general" },
+    { type: "list",      len: 10, snip: "...", p: 0, s: 2, d: 0, path: "list", items: 5 }
   ]
 }
 ```
+
+**`missDetails[].path`** — which code path handled this miss block. Diagnostic for verifying dispatch routing (this field exists because we once misread "subHits=0, subMisses=0 on a list miss" as "sub-memo broken", when in fact the block had been block-cache-hit and never entered `renderMissBlock` at all):
+
+| Value | Meaning |
+|---|---|
+| `"general"` | `renderMissBlock` general path (single-token fast path or merged-tokens slow path). Used for `paragraph` / `heading` / `code` / `hr` / `space` / `html` / `blockquote` etc. |
+| `"list"` | `renderListBlock` entered — Layer 5 container sub-memo is engaged. Look at `subHits` / `subMisses` for hit rate. |
+| `"table"` | `renderTableBlock` entered — Layer 5 sub-memo engaged for table rows. |
+| `"slowFallback"` | `renderListBlock` or `renderTableBlock` bailed out (empty container build failed, or table lost its `<tbody>` after sanitize). Should be rare — if seen recurrently, indicates a sub-memo invariant broke. |
+
+**`missDetails[].items`** (list/table only) — `items.length` of the container token at the moment of the miss. Cross-reference with `subHits + subMisses` to verify all items were accounted for (`subHits + subMisses === items` should hold for that frame). A `path:"list", items:5, subHits:0, subMisses:0` line means we entered `renderListBlock` but the loop never ran — likely empty items array bug.
 
 In production, `debug` is off by default — zero overhead.
 
@@ -232,17 +247,44 @@ If you do implement this, gate it behind a runtime flag and A/B against the curr
 
 ## Known Limits and Deliberately-Not-Done
 
-The remaining steady-state cost lives almost entirely in **Layer 2's tail lex** (5-8 ms per chunk for a long growing list / table, dominating the 9-11 ms total seen in slow logs). The next optimization frontier is **sub-block incremental lexing** — when the tail is a single growing list with N items, items 1..N-1 are stable but Layer 2 still re-lexes the entire list raw on every chunk.
+The remaining steady-state cost lives almost entirely in **Layer 2's tail lex when the tail contains an open block**. As of 2026-05 dogfood on iOS Safari, slow frames (>8 ms) show the following typical attribution:
+
+| Frame ms | Dominant cost | Example slow log line |
+|---|---|---|
+| 14-19 ms | `lex.tail` over a tail that holds one **open block** (list/table still growing, or unclosed `$$...$$` math, or unclosed fence) | `lex: { tail: 16, tailLen: 73 }, parse: 0, sanitize: 3, dom: 0` |
+| 11-13 ms | Mixed: small lex + 1-2 ms each across parse/sanitize/dom | `lex: { tail: 5 }, parse: 1, sanitize: 5, dom: 0` (multi-miss frame: list close + hr + heading all at once) |
+| 9-11 ms | Per-block constant overhead (mostly DOMPurify cold call + insertBefore) on a sub-memo cache miss | `lex: 6, parse: 0, sanitize: 2, dom: 0, subHits: 4, subMisses: 1` |
+
+**All flavors of the high-ms frame are the same root cause: an unclosed block forces Layer 2 to re-lex the entire tail on every chunk.** What looks like several distinct problems are surface forms of one issue:
+
+| Surface form | Why it costs | Why it's the same problem |
+|---|---|---|
+| Long growing **list/table** tail | marked's list rule re-runs full block-regex + per-item inline tokenization across all N items every chunk | Layer 2's "lex tail only" optimization degenerates: the tail *is* one open block, so "lex tail" = "lex whole list" |
+| Unclosed `$$...$$` **math** block (or open inline `$...$`) | The Temml extension tokenizer regex scans forward from `$$` looking for the close marker; with no close, it scans to end of tail. LaTeX content like `\text{item}_{N-1}` triggers regex backtracking on `{...}` and `_` | Same shape: one open block, regex must scan the full tail each chunk |
+| Unclosed code fence (\`\`\`) or HTML block | `mergeUnclosedBlocks` merges everything from the open fence to tail into one block; marked re-lexes that whole region | Same shape: one open block stretches to tail end |
+
+Sub-block incremental lex (item-level for lists/tables, line-level for fences) is the unified fix. Items/lines before the current write head are stable; only the in-progress one needs re-lexing.
 
 This is deliberately not done because the path to fix it has poor ROI:
 
 | Option | Status | Reason |
 |---|---|---|
-| Sub-block incremental lex within marked | Investigated, rejected | No mainstream JS markdown parser exposes this (marked, markdown-it, micromark, CommonMark.js all re-lex from scratch). Implementing would require duplicating marked's lex state machine in our repo and maintaining it across marked upgrades. Tail savings 5-8ms is below frame budget. |
+| Sub-block incremental lex within marked | Investigated, **on watchlist** | No mainstream JS markdown parser exposes this (marked, markdown-it, micromark, CommonMark.js all re-lex from scratch). Implementing would require duplicating marked's lex state machine in our repo and maintaining it across marked upgrades. **Current dogfood shows `lex.tail` peaking at 14-16ms on long open-block tails (lists, tables, unclosed `$$...$$`, unclosed fences) — this is at the 60Hz frame boundary and over the 120Hz budget.** Not started because it's the highest-risk option (silent corrupt DOM if grouping rules misapplied), but its ROI rose meaningfully after Layer 5/6 collapsed the other costs. One fix addresses all four surface forms above. |
 | Hand-rolled "tail split + reuse prefix tokens" on top of marked | Investigated, rejected | markdown list semantics have backward dependencies (later content can change earlier item grouping via lazy continuation / indent rules). Picking a safe split point is error-prone; getting it wrong renders silently corrupt DOM. High maintenance cost for a sub-frame-budget gain. |
 | Switch to tree-sitter-markdown (true incremental parse) | Investigated, rejected | Architecturally correct (only library that actually solves the problem) but ~250 KB of WASM + grammar, no built-in HTML emitter (we'd write a tree → HTML walker plus DOMPurify integration), 1-2 weeks of work. Reserve as the nuclear option if a future feature genuinely needs editor-grade incremental parsing. |
 
-**When to reconsider**: if iOS Safari slow logs show `lex.tail > 16 ms` regularly in real sessions (currently 5-8 ms — well within budget), or if a new feature demands token-level streaming guarantees that marked cannot provide.
+**16ms is a hard ceiling, not a noise threshold.** A 60Hz frame budget is 16.67ms — touching 16ms means the frame is already on the edge; on 120Hz ProMotion devices (iPhone Pro / iPad) the budget is only 8.3ms, so any frame >8ms is a guaranteed drop. Current dogfood shows `lex.tail` for long open-block tails hovering at 14-16ms — under iOS 60Hz this is visually imperceptible, but it is NOT "healthy", it is "right at the line".
+
+**When to reconsider**:
+
+| Signal | Meaning | Action |
+|---|---|---|
+| `lex.tail > 16ms` occasional | Already at 60Hz edge; guaranteed drop on 120Hz | Evaluate sub-block incremental lex / tree-sitter ROI |
+| `lex.tail > 16ms` steady-state in normal sessions (not stress) | Real users can perceive | Ship sub-block solution |
+| `subHits + subMisses !== items` | Sub-memo invariant broken | Fix dispatch / cache key |
+| `path: "slowFallback"` frequent | Container build fell back | Fix `renderListBlock` / `renderTableBlock` |
+
+Or if a new feature demands token-level streaming guarantees that marked cannot provide.
 
 Other known minor inefficiencies, kept as-is:
 
