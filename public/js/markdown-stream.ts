@@ -126,7 +126,13 @@ export interface MissDetail {
    *  Values: "general" (renderMissBlock fallback, dispatch missed sub-memo),
    *          "list" (renderListBlock entered),
    *          "table" (renderTableBlock entered),
-   *          "slowFallback" (renderListBlock/renderTableBlock bailed out). */
+   *          "slowFallback" (renderListBlock/renderTableBlock bailed out).
+   *
+   *  Note: only "slowFallback" carries info beyond `type` (signals a container
+   *  renderer bailed out, distinct from never-entering renderMissBlock).
+   *  The other three are derivable from `type` but retained to keep prod-log
+   *  grep schema stable (e.g. `path:"list"` queries already in operator use).
+   *  See plan.md 2026-05-17 Postscript M3 for the dismissal rationale. */
   path: "general" | "list" | "table" | "slowFallback";
   /** For path="list"/"table", number of items/rows in the container token.
    *  Surfaces "0-items list" edge case where sub-memo loop body never runs. */
