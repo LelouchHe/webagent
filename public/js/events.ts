@@ -917,38 +917,47 @@ function doAssistantRender() {
   //   ms > 8   → log.debug "md-render slow"    — pre-warning sample. Half
   //              the 60Hz budget, leaves headroom for scroll + other JS.
   //              Used to build a population for A/B against post-optimization.
-  // Compact field names (p/s/d) keep the line one screen wide for copy-paste
-  // from the mobile log panel.
+  // Field names are spelled out (parseMs/sanMs/domMs etc.) — grep-friendly,
+  // self-documenting. Slow log fires only on ms > 8 so volume is bounded;
+  // saving a few bytes per record with single-letter shorthand is not worth
+  // the readability cost.
   if (ms > 8) {
     const t = getLastMarkdownStreamTiming();
     const fmt = (n: number) => Math.round(n * 10) / 10;
     const payload = {
       ms: fmt(ms),
       len: state.currentAssistantText.length,
+      seq: t.seq,
       blocks: t.blocks,
       hits: t.hits,
       misses: t.misses,
+      fastPath: t.fastPath,
       lex: {
         total: fmt(t.lex),
         prefix: fmt(t.lexPrefix),
         tail: fmt(t.lexTail),
+        prefixBlocks: t.prefixBlocks,
+        prefixLen: t.prefixLen,
         tailLen: t.tailLen,
         tailBlocks: t.tailBlocks,
+        tailRawBlocks: t.tailRawBlocks,
       },
       parse: fmt(t.parse),
       sanitize: fmt(t.sanitize),
       dom: fmt(t.dom),
-      subHits: t.subHits,
-      subMisses: t.subMisses,
+      subList: t.subList,
+      subTable: t.subTable,
+      defsAbsorbed: t.defsAbsorbed,
+      linkMemoSize: t.linkMemoSize,
       // Cap to first 5 miss blocks — covers steady-state (typically 1-2)
       // without exploding line length when an unusual frame redraws many.
       missDetails: t.missDetails.slice(0, 5).map((m) => ({
         type: m.type,
         len: m.len,
         snip: m.snip,
-        p: fmt(m.parseMs),
-        s: fmt(m.sanMs),
-        d: fmt(m.domMs),
+        parseMs: fmt(m.parseMs),
+        sanMs: fmt(m.sanMs),
+        domMs: fmt(m.domMs),
         path: m.path,
         ...(m.items !== undefined ? { items: m.items } : {}),
       })),

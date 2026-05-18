@@ -30,8 +30,8 @@ interface ChunkStat {
   lexPrefix: number; // lexed-prefix block count, NOT ms
   lexTail: number; // lexed-tail block count
   tailLen: number;
-  subHits: number;
-  subMisses: number;
+  subList: { hits: number; misses: number };
+  subTable: { hits: number; misses: number };
 }
 
 describe("markdown-stream cache-hit regression", () => {
@@ -62,8 +62,8 @@ describe("markdown-stream cache-hit regression", () => {
       lexPrefix: t.blocks - t.tailBlocks,
       lexTail: t.tailBlocks,
       tailLen: t.tailLen,
-      subHits: t.subHits,
-      subMisses: t.subMisses,
+      subList: { hits: t.subList.hits, misses: t.subList.misses },
+      subTable: { hits: t.subTable.hits, misses: t.subTable.misses },
     };
   }
 
@@ -154,26 +154,26 @@ describe("markdown-stream cache-hit regression", () => {
     for (let i = 1; i < stats.length; i++) {
       const s = stats[i];
       assert.ok(
-        s.subHits >= lastSubHits,
-        `chunk ${i}: subHits regressed (${lastSubHits} → ${s.subHits})`,
+        s.subList.hits >= lastSubHits,
+        `chunk ${i}: subList.hits regressed (${lastSubHits} → ${s.subList.hits})`,
       );
-      lastSubHits = s.subHits;
+      lastSubHits = s.subList.hits;
 
       // Exactly 1: only the newly-appended item misses. The previously-last
       // item's raw gained a trailing "\n", but listItemKey strips it so the
       // cache key matches.
       assert.strictEqual(
-        s.subMisses,
+        s.subList.misses,
         1,
-        `chunk ${i}: expected exactly 1 sub-miss (the new item), got ${s.subMisses}`,
+        `chunk ${i}: expected exactly 1 sub-miss (the new item), got ${s.subList.misses}`,
       );
 
-      // After several items have been rendered, subHits must be > 0
+      // After several items have been rendered, subList.hits must be > 0
       // — confirming items 1..N-1 are being reused, not re-rendered.
       if (i >= 5) {
         assert.ok(
-          s.subHits > 0,
-          `chunk ${i}: expected sub-memo to reuse prior items, subHits=${s.subHits}`,
+          s.subList.hits > 0,
+          `chunk ${i}: expected sub-memo to reuse prior items, subList.hits=${s.subList.hits}`,
         );
       }
     }
@@ -182,9 +182,9 @@ describe("markdown-stream cache-hit regression", () => {
     // 15th item is a miss).
     const final = stats[stats.length - 1];
     assert.strictEqual(
-      final.subHits,
+      final.subList.hits,
       14,
-      `final chunk: expected exactly 14 sub-hits across 15 items, got ${final.subHits}`,
+      `final chunk: expected exactly 14 sub-hits across 15 items, got ${final.subList.hits}`,
     );
   });
 
@@ -201,20 +201,20 @@ describe("markdown-stream cache-hit regression", () => {
     for (let i = 1; i < stats.length; i++) {
       const s = stats[i];
       assert.ok(
-        s.subHits >= lastSubHits,
-        `chunk ${i}: table subHits regressed (${lastSubHits} → ${s.subHits})`,
+        s.subTable.hits >= lastSubHits,
+        `chunk ${i}: table subTable.hits regressed (${lastSubHits} → ${s.subTable.hits})`,
       );
-      lastSubHits = s.subHits;
+      lastSubHits = s.subTable.hits;
       assert.ok(
-        s.subMisses <= 1,
-        `chunk ${i}: expected ≤1 table sub-miss, got ${s.subMisses}`,
+        s.subTable.misses <= 1,
+        `chunk ${i}: expected ≤1 table sub-miss, got ${s.subTable.misses}`,
       );
     }
 
     const final = stats[stats.length - 1];
     assert.ok(
-      final.subHits >= 10,
-      `final chunk: expected ≥10 row sub-hits across 12 rows, got ${final.subHits}`,
+      final.subTable.hits >= 10,
+      `final chunk: expected ≥10 row sub-hits across 12 rows, got ${final.subTable.hits}`,
     );
   });
 
@@ -231,7 +231,7 @@ describe("markdown-stream cache-hit regression", () => {
     // by the variant change.
     mod.updateMarkdownStream(host, "- one\n- two\n- three");
     const tightStats = snap();
-    assert.ok(tightStats.subHits >= 0);
+    assert.ok(tightStats.subList.hits >= 0);
 
     // Flip to loose by inserting a blank line before a new item. marked
     // marks the entire list `loose: true` once any blank line appears
@@ -241,9 +241,9 @@ describe("markdown-stream cache-hit regression", () => {
 
     // Variant change → fresh container → subCache reset → all 4 items miss.
     assert.strictEqual(
-      looseStats.subMisses,
+      looseStats.subList.misses,
       4,
-      `loose flip: expected all 4 items to miss (container rebuilt), got subMisses=${looseStats.subMisses}, subHits=${looseStats.subHits}`,
+      `loose flip: expected all 4 items to miss (container rebuilt), got subList.misses=${looseStats.subList.misses}, subList.hits=${looseStats.subList.hits}`,
     );
 
     // DOM sanity: loose list wraps items in `<p>` — confirm rebuild actually

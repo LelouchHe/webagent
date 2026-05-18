@@ -153,10 +153,7 @@ describe("markdown-stream slow-log field contract", () => {
     mod.updateMarkdownStream(host, "- a\n- b\n- c");
     mod.updateMarkdownStream(host, "- a\n- b\n- c\n- d");
     const t = mod.getLastMarkdownStreamTiming();
-    assert.ok(
-      typeof t.subList === "object" && t.subList !== null,
-      "subList must be present",
-    );
+    assert.strictEqual(typeof t.subList, "object", "subList must be present");
     assert.strictEqual(typeof t.subList.hits, "number");
     assert.strictEqual(typeof t.subList.misses, "number");
     assert.ok(

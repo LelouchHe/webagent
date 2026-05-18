@@ -80,6 +80,10 @@ interface MarkdownStreamMemo {
    *  defs keep the first. Pre-loaded into a fresh `Lexer` instance before
    *  every tail re-lex so cross-chunk reflinks resolve at lex time. */
   links: Links;
+  /** Per-host call counter, 1-indexed; surfaced as timing.seq for slow-log
+   *  cold-start vs steady-state attribution. Different host = independent
+   *  counter (no shared global state). */
+  callCount: number;
 }
 
 /** Sub-block memo for container token types (list / table / blockquote).
@@ -141,16 +145,33 @@ export interface MarkdownStreamTiming {
   lexPrefix: number;
   /** Time spent in mergeUnclosedBlocks → marked.lexer(tail). */
   lexTail: number;
+  /** Number of cache-prefix blocks reused this call (no relex). */
+  prefixBlocks: number;
+  /** Total chars covered by the cache prefix this call. */
+  prefixLen: number;
   /** Length of the tail that was relexed. */
   tailLen: number;
-  /** Number of blocks produced by the tail relex. */
+  /** Number of blocks produced by the tail relex AFTER mergeUnclosedBlocks. */
   tailBlocks: number;
+  /** Number of raw tokens produced by marked.lexer on the tail, BEFORE
+   *  mergeUnclosedBlocks combined any. Equals tailBlocks when no fence/HTML
+   *  straddling triggered a merge; > tailBlocks when merge happened. */
+  tailRawBlocks: number;
+  /** Count of blocks rendered through the opt #2 single-token fastpath
+   *  (marked.parser([token]) skipping the inner re-lex). */
+  fastPath: number;
+  /** Count of new reflink defs absorbed into the cross-call memo this call. */
+  defsAbsorbed: number;
+  /** Total reflink defs cached after this call (Object.keys(memo.links).length). */
+  linkMemoSize: number;
+  /** 1-indexed per-host call sequence. Cold start = low values; steady state = high. */
+  seq: number;
   /** Per-miss-block breakdown. Empty when nothing missed (all cache hits). */
   missDetails: MissDetail[];
-  /** Sub-item cache hits inside container blocks (list/table/blockquote). */
-  subHits: number;
-  /** Sub-item cache misses inside container blocks. */
-  subMisses: number;
+  /** Sub-item cache hits/misses inside list containers (`<ul>` / `<ol>`). */
+  subList: { hits: number; misses: number };
+  /** Sub-item cache hits/misses inside table containers. */
+  subTable: { hits: number; misses: number };
 }
 
 function emptyTiming(): MarkdownStreamTiming {
@@ -164,11 +185,18 @@ function emptyTiming(): MarkdownStreamTiming {
     misses: 0,
     lexPrefix: 0,
     lexTail: 0,
+    prefixBlocks: 0,
+    prefixLen: 0,
     tailLen: 0,
     tailBlocks: 0,
+    tailRawBlocks: 0,
+    fastPath: 0,
+    defsAbsorbed: 0,
+    linkMemoSize: 0,
+    seq: 0,
     missDetails: [],
-    subHits: 0,
-    subMisses: 0,
+    subList: { hits: 0, misses: 0 },
+    subTable: { hits: 0, misses: 0 },
   };
 }
 
@@ -285,7 +313,7 @@ interface MergedBlock {
 function mergeUnclosedBlocks(
   fullText: string,
   memoLinks: Links,
-): MergedBlock[] {
+): { blocks: MergedBlock[]; rawCount: number } {
   // Use a fresh Lexer instance so we can pre-load `tokens.links` from the
   // cross-call memo BEFORE lexing. marked resolves reflinks during inline
   // tokenization (not parser walk), so the def map must be visible to the
@@ -366,7 +394,7 @@ function mergeUnclosedBlocks(
     (accTokens as Token[] & { links?: Record<string, unknown> }).links = links;
     blocks.push({ raw: acc, type: accType ?? "?", tokens: accTokens });
   }
-  return blocks;
+  return { blocks, rawCount: tokens.length };
 }
 
 // Incremental lex: count how many leading cached blocks are still a
@@ -386,8 +414,17 @@ interface IncrementalLexResult {
   blocks: Array<{ raw: string; type: string | null; tokens: Token[] | null }>;
   prefixMs: number;
   tailMs: number;
+  /** Cache-prefix block count reused (no relex). */
+  prefixBlockCount: number;
+  /** Total chars covered by the cache prefix. */
+  prefixLen: number;
   tailLen: number;
+  /** Tail blocks AFTER mergeUnclosedBlocks combined fence/HTML straddles. */
   tailBlockCount: number;
+  /** Tail token count from marked.lexer BEFORE mergeUnclosedBlocks. */
+  tailRawBlockCount: number;
+  /** New reflink defs added to memoLinks this call (first-write-wins). */
+  defsAbsorbed: number;
 }
 
 function incrementalLex(
@@ -412,7 +449,10 @@ function incrementalLex(
   const tPrefix1 = now();
   const tail = stableLen === 0 ? fullText : fullText.slice(stableLen);
   const tTail0 = now();
-  const tailBlocks = tail ? mergeUnclosedBlocks(tail, memoLinks) : [];
+  const tailResult = tail
+    ? mergeUnclosedBlocks(tail, memoLinks)
+    : { blocks: [], rawCount: 0 };
+  const tailBlocks = tailResult.blocks;
   const tTail1 = now();
   // Absorb `def` tokens from non-last tail blocks into the cross-call memo
   // (first-write-wins, matching marked's full-text baseline). Skipping the
@@ -421,11 +461,15 @@ function incrementalLex(
   // refuse to record a potentially-truncated href until a later block has
   // pinned it down. Once a later block arrives, the def block is no longer
   // the last and gets absorbed normally on a subsequent call.
+  let defsAbsorbed = 0;
   for (let i = 0; i < tailBlocks.length - 1; i++) {
     const b = tailBlocks[i];
     if (b.type !== "def") continue;
     const def = b.tokens[0] as Tokens.Def;
-    memoLinks[def.tag] ??= { href: def.href, title: def.title };
+    if (!(def.tag in memoLinks)) {
+      memoLinks[def.tag] = { href: def.href, title: def.title };
+      defsAbsorbed++;
+    }
   }
   const merged: Array<{
     raw: string;
@@ -440,8 +484,12 @@ function incrementalLex(
     blocks: merged,
     prefixMs: tPrefix1 - tPrefix0,
     tailMs: tTail1 - tTail0,
+    prefixBlockCount: stableCount,
+    prefixLen: stableLen,
     tailLen: tail.length,
     tailBlockCount: tailBlocks.length,
+    tailRawBlockCount: tailResult.rawCount,
+    defsAbsorbed,
   };
 }
 
@@ -508,6 +556,7 @@ function renderMissBlock(
   // fallback semantics are preserved.
   let out: string | Promise<string>;
   if (!pathOverride && tokens?.length === 1) {
+    timing.fastPath++;
     // NB: must spread `marked.defaults` — passing only `{async:false}`
     // would replace the entire options object, losing the math (Temml)
     // extension renderer registered via `marked.use(...)` in math.ts.
@@ -731,10 +780,10 @@ function renderListBlock(
   for (let j = 0; j < items.length; j++) {
     const itemKey = listItemKey(items[j].raw);
     if (subCache[j] === itemKey && containerEl.children.item(j)) {
-      timing.subHits++;
+      timing.subList.hits++;
       continue;
     }
-    timing.subMisses++;
+    timing.subList.misses++;
     const r = renderOneListItem(listTok, items[j], now);
     parseAccMs += r.parseMs;
     sanAccMs += r.sanMs;
@@ -933,10 +982,10 @@ function renderTableBlock(
   for (let j = 0; j < rows.length; j++) {
     const key = tableRowKey(rows[j]);
     if (subCache[j] === key && tbodyEl.children.item(j)) {
-      timing.subHits++;
+      timing.subTable.hits++;
       continue;
     }
-    timing.subMisses++;
+    timing.subTable.misses++;
     const r = renderOneTableRow(tableTok, rows[j], now);
     parseAccMs += r.parseMs;
     sanAccMs += r.sanMs;
@@ -999,9 +1048,17 @@ export function updateMarkdownStream(
   const tTotal0 = now();
 
   if (!memo) {
-    memo = { cache: [], rootCounts: [], subMemos: [], links: {} };
+    memo = {
+      cache: [],
+      rootCounts: [],
+      subMemos: [],
+      links: {},
+      callCount: 0,
+    };
     markdownStreamMemos.set(host, memo);
   }
+  memo.callCount++;
+  timing.seq = memo.callCount;
   const { cache, rootCounts, subMemos } = memo;
 
   const tLex0 = now();
@@ -1010,8 +1067,12 @@ export function updateMarkdownStream(
   timing.lex = tLex1 - tLex0;
   timing.lexPrefix = lexResult.prefixMs;
   timing.lexTail = lexResult.tailMs;
+  timing.prefixBlocks = lexResult.prefixBlockCount;
+  timing.prefixLen = lexResult.prefixLen;
   timing.tailLen = lexResult.tailLen;
   timing.tailBlocks = lexResult.tailBlockCount;
+  timing.tailRawBlocks = lexResult.tailRawBlockCount;
+  timing.defsAbsorbed = lexResult.defsAbsorbed;
   const merged = lexResult.blocks;
   timing.blocks = merged.length;
   perfMeasure("mdstream.lex", tLex0, tLex1);
@@ -1058,6 +1119,7 @@ export function updateMarkdownStream(
       );
     }
   }
+  timing.linkMemoSize = Object.keys(memo.links).length;
   lastTiming = timing;
   perfMeasure("mdstream.total", tTotal0, now());
 }

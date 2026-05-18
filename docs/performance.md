@@ -140,7 +140,7 @@ Layer 5 caches **per `<li>` / `<tr>`** inside a preserved container element:
 - **Sub-hit**: `<li>` / `<tr>` left in place, zero DOM mutation.
 - **Sub-miss**: re-parse just that item via a synthetic single-item list/table token, `replaceChild` the corresponding row.
 
-Locked by `test/markdown-stream-cache.test.ts` — counter-based regression tests assert `subMisses === 1` per append, plus a tight→loose flip case that asserts container rebuild produces actual `<p>`-wrapped `<li>`.
+Locked by `test/markdown-stream-cache.test.ts` — counter-based regression tests assert `subList.misses === 1` per append (and `subTable.misses ≤ 1` for tables), plus a tight→loose flip case that asserts container rebuild produces actual `<p>`-wrapped `<li>`.
 
 ## Layer 6 — Sanitize-to-Fragment
 
@@ -189,34 +189,51 @@ WARN  md-render budget {                      // ms > 16 → log.warn (SLA viola
 DEBUG md-render slow   {                      // 8 < ms ≤ 16 → log.debug (pre-warning)
   ms: 19,                        // total this frame
   len: 249,                      // accumulated text length
+  seq: 47,                       // per-host call sequence (1-indexed)
   blocks: 11,                    // total block count
   hits: 8, misses: 3,            // Layer 3 stats (block-level memo)
+  fastPath: 2,                   // single-token opt #2 fastpath fire count
   lex: {
     total: 14,
-    prefix: 0, tail: 14,         // Layer 2 stats: prefix reused, tail re-lexed
-    tailLen: 41, tailBlocks: 3
+    prefix: 0, tail: 14,         // Layer 2 stats: prefix walk ms / tail relex ms
+    prefixBlocks: 4,             // # of cache-prefix blocks reused (no relex)
+    prefixLen: 158,              // chars covered by prefix
+    tailLen: 41,
+    tailBlocks: 3,               // after mergeUnclosedBlocks
+    tailRawBlocks: 3             // before merge — equal when no fence/HTML straddle
   },
   parse: 0,                      // Layer 4 stats (sum across miss blocks)
   sanitize: 4,                   // Layer 6 stats (DOMPurify time)
   dom: 0,                        // post-sanitize: insertBefore + strip-text-nodes
-  subHits: 17, subMisses: 1,     // Layer 5 stats (list/table item-level memo)
+  subList:  { hits: 17, misses: 1 },  // Layer 5 stats (list item-level memo)
+  subTable: { hits:  0, misses: 0 },  // Layer 5 stats (table row memo)
+  defsAbsorbed: 0,               // new reflink defs absorbed into memo this call
+  linkMemoSize: 2,               // total reflink defs cached after this call
   missDetails: [
-    { type: "paragraph", len: 29, snip: "...", p: 0, s: 2, d: 0, path: "general" },
-    { type: "list",      len: 10, snip: "...", p: 0, s: 2, d: 0, path: "list", items: 5 }
+    { type: "paragraph", len: 29, snip: "...", parseMs: 0, sanMs: 2, domMs: 0, path: "general" },
+    { type: "list",      len: 10, snip: "...", parseMs: 0, sanMs: 2, domMs: 0, path: "list", items: 5 }
   ]
 }
 ```
+
+**Diagnostic recipes for common questions:**
+
+- *Is prefix lex actually working?* — `lex.prefixLen / (lex.prefixLen + lex.tailLen)`. Steady-state should be ≥ 0.9. If you see `prefixBlocks: 0, tailLen ≈ len` mid-stream, the cache invariant broke (some earlier chunk mutated a stable block's raw).
+- *Is opt #2 fastpath firing?* — `fastPath / misses`. Steady-state for plain paragraphs should be ~1.0. If it's 0 while `misses > 0`, every miss block is going through `marked.parse(raw)` (double-lex) — check whether token-merging is over-triggering.
+- *Did mergeUnclosedBlocks combine anything?* — `tailRawBlocks - tailBlocks`. Should be 0 in healthy streams; > 0 means a fence or HTML element is straddling the chunk boundary.
+- *Did E2 reflink memo grow?* — `defsAbsorbed > 0` on a frame whose tail introduced a new `[label]: url` def. `linkMemoSize` only grows; check it resets to 0 on a fresh session.
+- *Cold start vs steady state?* — `seq < 5` is cold (first few chunks of a turn); higher seq numbers reflect steady state.
 
 **`missDetails[].path`** — which code path handled this miss block. Diagnostic for verifying dispatch routing (this field exists because we once misread "subHits=0, subMisses=0 on a list miss" as "sub-memo broken", when in fact the block had been block-cache-hit and never entered `renderMissBlock` at all):
 
 | Value | Meaning |
 |---|---|
 | `"general"` | `renderMissBlock` general path (single-token fast path or merged-tokens slow path). Used for `paragraph` / `heading` / `code` / `hr` / `space` / `html` / `blockquote` etc. |
-| `"list"` | `renderListBlock` entered — Layer 5 container sub-memo is engaged. Look at `subHits` / `subMisses` for hit rate. |
-| `"table"` | `renderTableBlock` entered — Layer 5 sub-memo engaged for table rows. |
+| `"list"` | `renderListBlock` entered — Layer 5 container sub-memo is engaged. Look at `subList.hits` / `subList.misses` for hit rate. |
+| `"table"` | `renderTableBlock` entered — Layer 5 sub-memo engaged for table rows. Look at `subTable.hits` / `subTable.misses`. |
 | `"slowFallback"` | `renderListBlock` or `renderTableBlock` bailed out (empty container build failed, or table lost its `<tbody>` after sanitize). Should be rare — if seen recurrently, indicates a sub-memo invariant broke. |
 
-**`missDetails[].items`** (list/table only) — `items.length` of the container token at the moment of the miss. Cross-reference with `subHits + subMisses` to verify all items were accounted for (`subHits + subMisses === items` should hold for that frame). A `path:"list", items:5, subHits:0, subMisses:0` line means we entered `renderListBlock` but the loop never ran — likely empty items array bug.
+**`missDetails[].items`** (list/table only) — `items.length` of the container token at the moment of the miss. Cross-reference with `subList.hits + subList.misses` (or `subTable.*` for tables) to verify all items were accounted for. A `path:"list", items:5` line with `subList:{hits:0,misses:0}` means we entered `renderListBlock` but the loop never ran — likely empty items array bug.
 
 In production, `debug` is off by default — zero overhead.
 
@@ -253,7 +270,7 @@ The remaining steady-state cost lives almost entirely in **Layer 2's tail lex wh
 |---|---|---|
 | 14-19 ms | `lex.tail` over a tail that holds one **open block** (list/table still growing, or unclosed `$$...$$` math, or unclosed fence) | `lex: { tail: 16, tailLen: 73 }, parse: 0, sanitize: 3, dom: 0` |
 | 11-13 ms | Mixed: small lex + 1-2 ms each across parse/sanitize/dom | `lex: { tail: 5 }, parse: 1, sanitize: 5, dom: 0` (multi-miss frame: list close + hr + heading all at once) |
-| 9-11 ms | Per-block constant overhead (mostly DOMPurify cold call + insertBefore) on a sub-memo cache miss | `lex: 6, parse: 0, sanitize: 2, dom: 0, subHits: 4, subMisses: 1` |
+| 9-11 ms | Per-block constant overhead (mostly DOMPurify cold call + insertBefore) on a sub-memo cache miss | `lex: 6, parse: 0, sanitize: 2, dom: 0, subList: {hits: 4, misses: 1}` |
 
 **All flavors of the high-ms frame are the same root cause: an unclosed block forces Layer 2 to re-lex the entire tail on every chunk.** What looks like several distinct problems are surface forms of one issue:
 
@@ -281,7 +298,7 @@ This is deliberately not done because the path to fix it has poor ROI:
 |---|---|---|
 | `lex.tail > 16ms` occasional | Already at 60Hz edge; guaranteed drop on 120Hz | Evaluate sub-block incremental lex / tree-sitter ROI |
 | `lex.tail > 16ms` steady-state in normal sessions (not stress) | Real users can perceive | Ship sub-block solution |
-| `subHits + subMisses !== items` | Sub-memo invariant broken | Fix dispatch / cache key |
+| `subList.hits + subList.misses !== items` (or `subTable.*` for tables) | Sub-memo invariant broken | Fix dispatch / cache key |
 | `path: "slowFallback"` frequent | Container build fell back | Fix `renderListBlock` / `renderTableBlock` |
 
 Or if a new feature demands token-level streaming guarantees that marked cannot provide.
