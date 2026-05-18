@@ -46,7 +46,7 @@ export const ConfigSchema = z.object({
 
   // [title] — title generation sub-session configuration.
   //
-  // `model` is an array of case-insensitive substring patterns. When the
+  // `models` is an array of case-insensitive substring patterns. When the
   // title sub-session is created, we look at the model list the agent
   // reports (ACP `availableModels`) and pick the first model whose id
   // matches any pattern in order. Match → call `setConfigOption` with
@@ -61,17 +61,17 @@ export const ConfigSchema = z.object({
   //   - "flash"      → Google Gemini (gemini-*-flash)
   //   - "lite"       → Cohere, generic
   //
-  // Set `model = []` to disable substring matching entirely and always
+  // Set `models = []` to disable substring matching entirely and always
   // inherit the agent's default model. To pin one specific model, pass a
-  // single-element array: `model = ["claude-haiku-4.5"]`.
+  // single-element array: `models = ["claude-haiku-4.5"]`.
   title: z
     .object({
-      model: z
+      models: z
         .array(z.string())
         .default(["haiku", "flash-lite", "nano", "mini", "flash", "lite"]),
     })
     .default({
-      model: ["haiku", "flash-lite", "nano", "mini", "flash", "lite"],
+      models: ["haiku", "flash-lite", "nano", "mini", "flash", "lite"],
     }),
 
   // [debug] — frontend log level.

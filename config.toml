@@ -74,10 +74,10 @@ global_visibility_suppression = true
 #   - "flash"      → Google Gemini (gemini-*-flash)
 #   - "lite"       → Cohere, generic
 #
-# Set model = [] to disable matching entirely and always inherit the
+# Set models = [] to disable matching entirely and always inherit the
 # agent's default model. To pin one specific model, use a single-element
-# array, e.g. model = ["claude-haiku-4.5"].
-model = ["haiku", "flash-lite", "nano", "mini", "flash", "lite"]
+# array, e.g. models = ["claude-haiku-4.5"].
+models = ["haiku", "flash-lite", "nano", "mini", "flash", "lite"]
 
 [debug]
 # Frontend log level. One of: off | debug | info | warn | error.

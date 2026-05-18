@@ -1,8 +1,8 @@
 import type { AgentBridge } from "./bridge.ts";
 import type { SessionManager } from "./session-manager.ts";
 import type { Store } from "./store.ts";
-import type { ConfigOption } from "./types.ts";
 import { log } from "./log.ts";
+import { pickModelByPatterns } from "./model-picker.ts";
 
 const tlog = log.scope("title");
 
@@ -25,10 +25,7 @@ export class TitleService {
     this.store = store;
     this.sessions = sessions;
     this.defaultCwd = defaultCwd;
-    // Lowercase + drop empty strings for case-insensitive substring match.
-    this.modelPatterns = modelPatterns
-      .map((p) => p.trim().toLowerCase())
-      .filter((p) => p.length > 0);
+    this.modelPatterns = modelPatterns;
   }
 
   /** Generate a title for the session (non-blocking, fire-and-forget). */
@@ -115,7 +112,7 @@ export class TitleService {
       // the agent's reported availableModels (`configOptions[id=model].options`).
       // Empty pattern list, no model option, or no match → skip the call and
       // inherit the agent's default model (`currentModelId`).
-      const picked = this.pickTitleModel(configOptions);
+      const picked = pickModelByPatterns(configOptions, this.modelPatterns);
       if (picked) {
         await bridge.setConfigOption(id, "model", picked).catch(() => []);
       }
@@ -124,19 +121,5 @@ export class TitleService {
     } catch {
       return null;
     }
-  }
-
-  /** Find the first available model whose id matches any pattern (case-insensitive). */
-  private pickTitleModel(configOptions: ConfigOption[]): string | null {
-    if (this.modelPatterns.length === 0) return null;
-    const modelOpt = configOptions.find((c) => c.id === "model");
-    if (!modelOpt || modelOpt.options.length === 0) return null;
-    for (const pattern of this.modelPatterns) {
-      const hit = modelOpt.options.find((o) =>
-        o.value.toLowerCase().includes(pattern),
-      );
-      if (hit) return hit.value;
-    }
-    return null;
   }
 }

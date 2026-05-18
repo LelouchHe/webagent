@@ -98,7 +98,7 @@ const titleService = new TitleService(
   store,
   sessions,
   config.default_cwd,
-  config.title.model,
+  config.title.models,
 );
 const sseManager = new SseManager();
 const clientRegistry = new ClientRegistry();
