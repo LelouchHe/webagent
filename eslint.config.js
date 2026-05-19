@@ -57,6 +57,9 @@ export default tseslint.config(
       "@typescript-eslint/no-floating-promises": "error",
       "@typescript-eslint/no-misused-promises": "error",
       "@typescript-eslint/no-explicit-any": "error",
+      // Node's --experimental-strip-types only strips type annotations; it
+      // cannot transform TS parameter properties and fails at startup.
+      "@typescript-eslint/parameter-properties": "error",
       "@typescript-eslint/consistent-type-imports": [
         "error",
         // Allow `let x: typeof import("./foo")` inline type annotations;
