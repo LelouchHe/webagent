@@ -91,7 +91,6 @@ export default tseslint.config(
       complexity: ["error", { max: 20 }],
       "@typescript-eslint/only-throw-error": "error",
       "@typescript-eslint/no-unnecessary-condition": "error",
-      "@typescript-eslint/no-unnecessary-condition": "error",
       "@typescript-eslint/no-base-to-string": "error",
       "no-param-reassign": "error",
       "@typescript-eslint/switch-exhaustiveness-check": "error",
