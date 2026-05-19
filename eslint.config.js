@@ -31,7 +31,8 @@ export default tseslint.config(
       "bin/**",
       // Playwright config/spec files use a distinct test runner with its own globals.
       "playwright.config.ts",
-      "test/e2e/**",
+      "test/e2e/*.spec.ts",
+      "test/e2e/helpers.ts",
       "scripts/screenshots*.ts",
     ],
   },
@@ -208,6 +209,21 @@ export default tseslint.config(
       "@typescript-eslint/no-floating-promises": "off",
       "@typescript-eslint/no-misused-promises": "off",
       "no-console": "off",
+    },
+  },
+
+  // E2E support entrypoints run directly under `node --experimental-strip-types`
+  // (seed.ts from playwright.config.ts, mock-agent.ts via config.e2e.toml).
+  // Keep them linted for strip-types-incompatible syntax such as parameter
+  // properties, but relax noisy style rules because the broader E2E suite is
+  // intentionally excluded from project lint.
+  {
+    files: ["test/e2e/seed.ts", "test/e2e/mock-agent.ts"],
+    languageOptions: { globals: { ...globals.node } },
+    rules: {
+      "no-console": "off",
+      "@typescript-eslint/prefer-readonly": "off",
+      "@typescript-eslint/return-await": "off",
     },
   },
 
