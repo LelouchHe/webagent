@@ -380,7 +380,11 @@ describe("events", () => {
           entries: [{ content: "New", status: "in_progress" }],
         });
 
-        const plans = Array.from(dom.messages.querySelectorAll(".plan"));
+        const plans = Array.from(
+          (dom.messages as HTMLElement).querySelectorAll<HTMLDetailsElement>(
+            ".plan",
+          ),
+        );
         assert.equal(plans.length, 2);
         assert.equal(plans[0].open, false);
         assert.equal(plans[1].open, true);
@@ -1460,7 +1464,9 @@ describe("events", () => {
       );
 
       const plans = Array.from(
-        dom.messages.querySelectorAll(".plan"),
+        (dom.messages as HTMLElement).querySelectorAll<HTMLDetailsElement>(
+          ".plan",
+        ),
       );
       assert.equal(plans.length, 2);
       assert.equal(plans[0].open, false);

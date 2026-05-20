@@ -321,7 +321,10 @@ function buildPlan(data: Record<string, unknown>): HTMLElement {
           `<div class="plan-entry">${pv.symbol} ${escHtml(pv.content)}</div>`,
       )
       .join("")}</div>`;
-  el.querySelector(".plan-counts")?.setAttribute("aria-label", statusLabel);
+  el.querySelector(".plan-summary")?.setAttribute(
+    "aria-label",
+    statusLabel ? `plan: ${statusLabel}` : "plan",
+  );
   return el;
 }
 

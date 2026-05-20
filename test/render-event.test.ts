@@ -354,7 +354,11 @@ describe("render-event", () => {
       );
       assert.equal(
         summary.querySelector(".plan-counts")?.getAttribute("aria-label"),
-        "2 pending, 1 completed",
+        null,
+      );
+      assert.equal(
+        summary.getAttribute("aria-label"),
+        "plan: 2 pending, 1 completed",
       );
       const rows = el.querySelectorAll(".plan-entry");
       assert.equal(rows.length, 3);
@@ -373,8 +377,8 @@ describe("render-event", () => {
       )!;
       assert.equal(el.querySelector(".plan-counts")?.textContent, "? 1");
       assert.equal(
-        el.querySelector(".plan-counts")?.getAttribute("aria-label"),
-        "1 unknown",
+        el.querySelector(".plan-summary")?.getAttribute("aria-label"),
+        "plan: 1 unknown",
       );
       assert.equal(
         el.querySelector(".plan-entry")?.textContent,
