@@ -5,6 +5,7 @@ import {
   TOOL_ICONS,
   DEFAULT_TOOL_ICON,
   PLAN_STATUS_ICONS,
+  PLAN_STATUS_LABELS,
 } from "./constants.ts";
 import type {
   RawInput,
@@ -113,9 +114,18 @@ export function formatPlanStatusCounts(
   }
   const views = orderedStatuses.flatMap((status) => {
     const count = counts.get(status) ?? 0;
-    return count > 0 ? [{ symbol: PLAN_STATUS_ICONS[status], count }] : [];
+    return count > 0
+      ? [
+          {
+            symbol: PLAN_STATUS_ICONS[status],
+            label: PLAN_STATUS_LABELS[status] ?? status,
+            count,
+          },
+        ]
+      : [];
   });
-  if (unknownCount > 0) views.push({ symbol: "?", count: unknownCount });
+  if (unknownCount > 0)
+    views.push({ symbol: "?", label: "unknown", count: unknownCount });
   return views;
 }
 

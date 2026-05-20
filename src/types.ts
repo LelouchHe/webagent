@@ -255,6 +255,7 @@ export interface PlanEntryView {
 
 export interface PlanStatusCountView {
   symbol: string;
+  label: string;
   count: number;
 }
 

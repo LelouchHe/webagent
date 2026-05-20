@@ -247,9 +247,9 @@ describe("formatPlanStatusCounts", () => {
       { status: "completed", content: "Done 2" },
     ]);
     assert.deepEqual(result, [
-      { symbol: "○", count: 2 },
-      { symbol: "◉", count: 1 },
-      { symbol: "●", count: 2 },
+      { symbol: "○", label: "pending", count: 2 },
+      { symbol: "◉", label: "in progress", count: 1 },
+      { symbol: "●", label: "completed", count: 2 },
     ]);
   });
 
@@ -260,8 +260,8 @@ describe("formatPlanStatusCounts", () => {
       { status: "blocked", content: "Blocked" },
     ]);
     assert.deepEqual(result, [
-      { symbol: "○", count: 1 },
-      { symbol: "?", count: 2 },
+      { symbol: "○", label: "pending", count: 1 },
+      { symbol: "?", label: "unknown", count: 2 },
     ]);
   });
 

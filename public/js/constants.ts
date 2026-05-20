@@ -17,3 +17,8 @@ export const PLAN_STATUS_ICONS: Record<string, string> = {
   in_progress: "◉",
   completed: "●",
 };
+export const PLAN_STATUS_LABELS: Record<string, string> = {
+  pending: "pending",
+  in_progress: "in progress",
+  completed: "completed",
+};

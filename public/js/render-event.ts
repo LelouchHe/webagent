@@ -303,9 +303,13 @@ function buildPlan(data: Record<string, unknown>): HTMLElement {
     ? (data.entries as PlanEntry[])
     : [];
   const planViews = formatPlanEntries(entries);
-  const statusCounts = formatPlanStatusCounts(entries)
+  const countViews = formatPlanStatusCounts(entries);
+  const statusCounts = countViews
     .map((pv) => `${pv.symbol} ${pv.count}`)
     .join("  ");
+  const statusLabel = countViews
+    .map((pv) => `${pv.count} ${pv.label}`)
+    .join(", ");
   const el = document.createElement("details");
   el.className = "plan";
   el.open = true;
@@ -317,6 +321,7 @@ function buildPlan(data: Record<string, unknown>): HTMLElement {
           `<div class="plan-entry">${pv.symbol} ${escHtml(pv.content)}</div>`,
       )
       .join("")}</div>`;
+  el.querySelector(".plan-counts")?.setAttribute("aria-label", statusLabel);
   return el;
 }
 
