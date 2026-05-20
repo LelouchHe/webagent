@@ -380,9 +380,7 @@ describe("events", () => {
           entries: [{ content: "New", status: "in_progress" }],
         });
 
-        const plans = Array.from(
-          dom.messages.querySelectorAll(".plan"),
-        );
+        const plans = Array.from(dom.messages.querySelectorAll(".plan"));
         assert.equal(plans.length, 2);
         assert.equal(plans[0].open, false);
         assert.equal(plans[1].open, true);
@@ -1445,6 +1443,28 @@ describe("events", () => {
       );
       const el = globalThis.document.getElementById("tc-t1")!;
       assert.ok(el.classList.contains("completed"));
+    });
+
+    it("collapses prior open plans during replay", () => {
+      events.replayEvent(
+        "plan",
+        { entries: [{ content: "Old", status: "pending" }] },
+        [],
+        0,
+      );
+      events.replayEvent(
+        "plan",
+        { entries: [{ content: "New", status: "in_progress" }] },
+        [],
+        1,
+      );
+
+      const plans = Array.from(
+        dom.messages.querySelectorAll(".plan"),
+      );
+      assert.equal(plans.length, 2);
+      assert.equal(plans[0].open, false);
+      assert.equal(plans[1].open, true);
     });
 
     it("replays task_complete with visible summary", () => {
