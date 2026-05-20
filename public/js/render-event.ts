@@ -21,6 +21,7 @@ import {
   classifyPermissionOption,
   resolvePermissionLabel,
   formatPlanEntries,
+  formatPlanStatusCounts,
   parseDiff,
 } from "./event-interpreter.ts";
 import type {
@@ -302,16 +303,20 @@ function buildPlan(data: Record<string, unknown>): HTMLElement {
     ? (data.entries as PlanEntry[])
     : [];
   const planViews = formatPlanEntries(entries);
-  const el = document.createElement("div");
+  const statusCounts = formatPlanStatusCounts(entries)
+    .map((pv) => `${pv.symbol} ${pv.count}`)
+    .join("  ");
+  const el = document.createElement("details");
   el.className = "plan";
+  el.open = true;
   el.innerHTML =
-    '<div class="plan-title">― plan</div>' +
-    planViews
+    `<summary class="plan-summary"><span class="plan-label">plan</span><span class="plan-counts">${escHtml(statusCounts)}</span></summary>` +
+    `<div class="plan-entries">${planViews
       .map(
         (pv) =>
           `<div class="plan-entry">${pv.symbol} ${escHtml(pv.content)}</div>`,
       )
-      .join("");
+      .join("")}</div>`;
   return el;
 }
 

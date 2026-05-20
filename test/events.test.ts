@@ -357,12 +357,35 @@ describe("events", () => {
           ],
         });
         assert.equal(state.currentAssistantEl, null); // finishAssistant called
-        const plan = dom.messages.querySelector(".plan");
+        const plan = dom.messages.querySelector(".plan") as HTMLDetailsElement;
         assert.ok(plan);
+        assert.equal(plan.open, true);
+        assert.equal(
+          plan.querySelector(".plan-counts")?.textContent,
+          "○ 1  ◉ 1  ● 1",
+        );
         assert.equal(plan.querySelectorAll(".plan-entry").length, 3);
         assert.ok(plan.textContent.includes("●")); // completed
         assert.ok(plan.textContent.includes("◉")); // in_progress
         assert.ok(plan.textContent.includes("○")); // pending
+      });
+
+      it("collapses prior open plans when a newer plan arrives", () => {
+        events.handleEvent({
+          type: "plan",
+          entries: [{ content: "Old", status: "pending" }],
+        });
+        events.handleEvent({
+          type: "plan",
+          entries: [{ content: "New", status: "in_progress" }],
+        });
+
+        const plans = Array.from(
+          dom.messages.querySelectorAll(".plan"),
+        );
+        assert.equal(plans.length, 2);
+        assert.equal(plans[0].open, false);
+        assert.equal(plans[1].open, true);
       });
     });
 

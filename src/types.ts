@@ -253,6 +253,11 @@ export interface PlanEntryView {
   content: string;
 }
 
+export interface PlanStatusCountView {
+  symbol: string;
+  count: number;
+}
+
 /** Content item from ACP tool_call_update events. */
 export interface ToolContentItem {
   type?: string;

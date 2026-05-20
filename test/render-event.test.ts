@@ -328,7 +328,7 @@ describe("render-event", () => {
   });
 
   describe("plan", () => {
-    it("renders div.plan with .plan-title and .plan-entry rows", () => {
+    it("renders collapsible plan with summary counts and entry rows", () => {
       const el = append(
         mod.renderContentEvent(
           "plan",
@@ -336,15 +336,43 @@ describe("render-event", () => {
             entries: [
               { content: "step a", status: "pending", priority: "medium" },
               { content: "step b", status: "completed", priority: "medium" },
+              { content: "step c", status: "pending", priority: "medium" },
             ],
           },
           makeHooks(),
         ),
-      )!;
+      )! as HTMLDetailsElement;
+      assert.equal(el.tagName, "DETAILS");
+      assert.equal(el.open, true);
       assert.ok(el.classList.contains("plan"));
-      assert.ok(el.querySelector(".plan-title"));
+      const summary = el.querySelector("summary.plan-summary");
+      assert.ok(summary);
+      assert.equal(summary.querySelector(".plan-label")?.textContent, "plan");
+      assert.equal(
+        summary.querySelector(".plan-counts")?.textContent,
+        "○ 2  ● 1",
+      );
       const rows = el.querySelectorAll(".plan-entry");
-      assert.equal(rows.length, 2);
+      assert.equal(rows.length, 3);
+      assert.equal(rows[0].textContent, "○ step a");
+    });
+
+    it("escapes plan summary counts and entries", () => {
+      const el = append(
+        mod.renderContentEvent(
+          "plan",
+          {
+            entries: [{ content: "<script>alert(1)</script>", status: "new" }],
+          },
+          makeHooks(),
+        ),
+      )!;
+      assert.equal(el.querySelector(".plan-counts")?.textContent, "? 1");
+      assert.equal(
+        el.querySelector(".plan-entry")?.textContent,
+        "? <script>alert(1)</script>",
+      );
+      assert.equal(el.querySelector("script"), null);
     });
   });
 

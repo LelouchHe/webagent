@@ -20,6 +20,7 @@ import {
   classifyPermissionOption,
   resolvePermissionLabel,
   formatPlanEntries,
+  formatPlanStatusCounts,
   parseDiff,
   normalizeEventsResponse,
   isPromptIdle,
@@ -231,6 +232,41 @@ describe("formatPlanEntries", () => {
 
   it("handles empty array", () => {
     assert.deepEqual(formatPlanEntries([]), []);
+  });
+});
+
+// --- formatPlanStatusCounts ---
+
+describe("formatPlanStatusCounts", () => {
+  it("counts statuses in display order and skips zero counts", () => {
+    const result = formatPlanStatusCounts([
+      { status: "completed", content: "Done 1" },
+      { status: "pending", content: "Todo 1" },
+      { status: "in_progress", content: "Doing" },
+      { status: "pending", content: "Todo 2" },
+      { status: "completed", content: "Done 2" },
+    ]);
+    assert.deepEqual(result, [
+      { symbol: "○", count: 2 },
+      { symbol: "◉", count: 1 },
+      { symbol: "●", count: 2 },
+    ]);
+  });
+
+  it("counts unknown statuses as ?", () => {
+    const result = formatPlanStatusCounts([
+      { status: "skipped", content: "Nope" },
+      { status: "pending", content: "Todo" },
+      { status: "blocked", content: "Blocked" },
+    ]);
+    assert.deepEqual(result, [
+      { symbol: "○", count: 1 },
+      { symbol: "?", count: 2 },
+    ]);
+  });
+
+  it("handles empty array", () => {
+    assert.deepEqual(formatPlanStatusCounts([]), []);
   });
 });
 

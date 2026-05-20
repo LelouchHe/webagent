@@ -115,6 +115,14 @@ function replayQuery(sel: string): Element | null {
   return state.replayTarget?.querySelector(sel) ?? document.querySelector(sel);
 }
 
+function collapseOpenPlans(container: ParentNode): void {
+  container
+    .querySelectorAll<HTMLDetailsElement>(".plan[open]")
+    .forEach((plan) => {
+      plan.open = false;
+    });
+}
+
 // Ask the service worker to close any push notification with the given tag.
 // Used by message_acked/message_consumed handlers to recall the local
 // device's banner immediately, independent of the server's silent close push.
@@ -844,7 +852,11 @@ function handleReplayContentEvent(
     case "plan":
     case "permission_response": {
       const el = renderContentEvent(type, d, hooks);
-      if (el) appendMessageElement(el);
+      if (el) {
+        if (type === "plan")
+          collapseOpenPlans(state.replayTarget ?? dom.messages);
+        appendMessageElement(el);
+      }
       break;
     }
   }
@@ -1176,7 +1188,10 @@ export function handleEvent(msg: AgentEvent) {
       finishThinking();
       finishAssistant();
       const el = renderContentEvent("plan", msg, liveHooks());
-      if (el) appendMessageElement(el);
+      if (el) {
+        collapseOpenPlans(dom.messages);
+        appendMessageElement(el);
+      }
       break;
     }
 

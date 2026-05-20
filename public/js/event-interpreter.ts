@@ -15,6 +15,7 @@ import type {
   PermissionClassification,
   DiffLine,
   PlanEntryView,
+  PlanStatusCountView,
   ToolContentItem,
   NormalizedEventsResponse,
 } from "../../src/types.ts";
@@ -94,6 +95,28 @@ export function formatPlanEntries(entries: PlanEntry[]): PlanEntryView[] {
     symbol: PLAN_STATUS_ICONS[e.status] || "?",
     content: e.content,
   }));
+}
+
+/** Summarize plan entry statuses for a compact collapsible header. */
+export function formatPlanStatusCounts(
+  entries: PlanEntry[],
+): PlanStatusCountView[] {
+  const orderedStatuses = Object.keys(PLAN_STATUS_ICONS);
+  const counts = new Map<string, number>();
+  let unknownCount = 0;
+  for (const entry of entries) {
+    if (PLAN_STATUS_ICONS[entry.status]) {
+      counts.set(entry.status, (counts.get(entry.status) ?? 0) + 1);
+    } else {
+      unknownCount += 1;
+    }
+  }
+  const views = orderedStatuses.flatMap((status) => {
+    const count = counts.get(status) ?? 0;
+    return count > 0 ? [{ symbol: PLAN_STATUS_ICONS[status], count }] : [];
+  });
+  if (unknownCount > 0) views.push({ symbol: "?", count: unknownCount });
+  return views;
 }
 
 /**
