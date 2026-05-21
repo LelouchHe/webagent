@@ -28,6 +28,55 @@ const inlineRule =
   /^(\${1,2})(?!\$)((?:\\.|[^\\\n])*?(?:\\.|[^\\\n$]))\1(?=[\s?!.,:？！。，：]|$)/;
 const blockRule = /^(\${1,2})\n((?:\\[^]|[^\\])+?)\n\1(?:\n|$)/;
 
+function isFenceLine(line: string): string | null {
+  const match = /^( {0,3})(`{3,}|~{3,})/.exec(line);
+  return match ? match[2][0] : null;
+}
+
+function isFenceClose(line: string, marker: string): boolean {
+  const escaped = marker === "`" ? "`" : "~";
+  return new RegExp(`^ {0,3}${escaped}{3,}\\s*$`).test(line);
+}
+
+/**
+ * Return the source offset of an unmatched display-math opener, or null when
+ * all display-math blocks in `src` are closed. This is the shared definition
+ * used by both the marked extension and the streaming renderer's cache guard:
+ * display math starts/ends on a line whose only content is `$$`.
+ */
+export function findUnclosedDisplayMathBlockStart(src: string): number | null {
+  let mathStart: number | null = null;
+  let fenceMarker: string | null = null;
+  let lineStart = 0;
+
+  while (lineStart <= src.length) {
+    const newline = src.indexOf("\n", lineStart);
+    const hasNewline = newline !== -1;
+    const lineEnd = hasNewline ? newline : src.length;
+    const line = src.slice(lineStart, lineEnd);
+
+    if (fenceMarker) {
+      if (isFenceClose(line, fenceMarker)) fenceMarker = null;
+    } else {
+      const marker = isFenceLine(line);
+      if (marker) {
+        fenceMarker = marker;
+      } else if (line === "$$") {
+        if (mathStart === null) {
+          mathStart = lineStart;
+        } else {
+          mathStart = null;
+        }
+      }
+    }
+
+    if (!hasNewline) break;
+    lineStart = newline + 1;
+  }
+
+  return mathStart;
+}
+
 interface MathToken {
   type: string;
   raw: string;

@@ -115,6 +115,45 @@ describe("updateMarkdownStream", () => {
     assert.match(host.textContent, /after/);
   });
 
+  it("re-lexes from an unclosed $$ opener when display math spans chunks", () => {
+    const partial = "intro\n\n$$\na\n\nb\n";
+    const complete = "intro\n\n$$\na\n\nb\n$$\n\nafter\n";
+
+    mod.updateMarkdownStream(host, partial);
+    mod.updateMarkdownStream(host, complete);
+
+    const streamed = host.cloneNode(true) as HTMLElement;
+    const oneShot = document.createElement("div");
+    mod.updateMarkdownStream(oneShot, complete);
+
+    assert.equal(
+      streamed.querySelectorAll(".math-block").length,
+      1,
+      "streaming render should reclassify the partial raw text as block math",
+    );
+    assert.equal(
+      streamed.querySelector("h1"),
+      null,
+      "markdown inside an unclosed $$ block must not be frozen as normal markdown",
+    );
+    assert.equal(streamed.children.length, oneShot.children.length);
+    assert.equal(streamed.innerHTML, oneShot.innerHTML);
+  });
+
+  it("does not treat $$ inside fenced code as an unclosed math block", () => {
+    const code = "```md\n$$\nnot math\n```\n\n";
+    mod.updateMarkdownStream(host, code + "tail");
+    mod.updateMarkdownStream(host, code + "tail grows");
+    const t = mod.getLastMarkdownStreamTiming();
+
+    assert.ok(
+      t.prefixBlocks > 0,
+      "closed code fence containing $$ should remain prefix-cacheable",
+    );
+    assert.equal(host.querySelectorAll(".math-block").length, 0);
+    assert.ok(host.querySelector("pre"), "fenced code should stay code");
+  });
+
   it("dev-mode entry invariant fires when innerHTML is scribbled between calls", () => {
     mod.updateMarkdownStream(host, "para one\n\npara two\n");
     // Simulate a foreign code path (e.g. someone calling `marked.parse`

@@ -15,7 +15,7 @@
 
 import { marked, Lexer, type Token, type Tokens, type Links } from "marked";
 import DOMPurify from "dompurify";
-import "./math.ts";
+import { findUnclosedDisplayMathBlockStart } from "./math.ts";
 
 // `__DEV__` is injected by esbuild's `define` for browser bundles (see
 // scripts/build.js) and by test/frontend-setup.ts (`globalThis.__DEV__ = true`)
@@ -451,6 +451,18 @@ function incrementalLex(
   if (stableCount > 0) {
     stableCount--;
     stableLen -= cache[stableCount].length;
+  }
+  const unclosedMathStart = findUnclosedDisplayMathBlockStart(
+    fullText.slice(0, stableLen),
+  );
+  if (unclosedMathStart !== null) {
+    stableLen = 0;
+    stableCount = 0;
+    for (const raw of cache) {
+      if (stableLen + raw.length > unclosedMathStart) break;
+      stableLen += raw.length;
+      stableCount++;
+    }
   }
   const tPrefix1 = now();
   const tail = stableLen === 0 ? fullText : fullText.slice(stableLen);

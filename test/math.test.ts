@@ -17,11 +17,13 @@ import { setupDOM, teardownDOM } from "./frontend-setup.ts";
 
 describe("math rendering (Temml)", () => {
   let parse: (text: string) => string;
+  let findUnclosedDisplayMathBlockStart: (src: string) => number | null;
 
   before(async () => {
     setupDOM();
     // Side-effect import registers the marked extension.
-    await import("../public/js/math.ts");
+    const math = await import("../public/js/math.ts");
+    findUnclosedDisplayMathBlockStart = math.findUnclosedDisplayMathBlockStart;
     const { marked } = await import("marked");
     parse = (text: string) => marked.parse(text) as string;
   });
@@ -108,6 +110,24 @@ describe("math rendering (Temml)", () => {
     assert.match(html, /<div class="math-block"><math[^>]*display="block"/);
     assert.match(html, /<mtable/);
     assert.doesNotMatch(html, /\\begin\{aligned\}/);
+  });
+
+  it("shared display-math block scanner matches closed/unclosed $$ blocks", () => {
+    assert.equal(
+      findUnclosedDisplayMathBlockStart("before\n\n$$\na\n\nb\n"),
+      8,
+    );
+    assert.equal(
+      findUnclosedDisplayMathBlockStart("before\n\n$$\na\n\nb\n$$\n\nafter"),
+      null,
+    );
+  });
+
+  it("shared display-math block scanner ignores $$ inside fenced code", () => {
+    assert.equal(
+      findUnclosedDisplayMathBlockStart("```md\n$$\nnot math\n```\n\nafter"),
+      null,
+    );
   });
 
   it("handles multiple math blocks in one document", () => {
