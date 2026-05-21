@@ -121,6 +121,7 @@ describe("updateMarkdownStream", () => {
 
     mod.updateMarkdownStream(host, partial);
     mod.updateMarkdownStream(host, complete);
+    const t = mod.getLastMarkdownStreamTiming();
 
     const streamed = host.cloneNode(true) as HTMLElement;
     const oneShot = document.createElement("div");
@@ -136,6 +137,8 @@ describe("updateMarkdownStream", () => {
       null,
       "markdown inside an unclosed $$ block must not be frozen as normal markdown",
     );
+    assert.equal(t.mathRelex, true);
+    assert.equal(t.mathRelexLen, complete.length - "intro\n\n".length);
     assert.equal(streamed.children.length, oneShot.children.length);
     assert.equal(streamed.innerHTML, oneShot.innerHTML);
   });
@@ -150,6 +153,8 @@ describe("updateMarkdownStream", () => {
       t.prefixBlocks > 0,
       "closed code fence containing $$ should remain prefix-cacheable",
     );
+    assert.equal(t.mathRelex, false);
+    assert.equal(t.mathRelexLen, 0);
     assert.equal(host.querySelectorAll(".math-block").length, 0);
     assert.ok(host.querySelector("pre"), "fenced code should stay code");
   });

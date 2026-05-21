@@ -157,6 +157,10 @@ export interface MarkdownStreamTiming {
   prefixLen: number;
   /** Length of the tail that was relexed. */
   tailLen: number;
+  /** True when an unclosed display-math block forced cache rollback. */
+  mathRelex: boolean;
+  /** Number of chars relexed because of the unclosed display-math rollback. */
+  mathRelexLen: number;
   /** Number of blocks produced by the tail relex AFTER mergeUnclosedBlocks. */
   tailBlocks: number;
   /** Number of raw tokens produced by marked.lexer on the tail, BEFORE
@@ -194,6 +198,8 @@ function emptyTiming(): MarkdownStreamTiming {
     prefixBlocks: 0,
     prefixLen: 0,
     tailLen: 0,
+    mathRelex: false,
+    mathRelexLen: 0,
     tailBlocks: 0,
     tailRawBlocks: 0,
     fastPath: 0,
@@ -425,6 +431,10 @@ interface IncrementalLexResult {
   /** Total chars covered by the cache prefix. */
   prefixLen: number;
   tailLen: number;
+  /** True when an unclosed display-math block forced cache rollback. */
+  mathRelex: boolean;
+  /** Number of chars relexed because of the unclosed display-math rollback. */
+  mathRelexLen: number;
   /** Tail blocks AFTER mergeUnclosedBlocks combined fence/HTML straddles. */
   tailBlockCount: number;
   /** Tail token count from marked.lexer BEFORE mergeUnclosedBlocks. */
@@ -455,6 +465,8 @@ function incrementalLex(
   const unclosedMathStart = findUnclosedDisplayMathBlockStart(
     fullText.slice(0, stableLen),
   );
+  let mathRelex = false;
+  let mathRelexLen = 0;
   if (unclosedMathStart !== null) {
     stableLen = 0;
     stableCount = 0;
@@ -463,6 +475,8 @@ function incrementalLex(
       stableLen += raw.length;
       stableCount++;
     }
+    mathRelex = true;
+    mathRelexLen = fullText.length - stableLen;
   }
   const tPrefix1 = now();
   const tail = stableLen === 0 ? fullText : fullText.slice(stableLen);
@@ -505,6 +519,8 @@ function incrementalLex(
     prefixBlockCount: stableCount,
     prefixLen: stableLen,
     tailLen: tail.length,
+    mathRelex,
+    mathRelexLen,
     tailBlockCount: tailBlocks.length,
     tailRawBlockCount: tailResult.rawCount,
     defsAbsorbed,
@@ -1088,6 +1104,8 @@ export function updateMarkdownStream(
   timing.prefixBlocks = lexResult.prefixBlockCount;
   timing.prefixLen = lexResult.prefixLen;
   timing.tailLen = lexResult.tailLen;
+  timing.mathRelex = lexResult.mathRelex;
+  timing.mathRelexLen = lexResult.mathRelexLen;
   timing.tailBlocks = lexResult.tailBlockCount;
   timing.tailRawBlocks = lexResult.tailRawBlockCount;
   timing.defsAbsorbed = lexResult.defsAbsorbed;

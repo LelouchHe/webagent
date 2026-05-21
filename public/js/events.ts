@@ -951,6 +951,8 @@ function doAssistantRender() {
         prefixBlocks: t.prefixBlocks,
         prefixLen: t.prefixLen,
         tailLen: t.tailLen,
+        mathRelex: t.mathRelex,
+        mathRelexLen: t.mathRelexLen,
         tailBlocks: t.tailBlocks,
         tailRawBlocks: t.tailRawBlocks,
       },
