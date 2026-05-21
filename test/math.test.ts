@@ -128,6 +128,10 @@ describe("math rendering (Temml)", () => {
       findUnclosedDisplayMathBlockStart("```md\n$$\nnot math\n```\n\nafter"),
       null,
     );
+    assert.equal(
+      findUnclosedDisplayMathBlockStart("`````\n$$\nnot math\n```\n$$\n"),
+      null,
+    );
   });
 
   it("handles multiple math blocks in one document", () => {

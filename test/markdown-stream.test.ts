@@ -144,19 +144,25 @@ describe("updateMarkdownStream", () => {
   });
 
   it("does not treat $$ inside fenced code as an unclosed math block", () => {
-    const code = "```md\n$$\nnot math\n```\n\n";
-    mod.updateMarkdownStream(host, code + "tail");
-    mod.updateMarkdownStream(host, code + "tail grows");
-    const t = mod.getLastMarkdownStreamTiming();
+    for (const code of [
+      "```md\n$$\nnot math\n```\n\n",
+      "`````\n$$\nnot math\n```\n$$\n`````\n\n",
+    ]) {
+      mod.updateMarkdownStream(host, code + "tail");
+      mod.updateMarkdownStream(host, code + "tail grows");
+      const t = mod.getLastMarkdownStreamTiming();
 
-    assert.ok(
-      t.prefixBlocks > 0,
-      "closed code fence containing $$ should remain prefix-cacheable",
-    );
-    assert.equal(t.mathRelex, false);
-    assert.equal(t.mathRelexLen, 0);
-    assert.equal(host.querySelectorAll(".math-block").length, 0);
-    assert.ok(host.querySelector("pre"), "fenced code should stay code");
+      assert.ok(
+        t.prefixBlocks > 0,
+        "closed code fence containing $$ should remain prefix-cacheable",
+      );
+      assert.equal(t.mathRelex, false);
+      assert.equal(t.mathRelexLen, 0);
+      assert.equal(host.querySelectorAll(".math-block").length, 0);
+      assert.ok(host.querySelector("pre"), "fenced code should stay code");
+      mod.resetMarkdownStream(host);
+      host.replaceChildren();
+    }
   });
 
   it("dev-mode entry invariant fires when innerHTML is scribbled between calls", () => {

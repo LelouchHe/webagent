@@ -28,14 +28,20 @@ const inlineRule =
   /^(\${1,2})(?!\$)((?:\\.|[^\\\n])*?(?:\\.|[^\\\n$]))\1(?=[\s?!.,:？！。，：]|$)/;
 const blockRule = /^(\${1,2})\n((?:\\[^]|[^\\])+?)\n\1(?:\n|$)/;
 
-function isFenceLine(line: string): string | null {
-  const match = /^( {0,3})(`{3,}|~{3,})/.exec(line);
-  return match ? match[2][0] : null;
+interface FenceMarker {
+  char: string;
+  len: number;
 }
 
-function isFenceClose(line: string, marker: string): boolean {
-  const escaped = marker === "`" ? "`" : "~";
-  return new RegExp(`^ {0,3}${escaped}{3,}\\s*$`).test(line);
+function isFenceLine(line: string): FenceMarker | null {
+  const match = /^( {0,3})(`{3,}|~{3,})/.exec(line);
+  return match ? { char: match[2][0], len: match[2].length } : null;
+}
+
+function isFenceClose(line: string, marker: FenceMarker): boolean {
+  const escaped = marker.char === "`" ? "`" : "~";
+  const match = new RegExp(`^ {0,3}(${escaped}{3,})\\s*$`).exec(line);
+  return match ? match[1].length >= marker.len : false;
 }
 
 /**
@@ -46,7 +52,7 @@ function isFenceClose(line: string, marker: string): boolean {
  */
 export function findUnclosedDisplayMathBlockStart(src: string): number | null {
   let mathStart: number | null = null;
-  let fenceMarker: string | null = null;
+  let fenceMarker: FenceMarker | null = null;
   let lineStart = 0;
 
   while (lineStart <= src.length) {
