@@ -41,6 +41,7 @@ import {
   normalizeDisplayName,
   sniffMime,
 } from "./attachments.ts";
+import { readImageDimensions } from "./image-dimensions.ts";
 
 const IS_WIN = process.platform === "win32";
 
@@ -441,6 +442,8 @@ async function handleAttachmentUpload(
               finalPath = join(dir, `${uploadId}.${fileExt}`);
             }
           }
+          const imageDimensions =
+            kind === "image" ? readImageDimensions(head) : null;
           await rename(tmpPath, finalPath);
           const rp = await realpath(finalPath);
           const row = store.insertAttachment({
@@ -451,6 +454,8 @@ async function handleAttachmentUpload(
             mime: fileMime,
             size: bytesWritten,
             realpath: rp,
+            width: imageDimensions?.width ?? null,
+            height: imageDimensions?.height ?? null,
           });
           // Invalidate the per-session attachment label cache so the
           // next egress (SSE broadcast or replay) sees this new row.
@@ -468,6 +473,8 @@ async function handleAttachmentUpload(
             displayName: row.name,
             mimeType: row.mime,
             size: row.size,
+            width: row.width,
+            height: row.height,
             kind: row.kind,
             path: `sessions/${sessionId}/attachments/${fileName}`,
             url: fileUrl,
@@ -1061,10 +1068,12 @@ export function createRequestHandler(
             if (
               typeof att.uri === "string" ||
               typeof att.data === "string" ||
-              typeof att.path === "string"
+              typeof att.path === "string" ||
+              typeof att.width === "number" ||
+              typeof att.height === "number"
             ) {
               json(res, 400, {
-                error: "Client must not supply uri/data/path",
+                error: "Client must not supply uri/data/path/width/height",
               });
               return;
             }
@@ -1089,6 +1098,9 @@ export function createRequestHandler(
               displayName: a.displayName,
               mimeType: a.mimeType,
               path: `/api/v1/sessions/${sessionId}/attachments/${fileName}`,
+              ...(row.width != null && row.height != null
+                ? { width: row.width, height: row.height }
+                : {}),
             },
           ];
         });

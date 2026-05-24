@@ -403,6 +403,8 @@ describe("Prompt REST API", () => {
         mime: "image/png",
         size: 3,
         realpath,
+        width: 320,
+        height: 240,
       });
 
       const res = await makeRequest(
@@ -427,13 +429,15 @@ describe("Prompt REST API", () => {
       const userMsg = events.find((e) => e.type === "user_message");
       assert.ok(userMsg);
       const data = JSON.parse(userMsg.data) as {
-        attachments?: Array<{ path?: string }>;
+        attachments?: Array<{ path?: string; width?: number; height?: number }>;
       };
       assert.ok(data.attachments?.[0]);
       assert.equal(
         data.attachments[0].path,
         `/api/v1/sessions/${sessionId}/attachments/att-X.png`,
       );
+      assert.equal(data.attachments[0].width, 320);
+      assert.equal(data.attachments[0].height, 240);
     });
 
     it("drops attachment refs whose row is missing (defense)", async () => {
@@ -479,6 +483,29 @@ describe("Prompt REST API", () => {
               displayName: "x.png",
               mimeType: "image/png",
               path: "/etc/passwd",
+            },
+          ],
+        }),
+      );
+      assert.equal(res.status, 400);
+    });
+
+    it("rejects client-supplied attachment dimensions", async () => {
+      const sessionId = await createSession();
+      const res = await makeRequest(
+        port,
+        "POST",
+        `/api/v1/sessions/${sessionId}/prompt`,
+        JSON.stringify({
+          text: "x",
+          attachments: [
+            {
+              kind: "image",
+              attachmentId: "a1",
+              displayName: "x.png",
+              mimeType: "image/png",
+              width: 999,
+              height: 999,
             },
           ],
         }),

@@ -410,19 +410,23 @@ describe("Image upload", () => {
   let port: number;
   const UPLOAD_LIMIT = 1024;
 
-  // Minimal valid PNG (8-byte signature + empty IHDR-ish padding) — large
-  // enough for sniffMime to detect the magic bytes. The contents need not
-  // be a fully valid image, only the leading bytes.
-  const PNG_MAGIC = Buffer.from([
-    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d,
-    0x49, 0x48, 0x44, 0x52,
-  ]);
-  const fakePngBytes = (extra: string | number = 0) => {
+  // Minimal PNG header with IHDR dimensions — enough for MIME sniffing and
+  // server-side thumbnail dimension extraction.
+  const pngBytes = (width = 320, height = 240, extra: string | number = 0) => {
+    const head = Buffer.from([
+      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d,
+      0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    ]);
+    head.writeUInt32BE(width, 16);
+    head.writeUInt32BE(height, 20);
     const tail =
       typeof extra === "number"
         ? Buffer.alloc(extra)
         : Buffer.from(String(extra));
-    return Buffer.concat([PNG_MAGIC, tail]);
+    return Buffer.concat([head, tail]);
+  };
+  const fakePngBytes = (extra: string | number = 0) => {
+    return pngBytes(320, 240, extra);
   };
 
   beforeEach(async () => {
@@ -507,6 +511,8 @@ describe("Image upload", () => {
     assert.equal(body.displayName, "tiny.png");
     assert.equal(typeof body.attachmentId, "string");
     assert.equal(body.size, data.length);
+    assert.equal(body.width, 320);
+    assert.equal(body.height, 240);
   });
 
   it("preserves UTF-8 (e.g. Chinese) filenames through multipart parsing", async () => {

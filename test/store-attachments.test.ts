@@ -30,6 +30,8 @@ describe("Store attachments", () => {
       mime: "image/png",
       size: 12,
       realpath: "/tmp/fake/a1.png",
+      width: 320,
+      height: 240,
     });
     assert.equal(row.id, "a1");
     assert.equal(row.session_id, "s1");
@@ -40,6 +42,23 @@ describe("Store attachments", () => {
     const fetched = store.getAttachment("s1", "a1");
     assert.ok(fetched);
     assert.equal(fetched.realpath, "/tmp/fake/a1.png");
+    assert.equal(fetched.width, 320);
+    assert.equal(fetched.height, 240);
+  });
+
+  it("keeps dimensions nullable for non-image or legacy attachments", () => {
+    const row = store.insertAttachment({
+      id: "a1",
+      sessionId: "s1",
+      kind: "file",
+      name: "notes.txt",
+      mime: "text/plain",
+      size: 12,
+      realpath: "/tmp/fake/a1.txt",
+    });
+
+    assert.equal(row.width, null);
+    assert.equal(row.height, null);
   });
 
   it("getAttachment scopes by session — cross-session lookup returns undefined", () => {

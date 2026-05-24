@@ -180,6 +180,8 @@ does, even when the session is tombstoned for an active share.
 | `size` | INTEGER NOT NULL | Bytes on disk |
 | `realpath` | TEXT NOT NULL | Resolved absolute path (used by share gate + agent dispatch) |
 | `upload_seq` | INTEGER NOT NULL | `MAX(events.seq)` at insert time — share gate compares against `share_snapshot_seq` |
+| `width` | INTEGER | Server-derived image width in pixels (`NULL` for files/legacy rows) |
+| `height` | INTEGER | Server-derived image height in pixels (`NULL` for files/legacy rows) |
 | `created_at` | TEXT NOT NULL DEFAULT now() | ISO timestamp |
 
 ### `owner_prefs`

@@ -169,6 +169,10 @@ export type AgentEvent =
         // reSignAttachmentUrlsInJson at egress appends ?sig=&exp= so the
         // browser can fetch with a fresh 1h signature.
         path?: string;
+        // Server-derived image dimensions, used by the frontend to reserve
+        // thumbnail layout before the image bytes finish loading.
+        width?: number;
+        height?: number;
       }>;
     }
   | {

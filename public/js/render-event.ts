@@ -185,6 +185,11 @@ function buildUserMessage(
       imgEl.className = "user-image";
       imgEl.src = src;
       imgEl.alt = name;
+      const displaySize = imageDisplaySize(a.width, a.height);
+      if (displaySize) {
+        imgEl.width = displaySize.width;
+        imgEl.height = displaySize.height;
+      }
       el.appendChild(imgEl);
     } else if (kind === "file" && src) {
       const link = document.createElement("a");
@@ -205,6 +210,49 @@ function buildUserMessage(
     }
   }
   return el;
+}
+
+function imageDisplaySize(
+  rawWidth: unknown,
+  rawHeight: unknown,
+): { width: number; height: number } | null {
+  if (typeof rawWidth !== "number" || typeof rawHeight !== "number") {
+    return null;
+  }
+  if (!Number.isFinite(rawWidth) || !Number.isFinite(rawHeight)) return null;
+  if (rawWidth <= 0 || rawHeight <= 0) return null;
+  const maxSize = imageMaxDisplaySize();
+  const scale = Math.min(
+    maxSize.width / rawWidth,
+    maxSize.height / rawHeight,
+    1,
+  );
+  return {
+    width: Math.max(1, Math.round(rawWidth * scale)),
+    height: Math.max(1, Math.round(rawHeight * scale)),
+  };
+}
+
+function imageMaxDisplaySize(): { width: number; height: number } {
+  const style = document.defaultView?.getComputedStyle(
+    document.documentElement,
+  );
+  if (!style) return { width: 200, height: 150 };
+  return {
+    width: cssPixelVar(style, "--user-image-max-width", 200),
+    height: cssPixelVar(style, "--user-image-max-height", 150),
+  };
+}
+
+function cssPixelVar(
+  style: CSSStyleDeclaration,
+  name: string,
+  fallback: number,
+): number {
+  const raw = style.getPropertyValue(name).trim();
+  if (!raw.endsWith("px")) return fallback;
+  const value = Number(raw.slice(0, -2));
+  return Number.isFinite(value) && value > 0 ? value : fallback;
 }
 
 function buildAssistantMessage(

@@ -100,6 +100,8 @@ export interface AttachmentRow {
   size: number;
   realpath: string;
   upload_seq: number;
+  width: number | null;
+  height: number | null;
   created_at: string;
 }
 
@@ -111,6 +113,8 @@ export interface AttachmentInput {
   mime: string;
   size: number;
   realpath: string;
+  width?: number | null;
+  height?: number | null;
 }
 
 export class Store {
@@ -350,10 +354,22 @@ export class Store {
         size         INTEGER NOT NULL,
         realpath     TEXT NOT NULL,
         upload_seq   INTEGER NOT NULL,
+        width        INTEGER,
+        height       INTEGER,
         created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now'))
       );
       CREATE INDEX IF NOT EXISTS idx_attachments_session ON attachments(session_id);
     `);
+    const attachmentCols = this.db
+      .prepare("PRAGMA table_info(attachments)")
+      .all() as Array<{ name: string }>;
+    const attachmentColNames = new Set(attachmentCols.map((c) => c.name));
+    if (!attachmentColNames.has("width")) {
+      this.db.exec("ALTER TABLE attachments ADD COLUMN width INTEGER");
+    }
+    if (!attachmentColNames.has("height")) {
+      this.db.exec("ALTER TABLE attachments ADD COLUMN height INTEGER");
+    }
 
     // owner_prefs — key-value store for owner-scoped defaults (display_name,
     // last /by selection, etc). Single-user model = single owner scope.
@@ -894,8 +910,8 @@ export class Store {
     this.db
       .prepare(
         `INSERT INTO attachments
-           (id, session_id, kind, name, mime, size, realpath, upload_seq)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+           (id, session_id, kind, name, mime, size, realpath, upload_seq, width, height)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         input.id,
@@ -906,6 +922,8 @@ export class Store {
         input.size,
         input.realpath,
         uploadSeq,
+        input.width ?? null,
+        input.height ?? null,
       );
     return this.db
       .prepare("SELECT * FROM attachments WHERE id = ?")

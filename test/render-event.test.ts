@@ -123,6 +123,99 @@ describe("render-event", () => {
       );
     });
 
+    it("sets rendered thumbnail dimensions from image attachment metadata", () => {
+      const el = append(
+        mod.renderContentEvent(
+          "user_message",
+          {
+            text: "see",
+            attachments: [
+              {
+                kind: "image",
+                attachmentId: "a1",
+                displayName: "wide.png",
+                mimeType: "image/png",
+                path: "/api/v1/sessions/s1/attachments/a1.png",
+                width: 800,
+                height: 200,
+              },
+            ],
+          },
+          makeHooks(),
+        ),
+      )!;
+      const img = el.querySelector("img.user-image")!;
+      assert.equal(img.getAttribute("width"), "200");
+      assert.equal(img.getAttribute("height"), "50");
+    });
+
+    it("does not upscale small image attachment dimensions", () => {
+      const el = append(
+        mod.renderContentEvent(
+          "user_message",
+          {
+            text: "see",
+            attachments: [
+              {
+                kind: "image",
+                attachmentId: "a1",
+                displayName: "small.png",
+                mimeType: "image/png",
+                path: "/api/v1/sessions/s1/attachments/a1.png",
+                width: 80,
+                height: 60,
+              },
+            ],
+          },
+          makeHooks(),
+        ),
+      )!;
+      const img = el.querySelector("img.user-image")!;
+      assert.equal(img.getAttribute("width"), "80");
+      assert.equal(img.getAttribute("height"), "60");
+    });
+
+    it("uses CSS thumbnail max-size variables for image dimensions", () => {
+      document.documentElement.style.setProperty(
+        "--user-image-max-width",
+        "160px",
+      );
+      document.documentElement.style.setProperty(
+        "--user-image-max-height",
+        "120px",
+      );
+      try {
+        const el = append(
+          mod.renderContentEvent(
+            "user_message",
+            {
+              text: "see",
+              attachments: [
+                {
+                  kind: "image",
+                  attachmentId: "a1",
+                  displayName: "wide.png",
+                  mimeType: "image/png",
+                  path: "/api/v1/sessions/s1/attachments/a1.png",
+                  width: 800,
+                  height: 200,
+                },
+              ],
+            },
+            makeHooks(),
+          ),
+        )!;
+        const img = el.querySelector("img.user-image")!;
+        assert.equal(img.getAttribute("width"), "160");
+        assert.equal(img.getAttribute("height"), "40");
+      } finally {
+        document.documentElement.style.removeProperty("--user-image-max-width");
+        document.documentElement.style.removeProperty(
+          "--user-image-max-height",
+        );
+      }
+    });
+
     it("renders file attachment as <a class=user-file> link", () => {
       const el = append(
         mod.renderContentEvent(

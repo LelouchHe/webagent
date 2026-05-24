@@ -342,7 +342,7 @@ Send a user prompt to the agent. Returns immediately; the agent's response strea
 | Field         | Type   | Required | Description                                                                          |
 | ------------- | ------ | -------- | ------------------------------------------------------------------------------------ |
 | `text`        | string | Yes      | The user's message                                                                   |
-| `attachments` | array  | No       | `[{ kind: "image"\|"file", attachmentId, displayName, mimeType }]`. Server resolves the on-disk path from `(sessionId, attachmentId)`. Clients **must not** send `uri`, `data`, or `path` — strict validation rejects them with `400`. |
+| `attachments` | array  | No       | `[{ kind: "image"\|"file", attachmentId, displayName, mimeType }]`. Server resolves the on-disk path and image dimensions from `(sessionId, attachmentId)`. Clients **must not** send `uri`, `data`, `path`, `width`, or `height` — strict validation rejects them with `400`. |
 
 **Response** `202`:
 
@@ -860,6 +860,8 @@ Content-Type: application/pdf
   "displayName": "report.pdf",
   "mimeType": "application/pdf",
   "kind": "file",
+  "width": null,
+  "height": null,
   "path": "sessions/abc-123/attachments/9b0c7e1a-...pdf",
   "url": "/api/v1/sessions/abc-123/attachments/9b0c7e1a-...pdf"
 }
@@ -870,6 +872,8 @@ otherwise. The classification drives both the size cap (image cap vs file cap)
 and the per-prompt permission auto-approve gate (only `kind: "image"` and
 the on-disk path matching the per-session attachments directory may be
 auto-approved when the agent later issues a read tool call against this file).
+For image uploads, `width` / `height` are parsed from the stored file when
+possible; for files and unparseable legacy images they are `null`.
 
 The returned `attachmentId` is the **only** handle the client needs. To
 reference the file in the next prompt, send back
@@ -1266,7 +1270,7 @@ These events are streamed in real-time via SSE as the agent works.
 | `permission_response`   | `requestId`, `sessionId`, `optionName`, `denied`                                         | Permission was resolved (server-generated)                                                                          |
 | `prompt_done`           | `sessionId`, `stopReason`                                                                | Agent turn complete                                                                                                 |
 | `error`                 | `message`, `sessionId?`                                                                  | Error occurred                                                                                                      |
-| `user_message`          | `sessionId`, `text`, `attachments?` (array of `{kind, attachmentId, displayName, mimeType}`) | User message broadcast (for multi-client sync)                                                                      |
+| `user_message`          | `sessionId`, `text`, `attachments?` (array of `{kind, attachmentId, displayName, mimeType, path?, width?, height?}`) | User message broadcast (for multi-client sync)                                                                      |
 | `bash_command`          | `sessionId`, `command`                                                                   | Bash command started                                                                                                |
 | `bash_output`           | `sessionId`, `text`, `stream`                                                            | Bash output chunk (`stream`: `"stdout"` or `"stderr"`)                                                              |
 | `bash_done`             | `sessionId`, `code`, `signal`, `error?`                                                  | Bash command completed                                                                                              |

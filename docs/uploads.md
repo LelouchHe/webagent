@@ -29,10 +29,12 @@ an `attachmentId`, every subsequent reference uses just the ID:
 
 The server resolves the on-disk path itself by joining the per-session
 attachments directory with the row keyed by `(sessionId, attachmentId)`.
-**Strict validation** in `src/routes.ts` rejects any prompt body whose
-`attachments[]` entries carry `uri`, `data`, or `path` fields with `400`
-— it's not just ignored, it's a hard fail, so a compromised browser
-cannot smuggle arbitrary paths through.
+For images, dimensions are also server-derived from the uploaded file and
+stored on the attachment row. **Strict validation** in `src/routes.ts`
+rejects any prompt body whose `attachments[]` entries carry `uri`, `data`,
+`path`, `width`, or `height` fields with `400` — it's not just ignored,
+it's a hard fail, so a compromised browser cannot smuggle arbitrary paths
+or lie about layout metadata.
 
 ## On-disk layout
 
@@ -226,17 +228,19 @@ leaked URL (screenshot, accidental link share) expires within a day.
 
 The stored `user_message` event keeps `attachments[]` with these
 fields: `kind`, `attachmentId`, `displayName`, `mimeType`, and a
-server-derived **`path`** (the unsigned base URL — see above). The
-client-only payload is the wire-shape ref minus `path`; `path` is
-added server-side at store time so the renderer doesn't need a second
-DB round-trip.
+server-derived **`path`** (the unsigned base URL — see above). Image
+attachments may also carry server-derived `width` / `height` so replay
+can reserve the thumbnail's final layout box before the image bytes
+finish loading. The client-only payload is the wire-shape ref minus
+`path` and dimensions; those are added server-side at store time so the
+renderer doesn't need a second DB round-trip.
 
 The `path` field is what the renderer keys on. Three branches in
 `public/js/render-event.ts → buildUserMessage`:
 
 | `kind`  | renders                                                                      |
 | ------- | ---------------------------------------------------------------------------- |
-| `image` | `<img class="user-image" src={signed URL} alt={displayName}>`               |
+| `image` | `<img class="user-image" src={signed URL} alt={displayName} width height>` when dimensions are known |
 | `file`  | `<a class="user-file" href={signed URL} target="_blank" download={name}>`   |
 | (any, missing path) | `<div class="user-attachment">[<kind>: <name>]</div>` — pre-fix data only |
 
