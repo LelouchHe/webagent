@@ -68,8 +68,8 @@ function readJpegDimensions(buf: Buffer): ImageDimensions | null {
       if (length < 2 || offset + length > buf.length) break;
       if (isJpegSofMarker(marker) && length >= 7) {
         return valid(
-          buf.readUInt16BE(offset + 3),
           buf.readUInt16BE(offset + 5),
+          buf.readUInt16BE(offset + 3),
         );
       }
       offset += length;
