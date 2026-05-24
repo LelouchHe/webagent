@@ -66,6 +66,7 @@ export function escHtml(s: string): string {
 
 interface MarkdownStreamMemo {
   cache: string[];
+  cacheTypes: Array<string | null>;
   rootCounts: number[];
   /** Optional sub-block memo per top-level block index. null for non-container
    *  blocks (paragraph, code, etc.); set for `list` (and future: `table`,
@@ -445,6 +446,7 @@ interface IncrementalLexResult {
 
 function incrementalLex(
   cache: string[],
+  cacheTypes: Array<string | null>,
   fullText: string,
   memoLinks: Links,
   now: () => number,
@@ -459,6 +461,15 @@ function incrementalLex(
     } else break;
   }
   if (stableCount > 0) {
+    stableCount--;
+    stableLen -= cache[stableCount].length;
+  }
+  // A list token is not permanently sealed just because its raw is a prefix:
+  // later indented content after a blank line can be reclassified as part of
+  // that previous list item (e.g. a fenced code block inside the list). If we
+  // keep the list in the prefix cache, tail-only lex sees the indented fence
+  // as a top-level code block and live DOM diverges from a cold full-text lex.
+  if (stableCount > 0 && cacheTypes[stableCount - 1] === "list") {
     stableCount--;
     stableLen -= cache[stableCount].length;
   }
@@ -1084,6 +1095,7 @@ export function updateMarkdownStream(
   if (!memo) {
     memo = {
       cache: [],
+      cacheTypes: [],
       rootCounts: [],
       subMemos: [],
       links: {},
@@ -1093,10 +1105,16 @@ export function updateMarkdownStream(
   }
   memo.callCount++;
   timing.seq = memo.callCount;
-  const { cache, rootCounts, subMemos } = memo;
+  const { cache, cacheTypes, rootCounts, subMemos } = memo;
 
   const tLex0 = now();
-  const lexResult = incrementalLex(cache, fullText, memo.links, now);
+  const lexResult = incrementalLex(
+    cache,
+    cacheTypes,
+    fullText,
+    memo.links,
+    now,
+  );
   const tLex1 = now();
   timing.lex = tLex1 - tLex0;
   timing.lexPrefix = lexResult.prefixMs;
@@ -1134,6 +1152,7 @@ export function updateMarkdownStream(
       now,
     );
     cache[i] = raw;
+    cacheTypes[i] = block.type;
     rootCounts[i] = newCount;
     subMemos[i] = newSubMemo;
     offset += newCount;
@@ -1141,6 +1160,7 @@ export function updateMarkdownStream(
   while (cache.length > merged.length) {
     const lastCount = rootCounts.pop() ?? 0;
     cache.pop();
+    cacheTypes.pop();
     subMemos.pop();
     for (let k = 0; k < lastCount; k++) {
       if (host.lastElementChild) host.removeChild(host.lastElementChild);

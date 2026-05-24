@@ -211,6 +211,38 @@ describe("updateMarkdownStream — byte-equal vs legacy renderMd", () => {
     );
   });
 
+  it("streaming sequence converges for list item containing indented fenced code", () => {
+    const text =
+      "- item one\n\n" +
+      "    ```js\n" +
+      "    const x = 1;\n" +
+      "    ```\n\n" +
+      "- item two\n";
+    const oneShot = document.createElement("div");
+    mod.updateMarkdownStream(oneShot, text);
+    const streamed = document.createElement("div");
+    for (let i = 1; i < text.length; i++) {
+      mod.updateMarkdownStream(streamed, text.slice(0, i));
+    }
+    mod.updateMarkdownStream(streamed, text);
+
+    assert.equal(
+      normWs(streamed.textContent),
+      normWs(oneShot.textContent),
+      "streamed textContent diverged from one-shot",
+    );
+    assert.equal(
+      streamed.querySelectorAll("pre code").length,
+      oneShot.querySelectorAll("pre code").length,
+      "streamed code block count diverged from one-shot",
+    );
+    assert.equal(
+      streamed.children.length,
+      oneShot.children.length,
+      "streamed root block count diverged from one-shot",
+    );
+  });
+
   // Opt #2 lock — for every single-token block the streaming code can see,
   // the fast path `marked.parser([token])` MUST produce HTML equivalent
   // to `marked.parse(raw)`. If marked's extension hooks ever assume the
