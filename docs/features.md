@@ -57,9 +57,10 @@ Commands with submenus (`/model`, `/mode`, `/think`, `/notify`, `/switch`, `/new
 | `/think [level]`      | Set thinking effort (low / medium / high)                                                                                     |
 | `/notify [on\|off]`   | Toggle push notifications                                                                                                     |
 | `/inbox`              | Manage inbox — pick a pending message to consume (opens a new session) or ack (dismiss). See [Messages / Inbox](messages.md). |
-| `/log [level]`        | Set log level (`off`, `debug`, `info`, `warn`, `error`). Log records render inline as system messages.                        |
+| `/log [level]`        | Set local log level (`off`, `debug`, `info`, `warn`, `error`, `reset`). Log records render inline as system messages.         |
 | `/cancel`             | Cancel current response                                                                                                       |
 | `/clear [cwd]`        | Clear current session and start fresh, optionally in another cwd (model/think inherited)                                      |
+| `/reset`              | Reset local frontend state for this device (keeps login token)                                                                |
 | `/switch <title\|id>` | Switch session (match by title or ID prefix)                                                                                  |
 | `/rename <new title>` | Rename session                                                                                                                |
 | `/exit`               | End current session (delete + switch to previous)                                                                             |

@@ -1,6 +1,7 @@
 import { describe, it, before, after, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { setupDOM, teardownDOM, resetState } from "./frontend-setup.ts";
+import { LOG_LEVEL_STORAGE_KEY } from "../public/js/local-reset.ts";
 
 describe("commands", () => {
   let state: any;
@@ -25,6 +26,7 @@ describe("commands", () => {
   beforeEach(() => {
     resetState(state, dom);
     commands.__resetCommandsForTest();
+    localStorage.clear();
     fetchCalls = [];
     globalThis.fetch = undefined as any;
   });
@@ -557,6 +559,22 @@ describe("commands", () => {
       assert.equal(cancelCall.url, "/api/v1/sessions/s1/cancel");
       assert.equal(cancelCall.init?.method, "POST");
       assert.ok(messageLines().includes("^C"));
+    });
+
+    it("persists /log level locally", async () => {
+      const handled = await commands.handleSlashCommand("/log debug");
+
+      assert.equal(handled, true);
+      assert.equal(localStorage.getItem(LOG_LEVEL_STORAGE_KEY), "debug");
+      assert.ok(messageLines().includes("log: debug (local) saved"));
+    });
+
+    it("/log reset clears the local level override", async () => {
+      localStorage.setItem(LOG_LEVEL_STORAGE_KEY, "debug");
+      await commands.handleSlashCommand("/log reset");
+
+      assert.equal(localStorage.getItem(LOG_LEVEL_STORAGE_KEY), null);
+      assert.ok(messageLines().includes("log: off (default) reset"));
     });
 
     it("reports the selected config value when no /model arg is given", async () => {

@@ -177,7 +177,7 @@ iOS Safari (JSCore) runs marked's regex-heavy lex/parse **2.4-3.7× slower** tha
 
 ## Observability
 
-Set `[debug]\nlevel = "debug"` in your config (or `/log debug` at runtime). The frontend then emits structured slow-frame log records in two tiers:
+Set `[debug]\nlevel = "debug"` in your config (or `/log debug` for a local browser override). The frontend then emits structured slow-frame log records in two tiers:
 
 - **`md-render slow`** (`log.debug`) — frame took >8ms but ≤16ms. Pre-warning sample, half the 60Hz frame budget. Used to build a population for A/B against post-optimization. Visible at `debug` level.
 - **`md-render budget`** (`log.warn`) — frame took >16ms. **60Hz frame budget (16.67ms) exceeded.** Guaranteed drop on 120Hz ProMotion devices, edge on 60Hz. SLA violation. Visible at `warn` level or lower — so even production users with `level = "warn"` see these.

@@ -18,10 +18,16 @@ import {
 import { addSystem, scrollToBottom, formatLocalTime } from "./render.ts";
 import { loadHistory, handleEvent, fallbackToNextSession } from "./events.ts";
 import * as api from "./api.ts";
-import { log, setLogLevel, getLogLevel, type LogLevel } from "./log.ts";
+import { log, getLogLevel, type LogLevel } from "./log.ts";
+import {
+  getLogLevelSource,
+  resetLogLevelOverride,
+  setStoredLogLevel,
+} from "./log.ts";
 import type { CmdNode } from "./slash-tree.ts";
 import type { SessionSummary } from "../../src/types.ts";
 import { TOKEN_STORAGE_KEY } from "./login-core.ts";
+import { resetLocalFrontendState } from "./local-reset.ts";
 import { replaceCurrentSession } from "./session-actions.ts";
 import {
   createPreview,
@@ -131,6 +137,34 @@ const listInbox = async (): Promise<api.InboxMessage[]> => {
 const listTokensFn = async (): Promise<api.TokenSummary[]> => api.listTokens();
 
 // --- onSelect actions ---
+
+function logStatusLine(): string {
+  return `log: ${getLogLevel()} (${getLogLevelSource()})`;
+}
+
+export function showLogStatus(): void {
+  addSystem(`${logStatusLine()} — use /log <off|debug|info|warn|error|reset>`);
+}
+
+export function setLocalLogLevel(level: LogLevel): void {
+  setStoredLogLevel(level);
+  addSystem(`${logStatusLine()} saved`);
+  if (level !== "off") log.info("log enabled", { level });
+}
+
+export function resetLocalLogLevel(): void {
+  resetLogLevelOverride();
+  addSystem(`${logStatusLine()} reset`);
+}
+
+export async function resetLocalState(): Promise<void> {
+  addSystem("Resetting local state…");
+  const result = await resetLocalFrontendState();
+  if (result.errors.length) {
+    addSystem(`warn: reset had issues: ${result.errors.join("; ")}`);
+  }
+  location.reload();
+}
 
 async function switchToSession(id: string): Promise<void> {
   state.sessionSwitchGen++;
@@ -330,6 +364,7 @@ export const ROOT: CmdNode = {
       name: "/log",
       desc: "Set log level",
       fetch: () => [
+        { value: "reset", name: "reset", desc: "Follow config/default" },
         { value: "off", name: "off", desc: "Disable logging" },
         { value: "error", name: "error", desc: "Show errors only" },
         { value: "warn", name: "warn", desc: "Show warnings and errors" },
@@ -341,13 +376,22 @@ export const ROOT: CmdNode = {
         return {
           primary: o.name,
           secondary: o.desc,
-          current: o.value === getLogLevel(),
+          current: o.value !== "reset" && o.value === getLogLevel(),
           onSelect: () => {
-            setLogLevel(o.value as LogLevel);
-            addSystem(`log: ${o.value}`);
-            if (o.value !== "off") log.info("log enabled", { level: o.value });
+            if (o.value === "reset") {
+              resetLocalLogLevel();
+              return;
+            }
+            setLocalLogLevel(o.value as LogLevel);
           },
         };
+      },
+    },
+    {
+      name: "/reset",
+      desc: "Reset local state",
+      onSelect: () => {
+        void resetLocalState();
       },
     },
     {

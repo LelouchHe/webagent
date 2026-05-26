@@ -19,9 +19,16 @@ import {
 import { addSystem, scrollToBottom, formatLocalTime } from "./render.ts";
 import { loadHistory, handleEvent, fallbackToNextSession } from "./events.ts";
 import * as api from "./api.ts";
-import { log, setLogLevel, getLogLevel, type LogLevel } from "./log.ts";
+import { log, type LogLevel } from "./log.ts";
 import { TOKEN_STORAGE_KEY } from "./login-core.ts";
-import { ROOT, consumeInbox } from "./slash-commands.ts";
+import {
+  ROOT,
+  consumeInbox,
+  resetLocalLogLevel,
+  resetLocalState,
+  setLocalLogLevel,
+  showLogStatus,
+} from "./slash-commands.ts";
 import { replaceCurrentSession } from "./session-actions.ts";
 import {
   createPreview,
@@ -564,20 +571,25 @@ export async function handleSlashCommand(text: string): Promise<boolean> {
     case "/log": {
       const sub = arg.toLowerCase().trim();
       if (sub === "") {
-        addSystem(
-          `log: ${getLogLevel()} (use /log <off|debug|info|warn|error>)`,
-        );
+        showLogStatus();
+        return true;
+      }
+      if (sub === "reset") {
+        resetLocalLogLevel();
         return true;
       }
       if (!["off", "debug", "info", "warn", "error"].includes(sub)) {
         addSystem(
-          `err: invalid level '${sub}' (use off|debug|info|warn|error)`,
+          `err: invalid level '${sub}' (use off|debug|info|warn|error|reset)`,
         );
         return true;
       }
-      setLogLevel(sub as LogLevel);
-      addSystem(`log: ${sub}`);
-      if (sub !== "off") log.info("log enabled", { level: sub });
+      setLocalLogLevel(sub as LogLevel);
+      return true;
+    }
+
+    case "/reset": {
+      await resetLocalState();
       return true;
     }
 

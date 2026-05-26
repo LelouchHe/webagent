@@ -11,6 +11,8 @@
 // callback is unused, but keeping the hook avoids breaking existing
 // wiring in app.ts.
 
+import { THEME_STORAGE_KEY } from "./local-reset.ts";
+
 const THEME_ICONS: Record<string, string> = {
   auto: "◑",
   light: "☀",
@@ -19,7 +21,7 @@ const THEME_ICONS: Record<string, string> = {
 const THEME_CYCLE = ["auto", "light", "dark"] as const;
 
 function getTheme(): string {
-  return localStorage.getItem("theme") ?? "auto";
+  return localStorage.getItem(THEME_STORAGE_KEY) ?? "auto";
 }
 
 const themeChangeCallbacks: Array<() => void> = [];
@@ -35,7 +37,7 @@ function applyTheme(t: string): void {
     btn.textContent = THEME_ICONS[t];
     btn.title = `Theme: ${t}`;
   }
-  localStorage.setItem("theme", t);
+  localStorage.setItem(THEME_STORAGE_KEY, t);
   for (const cb of themeChangeCallbacks) cb();
 }
 

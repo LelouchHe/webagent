@@ -38,6 +38,7 @@ describe("log (level-gated)", () => {
   beforeEach(() => {
     consoleSpy = [];
     renderedLines = [];
+    localStorage.clear();
     mod.setLogLevel("off");
   });
 
@@ -200,6 +201,62 @@ describe("log (level-gated)", () => {
       assert.equal(mod.parseUrlLogLevelFrom("http://x/?debug=1"), null);
       assert.equal(mod.parseUrlLogLevelFrom("http://x/?debug=yes"), null);
       assert.equal(mod.parseUrlLogLevelFrom("http://x/?debug="), null);
+    });
+  });
+
+  describe("persistent local level", () => {
+    it("uses URL override before local storage and config", () => {
+      localStorage.setItem(mod.LOG_LEVEL_STORAGE_KEY, "warn");
+
+      const res = mod.resolveLogLevel(
+        "error",
+        "http://localhost:6801/?debug=debug",
+      );
+
+      assert.deepEqual(res, { level: "debug", source: "url" });
+    });
+
+    it("uses local storage before server config", () => {
+      localStorage.setItem(mod.LOG_LEVEL_STORAGE_KEY, "warn");
+
+      const res = mod.resolveLogLevel("error", "http://localhost:6801/");
+
+      assert.deepEqual(res, { level: "warn", source: "local" });
+    });
+
+    it("ignores invalid local storage values", () => {
+      localStorage.setItem(mod.LOG_LEVEL_STORAGE_KEY, "loud");
+
+      const res = mod.resolveLogLevel("info", "http://localhost:6801/");
+
+      assert.deepEqual(res, { level: "info", source: "config" });
+    });
+
+    it("falls back to off when no source is set", () => {
+      const res = mod.resolveLogLevel(undefined, "http://localhost:6801/");
+
+      assert.deepEqual(res, { level: "off", source: "default" });
+    });
+
+    it("setStoredLogLevel persists and applies local source", () => {
+      const res = mod.setStoredLogLevel("debug");
+
+      assert.equal(localStorage.getItem(mod.LOG_LEVEL_STORAGE_KEY), "debug");
+      assert.deepEqual(res, { level: "debug", source: "local" });
+      assert.equal(mod.getLogLevel(), "debug");
+      assert.equal(mod.getLogLevelSource(), "local");
+    });
+
+    it("resetLogLevelOverride clears local storage and reapplies config", () => {
+      localStorage.setItem(mod.LOG_LEVEL_STORAGE_KEY, "debug");
+      mod.applyConnectedLogLevel("warn");
+
+      const res = mod.resetLogLevelOverride();
+
+      assert.equal(localStorage.getItem(mod.LOG_LEVEL_STORAGE_KEY), null);
+      assert.deepEqual(res, { level: "warn", source: "config" });
+      assert.equal(mod.getLogLevel(), "warn");
+      assert.equal(mod.getLogLevelSource(), "config");
     });
   });
 });

@@ -13,8 +13,9 @@
 //   - URL boot override: `parseUrlLogLevel()` reads `?debug=<level>` and
 //     is invoked once at module load.
 //   - Server config: the `connected` SSE event carries `debugLevel`; the
-//     connection handler calls `setLogLevel` with `urlLevel ?? configLevel`.
-//   - `/log <level>` slash command: calls `setLogLevel` at runtime.
+//     connection handler applies `urlLevel ?? storedLevel ?? configLevel`.
+//   - `/log <level>` slash command: persists a browser-local override.
+//   - `/log reset`: clears the local override and follows URL/config again.
 //
 // Logger always forwards to native `console.*` for DevTools call-site line
 // numbers. No `console.*` monkey-patch.
@@ -27,14 +28,19 @@ import {
   formatTs,
 } from "../../src/log-fmt.ts";
 import type { LogLevel } from "../../src/log-fmt.ts";
+import { LOG_LEVEL_STORAGE_KEY } from "./local-reset.ts";
 
 export type { LogLevel };
+export { LOG_LEVEL_STORAGE_KEY };
 
 // ============================================================
 // Module state
 // ============================================================
 
 let currentLevel: LogLevel = "off";
+export type LogLevelSource = "url" | "local" | "config" | "default" | "runtime";
+let currentSource: LogLevelSource = "default";
+let lastConfigLevel: string | undefined;
 
 type AddSystemFn = (text: string) => HTMLElement;
 let addSystemImpl: AddSystemFn | null = null;
@@ -43,13 +49,26 @@ let addSystemImpl: AddSystemFn | null = null;
 // Public API
 // ============================================================
 
-export function setLogLevel(level: LogLevel): void {
+export function setLogLevel(
+  level: LogLevel,
+  source: LogLevelSource = "runtime",
+): void {
   if (!VALID_LEVELS.has(level)) return;
   currentLevel = level;
+  currentSource = source;
 }
 
 export function getLogLevel(): LogLevel {
   return currentLevel;
+}
+
+export function getLogLevelSource(): LogLevelSource {
+  return currentSource;
+}
+
+export interface LogLevelResolution {
+  level: LogLevel;
+  source: Exclude<LogLevelSource, "runtime">;
 }
 
 /**
@@ -58,16 +77,9 @@ export function getLogLevel(): LogLevel {
  * paths use this to install the level once per connection.
  */
 export function applyConnectedLogLevel(configLevel: string | undefined): void {
-  const urlLevel = parseUrlLogLevel();
-  if (urlLevel) {
-    setLogLevel(urlLevel);
-    return;
-  }
-  if (configLevel && VALID_LEVELS.has(configLevel)) {
-    setLogLevel(configLevel as LogLevel);
-  } else {
-    setLogLevel("off");
-  }
+  lastConfigLevel = configLevel;
+  const resolved = resolveLogLevel(configLevel);
+  setLogLevel(resolved.level, resolved.source);
 }
 
 export function setLogRenderer(fn: AddSystemFn): void {
@@ -99,6 +111,52 @@ export function parseUrlLogLevelFrom(url: string): LogLevel | null {
 export function parseUrlLogLevel(): LogLevel | null {
   if (typeof location === "undefined") return null;
   return parseUrlLogLevelFrom(location.href);
+}
+
+export function getStoredLogLevel(): LogLevel | null {
+  if (typeof localStorage === "undefined") return null;
+  try {
+    const raw = localStorage.getItem(LOG_LEVEL_STORAGE_KEY);
+    if (!raw || !VALID_LEVELS.has(raw)) return null;
+    return raw as LogLevel;
+  } catch {
+    return null;
+  }
+}
+
+export function resolveLogLevel(
+  configLevel: string | undefined,
+  url: string | null = typeof location === "undefined" ? null : location.href,
+): LogLevelResolution {
+  const urlLevel = url ? parseUrlLogLevelFrom(url) : null;
+  if (urlLevel) return { level: urlLevel, source: "url" };
+
+  const localLevel = getStoredLogLevel();
+  if (localLevel) return { level: localLevel, source: "local" };
+
+  if (configLevel && VALID_LEVELS.has(configLevel)) {
+    return { level: configLevel as LogLevel, source: "config" };
+  }
+
+  return { level: "off", source: "default" };
+}
+
+export function setStoredLogLevel(level: LogLevel): LogLevelResolution {
+  if (typeof localStorage !== "undefined") {
+    localStorage.setItem(LOG_LEVEL_STORAGE_KEY, level);
+  }
+  const resolved: LogLevelResolution = { level, source: "local" };
+  setLogLevel(level, "local");
+  return resolved;
+}
+
+export function resetLogLevelOverride(): LogLevelResolution {
+  if (typeof localStorage !== "undefined") {
+    localStorage.removeItem(LOG_LEVEL_STORAGE_KEY);
+  }
+  const resolved = resolveLogLevel(lastConfigLevel);
+  setLogLevel(resolved.level, resolved.source);
+  return resolved;
 }
 
 // Backward-compat no-op retained so callers wired before the level refactor

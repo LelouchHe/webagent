@@ -45,6 +45,7 @@ import {
 import * as api from "./api.ts";
 import { applyConnectedLogLevel } from "./log.ts";
 import { log } from "./log.ts";
+import { NOTIFY_TIP_DENIED_KEY, NOTIFY_TIP_KEY } from "./local-reset.ts";
 import { scrollMetrics } from "./scroll-debug.ts";
 import {
   classifyPermissionOption,
@@ -141,9 +142,6 @@ function closeLocalBanner(tag: string): void {
     tag,
   });
 }
-
-const NOTIFY_TIP_KEY = "webagent_notify_tip_shown";
-const NOTIFY_TIP_DENIED_KEY = "webagent_notify_tip_denied_shown";
 
 function showNotifyTip() {
   if (typeof Notification === "undefined") return;
