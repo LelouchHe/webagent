@@ -123,6 +123,7 @@ describe("attachments", () => {
     });
     assert.equal(state.pendingAttachments[1].previewUrl, undefined);
     assert.equal(dom.fileInput.value, "");
+    assert.equal(clicked, 0);
   });
 
   it("adds pasted images and prevents the default paste behavior", async () => {
@@ -151,5 +152,6 @@ describe("attachments", () => {
       mimeType: "image/png",
       previewUrl: "data:image/png;base64,xyz789",
     });
+    assert.equal(clicked, 0);
   });
 });

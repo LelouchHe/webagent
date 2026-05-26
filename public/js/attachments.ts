@@ -31,7 +31,6 @@ async function makeAttachment(file: File): Promise<PendingAttachment> {
 function addPendingAttachment(att: PendingAttachment) {
   state.pendingAttachments.push(att);
   renderAttachPreview();
-  dom.input.focus();
 }
 
 export function renderAttachPreview() {

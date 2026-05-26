@@ -21,6 +21,7 @@ import { connect } from "./connection.ts";
 import { state, dom, resetSessionUI } from "./state.ts";
 import { loadHistory, handleEvent } from "./events.ts";
 import { addSystem, scrollToBottom, onThemeChange } from "./render.ts";
+import { installInputFocusRecovery } from "./input-focus-recovery.ts";
 import {
   handleCopyClick,
   onThemeChange as hljsThemeChange,
@@ -30,6 +31,7 @@ import { setLogRenderer } from "./log.ts";
 // Inline debug log — when level != "off", log records render as
 // system-msg rows in the conversation flow via addSystem.
 setLogRenderer(addSystem);
+installInputFocusRecovery();
 import * as api from "./api.ts";
 
 // Code block copy button (event delegation)
