@@ -46,7 +46,6 @@ import * as api from "./api.ts";
 import { applyConnectedLogLevel } from "./log.ts";
 import { log } from "./log.ts";
 import { NOTIFY_TIP_DENIED_KEY, NOTIFY_TIP_KEY } from "./local-reset.ts";
-import { scrollMetrics } from "./scroll-debug.ts";
 import {
   classifyPermissionOption,
   normalizeEventsResponse,
@@ -510,7 +509,6 @@ async function _loadNewEventsImpl(sid: string): Promise<boolean> {
 // --- History pagination: sentinel + lazy loading ---
 
 let historySentinelObserver: IntersectionObserver | null = null;
-const scrollLog = log.scope("scroll");
 
 function installHistorySentinel() {
   removeHistorySentinel();
@@ -519,12 +517,6 @@ function installHistorySentinel() {
   sentinel.className = "history-sentinel";
   sentinel.textContent = "↑ loading…";
   dom.messages.prepend(sentinel);
-  scrollLog.debug("history sentinel installed", {
-    sessionId: state.sessionId,
-    oldestLoadedSeq: state.oldestLoadedSeq,
-    hasMoreHistory: state.hasMoreHistory,
-    ...scrollMetrics(dom.messages),
-  });
 
   if (typeof IntersectionObserver === "function") {
     historySentinelObserver = new IntersectionObserver(
@@ -535,11 +527,6 @@ function installHistorySentinel() {
           state.hasMoreHistory &&
           state.sessionId
         ) {
-          scrollLog.debug("history sentinel triggered", {
-            sessionId: state.sessionId,
-            oldestLoadedSeq: state.oldestLoadedSeq,
-            ...scrollMetrics(dom.messages),
-          });
           void loadOlderEvents(state.sessionId);
         }
       },
@@ -569,11 +556,6 @@ export async function loadOlderEvents(sid: string): Promise<boolean> {
     return false;
   }
   state.loadingOlderEvents = true;
-  scrollLog.debug("loadOlderEvents start", {
-    sid,
-    beforeSeq: state.oldestLoadedSeq,
-    ...scrollMetrics(dom.messages),
-  });
   try {
     const res = await fetch(
       `/api/v1/sessions/${sid}/events?limit=${HISTORY_PAGE_SIZE}&before=${state.oldestLoadedSeq}`,
@@ -583,12 +565,6 @@ export async function loadOlderEvents(sid: string): Promise<boolean> {
     if (sid !== state.sessionId) return false;
     const body = (await res.json()) as Record<string, unknown>;
     const { events, hasMore } = normalizeEventsResponse(body);
-    scrollLog.debug("loadOlderEvents fetched", {
-      sid,
-      count: events.length,
-      hasMore,
-      ...scrollMetrics(dom.messages),
-    });
 
     if (events.length === 0) {
       state.hasMoreHistory = false;
@@ -609,7 +585,6 @@ export async function loadOlderEvents(sid: string): Promise<boolean> {
     // Prepend to DOM while preserving scroll position
     const container = dom.messages;
     const prevScrollHeight = container.scrollHeight;
-    const beforePrepend = scrollMetrics(container);
     const sentinel = document.getElementById("history-sentinel");
     if (sentinel) {
       sentinel.after(fragment);
@@ -617,13 +592,6 @@ export async function loadOlderEvents(sid: string): Promise<boolean> {
       container.prepend(fragment);
     }
     container.scrollTop += container.scrollHeight - prevScrollHeight;
-    scrollLog.debug("loadOlderEvents prepended", {
-      sid,
-      count: events.length,
-      heightDelta: Math.round(container.scrollHeight - prevScrollHeight),
-      before: beforePrepend,
-      after: scrollMetrics(container),
-    });
 
     state.oldestLoadedSeq = events[0].seq;
     state.hasMoreHistory = hasMore === true;
