@@ -55,12 +55,12 @@ describe("input focus recovery", () => {
     };
   });
 
-  function touchPointerDown(target: Element): void {
+  function pointerDown(target: Element, pointerType = "touch"): void {
     const event = new window.Event("pointerdown", {
       bubbles: true,
       cancelable: true,
     }) as Event & { pointerType?: string };
-    event.pointerType = "touch";
+    event.pointerType = pointerType;
     target.dispatchEvent(event);
   }
 
@@ -70,7 +70,20 @@ describe("input focus recovery", () => {
       configurable: true,
     });
 
-    touchPointerDown(dom.input);
+    pointerDown(dom.input);
+
+    assert.equal(blurCount, 1);
+    assert.equal(focusCount, 0);
+    assert.equal(document.activeElement, document.body);
+  });
+
+  it("unlocks stale mobile focus when touch lands on the input area", () => {
+    Object.defineProperty(document, "activeElement", {
+      value: dom.input,
+      configurable: true,
+    });
+
+    pointerDown(dom.inputArea);
 
     assert.equal(blurCount, 1);
     assert.equal(focusCount, 0);
@@ -92,7 +105,33 @@ describe("input focus recovery", () => {
       configurable: true,
     });
 
-    touchPointerDown(dom.input);
+    pointerDown(dom.input);
+
+    assert.equal(blurCount, 0);
+    assert.equal(focusCount, 0);
+  });
+
+  it("does not recover when the input is disabled", () => {
+    Object.defineProperty(document, "activeElement", {
+      value: dom.input,
+      configurable: true,
+    });
+    dom.input.disabled = true;
+
+    pointerDown(dom.input);
+
+    assert.equal(blurCount, 0);
+    assert.equal(focusCount, 0);
+  });
+
+  it("does not recover for desktop pointer events", () => {
+    Object.defineProperty(document, "activeElement", {
+      value: dom.input,
+      configurable: true,
+    });
+
+    pointerDown(dom.input, "mouse");
+    pointerDown(dom.input, "pen");
 
     assert.equal(blurCount, 0);
     assert.equal(focusCount, 0);
@@ -108,7 +147,7 @@ describe("input focus recovery", () => {
       configurable: true,
     });
 
-    touchPointerDown(dom.input);
+    pointerDown(dom.input);
 
     assert.equal(blurCount, 0);
     assert.equal(focusCount, 0);
