@@ -116,7 +116,14 @@ export function buildCandidates(
   // 1. Subcommands (fuzzy-matched against tailQuery)
   const subcommands: Candidate[] = [];
   if (node.children) {
-    for (const child of node.children) {
+    // Root commands are displayed alphabetically by the slash walker. Keep
+    // declaration order free for code locality; subcommands/data rows keep
+    // their declared/business order.
+    const children =
+      node.name === "<root>"
+        ? [...node.children].sort((a, b) => a.name.localeCompare(b.name))
+        : node.children;
+    for (const child of children) {
       if (q && !child.name.toLowerCase().includes(q)) continue;
       const hasChildren = (child.children?.length ?? 0) > 0;
       // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- checking truthy presence

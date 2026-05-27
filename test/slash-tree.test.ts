@@ -150,6 +150,25 @@ describe("slash-tree — buildCandidates", () => {
     assert.equal(c[0].kind, "subcommand");
   });
 
+  it("root commands are displayed alphabetically", () => {
+    const root = makeRoot();
+    const c = buildCandidates(root, "");
+    assert.deepEqual(
+      c.map((x) => x.spec.primary),
+      ["/cancel", "/help", "/inbox", "/notify", "/rename", "/token"],
+    );
+  });
+
+  it("nested subcommands keep declaration order", () => {
+    const root = makeRoot();
+    const notify = root.children!.find((x) => x.name === "/notify")!;
+    const c = buildCandidates(notify, "");
+    assert.deepEqual(
+      c.map((x) => x.spec.primary),
+      ["on", "off"],
+    );
+  });
+
   it("subcommand prefix = '›' for nodes with structure", () => {
     const root = makeRoot();
     const c = buildCandidates(root, "");
