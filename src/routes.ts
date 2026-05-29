@@ -176,6 +176,30 @@ function getClientOpId(req: IncomingMessage): string | null {
   return null;
 }
 
+function logPromptRejectBeforeSave(fields: {
+  sessionId: string;
+  status: number;
+  reason: string;
+  opId?: string | null;
+  textLength?: number;
+  attachmentCount?: number;
+  busyKind?: string;
+  error?: unknown;
+}): void {
+  plog.warn("rejected before save", {
+    sessionId: fields.sessionId.slice(0, 8),
+    status: fields.status,
+    reason: fields.reason,
+    ...(fields.opId ? { opId: fields.opId } : {}),
+    ...(fields.textLength != null ? { textLength: fields.textLength } : {}),
+    ...(fields.attachmentCount != null
+      ? { attachmentCount: fields.attachmentCount }
+      : {}),
+    ...(fields.busyKind ? { busyKind: fields.busyKind } : {}),
+    ...(fields.error ? { error: fields.error } : {}),
+  });
+}
+
 function tryReplayClientOp(
   req: IncomingMessage,
   res: ServerResponse,
@@ -983,17 +1007,36 @@ export function createRequestHandler(
       );
       if (promptMatch && req.method === "POST") {
         const sessionId = decodeURIComponent(promptMatch[1]);
+        const requestOpId = getClientOpId(req);
         const session = store.getSession(sessionId);
         if (!session) {
+          logPromptRejectBeforeSave({
+            sessionId,
+            status: 404,
+            reason: "session_not_found",
+            opId: requestOpId,
+          });
           json(res, 404, { error: "Session not found" });
           return;
         }
         const bridge = getBridge?.();
         if (!bridge) {
+          logPromptRejectBeforeSave({
+            sessionId,
+            status: 503,
+            reason: "agent_not_ready",
+            opId: requestOpId,
+          });
           json(res, 503, { error: "Agent not ready yet" });
           return;
         }
         if (!sessions) {
+          logPromptRejectBeforeSave({
+            sessionId,
+            status: 503,
+            reason: "session_manager_unavailable",
+            opId: requestOpId,
+          });
           json(res, 503, { error: "Session manager not available" });
           return;
         }
@@ -1010,6 +1053,13 @@ export function createRequestHandler(
         try {
           await sessions.ensureResumed(bridge, sessionId);
         } catch (err) {
+          logPromptRejectBeforeSave({
+            sessionId,
+            status: 500,
+            reason: "resume_failed",
+            opId,
+            error: errorMessage(err),
+          });
           json(res, 500, {
             error: `Failed to resume session: ${err instanceof Error ? err.message : String(err)}`,
           });
@@ -1019,6 +1069,13 @@ export function createRequestHandler(
         // Check if session is busy
         const busyKind = sessions.getBusyKind(sessionId);
         if (busyKind) {
+          logPromptRejectBeforeSave({
+            sessionId,
+            status: 409,
+            reason: "session_busy",
+            opId,
+            busyKind,
+          });
           json(res, 409, { error: "Session is busy", busyKind });
           return;
         }
@@ -1035,10 +1092,26 @@ export function createRequestHandler(
         try {
           body = JSON.parse(await readBody(req)) as typeof body;
         } catch {
+          logPromptRejectBeforeSave({
+            sessionId,
+            status: 400,
+            reason: "invalid_json",
+            opId,
+          });
           json(res, 400, { error: "Invalid JSON" });
           return;
         }
         if (!body.text) {
+          logPromptRejectBeforeSave({
+            sessionId,
+            status: 400,
+            reason: "missing_text",
+            opId,
+            textLength: 0,
+            attachmentCount: Array.isArray(body.attachments)
+              ? body.attachments.length
+              : undefined,
+          });
           json(res, 400, { error: "Missing required field: text" });
           return;
         }
@@ -1049,6 +1122,13 @@ export function createRequestHandler(
         const attachments = body.attachments;
         if (attachments) {
           if (!Array.isArray(attachments)) {
+            logPromptRejectBeforeSave({
+              sessionId,
+              status: 400,
+              reason: "attachments_not_array",
+              opId,
+              textLength: body.text.length,
+            });
             json(res, 400, { error: "attachments must be an array" });
             return;
           }
@@ -1062,6 +1142,14 @@ export function createRequestHandler(
               typeof att.displayName !== "string" ||
               typeof att.mimeType !== "string"
             ) {
+              logPromptRejectBeforeSave({
+                sessionId,
+                status: 400,
+                reason: "invalid_attachment_entry",
+                opId,
+                textLength: body.text.length,
+                attachmentCount: attachments.length,
+              });
               json(res, 400, { error: "Invalid attachment entry" });
               return;
             }
@@ -1072,6 +1160,14 @@ export function createRequestHandler(
               typeof att.width === "number" ||
               typeof att.height === "number"
             ) {
+              logPromptRejectBeforeSave({
+                sessionId,
+                status: 400,
+                reason: "client_supplied_attachment_data",
+                opId,
+                textLength: body.text.length,
+                attachmentCount: attachments.length,
+              });
               json(res, 400, {
                 error: "Client must not supply uri/data/path/width/height",
               });

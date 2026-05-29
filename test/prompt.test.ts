@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { Store } from "../src/store.ts";
 import { SessionManager } from "../src/session-manager.ts";
 import { createRequestHandler } from "../src/routes.ts";
+import { getLogLevel, setLogLevel, setLogSink } from "../src/log.ts";
 import type { ConfigOption, AgentEvent } from "../src/types.ts";
 import { mockBridgeStubs } from "./fixtures.ts";
 
@@ -149,6 +150,7 @@ describe("Prompt REST API", () => {
   });
 
   afterEach(async () => {
+    setLogSink(null);
     await new Promise<void>((resolve) =>
       server.close(() => {
         resolve();
@@ -157,6 +159,22 @@ describe("Prompt REST API", () => {
     store.close();
     rmSync(tmpDir, { recursive: true, force: true });
   });
+
+  async function captureWarnLogs(work: () => Promise<void>): Promise<string[]> {
+    const prevLevel = getLogLevel();
+    const logs: string[] = [];
+    setLogLevel("warn");
+    setLogSink((_stream, line) => {
+      logs.push(line);
+    });
+    try {
+      await work();
+      return logs;
+    } finally {
+      setLogSink(null);
+      setLogLevel(prevLevel);
+    }
+  }
 
   async function createSession(): Promise<string> {
     const res = await makeRequest(
@@ -279,6 +297,64 @@ describe("Prompt REST API", () => {
       const body = JSON.parse(res.body);
       assert.equal(body.error, "Session is busy");
       assert.equal(body.busyKind, "agent");
+    });
+
+    it("logs prompt rejects that happen before user_message is saved", async () => {
+      const sessionId = await createSession();
+      sessions.activePrompts.add(sessionId);
+
+      const logs = await captureWarnLogs(async () => {
+        const res = await makeRequest(
+          port,
+          "POST",
+          `/api/v1/sessions/${sessionId}/prompt`,
+          JSON.stringify({ text: "hello" }),
+          { "X-Client-Op-Id": "op-busy" },
+        );
+        assert.equal(res.status, 409);
+      });
+
+      const line = logs.find((l) => l.includes("[routes.prompt]"));
+      assert.ok(line, `expected prompt reject log, got: ${logs.join(" | ")}`);
+      assert.match(line, /rejected before save/);
+      assert.match(line, /"status":409/);
+      assert.match(line, /"reason":"session_busy"/);
+      assert.match(line, /"busyKind":"agent"/);
+      assert.match(line, /"opId":"op-busy"/);
+      assert.doesNotMatch(line, /hello/);
+    });
+
+    it("logs resume failures before user_message is saved", async () => {
+      const sessionId = await createSession();
+      sessions.liveSessions.delete(sessionId);
+      mockBridge.loadSession = async () => {
+        throw new Error("resume exploded");
+      };
+
+      const logs = await captureWarnLogs(async () => {
+        const res = await makeRequest(
+          port,
+          "POST",
+          `/api/v1/sessions/${sessionId}/prompt`,
+          JSON.stringify({ text: "lockscreen send" }),
+          { "X-Client-Op-Id": "op-resume" },
+        );
+        assert.equal(res.status, 500);
+      });
+
+      const events = store.getEvents(sessionId);
+      assert.equal(
+        events.some((e) => e.type === "user_message"),
+        false,
+      );
+      const line = logs.find((l) => l.includes("[routes.prompt]"));
+      assert.ok(line, `expected prompt reject log, got: ${logs.join(" | ")}`);
+      assert.match(line, /rejected before save/);
+      assert.match(line, /"status":500/);
+      assert.match(line, /"reason":"resume_failed"/);
+      assert.match(line, /"opId":"op-resume"/);
+      assert.match(line, /resume exploded/);
+      assert.doesNotMatch(line, /lockscreen send/);
     });
 
     it("returns 409 when session is busy with bash", async () => {
