@@ -4,6 +4,29 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/), and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.5.0] - 2026-05-29
+
+### Added
+
+- **LaTeX math rendering** — render inline and display math with Temml/MathML, lazy-loaded and compatible with the existing CSP.
+- **Configurable bind host** — new `host` config option controls the server listen address, defaulting to loopback.
+- **Mobile input focus recovery** — detects stale focused inputs on iOS/PWA and recovers from the "focused but keyboard closed" state.
+- Backend diagnostics for prompt requests rejected before persistence, to help investigate optimistic messages that disappear after replay.
+
+### Changed
+
+- **Streaming Markdown rendering is now incremental and memoized** — reduces per-chunk re-render cost, coalesces live updates with `requestAnimationFrame`, and adds slow-render diagnostics.
+- Static asset handling now serves `.wasm` with the correct MIME type and treats vendored `/lib/**` assets as immutable.
+- Plan events are collapsible and expose clearer accessible status labels.
+- Frontend log level preference persists locally and can be reset.
+- Slash command menus are sorted more consistently.
+
+### Fixed
+
+- JPEG/image attachments now persist dimensions correctly and avoid layout shifts while loading.
+- Streamed Markdown edge cases involving display math, fenced code blocks, lists, tables, and reference links.
+- Cross-client push notification visibility tracking now uses the shared client registry for more consistent suppression.
+
 ## [0.4.0] - 2026-05-07
 
 ### ⚠️ BREAKING
@@ -305,6 +328,7 @@ Initial release of WebAgent — a terminal-style web UI for ACP-compatible agent
 - **CI/CD**: GitHub Actions for CI (unit + E2E tests) and npm publishing on tag push
 - **npm package**: Published as `@lelouchhe/webagent`
 
+[0.5.0]: https://github.com/LelouchHe/webagent/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/LelouchHe/webagent/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/LelouchHe/webagent/compare/v0.2.6...v0.3.0
 [0.2.6]: https://github.com/LelouchHe/webagent/compare/v0.2.5...v0.2.6
