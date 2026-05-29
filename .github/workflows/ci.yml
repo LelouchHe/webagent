@@ -34,6 +34,10 @@ jobs:
         env:
           PLAYWRIGHT_CHROME_CHANNEL: chrome
         run: |
+          if ! command -v google-chrome >/dev/null 2>&1; then
+            echo "::error::google-chrome is not installed on this runner; cannot run Playwright with channel=chrome"
+            exit 1
+          fi
           google-chrome --version
           npx playwright --version
 
