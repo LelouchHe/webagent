@@ -21,6 +21,7 @@ export default defineConfig({
   use: {
     baseURL: "http://127.0.0.1:6802",
     headless: true,
+    channel: process.env.PLAYWRIGHT_CHROME_CHANNEL,
     storageState: "./test/e2e-data/storage-state.json",
     extraHTTPHeaders: {
       Authorization: `Bearer ${E2E_TOKEN}`,

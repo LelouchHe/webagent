@@ -30,38 +30,13 @@ jobs:
 
       - run: npm test
 
-      - name: Cache Playwright browsers
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/ms-playwright
-          key: ${{ runner.os }}-playwright-${{ hashFiles('package-lock.json') }}
-          restore-keys: |
-            ${{ runner.os }}-playwright-
-
-      - name: Install Playwright system dependencies
-        timeout-minutes: 10
-        run: npx playwright install-deps chromium
-
-      - name: Install Playwright browser
-        timeout-minutes: 30
+      - name: Verify Chrome
         env:
-          DEBUG: pw:install
+          PLAYWRIGHT_CHROME_CHANNEL: chrome
         run: |
-          status=0
-          for attempt in 1 2 3; do
-            echo "::group::Playwright browser install attempt ${attempt}"
-            if timeout 8m npx playwright install chromium; then
-              echo "::endgroup::"
-              exit 0
-            fi
-            status=$?
-            echo "::endgroup::"
-
-            if [ "$attempt" -lt 3 ]; then
-              rm -rf ~/.cache/ms-playwright
-              sleep $((attempt * 10))
-            fi
-          done
-          exit "$status"
+          google-chrome --version
+          npx playwright --version
 
       - run: npm run test:e2e
+        env:
+          PLAYWRIGHT_CHROME_CHANNEL: chrome
