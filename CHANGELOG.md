@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/), and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.5.1] - 2026-05-29
+
+### Fixed
+
+- CI E2E tests now use the runner-provided Chrome browser and fail fast if it is missing, avoiding Playwright browser install/extract hangs during release validation.
+
 ## [0.5.0] - 2026-05-29
 
 ### Added
@@ -328,6 +334,7 @@ Initial release of WebAgent — a terminal-style web UI for ACP-compatible agent
 - **CI/CD**: GitHub Actions for CI (unit + E2E tests) and npm publishing on tag push
 - **npm package**: Published as `@lelouchhe/webagent`
 
+[0.5.1]: https://github.com/LelouchHe/webagent/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/LelouchHe/webagent/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/LelouchHe/webagent/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/LelouchHe/webagent/compare/v0.2.6...v0.3.0
