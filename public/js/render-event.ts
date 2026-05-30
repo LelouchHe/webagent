@@ -325,24 +325,30 @@ function applyToolCallUpdate(
   const content = Array.isArray(data.content)
     ? (data.content as ToolContentItem[])
     : [];
-  if (
-    content.length &&
-    !el.querySelector("details") &&
-    !el.querySelector(".tc-summary")
-  ) {
-    const text = extractToolCallContent(content);
-    if (text) {
-      if (el.dataset.kind === "task_complete") {
-        const div = document.createElement("div");
-        div.className = "tc-summary";
-        div.textContent = text;
-        el.appendChild(div);
-      } else {
-        const details = document.createElement("details");
-        details.innerHTML = `<summary>output</summary><div class="tc-content">${escHtml(text)}</div>`;
-        el.appendChild(details);
-      }
+  if (!content.length) return;
+  const text = extractToolCallContent(content);
+  if (!text) return;
+
+  // ACP agents stream cumulative snapshots (full output-so-far), not deltas.
+  // Find-or-create the output body, then overwrite with the latest snapshot.
+  if (el.dataset.kind === "task_complete") {
+    let div = el.querySelector(".tc-summary");
+    if (!div) {
+      div = document.createElement("div");
+      div.className = "tc-summary";
+      el.appendChild(div);
     }
+    div.textContent = text;
+  } else {
+    let body = el.querySelector(".tc-output .tc-content");
+    if (!body) {
+      const details = document.createElement("details");
+      details.className = "tc-output";
+      details.innerHTML = `<summary>output</summary><div class="tc-content"></div>`;
+      el.appendChild(details);
+      body = details.querySelector(".tc-content");
+    }
+    if (body) body.textContent = text;
   }
 }
 

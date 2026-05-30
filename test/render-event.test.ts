@@ -418,6 +418,102 @@ describe("render-event", () => {
       assert.ok(details, "details inserted");
       assert.ok(details.querySelector(".tc-content"));
     });
+
+    it("overwrites output with the latest cumulative snapshot across updates", () => {
+      // ACP agents (e.g. Copilot CLI) stream cumulative snapshots, not deltas:
+      // each tool_call_update carries the full output-so-far. The renderer must
+      // reflect the LAST (fullest) snapshot, not freeze on the first one.
+      const existing = document.createElement("div");
+      existing.className = "tool-call pending";
+      existing.id = "tc-S";
+      existing.innerHTML = '<span class="icon">·</span>';
+      host.appendChild(existing);
+      const hooks = makeHooks({ findToolCallEl: () => existing });
+
+      const send = (text: string, status: string) =>
+        mod.renderContentEvent(
+          "tool_call_update",
+          {
+            id: "S",
+            status,
+            content: [{ type: "content", content: { type: "text", text } }],
+          },
+          hooks,
+        );
+
+      send("line1\n", "in_progress");
+      send("line1\nline2\n", "in_progress");
+      send("line1\nline2\nline3\n", "completed");
+
+      const bodies = existing.querySelectorAll(".tc-content");
+      assert.equal(bodies.length, 1, "exactly one output body (no duplicates)");
+      assert.equal(
+        bodies[0].textContent,
+        "line1\nline2\nline3\n",
+        "shows the fullest snapshot, not the first frame",
+      );
+    });
+
+    it("overwrites task_complete summary with the latest snapshot", () => {
+      const existing = document.createElement("div");
+      existing.className = "tool-call pending";
+      existing.id = "tc-T";
+      existing.dataset.kind = "task_complete";
+      existing.innerHTML = '<span class="icon">·</span>';
+      host.appendChild(existing);
+      const hooks = makeHooks({ findToolCallEl: () => existing });
+
+      const send = (text: string, status: string) =>
+        mod.renderContentEvent(
+          "tool_call_update",
+          {
+            id: "T",
+            status,
+            content: [{ type: "content", content: { type: "text", text } }],
+          },
+          hooks,
+        );
+
+      send("partial", "in_progress");
+      send("partial summary done", "completed");
+
+      const summaries = existing.querySelectorAll(".tc-summary");
+      assert.equal(summaries.length, 1, "exactly one summary (no duplicates)");
+      assert.equal(summaries[0].textContent, "partial summary done");
+    });
+
+    it("does not clobber an edit diff details when output arrives", () => {
+      // buildToolCall appends a diff <details> for edit kind; the output body
+      // must be a separate node, not overwrite the diff.
+      const existing = document.createElement("div");
+      existing.className = "tool-call pending";
+      existing.id = "tc-E";
+      existing.innerHTML =
+        '<span class="icon">·</span><details class="tc-diff"><summary>diff</summary><div class="diff-view">DIFF</div></details>';
+      host.appendChild(existing);
+      const hooks = makeHooks({ findToolCallEl: () => existing });
+
+      mod.renderContentEvent(
+        "tool_call_update",
+        {
+          id: "E",
+          status: "completed",
+          content: [
+            { type: "content", content: { type: "text", text: "OUT" } },
+          ],
+        },
+        hooks,
+      );
+
+      assert.equal(
+        existing.querySelector(".diff-view")?.textContent,
+        "DIFF",
+        "diff content preserved",
+      );
+      const body = existing.querySelector(".tc-content");
+      assert.ok(body, "output body created");
+      assert.equal(body.textContent, "OUT");
+    });
   });
 
   describe("plan", () => {
