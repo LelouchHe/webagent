@@ -579,6 +579,15 @@ function shouldCorrectStabilizationDelta(
   return abs <= 4 || abs > container.clientHeight;
 }
 
+function preserveScrollAnchorAround(
+  container: HTMLElement,
+  action: () => void,
+): number {
+  const anchor = pickScrollAnchor(container);
+  action();
+  return restoreScrollAnchor(container, anchor);
+}
+
 async function waitForTopBounceToSettle(
   container: HTMLElement,
 ): Promise<number> {
@@ -671,23 +680,27 @@ function observeHistorySentinelAfterExit() {
   historySentinelObserver.observe(sentinel);
 }
 
-function showHistoryLoading() {
+function showHistoryLoading(container = dom.messages) {
   if (document.getElementById("history-loading")) return;
-  const loading = document.createElement("div");
-  loading.id = "history-loading";
-  loading.className = "history-loading";
-  loading.setAttribute("role", "status");
-  loading.textContent = "↑ loading…";
-  const sentinel = document.getElementById("history-sentinel");
-  if (sentinel) {
-    sentinel.after(loading);
-  } else {
-    dom.messages.prepend(loading);
-  }
+  preserveScrollAnchorAround(container, () => {
+    const loading = document.createElement("div");
+    loading.id = "history-loading";
+    loading.className = "history-loading";
+    loading.setAttribute("role", "status");
+    loading.textContent = "↑ loading…";
+    const sentinel = document.getElementById("history-sentinel");
+    if (sentinel) {
+      sentinel.after(loading);
+    } else {
+      container.prepend(loading);
+    }
+  });
 }
 
-function hideHistoryLoading() {
-  document.getElementById("history-loading")?.remove();
+function hideHistoryLoading(container = dom.messages) {
+  const loading = document.getElementById("history-loading");
+  if (!loading) return;
+  preserveScrollAnchorAround(container, () => { loading.remove(); });
 }
 
 function rearmHistoryObserverAfterLoad(
@@ -741,7 +754,7 @@ export async function loadOlderEvents(sid: string): Promise<boolean> {
   disconnectHistoryObserver();
   const container = dom.messages;
   let loadedOlderEvents = false;
-  showHistoryLoading();
+  showHistoryLoading(container);
   scrollLog.debug("load older start", {
     sessionId: sid,
     beforeSeq: state.oldestLoadedSeq,
@@ -807,7 +820,7 @@ export async function loadOlderEvents(sid: string): Promise<boolean> {
     const anchor = pickScrollAnchor(container);
     const prevScrollHeight = container.scrollHeight;
     const beforePrepend = scrollMetrics(container);
-    hideHistoryLoading();
+    hideHistoryLoading(container);
     const sentinel = document.getElementById("history-sentinel");
     if (sentinel) {
       sentinel.after(fragment);
@@ -841,7 +854,7 @@ export async function loadOlderEvents(sid: string): Promise<boolean> {
   } catch {
     return false;
   } finally {
-    hideHistoryLoading();
+    hideHistoryLoading(container);
     state.loadingOlderEvents = false;
     rearmHistoryObserverAfterLoad(sid, loadedOlderEvents);
   }

@@ -1876,7 +1876,7 @@ describe("events", () => {
         ({ top: 0, bottom: 544 }) as DOMRect;
 
       const anchor = dom.messages.children[0] as HTMLElement;
-      const anchorTops = [100, 900, 100];
+      const anchorTops = [100, 100, 100, 100, 100, 900, 100];
       anchor.getBoundingClientRect = () => {
         const top = anchorTops.shift() ?? 100;
         return { top, bottom: top + 40 } as DOMRect;
@@ -1992,6 +1992,48 @@ describe("events", () => {
       } finally {
         (globalThis as any).IntersectionObserver = originalIntersectionObserver;
       }
+    });
+
+    it("preserves the current visual anchor when failed load shows and hides loading row", async () => {
+      state.oldestLoadedSeq = 5;
+      state.hasMoreHistory = true;
+      state.sessionId = "s1";
+      events.replayEvent("user_message", { text: "msg-5" }, [], 0);
+      await new Promise((resolve) => {
+        requestAnimationFrame(() => {
+          resolve(null);
+        });
+      });
+
+      let scrollTop = 100;
+      Object.defineProperties(dom.messages, {
+        scrollTop: {
+          get: () => scrollTop,
+          set: (v: number) => {
+            scrollTop = v;
+          },
+          configurable: true,
+        },
+        clientHeight: { value: 544, configurable: true },
+        scrollHeight: { value: 6000, configurable: true },
+      });
+      dom.messages.getBoundingClientRect = () =>
+        ({ top: 0, bottom: 544 }) as DOMRect;
+
+      const anchor = dom.messages.children[0] as HTMLElement;
+      const anchorTops = [100, 124, 124, 100];
+      anchor.getBoundingClientRect = () => {
+        const top = anchorTops.shift() ?? 100;
+        return { top, bottom: top + 40 } as DOMRect;
+      };
+
+      setFetch(() => Promise.resolve({ ok: false, status: 503 }));
+
+      const result = await events.loadOlderEvents("s1");
+
+      assert.equal(result, false);
+      assert.equal(scrollTop, 100);
+      assert.equal(document.getElementById("history-loading"), null);
     });
 
     it("returns false when no more history", async () => {
