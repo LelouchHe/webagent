@@ -561,9 +561,22 @@ function restoreScrollAnchor(
   anchor: ScrollAnchor | null,
 ): number {
   if (!anchor?.el.isConnected) return 0;
-  const delta = anchor.el.getBoundingClientRect().top - anchor.top;
+  const delta = measureScrollAnchorDelta(anchor);
   if (delta !== 0) container.scrollTop += delta;
   return delta;
+}
+
+function measureScrollAnchorDelta(anchor: ScrollAnchor | null): number {
+  if (!anchor?.el.isConnected) return 0;
+  return anchor.el.getBoundingClientRect().top - anchor.top;
+}
+
+function shouldCorrectStabilizationDelta(
+  container: HTMLElement,
+  delta: number,
+): boolean {
+  const abs = Math.abs(delta);
+  return abs <= 4 || abs > container.clientHeight;
 }
 
 async function waitForTopBounceToSettle(
@@ -589,8 +602,18 @@ async function stabilizeScrollAnchor(
 ): Promise<void> {
   for (let frame = 1; frame <= 8; frame++) {
     await nextFrame();
-    const delta = restoreScrollAnchor(container, anchor);
+    const delta = measureScrollAnchorDelta(anchor);
     if (delta !== 0) {
+      if (!shouldCorrectStabilizationDelta(container, delta)) {
+        scrollLog.debug("load older anchor stabilization stopped", {
+          sessionId,
+          frame,
+          anchorDelta: Math.round(delta),
+          after: scrollMetrics(container),
+        });
+        return;
+      }
+      container.scrollTop += delta;
       scrollLog.debug("load older anchor frame correction", {
         sessionId,
         frame,

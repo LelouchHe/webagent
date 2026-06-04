@@ -1794,6 +1794,61 @@ describe("events", () => {
       assert.equal(scrollTop, 900);
     });
 
+    it("does not fight user-sized scroll movement during anchor stabilization", async () => {
+      state.oldestLoadedSeq = 5;
+      state.hasMoreHistory = true;
+      state.sessionId = "s1";
+      events.replayEvent("user_message", { text: "msg-5" }, [], 0);
+      await new Promise((resolve) => {
+        requestAnimationFrame(() => {
+          resolve(null);
+        });
+      });
+
+      let scrollTop = 100;
+      Object.defineProperties(dom.messages, {
+        scrollTop: {
+          get: () => scrollTop,
+          set: (v: number) => {
+            scrollTop = v;
+          },
+          configurable: true,
+        },
+        clientHeight: { value: 544, configurable: true },
+        scrollHeight: { value: 6000, configurable: true },
+      });
+      dom.messages.getBoundingClientRect = () =>
+        ({ top: 0, bottom: 544 }) as DOMRect;
+
+      const anchor = dom.messages.children[0] as HTMLElement;
+      const anchorTops = [120, 920, 220];
+      anchor.getBoundingClientRect = () => {
+        const top = anchorTops.shift() ?? 220;
+        return { top, bottom: top + 40 } as DOMRect;
+      };
+
+      setFetch(() =>
+        Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              events: [
+                {
+                  seq: 4,
+                  type: "assistant_message",
+                  data: JSON.stringify({ text: "msg-4" }),
+                },
+              ],
+              hasMore: true,
+            }),
+        }),
+      );
+
+      await events.loadOlderEvents("s1");
+
+      assert.equal(scrollTop, 900);
+    });
+
     it("waits for iOS top rubber-band before prepending older events", async () => {
       state.oldestLoadedSeq = 5;
       state.hasMoreHistory = true;
