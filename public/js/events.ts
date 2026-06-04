@@ -220,6 +220,7 @@ function completePendingTurnUI() {
 const HISTORY_PAGE_SIZE = 200;
 
 export async function loadHistory(sid: string): Promise<boolean> {
+  invalidateHistoryLoads();
   state.replayInProgress = true;
   state.replayQueue = [];
   try {
@@ -513,6 +514,14 @@ async function _loadNewEventsImpl(sid: string): Promise<boolean> {
 let historySentinelObserver: IntersectionObserver | null = null;
 let historyLoadToken = 0;
 
+function invalidateHistoryLoads() {
+  historyLoadToken++;
+}
+
+function isCurrentHistoryLoad(sessionId: string, loadToken: number): boolean {
+  return loadToken === historyLoadToken && state.sessionId === sessionId;
+}
+
 function nextFrame(): Promise<void> {
   if (typeof requestAnimationFrame !== "function") return Promise.resolve();
   return new Promise((resolve) =>
@@ -736,10 +745,40 @@ function installHistorySentinel() {
   observeHistorySentinel();
 }
 
-function removeHistorySentinel() {
+function removeHistorySentinel({ invalidateLoads = true } = {}) {
+  if (invalidateLoads) invalidateHistoryLoads();
   disconnectHistoryObserver();
   hideHistoryLoading();
   document.getElementById("history-sentinel")?.remove();
+}
+
+async function fetchOlderEventsPage(
+  sessionId: string,
+  loadToken: number,
+): Promise<{ events: StoredEvent[]; hasMore: boolean | undefined } | null> {
+  const res = await fetch(
+    `/api/v1/sessions/${sessionId}/events?limit=${HISTORY_PAGE_SIZE}&before=${state.oldestLoadedSeq}`,
+  );
+  if (!isCurrentHistoryLoad(sessionId, loadToken)) return null;
+  if (!res.ok) {
+    scrollLog.warn("load older fetch failed", {
+      sessionId,
+      status: res.status,
+    });
+    return null;
+  }
+  const body = (await res.json()) as Record<string, unknown>;
+  if (!isCurrentHistoryLoad(sessionId, loadToken)) return null;
+  const { events, hasMore } = normalizeEventsResponse(body);
+  scrollLog.debug("load older fetched", {
+    sessionId,
+    count: events.length,
+    firstSeq: events[0]?.seq,
+    lastSeq: events[events.length - 1]?.seq,
+    hasMore,
+    ...scrollMetrics(dom.messages),
+  });
+  return { events, hasMore };
 }
 
 // Clean up observer on session reset to avoid leaking across session switches
@@ -767,28 +806,9 @@ export async function loadOlderEvents(sid: string): Promise<boolean> {
     ...scrollMetrics(container),
   });
   try {
-    const res = await fetch(
-      `/api/v1/sessions/${sid}/events?limit=${HISTORY_PAGE_SIZE}&before=${state.oldestLoadedSeq}`,
-    );
-    if (!res.ok) {
-      scrollLog.warn("load older fetch failed", {
-        sessionId: sid,
-        status: res.status,
-      });
-      return false;
-    }
-    // Bail out if the user switched sessions while the fetch was in-flight
-    if (sid !== state.sessionId) return false;
-    const body = (await res.json()) as Record<string, unknown>;
-    const { events, hasMore } = normalizeEventsResponse(body);
-    scrollLog.debug("load older fetched", {
-      sessionId: sid,
-      count: events.length,
-      firstSeq: events[0]?.seq,
-      lastSeq: events[events.length - 1]?.seq,
-      hasMore,
-      ...scrollMetrics(container),
-    });
+    const page = await fetchOlderEventsPage(sid, loadToken);
+    if (!page) return false;
+    const { events, hasMore } = page;
 
     const bounceFrames = await waitForTopBounceToSettle(container);
     if (bounceFrames > 0) {
@@ -798,11 +818,11 @@ export async function loadOlderEvents(sid: string): Promise<boolean> {
         ...scrollMetrics(container),
       });
     }
-    if (sid !== state.sessionId) return false;
+    if (!isCurrentHistoryLoad(sid, loadToken)) return false;
 
     if (events.length === 0) {
       state.hasMoreHistory = false;
-      removeHistorySentinel();
+      removeHistorySentinel({ invalidateLoads: false });
       scrollLog.debug("load older empty", {
         sessionId: sid,
         beforeSeq: state.oldestLoadedSeq,
@@ -849,7 +869,7 @@ export async function loadOlderEvents(sid: string): Promise<boolean> {
     state.hasMoreHistory = hasMore === true;
 
     if (!state.hasMoreHistory) {
-      removeHistorySentinel();
+      removeHistorySentinel({ invalidateLoads: false });
     }
 
     await stabilizeScrollAnchor(container, anchor, sid);
@@ -858,7 +878,7 @@ export async function loadOlderEvents(sid: string): Promise<boolean> {
   } catch {
     return false;
   } finally {
-    if (loadToken === historyLoadToken && state.sessionId === sid) {
+    if (isCurrentHistoryLoad(sid, loadToken)) {
       hideHistoryLoading(container);
       state.loadingOlderEvents = false;
       rearmHistoryObserverAfterLoad(sid, loadedOlderEvents);

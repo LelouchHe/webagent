@@ -2087,6 +2087,58 @@ describe("events", () => {
       assert.equal(document.getElementById("history-loading"), null);
     });
 
+    it("ignores stale same-session older-history response after session reset", async () => {
+      const responses: Array<
+        (res: { ok: boolean; json: () => unknown }) => void
+      > = [];
+      setFetch(
+        () =>
+          new Promise((resolve) => {
+            responses.push(resolve);
+          }),
+      );
+
+      state.oldestLoadedSeq = 5;
+      state.hasMoreHistory = true;
+      state.sessionId = "s1";
+      events.replayEvent("user_message", { text: "old-visible" }, [], 0);
+      await new Promise((resolve) => {
+        requestAnimationFrame(() => {
+          resolve(null);
+        });
+      });
+
+      const oldLoad = events.loadOlderEvents("s1");
+
+      stateMod.resetSessionUI();
+      state.sessionId = "s1";
+      state.oldestLoadedSeq = 50;
+      state.hasMoreHistory = true;
+      events.replayEvent("user_message", { text: "fresh-visible" }, [], 0);
+
+      responses[0]({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            events: [
+              {
+                seq: 3,
+                type: "user_message",
+                data: JSON.stringify({ text: "stale-prepend" }),
+              },
+            ],
+            hasMore: false,
+          }),
+      });
+
+      const result = await oldLoad;
+
+      assert.equal(result, false);
+      assert.equal(state.oldestLoadedSeq, 50);
+      assert.equal(dom.messages.textContent.includes("fresh-visible"), true);
+      assert.equal(dom.messages.textContent.includes("stale-prepend"), false);
+    });
+
     it("returns false when no more history", async () => {
       state.hasMoreHistory = false;
       const result = await events.loadOlderEvents("s1");
