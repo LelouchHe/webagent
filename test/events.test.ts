@@ -1730,6 +1730,132 @@ describe("events", () => {
       assert.equal(dom.messages.children.length, 4);
     });
 
+    it("preserves the current visual anchor when prepending older events", async () => {
+      state.oldestLoadedSeq = 5;
+      state.hasMoreHistory = true;
+      state.sessionId = "s1";
+      events.replayEvent("user_message", { text: "msg-5" }, [], 0);
+      events.replayEvent("assistant_message", { text: "msg-6" }, [], 0);
+      await new Promise((resolve) =>
+        requestAnimationFrame(() => { resolve(null); }),
+      );
+
+      let scrollTop = 100;
+      Object.defineProperties(dom.messages, {
+        scrollTop: {
+          get: () => scrollTop,
+          set: (v: number) => {
+            scrollTop = v;
+          },
+          configurable: true,
+        },
+        clientHeight: { value: 544, configurable: true },
+        scrollHeight: { value: 6000, configurable: true },
+      });
+      dom.messages.getBoundingClientRect = () =>
+        ({
+          top: 0,
+          bottom: 544,
+        }) as DOMRect;
+
+      const anchor = dom.messages.children[0] as HTMLElement;
+      const anchorTops = [120, 920, 120];
+      anchor.getBoundingClientRect = () => {
+        const top = anchorTops.shift() ?? 120;
+        return { top, bottom: top + 40 } as DOMRect;
+      };
+
+      setFetch(() =>
+        Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              events: [
+                {
+                  seq: 3,
+                  type: "user_message",
+                  data: JSON.stringify({ text: "msg-3" }),
+                },
+                {
+                  seq: 4,
+                  type: "assistant_message",
+                  data: JSON.stringify({ text: "msg-4" }),
+                },
+              ],
+              hasMore: true,
+            }),
+        }),
+      );
+
+      await events.loadOlderEvents("s1");
+
+      assert.equal(scrollTop, 900);
+    });
+
+    it("waits for iOS top rubber-band before prepending older events", async () => {
+      state.oldestLoadedSeq = 5;
+      state.hasMoreHistory = true;
+      state.sessionId = "s1";
+      events.replayEvent("user_message", { text: "msg-5" }, [], 0);
+      await new Promise((resolve) =>
+        requestAnimationFrame(() => { resolve(null); }),
+      );
+
+      let scrollTop = -50;
+      Object.defineProperties(dom.messages, {
+        scrollTop: {
+          get: () => scrollTop,
+          set: (v: number) => {
+            scrollTop = v;
+          },
+          configurable: true,
+        },
+        clientHeight: { value: 544, configurable: true },
+        scrollHeight: { value: 6000, configurable: true },
+      });
+      dom.messages.getBoundingClientRect = () =>
+        ({ top: 0, bottom: 544 }) as DOMRect;
+
+      const anchor = dom.messages.children[0] as HTMLElement;
+      const anchorTops = [100, 900, 100];
+      anchor.getBoundingClientRect = () => {
+        const top = anchorTops.shift() ?? 100;
+        return { top, bottom: top + 40 } as DOMRect;
+      };
+
+      const originalRaf = globalThis.requestAnimationFrame;
+      globalThis.requestAnimationFrame = ((cb: FrameRequestCallback) => {
+        scrollTop = Math.max(scrollTop, 0);
+        cb(0);
+        return 1;
+      });
+
+      setFetch(() =>
+        Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              events: [
+                {
+                  seq: 4,
+                  type: "assistant_message",
+                  data: JSON.stringify({ text: "msg-4" }),
+                },
+              ],
+              hasMore: true,
+            }),
+        }),
+      );
+
+      try {
+        await events.loadOlderEvents("s1");
+      } finally {
+        globalThis.requestAnimationFrame = originalRaf;
+      }
+
+      assert.equal(scrollTop, 800);
+    });
+
     it("removes sentinel and sets hasMoreHistory=false when no more events", async () => {
       state.oldestLoadedSeq = 3;
       state.hasMoreHistory = true;

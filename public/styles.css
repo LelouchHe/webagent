@@ -177,6 +177,7 @@ body {
   display: flex;
   flex-direction: column;
   gap: 4px;
+  overflow-anchor: none;
 }
 #messages > * {
   min-width: 0;
@@ -1005,10 +1006,17 @@ body {
 
 /* History pagination sentinel */
 .history-sentinel {
+  height: 1px;
+  padding: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+.history-loading {
   text-align: center;
   padding: 8px;
   opacity: 0.5;
   font-size: 0.85em;
+  pointer-events: none;
 }
 
 /* Utility: dim out cancelled / settled / past states. Used in dynamic innerHTML

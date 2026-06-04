@@ -61,6 +61,8 @@ import {
 import { enhanceCodeBlocks } from "./highlight.ts";
 import type { AgentEvent, StoredEvent } from "../../src/types.ts";
 
+const scrollLog = log.scope("history-scroll");
+
 /**
  * When the current session is gone (expired, deleted), try to switch to the
  * next available session. Creates a new session only if no others exist.
@@ -510,37 +512,164 @@ async function _loadNewEventsImpl(sid: string): Promise<boolean> {
 
 let historySentinelObserver: IntersectionObserver | null = null;
 
+function nextFrame(): Promise<void> {
+  if (typeof requestAnimationFrame !== "function") return Promise.resolve();
+  return new Promise((resolve) => requestAnimationFrame(() => { resolve(); }));
+}
+
+function scrollMetrics(el: HTMLElement): Record<string, number> {
+  return {
+    scrollTop: Math.round(el.scrollTop),
+    clientHeight: Math.round(el.clientHeight),
+    scrollHeight: Math.round(el.scrollHeight),
+  };
+}
+
+interface ScrollAnchor {
+  el: HTMLElement;
+  top: number;
+}
+
+function pickScrollAnchor(container: HTMLElement): ScrollAnchor | null {
+  const containerRect = container.getBoundingClientRect();
+  for (const child of Array.from(container.children)) {
+    if (!(child instanceof HTMLElement)) continue;
+    if (child.id === "history-sentinel") continue;
+    if (child.id === "history-loading") continue;
+    const rect = child.getBoundingClientRect();
+    if (rect.bottom >= containerRect.top && rect.top <= containerRect.bottom) {
+      return { el: child, top: rect.top };
+    }
+  }
+  const fallback = Array.from(container.children).find(
+    (child): child is HTMLElement =>
+      child instanceof HTMLElement &&
+      child.id !== "history-sentinel" &&
+      child.id !== "history-loading",
+  );
+  return fallback
+    ? { el: fallback, top: fallback.getBoundingClientRect().top }
+    : null;
+}
+
+function restoreScrollAnchor(
+  container: HTMLElement,
+  anchor: ScrollAnchor | null,
+): number {
+  if (!anchor?.el.isConnected) return 0;
+  const delta = anchor.el.getBoundingClientRect().top - anchor.top;
+  if (delta !== 0) container.scrollTop += delta;
+  return delta;
+}
+
+async function waitForTopBounceToSettle(
+  container: HTMLElement,
+): Promise<number> {
+  if (container.scrollTop >= 0) return 0;
+  for (let frame = 1; frame <= 20; frame++) {
+    await nextFrame();
+    if (container.scrollTop >= 0) {
+      await nextFrame();
+      return frame;
+    }
+  }
+  container.scrollTop = 0;
+  await nextFrame();
+  return 20;
+}
+
+async function stabilizeScrollAnchor(
+  container: HTMLElement,
+  anchor: ScrollAnchor | null,
+  sessionId: string,
+): Promise<void> {
+  for (let frame = 1; frame <= 8; frame++) {
+    await nextFrame();
+    const delta = restoreScrollAnchor(container, anchor);
+    if (delta !== 0) {
+      scrollLog.debug("load older anchor frame correction", {
+        sessionId,
+        frame,
+        anchorDelta: Math.round(delta),
+        after: scrollMetrics(container),
+      });
+    }
+  }
+}
+
+function disconnectHistoryObserver() {
+  if (!historySentinelObserver) return;
+  historySentinelObserver.disconnect();
+  historySentinelObserver = null;
+}
+
+function observeHistorySentinel() {
+  const sentinel = document.getElementById("history-sentinel");
+  if (!sentinel || typeof IntersectionObserver !== "function") return;
+  disconnectHistoryObserver();
+  historySentinelObserver = new IntersectionObserver(
+    (entries) => {
+      if (
+        entries[0].isIntersecting &&
+        !state.loadingOlderEvents &&
+        state.hasMoreHistory &&
+        state.sessionId
+      ) {
+        scrollLog.debug("sentinel triggered", {
+          sessionId: state.sessionId,
+          oldestLoadedSeq: state.oldestLoadedSeq,
+          isIntersecting: entries[0].isIntersecting,
+          intersectionRatio: entries[0].intersectionRatio,
+          ...scrollMetrics(dom.messages),
+        });
+        void loadOlderEvents(state.sessionId);
+      }
+    },
+    { root: dom.messages, rootMargin: "200px 0px 0px 0px" },
+  );
+  historySentinelObserver.observe(sentinel);
+}
+
+function showHistoryLoading() {
+  if (document.getElementById("history-loading")) return;
+  const loading = document.createElement("div");
+  loading.id = "history-loading";
+  loading.className = "history-loading";
+  loading.setAttribute("role", "status");
+  loading.textContent = "↑ loading…";
+  const sentinel = document.getElementById("history-sentinel");
+  if (sentinel) {
+    sentinel.after(loading);
+  } else {
+    dom.messages.prepend(loading);
+  }
+}
+
+function hideHistoryLoading() {
+  document.getElementById("history-loading")?.remove();
+}
+
 function installHistorySentinel() {
   removeHistorySentinel();
   const sentinel = document.createElement("div");
   sentinel.id = "history-sentinel";
   sentinel.className = "history-sentinel";
-  sentinel.textContent = "↑ loading…";
+  sentinel.setAttribute("aria-hidden", "true");
   dom.messages.prepend(sentinel);
+  scrollLog.debug("sentinel installed", {
+    sessionId: state.sessionId,
+    oldestLoadedSeq: state.oldestLoadedSeq,
+    hasMoreHistory: state.hasMoreHistory,
+    childCount: dom.messages.children.length,
+    ...scrollMetrics(dom.messages),
+  });
 
-  if (typeof IntersectionObserver === "function") {
-    historySentinelObserver = new IntersectionObserver(
-      (entries) => {
-        if (
-          entries[0].isIntersecting &&
-          !state.loadingOlderEvents &&
-          state.hasMoreHistory &&
-          state.sessionId
-        ) {
-          void loadOlderEvents(state.sessionId);
-        }
-      },
-      { root: dom.messages, rootMargin: "200px 0px 0px 0px" },
-    );
-    historySentinelObserver.observe(sentinel);
-  }
+  observeHistorySentinel();
 }
 
 function removeHistorySentinel() {
-  if (historySentinelObserver) {
-    historySentinelObserver.disconnect();
-    historySentinelObserver = null;
-  }
+  disconnectHistoryObserver();
+  hideHistoryLoading();
   document.getElementById("history-sentinel")?.remove();
 }
 
@@ -556,19 +685,57 @@ export async function loadOlderEvents(sid: string): Promise<boolean> {
     return false;
   }
   state.loadingOlderEvents = true;
+  disconnectHistoryObserver();
+  const container = dom.messages;
+  showHistoryLoading();
+  scrollLog.debug("load older start", {
+    sessionId: sid,
+    beforeSeq: state.oldestLoadedSeq,
+    hasMoreHistory: state.hasMoreHistory,
+    childCount: container.children.length,
+    ...scrollMetrics(container),
+  });
   try {
     const res = await fetch(
       `/api/v1/sessions/${sid}/events?limit=${HISTORY_PAGE_SIZE}&before=${state.oldestLoadedSeq}`,
     );
-    if (!res.ok) return false;
+    if (!res.ok) {
+      scrollLog.warn("load older fetch failed", {
+        sessionId: sid,
+        status: res.status,
+      });
+      return false;
+    }
     // Bail out if the user switched sessions while the fetch was in-flight
     if (sid !== state.sessionId) return false;
     const body = (await res.json()) as Record<string, unknown>;
     const { events, hasMore } = normalizeEventsResponse(body);
+    scrollLog.debug("load older fetched", {
+      sessionId: sid,
+      count: events.length,
+      firstSeq: events[0]?.seq,
+      lastSeq: events[events.length - 1]?.seq,
+      hasMore,
+      ...scrollMetrics(container),
+    });
+
+    const bounceFrames = await waitForTopBounceToSettle(container);
+    if (bounceFrames > 0) {
+      scrollLog.debug("top bounce settled", {
+        sessionId: sid,
+        frames: bounceFrames,
+        ...scrollMetrics(container),
+      });
+    }
+    if (sid !== state.sessionId) return false;
 
     if (events.length === 0) {
       state.hasMoreHistory = false;
       removeHistorySentinel();
+      scrollLog.debug("load older empty", {
+        sessionId: sid,
+        beforeSeq: state.oldestLoadedSeq,
+      });
       return true;
     }
 
@@ -583,15 +750,29 @@ export async function loadOlderEvents(sid: string): Promise<boolean> {
     state.replayTarget = null;
 
     // Prepend to DOM while preserving scroll position
-    const container = dom.messages;
+    const anchor = pickScrollAnchor(container);
     const prevScrollHeight = container.scrollHeight;
+    const beforePrepend = scrollMetrics(container);
+    hideHistoryLoading();
     const sentinel = document.getElementById("history-sentinel");
     if (sentinel) {
       sentinel.after(fragment);
     } else {
       container.prepend(fragment);
     }
-    container.scrollTop += container.scrollHeight - prevScrollHeight;
+    const anchorDelta = restoreScrollAnchor(container, anchor);
+    scrollLog.debug("load older prepended", {
+      sessionId: sid,
+      count: events.length,
+      heightDelta: Math.round(container.scrollHeight - prevScrollHeight),
+      anchorDelta: Math.round(anchorDelta),
+      anchorId: anchor?.el.id,
+      anchorClass: anchor?.el.className,
+      anchorTop: anchor ? Math.round(anchor.top) : null,
+      before: beforePrepend,
+      after: scrollMetrics(container),
+      childCount: container.children.length,
+    });
 
     state.oldestLoadedSeq = events[0].seq;
     state.hasMoreHistory = hasMore === true;
@@ -600,11 +781,16 @@ export async function loadOlderEvents(sid: string): Promise<boolean> {
       removeHistorySentinel();
     }
 
+    await stabilizeScrollAnchor(container, anchor, sid);
     return true;
   } catch {
     return false;
   } finally {
+    hideHistoryLoading();
     state.loadingOlderEvents = false;
+    if (state.hasMoreHistory && state.sessionId === sid) {
+      observeHistorySentinel();
+    }
   }
 }
 
