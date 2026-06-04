@@ -1737,7 +1737,9 @@ describe("events", () => {
       events.replayEvent("user_message", { text: "msg-5" }, [], 0);
       events.replayEvent("assistant_message", { text: "msg-6" }, [], 0);
       await new Promise((resolve) =>
-        requestAnimationFrame(() => { resolve(null); }),
+        requestAnimationFrame(() => {
+          resolve(null);
+        }),
       );
 
       let scrollTop = 100;
@@ -1798,7 +1800,9 @@ describe("events", () => {
       state.sessionId = "s1";
       events.replayEvent("user_message", { text: "msg-5" }, [], 0);
       await new Promise((resolve) =>
-        requestAnimationFrame(() => { resolve(null); }),
+        requestAnimationFrame(() => {
+          resolve(null);
+        }),
       );
 
       let scrollTop = -50;
@@ -1824,11 +1828,11 @@ describe("events", () => {
       };
 
       const originalRaf = globalThis.requestAnimationFrame;
-      globalThis.requestAnimationFrame = ((cb: FrameRequestCallback) => {
+      globalThis.requestAnimationFrame = (cb: FrameRequestCallback) => {
         scrollTop = Math.max(scrollTop, 0);
         cb(0);
         return 1;
-      });
+      };
 
       setFetch(() =>
         Promise.resolve({
@@ -1882,6 +1886,57 @@ describe("events", () => {
       await events.loadOlderEvents("s1");
       assert.equal(state.hasMoreHistory, false);
       assert.equal(state.oldestLoadedSeq, 1);
+    });
+
+    it("does not immediately retry a failed older-history load while sentinel remains visible", async () => {
+      state.oldestLoadedSeq = 5;
+      state.hasMoreHistory = true;
+      state.sessionId = "s1";
+      const sentinel = document.createElement("div");
+      sentinel.id = "history-sentinel";
+      dom.messages.prepend(sentinel);
+
+      const observers: Array<{
+        callback: (entries: Array<{ isIntersecting: boolean }>) => void;
+      }> = [];
+      const originalIntersectionObserver = (globalThis as any)
+        .IntersectionObserver;
+      (globalThis as any).IntersectionObserver =
+        class MockIntersectionObserver {
+          callback: (entries: Array<{ isIntersecting: boolean }>) => void;
+          constructor(
+            callback: (entries: Array<{ isIntersecting: boolean }>) => void,
+          ) {
+            this.callback = callback;
+            observers.push(this);
+          }
+          observe() {}
+          disconnect() {}
+        };
+
+      let fetchCount = 0;
+      setFetch(() => {
+        fetchCount++;
+        return Promise.resolve({ ok: false, status: 503 });
+      });
+
+      try {
+        const result = await events.loadOlderEvents("s1");
+        assert.equal(result, false);
+        assert.equal(fetchCount, 1);
+
+        observers[0].callback([{ isIntersecting: true }]);
+        await Promise.resolve();
+        assert.equal(fetchCount, 1);
+
+        observers[0].callback([{ isIntersecting: false }]);
+        observers[1].callback([{ isIntersecting: true }]);
+        await Promise.resolve();
+        await Promise.resolve();
+        assert.equal(fetchCount, 2);
+      } finally {
+        (globalThis as any).IntersectionObserver = originalIntersectionObserver;
+      }
     });
 
     it("returns false when no more history", async () => {

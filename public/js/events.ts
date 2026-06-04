@@ -514,7 +514,11 @@ let historySentinelObserver: IntersectionObserver | null = null;
 
 function nextFrame(): Promise<void> {
   if (typeof requestAnimationFrame !== "function") return Promise.resolve();
-  return new Promise((resolve) => requestAnimationFrame(() => { resolve(); }));
+  return new Promise((resolve) =>
+    requestAnimationFrame(() => {
+      resolve();
+    }),
+  );
 }
 
 function scrollMetrics(el: HTMLElement): Record<string, number> {
@@ -630,6 +634,20 @@ function observeHistorySentinel() {
   historySentinelObserver.observe(sentinel);
 }
 
+function observeHistorySentinelAfterExit() {
+  const sentinel = document.getElementById("history-sentinel");
+  if (!sentinel || typeof IntersectionObserver !== "function") return;
+  disconnectHistoryObserver();
+  historySentinelObserver = new IntersectionObserver(
+    (entries) => {
+      if (entries[0].isIntersecting) return;
+      observeHistorySentinel();
+    },
+    { root: dom.messages, rootMargin: "200px 0px 0px 0px" },
+  );
+  historySentinelObserver.observe(sentinel);
+}
+
 function showHistoryLoading() {
   if (document.getElementById("history-loading")) return;
   const loading = document.createElement("div");
@@ -647,6 +665,18 @@ function showHistoryLoading() {
 
 function hideHistoryLoading() {
   document.getElementById("history-loading")?.remove();
+}
+
+function rearmHistoryObserverAfterLoad(
+  sessionId: string,
+  loadedOlderEvents: boolean,
+) {
+  if (!state.hasMoreHistory || state.sessionId !== sessionId) return;
+  if (loadedOlderEvents) {
+    observeHistorySentinel();
+  } else {
+    observeHistorySentinelAfterExit();
+  }
 }
 
 function installHistorySentinel() {
@@ -687,6 +717,7 @@ export async function loadOlderEvents(sid: string): Promise<boolean> {
   state.loadingOlderEvents = true;
   disconnectHistoryObserver();
   const container = dom.messages;
+  let loadedOlderEvents = false;
   showHistoryLoading();
   scrollLog.debug("load older start", {
     sessionId: sid,
@@ -782,15 +813,14 @@ export async function loadOlderEvents(sid: string): Promise<boolean> {
     }
 
     await stabilizeScrollAnchor(container, anchor, sid);
+    loadedOlderEvents = true;
     return true;
   } catch {
     return false;
   } finally {
     hideHistoryLoading();
     state.loadingOlderEvents = false;
-    if (state.hasMoreHistory && state.sessionId === sid) {
-      observeHistorySentinel();
-    }
+    rearmHistoryObserverAfterLoad(sid, loadedOlderEvents);
   }
 }
 
