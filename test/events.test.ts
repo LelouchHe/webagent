@@ -2036,6 +2036,57 @@ describe("events", () => {
       assert.equal(document.getElementById("history-loading"), null);
     });
 
+    it("ignores stale older-history cleanup after switching sessions", async () => {
+      const responses: Array<(res: { ok: boolean; status?: number }) => void> =
+        [];
+      setFetch(
+        () =>
+          new Promise((resolve) => {
+            responses.push(resolve);
+          }),
+      );
+
+      state.oldestLoadedSeq = 5;
+      state.hasMoreHistory = true;
+      state.sessionId = "s1";
+      events.replayEvent("user_message", { text: "old" }, [], 0);
+      await new Promise((resolve) => {
+        requestAnimationFrame(() => {
+          resolve(null);
+        });
+      });
+
+      const oldLoad = events.loadOlderEvents("s1");
+      assert.equal(document.getElementById("history-loading") != null, true);
+
+      dom.messages.innerHTML = "";
+      state.sessionId = "s2";
+      state.oldestLoadedSeq = 10;
+      state.hasMoreHistory = true;
+      state.loadingOlderEvents = false;
+      events.replayEvent("user_message", { text: "new" }, [], 0);
+      await new Promise((resolve) => {
+        requestAnimationFrame(() => {
+          resolve(null);
+        });
+      });
+
+      const newLoad = events.loadOlderEvents("s2");
+      assert.equal(responses.length, 2);
+
+      responses[0]({ ok: false, status: 503 });
+      await oldLoad;
+
+      assert.equal(state.loadingOlderEvents, true);
+      assert.equal(document.getElementById("history-loading") != null, true);
+
+      responses[1]({ ok: false, status: 503 });
+      await newLoad;
+
+      assert.equal(state.loadingOlderEvents, false);
+      assert.equal(document.getElementById("history-loading"), null);
+    });
+
     it("returns false when no more history", async () => {
       state.hasMoreHistory = false;
       const result = await events.loadOlderEvents("s1");

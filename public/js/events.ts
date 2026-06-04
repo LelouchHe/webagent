@@ -511,6 +511,7 @@ async function _loadNewEventsImpl(sid: string): Promise<boolean> {
 // --- History pagination: sentinel + lazy loading ---
 
 let historySentinelObserver: IntersectionObserver | null = null;
+let historyLoadToken = 0;
 
 function nextFrame(): Promise<void> {
   if (typeof requestAnimationFrame !== "function") return Promise.resolve();
@@ -700,7 +701,9 @@ function showHistoryLoading(container = dom.messages) {
 function hideHistoryLoading(container = dom.messages) {
   const loading = document.getElementById("history-loading");
   if (!loading) return;
-  preserveScrollAnchorAround(container, () => { loading.remove(); });
+  preserveScrollAnchorAround(container, () => {
+    loading.remove();
+  });
 }
 
 function rearmHistoryObserverAfterLoad(
@@ -751,6 +754,7 @@ export async function loadOlderEvents(sid: string): Promise<boolean> {
     return false;
   }
   state.loadingOlderEvents = true;
+  const loadToken = ++historyLoadToken;
   disconnectHistoryObserver();
   const container = dom.messages;
   let loadedOlderEvents = false;
@@ -854,9 +858,11 @@ export async function loadOlderEvents(sid: string): Promise<boolean> {
   } catch {
     return false;
   } finally {
-    hideHistoryLoading(container);
-    state.loadingOlderEvents = false;
-    rearmHistoryObserverAfterLoad(sid, loadedOlderEvents);
+    if (loadToken === historyLoadToken && state.sessionId === sid) {
+      hideHistoryLoading(container);
+      state.loadingOlderEvents = false;
+      rearmHistoryObserverAfterLoad(sid, loadedOlderEvents);
+    }
   }
 }
 
