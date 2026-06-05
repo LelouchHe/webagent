@@ -61,8 +61,6 @@ import {
 import { enhanceCodeBlocks } from "./highlight.ts";
 import type { AgentEvent, StoredEvent } from "../../src/types.ts";
 
-const scrollLog = log.scope("history-scroll");
-
 /**
  * When the current session is gone (expired, deleted), try to switch to the
  * next available session. Creates a new session only if no others exist.
@@ -531,14 +529,6 @@ function nextFrame(): Promise<void> {
   );
 }
 
-function scrollMetrics(el: HTMLElement): Record<string, number> {
-  return {
-    scrollTop: Math.round(el.scrollTop),
-    clientHeight: Math.round(el.clientHeight),
-    scrollHeight: Math.round(el.scrollHeight),
-  };
-}
-
 interface ScrollAnchor {
   el: HTMLElement;
   top: number;
@@ -598,47 +588,31 @@ function preserveScrollAnchorAround(
   return restoreScrollAnchor(container, anchor);
 }
 
-async function waitForTopBounceToSettle(
-  container: HTMLElement,
-): Promise<number> {
-  if (container.scrollTop >= 0) return 0;
+async function waitForTopBounceToSettle(container: HTMLElement): Promise<void> {
+  if (container.scrollTop >= 0) return;
   for (let frame = 1; frame <= 20; frame++) {
     await nextFrame();
     if (container.scrollTop >= 0) {
       await nextFrame();
-      return frame;
+      return;
     }
   }
   container.scrollTop = 0;
   await nextFrame();
-  return 20;
 }
 
 async function stabilizeScrollAnchor(
   container: HTMLElement,
   anchor: ScrollAnchor | null,
-  sessionId: string,
 ): Promise<void> {
   for (let frame = 1; frame <= 8; frame++) {
     await nextFrame();
     const delta = measureScrollAnchorDelta(anchor);
     if (delta !== 0) {
       if (!shouldCorrectStabilizationDelta(container, delta)) {
-        scrollLog.debug("load older anchor stabilization stopped", {
-          sessionId,
-          frame,
-          anchorDelta: Math.round(delta),
-          after: scrollMetrics(container),
-        });
         return;
       }
       container.scrollTop += delta;
-      scrollLog.debug("load older anchor frame correction", {
-        sessionId,
-        frame,
-        anchorDelta: Math.round(delta),
-        after: scrollMetrics(container),
-      });
     }
   }
 }
@@ -661,13 +635,6 @@ function observeHistorySentinel() {
         state.hasMoreHistory &&
         state.sessionId
       ) {
-        scrollLog.debug("sentinel triggered", {
-          sessionId: state.sessionId,
-          oldestLoadedSeq: state.oldestLoadedSeq,
-          isIntersecting: entries[0].isIntersecting,
-          intersectionRatio: entries[0].intersectionRatio,
-          ...scrollMetrics(dom.messages),
-        });
         void loadOlderEvents(state.sessionId);
       }
     },
@@ -734,14 +701,6 @@ function installHistorySentinel() {
   sentinel.className = "history-sentinel";
   sentinel.setAttribute("aria-hidden", "true");
   dom.messages.prepend(sentinel);
-  scrollLog.debug("sentinel installed", {
-    sessionId: state.sessionId,
-    oldestLoadedSeq: state.oldestLoadedSeq,
-    hasMoreHistory: state.hasMoreHistory,
-    childCount: dom.messages.children.length,
-    ...scrollMetrics(dom.messages),
-  });
-
   observeHistorySentinel();
 }
 
@@ -760,24 +719,10 @@ async function fetchOlderEventsPage(
     `/api/v1/sessions/${sessionId}/events?limit=${HISTORY_PAGE_SIZE}&before=${state.oldestLoadedSeq}`,
   );
   if (!isCurrentHistoryLoad(sessionId, loadToken)) return null;
-  if (!res.ok) {
-    scrollLog.warn("load older fetch failed", {
-      sessionId,
-      status: res.status,
-    });
-    return null;
-  }
+  if (!res.ok) return null;
   const body = (await res.json()) as Record<string, unknown>;
   if (!isCurrentHistoryLoad(sessionId, loadToken)) return null;
   const { events, hasMore } = normalizeEventsResponse(body);
-  scrollLog.debug("load older fetched", {
-    sessionId,
-    count: events.length,
-    firstSeq: events[0]?.seq,
-    lastSeq: events[events.length - 1]?.seq,
-    hasMore,
-    ...scrollMetrics(dom.messages),
-  });
   return { events, hasMore };
 }
 
@@ -798,35 +743,17 @@ export async function loadOlderEvents(sid: string): Promise<boolean> {
   const container = dom.messages;
   let loadedOlderEvents = false;
   showHistoryLoading(container);
-  scrollLog.debug("load older start", {
-    sessionId: sid,
-    beforeSeq: state.oldestLoadedSeq,
-    hasMoreHistory: state.hasMoreHistory,
-    childCount: container.children.length,
-    ...scrollMetrics(container),
-  });
   try {
     const page = await fetchOlderEventsPage(sid, loadToken);
     if (!page) return false;
     const { events, hasMore } = page;
 
-    const bounceFrames = await waitForTopBounceToSettle(container);
-    if (bounceFrames > 0) {
-      scrollLog.debug("top bounce settled", {
-        sessionId: sid,
-        frames: bounceFrames,
-        ...scrollMetrics(container),
-      });
-    }
+    await waitForTopBounceToSettle(container);
     if (!isCurrentHistoryLoad(sid, loadToken)) return false;
 
     if (events.length === 0) {
       state.hasMoreHistory = false;
       removeHistorySentinel({ invalidateLoads: false });
-      scrollLog.debug("load older empty", {
-        sessionId: sid,
-        beforeSeq: state.oldestLoadedSeq,
-      });
       return true;
     }
 
@@ -842,8 +769,6 @@ export async function loadOlderEvents(sid: string): Promise<boolean> {
 
     // Prepend to DOM while preserving scroll position
     const anchor = pickScrollAnchor(container);
-    const prevScrollHeight = container.scrollHeight;
-    const beforePrepend = scrollMetrics(container);
     hideHistoryLoading(container);
     const sentinel = document.getElementById("history-sentinel");
     if (sentinel) {
@@ -851,19 +776,7 @@ export async function loadOlderEvents(sid: string): Promise<boolean> {
     } else {
       container.prepend(fragment);
     }
-    const anchorDelta = restoreScrollAnchor(container, anchor);
-    scrollLog.debug("load older prepended", {
-      sessionId: sid,
-      count: events.length,
-      heightDelta: Math.round(container.scrollHeight - prevScrollHeight),
-      anchorDelta: Math.round(anchorDelta),
-      anchorId: anchor?.el.id,
-      anchorClass: anchor?.el.className,
-      anchorTop: anchor ? Math.round(anchor.top) : null,
-      before: beforePrepend,
-      after: scrollMetrics(container),
-      childCount: container.children.length,
-    });
+    restoreScrollAnchor(container, anchor);
 
     state.oldestLoadedSeq = events[0].seq;
     state.hasMoreHistory = hasMore === true;
@@ -872,7 +785,7 @@ export async function loadOlderEvents(sid: string): Promise<boolean> {
       removeHistorySentinel({ invalidateLoads: false });
     }
 
-    await stabilizeScrollAnchor(container, anchor, sid);
+    await stabilizeScrollAnchor(container, anchor);
     loadedOlderEvents = true;
     return true;
   } catch {
