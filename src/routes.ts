@@ -1407,14 +1407,18 @@ export function createRequestHandler(
       }
 
       // --- PUT /api/v1/sessions/:id/{model,mode,reasoning-effort} ---
-      const configPutMatch = url.match(
+      // --- PUT /api/v1/sessions/:id/config/:configId ---
+      const legacyConfigPutMatch = url.match(
         /^\/api\/v1\/sessions\/([^/]+)\/(model|mode|reasoning-effort)\/?$/,
       );
+      const genericConfigPutMatch = url.match(
+        /^\/api\/v1\/sessions\/([^/]+)\/config\/([^/]+)\/?$/,
+      );
+      const configPutMatch = legacyConfigPutMatch ?? genericConfigPutMatch;
       if (configPutMatch && req.method === "PUT") {
         const sessionId = decodeURIComponent(configPutMatch[1]);
-        const configPath = configPutMatch[2];
-        const configId =
-          configPath === "reasoning-effort" ? "reasoning_effort" : configPath;
+        const configPath = decodeURIComponent(configPutMatch[2]);
+        const configId = configPath.replace(/-/g, "_");
         const session = store.getSession(sessionId);
         if (!session) {
           json(res, 404, { error: "Session not found" });

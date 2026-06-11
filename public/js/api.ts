@@ -151,7 +151,8 @@ export function setConfig(
   value: string | boolean,
 ): Promise<void> {
   const urlId = configId.replace(/_/g, "-");
-  return request("/api/v1/sessions/" + sessionId + "/" + urlId, {
+  const path = typeof value === "boolean" ? "config/" + urlId : urlId;
+  return request("/api/v1/sessions/" + sessionId + "/" + path, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ value }),

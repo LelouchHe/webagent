@@ -57,6 +57,12 @@ function createMockBridge(nextId = "mock-session-1") {
       currentValue: "agent",
       options: [{ value: "agent", name: "Agent" }],
     },
+    {
+      type: "boolean",
+      id: "allow_all",
+      name: "Allow all",
+      currentValue: false,
+    },
   ];
   return {
     ...mockBridgeStubs(),
@@ -76,11 +82,16 @@ function createMockBridge(nextId = "mock-session-1") {
       configId: string,
       value: string | boolean,
     ) => {
-      return configOptions.map((opt) =>
-        opt.id === configId && "options" in opt && typeof value === "string"
-          ? { ...opt, currentValue: value }
-          : opt,
-      );
+      return configOptions.map((opt) => {
+        if (opt.id !== configId) return opt;
+        if ("options" in opt && typeof value === "string") {
+          return { ...opt, currentValue: value };
+        }
+        if (opt.type === "boolean" && typeof value === "boolean") {
+          return { ...opt, currentValue: value };
+        }
+        return opt;
+      });
     },
   };
 }
@@ -390,6 +401,35 @@ describe("Session REST API", () => {
         JSON.stringify({ value: "agent#autopilot" }),
       );
       assert.equal(res.status, 200);
+    });
+
+    it("updates arbitrary boolean config via /config/:configId", async () => {
+      const createRes = await makeRequest(
+        port,
+        "POST",
+        "/api/v1/sessions",
+        "{}",
+      );
+      const { id } = JSON.parse(createRes.body);
+
+      const res = await makeRequest(
+        port,
+        "PUT",
+        `/api/v1/sessions/${id}/config/allow-all`,
+        JSON.stringify({ value: true }),
+      );
+
+      assert.equal(res.status, 200);
+      const body = JSON.parse(res.body);
+      const allowAll = body.configOptions.find(
+        (opt: ConfigOption) => opt.id === "allow_all",
+      );
+      assert.deepEqual(allowAll, {
+        type: "boolean",
+        id: "allow_all",
+        name: "Allow all",
+        currentValue: true,
+      });
     });
 
     it("broadcasts config_option_update", async () => {

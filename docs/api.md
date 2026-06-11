@@ -486,6 +486,63 @@ Get server configuration and available config options.
 
 ---
 
+#### `PUT /api/v1/sessions/:id/{model,mode,reasoning-effort}`
+
+Set one of the built-in string/select ACP session config options. `reasoning-effort` maps to the ACP config id `reasoning_effort`.
+
+**Request body:**
+
+```json
+{ "value": "agent" }
+```
+
+**Response** `200`:
+
+```json
+{ "configOptions": [...] }
+```
+
+**Side effects:**
+
+- Stores string-valued session config for known persisted ids (`model`, `mode`, `reasoning_effort`)
+- Broadcasts `config_option_update` and `config_set` to all SSE clients
+
+**Errors:** `404` (session not found), `400` (invalid JSON or missing value), `503` (agent not ready)
+
+---
+
+#### `PUT /api/v1/sessions/:id/config/:configId`
+
+Set an arbitrary ACP session config option. This path is primarily for newer config shapes such as boolean options; hyphens in `:configId` are normalized to underscores before sending to the agent (for example `allow-all` → `allow_all`).
+
+**Request body (select/string):**
+
+```json
+{ "value": "agent" }
+```
+
+**Request body (boolean):**
+
+```json
+{ "value": true }
+```
+
+**Response** `200`:
+
+```json
+{ "configOptions": [...] }
+```
+
+**Side effects:**
+
+- Sends boolean values using ACP's required boolean payload shape
+- Stores only string-valued session config fields; boolean values remain runtime agent config
+- Broadcasts `config_option_update` and `config_set` to all SSE clients
+
+**Errors:** `404` (session not found), `400` (invalid JSON or missing value), `503` (agent not ready)
+
+---
+
 ### Recent Paths
 
 #### `GET /api/v1/recent-paths`
