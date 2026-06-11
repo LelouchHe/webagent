@@ -117,9 +117,19 @@ class MockAgent implements Agent {
     if (!session) {
       throw new Error(`Unknown session: ${params.sessionId}`);
     }
-    session.configOptions = session.configOptions.map((opt) =>
-      opt.id === params.configId ? { ...opt, currentValue: params.value } : opt,
-    );
+    session.configOptions = session.configOptions.map((opt) => {
+      if (opt.id !== params.configId) return opt;
+      if (opt.type === "select") {
+        if (typeof params.value !== "string") {
+          throw new Error(`Invalid select value for ${params.configId}`);
+        }
+        return { ...opt, currentValue: params.value };
+      }
+      if (typeof params.value !== "boolean") {
+        throw new Error(`Invalid boolean value for ${params.configId}`);
+      }
+      return { ...opt, currentValue: params.value };
+    });
     return { configOptions: session.configOptions };
   }
 
