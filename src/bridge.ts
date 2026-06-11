@@ -6,6 +6,7 @@ import * as acp from "@agentclientprotocol/sdk";
 import type {
   AgentEvent,
   ConfigOption,
+  ConfigValue,
   RawInput,
   ToolContentItem,
 } from "./types.ts";
@@ -129,10 +130,10 @@ export class AgentBridge extends EventEmitter {
     opts?: { silent?: boolean },
   ): Promise<{ sessionId: string; configOptions: ConfigOption[] }> {
     if (!this.conn) throw new Error("Not connected");
-    const session = (await this.conn.newSession({
+    const session = await this.conn.newSession({
       cwd,
       mcpServers: [],
-    })) as acp.NewSessionResponse;
+    });
     const configOptions = (session.configOptions ??
       []) as unknown as ConfigOption[];
     if (!opts?.silent) {
@@ -153,11 +154,11 @@ export class AgentBridge extends EventEmitter {
     if (!this.conn) throw new Error("Not connected");
     let session: acp.LoadSessionResponse;
     try {
-      session = (await this.conn.loadSession({
+      session = await this.conn.loadSession({
         sessionId,
         cwd,
         mcpServers: [],
-      })) as acp.LoadSessionResponse;
+      });
     } catch (err: unknown) {
       // -32002 = Resource not found. Some agents (e.g. claude-agent-acp) don't
       // persist sessions across process restarts, so a session in our DB may
@@ -187,14 +188,16 @@ export class AgentBridge extends EventEmitter {
   async setConfigOption(
     sessionId: string,
     configId: string,
-    value: string,
+    value: ConfigValue,
   ): Promise<ConfigOption[]> {
     if (!this.conn) throw new Error("Not connected");
-    const result = (await this.conn.setSessionConfigOption({
+    const result = await this.conn.setSessionConfigOption({
       sessionId,
       configId,
-      value,
-    })) as acp.SetSessionConfigOptionResponse;
+      ...(typeof value === "boolean"
+        ? { type: "boolean" as const, value }
+        : { value }),
+    });
     return result.configOptions as unknown as ConfigOption[];
   }
 

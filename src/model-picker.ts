@@ -1,4 +1,4 @@
-import type { ConfigOption } from "./types.ts";
+import type { ConfigOption, ConfigSelectOption } from "./types.ts";
 
 /** Find the first available model whose id matches any pattern. */
 export function pickModelByPatterns(
@@ -10,7 +10,9 @@ export function pickModelByPatterns(
     .filter((p) => p.length > 0);
   if (normalized.length === 0) return null;
 
-  const modelOpt = configOptions.find((c) => c.id === "model");
+  const modelOpt = configOptions.find(
+    (c): c is ConfigSelectOption => c.id === "model" && "options" in c,
+  );
   if (!modelOpt || modelOpt.options.length === 0) return null;
 
   for (const pattern of normalized) {

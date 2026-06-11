@@ -324,6 +324,44 @@ describe("AgentBridge", () => {
     ]);
   });
 
+  it("sends boolean config options using the ACP boolean payload shape", async () => {
+    const bridge = new AgentBridge("fake-agent");
+    let sent: unknown = null;
+
+    (bridge as any).conn = {
+      setSessionConfigOption: async (params: unknown) => {
+        sent = params;
+        return {
+          configOptions: [
+            {
+              type: "boolean",
+              id: "allow_all",
+              name: "Allow all",
+              currentValue: false,
+            },
+          ],
+        };
+      },
+    };
+
+    const result = await bridge.setConfigOption("s1", "allow_all", false);
+
+    assert.deepEqual(sent, {
+      sessionId: "s1",
+      configId: "allow_all",
+      type: "boolean",
+      value: false,
+    });
+    assert.deepEqual(result, [
+      {
+        type: "boolean",
+        id: "allow_all",
+        name: "Allow all",
+        currentValue: false,
+      },
+    ]);
+  });
+
   describe("subprocess death", () => {
     it("rejects in-flight prompts and emits error event when agent dies", async () => {
       const bridge = new AgentBridge("fake-agent");

@@ -9,7 +9,7 @@ import {
   resetSessionUI,
   requestNewSession,
   sendCancel,
-  getConfigOption,
+  getSelectConfigOption,
   getConfigValue,
   updateModeUI,
   updateStatusBar,
@@ -198,7 +198,7 @@ async function setConfigAndUpdate(
   value: string,
   name: string,
 ): Promise<void> {
-  const opt = getConfigOption(configId);
+  const opt = getSelectConfigOption(configId);
   if (opt) opt.currentValue = value;
   updateModeUI();
   updateStatusBar();
@@ -701,7 +701,7 @@ function configCmdNode(name: string, desc: string, configId: string): CmdNode {
     name,
     desc,
     fetch: () => {
-      const opt = getConfigOption(configId);
+      const opt = getSelectConfigOption(configId);
       return opt ? opt.options : [];
     },
     toSpec: (item: unknown) => {

@@ -11,7 +11,7 @@ import {
   resetSessionUI,
   requestNewSession,
   sendCancel,
-  getConfigOption,
+  getSelectConfigOption,
   updateModeUI,
   updateStatusBar,
   reloadSnapshot,
@@ -401,7 +401,7 @@ export async function handleSlashCommand(text: string): Promise<boolean> {
         "/think": "reasoning_effort",
       };
       const configId = configMap[cmd];
-      const opt = getConfigOption(configId);
+      const opt = getSelectConfigOption(configId);
       if (!arg) {
         const valueName =
           opt?.options.find((o) => o.value === opt.currentValue)?.name ??

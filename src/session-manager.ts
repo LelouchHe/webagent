@@ -284,7 +284,8 @@ export class SessionManager {
     };
     return configOptions.map((opt) => {
       const override = stored[opt.id];
-      if (override) return { ...opt, currentValue: override };
+      if (override && "options" in opt)
+        return { ...opt, currentValue: override };
       return opt;
     });
   }

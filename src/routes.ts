@@ -1425,14 +1425,16 @@ export function createRequestHandler(
           json(res, 503, { error: "Agent not ready yet" });
           return;
         }
-        let body: { value?: string };
+        let body: { value?: string | boolean };
         try {
-          body = JSON.parse(await readBody(req)) as { value?: string };
+          body = JSON.parse(await readBody(req)) as {
+            value?: string | boolean;
+          };
         } catch {
           json(res, 400, { error: "Invalid JSON" });
           return;
         }
-        if (!body.value) {
+        if (body.value === undefined) {
           json(res, 400, { error: "Missing required field: value" });
           return;
         }
@@ -1443,7 +1445,9 @@ export function createRequestHandler(
             body.value,
           );
           for (const opt of configOptions) {
-            store.updateSessionConfig(sessionId, opt.id, opt.currentValue);
+            if (typeof opt.currentValue === "string") {
+              store.updateSessionConfig(sessionId, opt.id, opt.currentValue);
+            }
           }
           sseManager.broadcast({
             type: "config_option_update",
@@ -1544,7 +1548,9 @@ export function createRequestHandler(
                       reasoning_effort: cur.reasoning_effort,
                     };
                     const override = stored[opt.id];
-                    return override ? { ...opt, currentValue: override } : opt;
+                    return override && "options" in opt
+                      ? { ...opt, currentValue: override }
+                      : opt;
                   });
                   sseManager.broadcast({
                     type: "config_option_update",
@@ -1609,7 +1615,9 @@ export function createRequestHandler(
                     reasoning_effort: freshSession.reasoning_effort,
                   };
                   const override = stored[opt.id];
-                  return override ? { ...opt, currentValue: override } : opt;
+                  return override && "options" in opt
+                    ? { ...opt, currentValue: override }
+                    : opt;
                 });
                 return opts;
               })()

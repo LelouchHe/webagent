@@ -85,10 +85,12 @@ function createMockBridge() {
     setConfigOption: async (
       _sessionId: string,
       configId: string,
-      value: string,
+      value: string | boolean,
     ) => {
       return configOptions.map((opt) =>
-        opt.id === configId ? { ...opt, currentValue: value } : opt,
+        opt.id === configId && "options" in opt && typeof value === "string"
+          ? { ...opt, currentValue: value }
+          : opt,
       );
     },
     cancel: async () => {},

@@ -63,9 +63,15 @@ function createMockBridge() {
       return { sessionId: `mock-session-${idCounter}`, configOptions: [] };
     },
     loadSession: async () => ({ sessionId: "", configOptions }),
-    setConfigOption: async (_s: string, configId: string, value: string) =>
+    setConfigOption: async (
+      _s: string,
+      configId: string,
+      value: string | boolean,
+    ) =>
       configOptions.map((opt) =>
-        opt.id === configId ? { ...opt, currentValue: value } : opt,
+        opt.id === configId && "options" in opt && typeof value === "string"
+          ? { ...opt, currentValue: value }
+          : opt,
       ),
     cancel: async () => {},
     prompt: async () => {},

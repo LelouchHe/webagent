@@ -6,7 +6,7 @@ import {
   setInputValue,
   setBusy,
   sendCancel,
-  getConfigOption,
+  getSelectConfigOption,
   updateModeUI,
   refreshInputActions,
 } from "./state.ts";
@@ -282,7 +282,7 @@ document.addEventListener("keydown", (e) => {
 // Cycle mode helper
 let lastModeUnavailableWarnTs = 0;
 function cycleMode() {
-  const opt = getConfigOption("mode");
+  const opt = getSelectConfigOption("mode");
   if (!opt?.options.length) {
     if (Date.now() - lastModeUnavailableWarnTs > 3000) {
       addSystem(

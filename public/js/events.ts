@@ -15,7 +15,7 @@ import {
   dom,
   setBusy,
   setConfigValue,
-  getConfigOption,
+  getSelectConfigOption,
   updateConfigOptions,
   updateModeUI,
   updateStatusBar,
@@ -1513,10 +1513,12 @@ export function handleEvent(msg: AgentEvent) {
 
     case "config_set": {
       setConfigValue(msg.configId, msg.value);
-      const opt = getConfigOption(msg.configId);
+      const opt = getSelectConfigOption(msg.configId);
       const label = opt?.name ?? msg.configId;
       const valueName =
-        opt?.options.find((o) => o.value === msg.value)?.name ?? msg.value;
+        typeof msg.value === "string"
+          ? (opt?.options.find((o) => o.value === msg.value)?.name ?? msg.value)
+          : String(msg.value);
       addSystem(`ok: ${label}: ${valueName}`);
       if (msg.configId === "mode") updateModeUI();
       updateStatusBar();

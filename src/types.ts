@@ -3,14 +3,27 @@ import { z } from "zod";
 
 // --- Config option (subset of ACP SessionConfigOption we care about) ---
 
-export interface ConfigOption {
-  type: "select";
+export type ConfigValue = string | boolean;
+
+export interface ConfigSelectOption {
+  /** Older stored/test events may omit type; options[] implies select. */
+  type?: "select";
   id: string;
   name: string;
   category?: string | null;
   currentValue: string;
   options: Array<{ value: string; name: string }>;
 }
+
+export interface ConfigBooleanOption {
+  type: "boolean";
+  id: string;
+  name: string;
+  category?: string | null;
+  currentValue: boolean;
+}
+
+export type ConfigOption = ConfigSelectOption | ConfigBooleanOption;
 
 // --- Shared interfaces used by both frontend and backend ---
 
@@ -182,7 +195,7 @@ export type AgentEvent =
       optionName: string;
       denied: boolean;
     }
-  | { type: "config_set"; configId: string; value: string }
+  | { type: "config_set"; configId: string; value: ConfigValue }
   | { type: "bash_command"; sessionId: string; command: string }
   | { type: "bash_output"; sessionId: string; text: string; stream: string }
   | {

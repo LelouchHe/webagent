@@ -61,7 +61,9 @@ function handleConfigLikeEvent(
   if (event.configOptions.length)
     sessions.cachedConfigOptions = event.configOptions;
   for (const opt of event.configOptions) {
-    store.updateSessionConfig(event.sessionId, opt.id, opt.currentValue);
+    if (typeof opt.currentValue === "string") {
+      store.updateSessionConfig(event.sessionId, opt.id, opt.currentValue);
+    }
   }
 }
 

@@ -148,7 +148,7 @@ export function denyPermission(
 export function setConfig(
   sessionId: string,
   configId: string,
-  value: string,
+  value: string | boolean,
 ): Promise<void> {
   const urlId = configId.replace(/_/g, "-");
   return request("/api/v1/sessions/" + sessionId + "/" + urlId, {

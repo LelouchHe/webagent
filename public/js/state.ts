@@ -154,12 +154,25 @@ export function setConnectionStatus(
 export function getConfigOption(id: string) {
   return state.configOptions.find((o) => o.id === id);
 }
+export function getSelectConfigOption(id: string) {
+  const opt = getConfigOption(id);
+  return opt && "options" in opt ? opt : null;
+}
 export function getConfigValue(id: string) {
   return getConfigOption(id)?.currentValue ?? null;
 }
-export function setConfigValue(id: string, value: string) {
+export function getStringConfigValue(id: string) {
+  const value = getConfigValue(id);
+  return typeof value === "string" ? value : null;
+}
+export function setConfigValue(id: string, value: string | boolean) {
   const opt = getConfigOption(id);
-  if (opt) opt.currentValue = value;
+  if (!opt) return;
+  if ("options" in opt && typeof value === "string") {
+    opt.currentValue = value;
+  } else if (opt.type === "boolean" && typeof value === "boolean") {
+    opt.currentValue = value;
+  }
 }
 export function updateConfigOptions(newOptions: ConfigOption[]) {
   state.configOptions = newOptions;
@@ -206,7 +219,7 @@ export function updateModeUI() {
   // Empty-string `currentValue` should fall through to the fallback, not
   // terminate the chain. `??` would keep `""` as the winner; `||` skips it.
   // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing
-  const modeValue = getConfigValue("mode") || getFallback("mode") || "";
+  const modeValue = getStringConfigValue("mode") || getFallback("mode") || "";
   if (isPlanMode(modeValue)) dom.inputArea.classList.add("plan-mode");
   else if (isAutopilotMode(modeValue))
     dom.inputArea.classList.add("autopilot-mode");
@@ -223,7 +236,7 @@ export function updateModeUI() {
 
 export function updateStatusBar() {
   // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- see updateModeUI
-  const model = getConfigValue("model") || getFallback("model");
+  const model = getStringConfigValue("model") || getFallback("model");
   const cwd = state.sessionCwd ?? "";
   dom.statusBar.textContent = "";
   if (cwd) {
