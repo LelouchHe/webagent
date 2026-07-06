@@ -55,39 +55,131 @@ describe("input focus recovery", () => {
     };
   });
 
-  function pointerDown(target: Element, pointerType = "touch"): void {
-    const event = new window.Event("pointerdown", {
-      bubbles: true,
-      cancelable: true,
-    }) as Event & { pointerType?: string };
-    event.pointerType = pointerType;
-    target.dispatchEvent(event);
-  }
-
-  it("unlocks stale mobile focus when touch lands on the already-active input", () => {
+  function setInputActive(): void {
     Object.defineProperty(document, "activeElement", {
       value: dom.input,
       configurable: true,
     });
+  }
 
-    pointerDown(dom.input);
+  function pointer(
+    type: "pointerdown" | "pointerup" | "pointercancel",
+    target: Element,
+    opts: {
+      pointerType?: string;
+      pointerId?: number;
+      clientX?: number;
+      clientY?: number;
+      timeStamp?: number;
+    } = {},
+  ): void {
+    const event = new window.Event(type, {
+      bubbles: true,
+      cancelable: true,
+    }) as Event & {
+      pointerType?: string;
+      pointerId?: number;
+      clientX?: number;
+      clientY?: number;
+    };
+    event.pointerType = opts.pointerType ?? "touch";
+    event.pointerId = opts.pointerId ?? 1;
+    event.clientX = opts.clientX ?? 0;
+    event.clientY = opts.clientY ?? 0;
+    Object.defineProperty(event, "timeStamp", {
+      value: opts.timeStamp ?? 0,
+      configurable: true,
+    });
+    target.dispatchEvent(event);
+  }
+
+  function shortTap(target: Element): void {
+    pointer("pointerdown", target, {
+      timeStamp: 100,
+      clientX: 10,
+      clientY: 10,
+    });
+    pointer("pointerup", target, { timeStamp: 180, clientX: 12, clientY: 12 });
+  }
+
+  it("does not blur on pointerdown so long-press menus can start", () => {
+    setInputActive();
+
+    pointer("pointerdown", dom.input, { timeStamp: 100 });
+
+    assert.equal(blurCount, 0);
+    assert.equal(focusCount, 0);
+    assert.equal(document.activeElement, dom.input);
+  });
+
+  it("unlocks stale mobile focus on a short tap of the already-active input", () => {
+    setInputActive();
+
+    shortTap(dom.input);
 
     assert.equal(blurCount, 1);
     assert.equal(focusCount, 0);
     assert.equal(document.activeElement, document.body);
   });
 
-  it("unlocks stale mobile focus when touch lands on the input area", () => {
-    Object.defineProperty(document, "activeElement", {
-      value: dom.input,
-      configurable: true,
+  it("does not recover from touches on the surrounding input area", () => {
+    setInputActive();
+
+    shortTap(dom.inputArea);
+
+    assert.equal(blurCount, 0);
+    assert.equal(focusCount, 0);
+    assert.equal(document.activeElement, dom.input);
+  });
+
+  it("does not recover from a long press", () => {
+    setInputActive();
+
+    pointer("pointerdown", dom.input, {
+      timeStamp: 100,
+      clientX: 10,
+      clientY: 10,
+    });
+    pointer("pointerup", dom.input, {
+      timeStamp: 700,
+      clientX: 10,
+      clientY: 10,
     });
 
-    pointerDown(dom.inputArea);
-
-    assert.equal(blurCount, 1);
+    assert.equal(blurCount, 0);
     assert.equal(focusCount, 0);
-    assert.equal(document.activeElement, document.body);
+    assert.equal(document.activeElement, dom.input);
+  });
+
+  it("does not recover after pointer movement", () => {
+    setInputActive();
+
+    pointer("pointerdown", dom.input, {
+      timeStamp: 100,
+      clientX: 10,
+      clientY: 10,
+    });
+    pointer("pointerup", dom.input, {
+      timeStamp: 180,
+      clientX: 40,
+      clientY: 10,
+    });
+
+    assert.equal(blurCount, 0);
+    assert.equal(focusCount, 0);
+    assert.equal(document.activeElement, dom.input);
+  });
+
+  it("does not recover after pointer cancellation", () => {
+    setInputActive();
+
+    pointer("pointerdown", dom.input, { timeStamp: 100 });
+    pointer("pointercancel", dom.input, { timeStamp: 120 });
+    pointer("pointerup", dom.input, { timeStamp: 180 });
+
+    assert.equal(blurCount, 0);
+    assert.equal(focusCount, 0);
+    assert.equal(document.activeElement, dom.input);
   });
 
   it("does not recover when the virtual keyboard already appears open", () => {
@@ -100,38 +192,31 @@ describe("input focus recovery", () => {
       },
       configurable: true,
     });
-    Object.defineProperty(document, "activeElement", {
-      value: dom.input,
-      configurable: true,
-    });
+    setInputActive();
 
-    pointerDown(dom.input);
+    shortTap(dom.input);
 
     assert.equal(blurCount, 0);
     assert.equal(focusCount, 0);
   });
 
   it("does not recover when the input is disabled", () => {
-    Object.defineProperty(document, "activeElement", {
-      value: dom.input,
-      configurable: true,
-    });
+    setInputActive();
     dom.input.disabled = true;
 
-    pointerDown(dom.input);
+    shortTap(dom.input);
 
     assert.equal(blurCount, 0);
     assert.equal(focusCount, 0);
   });
 
   it("does not recover for desktop pointer events", () => {
-    Object.defineProperty(document, "activeElement", {
-      value: dom.input,
-      configurable: true,
-    });
+    setInputActive();
 
-    pointerDown(dom.input, "mouse");
-    pointerDown(dom.input, "pen");
+    pointer("pointerdown", dom.input, { pointerType: "mouse", timeStamp: 100 });
+    pointer("pointerup", dom.input, { pointerType: "mouse", timeStamp: 180 });
+    pointer("pointerdown", dom.input, { pointerType: "pen", timeStamp: 200 });
+    pointer("pointerup", dom.input, { pointerType: "pen", timeStamp: 280 });
 
     assert.equal(blurCount, 0);
     assert.equal(focusCount, 0);
@@ -142,12 +227,9 @@ describe("input focus recovery", () => {
       value: undefined,
       configurable: true,
     });
-    Object.defineProperty(document, "activeElement", {
-      value: dom.input,
-      configurable: true,
-    });
+    setInputActive();
 
-    pointerDown(dom.input);
+    shortTap(dom.input);
 
     assert.equal(blurCount, 0);
     assert.equal(focusCount, 0);
