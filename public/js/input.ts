@@ -16,6 +16,7 @@ import {
   addBashBlock,
   showWaiting,
   hideWaiting,
+  maintainBottomAnchorDuring,
 } from "./render.ts";
 import {
   handleSlashCommand,
@@ -327,6 +328,18 @@ dom.input.addEventListener("input", refreshInputActions);
 
 // Auto-resize textarea
 dom.input.addEventListener("input", () => {
-  dom.input.style.height = "auto";
-  dom.input.style.height = Math.min(dom.input.scrollHeight, 200) + "px";
+  maintainBottomAnchorDuring(resizeTextareaToContent);
 });
+
+function resizeTextareaToContent(): void {
+  dom.input.style.height = "auto";
+  dom.input.style.height =
+    Math.min(dom.input.scrollHeight, getInputMaxHeight()) + "px";
+}
+
+function getInputMaxHeight(): number {
+  const maxHeight = Number.parseFloat(
+    window.getComputedStyle(dom.input).maxHeight,
+  );
+  return Number.isFinite(maxHeight) ? maxHeight : Number.POSITIVE_INFINITY;
+}

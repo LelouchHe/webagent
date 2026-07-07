@@ -28,11 +28,14 @@ describe("input", () => {
     teardownDOM();
   });
 
-  beforeEach(() => {
+  beforeEach(async () => {
     resetState(state, dom);
     commandsMod.__resetCommandsForTest();
+    dom.input.style.height = "";
+    dom.input.style.maxHeight = "";
     fetchCalls = [];
     globalThis.fetch = undefined as any;
+    await nextFrames(3);
   });
 
   function clickSend() {
@@ -59,6 +62,43 @@ describe("input", () => {
     });
     document.dispatchEvent(event);
     return event;
+  }
+
+  function nextFrame(): Promise<void> {
+    return new Promise((resolve) => {
+      requestAnimationFrame(() => {
+        resolve();
+      });
+    });
+  }
+
+  async function nextFrames(count: number): Promise<void> {
+    for (let i = 0; i < count; i++) {
+      await nextFrame();
+    }
+  }
+
+  function setMessagesScrollMetrics({
+    scrollTop,
+    scrollHeight,
+    clientHeight,
+  }: {
+    scrollTop: number;
+    scrollHeight: number;
+    clientHeight: number;
+  }) {
+    Object.defineProperties(dom.messages, {
+      scrollTop: { value: scrollTop, writable: true, configurable: true },
+      scrollHeight: { value: scrollHeight, configurable: true },
+      clientHeight: { value: clientHeight, configurable: true },
+    });
+  }
+
+  function setInputScrollHeight(scrollHeight: number) {
+    Object.defineProperty(dom.input, "scrollHeight", {
+      value: scrollHeight,
+      configurable: true,
+    });
   }
 
   // eslint-disable-next-line @typescript-eslint/no-redundant-type-constituents
@@ -174,6 +214,60 @@ describe("input", () => {
     dom.input.dispatchEvent(new globalThis.window.Event("input"));
     assert.equal(dom.sendBtn.textContent, "^C");
     assert.ok(dom.sendBtn.classList.contains("cancel"));
+  });
+
+  it("keeps messages pinned when textarea grows while following bottom", async () => {
+    setMessagesScrollMetrics({
+      scrollTop: 400,
+      scrollHeight: 600,
+      clientHeight: 200,
+    });
+    dom.messages.dispatchEvent(new globalThis.window.Event("scroll"));
+    dom.input.style.height = "32px";
+    setInputScrollHeight(56);
+
+    dom.input.dispatchEvent(new globalThis.window.Event("input"));
+
+    assert.equal(dom.messages.scrollTop, 600);
+    assert.equal(state.followMessages, true);
+    await nextFrames(3);
+    assert.equal(dom.messages.scrollTop, 600);
+  });
+
+  it("uses computed textarea max-height instead of a hardcoded cap", async () => {
+    setMessagesScrollMetrics({
+      scrollTop: 400,
+      scrollHeight: 600,
+      clientHeight: 200,
+    });
+    dom.messages.dispatchEvent(new globalThis.window.Event("scroll"));
+    dom.input.style.height = "32px";
+    dom.input.style.maxHeight = "120px";
+    setInputScrollHeight(240);
+
+    dom.input.dispatchEvent(new globalThis.window.Event("input"));
+
+    assert.equal(dom.input.style.height, "120px");
+    assert.equal(dom.messages.scrollTop, 600);
+    await nextFrames(3);
+    assert.equal(dom.messages.scrollTop, 600);
+  });
+
+  it("does not pull messages to bottom when textarea grows after user scrolled up", async () => {
+    setMessagesScrollMetrics({
+      scrollTop: 120,
+      scrollHeight: 600,
+      clientHeight: 200,
+    });
+    dom.messages.dispatchEvent(new globalThis.window.Event("scroll"));
+    dom.input.style.height = "32px";
+    setInputScrollHeight(56);
+
+    dom.input.dispatchEvent(new globalThis.window.Event("input"));
+    await nextFrames(3);
+
+    assert.equal(dom.messages.scrollTop, 120);
+    assert.equal(state.followMessages, false);
   });
 
   it("send button executes command instead of cancel while busy", () => {

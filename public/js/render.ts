@@ -115,7 +115,7 @@ function updateScrollFollowState() {
 
 dom.messages.addEventListener("scroll", updateScrollFollowState);
 
-function shouldFollowNewContent(): boolean {
+export function shouldFollowMessages(): boolean {
   return state.followMessages || isNearBottom(dom.messages);
 }
 
@@ -128,7 +128,7 @@ export function appendMessageElement(
     state.replayTarget.appendChild(el);
     return el;
   }
-  const shouldFollow = force || shouldFollowNewContent();
+  const shouldFollow = force || shouldFollowMessages();
   dom.messages.appendChild(el);
   scrollToBottom(shouldFollow);
   return el;
@@ -149,6 +149,46 @@ export function hideWaiting() {
 }
 
 let scrollRafPending = false;
+let bottomRepinRafPending = false;
+
+export function scrollToBottomImmediate(force?: boolean) {
+  const el = dom.messages;
+  if (force || state.followMessages) {
+    // Force layout before assigning scrollTop so callers that just changed
+    // sibling chrome height (textarea resize) don't scroll against stale
+    // flex metrics.
+    void el.clientHeight;
+    el.scrollTop = el.scrollHeight;
+    state.followMessages = true;
+    return;
+  }
+  state.followMessages = isNearBottom(el);
+}
+
+export function scheduleBottomRepin(force?: boolean) {
+  if (!(force || state.followMessages)) {
+    state.followMessages = isNearBottom(dom.messages);
+    return;
+  }
+  scrollToBottomImmediate(true);
+  if (typeof requestAnimationFrame !== "function" || bottomRepinRafPending) {
+    return;
+  }
+  bottomRepinRafPending = true;
+  requestAnimationFrame(() => {
+    scrollToBottomImmediate(true);
+    requestAnimationFrame(() => {
+      bottomRepinRafPending = false;
+      scrollToBottomImmediate(true);
+    });
+  });
+}
+
+export function maintainBottomAnchorDuring(action: () => void): void {
+  const shouldRepin = shouldFollowMessages();
+  action();
+  if (shouldRepin) scheduleBottomRepin(true);
+}
 
 export function scrollToBottom(force?: boolean) {
   const el = dom.messages;
