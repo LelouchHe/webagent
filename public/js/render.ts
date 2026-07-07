@@ -176,9 +176,14 @@ export function scheduleBottomRepin(force?: boolean) {
   }
   bottomRepinRafPending = true;
   requestAnimationFrame(() => {
+    if (!state.followMessages) {
+      bottomRepinRafPending = false;
+      return;
+    }
     scrollToBottomImmediate(true);
     requestAnimationFrame(() => {
       bottomRepinRafPending = false;
+      if (!state.followMessages) return;
       scrollToBottomImmediate(true);
     });
   });

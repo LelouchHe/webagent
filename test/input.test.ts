@@ -270,6 +270,27 @@ describe("input", () => {
     assert.equal(state.followMessages, false);
   });
 
+  it("does not pull messages back down if the user scrolls up during deferred repin", async () => {
+    setMessagesScrollMetrics({
+      scrollTop: 400,
+      scrollHeight: 600,
+      clientHeight: 200,
+    });
+    dom.messages.dispatchEvent(new globalThis.window.Event("scroll"));
+    dom.input.style.height = "32px";
+    setInputScrollHeight(56);
+
+    dom.input.dispatchEvent(new globalThis.window.Event("input"));
+    assert.equal(dom.messages.scrollTop, 600);
+
+    dom.messages.scrollTop = 120;
+    dom.messages.dispatchEvent(new globalThis.window.Event("scroll"));
+    await nextFrames(3);
+
+    assert.equal(dom.messages.scrollTop, 120);
+    assert.equal(state.followMessages, false);
+  });
+
   it("send button executes command instead of cancel while busy", () => {
     state.sessionId = "s1";
     state.sessionCwd = "/test";
