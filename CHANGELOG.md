@@ -4,6 +4,23 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/), and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.6.0] - 2026-07-07
+
+### Added
+
+- **Generic ACP config updates** — new API support for updating arbitrary ACP config option IDs, including boolean options, so frontend controls are no longer limited to the built-in model/mode/think fields.
+
+### Changed
+
+- Upgraded `@agentclientprotocol/sdk` to `0.25.0`.
+
+### Fixed
+
+- **Message history scrolling is more stable on iOS** — loading older history now preserves the visible anchor, avoids immediate retry loops, ignores stale pagination responses, and does not fight user scrolling during stabilization.
+- **Multiline input keeps the conversation pinned** — growing the textarea, including the max-height/internal-scrollbar case, now preserves the conversation bottom when the user was already following it, without adding artificial spacer gaps or pulling users back down after they scroll away.
+- iPad input long-press recovery no longer interferes with normal text selection/context menu behavior.
+- Streaming tool-call output now shows the latest output snapshot instead of getting stuck on the first rendered frame.
+
 ## [0.5.1] - 2026-05-29
 
 ### Fixed
@@ -334,6 +351,7 @@ Initial release of WebAgent — a terminal-style web UI for ACP-compatible agent
 - **CI/CD**: GitHub Actions for CI (unit + E2E tests) and npm publishing on tag push
 - **npm package**: Published as `@lelouchhe/webagent`
 
+[0.6.0]: https://github.com/LelouchHe/webagent/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/LelouchHe/webagent/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/LelouchHe/webagent/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/LelouchHe/webagent/compare/v0.3.0...v0.4.0
