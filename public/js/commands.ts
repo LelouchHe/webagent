@@ -49,7 +49,7 @@ function rootForInput(input: string): CmdNode {
   return input.startsWith("//") ? agentRoot() : ROOT;
 }
 
-function showHint(primary: string): void {
+function showPlaceholder(primary: string): void {
   currentPath = "";
   currentNode = rootForInput(dom.input.value);
   currentData = undefined;
@@ -57,7 +57,7 @@ function showHint(primary: string): void {
     {
       spec: { primary },
       prefix: "",
-      kind: "hint",
+      kind: "placeholder",
     },
   ];
   selectedIdx = -1;
@@ -91,11 +91,11 @@ export function updateSlashMenu(): void {
 
   const isAgentNamespace = text.startsWith("//");
   if (isAgentNamespace && state.busy) {
-    showHint("(agent busy — wait or ^C to cancel)");
+    showPlaceholder("(agent busy — wait or ^C to cancel)");
     return;
   }
   if (isAgentNamespace && state.agentCommands.length === 0) {
-    showHint("(agent commands unavailable)");
+    showPlaceholder("(agent commands unavailable)");
     return;
   }
 
@@ -160,7 +160,7 @@ function rebuild(tailQuery: string, pathPrefix: string): void {
     cands.push({
       spec: { primary: "Agent commands: type //" },
       prefix: "",
-      kind: "hint",
+      kind: "placeholder",
     });
   }
   candidates = cands;
@@ -175,8 +175,7 @@ function rebuild(tailQuery: string, pathPrefix: string): void {
   // auto-selecting it (e.g. the active session in /switch) is awkward when the
   // user opens the menu intending to switch *away* from it.
   const firstSelectable = cands.findIndex(
-    (c) =>
-      c.kind !== "separator" && c.kind !== "placeholder" && c.kind !== "hint",
+    (c) => c.kind !== "separator" && c.kind !== "placeholder",
   );
   selectedIdx = firstSelectable >= 0 ? firstSelectable : 0;
 
@@ -200,7 +199,7 @@ function renderMenu(pathPrefix: string): void {
     if (c.prefix === "›") {
       itemEl.classList.add("slash-arrow");
     }
-    if (c.kind === "placeholder" || c.kind === "hint") {
+    if (c.kind === "placeholder") {
       itemEl.classList.add("slash-placeholder");
     }
     itemEl.dataset.idx = String(i);
@@ -232,8 +231,7 @@ function tabComplete(): void {
   if (!c) return;
   const pathPrefix = dom.slashMenu.dataset.pathPrefix ?? "";
 
-  if (c.kind === "separator" || c.kind === "placeholder" || c.kind === "hint")
-    return;
+  if (c.kind === "separator" || c.kind === "placeholder") return;
 
   if (c.kind === "subcommand" && c.node) {
     const nodeChildren = c.node.children ?? [];
@@ -269,8 +267,7 @@ async function clickItem(idx: number): Promise<void> {
   if (!c) return;
   const pathPrefix = dom.slashMenu.dataset.pathPrefix ?? "";
 
-  if (c.kind === "separator" || c.kind === "placeholder" || c.kind === "hint")
-    return;
+  if (c.kind === "separator" || c.kind === "placeholder") return;
 
   if (c.kind === "subcommand" && c.node) {
     const childNodes = c.node.children ?? [];
@@ -332,8 +329,7 @@ function nextSelectable(from: number, dir: 1 | -1): number {
     const i = (from + dir * step + n) % n;
     if (
       candidates[i].kind !== "separator" &&
-      candidates[i].kind !== "placeholder" &&
-      candidates[i].kind !== "hint"
+      candidates[i].kind !== "placeholder"
     ) {
       return i;
     }
