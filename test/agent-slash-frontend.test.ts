@@ -173,10 +173,9 @@ describe("agent slash frontend", () => {
     globalThis.fetch = async () => {
       return {
         ok: false,
-        status: 409,
+        status: 422,
         json: async () => ({
           error: "Unknown command",
-          code: "unknown_command",
           command: "//context",
           prefix: "//",
         }),

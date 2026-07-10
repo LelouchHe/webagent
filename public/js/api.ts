@@ -6,11 +6,9 @@ import type { SessionDetail, SessionSummary } from "../../src/types.ts";
 export class ApiError extends Error {
   name = "ApiError";
   status: number;
-  code?: string;
-  constructor(status: number, message: string, code?: string) {
+  constructor(status: number, message: string) {
     super(message);
     this.status = status;
-    this.code = code;
   }
 }
 
@@ -21,10 +19,8 @@ async function request<T = unknown>(
   const res = await fetch(url, init);
   if (!res.ok) {
     let message = `HTTP ${res.status}`;
-    let code: string | undefined;
     try {
       const body = (await res.json()) as Record<string, unknown>;
-      if (typeof body.code === "string") code = body.code;
       if (body.error)
         message =
           typeof body.error === "string"
@@ -33,7 +29,7 @@ async function request<T = unknown>(
     } catch {
       /* non-JSON error body */
     }
-    throw new ApiError(res.status, message, code);
+    throw new ApiError(res.status, message);
   }
   const text = await res.text();
   if (!text) return undefined as T;

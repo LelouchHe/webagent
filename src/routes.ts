@@ -1200,15 +1200,14 @@ export function createRequestHandler(
             const command = agentCommandToken(body.text);
             logPromptRejectBeforeSave({
               sessionId,
-              status: 409,
+              status: 422,
               reason: "unknown_command",
               opId,
               textLength: body.text.length,
               attachmentCount: attachments?.length,
             });
-            json(res, 409, {
+            json(res, 422, {
               error: "Unknown command",
-              code: "unknown_command",
               command,
               prefix: "//",
             });

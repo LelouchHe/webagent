@@ -264,10 +264,9 @@ describe("Prompt REST API", () => {
         JSON.stringify({ text: "//compact now" }),
       );
 
-      assert.equal(res.status, 409);
+      assert.equal(res.status, 422);
       assert.deepEqual(JSON.parse(res.body), {
         error: "Unknown command",
-        code: "unknown_command",
         command: "//compact",
         prefix: "//",
       });

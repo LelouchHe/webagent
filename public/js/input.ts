@@ -244,7 +244,7 @@ function handleSendError(
   if (
     context?.isAgentCommand &&
     err instanceof api.ApiError &&
-    err.code === "unknown_command"
+    err.status === 422
   ) {
     context.messageEl.remove();
     state.sentMessageForSession = null;
