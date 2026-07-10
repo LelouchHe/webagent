@@ -311,6 +311,40 @@ describe("Session REST API", () => {
       // Should now be live
       assert.ok(sessions.liveSessions.has("stored-only"));
     });
+
+    it("snapshot waits for command discovery during a warm-cache resume", async () => {
+      store.createSession("stored-only", tmpDir);
+      sessions.cachedConfigOptions.push({
+        type: "select",
+        id: "model",
+        name: "Model",
+        currentValue: "claude-sonnet",
+        options: [{ value: "claude-sonnet", name: "Sonnet" }],
+      });
+      mockBridge.loadSession = async (sessionId: string) => {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        sessions.updateAgentCommands(sessionId, [
+          { name: "context", description: "Show context usage" },
+        ]);
+        return { sessionId, configOptions: [] };
+      };
+
+      const detail = await makeRequest(
+        port,
+        "GET",
+        "/api/v1/sessions/stored-only",
+      );
+      assert.equal(detail.status, 200);
+      const snapshot = await makeRequest(
+        port,
+        "GET",
+        "/api/v1/sessions/stored-only/snapshot",
+      );
+
+      assert.deepEqual(JSON.parse(snapshot.body).agentCommands.commands, [
+        { name: "context", description: "Show context usage" },
+      ]);
+    });
   });
 
   // --- DELETE /api/v1/sessions/:id ---

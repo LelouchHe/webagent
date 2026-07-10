@@ -196,8 +196,8 @@ async function resumeAndLoad(
         api.getSession(sessionId),
         historyPromise,
       ]);
-      // GET session completes ACP restore. Only then can the runtime snapshot
-      // contain command updates emitted during session/load.
+      // The snapshot endpoint joins any in-flight ACP restore before reading
+      // command state, so it is the authoritative hydration boundary.
       await reloadSnapshot(sessionId);
       if (gen !== state.sessionSwitchGen) return;
       session = s;

@@ -57,6 +57,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - auto-retry of interrupted turns
   - deduplicated resume (ensureResumed)
   - revisioned Agent command snapshot lifecycle and cleanup
+  - authoritative snapshot waits for command discovery during warm-cache restore
 
 - `test/store.test.ts`
   - session creation / deletion / updates

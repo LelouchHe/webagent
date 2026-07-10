@@ -974,6 +974,18 @@ export function createRequestHandler(
           json(res, 503, { error: "Session manager not available" });
           return;
         }
+        const bridge = getBridge?.();
+        if (bridge && !sessions.liveSessions.has(sessionId)) {
+          try {
+            // Command discovery happens during session/load. Snapshot is the
+            // authoritative hydration boundary, so it must join any in-flight
+            // restore before reading the per-session command state.
+            await sessions.ensureResumed(bridge, sessionId);
+          } catch {
+            json(res, 503, { error: "Failed to restore session" });
+            return;
+          }
+        }
         // Make sure runtime reflects the current activePrompts/bash state even
         // if no patch has been emitted yet for this session.
         sessions.syncBusy(sessionId);
