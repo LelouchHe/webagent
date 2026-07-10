@@ -205,6 +205,11 @@ describe("connection", () => {
     assert.ok(
       urls.some((u) => u.startsWith("/api/v1/sessions/hash-session/events")),
     );
+    assert.ok(
+      urls.indexOf("/api/v1/sessions/hash-session") <
+        urls.indexOf("/api/v1/sessions/hash-session/snapshot"),
+      "session resume must complete before command snapshot hydration",
+    );
     assert.ok(dom.messages.textContent.includes("restored"));
     assert.equal(state.lastEventSeq, 1);
   });

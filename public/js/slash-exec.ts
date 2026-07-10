@@ -320,8 +320,8 @@ export async function handleSlashCommand(text: string): Promise<boolean> {
         const [session] = await Promise.all([
           api.getSession(match.id),
           loadHistory(match.id),
-          reloadSnapshot(match.id),
         ]);
+        await reloadSnapshot(match.id);
         if (gen !== state.sessionSwitchGen) return true;
         handleEvent({
           type: "session_created",
@@ -378,6 +378,7 @@ export async function handleSlashCommand(text: string): Promise<boolean> {
       addSystem("Tab completes · Enter sends raw text");
       addSystem("? — Show help");
       addSystem("!<command> — Run bash command");
+      addSystem("// — Agent commands");
       for (const c of ROOT.children!) {
         addSystem(`${c.name} — ${c.desc ?? ""}`);
       }
@@ -594,6 +595,9 @@ export async function handleSlashCommand(text: string): Promise<boolean> {
     }
 
     default:
-      return false;
+      addSystem(
+        `err: Unknown command "${cmd}". Type / to see available commands.`,
+      );
+      return true;
   }
 }

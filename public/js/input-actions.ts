@@ -49,7 +49,10 @@ export function registerInputHandlers(h: Handlers): void {
 function inputHasCommand(): boolean {
   const t = dom.input.value.trim();
   return (
-    t.startsWith("/") || t.startsWith("!") || t === "?" || t.startsWith("? ")
+    (t.startsWith("/") && !t.startsWith("//")) ||
+    t.startsWith("!") ||
+    t === "?" ||
+    t.startsWith("? ")
   );
 }
 

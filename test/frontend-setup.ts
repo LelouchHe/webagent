@@ -58,6 +58,8 @@ export function resetState(state: any, dom: any) {
   state.sessionTitle = null;
   state.awaitingNewSession = false;
   state.configOptions = [];
+  state.agentCommands = [];
+  state.agentCommandsRevision = 0;
   state.sessionMode = null;
   state.sessionModel = null;
   state.currentAssistantEl = null;

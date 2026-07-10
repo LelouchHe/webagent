@@ -190,15 +190,15 @@ async function resumeAndLoad(
     // Full load: fetch session details and history in parallel
     state.sessionId = null;
     const historyPromise = loadHistory(sessionId);
-    const snapshotPromise = reloadSnapshot(sessionId);
     let session: SessionDetail;
     try {
       const [s, loaded] = await Promise.all([
         api.getSession(sessionId),
         historyPromise,
       ]);
-      // Wait for snapshot but don't fail the whole load if it fails
-      await snapshotPromise;
+      // GET session completes ACP restore. Only then can the runtime snapshot
+      // contain command updates emitted during session/load.
+      await reloadSnapshot(sessionId);
       if (gen !== state.sessionSwitchGen) return;
       session = s;
       if (!loaded) {

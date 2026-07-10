@@ -37,7 +37,13 @@ export interface Candidate {
   spec: SlashItemSpec;
   prefix: SlashPrefix;
   /** Source classification, drives selection dispatch. */
-  kind: "subcommand" | "freeform" | "data" | "placeholder" | "separator";
+  kind:
+    | "subcommand"
+    | "freeform"
+    | "data"
+    | "placeholder"
+    | "hint"
+    | "separator";
   /** When kind === 'subcommand', the child node selected. */
   node?: CmdNode;
 }

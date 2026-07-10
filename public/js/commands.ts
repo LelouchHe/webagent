@@ -5,7 +5,7 @@
 // plus Tab/Click/keyboard dispatch. Execution paths (onSelect handlers) live
 // in slash-commands.ts so this file stays a thin pipeline.
 
-import { dom, setInputValue } from "./state.ts";
+import { state, dom, setInputValue } from "./state.ts";
 import { addSystem } from "./render.ts";
 import {
   resolvePath,
@@ -28,6 +28,42 @@ let currentData: FetchData | undefined = undefined;
 let candidates: Candidate[] = [];
 let selectedIdx = -1;
 let dismissedFor: string | null = null;
+
+function agentRoot(): CmdNode {
+  return {
+    name: "<agent-root>",
+    children: state.agentCommands.map((command) => ({
+      name: `//${command.name}`,
+      desc: command.input
+        ? `${command.description} · <${command.input.hint}>`
+        : command.description,
+      onSelect: () => {
+        setInputValue(`//${command.name}`);
+        dom.sendBtn.click();
+      },
+    })),
+  };
+}
+
+function rootForInput(input: string): CmdNode {
+  return input.startsWith("//") ? agentRoot() : ROOT;
+}
+
+function showHint(primary: string): void {
+  currentPath = "";
+  currentNode = rootForInput(dom.input.value);
+  currentData = undefined;
+  candidates = [
+    {
+      spec: { primary },
+      prefix: "",
+      kind: "hint",
+    },
+  ];
+  selectedIdx = -1;
+  renderMenu("");
+  dom.slashMenu.classList.add("active");
+}
 
 export function __resetCommandsForTest(): void {
   currentPath = null;
@@ -53,7 +89,18 @@ export function updateSlashMenu(): void {
     return;
   }
 
-  const { node, pathPrefix, tailQuery } = resolvePath(text, ROOT);
+  const isAgentNamespace = text.startsWith("//");
+  if (isAgentNamespace && state.busy) {
+    showHint("(agent busy — wait or ^C to cancel)");
+    return;
+  }
+  if (isAgentNamespace && state.agentCommands.length === 0) {
+    showHint("(agent commands unavailable)");
+    return;
+  }
+
+  const root = rootForInput(text);
+  const { node, pathPrefix, tailQuery } = resolvePath(text, root);
 
   // Path changed → reset data, kick fresh fetch if node has one.
   // Active-path guard: stale fetch responses are dropped if currentPath has
@@ -100,12 +147,22 @@ export function updateSlashMenu(): void {
 // Re-resolve tailQuery from current input (used by async fetch callbacks
 // that may fire after input has changed but currentPath is still valid).
 function currentTailQueryFromInput(): string {
-  const { tailQuery } = resolvePath(dom.input.value, ROOT);
+  const { tailQuery } = resolvePath(
+    dom.input.value,
+    rootForInput(dom.input.value),
+  );
   return tailQuery;
 }
 
 function rebuild(tailQuery: string, pathPrefix: string): void {
   const cands = buildCandidates(currentNode, tailQuery, currentData);
+  if (dom.input.value === "/") {
+    cands.push({
+      spec: { primary: "Agent commands: type //" },
+      prefix: "",
+      kind: "hint",
+    });
+  }
   candidates = cands;
 
   if (cands.length === 0) {
@@ -118,7 +175,8 @@ function rebuild(tailQuery: string, pathPrefix: string): void {
   // auto-selecting it (e.g. the active session in /switch) is awkward when the
   // user opens the menu intending to switch *away* from it.
   const firstSelectable = cands.findIndex(
-    (c) => c.kind !== "separator" && c.kind !== "placeholder",
+    (c) =>
+      c.kind !== "separator" && c.kind !== "placeholder" && c.kind !== "hint",
   );
   selectedIdx = firstSelectable >= 0 ? firstSelectable : 0;
 
@@ -142,7 +200,7 @@ function renderMenu(pathPrefix: string): void {
     if (c.prefix === "›") {
       itemEl.classList.add("slash-arrow");
     }
-    if (c.kind === "placeholder") {
+    if (c.kind === "placeholder" || c.kind === "hint") {
       itemEl.classList.add("slash-placeholder");
     }
     itemEl.dataset.idx = String(i);
@@ -174,7 +232,8 @@ function tabComplete(): void {
   if (!c) return;
   const pathPrefix = dom.slashMenu.dataset.pathPrefix ?? "";
 
-  if (c.kind === "separator" || c.kind === "placeholder") return;
+  if (c.kind === "separator" || c.kind === "placeholder" || c.kind === "hint")
+    return;
 
   if (c.kind === "subcommand" && c.node) {
     const nodeChildren = c.node.children ?? [];
@@ -210,7 +269,8 @@ async function clickItem(idx: number): Promise<void> {
   if (!c) return;
   const pathPrefix = dom.slashMenu.dataset.pathPrefix ?? "";
 
-  if (c.kind === "separator" || c.kind === "placeholder") return;
+  if (c.kind === "separator" || c.kind === "placeholder" || c.kind === "hint")
+    return;
 
   if (c.kind === "subcommand" && c.node) {
     const childNodes = c.node.children ?? [];
@@ -272,7 +332,8 @@ function nextSelectable(from: number, dir: 1 | -1): number {
     const i = (from + dir * step + n) % n;
     if (
       candidates[i].kind !== "separator" &&
-      candidates[i].kind !== "placeholder"
+      candidates[i].kind !== "placeholder" &&
+      candidates[i].kind !== "hint"
     ) {
       return i;
     }

@@ -27,6 +27,7 @@ import {
   clearCancelTimer,
   onSessionReset,
   applyStatePatch,
+  applyAgentCommandSnapshot,
   reloadSnapshot,
 } from "./state.ts";
 import {
@@ -1247,6 +1248,19 @@ export function handleEvent(msg: AgentEvent) {
       break;
     }
 
+    case "available_commands_update":
+      if (
+        applyAgentCommandSnapshot({
+          revision: msg.revision ?? 0,
+          commands: msg.commands,
+        })
+      ) {
+        // Re-run the active menu without importing commands.ts here (which
+        // would create an events → commands → slash-commands → events cycle).
+        dom.input.dispatchEvent(new window.Event("input", { bubbles: true }));
+      }
+      break;
+
     case "session_created":
       // Only switch to the new session if this client requested it
       if (
@@ -1260,6 +1274,7 @@ export function handleEvent(msg: AgentEvent) {
       state.sessionId = msg.sessionId;
       state.sessionCwd = msg.cwd ?? state.sessionCwd;
       state.sessionTitle = msg.title ?? null;
+      if (msg.agentCommands) applyAgentCommandSnapshot(msg.agentCommands);
       // eslint-disable-next-line @typescript-eslint/prefer-optional-chain, @typescript-eslint/no-unnecessary-condition -- runtime safety for legacy events
       if (msg.configOptions && msg.configOptions.length)
         updateConfigOptions(msg.configOptions);

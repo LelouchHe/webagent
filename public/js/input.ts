@@ -27,9 +27,21 @@ import { renderAttachPreview } from "./attachments.ts";
 import { registerInputHandlers } from "./input-actions.ts";
 import { publishPreview, cancelPreview } from "./share/commands.ts";
 import * as api from "./api.ts";
+import {
+  agentCommandToken,
+  resolveAgentCommand,
+} from "../../src/agent-commands.ts";
 
 function isConnected(): boolean {
   return state.clientId !== null;
+}
+
+function isLocalCommand(text: string): boolean {
+  return (
+    (!text.startsWith("//") && text.startsWith("/")) ||
+    text === "?" ||
+    text.startsWith("? ")
+  );
 }
 
 // Wire up cancel-timeout feedback (state.js cannot import render.js directly)
@@ -39,12 +51,10 @@ state._onCancelTimeout = () =>
 function sendMessage() {
   const text = dom.input.value.trim();
   if (!text && state.pendingAttachments.length === 0) return;
+  const isAgentCommand = text.startsWith("//");
 
   // Slash commands and bash always go through, even while busy
-  if (
-    (text.startsWith("/") || text === "?" || text.startsWith("? ")) &&
-    state.pendingAttachments.length === 0
-  ) {
+  if (isLocalCommand(text) && state.pendingAttachments.length === 0) {
     setInputValue("");
     dom.input.style.height = "auto";
     void handleSlashCommand(text);
@@ -74,6 +84,14 @@ function sendMessage() {
 
   // Regular messages require agent to be idle
   if (state.busy) return;
+
+  if (isAgentCommand && !resolveAgentCommand(text, state.agentCommands)) {
+    const command = agentCommandToken(text);
+    addSystem(
+      `err: Unknown command "${command}". Type // to see available commands.`,
+    );
+    return;
+  }
 
   setInputValue("");
   dom.input.style.height = "auto";
@@ -120,6 +138,15 @@ function sendMessage() {
   const attachments = state.pendingAttachments.slice();
   state.pendingAttachments.length = 0;
   renderAttachPreview();
+
+  const onSendError = (err: unknown) => {
+    handleSendError(err, {
+      text,
+      isAgentCommand,
+      messageEl: msgEl,
+      attachments,
+    });
+  };
 
   if (attachments.length > 0) {
     void Promise.all(
@@ -189,10 +216,10 @@ function sendMessage() {
           text || "What is in this attachment?",
           refs,
         )
-        .catch(handleSendError);
+        .catch(onSendError);
     });
   } else {
-    api.sendMessage(state.sessionId, text).catch(handleSendError);
+    api.sendMessage(state.sessionId, text).catch(onSendError);
   }
   state.turnEnded = false;
   state.sentMessageForSession = state.sessionId;
@@ -200,12 +227,36 @@ function sendMessage() {
   showWaiting();
 }
 
-function handleSendError(err: unknown) {
+function handleSendError(
+  err: unknown,
+  context?: {
+    text: string;
+    isAgentCommand: boolean;
+    messageEl: HTMLElement;
+    attachments: typeof state.pendingAttachments;
+  },
+) {
   // Without this, a fire-and-forget POST that returns non-2xx (e.g. 500
   // when ensureResumed fails because the agent doesn't recognize the
   // session) leaves the UI stuck in busy state with no visible reason.
   setBusy(false);
   hideWaiting();
+  if (
+    context?.isAgentCommand &&
+    err instanceof api.ApiError &&
+    err.code === "unknown_command"
+  ) {
+    context.messageEl.remove();
+    state.sentMessageForSession = null;
+    setInputValue(context.text);
+    state.pendingAttachments.push(...context.attachments);
+    renderAttachPreview();
+    const command = agentCommandToken(context.text);
+    addSystem(
+      `err: Unknown command "${command}". Type // to see available commands.`,
+    );
+    return;
+  }
   const msg = err instanceof Error ? err.message : String(err);
   addSystem(`err: ${msg}`);
 }

@@ -127,6 +127,17 @@ describe("commands", () => {
       assert.ok(lines.includes("? — Show help"));
     });
 
+    it("shows the unified error for an unknown local slash command", async () => {
+      const handled = await commands.handleSlashCommand("/does-not-exist arg");
+
+      assert.equal(handled, true);
+      assert.ok(
+        messageLines().includes(
+          'err: Unknown command "/does-not-exist". Type / to see available commands.',
+        ),
+      );
+    });
+
     it("exits current session — deletes it and switches to MRU", async () => {
       state.clientId = "cl-1";
       state.sessionId = "current";

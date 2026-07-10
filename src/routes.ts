@@ -20,6 +20,7 @@ import { createWriteStream } from "node:fs";
 import { handleShareRoutes } from "./share/routes.ts";
 import { authenticate, isWhitelistedPath } from "./auth-middleware.ts";
 import { enrichStoredEventsForDisplay } from "./attachment-labels.ts";
+import { agentCommandToken, resolveAgentCommand } from "./agent-commands.ts";
 import { log } from "./log.ts";
 
 const rlog = log.scope("routes");
@@ -995,6 +996,7 @@ export function createRequestHandler(
               lastEventSeq,
             },
             runtime: runtimeState.runtime,
+            agentCommands: sessions.getAgentCommands(sessionId),
           },
           req,
         );
@@ -1176,6 +1178,33 @@ export function createRequestHandler(
           }
         }
 
+        let agentText = body.text;
+        if (body.text.startsWith("//")) {
+          const resolved = resolveAgentCommand(
+            body.text,
+            sessions.getAgentCommands(sessionId).commands,
+          );
+          if (!resolved) {
+            const command = agentCommandToken(body.text);
+            logPromptRejectBeforeSave({
+              sessionId,
+              status: 409,
+              reason: "unknown_command",
+              opId,
+              textLength: body.text.length,
+              attachmentCount: attachments?.length,
+            });
+            json(res, 409, {
+              error: "Unknown command",
+              code: "unknown_command",
+              command,
+              prefix: "//",
+            });
+            return;
+          }
+          agentText = resolved.agentText;
+        }
+
         // Stored shape mirrors the wire shape PLUS a server-derived `path`
         // for renderers. The path is the unsigned base URL
         // (`/api/v1/sessions/<sid>/attachments/<filename>`); reSign on
@@ -1246,7 +1275,7 @@ export function createRequestHandler(
         sessions.activePrompts.add(sessionId);
         sessions.syncBusy(sessionId);
         bridge
-          .prompt(sessionId, body.text, attachments)
+          .prompt(sessionId, agentText, attachments)
           .catch((err: unknown) => {
             plog.error("error", { sessionId, error: err });
           })
@@ -1703,6 +1732,7 @@ export function createRequestHandler(
             cwd: session?.cwd,
             title: session?.title,
             configOptions,
+            agentCommands: sessions.getAgentCommands(sessionId),
           } as AgentEvent;
           sseManager.broadcast(sessionCreatedEvent);
           // ACP's session_created event fires before inheritance runs, so
@@ -1720,6 +1750,7 @@ export function createRequestHandler(
             title: session?.title ?? null,
             source: session?.source ?? source,
             configOptions,
+            agentCommands: sessions.getAgentCommands(sessionId),
           });
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);

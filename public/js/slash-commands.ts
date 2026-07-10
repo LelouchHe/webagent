@@ -175,8 +175,8 @@ async function switchToSession(id: string): Promise<void> {
     const [session, loaded] = await Promise.all([
       api.getSession(id),
       loadHistory(id),
-      reloadSnapshot(id),
     ]);
+    await reloadSnapshot(id);
     if (gen !== state.sessionSwitchGen) return;
     handleEvent({
       type: "session_created",
@@ -726,6 +726,7 @@ function printHelp(): void {
   addSystem("Tab completes · Enter sends raw text");
   addSystem("? — Show help");
   addSystem("!<command> — Run bash command");
+  addSystem("// — Agent commands");
   for (const c of ROOT.children!) {
     addSystem(`${c.name} — ${c.desc ?? ""}`);
   }

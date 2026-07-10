@@ -267,6 +267,23 @@ describe("AgentBridge", () => {
         ],
       },
     });
+    await (bridge as any).handleSessionUpdate({
+      sessionId: "s1",
+      update: {
+        sessionUpdate: "available_commands_update",
+        availableCommands: [
+          {
+            name: "context",
+            description: "Show context usage",
+          },
+          {
+            name: "compact",
+            description: "Compact conversation",
+            input: { hint: "focus instructions" },
+          },
+        ],
+      },
+    });
 
     assert.deepEqual(events, [
       { type: "message_chunk", sessionId: "s1", text: "hello" },
@@ -296,6 +313,21 @@ describe("AgentBridge", () => {
         sessionId: "s1",
         configOptions: [
           { id: "model", name: "Model", currentValue: "x", options: [] },
+        ],
+      },
+      {
+        type: "available_commands_update",
+        sessionId: "s1",
+        commands: [
+          {
+            name: "context",
+            description: "Show context usage",
+          },
+          {
+            name: "compact",
+            description: "Compact conversation",
+            input: { hint: "focus instructions" },
+          },
         ],
       },
     ]);
