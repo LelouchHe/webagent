@@ -83,7 +83,11 @@ describe("agent slash frontend", () => {
     assert.match(dom.slashMenu.textContent, /\/\/context/);
     assert.match(dom.slashMenu.textContent, /Show context usage/);
     assert.match(dom.slashMenu.textContent, /\/\/compact/);
-    assert.match(dom.slashMenu.textContent, /focus instructions/);
+    assert.match(
+      dom.slashMenu.textContent,
+      /Compact conversation · focus instructions/,
+    );
+    assert.doesNotMatch(dom.slashMenu.textContent, /<focus instructions>/);
     assert.doesNotMatch(dom.slashMenu.textContent, /\/help/);
   });
 

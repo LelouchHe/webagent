@@ -35,7 +35,7 @@ function agentRoot(): CmdNode {
     children: state.agentCommands.map((command) => ({
       name: `//${command.name}`,
       desc: command.input
-        ? `${command.description} · <${command.input.hint}>`
+        ? `${command.description} · ${command.input.hint}`
         : command.description,
       onSelect: () => {
         setInputValue(`//${command.name}`);
