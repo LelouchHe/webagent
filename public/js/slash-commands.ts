@@ -474,7 +474,7 @@ export const ROOT: CmdNode = {
       },
     },
     configCmdNode("/mode", "Switch mode", "mode"),
-    configCmdNode("/model", "Switch model", "model"),
+    configCmdNode("/model", "Switch model", "model", true),
     {
       name: "/new",
       desc: "Create new session",
@@ -696,7 +696,12 @@ export const ROOT: CmdNode = {
   ],
 };
 
-function configCmdNode(name: string, desc: string, configId: string): CmdNode {
+function configCmdNode(
+  name: string,
+  desc: string,
+  configId: string,
+  showOptionValue = false,
+): CmdNode {
   return {
     name,
     desc,
@@ -709,10 +714,20 @@ function configCmdNode(name: string, desc: string, configId: string): CmdNode {
       const current = getConfigValue(configId);
       return {
         primary: o.name,
+        secondary: showOptionValue ? `(${o.value})` : undefined,
         current: o.value === current,
         onSelect: () => setConfigAndUpdate(configId, o.value, o.name),
       };
     },
+    matches: showOptionValue
+      ? (item: unknown, query: string) => {
+          const o = item as { value: string; name: string };
+          return (
+            o.name.toLowerCase().includes(query) ||
+            o.value.toLowerCase().includes(query)
+          );
+        }
+      : undefined,
   };
 }
 
