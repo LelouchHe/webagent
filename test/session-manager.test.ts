@@ -52,7 +52,10 @@ describe("SessionManager", () => {
       assert.ok(!sm.sessionHasTitle.has("s1"));
       assert.ok(!sm.assistantBuffers.has("s1"));
       assert.ok(!sm.thinkingBuffers.has("s1"));
-      assert.deepEqual(sm.getAgentCommands("s1"), {
+      const commands = sm.getAgentCommands("s1");
+      assert.ok(commands.epoch);
+      assert.deepEqual(commands, {
+        epoch: commands.epoch,
         revision: 0,
         commands: [],
       });
@@ -74,10 +77,12 @@ describe("SessionManager", () => {
       ]);
 
       assert.deepEqual(first, {
+        epoch: first.epoch,
         revision: 1,
         commands: [{ name: "context", description: "Show context usage" }],
       });
       assert.deepEqual(second, {
+        epoch: first.epoch,
         revision: 2,
         commands: [
           {
@@ -99,12 +104,14 @@ describe("SessionManager", () => {
       ]);
 
       const cleared = sm.clearAgentCommands();
+      const epoch = sm.getAgentCommands("s1").epoch;
 
       assert.deepEqual(cleared, [
-        { sessionId: "s1", revision: 2, commands: [] },
-        { sessionId: "s2", revision: 2, commands: [] },
+        { sessionId: "s1", epoch, revision: 2, commands: [] },
+        { sessionId: "s2", epoch, revision: 2, commands: [] },
       ]);
       assert.deepEqual(sm.getAgentCommands("s1"), {
+        epoch,
         revision: 2,
         commands: [],
       });

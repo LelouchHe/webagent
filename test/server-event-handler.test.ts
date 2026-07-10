@@ -220,7 +220,9 @@ describe("handleAgentEvent", () => {
       sseManager as any,
     );
 
-    assert.deepEqual(sessions.getAgentCommands("s1"), {
+    const snapshot = sessions.getAgentCommands("s1");
+    assert.deepEqual(snapshot, {
+      epoch: snapshot.epoch,
       revision: 1,
       commands: [
         {
@@ -251,10 +253,12 @@ describe("handleAgentEvent", () => {
       sseManager as any,
     );
 
+    const epoch = sessions.getAgentCommands("s1").epoch;
     assert.deepEqual(broadcasted, [
       {
         type: "available_commands_update",
         sessionId: "s1",
+        epoch,
         revision: 1,
         commands: [{ name: "context", description: "Show context usage" }],
       },
@@ -279,10 +283,12 @@ describe("handleAgentEvent", () => {
       sseManager as any,
     );
 
+    const epoch = sessions.getAgentCommands("s1").epoch;
     assert.deepEqual(broadcasted, [
       {
         type: "available_commands_update",
         sessionId: "s1",
+        epoch,
         revision: 2,
         commands: [],
       },

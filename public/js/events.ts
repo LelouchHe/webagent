@@ -1251,6 +1251,7 @@ export function handleEvent(msg: AgentEvent) {
     case "available_commands_update":
       if (
         applyAgentCommandSnapshot({
+          epoch: msg.epoch ?? "",
           revision: msg.revision ?? 0,
           commands: msg.commands,
         })

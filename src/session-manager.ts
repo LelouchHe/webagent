@@ -1,5 +1,6 @@
 import type { ChildProcess } from "node:child_process";
 import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { rm } from "node:fs/promises";
 import { stat } from "node:fs/promises";
 import { join } from "node:path";
@@ -81,6 +82,7 @@ export class SessionManager {
     string,
     AgentCommandSnapshot
   >();
+  private readonly agentCommandEpoch = randomUUID();
 
   cachedConfigOptions: ConfigOption[] = [];
   agentInfo: { name: string; version: string } | null = null;
@@ -331,6 +333,7 @@ export class SessionManager {
   ): AgentCommandSnapshot {
     const current = this.agentCommandSnapshots.get(sessionId);
     const snapshot = {
+      epoch: this.agentCommandEpoch,
       revision: (current?.revision ?? 0) + 1,
       commands: commands.map((command) => ({
         ...command,
@@ -344,6 +347,7 @@ export class SessionManager {
   getAgentCommands(sessionId: string): AgentCommandSnapshot {
     return (
       this.agentCommandSnapshots.get(sessionId) ?? {
+        epoch: this.agentCommandEpoch,
         revision: 0,
         commands: [],
       }
@@ -354,6 +358,7 @@ export class SessionManager {
     const cleared: Array<AgentCommandSnapshot & { sessionId: string }> = [];
     for (const [sessionId, current] of this.agentCommandSnapshots) {
       const snapshot: AgentCommandSnapshot = {
+        epoch: this.agentCommandEpoch,
         revision: current.revision + 1,
         commands: [],
       };

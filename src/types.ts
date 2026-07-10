@@ -112,6 +112,7 @@ export interface AgentCommand {
 }
 
 export interface AgentCommandSnapshot {
+  epoch: string;
   revision: number;
   commands: AgentCommand[];
 }
@@ -144,6 +145,7 @@ export type AgentEvent =
       type: "available_commands_update";
       sessionId: string;
       commands: AgentCommand[];
+      epoch?: string;
       revision?: number;
     }
   | { type: "message_chunk"; sessionId: string; text: string }

@@ -206,6 +206,7 @@ describe("agent slash frontend", () => {
     events.handleEvent({
       type: "available_commands_update",
       sessionId: "session-1",
+      epoch: "server-a",
       revision: 2,
       commands: [{ name: "context", description: "New" }],
     });
@@ -223,6 +224,7 @@ describe("agent slash frontend", () => {
       },
       runtime: { busy: null },
       agentCommands: {
+        epoch: "server-a",
         revision: 1,
         commands: [{ name: "old", description: "Stale" }],
       },
@@ -232,5 +234,23 @@ describe("agent slash frontend", () => {
     assert.deepEqual(state.agentCommands, [
       { name: "context", description: "New" },
     ]);
+  });
+
+  it("accepts a lower revision after the server command epoch changes", () => {
+    stateMod.applyAgentCommandSnapshot({
+      epoch: "server-a",
+      revision: 5,
+      commands: [{ name: "context", description: "stale" }],
+    });
+
+    const applied = stateMod.applyAgentCommandSnapshot({
+      epoch: "server-b",
+      revision: 0,
+      commands: [],
+    });
+
+    assert.equal(applied, true);
+    assert.deepEqual(state.agentCommands, []);
+    assert.equal(state.agentCommandsRevision, 0);
   });
 });

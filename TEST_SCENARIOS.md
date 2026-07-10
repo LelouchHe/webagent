@@ -144,7 +144,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
 - `test/agent-slash-frontend.test.ts`
   - `//` command discovery, filtering, Tab, Click, and input-hint rendering
   - busy-state gating and unavailable-command feedback
-  - snapshot/SSE revision ordering and stale-command optimistic rollback
+  - snapshot/SSE revision ordering, server-restart epoch recovery, and stale-command optimistic rollback
   - `/` root and `/help` discoverability for Agent commands
 
 - `test/state.test.ts`

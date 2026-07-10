@@ -125,7 +125,9 @@ describe("GET /api/v1/sessions/:id/snapshot", () => {
     const res = await req(port, "GET", "/api/v1/sessions/s1/snapshot");
     const body = JSON.parse(res.body);
 
+    assert.equal(typeof body.agentCommands.epoch, "string");
     assert.deepEqual(body.agentCommands, {
+      epoch: body.agentCommands.epoch,
       revision: 1,
       commands: [
         {

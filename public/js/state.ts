@@ -76,6 +76,7 @@ export const state = {
   awaitingNewSession: false,
   configOptions: [] as ConfigOption[],
   agentCommands: [] as AgentCommand[],
+  agentCommandsEpoch: null as string | null,
   agentCommandsRevision: 0,
   // Fallback copies of session.mode / session.model from snapshot. Used by
   // updateModeUI / updateStatusBar when configOptions is empty (typical after
@@ -307,7 +308,7 @@ export function applySnapshot(snap: SessionSnapshot): void {
   setBusy(busy != null);
   if (busy == null) clearCancelTimer();
   applyAgentCommandSnapshot(
-    snap.agentCommands ?? { revision: 0, commands: [] },
+    snap.agentCommands ?? { epoch: "", revision: 0, commands: [] },
   );
   // Bug A: populate display fallback from snapshot and repaint. Guarded
   // internally — no-op if configOptions is already non-empty.
@@ -319,7 +320,12 @@ export function applySnapshot(snap: SessionSnapshot): void {
 export function applyAgentCommandSnapshot(
   snapshot: AgentCommandSnapshot,
 ): boolean {
-  if (snapshot.revision < state.agentCommandsRevision) return false;
+  if (
+    snapshot.epoch === state.agentCommandsEpoch &&
+    snapshot.revision < state.agentCommandsRevision
+  )
+    return false;
+  state.agentCommandsEpoch = snapshot.epoch;
   state.agentCommandsRevision = snapshot.revision;
   state.agentCommands = snapshot.commands.slice();
   return true;
@@ -451,6 +457,7 @@ export function resetSessionUI() {
   state.sessionCwd = null;
   state.configOptions = [];
   state.agentCommands = [];
+  state.agentCommandsEpoch = null;
   state.agentCommandsRevision = 0;
   clearFallback();
   updateSessionInfo(null, null);
