@@ -5,23 +5,36 @@ export interface ResolvedAgentCommand {
   agentText: string;
 }
 
+function splitFirstToken(text: string): {
+  token: string;
+  remainder: string;
+} {
+  const boundary = text.search(/\s/);
+  if (boundary < 0) return { token: text, remainder: "" };
+  return {
+    token: text.slice(0, boundary),
+    remainder: text.slice(boundary),
+  };
+}
+
 export function resolveAgentCommand(
   text: string,
   commands: AgentCommand[],
 ): ResolvedAgentCommand | null {
-  const match = /^\/\/(\S+)([\s\S]*)$/.exec(text);
-  if (!match) return null;
-  const inputName = match[1];
+  if (!text.startsWith("//")) return null;
+  const { token, remainder } = splitFirstToken(text);
+  const inputName = token.slice(2);
+  if (!inputName) return null;
   const command = commands.find(
     (candidate) => candidate.name.toLowerCase() === inputName.toLowerCase(),
   );
   if (!command) return null;
   return {
-    command: `//${inputName}`,
-    agentText: `/${command.name}${match[2]}`,
+    command: token,
+    agentText: `/${command.name}${remainder}`,
   };
 }
 
 export function agentCommandToken(text: string): string {
-  return text.match(/^\S+/)?.[0] ?? text;
+  return splitFirstToken(text).token || text;
 }
