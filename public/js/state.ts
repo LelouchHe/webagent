@@ -352,10 +352,20 @@ export function applyStatePatch(patchEvent: {
 }
 
 /**
- * Fetch the authoritative snapshot for a session and apply it. Returns the
- * snapshot (for callers that need session meta like lastEventSeq) or null
- * on failure.
+ * Fetch the authoritative snapshot without applying it. Full session loads
+ * use this to overlap network work, then apply the snapshot after history.
  */
+export async function fetchSnapshot(
+  sessionId: string,
+): Promise<SessionSnapshot | null> {
+  try {
+    return (await api.getSnapshot(sessionId)) as unknown as SessionSnapshot;
+  } catch {
+    return null;
+  }
+}
+
+/** Fetch and immediately apply the authoritative snapshot. */
 export async function reloadSnapshot(
   sessionId: string,
 ): Promise<SessionSnapshot | null> {
@@ -364,16 +374,10 @@ export async function reloadSnapshot(
   // Without this guard, an A→B→A rapid switch could see A's slow response
   // clobber B's state because applySnapshot runs unconditionally.
   const genAtStart = state.sessionSwitchGen;
-  try {
-    const snap = (await api.getSnapshot(
-      sessionId,
-    )) as unknown as SessionSnapshot;
-    if (state.sessionSwitchGen !== genAtStart) return null;
-    applySnapshot(snap);
-    return snap;
-  } catch {
-    return null;
-  }
+  const snap = await fetchSnapshot(sessionId);
+  if (!snap || state.sessionSwitchGen !== genAtStart) return null;
+  applySnapshot(snap);
+  return snap;
 }
 
 export function setBusy(on: boolean) {

@@ -339,6 +339,14 @@ describe("inbox consume — switches session via switchToSession", () => {
           busyKind: null,
         });
       }
+      if (url === "/api/v1/sessions/new-session/snapshot") {
+        return respond({
+          version: 1,
+          seq: 0,
+          session: {},
+          runtime: { busy: null },
+        });
+      }
       if (url.includes("/events")) {
         return respond({
           events: [],

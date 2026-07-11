@@ -14,7 +14,8 @@ import {
   getSelectConfigOption,
   updateModeUI,
   updateStatusBar,
-  reloadSnapshot,
+  fetchSnapshot,
+  applySnapshot,
 } from "./state.ts";
 import { addSystem, scrollToBottom, formatLocalTime } from "./render.ts";
 import { loadHistory, handleEvent, fallbackToNextSession } from "./events.ts";
@@ -317,12 +318,13 @@ export async function handleSlashCommand(text: string): Promise<boolean> {
         const gen = state.sessionSwitchGen;
         resetSessionUI();
         state.sessionId = null;
-        const [session] = await Promise.all([
+        const [session, , snapshot] = await Promise.all([
           api.getSession(match.id),
           loadHistory(match.id),
-          reloadSnapshot(match.id),
+          fetchSnapshot(match.id),
         ]);
         if (gen !== state.sessionSwitchGen) return true;
+        if (snapshot) applySnapshot(snapshot);
         handleEvent({
           type: "session_created",
           sessionId: session.id,

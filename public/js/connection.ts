@@ -9,6 +9,8 @@ import {
   setConnectionStatus,
   clearCancelTimer,
   reloadSnapshot,
+  fetchSnapshot,
+  applySnapshot,
 } from "./state.ts";
 import {
   addSystem,
@@ -193,12 +195,13 @@ async function resumeAndLoad(
     const historyPromise = loadHistory(sessionId);
     let session: SessionDetail;
     try {
-      const [s, loaded] = await Promise.all([
+      const [s, loaded, snapshot] = await Promise.all([
         api.getSession(sessionId),
         historyPromise,
-        reloadSnapshot(sessionId),
+        fetchSnapshot(sessionId),
       ]);
       if (gen !== state.sessionSwitchGen) return;
+      if (snapshot) applySnapshot(snapshot);
       session = s;
       if (!loaded) {
         addSystem("warn: Failed to load history.");

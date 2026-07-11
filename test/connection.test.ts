@@ -108,6 +108,12 @@ describe("connection", () => {
 
   function setFetch(
     handler: (url: string, init?: RequestInit) => Promise<MockResponse>,
+    snapshot: Record<string, unknown> = {
+      version: 1,
+      seq: 0,
+      session: {},
+      runtime: { busy: null },
+    },
   ) {
     globalThis.fetch = (async (url: string, init?: RequestInit) => {
       fetchCalls.push({ url, init });
@@ -118,12 +124,7 @@ describe("connection", () => {
       }
       // Auto-stub snapshot endpoint so tests that don't care about it don't explode.
       if (url.endsWith("/snapshot")) {
-        return mockResponse({
-          version: 1,
-          seq: 0,
-          session: {},
-          runtime: { busy: null },
-        });
+        return mockResponse(snapshot);
       }
       return handler(url, init);
     }) as unknown as typeof fetch;
@@ -179,22 +180,47 @@ describe("connection", () => {
     const sessionReady = new Promise<void>((resolve) => {
       releaseSession = resolve;
     });
-    setFetch(async (url: string) => {
-      if (url.includes("/visibility")) return mockResponse({});
-      if (url === "/api/v1/sessions/hash-session") {
-        await sessionReady;
-        return mockResponse(sessionResponse("hash-session"));
-      }
-      if (url.startsWith("/api/v1/sessions/hash-session/events"))
-        return mockResponse([
-          {
-            seq: 1,
-            type: "assistant_message",
-            data: JSON.stringify({ text: "restored" }),
-          },
-        ]);
-      throw new Error(`Unexpected fetch: ${url}`);
+    let releaseHistory!: () => void;
+    const historyReady = new Promise<void>((resolve) => {
+      releaseHistory = resolve;
     });
+    setFetch(
+      async (url: string) => {
+        if (url.includes("/visibility")) return mockResponse({});
+        if (url === "/api/v1/sessions/hash-session") {
+          await sessionReady;
+          return mockResponse(sessionResponse("hash-session"));
+        }
+        if (url.startsWith("/api/v1/sessions/hash-session/events")) {
+          await historyReady;
+          return mockResponse([
+            {
+              seq: 1,
+              type: "prompt_done",
+              data: "{}",
+            },
+            {
+              seq: 2,
+              type: "assistant_message",
+              data: JSON.stringify({ text: "restored" }),
+            },
+          ]);
+        }
+        throw new Error(`Unexpected fetch: ${url}`);
+      },
+      {
+        version: 1,
+        seq: 2,
+        session: {},
+        runtime: {
+          busy: {
+            kind: "agent",
+            since: "2026-07-10T00:00:00.000Z",
+            promptId: "prompt-1",
+          },
+        },
+      },
+    );
 
     connection.connect();
     const es = await latestES();
@@ -205,6 +231,7 @@ describe("connection", () => {
       (c) => c.url === "/api/v1/sessions/hash-session/snapshot",
     );
     releaseSession();
+    releaseHistory();
     await flush();
     // SSE connected arrives — sets clientId only
     fireConnected(es, "cl-test");
@@ -218,7 +245,8 @@ describe("connection", () => {
     );
     assert.equal(snapshotStartedInParallel, true);
     assert.ok(dom.messages.textContent.includes("restored"));
-    assert.equal(state.lastEventSeq, 1);
+    assert.equal(state.lastEventSeq, 2);
+    assert.equal(state.busy, true);
   });
 
   it("resumes the most recent session when there is no hash", async () => {

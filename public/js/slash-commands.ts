@@ -13,7 +13,8 @@ import {
   getConfigValue,
   updateModeUI,
   updateStatusBar,
-  reloadSnapshot,
+  fetchSnapshot,
+  applySnapshot,
 } from "./state.ts";
 import { addSystem, scrollToBottom, formatLocalTime } from "./render.ts";
 import { loadHistory, handleEvent, fallbackToNextSession } from "./events.ts";
@@ -172,12 +173,13 @@ async function switchToSession(id: string): Promise<void> {
   resetSessionUI();
   state.sessionId = null;
   try {
-    const [session, loaded] = await Promise.all([
+    const [session, loaded, snapshot] = await Promise.all([
       api.getSession(id),
       loadHistory(id),
-      reloadSnapshot(id),
+      fetchSnapshot(id),
     ]);
     if (gen !== state.sessionSwitchGen) return;
+    if (snapshot) applySnapshot(snapshot);
     handleEvent({
       type: "session_created",
       sessionId: session.id,
