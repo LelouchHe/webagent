@@ -175,10 +175,16 @@ describe("connection", () => {
 
   it("resumes the session from the URL hash on connect", async () => {
     history.replaceState(null, "", "/#hash-session");
+    let releaseSession!: () => void;
+    const sessionReady = new Promise<void>((resolve) => {
+      releaseSession = resolve;
+    });
     setFetch(async (url: string) => {
       if (url.includes("/visibility")) return mockResponse({});
-      if (url === "/api/v1/sessions/hash-session")
+      if (url === "/api/v1/sessions/hash-session") {
+        await sessionReady;
         return mockResponse(sessionResponse("hash-session"));
+      }
       if (url.startsWith("/api/v1/sessions/hash-session/events"))
         return mockResponse([
           {
@@ -193,7 +199,12 @@ describe("connection", () => {
     connection.connect();
     const es = await latestES();
     assert.equal(es.url, "/api/v1/events/stream?ticket=tkt-test");
-    // initSession runs immediately (parallel with SSE), flush to let it complete
+    // Snapshot hydration should start without waiting for session metadata.
+    await flush();
+    const snapshotStartedInParallel = fetchCalls.some(
+      (c) => c.url === "/api/v1/sessions/hash-session/snapshot",
+    );
+    releaseSession();
     await flush();
     // SSE connected arrives — sets clientId only
     fireConnected(es, "cl-test");
@@ -205,11 +216,7 @@ describe("connection", () => {
     assert.ok(
       urls.some((u) => u.startsWith("/api/v1/sessions/hash-session/events")),
     );
-    assert.ok(
-      urls.indexOf("/api/v1/sessions/hash-session") <
-        urls.indexOf("/api/v1/sessions/hash-session/snapshot"),
-      "session resume must complete before command snapshot hydration",
-    );
+    assert.equal(snapshotStartedInParallel, true);
     assert.ok(dom.messages.textContent.includes("restored"));
     assert.equal(state.lastEventSeq, 1);
   });

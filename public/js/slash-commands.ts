@@ -175,8 +175,8 @@ async function switchToSession(id: string): Promise<void> {
     const [session, loaded] = await Promise.all([
       api.getSession(id),
       loadHistory(id),
+      reloadSnapshot(id),
     ]);
-    await reloadSnapshot(id);
     if (gen !== state.sessionSwitchGen) return;
     handleEvent({
       type: "session_created",

@@ -320,8 +320,8 @@ export async function handleSlashCommand(text: string): Promise<boolean> {
         const [session] = await Promise.all([
           api.getSession(match.id),
           loadHistory(match.id),
+          reloadSnapshot(match.id),
         ]);
-        await reloadSnapshot(match.id);
         if (gen !== state.sessionSwitchGen) return true;
         handleEvent({
           type: "session_created",

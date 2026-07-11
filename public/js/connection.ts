@@ -187,7 +187,8 @@ async function resumeAndLoad(
     // Load snapshot in parallel with catch-up events (runtime state vs history)
     await Promise.all([reloadSnapshot(sessionId), loadNewEvents(sessionId)]);
   } else {
-    // Full load: fetch session details and history in parallel
+    // Full load: fetch metadata, history, and authoritative runtime state in
+    // parallel. The snapshot endpoint joins ACP restore before reading state.
     state.sessionId = null;
     const historyPromise = loadHistory(sessionId);
     let session: SessionDetail;
@@ -195,10 +196,8 @@ async function resumeAndLoad(
       const [s, loaded] = await Promise.all([
         api.getSession(sessionId),
         historyPromise,
+        reloadSnapshot(sessionId),
       ]);
-      // The snapshot endpoint joins any in-flight ACP restore before reading
-      // command state, so it is the authoritative hydration boundary.
-      await reloadSnapshot(sessionId);
       if (gen !== state.sessionSwitchGen) return;
       session = s;
       if (!loaded) {
