@@ -9,8 +9,6 @@ import {
   setConnectionStatus,
   clearCancelTimer,
   reloadSnapshot,
-  fetchSnapshot,
-  applySnapshot,
 } from "./state.ts";
 import {
   addSystem,
@@ -189,19 +187,19 @@ async function resumeAndLoad(
     // Load snapshot in parallel with catch-up events (runtime state vs history)
     await Promise.all([reloadSnapshot(sessionId), loadNewEvents(sessionId)]);
   } else {
-    // Full load: fetch metadata, history, and authoritative runtime state in
-    // parallel. The snapshot endpoint joins ACP restore before reading state.
+    // Full load: fetch session details and history in parallel.
     state.sessionId = null;
     const historyPromise = loadHistory(sessionId);
     let session: SessionDetail;
     try {
-      const [s, loaded, snapshot] = await Promise.all([
+      const [s, loaded] = await Promise.all([
         api.getSession(sessionId),
         historyPromise,
-        fetchSnapshot(sessionId),
       ]);
+      // History replay drains queued live patches while sessionId is null.
+      // Fetch afterward so the authoritative snapshot includes that state.
+      await reloadSnapshot(sessionId);
       if (gen !== state.sessionSwitchGen) return;
-      if (snapshot) applySnapshot(snapshot);
       session = s;
       if (!loaded) {
         addSystem("warn: Failed to load history.");

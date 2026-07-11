@@ -225,9 +225,9 @@ describe("connection", () => {
     connection.connect();
     const es = await latestES();
     assert.equal(es.url, "/api/v1/events/stream?ticket=tkt-test");
-    // Snapshot hydration should start without waiting for session metadata.
+    // Snapshot hydration must wait until metadata and history are complete.
     await flush();
-    const snapshotStartedInParallel = fetchCalls.some(
+    const snapshotStartedBeforeReplayFinished = fetchCalls.some(
       (c) => c.url === "/api/v1/sessions/hash-session/snapshot",
     );
     releaseSession();
@@ -243,7 +243,7 @@ describe("connection", () => {
     assert.ok(
       urls.some((u) => u.startsWith("/api/v1/sessions/hash-session/events")),
     );
-    assert.equal(snapshotStartedInParallel, true);
+    assert.equal(snapshotStartedBeforeReplayFinished, false);
     assert.ok(dom.messages.textContent.includes("restored"));
     assert.equal(state.lastEventSeq, 2);
     assert.equal(state.busy, true);
