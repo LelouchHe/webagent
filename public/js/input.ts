@@ -32,6 +32,7 @@ import {
   resolveAgentCommand,
 } from "../../src/agent-commands.ts";
 import { isLocalCommand } from "./input-command.ts";
+import { HTTP_STATUS } from "../../src/http-status.ts";
 
 function isConnected(): boolean {
   return state.clientId !== null;
@@ -237,7 +238,7 @@ function handleSendError(
   if (
     context?.isAgentCommand &&
     err instanceof api.ApiError &&
-    err.status === 422
+    err.status === HTTP_STATUS.UNPROCESSABLE_CONTENT
   ) {
     context.messageEl.remove();
     state.sentMessageForSession = null;

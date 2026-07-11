@@ -26,6 +26,7 @@ import {
 } from "./log.ts";
 import type { CmdNode } from "./slash-tree.ts";
 import type { SessionSummary } from "../../src/types.ts";
+import { HTTP_STATUS } from "../../src/http-status.ts";
 import { TOKEN_STORAGE_KEY } from "./login-core.ts";
 import { resetLocalFrontendState } from "./local-reset.ts";
 import { replaceCurrentSession } from "./session-actions.ts";
@@ -242,8 +243,9 @@ async function createApiToken(name: string): Promise<void> {
     addSystem("— save this now; it will never be shown again");
   } catch (e) {
     const err = e as api.ApiError;
-    if (err.status === 409) addSystem(`err: token "${name}" already exists`);
-    else if (err.status === 403)
+    if (err.status === HTTP_STATUS.CONFLICT)
+      addSystem(`err: token "${name}" already exists`);
+    else if (err.status === HTTP_STATUS.FORBIDDEN)
       addSystem("err: admin scope required to manage tokens");
     else addSystem(`err: create failed (${err.message})`);
   }
@@ -255,10 +257,14 @@ async function revokeToken(name: string): Promise<void> {
     addSystem(`token: revoked ${name}`);
   } catch (e) {
     const err = e as api.ApiError;
-    if (err.status === 404) addSystem(`err: no token named "${name}"`);
-    else if (err.status === 403)
+    if (err.status === HTTP_STATUS.NOT_FOUND)
+      addSystem(`err: no token named "${name}"`);
+    else if (err.status === HTTP_STATUS.FORBIDDEN)
       addSystem("err: admin scope required to manage tokens");
-    else if (err.status === 400 && /using|yourself|cannot/i.test(err.message)) {
+    else if (
+      err.status === HTTP_STATUS.BAD_REQUEST &&
+      /using|yourself|cannot/i.test(err.message)
+    ) {
       addSystem(
         "err: can't revoke the token you're signed in with — use another admin token",
       );

@@ -26,6 +26,7 @@
  * with html:false / DOMPurify.
  */
 import type { StoredEvent } from "../types.ts";
+import { HTTP_STATUS } from "../http-status.ts";
 
 /**
  * Input event shape — either a raw StoredEvent (with JSON-string data)
@@ -62,7 +63,7 @@ export interface SanitizeFlag {
 }
 
 export class SanitizeError extends Error {
-  readonly status = 400;
+  readonly status = HTTP_STATUS.BAD_REQUEST;
   /** The event seq that triggered the hard-reject; surfaced to owner as event_id. */
   readonly event_id: number;
   readonly rule: string;

@@ -43,6 +43,7 @@ import {
   sniffMime,
 } from "./attachments.ts";
 import { readImageDimensions } from "./image-dimensions.ts";
+import { HTTP_STATUS } from "./http-status.ts";
 
 const IS_WIN = process.platform === "win32";
 
@@ -292,7 +293,7 @@ async function handleAttachmentUpload(
   const { store, dataDir, limits, sessions } = deps;
   const fileUploadLimit = limits.file_upload ?? 52_428_800;
   if (!store.getSession(sessionId)) {
-    json(res, 404, { error: "Session not found" });
+    json(res, HTTP_STATUS.NOT_FOUND, { error: "Session not found" });
     return;
   }
   const dir = join(dataDir, "sessions", sessionId, "attachments");
@@ -359,7 +360,7 @@ async function handleAttachmentUpload(
         },
       });
     } catch {
-      void finish(400, { error: "Invalid multipart" });
+      void finish(HTTP_STATUS.BAD_REQUEST, { error: "Invalid multipart" });
       return;
     }
 
@@ -373,7 +374,9 @@ async function handleAttachmentUpload(
       sawFile = true;
       if (fieldName !== "file") {
         stream.resume();
-        void finish(400, { error: "Unexpected field name" });
+        void finish(HTTP_STATUS.BAD_REQUEST, {
+          error: "Unexpected field name",
+        });
         return;
       }
       fileMime = (info.mimeType || "application/octet-stream").toLowerCase();
@@ -425,22 +428,28 @@ async function handleAttachmentUpload(
           await writeDone;
           if (aborted) {
             await cleanupTmp();
-            await finish(400, { error: "Upload aborted" });
+            await finish(HTTP_STATUS.BAD_REQUEST, { error: "Upload aborted" });
             return;
           }
           if (limitExceeded) {
             await cleanupTmp();
-            await finish(413, { error: "Upload too large" });
+            await finish(HTTP_STATUS.PAYLOAD_TOO_LARGE, {
+              error: "Upload too large",
+            });
             return;
           }
           if (writeError) {
             await cleanupTmp();
-            await finish(500, { error: "Upload failed" });
+            await finish(HTTP_STATUS.INTERNAL_SERVER_ERROR, {
+              error: "Upload failed",
+            });
             return;
           }
           if (!sawFile || !tmpPath || !finalPath || !displayName) {
             await cleanupTmp();
-            await finish(400, { error: "Missing file part" });
+            await finish(HTTP_STATUS.BAD_REQUEST, {
+              error: "Missing file part",
+            });
             return;
           }
           // Sniff the actual mime from file content (magic bytes + UTF-8
@@ -493,7 +502,7 @@ async function handleAttachmentUpload(
           const fileUrl = deps.attachmentSecret
             ? `${basePath}?${signAttachmentUrl(basePath, deps.attachmentSecret, 3600)}`
             : basePath;
-          await finish(200, {
+          await finish(HTTP_STATUS.OK, {
             attachmentId: row.id,
             displayName: row.name,
             mimeType: row.mime,
@@ -506,7 +515,9 @@ async function handleAttachmentUpload(
           });
         } catch (err) {
           await cleanupTmp();
-          await finish(500, { error: errorMessage(err) });
+          await finish(HTTP_STATUS.INTERNAL_SERVER_ERROR, {
+            error: errorMessage(err),
+          });
         }
       })();
     });
@@ -531,7 +542,7 @@ export function createRequestHandler(
       if (!isWhitelistedPath(method, path)) {
         const result = authenticate(req.headers, deps.authStore);
         if (!result.ok) {
-          res.writeHead(401, {
+          res.writeHead(HTTP_STATUS.UNAUTHORIZED, {
             "Content-Type": "application/json",
             "WWW-Authenticate": "Bearer",
           });
@@ -570,7 +581,7 @@ export function createRequestHandler(
 
       // GET /api/v1 — discovery endpoint
       if (url === "/api/v1" && req.method === "GET") {
-        json(res, 200, {
+        json(res, HTTP_STATUS.OK, {
           version: "v1",
           endpoints: {
             sessions: "/api/v1/sessions",
@@ -601,7 +612,7 @@ export function createRequestHandler(
 
       // --- GET /api/v1/config ---
       if (url === "/api/v1/config" && req.method === "GET") {
-        json(res, 200, {
+        json(res, HTTP_STATUS.OK, {
           configOptions: sessions?.cachedConfigOptions ?? [],
           cancelTimeout: deps.limits.cancel_timeout ?? 0,
           recentPathsLimit: deps.limits.recent_paths ?? 10,
@@ -620,13 +631,13 @@ export function createRequestHandler(
           limit: isNaN(limit) ? 0 : limit,
           ttlDays,
         });
-        json(res, 200, paths);
+        json(res, HTTP_STATUS.OK, paths);
         return;
       }
 
       // GET /api/v1/version
       if (url === "/api/v1/version" && req.method === "GET") {
-        json(res, 200, {
+        json(res, HTTP_STATUS.OK, {
           server: deps.serverVersion ?? "unknown",
           agent: sessions?.agentInfo ?? null,
         });
@@ -637,10 +648,10 @@ export function createRequestHandler(
       if (url === "/api/v1/auth/verify" && req.method === "GET") {
         const principal = principalByRequest.get(req);
         if (!principal) {
-          json(res, 401, { error: "Unauthorized" });
+          json(res, HTTP_STATUS.UNAUTHORIZED, { error: "Unauthorized" });
           return;
         }
-        json(res, 200, {
+        json(res, HTTP_STATUS.OK, {
           ok: true,
           name: principal.name,
           scope: principal.scope,
@@ -652,18 +663,20 @@ export function createRequestHandler(
       if (url === "/api/v1/sse-ticket" && req.method === "POST") {
         const principal = principalByRequest.get(req);
         if (!principal) {
-          json(res, 401, { error: "Unauthorized" });
+          json(res, HTTP_STATUS.UNAUTHORIZED, { error: "Unauthorized" });
           return;
         }
         if (!deps.ticketStore) {
-          json(res, 501, { error: "SSE not available" });
+          json(res, HTTP_STATUS.NOT_IMPLEMENTED, {
+            error: "SSE not available",
+          });
           return;
         }
         const ticket = deps.ticketStore.mint({
           tokenName: principal.name,
           scope: principal.scope,
         });
-        json(res, 200, { ticket, expiresIn: 60 });
+        json(res, HTTP_STATUS.OK, { ticket, expiresIn: 60 });
         return;
       }
 
@@ -674,7 +687,7 @@ export function createRequestHandler(
       if (url === "/api/v1/tokens" && req.method === "GET") {
         const principal = principalByRequest.get(req);
         if (!deps.authStore || !principal) {
-          json(res, 401, { error: "Unauthorized" });
+          json(res, HTTP_STATUS.UNAUTHORIZED, { error: "Unauthorized" });
           return;
         }
         const all = deps.authStore.list();
@@ -689,7 +702,7 @@ export function createRequestHandler(
           lastUsedAt: t.lastUsedAt,
           isSelf: t.name === principal.name,
         }));
-        json(res, 200, list);
+        json(res, HTTP_STATUS.OK, list);
         return;
       }
 
@@ -697,24 +710,24 @@ export function createRequestHandler(
       if (url === "/api/v1/tokens" && req.method === "POST") {
         const principal = principalByRequest.get(req);
         if (!deps.authStore || !principal) {
-          json(res, 401, { error: "Unauthorized" });
+          json(res, HTTP_STATUS.UNAUTHORIZED, { error: "Unauthorized" });
           return;
         }
         if (principal.scope !== "admin") {
-          json(res, 403, { error: "Forbidden" });
+          json(res, HTTP_STATUS.FORBIDDEN, { error: "Forbidden" });
           return;
         }
         let body: { name?: unknown };
         try {
           body = JSON.parse(await readBody(req)) as { name?: unknown };
         } catch {
-          json(res, 400, { error: "Invalid JSON" });
+          json(res, HTTP_STATUS.BAD_REQUEST, { error: "Invalid JSON" });
           return;
         }
         const name = typeof body.name === "string" ? body.name : "";
         try {
           const created = await deps.authStore.addToken(name, "api");
-          json(res, 201, {
+          json(res, HTTP_STATUS.CREATED, {
             token: created.token,
             name: created.record.name,
             scope: created.record.scope,
@@ -722,9 +735,9 @@ export function createRequestHandler(
         } catch (err: unknown) {
           const msg = errorMessage(err);
           if (/already exists|duplicate/i.test(msg)) {
-            json(res, 409, { error: msg });
+            json(res, HTTP_STATUS.CONFLICT, { error: msg });
           } else {
-            json(res, 400, { error: msg });
+            json(res, HTTP_STATUS.BAD_REQUEST, { error: msg });
           }
         }
         return;
@@ -735,32 +748,34 @@ export function createRequestHandler(
       if (tokenDelMatch && req.method === "DELETE") {
         const principal = principalByRequest.get(req);
         if (!deps.authStore || !principal) {
-          json(res, 401, { error: "Unauthorized" });
+          json(res, HTTP_STATUS.UNAUTHORIZED, { error: "Unauthorized" });
           return;
         }
         if (principal.scope !== "admin") {
-          json(res, 403, { error: "Forbidden" });
+          json(res, HTTP_STATUS.FORBIDDEN, { error: "Forbidden" });
           return;
         }
         const name = decodeURIComponent(tokenDelMatch[1]);
         if (!/^[A-Za-z0-9_-]{1,64}$/.test(name)) {
-          json(res, 400, { error: "Invalid token name" });
+          json(res, HTTP_STATUS.BAD_REQUEST, { error: "Invalid token name" });
           return;
         }
         if (name === principal.name) {
-          json(res, 400, { error: "Cannot revoke the token you are using" });
+          json(res, HTTP_STATUS.BAD_REQUEST, {
+            error: "Cannot revoke the token you are using",
+          });
           return;
         }
         try {
           const ok = await deps.authStore.revokeToken(name);
           if (!ok) {
-            json(res, 404, { error: "Token not found" });
+            json(res, HTTP_STATUS.NOT_FOUND, { error: "Token not found" });
             return;
           }
-          res.writeHead(204);
+          res.writeHead(HTTP_STATUS.NO_CONTENT);
           res.end();
         } catch (err: unknown) {
-          json(res, 400, { error: errorMessage(err) });
+          json(res, HTTP_STATUS.BAD_REQUEST, { error: errorMessage(err) });
         }
         return;
       }
@@ -769,18 +784,22 @@ export function createRequestHandler(
       if (url === "/api/v1/bridge/reload" && req.method === "POST") {
         const bridge = getBridge?.();
         if (!bridge) {
-          json(res, 503, { error: "Agent not ready yet" });
+          json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
+            error: "Agent not ready yet",
+          });
           return;
         }
         if (bridge.reloading) {
-          json(res, 409, { error: "Already reloading" });
+          json(res, HTTP_STATUS.CONFLICT, { error: "Already reloading" });
           return;
         }
         try {
           await bridge.restart(sessions!, titleService!);
-          json(res, 200, { ok: true });
+          json(res, HTTP_STATUS.OK, { ok: true });
         } catch (err: unknown) {
-          json(res, 500, { error: errorMessage(err) });
+          json(res, HTTP_STATUS.INTERNAL_SERVER_ERROR, {
+            error: errorMessage(err),
+          });
         }
         return;
       }
@@ -794,7 +813,7 @@ export function createRequestHandler(
       if (permListMatch && req.method === "GET") {
         const sessionId = decodeURIComponent(permListMatch[1]);
         const perms = sessions?.getPendingPermissions(sessionId) ?? [];
-        json(res, 200, perms);
+        json(res, HTTP_STATUS.OK, perms);
         return;
       }
 
@@ -814,16 +833,18 @@ export function createRequestHandler(
         if (replayed) return;
         const perm = sessions?.pendingPermissions.get(requestId);
         if (!perm) {
-          json(res, 404, { error: "Permission not found" });
+          json(res, HTTP_STATUS.NOT_FOUND, { error: "Permission not found" });
           return;
         }
         if (perm.sessionId !== sessionId) {
-          json(res, 400, { error: "Session ID mismatch" });
+          json(res, HTTP_STATUS.BAD_REQUEST, { error: "Session ID mismatch" });
           return;
         }
         const bridge = getBridge?.();
         if (!bridge) {
-          json(res, 503, { error: "Agent not ready yet" });
+          json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
+            error: "Agent not ready yet",
+          });
           return;
         }
 
@@ -834,11 +855,13 @@ export function createRequestHandler(
             denied?: boolean;
           };
         } catch {
-          json(res, 400, { error: "Invalid JSON" });
+          json(res, HTTP_STATUS.BAD_REQUEST, { error: "Invalid JSON" });
           return;
         }
         if (!body.optionId && !body.denied) {
-          json(res, 400, { error: "Provide optionId or denied:true" });
+          json(res, HTTP_STATUS.BAD_REQUEST, {
+            error: "Provide optionId or denied:true",
+          });
           return;
         }
 
@@ -880,8 +903,8 @@ export function createRequestHandler(
         }
 
         const okBody = { ok: true };
-        saveClientOpResult(store, opId, sessionId, 200, okBody);
-        json(res, 200, okBody);
+        saveClientOpResult(store, opId, sessionId, HTTP_STATUS.OK, okBody);
+        json(res, HTTP_STATUS.OK, okBody);
         return;
       }
 
@@ -893,12 +916,14 @@ export function createRequestHandler(
         const sessionId = decodeURIComponent(cancelMatch[1]);
         const session = store.getSession(sessionId);
         if (!session) {
-          json(res, 404, { error: "Session not found" });
+          json(res, HTTP_STATUS.NOT_FOUND, { error: "Session not found" });
           return;
         }
         const bridge = getBridge?.();
         if (!bridge) {
-          json(res, 503, { error: "Agent not ready yet" });
+          json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
+            error: "Agent not ready yet",
+          });
           return;
         }
 
@@ -929,8 +954,8 @@ export function createRequestHandler(
           sessions.state.armCancelSafety(sessionId, cancelTimeout);
         sessions?.syncBusy(sessionId);
         const okBody = { ok: true };
-        saveClientOpResult(store, opId, sessionId, 200, okBody);
-        json(res, 200, okBody);
+        saveClientOpResult(store, opId, sessionId, HTTP_STATUS.OK, okBody);
+        json(res, HTTP_STATUS.OK, okBody);
         return;
       }
 
@@ -942,12 +967,12 @@ export function createRequestHandler(
         const sessionId = decodeURIComponent(statusMatch[1]);
         const session = store.getSession(sessionId);
         if (!session) {
-          json(res, 404, { error: "Session not found" });
+          json(res, HTTP_STATUS.NOT_FOUND, { error: "Session not found" });
           return;
         }
         const busyKind = sessions?.getBusyKind(sessionId) ?? null;
         const pendingPerms = sessions?.getPendingPermissions(sessionId) ?? [];
-        json(res, 200, {
+        json(res, HTTP_STATUS.OK, {
           busy: busyKind != null,
           busyKind,
           pendingPermissions: pendingPerms,
@@ -967,11 +992,13 @@ export function createRequestHandler(
         const sessionId = decodeURIComponent(snapshotMatch[1]);
         const session = store.getSession(sessionId);
         if (!session) {
-          json(res, 404, { error: "Session not found" });
+          json(res, HTTP_STATUS.NOT_FOUND, { error: "Session not found" });
           return;
         }
         if (!sessions) {
-          json(res, 503, { error: "Session manager not available" });
+          json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
+            error: "Session manager not available",
+          });
           return;
         }
         const bridge = getBridge?.();
@@ -982,7 +1009,9 @@ export function createRequestHandler(
             // restore before reading the per-session command state.
             await sessions.ensureResumed(bridge, sessionId);
           } catch {
-            json(res, 503, { error: "Failed to restore session" });
+            json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
+              error: "Failed to restore session",
+            });
             return;
           }
         }
@@ -994,7 +1023,7 @@ export function createRequestHandler(
         const lastEventSeq = store.getLastEventSeq(sessionId);
         json(
           res,
-          200,
+          HTTP_STATUS.OK,
           {
             version: 1,
             seq: runtimeState.seq,
@@ -1026,32 +1055,36 @@ export function createRequestHandler(
         if (!session) {
           logPromptRejectBeforeSave({
             sessionId,
-            status: 404,
+            status: HTTP_STATUS.NOT_FOUND,
             reason: "session_not_found",
             opId: requestOpId,
           });
-          json(res, 404, { error: "Session not found" });
+          json(res, HTTP_STATUS.NOT_FOUND, { error: "Session not found" });
           return;
         }
         const bridge = getBridge?.();
         if (!bridge) {
           logPromptRejectBeforeSave({
             sessionId,
-            status: 503,
+            status: HTTP_STATUS.SERVICE_UNAVAILABLE,
             reason: "agent_not_ready",
             opId: requestOpId,
           });
-          json(res, 503, { error: "Agent not ready yet" });
+          json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
+            error: "Agent not ready yet",
+          });
           return;
         }
         if (!sessions) {
           logPromptRejectBeforeSave({
             sessionId,
-            status: 503,
+            status: HTTP_STATUS.SERVICE_UNAVAILABLE,
             reason: "session_manager_unavailable",
             opId: requestOpId,
           });
-          json(res, 503, { error: "Session manager not available" });
+          json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
+            error: "Session manager not available",
+          });
           return;
         }
 
@@ -1069,12 +1102,12 @@ export function createRequestHandler(
         } catch (err) {
           logPromptRejectBeforeSave({
             sessionId,
-            status: 500,
+            status: HTTP_STATUS.INTERNAL_SERVER_ERROR,
             reason: "resume_failed",
             opId,
             error: errorMessage(err),
           });
-          json(res, 500, {
+          json(res, HTTP_STATUS.INTERNAL_SERVER_ERROR, {
             error: `Failed to resume session: ${err instanceof Error ? err.message : String(err)}`,
           });
           return;
@@ -1085,12 +1118,15 @@ export function createRequestHandler(
         if (busyKind) {
           logPromptRejectBeforeSave({
             sessionId,
-            status: 409,
+            status: HTTP_STATUS.CONFLICT,
             reason: "session_busy",
             opId,
             busyKind,
           });
-          json(res, 409, { error: "Session is busy", busyKind });
+          json(res, HTTP_STATUS.CONFLICT, {
+            error: "Session is busy",
+            busyKind,
+          });
           return;
         }
 
@@ -1108,17 +1144,17 @@ export function createRequestHandler(
         } catch {
           logPromptRejectBeforeSave({
             sessionId,
-            status: 400,
+            status: HTTP_STATUS.BAD_REQUEST,
             reason: "invalid_json",
             opId,
           });
-          json(res, 400, { error: "Invalid JSON" });
+          json(res, HTTP_STATUS.BAD_REQUEST, { error: "Invalid JSON" });
           return;
         }
         if (!body.text) {
           logPromptRejectBeforeSave({
             sessionId,
-            status: 400,
+            status: HTTP_STATUS.BAD_REQUEST,
             reason: "missing_text",
             opId,
             textLength: 0,
@@ -1126,7 +1162,9 @@ export function createRequestHandler(
               ? body.attachments.length
               : undefined,
           });
-          json(res, 400, { error: "Missing required field: text" });
+          json(res, HTTP_STATUS.BAD_REQUEST, {
+            error: "Missing required field: text",
+          });
           return;
         }
 
@@ -1138,12 +1176,14 @@ export function createRequestHandler(
           if (!Array.isArray(attachments)) {
             logPromptRejectBeforeSave({
               sessionId,
-              status: 400,
+              status: HTTP_STATUS.BAD_REQUEST,
               reason: "attachments_not_array",
               opId,
               textLength: body.text.length,
             });
-            json(res, 400, { error: "attachments must be an array" });
+            json(res, HTTP_STATUS.BAD_REQUEST, {
+              error: "attachments must be an array",
+            });
             return;
           }
           for (const raw of attachments) {
@@ -1158,13 +1198,15 @@ export function createRequestHandler(
             ) {
               logPromptRejectBeforeSave({
                 sessionId,
-                status: 400,
+                status: HTTP_STATUS.BAD_REQUEST,
                 reason: "invalid_attachment_entry",
                 opId,
                 textLength: body.text.length,
                 attachmentCount: attachments.length,
               });
-              json(res, 400, { error: "Invalid attachment entry" });
+              json(res, HTTP_STATUS.BAD_REQUEST, {
+                error: "Invalid attachment entry",
+              });
               return;
             }
             if (
@@ -1176,13 +1218,13 @@ export function createRequestHandler(
             ) {
               logPromptRejectBeforeSave({
                 sessionId,
-                status: 400,
+                status: HTTP_STATUS.BAD_REQUEST,
                 reason: "client_supplied_attachment_data",
                 opId,
                 textLength: body.text.length,
                 attachmentCount: attachments.length,
               });
-              json(res, 400, {
+              json(res, HTTP_STATUS.BAD_REQUEST, {
                 error: "Client must not supply uri/data/path/width/height",
               });
               return;
@@ -1200,13 +1242,13 @@ export function createRequestHandler(
             const command = agentCommandToken(body.text);
             logPromptRejectBeforeSave({
               sessionId,
-              status: 422,
+              status: HTTP_STATUS.UNPROCESSABLE_CONTENT,
               reason: "unknown_command",
               opId,
               textLength: body.text.length,
               attachmentCount: attachments?.length,
             });
-            json(res, 422, {
+            json(res, HTTP_STATUS.UNPROCESSABLE_CONTENT, {
               error: "Unknown command",
               command,
               prefix: "//",
@@ -1296,8 +1338,14 @@ export function createRequestHandler(
           });
 
         const acceptedBody = { status: "accepted" };
-        saveClientOpResult(store, opId, sessionId, 202, acceptedBody);
-        json(res, 202, acceptedBody);
+        saveClientOpResult(
+          store,
+          opId,
+          sessionId,
+          HTTP_STATUS.ACCEPTED,
+          acceptedBody,
+        );
+        json(res, HTTP_STATUS.ACCEPTED, acceptedBody);
         return;
       }
 
@@ -1307,15 +1355,17 @@ export function createRequestHandler(
         const sessionId = decodeURIComponent(bashMatch[1]);
         const session = store.getSession(sessionId);
         if (!session) {
-          json(res, 404, { error: "Session not found" });
+          json(res, HTTP_STATUS.NOT_FOUND, { error: "Session not found" });
           return;
         }
         if (!sessions) {
-          json(res, 503, { error: "Session manager not available" });
+          json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
+            error: "Session manager not available",
+          });
           return;
         }
         if (sessions.runningBashProcs.has(sessionId)) {
-          json(res, 409, {
+          json(res, HTTP_STATUS.CONFLICT, {
             error: "A bash command is already running in this session",
           });
           return;
@@ -1325,11 +1375,13 @@ export function createRequestHandler(
         try {
           body = JSON.parse(await readBody(req)) as { command?: string };
         } catch {
-          json(res, 400, { error: "Invalid JSON" });
+          json(res, HTTP_STATUS.BAD_REQUEST, { error: "Invalid JSON" });
           return;
         }
         if (!body.command) {
-          json(res, 400, { error: "Missing required field: command" });
+          json(res, HTTP_STATUS.BAD_REQUEST, {
+            error: "Missing required field: command",
+          });
           return;
         }
 
@@ -1426,7 +1478,7 @@ export function createRequestHandler(
           sseManager.broadcast(bashErrEvent);
         });
 
-        json(res, 202, { status: "accepted" });
+        json(res, HTTP_STATUS.ACCEPTED, { status: "accepted" });
         return;
       }
 
@@ -1438,11 +1490,11 @@ export function createRequestHandler(
         const sessionId = decodeURIComponent(bashCancelMatch[1]);
         const session = store.getSession(sessionId);
         if (!session) {
-          json(res, 404, { error: "Session not found" });
+          json(res, HTTP_STATUS.NOT_FOUND, { error: "Session not found" });
           return;
         }
         interruptBashProc(sessions?.runningBashProcs.get(sessionId));
-        json(res, 200, { ok: true });
+        json(res, HTTP_STATUS.OK, { ok: true });
         return;
       }
 
@@ -1461,12 +1513,14 @@ export function createRequestHandler(
         const configId = configPath.replace(/-/g, "_");
         const session = store.getSession(sessionId);
         if (!session) {
-          json(res, 404, { error: "Session not found" });
+          json(res, HTTP_STATUS.NOT_FOUND, { error: "Session not found" });
           return;
         }
         const bridge = getBridge?.();
         if (!bridge) {
-          json(res, 503, { error: "Agent not ready yet" });
+          json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
+            error: "Agent not ready yet",
+          });
           return;
         }
         let body: { value?: string | boolean };
@@ -1475,11 +1529,13 @@ export function createRequestHandler(
             value?: string | boolean;
           };
         } catch {
-          json(res, 400, { error: "Invalid JSON" });
+          json(res, HTTP_STATUS.BAD_REQUEST, { error: "Invalid JSON" });
           return;
         }
         if (body.value === undefined) {
-          json(res, 400, { error: "Missing required field: value" });
+          json(res, HTTP_STATUS.BAD_REQUEST, {
+            error: "Missing required field: value",
+          });
           return;
         }
         try {
@@ -1504,9 +1560,9 @@ export function createRequestHandler(
             configId,
             value: body.value,
           } as AgentEvent);
-          json(res, 200, { configOptions });
+          json(res, HTTP_STATUS.OK, { configOptions });
         } catch (err) {
-          json(res, 500, {
+          json(res, HTTP_STATUS.INTERNAL_SERVER_ERROR, {
             error: `Failed to set ${configId}: ${err instanceof Error ? err.message : String(err)}`,
           });
         }
@@ -1521,18 +1577,20 @@ export function createRequestHandler(
         const sessionId = decodeURIComponent(titlePutMatch[1]);
         const session = store.getSession(sessionId);
         if (!session) {
-          json(res, 404, { error: "Session not found" });
+          json(res, HTTP_STATUS.NOT_FOUND, { error: "Session not found" });
           return;
         }
         let body: { value?: string };
         try {
           body = JSON.parse(await readBody(req)) as { value?: string };
         } catch {
-          json(res, 400, { error: "Invalid JSON" });
+          json(res, HTTP_STATUS.BAD_REQUEST, { error: "Invalid JSON" });
           return;
         }
         if (!body.value) {
-          json(res, 400, { error: "Missing required field: value" });
+          json(res, HTTP_STATUS.BAD_REQUEST, {
+            error: "Missing required field: value",
+          });
           return;
         }
         store.updateSessionTitle(sessionId, body.value);
@@ -1546,7 +1604,7 @@ export function createRequestHandler(
           title: body.value,
         } as AgentEvent;
         sseManager.broadcast(titleEvent);
-        json(res, 200, { title: body.value });
+        json(res, HTTP_STATUS.OK, { title: body.value });
         return;
       }
 
@@ -1564,7 +1622,7 @@ export function createRequestHandler(
         if (req.method === "GET") {
           const session = store.getSession(sessionId);
           if (!session) {
-            json(res, 404, { error: "Session not found" });
+            json(res, HTTP_STATUS.NOT_FOUND, { error: "Session not found" });
             return;
           }
           // Start resume in background (non-blocking) so the client gets metadata fast.
@@ -1668,7 +1726,7 @@ export function createRequestHandler(
             : [];
           json(
             res,
-            200,
+            HTTP_STATUS.OK,
             {
               id: freshSession.id,
               cwd: freshSession.cwd,
@@ -1687,7 +1745,7 @@ export function createRequestHandler(
         if (req.method === "DELETE") {
           const session = store.getSession(sessionId);
           if (!session) {
-            json(res, 404, { error: "Session not found" });
+            json(res, HTTP_STATUS.NOT_FOUND, { error: "Session not found" });
             return;
           }
           if (sessions) {
@@ -1696,7 +1754,7 @@ export function createRequestHandler(
             store.deleteSession(sessionId);
           }
           sseManager.broadcast({ type: "session_deleted", sessionId });
-          res.writeHead(204);
+          res.writeHead(HTTP_STATUS.NO_CONTENT);
           res.end();
           return;
         }
@@ -1706,11 +1764,15 @@ export function createRequestHandler(
       if (url === "/api/v1/sessions" && req.method === "POST") {
         const bridge = getBridge?.();
         if (!bridge) {
-          json(res, 503, { error: "Agent not ready yet" });
+          json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
+            error: "Agent not ready yet",
+          });
           return;
         }
         if (!sessions) {
-          json(res, 503, { error: "Session manager not available" });
+          json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
+            error: "Session manager not available",
+          });
           return;
         }
         let body: {
@@ -1725,7 +1787,7 @@ export function createRequestHandler(
             source?: string;
           };
         } catch {
-          json(res, 400, { error: "Invalid JSON" });
+          json(res, HTTP_STATUS.BAD_REQUEST, { error: "Invalid JSON" });
           return;
         }
         const source = body.source ?? "auto";
@@ -1755,7 +1817,7 @@ export function createRequestHandler(
               configOptions,
             });
           }
-          json(res, 201, {
+          json(res, HTTP_STATUS.CREATED, {
             id: sessionId,
             cwd: session?.cwd ?? body.cwd,
             title: session?.title ?? null,
@@ -1766,9 +1828,9 @@ export function createRequestHandler(
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
           if (msg.includes("does not exist")) {
-            json(res, 400, { error: msg });
+            json(res, HTTP_STATUS.BAD_REQUEST, { error: msg });
           } else {
-            json(res, 500, { error: msg });
+            json(res, HTTP_STATUS.INTERNAL_SERVER_ERROR, { error: msg });
           }
         }
         return;
@@ -1794,7 +1856,7 @@ export function createRequestHandler(
             : undefined;
         const session = store.getSession(sessionId);
         if (!session) {
-          json(res, 404, { error: "Session not found" });
+          json(res, HTTP_STATUS.NOT_FOUND, { error: "Session not found" });
           return;
         }
         // Flush pending buffers so their content becomes part of the event list.
@@ -1861,7 +1923,7 @@ export function createRequestHandler(
           envelope.total = total;
           envelope.hasMore = hasMore;
         }
-        json(res, 200, envelope, req);
+        json(res, HTTP_STATUS.OK, envelope, req);
         return;
       }
 
@@ -1878,7 +1940,9 @@ export function createRequestHandler(
             new URLSearchParams(url.split("?")[1] ?? "").get("ticket") ?? "";
           const principal = deps.ticketStore?.consume(ticket);
           if (!principal) {
-            json(res, 401, { error: "Invalid or expired ticket" });
+            json(res, HTTP_STATUS.UNAUTHORIZED, {
+              error: "Invalid or expired ticket",
+            });
             return;
           }
           tokenName = principal.tokenName;
@@ -1886,7 +1950,7 @@ export function createRequestHandler(
 
         const clientId = sseManager.generateClientId();
 
-        res.writeHead(200, {
+        res.writeHead(HTTP_STATUS.OK, {
           "Content-Type": "text/event-stream",
           "Cache-Control": "no-cache",
           Connection: "keep-alive",
@@ -1922,7 +1986,9 @@ export function createRequestHandler(
             new URLSearchParams(url.split("?")[1] ?? "").get("ticket") ?? "";
           const principal = deps.ticketStore?.consume(ticket);
           if (!principal) {
-            json(res, 401, { error: "Invalid or expired ticket" });
+            json(res, HTTP_STATUS.UNAUTHORIZED, {
+              error: "Invalid or expired ticket",
+            });
             return;
           }
           tokenName = principal.tokenName;
@@ -1930,12 +1996,12 @@ export function createRequestHandler(
 
         const session = store.getSession(sessionId);
         if (!session) {
-          json(res, 404, { error: "Session not found" });
+          json(res, HTTP_STATUS.NOT_FOUND, { error: "Session not found" });
           return;
         }
 
         const clientId = sseManager.generateClientId();
-        res.writeHead(200, {
+        res.writeHead(HTTP_STATUS.OK, {
           "Content-Type": "text/event-stream",
           "Cache-Control": "no-cache",
           Connection: "keep-alive",
@@ -1997,12 +2063,14 @@ export function createRequestHandler(
       if (imgUploadMatch && req.method === "POST") {
         const sessionId = decodeURIComponent(imgUploadMatch[1]);
         if (!SAFE_ID.test(sessionId)) {
-          json(res, 400, { error: "Invalid session ID" });
+          json(res, HTTP_STATUS.BAD_REQUEST, { error: "Invalid session ID" });
           return;
         }
         const ctype = req.headers["content-type"] ?? "";
         if (!ctype.toLowerCase().startsWith("multipart/form-data")) {
-          json(res, 400, { error: "Expected multipart/form-data" });
+          json(res, HTTP_STATUS.BAD_REQUEST, {
+            error: "Expected multipart/form-data",
+          });
           return;
         }
         await handleAttachmentUpload(req, res, sessionId, deps);
@@ -2028,7 +2096,9 @@ export function createRequestHandler(
           const exp = params.get("exp") ?? "";
           const basePath = `/api/v1/sessions/${sessionId}/attachments/${file}`;
           if (!verifyAttachmentSig(basePath, exp, sig, deps.attachmentSecret)) {
-            res.writeHead(401, { "Content-Type": "application/json" });
+            res.writeHead(HTTP_STATUS.UNAUTHORIZED, {
+              "Content-Type": "application/json",
+            });
             res.end(JSON.stringify({ error: "Unauthorized" }));
             return;
           }
@@ -2041,7 +2111,7 @@ export function createRequestHandler(
           file,
         );
         if (!filePath.startsWith(join(deps.dataDir, "sessions"))) {
-          res.writeHead(403);
+          res.writeHead(HTTP_STATUS.FORBIDDEN);
           res.end("Forbidden");
           return;
         }
@@ -2066,10 +2136,10 @@ export function createRequestHandler(
               row.name,
             );
           }
-          res.writeHead(200, headers);
+          res.writeHead(HTTP_STATUS.OK, headers);
           res.end(fileData);
         } catch {
-          res.writeHead(404);
+          res.writeHead(HTTP_STATUS.NOT_FOUND);
           res.end("Not found");
         }
         return;
@@ -2094,19 +2164,19 @@ export function createRequestHandler(
         try {
           raw = await readBody(req);
         } catch {
-          json(res, 400, { error: "Failed to read body" });
+          json(res, HTTP_STATUS.BAD_REQUEST, { error: "Failed to read body" });
           return;
         }
         let parsed: unknown;
         try {
           parsed = JSON.parse(raw);
         } catch {
-          json(res, 400, { error: "Invalid JSON" });
+          json(res, HTTP_STATUS.BAD_REQUEST, { error: "Invalid JSON" });
           return;
         }
         const validation = MessageIngressSchema.safeParse(parsed);
         if (!validation.success) {
-          json(res, 400, {
+          json(res, HTTP_STATUS.BAD_REQUEST, {
             error: "Invalid body",
             issues: validation.error.issues,
           });
@@ -2119,7 +2189,7 @@ export function createRequestHandler(
           const targetSid = input.to.slice("session:".length);
           const session = store.getSession(targetSid);
           if (!session) {
-            json(res, 400, { error: "session_not_found" });
+            json(res, HTTP_STATUS.BAD_REQUEST, { error: "session_not_found" });
             return;
           }
           sessions?.flushBuffers(targetSid);
@@ -2155,8 +2225,14 @@ export function createRequestHandler(
             sess_id: targetSid.slice(0, 8),
           });
           const boundBody = { id, delivered: "session" };
-          saveClientOpResult(store, opId, "__ingress__", 200, boundBody);
-          json(res, 200, boundBody);
+          saveClientOpResult(
+            store,
+            opId,
+            "__ingress__",
+            HTTP_STATUS.OK,
+            boundBody,
+          );
+          json(res, HTTP_STATUS.OK, boundBody);
           return;
         }
 
@@ -2203,14 +2279,20 @@ export function createRequestHandler(
           from_ref: input.from_ref,
         });
         const unboundBody = { id, delivered: "pending" };
-        saveClientOpResult(store, opId, "__ingress__", 200, unboundBody);
-        json(res, 200, unboundBody);
+        saveClientOpResult(
+          store,
+          opId,
+          "__ingress__",
+          HTTP_STATUS.OK,
+          unboundBody,
+        );
+        json(res, HTTP_STATUS.OK, unboundBody);
         return;
       }
 
       // GET /api/v1/messages — list unprocessed
       if (url === "/api/v1/messages" && req.method === "GET") {
-        json(res, 200, { messages: store.listUnprocessed() });
+        json(res, HTTP_STATUS.OK, { messages: store.listUnprocessed() });
         return;
       }
 
@@ -2227,7 +2309,7 @@ export function createRequestHandler(
             out = store.consumeMessageTx(id, { sessionId: newSid });
           } catch (err) {
             if (/message not found/.test(errorMessage(err))) {
-              json(res, 404, { error: "Message not found" });
+              json(res, HTTP_STATUS.NOT_FOUND, { error: "Message not found" });
               return;
             }
             throw err;
@@ -2245,7 +2327,7 @@ export function createRequestHandler(
             sess_id: out.sessionId.slice(0, 8),
             already_consumed: out.alreadyConsumed,
           });
-          json(res, 200, {
+          json(res, HTTP_STATUS.OK, {
             sessionId: out.sessionId,
             alreadyConsumed: out.alreadyConsumed,
           });
@@ -2261,13 +2343,13 @@ export function createRequestHandler(
           const id = decodeURIComponent((ackPost ?? idOnly)![1]);
           const changes = store.deleteMessage(id);
           if (changes === 0) {
-            json(res, 404, { error: "Message not found" });
+            json(res, HTTP_STATUS.NOT_FOUND, { error: "Message not found" });
             return;
           }
           sseManager.broadcast({ type: "message_acked", messageId: id });
           if (deps.pushService) void deps.pushService.sendClose(id);
           mlog.info("ack", { msg_id: id });
-          json(res, 200, { ok: true });
+          json(res, HTTP_STATUS.OK, { ok: true });
           return;
         }
 
@@ -2275,15 +2357,15 @@ export function createRequestHandler(
           const id = decodeURIComponent(idOnly[1]);
           const row = store.getMessage(id);
           if (!row) {
-            json(res, 404, { error: "Message not found" });
+            json(res, HTTP_STATUS.NOT_FOUND, { error: "Message not found" });
             return;
           }
-          json(res, 200, row);
+          json(res, HTTP_STATUS.OK, row);
           return;
         }
       }
 
-      json(res, 404, { error: "Not found" });
+      json(res, HTTP_STATUS.NOT_FOUND, { error: "Not found" });
       return;
     }
 
@@ -2294,12 +2376,16 @@ export function createRequestHandler(
       // POST /api/beta/prompt — quick one-shot prompt (create temp session + send)
       if (url === "/api/beta/prompt" && req.method === "POST") {
         if (!sessions || !getBridge) {
-          json(res, 503, { error: "Agent not available" });
+          json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
+            error: "Agent not available",
+          });
           return;
         }
         const bridge = getBridge();
         if (!bridge) {
-          json(res, 503, { error: "Agent not available" });
+          json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
+            error: "Agent not available",
+          });
           return;
         }
 
@@ -2307,13 +2393,15 @@ export function createRequestHandler(
         try {
           body = JSON.parse(await readBody(req)) as Record<string, unknown>;
         } catch {
-          json(res, 400, { error: "Invalid JSON" });
+          json(res, HTTP_STATUS.BAD_REQUEST, { error: "Invalid JSON" });
           return;
         }
 
         const text = body.text as string | undefined;
         if (!text || typeof text !== "string") {
-          json(res, 400, { error: "Missing required field: text" });
+          json(res, HTTP_STATUS.BAD_REQUEST, {
+            error: "Missing required field: text",
+          });
           return;
         }
 
@@ -2326,7 +2414,7 @@ export function createRequestHandler(
         );
         const streamUrl = `/api/v1/sessions/${sessionId}/events/stream`;
 
-        json(res, 202, { sessionId, streamUrl });
+        json(res, HTTP_STATUS.ACCEPTED, { sessionId, streamUrl });
 
         // Fire-and-forget: send the prompt asynchronously, tracking busy state
         sessions.activePrompts.add(sessionId);
@@ -2371,7 +2459,7 @@ export function createRequestHandler(
           sseManager.clients.has(clientId) ||
           deps.clientRegistry?.get(clientId) !== undefined;
         if (!clientKnown) {
-          json(res, 404, { error: "Client not found" });
+          json(res, HTTP_STATUS.NOT_FOUND, { error: "Client not found" });
           return;
         }
 
@@ -2379,12 +2467,14 @@ export function createRequestHandler(
         try {
           body = JSON.parse(await readBody(req)) as Record<string, unknown>;
         } catch {
-          json(res, 400, { error: "Invalid JSON" });
+          json(res, HTTP_STATUS.BAD_REQUEST, { error: "Invalid JSON" });
           return;
         }
 
         if (typeof body.visible !== "boolean") {
-          json(res, 400, { error: "Missing or invalid 'visible' field" });
+          json(res, HTTP_STATUS.BAD_REQUEST, {
+            error: "Missing or invalid 'visible' field",
+          });
           return;
         }
 
@@ -2441,7 +2531,7 @@ export function createRequestHandler(
           }
         }
 
-        json(res, 200, { ok: true });
+        json(res, HTTP_STATUS.OK, { ok: true });
         return;
       }
 
@@ -2450,17 +2540,19 @@ export function createRequestHandler(
       // GET /api/beta/push/vapid-key
       if (url === "/api/beta/push/vapid-key" && req.method === "GET") {
         if (!deps.pushService) {
-          json(res, 404, { error: "Push not configured" });
+          json(res, HTTP_STATUS.NOT_FOUND, { error: "Push not configured" });
           return;
         }
-        json(res, 200, { publicKey: deps.pushService.getPublicKey() });
+        json(res, HTTP_STATUS.OK, {
+          publicKey: deps.pushService.getPublicKey(),
+        });
         return;
       }
 
       // POST /api/beta/push/subscribe
       if (url === "/api/beta/push/subscribe" && req.method === "POST") {
         if (!deps.pushService) {
-          json(res, 404, { error: "Push not configured" });
+          json(res, HTTP_STATUS.NOT_FOUND, { error: "Push not configured" });
           return;
         }
         const chunks: Buffer[] = [];
@@ -2477,11 +2569,13 @@ export function createRequestHandler(
             clientId?: string;
           };
         } catch {
-          json(res, 400, { error: "Invalid JSON" });
+          json(res, HTTP_STATUS.BAD_REQUEST, { error: "Invalid JSON" });
           return;
         }
         if (!body.endpoint || !body.keys?.auth || !body.keys.p256dh) {
-          json(res, 400, { error: "Missing endpoint or keys (auth, p256dh)" });
+          json(res, HTTP_STATUS.BAD_REQUEST, {
+            error: "Missing endpoint or keys (auth, p256dh)",
+          });
           return;
         }
         store.saveSubscription(body.endpoint, body.keys.auth, body.keys.p256dh);
@@ -2489,14 +2583,14 @@ export function createRequestHandler(
         if (body.clientId && deps.pushService) {
           deps.pushService.registerClient(body.clientId, body.endpoint);
         }
-        json(res, 201, { ok: true });
+        json(res, HTTP_STATUS.CREATED, { ok: true });
         return;
       }
 
       // POST /api/beta/push/register-client — associate clientId with push endpoint
       if (url === "/api/beta/push/register-client" && req.method === "POST") {
         if (!deps.pushService) {
-          json(res, 404, { error: "Push not configured" });
+          json(res, HTTP_STATUS.NOT_FOUND, { error: "Push not configured" });
           return;
         }
         const chunks: Buffer[] = [];
@@ -2508,22 +2602,24 @@ export function createRequestHandler(
             endpoint?: string;
           };
         } catch {
-          json(res, 400, { error: "Invalid JSON" });
+          json(res, HTTP_STATUS.BAD_REQUEST, { error: "Invalid JSON" });
           return;
         }
         if (!body.clientId || !body.endpoint) {
-          json(res, 400, { error: "Missing clientId or endpoint" });
+          json(res, HTTP_STATUS.BAD_REQUEST, {
+            error: "Missing clientId or endpoint",
+          });
           return;
         }
         deps.pushService.registerClient(body.clientId, body.endpoint);
-        json(res, 200, { ok: true });
+        json(res, HTTP_STATUS.OK, { ok: true });
         return;
       }
 
       // POST /api/beta/push/unsubscribe
       if (url === "/api/beta/push/unsubscribe" && req.method === "POST") {
         if (!deps.pushService) {
-          json(res, 404, { error: "Push not configured" });
+          json(res, HTTP_STATUS.NOT_FOUND, { error: "Push not configured" });
           return;
         }
         const chunks: Buffer[] = [];
@@ -2534,17 +2630,17 @@ export function createRequestHandler(
             endpoint?: string;
           };
         } catch {
-          json(res, 400, { error: "Invalid JSON" });
+          json(res, HTTP_STATUS.BAD_REQUEST, { error: "Invalid JSON" });
           return;
         }
         if (body.endpoint) {
           store.removeSubscription(body.endpoint);
         }
-        json(res, 200, { ok: true });
+        json(res, HTTP_STATUS.OK, { ok: true });
         return;
       }
 
-      json(res, 404, { error: "Not found" });
+      json(res, HTTP_STATUS.NOT_FOUND, { error: "Not found" });
       return;
     }
 
@@ -2554,7 +2650,7 @@ export function createRequestHandler(
     if (htmlEntry) staticPath = "/" + htmlEntry.file;
     const filePath = join(deps.publicDir, staticPath);
     if (!filePath.startsWith(deps.publicDir)) {
-      res.writeHead(403);
+      res.writeHead(HTTP_STATUS.FORBIDDEN);
       res.end("Forbidden");
       return;
     }
@@ -2577,10 +2673,10 @@ export function createRequestHandler(
       };
       // CSP applies to HTML entrypoints (where script/style execute).
       if (htmlEntry) headers["Content-Security-Policy"] = CSP_POLICY;
-      res.writeHead(200, headers);
+      res.writeHead(HTTP_STATUS.OK, headers);
       res.end(data);
     } catch {
-      res.writeHead(404);
+      res.writeHead(HTTP_STATUS.NOT_FOUND);
       res.end("Not found");
     }
   };

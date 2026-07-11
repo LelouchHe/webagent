@@ -5,6 +5,8 @@
  * agree on the same name. Choose `wa_token` to match localStorage discovery
  * conventions (short, unique, no PII).
  */
+import { HTTP_STATUS } from "../../src/http-status.ts";
+
 export const TOKEN_STORAGE_KEY = "wa_token";
 
 export type VerifyResult =
@@ -39,7 +41,7 @@ export async function verifyAndStoreToken(
     return { ok: false, error: `Network error: ${msg}` };
   }
 
-  if (res.status === 200) {
+  if (res.status === HTTP_STATUS.OK) {
     let body: { ok?: boolean; name?: string; scope?: string };
     try {
       body = (await res.json()) as {
@@ -66,7 +68,7 @@ export async function verifyAndStoreToken(
     return { ok: true, name: body.name, scope: body.scope };
   }
 
-  if (res.status === 401) {
+  if (res.status === HTTP_STATUS.UNAUTHORIZED) {
     return { ok: false, error: "Invalid or rejected token" };
   }
 

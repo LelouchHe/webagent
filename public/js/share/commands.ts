@@ -20,6 +20,7 @@ import { state } from "../state.ts";
 import { updateModeUI } from "../state.ts";
 import { addSystem } from "../render.ts";
 import { log } from "../log.ts";
+import { HTTP_STATUS } from "../../../src/http-status.ts";
 
 const slog = log.scope("share");
 
@@ -84,13 +85,16 @@ export async function createPreview(): Promise<void> {
     );
     if (!res.ok) {
       const errText = await res.text();
-      if (res.status === 409) {
+      if (res.status === HTTP_STATUS.CONFLICT) {
         addSystem(
           "share: session busy (agent streaming) — retry after the response completes",
         );
-      } else if (res.status === 403) {
+      } else if (res.status === HTTP_STATUS.FORBIDDEN) {
         addSystem("share: forbidden (not owner)");
-      } else if (res.status === 400 && errText.includes("sanitize")) {
+      } else if (
+        res.status === HTTP_STATUS.BAD_REQUEST &&
+        errText.includes("sanitize")
+      ) {
         addSystem(`share: ✗ sanitize blocked this session — ${errText}`);
       } else {
         addSystem(
@@ -140,9 +144,9 @@ export async function publishPreview(): Promise<void> {
     );
     if (!res.ok) {
       const text = await res.text();
-      if (res.status === 403) {
+      if (res.status === HTTP_STATUS.FORBIDDEN) {
         addSystem("share: forbidden (not owner)");
-      } else if (res.status === 404) {
+      } else if (res.status === HTTP_STATUS.NOT_FOUND) {
         addSystem("share: token not found (already revoked?)");
       } else {
         addSystem(
@@ -228,8 +232,10 @@ export async function revokeShare(token: string): Promise<void> {
       },
     );
     if (!res.ok) {
-      if (res.status === 403) addSystem("share: forbidden (not owner)");
-      else if (res.status === 404) addSystem(`share: ${token} already revoked`);
+      if (res.status === HTTP_STATUS.FORBIDDEN)
+        addSystem("share: forbidden (not owner)");
+      else if (res.status === HTTP_STATUS.NOT_FOUND)
+        addSystem(`share: ${token} already revoked`);
       else addSystem(`share: revoke failed ${res.status}`);
       return;
     }

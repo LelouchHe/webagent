@@ -5,6 +5,7 @@ import { join } from "node:path";
 import type { Store } from "./store.ts";
 import type { ClientRegistry } from "./client-registry.ts";
 import { log } from "./log.ts";
+import { HTTP_STATUS } from "./http-status.ts";
 
 const slog = log.scope("push");
 const elog = log.scope("egress");
@@ -405,7 +406,7 @@ export class PushService {
       } else {
         fail++;
         const err = result.reason as { statusCode?: number };
-        if (err.statusCode === 410) {
+        if (err.statusCode === HTTP_STATUS.GONE) {
           fail410++;
           this.store.removeSubscription(endpoint);
           this.failureCounts.delete(endpoint);

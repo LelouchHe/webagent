@@ -5,6 +5,7 @@
  * untouched (cross-origin, non-/api, etc.) so we never leak the token.
  */
 import { TOKEN_STORAGE_KEY } from "./login-core.ts";
+import { HTTP_STATUS } from "../../src/http-status.ts";
 
 interface AuthFetchOptions {
   /** Underlying fetch to wrap. Defaults to globalThis.fetch at install time. */
@@ -74,7 +75,7 @@ export function installAuthFetch(opts: AuthFetchOptions = {}): () => void {
 
     const res = await base(input, nextInit);
 
-    if (isApi && res.status === 401) {
+    if (isApi && res.status === HTTP_STATUS.UNAUTHORIZED) {
       try {
         localStorage.removeItem(TOKEN_STORAGE_KEY);
       } catch {
