@@ -43,6 +43,35 @@ describe("commands", () => {
     return [...dom.messages.children].map((el: any) => el.textContent);
   }
 
+  it("shows model IDs as dim secondary menu text", () => {
+    state.configOptions = [
+      {
+        id: "model",
+        name: "Model",
+        currentValue: "gpt-5.6-sol",
+        options: [
+          { value: "gpt-5.6-sol", name: "GPT-5.6 Sol" },
+          { value: "gpt-5.4-mini", name: "GPT-5.4 mini" },
+        ],
+      },
+    ];
+    dom.input.value = "/model ";
+
+    commands.updateSlashMenu();
+
+    const rows = [...dom.slashMenu.querySelectorAll(".slash-item")];
+    assert.deepEqual(
+      rows.map((row: any) => ({
+        name: row.querySelector(".slash-primary")?.textContent,
+        id: row.querySelector(".slash-secondary")?.textContent,
+      })),
+      [
+        { name: "GPT-5.6 Sol", id: "(gpt-5.6-sol)" },
+        { name: "GPT-5.4 mini", id: "(gpt-5.4-mini)" },
+      ],
+    );
+  });
+
   describe("handleSlashCommand", () => {
     it("creates a new session using the provided cwd", async () => {
       setFetch(() => ({
@@ -125,6 +154,17 @@ describe("commands", () => {
       assert.equal(handled, true);
       const lines = messageLines();
       assert.ok(lines.includes("? — Show help"));
+    });
+
+    it("shows the unified error for an unknown local slash command", async () => {
+      const handled = await commands.handleSlashCommand("/does-not-exist arg");
+
+      assert.equal(handled, true);
+      assert.ok(
+        messageLines().includes(
+          'err: Unknown command "/does-not-exist". Type / to see available commands.',
+        ),
+      );
     });
 
     it("exits current session — deletes it and switches to MRU", async () => {

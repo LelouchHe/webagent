@@ -111,4 +111,31 @@ describe("GET /api/v1/sessions/:id/snapshot", () => {
     const body = JSON.parse(res.body);
     assert.ok(body.session.lastEventSeq >= 1);
   });
+
+  it("includes the current agent command snapshot", async () => {
+    store.createSession("s1", "/tmp/cwd");
+    sessions.updateAgentCommands("s1", [
+      {
+        name: "compact",
+        description: "Compact conversation",
+        input: { hint: "focus instructions" },
+      },
+    ]);
+
+    const res = await req(port, "GET", "/api/v1/sessions/s1/snapshot");
+    const body = JSON.parse(res.body);
+
+    assert.equal(typeof body.agentCommands.epoch, "string");
+    assert.deepEqual(body.agentCommands, {
+      epoch: body.agentCommands.epoch,
+      revision: 1,
+      commands: [
+        {
+          name: "compact",
+          description: "Compact conversation",
+          input: { hint: "focus instructions" },
+        },
+      ],
+    });
+  });
 });

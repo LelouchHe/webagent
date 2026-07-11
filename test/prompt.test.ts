@@ -213,6 +213,95 @@ describe("Prompt REST API", () => {
       assert.equal(mockBridge.lastPromptArgs!.text, "hello world");
     });
 
+    it("stores and broadcasts raw agent slash text but sends the canonical command to the bridge", async () => {
+      const sessionId = await createSession();
+      sessions.updateAgentCommands(sessionId, [
+        {
+          name: "compact",
+          description: "Compact conversation",
+          input: { hint: "focus instructions" },
+        },
+      ]);
+      broadcastEvents = [];
+
+      const res = await makeRequest(
+        port,
+        "POST",
+        `/api/v1/sessions/${sessionId}/prompt`,
+        JSON.stringify({ text: "//COMPACT  unresolved work" }),
+      );
+
+      assert.equal(res.status, 202);
+      assert.equal(
+        mockBridge.lastPromptArgs!.text,
+        "/compact  unresolved work",
+      );
+      const stored = store
+        .getEvents(sessionId)
+        .find((event) => event.type === "user_message");
+      assert.ok(stored);
+      assert.equal(JSON.parse(stored.data).text, "//COMPACT  unresolved work");
+      const broadcast = broadcastEvents.find(
+        (event) => event.type === "user_message",
+      );
+      assert.equal(
+        broadcast && "text" in broadcast ? broadcast.text : null,
+        "//COMPACT  unresolved work",
+      );
+    });
+
+    it("rejects an unavailable agent command before prompt side effects", async () => {
+      const sessionId = await createSession();
+      sessions.updateAgentCommands(sessionId, [
+        { name: "context", description: "Show context usage" },
+      ]);
+      broadcastEvents = [];
+
+      const res = await makeRequest(
+        port,
+        "POST",
+        `/api/v1/sessions/${sessionId}/prompt`,
+        JSON.stringify({ text: "//compact now" }),
+      );
+
+      assert.equal(res.status, 422);
+      assert.deepEqual(JSON.parse(res.body), {
+        error: "Unknown command",
+        command: "//compact",
+        prefix: "//",
+      });
+      assert.equal(mockBridge.lastPromptArgs, null);
+      assert.deepEqual(store.getEvents(sessionId), []);
+      assert.deepEqual(broadcastEvents, []);
+      assert.equal(sessions.activePrompts.has(sessionId), false);
+    });
+
+    it("preserves attachments while canonicalizing agent slash text", async () => {
+      const sessionId = await createSession();
+      sessions.updateAgentCommands(sessionId, [
+        { name: "context", description: "Show context usage" },
+      ]);
+      const attachments = [
+        {
+          kind: "file" as const,
+          attachmentId: "missing-file",
+          displayName: "notes.txt",
+          mimeType: "text/plain",
+        },
+      ];
+
+      const res = await makeRequest(
+        port,
+        "POST",
+        `/api/v1/sessions/${sessionId}/prompt`,
+        JSON.stringify({ text: "//CONTEXT", attachments }),
+      );
+
+      assert.equal(res.status, 202);
+      assert.equal(mockBridge.lastPromptArgs!.text, "/context");
+      assert.deepEqual(mockBridge.lastPromptArgs!.attachments, attachments);
+    });
+
     it("stores user_message event", async () => {
       const sessionId = await createSession();
       await makeRequest(

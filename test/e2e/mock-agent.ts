@@ -78,6 +78,26 @@ class MockAgent implements Agent {
     this.conn = conn;
   }
 
+  private async advertiseCommands(sessionId: string): Promise<void> {
+    await this.conn.sessionUpdate({
+      sessionId,
+      update: {
+        sessionUpdate: "available_commands_update",
+        availableCommands: [
+          {
+            name: "context",
+            description: "Show context usage",
+          },
+          {
+            name: "compact",
+            description: "Compact conversation",
+            input: { hint: "focus instructions" },
+          },
+        ],
+      },
+    });
+  }
+
   async initialize(_params: InitializeRequest): Promise<InitializeResponse> {
     return {
       protocolVersion: PROTOCOL_VERSION,
@@ -93,6 +113,7 @@ class MockAgent implements Agent {
       configOptions: createConfigOptions(),
     };
     this.sessions.set(sessionId, session);
+    await this.advertiseCommands(sessionId);
     return { sessionId, configOptions: session.configOptions };
   }
 
@@ -105,6 +126,7 @@ class MockAgent implements Agent {
       };
       this.sessions.set(params.sessionId, session);
     }
+    await this.advertiseCommands(params.sessionId);
     return {
       configOptions: session.configOptions,
     };

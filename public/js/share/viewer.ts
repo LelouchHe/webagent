@@ -18,6 +18,7 @@ import { makeAttachmentRewriter } from "./attachment-rewriter.ts";
 import "../lightbox.ts"; // click-to-enlarge user-image, same as main app
 import "../theme.ts"; // wires #theme-btn click + applies saved theme
 import type { StoredEvent } from "../../../src/types.ts";
+import { HTTP_STATUS } from "../../../src/http-status.ts";
 
 interface SharePayload {
   schema_version: string;
@@ -132,7 +133,7 @@ async function main(): Promise<void> {
         credentials: "omit",
       },
     );
-    if (res.status === 410) {
+    if (res.status === HTTP_STATUS.GONE) {
       document.body.innerHTML = // xss-ok: static literal, no user input
         "<div class='share-gone'>此链接已撤销或过期。</div>";
       return;

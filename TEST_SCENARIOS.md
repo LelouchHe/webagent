@@ -1,6 +1,6 @@
 # Test Scenarios
 
-Last updated: 2025-07-25
+Last updated: 2026-07-10
 
 This file is a scenario-level map of the current automated test suite.
 It is intentionally higher-level than raw test names so we can review coverage,
@@ -17,6 +17,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - config persistence / inheritance / sync
   - bash execution lifecycle
   - slash command and picker UX
+  - ACP Agent Slash discovery, forwarding, snapshot hydration, and busy gating
   - REST API surface (sessions, prompt, bash, permissions, ops, SSE, push)
   - Share links (token issue, owner auth, sanitizer, viewer routes, attachment proxy, build prune)
   - Attachment upload pipeline (image + file, send-time upload, atomic disk writes)
@@ -32,12 +33,14 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - targeted cancellation of pending permission requests
   - config-option update return path
   - ACP session update event translation
+  - available_commands_update translation
   - ACP text file read/write callbacks
 
 - `test/server-event-handler.test.ts`
   - event routing: message_chunk, thought_chunk, tool_call, prompt_done, session_created, error
   - thinking↔assistant buffer flush transitions
   - restoring-session event suppression
+  - per-session Agent command snapshot replacement and revision broadcast
   - autopilot auto-approval with allow_once
   - autopilot fallback when no allow_once option exists
   - normal permission_request broadcast in non-autopilot mode
@@ -53,6 +56,8 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - cwd lookup fallback
   - auto-retry of interrupted turns
   - deduplicated resume (ensureResumed)
+  - revisioned Agent command snapshot lifecycle and cleanup
+  - authoritative snapshot waits for command discovery during warm-cache restore
 
 - `test/store.test.ts`
   - session creation / deletion / updates
@@ -99,6 +104,8 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - title generation trigger for untitled sessions
   - image support in prompts
   - input validation and bridge-not-ready errors
+  - raw `//` storage/broadcast with canonical `/command` Agent forwarding
+  - undeclared Agent command rejection before prompt side effects
 
 - `test/bash.test.ts`
   - bash command execution and event storage / broadcast
@@ -134,6 +141,12 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - input validation and bridge-not-ready errors
 
 ### Frontend state and UI event flow
+
+- `test/agent-slash-frontend.test.ts`
+  - `//` command discovery, filtering, Tab, Click, and input-hint rendering
+  - busy-state gating and unavailable-command feedback
+  - snapshot/SSE revision ordering, server-restart epoch recovery, and stale-command optimistic rollback
+  - `/` root and `/help` discoverability for Agent commands
 
 - `test/state.test.ts`
   - DOM wiring
@@ -171,6 +184,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - config update application
   - session deletion and title update handling
   - cross-session event filtering
+  - Agent command update revision ordering
   - history replay for all major stored event types (incl. task_complete with visible summary)
   - paginated loadHistory (limit param, hasMoreHistory)
   - loadOlderEvents prepend and sentinel removal

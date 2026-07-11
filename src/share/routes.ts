@@ -13,6 +13,7 @@ import { SanitizeError, sanitizeEventsForShare } from "./sanitize.ts";
 import { buildContentDisposition, isInlineMime } from "../attachments.ts";
 import { enrichStoredEventsForDisplay } from "../attachment-labels.ts";
 import { log } from "../log.ts";
+import { HTTP_STATUS } from "../http-status.ts";
 
 const slog = log.scope("share");
 
@@ -150,7 +151,9 @@ export async function handleShareRoutes(
     return true;
   }
   if (url === "/s" || url === "/s/") {
-    res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+    res.writeHead(HTTP_STATUS.NOT_FOUND, {
+      "Content-Type": "text/plain; charset=utf-8",
+    });
     res.end("share token required");
     return true;
   }
@@ -244,7 +247,9 @@ export async function handleShareRoutes(
     url === "/api/v1/share" ||
     url.startsWith("/api/v1/share/")
   ) {
-    res.writeHead(404, { "Content-Type": "application/json" });
+    res.writeHead(HTTP_STATUS.NOT_FOUND, {
+      "Content-Type": "application/json",
+    });
     res.end(JSON.stringify({ error: "not found" }));
     return true;
   }
@@ -282,13 +287,13 @@ async function handlePreviewCreate(
 ): Promise<void> {
   const session = deps.store.getSession(sessionId);
   if (!session) {
-    json(res, 404, { error: "session not found" });
+    json(res, HTTP_STATUS.NOT_FOUND, { error: "session not found" });
     return;
   }
 
   // 409 guard: block while the agent is actively streaming into this session.
   if (deps.sessions?.getBusyKind(sessionId) === "agent") {
-    json(res, 409, {
+    json(res, HTTP_STATUS.CONFLICT, {
       error: "session busy",
       detail: "此 session 正在接收 agent 输出,请等 agent 输出结束后再分享",
     });
@@ -305,14 +310,16 @@ async function handlePreviewCreate(
     // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- runtime defense; cast above lies to TS
     if (body === null || typeof body !== "object") body = {};
   } catch {
-    json(res, 400, { error: "invalid JSON body" });
+    json(res, HTTP_STATUS.BAD_REQUEST, { error: "invalid JSON body" });
     return;
   }
 
   let ttlHours: number | null = null;
   if (body.ttl_hours != null) {
     if (!Number.isFinite(body.ttl_hours) || body.ttl_hours < 0) {
-      json(res, 400, { error: "ttl_hours must be a non-negative number" });
+      json(res, HTTP_STATUS.BAD_REQUEST, {
+        error: "ttl_hours must be a non-negative number",
+      });
       return;
     }
     ttlHours =
@@ -325,12 +332,12 @@ async function handlePreviewCreate(
   // control/size rejected at entry rather than silently dropped.
   const dnResult = validateLabel(body.display_name, "display_name", 256);
   if (!dnResult.ok) {
-    json(res, 400, { error: dnResult.reason });
+    json(res, HTTP_STATUS.BAD_REQUEST, { error: dnResult.reason });
     return;
   }
   const olResult = validateLabel(body.owner_label, "owner_label", 1024);
   if (!olResult.ok) {
-    json(res, 400, { error: olResult.reason });
+    json(res, HTTP_STATUS.BAD_REQUEST, { error: olResult.reason });
     return;
   }
   const displayName = resolveDisplayName(deps, dnResult.value);
@@ -372,7 +379,7 @@ async function handlePreviewCreate(
     if (!existingInflight) pendingShareCreates.set(sessionId, inflight);
     const result = await inflight;
 
-    json(res, result.reused ? 200 : 201, {
+    json(res, result.reused ? HTTP_STATUS.OK : HTTP_STATUS.CREATED, {
       token: result.row.token,
       session_id: sessionId,
       snapshot_seq: result.row.share_snapshot_seq,
@@ -384,7 +391,7 @@ async function handlePreviewCreate(
     });
   } catch (err: unknown) {
     if (err instanceof SanitizeError) {
-      json(res, 400, {
+      json(res, HTTP_STATUS.BAD_REQUEST, {
         error: "sanitize rejected",
         event_id: err.event_id,
         rule: err.rule,
@@ -394,7 +401,10 @@ async function handlePreviewCreate(
     }
     const errorId = randomUUID();
     slog.error("preview_create", { error_id: errorId, error: err });
-    json(res, 500, { error: "internal error", error_id: errorId });
+    json(res, HTTP_STATUS.INTERNAL_SERVER_ERROR, {
+      error: "internal error",
+      error_id: errorId,
+    });
   }
 }
 
@@ -429,27 +439,31 @@ async function handlePreviewRead(
   const tokenHeader = req.headers["x-share-token"];
   const token = Array.isArray(tokenHeader) ? tokenHeader[0] : tokenHeader;
   if (!token) {
-    json(res, 400, { error: "X-Share-Token header required" });
+    json(res, HTTP_STATUS.BAD_REQUEST, {
+      error: "X-Share-Token header required",
+    });
     return;
   }
 
   const row = deps.store.getShareByToken(token);
   if (!row) {
-    json(res, 404, { error: "share not found" });
+    json(res, HTTP_STATUS.NOT_FOUND, { error: "share not found" });
     return;
   }
   if (row.session_id !== sessionId) {
-    json(res, 404, { error: "share not found" });
+    json(res, HTTP_STATUS.NOT_FOUND, { error: "share not found" });
     return;
   }
   if (row.shared_at != null) {
-    json(res, 409, { error: "share already active (use public viewer)" });
+    json(res, HTTP_STATUS.CONFLICT, {
+      error: "share already active (use public viewer)",
+    });
     return;
   }
 
   const session = deps.store.getSession(sessionId);
   if (!session) {
-    json(res, 404, { error: "session not found" });
+    json(res, HTTP_STATUS.NOT_FOUND, { error: "session not found" });
     return;
   }
 
@@ -480,7 +494,7 @@ async function handlePreviewRead(
       currentLastSeq - row.share_snapshot_seq,
     );
 
-    json(res, 200, {
+    json(res, HTTP_STATUS.OK, {
       schema_version: "1.0",
       share: {
         token: row.token,
@@ -499,7 +513,7 @@ async function handlePreviewRead(
     });
   } catch (err: unknown) {
     if (err instanceof SanitizeError) {
-      json(res, 400, {
+      json(res, HTTP_STATUS.BAD_REQUEST, {
         error: "sanitize rejected",
         event_id: err.event_id,
         rule: err.rule,
@@ -508,7 +522,10 @@ async function handlePreviewRead(
     }
     const errorId = randomUUID();
     slog.error("preview_read", { error_id: errorId, error: err });
-    json(res, 500, { error: "internal error", error_id: errorId });
+    json(res, HTTP_STATUS.INTERNAL_SERVER_ERROR, {
+      error: "internal error",
+      error_id: errorId,
+    });
   }
 }
 
@@ -541,26 +558,26 @@ async function handlePublish(
     // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- runtime defense; cast above lies to TS
     if (body === null || typeof body !== "object") body = {};
   } catch {
-    json(res, 400, { error: "invalid JSON body" });
+    json(res, HTTP_STATUS.BAD_REQUEST, { error: "invalid JSON body" });
     return;
   }
 
   if (!body.token || typeof body.token !== "string") {
-    json(res, 400, { error: "token required" });
+    json(res, HTTP_STATUS.BAD_REQUEST, { error: "token required" });
     return;
   }
 
   const row = deps.store.getShareByToken(body.token);
   if (!row) {
-    json(res, 404, { error: "share not found" });
+    json(res, HTTP_STATUS.NOT_FOUND, { error: "share not found" });
     return;
   }
   if (row.session_id !== sessionId) {
-    json(res, 404, { error: "share not found" });
+    json(res, HTTP_STATUS.NOT_FOUND, { error: "share not found" });
     return;
   }
   if (row.shared_at != null) {
-    json(res, 409, {
+    json(res, HTTP_STATUS.CONFLICT, {
       error: "share already active",
       token: row.token,
       shared_at: row.shared_at,
@@ -575,7 +592,7 @@ async function handlePublish(
   if ("display_name" in body) {
     const r = validateLabel(body.display_name, "display_name", 256);
     if (!r.ok) {
-      json(res, 400, { error: r.reason });
+      json(res, HTTP_STATUS.BAD_REQUEST, { error: r.reason });
       return;
     }
     displayName = r.value === "" ? null : r.value;
@@ -584,7 +601,7 @@ async function handlePublish(
   if ("owner_label" in body) {
     const r = validateLabel(body.owner_label, "owner_label", 1024);
     if (!r.ok) {
-      json(res, 400, { error: r.reason });
+      json(res, HTTP_STATUS.BAD_REQUEST, { error: r.reason });
       return;
     }
     ownerLabel = r.value === "" ? null : r.value;
@@ -598,18 +615,20 @@ async function handlePublish(
     // Race: concurrent revoke/activate between getShareByToken and activateShare.
     const fresh = deps.store.getShareByToken(body.token);
     if (!fresh) {
-      json(res, 410, { error: "share revoked" });
+      json(res, HTTP_STATUS.GONE, { error: "share revoked" });
       return;
     }
     if (fresh.shared_at != null) {
-      json(res, 409, {
+      json(res, HTTP_STATUS.CONFLICT, {
         error: "share already active",
         token: fresh.token,
         shared_at: fresh.shared_at,
       });
       return;
     }
-    json(res, 500, { error: "unexpected activate failure" });
+    json(res, HTTP_STATUS.INTERNAL_SERVER_ERROR, {
+      error: "unexpected activate failure",
+    });
     return;
   }
 
@@ -619,7 +638,9 @@ async function handlePublish(
 
   const after = deps.store.getShareByToken(body.token);
   if (!after) {
-    json(res, 500, { error: "post-activate read failed" });
+    json(res, HTTP_STATUS.INTERNAL_SERVER_ERROR, {
+      error: "post-activate read failed",
+    });
     return;
   }
 
@@ -627,7 +648,7 @@ async function handlePublish(
     deps.config.viewer_origin && deps.config.viewer_origin !== ""
       ? deps.config.viewer_origin.replace(/\/$/, "")
       : "";
-  json(res, 200, {
+  json(res, HTTP_STATUS.OK, {
     token: after.token,
     session_id: sessionId,
     shared_at: after.shared_at,
@@ -650,7 +671,7 @@ async function handleViewerHtml(
   if (row?.shared_at == null) {
     // Preview tokens (shared_at IS NULL) MUST NOT resolve publicly.
     const csp = viewerCsp(deps.config.csp_enforce);
-    res.writeHead(410, {
+    res.writeHead(HTTP_STATUS.GONE, {
       "Content-Type": "text/html; charset=utf-8",
       [csp.name]: csp.value,
       "Cache-Control": "no-store",
@@ -664,7 +685,7 @@ async function handleViewerHtml(
 
   if (isExpired(row)) {
     const csp = viewerCsp(deps.config.csp_enforce);
-    res.writeHead(410, {
+    res.writeHead(HTTP_STATUS.GONE, {
       "Content-Type": "text/html; charset=utf-8",
       [csp.name]: csp.value,
       "Cache-Control": "no-store",
@@ -677,7 +698,9 @@ async function handleViewerHtml(
   }
 
   if (!deps.publicDir) {
-    json(res, 500, { error: "publicDir not configured" });
+    json(res, HTTP_STATUS.INTERNAL_SERVER_ERROR, {
+      error: "publicDir not configured",
+    });
     return;
   }
 
@@ -687,7 +710,7 @@ async function handleViewerHtml(
       "utf-8",
     );
     const csp = viewerCsp(deps.config.csp_enforce);
-    res.writeHead(200, {
+    res.writeHead(HTTP_STATUS.OK, {
       "Content-Type": "text/html; charset=utf-8",
       [csp.name]: csp.value,
       "Cache-Control": "no-store, no-cache, must-revalidate",
@@ -701,7 +724,9 @@ async function handleViewerHtml(
   } catch (err: unknown) {
     const errorId = randomUUID();
     slog.error("viewer_html", { error_id: errorId, error: err });
-    res.writeHead(500, { "Content-Type": "text/plain" });
+    res.writeHead(HTTP_STATUS.INTERNAL_SERVER_ERROR, {
+      "Content-Type": "text/plain",
+    });
     res.end(`viewer unavailable (error_id=${errorId})`);
   }
 }
@@ -717,11 +742,11 @@ async function handleSharedEvents(
 ): Promise<void> {
   const row = deps.store.getShareByToken(token);
   if (row?.shared_at == null) {
-    json(res, 410, { error: "share revoked or not found" });
+    json(res, HTTP_STATUS.GONE, { error: "share revoked or not found" });
     return;
   }
   if (isExpired(row)) {
-    json(res, 410, { error: "share expired" });
+    json(res, HTTP_STATUS.GONE, { error: "share expired" });
     return;
   }
 
@@ -730,7 +755,7 @@ async function handleSharedEvents(
   // them (Store.deleteSession soft-deletes when shares exist).
   const session = deps.store.getSessionIncludingDeleted(row.session_id);
   if (!session) {
-    json(res, 500, { error: "session vanished" });
+    json(res, HTTP_STATUS.INTERNAL_SERVER_ERROR, { error: "session vanished" });
     return;
   }
 
@@ -753,7 +778,7 @@ async function handleSharedEvents(
     });
 
     // Public response: DOES NOT expose session_id. Only title + display_name + meta.
-    res.writeHead(200, {
+    res.writeHead(HTTP_STATUS.OK, {
       "Content-Type": "application/json",
       "Cache-Control": "no-store",
       "X-Content-Type-Options": "nosniff",
@@ -782,12 +807,15 @@ async function handleSharedEvents(
         rule: err.rule,
         event_id: err.event_id,
       });
-      json(res, 410, { error: "share unavailable" });
+      json(res, HTTP_STATUS.GONE, { error: "share unavailable" });
       return;
     }
     const errorId = randomUUID();
     slog.error("shared_events", { error_id: errorId, error: err });
-    json(res, 500, { error: "internal error", error_id: errorId });
+    json(res, HTTP_STATUS.INTERNAL_SERVER_ERROR, {
+      error: "internal error",
+      error_id: errorId,
+    });
   }
 }
 
@@ -805,7 +833,9 @@ async function handleViewerAsset(
   file: string,
 ): Promise<void> {
   if (!deps.publicDir) {
-    res.writeHead(500, { "Content-Type": "text/plain" });
+    res.writeHead(HTTP_STATUS.INTERNAL_SERVER_ERROR, {
+      "Content-Type": "text/plain",
+    });
     res.end("publicDir not configured");
     return;
   }
@@ -818,7 +848,7 @@ async function handleViewerAsset(
   );
   const jsMatch = /^(viewer|chunk)(?:\.[A-Za-z0-9_-]+)?\.js$/.test(file);
   if (!cssMatch && !jsMatch) {
-    res.writeHead(404, { "Content-Type": "text/plain" });
+    res.writeHead(HTTP_STATUS.NOT_FOUND, { "Content-Type": "text/plain" });
     res.end("not found");
     return;
   }
@@ -839,7 +869,7 @@ async function handleViewerAsset(
 
   try {
     const buf = await readFile(filePath);
-    res.writeHead(200, {
+    res.writeHead(HTTP_STATUS.OK, {
       "Content-Type": contentType,
       "Cache-Control": cacheControl,
       "X-Content-Type-Options": "nosniff",
@@ -847,7 +877,7 @@ async function handleViewerAsset(
     });
     res.end(buf);
   } catch {
-    res.writeHead(404, { "Content-Type": "text/plain" });
+    res.writeHead(HTTP_STATUS.NOT_FOUND, { "Content-Type": "text/plain" });
     res.end("not found");
   }
 }
@@ -864,23 +894,25 @@ async function handleViewerImage(
   file: string,
 ): Promise<void> {
   if (!deps.dataDir) {
-    json(res, 500, { error: "dataDir not configured" });
+    json(res, HTTP_STATUS.INTERNAL_SERVER_ERROR, {
+      error: "dataDir not configured",
+    });
     return;
   }
 
   const row = deps.store.getShareByToken(token);
   if (row?.shared_at == null) {
-    json(res, 410, { error: "share unavailable" });
+    json(res, HTTP_STATUS.GONE, { error: "share unavailable" });
     return;
   }
   if (isExpired(row)) {
-    json(res, 410, { error: "share expired" });
+    json(res, HTTP_STATUS.GONE, { error: "share expired" });
     return;
   }
 
   // Only allow simple filenames — reject any path separators / dotfiles / traversal.
   if (!/^[A-Za-z0-9._-]+$/.test(file) || file.startsWith(".")) {
-    json(res, 404, { error: "invalid file" });
+    json(res, HTTP_STATUS.NOT_FOUND, { error: "invalid file" });
     return;
   }
 
@@ -893,7 +925,7 @@ async function handleViewerImage(
   const filePath = join(sessionRoot, file);
   // Final realpath-style guard: must stay under <dataDir>/sessions/<sid>/attachments.
   if (!filePath.startsWith(sessionRoot + "/") && filePath !== sessionRoot) {
-    res.writeHead(403);
+    res.writeHead(HTTP_STATUS.FORBIDDEN);
     res.end("Forbidden");
     return;
   }
@@ -924,10 +956,10 @@ async function handleViewerImage(
         att.name,
       );
     }
-    res.writeHead(200, headers);
+    res.writeHead(HTTP_STATUS.OK, headers);
     res.end(buf);
   } catch {
-    res.writeHead(404, { "Content-Type": "text/plain" });
+    res.writeHead(HTTP_STATUS.NOT_FOUND, { "Content-Type": "text/plain" });
     res.end("Not found");
   }
 }
@@ -1001,12 +1033,12 @@ async function handleRevoke(
     // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- runtime defense; cast above lies to TS
     if (body === null || typeof body !== "object") body = {};
   } catch {
-    json(res, 400, { error: "invalid JSON body" });
+    json(res, HTTP_STATUS.BAD_REQUEST, { error: "invalid JSON body" });
     return;
   }
 
   if (!body.token || typeof body.token !== "string") {
-    json(res, 400, { error: "token required" });
+    json(res, HTTP_STATUS.BAD_REQUEST, { error: "token required" });
     return;
   }
 
@@ -1015,7 +1047,7 @@ async function handleRevoke(
     // Idempotent DELETE: row already gone (revoked or never existed).
     // We can't verify session ownership without a row, but the token
     // is opaque/random so leaking "revoked or never existed" is fine.
-    json(res, 200, {
+    json(res, HTTP_STATUS.OK, {
       ok: true,
       token: body.token,
       revoked: false,
@@ -1024,7 +1056,7 @@ async function handleRevoke(
     return;
   }
   if (row.session_id !== sessionId) {
-    json(res, 404, { error: "share not found" });
+    json(res, HTTP_STATUS.NOT_FOUND, { error: "share not found" });
     return;
   }
 
@@ -1041,7 +1073,7 @@ async function handleRevoke(
       }).catch(() => {});
     }
   }
-  json(res, 200, {
+  json(res, HTTP_STATUS.OK, {
     ok: true,
     token: body.token,
     revoked,
@@ -1069,22 +1101,22 @@ async function handlePatchLabel(
     // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- runtime defense; cast above lies to TS
     if (body === null || typeof body !== "object") body = {};
   } catch {
-    json(res, 400, { error: "invalid JSON body" });
+    json(res, HTTP_STATUS.BAD_REQUEST, { error: "invalid JSON body" });
     return;
   }
 
   if (!body.token || typeof body.token !== "string") {
-    json(res, 400, { error: "token required" });
+    json(res, HTTP_STATUS.BAD_REQUEST, { error: "token required" });
     return;
   }
 
   const row = deps.store.getShareByToken(body.token);
   if (!row) {
-    json(res, 404, { error: "share not found" });
+    json(res, HTTP_STATUS.NOT_FOUND, { error: "share not found" });
     return;
   }
   if (row.session_id !== sessionId) {
-    json(res, 404, { error: "share not found" });
+    json(res, HTTP_STATUS.NOT_FOUND, { error: "share not found" });
     return;
   }
 
@@ -1092,7 +1124,7 @@ async function handlePatchLabel(
   if ("owner_label" in body) {
     const v = validateLabel(body.owner_label, "owner_label", 1024);
     if (!v.ok) {
-      json(res, 400, { error: v.reason });
+      json(res, HTTP_STATUS.BAD_REQUEST, { error: v.reason });
       return;
     }
     ownerLabel = v.value === "" ? null : v.value;
@@ -1102,7 +1134,7 @@ async function handlePatchLabel(
   if ("display_name" in body) {
     const v = validateLabel(body.display_name, "display_name", 256);
     if (!v.ok) {
-      json(res, 400, { error: v.reason });
+      json(res, HTTP_STATUS.BAD_REQUEST, { error: v.reason });
       return;
     }
     displayName = v.value === "" ? null : v.value;
@@ -1115,10 +1147,12 @@ async function handlePatchLabel(
 
   const after = deps.store.getShareByToken(body.token);
   if (!after) {
-    json(res, 500, { error: "post-patch read failed" });
+    json(res, HTTP_STATUS.INTERNAL_SERVER_ERROR, {
+      error: "post-patch read failed",
+    });
     return;
   }
-  json(res, 200, {
+  json(res, HTTP_STATUS.OK, {
     token: after.token,
     session_id: sessionId,
     owner_label: after.owner_label,
@@ -1137,7 +1171,7 @@ async function handleOwnerList(
   deps: ShareRouteDeps,
 ): Promise<void> {
   const rows = deps.store.listOwnerShares();
-  json(res, 200, { shares: rows });
+  json(res, HTTP_STATUS.OK, { shares: rows });
 }
 
 /**
@@ -1151,7 +1185,7 @@ async function handleByGet(
   deps: ShareRouteDeps,
 ): Promise<void> {
   const value = deps.store.getOwnerPref(DEFAULT_DISPLAY_NAME_KEY) ?? null;
-  json(res, 200, { value });
+  json(res, HTTP_STATUS.OK, { value });
 }
 
 /**
@@ -1170,20 +1204,20 @@ async function handleByPut(
     // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- runtime defense; cast above lies to TS
     if (body === null || typeof body !== "object") body = {};
   } catch {
-    json(res, 400, { error: "invalid JSON body" });
+    json(res, HTTP_STATUS.BAD_REQUEST, { error: "invalid JSON body" });
     return;
   }
 
   const v = validateLabel(body.value, "value", 256);
   if (!v.ok) {
-    json(res, 400, { error: v.reason });
+    json(res, HTTP_STATUS.BAD_REQUEST, { error: v.reason });
     return;
   }
   if (v.value === "") {
     deps.store.clearOwnerPref(DEFAULT_DISPLAY_NAME_KEY);
-    json(res, 200, { value: null });
+    json(res, HTTP_STATUS.OK, { value: null });
   } else {
     deps.store.setOwnerPref(DEFAULT_DISPLAY_NAME_KEY, v.value);
-    json(res, 200, { value: v.value });
+    json(res, HTTP_STATUS.OK, { value: v.value });
   }
 }

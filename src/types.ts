@@ -105,6 +105,18 @@ export interface PendingPermission {
   options: Array<{ optionId: string; label: string }>;
 }
 
+export interface AgentCommand {
+  name: string;
+  description: string;
+  input?: { hint: string };
+}
+
+export interface AgentCommandSnapshot {
+  epoch: string;
+  revision: number;
+  commands: AgentCommand[];
+}
+
 // --- Agent events (server → client) ---
 
 export type AgentEvent =
@@ -122,11 +134,19 @@ export type AgentEvent =
       cwd?: string;
       title?: string | null;
       configOptions: ConfigOption[];
+      agentCommands?: AgentCommandSnapshot;
     }
   | {
       type: "config_option_update";
       sessionId: string;
       configOptions: ConfigOption[];
+    }
+  | {
+      type: "available_commands_update";
+      sessionId: string;
+      commands: AgentCommand[];
+      epoch?: string;
+      revision?: number;
     }
   | { type: "message_chunk"; sessionId: string; text: string }
   | { type: "thought_chunk"; sessionId: string; text: string }
@@ -208,6 +228,7 @@ export type AgentEvent =
   // Server lifecycle events (no sessionId)
   | { type: "agent_reloading" }
   | { type: "agent_reloading_failed"; error: string }
+  | { type: "agent_disconnected" }
   // Per-session runtime state delta (broadcast to subscribed SSE clients)
   | {
       type: "state_patch";

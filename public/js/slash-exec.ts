@@ -21,6 +21,7 @@ import { loadHistory, handleEvent, fallbackToNextSession } from "./events.ts";
 import * as api from "./api.ts";
 import { log, type LogLevel } from "./log.ts";
 import { TOKEN_STORAGE_KEY } from "./login-core.ts";
+import { HTTP_STATUS } from "../../src/http-status.ts";
 import {
   ROOT,
   consumeInbox,
@@ -240,7 +241,7 @@ export async function handleSlashCommand(text: string): Promise<boolean> {
           );
         } catch (e) {
           const err = e as api.ApiError;
-          if (err.status === 403)
+          if (err.status === HTTP_STATUS.FORBIDDEN)
             addSystem("err: admin scope required to manage tokens");
           else addSystem(`err: token list failed (${err.message})`);
         }
@@ -258,11 +259,12 @@ export async function handleSlashCommand(text: string): Promise<boolean> {
           addSystem(`token: revoked ${name}`);
         } catch (e) {
           const err = e as api.ApiError;
-          if (err.status === 404) addSystem(`err: no token named "${name}"`);
-          else if (err.status === 403)
+          if (err.status === HTTP_STATUS.NOT_FOUND)
+            addSystem(`err: no token named "${name}"`);
+          else if (err.status === HTTP_STATUS.FORBIDDEN)
             addSystem("err: admin scope required to manage tokens");
           else if (
-            err.status === 400 &&
+            err.status === HTTP_STATUS.BAD_REQUEST &&
             /using|yourself|cannot/i.test(err.message)
           ) {
             addSystem(
@@ -285,9 +287,9 @@ export async function handleSlashCommand(text: string): Promise<boolean> {
         addSystem("— save this now; it will never be shown again");
       } catch (e) {
         const err = e as api.ApiError;
-        if (err.status === 409)
+        if (err.status === HTTP_STATUS.CONFLICT)
           addSystem(`err: token "${name}" already exists`);
-        else if (err.status === 403)
+        else if (err.status === HTTP_STATUS.FORBIDDEN)
           addSystem("err: admin scope required to manage tokens");
         else addSystem(`err: create failed (${err.message})`);
       }
@@ -320,8 +322,8 @@ export async function handleSlashCommand(text: string): Promise<boolean> {
         const [session] = await Promise.all([
           api.getSession(match.id),
           loadHistory(match.id),
-          reloadSnapshot(match.id),
         ]);
+        await reloadSnapshot(match.id);
         if (gen !== state.sessionSwitchGen) return true;
         handleEvent({
           type: "session_created",
@@ -378,6 +380,7 @@ export async function handleSlashCommand(text: string): Promise<boolean> {
       addSystem("Tab completes · Enter sends raw text");
       addSystem("? — Show help");
       addSystem("!<command> — Run bash command");
+      addSystem("// — Agent commands");
       for (const c of ROOT.children!) {
         addSystem(`${c.name} — ${c.desc ?? ""}`);
       }
@@ -594,6 +597,9 @@ export async function handleSlashCommand(text: string): Promise<boolean> {
     }
 
     default:
-      return false;
+      addSystem(
+        `err: Unknown command "${cmd}". Type / to see available commands.`,
+      );
+      return true;
   }
 }

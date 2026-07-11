@@ -187,18 +187,18 @@ async function resumeAndLoad(
     // Load snapshot in parallel with catch-up events (runtime state vs history)
     await Promise.all([reloadSnapshot(sessionId), loadNewEvents(sessionId)]);
   } else {
-    // Full load: fetch session details and history in parallel
+    // Full load: fetch session details and history in parallel.
     state.sessionId = null;
     const historyPromise = loadHistory(sessionId);
-    const snapshotPromise = reloadSnapshot(sessionId);
     let session: SessionDetail;
     try {
       const [s, loaded] = await Promise.all([
         api.getSession(sessionId),
         historyPromise,
       ]);
-      // Wait for snapshot but don't fail the whole load if it fails
-      await snapshotPromise;
+      // History replay drains queued live patches while sessionId is null.
+      // Fetch afterward so the authoritative snapshot includes that state.
+      await reloadSnapshot(sessionId);
       if (gen !== state.sessionSwitchGen) return;
       session = s;
       if (!loaded) {

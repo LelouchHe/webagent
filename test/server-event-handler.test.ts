@@ -195,6 +195,107 @@ describe("handleAgentEvent", () => {
     assert.equal(sessions.assistantBuffers.has("s1"), false);
   });
 
+  it("caches available commands during restore without broadcasting", () => {
+    store.createSession("s1", "/tmp");
+    sessions.restoringSessions.add("s1");
+    const { bridge } = createMockBridge();
+    const { sseManager, broadcasted } = createMockSseManager();
+
+    handleAgentEvent(
+      {
+        type: "available_commands_update",
+        sessionId: "s1",
+        commands: [
+          {
+            name: "compact",
+            description: "Compact conversation",
+            input: { hint: "focus instructions" },
+          },
+        ],
+      },
+      sessions,
+      store,
+      bridge,
+      makeEventHandlerConfig(),
+      sseManager as any,
+    );
+
+    const snapshot = sessions.getAgentCommands("s1");
+    assert.deepEqual(snapshot, {
+      epoch: snapshot.epoch,
+      revision: 1,
+      commands: [
+        {
+          name: "compact",
+          description: "Compact conversation",
+          input: { hint: "focus instructions" },
+        },
+      ],
+    });
+    assert.deepEqual(broadcasted, []);
+  });
+
+  it("broadcasts available commands with the server revision", () => {
+    store.createSession("s1", "/tmp");
+    const { bridge } = createMockBridge();
+    const { sseManager, broadcasted } = createMockSseManager();
+
+    handleAgentEvent(
+      {
+        type: "available_commands_update",
+        sessionId: "s1",
+        commands: [{ name: "context", description: "Show context usage" }],
+      },
+      sessions,
+      store,
+      bridge,
+      makeEventHandlerConfig(),
+      sseManager as any,
+    );
+
+    const epoch = sessions.getAgentCommands("s1").epoch;
+    assert.deepEqual(broadcasted, [
+      {
+        type: "available_commands_update",
+        sessionId: "s1",
+        epoch,
+        revision: 1,
+        commands: [{ name: "context", description: "Show context usage" }],
+      },
+    ]);
+    assert.deepEqual(store.getEvents("s1"), []);
+  });
+
+  it("clears and broadcasts command snapshots when the agent disconnects", () => {
+    store.createSession("s1", "/tmp");
+    sessions.updateAgentCommands("s1", [
+      { name: "context", description: "Show context usage" },
+    ]);
+    const { bridge } = createMockBridge();
+    const { sseManager, broadcasted } = createMockSseManager();
+
+    handleAgentEvent(
+      { type: "agent_disconnected" },
+      sessions,
+      store,
+      bridge,
+      makeEventHandlerConfig(),
+      sseManager as any,
+    );
+
+    const epoch = sessions.getAgentCommands("s1").epoch;
+    assert.deepEqual(broadcasted, [
+      {
+        type: "available_commands_update",
+        sessionId: "s1",
+        epoch,
+        revision: 2,
+        commands: [],
+      },
+      { type: "agent_disconnected" },
+    ]);
+  });
+
   it("removes active prompt on error events", () => {
     store.createSession("s1", "/tmp");
     sessions.activePrompts.add("s1");

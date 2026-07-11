@@ -5,7 +5,7 @@
 // plus Tab/Click/keyboard dispatch. Execution paths (onSelect handlers) live
 // in slash-commands.ts so this file stays a thin pipeline.
 
-import { dom, setInputValue } from "./state.ts";
+import { state, dom, setInputValue } from "./state.ts";
 import { addSystem } from "./render.ts";
 import {
   resolvePath,
@@ -28,6 +28,42 @@ let currentData: FetchData | undefined = undefined;
 let candidates: Candidate[] = [];
 let selectedIdx = -1;
 let dismissedFor: string | null = null;
+
+function agentRoot(): CmdNode {
+  return {
+    name: "<agent-root>",
+    children: state.agentCommands.map((command) => ({
+      name: `//${command.name}`,
+      desc: command.input
+        ? `${command.description} · ${command.input.hint}`
+        : command.description,
+      onSelect: () => {
+        setInputValue(`//${command.name}`);
+        dom.sendBtn.click();
+      },
+    })),
+  };
+}
+
+function rootForInput(input: string): CmdNode {
+  return input.startsWith("//") ? agentRoot() : ROOT;
+}
+
+function showPlaceholder(primary: string): void {
+  currentPath = "";
+  currentNode = rootForInput(dom.input.value);
+  currentData = undefined;
+  candidates = [
+    {
+      spec: { primary },
+      prefix: "",
+      kind: "placeholder",
+    },
+  ];
+  selectedIdx = -1;
+  renderMenu("");
+  dom.slashMenu.classList.add("active");
+}
 
 export function __resetCommandsForTest(): void {
   currentPath = null;
@@ -53,7 +89,18 @@ export function updateSlashMenu(): void {
     return;
   }
 
-  const { node, pathPrefix, tailQuery } = resolvePath(text, ROOT);
+  const isAgentNamespace = text.startsWith("//");
+  if (isAgentNamespace && state.busy) {
+    showPlaceholder("(agent busy — wait or ^C to cancel)");
+    return;
+  }
+  if (isAgentNamespace && state.agentCommands.length === 0) {
+    showPlaceholder("(agent commands unavailable)");
+    return;
+  }
+
+  const root = rootForInput(text);
+  const { node, pathPrefix, tailQuery } = resolvePath(text, root);
 
   // Path changed → reset data, kick fresh fetch if node has one.
   // Active-path guard: stale fetch responses are dropped if currentPath has
@@ -100,12 +147,22 @@ export function updateSlashMenu(): void {
 // Re-resolve tailQuery from current input (used by async fetch callbacks
 // that may fire after input has changed but currentPath is still valid).
 function currentTailQueryFromInput(): string {
-  const { tailQuery } = resolvePath(dom.input.value, ROOT);
+  const { tailQuery } = resolvePath(
+    dom.input.value,
+    rootForInput(dom.input.value),
+  );
   return tailQuery;
 }
 
 function rebuild(tailQuery: string, pathPrefix: string): void {
   const cands = buildCandidates(currentNode, tailQuery, currentData);
+  if (dom.input.value === "/") {
+    cands.push({
+      spec: { primary: "Agent commands: type //" },
+      prefix: "",
+      kind: "placeholder",
+    });
+  }
   candidates = cands;
 
   if (cands.length === 0) {

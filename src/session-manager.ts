@@ -1,11 +1,18 @@
 import type { ChildProcess } from "node:child_process";
 import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { rm } from "node:fs/promises";
 import { stat } from "node:fs/promises";
 import { join } from "node:path";
 import type { Store } from "./store.ts";
 import type { AgentBridge } from "./bridge.ts";
-import type { AgentEvent, ConfigOption, PendingPermission } from "./types.ts";
+import type {
+  AgentCommand,
+  AgentCommandSnapshot,
+  AgentEvent,
+  ConfigOption,
+  PendingPermission,
+} from "./types.ts";
 
 import { SessionStateManager } from "./session-state.ts";
 import { buildLabelMap, type LabelMap } from "./attachment-labels.ts";
@@ -71,6 +78,11 @@ export class SessionManager {
    * DELETE. Lookup is cheap (Map.get); rebuild is one SQLite query.
    */
   private readonly attachmentLabelCache = new Map<string, LabelMap>();
+  private readonly agentCommandSnapshots = new Map<
+    string,
+    AgentCommandSnapshot
+  >();
+  private readonly agentCommandEpoch = randomUUID();
 
   cachedConfigOptions: ConfigOption[] = [];
   agentInfo: { name: string; version: string } | null = null;
@@ -109,7 +121,10 @@ export class SessionManager {
 
     // Clean up empty sessions (no events) older than the threshold
     const cleaned = this.store.deleteEmptySessions(EMPTY_SESSION_MIN_AGE_S);
-    for (const id of cleaned) this.liveSessions.delete(id);
+    for (const id of cleaned) {
+      this.liveSessions.delete(id);
+      this.agentCommandSnapshots.delete(id);
+    }
     if (cleaned.length > 0)
       slog.info("cleaned empty session(s)", { count: cleaned.length });
 
@@ -312,6 +327,50 @@ export class SessionManager {
     this.attachmentLabelCache.delete(sessionId);
   }
 
+  updateAgentCommands(
+    sessionId: string,
+    commands: AgentCommand[],
+  ): AgentCommandSnapshot {
+    const current = this.agentCommandSnapshots.get(sessionId);
+    const snapshot = {
+      epoch: this.agentCommandEpoch,
+      revision: (current?.revision ?? 0) + 1,
+      commands: commands.map((command) => ({
+        ...command,
+        ...(command.input ? { input: { ...command.input } } : {}),
+      })),
+    };
+    this.agentCommandSnapshots.set(sessionId, snapshot);
+    return snapshot;
+  }
+
+  getAgentCommands(sessionId: string): AgentCommandSnapshot {
+    return (
+      this.agentCommandSnapshots.get(sessionId) ?? {
+        epoch: this.agentCommandEpoch,
+        revision: 0,
+        commands: [],
+      }
+    );
+  }
+
+  clearAgentCommands(): Array<AgentCommandSnapshot & { sessionId: string }> {
+    const cleared: Array<AgentCommandSnapshot & { sessionId: string }> = [];
+    for (const [sessionId, current] of this.agentCommandSnapshots) {
+      const snapshot: AgentCommandSnapshot = {
+        epoch: this.agentCommandEpoch,
+        revision: current.revision + 1,
+        commands: [],
+      };
+      this.agentCommandSnapshots.set(sessionId, snapshot);
+      cleared.push({
+        sessionId,
+        ...snapshot,
+      });
+    }
+    return cleared;
+  }
+
   /** Delete a session from store and clean up all state (including images). */
   deleteSession(sessionId: string): void {
     const mode = this.store.deleteSession(sessionId);
@@ -322,6 +381,7 @@ export class SessionManager {
     this.activePrompts.delete(sessionId);
     this.runningBashProcs.delete(sessionId);
     this.attachmentLabelCache.delete(sessionId);
+    this.agentCommandSnapshots.delete(sessionId);
     // Clean pending permissions for this session
     for (const [reqId, perm] of this.pendingPermissions) {
       if (perm.sessionId === sessionId) this.pendingPermissions.delete(reqId);

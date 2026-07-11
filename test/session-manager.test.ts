@@ -42,6 +42,9 @@ describe("SessionManager", () => {
       sm.sessionHasTitle.add("s1");
       sm.assistantBuffers.set("s1", "partial");
       sm.thinkingBuffers.set("s1", "hmm");
+      sm.updateAgentCommands("s1", [
+        { name: "context", description: "Show context usage" },
+      ]);
 
       sm.deleteSession("s1");
 
@@ -49,7 +52,69 @@ describe("SessionManager", () => {
       assert.ok(!sm.sessionHasTitle.has("s1"));
       assert.ok(!sm.assistantBuffers.has("s1"));
       assert.ok(!sm.thinkingBuffers.has("s1"));
+      const commands = sm.getAgentCommands("s1");
+      assert.ok(commands.epoch);
+      assert.deepEqual(commands, {
+        epoch: commands.epoch,
+        revision: 0,
+        commands: [],
+      });
       assert.equal(store.getSession("s1"), undefined);
+    });
+  });
+
+  describe("agent command snapshots", () => {
+    it("replaces commands and increments the per-session revision", () => {
+      const first = sm.updateAgentCommands("s1", [
+        { name: "context", description: "Show context usage" },
+      ]);
+      const second = sm.updateAgentCommands("s1", [
+        {
+          name: "compact",
+          description: "Compact conversation",
+          input: { hint: "focus instructions" },
+        },
+      ]);
+
+      assert.deepEqual(first, {
+        epoch: first.epoch,
+        revision: 1,
+        commands: [{ name: "context", description: "Show context usage" }],
+      });
+      assert.deepEqual(second, {
+        epoch: first.epoch,
+        revision: 2,
+        commands: [
+          {
+            name: "compact",
+            description: "Compact conversation",
+            input: { hint: "focus instructions" },
+          },
+        ],
+      });
+      assert.deepEqual(sm.getAgentCommands("s1"), second);
+    });
+
+    it("clears all snapshots with a newer revision", () => {
+      sm.updateAgentCommands("s1", [
+        { name: "context", description: "Show context usage" },
+      ]);
+      sm.updateAgentCommands("s2", [
+        { name: "usage", description: "Show usage" },
+      ]);
+
+      const cleared = sm.clearAgentCommands();
+      const epoch = sm.getAgentCommands("s1").epoch;
+
+      assert.deepEqual(cleared, [
+        { sessionId: "s1", epoch, revision: 2, commands: [] },
+        { sessionId: "s2", epoch, revision: 2, commands: [] },
+      ]);
+      assert.deepEqual(sm.getAgentCommands("s1"), {
+        epoch,
+        revision: 2,
+        commands: [],
+      });
     });
   });
 

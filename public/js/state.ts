@@ -1,6 +1,11 @@
 // Shared state, DOM refs, config helpers, routing, session management
 
-import type { ConfigOption, AgentEvent } from "../../src/types.ts";
+import type {
+  AgentCommand,
+  AgentCommandSnapshot,
+  ConfigOption,
+  AgentEvent,
+} from "../../src/types.ts";
 import {
   isPlanMode,
   isAutopilotMode,
@@ -70,6 +75,9 @@ export const state = {
   sessionTitle: null as string | null,
   awaitingNewSession: false,
   configOptions: [] as ConfigOption[],
+  agentCommands: [] as AgentCommand[],
+  agentCommandsEpoch: null as string | null,
+  agentCommandsRevision: 0,
   // Fallback copies of session.mode / session.model from snapshot. Used by
   // updateModeUI / updateStatusBar when configOptions is empty (typical after
   // `svc webagent reload` before the lifecycle probe warms the global cache).
@@ -275,6 +283,7 @@ export interface SessionSnapshot {
     pendingPermissions?: unknown[];
     streaming?: { assistant: boolean; thinking: boolean };
   };
+  agentCommands?: AgentCommandSnapshot;
 }
 
 export interface StatePatchPayload {
@@ -298,11 +307,28 @@ export function applySnapshot(snap: SessionSnapshot): void {
   const busy = snap.runtime.busy;
   setBusy(busy != null);
   if (busy == null) clearCancelTimer();
+  applyAgentCommandSnapshot(
+    snap.agentCommands ?? { epoch: "", revision: 0, commands: [] },
+  );
   // Bug A: populate display fallback from snapshot and repaint. Guarded
   // internally — no-op if configOptions is already non-empty.
   setFallbackFromSnapshot(snap);
   updateModeUI();
   updateStatusBar();
+}
+
+export function applyAgentCommandSnapshot(
+  snapshot: AgentCommandSnapshot,
+): boolean {
+  if (
+    snapshot.epoch === state.agentCommandsEpoch &&
+    snapshot.revision < state.agentCommandsRevision
+  )
+    return false;
+  state.agentCommandsEpoch = snapshot.epoch;
+  state.agentCommandsRevision = snapshot.revision;
+  state.agentCommands = snapshot.commands.slice();
+  return true;
 }
 
 /**
@@ -430,6 +456,9 @@ export function resetSessionUI() {
   state.sessionTitle = null;
   state.sessionCwd = null;
   state.configOptions = [];
+  state.agentCommands = [];
+  state.agentCommandsEpoch = null;
+  state.agentCommandsRevision = 0;
   clearFallback();
   updateSessionInfo(null, null);
   dom.statusBar.textContent = "";

@@ -53,6 +53,14 @@ describe("input-actions", () => {
       assert.equal(dom.sendBtn.textContent, "↵");
       assert.ok(!dom.sendBtn.classList.contains("cancel"));
     });
+
+    it("busy + agent command keeps the cancel action", () => {
+      state.busy = true;
+      dom.input.value = "//compact";
+      actions.applyInputActions();
+      assert.equal(dom.sendBtn.textContent, "^C");
+      assert.ok(dom.sendBtn.classList.contains("cancel"));
+    });
   });
 
   describe("preview mode", () => {

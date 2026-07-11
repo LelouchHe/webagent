@@ -402,6 +402,23 @@ export function handleAgentEvent(
   pushService?: PushService,
   _clientRegistry?: ClientRegistry,
 ): void {
+  if (event.type === "available_commands_update") {
+    const snapshot = sessions.updateAgentCommands(
+      event.sessionId,
+      event.commands,
+    );
+    if (sessions.restoringSessions.has(event.sessionId)) return;
+    sseManager.broadcast({ ...event, ...snapshot });
+    return;
+  }
+  if (event.type === "agent_reloading" || event.type === "agent_disconnected") {
+    for (const snapshot of sessions.clearAgentCommands()) {
+      sseManager.broadcast({
+        type: "available_commands_update",
+        ...snapshot,
+      });
+    }
+  }
   if (
     "sessionId" in event &&
     event.sessionId &&

@@ -310,6 +310,7 @@ export class AgentBridge extends EventEmitter {
       } satisfies AgentEvent);
       abort(new Error(reason));
     }
+    this.emit("event", { type: "agent_disconnected" } satisfies AgentEvent);
     this.conn = null;
   }
 
@@ -594,6 +595,17 @@ export class AgentBridge extends EventEmitter {
           configOptions:
             (update as unknown as { configOptions?: ConfigOption[] })
               .configOptions ?? [],
+        };
+
+      case "available_commands_update":
+        return {
+          type: "available_commands_update",
+          sessionId,
+          commands: update.availableCommands.map((command) => ({
+            name: command.name,
+            description: command.description,
+            ...(command.input ? { input: { hint: command.input.hint } } : {}),
+          })),
         };
 
       default:
