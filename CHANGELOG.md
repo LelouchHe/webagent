@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/), and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.7.0] - 2026-07-10
+
+### Added
+
+- **Agent-specific slash commands** — type `//` to discover and run commands advertised dynamically by the current ACP Agent. Commands are session-scoped, support autocomplete and input hints, preserve their original text in conversation history, and are validated before execution.
+
+### Changed
+
+- Model picker entries now show both the friendly model name and model ID.
+- Inline help and feature documentation now clarify that `//` commands are agent-specific and may not synchronize CLI-only state such as cwd with WebAgent.
+
 ## [0.6.0] - 2026-07-07
 
 ### Added
@@ -351,6 +362,7 @@ Initial release of WebAgent — a terminal-style web UI for ACP-compatible agent
 - **CI/CD**: GitHub Actions for CI (unit + E2E tests) and npm publishing on tag push
 - **npm package**: Published as `@lelouchhe/webagent`
 
+[0.7.0]: https://github.com/LelouchHe/webagent/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/LelouchHe/webagent/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/LelouchHe/webagent/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/LelouchHe/webagent/compare/v0.4.0...v0.5.0
