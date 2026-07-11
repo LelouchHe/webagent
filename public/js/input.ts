@@ -31,17 +31,10 @@ import {
   agentCommandToken,
   resolveAgentCommand,
 } from "../../src/agent-commands.ts";
+import { isLocalCommand } from "./input-command.ts";
 
 function isConnected(): boolean {
   return state.clientId !== null;
-}
-
-function isLocalCommand(text: string): boolean {
-  return (
-    (!text.startsWith("//") && text.startsWith("/")) ||
-    text === "?" ||
-    text.startsWith("? ")
-  );
 }
 
 // Wire up cancel-timeout feedback (state.js cannot import render.js directly)

@@ -16,6 +16,7 @@
 // which would create a cycle if we imported them back here.
 
 import { dom, state, setInputActionsRefresher } from "./state.ts";
+import { canSubmitWhileBusy } from "./input-command.ts";
 
 export type InputAction = {
   label: string;
@@ -44,16 +45,6 @@ let handlers: Handlers = {
 
 export function registerInputHandlers(h: Handlers): void {
   handlers = h;
-}
-
-function inputHasCommand(): boolean {
-  const t = dom.input.value.trim();
-  return (
-    (t.startsWith("/") && !t.startsWith("//")) ||
-    t.startsWith("!") ||
-    t === "?" ||
-    t.startsWith("? ")
-  );
 }
 
 export function resolveInputActions(): [InputAction, InputAction] {
@@ -88,10 +79,10 @@ export function resolveInputActions(): [InputAction, InputAction] {
   // "/help" and clicks before the input-event repaint lands still sends. The
   // label/className still come from the current snapshot (paint-time).
   const rightOnClick = () => {
-    if (state.busy && !inputHasCommand()) handlers.cancel();
+    if (state.busy && !canSubmitWhileBusy(dom.input.value)) handlers.cancel();
     else handlers.send();
   };
-  if (state.busy && !inputHasCommand()) {
+  if (state.busy && !canSubmitWhileBusy(dom.input.value)) {
     return [
       left,
       {
