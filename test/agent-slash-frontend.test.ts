@@ -202,7 +202,7 @@ describe("agent slash frontend", () => {
     assert.match(dom.slashMenu.textContent, /Agent commands: type \/\//);
 
     await commands.handleSlashCommand("/help");
-    assert.ok(messageLines().includes("// — Agent commands"));
+    assert.ok(messageLines().includes("// — Agent commands (agent-specific)"));
   });
 
   it("keeps the newest command revision across SSE and snapshot races", () => {

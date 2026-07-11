@@ -131,6 +131,7 @@ describe("commands", () => {
       assert.ok(lines.includes("? — Show help"));
       assert.ok(lines.includes("/help — Show help"));
       assert.ok(lines.includes("!<command> — Run bash command"));
+      assert.ok(lines.includes("// — Agent commands (agent-specific)"));
     });
 
     it("shows version line when versions are available", async () => {

@@ -71,6 +71,29 @@ Commands with submenus (`/model`, `/mode`, `/think`, `/notify`, `/switch`, `/new
 
 Type `?` for inline help listing all commands and shortcuts.
 
+### Agent commands (`//`)
+
+Agent commands are agent-specific: they are advertised and implemented by the
+current Agent, not by WebAgent. Type `//` to see the commands available for the
+current session. WebAgent sends the selected command as a normal Agent turn, so
+it cannot run while that session is busy. Command names, arguments, and behavior
+may differ between Agent implementations or versions.
+
+WebAgent stores and displays the original `//command` text, then converts it to
+the Agent's canonical `/command` form only at the ACP boundary. Commands are
+validated against the latest command list before they are sent.
+
+Some commands may conflict with WebAgent's own state or may not work fully when
+they depend on CLI-only UI or behavior that ACP does not expose. WebAgent can
+synchronize a change only when the Agent reports it through ACP. For example,
+model changes normally arrive through a configuration update and appear in the
+status bar. ACP currently has no session working-directory update, so an Agent
+command that changes cwd can leave the Agent's internal cwd different from
+WebAgent's status bar, local `!` bash cwd, persisted session cwd, and
+restart/restore cwd. Prefer WebAgent's local command when an equivalent exists;
+otherwise treat the Agent command as an agent-side operation whose effects may
+not be reflected everywhere in WebAgent.
+
 ## Keyboard Shortcuts
 
 | Shortcut      | Action                                                      |

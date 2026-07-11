@@ -747,7 +747,7 @@ function printHelp(): void {
   addSystem("Tab completes · Enter sends raw text");
   addSystem("? — Show help");
   addSystem("!<command> — Run bash command");
-  addSystem("// — Agent commands");
+  addSystem("// — Agent commands (agent-specific)");
   for (const c of ROOT.children!) {
     addSystem(`${c.name} — ${c.desc ?? ""}`);
   }
