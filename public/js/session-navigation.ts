@@ -36,15 +36,18 @@ export async function switchToSession(
   resetSessionUI();
   state.sessionId = null;
   state.pendingNavigationSessionId = sessionId;
+  const isCurrentNavigation = () =>
+    generation === state.sessionSwitchGen &&
+    state.pendingNavigationSessionId === sessionId;
 
   try {
     const [session, loaded] = await Promise.all([
       getSession(sessionId),
       loadHistory(sessionId),
     ]);
-    if (generation !== state.sessionSwitchGen) return "ignored";
+    if (!isCurrentNavigation()) return "ignored";
     await reloadSnapshot(sessionId);
-    if (generation !== state.sessionSwitchGen) return "ignored";
+    if (!isCurrentNavigation()) return "ignored";
     handleEvent({
       type: "session_created",
       sessionId: session.id,
@@ -55,10 +58,9 @@ export async function switchToSession(
     if (loaded) scrollToBottom(true);
     return "switched";
   } catch (error) {
-    if (generation === state.sessionSwitchGen) {
+    if (isCurrentNavigation()) {
       resetSessionUI();
       state.sessionId = null;
-      state.pendingNavigationSessionId = null;
     }
     throw error;
   }

@@ -133,6 +133,39 @@ describe("shared session navigation", () => {
     assert.equal(location.hash, "#message-session");
   });
 
+  it("abandons a switch superseded by ordinary session creation", async () => {
+    state.sessionId = "current-session";
+    let releaseHistory!: (response: Response) => void;
+    delayedHistory = new Promise<Response>((resolve) => {
+      releaseHistory = resolve;
+    });
+
+    const pending = navigation.switchToSession("message-session");
+    resetSessionUI();
+    state.awaitingNewSession = true;
+    handleEvent({
+      type: "session_created",
+      sessionId: "new-session",
+      cwd: "/new",
+      configOptions: [],
+    });
+    releaseHistory(
+      new Response(JSON.stringify({ events: [], streaming: {} }), {
+        status: 200,
+      }),
+    );
+    const result = await pending;
+
+    assert.equal(result, "ignored");
+    assert.equal(state.sessionId, "new-session");
+    assert.equal(
+      fetchCalls.some(
+        (call) => call.url === "/api/v1/sessions/message-session/snapshot",
+      ),
+      false,
+    );
+  });
+
   it("clears a terminal startup message intent", async () => {
     history.replaceState(null, "", "/?message=missing");
 
