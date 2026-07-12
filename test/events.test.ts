@@ -43,6 +43,22 @@ describe("events", () => {
 
   describe("handleEvent", () => {
     describe("session_created", () => {
+      it("lets a new-session request supersede a pending navigation", () => {
+        state.pendingNavigationSessionId = "old-target";
+        state.awaitingNewSession = true;
+        stateMod.resetSessionUI();
+
+        events.handleEvent({
+          type: "session_created",
+          sessionId: "new-session",
+          cwd: "/tmp",
+          configOptions: [],
+        });
+
+        assert.equal(state.pendingNavigationSessionId, null);
+        assert.equal(state.sessionId, "new-session");
+      });
+
       it("sets session state when awaiting", () => {
         state.awaitingNewSession = true;
         events.handleEvent({

@@ -143,7 +143,9 @@ async function initSession() {
 
   // Full load: different session in hash, or first connect to a hash
   if (existingId) {
-    resetSessionUI();
+    resetSessionUI({
+      preserveNavigationTarget: state.pendingNavigationSessionId === existingId,
+    });
     await resumeAndLoad(existingId, false, gen);
     if (gen !== state.sessionSwitchGen) return;
     scrollToBottom(true);

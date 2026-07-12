@@ -111,7 +111,7 @@ describe("shared session navigation", () => {
     });
 
     const pending = navigation.switchToSession("message-session");
-    resetSessionUI();
+    resetSessionUI({ preserveNavigationTarget: true });
     assert.equal(state.pendingNavigationSessionId, "message-session");
     assert.equal(state.sessionId, null);
     handleEvent({

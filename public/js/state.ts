@@ -411,7 +411,9 @@ export function refreshInputActions(): void {
   inputActionsRefresher();
 }
 
-export function resetSessionUI() {
+export function resetSessionUI({
+  preserveNavigationTarget = false,
+}: { preserveNavigationTarget?: boolean } = {}) {
   for (const hook of resetHooks) hook();
   dom.messages.innerHTML = "";
   // Cancel any pending markdown-render rAF before clearing the element it
@@ -442,6 +444,7 @@ export function resetSessionUI() {
   state.loadingOlderEvents = false;
   state.replayInProgress = false;
   state.replayQueue = [];
+  if (!preserveNavigationTarget) state.pendingNavigationSessionId = null;
   // Clear preview mode on session reset — preview is per-session and lost
   // by design when switching/resetting (TTL cleans backend).
   state.previewToken = null;
