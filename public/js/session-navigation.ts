@@ -4,6 +4,7 @@ import { handleEvent, loadHistory } from "./events.ts";
 import { addSystem, scrollToBottom } from "./render.ts";
 import {
   reloadSnapshot,
+  requestNewSession,
   resetSessionUI,
   setHashSessionId,
   state,
@@ -106,7 +107,10 @@ export async function processStartupMessageIntent(): Promise<NavigationResult> {
       error instanceof ApiError &&
       (error.status === HTTP_STATUS.BAD_REQUEST ||
         error.status === HTTP_STATUS.NOT_FOUND);
-    if (terminal) clearStartupMessageIntent();
+    if (terminal) {
+      clearStartupMessageIntent();
+      if (!state.sessionId) requestNewSession();
+    }
     const message = error instanceof Error ? error.message : String(error);
     addSystem(`err: notification consume failed (${message})`);
     return terminal ? "terminal-error" : "retryable-error";

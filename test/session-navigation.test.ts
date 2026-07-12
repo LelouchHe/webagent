@@ -104,6 +104,10 @@ describe("shared session navigation", () => {
 
     assert.equal(result, "terminal-error");
     assert.equal(location.search, "");
+    assert.equal(
+      fetchCalls.some((call) => call.url === "/api/v1/sessions"),
+      true,
+    );
   });
 
   it("retains a retryable startup message intent without retrying in-page", async () => {
