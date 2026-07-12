@@ -8,17 +8,24 @@ import { Store } from "../src/store.ts";
 import { createRequestHandler } from "../src/routes.ts";
 import { SseManager } from "../src/sse-manager.ts";
 import { SessionManager } from "../src/session-manager.ts";
-import type { AgentEvent } from "../src/types.ts";
+import type { AgentEvent, ConfigOption } from "../src/types.ts";
 import { mockBridgeStubs, waitFor } from "./fixtures.ts";
 
 function send(
   port: number,
   method: string,
   path: string,
+  body?: Record<string, unknown>,
 ): Promise<{ status: number; body: string }> {
   return new Promise((resolve, reject) => {
     const r = http.request(
-      { hostname: "127.0.0.1", port, path, method },
+      {
+        hostname: "127.0.0.1",
+        port,
+        path,
+        method,
+        headers: body ? { "Content-Type": "application/json" } : undefined,
+      },
       (res) => {
         let d = "";
         res.on("data", (c: Buffer) => (d += c.toString()));
@@ -28,6 +35,7 @@ function send(
       },
     );
     r.on("error", reject);
+    if (body) r.write(JSON.stringify(body));
     r.end();
   });
 }
@@ -44,6 +52,11 @@ describe("POST /api/v1/messages/:id/consume + ack + DELETE", () => {
   let loadSessionCalls: string[];
   let failNewSession: boolean;
   let releaseNewSession: (() => void) | null;
+  let configCalls: Array<{
+    sessionId: string;
+    configId: string;
+    value: string;
+  }>;
 
   beforeEach(async () => {
     tmpDir = mkdtempSync(join(tmpdir(), "webagent-msg-action-"));
@@ -57,6 +70,39 @@ describe("POST /api/v1/messages/:id/consume + ack + DELETE", () => {
     loadSessionCalls = [];
     failNewSession = false;
     releaseNewSession = null;
+    configCalls = [];
+    let newSessionConfig: ConfigOption[] = [
+      {
+        type: "select",
+        id: "model",
+        name: "Model",
+        currentValue: "agent-default-model",
+        options: [
+          { value: "agent-default-model", name: "Default" },
+          { value: "inherited-model", name: "Inherited" },
+        ],
+      },
+      {
+        type: "select",
+        id: "mode",
+        name: "Mode",
+        currentValue: "agent-mode",
+        options: [
+          { value: "agent-mode", name: "Agent" },
+          { value: "autopilot-mode", name: "Autopilot" },
+        ],
+      },
+      {
+        type: "select",
+        id: "reasoning_effort",
+        name: "Reasoning",
+        currentValue: "medium",
+        options: [
+          { value: "medium", name: "Medium" },
+          { value: "high", name: "High" },
+        ],
+      },
+    ];
     const bridge = {
       ...mockBridgeStubs(),
       async newSession(cwd: string, opts?: { silent?: boolean }) {
@@ -74,8 +120,21 @@ describe("POST /api/v1/messages/:id/consume + ack + DELETE", () => {
         }
         return {
           sessionId: `agent-session-${newSessionCalls.length}`,
-          configOptions: [],
+          configOptions: newSessionConfig,
         };
+      },
+      async setConfigOption(
+        sessionId: string,
+        configId: string,
+        value: string,
+      ) {
+        configCalls.push({ sessionId, configId, value });
+        newSessionConfig = newSessionConfig.map((option) =>
+          option.id === configId && "options" in option
+            ? { ...option, currentValue: value }
+            : option,
+        );
+        return newSessionConfig;
       },
       async loadSession(sessionId: string) {
         loadSessionCalls.push(sessionId);
@@ -168,6 +227,58 @@ describe("POST /api/v1/messages/:id/consume + ack + DELETE", () => {
     const get = await send(port, "GET", `/api/v1/sessions/${body.sessionId}`);
     assert.equal(get.status, 200);
     assert.deepEqual(loadSessionCalls, []);
+  });
+
+  it("reuses new-session config inheritance without inheriting mode", async () => {
+    mkMsg("m-inherit");
+    store.createSession("source-session", tmpDir);
+    store.updateSessionConfig("source-session", "model", "inherited-model");
+    store.updateSessionConfig("source-session", "mode", "autopilot-mode");
+    store.updateSessionConfig("source-session", "reasoning_effort", "high");
+    sessions.cachedConfigOptions = [
+      {
+        type: "select",
+        id: "mode",
+        name: "Mode",
+        currentValue: "autopilot-mode",
+        options: [
+          { value: "agent-mode", name: "Agent" },
+          { value: "autopilot-mode", name: "Autopilot" },
+        ],
+      },
+    ];
+
+    const consumed = await send(
+      port,
+      "POST",
+      "/api/v1/messages/m-inherit/consume",
+      { inheritFromSessionId: "source-session" },
+    );
+
+    assert.equal(consumed.status, 200);
+    const sessionId = JSON.parse(consumed.body).sessionId as string;
+    assert.deepEqual(configCalls, [
+      { sessionId, configId: "model", value: "inherited-model" },
+      { sessionId, configId: "reasoning_effort", value: "high" },
+    ]);
+    const stored = store.getSession(sessionId);
+    assert.ok(stored);
+    assert.equal(stored.model, "inherited-model");
+    assert.equal(stored.reasoning_effort, "high");
+    assert.equal(stored.mode, "agent-mode");
+
+    const response = await send(port, "GET", `/api/v1/sessions/${sessionId}`);
+    const detail = JSON.parse(response.body) as {
+      configOptions: ConfigOption[];
+    };
+    const currentValues = Object.fromEntries(
+      detail.configOptions.map((option) => [option.id, option.currentValue]),
+    );
+    assert.deepEqual(currentValues, {
+      model: "inherited-model",
+      mode: "agent-mode",
+      reasoning_effort: "high",
+    });
   });
 
   it("consume is idempotent: second call returns same sessionId, no new session", async () => {

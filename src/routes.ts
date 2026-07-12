@@ -2306,6 +2306,26 @@ export function createRequestHandler(
         const consumeMatch = tail.match(/^([^/?]+)\/consume\/?$/);
         if (consumeMatch && req.method === "POST") {
           const id = decodeURIComponent(consumeMatch[1]);
+          let inheritFromSessionId: string | undefined;
+          try {
+            const rawBody = await readBody(req);
+            if (rawBody) {
+              const body = JSON.parse(rawBody) as Record<string, unknown>;
+              if (
+                body.inheritFromSessionId !== undefined &&
+                typeof body.inheritFromSessionId !== "string"
+              ) {
+                json(res, HTTP_STATUS.BAD_REQUEST, {
+                  error: "inheritFromSessionId must be a string",
+                });
+                return;
+              }
+              inheritFromSessionId = body.inheritFromSessionId;
+            }
+          } catch {
+            json(res, HTTP_STATUS.BAD_REQUEST, { error: "Invalid JSON" });
+            return;
+          }
           const bridge = getBridge?.();
           if (!sessions || !bridge) {
             json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
@@ -2318,7 +2338,11 @@ export function createRequestHandler(
             alreadyConsumed: boolean;
           } | null;
           try {
-            out = await sessions.consumeMessage(bridge, id);
+            out = await sessions.consumeMessage(
+              bridge,
+              id,
+              inheritFromSessionId,
+            );
           } catch (err) {
             if (err instanceof InvalidSessionDirectoryError) {
               json(res, HTTP_STATUS.BAD_REQUEST, {

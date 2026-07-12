@@ -162,7 +162,10 @@ describe("SessionManager", () => {
       const bridge = {
         async newSession(cwd: string) {
           assert.equal(cwd, tmpDir);
-          return { sessionId: "s2", configOptions: [] };
+          return {
+            sessionId: "s2",
+            configOptions: sm.cachedConfigOptions,
+          };
         },
         async setConfigOption(
           sessionId: string,
@@ -197,7 +200,7 @@ describe("SessionManager", () => {
         ],
       );
       assert.equal(store.getSession("s2")!.model, "claude-sonnet-4.6");
-      assert.equal(store.getSession("s2")!.mode, null);
+      assert.equal(store.getSession("s2")!.mode, "agent");
       assert.equal(store.getSession("s2")!.reasoning_effort, "high");
     });
 

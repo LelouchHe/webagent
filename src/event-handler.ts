@@ -56,15 +56,8 @@ function handleConnected(
 function handleConfigLikeEvent(
   event: ConfigLikeEvent,
   sessions: SessionManager,
-  store: Store,
 ): void {
-  if (event.configOptions.length)
-    sessions.cachedConfigOptions = event.configOptions;
-  for (const opt of event.configOptions) {
-    if (typeof opt.currentValue === "string") {
-      store.updateSessionConfig(event.sessionId, opt.id, opt.currentValue);
-    }
-  }
+  sessions.recordConfigOptions(event.sessionId, event.configOptions);
 }
 
 function handleMessageChunk(
@@ -328,7 +321,7 @@ function dispatchAgentEvent(
       return false;
     case "session_created":
     case "config_option_update":
-      handleConfigLikeEvent(event, sessions, store);
+      handleConfigLikeEvent(event, sessions);
       return false;
     case "message_chunk":
       handleMessageChunk(event, sessions);

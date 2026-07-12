@@ -92,7 +92,7 @@ Typing `/inbox` (with or without a trailing space) opens a picker listing all pe
     from · /cwd/left-ellipsed
 ```
 
-- **Default action (click / Tab+Enter):** consume → creates session + switches the UI
+- **Default action (click / Tab+Enter):** consume → creates session + switches the UI; model and reasoning effort follow the same inheritance rules as `/new`, while mode resets to the agent default
 - **`[x]` button:** ack (dismiss without consuming)
 - **Tab:** fills `/inbox <id>` into the input so the command is visible before you press Enter
 

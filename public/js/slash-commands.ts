@@ -210,7 +210,8 @@ async function setConfigAndUpdate(
 
 export async function consumeInbox(m: api.InboxMessage): Promise<void> {
   try {
-    const r = await api.consumeMessage(m.id);
+    const inheritFromSessionId = state.sessionId;
+    const r = await api.consumeMessage(m.id, inheritFromSessionId);
     if (r.alreadyConsumed) {
       addSystem(`inbox: already consumed → switching to ${r.sessionId}`);
     } else {

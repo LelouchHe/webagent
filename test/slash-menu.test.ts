@@ -372,6 +372,9 @@ describe("inbox consume — switches session via switchToSession", () => {
     );
     const consumeCall = fetchCalls.find((c) => c.url.endsWith("/consume"));
     assert.ok(consumeCall, "should call consume endpoint");
+    assert.deepEqual(JSON.parse(consumeCall.init.body as string), {
+      inheritFromSessionId: "old-session",
+    });
     const sessionCall = fetchCalls.find(
       (c) => c.url === "/api/v1/sessions/new-session",
     );

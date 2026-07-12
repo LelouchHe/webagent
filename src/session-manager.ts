@@ -47,9 +47,6 @@ type SessionBridge = Pick<
   "newSession" | "setConfigOption" | "loadSession"
 >;
 
-/** Known config option IDs that we persist per-session. */
-const _PERSISTED_CONFIG_IDS = ["model", "mode", "reasoning_effort"] as const;
-
 /** Minimum age (seconds) before an empty session is eligible for cleanup. */
 const EMPTY_SESSION_MIN_AGE_S = 60;
 
@@ -149,9 +146,9 @@ export class SessionManager {
     const sourceSession = inheritFromSessionId
       ? this.store.getSession(inheritFromSessionId)
       : null;
-    const { sessionId } = await bridge.newSession(sessionCwd, {
-      silent: opts?.silent,
-    });
+    const { sessionId, configOptions: createdConfigOptions } =
+      await bridge.newSession(sessionCwd, { silent: opts?.silent });
+    let configOptions = createdConfigOptions;
     try {
       this.store.createSession(sessionId, sessionCwd, source);
     } catch (err) {
@@ -162,6 +159,7 @@ export class SessionManager {
       throw err;
     }
     this.liveSessions.add(sessionId);
+    this.recordConfigOptions(sessionId, createdConfigOptions);
 
     // Inherit config options from source session
     if (sourceSession) {
@@ -172,8 +170,17 @@ export class SessionManager {
       for (const { configId, value } of inherited) {
         if (!value) continue;
         try {
-          await bridge.setConfigOption(sessionId, configId, value);
-          this.store.updateSessionConfig(sessionId, configId, value);
+          const updatedConfigOptions = await bridge.setConfigOption(
+            sessionId,
+            configId,
+            value,
+          );
+          if (updatedConfigOptions.length > 0) {
+            configOptions = updatedConfigOptions;
+            this.recordConfigOptions(sessionId, updatedConfigOptions);
+          } else {
+            this.store.updateSessionConfig(sessionId, configId, value);
+          }
         } catch {
           // Option may no longer be available; ignore
         }
@@ -183,8 +190,25 @@ export class SessionManager {
     const session = this.store.getSession(sessionId);
     return {
       sessionId,
-      configOptions: session ? this.buildConfigOptions(session) : [],
+      configOptions: session
+        ? this.applyStoredConfig(configOptions, session)
+        : [],
     };
+  }
+
+  /** Cache the ACP config schema and persist this session's current values. */
+  recordConfigOptions(sessionId: string, configOptions: ConfigOption[]): void {
+    if (configOptions.length === 0) return;
+    this.cachedConfigOptions = configOptions;
+    for (const option of configOptions) {
+      if (typeof option.currentValue === "string") {
+        this.store.updateSessionConfig(
+          sessionId,
+          option.id,
+          option.currentValue,
+        );
+      }
+    }
   }
 
   /**
@@ -194,6 +218,7 @@ export class SessionManager {
   consumeMessage(
     bridge: SessionBridge,
     messageId: string,
+    inheritFromSessionId?: string,
   ): Promise<ConsumeMessageResult | null> {
     const pending = this.pendingMessageConsumes.get(messageId);
     if (pending) return pending;
@@ -206,13 +231,15 @@ export class SessionManager {
       });
     }
 
-    const operation = this.consumePendingMessage(bridge, messageId).finally(
-      () => {
-        if (this.pendingMessageConsumes.get(messageId) === operation) {
-          this.pendingMessageConsumes.delete(messageId);
-        }
-      },
-    );
+    const operation = this.consumePendingMessage(
+      bridge,
+      messageId,
+      inheritFromSessionId,
+    ).finally(() => {
+      if (this.pendingMessageConsumes.get(messageId) === operation) {
+        this.pendingMessageConsumes.delete(messageId);
+      }
+    });
     this.pendingMessageConsumes.set(messageId, operation);
     return operation;
   }
@@ -220,6 +247,7 @@ export class SessionManager {
   private async consumePendingMessage(
     bridge: SessionBridge,
     messageId: string,
+    inheritFromSessionId?: string,
   ): Promise<ConsumeMessageResult | null> {
     const message = this.store.getMessage(messageId);
     if (!message) return null;
@@ -227,7 +255,7 @@ export class SessionManager {
     const { sessionId } = await this.createSession(
       bridge,
       message.cwd ?? undefined,
-      undefined,
+      inheritFromSessionId,
       "message",
       { silent: true },
     );
@@ -388,7 +416,7 @@ export class SessionManager {
       reasoning_effort: string | null;
     },
   ): ConfigOption[] {
-    if (!configOptions.length) return this.cachedConfigOptions;
+    if (!configOptions.length) return configOptions;
     const stored: Record<string, string | null> = {
       model: session.model,
       mode: session.mode,

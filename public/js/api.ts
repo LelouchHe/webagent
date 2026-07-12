@@ -231,8 +231,11 @@ export function listMessages(): Promise<{ messages: InboxMessage[] }> {
 
 export function consumeMessage(
   id: string,
+  inheritFromSessionId?: string | null,
 ): Promise<{ sessionId: string; alreadyConsumed: boolean }> {
-  return post(`/api/v1/messages/${encodeURIComponent(id)}/consume`, {});
+  return post(`/api/v1/messages/${encodeURIComponent(id)}/consume`, {
+    ...(inheritFromSessionId ? { inheritFromSessionId } : {}),
+  });
 }
 
 export function ackMessage(id: string): Promise<void> {

@@ -864,6 +864,14 @@ Get a single unprocessed message by id. Returns `404` if not found.
 
 Consume a message: creates a new ACP-backed session, appends a `message` event with the message payload, and deletes the row. The session uses the message's `cwd` when provided, otherwise the configured default. Idempotent via a DB-authoritative check; concurrent requests share one in-flight creation, and later calls return `alreadyConsumed: true`.
 
+**Request body** (optional):
+
+```json
+{ "inheritFromSessionId": "<current-session-id>" }
+```
+
+When provided, session creation uses the same inheritance rules as `POST /api/v1/sessions`: model and reasoning effort are copied, while mode starts from the new ACP session's default.
+
 **Response** `200`:
 
 ```json

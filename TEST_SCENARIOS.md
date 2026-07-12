@@ -142,6 +142,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
 
 - `test/messages-route-actions.test.ts`, `test/messages-schema.test.ts`
   - Inbox consume creates a live ACP-backed session and never reloads it
+  - Inbox-created sessions reuse `/new` model/reasoning inheritance while resetting mode
   - message cwd inheritance and configured-default fallback
   - sequential idempotency and concurrent consume deduplication
   - ACP creation and local transaction failure preserve the pending message

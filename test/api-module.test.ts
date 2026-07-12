@@ -105,6 +105,24 @@ describe("api module", () => {
     assert.equal(fetchCalls[0].url, "/api/v1/sessions/s1");
   });
 
+  it("consumeMessage forwards the session inheritance source", async () => {
+    fetchResponse = {
+      status: 200,
+      ok: true,
+      json: () => Promise.resolve({}),
+      text: () =>
+        Promise.resolve('{"sessionId":"new-session","alreadyConsumed":false}'),
+    };
+
+    await api.consumeMessage("m1", "current-session");
+
+    assert.equal(fetchCalls[0].url, "/api/v1/messages/m1/consume");
+    assert.equal(fetchCalls[0].init!.method, "POST");
+    assert.deepEqual(JSON.parse(fetchCalls[0].init!.body as string), {
+      inheritFromSessionId: "current-session",
+    });
+  });
+
   // --- Prompt ---
 
   it("sendMessage sends POST /api/v1/sessions/:id/prompt", async () => {
