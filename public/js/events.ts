@@ -743,8 +743,11 @@ async function fetchOlderEventsPage(
   return { events, hasMore };
 }
 
-// Clean up observer on session reset to avoid leaking across session switches
+// Revoke both pagination and replay ownership across session switches.
 onSessionReset(removeHistorySentinel);
+onSessionReset(() => {
+  replayLoadToken++;
+});
 
 export async function loadOlderEvents(sid: string): Promise<boolean> {
   if (

@@ -1591,6 +1591,33 @@ describe("events", () => {
   });
 
   describe("loadHistory", () => {
+    it("does not commit after the session UI is reset", async () => {
+      let resolveResponse!: (value: Response) => void;
+      globalThis.fetch = () =>
+        new Promise<Response>((resolve) => {
+          resolveResponse = resolve;
+        });
+
+      const pending = events.loadHistory("failed");
+      stateMod.resetSessionUI();
+      resolveResponse({
+        ok: true,
+        async json() {
+          return [
+            {
+              seq: 1,
+              type: "user_message",
+              data: JSON.stringify({ text: "stale history" }),
+            },
+          ];
+        },
+      } as Response);
+
+      assert.equal(await pending, false);
+      assert.equal(dom.messages.textContent, "");
+      assert.equal(state.lastEventSeq, 0);
+    });
+
     it("ignores a stale history response after a newer load starts", async () => {
       let resolveFirst!: (value: Response) => void;
       const firstResponse = new Promise<Response>((resolve) => {
