@@ -1,6 +1,6 @@
 # Test Scenarios
 
-Last updated: 2026-07-10
+Last updated: 2026-07-12
 
 This file is a scenario-level map of the current automated test suite.
 It is intentionally higher-level than raw test names so we can review coverage,
@@ -139,6 +139,14 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - session creation and prompt forwarding
   - custom cwd and source=auto marking
   - input validation and bridge-not-ready errors
+
+- `test/messages-route-actions.test.ts`, `test/messages-schema.test.ts`
+  - Inbox consume creates a live ACP-backed session and never reloads it
+  - message cwd inheritance and configured-default fallback
+  - sequential idempotency and concurrent consume deduplication
+  - ACP creation and local transaction failure preserve the pending message
+  - existing-session message move is atomic at the SQLite boundary
+  - ack / delete aliases and corresponding SSE broadcasts
 
 ### Frontend state and UI event flow
 

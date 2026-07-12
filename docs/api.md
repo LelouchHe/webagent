@@ -862,7 +862,7 @@ Get a single unprocessed message by id. Returns `404` if not found.
 
 #### `POST /api/v1/messages/:id/consume`
 
-Consume a message: creates a new session, appends a `message` event with the message payload, and deletes the row. Idempotent via DB-authoritative check — calling twice returns `alreadyConsumed: true` the second time.
+Consume a message: creates a new ACP-backed session, appends a `message` event with the message payload, and deletes the row. The session uses the message's `cwd` when provided, otherwise the configured default. Idempotent via a DB-authoritative check; concurrent requests share one in-flight creation, and later calls return `alreadyConsumed: true`.
 
 **Response** `200`:
 
@@ -872,7 +872,7 @@ Consume a message: creates a new session, appends a `message` event with the mes
 
 **Side effects:** broadcasts `message_consumed` SSE; triggers `pushService.sendClose(id)` to dismiss banners on other devices (stub until C11-C13).
 
-**Errors:** `404` (message not found — never existed).
+**Errors:** `400` (message cwd no longer exists), `404` (message not found), `503` (agent/session manager unavailable), `500` (agent or persistence failure). Failures before the local consume transaction completes leave the inbox row pending for retry.
 
 ---
 

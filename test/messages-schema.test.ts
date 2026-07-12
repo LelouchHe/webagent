@@ -224,7 +224,7 @@ describe("Store — messages table", () => {
   });
 
   describe("consumeMessageTx — atomic consume", () => {
-    it("creates session + appends message event with message_id + deletes row, all in one tx", () => {
+    it("appends to an existing session and deletes the row in one transaction", () => {
       store.createMessage({
         id: "m1",
         from_ref: "cron:backup",
@@ -237,13 +237,9 @@ describe("Store — messages table", () => {
         cwd: "/b",
         created_at: 1,
       });
-      const { sessionId } = store.consumeMessageTx("m1", {
-        sessionId: "sess-new",
-        cwd: "/b",
-      });
+      store.createSession("sess-new", "/b", "message");
+      const { sessionId } = store.consumeMessageTx("m1", "sess-new");
       assert.equal(sessionId, "sess-new");
-      // Session exists
-      assert.ok(store.getSession("sess-new"));
       // Row deleted
       assert.equal(store.getMessage("m1"), undefined);
       // Event appended with message_id
@@ -259,15 +255,22 @@ describe("Store — messages table", () => {
       assert.equal(data.title, "Done");
     });
 
-    it("rolls back if appendEvent would throw (no session, no event)", () => {
-      // We can't easily stub in node:test without mock.method; simulate by
-      // calling consume with a missing message id — it should throw and leave
-      // no artefacts.
-      assert.throws(() =>
-        store.consumeMessageTx("ghost", { sessionId: "sess-ghost", cwd: "/x" }),
-      );
-      assert.equal(store.getSession("sess-ghost"), undefined);
-      assert.equal(store.getEvents("sess-ghost").length, 0);
+    it("requires the destination session to exist", () => {
+      store.createMessage({
+        id: "m1",
+        from_ref: "cron:a",
+        from_label: null,
+        to_ref: "user",
+        deliver: "push",
+        dedup_key: null,
+        title: "t",
+        body: "b",
+        cwd: null,
+        created_at: 1,
+      });
+
+      assert.throws(() => store.consumeMessageTx("m1", "missing-session"));
+      assert.ok(store.getMessage("m1"));
     });
 
     it("returns the prior sessionId if the message was already consumed", () => {
@@ -283,19 +286,14 @@ describe("Store — messages table", () => {
         cwd: null,
         created_at: 1,
       });
-      const first = store.consumeMessageTx("m1", {
-        sessionId: "sess-a",
-        cwd: "/x",
-      });
+      store.createSession("sess-a", "/x", "message");
+      const first = store.consumeMessageTx("m1", "sess-a");
       // Second attempt — row is gone, but we want idempotent resolution.
-      const second = store.consumeMessageTx("m1", {
-        sessionId: "sess-b",
-        cwd: "/x",
-      });
+      store.createSession("sess-b", "/x", "message");
+      const second = store.consumeMessageTx("m1", "sess-b");
       assert.equal(second.sessionId, first.sessionId);
       assert.equal(second.alreadyConsumed, true);
-      // No second session created.
-      assert.equal(store.getSession("sess-b"), undefined);
+      assert.equal(store.getEvents("sess-b").length, 0);
     });
   });
 });

@@ -62,6 +62,13 @@ export interface MessageInput {
   created_at: number;
 }
 
+export class MessageNotFoundError extends Error {
+  constructor(messageId: string) {
+    super(`Message not found: ${messageId}`);
+    this.name = "MessageNotFoundError";
+  }
+}
+
 /** share-plan §4.1 full row shape. */
 export interface ShareRow {
   token: string;
@@ -192,9 +199,9 @@ export class Store {
 
     // messages — pending unbound notifications. POST /api/v1/messages with
     // `to = "user"` lands here; consumeMessageTx transactionally moves the
-    // content into a new session's events and deletes the row. Bound
-    // messages (to = session id) skip this table entirely and go straight
-    // to `events`.
+    // content into an existing ACP-backed session's events and deletes the
+    // row. Bound messages (to = session id) skip this table entirely and go
+    // straight to `events`.
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS messages (
         id              TEXT PRIMARY KEY,
@@ -780,35 +787,27 @@ export class Store {
   }
 
   /**
-   * Atomic consume: create a session, append a `message` event whose data
-   * includes `message_id`, and delete the messages row -- all in a single
-   * transaction. If the row is already gone, returns the prior session id
-   * by looking up the historic `message` event; callers can treat this as
-   * idempotent.
+   * Atomically move a pending message into an existing session. Session
+   * lifecycle belongs to SessionManager because ACP creation is asynchronous
+   * and cannot participate in this SQLite transaction.
    */
   consumeMessageTx(
     messageId: string,
-    opts: { sessionId: string; cwd?: string },
+    sessionId: string,
   ): { sessionId: string; alreadyConsumed: boolean } {
-    // Fast idempotency pre-check outside the tx to avoid the cost of
-    // opening one for an already-resolved message.
-    const existing = this.findMessageEventSession(messageId);
+    const existing = this.findConsumedMessageSession(messageId);
     if (existing) {
       return { sessionId: existing, alreadyConsumed: true };
     }
 
     const row = this.getMessage(messageId);
     if (!row) {
-      throw new Error(`consumeMessageTx: message not found (id=${messageId})`);
+      throw new MessageNotFoundError(messageId);
     }
 
     const tx = this.db.transaction(() => {
-      this.db
-        .prepare("INSERT INTO sessions (id, cwd, source) VALUES (?, ?, ?)")
-        .run(opts.sessionId, opts.cwd ?? row.cwd ?? "", "message");
-      // Append message event via saveEvent so seq logic applies.
       this.saveEvent(
-        opts.sessionId,
+        sessionId,
         "message",
         {
           message_id: row.id,
@@ -824,19 +823,15 @@ export class Store {
         .prepare("DELETE FROM messages WHERE id = ?")
         .run(messageId);
       if (del.changes === 0) {
-        // Should never happen -- we just fetched the row above. If it does,
-        // roll back via throw.
-        throw new Error(
-          `consumeMessageTx: row vanished mid-tx (id=${messageId})`,
-        );
+        throw new MessageNotFoundError(messageId);
       }
     });
     tx();
 
-    return { sessionId: opts.sessionId, alreadyConsumed: false };
+    return { sessionId, alreadyConsumed: false };
   }
 
-  private findMessageEventSession(messageId: string): string | undefined {
+  findConsumedMessageSession(messageId: string): string | undefined {
     const row = this.db
       .prepare(
         `SELECT session_id FROM events

@@ -14,7 +14,10 @@ import type { TitleService } from "./title-service.ts";
 import type { ClientRegistry } from "./client-registry.ts";
 import { errorMessage, MessageIngressSchema } from "./types.ts";
 import type { AgentEvent } from "./types.ts";
-import { interruptBashProc } from "./session-manager.ts";
+import {
+  interruptBashProc,
+  InvalidSessionDirectoryError,
+} from "./session-manager.ts";
 import { randomUUID } from "node:crypto";
 import { createWriteStream } from "node:fs";
 import { handleShareRoutes } from "./share/routes.ts";
@@ -1827,7 +1830,7 @@ export function createRequestHandler(
           });
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
-          if (msg.includes("does not exist")) {
+          if (err instanceof InvalidSessionDirectoryError) {
             json(res, HTTP_STATUS.BAD_REQUEST, { error: msg });
           } else {
             json(res, HTTP_STATUS.INTERNAL_SERVER_ERROR, { error: msg });
@@ -2303,16 +2306,34 @@ export function createRequestHandler(
         const consumeMatch = tail.match(/^([^/?]+)\/consume\/?$/);
         if (consumeMatch && req.method === "POST") {
           const id = decodeURIComponent(consumeMatch[1]);
-          const newSid = randomUUID();
-          let out: { sessionId: string; alreadyConsumed: boolean };
+          const bridge = getBridge?.();
+          if (!sessions || !bridge) {
+            json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
+              error: "Agent not available",
+            });
+            return;
+          }
+          let out: {
+            sessionId: string;
+            alreadyConsumed: boolean;
+          } | null;
           try {
-            out = store.consumeMessageTx(id, { sessionId: newSid });
+            out = await sessions.consumeMessage(bridge, id);
           } catch (err) {
-            if (/message not found/.test(errorMessage(err))) {
-              json(res, HTTP_STATUS.NOT_FOUND, { error: "Message not found" });
+            if (err instanceof InvalidSessionDirectoryError) {
+              json(res, HTTP_STATUS.BAD_REQUEST, {
+                error: err.message,
+              });
               return;
             }
-            throw err;
+            json(res, HTTP_STATUS.INTERNAL_SERVER_ERROR, {
+              error: errorMessage(err),
+            });
+            return;
+          }
+          if (!out) {
+            json(res, HTTP_STATUS.NOT_FOUND, { error: "Message not found" });
+            return;
           }
           sseManager.broadcast({
             type: "message_consumed",

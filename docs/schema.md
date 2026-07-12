@@ -110,8 +110,9 @@ Bound messages (`to = <session_id>`) skip this table and go straight to
 | `cwd` | TEXT | Optional cwd hint for the consuming session |
 | `created_at` | INTEGER NOT NULL | Unix millis |
 
-`consumeMessageTx()` transactionally moves the row's content into a new
-session's `events` and deletes the `messages` row.
+`SessionManager.consumeMessage()` creates the destination through ACP first.
+`consumeMessageTx()` then transactionally moves the row's content into that
+existing session's `events` and deletes the `messages` row.
 
 ### `client_ops`
 

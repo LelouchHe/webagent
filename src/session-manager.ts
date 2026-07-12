@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { rm } from "node:fs/promises";
 import { stat } from "node:fs/promises";
 import { join } from "node:path";
-import type { Store } from "./store.ts";
+import { MessageNotFoundError, type Store } from "./store.ts";
 import type { AgentBridge } from "./bridge.ts";
 import type {
   AgentCommand,
@@ -53,6 +53,18 @@ const _PERSISTED_CONFIG_IDS = ["model", "mode", "reasoning_effort"] as const;
 /** Minimum age (seconds) before an empty session is eligible for cleanup. */
 const EMPTY_SESSION_MIN_AGE_S = 60;
 
+export class InvalidSessionDirectoryError extends Error {
+  constructor(cwd: string) {
+    super(`Directory does not exist: ${cwd}`);
+    this.name = "InvalidSessionDirectoryError";
+  }
+}
+
+export interface ConsumeMessageResult {
+  sessionId: string;
+  alreadyConsumed: boolean;
+}
+
 /**
  * Centralizes all session-related state that was previously scattered
  * across module-level variables in server.ts.
@@ -71,6 +83,11 @@ export class SessionManager {
   readonly state = new SessionStateManager();
   /** Deduplicates concurrent resume calls for the same session. */
   private readonly pendingResumes = new Map<string, Promise<void>>();
+  /** Deduplicates concurrent attempts to materialize one inbox message. */
+  private readonly pendingMessageConsumes = new Map<
+    string,
+    Promise<ConsumeMessageResult | null>
+  >();
   /**
    * Per-session attachment label map (CLAUDE.md "Attachment label
    * egress rewrite"). Built lazily from the `attachments` table on
@@ -110,13 +127,14 @@ export class SessionManager {
     cwd?: string,
     inheritFromSessionId?: string,
     source: string = "auto",
+    opts?: { silent?: boolean },
   ): Promise<{ sessionId: string; configOptions: ConfigOption[] }> {
     const sessionCwd = cwd ?? this.defaultCwd;
     try {
       const info = await stat(sessionCwd);
       if (!info.isDirectory()) throw new Error("not a directory");
     } catch {
-      throw new Error(`Directory does not exist: ${sessionCwd}`);
+      throw new InvalidSessionDirectoryError(sessionCwd);
     }
 
     // Clean up empty sessions (no events) older than the threshold
@@ -131,9 +149,19 @@ export class SessionManager {
     const sourceSession = inheritFromSessionId
       ? this.store.getSession(inheritFromSessionId)
       : null;
-    const { sessionId } = await bridge.newSession(sessionCwd);
+    const { sessionId } = await bridge.newSession(sessionCwd, {
+      silent: opts?.silent,
+    });
+    try {
+      this.store.createSession(sessionId, sessionCwd, source);
+    } catch (err) {
+      slog.warn("ACP session created but local persistence failed", {
+        sessionId,
+        error: err,
+      });
+      throw err;
+    }
     this.liveSessions.add(sessionId);
-    this.store.createSession(sessionId, sessionCwd, source);
 
     // Inherit config options from source session
     if (sourceSession) {
@@ -157,6 +185,75 @@ export class SessionManager {
       sessionId,
       configOptions: session ? this.buildConfigOptions(session) : [],
     };
+  }
+
+  /**
+   * Materialize a pending inbox message as a real ACP-backed session.
+   * Returns null when the message is neither pending nor previously consumed.
+   */
+  consumeMessage(
+    bridge: SessionBridge,
+    messageId: string,
+  ): Promise<ConsumeMessageResult | null> {
+    const pending = this.pendingMessageConsumes.get(messageId);
+    if (pending) return pending;
+
+    const existing = this.store.findConsumedMessageSession(messageId);
+    if (existing) {
+      return Promise.resolve({
+        sessionId: existing,
+        alreadyConsumed: true,
+      });
+    }
+
+    const operation = this.consumePendingMessage(bridge, messageId).finally(
+      () => {
+        if (this.pendingMessageConsumes.get(messageId) === operation) {
+          this.pendingMessageConsumes.delete(messageId);
+        }
+      },
+    );
+    this.pendingMessageConsumes.set(messageId, operation);
+    return operation;
+  }
+
+  private async consumePendingMessage(
+    bridge: SessionBridge,
+    messageId: string,
+  ): Promise<ConsumeMessageResult | null> {
+    const message = this.store.getMessage(messageId);
+    if (!message) return null;
+
+    const { sessionId } = await this.createSession(
+      bridge,
+      message.cwd ?? undefined,
+      undefined,
+      "message",
+      { silent: true },
+    );
+
+    try {
+      const result = this.store.consumeMessageTx(messageId, sessionId);
+      if (result.alreadyConsumed) {
+        this.deleteSession(sessionId);
+      }
+      return result;
+    } catch (err) {
+      this.deleteSession(sessionId);
+      if (err instanceof MessageNotFoundError) {
+        const consumedSessionId =
+          this.store.findConsumedMessageSession(messageId);
+        return consumedSessionId
+          ? { sessionId: consumedSessionId, alreadyConsumed: true }
+          : null;
+      }
+      slog.warn("message consume left an unreachable ACP session", {
+        messageId,
+        sessionId,
+        error: err,
+      });
+      throw err;
+    }
   }
 
   /** Resume a session — returns event to send to the requesting client. */
