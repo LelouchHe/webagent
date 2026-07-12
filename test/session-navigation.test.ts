@@ -10,6 +10,8 @@ describe("shared session navigation", () => {
   let handleEvent: typeof import("../public/js/events.ts").handleEvent;
   let fetchCalls: Array<{ url: string; init?: RequestInit }>;
   let delayedHistory: Promise<Response> | null;
+  let delayedSnapshot: Promise<Response> | null;
+  let onDelayedSnapshotFetch: (() => void) | null;
 
   before(async () => {
     setupDOM();
@@ -27,6 +29,8 @@ describe("shared session navigation", () => {
     resetState(state, dom);
     fetchCalls = [];
     delayedHistory = null;
+    delayedSnapshot = null;
+    onDelayedSnapshotFetch = null;
     history.replaceState(null, "", "/");
     globalThis.fetch = (async (url: string, init?: RequestInit) => {
       fetchCalls.push({ url, init });
@@ -61,6 +65,10 @@ describe("shared session navigation", () => {
         return response({ events: [], streaming: {} });
       }
       if (url === "/api/v1/sessions/message-session/snapshot") {
+        if (delayedSnapshot) {
+          onDelayedSnapshotFetch?.();
+          return delayedSnapshot;
+        }
         return response({
           version: 1,
           seq: 0,
@@ -164,6 +172,47 @@ describe("shared session navigation", () => {
       ),
       false,
     );
+  });
+
+  it("does not apply a snapshot after navigation ownership is revoked", async () => {
+    state.sessionId = "current-session";
+    let releaseSnapshot!: (response: Response) => void;
+    let markSnapshotStarted!: () => void;
+    const snapshotStarted = new Promise<void>((resolve) => {
+      markSnapshotStarted = resolve;
+    });
+    onDelayedSnapshotFetch = markSnapshotStarted;
+    delayedSnapshot = new Promise<Response>((resolve) => {
+      releaseSnapshot = resolve;
+    });
+
+    const pending = navigation.switchToSession("message-session");
+    await snapshotStarted;
+    resetSessionUI();
+    state.awaitingNewSession = true;
+    handleEvent({
+      type: "session_created",
+      sessionId: "new-session",
+      cwd: "/new",
+      configOptions: [],
+    });
+    releaseSnapshot(
+      new Response(
+        JSON.stringify({
+          version: 1,
+          seq: 77,
+          session: {},
+          runtime: { busy: { kind: "prompt" } },
+        }),
+        { status: 200 },
+      ),
+    );
+    const result = await pending;
+
+    assert.equal(result, "ignored");
+    assert.equal(state.sessionId, "new-session");
+    assert.equal(state.busy, false);
+    assert.equal(state.lastStateSeq, 0);
   });
 
   it("clears a terminal startup message intent", async () => {

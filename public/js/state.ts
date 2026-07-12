@@ -359,6 +359,7 @@ export function applyStatePatch(patchEvent: {
  */
 export async function reloadSnapshot(
   sessionId: string,
+  isStillCurrent?: () => boolean,
 ): Promise<SessionSnapshot | null> {
   // Capture sessionSwitchGen so an in-flight stale snapshot can be dropped
   // when a newer switch bumps the generation before the fetch resolves.
@@ -369,7 +370,11 @@ export async function reloadSnapshot(
     const snap = (await api.getSnapshot(
       sessionId,
     )) as unknown as SessionSnapshot;
-    if (state.sessionSwitchGen !== genAtStart) return null;
+    if (
+      state.sessionSwitchGen !== genAtStart ||
+      (isStillCurrent && !isStillCurrent())
+    )
+      return null;
     applySnapshot(snap);
     return snap;
   } catch {

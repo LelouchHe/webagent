@@ -46,7 +46,7 @@ export async function switchToSession(
       loadHistory(sessionId),
     ]);
     if (!isCurrentNavigation()) return "ignored";
-    await reloadSnapshot(sessionId);
+    await reloadSnapshot(sessionId, isCurrentNavigation);
     if (!isCurrentNavigation()) return "ignored";
     handleEvent({
       type: "session_created",
