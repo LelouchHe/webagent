@@ -26,6 +26,10 @@ import {
 import * as api from "./api.ts";
 import { applyConnectedLogLevel } from "./log.ts";
 import type { SessionDetail } from "../../src/types.ts";
+import {
+  getStartupMessageIntent,
+  processStartupMessageIntent,
+} from "./session-navigation.ts";
 
 /** If the browser has an active push subscription, tell the server which
  *  clientId owns it so per-subscription visibility filtering works. */
@@ -115,7 +119,12 @@ async function openStream() {
   });
 
   // Load session immediately via REST — parallel with SSE connection
-  void initSession();
+  void initializeSessionAndIntent();
+}
+
+async function initializeSessionAndIntent(): Promise<void> {
+  await initSession();
+  await processStartupMessageIntent();
 }
 
 async function initSession() {
@@ -158,6 +167,7 @@ async function initSession() {
 
   if (gen !== state.sessionSwitchGen) return;
   // No previous sessions — create new
+  if (getStartupMessageIntent()) return;
   requestNewSession();
 }
 

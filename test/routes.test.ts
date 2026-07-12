@@ -110,6 +110,12 @@ describe("HTTP routes", () => {
     assert.ok(res.body.includes("<h1>Test</h1>"));
   });
 
+  it("GET / with a query serves index.html", async () => {
+    const res = await makeRequest(port, "GET", "/?message=msg-1");
+    assert.equal(res.status, 200);
+    assert.ok(res.body.includes("<h1>Test</h1>"));
+  });
+
   it("GET / sets no-cache for index.html", async () => {
     const res = await makeRequest(port, "GET", "/");
     assert.equal(res.headers["cache-control"], "no-cache");

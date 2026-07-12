@@ -13,11 +13,11 @@ import {
   getConfigValue,
   updateModeUI,
   updateStatusBar,
-  reloadSnapshot,
 } from "./state.ts";
-import { addSystem, scrollToBottom, formatLocalTime } from "./render.ts";
-import { loadHistory, handleEvent, fallbackToNextSession } from "./events.ts";
+import { addSystem, formatLocalTime } from "./render.ts";
+import { fallbackToNextSession } from "./events.ts";
 import * as api from "./api.ts";
+import { consumeAndSwitch, switchToSession } from "./session-navigation.ts";
 import { log, getLogLevel, type LogLevel } from "./log.ts";
 import {
   getLogLevelSource,
@@ -167,33 +167,6 @@ export async function resetLocalState(): Promise<void> {
   location.reload();
 }
 
-async function switchToSession(id: string): Promise<void> {
-  state.sessionSwitchGen++;
-  const gen = state.sessionSwitchGen;
-  resetSessionUI();
-  state.sessionId = null;
-  try {
-    const [session, loaded] = await Promise.all([
-      api.getSession(id),
-      loadHistory(id),
-    ]);
-    await reloadSnapshot(id);
-    if (gen !== state.sessionSwitchGen) return;
-    handleEvent({
-      type: "session_created",
-      sessionId: session.id,
-      cwd: session.cwd,
-      title: session.title,
-      configOptions: session.configOptions,
-    });
-    if (loaded) scrollToBottom(true);
-  } catch {
-    resetSessionUI();
-    state.sessionId = null;
-    addSystem("err: Failed to switch session");
-  }
-}
-
 async function setConfigAndUpdate(
   configId: string,
   value: string,
@@ -210,14 +183,7 @@ async function setConfigAndUpdate(
 
 export async function consumeInbox(m: api.InboxMessage): Promise<void> {
   try {
-    const inheritFromSessionId = state.sessionId;
-    const r = await api.consumeMessage(m.id, inheritFromSessionId);
-    if (r.alreadyConsumed) {
-      addSystem(`inbox: already consumed → switching to ${r.sessionId}`);
-    } else {
-      addSystem(`inbox: opened as ${r.sessionId}`);
-    }
-    await switchToSession(r.sessionId);
+    await consumeAndSwitch(m.id);
   } catch (e) {
     addSystem(`err: consume failed (${(e as Error).message})`);
   }
@@ -646,7 +612,13 @@ export const ROOT: CmdNode = {
           secondary: time,
           path: s.cwd,
           current: s.id === state.sessionId,
-          onSelect: () => switchToSession(s.id),
+          onSelect: async () => {
+            try {
+              await switchToSession(s.id);
+            } catch {
+              addSystem("err: Failed to switch session");
+            }
+          },
         };
       },
     },

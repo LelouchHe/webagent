@@ -357,7 +357,10 @@ Sessions are identified by URL hash: `/#session-id`. This enables:
 - Push notification click → navigate to session
 - Browser back/forward (hash change)
 
-`state.ts` provides `getHashSessionId()` and `setHashSessionId()`.
+`state.ts` provides `getHashSessionId()` and `setHashSessionId()`. All session
+switch callers use `session-navigation.ts`; unbound Inbox notifications first
+consume their message ID, then use the same switch path. A cold notification
+click carries the unresolved ID as `/?message=<id>` until startup consumes it.
 
 ### New Session Creation
 

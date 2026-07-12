@@ -18,21 +18,23 @@ import "./attachments.ts"; // attach/paste listeners
 import "./lightbox.ts"; // click-to-enlarge image viewer
 import "./input.ts"; // keyboard/send listeners
 import { connect } from "./connection.ts";
-import { state, dom, resetSessionUI } from "./state.ts";
-import { loadHistory, handleEvent } from "./events.ts";
-import { addSystem, scrollToBottom, onThemeChange } from "./render.ts";
+import { state, dom } from "./state.ts";
+import { addSystem, onThemeChange } from "./render.ts";
 import { installInputFocusRecovery } from "./input-focus-recovery.ts";
 import {
   handleCopyClick,
   onThemeChange as hljsThemeChange,
 } from "./highlight.ts";
 import { setLogRenderer } from "./log.ts";
+import {
+  navigateFromNotification,
+  type NotificationTarget,
+} from "./session-navigation.ts";
 
 // Inline debug log — when level != "off", log records render as
 // system-msg rows in the conversation flow via addSystem.
 setLogRenderer(addSystem);
 installInputFocusRecovery();
-import * as api from "./api.ts";
 
 // Code block copy button (event delegation)
 dom.messages.addEventListener("click", handleCopyClick);
@@ -60,35 +62,11 @@ if ("serviceWorker" in navigator) {
 
   // Handle push notification click → navigate to session
   navigator.serviceWorker.addEventListener("message", (e) => {
-    const data = e.data as { type?: string; sessionId?: string } | null;
-    if (data?.type === "navigate" && data.sessionId) {
-      const targetId = data.sessionId;
-      if (state.sessionId === targetId) return; // already there
-      state.sessionSwitchGen++;
-      const gen = state.sessionSwitchGen;
-      // Set hash immediately so any concurrent initSession (from SSE reconnect
-      // or visibilitychange) picks up the correct target session
-      history.replaceState(null, "", `#${targetId}`);
-      resetSessionUI();
-      state.sessionId = null;
-      addSystem("Switching…");
-      Promise.all([api.getSession(targetId), loadHistory(targetId)])
-        .then(([session, loaded]) => {
-          if (gen !== state.sessionSwitchGen) return;
-          handleEvent({
-            type: "session_created",
-            sessionId: session.id,
-            cwd: session.cwd,
-            title: session.title,
-            configOptions: session.configOptions,
-          });
-          if (loaded) scrollToBottom(true);
-        })
-        .catch(() => {
-          resetSessionUI();
-          state.sessionId = null;
-          addSystem("err: Failed to switch session");
-        });
-    }
+    const data = (e.data ?? {}) as NotificationTarget & { type?: string };
+    if (data.type !== "navigate") return;
+    void navigateFromNotification(data).catch((error: unknown) => {
+      const message = error instanceof Error ? error.message : String(error);
+      addSystem(`err: notification navigation failed (${message})`);
+    });
   });
 }

@@ -102,7 +102,7 @@ The menu refetches on every open (no client-side caching) so new arrivals show u
 
 ### Push notifications
 
-Unbound messages fire a web-push with tag `msg-<id>`. Clicking the banner opens the app; the SW sees the `data.messageId` and navigates to `/inbox`. Acking or consuming fires a silent `sendClose("msg-<id>")` so stale banners on other devices disappear.
+Unbound messages fire a web-push with tag `msg-<id>`. Clicking the banner consumes the message, creates its ACP-backed session with the same inheritance rules as `/new`, and switches to it. An open app receives the message ID from the service worker; a closed app opens with `?message=<id>` and processes the same flow after startup. Acking or consuming fires a silent `sendClose("msg-<id>")` so stale banners on other devices disappear.
 
 For bound messages the push tag is the owning session's event tag (`sess-<sid>-...`) and clicking routes to that session directly (`data.sessionId` set on send).
 

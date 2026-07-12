@@ -2690,7 +2690,7 @@ export function createRequestHandler(
     }
 
     // --- Static files ---
-    let staticPath = url;
+    let staticPath = url.split("?")[0] ?? url;
     const htmlEntry = HTML_ENTRYPOINTS.find((e) => e.urlPath === staticPath);
     if (htmlEntry) staticPath = "/" + htmlEntry.file;
     const filePath = join(deps.publicDir, staticPath);

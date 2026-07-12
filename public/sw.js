@@ -79,25 +79,35 @@ self.addEventListener("notificationclick", (e) => {
   e.notification.close();
 
   const data = e.notification.data || {};
-  // For inbox messages, route to the bound session (if set) or root.
-  // For session events, route to the session.
   const sessionId = data.sessionId;
-  const urlHash = sessionId ? `/#${sessionId}` : "/";
+  const messageId = data.messageId;
+  const target = sessionId
+    ? { type: "navigate", sessionId }
+    : messageId
+      ? { type: "navigate", messageId }
+      : { type: "navigate" };
+  const targetUrl = sessionId
+    ? `/#${encodeURIComponent(sessionId)}`
+    : messageId
+      ? `/?message=${encodeURIComponent(messageId)}`
+      : "/";
 
   e.waitUntil(
     self.clients
       .matchAll({ type: "window", includeUncontrolled: true })
-      .then((clients) => {
-        // Focus existing window if open
+      .then(async (clients) => {
         for (const client of clients) {
           if (client.url.includes(self.location.origin)) {
-            client.focus();
-            client.postMessage({ type: "navigate", sessionId });
+            try {
+              await client.focus();
+            } catch {
+              // Navigation still works if the browser refuses focus.
+            }
+            client.postMessage(target);
             return;
           }
         }
-        // Otherwise open a new window
-        return self.clients.openWindow(urlHash);
+        return self.clients.openWindow(targetUrl);
       }),
   );
 });

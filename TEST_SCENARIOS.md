@@ -149,6 +149,12 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - existing-session message move is atomic at the SQLite boundary
   - ack / delete aliases and corresponding SSE broadcasts
 
+- `test/session-navigation.test.ts`, `test/service-worker-click.test.ts`
+  - Inbox notification consume reuses the current session as inheritance source
+  - direct session targets take priority over unresolved message targets
+  - existing-window and cold-start service-worker routing
+  - terminal startup intents are cleared; retryable intents survive refresh without in-page duplication
+
 ### Frontend state and UI event flow
 
 - `test/agent-slash-frontend.test.ts`
@@ -386,6 +392,9 @@ spot gaps, and decide what still needs to be added without reading every spec.
 
 - `session-switch-isolation.spec.ts`
   - switching sessions reloads the right history without message mixing
+
+- `message-notification-cold-start.spec.ts`
+  - cold Inbox notification consumes after startup, switches to the new session, cleans the URL, and inherits model configuration
 
 - `session-delete-broadcast.spec.ts`
   - deleting the current session disables peer clients correctly
