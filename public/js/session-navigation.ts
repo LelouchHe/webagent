@@ -58,6 +58,7 @@ export async function switchToSession(
     if (generation === state.sessionSwitchGen) {
       resetSessionUI();
       state.sessionId = null;
+      state.pendingNavigationSessionId = null;
     }
     throw error;
   }

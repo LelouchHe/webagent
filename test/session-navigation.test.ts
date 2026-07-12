@@ -5,6 +5,7 @@ import { resetState, setupDOM, teardownDOM } from "./frontend-setup.ts";
 describe("shared session navigation", () => {
   let state: typeof import("../public/js/state.ts").state;
   let dom: typeof import("../public/js/state.ts").dom;
+  let resetSessionUI: typeof import("../public/js/state.ts").resetSessionUI;
   let navigation: typeof import("../public/js/session-navigation.ts");
   let handleEvent: typeof import("../public/js/events.ts").handleEvent;
   let fetchCalls: Array<{ url: string; init?: RequestInit }>;
@@ -12,7 +13,7 @@ describe("shared session navigation", () => {
 
   before(async () => {
     setupDOM();
-    ({ state, dom } = await import("../public/js/state.ts"));
+    ({ state, dom, resetSessionUI } = await import("../public/js/state.ts"));
     await import("../public/js/render.ts");
     ({ handleEvent } = await import("../public/js/events.ts"));
     navigation = await import("../public/js/session-navigation.ts");
@@ -110,12 +111,16 @@ describe("shared session navigation", () => {
     });
 
     const pending = navigation.switchToSession("message-session");
+    resetSessionUI();
+    assert.equal(state.pendingNavigationSessionId, "message-session");
+    assert.equal(state.sessionId, null);
     handleEvent({
       type: "session_created",
       sessionId: "competing-session",
       cwd: "/other",
       configOptions: [],
     });
+    assert.equal(state.sessionId, null);
     releaseHistory(
       new Response(JSON.stringify({ events: [], streaming: {} }), {
         status: 200,

@@ -442,7 +442,6 @@ export function resetSessionUI() {
   state.loadingOlderEvents = false;
   state.replayInProgress = false;
   state.replayQueue = [];
-  state.pendingNavigationSessionId = null;
   // Clear preview mode on session reset — preview is per-session and lost
   // by design when switching/resetting (TTL cleans backend).
   state.previewToken = null;
