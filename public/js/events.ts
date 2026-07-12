@@ -1282,6 +1282,12 @@ export function handleEvent(msg: AgentEvent) {
       break;
 
     case "session_created":
+      if (
+        state.pendingNavigationSessionId &&
+        msg.sessionId !== state.pendingNavigationSessionId
+      ) {
+        break;
+      }
       // Only switch to the new session if this client requested it
       if (
         !state.awaitingNewSession &&
@@ -1291,6 +1297,7 @@ export function handleEvent(msg: AgentEvent) {
         break;
       }
       state.awaitingNewSession = false;
+      state.pendingNavigationSessionId = null;
       state.sessionId = msg.sessionId;
       state.sessionCwd = msg.cwd ?? state.sessionCwd;
       state.sessionTitle = msg.title ?? null;

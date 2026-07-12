@@ -35,6 +35,7 @@ export async function switchToSession(
   setHashSessionId(sessionId);
   resetSessionUI();
   state.sessionId = null;
+  state.pendingNavigationSessionId = sessionId;
 
   try {
     const [session, loaded] = await Promise.all([

@@ -6,12 +6,15 @@ describe("shared session navigation", () => {
   let state: typeof import("../public/js/state.ts").state;
   let dom: typeof import("../public/js/state.ts").dom;
   let navigation: typeof import("../public/js/session-navigation.ts");
+  let handleEvent: typeof import("../public/js/events.ts").handleEvent;
   let fetchCalls: Array<{ url: string; init?: RequestInit }>;
+  let delayedHistory: Promise<Response> | null;
 
   before(async () => {
     setupDOM();
     ({ state, dom } = await import("../public/js/state.ts"));
     await import("../public/js/render.ts");
+    ({ handleEvent } = await import("../public/js/events.ts"));
     navigation = await import("../public/js/session-navigation.ts");
   });
 
@@ -22,6 +25,7 @@ describe("shared session navigation", () => {
   beforeEach(() => {
     resetState(state, dom);
     fetchCalls = [];
+    delayedHistory = null;
     history.replaceState(null, "", "/");
     globalThis.fetch = (async (url: string, init?: RequestInit) => {
       fetchCalls.push({ url, init });
@@ -52,6 +56,7 @@ describe("shared session navigation", () => {
         });
       }
       if (url === "/api/v1/sessions/message-session/events?limit=500") {
+        if (delayedHistory) return delayedHistory;
         return response({ events: [], streaming: {} });
       }
       if (url === "/api/v1/sessions/message-session/snapshot") {
@@ -95,6 +100,32 @@ describe("shared session navigation", () => {
       false,
     );
     assert.equal(state.sessionId, "message-session");
+  });
+
+  it("does not let a competing session creation hijack a switch", async () => {
+    state.sessionId = "current-session";
+    let releaseHistory!: (response: Response) => void;
+    delayedHistory = new Promise<Response>((resolve) => {
+      releaseHistory = resolve;
+    });
+
+    const pending = navigation.switchToSession("message-session");
+    handleEvent({
+      type: "session_created",
+      sessionId: "competing-session",
+      cwd: "/other",
+      configOptions: [],
+    });
+    releaseHistory(
+      new Response(JSON.stringify({ events: [], streaming: {} }), {
+        status: 200,
+      }),
+    );
+    const result = await pending;
+
+    assert.equal(result, "switched");
+    assert.equal(state.sessionId, "message-session");
+    assert.equal(location.hash, "#message-session");
   });
 
   it("clears a terminal startup message intent", async () => {

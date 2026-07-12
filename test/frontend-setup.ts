@@ -54,6 +54,7 @@ export function resetState(state: any, dom: any) {
   state.clientId = null;
   state.sessionId = null;
   state.sessionSwitchGen = 0;
+  state.pendingNavigationSessionId = null;
   state.sessionCwd = null;
   state.sessionTitle = null;
   state.awaitingNewSession = false;
