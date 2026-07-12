@@ -1591,6 +1591,51 @@ describe("events", () => {
   });
 
   describe("loadHistory", () => {
+    it("ignores a stale history response after a newer load starts", async () => {
+      let resolveFirst!: (value: Response) => void;
+      const firstResponse = new Promise<Response>((resolve) => {
+        resolveFirst = resolve;
+      });
+      let requestCount = 0;
+      globalThis.fetch = async () => {
+        requestCount++;
+        if (requestCount === 1) return firstResponse;
+        return {
+          ok: true,
+          async json() {
+            return [
+              {
+                seq: 2,
+                type: "user_message",
+                data: JSON.stringify({ text: "new session" }),
+              },
+            ];
+          },
+        } as Response;
+      };
+
+      const staleLoad = events.loadHistory("old");
+      const currentLoad = events.loadHistory("new");
+      await currentLoad;
+      resolveFirst({
+        ok: true,
+        async json() {
+          return [
+            {
+              seq: 1,
+              type: "user_message",
+              data: JSON.stringify({ text: "old session" }),
+            },
+          ];
+        },
+      } as Response);
+      const staleResult = await staleLoad;
+
+      assert.equal(staleResult, false);
+      assert.equal(dom.messages.textContent, "new session");
+      assert.equal(state.lastEventSeq, 2);
+    });
+
     it("sets lastEventSeq and sync boundary from loaded events", async () => {
       const fakeEvents = [
         { seq: 1, type: "user_message", data: JSON.stringify({ text: "hi" }) },

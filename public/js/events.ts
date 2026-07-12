@@ -219,7 +219,7 @@ function completePendingTurnUI() {
 const HISTORY_PAGE_SIZE = 200;
 
 export async function loadHistory(sid: string): Promise<boolean> {
-  invalidateHistoryLoads();
+  const loadToken = ++historyLoadToken;
   state.replayInProgress = true;
   state.replayQueue = [];
   try {
@@ -228,6 +228,7 @@ export async function loadHistory(sid: string): Promise<boolean> {
     );
     if (!res.ok) return false;
     const body = (await res.json()) as Record<string, unknown>;
+    if (loadToken !== historyLoadToken) return false;
     const { events, streaming, hasMore } = normalizeEventsResponse(body);
 
     // Batch DOM operations: render into an offscreen fragment, then append once.
@@ -262,9 +263,11 @@ export async function loadHistory(sid: string): Promise<boolean> {
   } catch {
     return false;
   } finally {
-    state.replayTarget = null;
-    state.replayInProgress = false;
-    drainReplayQueue();
+    if (loadToken === historyLoadToken) {
+      state.replayTarget = null;
+      state.replayInProgress = false;
+      drainReplayQueue();
+    }
   }
 }
 
