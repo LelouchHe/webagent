@@ -1703,6 +1703,7 @@ describe("events", () => {
       assert.equal(state.lastEventSeq, 51);
       assert.equal(state.oldestLoadedSeq, 50);
       assert.equal(state.hasMoreHistory, true);
+      assert.equal(state.replayInProgress, false);
     });
 
     it("sets hasMoreHistory=false when all events fit in one page", async () => {
@@ -2200,6 +2201,58 @@ describe("events", () => {
   });
 
   describe("loadNewEvents", () => {
+    it("cannot overwrite a newer full-history load during a session switch", async () => {
+      let resolveIncremental!: (value: Response) => void;
+      const incrementalResponse = new Promise<Response>((resolve) => {
+        resolveIncremental = resolve;
+      });
+      globalThis.fetch = async (input) => {
+        const url =
+          typeof input === "string"
+            ? input
+            : input instanceof URL
+              ? input.href
+              : input.url;
+        if (url.includes("/old/events?after=")) return incrementalResponse;
+        return {
+          ok: true,
+          async json() {
+            return [
+              {
+                seq: 2,
+                type: "user_message",
+                data: JSON.stringify({ text: "new session" }),
+              },
+            ];
+          },
+        } as Response;
+      };
+      state.sessionId = "old";
+
+      const staleLoad = events.loadNewEvents("old");
+      state.sessionId = null;
+      const currentLoad = events.loadHistory("new");
+      await currentLoad;
+      resolveIncremental({
+        ok: true,
+        async json() {
+          return [
+            {
+              seq: 3,
+              type: "user_message",
+              data: JSON.stringify({ text: "stale incremental" }),
+            },
+          ];
+        },
+      } as Response);
+      const staleResult = await staleLoad;
+
+      assert.equal(staleResult, false);
+      assert.equal(dom.messages.textContent, "new session");
+      assert.equal(state.lastEventSeq, 2);
+      assert.equal(state.replayInProgress, false);
+    });
+
     it("appends new events without clearing existing DOM", async () => {
       // Simulate existing DOM from loadHistory
       events.replayEvent("user_message", { text: "old" }, [], 0);

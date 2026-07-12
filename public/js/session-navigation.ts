@@ -40,6 +40,7 @@ export async function switchToSession(
       getSession(sessionId),
       loadHistory(sessionId),
     ]);
+    if (generation !== state.sessionSwitchGen) return "ignored";
     await reloadSnapshot(sessionId);
     if (generation !== state.sessionSwitchGen) return "ignored";
     handleEvent({

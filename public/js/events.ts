@@ -219,7 +219,8 @@ function completePendingTurnUI() {
 const HISTORY_PAGE_SIZE = 200;
 
 export async function loadHistory(sid: string): Promise<boolean> {
-  const loadToken = ++historyLoadToken;
+  invalidateHistoryLoads();
+  const replayToken = ++replayLoadToken;
   state.replayInProgress = true;
   state.replayQueue = [];
   try {
@@ -228,7 +229,7 @@ export async function loadHistory(sid: string): Promise<boolean> {
     );
     if (!res.ok) return false;
     const body = (await res.json()) as Record<string, unknown>;
-    if (loadToken !== historyLoadToken) return false;
+    if (replayToken !== replayLoadToken) return false;
     const { events, streaming, hasMore } = normalizeEventsResponse(body);
 
     // Batch DOM operations: render into an offscreen fragment, then append once.
@@ -263,7 +264,7 @@ export async function loadHistory(sid: string): Promise<boolean> {
   } catch {
     return false;
   } finally {
-    if (loadToken === historyLoadToken) {
+    if (replayToken === replayLoadToken) {
       state.replayTarget = null;
       state.replayInProgress = false;
       drainReplayQueue();
@@ -376,6 +377,7 @@ export function loadNewEvents(sid: string): Promise<boolean> {
 
 // eslint-disable-next-line complexity -- TODO: refactor to reduce branching in replay logic
 async function _loadNewEventsImpl(sid: string): Promise<boolean> {
+  const replayToken = ++replayLoadToken;
   state.replayInProgress = true;
   state.replayQueue = [];
   // Cancel any pending streaming-render rAF so it doesn't fire later against
@@ -392,9 +394,17 @@ async function _loadNewEventsImpl(sid: string): Promise<boolean> {
     const url = `/api/v1/sessions/${sid}/events?after=${state.lastEventSeq}`;
     const res = await fetch(url);
     if (!res.ok) return false;
-    // Guard: if session switched while fetch was in-flight, discard stale results
-    if (state.sessionId && sid !== state.sessionId) return false;
+    if (
+      replayToken !== replayLoadToken ||
+      (state.sessionId && state.sessionId !== sid)
+    )
+      return false;
     const body = (await res.json()) as Record<string, unknown>;
+    if (
+      replayToken !== replayLoadToken ||
+      (state.sessionId && state.sessionId !== sid)
+    )
+      return false;
     const { events, streaming } = normalizeEventsResponse(body);
 
     // Revert primed elements to their DB-only content before boundary cleanup.
@@ -505,9 +515,11 @@ async function _loadNewEventsImpl(sid: string): Promise<boolean> {
   } catch {
     return false;
   } finally {
-    state.replayTarget = null;
-    state.replayInProgress = false;
-    drainReplayQueue();
+    if (replayToken === replayLoadToken) {
+      state.replayTarget = null;
+      state.replayInProgress = false;
+      drainReplayQueue();
+    }
   }
 }
 
@@ -515,6 +527,7 @@ async function _loadNewEventsImpl(sid: string): Promise<boolean> {
 
 let historySentinelObserver: IntersectionObserver | null = null;
 let historyLoadToken = 0;
+let replayLoadToken = 0;
 
 function invalidateHistoryLoads() {
   historyLoadToken++;
