@@ -721,6 +721,13 @@ function installHistorySentinel() {
   observeHistorySentinel();
 }
 
+function rearmHistoryObserverAfterSessionActivation() {
+  if (!state.hasMoreHistory || !document.getElementById("history-sentinel")) {
+    return;
+  }
+  observeHistorySentinel();
+}
+
 function removeHistorySentinel({ invalidateLoads = true } = {}) {
   if (invalidateLoads) invalidateHistoryLoads();
   disconnectHistoryObserver();
@@ -1299,6 +1306,7 @@ export function handleEvent(msg: AgentEvent) {
       state.awaitingNewSession = false;
       state.pendingNavigationSessionId = null;
       state.sessionId = msg.sessionId;
+      rearmHistoryObserverAfterSessionActivation();
       state.sessionCwd = msg.cwd ?? state.sessionCwd;
       state.sessionTitle = msg.title ?? null;
       if (msg.agentCommands) applyAgentCommandSnapshot(msg.agentCommands);

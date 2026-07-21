@@ -78,6 +78,73 @@ describe("events", () => {
         assert.equal(dom.status.getAttribute("aria-label"), "connected");
       });
 
+      it("rearms visible history sentinel after session activation", async () => {
+        const observers: Array<{
+          callback: (entries: Array<{ isIntersecting: boolean }>) => void;
+        }> = [];
+        const originalIntersectionObserver = (globalThis as any)
+          .IntersectionObserver;
+        (globalThis as any).IntersectionObserver =
+          class MockIntersectionObserver {
+            callback: (entries: Array<{ isIntersecting: boolean }>) => void;
+            constructor(
+              callback: (entries: Array<{ isIntersecting: boolean }>) => void,
+            ) {
+              this.callback = callback;
+              observers.push(this);
+            }
+            observe() {}
+            disconnect() {}
+          };
+
+        setFetch((url: string) => {
+          if (url.includes("before=5")) {
+            return Promise.resolve({ ok: false, status: 503 });
+          }
+          return Promise.resolve({
+            ok: true,
+            json: () =>
+              Promise.resolve({
+                events: [
+                  {
+                    seq: 5,
+                    type: "user_message",
+                    data: JSON.stringify({ text: "latest" }),
+                  },
+                ],
+                hasMore: true,
+              }),
+          });
+        });
+
+        try {
+          await events.loadHistory("s1");
+          assert.equal(state.sessionId, null);
+          assert.equal(observers.length, 1);
+
+          observers[0].callback([{ isIntersecting: true }]);
+          await Promise.resolve();
+          assert.equal(fetchCalls.length, 1);
+
+          state.pendingNavigationSessionId = "s1";
+          events.handleEvent({
+            type: "session_created",
+            sessionId: "s1",
+            configOptions: [],
+          });
+
+          assert.equal(observers.length, 2);
+          observers[1].callback([{ isIntersecting: true }]);
+          await Promise.resolve();
+          await Promise.resolve();
+          assert.equal(fetchCalls.length, 2);
+          assert.ok(fetchCalls[1].url.includes("before=5"));
+        } finally {
+          (globalThis as any).IntersectionObserver =
+            originalIntersectionObserver;
+        }
+      });
+
       it("ignores session_created from other clients when not awaiting", () => {
         state.sessionId = "existing";
         state.awaitingNewSession = false;
