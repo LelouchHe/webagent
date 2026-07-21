@@ -145,6 +145,50 @@ describe("events", () => {
         }
       });
 
+      it("does not rearm history sentinel for an active-session reconnect", async () => {
+        state.sessionId = "s1";
+        state.oldestLoadedSeq = 5;
+        state.hasMoreHistory = true;
+        const sentinel = document.createElement("div");
+        sentinel.id = "history-sentinel";
+        dom.messages.prepend(sentinel);
+
+        const observers: Array<{
+          callback: (entries: Array<{ isIntersecting: boolean }>) => void;
+        }> = [];
+        const originalIntersectionObserver = (globalThis as any)
+          .IntersectionObserver;
+        (globalThis as any).IntersectionObserver =
+          class MockIntersectionObserver {
+            callback: (entries: Array<{ isIntersecting: boolean }>) => void;
+            constructor(
+              callback: (entries: Array<{ isIntersecting: boolean }>) => void,
+            ) {
+              this.callback = callback;
+              observers.push(this);
+            }
+            observe() {}
+            disconnect() {}
+          };
+        setFetch(() => Promise.resolve({ ok: false, status: 503 }));
+
+        try {
+          await events.loadOlderEvents("s1");
+          assert.equal(observers.length, 1);
+
+          events.handleEvent({
+            type: "session_created",
+            sessionId: "s1",
+            configOptions: [],
+          });
+
+          assert.equal(observers.length, 1);
+        } finally {
+          (globalThis as any).IntersectionObserver =
+            originalIntersectionObserver;
+        }
+      });
+
       it("ignores session_created from other clients when not awaiting", () => {
         state.sessionId = "existing";
         state.awaitingNewSession = false;

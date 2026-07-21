@@ -1305,8 +1305,11 @@ export function handleEvent(msg: AgentEvent) {
       }
       state.awaitingNewSession = false;
       state.pendingNavigationSessionId = null;
-      state.sessionId = msg.sessionId;
-      rearmHistoryObserverAfterSessionActivation();
+      {
+        const isSessionActivation = state.sessionId === null;
+        state.sessionId = msg.sessionId;
+        if (isSessionActivation) rearmHistoryObserverAfterSessionActivation();
+      }
       state.sessionCwd = msg.cwd ?? state.sessionCwd;
       state.sessionTitle = msg.title ?? null;
       if (msg.agentCommands) applyAgentCommandSnapshot(msg.agentCommands);
