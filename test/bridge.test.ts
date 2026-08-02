@@ -498,6 +498,7 @@ describe("AgentBridge", () => {
 
   describe("restart()", () => {
     function createMockSessions() {
+      let plansCleared = false;
       return {
         liveSessions: new Set(["s1", "s2"]),
         restoringSessions: new Set<string>(),
@@ -522,6 +523,12 @@ describe("AgentBridge", () => {
           patch(_id: string, _p: unknown) {},
           delete(_id: string) {},
           clearCancelSafety(_id: string) {},
+          clearPlans() {
+            plansCleared = true;
+          },
+        },
+        get plansCleared() {
+          return plansCleared;
         },
       };
     }
@@ -586,6 +593,11 @@ describe("AgentBridge", () => {
         sessions.pendingPermissions.size,
         0,
         "pendingPermissions should be cleared",
+      );
+      assert.equal(
+        sessions.plansCleared,
+        true,
+        "runtime plans should be cleared",
       );
       assert.equal(
         sessions.assistantBuffers.size,

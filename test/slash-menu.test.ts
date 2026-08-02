@@ -109,6 +109,16 @@ describe("slash menu — Tab vs Click behavior", () => {
       sessionId: "s1",
       entries: [{ content: "Current work", status: "in_progress" }],
     });
+    events.handleEvent({
+      type: "state_patch",
+      sessionId: "s1",
+      seq: 1,
+      patch: {
+        runtime: {
+          plan: [{ content: "Current work", status: "in_progress" }],
+        },
+      },
+    });
     dom.input.value = "/plan ";
 
     commands.updateSlashMenu();
@@ -139,9 +149,10 @@ describe("slash menu — Tab vs Click behavior", () => {
   it("does not mark plan visibility current when no plan exists", async () => {
     const events = await import("../public/js/events.ts");
     events.handleEvent({
-      type: "prompt_done",
+      type: "state_patch",
       sessionId: "s1",
-      stopReason: "end_turn",
+      seq: state.lastStateSeq + 1,
+      patch: { runtime: { plan: null } },
     });
     dom.input.value = "/plan ";
 

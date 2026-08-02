@@ -20,6 +20,26 @@ describe("events", () => {
     };
   }
 
+  function applyPlanSnapshot(
+    plan: Array<{ content: string; status: string }> | null,
+    seq = 1,
+  ) {
+    stateMod.applySnapshot({
+      version: 1,
+      seq,
+      session: {
+        id: "s1",
+        title: null,
+        cwd: "/tmp",
+        model: null,
+        mode: null,
+        createdAt: null,
+        lastEventSeq: 0,
+      },
+      runtime: { busy: null, plan },
+    });
+  }
+
   before(async () => {
     setupDOM();
     stateMod = await import("../public/js/state.ts");
@@ -473,15 +493,28 @@ describe("events", () => {
     });
 
     describe("plan", () => {
+      function patchPlan(
+        entries: Array<{ content: string; status: string }> | null,
+      ) {
+        state.sessionId = "s1";
+        events.handleEvent({
+          type: "state_patch",
+          sessionId: "s1",
+          seq: state.lastStateSeq + 1,
+          patch: { runtime: { plan: entries } },
+        });
+      }
+
       it("renders plan with entries", () => {
         state.currentAssistantEl = globalThis.document.createElement("div");
+        const entries = [
+          { content: "Step 1", status: "completed" },
+          { content: "Step 2", status: "in_progress" },
+          { content: "Step 3", status: "pending" },
+        ];
         events.handleEvent({
           type: "plan",
-          entries: [
-            { content: "Step 1", status: "completed" },
-            { content: "Step 2", status: "in_progress" },
-            { content: "Step 3", status: "pending" },
-          ],
+          entries,
         });
         assert.equal(state.currentAssistantEl, null); // finishAssistant called
         const plan = dom.messages.querySelector(".plan") as HTMLDetailsElement;
@@ -499,6 +532,10 @@ describe("events", () => {
         const panel = document.querySelector(
           "#plan-panel",
         ) as HTMLDetailsElement;
+        assert.equal(panel.hidden, true);
+
+        patchPlan(entries);
+
         assert.equal(panel.hidden, false);
         assert.equal(panel.open, false);
         assert.equal(
@@ -513,10 +550,12 @@ describe("events", () => {
           type: "plan",
           entries: [{ content: "Old", status: "pending" }],
         });
+        patchPlan([{ content: "Old", status: "pending" }]);
         events.handleEvent({
           type: "plan",
           entries: [{ content: "New", status: "in_progress" }],
         });
+        patchPlan([{ content: "New", status: "in_progress" }]);
 
         const plans = Array.from(
           (dom.messages as HTMLElement).querySelectorAll<HTMLDetailsElement>(
@@ -537,6 +576,7 @@ describe("events", () => {
           type: "plan",
           entries: [{ content: "First", status: "in_progress" }],
         });
+        patchPlan([{ content: "First", status: "in_progress" }]);
         const panel = document.querySelector(
           "#plan-panel",
         ) as HTMLDetailsElement;
@@ -547,6 +587,7 @@ describe("events", () => {
           type: "plan",
           entries: [{ content: "Second", status: "in_progress" }],
         });
+        patchPlan([{ content: "Second", status: "in_progress" }]);
 
         assert.equal(panel.open, true);
         assert.equal(
@@ -560,10 +601,16 @@ describe("events", () => {
           type: "plan",
           entries: [{ content: "Working", status: "in_progress" }],
         });
+        patchPlan([{ content: "Working", status: "in_progress" }]);
         events.handleEvent({
           type: "plan",
           entries: [{ content: "Working", status: "completed" }],
         });
+        assert.equal(
+          document.querySelector("#plan-panel .plan-entry")?.textContent,
+          "[~] Working",
+        );
+        patchPlan(null);
 
         const panel = document.querySelector(
           "#plan-panel",
@@ -825,10 +872,21 @@ describe("events", () => {
         assert.equal(state.busy, false);
       });
 
-      it("removes the pinned plan so stale progress cannot linger", () => {
+      it("keeps the pinned plan across prompt_done for cross-turn work", () => {
+        state.sessionId = "s1";
         events.handleEvent({
           type: "plan",
           entries: [{ content: "Still shown", status: "in_progress" }],
+        });
+        events.handleEvent({
+          type: "state_patch",
+          sessionId: "s1",
+          seq: 1,
+          patch: {
+            runtime: {
+              plan: [{ content: "Still shown", status: "in_progress" }],
+            },
+          },
         });
         const panel = document.querySelector(
           "#plan-panel",
@@ -837,8 +895,11 @@ describe("events", () => {
 
         events.handleEvent({ type: "prompt_done" });
 
-        assert.equal(panel.hidden, true);
-        assert.equal(panel.textContent, "");
+        assert.equal(panel.hidden, false);
+        assert.equal(
+          panel.querySelector(".plan-entry")?.textContent,
+          "[~] Still shown",
+        );
       });
 
       it("clears busy on prompt_done even with in-flight tool calls", () => {
@@ -1885,7 +1946,7 @@ describe("events", () => {
       );
     });
 
-    it("restores an active pinned plan from current history", async () => {
+    it("keeps history plans transcript-only until snapshot hydration", async () => {
       const fakeEvents = [
         {
           seq: 1,
@@ -1902,11 +1963,8 @@ describe("events", () => {
         })) as any;
 
       assert.equal(await events.loadHistory("s1"), true);
-      assert.equal(dom.planPanel.hidden, false);
-      assert.equal(
-        dom.planPanel.querySelector(".plan-entry")?.textContent,
-        "[~] Reconnect work",
-      );
+      assert.equal(dom.planPanel.hidden, true);
+      assert.ok(dom.messages.textContent.includes("Reconnect work"));
     });
 
     it("does not restore a plan that completed before history ended", async () => {
@@ -1935,7 +1993,7 @@ describe("events", () => {
       assert.equal(dom.planPanel.textContent, "");
     });
 
-    it("restores a busy plan when paginated history starts mid-turn", async () => {
+    it("restores a plan from snapshot when history starts mid-turn", async () => {
       const fakeEvents = [
         {
           seq: 3,
@@ -1962,8 +2020,7 @@ describe("events", () => {
         })) as any;
 
       assert.equal(await events.loadHistory("s1"), true);
-      state.busy = true;
-      events.reconcilePlanPanelWithRuntime("s1");
+      applyPlanSnapshot([{ content: "New work", status: "in_progress" }]);
       assert.equal(dom.planPanel.hidden, false);
       assert.equal(
         dom.planPanel.querySelector(".plan-entry")?.textContent,
@@ -1971,7 +2028,7 @@ describe("events", () => {
       );
     });
 
-    it("does not let stale reconciliation replace a newer live plan", async () => {
+    it("does not let live history events bypass runtime plan state", async () => {
       globalThis.fetch = (() =>
         Promise.resolve({
           ok: true,
@@ -1987,31 +2044,46 @@ describe("events", () => {
             ]),
         })) as any;
       await events.loadHistory("s1");
+      applyPlanSnapshot([{ content: "Snapshot work", status: "in_progress" }]);
 
       events.handleEvent({
         type: "plan",
         entries: [{ content: "New live work", status: "in_progress" }],
       });
       state.sessionId = "s1";
-      state.busy = true;
-      events.reconcilePlanPanelWithRuntime("s1");
 
+      assert.equal(
+        dom.planPanel.querySelector(".plan-entry")?.textContent,
+        "[~] Snapshot work",
+      );
+
+      events.handleEvent({
+        type: "state_patch",
+        sessionId: "s1",
+        seq: 2,
+        patch: {
+          runtime: {
+            plan: [{ content: "New live work", status: "in_progress" }],
+          },
+        },
+      });
       assert.equal(
         dom.planPanel.querySelector(".plan-entry")?.textContent,
         "[~] New live work",
       );
     });
 
-    it("does not let another session's reconciliation clear this panel", () => {
+    it("does not let another session's state patch clear this panel", () => {
       state.sessionId = "current";
-      events.handleEvent({
-        type: "plan",
-        sessionId: "current",
-        entries: [{ content: "Current work", status: "in_progress" }],
-      });
-      state.busy = false;
+      applyPlanSnapshot([{ content: "Current work", status: "in_progress" }]);
+      state.sessionId = "current";
 
-      events.reconcilePlanPanelWithRuntime("stale");
+      events.handleEvent({
+        type: "state_patch",
+        sessionId: "stale",
+        seq: 2,
+        patch: { runtime: { plan: null } },
+      });
 
       assert.equal(dom.planPanel.hidden, false);
       assert.equal(
@@ -2137,10 +2209,7 @@ describe("events", () => {
     });
 
     it("does not let older plan history replace the current pinned plan", async () => {
-      events.handleEvent({
-        type: "plan",
-        entries: [{ content: "Current work", status: "in_progress" }],
-      });
+      applyPlanSnapshot([{ content: "Current work", status: "in_progress" }]);
       state.oldestLoadedSeq = 5;
       state.hasMoreHistory = true;
       state.sessionId = "s1";
@@ -2680,12 +2749,10 @@ describe("events", () => {
       );
     });
 
-    it("clears a live pinned plan when reconnect replay reaches prompt_done", async () => {
-      events.handleEvent({
-        type: "plan",
-        entries: [{ content: "Live work", status: "in_progress" }],
-      });
+    it("keeps runtime plan when reconnect history reaches prompt_done", async () => {
+      applyPlanSnapshot([{ content: "Live work", status: "in_progress" }]);
       state.lastEventSeq = 1;
+      events.replayEvent("user_message", { text: "old" }, [], 0);
       dom.messages.lastElementChild.setAttribute("data-sync-boundary", "");
       globalThis.fetch = (() =>
         Promise.resolve({
@@ -2701,11 +2768,14 @@ describe("events", () => {
         })) as any;
 
       assert.equal(await events.loadNewEvents("s1"), true);
-      assert.equal(dom.planPanel.hidden, true);
-      assert.equal(dom.planPanel.textContent, "");
+      assert.equal(dom.planPanel.hidden, false);
+      assert.equal(
+        dom.planPanel.querySelector(".plan-entry")?.textContent,
+        "[~] Live work",
+      );
     });
 
-    it("preserves a reconnect plan when the prior busy turn had no plan", async () => {
+    it("keeps reconnect plan history separate from snapshot state", async () => {
       state.busy = true;
       state.lastEventSeq = 1;
       events.replayEvent("user_message", { text: "old turn" }, [], 0);
@@ -2736,6 +2806,10 @@ describe("events", () => {
         })) as any;
 
       assert.equal(await events.loadNewEvents("s1"), true);
+      assert.equal(dom.planPanel.hidden, true);
+
+      applyPlanSnapshot([{ content: "New work", status: "in_progress" }]);
+
       assert.equal(dom.planPanel.hidden, false);
       assert.equal(
         dom.planPanel.querySelector(".plan-entry")?.textContent,

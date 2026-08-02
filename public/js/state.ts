@@ -5,6 +5,7 @@ import type {
   AgentCommandSnapshot,
   ConfigOption,
   AgentEvent,
+  PlanEntry,
 } from "../../src/types.ts";
 import {
   isPlanMode,
@@ -100,6 +101,7 @@ export const state = {
   currentThinkingEl: null as HTMLElement | null,
   currentThinkingText: "",
   busy: false,
+  plan: null as PlanEntry[] | null,
   pendingAttachments: [] as PendingAttachment[],
   currentBashEl: null as HTMLElement | null,
   followMessages: true,
@@ -284,6 +286,7 @@ export interface SessionSnapshot {
     } | null;
     pendingPermissions?: unknown[];
     streaming?: { assistant: boolean; thinking: boolean };
+    plan?: PlanEntry[] | null;
   };
   agentCommands?: AgentCommandSnapshot;
 }
@@ -295,7 +298,20 @@ export interface StatePatchPayload {
       since: string;
       promptId: string | null;
     } | null;
+    plan?: PlanEntry[] | null;
   };
+}
+
+let planStateApplier: (plan: PlanEntry[] | null) => void = () => {};
+export function setPlanStateApplier(
+  fn: (plan: PlanEntry[] | null) => void,
+): void {
+  planStateApplier = fn;
+}
+
+function applyRuntimePlan(plan: PlanEntry[] | null): void {
+  state.plan = plan?.map((entry) => ({ ...entry })) ?? null;
+  planStateApplier(state.plan);
 }
 
 /**
@@ -309,6 +325,7 @@ export function applySnapshot(snap: SessionSnapshot): void {
   const busy = snap.runtime.busy;
   setBusy(busy != null);
   if (busy == null) clearCancelTimer();
+  applyRuntimePlan(snap.runtime.plan ?? null);
   applyAgentCommandSnapshot(
     snap.agentCommands ?? { epoch: "", revision: 0, commands: [] },
   );
@@ -350,6 +367,7 @@ export function applyStatePatch(patchEvent: {
     setBusy(busy != null);
     if (busy == null) clearCancelTimer();
   }
+  if (r && "plan" in r) applyRuntimePlan(r.plan ?? null);
   return true;
 }
 
@@ -434,6 +452,7 @@ export function resetSessionUI({
   state.currentAssistantText = "";
   state.currentThinkingEl = null;
   state.currentThinkingText = "";
+  state.plan = null;
   state.pendingAttachments.length = 0;
   state.followMessages = true;
   state.pendingToolCallIds.clear();

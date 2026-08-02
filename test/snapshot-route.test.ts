@@ -91,7 +91,19 @@ describe("GET /api/v1/sessions/:id/snapshot", () => {
       assistant: false,
       thinking: false,
     });
+    assert.equal(body.runtime.plan, null);
     assert.equal(body.session.lastEventSeq, 0);
+  });
+
+  it("includes the current in-memory plan", async () => {
+    store.createSession("s1", "/tmp/cwd");
+    const plan = [{ content: "Continue work", status: "in_progress" }];
+    sessions.state.patch("s1", { runtime: { plan } });
+
+    const res = await req(port, "GET", "/api/v1/sessions/s1/snapshot");
+    const body = JSON.parse(res.body);
+
+    assert.deepEqual(body.runtime.plan, plan);
   });
 
   it("reflects agent busy when a prompt is active", async () => {

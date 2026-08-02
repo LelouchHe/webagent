@@ -7,7 +7,9 @@
 - Collapsible thinking process display
 - Tool call display (status animation, expandable details, diff rendering)
 - Agent execution plan display (pending `[ ]` / in-progress `[~]` / done
-  `[x]`) with a pinned, scrollable panel above the input
+  `[x]`) with a pinned, scrollable panel above the input. The current plan is
+  kept in server memory across turns and page refreshes, then cleared when all
+  entries complete or the agent bridge/service restarts.
 - Permission confirmation dialog for sensitive operations (Allow / Deny), synced across devices; auto-approved in autopilot mode
 - Smart scroll: force-scrolls on load/switch/send, soft auto-scroll during streaming
 

@@ -1,12 +1,14 @@
 /**
  * Per-session runtime state: single source of truth for "what state is this
- * session in right now" (busy / streaming / pending permissions).
+ * session in right now" (busy / streaming / pending permissions / plan).
  *
  * The frontend fetches a full snapshot on connect / reconnect / after long
  * backgrounding, then applies incremental `state_patch` SSE events. This
  * replaces the old "replay history + reconcile" approach which repeatedly
  * grew one-off sync paths per state field.
  */
+
+import type { PlanEntry } from "./types.ts";
 
 export type BusyKind = "agent" | "bash";
 
@@ -32,12 +34,14 @@ export interface Runtime {
   busy: BusyState | null;
   pendingPermissions: PendingPermission[];
   streaming: StreamingState;
+  plan: PlanEntry[] | null;
 }
 
 export interface RuntimePatch {
   busy?: BusyState | null;
   pendingPermissions?: PendingPermission[];
   streaming?: Partial<StreamingState>;
+  plan?: PlanEntry[] | null;
 }
 
 export interface StatePatch {
@@ -65,6 +69,7 @@ function defaultState(): SessionRuntimeState {
       busy: null,
       pendingPermissions: [],
       streaming: { assistant: false, thinking: false },
+      plan: null,
     },
   };
 }
@@ -98,6 +103,15 @@ function permsEqual(a: PendingPermission[], b: PendingPermission[]): boolean {
   return true;
 }
 
+function plansEqual(a: PlanEntry[] | null, b: PlanEntry[] | null): boolean {
+  if (a === null || b === null) return a === b;
+  if (a.length !== b.length) return false;
+  return a.every(
+    (entry, index) =>
+      entry.status === b[index].status && entry.content === b[index].content,
+  );
+}
+
 /** True when the patch would change the current runtime state. */
 function hasRuntimeChanges(
   current: Runtime,
@@ -111,6 +125,8 @@ function hasRuntimeChanges(
     patch.pendingPermissions &&
     !permsEqual(current.pendingPermissions, patch.pendingPermissions)
   )
+    return true;
+  if ("plan" in patch && !plansEqual(current.plan, patch.plan ?? null))
     return true;
   if ("streaming" in patch && patch.streaming) {
     const s = patch.streaming;
@@ -164,6 +180,10 @@ export class SessionStateManager {
         state.runtime.pendingPermissions =
           patch.runtime.pendingPermissions.slice();
       }
+      if ("plan" in patch.runtime) {
+        state.runtime.plan =
+          patch.runtime.plan?.map((entry) => ({ ...entry })) ?? null;
+      }
       if ("streaming" in patch.runtime && patch.runtime.streaming) {
         if (patch.runtime.streaming.assistant !== undefined) {
           state.runtime.streaming.assistant = patch.runtime.streaming.assistant;
@@ -199,6 +219,15 @@ export class SessionStateManager {
     if (t) {
       clearTimeout(t);
       this.cancelTimers.delete(sessionId);
+    }
+  }
+
+  /** Clear current plans for every known session (used on bridge reload). */
+  clearPlans(): void {
+    for (const [sessionId, state] of this.states) {
+      if (state.runtime.plan !== null) {
+        this.patch(sessionId, { runtime: { plan: null } });
+      }
     }
   }
 

@@ -64,5 +64,9 @@ test("active plans stay pinned above input and can be hidden or collapsed", asyn
   await expect(panel).not.toHaveAttribute("open");
 
   await page.locator("#send-btn").click();
+  await expect(panel).toBeVisible();
+
+  await page.locator("#input").fill("/plan hide");
+  await page.locator("#input").press("Enter");
   await expect(panel).toBeHidden();
 });

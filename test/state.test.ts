@@ -360,7 +360,7 @@ describe("state", () => {
       seq: number,
       busy: any,
       sessionExtras: Record<string, any> = {},
-    ) {
+    ): any {
       return {
         version: 1,
         seq,
@@ -391,6 +391,16 @@ describe("state", () => {
       mod.applySnapshot(snap(3, null));
       assert.equal(mod.state.busy, false);
       assert.equal(mod.state.lastStateSeq, 3);
+    });
+
+    it("applySnapshot installs the current runtime plan", () => {
+      const plan = [{ status: "in_progress", content: "Snapshot work" }];
+      const snapshot = snap(4, null);
+      snapshot.runtime.plan = plan;
+
+      mod.applySnapshot(snapshot);
+
+      assert.deepEqual(mod.state.plan, plan);
     });
 
     it("applyStatePatch applies in-order patch and bumps seq", () => {
@@ -429,6 +439,29 @@ describe("state", () => {
       });
       assert.equal(ok, true);
       assert.equal(mod.state.busy, false);
+    });
+
+    it("applyStatePatch replaces and clears the runtime plan", () => {
+      mod.state.lastStateSeq = 0;
+      const plan = [{ status: "pending", content: "Patch work" }];
+
+      assert.equal(
+        mod.applyStatePatch({
+          seq: 1,
+          patch: { runtime: { plan } },
+        }),
+        true,
+      );
+      assert.deepEqual(mod.state.plan, plan);
+
+      assert.equal(
+        mod.applyStatePatch({
+          seq: 2,
+          patch: { runtime: { plan: null } },
+        }),
+        true,
+      );
+      assert.equal(mod.state.plan, null);
     });
 
     it("reloadSnapshot applies fetched snapshot", async () => {

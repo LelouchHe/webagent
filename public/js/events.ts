@@ -60,12 +60,8 @@ import {
   type ContentEventType,
 } from "./render-event.ts";
 import { enhanceCodeBlocks } from "./highlight.ts";
-import type { AgentEvent, PlanEntry, StoredEvent } from "../../src/types.ts";
-import {
-  clearPlanPanel,
-  hasCurrentPlan,
-  updatePlanPanel,
-} from "./plan-panel.ts";
+import type { AgentEvent, StoredEvent } from "../../src/types.ts";
+import "./plan-panel.ts";
 
 /**
  * When the current session is gone (expired, deleted), try to switch to the
@@ -222,63 +218,6 @@ function completePendingTurnUI() {
 }
 
 const HISTORY_PAGE_SIZE = 200;
-let replayPlanCandidate:
-  | { sessionId: string; entries: PlanEntry[] }
-  | undefined;
-
-function syncPlanPanelFromReplay(
-  sessionId: string,
-  events: StoredEvent[],
-  resetCurrent: boolean,
-  activeBeforeReplay = false,
-): void {
-  let activeTurns = !resetCurrent && activeBeforeReplay ? 1 : 0;
-  if (resetCurrent) {
-    replayPlanCandidate = undefined;
-    clearPlanPanel();
-  }
-  for (const event of events) {
-    if (event.type === "user_message") {
-      activeTurns++;
-      replayPlanCandidate = undefined;
-    } else if (event.type === "plan") {
-      const data = JSON.parse(event.data) as { entries?: unknown };
-      if (Array.isArray(data.entries)) {
-        const entries = data.entries as PlanEntry[];
-        replayPlanCandidate =
-          entries.length > 0 &&
-          !entries.every((entry) => entry.status === "completed")
-            ? { sessionId, entries }
-            : undefined;
-        updatePlanPanel(entries);
-      }
-    } else if (event.type === "prompt_done") {
-      const data = JSON.parse(event.data) as { stopReason?: unknown };
-      if (data.stopReason === "cancelled" && activeTurns > 1) {
-        activeTurns--;
-        continue;
-      }
-      activeTurns = Math.max(0, activeTurns - 1);
-      if (data.stopReason !== "cancelled") replayPlanCandidate = undefined;
-      clearPlanPanel();
-    } else if (event.type === "error") {
-      activeTurns = 0;
-      replayPlanCandidate = undefined;
-      clearPlanPanel();
-    }
-  }
-}
-
-export function reconcilePlanPanelWithRuntime(sessionId: string): void {
-  if (state.sessionId && state.sessionId !== sessionId) return;
-  if (!state.busy) {
-    clearPlanPanel();
-    return;
-  }
-  if (replayPlanCandidate?.sessionId === sessionId) {
-    updatePlanPanel(replayPlanCandidate.entries);
-  }
-}
 
 export async function loadHistory(sid: string): Promise<boolean> {
   invalidateHistoryLoads();
@@ -304,7 +243,6 @@ export async function loadHistory(sid: string): Promise<boolean> {
       replayEvent(events[i].type, data, events, i, ri);
     }
     state.replayTarget = null;
-    syncPlanPanelFromReplay(sid, events, true);
 
     // Hide container to avoid layout during append, then show
     dom.messages.style.display = "none";
@@ -527,14 +465,12 @@ async function _loadNewEventsImpl(sid: string): Promise<boolean> {
     // Batch DOM operations into a fragment to avoid per-element reflow
     const fragment = document.createDocumentFragment();
     const ri = createReplayIndex(events);
-    const activeBeforeReplay = state.busy || hasCurrentPlan();
     state.replayTarget = fragment;
     for (let i = 0; i < events.length; i++) {
       const data = JSON.parse(events[i].data) as Record<string, unknown>;
       replayEvent(events[i].type, data, events, i, ri);
     }
     state.replayTarget = null;
-    syncPlanPanelFromReplay(sid, events, false, activeBeforeReplay);
 
     // Post-merge: if the last DOM element and first fragment child are the same
     // type (both assistant or both thinking), merge them to avoid split bubbles
@@ -819,7 +755,6 @@ async function fetchOlderEventsPage(
 onSessionReset(removeHistorySentinel);
 onSessionReset(() => {
   replayLoadToken++;
-  replayPlanCandidate = undefined;
 });
 
 export async function loadOlderEvents(sid: string): Promise<boolean> {
@@ -1423,7 +1358,6 @@ export function handleEvent(msg: AgentEvent) {
       break;
 
     case "user_message": {
-      replayPlanCandidate = undefined;
       // SSE broadcasts to all clients including the sender (unlike WS which
       // excluded the sender). Detect our own echo and skip it — we already
       // rendered the message and set busy in sendPrompt().
@@ -1497,7 +1431,6 @@ export function handleEvent(msg: AgentEvent) {
     }
 
     case "plan": {
-      replayPlanCandidate = undefined;
       finishThinking();
       finishAssistant();
       const el = renderContentEvent("plan", msg, liveHooks());
@@ -1505,7 +1438,6 @@ export function handleEvent(msg: AgentEvent) {
         collapseOpenPlans(dom.messages);
         appendMessageElement(el);
       }
-      if (Array.isArray(msg.entries)) updatePlanPanel(msg.entries);
       break;
     }
 
@@ -1602,8 +1534,6 @@ export function handleEvent(msg: AgentEvent) {
         break;
       }
       state.newTurnStarted = false;
-      replayPlanCandidate = undefined;
-      clearPlanPanel();
       if (msg.stopReason === "cancelled") {
         cancelPendingTurnUI();
       } else {
@@ -1673,8 +1603,6 @@ export function handleEvent(msg: AgentEvent) {
 
     case "error":
       state.awaitingNewSession = false;
-      replayPlanCandidate = undefined;
-      clearPlanPanel();
       state.pendingToolCallIds.clear();
       state.pendingPermissionRequestIds.clear();
       state.pendingPromptDone = false;

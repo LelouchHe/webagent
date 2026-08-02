@@ -162,6 +162,17 @@ describe("commands", () => {
         type: "plan",
         entries: [{ content: "Implement panel", status: "in_progress" }],
       });
+      state.sessionId = "s1";
+      events.handleEvent({
+        type: "state_patch",
+        sessionId: "s1",
+        seq: 1,
+        patch: {
+          runtime: {
+            plan: [{ content: "Implement panel", status: "in_progress" }],
+          },
+        },
+      });
       const panel = document.querySelector("#plan-panel") as HTMLDetailsElement;
       assert.equal(panel.hidden, false);
 
@@ -170,6 +181,16 @@ describe("commands", () => {
       events.handleEvent({
         type: "plan",
         entries: [{ content: "Updated while hidden", status: "in_progress" }],
+      });
+      events.handleEvent({
+        type: "state_patch",
+        sessionId: "s1",
+        seq: 2,
+        patch: {
+          runtime: {
+            plan: [{ content: "Updated while hidden", status: "in_progress" }],
+          },
+        },
       });
       assert.equal(panel.hidden, true);
       assert.equal(await commands.handleSlashCommand("/plan show"), true);

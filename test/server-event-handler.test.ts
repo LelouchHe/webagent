@@ -134,6 +134,55 @@ describe("handleAgentEvent", () => {
     assert.equal(broadcasted.length, 1);
   });
 
+  it("stores plan history and updates the current runtime plan", () => {
+    store.createSession("s1", "/tmp");
+    const { bridge } = createMockBridge();
+    const { sseManager, broadcasted } = createMockSseManager();
+    const entries = [
+      { content: "Implement state", status: "in_progress" },
+      { content: "Verify clients", status: "pending" },
+    ];
+
+    handleAgentEvent(
+      { type: "plan", sessionId: "s1", entries },
+      sessions,
+      store,
+      bridge,
+      makeEventHandlerConfig(),
+      sseManager as any,
+    );
+
+    assert.deepEqual(sessions.state.getState("s1").runtime.plan, entries);
+    assert.ok(store.getEvents("s1").some((event) => event.type === "plan"));
+    assert.equal(broadcasted.at(-1)?.type, "plan");
+  });
+
+  it("clears runtime plan when every entry is completed", () => {
+    store.createSession("s1", "/tmp");
+    sessions.state.patch("s1", {
+      runtime: {
+        plan: [{ content: "Old work", status: "in_progress" }],
+      },
+    });
+    const { bridge } = createMockBridge();
+    const { sseManager } = createMockSseManager();
+
+    handleAgentEvent(
+      {
+        type: "plan",
+        sessionId: "s1",
+        entries: [{ content: "Old work", status: "completed" }],
+      },
+      sessions,
+      store,
+      bridge,
+      makeEventHandlerConfig(),
+      sseManager as any,
+    );
+
+    assert.equal(sessions.state.getState("s1").runtime.plan, null);
+  });
+
   it("saves prompt_done and clears active prompt", () => {
     store.createSession("s1", "/tmp");
     sessions.activePrompts.add("s1");
@@ -153,6 +202,48 @@ describe("handleAgentEvent", () => {
     const events = store.getEvents("s1");
     assert.ok(events.some((e) => e.type === "prompt_done"));
     assert.equal(broadcasted.length, 1);
+  });
+
+  it("keeps runtime plan across prompt_done for cross-turn work", () => {
+    store.createSession("s1", "/tmp");
+    const plan = [{ content: "Continue later", status: "in_progress" }];
+    sessions.state.patch("s1", { runtime: { plan } });
+    sessions.activePrompts.add("s1");
+    const { bridge } = createMockBridge();
+    const { sseManager } = createMockSseManager();
+
+    handleAgentEvent(
+      { type: "prompt_done", sessionId: "s1", stopReason: "end_turn" } as any,
+      sessions,
+      store,
+      bridge,
+      makeEventHandlerConfig(),
+      sseManager as any,
+    );
+
+    assert.deepEqual(sessions.state.getState("s1").runtime.plan, plan);
+  });
+
+  it("clears runtime plans when the agent disconnects", () => {
+    store.createSession("s1", "/tmp");
+    sessions.state.patch("s1", {
+      runtime: {
+        plan: [{ content: "Interrupted work", status: "in_progress" }],
+      },
+    });
+    const { bridge } = createMockBridge();
+    const { sseManager } = createMockSseManager();
+
+    handleAgentEvent(
+      { type: "agent_disconnected", error: "agent exited" } as any,
+      sessions,
+      store,
+      bridge,
+      makeEventHandlerConfig(),
+      sseManager as any,
+    );
+
+    assert.equal(sessions.state.getState("s1").runtime.plan, null);
   });
 
   it("caches config options from session_created", () => {

@@ -584,6 +584,7 @@ All state lives in `state.ts` as a single mutable object. No state management li
 | `sessionCwd`             | string         | Working directory                            |
 | `configOptions`          | ConfigOption[] | Model, mode, reasoning_effort options        |
 | `busy`                   | boolean        | Agent or bash is running                     |
+| `plan`                   | PlanEntry[]     | Current server-memory plan from runtime state |
 | `currentAssistantEl`     | HTMLElement    | In-progress streaming message element        |
 | `currentAssistantText`   | string         | Accumulated streamed text                    |
 | `lastEventSeq`           | number         | Last event seq from history/incremental load |

@@ -190,7 +190,8 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - tool-call render and completion state
   - task_complete summary rendering (visible, not collapsed) with ✔ icon
   - plan transcript render (collapsed by default), pinned input panel updates,
-    status colors/icons, panel show/hide, and stale-panel cleanup
+    status colors/icons, panel show/hide, snapshot/state-patch restoration, and
+    cross-turn retention
   - permission request / response / resolution handling
   - bash command / output / completion handling
   - prompt completion rules
@@ -467,7 +468,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
     collapsed
   - active pinned plan recovery after page reload
   - panel collapse state and `/plan hide` / `/plan show`
-  - pinned plan cleanup when the prompt ends
+  - pinned plan survives prompt cancellation until explicitly hidden
 
 - `autopilot-permission.spec.ts`
   - autopilot auto-approves permissions

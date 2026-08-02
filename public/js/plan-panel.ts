@@ -1,5 +1,5 @@
 import type { PlanEntry } from "../../src/types.ts";
-import { dom, onSessionReset } from "./state.ts";
+import { dom, onSessionReset, setPlanStateApplier } from "./state.ts";
 import { buildPlanElement } from "./plan-view.ts";
 
 type PlanPanelAction = "show" | "hide" | "toggle";
@@ -76,3 +76,7 @@ dom.planPanel.addEventListener("click", (event) => {
 });
 
 onSessionReset(clearPlanPanel);
+setPlanStateApplier((plan) => {
+  if (plan) updatePlanPanel(plan);
+  else clearPlanPanel();
+});

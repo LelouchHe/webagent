@@ -111,7 +111,14 @@ function handlePlan(
 ): void {
   sessions.flushBuffers(event.sessionId);
   sessions.state.patch(event.sessionId, {
-    runtime: { streaming: { assistant: false, thinking: false } },
+    runtime: {
+      streaming: { assistant: false, thinking: false },
+      plan:
+        event.entries.length > 0 &&
+        !event.entries.every((entry) => entry.status === "completed")
+          ? event.entries
+          : null,
+    },
   });
   store.saveEvent(
     event.sessionId,
@@ -405,6 +412,7 @@ export function handleAgentEvent(
     return;
   }
   if (event.type === "agent_reloading" || event.type === "agent_disconnected") {
+    sessions.state.clearPlans();
     for (const snapshot of sessions.clearAgentCommands()) {
       sseManager.broadcast({
         type: "available_commands_update",

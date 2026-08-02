@@ -245,4 +245,52 @@ describe("SessionStateManager", () => {
       assert.equal(sm.getState("s1").seq, seqBefore);
     });
   });
+
+  describe("plan", () => {
+    const activePlan = [
+      { status: "in_progress", content: "Implement runtime plan" },
+      { status: "pending", content: "Verify clients" },
+    ];
+
+    it("is null by default", () => {
+      assert.equal(sm.getState("s1").runtime.plan, null);
+    });
+
+    it("replaces the full plan and broadcasts a patch", () => {
+      const events: StatePatchEvent[] = [];
+      sm.onPatch((event) => events.push(event));
+
+      sm.patch("s1", { runtime: { plan: activePlan } });
+
+      assert.deepEqual(sm.getState("s1").runtime.plan, activePlan);
+      assert.deepEqual(events[0].patch.runtime?.plan, activePlan);
+    });
+
+    it("is a no-op when plan content is unchanged", () => {
+      sm.patch("s1", { runtime: { plan: activePlan } });
+      const seqBefore = sm.getState("s1").seq;
+
+      sm.patch("s1", { runtime: { plan: activePlan } });
+
+      assert.equal(sm.getState("s1").seq, seqBefore);
+    });
+
+    it("clears the current plan with null", () => {
+      sm.patch("s1", { runtime: { plan: activePlan } });
+
+      sm.patch("s1", { runtime: { plan: null } });
+
+      assert.equal(sm.getState("s1").runtime.plan, null);
+    });
+
+    it("clearPlans clears every current plan", () => {
+      sm.patch("s1", { runtime: { plan: activePlan } });
+      sm.patch("s2", { runtime: { plan: activePlan } });
+
+      sm.clearPlans();
+
+      assert.equal(sm.getState("s1").runtime.plan, null);
+      assert.equal(sm.getState("s2").runtime.plan, null);
+    });
+  });
 });
