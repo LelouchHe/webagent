@@ -1885,6 +1885,56 @@ describe("events", () => {
       );
     });
 
+    it("restores an active pinned plan from current history", async () => {
+      const fakeEvents = [
+        {
+          seq: 1,
+          type: "plan",
+          data: JSON.stringify({
+            entries: [{ content: "Reconnect work", status: "in_progress" }],
+          }),
+        },
+      ];
+      globalThis.fetch = (() =>
+        Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve(fakeEvents),
+        })) as any;
+
+      assert.equal(await events.loadHistory("s1"), true);
+      assert.equal(dom.planPanel.hidden, false);
+      assert.equal(
+        dom.planPanel.querySelector(".plan-entry")?.textContent,
+        "[~] Reconnect work",
+      );
+    });
+
+    it("does not restore a plan that completed before history ended", async () => {
+      const fakeEvents = [
+        {
+          seq: 1,
+          type: "plan",
+          data: JSON.stringify({
+            entries: [{ content: "Old work", status: "in_progress" }],
+          }),
+        },
+        {
+          seq: 2,
+          type: "prompt_done",
+          data: JSON.stringify({ stopReason: "end_turn" }),
+        },
+      ];
+      globalThis.fetch = (() =>
+        Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve(fakeEvents),
+        })) as any;
+
+      assert.equal(await events.loadHistory("s1"), true);
+      assert.equal(dom.planPanel.hidden, true);
+      assert.equal(dom.planPanel.textContent, "");
+    });
+
     it("sends limit parameter in fetch URL", async () => {
       let capturedUrl = "";
       globalThis.fetch = ((url: string) => {
@@ -1999,6 +2049,39 @@ describe("events", () => {
       assert.equal(state.hasMoreHistory, true);
       // Should have 4 children: 2 prepended + 2 original
       assert.equal(dom.messages.children.length, 4);
+    });
+
+    it("does not let older plan history replace the current pinned plan", async () => {
+      events.handleEvent({
+        type: "plan",
+        entries: [{ content: "Current work", status: "in_progress" }],
+      });
+      state.oldestLoadedSeq = 5;
+      state.hasMoreHistory = true;
+      state.sessionId = "s1";
+      globalThis.fetch = (() =>
+        Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              events: [
+                {
+                  seq: 4,
+                  type: "plan",
+                  data: JSON.stringify({
+                    entries: [{ content: "Old work", status: "pending" }],
+                  }),
+                },
+              ],
+              hasMore: false,
+            }),
+        })) as any;
+
+      assert.equal(await events.loadOlderEvents("s1"), true);
+      assert.equal(
+        dom.planPanel.querySelector(".plan-entry")?.textContent,
+        "[~] Current work",
+      );
     });
 
     it("preserves the current visual anchor when prepending older events", async () => {
@@ -2510,6 +2593,31 @@ describe("events", () => {
       assert.ok(
         dom.messages.lastElementChild.hasAttribute("data-sync-boundary"),
       );
+    });
+
+    it("clears a live pinned plan when reconnect replay reaches prompt_done", async () => {
+      events.handleEvent({
+        type: "plan",
+        entries: [{ content: "Live work", status: "in_progress" }],
+      });
+      state.lastEventSeq = 1;
+      dom.messages.lastElementChild.setAttribute("data-sync-boundary", "");
+      globalThis.fetch = (() =>
+        Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve([
+              {
+                seq: 2,
+                type: "prompt_done",
+                data: JSON.stringify({ stopReason: "end_turn" }),
+              },
+            ]),
+        })) as any;
+
+      assert.equal(await events.loadNewEvents("s1"), true);
+      assert.equal(dom.planPanel.hidden, true);
+      assert.equal(dom.planPanel.textContent, "");
     });
 
     it("removes post-boundary live elements before replaying", async () => {

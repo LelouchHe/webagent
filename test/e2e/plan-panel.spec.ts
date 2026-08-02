@@ -25,6 +25,10 @@ test("active plans stay pinned above input and can be hidden or collapsed", asyn
   });
   expect(panelStyles).toEqual({ maxHeight: "180px", overflowY: "auto" });
 
+  await page.reload();
+  await expect(panel).toBeVisible();
+  await expect(panel.locator(".plan-counts")).toHaveText("[ ] 1  [~] 1  [x] 1");
+
   await panel.locator(".plan-summary").click();
   await expect(panel).not.toHaveAttribute("open");
 

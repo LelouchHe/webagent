@@ -465,6 +465,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
 - `plan-panel.spec.ts`
   - live ACP plans stay pinned above the input while transcript plans remain
     collapsed
+  - active pinned plan recovery after page reload
   - panel collapse state and `/plan hide` / `/plan show`
   - pinned plan cleanup when the prompt ends
 

@@ -60,7 +60,7 @@ import {
   type ContentEventType,
 } from "./render-event.ts";
 import { enhanceCodeBlocks } from "./highlight.ts";
-import type { AgentEvent, StoredEvent } from "../../src/types.ts";
+import type { AgentEvent, PlanEntry, StoredEvent } from "../../src/types.ts";
 import { clearPlanPanel, updatePlanPanel } from "./plan-panel.ts";
 
 /**
@@ -219,6 +219,23 @@ function completePendingTurnUI() {
 
 const HISTORY_PAGE_SIZE = 200;
 
+function syncPlanPanelFromReplay(
+  events: StoredEvent[],
+  resetCurrent: boolean,
+): void {
+  if (resetCurrent) clearPlanPanel();
+  for (const event of events) {
+    if (event.type === "plan") {
+      const data = JSON.parse(event.data) as { entries?: unknown };
+      if (Array.isArray(data.entries)) {
+        updatePlanPanel(data.entries as PlanEntry[]);
+      }
+    } else if (event.type === "prompt_done" || event.type === "error") {
+      clearPlanPanel();
+    }
+  }
+}
+
 export async function loadHistory(sid: string): Promise<boolean> {
   invalidateHistoryLoads();
   const replayToken = ++replayLoadToken;
@@ -243,6 +260,7 @@ export async function loadHistory(sid: string): Promise<boolean> {
       replayEvent(events[i].type, data, events, i, ri);
     }
     state.replayTarget = null;
+    syncPlanPanelFromReplay(events, true);
 
     // Hide container to avoid layout during append, then show
     dom.messages.style.display = "none";
@@ -471,6 +489,7 @@ async function _loadNewEventsImpl(sid: string): Promise<boolean> {
       replayEvent(events[i].type, data, events, i, ri);
     }
     state.replayTarget = null;
+    syncPlanPanelFromReplay(events, false);
 
     // Post-merge: if the last DOM element and first fragment child are the same
     // type (both assistant or both thinking), merge them to avoid split bubbles
