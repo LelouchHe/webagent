@@ -55,6 +55,10 @@ export function controlPlanPanel(action: PlanPanelAction): boolean {
   return true;
 }
 
+export function hasCurrentPlan(): boolean {
+  return currentEntries !== null;
+}
+
 dom.planPanel.addEventListener("click", (event) => {
   const target = event.target;
   if (!(target instanceof HTMLElement) || !target.closest(".plan-summary"))

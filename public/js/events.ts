@@ -61,7 +61,11 @@ import {
 } from "./render-event.ts";
 import { enhanceCodeBlocks } from "./highlight.ts";
 import type { AgentEvent, PlanEntry, StoredEvent } from "../../src/types.ts";
-import { clearPlanPanel, updatePlanPanel } from "./plan-panel.ts";
+import {
+  clearPlanPanel,
+  hasCurrentPlan,
+  updatePlanPanel,
+} from "./plan-panel.ts";
 
 /**
  * When the current session is gone (expired, deleted), try to switch to the
@@ -223,14 +227,26 @@ function syncPlanPanelFromReplay(
   events: StoredEvent[],
   resetCurrent: boolean,
 ): void {
+  let activeTurns = !resetCurrent && hasCurrentPlan() ? 1 : 0;
   if (resetCurrent) clearPlanPanel();
   for (const event of events) {
-    if (event.type === "plan") {
+    if (event.type === "user_message") {
+      activeTurns++;
+    } else if (event.type === "plan") {
       const data = JSON.parse(event.data) as { entries?: unknown };
       if (Array.isArray(data.entries)) {
         updatePlanPanel(data.entries as PlanEntry[]);
       }
-    } else if (event.type === "prompt_done" || event.type === "error") {
+    } else if (event.type === "prompt_done") {
+      const data = JSON.parse(event.data) as { stopReason?: unknown };
+      if (data.stopReason === "cancelled" && activeTurns > 1) {
+        activeTurns--;
+        continue;
+      }
+      activeTurns = Math.max(0, activeTurns - 1);
+      clearPlanPanel();
+    } else if (event.type === "error") {
+      activeTurns = 0;
       clearPlanPanel();
     }
   }

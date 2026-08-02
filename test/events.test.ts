@@ -1935,6 +1935,52 @@ describe("events", () => {
       assert.equal(dom.planPanel.textContent, "");
     });
 
+    it("keeps a newer plan when history ends with an older turn's stale cancel", async () => {
+      const fakeEvents = [
+        {
+          seq: 1,
+          type: "user_message",
+          data: JSON.stringify({ text: "old turn" }),
+        },
+        {
+          seq: 2,
+          type: "plan",
+          data: JSON.stringify({
+            entries: [{ content: "Old work", status: "in_progress" }],
+          }),
+        },
+        {
+          seq: 3,
+          type: "user_message",
+          data: JSON.stringify({ text: "new turn" }),
+        },
+        {
+          seq: 4,
+          type: "plan",
+          data: JSON.stringify({
+            entries: [{ content: "New work", status: "in_progress" }],
+          }),
+        },
+        {
+          seq: 5,
+          type: "prompt_done",
+          data: JSON.stringify({ stopReason: "cancelled" }),
+        },
+      ];
+      globalThis.fetch = (() =>
+        Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve(fakeEvents),
+        })) as any;
+
+      assert.equal(await events.loadHistory("s1"), true);
+      assert.equal(dom.planPanel.hidden, false);
+      assert.equal(
+        dom.planPanel.querySelector(".plan-entry")?.textContent,
+        "[~] New work",
+      );
+    });
+
     it("sends limit parameter in fetch URL", async () => {
       let capturedUrl = "";
       globalThis.fetch = ((url: string) => {
@@ -2618,6 +2664,46 @@ describe("events", () => {
       assert.equal(await events.loadNewEvents("s1"), true);
       assert.equal(dom.planPanel.hidden, true);
       assert.equal(dom.planPanel.textContent, "");
+    });
+
+    it("preserves a new reconnect plan across an older turn's stale cancel", async () => {
+      events.handleEvent({
+        type: "plan",
+        entries: [{ content: "Old live work", status: "in_progress" }],
+      });
+      state.lastEventSeq = 1;
+      dom.messages.lastElementChild.setAttribute("data-sync-boundary", "");
+      globalThis.fetch = (() =>
+        Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve([
+              {
+                seq: 2,
+                type: "user_message",
+                data: JSON.stringify({ text: "new turn" }),
+              },
+              {
+                seq: 3,
+                type: "plan",
+                data: JSON.stringify({
+                  entries: [{ content: "New work", status: "in_progress" }],
+                }),
+              },
+              {
+                seq: 4,
+                type: "prompt_done",
+                data: JSON.stringify({ stopReason: "cancelled" }),
+              },
+            ]),
+        })) as any;
+
+      assert.equal(await events.loadNewEvents("s1"), true);
+      assert.equal(dom.planPanel.hidden, false);
+      assert.equal(
+        dom.planPanel.querySelector(".plan-entry")?.textContent,
+        "[~] New work",
+      );
     });
 
     it("removes post-boundary live elements before replaying", async () => {
