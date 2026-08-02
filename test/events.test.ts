@@ -1935,20 +1935,8 @@ describe("events", () => {
       assert.equal(dom.planPanel.textContent, "");
     });
 
-    it("keeps a newer plan when history ends with an older turn's stale cancel", async () => {
+    it("restores a busy plan when paginated history starts mid-turn", async () => {
       const fakeEvents = [
-        {
-          seq: 1,
-          type: "user_message",
-          data: JSON.stringify({ text: "old turn" }),
-        },
-        {
-          seq: 2,
-          type: "plan",
-          data: JSON.stringify({
-            entries: [{ content: "Old work", status: "in_progress" }],
-          }),
-        },
         {
           seq: 3,
           type: "user_message",
@@ -1974,6 +1962,8 @@ describe("events", () => {
         })) as any;
 
       assert.equal(await events.loadHistory("s1"), true);
+      state.busy = true;
+      events.reconcilePlanPanelWithRuntime("s1");
       assert.equal(dom.planPanel.hidden, false);
       assert.equal(
         dom.planPanel.querySelector(".plan-entry")?.textContent,
@@ -2666,12 +2656,10 @@ describe("events", () => {
       assert.equal(dom.planPanel.textContent, "");
     });
 
-    it("preserves a new reconnect plan across an older turn's stale cancel", async () => {
-      events.handleEvent({
-        type: "plan",
-        entries: [{ content: "Old live work", status: "in_progress" }],
-      });
+    it("preserves a reconnect plan when the prior busy turn had no plan", async () => {
+      state.busy = true;
       state.lastEventSeq = 1;
+      events.replayEvent("user_message", { text: "old turn" }, [], 0);
       dom.messages.lastElementChild.setAttribute("data-sync-boundary", "");
       globalThis.fetch = (() =>
         Promise.resolve({

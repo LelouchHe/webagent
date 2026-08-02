@@ -222,20 +222,35 @@ function completePendingTurnUI() {
 }
 
 const HISTORY_PAGE_SIZE = 200;
+let replayPlanCandidate:
+  | { sessionId: string; entries: PlanEntry[] }
+  | undefined;
 
 function syncPlanPanelFromReplay(
+  sessionId: string,
   events: StoredEvent[],
   resetCurrent: boolean,
+  activeBeforeReplay = false,
 ): void {
-  let activeTurns = !resetCurrent && hasCurrentPlan() ? 1 : 0;
-  if (resetCurrent) clearPlanPanel();
+  let activeTurns = !resetCurrent && activeBeforeReplay ? 1 : 0;
+  if (resetCurrent) {
+    replayPlanCandidate = undefined;
+    clearPlanPanel();
+  }
   for (const event of events) {
     if (event.type === "user_message") {
       activeTurns++;
+      replayPlanCandidate = undefined;
     } else if (event.type === "plan") {
       const data = JSON.parse(event.data) as { entries?: unknown };
       if (Array.isArray(data.entries)) {
-        updatePlanPanel(data.entries as PlanEntry[]);
+        const entries = data.entries as PlanEntry[];
+        replayPlanCandidate =
+          entries.length > 0 &&
+          !entries.every((entry) => entry.status === "completed")
+            ? { sessionId, entries }
+            : undefined;
+        updatePlanPanel(entries);
       }
     } else if (event.type === "prompt_done") {
       const data = JSON.parse(event.data) as { stopReason?: unknown };
@@ -244,11 +259,23 @@ function syncPlanPanelFromReplay(
         continue;
       }
       activeTurns = Math.max(0, activeTurns - 1);
+      if (data.stopReason !== "cancelled") replayPlanCandidate = undefined;
       clearPlanPanel();
     } else if (event.type === "error") {
       activeTurns = 0;
+      replayPlanCandidate = undefined;
       clearPlanPanel();
     }
+  }
+}
+
+export function reconcilePlanPanelWithRuntime(sessionId: string): void {
+  if (!state.busy) {
+    clearPlanPanel();
+    return;
+  }
+  if (replayPlanCandidate?.sessionId === sessionId) {
+    updatePlanPanel(replayPlanCandidate.entries);
   }
 }
 
@@ -276,7 +303,7 @@ export async function loadHistory(sid: string): Promise<boolean> {
       replayEvent(events[i].type, data, events, i, ri);
     }
     state.replayTarget = null;
-    syncPlanPanelFromReplay(events, true);
+    syncPlanPanelFromReplay(sid, events, true);
 
     // Hide container to avoid layout during append, then show
     dom.messages.style.display = "none";
@@ -499,13 +526,14 @@ async function _loadNewEventsImpl(sid: string): Promise<boolean> {
     // Batch DOM operations into a fragment to avoid per-element reflow
     const fragment = document.createDocumentFragment();
     const ri = createReplayIndex(events);
+    const activeBeforeReplay = state.busy || hasCurrentPlan();
     state.replayTarget = fragment;
     for (let i = 0; i < events.length; i++) {
       const data = JSON.parse(events[i].data) as Record<string, unknown>;
       replayEvent(events[i].type, data, events, i, ri);
     }
     state.replayTarget = null;
-    syncPlanPanelFromReplay(events, false);
+    syncPlanPanelFromReplay(sid, events, false, activeBeforeReplay);
 
     // Post-merge: if the last DOM element and first fragment child are the same
     // type (both assistant or both thinking), merge them to avoid split bubbles
@@ -790,6 +818,7 @@ async function fetchOlderEventsPage(
 onSessionReset(removeHistorySentinel);
 onSessionReset(() => {
   replayLoadToken++;
+  replayPlanCandidate = undefined;
 });
 
 export async function loadOlderEvents(sid: string): Promise<boolean> {
