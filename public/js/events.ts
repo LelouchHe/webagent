@@ -80,7 +80,7 @@ export async function fallbackToNextSession(
     const next = sessions.find((s) => s.id !== expiredId);
     if (next) {
       resetSessionUI();
-      state.sessionId = null;
+      state.sessionId = next.id;
       setHashSessionId(next.id);
       const [session, loaded] = await Promise.all([
         api.getSession(next.id),

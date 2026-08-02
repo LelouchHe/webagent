@@ -1244,6 +1244,81 @@ describe("events", () => {
         assert.equal(state.awaitingNewSession, true);
       });
 
+      it("keeps a newer target-session patch over an in-flight fallback snapshot", async () => {
+        state.sessionId = "s1";
+        const nextSession = {
+          id: "s2",
+          cwd: "/next",
+          title: null,
+          configOptions: [],
+          busyKind: null,
+        };
+        let resolveSnapshot!: () => void;
+        const snapshotReady = new Promise<void>((resolve) => {
+          resolveSnapshot = resolve;
+        });
+        setFetch(async (url: string, init?: any) => {
+          if (
+            url === "/api/v1/sessions" &&
+            (!init?.method || init.method === "GET")
+          )
+            return {
+              ok: true,
+              text: async () => JSON.stringify([{ id: "s2" }]),
+            };
+          if (url === "/api/v1/sessions/s2")
+            return { ok: true, text: async () => JSON.stringify(nextSession) };
+          if (url.startsWith("/api/v1/sessions/s2/events"))
+            return { ok: true, text: async () => "[]" };
+          if (url === "/api/v1/sessions/s2/snapshot") {
+            await snapshotReady;
+            return {
+              ok: true,
+              text: async () =>
+                JSON.stringify({
+                  version: 1,
+                  seq: 0,
+                  session: {
+                    id: "s2",
+                    title: null,
+                    cwd: "/next",
+                    model: null,
+                    mode: null,
+                    createdAt: null,
+                    lastEventSeq: 0,
+                  },
+                  runtime: {
+                    busy: null,
+                    plan: [{ content: "Old snapshot", status: "in_progress" }],
+                  },
+                }),
+            };
+          }
+          return { ok: true, text: async () => "{}" };
+        });
+
+        const fallback = events.fallbackToNextSession("s1");
+        for (let i = 0; i < 20; i++) await Promise.resolve();
+        assert.equal(state.sessionId, "s2");
+        events.handleEvent({
+          type: "state_patch",
+          sessionId: "s2",
+          seq: 1,
+          patch: {
+            runtime: {
+              plan: [{ content: "New patch", status: "in_progress" }],
+            },
+          },
+        });
+        resolveSnapshot();
+        await fallback;
+
+        assert.equal(
+          dom.planPanel.querySelector(".plan-entry")?.textContent,
+          "[~] New patch",
+        );
+      });
+
       it("ignores deletion of other sessions", () => {
         state.sessionId = "s1";
         events.handleEvent({ type: "session_deleted", sessionId: "s2" });
