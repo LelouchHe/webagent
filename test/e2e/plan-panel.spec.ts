@@ -47,6 +47,12 @@ test("active plans stay pinned above input and can be hidden or collapsed", asyn
   expect(badgeStyles.symbolBackground).not.toBe("rgba(0, 0, 0, 0)");
   expect(badgeStyles.symbolRadius).not.toBe("0px");
   expect(badgeStyles.rowBackground).toBe("rgba(0, 0, 0, 0)");
+  const symbolWidths = await panel
+    .locator(".plan-entry .plan-symbol")
+    .evaluateAll((symbols) =>
+      symbols.map((symbol) => symbol.getBoundingClientRect().width),
+    );
+  expect(new Set(symbolWidths).size).toBe(1);
 
   await page.locator("#input").fill("/plan hide");
   await page.locator("#input").press("Enter");

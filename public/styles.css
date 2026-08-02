@@ -520,7 +520,6 @@ body {
 }
 .plan-status-in_progress .plan-symbol {
   display: inline-block;
-  padding: 0 2px;
   background: var(--accent-soft);
   border-radius: 2px;
 }
