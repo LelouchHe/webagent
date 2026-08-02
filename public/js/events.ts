@@ -1272,7 +1272,8 @@ export function handleEvent(msg: AgentEvent) {
       const applied = applyStatePatch({ seq: msg.seq, patch: msg.patch });
       if (!applied && state.sessionId === msg.sessionId) {
         // seq gap (missed patches) → reload the authoritative snapshot
-        void reloadSnapshot(state.sessionId);
+        const sessionId = state.sessionId;
+        void reloadSnapshot(sessionId, () => state.sessionId === sessionId);
       }
       break;
     }

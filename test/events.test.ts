@@ -1158,6 +1158,56 @@ describe("events", () => {
         await new Promise((r) => setTimeout(r, 5));
         assert.ok(snapshotFetched, "expected snapshot reload on seq gap");
       });
+
+      it("drops a seq-gap snapshot after abandoning its session", async () => {
+        state.sessionId = "s1";
+        state.lastStateSeq = 0;
+        let releaseSnapshot!: () => void;
+        const snapshotReady = new Promise<void>((resolve) => {
+          releaseSnapshot = resolve;
+        });
+        (globalThis as any).fetch = async (url: string) => {
+          if (url.endsWith("/snapshot")) {
+            await snapshotReady;
+            const body = JSON.stringify({
+              version: 1,
+              seq: 3,
+              session: {
+                id: "s1",
+                title: null,
+                cwd: "/",
+                model: null,
+                mode: null,
+                createdAt: null,
+                lastEventSeq: 0,
+              },
+              runtime: {
+                busy: null,
+                plan: [{ content: "Abandoned", status: "in_progress" }],
+              },
+            });
+            return {
+              ok: true,
+              status: 200,
+              text: async () => body,
+            };
+          }
+          return { ok: true, text: async () => "{}" };
+        };
+
+        events.handleEvent({
+          type: "state_patch",
+          sessionId: "s1",
+          seq: 3,
+          patch: { runtime: { plan: null } },
+        });
+        state.sessionId = null;
+        releaseSnapshot();
+        for (let i = 0; i < 10; i++) await Promise.resolve();
+
+        assert.equal(state.plan, null);
+        assert.equal(state.lastStateSeq, 0);
+      });
     });
 
     describe("session_deleted", () => {
