@@ -1971,6 +1971,55 @@ describe("events", () => {
       );
     });
 
+    it("does not let stale reconciliation replace a newer live plan", async () => {
+      globalThis.fetch = (() =>
+        Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve([
+              {
+                seq: 1,
+                type: "plan",
+                data: JSON.stringify({
+                  entries: [{ content: "Replay work", status: "in_progress" }],
+                }),
+              },
+            ]),
+        })) as any;
+      await events.loadHistory("s1");
+
+      events.handleEvent({
+        type: "plan",
+        entries: [{ content: "New live work", status: "in_progress" }],
+      });
+      state.sessionId = "s1";
+      state.busy = true;
+      events.reconcilePlanPanelWithRuntime("s1");
+
+      assert.equal(
+        dom.planPanel.querySelector(".plan-entry")?.textContent,
+        "[~] New live work",
+      );
+    });
+
+    it("does not let another session's reconciliation clear this panel", () => {
+      state.sessionId = "current";
+      events.handleEvent({
+        type: "plan",
+        sessionId: "current",
+        entries: [{ content: "Current work", status: "in_progress" }],
+      });
+      state.busy = false;
+
+      events.reconcilePlanPanelWithRuntime("stale");
+
+      assert.equal(dom.planPanel.hidden, false);
+      assert.equal(
+        dom.planPanel.querySelector(".plan-entry")?.textContent,
+        "[~] Current work",
+      );
+    });
+
     it("sends limit parameter in fetch URL", async () => {
       let capturedUrl = "";
       globalThis.fetch = ((url: string) => {

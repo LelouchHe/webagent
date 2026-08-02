@@ -198,8 +198,17 @@ async function resumeAndLoad(
     }
     if (gen !== state.sessionSwitchGen) return;
     // Load snapshot in parallel with catch-up events (runtime state vs history)
-    await Promise.all([reloadSnapshot(sessionId), loadNewEvents(sessionId)]);
-    reconcilePlanPanelWithRuntime(sessionId);
+    const [snapshot] = await Promise.all([
+      reloadSnapshot(sessionId),
+      loadNewEvents(sessionId),
+    ]);
+    if (
+      snapshot &&
+      gen === state.sessionSwitchGen &&
+      state.sessionId === sessionId
+    ) {
+      reconcilePlanPanelWithRuntime(sessionId);
+    }
   } else {
     // Full load: fetch session details and history in parallel.
     state.sessionId = null;
@@ -212,9 +221,9 @@ async function resumeAndLoad(
       ]);
       // History replay drains queued live patches while sessionId is null.
       // Fetch afterward so the authoritative snapshot includes that state.
-      await reloadSnapshot(sessionId);
-      reconcilePlanPanelWithRuntime(sessionId);
+      const snapshot = await reloadSnapshot(sessionId);
       if (gen !== state.sessionSwitchGen) return;
+      if (snapshot) reconcilePlanPanelWithRuntime(sessionId);
       session = s;
       if (!loaded) {
         addSystem("warn: Failed to load history.");
@@ -296,10 +305,13 @@ document.addEventListener("visibilitychange", () => {
     !state.replayInProgress
   ) {
     const sid = state.sessionId;
-    void Promise.all([reloadSnapshot(sid), loadNewEvents(sid)]).then(() => {
-      reconcilePlanPanelWithRuntime(sid);
-      scrollToBottom(false);
-    });
+    void Promise.all([reloadSnapshot(sid), loadNewEvents(sid)]).then(
+      ([snapshot]) => {
+        if (state.sessionId !== sid) return;
+        if (snapshot) reconcilePlanPanelWithRuntime(sid);
+        scrollToBottom(false);
+      },
+    );
   }
 });
 

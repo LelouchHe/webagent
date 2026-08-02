@@ -270,6 +270,7 @@ function syncPlanPanelFromReplay(
 }
 
 export function reconcilePlanPanelWithRuntime(sessionId: string): void {
+  if (state.sessionId && state.sessionId !== sessionId) return;
   if (!state.busy) {
     clearPlanPanel();
     return;
@@ -1422,6 +1423,7 @@ export function handleEvent(msg: AgentEvent) {
       break;
 
     case "user_message": {
+      replayPlanCandidate = undefined;
       // SSE broadcasts to all clients including the sender (unlike WS which
       // excluded the sender). Detect our own echo and skip it — we already
       // rendered the message and set busy in sendPrompt().
@@ -1495,6 +1497,7 @@ export function handleEvent(msg: AgentEvent) {
     }
 
     case "plan": {
+      replayPlanCandidate = undefined;
       finishThinking();
       finishAssistant();
       const el = renderContentEvent("plan", msg, liveHooks());
@@ -1599,6 +1602,7 @@ export function handleEvent(msg: AgentEvent) {
         break;
       }
       state.newTurnStarted = false;
+      replayPlanCandidate = undefined;
       clearPlanPanel();
       if (msg.stopReason === "cancelled") {
         cancelPendingTurnUI();
@@ -1669,6 +1673,7 @@ export function handleEvent(msg: AgentEvent) {
 
     case "error":
       state.awaitingNewSession = false;
+      replayPlanCandidate = undefined;
       clearPlanPanel();
       state.pendingToolCallIds.clear();
       state.pendingPermissionRequestIds.clear();
