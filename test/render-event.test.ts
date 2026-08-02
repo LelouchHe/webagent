@@ -541,6 +541,12 @@ describe("render-event", () => {
         summary.querySelector(".plan-counts")?.textContent,
         "[ ] 2  [x] 1",
       );
+      assert.deepEqual(
+        [...summary.querySelectorAll(".plan-count-symbol")].map(
+          (node) => node.textContent,
+        ),
+        ["[ ]", "[x]"],
+      );
       assert.equal(
         summary.querySelector(".plan-counts")?.getAttribute("aria-label"),
         null,

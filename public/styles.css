@@ -518,6 +518,12 @@ body {
 .plan-counts .plan-status-in_progress {
   color: var(--blue);
 }
+.plan-status-in_progress .plan-symbol {
+  display: inline-block;
+  padding: 0 2px;
+  background: var(--accent-soft);
+  border-radius: 2px;
+}
 .plan-status-completed .plan-symbol,
 .plan-counts .plan-status-completed {
   color: var(--green);

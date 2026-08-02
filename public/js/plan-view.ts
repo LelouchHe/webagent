@@ -35,7 +35,11 @@ export function buildPlanElement(
     if (index > 0) counts.appendChild(document.createTextNode("  "));
     const count = document.createElement("span");
     count.className = `plan-status-${view.status}`;
-    count.textContent = `${view.symbol} ${view.count}`;
+    const symbol = document.createElement("span");
+    symbol.className = "plan-symbol plan-count-symbol";
+    symbol.textContent = view.symbol;
+    count.appendChild(symbol);
+    count.appendChild(document.createTextNode(` ${view.count}`));
     counts.appendChild(count);
   }
   summary.appendChild(counts);

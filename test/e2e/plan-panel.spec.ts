@@ -33,6 +33,20 @@ test("active plans stay pinned above input and can be hidden or collapsed", asyn
 
   await panel.locator(".plan-summary").click();
   await expect(panel).toHaveAttribute("open");
+  const badgeStyles = await panel
+    .locator(".plan-entry.plan-status-in_progress .plan-symbol")
+    .evaluate((el) => {
+      const symbol = getComputedStyle(el);
+      const row = getComputedStyle(el.parentElement!);
+      return {
+        symbolBackground: symbol.backgroundColor,
+        symbolRadius: symbol.borderRadius,
+        rowBackground: row.backgroundColor,
+      };
+    });
+  expect(badgeStyles.symbolBackground).not.toBe("rgba(0, 0, 0, 0)");
+  expect(badgeStyles.symbolRadius).not.toBe("0px");
+  expect(badgeStyles.rowBackground).toBe("rgba(0, 0, 0, 0)");
 
   await page.locator("#input").fill("/plan hide");
   await page.locator("#input").press("Enter");
