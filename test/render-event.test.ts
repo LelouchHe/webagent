@@ -532,14 +532,14 @@ describe("render-event", () => {
         ),
       )! as HTMLDetailsElement;
       assert.equal(el.tagName, "DETAILS");
-      assert.equal(el.open, true);
+      assert.equal(el.open, false);
       assert.ok(el.classList.contains("plan"));
       const summary = el.querySelector("summary.plan-summary");
       assert.ok(summary);
       assert.equal(summary.querySelector(".plan-label")?.textContent, "plan");
       assert.equal(
         summary.querySelector(".plan-counts")?.textContent,
-        "○ 2  ● 1",
+        "[ ] 2  [x] 1",
       );
       assert.equal(
         summary.querySelector(".plan-counts")?.getAttribute("aria-label"),
@@ -551,7 +551,9 @@ describe("render-event", () => {
       );
       const rows = el.querySelectorAll(".plan-entry");
       assert.equal(rows.length, 3);
-      assert.equal(rows[0].textContent, "○ step a");
+      assert.equal(rows[0].textContent, "[ ] step a");
+      assert.ok(rows[0].classList.contains("plan-status-pending"));
+      assert.ok(rows[1].classList.contains("plan-status-completed"));
     });
 
     it("escapes plan summary counts and entries", () => {
@@ -564,14 +566,14 @@ describe("render-event", () => {
           makeHooks(),
         ),
       )!;
-      assert.equal(el.querySelector(".plan-counts")?.textContent, "? 1");
+      assert.equal(el.querySelector(".plan-counts")?.textContent, "[?] 1");
       assert.equal(
         el.querySelector(".plan-summary")?.getAttribute("aria-label"),
         "plan: 1 unknown",
       );
       assert.equal(
         el.querySelector(".plan-entry")?.textContent,
-        "? <script>alert(1)</script>",
+        "[?] <script>alert(1)</script>",
       );
       assert.equal(el.querySelector("script"), null);
     });

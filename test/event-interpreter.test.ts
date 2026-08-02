@@ -219,15 +219,17 @@ describe("formatPlanEntries", () => {
       { status: "completed", content: "Task 3" },
     ]);
     assert.deepEqual(result, [
-      { symbol: "○", content: "Task 1" },
-      { symbol: "◉", content: "Task 2" },
-      { symbol: "●", content: "Task 3" },
+      { status: "pending", symbol: "[ ]", content: "Task 1" },
+      { status: "in_progress", symbol: "[~]", content: "Task 2" },
+      { status: "completed", symbol: "[x]", content: "Task 3" },
     ]);
   });
 
   it("uses ? for unknown status", () => {
     const result = formatPlanEntries([{ status: "skipped", content: "X" }]);
-    assert.deepEqual(result, [{ symbol: "?", content: "X" }]);
+    assert.deepEqual(result, [
+      { status: "unknown", symbol: "[?]", content: "X" },
+    ]);
   });
 
   it("handles empty array", () => {
@@ -247,9 +249,14 @@ describe("formatPlanStatusCounts", () => {
       { status: "completed", content: "Done 2" },
     ]);
     assert.deepEqual(result, [
-      { symbol: "○", label: "pending", count: 2 },
-      { symbol: "◉", label: "in progress", count: 1 },
-      { symbol: "●", label: "completed", count: 2 },
+      { status: "pending", symbol: "[ ]", label: "pending", count: 2 },
+      {
+        status: "in_progress",
+        symbol: "[~]",
+        label: "in progress",
+        count: 1,
+      },
+      { status: "completed", symbol: "[x]", label: "completed", count: 2 },
     ]);
   });
 
@@ -260,8 +267,8 @@ describe("formatPlanStatusCounts", () => {
       { status: "blocked", content: "Blocked" },
     ]);
     assert.deepEqual(result, [
-      { symbol: "○", label: "pending", count: 1 },
-      { symbol: "?", label: "unknown", count: 2 },
+      { status: "pending", symbol: "[ ]", label: "pending", count: 1 },
+      { status: "unknown", symbol: "[?]", label: "unknown", count: 2 },
     ]);
   });
 

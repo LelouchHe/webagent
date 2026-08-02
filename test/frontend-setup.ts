@@ -14,7 +14,8 @@ const HTML = `
 <div id="header"><div class="header-side header-left"><span class="logo">>_</span></div><span id="session-info" class="status"></span><div class="header-side header-right"><span id="status" class="status-dot is-disconnected" data-state="disconnected" role="status" aria-live="polite" aria-label="disconnected" title="disconnected"></span><button id="theme-btn">x</button></div></div>
 <div id="messages"></div>
 <div id="attach-preview"></div>
-<div id="input-area"><div id="slash-menu"></div><span id="mode-pill"></span><span id="input-prompt">x</span><textarea id="input" placeholder="Message or ?"></textarea><button id="attach-btn" class="input-btn">x</button><button id="send-btn" class="input-btn">x</button><input type="file" id="file-input" hidden></div>
+<details id="plan-panel" class="input-panel" hidden></details>
+<div id="input-area"><div id="slash-menu" class="input-panel"></div><span id="mode-pill"></span><span id="input-prompt">x</span><textarea id="input" placeholder="Message or ?"></textarea><button id="attach-btn" class="input-btn">x</button><button id="send-btn" class="input-btn">x</button><input type="file" id="file-input" hidden></div>
 <div id="status-bar"></div>
 `;
 
@@ -115,6 +116,11 @@ export function resetState(state: any, dom: any) {
   dom.attachPreview.className = "";
   dom.slashMenu.innerHTML = "";
   dom.slashMenu.className = "";
+  if (dom.planPanel) {
+    dom.planPanel.innerHTML = "";
+    dom.planPanel.hidden = true;
+    dom.planPanel.open = false;
+  }
   dom.inputArea.className = "";
   if (dom.statusBar) dom.statusBar.textContent = "";
   // Preview-mode is per-session and lives in memory only.

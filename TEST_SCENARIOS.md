@@ -189,7 +189,8 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - user / assistant / thinking rendering
   - tool-call render and completion state
   - task_complete summary rendering (visible, not collapsed) with ✔ icon
-  - plan render
+  - plan transcript render (collapsed by default), pinned input panel updates,
+    status colors/icons, panel show/hide, and stale-panel cleanup
   - permission request / response / resolution handling
   - bash command / output / completion handling
   - prompt completion rules
@@ -460,6 +461,12 @@ spot gaps, and decide what still needs to be added without reading every spec.
 
 - `plan-reload-persistence.spec.ts`
   - plan mode survives reload
+
+- `plan-panel.spec.ts`
+  - live ACP plans stay pinned above the input while transcript plans remain
+    collapsed
+  - panel collapse state and `/plan hide` / `/plan show`
+  - pinned plan cleanup when the prompt ends
 
 - `autopilot-permission.spec.ts`
   - autopilot auto-approves permissions

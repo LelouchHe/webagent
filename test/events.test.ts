@@ -486,18 +486,29 @@ describe("events", () => {
         assert.equal(state.currentAssistantEl, null); // finishAssistant called
         const plan = dom.messages.querySelector(".plan") as HTMLDetailsElement;
         assert.ok(plan);
-        assert.equal(plan.open, true);
+        assert.equal(plan.open, false);
         assert.equal(
           plan.querySelector(".plan-counts")?.textContent,
-          "○ 1  ◉ 1  ● 1",
+          "[ ] 1  [~] 1  [x] 1",
         );
         assert.equal(plan.querySelectorAll(".plan-entry").length, 3);
-        assert.ok(plan.textContent.includes("●")); // completed
-        assert.ok(plan.textContent.includes("◉")); // in_progress
-        assert.ok(plan.textContent.includes("○")); // pending
+        assert.ok(plan.textContent.includes("[x]")); // completed
+        assert.ok(plan.textContent.includes("[~]")); // in_progress
+        assert.ok(plan.textContent.includes("[ ]")); // pending
+
+        const panel = document.querySelector(
+          "#plan-panel",
+        ) as HTMLDetailsElement;
+        assert.equal(panel.hidden, false);
+        assert.equal(panel.open, true);
+        assert.equal(
+          panel.querySelector(".plan-counts")?.textContent,
+          "[ ] 1  [~] 1  [x] 1",
+        );
+        assert.equal(panel.querySelectorAll(".plan-entry").length, 3);
       });
 
-      it("collapses prior open plans when a newer plan arrives", () => {
+      it("keeps transcript plans collapsed and updates one pinned panel", () => {
         events.handleEvent({
           type: "plan",
           entries: [{ content: "Old", status: "pending" }],
@@ -514,7 +525,51 @@ describe("events", () => {
         );
         assert.equal(plans.length, 2);
         assert.equal(plans[0].open, false);
-        assert.equal(plans[1].open, true);
+        assert.equal(plans[1].open, false);
+        assert.equal(
+          document.querySelector("#plan-panel .plan-entry")?.textContent,
+          "[~] New",
+        );
+      });
+
+      it("preserves the pinned panel's collapsed state across updates", () => {
+        events.handleEvent({
+          type: "plan",
+          entries: [{ content: "First", status: "in_progress" }],
+        });
+        const panel = document.querySelector(
+          "#plan-panel",
+        ) as HTMLDetailsElement;
+        panel.querySelector<HTMLElement>(".plan-summary")?.click();
+        assert.equal(panel.open, false);
+
+        events.handleEvent({
+          type: "plan",
+          entries: [{ content: "Second", status: "in_progress" }],
+        });
+
+        assert.equal(panel.open, false);
+        assert.equal(
+          panel.querySelector(".plan-entry")?.textContent,
+          "[~] Second",
+        );
+      });
+
+      it("removes the pinned panel when every entry is completed", () => {
+        events.handleEvent({
+          type: "plan",
+          entries: [{ content: "Working", status: "in_progress" }],
+        });
+        events.handleEvent({
+          type: "plan",
+          entries: [{ content: "Working", status: "completed" }],
+        });
+
+        const panel = document.querySelector(
+          "#plan-panel",
+        ) as HTMLDetailsElement;
+        assert.equal(panel.hidden, true);
+        assert.equal(panel.textContent, "");
       });
     });
 
@@ -768,6 +823,22 @@ describe("events", () => {
         events.handleEvent({ type: "prompt_done" });
         assert.equal(state.currentAssistantEl, null);
         assert.equal(state.busy, false);
+      });
+
+      it("removes the pinned plan so stale progress cannot linger", () => {
+        events.handleEvent({
+          type: "plan",
+          entries: [{ content: "Still shown", status: "in_progress" }],
+        });
+        const panel = document.querySelector(
+          "#plan-panel",
+        ) as HTMLDetailsElement;
+        assert.equal(panel.hidden, false);
+
+        events.handleEvent({ type: "prompt_done" });
+
+        assert.equal(panel.hidden, true);
+        assert.equal(panel.textContent, "");
       });
 
       it("clears busy on prompt_done even with in-flight tool calls", () => {
@@ -1576,7 +1647,7 @@ describe("events", () => {
       assert.ok(el.classList.contains("completed"));
     });
 
-    it("collapses prior open plans during replay", () => {
+    it("keeps replayed plans collapsed in the transcript", () => {
       events.replayEvent(
         "plan",
         { entries: [{ content: "Old", status: "pending" }] },
@@ -1597,7 +1668,7 @@ describe("events", () => {
       );
       assert.equal(plans.length, 2);
       assert.equal(plans[0].open, false);
-      assert.equal(plans[1].open, true);
+      assert.equal(plans[1].open, false);
     });
 
     it("replays task_complete with visible summary", () => {

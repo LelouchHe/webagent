@@ -20,10 +20,9 @@ import {
   getStatusIcon,
   classifyPermissionOption,
   resolvePermissionLabel,
-  formatPlanEntries,
-  formatPlanStatusCounts,
   parseDiff,
 } from "./event-interpreter.ts";
+import { buildPlanElement } from "./plan-view.ts";
 import type {
   RawInput,
   DiffLine,
@@ -356,30 +355,7 @@ function buildPlan(data: Record<string, unknown>): HTMLElement {
   const entries = Array.isArray(data.entries)
     ? (data.entries as PlanEntry[])
     : [];
-  const planViews = formatPlanEntries(entries);
-  const countViews = formatPlanStatusCounts(entries);
-  const statusCounts = countViews
-    .map((pv) => `${pv.symbol} ${pv.count}`)
-    .join("  ");
-  const statusLabel = countViews
-    .map((pv) => `${pv.count} ${pv.label}`)
-    .join(", ");
-  const el = document.createElement("details");
-  el.className = "plan";
-  el.open = true;
-  el.innerHTML =
-    `<summary class="plan-summary"><span class="plan-label">plan</span><span class="plan-counts">${escHtml(statusCounts)}</span></summary>` +
-    `<div class="plan-entries">${planViews
-      .map(
-        (pv) =>
-          `<div class="plan-entry">${pv.symbol} ${escHtml(pv.content)}</div>`,
-      )
-      .join("")}</div>`;
-  el.querySelector(".plan-summary")?.setAttribute(
-    "aria-label",
-    statusLabel ? `plan: ${statusLabel}` : "plan",
-  );
-  return el;
+  return buildPlanElement(entries, { className: "plan", open: false });
 }
 
 function buildPermissionRequest(

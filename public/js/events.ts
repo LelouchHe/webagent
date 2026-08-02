@@ -61,6 +61,7 @@ import {
 } from "./render-event.ts";
 import { enhanceCodeBlocks } from "./highlight.ts";
 import type { AgentEvent, StoredEvent } from "../../src/types.ts";
+import { clearPlanPanel, updatePlanPanel } from "./plan-panel.ts";
 
 /**
  * When the current session is gone (expired, deleted), try to switch to the
@@ -1437,6 +1438,7 @@ export function handleEvent(msg: AgentEvent) {
         collapseOpenPlans(dom.messages);
         appendMessageElement(el);
       }
+      if (Array.isArray(msg.entries)) updatePlanPanel(msg.entries);
       break;
     }
 
@@ -1533,6 +1535,7 @@ export function handleEvent(msg: AgentEvent) {
         break;
       }
       state.newTurnStarted = false;
+      clearPlanPanel();
       if (msg.stopReason === "cancelled") {
         cancelPendingTurnUI();
       } else {
@@ -1602,6 +1605,7 @@ export function handleEvent(msg: AgentEvent) {
 
     case "error":
       state.awaitingNewSession = false;
+      clearPlanPanel();
       state.pendingToolCallIds.clear();
       state.pendingPermissionRequestIds.clear();
       state.pendingPromptDone = false;

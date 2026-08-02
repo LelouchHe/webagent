@@ -494,6 +494,12 @@ body {
   margin-bottom: 2px;
   cursor: pointer;
 }
+.plan-summary::marker {
+  content: "";
+}
+.plan-summary::-webkit-details-marker {
+  display: none;
+}
 .plan-counts {
   color: var(--text-dim);
   font-weight: normal;
@@ -504,6 +510,23 @@ body {
 }
 .plan-entry {
   padding: 1px 0;
+}
+.plan-status-pending {
+  color: var(--text-dim);
+}
+.plan-status-in_progress .plan-symbol,
+.plan-counts .plan-status-in_progress {
+  color: var(--blue);
+}
+.plan-status-completed .plan-symbol,
+.plan-counts .plan-status-completed {
+  color: var(--green);
+}
+.plan-status-completed .plan-content {
+  color: var(--text-dim);
+}
+.plan-status-unknown {
+  color: var(--text-dim);
 }
 
 /* Permission dialog */
@@ -795,6 +818,30 @@ body {
   }
 }
 
+/* Panels attached to the input */
+.input-panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-bottom: none;
+  max-height: 220px;
+}
+#plan-panel {
+  flex: 0 0 auto;
+}
+#plan-panel[hidden] {
+  display: none;
+}
+#plan-panel > .plan-summary {
+  margin: 0;
+  padding: 6px 16px;
+}
+#plan-panel > .plan-entries {
+  max-height: 180px;
+  margin: 0;
+  padding: 0 16px 6px;
+  overflow-y: auto;
+}
+
 /* Slash command autocomplete */
 #slash-menu {
   display: none;
@@ -802,10 +849,6 @@ body {
   bottom: 100%;
   left: 0;
   right: 0;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-bottom: none;
-  max-height: 220px;
   overflow-y: auto;
   z-index: 10;
 }

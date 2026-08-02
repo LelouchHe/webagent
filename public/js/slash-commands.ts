@@ -39,6 +39,7 @@ import {
   setDefaultDisplayName,
   type ShareListRow,
 } from "./share/commands.ts";
+import { controlPlanPanel } from "./plan-panel.ts";
 
 // --- shared helpers used by onSelect handlers ---
 
@@ -359,6 +360,26 @@ export const ROOT: CmdNode = {
           },
         };
       },
+    },
+    {
+      name: "/plan",
+      desc: "Show or hide current plan",
+      children: [
+        {
+          name: "show",
+          desc: "Show current plan",
+          onSelect: () => {
+            controlPlanPanel("show");
+          },
+        },
+        {
+          name: "hide",
+          desc: "Hide current plan",
+          onSelect: () => {
+            controlPlanPanel("hide");
+          },
+        },
+      ],
     },
     {
       name: "/reset",

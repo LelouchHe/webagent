@@ -157,6 +157,33 @@ describe("commands", () => {
       assert.ok(lines.includes("? — Show help"));
     });
 
+    it("toggles, hides, and restores the active plan panel", async () => {
+      events.handleEvent({
+        type: "plan",
+        entries: [{ content: "Implement panel", status: "in_progress" }],
+      });
+      const panel = document.querySelector("#plan-panel") as HTMLDetailsElement;
+      assert.equal(panel.hidden, false);
+
+      assert.equal(await commands.handleSlashCommand("/plan hide"), true);
+      assert.equal(panel.hidden, true);
+      events.handleEvent({
+        type: "plan",
+        entries: [{ content: "Updated while hidden", status: "in_progress" }],
+      });
+      assert.equal(panel.hidden, true);
+      assert.equal(await commands.handleSlashCommand("/plan show"), true);
+      assert.equal(panel.hidden, false);
+      assert.equal(
+        panel.querySelector(".plan-entry")?.textContent,
+        "[~] Updated while hidden",
+      );
+      assert.equal(await commands.handleSlashCommand("/plan"), true);
+      assert.equal(panel.hidden, true);
+      assert.equal(await commands.handleSlashCommand("/plan"), true);
+      assert.equal(panel.hidden, false);
+    });
+
     it("shows the unified error for an unknown local slash command", async () => {
       const handled = await commands.handleSlashCommand("/does-not-exist arg");
 

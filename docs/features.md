@@ -6,7 +6,8 @@
 - LaTeX math rendering: inline `$E=mc^2$` and display `$$\sum_i x_i$$` (Temml → MathML, lazy-loaded). Display math must be on its own line (`$$\n…\n$$`), per GitHub/Obsidian/Jupyter convention. CSP-safe (no inline styles).
 - Collapsible thinking process display
 - Tool call display (status animation, expandable details, diff rendering)
-- Agent execution plan display (pending ○ / in-progress ◉ / done ●)
+- Agent execution plan display (pending `[ ]` / in-progress `[~]` / done
+  `[x]`) with a pinned, scrollable panel above the input
 - Permission confirmation dialog for sensitive operations (Allow / Deny), synced across devices; auto-approved in autopilot mode
 - Smart scroll: force-scrolls on load/switch/send, soft auto-scroll during streaming
 
@@ -46,7 +47,7 @@ Type `/` to trigger an autocomplete menu with arrow keys to navigate, Esc to clo
 | `Enter`   | Send current input            | Send current input |
 | Click/Tap | Fill and send (Tab + Enter)   | —                  |
 
-Commands with submenus (`/model`, `/mode`, `/think`, `/notify`, `/switch`, `/new`, `/clear`, `/inbox`, `/log`) show a picker after typing the command and a space. Tab completes the selection into the input so you can review or edit before pressing Enter to send.
+Commands with submenus (`/model`, `/mode`, `/think`, `/notify`, `/switch`, `/new`, `/clear`, `/inbox`, `/log`, `/plan`) show a picker after typing the command and a space. Tab completes the selection into the input so you can review or edit before pressing Enter to send.
 
 | Command               | Description                                                                                                                   |
 | --------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
@@ -58,6 +59,7 @@ Commands with submenus (`/model`, `/mode`, `/think`, `/notify`, `/switch`, `/new
 | `/notify [on\|off]`   | Toggle push notifications                                                                                                     |
 | `/inbox`              | Manage inbox — pick a pending message to consume (opens a new session) or ack (dismiss). See [Messages / Inbox](messages.md). |
 | `/log [level]`        | Set local log level (`off`, `debug`, `info`, `warn`, `error`, `reset`). Log records render inline as system messages.         |
+| `/plan [show\|hide]`  | Toggle, show, or hide the current pinned plan panel                                                                           |
 | `/cancel`             | Cancel current response                                                                                                       |
 | `/clear [cwd]`        | Clear current session and start fresh, optionally in another cwd (model/think inherited)                                      |
 | `/reset`              | Reset local frontend state for this device (keeps login token)                                                                |

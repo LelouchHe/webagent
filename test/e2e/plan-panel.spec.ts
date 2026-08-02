@@ -1,0 +1,42 @@
+import { test, expect } from "playwright/test";
+import { gotoConnected } from "./helpers.ts";
+
+test("active plans stay pinned above input and can be hidden or collapsed", async ({
+  page,
+}) => {
+  await gotoConnected(page);
+  await page.locator("#input").fill("E2E_SLOW_PLAN");
+  await page.locator("#input").press("Enter");
+
+  const panel = page.locator("#plan-panel");
+  await expect(panel).toBeVisible();
+  await expect(panel.locator(".plan-counts")).toHaveText("[ ] 1  [~] 1  [x] 1");
+  await expect(panel.locator(".plan-entry")).toHaveCount(3);
+  await expect(page.locator("#messages details.plan")).not.toHaveAttribute(
+    "open",
+  );
+  expect(await panel.evaluate((el) => el.nextElementSibling?.id)).toBe(
+    "input-area",
+  );
+
+  const panelStyles = await panel.locator(".plan-entries").evaluate((el) => {
+    const style = getComputedStyle(el);
+    return { maxHeight: style.maxHeight, overflowY: style.overflowY };
+  });
+  expect(panelStyles).toEqual({ maxHeight: "180px", overflowY: "auto" });
+
+  await panel.locator(".plan-summary").click();
+  await expect(panel).not.toHaveAttribute("open");
+
+  await page.locator("#input").fill("/plan hide");
+  await page.locator("#input").press("Enter");
+  await expect(panel).toBeHidden();
+
+  await page.locator("#input").fill("/plan show");
+  await page.locator("#input").press("Enter");
+  await expect(panel).toBeVisible();
+  await expect(panel).not.toHaveAttribute("open");
+
+  await page.locator("#send-btn").click();
+  await expect(panel).toBeHidden();
+});

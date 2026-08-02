@@ -162,6 +162,27 @@ class MockAgent implements Agent {
       .join(" ")
       .trim();
 
+    if (text.startsWith("E2E_SLOW_PLAN")) {
+      await this.conn.sessionUpdate({
+        sessionId: params.sessionId,
+        update: {
+          sessionUpdate: "plan",
+          entries: [
+            { content: "Waiting", priority: "medium", status: "pending" },
+            {
+              content: "Working",
+              priority: "medium",
+              status: "in_progress",
+            },
+            { content: "Finished", priority: "medium", status: "completed" },
+          ],
+        },
+      });
+      return await new Promise<PromptResponse>((resolve) => {
+        this.pendingPrompts.set(params.sessionId, { resolve });
+      });
+    }
+
     if (text.startsWith("E2E_SLOW_TOOL")) {
       const toolCallId = `tool-${++this.toolCallCounter}`;
       await this.conn.sessionUpdate({

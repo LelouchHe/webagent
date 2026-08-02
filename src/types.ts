@@ -287,11 +287,13 @@ export interface DiffLine {
 }
 
 export interface PlanEntryView {
+  status: string;
   symbol: string;
   content: string;
 }
 
 export interface PlanStatusCountView {
+  status: string;
   symbol: string;
   label: string;
   count: number;

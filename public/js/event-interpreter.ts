@@ -93,7 +93,8 @@ export function resolvePermissionLabel(
 /** Map plan entries to display-ready view models with status symbols. */
 export function formatPlanEntries(entries: PlanEntry[]): PlanEntryView[] {
   return entries.map((e) => ({
-    symbol: PLAN_STATUS_ICONS[e.status] || "?",
+    status: PLAN_STATUS_ICONS[e.status] ? e.status : "unknown",
+    symbol: PLAN_STATUS_ICONS[e.status] || "[?]",
     content: e.content,
   }));
 }
@@ -117,6 +118,7 @@ export function formatPlanStatusCounts(
     return count > 0
       ? [
           {
+            status,
             symbol: PLAN_STATUS_ICONS[status],
             label: PLAN_STATUS_LABELS[status] ?? status,
             count,
@@ -125,7 +127,12 @@ export function formatPlanStatusCounts(
       : [];
   });
   if (unknownCount > 0)
-    views.push({ symbol: "?", label: "unknown", count: unknownCount });
+    views.push({
+      status: "unknown",
+      symbol: "[?]",
+      label: "unknown",
+      count: unknownCount,
+    });
   return views;
 }
 

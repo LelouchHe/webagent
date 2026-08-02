@@ -39,6 +39,7 @@ export const dom = {
   attachPreview: $<HTMLDivElement>("#attach-preview"),
   themeBtn: $<HTMLButtonElement>("#theme-btn"),
   slashMenu: $<HTMLDivElement>("#slash-menu"),
+  planPanel: $<HTMLDetailsElement>("#plan-panel"),
   inputArea: $<HTMLDivElement>("#input-area"),
   modePill: $<HTMLSpanElement>("#mode-pill"),
   statusBar: $<HTMLDivElement>("#status-bar"),

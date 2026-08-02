@@ -13,9 +13,9 @@ export const DEFAULT_TOOL_ICON = "run";
 
 // --- Plan entry status → display symbol ---
 export const PLAN_STATUS_ICONS: Record<string, string> = {
-  pending: "○",
-  in_progress: "◉",
-  completed: "●",
+  pending: "[ ]",
+  in_progress: "[~]",
+  completed: "[x]",
 };
 export const PLAN_STATUS_LABELS: Record<string, string> = {
   pending: "pending",

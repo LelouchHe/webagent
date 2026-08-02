@@ -37,6 +37,7 @@ import {
   setDefaultDisplayName,
   openShare,
 } from "./share/commands.ts";
+import { controlPlanPanel } from "./plan-panel.ts";
 
 async function subscribePush(): Promise<void> {
   try {
@@ -109,6 +110,16 @@ export async function handleSlashCommand(text: string): Promise<boolean> {
   // reachable from the regular conversation flow — there's no need to
   // intercept "what if user types /publish in preview" anymore.
   switch (cmd) {
+    case "/plan": {
+      const action = arg.toLowerCase() || "toggle";
+      if (action !== "show" && action !== "hide" && action !== "toggle") {
+        addSystem("plan: use /plan, /plan show, or /plan hide");
+        return true;
+      }
+      controlPlanPanel(action);
+      return true;
+    }
+
     case "/share": {
       const subParts = arg.split(/\s+/);
       const sub = (subParts[0] ?? "").toLowerCase();
