@@ -174,6 +174,7 @@ describe("commands", () => {
       assert.equal(panel.hidden, true);
       assert.equal(await commands.handleSlashCommand("/plan show"), true);
       assert.equal(panel.hidden, false);
+      assert.equal(panel.open, false);
       assert.equal(
         panel.querySelector(".plan-entry")?.textContent,
         "[~] Updated while hidden",

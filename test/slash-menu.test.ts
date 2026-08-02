@@ -102,6 +102,40 @@ describe("slash menu — Tab vs Click behavior", () => {
     assert.equal(messageLines().length, 0, "Tab should not execute /notify");
   });
 
+  it("shows plan visibility options with descriptions and current marker", async () => {
+    const events = await import("../public/js/events.ts");
+    events.handleEvent({
+      type: "plan",
+      sessionId: "s1",
+      entries: [{ content: "Current work", status: "in_progress" }],
+    });
+    dom.input.value = "/plan ";
+
+    commands.updateSlashMenu();
+    await new Promise((r) => setTimeout(r, 0));
+
+    const rows = [...dom.slashMenu.querySelectorAll(".slash-item")];
+    assert.deepEqual(
+      rows.map((row: any) => ({
+        prefix: row.querySelector(".slash-prefix")?.textContent,
+        primary: row.querySelector(".slash-primary")?.textContent,
+        secondary: row.querySelector(".slash-secondary")?.textContent,
+      })),
+      [
+        {
+          prefix: "*",
+          primary: "show",
+          secondary: "Show plan panel",
+        },
+        {
+          prefix: "",
+          primary: "hide",
+          secondary: "Hide plan panel",
+        },
+      ],
+    );
+  });
+
   it("Tab on config submenu fills input with /model <option> without executing", () => {
     state.configOptions = [
       {

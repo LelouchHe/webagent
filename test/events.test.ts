@@ -500,7 +500,7 @@ describe("events", () => {
           "#plan-panel",
         ) as HTMLDetailsElement;
         assert.equal(panel.hidden, false);
-        assert.equal(panel.open, true);
+        assert.equal(panel.open, false);
         assert.equal(
           panel.querySelector(".plan-counts")?.textContent,
           "[ ] 1  [~] 1  [x] 1",
@@ -532,7 +532,7 @@ describe("events", () => {
         );
       });
 
-      it("preserves the pinned panel's collapsed state across updates", () => {
+      it("preserves the pinned panel's expanded state across updates", () => {
         events.handleEvent({
           type: "plan",
           entries: [{ content: "First", status: "in_progress" }],
@@ -541,14 +541,14 @@ describe("events", () => {
           "#plan-panel",
         ) as HTMLDetailsElement;
         panel.querySelector<HTMLElement>(".plan-summary")?.click();
-        assert.equal(panel.open, false);
+        assert.equal(panel.open, true);
 
         events.handleEvent({
           type: "plan",
           entries: [{ content: "Second", status: "in_progress" }],
         });
 
-        assert.equal(panel.open, false);
+        assert.equal(panel.open, true);
         assert.equal(
           panel.querySelector(".plan-entry")?.textContent,
           "[~] Second",

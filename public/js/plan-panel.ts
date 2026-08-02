@@ -6,7 +6,7 @@ type PlanPanelAction = "show" | "hide" | "toggle";
 
 let currentEntries: PlanEntry[] | null = null;
 let dismissed = false;
-let expanded = true;
+let expanded = false;
 
 function render(): void {
   dom.planPanel.replaceChildren();
@@ -42,21 +42,30 @@ export function updatePlanPanel(entries: PlanEntry[]): void {
 export function clearPlanPanel(): void {
   currentEntries = null;
   dismissed = false;
-  expanded = true;
+  expanded = false;
   render();
 }
 
 export function controlPlanPanel(action: PlanPanelAction): boolean {
   if (!currentEntries) return false;
   if (action === "show") dismissed = false;
-  else if (action === "hide") dismissed = true;
-  else dismissed = !dismissed;
+  else if (action === "hide") {
+    dismissed = true;
+    expanded = false;
+  } else {
+    dismissed = !dismissed;
+    if (dismissed) expanded = false;
+  }
   render();
   return true;
 }
 
 export function hasCurrentPlan(): boolean {
   return currentEntries !== null;
+}
+
+export function isPlanPanelShown(): boolean {
+  return !dismissed;
 }
 
 dom.planPanel.addEventListener("click", (event) => {

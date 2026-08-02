@@ -10,6 +10,7 @@ test("active plans stay pinned above input and can be hidden or collapsed", asyn
 
   const panel = page.locator("#plan-panel");
   await expect(panel).toBeVisible();
+  await expect(panel).not.toHaveAttribute("open");
   await expect(panel.locator(".plan-counts")).toHaveText("[ ] 1  [~] 1  [x] 1");
   await expect(panel.locator(".plan-entry")).toHaveCount(3);
   await expect(page.locator("#messages details.plan")).not.toHaveAttribute(
@@ -27,10 +28,11 @@ test("active plans stay pinned above input and can be hidden or collapsed", asyn
 
   await page.reload();
   await expect(panel).toBeVisible();
+  await expect(panel).not.toHaveAttribute("open");
   await expect(panel.locator(".plan-counts")).toHaveText("[ ] 1  [~] 1  [x] 1");
 
   await panel.locator(".plan-summary").click();
-  await expect(panel).not.toHaveAttribute("open");
+  await expect(panel).toHaveAttribute("open");
 
   await page.locator("#input").fill("/plan hide");
   await page.locator("#input").press("Enter");
