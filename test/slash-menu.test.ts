@@ -136,6 +136,26 @@ describe("slash menu — Tab vs Click behavior", () => {
     );
   });
 
+  it("does not mark plan visibility current when no plan exists", async () => {
+    const events = await import("../public/js/events.ts");
+    events.handleEvent({
+      type: "prompt_done",
+      sessionId: "s1",
+      stopReason: "end_turn",
+    });
+    dom.input.value = "/plan ";
+
+    commands.updateSlashMenu();
+    await new Promise((r) => setTimeout(r, 0));
+
+    assert.deepEqual(
+      [...dom.slashMenu.querySelectorAll(".slash-prefix")].map(
+        (node) => node.textContent,
+      ),
+      ["", ""],
+    );
+  });
+
   it("Tab on config submenu fills input with /model <option> without executing", () => {
     state.configOptions = [
       {

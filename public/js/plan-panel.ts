@@ -65,7 +65,7 @@ export function hasCurrentPlan(): boolean {
 }
 
 export function isPlanPanelShown(): boolean {
-  return !dismissed;
+  return currentEntries !== null && !dismissed;
 }
 
 dom.planPanel.addEventListener("click", (event) => {

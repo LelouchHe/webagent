@@ -39,7 +39,11 @@ import {
   setDefaultDisplayName,
   type ShareListRow,
 } from "./share/commands.ts";
-import { controlPlanPanel, isPlanPanelShown } from "./plan-panel.ts";
+import {
+  controlPlanPanel,
+  hasCurrentPlan,
+  isPlanPanelShown,
+} from "./plan-panel.ts";
 
 // --- shared helpers used by onSelect handlers ---
 
@@ -377,7 +381,9 @@ export const ROOT: CmdNode = {
         return {
           primary: option.name,
           secondary: option.desc,
-          current: (option.value === "show") === isPlanPanelShown(),
+          current:
+            hasCurrentPlan() &&
+            (option.value === "show") === isPlanPanelShown(),
           onSelect: () => {
             controlPlanPanel(option.value);
           },
