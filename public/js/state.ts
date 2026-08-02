@@ -385,12 +385,14 @@ export async function reloadSnapshot(
   // Without this guard, an A→B→A rapid switch could see A's slow response
   // clobber B's state because applySnapshot runs unconditionally.
   const genAtStart = state.sessionSwitchGen;
+  const seqAtStart = state.lastStateSeq;
   try {
     const snap = (await api.getSnapshot(
       sessionId,
     )) as unknown as SessionSnapshot;
     if (
       state.sessionSwitchGen !== genAtStart ||
+      state.lastStateSeq !== seqAtStart ||
       (isStillCurrent && !isStillCurrent())
     )
       return null;

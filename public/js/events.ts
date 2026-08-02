@@ -87,6 +87,8 @@ export async function fallbackToNextSession(
         loadHistory(next.id),
       ]);
       if (gen !== state.sessionSwitchGen) return;
+      await reloadSnapshot(next.id, () => gen === state.sessionSwitchGen);
+      if (gen !== state.sessionSwitchGen) return;
       handleEvent({
         type: "session_created",
         sessionId: session.id,

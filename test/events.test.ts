@@ -1183,6 +1183,33 @@ describe("events", () => {
             return { ok: true, text: async () => JSON.stringify(nextSession) };
           if (url.startsWith("/api/v1/sessions/s2/events"))
             return { ok: true, text: async () => "[]" };
+          if (url === "/api/v1/sessions/s2/snapshot")
+            return {
+              ok: true,
+              text: async () =>
+                JSON.stringify({
+                  version: 1,
+                  seq: 1,
+                  session: {
+                    id: "s2",
+                    title: null,
+                    cwd: "/next",
+                    model: null,
+                    mode: null,
+                    createdAt: null,
+                    lastEventSeq: 0,
+                  },
+                  runtime: {
+                    busy: null,
+                    plan: [
+                      {
+                        content: "Restored fallback work",
+                        status: "in_progress",
+                      },
+                    ],
+                  },
+                }),
+            };
           return { ok: true, text: async () => "{}" };
         });
 
@@ -1190,6 +1217,10 @@ describe("events", () => {
         for (let i = 0; i < 30; i++) await Promise.resolve();
         assert.equal(state.sessionId, "s2");
         assert.equal(dom.input.disabled, false);
+        assert.equal(
+          dom.planPanel.querySelector(".plan-entry")?.textContent,
+          "[~] Restored fallback work",
+        );
       });
 
       it("creates new session when current is deleted and no others exist", async () => {

@@ -535,6 +535,44 @@ describe("state", () => {
       );
     });
 
+    it("reloadSnapshot drops its response when a newer patch lands in flight", async () => {
+      mod.state.lastStateSeq = 5;
+      mod.state.plan = null;
+      let resolveSnapshot: (value: unknown) => void = () => {};
+      const pendingSnapshot = new Promise((resolve) => {
+        resolveSnapshot = resolve;
+      });
+      globalThis.fetch = (async () => ({
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify(await pendingSnapshot),
+      })) as any;
+
+      const reload = mod.reloadSnapshot("s1");
+      assert.equal(
+        mod.applyStatePatch({
+          seq: 6,
+          patch: {
+            runtime: {
+              plan: [{ status: "in_progress", content: "New patch" }],
+            },
+          },
+        }),
+        true,
+      );
+      resolveSnapshot(
+        snap(5, null, {
+          lastEventSeq: 5,
+        }),
+      );
+
+      assert.equal(await reload, null);
+      assert.equal(mod.state.lastStateSeq, 6);
+      assert.deepEqual(mod.state.plan, [
+        { status: "in_progress", content: "New patch" },
+      ]);
+    });
+
     it("reloadSnapshot still applies when no switch happened during fetch", async () => {
       mod.state.lastStateSeq = 0;
       mod.setBusy(false);
