@@ -28,6 +28,11 @@ let currentData: FetchData | undefined = undefined;
 let candidates: Candidate[] = [];
 let selectedIdx = -1;
 let dismissedFor: string | null = null;
+let menuInputOverride: string | null = null;
+
+function currentMenuInput(): string {
+  return menuInputOverride ?? dom.input.value;
+}
 
 function agentRoot(): CmdNode {
   return {
@@ -72,12 +77,13 @@ export function __resetCommandsForTest(): void {
   candidates = [];
   selectedIdx = -1;
   dismissedFor = null;
+  menuInputOverride = null;
 }
 
 // --- entry: called from input listener ---
 
 export function updateSlashMenu(): void {
-  const text = dom.input.value;
+  const text = currentMenuInput();
 
   if (dismissedFor !== null) {
     if (text === dismissedFor) return;
@@ -147,10 +153,8 @@ export function updateSlashMenu(): void {
 // Re-resolve tailQuery from current input (used by async fetch callbacks
 // that may fire after input has changed but currentPath is still valid).
 function currentTailQueryFromInput(): string {
-  const { tailQuery } = resolvePath(
-    dom.input.value,
-    rootForInput(dom.input.value),
-  );
+  const input = currentMenuInput();
+  const { tailQuery } = resolvePath(input, rootForInput(input));
   return tailQuery;
 }
 
@@ -213,6 +217,8 @@ function renderMenu(pathPrefix: string): void {
 }
 
 export function hideSlashMenu(): void {
+  const dismissedInput = currentMenuInput();
+  menuInputOverride = null;
   dom.slashMenu.classList.remove("active");
   dom.slashMenu.innerHTML = "";
   selectedIdx = -1;
@@ -220,7 +226,13 @@ export function hideSlashMenu(): void {
   currentPath = null;
   currentNode = ROOT;
   currentData = undefined;
-  dismissedFor = dom.input.value;
+  dismissedFor = dismissedInput;
+}
+
+export function openSlashMenuForPath(path: string): void {
+  menuInputOverride = path;
+  dismissedFor = null;
+  updateSlashMenu();
 }
 
 // --- Tab: fill input only, never execute ---
@@ -266,6 +278,7 @@ async function clickItem(idx: number): Promise<void> {
   // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- array access safety
   if (!c) return;
   const pathPrefix = dom.slashMenu.dataset.pathPrefix ?? "";
+  const preserveInput = menuInputOverride !== null;
 
   if (c.kind === "separator" || c.kind === "placeholder") return;
 
@@ -277,22 +290,27 @@ async function clickItem(idx: number): Promise<void> {
       Boolean(c.node.freeform);
     if (hasMore) {
       const sep = pathPrefix ? " " : "";
-      setInputValue(`${pathPrefix}${sep}${c.node.name} `);
+      const nextPath = `${pathPrefix}${sep}${c.node.name} `;
       dismissedFor = null;
-      updateSlashMenu();
+      if (preserveInput) {
+        menuInputOverride = nextPath;
+        updateSlashMenu();
+      } else {
+        setInputValue(nextPath);
+      }
       dom.input.focus();
       return;
     }
     // Pure-leaf subcommand — execute immediately
     hideSlashMenu();
-    setInputValue("");
+    if (!preserveInput) setInputValue("");
     if (c.node.onSelect) await c.node.onSelect();
     return;
   }
 
   // data / freeform
   hideSlashMenu();
-  setInputValue("");
+  if (!preserveInput) setInputValue("");
   if (c.spec.onSelect) {
     await c.spec.onSelect();
   } else {
@@ -349,6 +367,7 @@ dom.slashMenu.addEventListener("mousedown", (e) => {
 });
 
 dom.input.addEventListener("input", () => {
+  menuInputOverride = null;
   updateSlashMenu();
   dom.inputArea.classList.toggle("bash-mode", dom.input.value.startsWith("!"));
 });

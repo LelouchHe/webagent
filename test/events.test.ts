@@ -1638,6 +1638,17 @@ describe("events", () => {
         assert.equal(dom.messages.children.length, 0);
       });
 
+      it("applies inbox count immediately during history replay", () => {
+        state.replayInProgress = true;
+
+        events.handleEvent({ type: "inbox_count_changed", pendingCount: 4 });
+        stateMod.resetSessionUI();
+
+        assert.equal(state.inboxCount, 4);
+        assert.equal(dom.inboxCount.textContent, "(4)");
+        assert.deepEqual(state.replayQueue, []);
+      });
+
       it("does not add conversation rows for inbox lifecycle events", () => {
         state.sessionId = "s1";
         events.handleEvent({ type: "message_created", messageId: "m1" });

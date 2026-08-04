@@ -40,4 +40,14 @@ describe("inbox indicator", () => {
     assert.equal(stateMod.dom.input.value, "/inbox ");
     assert.equal(stateMod.dom.slashMenu.classList.contains("active"), true);
   });
+
+  it("preserves an existing draft while opening the inbox picker", async () => {
+    stateMod.setInputValue("unsent draft");
+
+    stateMod.dom.inboxBtn.click();
+    await Promise.resolve();
+
+    assert.equal(stateMod.dom.input.value, "unsent draft");
+    assert.equal(stateMod.dom.slashMenu.classList.contains("active"), true);
+  });
 });

@@ -1231,6 +1231,11 @@ function scheduleAssistantRender() {
 
 // eslint-disable-next-line complexity -- TODO: refactor event type switch with helper functions
 export function handleEvent(msg: AgentEvent) {
+  if (msg.type === "inbox_count_changed") {
+    updateInboxCount(msg.pendingCount);
+    return;
+  }
+
   // Queue events that arrive while history replay is in progress to avoid duplicates
   if (state.replayInProgress) {
     state.replayQueue.push(msg);
@@ -1626,10 +1631,6 @@ export function handleEvent(msg: AgentEvent) {
 
     case "message_acked":
       closeLocalBanner(`msg-${msg.messageId}`);
-      break;
-
-    case "inbox_count_changed":
-      updateInboxCount(msg.pendingCount);
       break;
 
     case "message":
