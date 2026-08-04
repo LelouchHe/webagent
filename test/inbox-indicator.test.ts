@@ -50,4 +50,38 @@ describe("inbox indicator", () => {
     assert.equal(stateMod.dom.input.value, "unsent draft");
     assert.equal(stateMod.dom.slashMenu.classList.contains("active"), true);
   });
+
+  it("preserves an existing draft when completing an inbox item with Tab", async () => {
+    globalThis.fetch = (async (_url: string) => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        messages: [
+          {
+            id: "m1",
+            from_ref: "sender",
+            from_label: null,
+            to_ref: "receiver",
+            deliver: "inbox",
+            dedup_key: null,
+            title: "Pick me",
+            body: "body",
+            cwd: null,
+            created_at: Date.now(),
+          },
+        ],
+      }),
+      text: async () => "",
+    })) as typeof fetch;
+    stateMod.setInputValue("unsent draft");
+    stateMod.dom.inboxBtn.click();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    commands.handleSlashMenuKey(
+      new window.KeyboardEvent("keydown", { key: "Tab" }),
+    );
+
+    assert.equal(stateMod.dom.input.value, "unsent draft");
+  });
 });

@@ -242,6 +242,7 @@ function tabComplete(): void {
   // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- array access safety
   if (!c) return;
   const pathPrefix = dom.slashMenu.dataset.pathPrefix ?? "";
+  const preserveInput = menuInputOverride !== null;
 
   if (c.kind === "separator" || c.kind === "placeholder") return;
 
@@ -252,17 +253,32 @@ function tabComplete(): void {
       Boolean(c.node.fetch) ||
       Boolean(c.node.freeform);
     const sep = pathPrefix ? " " : "";
-    setInputValue(`${pathPrefix}${sep}${c.node.name}${hasMore ? " " : ""}`);
-    if (hasMore) {
-      dismissedFor = null;
-      updateSlashMenu();
+    const nextPath = `${pathPrefix}${sep}${c.node.name}${hasMore ? " " : ""}`;
+    if (preserveInput) {
+      if (hasMore) {
+        menuInputOverride = nextPath;
+        dismissedFor = null;
+        updateSlashMenu();
+      } else {
+        hideSlashMenu();
+      }
     } else {
-      hideSlashMenu();
+      setInputValue(nextPath);
+      if (hasMore) {
+        dismissedFor = null;
+        updateSlashMenu();
+      } else {
+        hideSlashMenu();
+      }
     }
   } else if (c.kind === "data") {
-    const sep = pathPrefix ? " " : "";
-    setInputValue(`${pathPrefix}${sep}${c.spec.primary}`);
-    hideSlashMenu();
+    if (preserveInput) {
+      hideSlashMenu();
+    } else {
+      const sep = pathPrefix ? " " : "";
+      setInputValue(`${pathPrefix}${sep}${c.spec.primary}`);
+      hideSlashMenu();
+    }
   } else if (c.kind === "freeform") {
     // Freeform spec reflects the user's typed query — Tab is a no-op
     // (input already contains what the freeform represents).
