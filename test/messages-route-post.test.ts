@@ -66,6 +66,11 @@ describe("POST /api/v1/messages — ingress", () => {
       broadcasts.push(ev);
       origBroadcast(ev);
     };
+    const origBroadcastGlobal = sseManager.broadcastGlobal.bind(sseManager);
+    sseManager.broadcastGlobal = (ev: AgentEvent) => {
+      broadcasts.push(ev);
+      origBroadcastGlobal(ev);
+    };
 
     const handler = createRequestHandler({
       sseManager,
@@ -167,6 +172,11 @@ describe("POST /api/v1/messages — ingress", () => {
     const ev = broadcasts.find((e) => e.type === "message_created");
     assert.ok(ev, "message_created broadcast fired");
     assert.equal(ev.messageId, body.id);
+    const countEvent = broadcasts.find((e) => e.type === "inbox_count_changed");
+    assert.deepEqual(countEvent, {
+      type: "inbox_count_changed",
+      pendingCount: 1,
+    });
   });
 
   it("bound to=session:<id> with unknown session returns 400 session_not_found (no fallback to inbox)", async () => {
@@ -247,5 +257,12 @@ describe("POST /api/v1/messages — ingress", () => {
     assert.ok(newRow);
     assert.equal(newRow.body, "v2");
     assert.equal(store.listUnprocessed().length, 1);
+    const countEvents = broadcasts.filter(
+      (e) => e.type === "inbox_count_changed",
+    );
+    assert.deepEqual(
+      countEvents.map((event) => event.pendingCount),
+      [1, 1],
+    );
   });
 });

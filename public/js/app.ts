@@ -30,11 +30,13 @@ import {
   navigateFromNotification,
   type NotificationTarget,
 } from "./session-navigation.ts";
+import { installInboxIndicator } from "./inbox-indicator.ts";
 
 // Inline debug log — when level != "off", log records render as
 // system-msg rows in the conversation flow via addSystem.
 setLogRenderer(addSystem);
 installInputFocusRecovery();
+installInboxIndicator();
 
 // Code block copy button (event delegation)
 dom.messages.addEventListener("click", handleCopyClick);

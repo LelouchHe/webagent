@@ -143,9 +143,10 @@ describe("connection", () => {
   function fireConnected(
     es: InstanceType<typeof MockEventSource>,
     clientId: string,
+    pendingCount = 0,
   ) {
     return es.onmessage?.({
-      data: JSON.stringify({ type: "connected", clientId }),
+      data: JSON.stringify({ type: "connected", clientId, pendingCount }),
     });
   }
 
@@ -173,6 +174,17 @@ describe("connection", () => {
   async function flush(n = 30) {
     for (let i = 0; i < n; i++) await Promise.resolve();
   }
+
+  it("initializes the inbox count from the SSE handshake", async () => {
+    setFetch(async () => mockResponse([]));
+    connection.connect();
+    const es = await latestES();
+
+    fireConnected(es, "client-1", 5);
+
+    assert.equal(state.inboxCount, 5);
+    assert.equal(dom.inboxCount.textContent, "(5)");
+  });
 
   it("resumes the session from the URL hash on connect", async () => {
     history.replaceState(null, "", "/#hash-session");

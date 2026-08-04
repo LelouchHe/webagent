@@ -36,6 +36,7 @@ describe("message-cleanup — unprocessed TTL sweep", () => {
       cwd: null,
       created_at: old,
     });
+
     store.createMessage({
       id: "fresh-1",
       to_ref: "*",
@@ -53,6 +54,40 @@ describe("message-cleanup — unprocessed TTL sweep", () => {
     assert.equal(removed, 1);
     assert.equal(store.getMessage("old-1"), undefined);
     assert.ok(store.getMessage("fresh-1"));
+  });
+
+  it("notifies with the authoritative pending count after removing rows", () => {
+    const now = Date.now();
+    for (const [id, created_at] of [
+      ["old", now - 40 * 24 * 60 * 60 * 1000],
+      ["fresh", now],
+    ] as const) {
+      store.createMessage({
+        id,
+        to_ref: "user",
+        from_ref: "cron:x",
+        title: id,
+        body: id,
+        deliver: "push",
+        dedup_key: null,
+        from_label: null,
+        cwd: null,
+        created_at,
+      });
+    }
+    const counts: number[] = [];
+
+    sweepOnce(store, 30, now, (pendingCount) => counts.push(pendingCount));
+
+    assert.deepEqual(counts, [1]);
+  });
+
+  it("does not notify when a sweep removes nothing", () => {
+    const counts: number[] = [];
+    sweepOnce(store, 30, Date.now(), (pendingCount) =>
+      counts.push(pendingCount),
+    );
+    assert.deepEqual(counts, []);
   });
 
   it("ttlDays=0 means keep forever — sweep is a no-op", () => {

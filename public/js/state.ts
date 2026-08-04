@@ -35,6 +35,8 @@ export const dom = {
   prompt: $<HTMLSpanElement>("#input-prompt"),
   status: $<HTMLSpanElement>("#status"),
   sessionInfo: $<HTMLSpanElement>("#session-info"),
+  inboxBtn: $<HTMLButtonElement>("#inbox-btn"),
+  inboxCount: $<HTMLSpanElement>("#inbox-count"),
   attachBtn: $<HTMLButtonElement>("#attach-btn"),
   fileInput: $<HTMLInputElement>("#file-input"),
   attachPreview: $<HTMLDivElement>("#attach-preview"),
@@ -76,6 +78,7 @@ export const state = {
   pendingNavigationSessionId: null as string | null,
   sessionCwd: null as string | null,
   sessionTitle: null as string | null,
+  inboxCount: 0,
   awaitingNewSession: false,
   configOptions: [] as ConfigOption[],
   agentCommands: [] as AgentCommand[],
@@ -159,6 +162,20 @@ export function setConnectionStatus(
   dom.status.dataset.state = status;
   dom.status.setAttribute("aria-label", label);
   dom.status.setAttribute("title", label);
+}
+
+export function updateInboxCount(pendingCount: number): void {
+  const count = Math.max(0, Math.trunc(pendingCount));
+  state.inboxCount = count;
+  dom.inboxCount.hidden = count === 0;
+  dom.inboxCount.textContent =
+    count === 0 ? "" : `(${count > 9 ? "9+" : count})`;
+  const label =
+    count === 0
+      ? "Inbox, no pending messages"
+      : `Inbox, ${count} pending ${count === 1 ? "message" : "messages"}`;
+  dom.inboxBtn.setAttribute("aria-label", label);
+  dom.inboxBtn.title = count === 0 ? "Open inbox" : `${label}. Open inbox`;
 }
 
 // --- Config helpers ---

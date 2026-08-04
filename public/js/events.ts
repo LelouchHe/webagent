@@ -29,6 +29,7 @@ import {
   applyStatePatch,
   applyAgentCommandSnapshot,
   reloadSnapshot,
+  updateInboxCount,
 } from "./state.ts";
 import {
   addMessage,
@@ -1617,17 +1618,18 @@ export function handleEvent(msg: AgentEvent) {
       break;
 
     case "message_created":
-      addSystem(`inbox: new message ${msg.messageId} — /inbox to view`);
       break;
 
     case "message_consumed":
-      addSystem(`inbox: ${msg.messageId} consumed → session ${msg.sessionId}`);
       closeLocalBanner(`msg-${msg.messageId}`);
       break;
 
     case "message_acked":
-      addSystem(`inbox: ${msg.messageId} dismissed`);
       closeLocalBanner(`msg-${msg.messageId}`);
+      break;
+
+    case "inbox_count_changed":
+      updateInboxCount(msg.pendingCount);
       break;
 
     case "message":

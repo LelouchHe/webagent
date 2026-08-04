@@ -1631,6 +1631,25 @@ describe("events", () => {
     });
 
     describe("event filtering", () => {
+      it("updates inbox count without adding conversation rows", () => {
+        events.handleEvent({ type: "inbox_count_changed", pendingCount: 4 });
+        assert.equal(state.inboxCount, 4);
+        assert.equal(dom.inboxCount.textContent, "(4)");
+        assert.equal(dom.messages.children.length, 0);
+      });
+
+      it("does not add conversation rows for inbox lifecycle events", () => {
+        state.sessionId = "s1";
+        events.handleEvent({ type: "message_created", messageId: "m1" });
+        events.handleEvent({
+          type: "message_consumed",
+          messageId: "m1",
+          sessionId: "s1",
+        });
+        events.handleEvent({ type: "message_acked", messageId: "m2" });
+        assert.equal(dom.messages.children.length, 0);
+      });
+
       it("ignores events from other sessions", () => {
         state.sessionId = "s1";
         events.handleEvent({

@@ -148,6 +148,11 @@ describe("POST /api/v1/messages/:id/consume + ack + DELETE", () => {
       broadcasts.push(ev);
       orig(ev);
     };
+    const origGlobal = sseManager.broadcastGlobal.bind(sseManager);
+    sseManager.broadcastGlobal = (ev: AgentEvent) => {
+      broadcasts.push(ev);
+      origGlobal(ev);
+    };
 
     const handler = createRequestHandler({
       sseManager,
@@ -222,6 +227,10 @@ describe("POST /api/v1/messages/:id/consume + ack + DELETE", () => {
     assert.ok(ev, "message_consumed SSE");
     assert.equal(ev.messageId, "m1");
     assert.equal(ev.sessionId, body.sessionId);
+    assert.deepEqual(
+      broadcasts.find((event) => event.type === "inbox_count_changed"),
+      { type: "inbox_count_changed", pendingCount: 0 },
+    );
 
     // Switching to the returned session must not attempt ACP loadSession.
     const get = await send(port, "GET", `/api/v1/sessions/${body.sessionId}`);
@@ -422,6 +431,10 @@ describe("POST /api/v1/messages/:id/consume + ack + DELETE", () => {
     const ev = broadcasts.find((e) => e.type === "message_acked");
     assert.ok(ev);
     assert.equal(ev.messageId, "m3");
+    assert.deepEqual(
+      broadcasts.find((event) => event.type === "inbox_count_changed"),
+      { type: "inbox_count_changed", pendingCount: 0 },
+    );
   });
 
   it("DELETE /api/v1/messages/:id is an alias for ack", async () => {

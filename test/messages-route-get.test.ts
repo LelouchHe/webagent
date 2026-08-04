@@ -105,6 +105,15 @@ describe("GET /api/v1/messages — list + single", () => {
     );
   });
 
+  it("tracks the pending count without reading message bodies", () => {
+    assert.equal(store.countUnprocessed(), 0);
+    mkMsg({ id: "a" });
+    mkMsg({ id: "b" });
+    assert.equal(store.countUnprocessed(), 2);
+    store.deleteMessage("a");
+    assert.equal(store.countUnprocessed(), 1);
+  });
+
   it("GET /api/v1/messages/:id returns the row", async () => {
     mkMsg({ id: "abc", body: "hello world", from_ref: "cron:nightly" });
     const res = await req(port, "GET", "/api/v1/messages/abc");

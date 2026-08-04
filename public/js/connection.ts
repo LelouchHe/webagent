@@ -9,6 +9,7 @@ import {
   setConnectionStatus,
   clearCancelTimer,
   reloadSnapshot,
+  updateInboxCount,
 } from "./state.ts";
 import {
   addSystem,
@@ -80,10 +81,14 @@ async function openStream() {
       clientId?: string;
       agent?: unknown;
       debugLevel?: string;
+      pendingCount?: number;
     };
     // SSE initial handshake: server assigns clientId (no agent field)
     if (msg.type === "connected" && msg.clientId) {
       state.clientId = msg.clientId;
+      if (typeof msg.pendingCount === "number") {
+        updateInboxCount(msg.pendingCount);
+      }
       applyConnectedLogLevel(msg.debugLevel);
       void api.postVisibility(
         msg.clientId,

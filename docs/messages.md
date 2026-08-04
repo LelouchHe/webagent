@@ -73,6 +73,10 @@ Reserved strings (`agent`, `user`, `system`) and `session:<id>` are rejected. Th
                                                         SSE message_consumed
                                                         push close sent
 
+Every pending-row mutation also broadcasts the authoritative global
+`inbox_count_changed` event. TTL cleanup uses the same event when it removes
+expired rows.
+
 Bound path (to:"session:<id>") skips the inbox entirely:
 external tool → POST → message event on target session → session SSE + push
 ```
@@ -82,6 +86,19 @@ Messages are physically deleted on ack/consume (no soft-delete). Historical reco
 ---
 
 ## Frontend integration
+
+### Pending indicator
+
+The header shows the pending inbox count next to the terminal logo: `>_ (3)`.
+Counts above nine render as `>_ (9+)`; zero hides the count entirely. The whole
+logo/count button opens the `/inbox` picker.
+
+The SSE `connected` handshake supplies the initial `pendingCount`, so startup
+does not fetch message bodies. Later create, consume, dismiss, and TTL cleanup
+operations broadcast a global `inbox_count_changed` event with the
+authoritative post-mutation count. Global delivery bypasses per-session SSE
+filtering, keeping every connected client in sync. Inbox lifecycle events no
+longer add informational rows to the active conversation.
 
 ### `/inbox` slash menu
 
@@ -98,7 +115,9 @@ Typing `/inbox` (with or without a trailing space) opens a picker listing all pe
 
 Typing `/inbox <id-prefix|title-substring>` (without picker) consumes the first match; `/inbox dismiss <id-prefix|title-substring>` dismisses it. Matching mirrors `/switch` (id prefix OR case-insensitive title substring, first hit wins). There is no `consume` keyword — plain `/inbox <query>` is the consume path.
 
-The menu refetches on every open (no client-side caching) so new arrivals show up immediately.
+The menu refetches on every open (no client-side caching) so new arrivals show
+up immediately. The complete list remains transient; only the pending count is
+kept in frontend state.
 
 ### Push notifications
 

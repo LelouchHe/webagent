@@ -148,6 +148,12 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - ACP creation and local transaction failure preserve the pending message
   - existing-session message move is atomic at the SQLite boundary
   - ack / delete aliases and corresponding SSE broadcasts
+  - authoritative pending-count broadcasts after create, dedup supersede, consume, and dismiss
+
+- `test/message-cleanup.test.ts`, `test/sse.test.ts`
+  - TTL cleanup broadcasts the post-sweep pending count only when rows change
+  - SSE handshakes initialize the count without fetching message bodies
+  - global inbox-count events reach session-scoped SSE clients
 
 - `test/session-navigation.test.ts`, `test/service-worker-click.test.ts`
   - Inbox notification consume reuses the current session as inheritance source
@@ -156,6 +162,11 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - terminal startup intents are cleared; retryable intents survive refresh without in-page duplication
 
 ### Frontend state and UI event flow
+
+- `test/inbox-indicator.test.ts`, `test/state.test.ts`, `test/events.test.ts`
+  - header renders `>_ (N)`, caps at `9+`, and hides zero
+  - the full accessible logo button opens the `/inbox` picker
+  - count events update the indicator without adding inbox lifecycle rows to the conversation
 
 - `test/agent-slash-frontend.test.ts`
   - `//` command discovery, filtering, Tab, Click, and input-hint rendering
@@ -397,6 +408,10 @@ spot gaps, and decide what still needs to be added without reading every spec.
 
 - `message-notification-cold-start.spec.ts`
   - cold Inbox notification consumes after startup, switches to the new session, cleans the URL, and inherits model configuration
+
+- `inbox-indicator.spec.ts`
+  - pending messages update the header count through SSE without adding conversation rows
+  - the logo button opens the live Inbox picker and dismissing the message hides the count
 
 - `session-delete-broadcast.spec.ts`
   - deleting the current session disables peer clients correctly

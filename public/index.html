@@ -29,7 +29,15 @@
   <body>
     <div id="header">
       <div class="header-side header-left">
-        <span class="logo">>_</span>
+        <button
+          id="inbox-btn"
+          type="button"
+          aria-label="Inbox, no pending messages"
+          title="Open inbox"
+        >
+          <span class="logo">>_</span>
+          <span id="inbox-count" hidden></span>
+        </button>
       </div>
       <span id="session-info" class="status"></span>
       <div class="header-side header-right">

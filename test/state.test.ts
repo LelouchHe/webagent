@@ -28,9 +28,39 @@ describe("state", () => {
       assert.ok(mod.dom.prompt);
       assert.ok(mod.dom.status);
       assert.ok(mod.dom.sessionInfo);
+      assert.ok(mod.dom.inboxBtn);
+      assert.ok(mod.dom.inboxCount);
       assert.ok(mod.dom.themeBtn);
       assert.ok(mod.dom.slashMenu);
       assert.ok(mod.dom.inputArea);
+    });
+
+    describe("inbox count", () => {
+      it("hides zero and renders counts up to 9+", () => {
+        mod.updateInboxCount(0);
+        assert.equal(mod.dom.inboxCount.hidden, true);
+        assert.equal(mod.dom.inboxCount.textContent, "");
+        assert.equal(
+          mod.dom.inboxBtn.getAttribute("aria-label"),
+          "Inbox, no pending messages",
+        );
+
+        mod.updateInboxCount(3);
+        assert.equal(mod.state.inboxCount, 3);
+        assert.equal(mod.dom.inboxCount.hidden, false);
+        assert.equal(mod.dom.inboxCount.textContent, "(3)");
+        assert.equal(
+          mod.dom.inboxBtn.getAttribute("aria-label"),
+          "Inbox, 3 pending messages",
+        );
+
+        mod.updateInboxCount(12);
+        assert.equal(mod.dom.inboxCount.textContent, "(9+)");
+        assert.equal(
+          mod.dom.inboxBtn.getAttribute("aria-label"),
+          "Inbox, 12 pending messages",
+        );
+      });
     });
   });
 

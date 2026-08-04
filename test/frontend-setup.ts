@@ -11,7 +11,7 @@ import { Window } from "happy-dom";
 (globalThis as { __DEV__?: boolean }).__DEV__ = true;
 
 const HTML = `
-<div id="header"><div class="header-side header-left"><span class="logo">>_</span></div><span id="session-info" class="status"></span><div class="header-side header-right"><span id="status" class="status-dot is-disconnected" data-state="disconnected" role="status" aria-live="polite" aria-label="disconnected" title="disconnected"></span><button id="theme-btn">x</button></div></div>
+<div id="header"><div class="header-side header-left"><button id="inbox-btn" type="button" aria-label="Inbox, no pending messages"><span class="logo">>_</span><span id="inbox-count" hidden></span></button></div><span id="session-info" class="status"></span><div class="header-side header-right"><span id="status" class="status-dot is-disconnected" data-state="disconnected" role="status" aria-live="polite" aria-label="disconnected" title="disconnected"></span><button id="theme-btn">x</button></div></div>
 <div id="messages"></div>
 <div id="attach-preview"></div>
 <details id="plan-panel" class="input-panel" hidden></details>
@@ -58,6 +58,7 @@ export function resetState(state: any, dom: any) {
   state.pendingNavigationSessionId = null;
   state.sessionCwd = null;
   state.sessionTitle = null;
+  state.inboxCount = 0;
   state.awaitingNewSession = false;
   state.configOptions = [];
   state.agentCommands = [];
@@ -107,6 +108,9 @@ export function resetState(state: any, dom: any) {
   dom.status.setAttribute("aria-label", "disconnected");
   dom.status.setAttribute("title", "disconnected");
   dom.sessionInfo.textContent = "";
+  dom.inboxCount.textContent = "";
+  dom.inboxCount.hidden = true;
+  dom.inboxBtn.setAttribute("aria-label", "Inbox, no pending messages");
   dom.input.value = "";
   dom.input.disabled = false;
   dom.sendBtn.disabled = false;

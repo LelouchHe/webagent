@@ -138,7 +138,13 @@ sessions.state.onPatch((event) => {
 });
 
 let bridge: AgentBridge | null = null;
-let messageCleanup: CleanupHandle | null = null;
+const messageCleanup: CleanupHandle = startMessageCleanup(
+  store,
+  config.messages.unprocessed_ttl_days,
+  (pendingCount) => {
+    sseManager.broadcastGlobal({ type: "inbox_count_changed", pendingCount });
+  },
+);
 let sharePreviewCleanup: SharePreviewCleanupHandle | null = null;
 
 // --- HTTP server ---
@@ -203,7 +209,7 @@ async function initBridge(agentCmd: string): Promise<AgentBridge> {
 async function shutdown() {
   console.log("\n[server] shutting down...");
   sseManager.stopHeartbeat();
-  messageCleanup?.stop();
+  messageCleanup.stop();
   sharePreviewCleanup?.stop();
   sessions.killAllBashProcs();
   await bridge?.shutdown();
@@ -242,10 +248,6 @@ server.listen(config.port, config.host, () => {
     // will use. If the gate ran, auth.json exists and has ≥ 1 token.
     await authStore.load();
     console.log(`[server] listening on http://localhost:${config.port}`);
-    messageCleanup = startMessageCleanup(
-      store,
-      config.messages.unprocessed_ttl_days,
-    );
     if (config.share.enabled) {
       sharePreviewCleanup = startSharePreviewCleanup(store);
       console.log(`[share] preview gc armed (24h interval)`);

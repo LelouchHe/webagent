@@ -21,12 +21,14 @@ export function sweepOnce(
   store: Store,
   ttlDays: number,
   now: number = Date.now(),
+  onPendingCountChange?: (pendingCount: number) => void,
 ): number {
   if (ttlDays <= 0) return 0;
   const threshold = now - ttlDays * DAY_MS;
   const removed = store.deleteOlderThan(threshold);
   if (removed > 0) {
     mlog.info("ttl sweep", { removed, ttl_days: ttlDays });
+    onPendingCountChange?.(store.countUnprocessed());
   }
   return removed;
 }
@@ -41,8 +43,9 @@ export function sweepOnce(
 export function startMessageCleanup(
   store: Store,
   ttlDays: number,
+  onPendingCountChange?: (pendingCount: number) => void,
 ): CleanupHandle {
-  sweepOnce(store, ttlDays);
+  sweepOnce(store, ttlDays, Date.now(), onPendingCountChange);
 
   if (ttlDays <= 0) {
     return { armed: false, stop: () => {} };
@@ -50,7 +53,7 @@ export function startMessageCleanup(
 
   const timer = setInterval(() => {
     try {
-      sweepOnce(store, ttlDays);
+      sweepOnce(store, ttlDays, Date.now(), onPendingCountChange);
     } catch (err) {
       mlog.error("ttl sweep failed", { error: err });
     }

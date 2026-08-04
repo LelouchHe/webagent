@@ -177,6 +177,15 @@ export class SseManager {
     }
   }
 
+  /** Broadcast global application state regardless of a client's session filter. */
+  broadcastGlobal(event: AgentEvent): void {
+    const snapshot = [...this.clients.values()];
+    for (const client of snapshot) {
+      if (client.res.writableEnded) continue;
+      this.sendEvent(client, event);
+    }
+  }
+
   /** Get count of connected clients. */
   get size(): number {
     return this.clients.size;

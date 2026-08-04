@@ -52,6 +52,13 @@ const IS_WIN = process.platform === "win32";
 
 const SAFE_ID = /^[a-zA-Z0-9_-]+$/;
 
+function broadcastInboxCount(store: Store, sseManager: SseManager): void {
+  sseManager.broadcastGlobal({
+    type: "inbox_count_changed",
+    pendingCount: store.countUnprocessed(),
+  });
+}
+
 const MIME: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
   ".js": "application/javascript; charset=utf-8",
@@ -1971,6 +1978,7 @@ export function createRequestHandler(
           type: "connected",
           clientId,
           debugLevel: deps.debugLevel ?? "off",
+          pendingCount: store.countUnprocessed(),
         } as unknown as AgentEvent);
         sseManager.writeHeartbeat(client);
         return;
@@ -2023,6 +2031,7 @@ export function createRequestHandler(
           type: "connected",
           clientId,
           debugLevel: deps.debugLevel ?? "off",
+          pendingCount: store.countUnprocessed(),
         } as unknown as AgentEvent);
         sseManager.writeHeartbeat(client);
 
@@ -2266,6 +2275,7 @@ export function createRequestHandler(
           created_at: Date.now(),
         });
         sseManager.broadcast({ type: "message_created", messageId: id });
+        broadcastInboxCount(store, sseManager);
         if (deps.pushService) {
           void deps.pushService.sendForMessage({
             id,
@@ -2364,6 +2374,7 @@ export function createRequestHandler(
             messageId: id,
             sessionId: out.sessionId,
           });
+          broadcastInboxCount(store, sseManager);
           if (!out.alreadyConsumed && deps.pushService) {
             void deps.pushService.sendClose(id);
           }
@@ -2392,6 +2403,7 @@ export function createRequestHandler(
             return;
           }
           sseManager.broadcast({ type: "message_acked", messageId: id });
+          broadcastInboxCount(store, sseManager);
           if (deps.pushService) void deps.pushService.sendClose(id);
           mlog.info("ack", { msg_id: id });
           json(res, HTTP_STATUS.OK, { ok: true });

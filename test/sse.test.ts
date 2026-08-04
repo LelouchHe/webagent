@@ -223,6 +223,27 @@ describe("SSE REST API", () => {
       assert.equal(sseManager.size, 1);
     });
 
+    it("includes the authoritative inbox count in the connected handshake", async () => {
+      store.createMessage({
+        id: "pending-1",
+        from_ref: "cron:x",
+        from_label: null,
+        to_ref: "user",
+        deliver: "inapp",
+        dedup_key: null,
+        title: "Pending",
+        body: "Body",
+        cwd: null,
+        created_at: Date.now(),
+      });
+      const sse = openSse(port, "/api/v1/events/stream");
+      sseCleanups.push(sse.close);
+      await sse.response;
+      await waitFor(() => sse.events.length >= 1);
+
+      assert.equal(JSON.parse(sse.events[0]).pendingCount, 1);
+    });
+
     it("removes client on connection close", async () => {
       const sse = openSse(port, "/api/v1/events/stream");
       sseCleanups.push(sse.close);
@@ -504,6 +525,29 @@ describe("SSE REST API", () => {
       );
       // Named event so EventSource addEventListener("heartbeat", …) fires.
       assert.equal(heartbeats[0], "event: heartbeat\ndata: {}\n\n");
+    });
+
+    describe("global broadcasts", () => {
+      it("delivers inbox count changes to session-scoped clients", () => {
+        const sse = new SseManager();
+        const chunks: string[] = [];
+        const fakeRes = {
+          writableEnded: false,
+          write(data: string) {
+            chunks.push(data);
+            return true;
+          },
+          on() {},
+        } as any;
+        sse.add({ id: "session-client", res: fakeRes, sessionId: "s1" });
+
+        sse.broadcastGlobal({
+          type: "inbox_count_changed",
+          pendingCount: 2,
+        });
+
+        assert.match(chunks.join(""), /"pendingCount":2/);
+      });
     });
   });
 });

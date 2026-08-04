@@ -757,6 +757,13 @@ export class Store {
       .all() as MessageRow[];
   }
 
+  countUnprocessed(): number {
+    const row = this.db
+      .prepare("SELECT COUNT(*) AS count FROM messages")
+      .get() as { count: number };
+    return row.count;
+  }
+
   deleteMessage(id: string): number {
     const info = this.db.prepare("DELETE FROM messages WHERE id = ?").run(id);
     return info.changes;

@@ -84,6 +84,32 @@ body {
   font-weight: bold;
   color: var(--green);
 }
+#inbox-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 28px;
+  padding: 2px 6px;
+  margin-left: -6px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+#inbox-btn:hover .logo,
+#inbox-btn:focus-visible .logo {
+  color: var(--text);
+}
+#inbox-btn:focus-visible {
+  outline: 1px solid var(--text-dim);
+  outline-offset: 1px;
+}
+#inbox-count {
+  color: var(--red);
+  font-size: 13px;
+  font-weight: 600;
+}
 .header-side {
   min-width: 0;
   display: flex;

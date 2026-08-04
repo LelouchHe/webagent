@@ -250,6 +250,7 @@ export type AgentEvent =
   | { type: "message_created"; messageId: string }
   | { type: "message_consumed"; messageId: string; sessionId: string }
   | { type: "message_acked"; messageId: string }
+  | { type: "inbox_count_changed"; pendingCount: number }
   // Replay-only events (stored in DB, not sent live)
   | { type: "assistant_message"; sessionId?: string; text: string }
   | { type: "thinking"; sessionId?: string; text: string }
