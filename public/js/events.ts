@@ -1290,7 +1290,7 @@ function handleReplayContentEvent(
         events[idx]?.session_id === state.sentMessageForSession &&
         d.clientOpId === state.sentMessageOpId
       ) {
-        state.awaitingOwnUserEcho = false;
+        state.replayedOwnUserEcho = true;
       }
       const el = renderContentEvent(type, d, hooks);
       if (el) {
@@ -1311,6 +1311,10 @@ function drainReplayQueue() {
     if (isDuplicateOfReplay(msg)) continue;
     handleEvent(msg);
   }
+  if (state.awaitingOwnUserEcho && state.replayedOwnUserEcho) {
+    state.awaitingOwnUserEcho = false;
+  }
+  state.replayedOwnUserEcho = false;
 }
 
 /** Check whether a queued WS event duplicates an element already rendered by replay. */

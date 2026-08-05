@@ -1991,7 +1991,8 @@ describe("events", () => {
         0,
       );
 
-      assert.equal(state.awaitingOwnUserEcho, false);
+      assert.equal(state.awaitingOwnUserEcho, true);
+      assert.equal(state.replayedOwnUserEcho, true);
       assert.equal(state.sentMessageForSession, "s1");
       assert.equal(state.sentMessageOpId, "op-1");
 
@@ -2002,6 +2003,7 @@ describe("events", () => {
         clientOpId: "op-1",
       });
       assert.equal(dom.messages.querySelectorAll(".msg.user").length, 1);
+      assert.equal(state.awaitingOwnUserEcho, false);
       assert.equal(state.sentMessageOpId, null);
     });
 
@@ -2062,7 +2064,8 @@ describe("events", () => {
         storedEvents,
         1,
       );
-      assert.equal(state.awaitingOwnUserEcho, false);
+      assert.equal(state.awaitingOwnUserEcho, true);
+      assert.equal(state.replayedOwnUserEcho, true);
     });
 
     it("replays assistant_message", () => {
@@ -4359,6 +4362,43 @@ describe("events", () => {
       assert.ok(dom.messages.children[0].textContent.includes("hi"));
       // message_chunk creates an assistant element
       assert.ok(dom.messages.children[1].classList.contains("assistant"));
+    });
+
+    it("keeps stale queued completion guarded until replay drain finishes", async () => {
+      const fakeEvents = [
+        {
+          seq: 11,
+          session_id: "s1",
+          type: "user_message",
+          data: JSON.stringify({
+            text: "new",
+            clientOpId: "op-new",
+          }),
+        },
+      ];
+      let resolveFetch: Function;
+      globalThis.fetch = (() =>
+        new Promise((resolve) => {
+          resolveFetch = resolve;
+        })) as any;
+      state.sessionId = "s1";
+      state.busy = true;
+      state.awaitingOwnUserEcho = true;
+      state.sentMessageForSession = "s1";
+      state.sentMessageOpId = "op-new";
+
+      const historyPromise = events.loadHistory("s1");
+      events.handleEvent({
+        type: "prompt_done",
+        sessionId: "s1",
+        stopReason: "end_turn",
+      });
+      resolveFetch!({ ok: true, json: () => Promise.resolve(fakeEvents) });
+      await historyPromise;
+
+      assert.equal(state.busy, true);
+      assert.equal(state.turnEnded, false);
+      assert.equal(state.awaitingOwnUserEcho, false);
     });
 
     it("deduplicates tool_call events that were both replayed and queued", async () => {
