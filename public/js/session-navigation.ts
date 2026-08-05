@@ -1,6 +1,6 @@
 import { ApiError, consumeMessage, getSession } from "./api.ts";
 import { HTTP_STATUS } from "../../src/http-status.ts";
-import { handleEvent, loadHistory } from "./events.ts";
+import { drainNavigationEvents, handleEvent, loadHistory } from "./events.ts";
 import { addSystem, scrollToBottom } from "./render.ts";
 import {
   hydrateSessionRuntime,
@@ -34,7 +34,7 @@ export async function switchToSession(
   const previousSessionId = state.sessionId;
   state.awaitingNewSession = false;
   state.pendingNavigationSessionId = null;
-  state.pendingNavigationStatePatches = [];
+  state.pendingNavigationEvents = [];
   if (state.sessionId === sessionId) return "unchanged";
   setHashSessionId(sessionId);
   resetSessionUI();
@@ -66,6 +66,7 @@ export async function switchToSession(
       title: session.title,
       configOptions: session.configOptions,
     });
+    drainNavigationEvents(sessionId);
     if (loaded) scrollToBottom(true);
     return "switched";
   } catch (error) {

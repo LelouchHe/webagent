@@ -1435,6 +1435,16 @@ function scheduleAssistantRender() {
   });
 }
 
+export function drainNavigationEvents(sessionId: string): void {
+  const matching = state.pendingNavigationEvents.filter(
+    (event) => "sessionId" in event && event.sessionId === sessionId,
+  );
+  state.pendingNavigationEvents = state.pendingNavigationEvents.filter(
+    (event) => !("sessionId" in event) || event.sessionId !== sessionId,
+  );
+  for (const event of matching) handleEvent(event);
+}
+
 // eslint-disable-next-line complexity -- TODO: refactor event type switch with helper functions
 export function handleEvent(msg: AgentEvent) {
   if (msg.type === "inbox_count_changed") {
@@ -1448,12 +1458,14 @@ export function handleEvent(msg: AgentEvent) {
     return;
   }
 
+  const navigationSid = "sessionId" in msg ? msg.sessionId : undefined;
   if (
-    msg.type === "state_patch" &&
+    navigationSid &&
+    msg.type !== "session_created" &&
     state.sessionId === null &&
-    state.pendingNavigationSessionId === msg.sessionId
+    state.pendingNavigationSessionId === navigationSid
   ) {
-    state.pendingNavigationStatePatches.push(msg);
+    state.pendingNavigationEvents.push(msg);
     return;
   }
 
@@ -1527,13 +1539,10 @@ export function handleEvent(msg: AgentEvent) {
       const matchesPendingCreate =
         state.awaitingNewSession &&
         state.pendingNewSessionOpId === msg.clientOpId;
-      if (
-        state.newSessionRequestInFlight &&
-        state.awaitingNewSession &&
-        !matchesPendingCreate
-      ) {
+      if (state.pendingNewSessionOpId && !matchesPendingCreate) {
         break;
       }
+
       if (matchesPendingCreate) {
         finishNewSessionRequest();
       }

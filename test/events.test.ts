@@ -125,6 +125,39 @@ describe("events", () => {
         assert.equal(state.pendingNewSessionOpId, null);
       });
 
+      it("rejects unrelated creates during interrupted-response recovery", async () => {
+        let rejectCreate!: (reason: Error) => void;
+        let clientOpId = "";
+        setFetch((_url: string, init?: RequestInit) => {
+          clientOpId = new Headers(init?.headers).get("X-Client-Op-Id") ?? "";
+          return new Promise((_resolve, reject) => {
+            rejectCreate = reject;
+          });
+        });
+
+        stateMod.requestNewSession();
+        rejectCreate(new Error("response interrupted"));
+        await new Promise((resolve) => setImmediate(resolve));
+        events.handleEvent({
+          type: "session_created",
+          sessionId: "unrelated-session",
+          cwd: "/other",
+          configOptions: [],
+          clientOpId: "other-op",
+        });
+        assert.equal(state.sessionId, null);
+
+        events.handleEvent({
+          type: "session_created",
+          sessionId: "committed-session",
+          cwd: "/committed",
+          configOptions: [],
+          clientOpId,
+        });
+        assert.equal(state.sessionId, "committed-session");
+        assert.equal(state.pendingNewSessionOpId, null);
+      });
+
       it("rearms visible history sentinel after session activation", async () => {
         const observers: Array<{
           callback: (entries: Array<{ isIntersecting: boolean }>) => void;

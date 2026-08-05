@@ -77,9 +77,7 @@ export const state = {
   sessionSwitchGen: 0,
   messageNavigationGen: 0,
   pendingNavigationSessionId: null as string | null,
-  pendingNavigationStatePatches: [] as Array<
-    Extract<AgentEvent, { type: "state_patch" }>
-  >,
+  pendingNavigationEvents: [] as AgentEvent[],
   sessionCwd: null as string | null,
   sessionTitle: null as string | null,
   inboxCount: 0,
@@ -439,13 +437,15 @@ export async function reloadSnapshot(
 function takeNavigationStatePatches(
   sessionId: string,
 ): Array<Extract<AgentEvent, { type: "state_patch" }>> {
-  const matching = state.pendingNavigationStatePatches
-    .filter((event) => event.sessionId === sessionId)
+  const matching = state.pendingNavigationEvents
+    .filter(
+      (event): event is Extract<AgentEvent, { type: "state_patch" }> =>
+        event.type === "state_patch" && event.sessionId === sessionId,
+    )
     .sort((a, b) => a.seq - b.seq);
-  state.pendingNavigationStatePatches =
-    state.pendingNavigationStatePatches.filter(
-      (event) => event.sessionId !== sessionId,
-    );
+  state.pendingNavigationEvents = state.pendingNavigationEvents.filter(
+    (event) => event.type !== "state_patch" || event.sessionId !== sessionId,
+  );
   return matching;
 }
 
@@ -495,7 +495,7 @@ export function requestNewSession({
   state.messageNavigationGen++;
   const generation = state.sessionSwitchGen;
   state.pendingNavigationSessionId = null;
-  state.pendingNavigationStatePatches = [];
+  state.pendingNavigationEvents = [];
   state.awaitingNewSession = true;
   state.newSessionRequestInFlight = true;
   const clientOpId = api.newOpId();
@@ -612,7 +612,7 @@ export function resetSessionUI({
   state._cancelTimerId = null;
   state.lastEventSeq = 0;
   state.lastStateSeq = 0;
-  state.pendingNavigationStatePatches = [];
+  state.pendingNavigationEvents = [];
   state.oldestLoadedSeq = 0;
   state.hasMoreHistory = false;
   state.loadingOlderEvents = false;

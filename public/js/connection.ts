@@ -21,6 +21,7 @@ import {
 } from "./render.ts";
 import {
   handleEvent,
+  drainNavigationEvents,
   loadHistory,
   loadNewEvents,
   fallbackToNextSession,
@@ -249,6 +250,7 @@ async function resumeAndLoad(
       title: session.title,
       configOptions: session.configOptions,
     });
+    drainNavigationEvents(sessionId);
   }
 }
 

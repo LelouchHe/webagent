@@ -105,7 +105,7 @@ export function resetState(state: any, dom: any) {
   state._cancelTimerId = null;
   state.lastEventSeq = 0;
   state.lastStateSeq = 0;
-  state.pendingNavigationStatePatches = [];
+  state.pendingNavigationEvents = [];
   state.replayInProgress = false;
   state.replayQueue = [];
   if (state.unconfirmedPermissions) state.unconfirmedPermissions.clear();

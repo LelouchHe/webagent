@@ -320,6 +320,41 @@ describe("shared session navigation", () => {
     assert.equal(state.lastStateSeq, 5);
   });
 
+  it("drains target live events after snapshot hydration", async () => {
+    state.sessionId = "current-session";
+    let releaseSnapshot!: (response: Response) => void;
+    let markSnapshotStarted!: () => void;
+    const snapshotStarted = new Promise<void>((resolve) => {
+      markSnapshotStarted = resolve;
+    });
+    onDelayedSnapshotFetch = markSnapshotStarted;
+    delayedSnapshot = new Promise<Response>((resolve) => {
+      releaseSnapshot = resolve;
+    });
+
+    const pending = navigation.switchToSession("message-session");
+    await snapshotStarted;
+    handleEvent({
+      type: "message_chunk",
+      sessionId: "message-session",
+      text: "arrived during hydration",
+    });
+    releaseSnapshot(
+      new Response(
+        JSON.stringify({
+          version: 1,
+          seq: 0,
+          session: {},
+          runtime: { busy: null },
+        }),
+        { status: 200 },
+      ),
+    );
+
+    assert.equal(await pending, "switched");
+    assert.equal(state.currentAssistantText, "arrived during hydration");
+  });
+
   it("abandons a switch superseded by ordinary session creation", async () => {
     state.sessionId = "current-session";
     let releaseHistory!: (response: Response) => void;
