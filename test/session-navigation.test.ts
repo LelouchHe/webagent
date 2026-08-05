@@ -141,6 +141,56 @@ describe("shared session navigation", () => {
     assert.equal(location.hash, "#message-session");
   });
 
+  it("keeps switch ownership when target session_created arrives before snapshot", async () => {
+    state.sessionId = "current-session";
+    let releaseHistory!: (response: Response) => void;
+    delayedHistory = new Promise<Response>((resolve) => {
+      releaseHistory = resolve;
+    });
+    delayedSnapshot = Promise.resolve(
+      new Response(
+        JSON.stringify({
+          version: 1,
+          seq: 4,
+          session: {},
+          runtime: {
+            busy: {
+              kind: "agent",
+              since: "t0",
+              promptId: "p1",
+            },
+          },
+        }),
+        { status: 200 },
+      ),
+    );
+
+    const pending = navigation.switchToSession("message-session");
+    handleEvent({
+      type: "session_created",
+      sessionId: "message-session",
+      cwd: "/tmp",
+      configOptions: [],
+    });
+
+    assert.equal(
+      state.pendingNavigationSessionId,
+      "message-session",
+      "intermediate lifecycle event must not release switch ownership",
+    );
+    releaseHistory(
+      new Response(JSON.stringify({ events: [], streaming: {} }), {
+        status: 200,
+      }),
+    );
+
+    assert.equal(await pending, "switched");
+    assert.equal(state.sessionId, "message-session");
+    assert.equal(state.busy, true);
+    assert.equal(state.busyKind, "agent");
+    assert.equal(state.pendingNavigationSessionId, null);
+  });
+
   it("abandons a switch superseded by ordinary session creation", async () => {
     state.sessionId = "current-session";
     let releaseHistory!: (response: Response) => void;

@@ -55,6 +55,8 @@ export async function switchToSession(
       title: session.title,
       configOptions: session.configOptions,
     });
+    if (!isCurrentNavigation()) return "ignored";
+    state.pendingNavigationSessionId = null;
     if (loaded) scrollToBottom(true);
     return "switched";
   } catch (error) {

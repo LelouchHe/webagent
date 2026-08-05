@@ -1483,7 +1483,10 @@ export function handleEvent(msg: AgentEvent) {
       }
       break;
 
-    case "session_created":
+    case "session_created": {
+      const continuesExplicitNavigation =
+        state.pendingNavigationSessionId === msg.sessionId &&
+        !state.awaitingNewSession;
       if (
         state.pendingNavigationSessionId &&
         msg.sessionId !== state.pendingNavigationSessionId
@@ -1499,7 +1502,9 @@ export function handleEvent(msg: AgentEvent) {
         break;
       }
       state.awaitingNewSession = false;
-      state.pendingNavigationSessionId = null;
+      if (!continuesExplicitNavigation) {
+        state.pendingNavigationSessionId = null;
+      }
       {
         const isSessionActivation = state.sessionId === null;
         state.sessionId = msg.sessionId;
@@ -1550,6 +1555,7 @@ export function handleEvent(msg: AgentEvent) {
       }
       updateStatusBar();
       break;
+    }
 
     case "user_message": {
       // SSE broadcasts to all clients including the sender (unlike WS which
