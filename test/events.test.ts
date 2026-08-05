@@ -1972,6 +1972,7 @@ describe("events", () => {
 
     it("reconciles an optimistic user echo from replay", () => {
       state.awaitingOwnUserEcho = true;
+      state.sessionId = "s1";
       state.sentMessageForSession = "s1";
       state.sentMessageOpId = "op-1";
       const storedEvents = [
@@ -1992,6 +1993,16 @@ describe("events", () => {
 
       assert.equal(state.awaitingOwnUserEcho, false);
       assert.equal(state.sentMessageForSession, "s1");
+      assert.equal(state.sentMessageOpId, "op-1");
+
+      events.handleEvent({
+        type: "user_message",
+        sessionId: "s1",
+        text: "hello",
+        clientOpId: "op-1",
+      });
+      assert.equal(dom.messages.querySelectorAll(".msg.user").length, 1);
+      assert.equal(state.sentMessageOpId, null);
     });
 
     it("does not reconcile an optimistic echo from another operation", () => {

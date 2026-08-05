@@ -1291,7 +1291,6 @@ function handleReplayContentEvent(
         d.clientOpId === state.sentMessageOpId
       ) {
         state.awaitingOwnUserEcho = false;
-        state.sentMessageOpId = null;
       }
       const el = renderContentEvent(type, d, hooks);
       if (el) {
