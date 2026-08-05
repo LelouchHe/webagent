@@ -292,7 +292,9 @@ describe("Session REST API", () => {
         assert.ok(releaseCancel);
         sessions.activePrompts.delete("s-reserved-race");
         sessions.syncBusy("s-reserved-race");
-        assert.equal(sessions.reservePromptSubmission("s-reserved-race"), true);
+        const replacementSubmission =
+          sessions.reservePromptSubmission("s-reserved-race");
+        assert.ok(replacementSubmission);
 
         releaseCancel();
         const res = await cancelRequest;
@@ -303,7 +305,10 @@ describe("Session REST API", () => {
           sessions.pendingPromptSubmissions.has("s-reserved-race"),
           true,
         );
-        sessions.releasePromptSubmission("s-reserved-race");
+        sessions.releasePromptSubmission(
+          "s-reserved-race",
+          replacementSubmission,
+        );
       });
 
       it("cancels a prompt submission while session resume is pending", async () => {
@@ -599,7 +604,10 @@ describe("Session REST API", () => {
 
     it("rejects deletion while prompt submission is pending", async () => {
       store.createSession("s-pending-delete", tmpDir);
-      assert.equal(sessions.reservePromptSubmission("s-pending-delete"), true);
+      assert.notEqual(
+        sessions.reservePromptSubmission("s-pending-delete"),
+        null,
+      );
 
       const res = await makeRequest(
         port,

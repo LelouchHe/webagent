@@ -503,8 +503,8 @@ describe("AgentBridge", () => {
         liveSessions: new Set(["s1", "s2"]),
         restoringSessions: new Set<string>(),
         activePrompts: new Set(["s1"]),
-        pendingPromptSubmissions: new Set(["s2"]),
-        cancelledPromptSubmissions: new Set(["s2"]),
+        pendingPromptSubmissions: new Map([["s2", 22]]),
+        cancelledPromptSubmissions: new Set([22]),
         runningBashProcs: new Map<string, any>(),
         pendingPermissions: new Map([
           [
@@ -601,7 +601,7 @@ describe("AgentBridge", () => {
         1,
         "pending submissions should remain cancellation tombstones",
       );
-      assert.equal(sessions.cancelledPromptSubmissions.has("s2"), true);
+      assert.equal(sessions.cancelledPromptSubmissions.has(22), true);
       assert.equal(
         sessions.pendingPermissions.size,
         0,

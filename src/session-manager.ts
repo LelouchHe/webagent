@@ -74,8 +74,8 @@ export class SessionManager {
   readonly assistantBuffers = new Map<string, string>();
   readonly thinkingBuffers = new Map<string, string>();
   readonly activePrompts = new Set<string>();
-  readonly pendingPromptSubmissions = new Set<string>();
-  readonly cancelledPromptSubmissions = new Set<string>();
+  readonly pendingPromptSubmissions = new Map<string, number>();
+  readonly cancelledPromptSubmissions = new Set<number>();
   readonly runningBashProcs = new Map<string, ChildProcess>();
   readonly interruptedBashProcs = new WeakSet<ChildProcess>();
   /** Pending permission requests keyed by requestId. */
@@ -85,6 +85,7 @@ export class SessionManager {
   /** Deduplicates concurrent resume calls for the same session. */
   private readonly pendingResumes = new Map<string, Promise<void>>();
   private nextPromptNumber = 0;
+  private nextPromptSubmissionNumber = 0;
   /** Deduplicates concurrent attempts to materialize one inbox message. */
   private readonly pendingMessageConsumes = new Map<
     string,
@@ -509,8 +510,11 @@ export class SessionManager {
     this.assistantBuffers.delete(sessionId);
     this.thinkingBuffers.delete(sessionId);
     this.activePrompts.delete(sessionId);
+    const pendingSubmission = this.pendingPromptSubmissions.get(sessionId);
     this.pendingPromptSubmissions.delete(sessionId);
-    this.cancelledPromptSubmissions.delete(sessionId);
+    if (pendingSubmission !== undefined) {
+      this.cancelledPromptSubmissions.delete(pendingSubmission);
+    }
     this.runningBashProcs.delete(sessionId);
     this.attachmentLabelCache.delete(sessionId);
     this.agentCommandSnapshots.delete(sessionId);
@@ -588,25 +592,33 @@ export class SessionManager {
     return null;
   }
 
-  reservePromptSubmission(sessionId: string): boolean {
-    if (this.getBusyKind(sessionId) !== null) return false;
-    this.pendingPromptSubmissions.add(sessionId);
-    return true;
+  reservePromptSubmission(sessionId: string): number | null {
+    if (this.getBusyKind(sessionId) !== null) return null;
+    const submissionId = ++this.nextPromptSubmissionNumber;
+    this.pendingPromptSubmissions.set(sessionId, submissionId);
+    return submissionId;
   }
 
   cancelPendingPromptSubmission(sessionId: string): boolean {
-    if (!this.pendingPromptSubmissions.has(sessionId)) return false;
-    this.cancelledPromptSubmissions.add(sessionId);
+    const submissionId = this.pendingPromptSubmissions.get(sessionId);
+    if (submissionId === undefined) return false;
+    this.cancelledPromptSubmissions.add(submissionId);
     return true;
   }
 
-  isPromptSubmissionCancelled(sessionId: string): boolean {
-    return this.cancelledPromptSubmissions.has(sessionId);
+  isPromptSubmissionCancelled(submissionId: number): boolean {
+    return this.cancelledPromptSubmissions.has(submissionId);
   }
 
-  releasePromptSubmission(sessionId: string, sync = true): void {
-    this.pendingPromptSubmissions.delete(sessionId);
-    this.cancelledPromptSubmissions.delete(sessionId);
+  releasePromptSubmission(
+    sessionId: string,
+    submissionId: number,
+    sync = true,
+  ): void {
+    if (this.pendingPromptSubmissions.get(sessionId) === submissionId) {
+      this.pendingPromptSubmissions.delete(sessionId);
+    }
+    this.cancelledPromptSubmissions.delete(submissionId);
     if (sync) this.syncBusy(sessionId);
   }
 

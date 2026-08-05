@@ -406,13 +406,13 @@ export class AgentBridge extends EventEmitter {
       sessions.state.clearPlans();
       const busySessionIds = new Set([
         ...sessions.activePrompts,
-        ...sessions.pendingPromptSubmissions,
+        ...sessions.pendingPromptSubmissions.keys(),
       ]);
       for (const id of busySessionIds) {
         sessions.state.patch(id, { runtime: { busy: null } });
       }
-      for (const id of sessions.pendingPromptSubmissions) {
-        sessions.cancelledPromptSubmissions.add(id);
+      for (const submissionId of sessions.pendingPromptSubmissions.values()) {
+        sessions.cancelledPromptSubmissions.add(submissionId);
       }
       sessions.activePrompts.clear();
       sessions.pendingPromptSubmissions.clear();

@@ -1161,7 +1161,8 @@ export function createRequestHandler(
         );
         if (replayed) return;
 
-        if (!sessions.reservePromptSubmission(sessionId)) {
+        const promptSubmissionId = sessions.reservePromptSubmission(sessionId);
+        if (promptSubmissionId === null) {
           const busyKind = sessions.getBusyKind(sessionId);
           logPromptRejectBeforeSave({
             sessionId,
@@ -1180,10 +1181,10 @@ export function createRequestHandler(
         const isRequestAborted = () => requestState.aborted;
         const abortPromptSubmission = () => {
           requestState.aborted = true;
-          sessions.releasePromptSubmission(sessionId);
+          sessions.releasePromptSubmission(sessionId, promptSubmissionId);
         };
         res.once("finish", () => {
-          sessions.releasePromptSubmission(sessionId);
+          sessions.releasePromptSubmission(sessionId, promptSubmissionId);
         });
         req.once("aborted", abortPromptSubmission);
         res.once("close", () => {
@@ -1210,7 +1211,7 @@ export function createRequestHandler(
 
         if (
           isRequestAborted() ||
-          sessions.isPromptSubmissionCancelled(sessionId)
+          sessions.isPromptSubmissionCancelled(promptSubmissionId)
         ) {
           logPromptRejectBeforeSave({
             sessionId,
@@ -1248,7 +1249,7 @@ export function createRequestHandler(
         }
         if (
           isRequestAborted() ||
-          sessions.isPromptSubmissionCancelled(sessionId)
+          sessions.isPromptSubmissionCancelled(promptSubmissionId)
         ) {
           json(res, HTTP_STATUS.CONFLICT, {
             error: "Prompt was cancelled before start",
@@ -1429,7 +1430,7 @@ export function createRequestHandler(
         }
 
         // Fire prompt asynchronously (don't await — response is 202)
-        sessions.releasePromptSubmission(sessionId, false);
+        sessions.releasePromptSubmission(sessionId, promptSubmissionId, false);
         sessions.activePrompts.add(sessionId);
         sessions.syncBusy(sessionId);
         bridge

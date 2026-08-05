@@ -403,14 +403,33 @@ describe("SessionManager", () => {
     });
 
     it("clears runtime busy when a pending submission is released", () => {
-      assert.equal(sm.reservePromptSubmission("s1"), true);
+      const submissionId = sm.reservePromptSubmission("s1");
+      assert.ok(submissionId);
       sm.syncBusy("s1");
       assert.equal(sm.state.getState("s1").runtime.busy?.kind, "agent");
 
-      sm.releasePromptSubmission("s1");
+      sm.releasePromptSubmission("s1", submissionId);
 
       assert.equal(sm.getBusyKind("s1"), null);
       assert.equal(sm.state.getState("s1").runtime.busy, null);
+    });
+
+    it("keeps cancellation tombstones scoped to their submission", () => {
+      const first = sm.reservePromptSubmission("s1");
+      assert.ok(first);
+      assert.equal(sm.cancelPendingPromptSubmission("s1"), true);
+      sm.pendingPromptSubmissions.clear();
+
+      const second = sm.reservePromptSubmission("s1");
+      assert.ok(second);
+      assert.notEqual(second, first);
+      assert.equal(sm.isPromptSubmissionCancelled(second), false);
+      assert.equal(sm.isPromptSubmissionCancelled(first), true);
+
+      sm.releasePromptSubmission("s1", second);
+      assert.equal(sm.isPromptSubmissionCancelled(first), true);
+      sm.releasePromptSubmission("s1", first);
+      assert.equal(sm.isPromptSubmissionCancelled(first), false);
     });
   });
 
