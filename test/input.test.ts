@@ -216,6 +216,28 @@ describe("input", () => {
     assert.equal(state.currentAssistantText, "new response");
   });
 
+  it("ignores prior agent error until the optimistic user echo arrives", () => {
+    setFetch(() => ({
+      ok: true,
+      json: async () => ({ status: "accepted" }),
+      text: async () => '{"status":"accepted"}',
+    }));
+    state.sessionId = "s1";
+    state.clientId = "cl-1";
+    dom.input.value = "next question";
+
+    clickSend();
+    eventsModule.handleEvent({
+      type: "error",
+      sessionId: "s1",
+      message: "old prompt failed",
+    });
+
+    assert.equal(state.busy, true);
+    assert.equal(state.awaitingOwnUserEcho, true);
+    assert.doesNotMatch(dom.messages.textContent, /old prompt failed/);
+  });
+
   it("routes bang-prefixed input to bash execution", () => {
     setFetch(() => ({
       ok: true,

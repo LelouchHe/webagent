@@ -1891,6 +1891,7 @@ export function handleEvent(msg: AgentEvent) {
       break;
 
     case "error":
+      if (state.awaitingOwnUserEcho) break;
       state.awaitingNewSession = false;
       state.pendingToolCallIds.clear();
       state.pendingPermissionRequestIds.clear();
