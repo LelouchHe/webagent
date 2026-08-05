@@ -2008,6 +2008,37 @@ describe("events", () => {
       assert.equal(state.sentMessageAfterSeq, 10);
     });
 
+    it("ignores replayed prior prompt_done until the own user echo", () => {
+      state.busy = true;
+      state.awaitingOwnUserEcho = true;
+      state.sentMessageForSession = "s1";
+      state.sentMessageAfterSeq = 10;
+      const storedEvents = [
+        {
+          seq: 10,
+          session_id: "s1",
+          type: "prompt_done",
+          data: JSON.stringify({ stopReason: "end_turn" }),
+        },
+        {
+          seq: 11,
+          session_id: "s1",
+          type: "user_message",
+          data: JSON.stringify({ text: "new" }),
+        },
+      ] as any;
+
+      events.replayEvent(
+        "prompt_done",
+        { stopReason: "end_turn" },
+        storedEvents,
+        0,
+      );
+      assert.equal(state.busy, true);
+      events.replayEvent("user_message", { text: "new" }, storedEvents, 1);
+      assert.equal(state.awaitingOwnUserEcho, false);
+    });
+
     it("replays assistant_message", () => {
       events.replayEvent("assistant_message", { text: "response" }, [], 0);
       assert.equal(dom.messages.children.length, 1);

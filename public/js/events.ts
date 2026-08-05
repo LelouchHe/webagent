@@ -1008,6 +1008,7 @@ export function replayEvent(
   }
   switch (type) {
     case "prompt_done":
+      if (state.awaitingOwnUserEcho) break;
       state.pendingToolCallIds.clear();
       state.pendingPermissionRequestIds.clear();
       state.pendingPromptDone = false;
