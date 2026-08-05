@@ -190,6 +190,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
 
 - `test/input.test.ts`
   - normal prompt send flow
+  - optimistic sends seal prior assistant/thinking streams before the user bubble
   - `!` bash routing
   - image upload send flow
   - global `Ctrl+C` cancel (smart: skips when text selected)

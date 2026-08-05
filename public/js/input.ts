@@ -17,6 +17,8 @@ import {
   showWaiting,
   hideWaiting,
   maintainBottomAnchorDuring,
+  finishAssistant,
+  finishThinking,
 } from "./render.ts";
 import {
   handleSlashCommand,
@@ -100,6 +102,13 @@ function sendMessage() {
     addSystem("warn: Not connected, please retry");
     return;
   }
+
+  // The sender suppresses its own user_message SSE echo, so it must apply the
+  // same turn boundary locally before mounting the optimistic user bubble.
+  // Otherwise a late assistant stream from the prior turn remains current and
+  // the next response is appended above the user's new message.
+  finishThinking();
+  finishAssistant();
 
   // Render user_message body locally with attachment markers so the on-send
   // bubble matches the shape SSE replay produces after reload.
