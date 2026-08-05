@@ -34,6 +34,31 @@ Passing `mcpServers: []` does **not** disable MCP — the agent loads its own co
 
 In practice, this means WebAgent provides a browser UI for the core ACP chat/session workflow, but not the full product surface of direct Copilot CLI or Claude Code in a terminal.
 
+## Known Copilot CLI Artifacts
+
+Copilot CLI may emit `Info: Operation cancelled by user` even when neither the
+user nor WebAgent requested cancellation. This is an agent-output artifact, not
+a reliable ACP cancellation signal:
+
+- affected turns end with `prompt_done.stopReason = end_turn`, not `cancelled`;
+- WebAgent service logs have no matching `cancel requested` entry;
+- the text can occur twice consecutively in one assistant message;
+- tools may all report `completed`, or a command may finish successfully while
+  its final `tool_call_update.status = completed` is absent;
+- browser locking/backgrounding only updates client visibility and never calls
+  the cancel endpoint.
+
+Copilot sub-agent results also commonly use `<final_answer>` as a one-sided
+opening marker rather than a balanced HTML/XML element. In one observed
+session, 48 of 50 logical results had no closing `</final_answer>`. Clients must
+therefore use the ACP message/tool lifecycle as the boundary instead of waiting
+for a closing tag.
+
+WebAgent preserves the raw ACP payload in SQLite. Display egress removes the
+unverified `by user` attribution, but does not convert the artifact into a real
+session cancel. Further deduplication and upstream tracking are recorded in
+[issue #10](https://github.com/LelouchHe/webagent/issues/10).
+
 ## ACP vs Vendor SDKs
 
 Each major agent vendor ships its own SDK for programmatic embedding:
