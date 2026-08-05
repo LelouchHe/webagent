@@ -377,6 +377,7 @@ describe("connection", () => {
     state.pendingToolCallIds.add("tc-orphan");
     state.pendingPermissionRequestIds.add("perm-orphan");
     state.pendingPromptDone = true;
+    state.lastStateSeq = 42;
     state.clientId = "cl-old";
 
     es.onerror?.();
@@ -388,6 +389,7 @@ describe("connection", () => {
     assert.equal(state.pendingToolCallIds.size, 0);
     assert.equal(state.pendingPermissionRequestIds.size, 0);
     assert.equal(state.pendingPromptDone, false);
+    assert.equal(state.lastStateSeq, 0);
     assert.equal(state.clientId, null);
     assert.equal(state.eventSource, null);
     assert.deepEqual(timeoutCalls, [3000]);

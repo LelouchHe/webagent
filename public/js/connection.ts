@@ -265,6 +265,9 @@ function cleanup() {
   state.pendingPermissionRequestIds.clear();
   state.pendingPromptDone = false;
   state.turnEnded = false;
+  // Runtime patch sequences are scoped to one server process. Reconnect
+  // establishes a fresh snapshot baseline, including after server restart.
+  state.lastStateSeq = 0;
   clearCancelTimer();
   setBusy(false);
 }
