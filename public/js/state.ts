@@ -75,7 +75,11 @@ export const state = {
   // click, /switch). initSession() captures the value before async work and bails
   // out if it changed, preventing stale reconnects from overriding deliberate switches.
   sessionSwitchGen: 0,
+  messageNavigationGen: 0,
   pendingNavigationSessionId: null as string | null,
+  pendingNavigationStatePatches: [] as Array<
+    Extract<AgentEvent, { type: "state_patch" }>
+  >,
   sessionCwd: null as string | null,
   sessionTitle: null as string | null,
   inboxCount: 0,
@@ -447,9 +451,16 @@ export function requestNewSession({
   inheritFromSessionId = state.sessionId,
 }: { cwd?: string; inheritFromSessionId?: string | null } = {}) {
   state.sessionSwitchGen++;
+  state.messageNavigationGen++;
+  const generation = state.sessionSwitchGen;
   state.pendingNavigationSessionId = null;
+  state.pendingNavigationStatePatches = [];
   state.awaitingNewSession = true;
-  api.createSession({ cwd, inheritFromSessionId }).catch(() => {});
+  api.createSession({ cwd, inheritFromSessionId }).catch(() => {
+    if (generation === state.sessionSwitchGen) {
+      state.awaitingNewSession = false;
+    }
+  });
 }
 
 // Modules can register cleanup functions to run on session reset (avoids circular imports)
@@ -499,6 +510,7 @@ export function resetSessionUI({
   state._cancelTimerId = null;
   state.lastEventSeq = 0;
   state.lastStateSeq = 0;
+  state.pendingNavigationStatePatches = [];
   state.oldestLoadedSeq = 0;
   state.hasMoreHistory = false;
   state.loadingOlderEvents = false;

@@ -14,10 +14,10 @@ import {
   getSelectConfigOption,
   updateModeUI,
   updateStatusBar,
-  reloadSnapshot,
 } from "./state.ts";
-import { addSystem, scrollToBottom, formatLocalTime } from "./render.ts";
-import { loadHistory, handleEvent, fallbackToNextSession } from "./events.ts";
+import { addSystem, formatLocalTime } from "./render.ts";
+import { fallbackToNextSession } from "./events.ts";
+import { switchToSession } from "./session-navigation.ts";
 import * as api from "./api.ts";
 import { log, type LogLevel } from "./log.ts";
 import { TOKEN_STORAGE_KEY } from "./login-core.ts";
@@ -329,27 +329,8 @@ export async function handleSlashCommand(text: string): Promise<boolean> {
           addSystem(`err: No session matching "${arg}"`);
           return true;
         }
-        state.sessionSwitchGen++;
-        const gen = state.sessionSwitchGen;
-        resetSessionUI();
-        state.sessionId = null;
-        const [session] = await Promise.all([
-          api.getSession(match.id),
-          loadHistory(match.id),
-        ]);
-        await reloadSnapshot(match.id);
-        if (gen !== state.sessionSwitchGen) return true;
-        handleEvent({
-          type: "session_created",
-          sessionId: session.id,
-          cwd: session.cwd,
-          title: session.title,
-          configOptions: session.configOptions,
-        });
-        scrollToBottom(true);
+        await switchToSession(match.id);
       } catch {
-        resetSessionUI();
-        state.sessionId = null;
         addSystem("err: Failed to switch session");
       }
       return true;

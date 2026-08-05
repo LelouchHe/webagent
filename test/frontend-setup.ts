@@ -55,6 +55,7 @@ export function resetState(state: any, dom: any) {
   state.clientId = null;
   state.sessionId = null;
   state.sessionSwitchGen = 0;
+  state.messageNavigationGen = 0;
   state.pendingNavigationSessionId = null;
   state.sessionCwd = null;
   state.sessionTitle = null;
@@ -98,6 +99,7 @@ export function resetState(state: any, dom: any) {
   state._cancelTimerId = null;
   state.lastEventSeq = 0;
   state.lastStateSeq = 0;
+  state.pendingNavigationStatePatches = [];
   state.replayInProgress = false;
   state.replayQueue = [];
   if (state.unconfirmedPermissions) state.unconfirmedPermissions.clear();

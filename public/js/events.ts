@@ -1404,6 +1404,19 @@ function scheduleAssistantRender() {
   });
 }
 
+export function takeNavigationStatePatches(
+  sessionId: string,
+): Array<Extract<AgentEvent, { type: "state_patch" }>> {
+  const matching = state.pendingNavigationStatePatches
+    .filter((event) => event.sessionId === sessionId)
+    .sort((a, b) => a.seq - b.seq);
+  state.pendingNavigationStatePatches =
+    state.pendingNavigationStatePatches.filter(
+      (event) => event.sessionId !== sessionId,
+    );
+  return matching;
+}
+
 // eslint-disable-next-line complexity -- TODO: refactor event type switch with helper functions
 export function handleEvent(msg: AgentEvent) {
   if (msg.type === "inbox_count_changed") {
@@ -1414,6 +1427,15 @@ export function handleEvent(msg: AgentEvent) {
   // Queue events that arrive while history replay is in progress to avoid duplicates
   if (state.replayInProgress) {
     state.replayQueue.push(msg);
+    return;
+  }
+
+  if (
+    msg.type === "state_patch" &&
+    state.sessionId === null &&
+    state.pendingNavigationSessionId === msg.sessionId
+  ) {
+    state.pendingNavigationStatePatches.push(msg);
     return;
   }
 

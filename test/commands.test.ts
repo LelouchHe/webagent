@@ -590,6 +590,19 @@ describe("commands", () => {
             text: async () => JSON.stringify(data),
           };
         }
+        if (url === "/api/v1/sessions/target-1/snapshot") {
+          const data = {
+            version: 1,
+            seq: 0,
+            session: {},
+            runtime: { busy: null },
+          };
+          return {
+            ok: true,
+            json: async () => data,
+            text: async () => JSON.stringify(data),
+          };
+        }
         throw new Error(`Unexpected fetch: ${url}`);
       });
 

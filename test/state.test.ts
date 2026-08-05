@@ -264,6 +264,17 @@ describe("state", () => {
       const body = JSON.parse(calls[0].init?.body as string);
       assert.equal(body.cwd, "/tmp");
     });
+
+    it("releases new-session ownership when creation fails", async () => {
+      globalThis.fetch = async () => {
+        throw new Error("network");
+      };
+
+      mod.requestNewSession();
+      await new Promise((resolve) => setImmediate(resolve));
+
+      assert.equal(mod.state.awaitingNewSession, false);
+    });
   });
 
   describe("resetSessionUI", () => {

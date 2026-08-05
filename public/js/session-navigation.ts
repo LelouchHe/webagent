@@ -1,9 +1,14 @@
 import { ApiError, consumeMessage, getSession } from "./api.ts";
 import { HTTP_STATUS } from "../../src/http-status.ts";
-import { handleEvent, loadHistory } from "./events.ts";
+import {
+  handleEvent,
+  loadHistory,
+  takeNavigationStatePatches,
+} from "./events.ts";
 import { addSystem, scrollToBottom } from "./render.ts";
 import {
   reloadSnapshot,
+  applyStatePatch,
   requestNewSession,
   resetSessionUI,
   setHashSessionId,
@@ -28,11 +33,13 @@ let attemptedStartupMessageId: string | null = null;
 export async function switchToSession(
   sessionId: string,
 ): Promise<NavigationResult> {
-  if (state.sessionId === sessionId) return "unchanged";
-
   state.sessionSwitchGen++;
+  state.messageNavigationGen++;
   const generation = state.sessionSwitchGen;
   state.awaitingNewSession = false;
+  state.pendingNavigationSessionId = null;
+  state.pendingNavigationStatePatches = [];
+  if (state.sessionId === sessionId) return "unchanged";
   setHashSessionId(sessionId);
   resetSessionUI();
   state.sessionId = null;
@@ -53,6 +60,12 @@ export async function switchToSession(
       throw new Error("Failed to hydrate session snapshot");
     }
     if (!isCurrentNavigation()) return "ignored";
+    for (const patch of takeNavigationStatePatches(sessionId)) {
+      if (patch.seq <= state.lastStateSeq) continue;
+      if (!applyStatePatch({ seq: patch.seq, patch: patch.patch })) {
+        throw new Error("Failed to reconcile session state patches");
+      }
+    }
     handleEvent({
       type: "session_created",
       sessionId: session.id,
@@ -74,9 +87,9 @@ export async function switchToSession(
 export async function consumeAndSwitch(
   messageId: string,
 ): Promise<NavigationResult> {
-  const generation = ++state.sessionSwitchGen;
+  const generation = ++state.messageNavigationGen;
   const result = await consumeMessage(messageId, state.sessionId);
-  if (generation !== state.sessionSwitchGen) return "ignored";
+  if (generation !== state.messageNavigationGen) return "ignored";
   addSystem(
     result.alreadyConsumed
       ? `inbox: already consumed → switching to ${result.sessionId}`
