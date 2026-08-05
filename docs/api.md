@@ -776,10 +776,10 @@ while the prompt remains active resends the notification.
 { "ok": true, "status": "cancelling" }
 ```
 
-**Response** `200` when only a WebAgent-owned bash process was stopped:
+**Response** `202` while a WebAgent-owned bash process is terminating:
 
 ```json
-{ "ok": true, "status": "cancelled" }
+{ "ok": true, "status": "cancelling" }
 ```
 
 When no work remains, the endpoint is idempotent:

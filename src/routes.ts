@@ -960,8 +960,6 @@ export function createRequestHandler(
         const proc = sessions?.runningBashProcs.get(sessionId);
         if (proc) {
           interruptBashProc(proc);
-          sessions!.runningBashProcs.delete(sessionId);
-          sessions!.syncBusy(sessionId);
         }
         // ACP cancel is a notification, not an acknowledgement. Keep the
         // prompt active until its prompt response supplies the terminal stop
@@ -998,10 +996,11 @@ export function createRequestHandler(
         if (cancelPending && cancelTimeout > 0)
           sessions.state.armCancelSafety(sessionId, cancelTimeout);
         sessions?.syncBusy(sessionId);
-        const status = cancelPending ? HTTP_STATUS.ACCEPTED : HTTP_STATUS.OK;
+        const workPending = cancelPending || hadBash;
+        const status = workPending ? HTTP_STATUS.ACCEPTED : HTTP_STATUS.OK;
         const okBody = {
           ok: true,
-          status: cancelPending ? "cancelling" : "cancelled",
+          status: workPending ? "cancelling" : "cancelled",
         };
         saveClientOpResult(store, opId, sessionId, status, okBody);
         json(res, status, okBody);

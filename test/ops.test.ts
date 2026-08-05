@@ -191,12 +191,13 @@ describe("Operations REST API", () => {
         "POST",
         `/api/v1/sessions/${sessionId}/cancel`,
       );
-      assert.equal(res.status, 200);
+      assert.equal(res.status, 202);
       assert.deepEqual(JSON.parse(res.body), {
         ok: true,
-        status: "cancelled",
+        status: "cancelling",
       });
       assert.ok(killed);
+      assert.equal(sessions.runningBashProcs.has(sessionId), true);
     });
 
     it("kills bash even when the agent bridge is unavailable", async () => {
@@ -230,8 +231,8 @@ describe("Operations REST API", () => {
           "POST",
           `/api/v1/sessions/${sessionId}/cancel`,
         );
-        assert.equal(res.status, 200);
-        assert.equal(JSON.parse(res.body).status, "cancelled");
+        assert.equal(res.status, 202);
+        assert.equal(JSON.parse(res.body).status, "cancelling");
         assert.equal(killed, true);
       } finally {
         await new Promise<void>((resolve) =>

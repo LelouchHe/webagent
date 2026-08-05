@@ -414,7 +414,7 @@ export const ROOT: CmdNode = {
             addSystem("err: Cancel active work before exiting the session");
             return;
           }
-          api.deleteSession(exitId).catch(() => {});
+          await api.deleteSession(exitId);
           await fallbackToNextSession(exitId, state.sessionCwd ?? undefined);
         } catch {
           addSystem("err: Failed to exit session");

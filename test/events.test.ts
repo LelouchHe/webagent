@@ -877,6 +877,19 @@ describe("events", () => {
         assert.equal(state.currentBashEl, null);
         assert.equal(state.busy, false);
       });
+
+      it("keeps busy when bash finishes during an agent prompt", () => {
+        state.busy = true;
+        state.busyKind = "agent";
+        events.handleEvent({
+          type: "bash_done",
+          sessionId: "s1",
+          code: 0,
+          signal: null,
+        });
+        assert.equal(state.busy, true);
+        assert.equal(state.busyKind, "agent");
+      });
     });
 
     describe("prompt_done", () => {
@@ -967,6 +980,17 @@ describe("events", () => {
           requestId: "perm-cancelled",
           title: "Allow?",
           options: [{ optionId: "allow", kind: "allow_once", name: "Allow" }],
+        });
+
+        it("keeps busy when the prompt finishes during local bash", () => {
+          state.busy = true;
+          state.busyKind = "bash";
+          events.handleEvent({
+            type: "prompt_done",
+            stopReason: "end_turn",
+          });
+          assert.equal(state.busy, true);
+          assert.equal(state.busyKind, "bash");
         });
 
         events.handleEvent({ type: "prompt_done", stopReason: "cancelled" });

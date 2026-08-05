@@ -34,5 +34,9 @@ export async function replaceCurrentSession({
     addSystem("err: Failed to clear session");
     return;
   }
-  api.deleteSession(oldId).catch(() => {});
+  try {
+    await api.deleteSession(oldId);
+  } catch (err: unknown) {
+    addSystem(`err: Failed to delete previous session — ${String(err)}`);
+  }
 }

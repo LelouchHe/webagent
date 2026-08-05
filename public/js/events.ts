@@ -182,7 +182,7 @@ function finishPromptIfIdle() {
   hideWaiting();
   finishThinking();
   finishAssistant();
-  setBusy(false);
+  if (state.busyKind !== "bash") setBusy(false);
   state.pendingPromptDone = false;
   showNotifyTip();
 }
@@ -1540,7 +1540,7 @@ export function handleEvent(msg: AgentEvent) {
       if (msg.sessionId !== state.sessionId) break;
       finishBash(state.currentBashEl, msg.code, msg.signal);
       if (msg.error) addSystem(`err: ${msg.error}`);
-      setBusy(false);
+      if (state.busyKind !== "agent") setBusy(false);
       break;
     }
 

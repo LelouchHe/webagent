@@ -104,6 +104,7 @@ export const state = {
   currentThinkingEl: null as HTMLElement | null,
   currentThinkingText: "",
   busy: false,
+  busyKind: null as "agent" | "bash" | null,
   cancelStatus: null as "requested" | "unconfirmed" | null,
   plan: null as PlanEntry[] | null,
   pendingAttachments: [] as PendingAttachment[],
@@ -343,6 +344,7 @@ function applyRuntimePlan(plan: PlanEntry[] | null): void {
 export function applySnapshot(snap: SessionSnapshot): void {
   state.lastStateSeq = snap.seq;
   const busy = snap.runtime.busy;
+  state.busyKind = busy?.kind ?? null;
   state.cancelStatus = busy?.cancelStatus ?? null;
   setBusy(busy != null);
   if (busy == null) clearCancelTimer();
@@ -385,6 +387,7 @@ export function applyStatePatch(patchEvent: {
   const r = patchEvent.patch.runtime;
   if (r && "busy" in r) {
     const busy = r.busy ?? null;
+    state.busyKind = busy?.kind ?? null;
     state.cancelStatus = busy?.cancelStatus ?? null;
     setBusy(busy != null);
     if (busy == null) clearCancelTimer();
@@ -427,7 +430,10 @@ export async function reloadSnapshot(
 
 export function setBusy(on: boolean) {
   state.busy = on;
-  if (!on) state.cancelStatus = null;
+  if (!on) {
+    state.busyKind = null;
+    state.cancelStatus = null;
+  }
   if (on) {
     dom.prompt.classList.add("busy");
   } else {
@@ -477,6 +483,7 @@ export function resetSessionUI({
   state.currentAssistantText = "";
   state.currentThinkingEl = null;
   state.currentThinkingText = "";
+  state.busyKind = null;
   state.cancelStatus = null;
   state.plan = null;
   state.pendingAttachments.length = 0;
