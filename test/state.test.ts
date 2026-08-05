@@ -236,8 +236,12 @@ describe("state", () => {
       }) as any;
 
       mod.state.sessionId = "existing-id";
+      mod.state.pendingNavigationSessionId = "old-target";
+      const previousGeneration = mod.state.sessionSwitchGen;
       mod.requestNewSession();
       assert.equal(mod.state.awaitingNewSession, true);
+      assert.equal(mod.state.pendingNavigationSessionId, null);
+      assert.equal(mod.state.sessionSwitchGen, previousGeneration + 1);
       await new Promise((r) => setTimeout(r, 0));
 
       assert.equal(calls.length, 1);

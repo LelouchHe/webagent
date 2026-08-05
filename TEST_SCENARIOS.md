@@ -160,7 +160,8 @@ spot gaps, and decide what still needs to be added without reading every spec.
 - `test/session-navigation.test.ts`, `test/service-worker-click.test.ts`
   - Inbox notification consume reuses the current session as inheritance source
   - direct session targets take priority over unresolved message targets
-  - cold-resume lifecycle events cannot release switch ownership before busy snapshot hydration
+  - session switches require successful busy snapshot hydration
+  - explicit switches, `/new`, and competing notification consumes use ordered navigation ownership
   - existing-window and cold-start service-worker routing
   - terminal startup intents are cleared; retryable intents survive refresh without in-page duplication
 

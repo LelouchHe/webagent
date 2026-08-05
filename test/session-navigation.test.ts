@@ -141,43 +141,33 @@ describe("shared session navigation", () => {
     assert.equal(location.hash, "#message-session");
   });
 
-  it("keeps switch ownership when target session_created arrives before snapshot", async () => {
+  it("does not complete a switch when snapshot hydration fails", async () => {
     state.sessionId = "current-session";
+    delayedSnapshot = Promise.resolve(
+      new Response(JSON.stringify({ error: "snapshot failed" }), {
+        status: 500,
+      }),
+    );
+
+    await assert.rejects(
+      navigation.switchToSession("message-session"),
+      /snapshot/i,
+    );
+    assert.equal(state.sessionId, null);
+    assert.equal(state.busy, false);
+    assert.equal(state.pendingNavigationSessionId, null);
+  });
+
+  it("explicit switch supersedes stale new-session ownership", async () => {
+    state.sessionId = "current-session";
+    state.awaitingNewSession = true;
     let releaseHistory!: (response: Response) => void;
     delayedHistory = new Promise<Response>((resolve) => {
       releaseHistory = resolve;
     });
-    delayedSnapshot = Promise.resolve(
-      new Response(
-        JSON.stringify({
-          version: 1,
-          seq: 4,
-          session: {},
-          runtime: {
-            busy: {
-              kind: "agent",
-              since: "t0",
-              promptId: "p1",
-            },
-          },
-        }),
-        { status: 200 },
-      ),
-    );
 
     const pending = navigation.switchToSession("message-session");
-    handleEvent({
-      type: "session_created",
-      sessionId: "message-session",
-      cwd: "/tmp",
-      configOptions: [],
-    });
-
-    assert.equal(
-      state.pendingNavigationSessionId,
-      "message-session",
-      "intermediate lifecycle event must not release switch ownership",
-    );
+    assert.equal(state.awaitingNewSession, false);
     releaseHistory(
       new Response(JSON.stringify({ events: [], streaming: {} }), {
         status: 200,
@@ -186,9 +176,55 @@ describe("shared session navigation", () => {
 
     assert.equal(await pending, "switched");
     assert.equal(state.sessionId, "message-session");
-    assert.equal(state.busy, true);
-    assert.equal(state.busyKind, "agent");
-    assert.equal(state.pendingNavigationSessionId, null);
+    assert.equal(state.awaitingNewSession, false);
+  });
+
+  it("does not let a slower notification consume override a newer one", async () => {
+    state.sessionId = "current-session";
+    let releaseSlow!: (response: Response) => void;
+    const slowConsume = new Promise<Response>((resolve) => {
+      releaseSlow = resolve;
+    });
+    const response = (body: unknown) =>
+      new Response(JSON.stringify(body), { status: 200 });
+    globalThis.fetch = (async (url: string) => {
+      if (url === "/api/v1/messages/slow/consume") return slowConsume;
+      if (url === "/api/v1/messages/fast/consume") {
+        return response({ sessionId: "fast-session", alreadyConsumed: false });
+      }
+      if (url === "/api/v1/sessions/fast-session") {
+        return response({
+          id: "fast-session",
+          cwd: "/fast",
+          title: "Fast",
+          configOptions: [],
+        });
+      }
+      if (url === "/api/v1/sessions/fast-session/events?limit=500") {
+        return response({ events: [], streaming: {} });
+      }
+      if (url === "/api/v1/sessions/fast-session/snapshot") {
+        return response({
+          version: 1,
+          seq: 0,
+          session: {},
+          runtime: { busy: null },
+        });
+      }
+      if (url.startsWith("/api/beta/clients/")) return response({});
+      throw new Error(`Unexpected fetch: ${url}`);
+    }) as typeof fetch;
+
+    const older = navigation.consumeAndSwitch("slow");
+    const newer = navigation.consumeAndSwitch("fast");
+    assert.equal(await newer, "switched");
+    releaseSlow(
+      response({ sessionId: "slow-session", alreadyConsumed: false }),
+    );
+
+    assert.equal(await older, "ignored");
+    assert.equal(state.sessionId, "fast-session");
+    assert.equal(location.hash, "#fast-session");
   });
 
   it("abandons a switch superseded by ordinary session creation", async () => {

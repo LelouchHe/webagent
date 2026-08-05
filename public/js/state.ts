@@ -446,6 +446,8 @@ export function requestNewSession({
   cwd,
   inheritFromSessionId = state.sessionId,
 }: { cwd?: string; inheritFromSessionId?: string | null } = {}) {
+  state.sessionSwitchGen++;
+  state.pendingNavigationSessionId = null;
   state.awaitingNewSession = true;
   api.createSession({ cwd, inheritFromSessionId }).catch(() => {});
 }

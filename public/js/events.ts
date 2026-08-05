@@ -1484,9 +1484,6 @@ export function handleEvent(msg: AgentEvent) {
       break;
 
     case "session_created": {
-      const continuesExplicitNavigation =
-        state.pendingNavigationSessionId === msg.sessionId &&
-        !state.awaitingNewSession;
       if (
         state.pendingNavigationSessionId &&
         msg.sessionId !== state.pendingNavigationSessionId
@@ -1502,9 +1499,7 @@ export function handleEvent(msg: AgentEvent) {
         break;
       }
       state.awaitingNewSession = false;
-      if (!continuesExplicitNavigation) {
-        state.pendingNavigationSessionId = null;
-      }
+      state.pendingNavigationSessionId = null;
       {
         const isSessionActivation = state.sessionId === null;
         state.sessionId = msg.sessionId;
