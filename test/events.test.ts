@@ -1867,12 +1867,108 @@ describe("events", () => {
     });
 
     it("merges consecutive assistant_messages into one bubble", () => {
-      events.replayEvent("assistant_message", { text: "Hello " }, [], 0);
-      events.replayEvent("assistant_message", { text: "world" }, [], 1);
+      const storedEvents = [
+        {
+          seq: 1,
+          type: "assistant_message",
+          data: JSON.stringify({ text: "Hello " }),
+        },
+        {
+          seq: 2,
+          type: "assistant_message",
+          data: JSON.stringify({ text: "world" }),
+        },
+      ] as any;
+      events.replayEvent(
+        "assistant_message",
+        { text: "Hello " },
+        storedEvents,
+        0,
+      );
+      events.replayEvent(
+        "assistant_message",
+        { text: "world" },
+        storedEvents,
+        1,
+      );
       const msgs = dom.messages.querySelectorAll(".msg.assistant");
       assert.equal(msgs.length, 1, "should merge into a single bubble");
       assert.ok(msgs[0].innerHTML.includes("Hello"));
       assert.ok(msgs[0].innerHTML.includes("world"));
+    });
+
+    it("does not merge assistant_messages across prompt_done", () => {
+      const first = "```text\nanimation.key\n```";
+      const second = "next turn";
+      const storedEvents = [
+        {
+          seq: 1,
+          type: "assistant_message",
+          data: JSON.stringify({ text: first }),
+        },
+        {
+          seq: 2,
+          type: "prompt_done",
+          data: JSON.stringify({ stopReason: "end_turn" }),
+        },
+        {
+          seq: 3,
+          type: "assistant_message",
+          data: JSON.stringify({ text: second }),
+        },
+      ] as any;
+
+      events.replayEvent("assistant_message", { text: first }, storedEvents, 0);
+      events.replayEvent(
+        "prompt_done",
+        { stopReason: "end_turn" },
+        storedEvents,
+        1,
+      );
+      events.replayEvent(
+        "assistant_message",
+        { text: second },
+        storedEvents,
+        2,
+      );
+
+      const msgs = dom.messages.querySelectorAll(".msg.assistant");
+      assert.equal(msgs.length, 2, "turn boundary must start a new bubble");
+      assert.equal(
+        msgs[0].querySelector("code")?.textContent,
+        "animation.key\n",
+      );
+      assert.equal(msgs[1].textContent, second);
+    });
+
+    it("does not merge neighboring assistant events across a seq gap", () => {
+      const storedEvents = [
+        {
+          seq: 1,
+          type: "assistant_message",
+          data: JSON.stringify({ text: "first turn" }),
+        },
+        {
+          seq: 3,
+          type: "assistant_message",
+          data: JSON.stringify({ text: "second turn" }),
+        },
+      ] as any;
+
+      events.replayEvent(
+        "assistant_message",
+        { text: "first turn" },
+        storedEvents,
+        0,
+      );
+      events.replayEvent(
+        "assistant_message",
+        { text: "second turn" },
+        storedEvents,
+        1,
+      );
+
+      assert.equal(dom.messages.querySelectorAll(".msg.assistant").length, 2);
     });
 
     it("does not merge assistant_messages separated by other events", () => {
@@ -1891,8 +1987,20 @@ describe("events", () => {
     });
 
     it("merges consecutive thinking blocks into one", () => {
-      events.replayEvent("thinking", { text: "part one" }, [], 0);
-      events.replayEvent("thinking", { text: "part two" }, [], 1);
+      const storedEvents = [
+        {
+          seq: 1,
+          type: "thinking",
+          data: JSON.stringify({ text: "part one" }),
+        },
+        {
+          seq: 2,
+          type: "thinking",
+          data: JSON.stringify({ text: "part two" }),
+        },
+      ] as any;
+      events.replayEvent("thinking", { text: "part one" }, storedEvents, 0);
+      events.replayEvent("thinking", { text: "part two" }, storedEvents, 1);
       const thinkings = dom.messages.querySelectorAll(".thinking");
       assert.equal(
         thinkings.length,
@@ -1912,10 +2020,22 @@ describe("events", () => {
     });
 
     it("updates data-raw when consecutive thinking blocks merge", () => {
-      events.replayEvent("thinking", { text: "part one" }, [], 0);
-      events.replayEvent("thinking", { text: "part two" }, [], 1);
+      const storedEvents = [
+        {
+          seq: 1,
+          type: "thinking",
+          data: JSON.stringify({ text: "part one" }),
+        },
+        {
+          seq: 2,
+          type: "thinking",
+          data: JSON.stringify({ text: "part two" }),
+        },
+      ] as any;
+      events.replayEvent("thinking", { text: "part one" }, storedEvents, 0);
+      events.replayEvent("thinking", { text: "part two" }, storedEvents, 1);
       const thinking = dom.messages.querySelector(".thinking");
-      assert.equal(thinking.getAttribute("data-raw"), "part one\npart two");
+      assert.equal(thinking.getAttribute("data-raw"), "part onepart two");
     });
 
     it("replays tool_call and tool_call_update", () => {
@@ -2433,6 +2553,174 @@ describe("events", () => {
       assert.equal(state.hasMoreHistory, true);
       // Should have 4 children: 2 prepended + 2 original
       assert.equal(dom.messages.children.length, 4);
+    });
+
+    it("merges adjacent assistant fragments across older-history pagination", async () => {
+      state.oldestLoadedSeq = 201;
+      state.hasMoreHistory = true;
+      state.sessionId = "s1";
+      const currentEvents = [
+        {
+          seq: 201,
+          type: "assistant_message",
+          data: JSON.stringify({ text: ": 3 }" }),
+        },
+        {
+          seq: 202,
+          type: "user_message",
+          data: JSON.stringify({ text: "anchor" }),
+        },
+      ] as any;
+      events.replayEvent(
+        "assistant_message",
+        { text: ": 3 }" },
+        currentEvents,
+        0,
+      );
+      events.replayEvent("user_message", { text: "anchor" }, currentEvents, 1);
+
+      globalThis.fetch = (() =>
+        Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              events: [
+                {
+                  seq: 200,
+                  type: "assistant_message",
+                  data: JSON.stringify({ text: "reconnect { id" }),
+                },
+              ],
+              hasMore: false,
+            }),
+        })) as any;
+
+      assert.equal(await events.loadOlderEvents("s1"), true);
+      const msgs = dom.messages.querySelectorAll(".msg.assistant");
+      assert.equal(msgs.length, 1);
+      assert.equal(msgs[0].getAttribute("data-raw"), "reconnect { id: 3 }");
+      assert.equal((msgs[0] as HTMLElement).dataset.firstEventSeq, "200");
+      assert.equal((msgs[0] as HTMLElement).dataset.lastEventSeq, "201");
+    });
+
+    it("preserves scroll position when the sole child merges with older history", async () => {
+      state.oldestLoadedSeq = 201;
+      state.hasMoreHistory = true;
+      state.sessionId = "s1";
+      const currentEvents = [
+        {
+          seq: 201,
+          type: "assistant_message",
+          data: JSON.stringify({ text: ": 3 }" }),
+        },
+      ] as any;
+      events.replayEvent(
+        "assistant_message",
+        { text: ": 3 }" },
+        currentEvents,
+        0,
+      );
+      const originalScrollHeight = Object.getOwnPropertyDescriptor(
+        dom.messages,
+        "scrollHeight",
+      );
+      Object.defineProperty(dom.messages, "scrollHeight", {
+        configurable: true,
+        get() {
+          const raw = dom.messages
+            .querySelector(".msg.assistant")
+            ?.getAttribute("data-raw");
+          return raw === "reconnect { id: 3 }" ? 200 : 100;
+        },
+      });
+      dom.messages.scrollTop = 10;
+
+      globalThis.fetch = (() =>
+        Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              events: [
+                {
+                  seq: 200,
+                  type: "assistant_message",
+                  data: JSON.stringify({ text: "reconnect { id" }),
+                },
+              ],
+              hasMore: false,
+            }),
+        })) as any;
+
+      try {
+        assert.equal(await events.loadOlderEvents("s1"), true);
+        assert.equal(dom.messages.querySelectorAll(".msg.assistant").length, 1);
+        assert.ok(
+          dom.messages.scrollTop > 10,
+          "scrollTop must compensate for the merged prefix height",
+        );
+      } finally {
+        if (originalScrollHeight) {
+          Object.defineProperty(
+            dom.messages,
+            "scrollHeight",
+            originalScrollHeight,
+          );
+        } else {
+          delete dom.messages.scrollHeight;
+        }
+      }
+    });
+
+    it("does not merge older replay into an active assistant stream", async () => {
+      state.oldestLoadedSeq = 201;
+      state.hasMoreHistory = true;
+      state.sessionId = "s1";
+      const currentEvents = [
+        {
+          seq: 201,
+          type: "assistant_message",
+          data: JSON.stringify({ text: ": 3 }" }),
+        },
+        {
+          seq: 202,
+          type: "user_message",
+          data: JSON.stringify({ text: "anchor" }),
+        },
+      ] as any;
+      events.replayEvent(
+        "assistant_message",
+        { text: ": 3 }" },
+        currentEvents,
+        0,
+      );
+      events.replayEvent("user_message", { text: "anchor" }, currentEvents, 1);
+      const active = dom.messages.querySelector(".msg.assistant");
+      assert.ok(active);
+      active.setAttribute("data-primed", "");
+      state.currentAssistantEl = active;
+      state.currentAssistantText = ": 3 } live tail";
+
+      globalThis.fetch = (() =>
+        Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              events: [
+                {
+                  seq: 200,
+                  type: "assistant_message",
+                  data: JSON.stringify({ text: "reconnect { id" }),
+                },
+              ],
+              hasMore: false,
+            }),
+        })) as any;
+
+      assert.equal(await events.loadOlderEvents("s1"), true);
+      const msgs = dom.messages.querySelectorAll(".msg.assistant");
+      assert.equal(msgs.length, 2);
+      assert.equal(active.getAttribute("data-raw"), ": 3 }");
+      assert.equal(state.currentAssistantText, ": 3 } live tail");
     });
 
     it("does not let older plan history replace the current pinned plan", async () => {
@@ -2976,6 +3264,117 @@ describe("events", () => {
       );
     });
 
+    it("does not treat missing replay seq metadata as sequence zero", async () => {
+      events.replayEvent("assistant_message", { text: "legacy" }, [], 0);
+      const existing = dom.messages.lastElementChild as HTMLElement;
+      existing.dataset.lastEventSeq = "";
+      existing.setAttribute("data-sync-boundary", "");
+      state.lastEventSeq = 0;
+
+      globalThis.fetch = (() =>
+        Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve([
+              {
+                seq: 1,
+                type: "assistant_message",
+                data: JSON.stringify({ text: "new" }),
+              },
+            ]),
+        })) as any;
+
+      assert.equal(await events.loadNewEvents("s1"), true);
+      assert.equal(dom.messages.querySelectorAll(".msg.assistant").length, 2);
+    });
+
+    it("does not merge incremental assistant replay across prompt_done", async () => {
+      const historyEvents = [
+        {
+          seq: 1,
+          type: "assistant_message",
+          data: JSON.stringify({ text: "```text\nanimation.key\n```" }),
+        },
+        {
+          seq: 2,
+          type: "prompt_done",
+          data: JSON.stringify({ stopReason: "end_turn" }),
+        },
+      ] as any;
+      events.replayEvent(
+        "assistant_message",
+        { text: "```text\nanimation.key\n```" },
+        historyEvents,
+        0,
+      );
+      events.replayEvent(
+        "prompt_done",
+        { stopReason: "end_turn" },
+        historyEvents,
+        1,
+      );
+      state.lastEventSeq = 2;
+      dom.messages.lastElementChild.setAttribute("data-sync-boundary", "");
+
+      globalThis.fetch = (() =>
+        Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve([
+              {
+                seq: 3,
+                type: "assistant_message",
+                data: JSON.stringify({ text: "next turn" }),
+              },
+            ]),
+        })) as any;
+
+      assert.equal(await events.loadNewEvents("s1"), true);
+      const msgs = dom.messages.querySelectorAll(".msg.assistant");
+      assert.equal(msgs.length, 2);
+      assert.equal(
+        msgs[0].querySelector("code")?.textContent,
+        "animation.key\n",
+      );
+      assert.equal(msgs[1].textContent, "next turn");
+    });
+
+    it("merges adjacent assistant fragments across incremental replay", async () => {
+      const historyEvents = [
+        {
+          seq: 1,
+          type: "assistant_message",
+          data: JSON.stringify({ text: "reconnect { id" }),
+        },
+      ] as any;
+      events.replayEvent(
+        "assistant_message",
+        { text: "reconnect { id" },
+        historyEvents,
+        0,
+      );
+      state.lastEventSeq = 1;
+      dom.messages.lastElementChild.setAttribute("data-sync-boundary", "");
+
+      globalThis.fetch = (() =>
+        Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve([
+              {
+                seq: 2,
+                type: "assistant_message",
+                data: JSON.stringify({ text: ": 3 }" }),
+              },
+            ]),
+        })) as any;
+
+      assert.equal(await events.loadNewEvents("s1"), true);
+      const msgs = dom.messages.querySelectorAll(".msg.assistant");
+      assert.equal(msgs.length, 1);
+      assert.equal(msgs[0].getAttribute("data-raw"), "reconnect { id: 3 }");
+    });
+
     it("keeps runtime plan when reconnect history reaches prompt_done", async () => {
       applyPlanSnapshot([{ content: "Live work", status: "in_progress" }]);
       state.lastEventSeq = 1;
@@ -3253,7 +3652,7 @@ describe("events", () => {
         })) as any;
 
       await events.loadHistory("s1");
-      assert.equal(state.currentThinkingText, "part one\npart two");
+      assert.equal(state.currentThinkingText, "part onepart two");
     });
 
     it("loadNewEvents reverts primed assistant element before replaying", async () => {
