@@ -615,6 +615,41 @@ function preserveScrollAnchorAround(
   return restoreScrollAnchor(container, anchor);
 }
 
+function mergeOlderReplayPageBoundary(
+  container: HTMLElement,
+  fragment: DocumentFragment,
+  anchor: ScrollAnchor | null,
+): ScrollAnchor | null {
+  const older = fragment.lastElementChild as HTMLElement | null;
+  const newer = Array.from(container.children).find(
+    (el) =>
+      el.id !== "history-sentinel" &&
+      el.id !== "history-loading" &&
+      !el.classList.contains("history-loading"),
+  ) as HTMLElement | undefined;
+  if (
+    !older ||
+    !newer ||
+    newer.hasAttribute("data-primed") ||
+    newer === state.currentAssistantEl ||
+    newer === state.currentThinkingEl
+  ) {
+    return anchor;
+  }
+  if (anchor?.el === newer) {
+    const nextAnchor = newer.nextElementSibling as HTMLElement | null;
+    if (!nextAnchor) return anchor;
+    const replacementAnchor = {
+      el: nextAnchor,
+      top: nextAnchor.getBoundingClientRect().top,
+    };
+    mergeOlderReplayBoundary(older, newer);
+    return replacementAnchor;
+  }
+  mergeOlderReplayBoundary(older, newer);
+  return anchor;
+}
+
 async function waitForTopBounceToSettle(container: HTMLElement): Promise<void> {
   if (container.scrollTop >= 0) return;
   for (let frame = 1; frame <= 20; frame++) {
@@ -805,18 +840,9 @@ export async function loadOlderEvents(sid: string): Promise<boolean> {
     state.replayTarget = null;
 
     // Prepend to DOM while preserving scroll position
-    const anchor = pickScrollAnchor(container);
+    let anchor = pickScrollAnchor(container);
     hideHistoryLoading(container);
-    const lastInFrag = fragment.lastElementChild as HTMLElement | null;
-    const firstInDom = Array.from(container.children).find(
-      (el) =>
-        el.id !== "history-sentinel" &&
-        el.id !== "history-loading" &&
-        !el.classList.contains("history-loading"),
-    ) as HTMLElement | undefined;
-    if (lastInFrag && firstInDom) {
-      mergeOlderReplayBoundary(lastInFrag, firstInDom);
-    }
+    anchor = mergeOlderReplayPageBoundary(container, fragment, anchor);
     const sentinel = document.getElementById("history-sentinel");
     if (sentinel) {
       sentinel.after(fragment);
