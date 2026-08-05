@@ -270,6 +270,42 @@ describe("Session REST API", () => {
         );
       });
 
+      it("reports superseded when a replacement prompt is still reserved", async () => {
+        store.createSession("s-reserved-race", tmpDir);
+        sessions.activePrompts.add("s-reserved-race");
+        sessions.syncBusy("s-reserved-race");
+        let releaseCancel: (() => void) | undefined;
+        mockBridge.cancel = () =>
+          new Promise<void>((resolve) => {
+            releaseCancel = resolve;
+          });
+
+        const cancelRequest = makeRequest(
+          port,
+          "POST",
+          "/api/v1/sessions/s-reserved-race/cancel",
+          "{}",
+        );
+        for (let i = 0; i < 10 && !releaseCancel; i++) {
+          await new Promise((resolve) => setImmediate(resolve));
+        }
+        assert.ok(releaseCancel);
+        sessions.activePrompts.delete("s-reserved-race");
+        sessions.syncBusy("s-reserved-race");
+        assert.equal(sessions.reservePromptSubmission("s-reserved-race"), true);
+
+        releaseCancel();
+        const res = await cancelRequest;
+
+        assert.equal(res.status, 202);
+        assert.equal(JSON.parse(res.body).status, "superseded");
+        assert.equal(
+          sessions.pendingPromptSubmissions.has("s-reserved-race"),
+          true,
+        );
+        sessions.releasePromptSubmission("s-reserved-race");
+      });
+
       it("cancels a prompt submission while session resume is pending", async () => {
         store.createSession("s-pending", tmpDir);
         let releaseResume!: () => void;

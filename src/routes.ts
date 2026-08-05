@@ -1003,9 +1003,10 @@ export function createRequestHandler(
         const workPending = cancelPending || hadBash;
         const replacementPromptActive =
           hadAgentPrompt &&
-          sessions?.activePrompts.has(sessionId) === true &&
-          busyAfterCancel?.kind === "agent" &&
-          busyAfterCancel.promptId !== cancelledPromptId;
+          ((sessions?.activePrompts.has(sessionId) === true &&
+            busyAfterCancel?.kind === "agent" &&
+            busyAfterCancel.promptId !== cancelledPromptId) ||
+            sessions?.pendingPromptSubmissions.has(sessionId) === true);
         const status =
           workPending || replacementPromptActive
             ? HTTP_STATUS.ACCEPTED
