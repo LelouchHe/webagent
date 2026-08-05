@@ -480,7 +480,11 @@ async function _loadNewEventsImpl(sid: string): Promise<boolean> {
     // across the boundary.
     const lastInDom = dom.messages.lastElementChild as HTMLElement | null;
     const firstInFrag = fragment.firstElementChild as HTMLElement | null;
-    if (lastInDom && firstInFrag) {
+    if (
+      lastInDom &&
+      firstInFrag &&
+      replayElementsAreAdjacent(lastInDom, firstInFrag)
+    ) {
       if (
         lastInDom.classList.contains("msg") &&
         lastInDom.classList.contains("assistant") &&
@@ -495,6 +499,9 @@ async function _loadNewEventsImpl(sid: string): Promise<boolean> {
         lastInDom.replaceChildren();
         updateMarkdownStream(lastInDom, combined);
         enhanceCodeBlocks(lastInDom);
+        const lastEventSeq = firstInFrag.dataset.lastEventSeq;
+        if (lastEventSeq) lastInDom.dataset.lastEventSeq = lastEventSeq;
+        else delete lastInDom.dataset.lastEventSeq;
         firstInFrag.remove();
       } else if (
         lastInDom.classList.contains("thinking") &&
@@ -502,10 +509,13 @@ async function _loadNewEventsImpl(sid: string): Promise<boolean> {
       ) {
         const existingRaw = lastInDom.getAttribute("data-raw") ?? "";
         const newRaw = firstInFrag.getAttribute("data-raw") ?? "";
-        const combined = existingRaw + "\n" + newRaw;
+        const combined = existingRaw + newRaw;
         lastInDom.setAttribute("data-raw", combined);
         const content = lastInDom.querySelector(".thinking-content");
         if (content) content.textContent = combined;
+        const lastEventSeq = firstInFrag.dataset.lastEventSeq;
+        if (lastEventSeq) lastInDom.dataset.lastEventSeq = lastEventSeq;
+        else delete lastInDom.dataset.lastEventSeq;
         firstInFrag.remove();
       }
     }
@@ -607,6 +617,52 @@ function preserveScrollAnchorAround(
   const anchor = pickScrollAnchor(container);
   action();
   return restoreScrollAnchor(container, anchor);
+}
+
+interface OlderReplayBoundaryState {
+  anchor: ScrollAnchor | null;
+  scrollHeightBefore: number | null;
+}
+
+function mergeOlderReplayPageBoundary(
+  container: HTMLElement,
+  fragment: DocumentFragment,
+  anchor: ScrollAnchor | null,
+): OlderReplayBoundaryState {
+  const older = fragment.lastElementChild as HTMLElement | null;
+  const newer = Array.from(container.children).find(
+    (el) =>
+      el.id !== "history-sentinel" &&
+      el.id !== "history-loading" &&
+      !el.classList.contains("history-loading"),
+  ) as HTMLElement | undefined;
+  if (
+    !older ||
+    !newer ||
+    newer.hasAttribute("data-primed") ||
+    newer === state.currentAssistantEl ||
+    newer === state.currentThinkingEl
+  ) {
+    return { anchor, scrollHeightBefore: null };
+  }
+  if (anchor?.el === newer) {
+    const nextAnchor = newer.nextElementSibling as HTMLElement | null;
+    if (!nextAnchor) {
+      const scrollHeightBefore = container.scrollHeight;
+      return mergeOlderReplayBoundary(older, newer)
+        ? { anchor: null, scrollHeightBefore }
+        : { anchor, scrollHeightBefore: null };
+    }
+    const replacementAnchor = {
+      el: nextAnchor,
+      top: nextAnchor.getBoundingClientRect().top,
+    };
+    return mergeOlderReplayBoundary(older, newer)
+      ? { anchor: replacementAnchor, scrollHeightBefore: null }
+      : { anchor, scrollHeightBefore: null };
+  }
+  mergeOlderReplayBoundary(older, newer);
+  return { anchor, scrollHeightBefore: null };
 }
 
 async function waitForTopBounceToSettle(container: HTMLElement): Promise<void> {
@@ -799,15 +855,26 @@ export async function loadOlderEvents(sid: string): Promise<boolean> {
     state.replayTarget = null;
 
     // Prepend to DOM while preserving scroll position
-    const anchor = pickScrollAnchor(container);
+    let anchor = pickScrollAnchor(container);
     hideHistoryLoading(container);
+    const boundaryState = mergeOlderReplayPageBoundary(
+      container,
+      fragment,
+      anchor,
+    );
+    anchor = boundaryState.anchor;
     const sentinel = document.getElementById("history-sentinel");
     if (sentinel) {
       sentinel.after(fragment);
     } else {
       container.prepend(fragment);
     }
-    restoreScrollAnchor(container, anchor);
+    if (boundaryState.scrollHeightBefore === null) {
+      restoreScrollAnchor(container, anchor);
+    } else {
+      container.scrollTop +=
+        container.scrollHeight - boundaryState.scrollHeightBefore;
+    }
 
     state.oldestLoadedSeq = events[0].seq;
     state.hasMoreHistory = hasMore === true;
@@ -976,6 +1043,89 @@ function bindPermissionButtons(
   });
 }
 
+function markReplayEventSeq(
+  el: HTMLElement,
+  event: StoredEvent | undefined,
+): void {
+  if (!event) return;
+  el.dataset.firstEventSeq = String(event.seq);
+  el.dataset.lastEventSeq = String(event.seq);
+}
+
+function markReplayEventEndSeq(
+  el: HTMLElement,
+  event: StoredEvent | undefined,
+): void {
+  if (event) el.dataset.lastEventSeq = String(event.seq);
+}
+
+function isAdjacentReplayEvent(
+  events: StoredEvent[],
+  idx: number,
+  type: string,
+): boolean {
+  if (idx <= 0 || idx >= events.length) return false;
+  const previous = events[idx - 1];
+  const current = events[idx];
+  return previous.type === type && current.seq === previous.seq + 1;
+}
+
+function replayElementsAreAdjacent(
+  previous: HTMLElement,
+  next: HTMLElement,
+): boolean {
+  const previousSeq = parseReplaySeq(previous.dataset.lastEventSeq);
+  const nextSeq = parseReplaySeq(next.dataset.firstEventSeq);
+  return (
+    previousSeq !== null && nextSeq !== null && nextSeq === previousSeq + 1
+  );
+}
+
+function parseReplaySeq(value: string | undefined): number | null {
+  if (!value || !/^[1-9]\d*$/.test(value)) return null;
+  const seq = Number(value);
+  return Number.isSafeInteger(seq) ? seq : null;
+}
+
+function mergeOlderReplayBoundary(
+  older: HTMLElement,
+  newer: HTMLElement,
+): boolean {
+  if (!replayElementsAreAdjacent(older, newer)) return false;
+  if (
+    older.classList.contains("msg") &&
+    older.classList.contains("assistant") &&
+    newer.classList.contains("msg") &&
+    newer.classList.contains("assistant")
+  ) {
+    const combined =
+      (older.getAttribute("data-raw") ?? "") +
+      (newer.getAttribute("data-raw") ?? "");
+    newer.setAttribute("data-raw", combined);
+    resetMarkdownStream(newer);
+    newer.replaceChildren();
+    updateMarkdownStream(newer, combined);
+    enhanceCodeBlocks(newer);
+  } else if (
+    older.classList.contains("thinking") &&
+    newer.classList.contains("thinking")
+  ) {
+    const combined =
+      (older.getAttribute("data-raw") ?? "") +
+      (newer.getAttribute("data-raw") ?? "");
+    newer.setAttribute("data-raw", combined);
+    const content = newer.querySelector(".thinking-content");
+    if (content) content.textContent = combined;
+  } else {
+    return false;
+  }
+  const firstEventSeq = older.dataset.firstEventSeq;
+  if (firstEventSeq) newer.dataset.firstEventSeq = firstEventSeq;
+  else delete newer.dataset.firstEventSeq;
+  older.remove();
+  return true;
+}
+
 // eslint-disable-next-line complexity -- TODO: refactor event type switch with helper functions
 function handleReplayContentEvent(
   type: ContentEventType,
@@ -992,6 +1142,7 @@ function handleReplayContentEvent(
       const lastChild = container.lastElementChild as HTMLElement | null;
       const textVal = (d.text as string | undefined) ?? "";
       if (
+        isAdjacentReplayEvent(events, idx, "assistant_message") &&
         lastChild?.classList.contains("msg") &&
         lastChild.classList.contains("assistant")
       ) {
@@ -1002,28 +1153,39 @@ function handleReplayContentEvent(
         lastChild.replaceChildren();
         updateMarkdownStream(lastChild, combined);
         enhanceCodeBlocks(lastChild);
+        markReplayEventEndSeq(lastChild, events[idx]);
         break;
       }
       const el = renderContentEvent(type, d, hooks);
-      if (el) appendMessageElement(el);
+      if (el) {
+        markReplayEventSeq(el, events[idx]);
+        appendMessageElement(el);
+      }
       break;
     }
     case "thinking": {
       const container = state.replayTarget ?? dom.messages;
       const lastChild = container.lastElementChild as HTMLElement | null;
       const textVal = (d.text as string | undefined) ?? "";
-      if (lastChild?.classList.contains("thinking")) {
+      if (
+        isAdjacentReplayEvent(events, idx, "thinking") &&
+        lastChild?.classList.contains("thinking")
+      ) {
         const content = lastChild.querySelector(".thinking-content");
         if (content) {
           const existing = lastChild.getAttribute("data-raw") ?? "";
-          const combined = existing + "\n" + textVal;
+          const combined = existing + textVal;
           lastChild.setAttribute("data-raw", combined);
           content.textContent = combined;
+          markReplayEventEndSeq(lastChild, events[idx]);
           break;
         }
       }
       const el = renderContentEvent(type, d, hooks);
-      if (el) appendMessageElement(el);
+      if (el) {
+        markReplayEventSeq(el, events[idx]);
+        appendMessageElement(el);
+      }
       break;
     }
     case "tool_call": {

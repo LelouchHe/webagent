@@ -56,7 +56,8 @@ export function escHtml(s: string): string {
 //     no `process` global; use `__DEV__` (see declare above).
 //
 // Invariants (dev-mode only, DCE'd in prod via esbuild define `__DEV__`):
-//   - entry: if a memo exists, sum(rootCounts) must equal host.children.length
+//   - entry: if a memo exists, sum(rootCounts) must equal
+//     host.childNodes.length
 //   - tail:  after each call, same equality must hold
 //
 // Lifecycle reset: any code path that mutates `host.innerHTML` directly
@@ -67,6 +68,9 @@ export function escHtml(s: string): string {
 interface MarkdownStreamMemo {
   cache: string[];
   cacheTypes: Array<string | null>;
+  /** Root DOM Node count per markdown block. DOMPurify can remove an unknown
+   *  wrapper while preserving its body as a top-level Text node, so this
+   *  must count all childNodes rather than only Element children. */
   rootCounts: number[];
   /** Optional sub-block memo per top-level block index. null for non-container
    *  blocks (paragraph, code, etc.); set for `list` (and future: `table`,
@@ -257,9 +261,9 @@ const HTML_VOID_TAGS = new Set([
 
 function stripWhitespaceTextNodes(root: DocumentFragment): void {
   // marked emits "\n" text nodes between root block elements. They are
-  // visually inert but break our offset counting (we index host.children
-  // which only sees Elements, but insertBefore on the fragment would insert
-  // text nodes too, drifting host.childNodes vs host.children).
+  // visually inert and would create unstable memo roots for parser formatting
+  // alone. Preserve non-whitespace Text nodes: DOMPurify may legitimately
+  // promote an unknown element's body to a top-level Text node.
   for (const n of Array.from(root.childNodes)) {
     if (n.nodeType === 3 /* TEXT_NODE */ && /^\s*$/.test(n.nodeValue ?? "")) {
       n.parentNode?.removeChild(n);
@@ -294,6 +298,17 @@ function sanitizeToFragment(html: string): DocumentFragment {
     USE_PROFILES: { html: true, mathMl: true },
     RETURN_DOM_FRAGMENT: true,
   });
+}
+
+function removeRootNodes(
+  host: HTMLElement,
+  offset: number,
+  count: number,
+): void {
+  for (let k = 0; k < count; k++) {
+    if (offset >= host.childNodes.length) break;
+    host.removeChild(host.childNodes.item(offset));
+  }
 }
 
 /**
@@ -633,12 +648,9 @@ function renderMissBlock(
   timing.sanitize += sanMs;
   const tDom0 = now();
   stripWhitespaceTextNodes(frag);
-  const newCount = frag.children.length;
-  for (let k = 0; k < prevCount; k++) {
-    const child = host.children.item(offset);
-    if (child) host.removeChild(child);
-  }
-  const anchor = host.children.item(offset);
+  const newCount = frag.childNodes.length;
+  removeRootNodes(host, offset, prevCount);
+  const anchor = host.childNodes.item(offset);
   host.insertBefore(frag, anchor);
   const tDom1 = now();
   const domMs = tDom1 - tDom0;
@@ -805,12 +817,10 @@ function renderListBlock(
         "slowFallback",
       );
     }
-    // Replace prev children at this offset with the new empty container
-    for (let k = 0; k < prevCount; k++) {
-      const child = host.children.item(offset);
-      if (child) host.removeChild(child);
-    }
-    const anchor = host.children.item(offset);
+    // Host offsets count all root Nodes; list item offsets below remain
+    // Element-only because the container's direct children are <li> elements.
+    removeRootNodes(host, offset, prevCount);
+    const anchor = host.childNodes.item(offset);
     host.insertBefore(fresh, anchor);
     containerEl = fresh as HTMLElement;
     subCache = [];
@@ -1010,11 +1020,10 @@ function renderTableBlock(
       freshTbody = fresh.ownerDocument.createElement("tbody");
       fresh.appendChild(freshTbody);
     }
-    for (let k = 0; k < prevCount; k++) {
-      const child = host.children.item(offset);
-      if (child) host.removeChild(child);
-    }
-    const anchor = host.children.item(offset);
+    // Host offsets count all root Nodes; row offsets below remain Element-only
+    // because <tbody>'s direct children are <tr> elements.
+    removeRootNodes(host, offset, prevCount);
+    const anchor = host.childNodes.item(offset);
     host.insertBefore(fresh, anchor);
     containerEl = fresh as HTMLElement;
     tbodyEl = freshTbody;
@@ -1076,12 +1085,17 @@ export function updateMarkdownStream(
   const DEV = typeof __DEV__ !== "undefined" && __DEV__;
   let memo = markdownStreamMemos.get(host);
 
-  if (DEV && memo && memo.cache.length > 0) {
+  if (memo && memo.cache.length > 0) {
     const sum = memo.rootCounts.reduce((a, b) => a + b, 0);
-    if (sum !== host.children.length) {
-      throw new Error(
-        `updateMarkdownStream entry invariant: rootCounts sum=${sum} vs host.children=${host.children.length} — another code path mutated host.innerHTML without calling resetMarkdownStream`,
-      );
+    if (sum !== host.childNodes.length) {
+      if (DEV) {
+        throw new Error(
+          `updateMarkdownStream entry invariant: rootCounts sum=${sum} vs host.childNodes=${host.childNodes.length} — another code path mutated host.innerHTML without calling resetMarkdownStream`,
+        );
+      }
+      markdownStreamMemos.delete(host);
+      host.replaceChildren();
+      memo = undefined;
     }
   }
 
@@ -1163,15 +1177,15 @@ export function updateMarkdownStream(
     cacheTypes.pop();
     subMemos.pop();
     for (let k = 0; k < lastCount; k++) {
-      if (host.lastElementChild) host.removeChild(host.lastElementChild);
+      if (host.lastChild) host.removeChild(host.lastChild);
     }
   }
 
   if (DEV) {
     const sum = rootCounts.reduce((a, b) => a + b, 0);
-    if (sum !== host.children.length) {
+    if (sum !== host.childNodes.length) {
       throw new Error(
-        `updateMarkdownStream tail invariant: rootCounts sum=${sum} vs host.children=${host.children.length}`,
+        `updateMarkdownStream tail invariant: rootCounts sum=${sum} vs host.childNodes=${host.childNodes.length}`,
       );
     }
   }

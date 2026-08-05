@@ -103,8 +103,10 @@ const CASES: { name: string; text: string }[] = [
 // Whitespace between root block elements:
 //   - renderMd → innerHTML preserves marked's "\n" text nodes between
 //     <p>…</p>\n<p>…</p>, so textContent includes them.
-//   - updateMarkdownStream strips those nodes (necessary so host.children
-//     stays in sync with host.childNodes for the offset math).
+//   - updateMarkdownStream strips whitespace-only root Text nodes so parser
+//     formatting does not create visually inert memo roots. Non-whitespace
+//     root Text nodes remain tracked in the same childNodes offset model as
+//     Element roots.
 // Both are visually identical (<p> is block-level; the space-between-text
 // is purely DOM-internal glue), and the rendered UI is unaffected. We
 // compare modulo all whitespace to lock semantic equivalence.

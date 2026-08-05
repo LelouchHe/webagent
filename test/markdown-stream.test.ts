@@ -29,9 +29,19 @@ import { describe, it, before, after, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { setupDOM, teardownDOM } from "./frontend-setup.ts";
 
+const TEXT_NODE = 3;
+
 describe("updateMarkdownStream", () => {
   let mod: typeof import("../public/js/render-event.ts");
   let host: HTMLElement;
+
+  function nodeSignature(target: HTMLElement) {
+    return Array.from(target.childNodes).map((node) => ({
+      type: node.nodeType,
+      name: node.nodeName,
+      text: node.textContent,
+    }));
+  }
 
   before(async () => {
     setupDOM();
@@ -98,6 +108,126 @@ describe("updateMarkdownStream", () => {
     mod.updateMarkdownStream(host, "a\n\nb\n");
     assert.equal(host.children.length, 2);
     assert.match(host.children[1].textContent, /b/);
+  });
+
+  it("matches one-shot DOM at every prefix of an unclosed custom HTML stream", () => {
+    const chunks = [
+      "<final_",
+      "answer>",
+      "\nCommands ",
+      "run:\n",
+      "- Succeeded: ",
+      "`git status",
+      " --short`\n",
+      "- Succeeded: `npm test`\n",
+    ];
+    let accumulated = "";
+
+    for (const chunk of chunks) {
+      accumulated += chunk;
+      mod.updateMarkdownStream(host, accumulated);
+
+      const oneShot = document.createElement("div");
+      mod.updateMarkdownStream(oneShot, accumulated);
+      assert.equal(
+        host.innerHTML,
+        oneShot.innerHTML,
+        `streamed HTML diverged at prefix ${JSON.stringify(accumulated)}`,
+      );
+      assert.deepEqual(
+        nodeSignature(host),
+        nodeSignature(oneShot),
+        `streamed root nodes diverged at prefix ${JSON.stringify(accumulated)}`,
+      );
+    }
+
+    assert.equal((host.textContent.match(/Commands run:/g) ?? []).length, 1);
+    assert.equal((host.textContent.match(/Succeeded:/g) ?? []).length, 2);
+  });
+
+  it("produces the same final DOM across different chunk histories", () => {
+    const text =
+      "<final_answer>\nCommands run:\n" +
+      "- Succeeded: `git status --short`\n" +
+      "- Succeeded: `npm test`\n";
+    const histories = [
+      [text],
+      Array.from(text),
+      text.match(/[\s\S]{1,10}/g) ?? [],
+      [
+        "<final_",
+        "answer>\n",
+        "Commands run:\n",
+        "- Succeeded: `git status --short`\n",
+        "- Succeeded: `npm test`\n",
+      ],
+    ];
+    const oneShot = document.createElement("div");
+    mod.updateMarkdownStream(oneShot, text);
+
+    for (const chunks of histories) {
+      const streamed = document.createElement("div");
+      let accumulated = "";
+      for (const chunk of chunks) {
+        accumulated += chunk;
+        mod.updateMarkdownStream(streamed, accumulated);
+      }
+      assert.equal(streamed.innerHTML, oneShot.innerHTML);
+      assert.deepEqual(nodeSignature(streamed), nodeSignature(oneShot));
+    }
+  });
+
+  it("keeps mixed root Text and Element nodes correctly offset", () => {
+    const initial =
+      "<custom-result>\nalpha\n</custom-result>\n\n## beta\n\n- one\n- two\n";
+    const updated =
+      "<custom-result>\nALPHA changed\n</custom-result>\n\n## beta\n\n- one\n- two\n";
+
+    mod.updateMarkdownStream(host, initial);
+    assert.equal(host.childNodes[0].nodeType, TEXT_NODE);
+    assert.equal(host.childNodes[1].nodeName, "H2");
+    assert.equal(host.childNodes[2].nodeName, "UL");
+
+    mod.updateMarkdownStream(host, updated);
+    const oneShot = document.createElement("div");
+    mod.updateMarkdownStream(oneShot, updated);
+    assert.equal(host.innerHTML, oneShot.innerHTML);
+    assert.deepEqual(nodeSignature(host), nodeSignature(oneShot));
+  });
+
+  it("removes trailing root Text nodes when the block count shrinks", () => {
+    const initial = "## kept\n\n<custom-result>\nremove me\n";
+    const shortened = "## kept\n";
+
+    mod.updateMarkdownStream(host, initial);
+    const trailing = host.lastChild;
+    assert.ok(trailing);
+    assert.equal(trailing.nodeType, TEXT_NODE);
+
+    mod.updateMarkdownStream(host, shortened);
+    const oneShot = document.createElement("div");
+    mod.updateMarkdownStream(oneShot, shortened);
+    assert.equal(host.innerHTML, oneShot.innerHTML);
+    assert.deepEqual(nodeSignature(host), nodeSignature(oneShot));
+    assert.doesNotMatch(host.textContent, /remove me/);
+  });
+
+  it("recovers without throwing when production DOM roots are missing", () => {
+    const globals = globalThis as typeof globalThis & { __DEV__: boolean };
+    globals.__DEV__ = false;
+    try {
+      mod.updateMarkdownStream(host, "alpha\n\nbeta\n\ngamma\n");
+      host.childNodes.item(1).remove();
+
+      assert.doesNotThrow(() => {
+        mod.updateMarkdownStream(host, "alpha\n\nBETA changed\n\ngamma\n");
+      });
+      assert.match(host.textContent, /BETA changed/);
+      assert.match(host.textContent, /gamma/);
+      assert.equal(host.childNodes.length, 3);
+    } finally {
+      globals.__DEV__ = true;
+    }
   });
 
   it("merges blocks while a fenced code block is open", () => {
