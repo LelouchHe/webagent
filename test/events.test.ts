@@ -1994,7 +1994,7 @@ describe("events", () => {
       events.replayEvent("thinking", { text: "part one" }, storedEvents, 0);
       events.replayEvent("thinking", { text: "part two" }, storedEvents, 1);
       const thinking = dom.messages.querySelector(".thinking");
-      assert.equal(thinking.getAttribute("data-raw"), "part one\npart two");
+      assert.equal(thinking.getAttribute("data-raw"), "part onepart two");
     });
 
     it("replays tool_call and tool_call_update", () => {
@@ -2560,6 +2560,74 @@ describe("events", () => {
       assert.equal(msgs[0].getAttribute("data-raw"), "reconnect { id: 3 }");
       assert.equal((msgs[0] as HTMLElement).dataset.firstEventSeq, "200");
       assert.equal((msgs[0] as HTMLElement).dataset.lastEventSeq, "201");
+    });
+
+    it("preserves scroll position when the sole child merges with older history", async () => {
+      state.oldestLoadedSeq = 201;
+      state.hasMoreHistory = true;
+      state.sessionId = "s1";
+      const currentEvents = [
+        {
+          seq: 201,
+          type: "assistant_message",
+          data: JSON.stringify({ text: ": 3 }" }),
+        },
+      ] as any;
+      events.replayEvent(
+        "assistant_message",
+        { text: ": 3 }" },
+        currentEvents,
+        0,
+      );
+      const originalScrollHeight = Object.getOwnPropertyDescriptor(
+        dom.messages,
+        "scrollHeight",
+      );
+      Object.defineProperty(dom.messages, "scrollHeight", {
+        configurable: true,
+        get() {
+          const raw = dom.messages
+            .querySelector(".msg.assistant")
+            ?.getAttribute("data-raw");
+          return raw === "reconnect { id: 3 }" ? 200 : 100;
+        },
+      });
+      dom.messages.scrollTop = 10;
+
+      globalThis.fetch = (() =>
+        Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              events: [
+                {
+                  seq: 200,
+                  type: "assistant_message",
+                  data: JSON.stringify({ text: "reconnect { id" }),
+                },
+              ],
+              hasMore: false,
+            }),
+        })) as any;
+
+      try {
+        assert.equal(await events.loadOlderEvents("s1"), true);
+        assert.equal(dom.messages.querySelectorAll(".msg.assistant").length, 1);
+        assert.ok(
+          dom.messages.scrollTop > 10,
+          "scrollTop must compensate for the merged prefix height",
+        );
+      } finally {
+        if (originalScrollHeight) {
+          Object.defineProperty(
+            dom.messages,
+            "scrollHeight",
+            originalScrollHeight,
+          );
+        } else {
+          delete dom.messages.scrollHeight;
+        }
+      }
     });
 
     it("does not merge older replay into an active assistant stream", async () => {
@@ -3519,7 +3587,7 @@ describe("events", () => {
         })) as any;
 
       await events.loadHistory("s1");
-      assert.equal(state.currentThinkingText, "part one\npart two");
+      assert.equal(state.currentThinkingText, "part onepart two");
     });
 
     it("loadNewEvents reverts primed assistant element before replaying", async () => {
