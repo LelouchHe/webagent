@@ -84,11 +84,15 @@ export function resolveInputActions(): [InputAction, InputAction] {
   };
   if (state.busy && !canSubmitWhileBusy(dom.input.value)) {
     const cancelTitle =
-      state.cancelStatus === "unconfirmed"
-        ? "Retry cancel (agent did not acknowledge)"
-        : state.cancelStatus === "requested"
-          ? "Retry cancel (waiting for agent acknowledgement)"
-          : "Cancel (Ctrl+C)";
+      state.busyKind === "bash" && state.cancelStatus === "requested"
+        ? "Force stop bash (SIGKILL)"
+        : state.busyKind === "bash"
+          ? "Cancel bash (Ctrl+C)"
+          : state.cancelStatus === "unconfirmed"
+            ? "Retry cancel (agent did not acknowledge)"
+            : state.cancelStatus === "requested"
+              ? "Retry cancel (waiting for agent acknowledgement)"
+              : "Cancel (Ctrl+C)";
     return [
       left,
       {

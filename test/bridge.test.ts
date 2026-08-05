@@ -503,6 +503,8 @@ describe("AgentBridge", () => {
         liveSessions: new Set(["s1", "s2"]),
         restoringSessions: new Set<string>(),
         activePrompts: new Set(["s1"]),
+        pendingPromptSubmissions: new Set(["s2"]),
+        cancelledPromptSubmissions: new Set(["s2"]),
         runningBashProcs: new Map<string, any>(),
         pendingPermissions: new Map([
           [
@@ -588,6 +590,16 @@ describe("AgentBridge", () => {
         sessions.activePrompts.size,
         0,
         "activePrompts should be cleared",
+      );
+      assert.equal(
+        sessions.pendingPromptSubmissions.size,
+        0,
+        "pendingPromptSubmissions should be cleared",
+      );
+      assert.equal(
+        sessions.cancelledPromptSubmissions.size,
+        0,
+        "cancelledPromptSubmissions should be cleared",
       );
       assert.equal(
         sessions.pendingPermissions.size,

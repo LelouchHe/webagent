@@ -30,7 +30,7 @@
 - Cancel running processes
 - Cancel is session-scoped inside WebAgent: it requests cancellation of the current ACP turn and stops WebAgent-owned session work (like local `!` bash), but it cannot stop host-level tasks started outside the WebAgent server/runtime
 - Agent cancellation remains visibly pending until the agent acknowledges it. If acknowledgement times out, the cancel button stays retryable instead of reporting a false success.
-- An unconfirmed agent cancel can also be recovered with `/reload`, which restarts the shared agent bridge. Repeating cancel for a still-running local bash process escalates from `SIGINT` to `SIGKILL`.
+- An unconfirmed agent cancel can also be recovered with `/reload`, which restarts the shared agent bridge and interrupts in-flight work in every session. Repeating cancel for a still-running local bash process escalates from `SIGINT` to `SIGKILL`.
 
 ## Session Management
 
