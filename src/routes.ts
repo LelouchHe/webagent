@@ -1175,14 +1175,25 @@ export function createRequestHandler(
           });
           return;
         }
+        const requestState: { aborted: boolean } = { aborted: false };
+        const isRequestAborted = () => requestState.aborted;
+        const abortPromptSubmission = () => {
+          requestState.aborted = true;
+          sessions.releasePromptSubmission(sessionId);
+        };
         res.once("finish", () => {
           sessions.releasePromptSubmission(sessionId);
+        });
+        req.once("aborted", abortPromptSubmission);
+        res.once("close", () => {
+          if (!res.writableEnded) abortPromptSubmission();
         });
 
         // Ensure session is live in ACP before prompting (awaits in-flight resume)
         try {
           await sessions.ensureResumed(bridge, sessionId);
         } catch (err) {
+          if (isRequestAborted()) return;
           logPromptRejectBeforeSave({
             sessionId,
             status: HTTP_STATUS.INTERNAL_SERVER_ERROR,
@@ -1196,7 +1207,10 @@ export function createRequestHandler(
           return;
         }
 
-        if (sessions.isPromptSubmissionCancelled(sessionId)) {
+        if (
+          isRequestAborted() ||
+          sessions.isPromptSubmissionCancelled(sessionId)
+        ) {
           logPromptRejectBeforeSave({
             sessionId,
             status: HTTP_STATUS.CONFLICT,
@@ -1221,6 +1235,7 @@ export function createRequestHandler(
         try {
           body = JSON.parse(await readBody(req)) as typeof body;
         } catch {
+          if (isRequestAborted()) return;
           logPromptRejectBeforeSave({
             sessionId,
             status: HTTP_STATUS.BAD_REQUEST,
@@ -1230,7 +1245,10 @@ export function createRequestHandler(
           json(res, HTTP_STATUS.BAD_REQUEST, { error: "Invalid JSON" });
           return;
         }
-        if (sessions.isPromptSubmissionCancelled(sessionId)) {
+        if (
+          isRequestAborted() ||
+          sessions.isPromptSubmissionCancelled(sessionId)
+        ) {
           json(res, HTTP_STATUS.CONFLICT, {
             error: "Prompt was cancelled before start",
           });
@@ -1410,7 +1428,7 @@ export function createRequestHandler(
         }
 
         // Fire prompt asynchronously (don't await — response is 202)
-        sessions.releasePromptSubmission(sessionId);
+        sessions.releasePromptSubmission(sessionId, false);
         sessions.activePrompts.add(sessionId);
         sessions.syncBusy(sessionId);
         bridge
@@ -1834,10 +1852,7 @@ export function createRequestHandler(
             json(res, HTTP_STATUS.NOT_FOUND, { error: "Session not found" });
             return;
           }
-          if (
-            sessions?.activePrompts.has(sessionId) ||
-            sessions?.runningBashProcs.has(sessionId)
-          ) {
+          if (sessions && sessions.getBusyKind(sessionId) !== null) {
             json(res, HTTP_STATUS.CONFLICT, {
               error: "Cancel active work before deleting the session",
             });

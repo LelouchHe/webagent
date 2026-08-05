@@ -604,9 +604,10 @@ export class SessionManager {
     return this.cancelledPromptSubmissions.has(sessionId);
   }
 
-  releasePromptSubmission(sessionId: string): void {
+  releasePromptSubmission(sessionId: string, sync = true): void {
     this.pendingPromptSubmissions.delete(sessionId);
     this.cancelledPromptSubmissions.delete(sessionId);
+    if (sync) this.syncBusy(sessionId);
   }
 
   /**

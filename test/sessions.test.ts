@@ -560,6 +560,23 @@ describe("Session REST API", () => {
       assert.equal(res.status, 409);
       assert.equal(store.getSession("s-active-delete")?.id, "s-active-delete");
     });
+
+    it("rejects deletion while prompt submission is pending", async () => {
+      store.createSession("s-pending-delete", tmpDir);
+      assert.equal(sessions.reservePromptSubmission("s-pending-delete"), true);
+
+      const res = await makeRequest(
+        port,
+        "DELETE",
+        "/api/v1/sessions/s-pending-delete",
+      );
+
+      assert.equal(res.status, 409);
+      assert.equal(
+        store.getSession("s-pending-delete")?.id,
+        "s-pending-delete",
+      );
+    });
   });
 
   // --- PUT /api/v1/sessions/:id/:configId ---

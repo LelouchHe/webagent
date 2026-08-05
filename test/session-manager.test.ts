@@ -401,6 +401,17 @@ describe("SessionManager", () => {
       sm.runningBashProcs.set("s1", {} as any);
       assert.equal(sm.getBusyKind("s1"), "agent");
     });
+
+    it("clears runtime busy when a pending submission is released", () => {
+      assert.equal(sm.reservePromptSubmission("s1"), true);
+      sm.syncBusy("s1");
+      assert.equal(sm.state.getState("s1").runtime.busy?.kind, "agent");
+
+      sm.releasePromptSubmission("s1");
+
+      assert.equal(sm.getBusyKind("s1"), null);
+      assert.equal(sm.state.getState("s1").runtime.busy, null);
+    });
   });
 
   describe("autoRetryIfNeeded", () => {
