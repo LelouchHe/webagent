@@ -300,6 +300,17 @@ function sanitizeToFragment(html: string): DocumentFragment {
   });
 }
 
+function removeRootNodes(
+  host: HTMLElement,
+  offset: number,
+  count: number,
+): void {
+  for (let k = 0; k < count; k++) {
+    if (offset >= host.childNodes.length) break;
+    host.removeChild(host.childNodes.item(offset));
+  }
+}
+
 /**
  * Walk lexed tokens and merge any whose accumulated raw leaves an unbalanced
  * state (open ``` fence or unclosed block-level HTML tag) into the previous
@@ -638,9 +649,7 @@ function renderMissBlock(
   const tDom0 = now();
   stripWhitespaceTextNodes(frag);
   const newCount = frag.childNodes.length;
-  for (let k = 0; k < prevCount; k++) {
-    host.removeChild(host.childNodes.item(offset));
-  }
+  removeRootNodes(host, offset, prevCount);
   const anchor = host.childNodes.item(offset);
   host.insertBefore(frag, anchor);
   const tDom1 = now();
@@ -810,9 +819,7 @@ function renderListBlock(
     }
     // Host offsets count all root Nodes; list item offsets below remain
     // Element-only because the container's direct children are <li> elements.
-    for (let k = 0; k < prevCount; k++) {
-      host.removeChild(host.childNodes.item(offset));
-    }
+    removeRootNodes(host, offset, prevCount);
     const anchor = host.childNodes.item(offset);
     host.insertBefore(fresh, anchor);
     containerEl = fresh as HTMLElement;
@@ -1015,9 +1022,7 @@ function renderTableBlock(
     }
     // Host offsets count all root Nodes; row offsets below remain Element-only
     // because <tbody>'s direct children are <tr> elements.
-    for (let k = 0; k < prevCount; k++) {
-      host.removeChild(host.childNodes.item(offset));
-    }
+    removeRootNodes(host, offset, prevCount);
     const anchor = host.childNodes.item(offset);
     host.insertBefore(fresh, anchor);
     containerEl = fresh as HTMLElement;

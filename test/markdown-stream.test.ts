@@ -212,6 +212,22 @@ describe("updateMarkdownStream", () => {
     assert.doesNotMatch(host.textContent, /remove me/);
   });
 
+  it("recovers without throwing when production DOM roots are missing", () => {
+    const globals = globalThis as typeof globalThis & { __DEV__: boolean };
+    globals.__DEV__ = false;
+    try {
+      mod.updateMarkdownStream(host, "alpha\n\nbeta\n");
+      host.lastChild?.remove();
+
+      assert.doesNotThrow(() => {
+        mod.updateMarkdownStream(host, "alpha\n\nBETA changed\n");
+      });
+      assert.match(host.textContent, /BETA changed/);
+    } finally {
+      globals.__DEV__ = true;
+    }
+  });
+
   it("merges blocks while a fenced code block is open", () => {
     // Mid-stream: fence opened but not closed yet. The "intro" paragraph
     // and the partial fence get accumulated into one logical block so the

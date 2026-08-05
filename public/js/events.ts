@@ -499,7 +499,9 @@ async function _loadNewEventsImpl(sid: string): Promise<boolean> {
         lastInDom.replaceChildren();
         updateMarkdownStream(lastInDom, combined);
         enhanceCodeBlocks(lastInDom);
-        lastInDom.dataset.lastEventSeq = firstInFrag.dataset.lastEventSeq ?? "";
+        const lastEventSeq = firstInFrag.dataset.lastEventSeq;
+        if (lastEventSeq) lastInDom.dataset.lastEventSeq = lastEventSeq;
+        else delete lastInDom.dataset.lastEventSeq;
         firstInFrag.remove();
       } else if (
         lastInDom.classList.contains("thinking") &&
@@ -511,7 +513,9 @@ async function _loadNewEventsImpl(sid: string): Promise<boolean> {
         lastInDom.setAttribute("data-raw", combined);
         const content = lastInDom.querySelector(".thinking-content");
         if (content) content.textContent = combined;
-        lastInDom.dataset.lastEventSeq = firstInFrag.dataset.lastEventSeq ?? "";
+        const lastEventSeq = firstInFrag.dataset.lastEventSeq;
+        if (lastEventSeq) lastInDom.dataset.lastEventSeq = lastEventSeq;
+        else delete lastInDom.dataset.lastEventSeq;
         firstInFrag.remove();
       }
     }
@@ -1070,13 +1074,17 @@ function replayElementsAreAdjacent(
   previous: HTMLElement,
   next: HTMLElement,
 ): boolean {
-  const previousSeq = Number(previous.dataset.lastEventSeq);
-  const nextSeq = Number(next.dataset.firstEventSeq);
+  const previousSeq = parseReplaySeq(previous.dataset.lastEventSeq);
+  const nextSeq = parseReplaySeq(next.dataset.firstEventSeq);
   return (
-    Number.isSafeInteger(previousSeq) &&
-    Number.isSafeInteger(nextSeq) &&
-    nextSeq === previousSeq + 1
+    previousSeq !== null && nextSeq !== null && nextSeq === previousSeq + 1
   );
+}
+
+function parseReplaySeq(value: string | undefined): number | null {
+  if (!value || !/^[1-9]\d*$/.test(value)) return null;
+  const seq = Number(value);
+  return Number.isSafeInteger(seq) ? seq : null;
 }
 
 function mergeOlderReplayBoundary(
@@ -1111,7 +1119,9 @@ function mergeOlderReplayBoundary(
   } else {
     return false;
   }
-  newer.dataset.firstEventSeq = older.dataset.firstEventSeq ?? "";
+  const firstEventSeq = older.dataset.firstEventSeq;
+  if (firstEventSeq) newer.dataset.firstEventSeq = firstEventSeq;
+  else delete newer.dataset.firstEventSeq;
   older.remove();
   return true;
 }

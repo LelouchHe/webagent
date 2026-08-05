@@ -3223,6 +3223,30 @@ describe("events", () => {
       );
     });
 
+    it("does not treat missing replay seq metadata as sequence zero", async () => {
+      events.replayEvent("assistant_message", { text: "legacy" }, [], 0);
+      const existing = dom.messages.lastElementChild as HTMLElement;
+      existing.dataset.lastEventSeq = "";
+      existing.setAttribute("data-sync-boundary", "");
+      state.lastEventSeq = 0;
+
+      globalThis.fetch = (() =>
+        Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve([
+              {
+                seq: 1,
+                type: "assistant_message",
+                data: JSON.stringify({ text: "new" }),
+              },
+            ]),
+        })) as any;
+
+      assert.equal(await events.loadNewEvents("s1"), true);
+      assert.equal(dom.messages.querySelectorAll(".msg.assistant").length, 2);
+    });
+
     it("does not merge incremental assistant replay across prompt_done", async () => {
       const historyEvents = [
         {
