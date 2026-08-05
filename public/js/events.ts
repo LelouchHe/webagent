@@ -480,7 +480,11 @@ async function _loadNewEventsImpl(sid: string): Promise<boolean> {
     // across the boundary.
     const lastInDom = dom.messages.lastElementChild as HTMLElement | null;
     const firstInFrag = fragment.firstElementChild as HTMLElement | null;
-    if (lastInDom && firstInFrag) {
+    if (
+      lastInDom &&
+      firstInFrag &&
+      replayElementsAreAdjacent(lastInDom, firstInFrag)
+    ) {
       if (
         lastInDom.classList.contains("msg") &&
         lastInDom.classList.contains("assistant") &&
@@ -495,6 +499,7 @@ async function _loadNewEventsImpl(sid: string): Promise<boolean> {
         lastInDom.replaceChildren();
         updateMarkdownStream(lastInDom, combined);
         enhanceCodeBlocks(lastInDom);
+        lastInDom.dataset.lastEventSeq = firstInFrag.dataset.lastEventSeq ?? "";
         firstInFrag.remove();
       } else if (
         lastInDom.classList.contains("thinking") &&
@@ -506,6 +511,7 @@ async function _loadNewEventsImpl(sid: string): Promise<boolean> {
         lastInDom.setAttribute("data-raw", combined);
         const content = lastInDom.querySelector(".thinking-content");
         if (content) content.textContent = combined;
+        lastInDom.dataset.lastEventSeq = firstInFrag.dataset.lastEventSeq ?? "";
         firstInFrag.remove();
       }
     }
@@ -976,6 +982,34 @@ function bindPermissionButtons(
   });
 }
 
+function markReplayEventSeq(
+  el: HTMLElement,
+  event: StoredEvent | undefined,
+): void {
+  if (event) el.dataset.lastEventSeq = String(event.seq);
+}
+
+function isAdjacentReplayEvent(
+  events: StoredEvent[],
+  idx: number,
+  type: string,
+): boolean {
+  return idx > 0 && events[idx - 1]?.type === type;
+}
+
+function replayElementsAreAdjacent(
+  previous: HTMLElement,
+  next: HTMLElement,
+): boolean {
+  const previousSeq = Number(previous.dataset.lastEventSeq);
+  const nextSeq = Number(next.dataset.lastEventSeq);
+  return (
+    Number.isSafeInteger(previousSeq) &&
+    Number.isSafeInteger(nextSeq) &&
+    nextSeq === previousSeq + 1
+  );
+}
+
 // eslint-disable-next-line complexity -- TODO: refactor event type switch with helper functions
 function handleReplayContentEvent(
   type: ContentEventType,
@@ -992,6 +1026,7 @@ function handleReplayContentEvent(
       const lastChild = container.lastElementChild as HTMLElement | null;
       const textVal = (d.text as string | undefined) ?? "";
       if (
+        isAdjacentReplayEvent(events, idx, "assistant_message") &&
         lastChild?.classList.contains("msg") &&
         lastChild.classList.contains("assistant")
       ) {
@@ -1002,28 +1037,39 @@ function handleReplayContentEvent(
         lastChild.replaceChildren();
         updateMarkdownStream(lastChild, combined);
         enhanceCodeBlocks(lastChild);
+        markReplayEventSeq(lastChild, events[idx]);
         break;
       }
       const el = renderContentEvent(type, d, hooks);
-      if (el) appendMessageElement(el);
+      if (el) {
+        markReplayEventSeq(el, events[idx]);
+        appendMessageElement(el);
+      }
       break;
     }
     case "thinking": {
       const container = state.replayTarget ?? dom.messages;
       const lastChild = container.lastElementChild as HTMLElement | null;
       const textVal = (d.text as string | undefined) ?? "";
-      if (lastChild?.classList.contains("thinking")) {
+      if (
+        isAdjacentReplayEvent(events, idx, "thinking") &&
+        lastChild?.classList.contains("thinking")
+      ) {
         const content = lastChild.querySelector(".thinking-content");
         if (content) {
           const existing = lastChild.getAttribute("data-raw") ?? "";
           const combined = existing + "\n" + textVal;
           lastChild.setAttribute("data-raw", combined);
           content.textContent = combined;
+          markReplayEventSeq(lastChild, events[idx]);
           break;
         }
       }
       const el = renderContentEvent(type, d, hooks);
-      if (el) appendMessageElement(el);
+      if (el) {
+        markReplayEventSeq(el, events[idx]);
+        appendMessageElement(el);
+      }
       break;
     }
     case "tool_call": {
