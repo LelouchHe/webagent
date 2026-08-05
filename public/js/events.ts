@@ -1290,6 +1290,14 @@ function handleReplayContentEvent(
         events[idx]?.session_id === state.sentMessageForSession &&
         d.clientOpId === state.sentMessageOpId
       ) {
+        // Only record that replay observed the echo; do NOT clear the guard or
+        // `sentMessageOpId` here. The same echo may also be sitting in
+        // `replayQueue` as a live event, and the live `user_message` handler
+        // needs `sentMessageOpId` intact to recognize and suppress it —
+        // otherwise the user bubble is rendered twice. `drainReplayQueue()`
+        // clears the guard after the queue settles. If no live echo follows,
+        // `sentMessageOpId` / `sentMessageForSession` linger until the next
+        // send or `resetSessionUI()`; that is inert, not a missed cleanup.
         state.replayedOwnUserEcho = true;
       }
       const el = renderContentEvent(type, d, hooks);
@@ -1815,6 +1823,14 @@ export function handleEvent(msg: AgentEvent) {
     case "prompt_done": {
       clearCancelTimer();
       if (state.awaitingOwnUserEcho) {
+        // Stale completion from the turn we just superseded. Busy state is not
+        // stranded by dropping it: `state_patch` / snapshot drive `setBusy`
+        // through applyStatePatch/applySnapshot, which deliberately bypass this
+        // guard, so the server remains authoritative for busy either way.
+        log.warn("dropping stale prompt_done during own-echo window", {
+          sessionId: msg.sessionId,
+          stopReason: msg.stopReason,
+        });
         break;
       }
       if (msg.stopReason === "cancelled" && state.newTurnStarted) {
@@ -1895,7 +1911,16 @@ export function handleEvent(msg: AgentEvent) {
       break;
 
     case "error":
-      if (state.awaitingOwnUserEcho) break;
+      if (state.awaitingOwnUserEcho) {
+        // Terminal error from the superseded turn. Note this drops errors for
+        // *any* session during the window (this case has no sessionId filter),
+        // so log the payload — it is the only remaining trace.
+        log.warn("dropping stale error during own-echo window", {
+          sessionId: msg.sessionId,
+          message: msg.message,
+        });
+        break;
+      }
       state.awaitingNewSession = false;
       state.pendingToolCallIds.clear();
       state.pendingPermissionRequestIds.clear();

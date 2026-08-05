@@ -238,6 +238,27 @@ describe("input", () => {
     assert.doesNotMatch(dom.messages.textContent, /old prompt failed/);
   });
 
+  it("clears the own-echo guard when the prompt request fails", async () => {
+    setFetch(() => ({
+      ok: false,
+      status: 500,
+      json: async () => ({ error: "Agent not ready" }),
+    }));
+    state.sessionId = "s1";
+    state.clientId = "cl-1";
+    dom.input.value = "next question";
+
+    clickSend();
+    assert.equal(state.awaitingOwnUserEcho, true);
+    await new Promise((resolve) => setImmediate(resolve));
+
+    // A failed send never produces a user_message echo, so the guard must be
+    // released here or every later prompt_done/error is dropped forever.
+    assert.equal(state.awaitingOwnUserEcho, false);
+    assert.equal(state.sentMessageOpId, null);
+    assert.equal(state.busy, false);
+  });
+
   it("routes bang-prefixed input to bash execution", () => {
     setFetch(() => ({
       ok: true,
