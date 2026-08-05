@@ -1370,6 +1370,7 @@ describe("events", () => {
           busyKind: null,
         };
         let resolveSnapshot!: () => void;
+        let snapshotCalls = 0;
         const snapshotReady = new Promise<void>((resolve) => {
           resolveSnapshot = resolve;
         });
@@ -1387,13 +1388,14 @@ describe("events", () => {
           if (url.startsWith("/api/v1/sessions/s2/events"))
             return { ok: true, text: async () => "[]" };
           if (url === "/api/v1/sessions/s2/snapshot") {
+            snapshotCalls++;
             await snapshotReady;
             return {
               ok: true,
               text: async () =>
                 JSON.stringify({
                   version: 1,
-                  seq: 0,
+                  seq: snapshotCalls === 1 ? 0 : 1,
                   session: {
                     id: "s2",
                     title: null,
@@ -1405,7 +1407,13 @@ describe("events", () => {
                   },
                   runtime: {
                     busy: null,
-                    plan: [{ content: "Old snapshot", status: "in_progress" }],
+                    plan: [
+                      {
+                        content:
+                          snapshotCalls === 1 ? "Old snapshot" : "New patch",
+                        status: "in_progress",
+                      },
+                    ],
                   },
                 }),
             };

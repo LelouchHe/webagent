@@ -422,6 +422,7 @@ export async function reloadSnapshot(
     if (
       state.sessionSwitchGen !== genAtStart ||
       state.lastStateSeq !== seqAtStart ||
+      snap.seq < state.lastStateSeq ||
       (isStillCurrent && !isStillCurrent())
     )
       return null;
@@ -430,6 +431,42 @@ export async function reloadSnapshot(
   } catch {
     return null;
   }
+}
+
+function takeNavigationStatePatches(
+  sessionId: string,
+): Array<Extract<AgentEvent, { type: "state_patch" }>> {
+  const matching = state.pendingNavigationStatePatches
+    .filter((event) => event.sessionId === sessionId)
+    .sort((a, b) => a.seq - b.seq);
+  state.pendingNavigationStatePatches =
+    state.pendingNavigationStatePatches.filter(
+      (event) => event.sessionId !== sessionId,
+    );
+  return matching;
+}
+
+export async function hydrateSessionRuntime(
+  sessionId: string,
+  isStillCurrent?: () => boolean,
+): Promise<boolean> {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const snapshot = await reloadSnapshot(sessionId, isStillCurrent);
+    if (!snapshot) {
+      if (isStillCurrent && !isStillCurrent()) return false;
+      continue;
+    }
+    let patchesApplied = true;
+    for (const patch of takeNavigationStatePatches(sessionId)) {
+      if (patch.seq <= state.lastStateSeq) continue;
+      if (!applyStatePatch({ seq: patch.seq, patch: patch.patch })) {
+        patchesApplied = false;
+        break;
+      }
+    }
+    if (patchesApplied) return true;
+  }
+  return false;
 }
 
 export function setBusy(on: boolean) {
@@ -450,6 +487,7 @@ export function requestNewSession({
   cwd,
   inheritFromSessionId = state.sessionId,
 }: { cwd?: string; inheritFromSessionId?: string | null } = {}) {
+  if (state.awaitingNewSession) return;
   state.sessionSwitchGen++;
   state.messageNavigationGen++;
   const generation = state.sessionSwitchGen;

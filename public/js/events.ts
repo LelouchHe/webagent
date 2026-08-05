@@ -29,6 +29,7 @@ import {
   applyStatePatch,
   applyAgentCommandSnapshot,
   reloadSnapshot,
+  hydrateSessionRuntime,
   updateInboxCount,
 } from "./state.ts";
 import {
@@ -89,8 +90,12 @@ export async function fallbackToNextSession(
         loadHistory(next.id),
       ]);
       if (gen !== state.sessionSwitchGen) return;
-      await reloadSnapshot(next.id, () => gen === state.sessionSwitchGen);
+      const hydrated = await hydrateSessionRuntime(
+        next.id,
+        () => gen === state.sessionSwitchGen,
+      );
       if (gen !== state.sessionSwitchGen) return;
+      if (!hydrated) throw new Error("Failed to hydrate fallback session");
       handleEvent({
         type: "session_created",
         sessionId: session.id,
@@ -1402,19 +1407,6 @@ function scheduleAssistantRender() {
     state.assistantRafToken = null;
     doAssistantRender();
   });
-}
-
-export function takeNavigationStatePatches(
-  sessionId: string,
-): Array<Extract<AgentEvent, { type: "state_patch" }>> {
-  const matching = state.pendingNavigationStatePatches
-    .filter((event) => event.sessionId === sessionId)
-    .sort((a, b) => a.seq - b.seq);
-  state.pendingNavigationStatePatches =
-    state.pendingNavigationStatePatches.filter(
-      (event) => event.sessionId !== sessionId,
-    );
-  return matching;
 }
 
 // eslint-disable-next-line complexity -- TODO: refactor event type switch with helper functions

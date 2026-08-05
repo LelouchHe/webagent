@@ -8,6 +8,7 @@ import {
   resetSessionUI,
   setConnectionStatus,
   clearCancelTimer,
+  hydrateSessionRuntime,
   reloadSnapshot,
   updateInboxCount,
 } from "./state.ts";
@@ -202,10 +203,17 @@ async function resumeAndLoad(
     }
     if (gen !== state.sessionSwitchGen) return;
     // Load snapshot in parallel with catch-up events (runtime state vs history)
-    await Promise.all([reloadSnapshot(sessionId), loadNewEvents(sessionId)]);
+    const [hydrated] = await Promise.all([
+      hydrateSessionRuntime(sessionId),
+      loadNewEvents(sessionId),
+    ]);
+    if (!hydrated) {
+      await fallbackToNextSession(sessionId, state.sessionCwd ?? undefined);
+    }
   } else {
     // Full load: fetch session details and history in parallel.
     state.sessionId = null;
+    state.pendingNavigationSessionId = sessionId;
     const historyPromise = loadHistory(sessionId);
     let session: SessionDetail;
     try {
@@ -215,8 +223,15 @@ async function resumeAndLoad(
       ]);
       // History replay drains queued live patches while sessionId is null.
       // Fetch afterward so the authoritative snapshot includes that state.
-      await reloadSnapshot(sessionId);
+      const hydrated = await hydrateSessionRuntime(
+        sessionId,
+        () => gen === state.sessionSwitchGen,
+      );
       if (gen !== state.sessionSwitchGen) return;
+      if (!hydrated) {
+        await fallbackToNextSession(sessionId, state.sessionCwd ?? undefined);
+        return;
+      }
       session = s;
       if (!loaded) {
         addSystem("warn: Failed to load history.");

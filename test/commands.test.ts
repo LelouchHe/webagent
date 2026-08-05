@@ -259,6 +259,14 @@ describe("commands", () => {
           return body({});
         if (url === "/api/v1/sessions/mru-456") return body(mruDetail);
         if (url.includes("/api/v1/sessions/mru-456/events")) return body([]);
+        if (url === "/api/v1/sessions/mru-456/snapshot") {
+          return body({
+            version: 1,
+            seq: 0,
+            session: {},
+            runtime: { busy: null },
+          });
+        }
         return body({});
       });
 
@@ -326,6 +334,14 @@ describe("commands", () => {
           return body(mruDetail);
         }
         if (url.includes("/api/v1/sessions/mru-456/events")) return body([]);
+        if (url === "/api/v1/sessions/mru-456/snapshot") {
+          return body({
+            version: 1,
+            seq: 0,
+            session: {},
+            runtime: { busy: null },
+          });
+        }
         return body({});
       });
 

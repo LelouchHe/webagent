@@ -275,6 +275,21 @@ describe("state", () => {
 
       assert.equal(mod.state.awaitingNewSession, false);
     });
+
+    it("serializes rapid new-session requests", async () => {
+      let createCalls = 0;
+      globalThis.fetch = () =>
+        new Promise<Response>(() => {
+          createCalls++;
+        });
+
+      mod.requestNewSession();
+      mod.requestNewSession();
+      await new Promise((resolve) => setImmediate(resolve));
+
+      assert.equal(createCalls, 1);
+      assert.equal(mod.state.awaitingNewSession, true);
+    });
   });
 
   describe("resetSessionUI", () => {

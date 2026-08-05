@@ -156,6 +156,7 @@ describe("shared session navigation", () => {
     assert.equal(state.sessionId, null);
     assert.equal(state.busy, false);
     assert.equal(state.pendingNavigationSessionId, null);
+    assert.equal(location.hash, "#current-session");
   });
 
   it("explicit switch supersedes stale new-session ownership", async () => {

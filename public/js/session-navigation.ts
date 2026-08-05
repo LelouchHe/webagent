@@ -1,14 +1,9 @@
 import { ApiError, consumeMessage, getSession } from "./api.ts";
 import { HTTP_STATUS } from "../../src/http-status.ts";
-import {
-  handleEvent,
-  loadHistory,
-  takeNavigationStatePatches,
-} from "./events.ts";
+import { handleEvent, loadHistory } from "./events.ts";
 import { addSystem, scrollToBottom } from "./render.ts";
 import {
-  reloadSnapshot,
-  applyStatePatch,
+  hydrateSessionRuntime,
   requestNewSession,
   resetSessionUI,
   setHashSessionId,
@@ -36,6 +31,7 @@ export async function switchToSession(
   state.sessionSwitchGen++;
   state.messageNavigationGen++;
   const generation = state.sessionSwitchGen;
+  const previousSessionId = state.sessionId;
   state.awaitingNewSession = false;
   state.pendingNavigationSessionId = null;
   state.pendingNavigationStatePatches = [];
@@ -54,18 +50,15 @@ export async function switchToSession(
       loadHistory(sessionId),
     ]);
     if (!isCurrentNavigation()) return "ignored";
-    const snapshot = await reloadSnapshot(sessionId, isCurrentNavigation);
-    if (!snapshot) {
+    const hydrated = await hydrateSessionRuntime(
+      sessionId,
+      isCurrentNavigation,
+    );
+    if (!hydrated) {
       if (!isCurrentNavigation()) return "ignored";
       throw new Error("Failed to hydrate session snapshot");
     }
     if (!isCurrentNavigation()) return "ignored";
-    for (const patch of takeNavigationStatePatches(sessionId)) {
-      if (patch.seq <= state.lastStateSeq) continue;
-      if (!applyStatePatch({ seq: patch.seq, patch: patch.patch })) {
-        throw new Error("Failed to reconcile session state patches");
-      }
-    }
     handleEvent({
       type: "session_created",
       sessionId: session.id,
@@ -79,6 +72,7 @@ export async function switchToSession(
     if (isCurrentNavigation()) {
       resetSessionUI();
       state.sessionId = null;
+      if (previousSessionId) setHashSessionId(previousSessionId);
     }
     throw error;
   }
