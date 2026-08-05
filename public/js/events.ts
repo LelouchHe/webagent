@@ -1283,6 +1283,13 @@ function handleReplayContentEvent(
     case "user_message":
     case "plan":
     case "permission_response": {
+      if (
+        type === "user_message" &&
+        state.awaitingOwnUserEcho &&
+        events[idx]?.session_id === state.sentMessageForSession
+      ) {
+        state.awaitingOwnUserEcho = false;
+      }
       const el = renderContentEvent(type, d, hooks);
       if (el) {
         if (type === "plan")

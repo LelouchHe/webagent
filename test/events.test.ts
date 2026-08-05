@@ -1970,6 +1970,24 @@ describe("events", () => {
       assert.ok(dom.messages.children[0].classList.contains("user"));
     });
 
+    it("reconciles an optimistic user echo from replay", () => {
+      state.awaitingOwnUserEcho = true;
+      state.sentMessageForSession = "s1";
+      const storedEvents = [
+        {
+          seq: 1,
+          session_id: "s1",
+          type: "user_message",
+          data: JSON.stringify({ text: "hello" }),
+        },
+      ] as any;
+
+      events.replayEvent("user_message", { text: "hello" }, storedEvents, 0);
+
+      assert.equal(state.awaitingOwnUserEcho, false);
+      assert.equal(state.sentMessageForSession, "s1");
+    });
+
     it("replays assistant_message", () => {
       events.replayEvent("assistant_message", { text: "response" }, [], 0);
       assert.equal(dom.messages.children.length, 1);
