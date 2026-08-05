@@ -463,11 +463,19 @@ function takeNavigationStatePatches(
   return matching;
 }
 
+function discardNavigationStatePatches(sessionId: string): void {
+  state.pendingNavigationEvents = state.pendingNavigationEvents.filter(
+    (event) => event.type !== "state_patch" || event.sessionId !== sessionId,
+  );
+}
+
+let runtimeHydrationToken = 0;
+
 export async function hydrateSessionRuntime(
   sessionId: string,
   isStillCurrent?: () => boolean,
 ): Promise<boolean> {
-  const previousHydrationSessionId = state.runtimeHydrationSessionId;
+  const hydrationToken = ++runtimeHydrationToken;
   state.runtimeHydrationSessionId = sessionId;
   try {
     for (let attempt = 0; attempt < 3; attempt++) {
@@ -487,7 +495,11 @@ export async function hydrateSessionRuntime(
     }
     return false;
   } finally {
-    state.runtimeHydrationSessionId = previousHydrationSessionId;
+    if (hydrationToken === runtimeHydrationToken) {
+      state.runtimeHydrationSessionId = null;
+    } else if (state.runtimeHydrationSessionId !== sessionId) {
+      discardNavigationStatePatches(sessionId);
+    }
   }
 }
 

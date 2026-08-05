@@ -842,6 +842,49 @@ describe("state", () => {
       assert.equal(mod.state.lastStateSeq, 1);
     });
 
+    it("overlapping hydrations keep the newest patch-buffer owner", async () => {
+      const snapshots = new Map<string, (value: unknown) => void>();
+      globalThis.fetch = (async (url: string) => ({
+        ok: true,
+        status: 200,
+        text: async () =>
+          JSON.stringify(
+            await new Promise((resolve) => {
+              snapshots.set(url, resolve);
+            }),
+          ),
+      })) as any;
+      const generation = mod.state.sessionSwitchGen;
+
+      const first = mod.hydrateSessionRuntime(
+        "A",
+        () => generation === mod.state.sessionSwitchGen,
+      );
+      const second = mod.hydrateSessionRuntime("B");
+      for (
+        let i = 0;
+        i < 10 &&
+        (!snapshots.has("/api/v1/sessions/A/snapshot") ||
+          !snapshots.has("/api/v1/sessions/B/snapshot"));
+        i++
+      ) {
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+      const resolveA = snapshots.get("/api/v1/sessions/A/snapshot");
+      const resolveB = snapshots.get("/api/v1/sessions/B/snapshot");
+      assert.ok(resolveA);
+      assert.ok(resolveB);
+      mod.state.sessionSwitchGen++;
+      resolveA(snap(0, null));
+      assert.equal(await first, false);
+      assert.equal(mod.state.runtimeHydrationSessionId, "B");
+
+      mod.state.sessionSwitchGen = generation;
+      resolveB(snap(0, null));
+      assert.equal(await second, true);
+      assert.equal(mod.state.runtimeHydrationSessionId, null);
+    });
+
     it("applySnapshot populates display fallback when configOptions empty", () => {
       mod.state.configOptions = [];
       mod.applySnapshot(snap(1, null, { mode: "#plan", model: "gpt-5.4" }));
