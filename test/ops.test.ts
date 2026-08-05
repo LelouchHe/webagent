@@ -151,6 +151,7 @@ describe("Operations REST API", () => {
     it("cancels an active prompt", async () => {
       const sessionId = await createSession();
       sessions.activePrompts.add(sessionId);
+      sessions.syncBusy(sessionId);
 
       let cancelCalled = false;
       mockBridge.cancel = async () => {
@@ -198,16 +199,60 @@ describe("Operations REST API", () => {
       assert.ok(killed);
     });
 
-    it("returns 409 when session is idle", async () => {
+    it("kills bash even when the agent bridge is unavailable", async () => {
+      const sessionId = await createSession();
+      let killed = false;
+      const fakeProc = new EventEmitter() as any;
+      fakeProc.pid = 12346;
+      fakeProc.kill = () => {
+        killed = true;
+        return true;
+      };
+      fakeProc.stdout = new EventEmitter();
+      fakeProc.stderr = new EventEmitter();
+      sessions.runningBashProcs.set(sessionId, fakeProc);
+      const handler = createRequestHandler({
+        store,
+        sessions,
+        getBridge: () => null,
+        publicDir,
+        dataDir: tmpDir,
+        limits: { bash_output: 1024, image_upload: 1024 },
+        sseManager: { broadcast() {} } as any,
+      });
+      const srv = http.createServer(handler);
+      await new Promise<void>((resolve) => srv.listen(0, "127.0.0.1", resolve));
+      const bashPort = (srv.address() as { port: number }).port;
+
+      try {
+        const res = await makeRequest(
+          bashPort,
+          "POST",
+          `/api/v1/sessions/${sessionId}/cancel`,
+        );
+        assert.equal(res.status, 200);
+        assert.equal(JSON.parse(res.body).status, "cancelled");
+        assert.equal(killed, true);
+      } finally {
+        await new Promise<void>((resolve) =>
+          srv.close(() => {
+            resolve();
+          }),
+        );
+      }
+    });
+
+    it("returns idempotent idle status when session is idle", async () => {
       const sessionId = await createSession();
       const res = await makeRequest(
         port,
         "POST",
         `/api/v1/sessions/${sessionId}/cancel`,
       );
-      assert.equal(res.status, 409);
+      assert.equal(res.status, 200);
       assert.deepEqual(JSON.parse(res.body), {
-        error: "Session is not active",
+        ok: true,
+        status: "idle",
       });
     });
 
@@ -253,6 +298,7 @@ describe("Operations REST API", () => {
     it("is idempotent when the same X-Client-Op-Id is replayed", async () => {
       const sessionId = await createSession();
       sessions.activePrompts.add(sessionId);
+      sessions.syncBusy(sessionId);
 
       let callCount = 0;
       mockBridge.cancel = async () => {

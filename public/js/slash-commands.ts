@@ -411,9 +411,8 @@ export const ROOT: CmdNode = {
         const exitId = state.sessionId;
         try {
           if (state.busy) {
-            void sendCancel().catch((err: unknown) => {
-              addSystem(`err: cancel failed — ${String(err)}`);
-            });
+            addSystem("err: Cancel active work before exiting the session");
+            return;
           }
           api.deleteSession(exitId).catch(() => {});
           await fallbackToNextSession(exitId, state.sessionCwd ?? undefined);

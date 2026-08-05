@@ -123,7 +123,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - input validation and bridge-not-ready errors
 
 - `test/ops.test.ts`
-  - cancel: active prompt, running bash, idle-session conflict
+  - cancel: active prompt, running bash, idempotent idle session
   - status: idle / busy-agent / busy-bash
   - `GET /api/v1/config` endpoint
   - bridge-not-ready error handling

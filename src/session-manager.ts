@@ -80,6 +80,7 @@ export class SessionManager {
   readonly state = new SessionStateManager();
   /** Deduplicates concurrent resume calls for the same session. */
   private readonly pendingResumes = new Map<string, Promise<void>>();
+  private nextPromptNumber = 0;
   /** Deduplicates concurrent attempts to materialize one inbox message. */
   private readonly pendingMessageConsumes = new Map<
     string,
@@ -575,8 +576,8 @@ export class SessionManager {
   }
 
   getBusyKind(sessionId: string): "agent" | "bash" | null {
-    if (this.runningBashProcs.has(sessionId)) return "bash";
     if (this.activePrompts.has(sessionId)) return "agent";
+    if (this.runningBashProcs.has(sessionId)) return "bash";
     return null;
   }
 
@@ -599,7 +600,12 @@ export class SessionManager {
       return;
     }
     const nextPromptId =
-      kind === "agent" ? (promptId ?? current?.promptId ?? null) : null;
+      kind === "agent"
+        ? (promptId ??
+          (current?.kind === "agent"
+            ? current.promptId
+            : `prompt-${++this.nextPromptNumber}`))
+        : null;
     const sameWork =
       current?.kind === kind && current.promptId === nextPromptId;
     if (sameWork) return;

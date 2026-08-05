@@ -929,14 +929,6 @@ export function createRequestHandler(
           json(res, HTTP_STATUS.NOT_FOUND, { error: "Session not found" });
           return;
         }
-        const bridge = getBridge?.();
-        if (!bridge) {
-          json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
-            error: "Agent not ready yet",
-          });
-          return;
-        }
-
         const { opId, replayed } = tryReplayClientOp(
           req,
           res,
@@ -948,9 +940,21 @@ export function createRequestHandler(
         const hadAgentPrompt = sessions?.activePrompts.has(sessionId) ?? false;
         const hadBash = sessions?.runningBashProcs.has(sessionId) ?? false;
         if (!hadAgentPrompt && !hadBash) {
-          json(res, HTTP_STATUS.CONFLICT, { error: "Session is not active" });
+          const idleBody = { ok: true, status: "idle" };
+          saveClientOpResult(store, opId, sessionId, HTTP_STATUS.OK, idleBody);
+          json(res, HTTP_STATUS.OK, idleBody);
           return;
         }
+        const bridge = hadAgentPrompt ? getBridge?.() : null;
+        if (hadAgentPrompt && !bridge) {
+          json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
+            error: "Agent not ready yet",
+          });
+          return;
+        }
+        const cancelledPromptId = hadAgentPrompt
+          ? (sessions?.state.getState(sessionId).runtime.busy?.promptId ?? null)
+          : null;
 
         // Kill running bash process if any
         const proc = sessions?.runningBashProcs.get(sessionId);
@@ -962,7 +966,7 @@ export function createRequestHandler(
         // ACP cancel is a notification, not an acknowledgement. Keep the
         // prompt active until its prompt response supplies the terminal stop
         // reason, and allow repeated requests to resend the notification.
-        if (hadAgentPrompt && sessions) {
+        if (hadAgentPrompt && sessions && bridge) {
           const previousCancelStatus =
             sessions.state.getState(sessionId).runtime.busy?.cancelStatus ??
             null;
@@ -972,18 +976,32 @@ export function createRequestHandler(
             previousStatus: previousCancelStatus,
           });
           await bridge.cancel(sessionId);
-          sessions.state.markCancelRequested(sessionId);
+          const busy = sessions.state.getState(sessionId).runtime.busy;
+          const stillCancellingSamePrompt =
+            sessions.activePrompts.has(sessionId) &&
+            busy?.kind === "agent" &&
+            busy.promptId === cancelledPromptId;
+          if (stillCancellingSamePrompt) {
+            sessions.state.markCancelRequested(sessionId);
+          }
         }
         // If prompt_done does not arrive, expose the lack of acknowledgement
         // instead of pretending the prompt stopped.
         const cancelTimeout = deps.limits.cancel_timeout ?? 0;
-        if (hadAgentPrompt && sessions && cancelTimeout > 0)
+        const busyAfterCancel =
+          sessions?.state.getState(sessionId).runtime.busy;
+        const cancelPending =
+          hadAgentPrompt &&
+          sessions?.activePrompts.has(sessionId) === true &&
+          busyAfterCancel?.kind === "agent" &&
+          busyAfterCancel.promptId === cancelledPromptId;
+        if (cancelPending && cancelTimeout > 0)
           sessions.state.armCancelSafety(sessionId, cancelTimeout);
         sessions?.syncBusy(sessionId);
-        const status = hadAgentPrompt ? HTTP_STATUS.ACCEPTED : HTTP_STATUS.OK;
+        const status = cancelPending ? HTTP_STATUS.ACCEPTED : HTTP_STATUS.OK;
         const okBody = {
           ok: true,
-          status: hadAgentPrompt ? "cancelling" : "cancelled",
+          status: cancelPending ? "cancelling" : "cancelled",
         };
         saveClientOpResult(store, opId, sessionId, status, okBody);
         json(res, status, okBody);
@@ -1777,6 +1795,15 @@ export function createRequestHandler(
           const session = store.getSession(sessionId);
           if (!session) {
             json(res, HTTP_STATUS.NOT_FOUND, { error: "Session not found" });
+            return;
+          }
+          if (
+            sessions?.activePrompts.has(sessionId) ||
+            sessions?.runningBashProcs.has(sessionId)
+          ) {
+            json(res, HTTP_STATUS.CONFLICT, {
+              error: "Cancel active work before deleting the session",
+            });
             return;
           }
           if (sessions) {

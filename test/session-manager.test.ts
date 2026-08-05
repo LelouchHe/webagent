@@ -396,10 +396,10 @@ describe("SessionManager", () => {
       assert.equal(sm.getBusyKind("s1"), "agent");
     });
 
-    it("prefers bash busy over agent busy", () => {
+    it("preserves agent busy while local bash also runs", () => {
       sm.activePrompts.add("s1");
       sm.runningBashProcs.set("s1", {} as any);
-      assert.equal(sm.getBusyKind("s1"), "bash");
+      assert.equal(sm.getBusyKind("s1"), "agent");
     });
   });
 

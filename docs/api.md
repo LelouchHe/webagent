@@ -782,7 +782,13 @@ while the prompt remains active resends the notification.
 { "ok": true, "status": "cancelled" }
 ```
 
-**Errors:** `404`, `409` (session has no active work), `503`
+When no work remains, the endpoint is idempotent:
+
+```json
+{ "ok": true, "status": "idle" }
+```
+
+**Errors:** `404`, `503`
 
 ---
 
