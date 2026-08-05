@@ -807,6 +807,16 @@ export async function loadOlderEvents(sid: string): Promise<boolean> {
     // Prepend to DOM while preserving scroll position
     const anchor = pickScrollAnchor(container);
     hideHistoryLoading(container);
+    const lastInFrag = fragment.lastElementChild as HTMLElement | null;
+    const firstInDom = Array.from(container.children).find(
+      (el) =>
+        el.id !== "history-sentinel" &&
+        el.id !== "history-loading" &&
+        !el.classList.contains("history-loading"),
+    ) as HTMLElement | undefined;
+    if (lastInFrag && firstInDom) {
+      mergeOlderReplayBoundary(lastInFrag, firstInDom);
+    }
     const sentinel = document.getElementById("history-sentinel");
     if (sentinel) {
       sentinel.after(fragment);
@@ -986,6 +996,15 @@ function markReplayEventSeq(
   el: HTMLElement,
   event: StoredEvent | undefined,
 ): void {
+  if (!event) return;
+  el.dataset.firstEventSeq = String(event.seq);
+  el.dataset.lastEventSeq = String(event.seq);
+}
+
+function markReplayEventEndSeq(
+  el: HTMLElement,
+  event: StoredEvent | undefined,
+): void {
   if (event) el.dataset.lastEventSeq = String(event.seq);
 }
 
@@ -994,7 +1013,10 @@ function isAdjacentReplayEvent(
   idx: number,
   type: string,
 ): boolean {
-  return idx > 0 && events[idx - 1]?.type === type;
+  if (idx <= 0 || idx >= events.length) return false;
+  const previous = events[idx - 1];
+  const current = events[idx];
+  return previous.type === type && current.seq === previous.seq + 1;
 }
 
 function replayElementsAreAdjacent(
@@ -1002,12 +1024,49 @@ function replayElementsAreAdjacent(
   next: HTMLElement,
 ): boolean {
   const previousSeq = Number(previous.dataset.lastEventSeq);
-  const nextSeq = Number(next.dataset.lastEventSeq);
+  const nextSeq = Number(next.dataset.firstEventSeq);
   return (
     Number.isSafeInteger(previousSeq) &&
     Number.isSafeInteger(nextSeq) &&
     nextSeq === previousSeq + 1
   );
+}
+
+function mergeOlderReplayBoundary(
+  older: HTMLElement,
+  newer: HTMLElement,
+): void {
+  if (!replayElementsAreAdjacent(older, newer)) return;
+  if (
+    older.classList.contains("msg") &&
+    older.classList.contains("assistant") &&
+    newer.classList.contains("msg") &&
+    newer.classList.contains("assistant")
+  ) {
+    const combined =
+      (older.getAttribute("data-raw") ?? "") +
+      (newer.getAttribute("data-raw") ?? "");
+    newer.setAttribute("data-raw", combined);
+    resetMarkdownStream(newer);
+    newer.replaceChildren();
+    updateMarkdownStream(newer, combined);
+    enhanceCodeBlocks(newer);
+  } else if (
+    older.classList.contains("thinking") &&
+    newer.classList.contains("thinking")
+  ) {
+    const combined =
+      (older.getAttribute("data-raw") ?? "") +
+      "\n" +
+      (newer.getAttribute("data-raw") ?? "");
+    newer.setAttribute("data-raw", combined);
+    const content = newer.querySelector(".thinking-content");
+    if (content) content.textContent = combined;
+  } else {
+    return;
+  }
+  newer.dataset.firstEventSeq = older.dataset.firstEventSeq ?? "";
+  older.remove();
 }
 
 // eslint-disable-next-line complexity -- TODO: refactor event type switch with helper functions
@@ -1037,7 +1096,7 @@ function handleReplayContentEvent(
         lastChild.replaceChildren();
         updateMarkdownStream(lastChild, combined);
         enhanceCodeBlocks(lastChild);
-        markReplayEventSeq(lastChild, events[idx]);
+        markReplayEventEndSeq(lastChild, events[idx]);
         break;
       }
       const el = renderContentEvent(type, d, hooks);
@@ -1061,7 +1120,7 @@ function handleReplayContentEvent(
           const combined = existing + "\n" + textVal;
           lastChild.setAttribute("data-raw", combined);
           content.textContent = combined;
-          markReplayEventSeq(lastChild, events[idx]);
+          markReplayEventEndSeq(lastChild, events[idx]);
           break;
         }
       }

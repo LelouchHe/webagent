@@ -1900,6 +1900,36 @@ describe("events", () => {
       assert.equal(msgs[1].textContent, second);
     });
 
+    it("does not merge neighboring assistant events across a seq gap", () => {
+      const storedEvents = [
+        {
+          seq: 1,
+          type: "assistant_message",
+          data: JSON.stringify({ text: "first turn" }),
+        },
+        {
+          seq: 3,
+          type: "assistant_message",
+          data: JSON.stringify({ text: "second turn" }),
+        },
+      ] as any;
+
+      events.replayEvent(
+        "assistant_message",
+        { text: "first turn" },
+        storedEvents,
+        0,
+      );
+      events.replayEvent(
+        "assistant_message",
+        { text: "second turn" },
+        storedEvents,
+        1,
+      );
+
+      assert.equal(dom.messages.querySelectorAll(".msg.assistant").length, 2);
+    });
+
     it("does not merge assistant_messages separated by other events", () => {
       events.replayEvent("assistant_message", { text: "first" }, [], 0);
       events.replayEvent("thinking", { text: "hmm" }, [], 1);
@@ -2482,6 +2512,48 @@ describe("events", () => {
       assert.equal(state.hasMoreHistory, true);
       // Should have 4 children: 2 prepended + 2 original
       assert.equal(dom.messages.children.length, 4);
+    });
+
+    it("merges adjacent assistant fragments across older-history pagination", async () => {
+      state.oldestLoadedSeq = 201;
+      state.hasMoreHistory = true;
+      state.sessionId = "s1";
+      const currentEvents = [
+        {
+          seq: 201,
+          type: "assistant_message",
+          data: JSON.stringify({ text: ": 3 }" }),
+        },
+      ] as any;
+      events.replayEvent(
+        "assistant_message",
+        { text: ": 3 }" },
+        currentEvents,
+        0,
+      );
+
+      globalThis.fetch = (() =>
+        Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              events: [
+                {
+                  seq: 200,
+                  type: "assistant_message",
+                  data: JSON.stringify({ text: "reconnect { id" }),
+                },
+              ],
+              hasMore: false,
+            }),
+        })) as any;
+
+      assert.equal(await events.loadOlderEvents("s1"), true);
+      const msgs = dom.messages.querySelectorAll(".msg.assistant");
+      assert.equal(msgs.length, 1);
+      assert.equal(msgs[0].getAttribute("data-raw"), "reconnect { id: 3 }");
+      assert.equal((msgs[0] as HTMLElement).dataset.firstEventSeq, "200");
+      assert.equal((msgs[0] as HTMLElement).dataset.lastEventSeq, "201");
     });
 
     it("does not let older plan history replace the current pinned plan", async () => {
