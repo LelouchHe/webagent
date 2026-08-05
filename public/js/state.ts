@@ -84,6 +84,7 @@ export const state = {
   sessionTitle: null as string | null,
   inboxCount: 0,
   awaitingNewSession: false,
+  newSessionRequestInFlight: false,
   configOptions: [] as ConfigOption[],
   agentCommands: [] as AgentCommand[],
   agentCommandsEpoch: null as string | null,
@@ -487,18 +488,41 @@ export function requestNewSession({
   cwd,
   inheritFromSessionId = state.sessionId,
 }: { cwd?: string; inheritFromSessionId?: string | null } = {}) {
-  if (state.awaitingNewSession) return;
+  if (state.newSessionRequestInFlight) return;
   state.sessionSwitchGen++;
   state.messageNavigationGen++;
   const generation = state.sessionSwitchGen;
   state.pendingNavigationSessionId = null;
   state.pendingNavigationStatePatches = [];
   state.awaitingNewSession = true;
-  api.createSession({ cwd, inheritFromSessionId }).catch(() => {
-    if (generation === state.sessionSwitchGen) {
-      state.awaitingNewSession = false;
-    }
-  });
+  state.newSessionRequestInFlight = true;
+  api
+    .createSession({ cwd, inheritFromSessionId })
+    .then((session) => {
+      state.newSessionRequestInFlight = false;
+      if (generation !== state.sessionSwitchGen) return;
+      if (typeof session.id !== "string") {
+        throw new Error("Session create response is missing an id");
+      }
+      createdSessionActivator(session);
+    })
+    .catch(() => {
+      if (generation === state.sessionSwitchGen) {
+        state.awaitingNewSession = false;
+      }
+    })
+    .finally(() => {
+      state.newSessionRequestInFlight = false;
+    });
+}
+
+let createdSessionActivator: (
+  session: Record<string, unknown>,
+) => void = () => {};
+export function setCreatedSessionActivator(
+  fn: (session: Record<string, unknown>) => void,
+): void {
+  createdSessionActivator = fn;
 }
 
 // Modules can register cleanup functions to run on session reset (avoids circular imports)

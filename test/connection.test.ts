@@ -344,7 +344,8 @@ describe("connection", () => {
     connection.connect();
     await flush(30);
 
-    assert.equal(state.awaitingNewSession, true);
+    assert.equal(state.awaitingNewSession, false);
+    assert.equal(state.sessionId, "new-1");
   });
 
   it("creates a new session when no previous session exists", async () => {
@@ -363,7 +364,8 @@ describe("connection", () => {
     connection.connect();
     await flush();
 
-    assert.equal(state.awaitingNewSession, true);
+    assert.equal(state.awaitingNewSession, false);
+    assert.equal(state.sessionId, "new-1");
   });
 
   it("marks the UI disconnected and schedules reconnect on SSE error", async () => {

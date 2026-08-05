@@ -86,7 +86,8 @@ describe("commands", () => {
       await new Promise((r) => setTimeout(r, 0)); // flush microtask (fire-and-forget)
 
       assert.equal(handled, true);
-      assert.equal(state.awaitingNewSession, true);
+      assert.equal(state.awaitingNewSession, false);
+      assert.equal(state.sessionId, "new-1");
       // requestNewSession now uses REST POST /api/v1/sessions
       const createCall = fetchCalls.find(
         (c) => c.url === "/api/v1/sessions" && c.init?.method === "POST",

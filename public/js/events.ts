@@ -31,6 +31,7 @@ import {
   reloadSnapshot,
   hydrateSessionRuntime,
   updateInboxCount,
+  setCreatedSessionActivator,
 } from "./state.ts";
 import {
   addMessage,
@@ -63,8 +64,30 @@ import {
   type ContentEventType,
 } from "./render-event.ts";
 import { enhanceCodeBlocks } from "./highlight.ts";
-import type { AgentEvent, StoredEvent } from "../../src/types.ts";
+import type {
+  AgentCommandSnapshot,
+  AgentEvent,
+  ConfigOption,
+  StoredEvent,
+} from "../../src/types.ts";
 import "./plan-panel.ts";
+
+setCreatedSessionActivator((session) => {
+  if (typeof session.id !== "string") return;
+  handleEvent({
+    type: "session_created",
+    sessionId: session.id,
+    cwd: typeof session.cwd === "string" ? session.cwd : undefined,
+    title: typeof session.title === "string" ? session.title : null,
+    configOptions: Array.isArray(session.configOptions)
+      ? (session.configOptions as ConfigOption[])
+      : [],
+    agentCommands:
+      session.agentCommands && typeof session.agentCommands === "object"
+        ? (session.agentCommands as AgentCommandSnapshot)
+        : undefined,
+  });
+});
 
 /**
  * When the current session is gone (expired, deleted), try to switch to the
@@ -1498,6 +1521,9 @@ export function handleEvent(msg: AgentEvent) {
       break;
 
     case "session_created": {
+      if (state.newSessionRequestInFlight && state.awaitingNewSession) {
+        break;
+      }
       if (
         state.pendingNavigationSessionId &&
         msg.sessionId !== state.pendingNavigationSessionId

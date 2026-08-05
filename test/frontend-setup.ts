@@ -61,6 +61,7 @@ export function resetState(state: any, dom: any) {
   state.sessionTitle = null;
   state.inboxCount = 0;
   state.awaitingNewSession = false;
+  state.newSessionRequestInFlight = false;
   state.configOptions = [];
   state.agentCommands = [];
   state.agentCommandsEpoch = null;

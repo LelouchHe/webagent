@@ -204,9 +204,10 @@ async function resumeAndLoad(
     if (gen !== state.sessionSwitchGen) return;
     // Load snapshot in parallel with catch-up events (runtime state vs history)
     const [hydrated] = await Promise.all([
-      hydrateSessionRuntime(sessionId),
+      hydrateSessionRuntime(sessionId, () => gen === state.sessionSwitchGen),
       loadNewEvents(sessionId),
     ]);
+    if (gen !== state.sessionSwitchGen) return;
     if (!hydrated) {
       await fallbackToNextSession(sessionId, state.sessionCwd ?? undefined);
     }

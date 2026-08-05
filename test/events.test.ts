@@ -1350,14 +1350,21 @@ describe("events", () => {
           if (url === "/api/v1/sessions" && init?.method === "POST")
             return {
               ok: true,
-              text: async () => JSON.stringify({ id: "new-1" }),
+              text: async () =>
+                JSON.stringify({
+                  id: "new-1",
+                  cwd: "/tmp",
+                  title: null,
+                  configOptions: [],
+                }),
             };
           return { ok: true, text: async () => "{}" };
         });
 
         events.handleEvent({ type: "session_deleted", sessionId: "s1" });
         for (let i = 0; i < 30; i++) await Promise.resolve();
-        assert.equal(state.awaitingNewSession, true);
+        assert.equal(state.awaitingNewSession, false);
+        assert.equal(state.sessionId, "new-1");
       });
 
       it("keeps a newer target-session patch over an in-flight fallback snapshot", async () => {
