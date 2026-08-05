@@ -116,7 +116,7 @@ export function sendMessage(
 
 export interface CancelResult {
   ok: true;
-  status: "cancelling" | "cancelled" | "idle";
+  status: "cancelling" | "cancelled" | "idle" | "superseded";
 }
 
 export function cancelSession(sessionId: string): Promise<CancelResult> {

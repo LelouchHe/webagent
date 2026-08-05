@@ -75,7 +75,7 @@ export class SessionManager {
   readonly thinkingBuffers = new Map<string, string>();
   readonly activePrompts = new Set<string>();
   readonly runningBashProcs = new Map<string, ChildProcess>();
-  readonly interruptedBashSessions = new Set<string>();
+  readonly interruptedBashProcs = new WeakSet<ChildProcess>();
   /** Pending permission requests keyed by requestId. */
   readonly pendingPermissions = new Map<string, PendingPermission>();
   /** Per-session runtime state (busy/streaming/permissions snapshots + patches). */
@@ -508,7 +508,6 @@ export class SessionManager {
     this.thinkingBuffers.delete(sessionId);
     this.activePrompts.delete(sessionId);
     this.runningBashProcs.delete(sessionId);
-    this.interruptedBashSessions.delete(sessionId);
     this.attachmentLabelCache.delete(sessionId);
     this.agentCommandSnapshots.delete(sessionId);
     // Clean pending permissions for this session

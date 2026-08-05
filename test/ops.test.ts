@@ -261,6 +261,19 @@ describe("Operations REST API", () => {
 
       assert.deepEqual(signals, ["SIGINT", "SIGKILL"]);
       assert.equal(sessions.runningBashProcs.has(sessionId), true);
+
+      const replacementSignals: string[] = [];
+      const replacementProc = new EventEmitter() as any;
+      replacementProc.kill = (signal: string) => {
+        replacementSignals.push(signal);
+        return true;
+      };
+      replacementProc.stdout = new EventEmitter();
+      replacementProc.stderr = new EventEmitter();
+      sessions.runningBashProcs.set(sessionId, replacementProc);
+
+      await makeRequest(port, "POST", `/api/v1/sessions/${sessionId}/cancel`);
+      assert.deepEqual(replacementSignals, ["SIGINT"]);
     });
 
     it("returns idempotent idle status when session is idle", async () => {

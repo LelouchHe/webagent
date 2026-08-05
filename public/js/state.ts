@@ -532,7 +532,28 @@ export function resetSessionUI({
 // the configured timeout; the resulting `state_patch` lands here via SSE.
 export async function sendCancel(): Promise<api.CancelResult | null> {
   if (!state.busy || !state.sessionId) return null;
-  return api.cancelSession(state.sessionId);
+  const sessionId = state.sessionId;
+  const stateSeq = state.lastStateSeq;
+  state.cancelStatus = "requested";
+  refreshInputActions();
+  try {
+    const result = await api.cancelSession(sessionId);
+    if (state.sessionId === sessionId && state.lastStateSeq === stateSeq) {
+      if (result.status === "idle" || result.status === "cancelled") {
+        setBusy(false);
+      } else if (result.status === "superseded") {
+        state.cancelStatus = null;
+        refreshInputActions();
+      }
+    }
+    return result;
+  } catch (err) {
+    if (state.sessionId === sessionId && state.lastStateSeq === stateSeq) {
+      state.cancelStatus = null;
+      refreshInputActions();
+    }
+    throw err;
+  }
 }
 
 export function clearCancelTimer() {

@@ -258,20 +258,10 @@ function handleSendError(
 function doCancel() {
   if (!state.busy || !state.sessionId) return;
   const retry = state.cancelStatus !== null;
-  state.cancelStatus = "requested";
-  refreshInputActions();
   addSystem(retry ? "^C retrying cancel…" : "^C cancelling…");
   void sendCancel()
-    .then((result) => {
-      if (result && result.status !== "cancelling") {
-        state.cancelStatus = null;
-        setBusy(false);
-      }
-      refreshInputActions();
-    })
+    .then(() => {})
     .catch((err: unknown) => {
-      state.cancelStatus = null;
-      refreshInputActions();
       const message = err instanceof Error ? err.message : String(err);
       addSystem(`err: cancel failed — ${message}`);
     });

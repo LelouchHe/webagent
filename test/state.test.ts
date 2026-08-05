@@ -374,6 +374,52 @@ describe("state", () => {
 
       await assert.rejects(mod.sendCancel(), /Agent not ready/);
     });
+
+    it("does not apply a stale terminal result after a newer state patch", async () => {
+      let resolveCancel!: (value: Response) => void;
+      globalThis.fetch = () =>
+        new Promise<Response>((resolve) => {
+          resolveCancel = resolve;
+        });
+      mod.state.busy = true;
+      mod.state.sessionId = "s1";
+      mod.state.lastStateSeq = 3;
+
+      const pending = mod.sendCancel();
+      mod.applyStatePatch({
+        seq: 4,
+        patch: {
+          runtime: {
+            busy: {
+              kind: "agent",
+              since: "new",
+              promptId: "new-prompt",
+            },
+          },
+        },
+      });
+      resolveCancel({
+        ok: true,
+        text: async () => JSON.stringify({ ok: true, status: "idle" }),
+      } as Response);
+      await pending;
+
+      assert.equal(mod.state.busy, true);
+      assert.equal(mod.state.lastStateSeq, 4);
+    });
+
+    it("clears optimistic status when cancel was superseded", async () => {
+      globalThis.fetch = (async () => ({
+        ok: true,
+        text: async () => JSON.stringify({ ok: true, status: "superseded" }),
+      })) as any;
+      mod.state.busy = true;
+      mod.state.sessionId = "s1";
+
+      assert.equal((await mod.sendCancel())?.status, "superseded");
+      assert.equal(mod.state.busy, true);
+      assert.equal(mod.state.cancelStatus, null);
+    });
   });
 
   describe("hash routing", () => {

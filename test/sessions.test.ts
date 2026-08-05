@@ -258,8 +258,8 @@ describe("Session REST API", () => {
         releaseCancel();
         const res = await cancelRequest;
 
-        assert.equal(res.status, 200);
-        assert.equal(JSON.parse(res.body).status, "cancelled");
+        assert.equal(res.status, 202);
+        assert.equal(JSON.parse(res.body).status, "superseded");
         assert.equal(
           sessions.state.getState("s-race").runtime.busy?.cancelStatus ?? null,
           null,

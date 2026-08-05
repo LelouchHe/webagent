@@ -952,9 +952,9 @@ export function createRequestHandler(
         // Kill running bash process if any
         const proc = sessions?.runningBashProcs.get(sessionId);
         if (proc) {
-          const force = sessions!.interruptedBashSessions.has(sessionId);
+          const force = sessions!.interruptedBashProcs.has(proc);
           interruptBashProc(proc, force);
-          sessions!.interruptedBashSessions.add(sessionId);
+          sessions!.interruptedBashProcs.add(proc);
         }
         const bridge = hadAgentPrompt ? getBridge?.() : null;
         if (hadAgentPrompt && !bridge) {
@@ -999,10 +999,22 @@ export function createRequestHandler(
           sessions.state.armCancelSafety(sessionId, cancelTimeout);
         sessions?.syncBusy(sessionId);
         const workPending = cancelPending || hadBash;
-        const status = workPending ? HTTP_STATUS.ACCEPTED : HTTP_STATUS.OK;
+        const replacementPromptActive =
+          hadAgentPrompt &&
+          sessions?.activePrompts.has(sessionId) === true &&
+          busyAfterCancel?.kind === "agent" &&
+          busyAfterCancel.promptId !== cancelledPromptId;
+        const status =
+          workPending || replacementPromptActive
+            ? HTTP_STATUS.ACCEPTED
+            : HTTP_STATUS.OK;
         const okBody = {
           ok: true,
-          status: workPending ? "cancelling" : "cancelled",
+          status: workPending
+            ? "cancelling"
+            : replacementPromptActive
+              ? "superseded"
+              : "cancelled",
         };
         saveClientOpResult(store, opId, sessionId, status, okBody);
         json(res, status, okBody);
@@ -1491,7 +1503,6 @@ export function createRequestHandler(
 
         child.on("close", (code, signal) => {
           sessions.runningBashProcs.delete(sessionId);
-          sessions.interruptedBashSessions.delete(sessionId);
           sessions.syncBusy(sessionId);
           const stored = outputTruncated ? "[truncated]\n" + output : output;
           store.saveEvent(
@@ -1511,7 +1522,6 @@ export function createRequestHandler(
 
         child.on("error", (err) => {
           sessions.runningBashProcs.delete(sessionId);
-          sessions.interruptedBashSessions.delete(sessionId);
           sessions.syncBusy(sessionId);
           const errMsg = errorMessage(err);
           store.saveEvent(
