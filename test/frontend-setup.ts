@@ -106,6 +106,7 @@ export function resetState(state: any, dom: any) {
   state.lastEventSeq = 0;
   state.lastStateSeq = 0;
   state.pendingNavigationEvents = [];
+  state.runtimeHydrationSessionId = null;
   state.replayInProgress = false;
   state.replayQueue = [];
   if (state.unconfirmedPermissions) state.unconfirmedPermissions.clear();

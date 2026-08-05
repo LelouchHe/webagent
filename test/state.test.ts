@@ -809,6 +809,39 @@ describe("state", () => {
       assert.equal(mod.state.busy, true);
     });
 
+    it("hydrateSessionRuntime applies a full baseline before buffered patches", async () => {
+      const oldPlan = [{ status: "in_progress", content: "Old plan" }];
+      mod.state.plan = oldPlan;
+      mod.state.lastStateSeq = 0;
+      let resolveSnapshot!: (value: unknown) => void;
+      const pendingSnapshot = new Promise((resolve) => {
+        resolveSnapshot = resolve;
+      });
+      globalThis.fetch = (async () => ({
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify(await pendingSnapshot),
+      })) as any;
+
+      const hydration = mod.hydrateSessionRuntime("s1");
+      mod.state.pendingNavigationEvents.push({
+        type: "state_patch",
+        sessionId: "s1",
+        seq: 1,
+        patch: {
+          runtime: {
+            busy: { kind: "agent", since: "new", promptId: "p2" },
+          },
+        },
+      });
+      resolveSnapshot(snap(0, null));
+
+      assert.equal(await hydration, true);
+      assert.equal(mod.state.plan, null);
+      assert.equal(mod.state.busy, true);
+      assert.equal(mod.state.lastStateSeq, 1);
+    });
+
     it("applySnapshot populates display fallback when configOptions empty", () => {
       mod.state.configOptions = [];
       mod.applySnapshot(snap(1, null, { mode: "#plan", model: "gpt-5.4" }));

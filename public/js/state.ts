@@ -78,6 +78,7 @@ export const state = {
   messageNavigationGen: 0,
   pendingNavigationSessionId: null as string | null,
   pendingNavigationEvents: [] as AgentEvent[],
+  runtimeHydrationSessionId: null as string | null,
   sessionCwd: null as string | null,
   sessionTitle: null as string | null,
   inboxCount: 0,
@@ -437,7 +438,7 @@ async function reloadSnapshotResult(
       (isStillCurrent && !isStillCurrent())
     )
       return { status: "stale" };
-    if (state.lastStateSeq !== seqAtStart) {
+    if (state.lastStateSeq !== seqAtStart || snap.seq < state.lastStateSeq) {
       return { status: "superseded" };
     }
     applySnapshot(snap);
@@ -466,24 +467,28 @@ export async function hydrateSessionRuntime(
   sessionId: string,
   isStillCurrent?: () => boolean,
 ): Promise<boolean> {
-  for (let attempt = 0; attempt < 3; attempt++) {
-    const result = await reloadSnapshotResult(sessionId, isStillCurrent);
-    if (result.status === "stale") return false;
-    if (result.status === "superseded") return true;
-    if (result.status === "failed") {
-      continue;
-    }
-    let patchesApplied = true;
-    for (const patch of takeNavigationStatePatches(sessionId)) {
-      if (patch.seq <= state.lastStateSeq) continue;
-      if (!applyStatePatch({ seq: patch.seq, patch: patch.patch })) {
-        patchesApplied = false;
-        break;
+  const previousHydrationSessionId = state.runtimeHydrationSessionId;
+  state.runtimeHydrationSessionId = sessionId;
+  try {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const result = await reloadSnapshotResult(sessionId, isStillCurrent);
+      if (result.status === "stale") return false;
+      if (result.status === "superseded") return true;
+      if (result.status === "failed") continue;
+      let patchesApplied = true;
+      for (const patch of takeNavigationStatePatches(sessionId)) {
+        if (patch.seq <= state.lastStateSeq) continue;
+        if (!applyStatePatch({ seq: patch.seq, patch: patch.patch })) {
+          patchesApplied = false;
+          break;
+        }
       }
+      if (patchesApplied) return true;
     }
-    if (patchesApplied) return true;
+    return false;
+  } finally {
+    state.runtimeHydrationSessionId = previousHydrationSessionId;
   }
-  return false;
 }
 
 export function setBusy(on: boolean) {
@@ -522,6 +527,7 @@ export async function createNewSessionRequest({
   const generation = state.sessionSwitchGen;
   state.pendingNavigationSessionId = null;
   state.pendingNavigationEvents = [];
+  state.runtimeHydrationSessionId = null;
   state.awaitingNewSession = true;
   state.newSessionRequestInFlight = true;
   const clientOpId = api.newOpId();

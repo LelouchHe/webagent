@@ -1468,6 +1468,13 @@ export function handleEvent(msg: AgentEvent) {
 
   const navigationSid = "sessionId" in msg ? msg.sessionId : undefined;
   if (
+    msg.type === "state_patch" &&
+    state.runtimeHydrationSessionId === msg.sessionId
+  ) {
+    state.pendingNavigationEvents.push(msg);
+    return;
+  }
+  if (
     navigationSid &&
     msg.type !== "session_created" &&
     state.sessionId === null &&
