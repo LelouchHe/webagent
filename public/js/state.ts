@@ -75,11 +75,17 @@ export const state = {
   // click, /switch). initSession() captures the value before async work and bails
   // out if it changed, preventing stale reconnects from overriding deliberate switches.
   sessionSwitchGen: 0,
+  messageNavigationGen: 0,
   pendingNavigationSessionId: null as string | null,
+  pendingNavigationEvents: [] as AgentEvent[],
+  runtimeHydrationSessionId: null as string | null,
   sessionCwd: null as string | null,
   sessionTitle: null as string | null,
   inboxCount: 0,
   awaitingNewSession: false,
+  newSessionRequestInFlight: false,
+  pendingNewSessionOpId: null as string | null,
+  _newSessionRecoveryTimer: null as ReturnType<typeof setTimeout> | null,
   configOptions: [] as ConfigOption[],
   agentCommands: [] as AgentCommand[],
   agentCommandsEpoch: null as string | null,
@@ -405,6 +411,18 @@ export async function reloadSnapshot(
   sessionId: string,
   isStillCurrent?: () => boolean,
 ): Promise<SessionSnapshot | null> {
+  const result = await reloadSnapshotResult(sessionId, isStillCurrent);
+  return result.status === "applied" ? result.snapshot : null;
+}
+
+type SnapshotReloadResult =
+  | { status: "applied"; snapshot: SessionSnapshot }
+  | { status: "superseded" | "stale" | "failed" };
+
+async function reloadSnapshotResult(
+  sessionId: string,
+  isStillCurrent?: () => boolean,
+): Promise<SnapshotReloadResult> {
   // Capture sessionSwitchGen so an in-flight stale snapshot can be dropped
   // when a newer switch bumps the generation before the fetch resolves.
   // Without this guard, an A→B→A rapid switch could see A's slow response
@@ -417,14 +435,76 @@ export async function reloadSnapshot(
     )) as unknown as SessionSnapshot;
     if (
       state.sessionSwitchGen !== genAtStart ||
-      state.lastStateSeq !== seqAtStart ||
       (isStillCurrent && !isStillCurrent())
     )
-      return null;
+      return { status: "stale" };
+    if (state.lastStateSeq !== seqAtStart || snap.seq < state.lastStateSeq) {
+      return { status: "superseded" };
+    }
     applySnapshot(snap);
-    return snap;
+    return { status: "applied", snapshot: snap };
   } catch {
-    return null;
+    return { status: "failed" };
+  }
+}
+
+function takeNavigationStatePatches(
+  sessionId: string,
+): Array<Extract<AgentEvent, { type: "state_patch" }>> {
+  const matching = state.pendingNavigationEvents
+    .filter(
+      (event): event is Extract<AgentEvent, { type: "state_patch" }> =>
+        event.type === "state_patch" && event.sessionId === sessionId,
+    )
+    .sort((a, b) => a.seq - b.seq);
+  state.pendingNavigationEvents = state.pendingNavigationEvents.filter(
+    (event) => event.type !== "state_patch" || event.sessionId !== sessionId,
+  );
+  return matching;
+}
+
+function discardNavigationStatePatches(sessionId: string): void {
+  state.pendingNavigationEvents = state.pendingNavigationEvents.filter(
+    (event) => event.type !== "state_patch" || event.sessionId !== sessionId,
+  );
+}
+
+let runtimeHydrationToken = 0;
+
+function applyBufferedStatePatches(sessionId: string): boolean {
+  for (const patch of takeNavigationStatePatches(sessionId)) {
+    if (patch.seq <= state.lastStateSeq) continue;
+    if (!applyStatePatch({ seq: patch.seq, patch: patch.patch })) {
+      return false;
+    }
+  }
+  return true;
+}
+
+export async function hydrateSessionRuntime(
+  sessionId: string,
+  isStillCurrent?: () => boolean,
+): Promise<boolean> {
+  const hydrationToken = ++runtimeHydrationToken;
+  state.runtimeHydrationSessionId = sessionId;
+  try {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const result = await reloadSnapshotResult(sessionId, isStillCurrent);
+      if (result.status === "stale") return false;
+      if (result.status === "superseded") {
+        if (applyBufferedStatePatches(sessionId)) return true;
+        continue;
+      }
+      if (result.status === "failed") continue;
+      if (applyBufferedStatePatches(sessionId)) return true;
+    }
+    return false;
+  } finally {
+    if (hydrationToken === runtimeHydrationToken) {
+      state.runtimeHydrationSessionId = null;
+    } else if (state.runtimeHydrationSessionId !== sessionId) {
+      discardNavigationStatePatches(sessionId);
+    }
   }
 }
 
@@ -446,8 +526,128 @@ export function requestNewSession({
   cwd,
   inheritFromSessionId = state.sessionId,
 }: { cwd?: string; inheritFromSessionId?: string | null } = {}) {
+  void createNewSessionRequest({ cwd, inheritFromSessionId });
+}
+
+export async function createNewSessionRequest({
+  cwd,
+  inheritFromSessionId = state.sessionId,
+}: {
+  cwd?: string;
+  inheritFromSessionId?: string | null;
+} = {}): Promise<boolean> {
+  if (state.newSessionRequestInFlight || state.pendingNewSessionOpId)
+    return false;
+  invalidateNavigationLoads();
+  state.sessionSwitchGen++;
+  state.messageNavigationGen++;
+  const generation = state.sessionSwitchGen;
+  state.pendingNavigationSessionId = null;
+  state.pendingNavigationEvents = [];
+  state.runtimeHydrationSessionId = null;
   state.awaitingNewSession = true;
-  api.createSession({ cwd, inheritFromSessionId }).catch(() => {});
+  state.newSessionRequestInFlight = true;
+  const clientOpId = api.newOpId();
+  state.pendingNewSessionOpId = clientOpId;
+  try {
+    const session = await api.createSession(
+      { cwd, inheritFromSessionId },
+      clientOpId,
+    );
+    state.newSessionRequestInFlight = false;
+    if (generation !== state.sessionSwitchGen) {
+      if (state.pendingNewSessionOpId === clientOpId) {
+        finishNewSessionRequest();
+      }
+      return false;
+    }
+    if (typeof session.id !== "string") {
+      throw new Error("Session create response is missing an id");
+    }
+    confirmedNewSessionOps.delete(clientOpId);
+    finishNewSessionRequest();
+    createdSessionActivator(session);
+    return true;
+  } catch {
+    if (confirmedNewSessionOps.delete(clientOpId)) return true;
+    if (
+      generation === state.sessionSwitchGen &&
+      state.pendingNewSessionOpId === clientOpId
+    ) {
+      // The server broadcasts session_created before writing the HTTP
+      // response. Keep ownership briefly so that matching SSE can recover
+      // an ambiguously committed create whose response was interrupted.
+      return await new Promise<boolean>((resolve) => {
+        newSessionConfirmationWaiters.set(clientOpId, resolve);
+        state._newSessionRecoveryTimer = setTimeout(() => {
+          newSessionConfirmationWaiters.delete(clientOpId);
+          if (state.pendingNewSessionOpId === clientOpId) {
+            state.pendingNewSessionOpId = null;
+            if (generation === state.sessionSwitchGen) {
+              state.awaitingNewSession = false;
+            }
+          }
+          state._newSessionRecoveryTimer = null;
+          resolve(false);
+        }, 3000);
+      });
+    }
+    return false;
+  } finally {
+    state.newSessionRequestInFlight = false;
+    if (
+      generation !== state.sessionSwitchGen &&
+      state.pendingNewSessionOpId === clientOpId
+    ) {
+      finishNewSessionRequest();
+    }
+  }
+}
+
+const confirmedNewSessionOps = new Set<string>();
+const newSessionConfirmationWaiters = new Map<
+  string,
+  (confirmed: boolean) => void
+>();
+
+export function finishNewSessionRequest(confirmedOpId?: string): void {
+  if (confirmedOpId) {
+    const waiter = newSessionConfirmationWaiters.get(confirmedOpId);
+    if (waiter) {
+      newSessionConfirmationWaiters.delete(confirmedOpId);
+      waiter(true);
+    } else {
+      confirmedNewSessionOps.add(confirmedOpId);
+    }
+  } else {
+    confirmedNewSessionOps.clear();
+    for (const waiter of newSessionConfirmationWaiters.values()) waiter(false);
+    newSessionConfirmationWaiters.clear();
+  }
+  if (state._newSessionRecoveryTimer != null) {
+    clearTimeout(state._newSessionRecoveryTimer);
+    state._newSessionRecoveryTimer = null;
+  }
+  state.pendingNewSessionOpId = null;
+  state.newSessionRequestInFlight = false;
+}
+
+let createdSessionActivator: (
+  session: Record<string, unknown>,
+) => void = () => {};
+export function setCreatedSessionActivator(
+  fn: (session: Record<string, unknown>) => void,
+): void {
+  createdSessionActivator = fn;
+}
+
+let navigationLoadInvalidator: () => void = () => {};
+export function setNavigationLoadInvalidator(fn: () => void): void {
+  navigationLoadInvalidator = fn;
+}
+
+function invalidateNavigationLoads(): void {
+  navigationLoadInvalidator();
 }
 
 // Modules can register cleanup functions to run on session reset (avoids circular imports)
@@ -497,6 +697,7 @@ export function resetSessionUI({
   state._cancelTimerId = null;
   state.lastEventSeq = 0;
   state.lastStateSeq = 0;
+  state.pendingNavigationEvents = [];
   state.oldestLoadedSeq = 0;
   state.hasMoreHistory = false;
   state.loadingOlderEvents = false;

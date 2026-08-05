@@ -1,4 +1,4 @@
-import { describe, it, before, after, beforeEach } from "node:test";
+import { describe, it, before, after, beforeEach, mock } from "node:test";
 import assert from "node:assert/strict";
 import { setupDOM, teardownDOM, resetState } from "./frontend-setup.ts";
 
@@ -236,8 +236,12 @@ describe("state", () => {
       }) as any;
 
       mod.state.sessionId = "existing-id";
+      mod.state.pendingNavigationSessionId = "old-target";
+      const previousGeneration = mod.state.sessionSwitchGen;
       mod.requestNewSession();
       assert.equal(mod.state.awaitingNewSession, true);
+      assert.equal(mod.state.pendingNavigationSessionId, null);
+      assert.equal(mod.state.sessionSwitchGen, previousGeneration + 1);
       await new Promise((r) => setTimeout(r, 0));
 
       assert.equal(calls.length, 1);
@@ -259,6 +263,58 @@ describe("state", () => {
 
       const body = JSON.parse(calls[0].init?.body as string);
       assert.equal(body.cwd, "/tmp");
+    });
+
+    it("releases new-session ownership when creation fails", async () => {
+      mock.timers.enable({ apis: ["setTimeout"] });
+      try {
+        globalThis.fetch = async () => {
+          throw new Error("network");
+        };
+
+        mod.requestNewSession();
+        await new Promise((resolve) => setImmediate(resolve));
+        assert.equal(mod.state.awaitingNewSession, true);
+
+        mock.timers.tick(3000);
+        assert.equal(mod.state.awaitingNewSession, false);
+      } finally {
+        mock.timers.reset();
+      }
+    });
+
+    it("releases failed create ownership even after generation changes", async () => {
+      mock.timers.enable({ apis: ["setTimeout"] });
+      try {
+        globalThis.fetch = async () => {
+          throw new Error("network");
+        };
+
+        mod.requestNewSession();
+        await new Promise((resolve) => setImmediate(resolve));
+        assert.ok(mod.state.pendingNewSessionOpId);
+        mod.state.sessionSwitchGen++;
+
+        mock.timers.tick(3000);
+        assert.equal(mod.state.pendingNewSessionOpId, null);
+      } finally {
+        mock.timers.reset();
+      }
+    });
+
+    it("serializes rapid new-session requests", async () => {
+      let createCalls = 0;
+      globalThis.fetch = () =>
+        new Promise<Response>(() => {
+          createCalls++;
+        });
+
+      mod.requestNewSession();
+      mod.requestNewSession();
+      await new Promise((resolve) => setImmediate(resolve));
+
+      assert.equal(createCalls, 1);
+      assert.equal(mod.state.awaitingNewSession, true);
     });
   });
 
@@ -716,6 +772,157 @@ describe("state", () => {
       assert.equal(mod.state.sessionSwitchGen, startGen);
       assert.equal(mod.state.lastStateSeq, 9);
       assert.equal(mod.state.busy, true);
+    });
+
+    it("hydrateSessionRuntime treats a newer state patch as authoritative", async () => {
+      mod.state.lastStateSeq = 5;
+      let resolveSnapshot!: (value: unknown) => void;
+      const pendingSnapshot = new Promise((resolve) => {
+        resolveSnapshot = resolve;
+      });
+      globalThis.fetch = (async () => ({
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify(await pendingSnapshot),
+      })) as any;
+
+      const hydration = mod.hydrateSessionRuntime("s1");
+      assert.equal(
+        mod.applyStatePatch({
+          seq: 6,
+          patch: {
+            runtime: {
+              busy: { kind: "agent", since: "new", promptId: "p2" },
+            },
+          },
+        }),
+        true,
+      );
+      resolveSnapshot(
+        snap(5, null, {
+          lastEventSeq: 5,
+        }),
+      );
+
+      assert.equal(await hydration, true);
+      assert.equal(mod.state.lastStateSeq, 6);
+      assert.equal(mod.state.busy, true);
+    });
+
+    it("hydrateSessionRuntime applies a full baseline before buffered patches", async () => {
+      const oldPlan = [{ status: "in_progress", content: "Old plan" }];
+      mod.state.plan = oldPlan;
+      mod.state.lastStateSeq = 0;
+      let resolveSnapshot!: (value: unknown) => void;
+      const pendingSnapshot = new Promise((resolve) => {
+        resolveSnapshot = resolve;
+      });
+      globalThis.fetch = (async () => ({
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify(await pendingSnapshot),
+      })) as any;
+
+      const hydration = mod.hydrateSessionRuntime("s1");
+      mod.state.pendingNavigationEvents.push({
+        type: "state_patch",
+        sessionId: "s1",
+        seq: 1,
+        patch: {
+          runtime: {
+            busy: { kind: "agent", since: "new", promptId: "p2" },
+          },
+        },
+      });
+      resolveSnapshot(snap(0, null));
+
+      assert.equal(await hydration, true);
+      assert.equal(mod.state.plan, null);
+      assert.equal(mod.state.busy, true);
+      assert.equal(mod.state.lastStateSeq, 1);
+    });
+
+    it("overlapping hydrations keep the newest patch-buffer owner", async () => {
+      const snapshots = new Map<string, (value: unknown) => void>();
+      globalThis.fetch = (async (url: string) => ({
+        ok: true,
+        status: 200,
+        text: async () =>
+          JSON.stringify(
+            await new Promise((resolve) => {
+              snapshots.set(url, resolve);
+            }),
+          ),
+      })) as any;
+      const generation = mod.state.sessionSwitchGen;
+
+      const first = mod.hydrateSessionRuntime(
+        "A",
+        () => generation === mod.state.sessionSwitchGen,
+      );
+      const second = mod.hydrateSessionRuntime("B");
+      for (
+        let i = 0;
+        i < 10 &&
+        (!snapshots.has("/api/v1/sessions/A/snapshot") ||
+          !snapshots.has("/api/v1/sessions/B/snapshot"));
+        i++
+      ) {
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+      const resolveA = snapshots.get("/api/v1/sessions/A/snapshot");
+      const resolveB = snapshots.get("/api/v1/sessions/B/snapshot");
+      assert.ok(resolveA);
+      assert.ok(resolveB);
+      mod.state.sessionSwitchGen++;
+      resolveA(snap(0, null));
+      assert.equal(await first, false);
+      assert.equal(mod.state.runtimeHydrationSessionId, "B");
+
+      mod.state.sessionSwitchGen = generation;
+      resolveB(snap(0, null));
+      assert.equal(await second, true);
+      assert.equal(mod.state.runtimeHydrationSessionId, null);
+    });
+
+    it("newest same-session hydration applies patches buffered after supersession", async () => {
+      const snapshots: Array<(value: unknown) => void> = [];
+      globalThis.fetch = (async () => ({
+        ok: true,
+        status: 200,
+        text: async () =>
+          JSON.stringify(
+            await new Promise((resolve) => {
+              snapshots.push(resolve);
+            }),
+          ),
+      })) as any;
+
+      const older = mod.hydrateSessionRuntime("A");
+      const newer = mod.hydrateSessionRuntime("A");
+      for (let i = 0; i < 10 && snapshots.length < 2; i++) {
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+      assert.equal(snapshots.length, 2);
+
+      snapshots[0](snap(1, null));
+      assert.equal(await older, true);
+      mod.state.pendingNavigationEvents.push({
+        type: "state_patch",
+        sessionId: "A",
+        seq: 2,
+        patch: {
+          runtime: {
+            busy: { kind: "agent", since: "new", promptId: "p1" },
+          },
+        },
+      });
+      snapshots[1](snap(0, null));
+
+      assert.equal(await newer, true);
+      assert.equal(mod.state.lastStateSeq, 2);
+      assert.equal(mod.state.busy, true);
+      assert.equal(mod.state.pendingNavigationEvents.length, 0);
     });
 
     it("applySnapshot populates display fallback when configOptions empty", () => {

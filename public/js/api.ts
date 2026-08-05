@@ -52,7 +52,7 @@ function post<T = unknown>(
   });
 }
 
-function newOpId(): string {
+export function newOpId(): string {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function")
     return crypto.randomUUID();
   return (
@@ -65,15 +65,18 @@ function newOpId(): string {
 
 // --- Session CRUD ---
 
-export function createSession(opts?: {
-  cwd?: string;
-  inheritFromSessionId?: string | null;
-}): Promise<Record<string, unknown>> {
+export function createSession(
+  opts?: {
+    cwd?: string;
+    inheritFromSessionId?: string | null;
+  },
+  clientOpId?: string,
+): Promise<Record<string, unknown>> {
   const body: Record<string, unknown> = {};
   if (opts?.cwd) body.cwd = opts.cwd;
   if (opts?.inheritFromSessionId)
     body.inheritFromSessionId = opts.inheritFromSessionId;
-  return post("/api/v1/sessions", body);
+  return post("/api/v1/sessions", body, clientOpId);
 }
 
 export function deleteSession(id: string): Promise<void> {

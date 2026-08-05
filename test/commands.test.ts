@@ -86,7 +86,8 @@ describe("commands", () => {
       await new Promise((r) => setTimeout(r, 0)); // flush microtask (fire-and-forget)
 
       assert.equal(handled, true);
-      assert.equal(state.awaitingNewSession, true);
+      assert.equal(state.awaitingNewSession, false);
+      assert.equal(state.sessionId, "new-1");
       // requestNewSession now uses REST POST /api/v1/sessions
       const createCall = fetchCalls.find(
         (c) => c.url === "/api/v1/sessions" && c.init?.method === "POST",
@@ -259,6 +260,14 @@ describe("commands", () => {
           return body({});
         if (url === "/api/v1/sessions/mru-456") return body(mruDetail);
         if (url.includes("/api/v1/sessions/mru-456/events")) return body([]);
+        if (url === "/api/v1/sessions/mru-456/snapshot") {
+          return body({
+            version: 1,
+            seq: 0,
+            session: {},
+            runtime: { busy: null },
+          });
+        }
         return body({});
       });
 
@@ -326,6 +335,14 @@ describe("commands", () => {
           return body(mruDetail);
         }
         if (url.includes("/api/v1/sessions/mru-456/events")) return body([]);
+        if (url === "/api/v1/sessions/mru-456/snapshot") {
+          return body({
+            version: 1,
+            seq: 0,
+            session: {},
+            runtime: { busy: null },
+          });
+        }
         return body({});
       });
 
@@ -414,8 +431,61 @@ describe("commands", () => {
       );
       assert.ok(deleteCall, "expected DELETE for old session");
 
-      assert.equal(state.awaitingNewSession, true);
+      assert.equal(state.awaitingNewSession, false);
+      assert.equal(state.sessionId, "new-2");
       assert.ok(messageLines().includes("Clearing session…"));
+    });
+
+    it("clears old session when SSE confirms a create with interrupted response", async () => {
+      state.clientId = "cl-1";
+      state.sessionId = "old-1";
+      state.sessionCwd = "/home/project";
+      let rejectCreate!: (reason: Error) => void;
+      setFetch(async (url: string, init?: RequestInit) => {
+        if (url === "/api/v1/sessions" && init?.method === "POST") {
+          return new Promise((_resolve, reject) => {
+            rejectCreate = reject;
+          });
+        }
+        if (url === "/api/v1/sessions/old-1" && init?.method === "DELETE") {
+          return {
+            ok: true,
+            status: 204,
+            text: async () => "",
+          };
+        }
+        throw new Error(`Unexpected fetch: ${url}`);
+      });
+
+      const pending = commands.handleSlashCommand("/clear");
+      await new Promise((resolve) => setImmediate(resolve));
+      const createCall = fetchCalls.find(
+        (call) =>
+          call.url === "/api/v1/sessions" && call.init?.method === "POST",
+      );
+      assert.ok(createCall);
+      const clientOpId = new Headers(createCall.init.headers).get(
+        "X-Client-Op-Id",
+      );
+      assert.ok(clientOpId);
+      events.handleEvent({
+        type: "session_created",
+        sessionId: "new-2",
+        cwd: "/home/project",
+        configOptions: [],
+        clientOpId,
+      });
+      rejectCreate(new Error("response interrupted"));
+
+      assert.equal(await pending, true);
+      assert.equal(state.sessionId, "new-2");
+      assert.ok(
+        fetchCalls.some(
+          (call) =>
+            call.url === "/api/v1/sessions/old-1" &&
+            call.init?.method === "DELETE",
+        ),
+      );
     });
 
     it("clears current session into the provided cwd", async () => {
@@ -583,6 +653,19 @@ describe("commands", () => {
             title: "Target Session",
             configOptions,
             busyKind: null,
+          };
+          return {
+            ok: true,
+            json: async () => data,
+            text: async () => JSON.stringify(data),
+          };
+        }
+        if (url === "/api/v1/sessions/target-1/snapshot") {
+          const data = {
+            version: 1,
+            seq: 0,
+            session: {},
+            runtime: { busy: null },
           };
           return {
             ok: true,

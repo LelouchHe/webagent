@@ -1,4 +1,4 @@
-import { state, resetSessionUI } from "./state.ts";
+import { state, createNewSessionRequest, resetSessionUI } from "./state.ts";
 import { addSystem } from "./render.ts";
 import * as api from "./api.ts";
 
@@ -26,11 +26,11 @@ export async function replaceCurrentSession({
       ? `Clearing session and starting at ${nextCwd}…`
       : "Clearing session…",
   );
-  state.awaitingNewSession = true;
-  try {
-    await api.createSession({ cwd: nextCwd, inheritFromSessionId: oldId });
-  } catch {
-    state.awaitingNewSession = false;
+  const created = await createNewSessionRequest({
+    cwd: nextCwd,
+    inheritFromSessionId: oldId,
+  });
+  if (!created) {
     addSystem("err: Failed to clear session");
     return;
   }

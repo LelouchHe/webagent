@@ -8,6 +8,7 @@ import {
   resetSessionUI,
   setConnectionStatus,
   clearCancelTimer,
+  hydrateSessionRuntime,
   reloadSnapshot,
   updateInboxCount,
 } from "./state.ts";
@@ -20,6 +21,7 @@ import {
 } from "./render.ts";
 import {
   handleEvent,
+  drainNavigationEvents,
   loadHistory,
   loadNewEvents,
   fallbackToNextSession,
@@ -202,10 +204,18 @@ async function resumeAndLoad(
     }
     if (gen !== state.sessionSwitchGen) return;
     // Load snapshot in parallel with catch-up events (runtime state vs history)
-    await Promise.all([reloadSnapshot(sessionId), loadNewEvents(sessionId)]);
+    const [hydrated] = await Promise.all([
+      hydrateSessionRuntime(sessionId, () => gen === state.sessionSwitchGen),
+      loadNewEvents(sessionId),
+    ]);
+    if (gen !== state.sessionSwitchGen) return;
+    if (!hydrated) {
+      await fallbackToNextSession(sessionId, state.sessionCwd ?? undefined);
+    }
   } else {
     // Full load: fetch session details and history in parallel.
     state.sessionId = null;
+    state.pendingNavigationSessionId = sessionId;
     const historyPromise = loadHistory(sessionId);
     let session: SessionDetail;
     try {
@@ -215,8 +225,15 @@ async function resumeAndLoad(
       ]);
       // History replay drains queued live patches while sessionId is null.
       // Fetch afterward so the authoritative snapshot includes that state.
-      await reloadSnapshot(sessionId);
+      const hydrated = await hydrateSessionRuntime(
+        sessionId,
+        () => gen === state.sessionSwitchGen,
+      );
       if (gen !== state.sessionSwitchGen) return;
+      if (!hydrated) {
+        await fallbackToNextSession(sessionId, state.sessionCwd ?? undefined);
+        return;
+      }
       session = s;
       if (!loaded) {
         addSystem("warn: Failed to load history.");
@@ -233,6 +250,7 @@ async function resumeAndLoad(
       title: session.title,
       configOptions: session.configOptions,
     });
+    drainNavigationEvents(sessionId);
   }
 }
 
@@ -249,6 +267,9 @@ function cleanup() {
   state.pendingPermissionRequestIds.clear();
   state.pendingPromptDone = false;
   state.turnEnded = false;
+  // Runtime patch sequences are scoped to one server process. Reconnect
+  // establishes a fresh snapshot baseline, including after server restart.
+  state.lastStateSeq = 0;
   clearCancelTimer();
   setBusy(false);
 }

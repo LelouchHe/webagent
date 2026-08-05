@@ -55,11 +55,18 @@ export function resetState(state: any, dom: any) {
   state.clientId = null;
   state.sessionId = null;
   state.sessionSwitchGen = 0;
+  state.messageNavigationGen = 0;
   state.pendingNavigationSessionId = null;
   state.sessionCwd = null;
   state.sessionTitle = null;
   state.inboxCount = 0;
   state.awaitingNewSession = false;
+  state.newSessionRequestInFlight = false;
+  state.pendingNewSessionOpId = null;
+  if (state._newSessionRecoveryTimer != null) {
+    clearTimeout(state._newSessionRecoveryTimer);
+  }
+  state._newSessionRecoveryTimer = null;
   state.configOptions = [];
   state.agentCommands = [];
   state.agentCommandsEpoch = null;
@@ -98,6 +105,8 @@ export function resetState(state: any, dom: any) {
   state._cancelTimerId = null;
   state.lastEventSeq = 0;
   state.lastStateSeq = 0;
+  state.pendingNavigationEvents = [];
+  state.runtimeHydrationSessionId = null;
   state.replayInProgress = false;
   state.replayQueue = [];
   if (state.unconfirmedPermissions) state.unconfirmedPermissions.clear();

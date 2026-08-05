@@ -1,9 +1,10 @@
 import { ApiError, consumeMessage, getSession } from "./api.ts";
 import { HTTP_STATUS } from "../../src/http-status.ts";
-import { handleEvent, loadHistory } from "./events.ts";
+import { drainNavigationEvents, handleEvent, loadHistory } from "./events.ts";
 import { addSystem, scrollToBottom } from "./render.ts";
 import {
-  reloadSnapshot,
+  hydrateSessionRuntime,
+  finishNewSessionRequest,
   requestNewSession,
   resetSessionUI,
   setHashSessionId,
@@ -28,10 +29,15 @@ let attemptedStartupMessageId: string | null = null;
 export async function switchToSession(
   sessionId: string,
 ): Promise<NavigationResult> {
+  state.messageNavigationGen++;
   if (state.sessionId === sessionId) return "unchanged";
-
   state.sessionSwitchGen++;
   const generation = state.sessionSwitchGen;
+  const previousSessionId = state.sessionId;
+  finishNewSessionRequest();
+  state.awaitingNewSession = false;
+  state.pendingNavigationSessionId = null;
+  state.pendingNavigationEvents = [];
   setHashSessionId(sessionId);
   resetSessionUI();
   state.sessionId = null;
@@ -46,7 +52,14 @@ export async function switchToSession(
       loadHistory(sessionId),
     ]);
     if (!isCurrentNavigation()) return "ignored";
-    await reloadSnapshot(sessionId, isCurrentNavigation);
+    const hydrated = await hydrateSessionRuntime(
+      sessionId,
+      isCurrentNavigation,
+    );
+    if (!hydrated) {
+      if (!isCurrentNavigation()) return "ignored";
+      throw new Error("Failed to hydrate session snapshot");
+    }
     if (!isCurrentNavigation()) return "ignored";
     handleEvent({
       type: "session_created",
@@ -55,12 +68,14 @@ export async function switchToSession(
       title: session.title,
       configOptions: session.configOptions,
     });
+    drainNavigationEvents(sessionId);
     if (loaded) scrollToBottom(true);
     return "switched";
   } catch (error) {
     if (isCurrentNavigation()) {
       resetSessionUI();
       state.sessionId = null;
+      if (previousSessionId) setHashSessionId(previousSessionId);
     }
     throw error;
   }
@@ -69,7 +84,9 @@ export async function switchToSession(
 export async function consumeAndSwitch(
   messageId: string,
 ): Promise<NavigationResult> {
+  const generation = ++state.messageNavigationGen;
   const result = await consumeMessage(messageId, state.sessionId);
+  if (generation !== state.messageNavigationGen) return "ignored";
   addSystem(
     result.alreadyConsumed
       ? `inbox: already consumed → switching to ${result.sessionId}`

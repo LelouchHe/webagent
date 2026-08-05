@@ -29,7 +29,11 @@ import {
   applyStatePatch,
   applyAgentCommandSnapshot,
   reloadSnapshot,
+  hydrateSessionRuntime,
   updateInboxCount,
+  setCreatedSessionActivator,
+  finishNewSessionRequest,
+  setNavigationLoadInvalidator,
 } from "./state.ts";
 import {
   addMessage,
@@ -62,8 +66,39 @@ import {
   type ContentEventType,
 } from "./render-event.ts";
 import { enhanceCodeBlocks } from "./highlight.ts";
-import type { AgentEvent, StoredEvent } from "../../src/types.ts";
+import type {
+  AgentCommandSnapshot,
+  AgentEvent,
+  ConfigOption,
+  StoredEvent,
+} from "../../src/types.ts";
 import "./plan-panel.ts";
+
+setNavigationLoadInvalidator(() => {
+  historyLoadToken++;
+  replayLoadToken++;
+  state.replayInProgress = false;
+  state.replayQueue = [];
+});
+
+setCreatedSessionActivator((session) => {
+  if (typeof session.id !== "string") return;
+  handleEvent({
+    type: "session_created",
+    sessionId: session.id,
+    cwd: typeof session.cwd === "string" ? session.cwd : undefined,
+    title: typeof session.title === "string" ? session.title : null,
+    configOptions: Array.isArray(session.configOptions)
+      ? (session.configOptions as ConfigOption[])
+      : [],
+    agentCommands:
+      session.agentCommands && typeof session.agentCommands === "object"
+        ? (session.agentCommands as AgentCommandSnapshot)
+        : undefined,
+    clientOpId:
+      typeof session.clientOpId === "string" ? session.clientOpId : undefined,
+  });
+});
 
 /**
  * When the current session is gone (expired, deleted), try to switch to the
@@ -89,8 +124,12 @@ export async function fallbackToNextSession(
         loadHistory(next.id),
       ]);
       if (gen !== state.sessionSwitchGen) return;
-      await reloadSnapshot(next.id, () => gen === state.sessionSwitchGen);
+      const hydrated = await hydrateSessionRuntime(
+        next.id,
+        () => gen === state.sessionSwitchGen,
+      );
       if (gen !== state.sessionSwitchGen) return;
+      if (!hydrated) throw new Error("Failed to hydrate fallback session");
       handleEvent({
         type: "session_created",
         sessionId: session.id,
@@ -1404,6 +1443,16 @@ function scheduleAssistantRender() {
   });
 }
 
+export function drainNavigationEvents(sessionId: string): void {
+  const matching = state.pendingNavigationEvents.filter(
+    (event) => "sessionId" in event && event.sessionId === sessionId,
+  );
+  state.pendingNavigationEvents = state.pendingNavigationEvents.filter(
+    (event) => !("sessionId" in event) || event.sessionId !== sessionId,
+  );
+  for (const event of matching) handleEvent(event);
+}
+
 // eslint-disable-next-line complexity -- TODO: refactor event type switch with helper functions
 export function handleEvent(msg: AgentEvent) {
   if (msg.type === "inbox_count_changed") {
@@ -1414,6 +1463,24 @@ export function handleEvent(msg: AgentEvent) {
   // Queue events that arrive while history replay is in progress to avoid duplicates
   if (state.replayInProgress) {
     state.replayQueue.push(msg);
+    return;
+  }
+
+  const navigationSid = "sessionId" in msg ? msg.sessionId : undefined;
+  if (
+    msg.type === "state_patch" &&
+    state.runtimeHydrationSessionId === msg.sessionId
+  ) {
+    state.pendingNavigationEvents.push(msg);
+    return;
+  }
+  if (
+    navigationSid &&
+    msg.type !== "session_created" &&
+    state.sessionId === null &&
+    state.pendingNavigationSessionId === navigationSid
+  ) {
+    state.pendingNavigationEvents.push(msg);
     return;
   }
 
@@ -1483,7 +1550,17 @@ export function handleEvent(msg: AgentEvent) {
       }
       break;
 
-    case "session_created":
+    case "session_created": {
+      const matchesPendingCreate =
+        state.awaitingNewSession &&
+        state.pendingNewSessionOpId === msg.clientOpId;
+      if (state.pendingNewSessionOpId && !matchesPendingCreate) {
+        break;
+      }
+
+      if (matchesPendingCreate) {
+        finishNewSessionRequest(msg.clientOpId);
+      }
       if (
         state.pendingNavigationSessionId &&
         msg.sessionId !== state.pendingNavigationSessionId
@@ -1550,6 +1627,7 @@ export function handleEvent(msg: AgentEvent) {
       }
       updateStatusBar();
       break;
+    }
 
     case "user_message": {
       // SSE broadcasts to all clients including the sender (unlike WS which

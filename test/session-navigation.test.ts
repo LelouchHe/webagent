@@ -6,6 +6,7 @@ describe("shared session navigation", () => {
   let state: typeof import("../public/js/state.ts").state;
   let dom: typeof import("../public/js/state.ts").dom;
   let resetSessionUI: typeof import("../public/js/state.ts").resetSessionUI;
+  let requestNewSession: typeof import("../public/js/state.ts").requestNewSession;
   let navigation: typeof import("../public/js/session-navigation.ts");
   let handleEvent: typeof import("../public/js/events.ts").handleEvent;
   let fetchCalls: Array<{ url: string; init?: RequestInit }>;
@@ -15,7 +16,8 @@ describe("shared session navigation", () => {
 
   before(async () => {
     setupDOM();
-    ({ state, dom, resetSessionUI } = await import("../public/js/state.ts"));
+    ({ state, dom, resetSessionUI, requestNewSession } =
+      await import("../public/js/state.ts"));
     await import("../public/js/render.ts");
     ({ handleEvent } = await import("../public/js/events.ts"));
     navigation = await import("../public/js/session-navigation.ts");
@@ -141,6 +143,243 @@ describe("shared session navigation", () => {
     assert.equal(location.hash, "#message-session");
   });
 
+  it("does not complete a switch when snapshot hydration fails", async () => {
+    state.sessionId = "current-session";
+    delayedSnapshot = Promise.resolve(
+      new Response(JSON.stringify({ error: "snapshot failed" }), {
+        status: 500,
+      }),
+    );
+
+    await assert.rejects(
+      navigation.switchToSession("message-session"),
+      /snapshot/i,
+    );
+    assert.equal(state.sessionId, null);
+    assert.equal(state.busy, false);
+    assert.equal(state.pendingNavigationSessionId, null);
+    assert.equal(location.hash, "#current-session");
+  });
+
+  it("explicit switch supersedes stale new-session ownership", async () => {
+    state.sessionId = "current-session";
+    state.awaitingNewSession = true;
+    state.newSessionRequestInFlight = true;
+    state.pendingNewSessionOpId = "old-create";
+    state._newSessionRecoveryTimer = setTimeout(() => {}, 3000);
+    let releaseHistory!: (response: Response) => void;
+    delayedHistory = new Promise<Response>((resolve) => {
+      releaseHistory = resolve;
+    });
+
+    const pending = navigation.switchToSession("message-session");
+    assert.equal(state.awaitingNewSession, false);
+    assert.equal(state.newSessionRequestInFlight, false);
+    assert.equal(state.pendingNewSessionOpId, null);
+    assert.equal(state._newSessionRecoveryTimer, null);
+    releaseHistory(
+      new Response(JSON.stringify({ events: [], streaming: {} }), {
+        status: 200,
+      }),
+    );
+
+    assert.equal(await pending, "switched");
+    assert.equal(state.sessionId, "message-session");
+    assert.equal(state.awaitingNewSession, false);
+  });
+
+  it("does not let a slower notification consume override a newer one", async () => {
+    state.sessionId = "current-session";
+    let releaseSlow!: (response: Response) => void;
+    const slowConsume = new Promise<Response>((resolve) => {
+      releaseSlow = resolve;
+    });
+    const response = (body: unknown) =>
+      new Response(JSON.stringify(body), { status: 200 });
+    globalThis.fetch = (async (url: string) => {
+      if (url === "/api/v1/messages/slow/consume") return slowConsume;
+      if (url === "/api/v1/messages/fast/consume") {
+        return response({ sessionId: "fast-session", alreadyConsumed: false });
+      }
+      if (url === "/api/v1/sessions/fast-session") {
+        return response({
+          id: "fast-session",
+          cwd: "/fast",
+          title: "Fast",
+          configOptions: [],
+        });
+      }
+      if (url === "/api/v1/sessions/fast-session/events?limit=500") {
+        return response({ events: [], streaming: {} });
+      }
+      if (url === "/api/v1/sessions/fast-session/snapshot") {
+        return response({
+          version: 1,
+          seq: 0,
+          session: {},
+          runtime: { busy: null },
+        });
+      }
+      if (url.startsWith("/api/beta/clients/")) return response({});
+      throw new Error(`Unexpected fetch: ${url}`);
+    }) as typeof fetch;
+
+    const older = navigation.consumeAndSwitch("slow");
+    const newer = navigation.consumeAndSwitch("fast");
+    assert.equal(await newer, "switched");
+    releaseSlow(
+      response({ sessionId: "slow-session", alreadyConsumed: false }),
+    );
+
+    assert.equal(await older, "ignored");
+    assert.equal(state.sessionId, "fast-session");
+    assert.equal(location.hash, "#fast-session");
+  });
+
+  it("same-session selection supersedes a pending notification consume", async () => {
+    state.sessionId = "current-session";
+    let releaseSlow!: (response: Response) => void;
+    globalThis.fetch = (async (url: string) => {
+      if (url === "/api/v1/messages/slow/consume") {
+        return new Promise<Response>((resolve) => {
+          releaseSlow = resolve;
+        });
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    }) as typeof fetch;
+
+    const pending = navigation.consumeAndSwitch("slow");
+    assert.equal(
+      await navigation.switchToSession("current-session"),
+      "unchanged",
+    );
+    releaseSlow(
+      new Response(
+        JSON.stringify({
+          sessionId: "slow-session",
+          alreadyConsumed: false,
+        }),
+        { status: 200 },
+      ),
+    );
+
+    assert.equal(await pending, "ignored");
+    assert.equal(state.sessionId, "current-session");
+  });
+
+  it("same-session selection does not cancel an in-flight create", async () => {
+    state.sessionId = "current-session";
+    state.awaitingNewSession = true;
+    state.newSessionRequestInFlight = true;
+    state.pendingNewSessionOpId = "create-op";
+    const switchGeneration = state.sessionSwitchGen;
+
+    assert.equal(
+      await navigation.switchToSession("current-session"),
+      "unchanged",
+    );
+
+    assert.equal(state.sessionSwitchGen, switchGeneration);
+    assert.equal(state.awaitingNewSession, true);
+    assert.equal(state.pendingNewSessionOpId, "create-op");
+  });
+
+  it("failed notification consume does not invalidate an existing switch", async () => {
+    state.sessionId = "current-session";
+    let releaseHistory!: (response: Response) => void;
+    delayedHistory = new Promise<Response>((resolve) => {
+      releaseHistory = resolve;
+    });
+
+    const pendingSwitch = navigation.switchToSession("message-session");
+    await assert.rejects(navigation.consumeAndSwitch("missing"), /Not found/);
+    releaseHistory(
+      new Response(JSON.stringify({ events: [], streaming: {} }), {
+        status: 200,
+      }),
+    );
+
+    assert.equal(await pendingSwitch, "switched");
+    assert.equal(state.sessionId, "message-session");
+  });
+
+  it("applies target state patches that arrive during snapshot hydration", async () => {
+    state.sessionId = "current-session";
+    let releaseSnapshot!: (response: Response) => void;
+    let markSnapshotStarted!: () => void;
+    const snapshotStarted = new Promise<void>((resolve) => {
+      markSnapshotStarted = resolve;
+    });
+    onDelayedSnapshotFetch = markSnapshotStarted;
+    delayedSnapshot = new Promise<Response>((resolve) => {
+      releaseSnapshot = resolve;
+    });
+
+    const pending = navigation.switchToSession("message-session");
+    await snapshotStarted;
+    handleEvent({
+      type: "state_patch",
+      sessionId: "message-session",
+      seq: 5,
+      patch: {
+        runtime: {
+          busy: { kind: "agent", since: "t1", promptId: "p2" },
+        },
+      },
+    });
+    releaseSnapshot(
+      new Response(
+        JSON.stringify({
+          version: 1,
+          seq: 4,
+          session: {},
+          runtime: { busy: null },
+        }),
+        { status: 200 },
+      ),
+    );
+
+    assert.equal(await pending, "switched");
+    assert.equal(state.busy, true);
+    assert.equal(state.busyKind, "agent");
+    assert.equal(state.lastStateSeq, 5);
+  });
+
+  it("drains target live events after snapshot hydration", async () => {
+    state.sessionId = "current-session";
+    let releaseSnapshot!: (response: Response) => void;
+    let markSnapshotStarted!: () => void;
+    const snapshotStarted = new Promise<void>((resolve) => {
+      markSnapshotStarted = resolve;
+    });
+    onDelayedSnapshotFetch = markSnapshotStarted;
+    delayedSnapshot = new Promise<Response>((resolve) => {
+      releaseSnapshot = resolve;
+    });
+
+    const pending = navigation.switchToSession("message-session");
+    await snapshotStarted;
+    handleEvent({
+      type: "message_chunk",
+      sessionId: "message-session",
+      text: "arrived during hydration",
+    });
+    releaseSnapshot(
+      new Response(
+        JSON.stringify({
+          version: 1,
+          seq: 0,
+          session: {},
+          runtime: { busy: null },
+        }),
+        { status: 200 },
+      ),
+    );
+
+    assert.equal(await pending, "switched");
+    assert.equal(state.currentAssistantText, "arrived during hydration");
+  });
+
   it("abandons a switch superseded by ordinary session creation", async () => {
     state.sessionId = "current-session";
     let releaseHistory!: (response: Response) => void;
@@ -172,6 +411,55 @@ describe("shared session navigation", () => {
       ),
       false,
     );
+  });
+
+  it("new-session intent invalidates stale history replay", async () => {
+    state.sessionId = "current-session";
+    let releaseHistory!: (response: Response) => void;
+    const historyResponse = new Promise<Response>((resolve) => {
+      releaseHistory = resolve;
+    });
+    const response = (body: unknown) =>
+      new Response(JSON.stringify(body), { status: 200 });
+    globalThis.fetch = (async (url: string, init?: RequestInit) => {
+      if (url === "/api/v1/sessions/message-session") {
+        return response({
+          id: "message-session",
+          cwd: "/old",
+          title: "Old",
+          configOptions: [],
+        });
+      }
+      if (url === "/api/v1/sessions/message-session/events?limit=500") {
+        return historyResponse;
+      }
+      if (url === "/api/v1/sessions" && init?.method === "POST") {
+        return response({
+          id: "new-session",
+          cwd: "/new",
+          title: "New",
+          configOptions: [],
+        });
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    }) as typeof fetch;
+
+    const staleSwitch = navigation.switchToSession("message-session");
+    requestNewSession();
+    await new Promise((resolve) => setImmediate(resolve));
+    releaseHistory(
+      response([
+        {
+          seq: 1,
+          type: "assistant_message",
+          data: JSON.stringify({ text: "stale history" }),
+        },
+      ]),
+    );
+
+    assert.equal(await staleSwitch, "ignored");
+    assert.equal(state.sessionId, "new-session");
+    assert.doesNotMatch(dom.messages.textContent, /stale history/);
   });
 
   it("does not apply a snapshot after navigation ownership is revoked", async () => {

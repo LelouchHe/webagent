@@ -98,6 +98,66 @@ describe("events", () => {
         assert.equal(dom.status.getAttribute("aria-label"), "connected");
       });
 
+      it("recovers a committed create when its HTTP response is interrupted", async () => {
+        let rejectCreate!: (reason: Error) => void;
+        let clientOpId = "";
+        setFetch((_url: string, init?: RequestInit) => {
+          clientOpId = new Headers(init?.headers).get("X-Client-Op-Id") ?? "";
+          return new Promise((_resolve, reject) => {
+            rejectCreate = reject;
+          });
+        });
+
+        stateMod.requestNewSession();
+        assert.ok(clientOpId);
+        events.handleEvent({
+          type: "session_created",
+          sessionId: "committed-session",
+          cwd: "/committed",
+          configOptions: [],
+          clientOpId,
+        });
+        rejectCreate(new Error("response interrupted"));
+        await new Promise((resolve) => setImmediate(resolve));
+
+        assert.equal(state.sessionId, "committed-session");
+        assert.equal(state.awaitingNewSession, false);
+        assert.equal(state.pendingNewSessionOpId, null);
+      });
+
+      it("rejects unrelated creates during interrupted-response recovery", async () => {
+        let rejectCreate!: (reason: Error) => void;
+        let clientOpId = "";
+        setFetch((_url: string, init?: RequestInit) => {
+          clientOpId = new Headers(init?.headers).get("X-Client-Op-Id") ?? "";
+          return new Promise((_resolve, reject) => {
+            rejectCreate = reject;
+          });
+        });
+
+        stateMod.requestNewSession();
+        rejectCreate(new Error("response interrupted"));
+        await new Promise((resolve) => setImmediate(resolve));
+        events.handleEvent({
+          type: "session_created",
+          sessionId: "unrelated-session",
+          cwd: "/other",
+          configOptions: [],
+          clientOpId: "other-op",
+        });
+        assert.equal(state.sessionId, null);
+
+        events.handleEvent({
+          type: "session_created",
+          sessionId: "committed-session",
+          cwd: "/committed",
+          configOptions: [],
+          clientOpId,
+        });
+        assert.equal(state.sessionId, "committed-session");
+        assert.equal(state.pendingNewSessionOpId, null);
+      });
+
       it("rearms visible history sentinel after session activation", async () => {
         const observers: Array<{
           callback: (entries: Array<{ isIntersecting: boolean }>) => void;
@@ -1350,14 +1410,21 @@ describe("events", () => {
           if (url === "/api/v1/sessions" && init?.method === "POST")
             return {
               ok: true,
-              text: async () => JSON.stringify({ id: "new-1" }),
+              text: async () =>
+                JSON.stringify({
+                  id: "new-1",
+                  cwd: "/tmp",
+                  title: null,
+                  configOptions: [],
+                }),
             };
           return { ok: true, text: async () => "{}" };
         });
 
         events.handleEvent({ type: "session_deleted", sessionId: "s1" });
         for (let i = 0; i < 30; i++) await Promise.resolve();
-        assert.equal(state.awaitingNewSession, true);
+        assert.equal(state.awaitingNewSession, false);
+        assert.equal(state.sessionId, "new-1");
       });
 
       it("keeps a newer target-session patch over an in-flight fallback snapshot", async () => {
@@ -1370,6 +1437,7 @@ describe("events", () => {
           busyKind: null,
         };
         let resolveSnapshot!: () => void;
+        let snapshotCalls = 0;
         const snapshotReady = new Promise<void>((resolve) => {
           resolveSnapshot = resolve;
         });
@@ -1387,13 +1455,14 @@ describe("events", () => {
           if (url.startsWith("/api/v1/sessions/s2/events"))
             return { ok: true, text: async () => "[]" };
           if (url === "/api/v1/sessions/s2/snapshot") {
+            snapshotCalls++;
             await snapshotReady;
             return {
               ok: true,
               text: async () =>
                 JSON.stringify({
                   version: 1,
-                  seq: 0,
+                  seq: snapshotCalls === 1 ? 0 : 1,
                   session: {
                     id: "s2",
                     title: null,
@@ -1405,7 +1474,13 @@ describe("events", () => {
                   },
                   runtime: {
                     busy: null,
-                    plan: [{ content: "Old snapshot", status: "in_progress" }],
+                    plan: [
+                      {
+                        content:
+                          snapshotCalls === 1 ? "Old snapshot" : "New patch",
+                        status: "in_progress",
+                      },
+                    ],
                   },
                 }),
             };
