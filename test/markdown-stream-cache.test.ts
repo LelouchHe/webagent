@@ -22,6 +22,7 @@ import assert from "node:assert/strict";
 import { setupDOM, teardownDOM } from "./frontend-setup.ts";
 
 type Mod = typeof import("../public/js/render-event.ts");
+const TEXT_NODE = 3;
 
 interface ChunkStat {
   blocks: number;
@@ -256,6 +257,60 @@ describe("markdown-stream cache-hit regression", () => {
       firstLi.querySelector("p"),
       "loose list <li> must wrap content in <p>; stale tight <li> survived variant flip",
     );
+  });
+
+  it("list sub-memo: rebuild after a root Text node resumes item reuse", () => {
+    const prefix = "<custom-result>\nprefix\n</custom-result>\n\n";
+    mod.updateMarkdownStream(host, prefix + "- one\n- two\n- three");
+    const tightList = host.querySelector("ul");
+    assert.ok(tightList);
+
+    mod.updateMarkdownStream(host, prefix + "- one\n- two\n- three\n\n- four");
+    const looseList = host.querySelector("ul");
+    assert.ok(looseList);
+    assert.notEqual(looseList, tightList, "variant flip must rebuild the list");
+    assert.equal(tightList.parentNode, null, "old list must be detached");
+    assert.equal(host.childNodes[0].nodeType, TEXT_NODE);
+    assert.equal(host.childNodes[1], looseList);
+    const firstLi = looseList.querySelector("li");
+    assert.ok(firstLi);
+
+    mod.updateMarkdownStream(
+      host,
+      prefix + "- one\n- two\n- three\n\n- four\n- five",
+    );
+    const reuseStats = snap();
+    assert.equal(host.querySelector("ul"), looseList);
+    assert.equal(looseList.querySelector("li"), firstLi);
+    assert.equal(reuseStats.subList.hits, 4);
+    assert.equal(reuseStats.subList.misses, 1);
+  });
+
+  it("table sub-memo: rebuild after a root Text node resumes row reuse", () => {
+    const prefix = "<custom-result>\nprefix\n</custom-result>\n\n";
+    const initial = prefix + "| a | b |\n| --- | --- |\n| 1 | x1 |\n| 2 | x2 |";
+    const rebuilt = prefix + "| A | b |\n| --- | --- |\n| 1 | x1 |\n| 2 | x2 |";
+
+    mod.updateMarkdownStream(host, initial);
+    const oldTable = host.querySelector("table");
+    assert.ok(oldTable);
+
+    mod.updateMarkdownStream(host, rebuilt);
+    const newTable = host.querySelector("table");
+    assert.ok(newTable);
+    assert.notEqual(newTable, oldTable, "header change must rebuild the table");
+    assert.equal(oldTable.parentNode, null, "old table must be detached");
+    assert.equal(host.childNodes[0].nodeType, TEXT_NODE);
+    assert.equal(host.childNodes[1], newTable);
+    const firstRow = newTable.querySelector("tbody tr");
+    assert.ok(firstRow);
+
+    mod.updateMarkdownStream(host, rebuilt + "\n| 3 | x3 |");
+    const reuseStats = snap();
+    assert.equal(host.querySelector("table"), newTable);
+    assert.equal(newTable.querySelector("tbody tr"), firstRow);
+    assert.equal(reuseStats.subTable.hits, 2);
+    assert.equal(reuseStats.subTable.misses, 1);
   });
 
   it("cold→warm: re-rendering identical text yields zero miss", () => {
