@@ -98,6 +98,33 @@ describe("events", () => {
         assert.equal(dom.status.getAttribute("aria-label"), "connected");
       });
 
+      it("recovers a committed create when its HTTP response is interrupted", async () => {
+        let rejectCreate!: (reason: Error) => void;
+        let clientOpId = "";
+        setFetch((_url: string, init?: RequestInit) => {
+          clientOpId = new Headers(init?.headers).get("X-Client-Op-Id") ?? "";
+          return new Promise((_resolve, reject) => {
+            rejectCreate = reject;
+          });
+        });
+
+        stateMod.requestNewSession();
+        assert.ok(clientOpId);
+        events.handleEvent({
+          type: "session_created",
+          sessionId: "committed-session",
+          cwd: "/committed",
+          configOptions: [],
+          clientOpId,
+        });
+        rejectCreate(new Error("response interrupted"));
+        await new Promise((resolve) => setImmediate(resolve));
+
+        assert.equal(state.sessionId, "committed-session");
+        assert.equal(state.awaitingNewSession, false);
+        assert.equal(state.pendingNewSessionOpId, null);
+      });
+
       it("rearms visible history sentinel after session activation", async () => {
         const observers: Array<{
           callback: (entries: Array<{ isIntersecting: boolean }>) => void;

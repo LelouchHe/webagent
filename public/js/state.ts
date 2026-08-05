@@ -85,6 +85,8 @@ export const state = {
   inboxCount: 0,
   awaitingNewSession: false,
   newSessionRequestInFlight: false,
+  pendingNewSessionOpId: null as string | null,
+  _newSessionRecoveryTimer: null as ReturnType<typeof setTimeout> | null,
   configOptions: [] as ConfigOption[],
   agentCommands: [] as AgentCommand[],
   agentCommandsEpoch: null as string | null,
@@ -488,7 +490,7 @@ export function requestNewSession({
   cwd,
   inheritFromSessionId = state.sessionId,
 }: { cwd?: string; inheritFromSessionId?: string | null } = {}) {
-  if (state.newSessionRequestInFlight) return;
+  if (state.newSessionRequestInFlight || state.pendingNewSessionOpId) return;
   state.sessionSwitchGen++;
   state.messageNavigationGen++;
   const generation = state.sessionSwitchGen;
@@ -496,24 +498,62 @@ export function requestNewSession({
   state.pendingNavigationStatePatches = [];
   state.awaitingNewSession = true;
   state.newSessionRequestInFlight = true;
+  const clientOpId = api.newOpId();
+  state.pendingNewSessionOpId = clientOpId;
   api
-    .createSession({ cwd, inheritFromSessionId })
+    .createSession({ cwd, inheritFromSessionId }, clientOpId)
     .then((session) => {
       state.newSessionRequestInFlight = false;
-      if (generation !== state.sessionSwitchGen) return;
+      if (generation !== state.sessionSwitchGen) {
+        if (state.pendingNewSessionOpId === clientOpId) {
+          finishNewSessionRequest();
+        }
+        return;
+      }
       if (typeof session.id !== "string") {
         throw new Error("Session create response is missing an id");
       }
+      finishNewSessionRequest();
       createdSessionActivator(session);
     })
     .catch(() => {
-      if (generation === state.sessionSwitchGen) {
-        state.awaitingNewSession = false;
+      if (
+        generation === state.sessionSwitchGen &&
+        state.pendingNewSessionOpId === clientOpId
+      ) {
+        // The server broadcasts session_created before writing the HTTP
+        // response. Keep ownership briefly so that matching SSE can recover
+        // an ambiguously committed create whose response was interrupted.
+        state._newSessionRecoveryTimer = setTimeout(() => {
+          if (
+            generation === state.sessionSwitchGen &&
+            state.pendingNewSessionOpId === clientOpId
+          ) {
+            state.pendingNewSessionOpId = null;
+            state.awaitingNewSession = false;
+          }
+          state._newSessionRecoveryTimer = null;
+        }, 3000);
       }
     })
     .finally(() => {
       state.newSessionRequestInFlight = false;
+      if (
+        generation !== state.sessionSwitchGen &&
+        state.pendingNewSessionOpId === clientOpId
+      ) {
+        finishNewSessionRequest();
+      }
     });
+}
+
+export function finishNewSessionRequest(): void {
+  if (state._newSessionRecoveryTimer != null) {
+    clearTimeout(state._newSessionRecoveryTimer);
+    state._newSessionRecoveryTimer = null;
+  }
+  state.pendingNewSessionOpId = null;
+  state.newSessionRequestInFlight = false;
 }
 
 let createdSessionActivator: (

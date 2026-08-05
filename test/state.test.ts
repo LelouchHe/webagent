@@ -1,4 +1,4 @@
-import { describe, it, before, after, beforeEach } from "node:test";
+import { describe, it, before, after, beforeEach, mock } from "node:test";
 import assert from "node:assert/strict";
 import { setupDOM, teardownDOM, resetState } from "./frontend-setup.ts";
 
@@ -266,14 +266,21 @@ describe("state", () => {
     });
 
     it("releases new-session ownership when creation fails", async () => {
-      globalThis.fetch = async () => {
-        throw new Error("network");
-      };
+      mock.timers.enable({ apis: ["setTimeout"] });
+      try {
+        globalThis.fetch = async () => {
+          throw new Error("network");
+        };
 
-      mod.requestNewSession();
-      await new Promise((resolve) => setImmediate(resolve));
+        mod.requestNewSession();
+        await new Promise((resolve) => setImmediate(resolve));
+        assert.equal(mod.state.awaitingNewSession, true);
 
-      assert.equal(mod.state.awaitingNewSession, false);
+        mock.timers.tick(3000);
+        assert.equal(mod.state.awaitingNewSession, false);
+      } finally {
+        mock.timers.reset();
+      }
     });
 
     it("serializes rapid new-session requests", async () => {

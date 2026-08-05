@@ -135,6 +135,7 @@ export type AgentEvent =
       title?: string | null;
       configOptions: ConfigOption[];
       agentCommands?: AgentCommandSnapshot;
+      clientOpId?: string;
     }
   | {
       type: "config_option_update";

@@ -32,6 +32,7 @@ import {
   hydrateSessionRuntime,
   updateInboxCount,
   setCreatedSessionActivator,
+  finishNewSessionRequest,
 } from "./state.ts";
 import {
   addMessage,
@@ -86,6 +87,8 @@ setCreatedSessionActivator((session) => {
       session.agentCommands && typeof session.agentCommands === "object"
         ? (session.agentCommands as AgentCommandSnapshot)
         : undefined,
+    clientOpId:
+      typeof session.clientOpId === "string" ? session.clientOpId : undefined,
   });
 });
 
@@ -1521,8 +1524,18 @@ export function handleEvent(msg: AgentEvent) {
       break;
 
     case "session_created": {
-      if (state.newSessionRequestInFlight && state.awaitingNewSession) {
+      const matchesPendingCreate =
+        state.awaitingNewSession &&
+        state.pendingNewSessionOpId === msg.clientOpId;
+      if (
+        state.newSessionRequestInFlight &&
+        state.awaitingNewSession &&
+        !matchesPendingCreate
+      ) {
         break;
+      }
+      if (matchesPendingCreate) {
+        finishNewSessionRequest();
       }
       if (
         state.pendingNavigationSessionId &&

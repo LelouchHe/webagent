@@ -1874,6 +1874,7 @@ export function createRequestHandler(
 
       // POST /api/v1/sessions (create new session)
       if (url === "/api/v1/sessions" && req.method === "POST") {
+        const clientOpId = getClientOpId(req);
         const bridge = getBridge?.();
         if (!bridge) {
           json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
@@ -1918,6 +1919,7 @@ export function createRequestHandler(
             title: session?.title,
             configOptions,
             agentCommands: sessions.getAgentCommands(sessionId),
+            clientOpId: clientOpId ?? undefined,
           } as AgentEvent;
           sseManager.broadcast(sessionCreatedEvent);
           // ACP's session_created event fires before inheritance runs, so
@@ -1936,6 +1938,7 @@ export function createRequestHandler(
             source: session?.source ?? source,
             configOptions,
             agentCommands: sessions.getAgentCommands(sessionId),
+            clientOpId: clientOpId ?? undefined,
           });
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
