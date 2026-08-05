@@ -114,7 +114,12 @@ export function sendMessage(
 
 // --- Cancel ---
 
-export function cancelSession(sessionId: string): Promise<void> {
+export interface CancelResult {
+  ok: true;
+  status: "cancelling" | "cancelled" | "idle" | "superseded";
+}
+
+export function cancelSession(sessionId: string): Promise<CancelResult> {
   return post("/api/v1/sessions/" + sessionId + "/cancel", {}, newOpId());
 }
 

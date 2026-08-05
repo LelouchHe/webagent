@@ -129,13 +129,25 @@ describe("SessionStateManager", () => {
       mock.timers.reset();
     });
 
-    it("armCancelSafety clears busy after the timeout elapses", () => {
+    it("armCancelSafety marks an active cancel as unconfirmed", () => {
       sm.patch("s1", {
-        runtime: { busy: { kind: "agent", since: "t0", promptId: "p1" } },
+        runtime: {
+          busy: {
+            kind: "agent",
+            since: "t0",
+            promptId: "p1",
+            cancelStatus: "requested",
+          },
+        },
       });
       sm.armCancelSafety("s1", 20);
       mock.timers.tick(20);
-      assert.equal(sm.getState("s1").runtime.busy, null);
+      assert.deepEqual(sm.getState("s1").runtime.busy, {
+        kind: "agent",
+        since: "t0",
+        promptId: "p1",
+        cancelStatus: "unconfirmed",
+      });
     });
 
     it("does nothing when busy is already cleared before timeout", () => {
@@ -155,14 +167,21 @@ describe("SessionStateManager", () => {
 
     it("multiple arms on the same session coalesce (no double-clear)", () => {
       sm.patch("s1", {
-        runtime: { busy: { kind: "agent", since: "t0", promptId: "p1" } },
+        runtime: {
+          busy: {
+            kind: "agent",
+            since: "t0",
+            promptId: "p1",
+            cancelStatus: "requested",
+          },
+        },
       });
       sm.armCancelSafety("s1", 20);
       sm.armCancelSafety("s1", 20);
       mock.timers.tick(20);
-      // Should only bump seq once for the clear
+      // Should only bump seq once for the unconfirmed transition
       assert.equal(sm.getState("s1").seq, 2);
-      assert.equal(sm.getState("s1").runtime.busy, null);
+      assert.equal(sm.getState("s1").runtime.busy?.cancelStatus, "unconfirmed");
     });
 
     it("is a no-op when timeout <= 0", () => {

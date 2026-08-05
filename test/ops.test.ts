@@ -151,6 +151,7 @@ describe("Operations REST API", () => {
     it("cancels an active prompt", async () => {
       const sessionId = await createSession();
       sessions.activePrompts.add(sessionId);
+      sessions.syncBusy(sessionId);
 
       let cancelCalled = false;
       mockBridge.cancel = async () => {
@@ -162,9 +163,13 @@ describe("Operations REST API", () => {
         "POST",
         `/api/v1/sessions/${sessionId}/cancel`,
       );
-      assert.equal(res.status, 200);
-      assert.deepEqual(JSON.parse(res.body), { ok: true });
+      assert.equal(res.status, 202);
+      assert.deepEqual(JSON.parse(res.body), {
+        ok: true,
+        status: "cancelling",
+      });
       assert.ok(cancelCalled);
+      assert.equal(sessions.activePrompts.has(sessionId), true);
     });
 
     it("kills running bash process", async () => {
@@ -186,11 +191,92 @@ describe("Operations REST API", () => {
         "POST",
         `/api/v1/sessions/${sessionId}/cancel`,
       );
-      assert.equal(res.status, 200);
+      assert.equal(res.status, 202);
+      assert.deepEqual(JSON.parse(res.body), {
+        ok: true,
+        status: "cancelling",
+      });
       assert.ok(killed);
+      assert.equal(sessions.runningBashProcs.has(sessionId), true);
     });
 
-    it("returns 200 even when session is idle (idempotent)", async () => {
+    it("kills bash even when the agent bridge is unavailable", async () => {
+      const sessionId = await createSession();
+      let killed = false;
+      const fakeProc = new EventEmitter() as any;
+      fakeProc.pid = 12346;
+      fakeProc.kill = () => {
+        killed = true;
+        return true;
+      };
+      fakeProc.stdout = new EventEmitter();
+      fakeProc.stderr = new EventEmitter();
+      sessions.runningBashProcs.set(sessionId, fakeProc);
+      sessions.activePrompts.add(sessionId);
+      sessions.syncBusy(sessionId);
+      const handler = createRequestHandler({
+        store,
+        sessions,
+        getBridge: () => null,
+        publicDir,
+        dataDir: tmpDir,
+        limits: { bash_output: 1024, image_upload: 1024 },
+        sseManager: { broadcast() {} } as any,
+      });
+      const srv = http.createServer(handler);
+      await new Promise<void>((resolve) => srv.listen(0, "127.0.0.1", resolve));
+      const bashPort = (srv.address() as { port: number }).port;
+
+      try {
+        const res = await makeRequest(
+          bashPort,
+          "POST",
+          `/api/v1/sessions/${sessionId}/cancel`,
+        );
+        assert.equal(res.status, 503);
+        assert.equal(killed, true);
+      } finally {
+        await new Promise<void>((resolve) =>
+          srv.close(() => {
+            resolve();
+          }),
+        );
+      }
+    });
+
+    it("escalates repeated bash cancel from SIGINT to SIGKILL", async () => {
+      const sessionId = await createSession();
+      const signals: string[] = [];
+      const fakeProc = new EventEmitter() as any;
+      fakeProc.kill = (signal: string) => {
+        signals.push(signal);
+        return true;
+      };
+      fakeProc.stdout = new EventEmitter();
+      fakeProc.stderr = new EventEmitter();
+      sessions.runningBashProcs.set(sessionId, fakeProc);
+
+      await makeRequest(port, "POST", `/api/v1/sessions/${sessionId}/cancel`);
+      await makeRequest(port, "POST", `/api/v1/sessions/${sessionId}/cancel`);
+
+      assert.deepEqual(signals, ["SIGINT", "SIGKILL"]);
+      assert.equal(sessions.runningBashProcs.has(sessionId), true);
+
+      const replacementSignals: string[] = [];
+      const replacementProc = new EventEmitter() as any;
+      replacementProc.kill = (signal: string) => {
+        replacementSignals.push(signal);
+        return true;
+      };
+      replacementProc.stdout = new EventEmitter();
+      replacementProc.stderr = new EventEmitter();
+      sessions.runningBashProcs.set(sessionId, replacementProc);
+
+      await makeRequest(port, "POST", `/api/v1/sessions/${sessionId}/cancel`);
+      assert.deepEqual(replacementSignals, ["SIGINT"]);
+    });
+
+    it("returns idempotent idle status when session is idle", async () => {
       const sessionId = await createSession();
       const res = await makeRequest(
         port,
@@ -198,7 +284,10 @@ describe("Operations REST API", () => {
         `/api/v1/sessions/${sessionId}/cancel`,
       );
       assert.equal(res.status, 200);
-      assert.deepEqual(JSON.parse(res.body), { ok: true });
+      assert.deepEqual(JSON.parse(res.body), {
+        ok: true,
+        status: "idle",
+      });
     });
 
     it("returns 404 for unknown session", async () => {
@@ -243,6 +332,7 @@ describe("Operations REST API", () => {
     it("is idempotent when the same X-Client-Op-Id is replayed", async () => {
       const sessionId = await createSession();
       sessions.activePrompts.add(sessionId);
+      sessions.syncBusy(sessionId);
 
       let callCount = 0;
       mockBridge.cancel = async () => {
@@ -257,7 +347,7 @@ describe("Operations REST API", () => {
         undefined,
         headers,
       );
-      assert.equal(res1.status, 200);
+      assert.equal(res1.status, 202);
       assert.equal(callCount, 1);
 
       const res2 = await makeRequest(
@@ -267,11 +357,10 @@ describe("Operations REST API", () => {
         undefined,
         headers,
       );
-      assert.equal(res2.status, 200);
+      assert.equal(res2.status, 202);
       assert.equal(res2.body, res1.body);
       assert.equal(callCount, 1);
 
-      sessions.activePrompts.add(sessionId);
       const res3 = await makeRequest(
         port,
         "POST",
@@ -279,7 +368,7 @@ describe("Operations REST API", () => {
         undefined,
         { "X-Client-Op-Id": "op-cancel-2" },
       );
-      assert.equal(res3.status, 200);
+      assert.equal(res3.status, 202);
       assert.equal(callCount, 2);
     });
   });

@@ -929,14 +929,6 @@ export function createRequestHandler(
           json(res, HTTP_STATUS.NOT_FOUND, { error: "Session not found" });
           return;
         }
-        const bridge = getBridge?.();
-        if (!bridge) {
-          json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
-            error: "Agent not ready yet",
-          });
-          return;
-        }
-
         const { opId, replayed } = tryReplayClientOp(
           req,
           res,
@@ -945,27 +937,90 @@ export function createRequestHandler(
         );
         if (replayed) return;
 
+        const hadAgentPrompt = sessions?.activePrompts.has(sessionId) ?? false;
+        const hadPendingPrompt =
+          sessions?.cancelPendingPromptSubmission(sessionId) ?? false;
+        const hadBash = sessions?.runningBashProcs.has(sessionId) ?? false;
+        if (!hadAgentPrompt && !hadPendingPrompt && !hadBash) {
+          const idleBody = { ok: true, status: "idle" };
+          saveClientOpResult(store, opId, sessionId, HTTP_STATUS.OK, idleBody);
+          json(res, HTTP_STATUS.OK, idleBody);
+          return;
+        }
+        const cancelledPromptId = hadAgentPrompt
+          ? (sessions?.state.getState(sessionId).runtime.busy?.promptId ?? null)
+          : null;
+
         // Kill running bash process if any
         const proc = sessions?.runningBashProcs.get(sessionId);
         if (proc) {
-          interruptBashProc(proc);
-          sessions!.runningBashProcs.delete(sessionId);
+          const force = sessions!.interruptedBashProcs.has(proc);
+          interruptBashProc(proc, force);
+          sessions!.interruptedBashProcs.add(proc);
         }
-        // Cancel agent prompt
-        if (sessions?.activePrompts.has(sessionId)) {
+        const bridge = hadAgentPrompt ? getBridge?.() : null;
+        if (hadAgentPrompt && !bridge) {
+          json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
+            error: "Agent not ready yet",
+          });
+          return;
+        }
+        // ACP cancel is a notification, not an acknowledgement. Keep the
+        // prompt active until its prompt response supplies the terminal stop
+        // reason, and allow repeated requests to resend the notification.
+        if (hadAgentPrompt && sessions && bridge) {
+          const previousCancelStatus =
+            sessions.state.getState(sessionId).runtime.busy?.cancelStatus ??
+            null;
+          rlog.info("cancel requested", {
+            sessionId: sessionId.slice(0, 8),
+            retry: previousCancelStatus !== null,
+            previousStatus: previousCancelStatus,
+          });
           await bridge.cancel(sessionId);
-          sessions.activePrompts.delete(sessionId);
+          const busy = sessions.state.getState(sessionId).runtime.busy;
+          const stillCancellingSamePrompt =
+            sessions.activePrompts.has(sessionId) &&
+            busy?.kind === "agent" &&
+            busy.promptId === cancelledPromptId;
+          if (stillCancellingSamePrompt) {
+            sessions.state.markCancelRequested(sessionId);
+          }
         }
-        // Arm backend safety net: if prompt_done doesn't arrive within the
-        // configured timeout, force-clear busy so the UI unstalls. Replaces
-        // the old frontend-side cancel timer.
+        // If prompt_done does not arrive, expose the lack of acknowledgement
+        // instead of pretending the prompt stopped.
         const cancelTimeout = deps.limits.cancel_timeout ?? 0;
-        if (sessions && cancelTimeout > 0)
+        const busyAfterCancel =
+          sessions?.state.getState(sessionId).runtime.busy;
+        const cancelPending =
+          hadAgentPrompt &&
+          sessions?.activePrompts.has(sessionId) === true &&
+          busyAfterCancel?.kind === "agent" &&
+          busyAfterCancel.promptId === cancelledPromptId;
+        if (cancelPending && cancelTimeout > 0)
           sessions.state.armCancelSafety(sessionId, cancelTimeout);
         sessions?.syncBusy(sessionId);
-        const okBody = { ok: true };
-        saveClientOpResult(store, opId, sessionId, HTTP_STATUS.OK, okBody);
-        json(res, HTTP_STATUS.OK, okBody);
+        const workPending = cancelPending || hadBash;
+        const replacementPromptActive =
+          hadAgentPrompt &&
+          ((sessions?.activePrompts.has(sessionId) === true &&
+            busyAfterCancel?.kind === "agent" &&
+            busyAfterCancel.promptId !== cancelledPromptId) ||
+            sessions?.pendingPromptSubmissions.has(sessionId) === true);
+        const status =
+          workPending || replacementPromptActive
+            ? HTTP_STATUS.ACCEPTED
+            : HTTP_STATUS.OK;
+        const okBody = {
+          ok: true,
+          status: workPending
+            ? "cancelling"
+            : replacementPromptActive
+              ? "superseded"
+              : "cancelled",
+        };
+        saveClientOpResult(store, opId, sessionId, status, okBody);
+        json(res, status, okBody);
         return;
       }
 
@@ -1106,10 +1161,41 @@ export function createRequestHandler(
         );
         if (replayed) return;
 
+        const promptSubmissionId = sessions.reservePromptSubmission(sessionId);
+        if (promptSubmissionId === null) {
+          const busyKind = sessions.getBusyKind(sessionId);
+          logPromptRejectBeforeSave({
+            sessionId,
+            status: HTTP_STATUS.CONFLICT,
+            reason: "session_busy",
+            opId,
+            busyKind: busyKind ?? undefined,
+          });
+          json(res, HTTP_STATUS.CONFLICT, {
+            error: "Session is busy",
+            busyKind,
+          });
+          return;
+        }
+        const requestState: { aborted: boolean } = { aborted: false };
+        const isRequestAborted = () => requestState.aborted;
+        const abortPromptSubmission = () => {
+          requestState.aborted = true;
+          sessions.releasePromptSubmission(sessionId, promptSubmissionId);
+        };
+        res.once("finish", () => {
+          sessions.releasePromptSubmission(sessionId, promptSubmissionId);
+        });
+        req.once("aborted", abortPromptSubmission);
+        res.once("close", () => {
+          if (!res.writableEnded) abortPromptSubmission();
+        });
+
         // Ensure session is live in ACP before prompting (awaits in-flight resume)
         try {
           await sessions.ensureResumed(bridge, sessionId);
         } catch (err) {
+          if (isRequestAborted()) return;
           logPromptRejectBeforeSave({
             sessionId,
             status: HTTP_STATUS.INTERNAL_SERVER_ERROR,
@@ -1123,19 +1209,18 @@ export function createRequestHandler(
           return;
         }
 
-        // Check if session is busy
-        const busyKind = sessions.getBusyKind(sessionId);
-        if (busyKind) {
+        if (
+          isRequestAborted() ||
+          sessions.isPromptSubmissionCancelled(promptSubmissionId)
+        ) {
           logPromptRejectBeforeSave({
             sessionId,
             status: HTTP_STATUS.CONFLICT,
-            reason: "session_busy",
+            reason: "prompt_cancelled_before_start",
             opId,
-            busyKind,
           });
           json(res, HTTP_STATUS.CONFLICT, {
-            error: "Session is busy",
-            busyKind,
+            error: "Prompt was cancelled before start",
           });
           return;
         }
@@ -1152,6 +1237,7 @@ export function createRequestHandler(
         try {
           body = JSON.parse(await readBody(req)) as typeof body;
         } catch {
+          if (isRequestAborted()) return;
           logPromptRejectBeforeSave({
             sessionId,
             status: HTTP_STATUS.BAD_REQUEST,
@@ -1159,6 +1245,15 @@ export function createRequestHandler(
             opId,
           });
           json(res, HTTP_STATUS.BAD_REQUEST, { error: "Invalid JSON" });
+          return;
+        }
+        if (
+          isRequestAborted() ||
+          sessions.isPromptSubmissionCancelled(promptSubmissionId)
+        ) {
+          json(res, HTTP_STATUS.CONFLICT, {
+            error: "Prompt was cancelled before start",
+          });
           return;
         }
         if (!body.text) {
@@ -1335,6 +1430,7 @@ export function createRequestHandler(
         }
 
         // Fire prompt asynchronously (don't await — response is 202)
+        sessions.releasePromptSubmission(sessionId, promptSubmissionId, false);
         sessions.activePrompts.add(sessionId);
         sessions.syncBusy(sessionId);
         bridge
@@ -1756,6 +1852,12 @@ export function createRequestHandler(
           const session = store.getSession(sessionId);
           if (!session) {
             json(res, HTTP_STATUS.NOT_FOUND, { error: "Session not found" });
+            return;
+          }
+          if (sessions && sessions.getBusyKind(sessionId) !== null) {
+            json(res, HTTP_STATUS.CONFLICT, {
+              error: "Cancel active work before deleting the session",
+            });
             return;
           }
           if (sessions) {

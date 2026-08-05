@@ -52,6 +52,7 @@ import {
   classifyPermissionOption,
   normalizeEventsResponse,
   isPromptIdle,
+  normalizeAssistantDisplayText,
 } from "./event-interpreter.ts";
 import {
   renderContentEvent,
@@ -181,7 +182,7 @@ function finishPromptIfIdle() {
   hideWaiting();
   finishThinking();
   finishAssistant();
-  setBusy(false);
+  if (state.busyKind !== "bash") setBusy(false);
   state.pendingPromptDone = false;
   showNotifyTip();
 }
@@ -424,7 +425,10 @@ async function _loadNewEventsImpl(sid: string): Promise<boolean> {
       ) {
         resetMarkdownStream(primed as HTMLElement);
         (primed as HTMLElement).replaceChildren();
-        updateMarkdownStream(primed as HTMLElement, raw);
+        updateMarkdownStream(
+          primed as HTMLElement,
+          normalizeAssistantDisplayText(raw),
+        );
         enhanceCodeBlocks(primed);
       } else if (primed.classList.contains("thinking")) {
         const content = primed.querySelector(".thinking-content");
@@ -497,7 +501,10 @@ async function _loadNewEventsImpl(sid: string): Promise<boolean> {
         lastInDom.setAttribute("data-raw", combined);
         resetMarkdownStream(lastInDom);
         lastInDom.replaceChildren();
-        updateMarkdownStream(lastInDom, combined);
+        updateMarkdownStream(
+          lastInDom,
+          normalizeAssistantDisplayText(combined),
+        );
         enhanceCodeBlocks(lastInDom);
         const lastEventSeq = firstInFrag.dataset.lastEventSeq;
         if (lastEventSeq) lastInDom.dataset.lastEventSeq = lastEventSeq;
@@ -1151,7 +1158,10 @@ function handleReplayContentEvent(
         lastChild.setAttribute("data-raw", combined);
         resetMarkdownStream(lastChild);
         lastChild.replaceChildren();
-        updateMarkdownStream(lastChild, combined);
+        updateMarkdownStream(
+          lastChild,
+          normalizeAssistantDisplayText(combined),
+        );
         enhanceCodeBlocks(lastChild);
         markReplayEventEndSeq(lastChild, events[idx]);
         break;
@@ -1302,7 +1312,10 @@ function doAssistantRender() {
   const el = state.currentAssistantEl;
   if (!el) return;
   const t0 = performance.now();
-  updateMarkdownStream(el, state.currentAssistantText);
+  updateMarkdownStream(
+    el,
+    normalizeAssistantDisplayText(state.currentAssistantText),
+  );
   const tRender = performance.now();
   const ms = tRender - t0;
   // Two-tier slow-frame logging:
@@ -1437,7 +1450,17 @@ export function handleEvent(msg: AgentEvent) {
     case "state_patch": {
       // client-server-split M1: runtime state (busy, future: pending perms,
       // streaming) flows through snapshot + patch, not replay.
+      const previousCancelStatus = state.cancelStatus;
       const applied = applyStatePatch({ seq: msg.seq, patch: msg.patch });
+      if (
+        applied &&
+        previousCancelStatus !== "unconfirmed" &&
+        state.cancelStatus === "unconfirmed"
+      ) {
+        addSystem(
+          "Cancel was not acknowledged — retry ^C or use /reload to restart the agent.",
+        );
+      }
       if (!applied && state.sessionId === msg.sessionId) {
         // seq gap (missed patches) → reload the authoritative snapshot
         const sessionId = state.sessionId;
@@ -1689,7 +1712,7 @@ export function handleEvent(msg: AgentEvent) {
       if (msg.sessionId !== state.sessionId) break;
       finishBash(state.currentBashEl, msg.code, msg.signal);
       if (msg.error) addSystem(`err: ${msg.error}`);
-      setBusy(false);
+      if (state.busyKind !== "agent") setBusy(false);
       break;
     }
 
@@ -1781,7 +1804,7 @@ export function handleEvent(msg: AgentEvent) {
       finishThinking();
       finishAssistant();
       addSystem(`err: ${msg.message}`);
-      setBusy(false);
+      if (state.busyKind !== "bash") setBusy(false);
       break;
 
     case "message_created":

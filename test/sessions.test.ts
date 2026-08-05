@@ -164,6 +164,198 @@ describe("Session REST API", () => {
       assert.ok(Array.isArray(body.configOptions));
     });
 
+    describe("POST /api/v1/sessions/:id/cancel", () => {
+      it("resends cancel while the agent prompt remains active", async () => {
+        store.createSession("s-cancel", tmpDir);
+        sessions.activePrompts.add("s-cancel");
+        sessions.syncBusy("s-cancel", "p1");
+        let cancelCalls = 0;
+        mockBridge.cancel = async () => {
+          cancelCalls++;
+        };
+
+        const first = await makeRequest(
+          port,
+          "POST",
+          "/api/v1/sessions/s-cancel/cancel",
+          "{}",
+        );
+        const second = await makeRequest(
+          port,
+          "POST",
+          "/api/v1/sessions/s-cancel/cancel",
+          "{}",
+        );
+
+        assert.equal(first.status, 202);
+        assert.equal(second.status, 202);
+        assert.equal(cancelCalls, 2);
+        assert.equal(sessions.activePrompts.has("s-cancel"), true);
+        assert.equal(
+          sessions.state.getState("s-cancel").runtime.busy?.cancelStatus,
+          "requested",
+        );
+
+        sessions.runningBashProcs.set("s-cancel", {} as any);
+        sessions.syncBusy("s-cancel");
+        assert.equal(
+          sessions.state.getState("s-cancel").runtime.busy?.kind,
+          "agent",
+        );
+        assert.equal(
+          sessions.state.getState("s-cancel").runtime.busy?.cancelStatus,
+          "requested",
+        );
+      });
+
+      it("returns idempotent idle status when no work is active", async () => {
+        store.createSession("s-idle", tmpDir);
+
+        const res = await makeRequest(
+          port,
+          "POST",
+          "/api/v1/sessions/s-idle/cancel",
+          "{}",
+        );
+
+        assert.equal(res.status, 200);
+        assert.deepEqual(JSON.parse(res.body), {
+          ok: true,
+          status: "idle",
+        });
+      });
+
+      it("does not attach a stale cancel to a replacement prompt", async () => {
+        store.createSession("s-race", tmpDir);
+        sessions.activePrompts.add("s-race");
+        sessions.syncBusy("s-race");
+        const oldPromptId =
+          sessions.state.getState("s-race").runtime.busy?.promptId;
+        let releaseCancel: (() => void) | undefined;
+        mockBridge.cancel = () =>
+          new Promise<void>((resolve) => {
+            releaseCancel = resolve;
+          });
+
+        const cancelRequest = makeRequest(
+          port,
+          "POST",
+          "/api/v1/sessions/s-race/cancel",
+          "{}",
+        );
+        for (let i = 0; i < 10 && !releaseCancel; i++) {
+          await new Promise((resolve) => setImmediate(resolve));
+        }
+        assert.ok(releaseCancel);
+        sessions.activePrompts.delete("s-race");
+        sessions.syncBusy("s-race");
+        sessions.activePrompts.add("s-race");
+        sessions.syncBusy("s-race");
+        const newPromptId =
+          sessions.state.getState("s-race").runtime.busy?.promptId;
+        assert.notEqual(newPromptId, oldPromptId);
+
+        releaseCancel();
+        const res = await cancelRequest;
+
+        assert.equal(res.status, 202);
+        assert.equal(JSON.parse(res.body).status, "superseded");
+        assert.equal(
+          sessions.state.getState("s-race").runtime.busy?.cancelStatus ?? null,
+          null,
+        );
+        assert.equal(
+          sessions.state.getState("s-race").runtime.busy?.promptId,
+          newPromptId,
+        );
+      });
+
+      it("reports superseded when a replacement prompt is still reserved", async () => {
+        store.createSession("s-reserved-race", tmpDir);
+        sessions.activePrompts.add("s-reserved-race");
+        sessions.syncBusy("s-reserved-race");
+        let releaseCancel: (() => void) | undefined;
+        mockBridge.cancel = () =>
+          new Promise<void>((resolve) => {
+            releaseCancel = resolve;
+          });
+
+        const cancelRequest = makeRequest(
+          port,
+          "POST",
+          "/api/v1/sessions/s-reserved-race/cancel",
+          "{}",
+        );
+        for (let i = 0; i < 10 && !releaseCancel; i++) {
+          await new Promise((resolve) => setImmediate(resolve));
+        }
+        assert.ok(releaseCancel);
+        sessions.activePrompts.delete("s-reserved-race");
+        sessions.syncBusy("s-reserved-race");
+        const replacementSubmission =
+          sessions.reservePromptSubmission("s-reserved-race");
+        assert.ok(replacementSubmission);
+
+        releaseCancel();
+        const res = await cancelRequest;
+
+        assert.equal(res.status, 202);
+        assert.equal(JSON.parse(res.body).status, "superseded");
+        assert.equal(
+          sessions.pendingPromptSubmissions.has("s-reserved-race"),
+          true,
+        );
+        sessions.releasePromptSubmission(
+          "s-reserved-race",
+          replacementSubmission,
+        );
+      });
+
+      it("cancels a prompt submission while session resume is pending", async () => {
+        store.createSession("s-pending", tmpDir);
+        let releaseResume!: () => void;
+        let promptCalls = 0;
+        mockBridge.loadSession = () =>
+          new Promise((resolve) => {
+            releaseResume = () => {
+              resolve({ sessionId: "s-pending", configOptions: [] });
+            };
+          });
+        mockBridge.prompt = async () => {
+          promptCalls++;
+        };
+
+        const promptRequest = makeRequest(
+          port,
+          "POST",
+          "/api/v1/sessions/s-pending/prompt",
+          JSON.stringify({ text: "do not run" }),
+        );
+        for (
+          let i = 0;
+          i < 10 && !sessions.pendingPromptSubmissions.has("s-pending");
+          i++
+        ) {
+          await new Promise((resolve) => setImmediate(resolve));
+        }
+        assert.equal(sessions.pendingPromptSubmissions.has("s-pending"), true);
+
+        const cancelRes = await makeRequest(
+          port,
+          "POST",
+          "/api/v1/sessions/s-pending/cancel",
+          "{}",
+        );
+        assert.equal(cancelRes.status, 200);
+        assert.equal(JSON.parse(cancelRes.body).status, "cancelled");
+
+        releaseResume();
+        const promptRes = await promptRequest;
+        assert.equal(promptRes.status, 409);
+        assert.equal(promptCalls, 0);
+      });
+    });
+
     it("creates a session with custom cwd", async () => {
       const res = await makeRequest(
         port,
@@ -393,6 +585,41 @@ describe("Session REST API", () => {
         "/api/v1/sessions/nonexistent",
       );
       assert.equal(res.status, 404);
+    });
+
+    it("rejects deletion while prompt work is active", async () => {
+      store.createSession("s-active-delete", tmpDir);
+      sessions.activePrompts.add("s-active-delete");
+      sessions.syncBusy("s-active-delete");
+
+      const res = await makeRequest(
+        port,
+        "DELETE",
+        "/api/v1/sessions/s-active-delete",
+      );
+
+      assert.equal(res.status, 409);
+      assert.equal(store.getSession("s-active-delete")?.id, "s-active-delete");
+    });
+
+    it("rejects deletion while prompt submission is pending", async () => {
+      store.createSession("s-pending-delete", tmpDir);
+      assert.notEqual(
+        sessions.reservePromptSubmission("s-pending-delete"),
+        null,
+      );
+
+      const res = await makeRequest(
+        port,
+        "DELETE",
+        "/api/v1/sessions/s-pending-delete",
+      );
+
+      assert.equal(res.status, 409);
+      assert.equal(
+        store.getSession("s-pending-delete")?.id,
+        "s-pending-delete",
+      );
     });
   });
 

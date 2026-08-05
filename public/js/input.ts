@@ -256,7 +256,15 @@ function handleSendError(
 }
 
 function doCancel() {
-  if (sendCancel()) addSystem("^C");
+  if (!state.busy || !state.sessionId) return;
+  const retry = state.cancelStatus !== null;
+  addSystem(retry ? "^C retrying cancel…" : "^C cancelling…");
+  void sendCancel()
+    .then(() => {})
+    .catch((err: unknown) => {
+      const message = err instanceof Error ? err.message : String(err);
+      addSystem(`err: cancel failed — ${message}`);
+    });
 }
 
 // --- Event listeners ---

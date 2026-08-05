@@ -306,8 +306,11 @@ export const ROOT: CmdNode = {
       desc: "Cancel current response",
       onSelect: () => {
         if (state.busy) {
-          sendCancel();
-          addSystem("^C");
+          void sendCancel()
+            .then(() => addSystem("^C cancelling…"))
+            .catch((err: unknown) => {
+              addSystem(`err: cancel failed — ${String(err)}`);
+            });
         } else addSystem("Nothing to cancel.");
       },
     },
@@ -407,8 +410,11 @@ export const ROOT: CmdNode = {
         }
         const exitId = state.sessionId;
         try {
-          if (state.busy) sendCancel();
-          api.deleteSession(exitId).catch(() => {});
+          if (state.busy) {
+            addSystem("err: Cancel active work before exiting the session");
+            return;
+          }
+          await api.deleteSession(exitId);
           await fallbackToNextSession(exitId, state.sessionCwd ?? undefined);
         } catch {
           addSystem("err: Failed to exit session");

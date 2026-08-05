@@ -61,6 +61,24 @@ describe("input-actions", () => {
       assert.equal(dom.sendBtn.textContent, "^C");
       assert.ok(dom.sendBtn.classList.contains("cancel"));
     });
+
+    it("keeps cancel retryable after acknowledgement timeout", () => {
+      state.busy = true;
+      state.cancelStatus = "unconfirmed";
+      actions.applyInputActions();
+      assert.equal(dom.sendBtn.textContent, "^C");
+      assert.match(dom.sendBtn.title, /Retry cancel/);
+      assert.equal(dom.sendBtn.disabled, false);
+    });
+
+    it("shows bash force-stop guidance after the first cancel", () => {
+      state.busy = true;
+      state.busyKind = "bash";
+      state.cancelStatus = "requested";
+      actions.applyInputActions();
+      assert.equal(dom.sendBtn.textContent, "^C");
+      assert.equal(dom.sendBtn.title, "Force stop bash");
+    });
   });
 
   describe("preview mode", () => {

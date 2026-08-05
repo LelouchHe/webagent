@@ -21,6 +21,7 @@ import {
   classifyPermissionOption,
   resolvePermissionLabel,
   parseDiff,
+  normalizeAssistantDisplayText,
 } from "./event-interpreter.ts";
 import { buildPlanElement } from "./plan-view.ts";
 import type {
@@ -262,7 +263,7 @@ function buildAssistantMessage(
   const el = document.createElement("div");
   el.className = "msg assistant";
   el.setAttribute("data-raw", text);
-  updateMarkdownStream(el, text);
+  updateMarkdownStream(el, normalizeAssistantDisplayText(text));
   hooks.enhanceMarkdown?.(el);
   return el;
 }

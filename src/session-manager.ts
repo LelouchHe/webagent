@@ -24,6 +24,7 @@ const IS_WIN = process.platform === "win32";
 
 export function interruptBashProc(
   proc: ReturnType<SessionManager["runningBashProcs"]["get"]>,
+  force = false,
 ): void {
   if (!proc) return;
   if (IS_WIN && typeof proc.pid === "number") {
@@ -33,13 +34,13 @@ export function interruptBashProc(
   }
   if (typeof proc.pid === "number") {
     try {
-      process.kill(-proc.pid, "SIGINT");
+      process.kill(-proc.pid, force ? "SIGKILL" : "SIGINT");
       return;
     } catch {
       // Fall through to direct child kill when the process is not a group leader.
     }
   }
-  proc.kill("SIGINT");
+  proc.kill(force ? "SIGKILL" : "SIGINT");
 }
 
 type SessionBridge = Pick<
@@ -73,13 +74,18 @@ export class SessionManager {
   readonly assistantBuffers = new Map<string, string>();
   readonly thinkingBuffers = new Map<string, string>();
   readonly activePrompts = new Set<string>();
+  readonly pendingPromptSubmissions = new Map<string, number>();
+  readonly cancelledPromptSubmissions = new Set<number>();
   readonly runningBashProcs = new Map<string, ChildProcess>();
+  readonly interruptedBashProcs = new WeakSet<ChildProcess>();
   /** Pending permission requests keyed by requestId. */
   readonly pendingPermissions = new Map<string, PendingPermission>();
   /** Per-session runtime state (busy/streaming/permissions snapshots + patches). */
   readonly state = new SessionStateManager();
   /** Deduplicates concurrent resume calls for the same session. */
   private readonly pendingResumes = new Map<string, Promise<void>>();
+  private nextPromptNumber = 0;
+  private nextPromptSubmissionNumber = 0;
   /** Deduplicates concurrent attempts to materialize one inbox message. */
   private readonly pendingMessageConsumes = new Map<
     string,
@@ -504,6 +510,11 @@ export class SessionManager {
     this.assistantBuffers.delete(sessionId);
     this.thinkingBuffers.delete(sessionId);
     this.activePrompts.delete(sessionId);
+    const pendingSubmission = this.pendingPromptSubmissions.get(sessionId);
+    this.pendingPromptSubmissions.delete(sessionId);
+    if (pendingSubmission !== undefined) {
+      this.cancelledPromptSubmissions.delete(pendingSubmission);
+    }
     this.runningBashProcs.delete(sessionId);
     this.attachmentLabelCache.delete(sessionId);
     this.agentCommandSnapshots.delete(sessionId);
@@ -575,9 +586,40 @@ export class SessionManager {
   }
 
   getBusyKind(sessionId: string): "agent" | "bash" | null {
-    if (this.runningBashProcs.has(sessionId)) return "bash";
+    if (this.pendingPromptSubmissions.has(sessionId)) return "agent";
     if (this.activePrompts.has(sessionId)) return "agent";
+    if (this.runningBashProcs.has(sessionId)) return "bash";
     return null;
+  }
+
+  reservePromptSubmission(sessionId: string): number | null {
+    if (this.getBusyKind(sessionId) !== null) return null;
+    const submissionId = ++this.nextPromptSubmissionNumber;
+    this.pendingPromptSubmissions.set(sessionId, submissionId);
+    return submissionId;
+  }
+
+  cancelPendingPromptSubmission(sessionId: string): boolean {
+    const submissionId = this.pendingPromptSubmissions.get(sessionId);
+    if (submissionId === undefined) return false;
+    this.cancelledPromptSubmissions.add(submissionId);
+    return true;
+  }
+
+  isPromptSubmissionCancelled(submissionId: number): boolean {
+    return this.cancelledPromptSubmissions.has(submissionId);
+  }
+
+  releasePromptSubmission(
+    sessionId: string,
+    submissionId: number,
+    sync = true,
+  ): void {
+    if (this.pendingPromptSubmissions.get(sessionId) === submissionId) {
+      this.pendingPromptSubmissions.delete(sessionId);
+    }
+    this.cancelledPromptSubmissions.delete(submissionId);
+    if (sync) this.syncBusy(sessionId);
   }
 
   /**
@@ -599,8 +641,15 @@ export class SessionManager {
       return;
     }
     const nextPromptId =
-      kind === "agent" ? (promptId ?? current?.promptId ?? null) : null;
-    if (current?.kind === kind && current.promptId === nextPromptId) return;
+      kind === "agent"
+        ? (promptId ??
+          (current?.kind === "agent"
+            ? current.promptId
+            : `prompt-${++this.nextPromptNumber}`))
+        : null;
+    const sameWork =
+      current?.kind === kind && current.promptId === nextPromptId;
+    if (sameWork) return;
     this.state.patch(sessionId, {
       runtime: {
         busy: {
@@ -608,6 +657,7 @@ export class SessionManager {
           since:
             current?.kind === kind ? current.since : new Date().toISOString(),
           promptId: nextPromptId,
+          cancelStatus: null,
         },
       },
     });

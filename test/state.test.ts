@@ -322,15 +322,17 @@ describe("state", () => {
       const calls: Array<{ url: string; init?: RequestInit }> = [];
       globalThis.fetch = (async (url: string, init?: RequestInit) => {
         calls.push({ url, init });
-        return { ok: true, text: async () => "", json: async () => ({}) };
+        return {
+          ok: true,
+          text: async () => JSON.stringify({ ok: true, status: "cancelling" }),
+        };
       }) as any;
 
       mod.state.busy = true;
       mod.state.sessionId = "s1";
       mod.state.currentBashEl = null;
 
-      assert.equal(mod.sendCancel(), true);
-      await new Promise((r) => setTimeout(r, 0));
+      assert.equal((await mod.sendCancel())?.status, "cancelling");
 
       assert.equal(calls.length, 1);
       assert.equal(calls[0].url, "/api/v1/sessions/s1/cancel");
@@ -341,23 +343,82 @@ describe("state", () => {
       const calls: Array<{ url: string; init?: RequestInit }> = [];
       globalThis.fetch = (async (url: string, init?: RequestInit) => {
         calls.push({ url, init });
-        return { ok: true, text: async () => "", json: async () => ({}) };
+        return {
+          ok: true,
+          text: async () => JSON.stringify({ ok: true, status: "cancelling" }),
+        };
       }) as any;
 
       mod.state.busy = true;
       mod.state.sessionId = "s1";
       mod.state.currentBashEl = {};
 
-      assert.equal(mod.sendCancel(), true);
-      await new Promise((r) => setTimeout(r, 0));
+      assert.equal((await mod.sendCancel())?.status, "cancelling");
 
       assert.equal(calls[0].url, "/api/v1/sessions/s1/cancel");
     });
 
-    it("returns false when not busy", () => {
+    it("returns false when not busy", async () => {
       mod.state.sessionId = "s1";
       mod.state.busy = false;
-      assert.equal(mod.sendCancel(), false);
+      assert.equal(await mod.sendCancel(), null);
+    });
+
+    it("surfaces cancel request failures", async () => {
+      globalThis.fetch = (async () => ({
+        ok: false,
+        json: async () => ({ error: "Agent not ready" }),
+      })) as any;
+      mod.state.busy = true;
+      mod.state.sessionId = "s1";
+
+      await assert.rejects(mod.sendCancel(), /Agent not ready/);
+    });
+
+    it("does not apply a stale terminal result after a newer state patch", async () => {
+      let resolveCancel!: (value: Response) => void;
+      globalThis.fetch = () =>
+        new Promise<Response>((resolve) => {
+          resolveCancel = resolve;
+        });
+      mod.state.busy = true;
+      mod.state.sessionId = "s1";
+      mod.state.lastStateSeq = 3;
+
+      const pending = mod.sendCancel();
+      mod.applyStatePatch({
+        seq: 4,
+        patch: {
+          runtime: {
+            busy: {
+              kind: "agent",
+              since: "new",
+              promptId: "new-prompt",
+            },
+          },
+        },
+      });
+      resolveCancel({
+        ok: true,
+        text: async () => JSON.stringify({ ok: true, status: "idle" }),
+      } as Response);
+      await pending;
+
+      assert.equal(mod.state.busy, true);
+      assert.equal(mod.state.lastStateSeq, 4);
+    });
+
+    it("clears optimistic status when cancel was superseded", async () => {
+      globalThis.fetch = (async () => ({
+        ok: true,
+        text: async () => JSON.stringify({ ok: true, status: "superseded" }),
+      })) as any;
+      mod.state.busy = true;
+      mod.state.sessionId = "s1";
+
+      assert.equal((await mod.sendCancel())?.status, "superseded");
+      assert.equal(mod.state.busy, true);
+      assert.equal(mod.state.cancelStatus, null);
     });
   });
 
@@ -416,6 +477,19 @@ describe("state", () => {
       assert.equal(mod.state.busy, true);
     });
 
+    it("applySnapshot exposes cancel status", () => {
+      mod.applySnapshot(
+        snap(7, {
+          kind: "agent",
+          since: "",
+          promptId: null,
+          cancelStatus: "unconfirmed",
+        }),
+      );
+      assert.equal(mod.state.cancelStatus, "unconfirmed");
+      assert.equal(mod.state.busy, true);
+    });
+
     it("applySnapshot with null busy clears busy", () => {
       mod.setBusy(true);
       mod.applySnapshot(snap(3, null));
@@ -443,6 +517,26 @@ describe("state", () => {
       });
       assert.equal(ok, true);
       assert.equal(mod.state.lastStateSeq, 6);
+      assert.equal(mod.state.busy, true);
+    });
+
+    it("applyStatePatch exposes requested cancel status", () => {
+      mod.state.lastStateSeq = 5;
+      const ok = mod.applyStatePatch({
+        seq: 6,
+        patch: {
+          runtime: {
+            busy: {
+              kind: "agent",
+              since: "",
+              promptId: null,
+              cancelStatus: "requested",
+            },
+          },
+        },
+      });
+      assert.equal(ok, true);
+      assert.equal(mod.state.cancelStatus, "requested");
       assert.equal(mod.state.busy, true);
     });
 

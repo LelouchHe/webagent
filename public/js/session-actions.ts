@@ -1,4 +1,4 @@
-import { state, resetSessionUI, sendCancel } from "./state.ts";
+import { state, resetSessionUI } from "./state.ts";
 import { addSystem } from "./render.ts";
 import * as api from "./api.ts";
 
@@ -16,7 +16,10 @@ export async function replaceCurrentSession({
 
   const oldId = state.sessionId;
   const nextCwd = cwd ?? state.sessionCwd ?? undefined;
-  if (state.busy) sendCancel();
+  if (state.busy) {
+    addSystem("err: Cancel active work before clearing the session");
+    return;
+  }
   resetSessionUI();
   addSystem(
     showCwd && nextCwd
@@ -31,5 +34,9 @@ export async function replaceCurrentSession({
     addSystem("err: Failed to clear session");
     return;
   }
-  api.deleteSession(oldId).catch(() => {});
+  try {
+    await api.deleteSession(oldId);
+  } catch (err: unknown) {
+    addSystem(`err: Failed to delete previous session — ${String(err)}`);
+  }
 }

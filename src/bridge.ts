@@ -404,10 +404,18 @@ export class AgentBridge extends EventEmitter {
       // 3. Clean up SessionManager state
       sessions.pendingPermissions.clear();
       sessions.state.clearPlans();
-      for (const id of sessions.activePrompts) {
+      const busySessionIds = new Set([
+        ...sessions.activePrompts,
+        ...sessions.pendingPromptSubmissions.keys(),
+      ]);
+      for (const id of busySessionIds) {
         sessions.state.patch(id, { runtime: { busy: null } });
       }
+      for (const submissionId of sessions.pendingPromptSubmissions.values()) {
+        sessions.cancelledPromptSubmissions.add(submissionId);
+      }
       sessions.activePrompts.clear();
+      sessions.pendingPromptSubmissions.clear();
 
       // 4. Clean up bridge-side silent session state
       this.silentSessions.clear();

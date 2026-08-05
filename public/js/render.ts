@@ -16,6 +16,7 @@ import {
   updateMarkdownStream,
   resetMarkdownStream,
 } from "./render-event.ts";
+import { normalizeAssistantDisplayText } from "./event-interpreter.ts";
 
 // --- Message helpers ---
 
@@ -25,7 +26,10 @@ export function addMessage(role: string, text: string): HTMLDivElement {
   if (role === "user") {
     el.innerHTML = escHtml(text).replace(/\n/g, "<br>");
   } else {
-    updateMarkdownStream(el, text);
+    updateMarkdownStream(
+      el,
+      role === "assistant" ? normalizeAssistantDisplayText(text) : text,
+    );
   }
   appendMessageElement(el);
   return el;
@@ -55,7 +59,11 @@ export function finishAssistant() {
       cancelAnimationFrame(state.assistantRafToken);
     }
     state.assistantRafToken = null;
-    if (assistantEl) updateMarkdownStream(assistantEl, assistantText);
+    if (assistantEl)
+      updateMarkdownStream(
+        assistantEl,
+        normalizeAssistantDisplayText(assistantText),
+      );
   }
   if (assistantEl && typeof assistantEl.querySelector === "function") {
     assistantEl.removeAttribute("data-primed");
@@ -85,7 +93,11 @@ export function flushStreamingRender() {
   }
   state.assistantRafToken = null;
   const el = state.currentAssistantEl;
-  if (el) updateMarkdownStream(el, state.currentAssistantText);
+  if (el)
+    updateMarkdownStream(
+      el,
+      normalizeAssistantDisplayText(state.currentAssistantText),
+    );
 }
 
 export function finishThinking() {

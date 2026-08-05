@@ -21,6 +21,16 @@ import type {
   NormalizedEventsResponse,
 } from "../../src/types.ts";
 
+const MISATTRIBUTED_CANCEL_TEXT = "Info: Operation cancelled by user";
+
+/** Remove an unverified user attribution while preserving the agent's raw text. */
+export function normalizeAssistantDisplayText(text: string): string {
+  return text.replaceAll(
+    MISATTRIBUTED_CANCEL_TEXT,
+    "Info: Operation cancelled — ",
+  );
+}
+
 /** Interpret a tool_call event into a display-ready view model. */
 export function interpretToolCall(
   kind: string,

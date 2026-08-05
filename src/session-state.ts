@@ -9,13 +9,18 @@
  */
 
 import type { PlanEntry } from "./types.ts";
+import { log } from "./log.ts";
+
+const clog = log.scope("cancel");
 
 export type BusyKind = "agent" | "bash";
+export type CancelStatus = "requested" | "unconfirmed";
 
 export interface BusyState {
   kind: BusyKind;
   since: string;
   promptId: string | null;
+  cancelStatus?: CancelStatus | null;
 }
 
 export interface PendingPermission {
@@ -77,7 +82,12 @@ function defaultState(): SessionRuntimeState {
 function busyEqual(a: BusyState | null, b: BusyState | null): boolean {
   if (a === null && b === null) return true;
   if (a === null || b === null) return false;
-  return a.kind === b.kind && a.since === b.since && a.promptId === b.promptId;
+  return (
+    a.kind === b.kind &&
+    a.since === b.since &&
+    a.promptId === b.promptId &&
+    (a.cancelStatus ?? null) === (b.cancelStatus ?? null)
+  );
 }
 
 function permsEqual(a: PendingPermission[], b: PendingPermission[]): boolean {
@@ -232,8 +242,8 @@ export class SessionStateManager {
   }
 
   /**
-   * Backend safety net for cancel: if busy is still set after `timeoutMs`,
-   * force-clear it. Replaces the old frontend cancel timer.
+   * Backend acknowledgement timer for cancel: if the same agent prompt is
+   * still pending after `timeoutMs`, mark the request unconfirmed.
    * A second arm on the same session replaces the existing timer.
    */
   armCancelSafety(sessionId: string, timeoutMs: number): void {
@@ -242,11 +252,31 @@ export class SessionStateManager {
     if (existing) clearTimeout(existing);
     const t = setTimeout(() => {
       this.cancelTimers.delete(sessionId);
-      this.patch(sessionId, { runtime: { busy: null } });
+      const busy = this.getState(sessionId).runtime.busy;
+      if (busy?.kind === "agent" && busy.cancelStatus === "requested") {
+        clog.warn("agent did not acknowledge", {
+          sessionId: sessionId.slice(0, 8),
+          promptId: busy.promptId,
+        });
+        this.patch(sessionId, {
+          runtime: {
+            busy: { ...busy, cancelStatus: "unconfirmed" },
+          },
+        });
+      }
     }, timeoutMs);
     if (typeof t === "object" && "unref" in t)
       (t as { unref: () => void }).unref();
     this.cancelTimers.set(sessionId, t);
+  }
+
+  /** Mark that a cancel notification was sent for the active agent prompt. */
+  markCancelRequested(sessionId: string): void {
+    const busy = this.getState(sessionId).runtime.busy;
+    if (busy?.kind !== "agent") return;
+    this.patch(sessionId, {
+      runtime: { busy: { ...busy, cancelStatus: "requested" } },
+    });
   }
 
   /** Cancel the safety net timer (e.g. when prompt_done arrives naturally). */

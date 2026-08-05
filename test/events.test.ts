@@ -356,6 +356,23 @@ describe("events", () => {
           "expected hljs to highlight the streamed code block",
         );
       });
+
+      it("removes unverified user attribution from split live chunks", () => {
+        events.handleEvent({
+          type: "message_chunk",
+          text: "Info: Operation cancelled by ",
+        });
+        events.handleEvent({
+          type: "message_chunk",
+          text: "usernext response",
+        });
+        events.handleEvent({ type: "prompt_done", stopReason: "end_turn" });
+
+        assert.equal(
+          dom.messages.querySelector(".msg.assistant")?.textContent,
+          "Info: Operation cancelled — next response",
+        );
+      });
     });
 
     describe("thought_chunk", () => {
@@ -860,6 +877,19 @@ describe("events", () => {
         assert.equal(state.currentBashEl, null);
         assert.equal(state.busy, false);
       });
+
+      it("keeps busy when bash finishes during an agent prompt", () => {
+        state.busy = true;
+        state.busyKind = "agent";
+        events.handleEvent({
+          type: "bash_done",
+          sessionId: "s1",
+          code: 0,
+          signal: null,
+        });
+        assert.equal(state.busy, true);
+        assert.equal(state.busyKind, "agent");
+      });
     });
 
     describe("prompt_done", () => {
@@ -956,6 +986,17 @@ describe("events", () => {
 
         assert.equal(state.pendingPermissionRequestIds.size, 0);
         assert.equal(state.busy, false);
+      });
+
+      it("keeps busy when the prompt finishes during local bash", () => {
+        state.busy = true;
+        state.busyKind = "bash";
+        events.handleEvent({
+          type: "prompt_done",
+          stopReason: "end_turn",
+        });
+        assert.equal(state.busy, true);
+        assert.equal(state.busyKind, "bash");
       });
     });
 
@@ -1208,6 +1249,31 @@ describe("events", () => {
         assert.equal(state.plan, null);
         assert.equal(state.lastStateSeq, 0);
       });
+
+      it("shows recovery guidance when cancel is unconfirmed", () => {
+        state.sessionId = "s1";
+        state.lastStateSeq = 0;
+        state.busy = true;
+        state.cancelStatus = "requested";
+
+        events.handleEvent({
+          type: "state_patch",
+          sessionId: "s1",
+          seq: 1,
+          patch: {
+            runtime: {
+              busy: {
+                kind: "agent",
+                since: "t0",
+                promptId: "p1",
+                cancelStatus: "unconfirmed",
+              },
+            },
+          },
+        });
+
+        assert.match(dom.messages.textContent, /retry.*\/reload/i);
+      });
     });
 
     describe("session_deleted", () => {
@@ -1443,6 +1509,16 @@ describe("events", () => {
           message: "Directory does not exist: /bad",
         });
         assert.equal(state.awaitingNewSession, false);
+      });
+
+      it("keeps busy when an agent error arrives during local bash", () => {
+        state.busy = true;
+        state.busyKind = "bash";
+
+        events.handleEvent({ type: "error", message: "agent failed" });
+
+        assert.equal(state.busy, true);
+        assert.equal(state.busyKind, "bash");
       });
     });
 

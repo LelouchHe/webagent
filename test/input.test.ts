@@ -369,7 +369,7 @@ describe("input", () => {
     ]);
   });
 
-  it("sends cancel on global Ctrl+C while busy and no selection", () => {
+  it("sends cancel on global Ctrl+C while busy and no selection", async () => {
     setFetch(() => ({ ok: true, json: async () => ({}) }));
     state.sessionId = "s1";
     state.busy = true;
@@ -381,7 +381,38 @@ describe("input", () => {
     assert.ok(cancelCall, "expected a cancel fetch call");
     assert.equal(cancelCall.url, "/api/v1/sessions/s1/cancel");
     assert.equal(cancelCall.init?.method, "POST");
-    assert.ok(dom.messages.textContent.includes("^C"));
+    assert.ok(dom.messages.textContent.includes("^C cancelling"));
+    assert.equal(state.cancelStatus, "requested");
+    await new Promise((resolve) => setImmediate(resolve));
+  });
+
+  it("shows cancel REST failures instead of swallowing them", async () => {
+    setFetch(() => ({
+      ok: false,
+      json: async () => ({ error: "Agent not ready" }),
+    }));
+    state.sessionId = "s1";
+    state.busy = true;
+
+    docKeydown("c", { ctrlKey: true });
+    await new Promise((resolve) => setImmediate(resolve));
+
+    assert.match(dom.messages.textContent, /cancel failed.*Agent not ready/);
+    assert.equal(state.cancelStatus, null);
+  });
+
+  it("clears optimistic cancel state when the server reports idle", async () => {
+    setFetch(() => ({
+      ok: true,
+      text: async () => JSON.stringify({ ok: true, status: "idle" }),
+    }));
+    state.sessionId = "s1";
+    state.busy = true;
+
+    docKeydown("c", { ctrlKey: true });
+    await new Promise((resolve) => setImmediate(resolve));
+
+    assert.equal(state.cancelStatus, null);
   });
 
   it("Ctrl+C allows native copy when text is selected in textarea", () => {
