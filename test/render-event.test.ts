@@ -342,6 +342,16 @@ describe("render-event", () => {
       );
       assert.ok(hooked, "enhanceMarkdown must be called");
     });
+
+    it("keeps raw cancel text but removes unverified user attribution", () => {
+      const raw = "Info: Operation cancelled by usernext response";
+      const el = append(
+        mod.renderContentEvent("assistant_message", { text: raw }, makeHooks()),
+      )!;
+
+      assert.equal(el.getAttribute("data-raw"), raw);
+      assert.equal(el.textContent, "Info: Operation cancelled — next response");
+    });
   });
 
   describe("thinking", () => {

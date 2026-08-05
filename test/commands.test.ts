@@ -648,7 +648,7 @@ describe("commands", () => {
       assert.ok(cancelCall, "expected a cancel fetch call");
       assert.equal(cancelCall.url, "/api/v1/sessions/s1/cancel");
       assert.equal(cancelCall.init?.method, "POST");
-      assert.ok(messageLines().includes("^C"));
+      assert.ok(messageLines().includes("^C cancelling…"));
     });
 
     it("persists /log level locally", async () => {

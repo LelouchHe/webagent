@@ -356,6 +356,23 @@ describe("events", () => {
           "expected hljs to highlight the streamed code block",
         );
       });
+
+      it("removes unverified user attribution from split live chunks", () => {
+        events.handleEvent({
+          type: "message_chunk",
+          text: "Info: Operation cancelled by ",
+        });
+        events.handleEvent({
+          type: "message_chunk",
+          text: "usernext response",
+        });
+        events.handleEvent({ type: "prompt_done", stopReason: "end_turn" });
+
+        assert.equal(
+          dom.messages.querySelector(".msg.assistant")?.textContent,
+          "Info: Operation cancelled — next response",
+        );
+      });
     });
 
     describe("thought_chunk", () => {

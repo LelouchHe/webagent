@@ -28,7 +28,8 @@
 - Real-time output streaming (stderr in red)
 - Collapsible output with exit code display
 - Cancel running processes
-- Cancel is session-scoped inside WebAgent: it stops the current ACP turn plus WebAgent-owned session work (like local `!` bash), but it cannot stop host-level tasks started outside the WebAgent server/runtime
+- Cancel is session-scoped inside WebAgent: it requests cancellation of the current ACP turn and stops WebAgent-owned session work (like local `!` bash), but it cannot stop host-level tasks started outside the WebAgent server/runtime
+- Agent cancellation remains visibly pending until the agent acknowledges it. If acknowledgement times out, the cancel button stays retryable instead of reporting a false success.
 
 ## Session Management
 

@@ -123,7 +123,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - input validation and bridge-not-ready errors
 
 - `test/ops.test.ts`
-  - cancel: active prompt, running bash, idle session (idempotent)
+  - cancel: active prompt, running bash, idle-session conflict
   - status: idle / busy-agent / busy-bash
   - `GET /api/v1/config` endpoint
   - bridge-not-ready error handling
@@ -208,7 +208,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - prompt completion rules
   - cancelled-turn cleanup for tool calls and permissions
   - late-event suppression after prompt_done (tool_call, permission_request)
-  - cancel timeout firing and warning
+  - cancel acknowledgement timeout transitions to unconfirmed while busy
   - config update application
   - session deletion and title update handling
   - cross-session event filtering
@@ -391,6 +391,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
 
 - `cancel-flow.spec.ts`
   - normal in-flight prompt cancellation
+  - retrying cancel until the agent acknowledges it
 
 - `cancel-after-tool-call.spec.ts`
   - cancellation after a tool call has already started
@@ -552,7 +553,8 @@ spot gaps, and decide what still needs to be added without reading every spec.
 
 ## Known Boundary
 
-- WebAgent now treats cancel as a session-wide hard stop for ACP prompt work,
+- WebAgent requests cancellation of ACP prompt work and keeps it visibly
+  pending until the agent acknowledges the terminal prompt state. It hard-stops
   pending permission work, local `!` bash work, and title-generation work that
   it owns inside the server runtime.
 - Host-level tasks started outside WebAgent's own runtime are not covered by

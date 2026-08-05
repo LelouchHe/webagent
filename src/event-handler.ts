@@ -15,6 +15,7 @@ import { isAutopilotMode } from "./mode-bucket.ts";
 
 const ailog = log.scope("attachment-interceptor");
 const plog = log.scope("push");
+const clog = log.scope("cancel");
 
 export interface EventHandlerConfig {
   cancelTimeout: number;
@@ -292,6 +293,15 @@ function handlePromptDone(
   sessions: SessionManager,
   store: Store,
 ): void {
+  const cancelStatus =
+    sessions.state.getState(event.sessionId).runtime.busy?.cancelStatus ?? null;
+  if (cancelStatus !== null) {
+    clog.info("agent completed after request", {
+      sessionId: event.sessionId.slice(0, 8),
+      requestedStatus: cancelStatus,
+      stopReason: event.stopReason,
+    });
+  }
   sessions.activePrompts.delete(event.sessionId);
   sessions.syncBusy(event.sessionId);
   sessions.flushBuffers(event.sessionId);

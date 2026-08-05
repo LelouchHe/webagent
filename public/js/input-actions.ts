@@ -83,11 +83,17 @@ export function resolveInputActions(): [InputAction, InputAction] {
     else handlers.send();
   };
   if (state.busy && !canSubmitWhileBusy(dom.input.value)) {
+    const cancelTitle =
+      state.cancelStatus === "unconfirmed"
+        ? "Retry cancel (agent did not acknowledge)"
+        : state.cancelStatus === "requested"
+          ? "Retry cancel (waiting for agent acknowledgement)"
+          : "Cancel (Ctrl+C)";
     return [
       left,
       {
         label: "^C",
-        title: "Cancel (Ctrl+C)",
+        title: cancelTitle,
         className: "cancel",
         onClick: rightOnClick,
       },

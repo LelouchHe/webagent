@@ -104,6 +104,7 @@ export const state = {
   currentThinkingEl: null as HTMLElement | null,
   currentThinkingText: "",
   busy: false,
+  cancelStatus: null as "requested" | "unconfirmed" | null,
   plan: null as PlanEntry[] | null,
   pendingAttachments: [] as PendingAttachment[],
   currentBashEl: null as HTMLElement | null,
@@ -300,6 +301,7 @@ export interface SessionSnapshot {
       kind: "agent" | "bash";
       since: string;
       promptId: string | null;
+      cancelStatus?: "requested" | "unconfirmed" | null;
     } | null;
     pendingPermissions?: unknown[];
     streaming?: { assistant: boolean; thinking: boolean };
@@ -314,6 +316,7 @@ export interface StatePatchPayload {
       kind: "agent" | "bash";
       since: string;
       promptId: string | null;
+      cancelStatus?: "requested" | "unconfirmed" | null;
     } | null;
     plan?: PlanEntry[] | null;
   };
@@ -340,6 +343,7 @@ function applyRuntimePlan(plan: PlanEntry[] | null): void {
 export function applySnapshot(snap: SessionSnapshot): void {
   state.lastStateSeq = snap.seq;
   const busy = snap.runtime.busy;
+  state.cancelStatus = busy?.cancelStatus ?? null;
   setBusy(busy != null);
   if (busy == null) clearCancelTimer();
   applyRuntimePlan(snap.runtime.plan ?? null);
@@ -381,6 +385,7 @@ export function applyStatePatch(patchEvent: {
   const r = patchEvent.patch.runtime;
   if (r && "busy" in r) {
     const busy = r.busy ?? null;
+    state.cancelStatus = busy?.cancelStatus ?? null;
     setBusy(busy != null);
     if (busy == null) clearCancelTimer();
   }
@@ -422,6 +427,7 @@ export async function reloadSnapshot(
 
 export function setBusy(on: boolean) {
   state.busy = on;
+  if (!on) state.cancelStatus = null;
   if (on) {
     dom.prompt.classList.add("busy");
   } else {
@@ -471,6 +477,7 @@ export function resetSessionUI({
   state.currentAssistantText = "";
   state.currentThinkingEl = null;
   state.currentThinkingText = "";
+  state.cancelStatus = null;
   state.plan = null;
   state.pendingAttachments.length = 0;
   state.followMessages = true;
@@ -514,11 +521,11 @@ export function resetSessionUI({
 
 // Send cancel without UI side-effect — callers add their own feedback.
 // The backend (session-state.ts `armCancelSafety`) owns the safety net that
-// force-clears busy if the agent fails to acknowledge the cancel within the
-// configured timeout; the resulting `state_patch` lands here via SSE.
-export function sendCancel() {
+// marks the request unconfirmed if the agent does not acknowledge it within
+// the configured timeout; the resulting `state_patch` lands here via SSE.
+export async function sendCancel(): Promise<boolean> {
   if (!state.busy || !state.sessionId) return false;
-  api.cancelSession(state.sessionId).catch(() => {});
+  await api.cancelSession(state.sessionId);
   return true;
 }
 

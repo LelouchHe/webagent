@@ -52,6 +52,7 @@ import {
   classifyPermissionOption,
   normalizeEventsResponse,
   isPromptIdle,
+  normalizeAssistantDisplayText,
 } from "./event-interpreter.ts";
 import {
   renderContentEvent,
@@ -424,7 +425,10 @@ async function _loadNewEventsImpl(sid: string): Promise<boolean> {
       ) {
         resetMarkdownStream(primed as HTMLElement);
         (primed as HTMLElement).replaceChildren();
-        updateMarkdownStream(primed as HTMLElement, raw);
+        updateMarkdownStream(
+          primed as HTMLElement,
+          normalizeAssistantDisplayText(raw),
+        );
         enhanceCodeBlocks(primed);
       } else if (primed.classList.contains("thinking")) {
         const content = primed.querySelector(".thinking-content");
@@ -493,7 +497,10 @@ async function _loadNewEventsImpl(sid: string): Promise<boolean> {
         lastInDom.setAttribute("data-raw", combined);
         resetMarkdownStream(lastInDom);
         lastInDom.replaceChildren();
-        updateMarkdownStream(lastInDom, combined);
+        updateMarkdownStream(
+          lastInDom,
+          normalizeAssistantDisplayText(combined),
+        );
         enhanceCodeBlocks(lastInDom);
         firstInFrag.remove();
       } else if (
@@ -1000,7 +1007,10 @@ function handleReplayContentEvent(
         lastChild.setAttribute("data-raw", combined);
         resetMarkdownStream(lastChild);
         lastChild.replaceChildren();
-        updateMarkdownStream(lastChild, combined);
+        updateMarkdownStream(
+          lastChild,
+          normalizeAssistantDisplayText(combined),
+        );
         enhanceCodeBlocks(lastChild);
         break;
       }
@@ -1140,7 +1150,10 @@ function doAssistantRender() {
   const el = state.currentAssistantEl;
   if (!el) return;
   const t0 = performance.now();
-  updateMarkdownStream(el, state.currentAssistantText);
+  updateMarkdownStream(
+    el,
+    normalizeAssistantDisplayText(state.currentAssistantText),
+  );
   const tRender = performance.now();
   const ms = tRender - t0;
   // Two-tier slow-frame logging:

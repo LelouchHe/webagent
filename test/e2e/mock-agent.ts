@@ -73,6 +73,7 @@ class MockAgent implements Agent {
   private conn: AgentSideConnection;
   private toolCallCounter = 0;
   private pendingPrompts = new Map<string, PendingPrompt>();
+  private retryCancelAttempts = new Map<string, number>();
 
   constructor(conn: AgentSideConnection) {
     this.conn = conn;
@@ -161,6 +162,13 @@ class MockAgent implements Agent {
       .map((part) => part.text)
       .join(" ")
       .trim();
+
+    if (text.startsWith("E2E_RETRY_CANCEL")) {
+      this.retryCancelAttempts.set(params.sessionId, 0);
+      return await new Promise<PromptResponse>((resolve) => {
+        this.pendingPrompts.set(params.sessionId, { resolve });
+      });
+    }
 
     if (text.startsWith("E2E_SLOW_PLAN")) {
       await this.conn.sessionUpdate({
@@ -426,6 +434,12 @@ class MockAgent implements Agent {
   async cancel(params: CancelNotification): Promise<void> {
     const pending = this.pendingPrompts.get(params.sessionId);
     if (!pending) return;
+    const retryAttempts = this.retryCancelAttempts.get(params.sessionId);
+    if (retryAttempts === 0) {
+      this.retryCancelAttempts.set(params.sessionId, 1);
+      return;
+    }
+    this.retryCancelAttempts.delete(params.sessionId);
     this.pendingPrompts.delete(params.sessionId);
     pending.resolve({ stopReason: "cancelled" });
   }

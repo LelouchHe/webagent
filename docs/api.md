@@ -766,11 +766,23 @@ Kill the running bash process in a session.
 
 Cancel the active agent prompt and/or bash process in a session.
 
-**Response** `200`:
+Agent prompts use ACP's asynchronous cancel notification. The session remains
+busy until the agent returns a terminal prompt response. Repeating this request
+while the prompt remains active resends the notification.
+
+**Response** `202` for an agent prompt:
 
 ```json
-{ "ok": true }
+{ "ok": true, "status": "cancelling" }
 ```
+
+**Response** `200` when only a WebAgent-owned bash process was stopped:
+
+```json
+{ "ok": true, "status": "cancelled" }
+```
+
+**Errors:** `404`, `409` (session has no active work), `503`
 
 ---
 

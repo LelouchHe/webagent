@@ -945,27 +945,48 @@ export function createRequestHandler(
         );
         if (replayed) return;
 
+        const hadAgentPrompt = sessions?.activePrompts.has(sessionId) ?? false;
+        const hadBash = sessions?.runningBashProcs.has(sessionId) ?? false;
+        if (!hadAgentPrompt && !hadBash) {
+          json(res, HTTP_STATUS.CONFLICT, { error: "Session is not active" });
+          return;
+        }
+
         // Kill running bash process if any
         const proc = sessions?.runningBashProcs.get(sessionId);
         if (proc) {
           interruptBashProc(proc);
           sessions!.runningBashProcs.delete(sessionId);
+          sessions!.syncBusy(sessionId);
         }
-        // Cancel agent prompt
-        if (sessions?.activePrompts.has(sessionId)) {
+        // ACP cancel is a notification, not an acknowledgement. Keep the
+        // prompt active until its prompt response supplies the terminal stop
+        // reason, and allow repeated requests to resend the notification.
+        if (hadAgentPrompt && sessions) {
+          const previousCancelStatus =
+            sessions.state.getState(sessionId).runtime.busy?.cancelStatus ??
+            null;
+          rlog.info("cancel requested", {
+            sessionId: sessionId.slice(0, 8),
+            retry: previousCancelStatus !== null,
+            previousStatus: previousCancelStatus,
+          });
           await bridge.cancel(sessionId);
-          sessions.activePrompts.delete(sessionId);
+          sessions.state.markCancelRequested(sessionId);
         }
-        // Arm backend safety net: if prompt_done doesn't arrive within the
-        // configured timeout, force-clear busy so the UI unstalls. Replaces
-        // the old frontend-side cancel timer.
+        // If prompt_done does not arrive, expose the lack of acknowledgement
+        // instead of pretending the prompt stopped.
         const cancelTimeout = deps.limits.cancel_timeout ?? 0;
-        if (sessions && cancelTimeout > 0)
+        if (hadAgentPrompt && sessions && cancelTimeout > 0)
           sessions.state.armCancelSafety(sessionId, cancelTimeout);
         sessions?.syncBusy(sessionId);
-        const okBody = { ok: true };
-        saveClientOpResult(store, opId, sessionId, HTTP_STATUS.OK, okBody);
-        json(res, HTTP_STATUS.OK, okBody);
+        const status = hadAgentPrompt ? HTTP_STATUS.ACCEPTED : HTTP_STATUS.OK;
+        const okBody = {
+          ok: true,
+          status: hadAgentPrompt ? "cancelling" : "cancelled",
+        };
+        saveClientOpResult(store, opId, sessionId, status, okBody);
+        json(res, status, okBody);
         return;
       }
 

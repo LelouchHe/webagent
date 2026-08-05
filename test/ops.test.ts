@@ -162,9 +162,13 @@ describe("Operations REST API", () => {
         "POST",
         `/api/v1/sessions/${sessionId}/cancel`,
       );
-      assert.equal(res.status, 200);
-      assert.deepEqual(JSON.parse(res.body), { ok: true });
+      assert.equal(res.status, 202);
+      assert.deepEqual(JSON.parse(res.body), {
+        ok: true,
+        status: "cancelling",
+      });
       assert.ok(cancelCalled);
+      assert.equal(sessions.activePrompts.has(sessionId), true);
     });
 
     it("kills running bash process", async () => {
@@ -187,18 +191,24 @@ describe("Operations REST API", () => {
         `/api/v1/sessions/${sessionId}/cancel`,
       );
       assert.equal(res.status, 200);
+      assert.deepEqual(JSON.parse(res.body), {
+        ok: true,
+        status: "cancelled",
+      });
       assert.ok(killed);
     });
 
-    it("returns 200 even when session is idle (idempotent)", async () => {
+    it("returns 409 when session is idle", async () => {
       const sessionId = await createSession();
       const res = await makeRequest(
         port,
         "POST",
         `/api/v1/sessions/${sessionId}/cancel`,
       );
-      assert.equal(res.status, 200);
-      assert.deepEqual(JSON.parse(res.body), { ok: true });
+      assert.equal(res.status, 409);
+      assert.deepEqual(JSON.parse(res.body), {
+        error: "Session is not active",
+      });
     });
 
     it("returns 404 for unknown session", async () => {
@@ -257,7 +267,7 @@ describe("Operations REST API", () => {
         undefined,
         headers,
       );
-      assert.equal(res1.status, 200);
+      assert.equal(res1.status, 202);
       assert.equal(callCount, 1);
 
       const res2 = await makeRequest(
@@ -267,11 +277,10 @@ describe("Operations REST API", () => {
         undefined,
         headers,
       );
-      assert.equal(res2.status, 200);
+      assert.equal(res2.status, 202);
       assert.equal(res2.body, res1.body);
       assert.equal(callCount, 1);
 
-      sessions.activePrompts.add(sessionId);
       const res3 = await makeRequest(
         port,
         "POST",
@@ -279,7 +288,7 @@ describe("Operations REST API", () => {
         undefined,
         { "X-Client-Op-Id": "op-cancel-2" },
       );
-      assert.equal(res3.status, 200);
+      assert.equal(res3.status, 202);
       assert.equal(callCount, 2);
     });
   });

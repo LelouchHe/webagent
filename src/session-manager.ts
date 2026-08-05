@@ -600,7 +600,9 @@ export class SessionManager {
     }
     const nextPromptId =
       kind === "agent" ? (promptId ?? current?.promptId ?? null) : null;
-    if (current?.kind === kind && current.promptId === nextPromptId) return;
+    const sameWork =
+      current?.kind === kind && current.promptId === nextPromptId;
+    if (sameWork) return;
     this.state.patch(sessionId, {
       runtime: {
         busy: {
@@ -608,6 +610,7 @@ export class SessionManager {
           since:
             current?.kind === kind ? current.since : new Date().toISOString(),
           promptId: nextPromptId,
+          cancelStatus: null,
         },
       },
     });

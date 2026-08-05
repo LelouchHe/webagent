@@ -164,6 +164,54 @@ describe("Session REST API", () => {
       assert.ok(Array.isArray(body.configOptions));
     });
 
+    describe("POST /api/v1/sessions/:id/cancel", () => {
+      it("resends cancel while the agent prompt remains active", async () => {
+        store.createSession("s-cancel", tmpDir);
+        sessions.activePrompts.add("s-cancel");
+        sessions.syncBusy("s-cancel", "p1");
+        let cancelCalls = 0;
+        mockBridge.cancel = async () => {
+          cancelCalls++;
+        };
+
+        const first = await makeRequest(
+          port,
+          "POST",
+          "/api/v1/sessions/s-cancel/cancel",
+          "{}",
+        );
+        const second = await makeRequest(
+          port,
+          "POST",
+          "/api/v1/sessions/s-cancel/cancel",
+          "{}",
+        );
+
+        assert.equal(first.status, 202);
+        assert.equal(second.status, 202);
+        assert.equal(cancelCalls, 2);
+        assert.equal(sessions.activePrompts.has("s-cancel"), true);
+        assert.equal(
+          sessions.state.getState("s-cancel").runtime.busy?.cancelStatus,
+          "requested",
+        );
+      });
+
+      it("rejects cancel when no work is active", async () => {
+        store.createSession("s-idle", tmpDir);
+
+        const res = await makeRequest(
+          port,
+          "POST",
+          "/api/v1/sessions/s-idle/cancel",
+          "{}",
+        );
+
+        assert.equal(res.status, 409);
+        assert.equal(JSON.parse(res.body).error, "Session is not active");
+      });
+    });
+
     it("creates a session with custom cwd", async () => {
       const res = await makeRequest(
         port,

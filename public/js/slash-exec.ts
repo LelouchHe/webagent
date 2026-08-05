@@ -205,7 +205,11 @@ export async function handleSlashCommand(text: string): Promise<boolean> {
       }
       const exitId = state.sessionId;
       try {
-        if (state.busy) sendCancel();
+        if (state.busy) {
+          void sendCancel().catch((err: unknown) => {
+            addSystem(`err: cancel failed — ${String(err)}`);
+          });
+        }
         api.deleteSession(exitId).catch(() => {});
         await fallbackToNextSession(exitId, state.sessionCwd ?? undefined);
       } catch {
@@ -357,8 +361,11 @@ export async function handleSlashCommand(text: string): Promise<boolean> {
       // only mean "cancel the busy turn". The ^C button covers the
       // preview-cancel case.
       if (state.busy) {
-        sendCancel();
-        addSystem("^C");
+        void sendCancel()
+          .then(() => addSystem("^C cancelling…"))
+          .catch((err: unknown) => {
+            addSystem(`err: cancel failed — ${String(err)}`);
+          });
       } else {
         addSystem("Nothing to cancel.");
       }

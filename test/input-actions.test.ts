@@ -61,6 +61,15 @@ describe("input-actions", () => {
       assert.equal(dom.sendBtn.textContent, "^C");
       assert.ok(dom.sendBtn.classList.contains("cancel"));
     });
+
+    it("keeps cancel retryable after acknowledgement timeout", () => {
+      state.busy = true;
+      state.cancelStatus = "unconfirmed";
+      actions.applyInputActions();
+      assert.equal(dom.sendBtn.textContent, "^C");
+      assert.match(dom.sendBtn.title, /Retry cancel/);
+      assert.equal(dom.sendBtn.disabled, false);
+    });
   });
 
   describe("preview mode", () => {

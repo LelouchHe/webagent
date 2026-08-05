@@ -20,3 +20,25 @@ test("an in-flight prompt can be cancelled from the UI", async ({ page }) => {
   await expect(page.locator("#input")).toBeEnabled();
   await expect(page.locator(".msg.assistant")).toHaveCount(0);
 });
+
+test("cancel can be retried until the agent acknowledges it", async ({
+  page,
+}) => {
+  await gotoConnected(page);
+  await createNewSession(page);
+
+  await sendPrompt(page, "E2E_RETRY_CANCEL ignore the first request");
+  const cancel = page.locator("#send-btn");
+  await expect(cancel).toHaveText("^C");
+
+  await cancel.click();
+  await expect(cancel).toHaveText("^C");
+  await expect(cancel).toHaveAttribute(
+    "title",
+    /waiting for agent acknowledgement/,
+  );
+
+  await cancel.click();
+  await expect(page.locator("#messages")).toContainText("retrying cancel");
+  await expect(cancel).toHaveText("↵");
+});

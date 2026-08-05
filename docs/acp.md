@@ -5,6 +5,9 @@ WebAgent uses ACP for the core agent loop: session creation / restore, prompt tu
 ## Core ACP Surface
 
 - Session lifecycle goes through ACP (`newSession`, `loadSession`, `prompt`, `cancel`)
+- ACP cancel is a notification rather than an acknowledgement. WebAgent keeps
+  the prompt active until its prompt response supplies the terminal stop reason;
+  timeout only marks the request unconfirmed.
 - The UI renders a subset of ACP session updates: assistant text, thinking text, tool calls, tool call updates, and plans
 - Session history is persisted locally and restored after server restart
 

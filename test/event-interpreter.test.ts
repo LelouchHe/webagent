@@ -24,7 +24,26 @@ import {
   parseDiff,
   normalizeEventsResponse,
   isPromptIdle,
+  normalizeAssistantDisplayText,
 } from "../public/js/event-interpreter.ts";
+
+describe("normalizeAssistantDisplayText", () => {
+  it("removes unverified user attribution without changing raw context", () => {
+    assert.equal(
+      normalizeAssistantDisplayText(
+        "Info: Operation cancelled by usernext response",
+      ),
+      "Info: Operation cancelled — next response",
+    );
+  });
+
+  it("leaves unrelated assistant text unchanged", () => {
+    assert.equal(
+      normalizeAssistantDisplayText("normal response"),
+      "normal response",
+    );
+  });
+});
 
 // --- interpretToolCall ---
 

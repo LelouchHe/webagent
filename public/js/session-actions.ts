@@ -16,7 +16,11 @@ export async function replaceCurrentSession({
 
   const oldId = state.sessionId;
   const nextCwd = cwd ?? state.sessionCwd ?? undefined;
-  if (state.busy) sendCancel();
+  if (state.busy) {
+    void sendCancel().catch((err: unknown) => {
+      addSystem(`err: cancel failed — ${String(err)}`);
+    });
+  }
   resetSessionUI();
   addSystem(
     showCwd && nextCwd
