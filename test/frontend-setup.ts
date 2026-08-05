@@ -96,6 +96,7 @@ export function resetState(state: any, dom: any) {
   state.pendingPromptDone = false;
   state.turnEnded = false;
   state.newTurnStarted = false;
+  state.awaitingOwnUserEcho = false;
   state.sentMessageForSession = null;
   state.cancelTimeout = 10_000;
   state.serverVersion = null;

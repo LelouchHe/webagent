@@ -181,6 +181,40 @@ describe("input", () => {
     assert.equal(state.currentAssistantText, "new response");
   });
 
+  it("ignores prior prompt_done until the optimistic user echo arrives", () => {
+    setFetch(() => ({
+      ok: true,
+      json: async () => ({ status: "accepted" }),
+      text: async () => '{"status":"accepted"}',
+    }));
+    state.sessionId = "s1";
+    state.clientId = "cl-1";
+    dom.input.value = "next question";
+
+    clickSend();
+    eventsModule.handleEvent({
+      type: "prompt_done",
+      sessionId: "s1",
+      stopReason: "end_turn",
+    });
+    assert.equal(state.busy, true);
+    assert.equal(state.turnEnded, false);
+
+    eventsModule.handleEvent({
+      type: "user_message",
+      sessionId: "s1",
+      text: "next question",
+    });
+    eventsModule.handleEvent({
+      type: "message_chunk",
+      sessionId: "s1",
+      text: "new response",
+    });
+
+    assert.equal(state.awaitingOwnUserEcho, false);
+    assert.equal(state.currentAssistantText, "new response");
+  });
+
   it("routes bang-prefixed input to bash execution", () => {
     setFetch(() => ({
       ok: true,

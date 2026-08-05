@@ -109,6 +109,7 @@ function sendMessage() {
   // the next response is appended above the user's new message.
   finishThinking();
   finishAssistant();
+  state.awaitingOwnUserEcho = true;
 
   // Render user_message body locally with attachment markers so the on-send
   // bubble matches the shape SSE replay produces after reload.
@@ -182,6 +183,7 @@ function sendMessage() {
       if (!isConnected()) {
         msgEl.remove();
         addSystem("warn: Not connected, please retry");
+        state.awaitingOwnUserEcho = false;
         setBusy(false);
         return;
       }
@@ -239,6 +241,7 @@ function handleSendError(
     attachments: typeof state.pendingAttachments;
   },
 ) {
+  state.awaitingOwnUserEcho = false;
   // Without this, a fire-and-forget POST that returns non-2xx (e.g. 500
   // when ensureResumed fails because the agent doesn't recognize the
   // session) leaves the UI stuck in busy state with no visible reason.

@@ -1635,6 +1635,7 @@ export function handleEvent(msg: AgentEvent) {
       // rendered the message and set busy in sendPrompt().
       if (state.sentMessageForSession === msg.sessionId) {
         state.sentMessageForSession = null;
+        state.awaitingOwnUserEcho = false;
         break;
       }
       // A new turn is starting (from another client's broadcast).
@@ -1796,6 +1797,9 @@ export function handleEvent(msg: AgentEvent) {
 
     case "prompt_done": {
       clearCancelTimer();
+      if (state.awaitingOwnUserEcho) {
+        break;
+      }
       if (msg.stopReason === "cancelled" && state.newTurnStarted) {
         // This prompt_done belongs to a previous turn — a new turn has already
         // started (signaled by user_message from another client).  Don't clobber

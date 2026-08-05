@@ -124,6 +124,7 @@ export const state = {
   // Set by sendPrompt to suppress the SSE echo of our own user_message
   // (SSE broadcasts to all clients including the sender, unlike WS which excluded sender)
   sentMessageForSession: null as string | null,
+  awaitingOwnUserEcho: false,
   // Set by bash input to suppress the SSE echo of our own bash_command
   sentBashForSession: null as string | null,
   cancelTimeout: 10_000,
@@ -693,6 +694,7 @@ export function resetSessionUI({
   state.pendingPromptDone = false;
   state.turnEnded = false;
   state.newTurnStarted = false;
+  state.awaitingOwnUserEcho = false;
   if (state._cancelTimerId != null) clearTimeout(state._cancelTimerId);
   state._cancelTimerId = null;
   state.lastEventSeq = 0;
