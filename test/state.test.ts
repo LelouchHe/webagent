@@ -885,6 +885,46 @@ describe("state", () => {
       assert.equal(mod.state.runtimeHydrationSessionId, null);
     });
 
+    it("newest same-session hydration applies patches buffered after supersession", async () => {
+      const snapshots: Array<(value: unknown) => void> = [];
+      globalThis.fetch = (async () => ({
+        ok: true,
+        status: 200,
+        text: async () =>
+          JSON.stringify(
+            await new Promise((resolve) => {
+              snapshots.push(resolve);
+            }),
+          ),
+      })) as any;
+
+      const older = mod.hydrateSessionRuntime("A");
+      const newer = mod.hydrateSessionRuntime("A");
+      for (let i = 0; i < 10 && snapshots.length < 2; i++) {
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+      assert.equal(snapshots.length, 2);
+
+      snapshots[0](snap(1, null));
+      assert.equal(await older, true);
+      mod.state.pendingNavigationEvents.push({
+        type: "state_patch",
+        sessionId: "A",
+        seq: 2,
+        patch: {
+          runtime: {
+            busy: { kind: "agent", since: "new", promptId: "p1" },
+          },
+        },
+      });
+      snapshots[1](snap(0, null));
+
+      assert.equal(await newer, true);
+      assert.equal(mod.state.lastStateSeq, 2);
+      assert.equal(mod.state.busy, true);
+      assert.equal(mod.state.pendingNavigationEvents.length, 0);
+    });
+
     it("applySnapshot populates display fallback when configOptions empty", () => {
       mod.state.configOptions = [];
       mod.applySnapshot(snap(1, null, { mode: "#plan", model: "gpt-5.4" }));

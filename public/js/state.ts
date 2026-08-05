@@ -471,6 +471,16 @@ function discardNavigationStatePatches(sessionId: string): void {
 
 let runtimeHydrationToken = 0;
 
+function applyBufferedStatePatches(sessionId: string): boolean {
+  for (const patch of takeNavigationStatePatches(sessionId)) {
+    if (patch.seq <= state.lastStateSeq) continue;
+    if (!applyStatePatch({ seq: patch.seq, patch: patch.patch })) {
+      return false;
+    }
+  }
+  return true;
+}
+
 export async function hydrateSessionRuntime(
   sessionId: string,
   isStillCurrent?: () => boolean,
@@ -481,17 +491,12 @@ export async function hydrateSessionRuntime(
     for (let attempt = 0; attempt < 3; attempt++) {
       const result = await reloadSnapshotResult(sessionId, isStillCurrent);
       if (result.status === "stale") return false;
-      if (result.status === "superseded") return true;
-      if (result.status === "failed") continue;
-      let patchesApplied = true;
-      for (const patch of takeNavigationStatePatches(sessionId)) {
-        if (patch.seq <= state.lastStateSeq) continue;
-        if (!applyStatePatch({ seq: patch.seq, patch: patch.patch })) {
-          patchesApplied = false;
-          break;
-        }
+      if (result.status === "superseded") {
+        if (applyBufferedStatePatches(sessionId)) return true;
+        continue;
       }
-      if (patchesApplied) return true;
+      if (result.status === "failed") continue;
+      if (applyBufferedStatePatches(sessionId)) return true;
     }
     return false;
   } finally {
