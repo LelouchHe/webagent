@@ -1288,10 +1288,10 @@ function handleReplayContentEvent(
         type === "user_message" &&
         state.awaitingOwnUserEcho &&
         events[idx]?.session_id === state.sentMessageForSession &&
-        events[idx].seq > state.sentMessageAfterSeq
+        d.clientOpId === state.sentMessageOpId
       ) {
         state.awaitingOwnUserEcho = false;
-        state.sentMessageAfterSeq = 0;
+        state.sentMessageOpId = null;
       }
       const el = renderContentEvent(type, d, hooks);
       if (el) {
@@ -1643,9 +1643,12 @@ export function handleEvent(msg: AgentEvent) {
       // SSE broadcasts to all clients including the sender (unlike WS which
       // excluded the sender). Detect our own echo and skip it — we already
       // rendered the message and set busy in sendPrompt().
-      if (state.sentMessageForSession === msg.sessionId) {
+      if (
+        state.sentMessageForSession === msg.sessionId &&
+        state.sentMessageOpId === msg.clientOpId
+      ) {
         state.sentMessageForSession = null;
-        state.sentMessageAfterSeq = 0;
+        state.sentMessageOpId = null;
         state.awaitingOwnUserEcho = false;
         break;
       }

@@ -1973,7 +1973,7 @@ describe("events", () => {
     it("reconciles an optimistic user echo from replay", () => {
       state.awaitingOwnUserEcho = true;
       state.sentMessageForSession = "s1";
-      state.sentMessageAfterSeq = 0;
+      state.sentMessageOpId = "op-1";
       const storedEvents = [
         {
           seq: 1,
@@ -1983,16 +1983,21 @@ describe("events", () => {
         },
       ] as any;
 
-      events.replayEvent("user_message", { text: "hello" }, storedEvents, 0);
+      events.replayEvent(
+        "user_message",
+        { text: "hello", clientOpId: "op-1" },
+        storedEvents,
+        0,
+      );
 
       assert.equal(state.awaitingOwnUserEcho, false);
       assert.equal(state.sentMessageForSession, "s1");
     });
 
-    it("does not reconcile an optimistic echo from older history", () => {
+    it("does not reconcile an optimistic echo from another operation", () => {
       state.awaitingOwnUserEcho = true;
       state.sentMessageForSession = "s1";
-      state.sentMessageAfterSeq = 10;
+      state.sentMessageOpId = "op-new";
       const storedEvents = [
         {
           seq: 5,
@@ -2002,17 +2007,22 @@ describe("events", () => {
         },
       ] as any;
 
-      events.replayEvent("user_message", { text: "old" }, storedEvents, 0);
+      events.replayEvent(
+        "user_message",
+        { text: "old", clientOpId: "op-old" },
+        storedEvents,
+        0,
+      );
 
       assert.equal(state.awaitingOwnUserEcho, true);
-      assert.equal(state.sentMessageAfterSeq, 10);
+      assert.equal(state.sentMessageOpId, "op-new");
     });
 
     it("ignores replayed prior prompt_done until the own user echo", () => {
       state.busy = true;
       state.awaitingOwnUserEcho = true;
       state.sentMessageForSession = "s1";
-      state.sentMessageAfterSeq = 10;
+      state.sentMessageOpId = "op-new";
       const storedEvents = [
         {
           seq: 10,
@@ -2035,7 +2045,12 @@ describe("events", () => {
         0,
       );
       assert.equal(state.busy, true);
-      events.replayEvent("user_message", { text: "new" }, storedEvents, 1);
+      events.replayEvent(
+        "user_message",
+        { text: "new", clientOpId: "op-new" },
+        storedEvents,
+        1,
+      );
       assert.equal(state.awaitingOwnUserEcho, false);
     });
 

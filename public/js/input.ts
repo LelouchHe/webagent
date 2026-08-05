@@ -110,6 +110,8 @@ function sendMessage() {
   finishThinking();
   finishAssistant();
   state.awaitingOwnUserEcho = true;
+  const promptOpId = api.newOpId();
+  state.sentMessageOpId = promptOpId;
 
   // Render user_message body locally with attachment markers so the on-send
   // bubble matches the shape SSE replay produces after reload.
@@ -220,15 +222,17 @@ function sendMessage() {
           state.sessionId!,
           text || "What is in this attachment?",
           refs,
+          promptOpId,
         )
         .catch(onSendError);
     });
   } else {
-    api.sendMessage(state.sessionId, text).catch(onSendError);
+    api
+      .sendMessage(state.sessionId, text, undefined, promptOpId)
+      .catch(onSendError);
   }
   state.turnEnded = false;
   state.sentMessageForSession = state.sessionId;
-  state.sentMessageAfterSeq = state.lastEventSeq;
   setBusy(true);
   showWaiting();
 }
@@ -243,7 +247,7 @@ function handleSendError(
   },
 ) {
   state.awaitingOwnUserEcho = false;
-  state.sentMessageAfterSeq = 0;
+  state.sentMessageOpId = null;
   // Without this, a fire-and-forget POST that returns non-2xx (e.g. 500
   // when ensureResumed fails because the agent doesn't recognize the
   // session) leaves the UI stuck in busy state with no visible reason.

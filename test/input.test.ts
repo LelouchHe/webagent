@@ -204,6 +204,7 @@ describe("input", () => {
       type: "user_message",
       sessionId: "s1",
       text: "next question",
+      clientOpId: state.sentMessageOpId,
     });
     eventsModule.handleEvent({
       type: "message_chunk",

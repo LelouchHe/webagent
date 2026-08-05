@@ -192,6 +192,7 @@ export type AgentEvent =
       type: "user_message";
       sessionId: string;
       text: string;
+      clientOpId?: string;
       attachments?: Array<{
         kind: "image" | "file";
         attachmentId: string;
