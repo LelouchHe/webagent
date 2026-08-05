@@ -283,6 +283,25 @@ describe("state", () => {
       }
     });
 
+    it("releases failed create ownership even after generation changes", async () => {
+      mock.timers.enable({ apis: ["setTimeout"] });
+      try {
+        globalThis.fetch = async () => {
+          throw new Error("network");
+        };
+
+        mod.requestNewSession();
+        await new Promise((resolve) => setImmediate(resolve));
+        assert.ok(mod.state.pendingNewSessionOpId);
+        mod.state.sessionSwitchGen++;
+
+        mock.timers.tick(3000);
+        assert.equal(mod.state.pendingNewSessionOpId, null);
+      } finally {
+        mock.timers.reset();
+      }
+    });
+
     it("serializes rapid new-session requests", async () => {
       let createCalls = 0;
       globalThis.fetch = () =>
@@ -752,6 +771,41 @@ describe("state", () => {
       assert.ok(result);
       assert.equal(mod.state.sessionSwitchGen, startGen);
       assert.equal(mod.state.lastStateSeq, 9);
+      assert.equal(mod.state.busy, true);
+    });
+
+    it("hydrateSessionRuntime treats a newer state patch as authoritative", async () => {
+      mod.state.lastStateSeq = 5;
+      let resolveSnapshot!: (value: unknown) => void;
+      const pendingSnapshot = new Promise((resolve) => {
+        resolveSnapshot = resolve;
+      });
+      globalThis.fetch = (async () => ({
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify(await pendingSnapshot),
+      })) as any;
+
+      const hydration = mod.hydrateSessionRuntime("s1");
+      assert.equal(
+        mod.applyStatePatch({
+          seq: 6,
+          patch: {
+            runtime: {
+              busy: { kind: "agent", since: "new", promptId: "p2" },
+            },
+          },
+        }),
+        true,
+      );
+      resolveSnapshot(
+        snap(5, null, {
+          lastEventSeq: 5,
+        }),
+      );
+
+      assert.equal(await hydration, true);
+      assert.equal(mod.state.lastStateSeq, 6);
       assert.equal(mod.state.busy, true);
     });
 

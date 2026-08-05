@@ -267,6 +267,23 @@ describe("shared session navigation", () => {
     assert.equal(state.sessionId, "current-session");
   });
 
+  it("same-session selection does not cancel an in-flight create", async () => {
+    state.sessionId = "current-session";
+    state.awaitingNewSession = true;
+    state.newSessionRequestInFlight = true;
+    state.pendingNewSessionOpId = "create-op";
+    const switchGeneration = state.sessionSwitchGen;
+
+    assert.equal(
+      await navigation.switchToSession("current-session"),
+      "unchanged",
+    );
+
+    assert.equal(state.sessionSwitchGen, switchGeneration);
+    assert.equal(state.awaitingNewSession, true);
+    assert.equal(state.pendingNewSessionOpId, "create-op");
+  });
+
   it("failed notification consume does not invalidate an existing switch", async () => {
     state.sessionId = "current-session";
     let releaseHistory!: (response: Response) => void;

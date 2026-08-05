@@ -410,6 +410,18 @@ export async function reloadSnapshot(
   sessionId: string,
   isStillCurrent?: () => boolean,
 ): Promise<SessionSnapshot | null> {
+  const result = await reloadSnapshotResult(sessionId, isStillCurrent);
+  return result.status === "applied" ? result.snapshot : null;
+}
+
+type SnapshotReloadResult =
+  | { status: "applied"; snapshot: SessionSnapshot }
+  | { status: "superseded" | "stale" | "failed" };
+
+async function reloadSnapshotResult(
+  sessionId: string,
+  isStillCurrent?: () => boolean,
+): Promise<SnapshotReloadResult> {
   // Capture sessionSwitchGen so an in-flight stale snapshot can be dropped
   // when a newer switch bumps the generation before the fetch resolves.
   // Without this guard, an A→B→A rapid switch could see A's slow response
@@ -422,15 +434,16 @@ export async function reloadSnapshot(
     )) as unknown as SessionSnapshot;
     if (
       state.sessionSwitchGen !== genAtStart ||
-      state.lastStateSeq !== seqAtStart ||
-      snap.seq < state.lastStateSeq ||
       (isStillCurrent && !isStillCurrent())
     )
-      return null;
+      return { status: "stale" };
+    if (state.lastStateSeq !== seqAtStart) {
+      return { status: "superseded" };
+    }
     applySnapshot(snap);
-    return snap;
+    return { status: "applied", snapshot: snap };
   } catch {
-    return null;
+    return { status: "failed" };
   }
 }
 
@@ -454,9 +467,10 @@ export async function hydrateSessionRuntime(
   isStillCurrent?: () => boolean,
 ): Promise<boolean> {
   for (let attempt = 0; attempt < 3; attempt++) {
-    const snapshot = await reloadSnapshot(sessionId, isStillCurrent);
-    if (!snapshot) {
-      if (isStillCurrent && !isStillCurrent()) return false;
+    const result = await reloadSnapshotResult(sessionId, isStillCurrent);
+    if (result.status === "stale") return false;
+    if (result.status === "superseded") return true;
+    if (result.status === "failed") {
       continue;
     }
     let patchesApplied = true;
@@ -490,7 +504,18 @@ export function requestNewSession({
   cwd,
   inheritFromSessionId = state.sessionId,
 }: { cwd?: string; inheritFromSessionId?: string | null } = {}) {
-  if (state.newSessionRequestInFlight || state.pendingNewSessionOpId) return;
+  void createNewSessionRequest({ cwd, inheritFromSessionId });
+}
+
+export async function createNewSessionRequest({
+  cwd,
+  inheritFromSessionId = state.sessionId,
+}: {
+  cwd?: string;
+  inheritFromSessionId?: string | null;
+} = {}): Promise<boolean> {
+  if (state.newSessionRequestInFlight || state.pendingNewSessionOpId)
+    return false;
   invalidateNavigationLoads();
   state.sessionSwitchGen++;
   state.messageNavigationGen++;
@@ -501,51 +526,52 @@ export function requestNewSession({
   state.newSessionRequestInFlight = true;
   const clientOpId = api.newOpId();
   state.pendingNewSessionOpId = clientOpId;
-  api
-    .createSession({ cwd, inheritFromSessionId }, clientOpId)
-    .then((session) => {
-      state.newSessionRequestInFlight = false;
-      if (generation !== state.sessionSwitchGen) {
-        if (state.pendingNewSessionOpId === clientOpId) {
-          finishNewSessionRequest();
-        }
-        return;
-      }
-      if (typeof session.id !== "string") {
-        throw new Error("Session create response is missing an id");
-      }
-      finishNewSessionRequest();
-      createdSessionActivator(session);
-    })
-    .catch(() => {
-      if (
-        generation === state.sessionSwitchGen &&
-        state.pendingNewSessionOpId === clientOpId
-      ) {
-        // The server broadcasts session_created before writing the HTTP
-        // response. Keep ownership briefly so that matching SSE can recover
-        // an ambiguously committed create whose response was interrupted.
-        state._newSessionRecoveryTimer = setTimeout(() => {
-          if (
-            generation === state.sessionSwitchGen &&
-            state.pendingNewSessionOpId === clientOpId
-          ) {
-            state.pendingNewSessionOpId = null;
-            state.awaitingNewSession = false;
-          }
-          state._newSessionRecoveryTimer = null;
-        }, 3000);
-      }
-    })
-    .finally(() => {
-      state.newSessionRequestInFlight = false;
-      if (
-        generation !== state.sessionSwitchGen &&
-        state.pendingNewSessionOpId === clientOpId
-      ) {
+  try {
+    const session = await api.createSession(
+      { cwd, inheritFromSessionId },
+      clientOpId,
+    );
+    state.newSessionRequestInFlight = false;
+    if (generation !== state.sessionSwitchGen) {
+      if (state.pendingNewSessionOpId === clientOpId) {
         finishNewSessionRequest();
       }
-    });
+      return false;
+    }
+    if (typeof session.id !== "string") {
+      throw new Error("Session create response is missing an id");
+    }
+    finishNewSessionRequest();
+    createdSessionActivator(session);
+    return true;
+  } catch {
+    if (
+      generation === state.sessionSwitchGen &&
+      state.pendingNewSessionOpId === clientOpId
+    ) {
+      // The server broadcasts session_created before writing the HTTP
+      // response. Keep ownership briefly so that matching SSE can recover
+      // an ambiguously committed create whose response was interrupted.
+      state._newSessionRecoveryTimer = setTimeout(() => {
+        if (state.pendingNewSessionOpId === clientOpId) {
+          state.pendingNewSessionOpId = null;
+          if (generation === state.sessionSwitchGen) {
+            state.awaitingNewSession = false;
+          }
+        }
+        state._newSessionRecoveryTimer = null;
+      }, 3000);
+    }
+    return false;
+  } finally {
+    state.newSessionRequestInFlight = false;
+    if (
+      generation !== state.sessionSwitchGen &&
+      state.pendingNewSessionOpId === clientOpId
+    ) {
+      finishNewSessionRequest();
+    }
+  }
 }
 
 export function finishNewSessionRequest(): void {

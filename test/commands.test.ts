@@ -431,7 +431,8 @@ describe("commands", () => {
       );
       assert.ok(deleteCall, "expected DELETE for old session");
 
-      assert.equal(state.awaitingNewSession, true);
+      assert.equal(state.awaitingNewSession, false);
+      assert.equal(state.sessionId, "new-2");
       assert.ok(messageLines().includes("Clearing session…"));
     });
 

@@ -29,15 +29,15 @@ let attemptedStartupMessageId: string | null = null;
 export async function switchToSession(
   sessionId: string,
 ): Promise<NavigationResult> {
-  state.sessionSwitchGen++;
   state.messageNavigationGen++;
+  if (state.sessionId === sessionId) return "unchanged";
+  state.sessionSwitchGen++;
   const generation = state.sessionSwitchGen;
   const previousSessionId = state.sessionId;
   finishNewSessionRequest();
   state.awaitingNewSession = false;
   state.pendingNavigationSessionId = null;
   state.pendingNavigationEvents = [];
-  if (state.sessionId === sessionId) return "unchanged";
   setHashSessionId(sessionId);
   resetSessionUI();
   state.sessionId = null;
