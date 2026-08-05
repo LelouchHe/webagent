@@ -598,9 +598,10 @@ describe("AgentBridge", () => {
       );
       assert.equal(
         sessions.cancelledPromptSubmissions.size,
-        0,
-        "cancelledPromptSubmissions should be cleared",
+        1,
+        "pending submissions should remain cancellation tombstones",
       );
+      assert.equal(sessions.cancelledPromptSubmissions.has("s2"), true);
       assert.equal(
         sessions.pendingPermissions.size,
         0,

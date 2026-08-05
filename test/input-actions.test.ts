@@ -77,7 +77,7 @@ describe("input-actions", () => {
       state.cancelStatus = "requested";
       actions.applyInputActions();
       assert.equal(dom.sendBtn.textContent, "^C");
-      assert.equal(dom.sendBtn.title, "Force stop bash (SIGKILL)");
+      assert.equal(dom.sendBtn.title, "Force stop bash");
     });
   });
 

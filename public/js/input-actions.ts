@@ -85,7 +85,7 @@ export function resolveInputActions(): [InputAction, InputAction] {
   if (state.busy && !canSubmitWhileBusy(dom.input.value)) {
     const cancelTitle =
       state.busyKind === "bash" && state.cancelStatus === "requested"
-        ? "Force stop bash (SIGKILL)"
+        ? "Force stop bash"
         : state.busyKind === "bash"
           ? "Cancel bash (Ctrl+C)"
           : state.cancelStatus === "unconfirmed"

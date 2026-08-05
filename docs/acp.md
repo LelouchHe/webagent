@@ -54,10 +54,12 @@ session, 48 of 50 logical results had no closing `</final_answer>`. Clients must
 therefore use the ACP message/tool lifecycle as the boundary instead of waiting
 for a closing tag.
 
-WebAgent preserves the raw ACP payload in SQLite. Display egress removes the
-unverified `by user` attribution, but does not convert the artifact into a real
-session cancel. Further deduplication and upstream tracking are recorded in
-[issue #10](https://github.com/LelouchHe/webagent/issues/10).
+WebAgent preserves the emitted assistant text and normalized projections of the
+supported ACP events in SQLite; it does not retain every complete ACP
+notification. Display egress removes the unverified `by user` attribution, but
+does not convert the artifact into a real session cancel. Further deduplication
+and upstream tracking are recorded in [issue
+#10](https://github.com/LelouchHe/webagent/issues/10).
 
 ## ACP vs Vendor SDKs
 

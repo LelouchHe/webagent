@@ -770,8 +770,9 @@ Agent prompts use ACP's asynchronous cancel notification. The session remains
 busy until the agent returns a terminal prompt response. Repeating this request
 while the prompt remains active resends the notification.
 
-For a WebAgent-owned bash process, the first request sends `SIGINT`; a repeated
-request while the process is still running escalates to `SIGKILL`.
+For a WebAgent-owned bash process on POSIX, the first request sends `SIGINT`; a
+repeated request while the process is still running escalates to `SIGKILL`.
+Windows uses forced `taskkill` immediately.
 
 **Response** `202` for an agent prompt:
 
