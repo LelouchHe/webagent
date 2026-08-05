@@ -1510,6 +1510,16 @@ describe("events", () => {
         });
         assert.equal(state.awaitingNewSession, false);
       });
+
+      it("keeps busy when an agent error arrives during local bash", () => {
+        state.busy = true;
+        state.busyKind = "bash";
+
+        events.handleEvent({ type: "error", message: "agent failed" });
+
+        assert.equal(state.busy, true);
+        assert.equal(state.busyKind, "bash");
+      });
     });
 
     describe("cross-client turn boundary (cancel + new prompt)", () => {

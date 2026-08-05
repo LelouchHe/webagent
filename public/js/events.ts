@@ -1804,7 +1804,7 @@ export function handleEvent(msg: AgentEvent) {
       finishThinking();
       finishAssistant();
       addSystem(`err: ${msg.message}`);
-      setBusy(false);
+      if (state.busyKind !== "bash") setBusy(false);
       break;
 
     case "message_created":

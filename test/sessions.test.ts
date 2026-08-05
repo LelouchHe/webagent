@@ -269,6 +269,50 @@ describe("Session REST API", () => {
           newPromptId,
         );
       });
+
+      it("cancels a prompt submission while session resume is pending", async () => {
+        store.createSession("s-pending", tmpDir);
+        let releaseResume!: () => void;
+        let promptCalls = 0;
+        mockBridge.loadSession = () =>
+          new Promise((resolve) => {
+            releaseResume = () => {
+              resolve({ sessionId: "s-pending", configOptions: [] });
+            };
+          });
+        mockBridge.prompt = async () => {
+          promptCalls++;
+        };
+
+        const promptRequest = makeRequest(
+          port,
+          "POST",
+          "/api/v1/sessions/s-pending/prompt",
+          JSON.stringify({ text: "do not run" }),
+        );
+        for (
+          let i = 0;
+          i < 10 && !sessions.pendingPromptSubmissions.has("s-pending");
+          i++
+        ) {
+          await new Promise((resolve) => setImmediate(resolve));
+        }
+        assert.equal(sessions.pendingPromptSubmissions.has("s-pending"), true);
+
+        const cancelRes = await makeRequest(
+          port,
+          "POST",
+          "/api/v1/sessions/s-pending/cancel",
+          "{}",
+        );
+        assert.equal(cancelRes.status, 200);
+        assert.equal(JSON.parse(cancelRes.body).status, "cancelled");
+
+        releaseResume();
+        const promptRes = await promptRequest;
+        assert.equal(promptRes.status, 409);
+        assert.equal(promptCalls, 0);
+      });
     });
 
     it("creates a session with custom cwd", async () => {

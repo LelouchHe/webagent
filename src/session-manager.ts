@@ -74,6 +74,8 @@ export class SessionManager {
   readonly assistantBuffers = new Map<string, string>();
   readonly thinkingBuffers = new Map<string, string>();
   readonly activePrompts = new Set<string>();
+  readonly pendingPromptSubmissions = new Set<string>();
+  readonly cancelledPromptSubmissions = new Set<string>();
   readonly runningBashProcs = new Map<string, ChildProcess>();
   readonly interruptedBashProcs = new WeakSet<ChildProcess>();
   /** Pending permission requests keyed by requestId. */
@@ -507,6 +509,8 @@ export class SessionManager {
     this.assistantBuffers.delete(sessionId);
     this.thinkingBuffers.delete(sessionId);
     this.activePrompts.delete(sessionId);
+    this.pendingPromptSubmissions.delete(sessionId);
+    this.cancelledPromptSubmissions.delete(sessionId);
     this.runningBashProcs.delete(sessionId);
     this.attachmentLabelCache.delete(sessionId);
     this.agentCommandSnapshots.delete(sessionId);
@@ -578,9 +582,31 @@ export class SessionManager {
   }
 
   getBusyKind(sessionId: string): "agent" | "bash" | null {
+    if (this.pendingPromptSubmissions.has(sessionId)) return "agent";
     if (this.activePrompts.has(sessionId)) return "agent";
     if (this.runningBashProcs.has(sessionId)) return "bash";
     return null;
+  }
+
+  reservePromptSubmission(sessionId: string): boolean {
+    if (this.getBusyKind(sessionId) !== null) return false;
+    this.pendingPromptSubmissions.add(sessionId);
+    return true;
+  }
+
+  cancelPendingPromptSubmission(sessionId: string): boolean {
+    if (!this.pendingPromptSubmissions.has(sessionId)) return false;
+    this.cancelledPromptSubmissions.add(sessionId);
+    return true;
+  }
+
+  isPromptSubmissionCancelled(sessionId: string): boolean {
+    return this.cancelledPromptSubmissions.has(sessionId);
+  }
+
+  releasePromptSubmission(sessionId: string): void {
+    this.pendingPromptSubmissions.delete(sessionId);
+    this.cancelledPromptSubmissions.delete(sessionId);
   }
 
   /**
