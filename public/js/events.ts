@@ -1286,9 +1286,11 @@ function handleReplayContentEvent(
       if (
         type === "user_message" &&
         state.awaitingOwnUserEcho &&
-        events[idx]?.session_id === state.sentMessageForSession
+        events[idx]?.session_id === state.sentMessageForSession &&
+        events[idx].seq > state.sentMessageAfterSeq
       ) {
         state.awaitingOwnUserEcho = false;
+        state.sentMessageAfterSeq = 0;
       }
       const el = renderContentEvent(type, d, hooks);
       if (el) {
@@ -1642,6 +1644,7 @@ export function handleEvent(msg: AgentEvent) {
       // rendered the message and set busy in sendPrompt().
       if (state.sentMessageForSession === msg.sessionId) {
         state.sentMessageForSession = null;
+        state.sentMessageAfterSeq = 0;
         state.awaitingOwnUserEcho = false;
         break;
       }

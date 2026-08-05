@@ -228,6 +228,7 @@ function sendMessage() {
   }
   state.turnEnded = false;
   state.sentMessageForSession = state.sessionId;
+  state.sentMessageAfterSeq = state.lastEventSeq;
   setBusy(true);
   showWaiting();
 }
@@ -242,6 +243,7 @@ function handleSendError(
   },
 ) {
   state.awaitingOwnUserEcho = false;
+  state.sentMessageAfterSeq = 0;
   // Without this, a fire-and-forget POST that returns non-2xx (e.g. 500
   // when ensureResumed fails because the agent doesn't recognize the
   // session) leaves the UI stuck in busy state with no visible reason.

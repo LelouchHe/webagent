@@ -1973,6 +1973,7 @@ describe("events", () => {
     it("reconciles an optimistic user echo from replay", () => {
       state.awaitingOwnUserEcho = true;
       state.sentMessageForSession = "s1";
+      state.sentMessageAfterSeq = 0;
       const storedEvents = [
         {
           seq: 1,
@@ -1986,6 +1987,25 @@ describe("events", () => {
 
       assert.equal(state.awaitingOwnUserEcho, false);
       assert.equal(state.sentMessageForSession, "s1");
+    });
+
+    it("does not reconcile an optimistic echo from older history", () => {
+      state.awaitingOwnUserEcho = true;
+      state.sentMessageForSession = "s1";
+      state.sentMessageAfterSeq = 10;
+      const storedEvents = [
+        {
+          seq: 5,
+          session_id: "s1",
+          type: "user_message",
+          data: JSON.stringify({ text: "old" }),
+        },
+      ] as any;
+
+      events.replayEvent("user_message", { text: "old" }, storedEvents, 0);
+
+      assert.equal(state.awaitingOwnUserEcho, true);
+      assert.equal(state.sentMessageAfterSeq, 10);
     });
 
     it("replays assistant_message", () => {
