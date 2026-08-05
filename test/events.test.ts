@@ -1249,6 +1249,31 @@ describe("events", () => {
         assert.equal(state.plan, null);
         assert.equal(state.lastStateSeq, 0);
       });
+
+      it("shows recovery guidance when cancel is unconfirmed", () => {
+        state.sessionId = "s1";
+        state.lastStateSeq = 0;
+        state.busy = true;
+        state.cancelStatus = "requested";
+
+        events.handleEvent({
+          type: "state_patch",
+          sessionId: "s1",
+          seq: 1,
+          patch: {
+            runtime: {
+              busy: {
+                kind: "agent",
+                since: "t0",
+                promptId: "p1",
+                cancelStatus: "unconfirmed",
+              },
+            },
+          },
+        });
+
+        assert.match(dom.messages.textContent, /retry.*\/reload/i);
+      });
     });
 
     describe("session_deleted", () => {

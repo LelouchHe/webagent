@@ -322,14 +322,17 @@ describe("state", () => {
       const calls: Array<{ url: string; init?: RequestInit }> = [];
       globalThis.fetch = (async (url: string, init?: RequestInit) => {
         calls.push({ url, init });
-        return { ok: true, text: async () => "", json: async () => ({}) };
+        return {
+          ok: true,
+          text: async () => JSON.stringify({ ok: true, status: "cancelling" }),
+        };
       }) as any;
 
       mod.state.busy = true;
       mod.state.sessionId = "s1";
       mod.state.currentBashEl = null;
 
-      assert.equal(await mod.sendCancel(), true);
+      assert.equal((await mod.sendCancel())?.status, "cancelling");
 
       assert.equal(calls.length, 1);
       assert.equal(calls[0].url, "/api/v1/sessions/s1/cancel");
@@ -340,14 +343,17 @@ describe("state", () => {
       const calls: Array<{ url: string; init?: RequestInit }> = [];
       globalThis.fetch = (async (url: string, init?: RequestInit) => {
         calls.push({ url, init });
-        return { ok: true, text: async () => "", json: async () => ({}) };
+        return {
+          ok: true,
+          text: async () => JSON.stringify({ ok: true, status: "cancelling" }),
+        };
       }) as any;
 
       mod.state.busy = true;
       mod.state.sessionId = "s1";
       mod.state.currentBashEl = {};
 
-      assert.equal(await mod.sendCancel(), true);
+      assert.equal((await mod.sendCancel())?.status, "cancelling");
 
       assert.equal(calls[0].url, "/api/v1/sessions/s1/cancel");
     });
@@ -355,7 +361,7 @@ describe("state", () => {
     it("returns false when not busy", async () => {
       mod.state.sessionId = "s1";
       mod.state.busy = false;
-      assert.equal(await mod.sendCancel(), false);
+      assert.equal(await mod.sendCancel(), null);
     });
 
     it("surfaces cancel request failures", async () => {

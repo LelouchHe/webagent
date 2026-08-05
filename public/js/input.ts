@@ -261,12 +261,20 @@ function doCancel() {
   state.cancelStatus = "requested";
   refreshInputActions();
   addSystem(retry ? "^C retrying cancel…" : "^C cancelling…");
-  void sendCancel().catch((err: unknown) => {
-    state.cancelStatus = null;
-    refreshInputActions();
-    const message = err instanceof Error ? err.message : String(err);
-    addSystem(`err: cancel failed — ${message}`);
-  });
+  void sendCancel()
+    .then((result) => {
+      if (result && result.status !== "cancelling") {
+        state.cancelStatus = null;
+        setBusy(false);
+      }
+      refreshInputActions();
+    })
+    .catch((err: unknown) => {
+      state.cancelStatus = null;
+      refreshInputActions();
+      const message = err instanceof Error ? err.message : String(err);
+      addSystem(`err: cancel failed — ${message}`);
+    });
 }
 
 // --- Event listeners ---

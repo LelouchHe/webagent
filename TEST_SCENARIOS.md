@@ -124,6 +124,8 @@ spot gaps, and decide what still needs to be added without reading every spec.
 
 - `test/ops.test.ts`
   - cancel: active prompt, running bash, idempotent idle session
+  - repeated bash cancel escalation (`SIGINT` → `SIGKILL`)
+  - local bash cancellation still runs when the agent bridge is unavailable
   - status: idle / busy-agent / busy-bash
   - `GET /api/v1/config` endpoint
   - bridge-not-ready error handling

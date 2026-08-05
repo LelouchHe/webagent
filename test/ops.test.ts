@@ -212,6 +212,8 @@ describe("Operations REST API", () => {
       fakeProc.stdout = new EventEmitter();
       fakeProc.stderr = new EventEmitter();
       sessions.runningBashProcs.set(sessionId, fakeProc);
+      sessions.activePrompts.add(sessionId);
+      sessions.syncBusy(sessionId);
       const handler = createRequestHandler({
         store,
         sessions,
@@ -231,8 +233,7 @@ describe("Operations REST API", () => {
           "POST",
           `/api/v1/sessions/${sessionId}/cancel`,
         );
-        assert.equal(res.status, 202);
-        assert.equal(JSON.parse(res.body).status, "cancelling");
+        assert.equal(res.status, 503);
         assert.equal(killed, true);
       } finally {
         await new Promise<void>((resolve) =>
@@ -241,6 +242,25 @@ describe("Operations REST API", () => {
           }),
         );
       }
+    });
+
+    it("escalates repeated bash cancel from SIGINT to SIGKILL", async () => {
+      const sessionId = await createSession();
+      const signals: string[] = [];
+      const fakeProc = new EventEmitter() as any;
+      fakeProc.kill = (signal: string) => {
+        signals.push(signal);
+        return true;
+      };
+      fakeProc.stdout = new EventEmitter();
+      fakeProc.stderr = new EventEmitter();
+      sessions.runningBashProcs.set(sessionId, fakeProc);
+
+      await makeRequest(port, "POST", `/api/v1/sessions/${sessionId}/cancel`);
+      await makeRequest(port, "POST", `/api/v1/sessions/${sessionId}/cancel`);
+
+      assert.deepEqual(signals, ["SIGINT", "SIGKILL"]);
+      assert.equal(sessions.runningBashProcs.has(sessionId), true);
     });
 
     it("returns idempotent idle status when session is idle", async () => {

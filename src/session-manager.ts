@@ -24,6 +24,7 @@ const IS_WIN = process.platform === "win32";
 
 export function interruptBashProc(
   proc: ReturnType<SessionManager["runningBashProcs"]["get"]>,
+  force = false,
 ): void {
   if (!proc) return;
   if (IS_WIN && typeof proc.pid === "number") {
@@ -33,13 +34,13 @@ export function interruptBashProc(
   }
   if (typeof proc.pid === "number") {
     try {
-      process.kill(-proc.pid, "SIGINT");
+      process.kill(-proc.pid, force ? "SIGKILL" : "SIGINT");
       return;
     } catch {
       // Fall through to direct child kill when the process is not a group leader.
     }
   }
-  proc.kill("SIGINT");
+  proc.kill(force ? "SIGKILL" : "SIGINT");
 }
 
 type SessionBridge = Pick<
@@ -74,6 +75,7 @@ export class SessionManager {
   readonly thinkingBuffers = new Map<string, string>();
   readonly activePrompts = new Set<string>();
   readonly runningBashProcs = new Map<string, ChildProcess>();
+  readonly interruptedBashSessions = new Set<string>();
   /** Pending permission requests keyed by requestId. */
   readonly pendingPermissions = new Map<string, PendingPermission>();
   /** Per-session runtime state (busy/streaming/permissions snapshots + patches). */
@@ -506,6 +508,7 @@ export class SessionManager {
     this.thinkingBuffers.delete(sessionId);
     this.activePrompts.delete(sessionId);
     this.runningBashProcs.delete(sessionId);
+    this.interruptedBashSessions.delete(sessionId);
     this.attachmentLabelCache.delete(sessionId);
     this.agentCommandSnapshots.delete(sessionId);
     // Clean pending permissions for this session

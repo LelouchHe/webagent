@@ -945,13 +945,6 @@ export function createRequestHandler(
           json(res, HTTP_STATUS.OK, idleBody);
           return;
         }
-        const bridge = hadAgentPrompt ? getBridge?.() : null;
-        if (hadAgentPrompt && !bridge) {
-          json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
-            error: "Agent not ready yet",
-          });
-          return;
-        }
         const cancelledPromptId = hadAgentPrompt
           ? (sessions?.state.getState(sessionId).runtime.busy?.promptId ?? null)
           : null;
@@ -959,7 +952,16 @@ export function createRequestHandler(
         // Kill running bash process if any
         const proc = sessions?.runningBashProcs.get(sessionId);
         if (proc) {
-          interruptBashProc(proc);
+          const force = sessions!.interruptedBashSessions.has(sessionId);
+          interruptBashProc(proc, force);
+          sessions!.interruptedBashSessions.add(sessionId);
+        }
+        const bridge = hadAgentPrompt ? getBridge?.() : null;
+        if (hadAgentPrompt && !bridge) {
+          json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
+            error: "Agent not ready yet",
+          });
+          return;
         }
         // ACP cancel is a notification, not an acknowledgement. Keep the
         // prompt active until its prompt response supplies the terminal stop
@@ -1489,6 +1491,7 @@ export function createRequestHandler(
 
         child.on("close", (code, signal) => {
           sessions.runningBashProcs.delete(sessionId);
+          sessions.interruptedBashSessions.delete(sessionId);
           sessions.syncBusy(sessionId);
           const stored = outputTruncated ? "[truncated]\n" + output : output;
           store.saveEvent(
@@ -1508,6 +1511,7 @@ export function createRequestHandler(
 
         child.on("error", (err) => {
           sessions.runningBashProcs.delete(sessionId);
+          sessions.interruptedBashSessions.delete(sessionId);
           sessions.syncBusy(sessionId);
           const errMsg = errorMessage(err);
           store.saveEvent(

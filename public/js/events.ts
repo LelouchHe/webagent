@@ -1450,7 +1450,17 @@ export function handleEvent(msg: AgentEvent) {
     case "state_patch": {
       // client-server-split M1: runtime state (busy, future: pending perms,
       // streaming) flows through snapshot + patch, not replay.
+      const previousCancelStatus = state.cancelStatus;
       const applied = applyStatePatch({ seq: msg.seq, patch: msg.patch });
+      if (
+        applied &&
+        previousCancelStatus !== "unconfirmed" &&
+        state.cancelStatus === "unconfirmed"
+      ) {
+        addSystem(
+          "Cancel was not acknowledged — retry ^C or use /reload to restart the agent.",
+        );
+      }
       if (!applied && state.sessionId === msg.sessionId) {
         // seq gap (missed patches) → reload the authoritative snapshot
         const sessionId = state.sessionId;

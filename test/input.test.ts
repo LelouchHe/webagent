@@ -401,6 +401,20 @@ describe("input", () => {
     assert.equal(state.cancelStatus, null);
   });
 
+  it("clears optimistic cancel state when the server reports idle", async () => {
+    setFetch(() => ({
+      ok: true,
+      text: async () => JSON.stringify({ ok: true, status: "idle" }),
+    }));
+    state.sessionId = "s1";
+    state.busy = true;
+
+    docKeydown("c", { ctrlKey: true });
+    await new Promise((resolve) => setImmediate(resolve));
+
+    assert.equal(state.cancelStatus, null);
+  });
+
   it("Ctrl+C allows native copy when text is selected in textarea", () => {
     state.busy = true;
     dom.input.value = "some text";
