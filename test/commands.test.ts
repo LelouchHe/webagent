@@ -436,6 +436,58 @@ describe("commands", () => {
       assert.ok(messageLines().includes("Clearing session…"));
     });
 
+    it("clears old session when SSE confirms a create with interrupted response", async () => {
+      state.clientId = "cl-1";
+      state.sessionId = "old-1";
+      state.sessionCwd = "/home/project";
+      let rejectCreate!: (reason: Error) => void;
+      setFetch(async (url: string, init?: RequestInit) => {
+        if (url === "/api/v1/sessions" && init?.method === "POST") {
+          return new Promise((_resolve, reject) => {
+            rejectCreate = reject;
+          });
+        }
+        if (url === "/api/v1/sessions/old-1" && init?.method === "DELETE") {
+          return {
+            ok: true,
+            status: 204,
+            text: async () => "",
+          };
+        }
+        throw new Error(`Unexpected fetch: ${url}`);
+      });
+
+      const pending = commands.handleSlashCommand("/clear");
+      await new Promise((resolve) => setImmediate(resolve));
+      const createCall = fetchCalls.find(
+        (call) =>
+          call.url === "/api/v1/sessions" && call.init?.method === "POST",
+      );
+      assert.ok(createCall);
+      const clientOpId = new Headers(createCall.init.headers).get(
+        "X-Client-Op-Id",
+      );
+      assert.ok(clientOpId);
+      events.handleEvent({
+        type: "session_created",
+        sessionId: "new-2",
+        cwd: "/home/project",
+        configOptions: [],
+        clientOpId,
+      });
+      rejectCreate(new Error("response interrupted"));
+
+      assert.equal(await pending, true);
+      assert.equal(state.sessionId, "new-2");
+      assert.ok(
+        fetchCalls.some(
+          (call) =>
+            call.url === "/api/v1/sessions/old-1" &&
+            call.init?.method === "DELETE",
+        ),
+      );
+    });
+
     it("clears current session into the provided cwd", async () => {
       state.clientId = "cl-1";
       state.sessionId = "old-1";

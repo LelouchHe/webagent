@@ -541,10 +541,12 @@ export async function createNewSessionRequest({
     if (typeof session.id !== "string") {
       throw new Error("Session create response is missing an id");
     }
+    confirmedNewSessionOps.delete(clientOpId);
     finishNewSessionRequest();
     createdSessionActivator(session);
     return true;
   } catch {
+    if (confirmedNewSessionOps.delete(clientOpId)) return true;
     if (
       generation === state.sessionSwitchGen &&
       state.pendingNewSessionOpId === clientOpId
@@ -552,15 +554,20 @@ export async function createNewSessionRequest({
       // The server broadcasts session_created before writing the HTTP
       // response. Keep ownership briefly so that matching SSE can recover
       // an ambiguously committed create whose response was interrupted.
-      state._newSessionRecoveryTimer = setTimeout(() => {
-        if (state.pendingNewSessionOpId === clientOpId) {
-          state.pendingNewSessionOpId = null;
-          if (generation === state.sessionSwitchGen) {
-            state.awaitingNewSession = false;
+      return await new Promise<boolean>((resolve) => {
+        newSessionConfirmationWaiters.set(clientOpId, resolve);
+        state._newSessionRecoveryTimer = setTimeout(() => {
+          newSessionConfirmationWaiters.delete(clientOpId);
+          if (state.pendingNewSessionOpId === clientOpId) {
+            state.pendingNewSessionOpId = null;
+            if (generation === state.sessionSwitchGen) {
+              state.awaitingNewSession = false;
+            }
           }
-        }
-        state._newSessionRecoveryTimer = null;
-      }, 3000);
+          state._newSessionRecoveryTimer = null;
+          resolve(false);
+        }, 3000);
+      });
     }
     return false;
   } finally {
@@ -574,7 +581,26 @@ export async function createNewSessionRequest({
   }
 }
 
-export function finishNewSessionRequest(): void {
+const confirmedNewSessionOps = new Set<string>();
+const newSessionConfirmationWaiters = new Map<
+  string,
+  (confirmed: boolean) => void
+>();
+
+export function finishNewSessionRequest(confirmedOpId?: string): void {
+  if (confirmedOpId) {
+    const waiter = newSessionConfirmationWaiters.get(confirmedOpId);
+    if (waiter) {
+      newSessionConfirmationWaiters.delete(confirmedOpId);
+      waiter(true);
+    } else {
+      confirmedNewSessionOps.add(confirmedOpId);
+    }
+  } else {
+    confirmedNewSessionOps.clear();
+    for (const waiter of newSessionConfirmationWaiters.values()) waiter(false);
+    newSessionConfirmationWaiters.clear();
+  }
   if (state._newSessionRecoveryTimer != null) {
     clearTimeout(state._newSessionRecoveryTimer);
     state._newSessionRecoveryTimer = null;

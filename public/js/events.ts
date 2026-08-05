@@ -1552,7 +1552,7 @@ export function handleEvent(msg: AgentEvent) {
       }
 
       if (matchesPendingCreate) {
-        finishNewSessionRequest();
+        finishNewSessionRequest(msg.clientOpId);
       }
       if (
         state.pendingNavigationSessionId &&
