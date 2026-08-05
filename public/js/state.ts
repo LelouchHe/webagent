@@ -491,6 +491,7 @@ export function requestNewSession({
   inheritFromSessionId = state.sessionId,
 }: { cwd?: string; inheritFromSessionId?: string | null } = {}) {
   if (state.newSessionRequestInFlight || state.pendingNewSessionOpId) return;
+  invalidateNavigationLoads();
   state.sessionSwitchGen++;
   state.messageNavigationGen++;
   const generation = state.sessionSwitchGen;
@@ -563,6 +564,15 @@ export function setCreatedSessionActivator(
   fn: (session: Record<string, unknown>) => void,
 ): void {
   createdSessionActivator = fn;
+}
+
+let navigationLoadInvalidator: () => void = () => {};
+export function setNavigationLoadInvalidator(fn: () => void): void {
+  navigationLoadInvalidator = fn;
+}
+
+function invalidateNavigationLoads(): void {
+  navigationLoadInvalidator();
 }
 
 // Modules can register cleanup functions to run on session reset (avoids circular imports)

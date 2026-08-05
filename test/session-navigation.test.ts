@@ -6,6 +6,7 @@ describe("shared session navigation", () => {
   let state: typeof import("../public/js/state.ts").state;
   let dom: typeof import("../public/js/state.ts").dom;
   let resetSessionUI: typeof import("../public/js/state.ts").resetSessionUI;
+  let requestNewSession: typeof import("../public/js/state.ts").requestNewSession;
   let navigation: typeof import("../public/js/session-navigation.ts");
   let handleEvent: typeof import("../public/js/events.ts").handleEvent;
   let fetchCalls: Array<{ url: string; init?: RequestInit }>;
@@ -15,7 +16,8 @@ describe("shared session navigation", () => {
 
   before(async () => {
     setupDOM();
-    ({ state, dom, resetSessionUI } = await import("../public/js/state.ts"));
+    ({ state, dom, resetSessionUI, requestNewSession } =
+      await import("../public/js/state.ts"));
     await import("../public/js/render.ts");
     ({ handleEvent } = await import("../public/js/events.ts"));
     navigation = await import("../public/js/session-navigation.ts");
@@ -392,6 +394,55 @@ describe("shared session navigation", () => {
       ),
       false,
     );
+  });
+
+  it("new-session intent invalidates stale history replay", async () => {
+    state.sessionId = "current-session";
+    let releaseHistory!: (response: Response) => void;
+    const historyResponse = new Promise<Response>((resolve) => {
+      releaseHistory = resolve;
+    });
+    const response = (body: unknown) =>
+      new Response(JSON.stringify(body), { status: 200 });
+    globalThis.fetch = (async (url: string, init?: RequestInit) => {
+      if (url === "/api/v1/sessions/message-session") {
+        return response({
+          id: "message-session",
+          cwd: "/old",
+          title: "Old",
+          configOptions: [],
+        });
+      }
+      if (url === "/api/v1/sessions/message-session/events?limit=500") {
+        return historyResponse;
+      }
+      if (url === "/api/v1/sessions" && init?.method === "POST") {
+        return response({
+          id: "new-session",
+          cwd: "/new",
+          title: "New",
+          configOptions: [],
+        });
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    }) as typeof fetch;
+
+    const staleSwitch = navigation.switchToSession("message-session");
+    requestNewSession();
+    await new Promise((resolve) => setImmediate(resolve));
+    releaseHistory(
+      response([
+        {
+          seq: 1,
+          type: "assistant_message",
+          data: JSON.stringify({ text: "stale history" }),
+        },
+      ]),
+    );
+
+    assert.equal(await staleSwitch, "ignored");
+    assert.equal(state.sessionId, "new-session");
+    assert.doesNotMatch(dom.messages.textContent, /stale history/);
   });
 
   it("does not apply a snapshot after navigation ownership is revoked", async () => {

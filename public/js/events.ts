@@ -33,6 +33,7 @@ import {
   updateInboxCount,
   setCreatedSessionActivator,
   finishNewSessionRequest,
+  setNavigationLoadInvalidator,
 } from "./state.ts";
 import {
   addMessage,
@@ -72,6 +73,13 @@ import type {
   StoredEvent,
 } from "../../src/types.ts";
 import "./plan-panel.ts";
+
+setNavigationLoadInvalidator(() => {
+  historyLoadToken++;
+  replayLoadToken++;
+  state.replayInProgress = false;
+  state.replayQueue = [];
+});
 
 setCreatedSessionActivator((session) => {
   if (typeof session.id !== "string") return;
