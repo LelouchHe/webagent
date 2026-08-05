@@ -1392,6 +1392,7 @@ export function createRequestHandler(
           "user_message",
           {
             text: body.text,
+            ...(opId ? { clientOpId: opId } : {}),
             ...(storedAttachments?.length
               ? { attachments: storedAttachments }
               : {}),
@@ -1404,6 +1405,7 @@ export function createRequestHandler(
           type: "user_message",
           sessionId,
           text: body.text,
+          clientOpId: opId ?? undefined,
           attachments: storedAttachments,
         } as AgentEvent;
         sseManager.broadcast(userMsgEvent);

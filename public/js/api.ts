@@ -109,10 +109,11 @@ export function sendMessage(
   sessionId: string,
   text: string,
   attachments?: AttachmentRefForSend[],
+  clientOpId = newOpId(),
 ): Promise<unknown> {
   const body: Record<string, unknown> = { text };
   if (attachments?.length) body.attachments = attachments;
-  return post("/api/v1/sessions/" + sessionId + "/prompt", body, newOpId());
+  return post("/api/v1/sessions/" + sessionId + "/prompt", body, clientOpId);
 }
 
 // --- Cancel ---

@@ -1008,6 +1008,7 @@ export function replayEvent(
   }
   switch (type) {
     case "prompt_done":
+      if (state.awaitingOwnUserEcho) break;
       state.pendingToolCallIds.clear();
       state.pendingPermissionRequestIds.clear();
       state.pendingPromptDone = false;
@@ -1283,6 +1284,22 @@ function handleReplayContentEvent(
     case "user_message":
     case "plan":
     case "permission_response": {
+      if (
+        type === "user_message" &&
+        state.awaitingOwnUserEcho &&
+        events[idx]?.session_id === state.sentMessageForSession &&
+        d.clientOpId === state.sentMessageOpId
+      ) {
+        // Only record that replay observed the echo; do NOT clear the guard or
+        // `sentMessageOpId` here. The same echo may also be sitting in
+        // `replayQueue` as a live event, and the live `user_message` handler
+        // needs `sentMessageOpId` intact to recognize and suppress it —
+        // otherwise the user bubble is rendered twice. `drainReplayQueue()`
+        // clears the guard after the queue settles. If no live echo follows,
+        // `sentMessageOpId` / `sentMessageForSession` linger until the next
+        // send or `resetSessionUI()`; that is inert, not a missed cleanup.
+        state.replayedOwnUserEcho = true;
+      }
       const el = renderContentEvent(type, d, hooks);
       if (el) {
         if (type === "plan")
@@ -1302,6 +1319,10 @@ function drainReplayQueue() {
     if (isDuplicateOfReplay(msg)) continue;
     handleEvent(msg);
   }
+  if (state.awaitingOwnUserEcho && state.replayedOwnUserEcho) {
+    state.awaitingOwnUserEcho = false;
+  }
+  state.replayedOwnUserEcho = false;
 }
 
 /** Check whether a queued WS event duplicates an element already rendered by replay. */
@@ -1633,8 +1654,13 @@ export function handleEvent(msg: AgentEvent) {
       // SSE broadcasts to all clients including the sender (unlike WS which
       // excluded the sender). Detect our own echo and skip it — we already
       // rendered the message and set busy in sendPrompt().
-      if (state.sentMessageForSession === msg.sessionId) {
+      if (
+        state.sentMessageForSession === msg.sessionId &&
+        state.sentMessageOpId === msg.clientOpId
+      ) {
         state.sentMessageForSession = null;
+        state.sentMessageOpId = null;
+        state.awaitingOwnUserEcho = false;
         break;
       }
       // A new turn is starting (from another client's broadcast).
@@ -1796,6 +1822,17 @@ export function handleEvent(msg: AgentEvent) {
 
     case "prompt_done": {
       clearCancelTimer();
+      if (state.awaitingOwnUserEcho) {
+        // Stale completion from the turn we just superseded. Busy state is not
+        // stranded by dropping it: `state_patch` / snapshot drive `setBusy`
+        // through applyStatePatch/applySnapshot, which deliberately bypass this
+        // guard, so the server remains authoritative for busy either way.
+        log.warn("dropping stale prompt_done during own-echo window", {
+          sessionId: msg.sessionId,
+          stopReason: msg.stopReason,
+        });
+        break;
+      }
       if (msg.stopReason === "cancelled" && state.newTurnStarted) {
         // This prompt_done belongs to a previous turn — a new turn has already
         // started (signaled by user_message from another client).  Don't clobber
@@ -1874,6 +1911,16 @@ export function handleEvent(msg: AgentEvent) {
       break;
 
     case "error":
+      if (state.awaitingOwnUserEcho) {
+        // Terminal error from the superseded turn. Note this drops errors for
+        // *any* session during the window (this case has no sessionId filter),
+        // so log the payload — it is the only remaining trace.
+        log.warn("dropping stale error during own-echo window", {
+          sessionId: msg.sessionId,
+          message: msg.message,
+        });
+        break;
+      }
       state.awaitingNewSession = false;
       state.pendingToolCallIds.clear();
       state.pendingPermissionRequestIds.clear();

@@ -7,6 +7,7 @@ describe("input", () => {
   let dom: any;
   let setBusy: any;
   let inputModule: any;
+  let eventsModule: any;
   let commandsMod: any;
   let fetchCalls: Array<{ url: string; init?: any }>;
 
@@ -17,7 +18,7 @@ describe("input", () => {
     dom = stateMod.dom;
     setBusy = stateMod.setBusy;
     await import("../public/js/render.ts");
-    await import("../public/js/events.ts");
+    eventsModule = await import("../public/js/events.ts");
     commandsMod = await import("../public/js/commands.ts");
     await import("../public/js/attachments.ts");
     inputModule = await import("../public/js/input.ts");
@@ -146,6 +147,116 @@ describe("input", () => {
 
     assert.equal(state.turnEnded, false, "turnEnded should be cleared on send");
     assert.equal(state.busy, true);
+  });
+
+  it("seals an old assistant stream before the optimistic user bubble", () => {
+    setFetch(() => ({
+      ok: true,
+      json: async () => ({ status: "accepted" }),
+      text: async () => '{"status":"accepted"}',
+    }));
+    state.sessionId = "s1";
+    state.clientId = "cl-1";
+    const oldAssistant = document.createElement("div");
+    oldAssistant.className = "msg assistant";
+    oldAssistant.textContent = "old response";
+    dom.messages.appendChild(oldAssistant);
+    state.currentAssistantEl = oldAssistant;
+    state.currentAssistantText = "old response";
+    dom.input.value = "同意";
+
+    clickSend();
+    eventsModule.handleEvent({
+      type: "message_chunk",
+      sessionId: "s1",
+      text: "new response",
+    });
+
+    const rows = Array.from(dom.messages.children as HTMLCollectionOf<Element>);
+    assert.equal(rows.length, 3);
+    assert.ok(rows[0].classList.contains("assistant"));
+    assert.ok(rows[1].classList.contains("user"));
+    assert.ok(rows[2].classList.contains("assistant"));
+    assert.equal(rows[2], state.currentAssistantEl);
+    assert.equal(state.currentAssistantText, "new response");
+  });
+
+  it("ignores prior prompt_done until the optimistic user echo arrives", () => {
+    setFetch(() => ({
+      ok: true,
+      json: async () => ({ status: "accepted" }),
+      text: async () => '{"status":"accepted"}',
+    }));
+    state.sessionId = "s1";
+    state.clientId = "cl-1";
+    dom.input.value = "next question";
+
+    clickSend();
+    eventsModule.handleEvent({
+      type: "prompt_done",
+      sessionId: "s1",
+      stopReason: "end_turn",
+    });
+    assert.equal(state.busy, true);
+    assert.equal(state.turnEnded, false);
+
+    eventsModule.handleEvent({
+      type: "user_message",
+      sessionId: "s1",
+      text: "next question",
+      clientOpId: state.sentMessageOpId,
+    });
+    eventsModule.handleEvent({
+      type: "message_chunk",
+      sessionId: "s1",
+      text: "new response",
+    });
+
+    assert.equal(state.awaitingOwnUserEcho, false);
+    assert.equal(state.currentAssistantText, "new response");
+  });
+
+  it("ignores prior agent error until the optimistic user echo arrives", () => {
+    setFetch(() => ({
+      ok: true,
+      json: async () => ({ status: "accepted" }),
+      text: async () => '{"status":"accepted"}',
+    }));
+    state.sessionId = "s1";
+    state.clientId = "cl-1";
+    dom.input.value = "next question";
+
+    clickSend();
+    eventsModule.handleEvent({
+      type: "error",
+      sessionId: "s1",
+      message: "old prompt failed",
+    });
+
+    assert.equal(state.busy, true);
+    assert.equal(state.awaitingOwnUserEcho, true);
+    assert.doesNotMatch(dom.messages.textContent, /old prompt failed/);
+  });
+
+  it("clears the own-echo guard when the prompt request fails", async () => {
+    setFetch(() => ({
+      ok: false,
+      status: 500,
+      json: async () => ({ error: "Agent not ready" }),
+    }));
+    state.sessionId = "s1";
+    state.clientId = "cl-1";
+    dom.input.value = "next question";
+
+    clickSend();
+    assert.equal(state.awaitingOwnUserEcho, true);
+    await new Promise((resolve) => setImmediate(resolve));
+
+    // A failed send never produces a user_message echo, so the guard must be
+    // released here or every later prompt_done/error is dropped forever.
+    assert.equal(state.awaitingOwnUserEcho, false);
+    assert.equal(state.sentMessageOpId, null);
+    assert.equal(state.busy, false);
   });
 
   it("routes bang-prefixed input to bash execution", () => {
