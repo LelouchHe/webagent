@@ -982,21 +982,21 @@ describe("events", () => {
           options: [{ optionId: "allow", kind: "allow_once", name: "Allow" }],
         });
 
-        it("keeps busy when the prompt finishes during local bash", () => {
-          state.busy = true;
-          state.busyKind = "bash";
-          events.handleEvent({
-            type: "prompt_done",
-            stopReason: "end_turn",
-          });
-          assert.equal(state.busy, true);
-          assert.equal(state.busyKind, "bash");
-        });
-
         events.handleEvent({ type: "prompt_done", stopReason: "cancelled" });
 
         assert.equal(state.pendingPermissionRequestIds.size, 0);
         assert.equal(state.busy, false);
+      });
+
+      it("keeps busy when the prompt finishes during local bash", () => {
+        state.busy = true;
+        state.busyKind = "bash";
+        events.handleEvent({
+          type: "prompt_done",
+          stopReason: "end_turn",
+        });
+        assert.equal(state.busy, true);
+        assert.equal(state.busyKind, "bash");
       });
     });
 
