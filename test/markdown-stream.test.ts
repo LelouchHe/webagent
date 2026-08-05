@@ -216,13 +216,15 @@ describe("updateMarkdownStream", () => {
     const globals = globalThis as typeof globalThis & { __DEV__: boolean };
     globals.__DEV__ = false;
     try {
-      mod.updateMarkdownStream(host, "alpha\n\nbeta\n");
-      host.lastChild?.remove();
+      mod.updateMarkdownStream(host, "alpha\n\nbeta\n\ngamma\n");
+      host.childNodes.item(1).remove();
 
       assert.doesNotThrow(() => {
-        mod.updateMarkdownStream(host, "alpha\n\nBETA changed\n");
+        mod.updateMarkdownStream(host, "alpha\n\nBETA changed\n\ngamma\n");
       });
       assert.match(host.textContent, /BETA changed/);
+      assert.match(host.textContent, /gamma/);
+      assert.equal(host.childNodes.length, 3);
     } finally {
       globals.__DEV__ = true;
     }

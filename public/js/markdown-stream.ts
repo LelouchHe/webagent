@@ -1085,12 +1085,17 @@ export function updateMarkdownStream(
   const DEV = typeof __DEV__ !== "undefined" && __DEV__;
   let memo = markdownStreamMemos.get(host);
 
-  if (DEV && memo && memo.cache.length > 0) {
+  if (memo && memo.cache.length > 0) {
     const sum = memo.rootCounts.reduce((a, b) => a + b, 0);
     if (sum !== host.childNodes.length) {
-      throw new Error(
-        `updateMarkdownStream entry invariant: rootCounts sum=${sum} vs host.childNodes=${host.childNodes.length} — another code path mutated host.innerHTML without calling resetMarkdownStream`,
-      );
+      if (DEV) {
+        throw new Error(
+          `updateMarkdownStream entry invariant: rootCounts sum=${sum} vs host.childNodes=${host.childNodes.length} — another code path mutated host.innerHTML without calling resetMarkdownStream`,
+        );
+      }
+      markdownStreamMemos.delete(host);
+      host.replaceChildren();
+      memo = undefined;
     }
   }
 
