@@ -162,6 +162,9 @@ describe("shared session navigation", () => {
   it("explicit switch supersedes stale new-session ownership", async () => {
     state.sessionId = "current-session";
     state.awaitingNewSession = true;
+    state.newSessionRequestInFlight = true;
+    state.pendingNewSessionOpId = "old-create";
+    state._newSessionRecoveryTimer = setTimeout(() => {}, 3000);
     let releaseHistory!: (response: Response) => void;
     delayedHistory = new Promise<Response>((resolve) => {
       releaseHistory = resolve;
@@ -169,6 +172,9 @@ describe("shared session navigation", () => {
 
     const pending = navigation.switchToSession("message-session");
     assert.equal(state.awaitingNewSession, false);
+    assert.equal(state.newSessionRequestInFlight, false);
+    assert.equal(state.pendingNewSessionOpId, null);
+    assert.equal(state._newSessionRecoveryTimer, null);
     releaseHistory(
       new Response(JSON.stringify({ events: [], streaming: {} }), {
         status: 200,

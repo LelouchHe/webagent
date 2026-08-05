@@ -4,6 +4,7 @@ import { drainNavigationEvents, handleEvent, loadHistory } from "./events.ts";
 import { addSystem, scrollToBottom } from "./render.ts";
 import {
   hydrateSessionRuntime,
+  finishNewSessionRequest,
   requestNewSession,
   resetSessionUI,
   setHashSessionId,
@@ -32,6 +33,7 @@ export async function switchToSession(
   state.messageNavigationGen++;
   const generation = state.sessionSwitchGen;
   const previousSessionId = state.sessionId;
+  finishNewSessionRequest();
   state.awaitingNewSession = false;
   state.pendingNavigationSessionId = null;
   state.pendingNavigationEvents = [];
