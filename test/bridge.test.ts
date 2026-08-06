@@ -503,7 +503,7 @@ describe("AgentBridge", () => {
       exitCode: number | null;
       kill: () => boolean;
     };
-    proc.exitCode = null;
+    proc.exitCode = 0;
     proc.kill = () => true;
     (bridge as any).proc = proc;
 
@@ -518,6 +518,26 @@ describe("AgentBridge", () => {
     proc.emit("close", 0, null);
     await shutdown;
     assert.equal(settled, true);
+  });
+
+  it("does not wait again after child stdio has already closed", async () => {
+    const bridge = new AgentBridge("fake-agent");
+    let killCount = 0;
+    const proc = new EventEmitter() as EventEmitter & {
+      exitCode: number | null;
+      kill: () => boolean;
+    };
+    proc.exitCode = null;
+    proc.kill = () => {
+      killCount++;
+      return true;
+    };
+    (bridge as any).proc = proc;
+    (bridge as any).closedProcesses.add(proc);
+
+    await bridge.shutdown();
+
+    assert.equal(killCount, 0);
   });
 
   describe("restart()", () => {

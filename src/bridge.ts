@@ -35,6 +35,7 @@ export class AgentBridge extends EventEmitter {
   private readonly pendingAborts = new Map<string, (e: Error) => void>();
   private deadReason: string | null = null;
   private stderrTail = "";
+  private readonly closedProcesses = new WeakSet<ChildProcess>();
   readonly agentCmd: string;
   reloading = false;
   private attachmentDispatcher: AttachmentDispatcher | null = null;
@@ -84,6 +85,9 @@ export class AgentBridge extends EventEmitter {
         (tail ? `\nLast stderr:\n${tail}` : "") +
         `\nCheck '${this.agentCmd}' is properly configured (e.g. authenticated).`;
       this.markAgentDead(reason);
+    });
+    proc.once("close", () => {
+      this.closedProcesses.add(proc);
     });
     proc.on("error", (err: Error) => {
       if (this.reloading) return;
@@ -480,13 +484,14 @@ export class AgentBridge extends EventEmitter {
     this.permissionResolvers.clear();
     this.permissionRequestSessions.clear();
 
-    if (this.proc?.exitCode === null) {
-      const proc = this.proc;
+    const proc = this.proc;
+    if (proc && !this.closedProcesses.has(proc)) {
       await new Promise<void>((resolve) => {
         let settled = false;
         const finish = () => {
           if (settled) return;
           settled = true;
+          this.closedProcesses.add(proc);
           clearTimeout(killTimer);
           clearTimeout(drainTimer);
           proc.off("close", finish);
