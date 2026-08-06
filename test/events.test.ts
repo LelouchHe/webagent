@@ -4443,6 +4443,52 @@ describe("events", () => {
       assert.equal(toolCalls.length, 1);
     });
 
+    it("deduplicates a foreign user message replayed before its queued SSE copy", async () => {
+      const fakeEvents = [
+        {
+          seq: 1,
+          session_id: "s1",
+          type: "user_message",
+          data: JSON.stringify({
+            text: "new question",
+            clientOpId: "op-foreign",
+          }),
+        },
+        {
+          seq: 2,
+          session_id: "s1",
+          type: "assistant_message",
+          data: JSON.stringify({ text: "new answer" }),
+        },
+      ];
+
+      let resolveFetch: Function;
+      globalThis.fetch = (() =>
+        new Promise((resolve) => {
+          resolveFetch = resolve;
+        })) as any;
+
+      state.sessionId = "s1";
+      const historyPromise = events.loadHistory("s1");
+
+      events.handleEvent({
+        type: "user_message",
+        sessionId: "s1",
+        text: "new question",
+        clientOpId: "op-foreign",
+      });
+
+      resolveFetch!({ ok: true, json: () => Promise.resolve(fakeEvents) });
+      await historyPromise;
+
+      const rows = [...dom.messages.children];
+      assert.equal(rows.length, 2);
+      assert.ok(rows[0].classList.contains("user"));
+      assert.ok(rows[0].textContent.includes("new question"));
+      assert.ok(rows[1].classList.contains("assistant"));
+      assert.ok(rows[1].textContent.includes("new answer"));
+    });
+
     it("deduplicates permission_request events that were both replayed and queued", async () => {
       const fakeEvents = [
         {

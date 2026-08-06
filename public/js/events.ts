@@ -1311,7 +1311,7 @@ function handleReplayContentEvent(
   }
 }
 
-/** Process queued WS events, skipping any that duplicate content already in the DOM. */
+/** Process queued SSE events, skipping any that duplicate content already in the DOM. */
 function drainReplayQueue() {
   const queue = state.replayQueue;
   state.replayQueue = [];
@@ -1336,6 +1336,15 @@ function isDuplicateOfReplay(msg: AgentEvent): boolean {
         document.querySelector(
           `.permission[data-request-id="${msg.requestId}"]`,
         ),
+      );
+    case "user_message":
+      return (
+        typeof msg.clientOpId === "string" &&
+        Array.from(
+          document.querySelectorAll<HTMLElement>(
+            ".msg.user[data-client-op-id]",
+          ),
+        ).some((el) => el.dataset.clientOpId === msg.clientOpId)
       );
     // Streaming chunks were flushed to DB by the events endpoint, so the
     // content is already rendered.  The live currentThinkingEl / currentAssistantEl

@@ -223,7 +223,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - paginated loadHistory (limit param, hasMoreHistory)
   - loadOlderEvents prepend and sentinel removal
   - loadNewEvents incremental sync and orphan cleanup
-  - replay queue: dedup on reconnect for tool_call, permission_request, thought_chunk, message_chunk
+  - replay queue: dedup on reconnect for user_message (by client operation), tool_call, permission_request, thought_chunk, message_chunk
   - retryUnconfirmedPermissions after reconnect
 
 - `test/commands.test.ts`
