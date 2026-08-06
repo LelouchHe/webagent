@@ -1627,11 +1627,9 @@ export function handleEvent(msg: AgentEvent) {
       }
       state.awaitingNewSession = false;
       state.pendingNavigationSessionId = null;
-      {
-        const isSessionActivation = state.sessionId === null;
-        state.sessionId = msg.sessionId;
-        if (isSessionActivation) rearmHistoryObserverAfterSessionActivation();
-      }
+      const isSessionActivation = state.sessionId === null;
+      state.sessionId = msg.sessionId;
+      if (isSessionActivation) rearmHistoryObserverAfterSessionActivation();
       state.sessionCwd = msg.cwd ?? state.sessionCwd;
       state.sessionTitle = msg.title ?? null;
       if (msg.agentCommands) applyAgentCommandSnapshot(msg.agentCommands);
@@ -1657,7 +1655,10 @@ export function handleEvent(msg: AgentEvent) {
       dom.input.disabled = false;
       dom.sendBtn.disabled = false;
       // Placeholder is owned by updateModeUI (called above). No literal here.
-      state.newTurnStarted = false;
+      // Full-load replay may have opened a foreign turn whose queued stale
+      // completion still waits in pendingNavigationEvents. Preserve that
+      // boundary until drainNavigationEvents classifies the completion.
+      if (!isSessionActivation) state.newTurnStarted = false;
       // Adopt any in-flight bash block from history replay (snapshot carries
       // the busy truth; we just need to hook up the DOM element if present).
       {

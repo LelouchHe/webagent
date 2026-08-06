@@ -331,6 +331,34 @@ describe("Prompt REST API", () => {
       assert.ok(userMsg);
     });
 
+    it("assigns a client operation id when the prompt omits one", async () => {
+      const sessionId = await createSession();
+      broadcastEvents = [];
+      await makeRequest(
+        port,
+        "POST",
+        `/api/v1/sessions/${sessionId}/prompt`,
+        JSON.stringify({ text: "hello" }),
+      );
+
+      const stored = store
+        .getEvents(sessionId)
+        .find((event) => event.type === "user_message");
+      assert.ok(stored);
+      const storedOpId = JSON.parse(stored.data).clientOpId;
+      const broadcast = broadcastEvents.find(
+        (event) => event.type === "user_message",
+      );
+      const broadcastOpId =
+        broadcast && "clientOpId" in broadcast
+          ? broadcast.clientOpId
+          : undefined;
+
+      assert.equal(typeof storedOpId, "string");
+      assert.ok(storedOpId.length > 0);
+      assert.equal(broadcastOpId, storedOpId);
+    });
+
     it("updates last_active_at", async () => {
       const sessionId = await createSession();
       const before = store.getSession(sessionId)!.last_active_at;

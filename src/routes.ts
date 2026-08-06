@@ -1387,12 +1387,13 @@ export function createRequestHandler(
             },
           ];
         });
+        const eventClientOpId = opId ?? randomUUID();
         store.saveEvent(
           sessionId,
           "user_message",
           {
             text: body.text,
-            ...(opId ? { clientOpId: opId } : {}),
+            clientOpId: eventClientOpId,
             ...(storedAttachments?.length
               ? { attachments: storedAttachments }
               : {}),
@@ -1405,7 +1406,7 @@ export function createRequestHandler(
           type: "user_message",
           sessionId,
           text: body.text,
-          clientOpId: opId ?? undefined,
+          clientOpId: eventClientOpId,
           attachments: storedAttachments,
         } as AgentEvent;
         sseManager.broadcast(userMsgEvent);
