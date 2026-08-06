@@ -1983,8 +1983,7 @@ export function createRequestHandler(
         let streamingThinking = false;
         let streamingAssistant = false;
         if (sessions) {
-          const runtimeStreaming =
-            sessions.state.getState(sessionId).runtime.streaming;
+          const runtimeStreaming = sessions.state.peekStreaming(sessionId);
           streamingThinking =
             runtimeStreaming.thinking ||
             Boolean(sessions.thinkingBuffers.get(sessionId));

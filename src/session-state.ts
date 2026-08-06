@@ -169,6 +169,12 @@ export class SessionStateManager {
     return s;
   }
 
+  /** Read streaming state without creating runtime state for an unseen session. */
+  peekStreaming(sessionId: string): StreamingState {
+    const streaming = this.states.get(sessionId)?.runtime.streaming;
+    return streaming ? { ...streaming } : { assistant: false, thinking: false };
+  }
+
   /**
    * Merge a patch into the session's runtime state. Bumps seq and notifies
    * listeners only when the patch actually changes something (no-op patches
