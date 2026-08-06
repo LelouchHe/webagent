@@ -1983,18 +1983,16 @@ export function createRequestHandler(
         let streamingThinking = false;
         let streamingAssistant = false;
         if (sessions) {
-          if (sessions.thinkingBuffers.get(sessionId)) {
-            streamingThinking = true;
-            sessions.flushThinkingBuffer(sessionId);
-          } else {
-            sessions.thinkingBuffers.delete(sessionId);
-          }
-          if (sessions.assistantBuffers.get(sessionId)) {
-            streamingAssistant = true;
-            sessions.flushAssistantBuffer(sessionId);
-          } else {
-            sessions.assistantBuffers.delete(sessionId);
-          }
+          const runtimeStreaming =
+            sessions.state.getState(sessionId).runtime.streaming;
+          streamingThinking =
+            runtimeStreaming.thinking ||
+            Boolean(sessions.thinkingBuffers.get(sessionId));
+          streamingAssistant =
+            runtimeStreaming.assistant ||
+            Boolean(sessions.assistantBuffers.get(sessionId));
+          sessions.flushThinkingBuffer(sessionId);
+          sessions.flushAssistantBuffer(sessionId);
         }
         const events = store.getEvents(sessionId, {
           excludeThinking,
