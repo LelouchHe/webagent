@@ -4537,6 +4537,44 @@ describe("events", () => {
       assert.equal(state.newTurnStarted, true);
     });
 
+    it("does not deduplicate another session by client operation id", async () => {
+      const fakeEvents = [
+        {
+          seq: 1,
+          session_id: "s1",
+          type: "user_message",
+          data: JSON.stringify({
+            text: "active question",
+            clientOpId: "op-shared",
+          }),
+        },
+      ];
+
+      let resolveFetch: Function;
+      globalThis.fetch = (() =>
+        new Promise((resolve) => {
+          resolveFetch = resolve;
+        })) as any;
+
+      state.sessionId = "s1";
+      state.turnEnded = true;
+      const historyPromise = events.loadHistory("s1");
+
+      events.handleEvent({
+        type: "user_message",
+        sessionId: "s2",
+        text: "other question",
+        clientOpId: "op-shared",
+      });
+
+      resolveFetch!({ ok: true, json: () => Promise.resolve(fakeEvents) });
+      await historyPromise;
+
+      assert.equal(dom.messages.querySelectorAll(".msg.user").length, 1);
+      assert.equal(state.turnEnded, true);
+      assert.equal(state.newTurnStarted, false);
+    });
+
     it("deduplicates permission_request events that were both replayed and queued", async () => {
       const fakeEvents = [
         {

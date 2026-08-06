@@ -311,7 +311,7 @@ export async function loadHistory(sid: string): Promise<boolean> {
     if (replayToken === replayLoadToken) {
       state.replayTarget = null;
       state.replayInProgress = false;
-      drainReplayQueue();
+      drainReplayQueue(sid);
     }
   }
 }
@@ -578,7 +578,7 @@ async function _loadNewEventsImpl(sid: string): Promise<boolean> {
     if (replayToken === replayLoadToken) {
       state.replayTarget = null;
       state.replayInProgress = false;
-      drainReplayQueue();
+      drainReplayQueue(sid);
     }
   }
 }
@@ -1312,11 +1312,11 @@ function handleReplayContentEvent(
 }
 
 /** Process queued SSE events, skipping any that duplicate content already in the DOM. */
-function drainReplayQueue() {
+function drainReplayQueue(replayedSessionId: string) {
   const queue = state.replayQueue;
   state.replayQueue = [];
   for (const msg of queue) {
-    if (isDuplicateOfReplay(msg)) {
+    if (isDuplicateOfReplay(msg, replayedSessionId)) {
       if (
         msg.type === "user_message" &&
         !(
@@ -1341,8 +1341,12 @@ function drainReplayQueue() {
   state.replayedOwnUserEcho = false;
 }
 
-/** Check whether a queued WS event duplicates an element already rendered by replay. */
-function isDuplicateOfReplay(msg: AgentEvent): boolean {
+/** Check whether a queued SSE event duplicates an element already rendered by replay. */
+function isDuplicateOfReplay(
+  msg: AgentEvent,
+  replayedSessionId: string,
+): boolean {
+  if ("sessionId" in msg && msg.sessionId !== replayedSessionId) return false;
   // eslint-disable-next-line @typescript-eslint/switch-exhaustiveness-check -- intentionally partial, default handles the rest
   switch (msg.type) {
     case "tool_call":
