@@ -348,6 +348,19 @@ describe("SessionManager", () => {
       assert.deepEqual(store.getEvents("s1"), []);
     });
 
+    it("discards late buffers for a deleted session", () => {
+      store.createSession("s1", "/x");
+      store.deleteSession("s1");
+      sm.assistantBuffers.set("s1", "late answer");
+      sm.thinkingBuffers.set("s1", "late thought");
+
+      assert.doesNotThrow(() => {
+        sm.flushBuffers("s1");
+      });
+      assert.equal(sm.assistantBuffers.has("s1"), false);
+      assert.equal(sm.thinkingBuffers.has("s1"), false);
+    });
+
     it("flushAssistantBuffer saves only the assistant buffer", () => {
       store.createSession("s1", "/x");
       sm.appendAssistant("s1", "Hello");

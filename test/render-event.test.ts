@@ -80,6 +80,17 @@ describe("render-event", () => {
       assert.ok(el.innerHTML.includes("<br>"));
     });
 
+    it("preserves client operation identity for replay/live deduplication", () => {
+      const el = append(
+        mod.renderContentEvent(
+          "user_message",
+          { text: "hello", clientOpId: "op-123" },
+          makeHooks(),
+        ),
+      )!;
+      assert.equal(el.dataset.clientOpId, "op-123");
+    });
+
     // Regression guard for the slice-4 user_message rendering bug:
     // attachments used to be `<img class=user-image>` / `<a class=user-file>`,
     // and slice 4 silently downgraded both to a plain text marker

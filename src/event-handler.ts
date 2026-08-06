@@ -320,6 +320,10 @@ function handleError(event: ErrorEvent, sessions: SessionManager): void {
   if (event.sessionId) {
     sessions.activePrompts.delete(event.sessionId);
     sessions.syncBusy(event.sessionId);
+    sessions.flushBuffers(event.sessionId);
+    sessions.state.patch(event.sessionId, {
+      runtime: { streaming: { assistant: false, thinking: false } },
+    });
   }
 }
 
@@ -422,6 +426,10 @@ export function handleAgentEvent(
     return;
   }
   if (event.type === "agent_reloading" || event.type === "agent_disconnected") {
+    for (const sessionId of sessions.liveSessions) {
+      sessions.flushBuffers(sessionId);
+    }
+    sessions.state.clearStreaming();
     sessions.state.clearPlans();
     for (const snapshot of sessions.clearAgentCommands()) {
       sseManager.broadcast({

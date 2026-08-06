@@ -237,6 +237,32 @@ describe("SessionStateManager", () => {
   });
 
   describe("streaming", () => {
+    it("peeks unknown streaming state without creating a session entry", () => {
+      const states = (
+        sm as unknown as {
+          states: Map<string, unknown>;
+        }
+      ).states;
+
+      assert.equal(states.size, 0);
+      assert.deepEqual(sm.peekStreaming("unseen"), {
+        assistant: false,
+        thinking: false,
+      });
+      assert.equal(states.size, 0);
+    });
+
+    it("peeks the current streaming state", () => {
+      sm.patch("s1", {
+        runtime: { streaming: { assistant: true, thinking: false } },
+      });
+
+      assert.deepEqual(sm.peekStreaming("s1"), {
+        assistant: true,
+        thinking: false,
+      });
+    });
+
     it("defaults to both false", () => {
       assert.deepEqual(sm.getState("s1").runtime.streaming, {
         assistant: false,

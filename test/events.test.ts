@@ -4443,6 +4443,233 @@ describe("events", () => {
       assert.equal(toolCalls.length, 1);
     });
 
+    it("deduplicates a foreign user message replayed before its queued SSE copy", async () => {
+      const fakeEvents = [
+        {
+          seq: 1,
+          session_id: "s1",
+          type: "user_message",
+          data: JSON.stringify({
+            text: "new question",
+            clientOpId: "op-foreign",
+          }),
+        },
+        {
+          seq: 2,
+          session_id: "s1",
+          type: "assistant_message",
+          data: JSON.stringify({ text: "new answer" }),
+        },
+      ];
+
+      let resolveFetch: Function;
+      globalThis.fetch = (() =>
+        new Promise((resolve) => {
+          resolveFetch = resolve;
+        })) as any;
+
+      state.sessionId = "s1";
+      const historyPromise = events.loadHistory("s1");
+
+      events.handleEvent({
+        type: "user_message",
+        sessionId: "s1",
+        text: "new question",
+        clientOpId: "op-foreign",
+      });
+
+      resolveFetch!({ ok: true, json: () => Promise.resolve(fakeEvents) });
+      await historyPromise;
+
+      const rows = [...dom.messages.children];
+      assert.equal(rows.length, 2);
+      assert.ok(rows[0].classList.contains("user"));
+      assert.ok(rows[0].textContent.includes("new question"));
+      assert.ok(rows[1].classList.contains("assistant"));
+      assert.ok(rows[1].textContent.includes("new answer"));
+    });
+
+    it("starts the replayed foreign turn before draining its queued answer", async () => {
+      const fakeEvents = [
+        {
+          seq: 1,
+          session_id: "s1",
+          type: "user_message",
+          data: JSON.stringify({
+            text: "new question",
+            clientOpId: "op-foreign",
+          }),
+        },
+      ];
+
+      let resolveFetch: Function;
+      globalThis.fetch = (() =>
+        new Promise((resolve) => {
+          resolveFetch = resolve;
+        })) as any;
+
+      state.sessionId = "s1";
+      state.turnEnded = true;
+      const historyPromise = events.loadHistory("s1");
+
+      events.handleEvent({
+        type: "user_message",
+        sessionId: "s1",
+        text: "new question",
+        clientOpId: "op-foreign",
+      });
+      events.handleEvent({
+        type: "message_chunk",
+        sessionId: "s1",
+        text: "new answer",
+      });
+
+      resolveFetch!({ ok: true, json: () => Promise.resolve(fakeEvents) });
+      await historyPromise;
+      render.finishAssistant();
+
+      const rows = [...dom.messages.children];
+      assert.equal(rows.length, 2);
+      assert.ok(rows[0].classList.contains("user"));
+      assert.ok(rows[1].classList.contains("assistant"));
+      assert.ok(rows[1].textContent.includes("new answer"));
+      assert.equal(state.turnEnded, false);
+      assert.equal(state.newTurnStarted, true);
+    });
+
+    it("does not deduplicate another session by client operation id", async () => {
+      const fakeEvents = [
+        {
+          seq: 1,
+          session_id: "s1",
+          type: "user_message",
+          data: JSON.stringify({
+            text: "active question",
+            clientOpId: "op-shared",
+          }),
+        },
+      ];
+
+      let resolveFetch: Function;
+      globalThis.fetch = (() =>
+        new Promise((resolve) => {
+          resolveFetch = resolve;
+        })) as any;
+
+      state.sessionId = "s1";
+      state.turnEnded = true;
+      const historyPromise = events.loadHistory("s1");
+
+      events.handleEvent({
+        type: "user_message",
+        sessionId: "s2",
+        text: "other question",
+        clientOpId: "op-shared",
+      });
+
+      resolveFetch!({ ok: true, json: () => Promise.resolve(fakeEvents) });
+      await historyPromise;
+
+      assert.equal(dom.messages.querySelectorAll(".msg.user").length, 1);
+      assert.equal(state.turnEnded, true);
+      assert.equal(state.newTurnStarted, false);
+    });
+
+    it("preserves a replayed turn boundary through full-load activation", async () => {
+      const fakeEvents = [
+        {
+          seq: 1,
+          session_id: "s1",
+          type: "user_message",
+          data: JSON.stringify({
+            text: "new question",
+            clientOpId: "op-foreign",
+          }),
+        },
+      ];
+
+      let resolveFetch: Function;
+      globalThis.fetch = (() =>
+        new Promise((resolve) => {
+          resolveFetch = resolve;
+        })) as any;
+
+      state.sessionId = null;
+      state.pendingNavigationSessionId = "s1";
+      state.turnEnded = true;
+      const historyPromise = events.loadHistory("s1");
+
+      events.handleEvent({
+        type: "user_message",
+        sessionId: "s1",
+        text: "new question",
+        clientOpId: "op-foreign",
+      });
+      events.handleEvent({
+        type: "prompt_done",
+        sessionId: "s1",
+        stopReason: "cancelled",
+      });
+
+      resolveFetch!({ ok: true, json: () => Promise.resolve(fakeEvents) });
+      await historyPromise;
+      events.handleEvent({
+        type: "session_created",
+        sessionId: "s1",
+        configOptions: [],
+      });
+      events.drainNavigationEvents("s1");
+
+      assert.equal(state.turnEnded, false);
+      assert.equal(state.newTurnStarted, false);
+    });
+
+    it("preserves a replayed turn boundary when refreshing the active session", async () => {
+      const fakeEvents = [
+        {
+          seq: 1,
+          session_id: "s1",
+          type: "user_message",
+          data: JSON.stringify({
+            text: "new question",
+            clientOpId: "op-foreign",
+          }),
+        },
+      ];
+
+      let resolveFetch: Function;
+      globalThis.fetch = (() =>
+        new Promise((resolve) => {
+          resolveFetch = resolve;
+        })) as any;
+
+      state.sessionId = "s1";
+      state.turnEnded = true;
+      const historyPromise = events.loadHistory("s1");
+      events.handleEvent({
+        type: "user_message",
+        sessionId: "s1",
+        text: "new question",
+        clientOpId: "op-foreign",
+      });
+
+      resolveFetch!({ ok: true, json: () => Promise.resolve(fakeEvents) });
+      await historyPromise;
+      events.handleEvent({
+        type: "session_created",
+        sessionId: "s1",
+        configOptions: [],
+      });
+      events.handleEvent({
+        type: "prompt_done",
+        sessionId: "s1",
+        stopReason: "cancelled",
+      });
+
+      assert.equal(state.turnEnded, false);
+      assert.equal(state.newTurnStarted, false);
+    });
+
     it("deduplicates permission_request events that were both replayed and queued", async () => {
       const fakeEvents = [
         {
@@ -4652,6 +4879,50 @@ describe("events", () => {
         state.currentAssistantEl,
         "currentAssistantEl should be primed",
       );
+    });
+
+    it("does not prime an assistant that precedes the latest user message", async () => {
+      const fakeEvents = [
+        {
+          seq: 1,
+          type: "assistant_message",
+          data: JSON.stringify({ text: "old answer" }),
+        },
+        {
+          seq: 2,
+          type: "user_message",
+          data: JSON.stringify({
+            text: "new question",
+            clientOpId: "op-new",
+          }),
+        },
+      ];
+      const response = {
+        events: fakeEvents,
+        streaming: { thinking: false, assistant: true },
+      };
+      state.sessionId = "s1";
+      globalThis.fetch = (() =>
+        Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve(response),
+        })) as any;
+
+      await events.loadHistory("s1");
+      events.handleEvent({
+        type: "message_chunk",
+        sessionId: "s1",
+        text: "new answer",
+      });
+      render.finishAssistant();
+
+      const rows = [...dom.messages.children];
+      assert.equal(rows.length, 3);
+      assert.ok(rows[0].classList.contains("assistant"));
+      assert.ok(rows[0].textContent.includes("old answer"));
+      assert.ok(rows[1].classList.contains("user"));
+      assert.ok(rows[2].classList.contains("assistant"));
+      assert.ok(rows[2].textContent.includes("new answer"));
     });
 
     it("allows new thought_chunk through when no streaming was signaled", async () => {

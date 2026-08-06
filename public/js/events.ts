@@ -311,7 +311,7 @@ export async function loadHistory(sid: string): Promise<boolean> {
     if (replayToken === replayLoadToken) {
       state.replayTarget = null;
       state.replayInProgress = false;
-      drainReplayQueue();
+      drainReplayQueue(sid);
     }
   }
 }
@@ -339,15 +339,16 @@ function primeStreamingState(
   if (streaming.thinking) {
     let el: HTMLDetailsElement | undefined;
     if (events.length) {
-      // Find the last thinking event — it was the flushed buffer
-      for (let i = events.length - 1; i >= 0; i--) {
-        if (events[i].type === "thinking") {
-          const allThinking = dom.messages.querySelectorAll(".thinking");
-          el = allThinking[allThinking.length - 1] as
-            | HTMLDetailsElement
-            | undefined;
-          break;
-        }
+      // Tools may follow an open stream, but a user message is a hard turn
+      // boundary. Never adopt thinking from before the latest user message.
+      if (
+        lastEventIndex(events, "thinking") >
+        lastEventIndex(events, "user_message")
+      ) {
+        const allThinking = dom.messages.querySelectorAll(".thinking");
+        el = allThinking[allThinking.length - 1] as
+          | HTMLDetailsElement
+          | undefined;
       }
     } else {
       // No new events but still streaming — re-prime from existing DOM
@@ -370,12 +371,12 @@ function primeStreamingState(
   if (streaming.assistant) {
     let el: HTMLDivElement | undefined;
     if (events.length) {
-      for (let i = events.length - 1; i >= 0; i--) {
-        if (events[i].type === "assistant_message") {
-          const allMsg = dom.messages.querySelectorAll(".msg.assistant");
-          el = allMsg[allMsg.length - 1] as HTMLDivElement | undefined;
-          break;
-        }
+      if (
+        lastEventIndex(events, "assistant_message") >
+        lastEventIndex(events, "user_message")
+      ) {
+        const allMsg = dom.messages.querySelectorAll(".msg.assistant");
+        el = allMsg[allMsg.length - 1] as HTMLDivElement | undefined;
       }
     } else {
       // No new events but still streaming — re-prime from existing DOM
@@ -387,6 +388,13 @@ function primeStreamingState(
       state.currentAssistantText = el.getAttribute("data-raw") ?? "";
       el.setAttribute("data-primed", "");
     }
+  }
+
+  function lastEventIndex(historyEvents: StoredEvent[], type: string): number {
+    for (let i = historyEvents.length - 1; i >= 0; i--) {
+      if (historyEvents[i].type === type) return i;
+    }
+    return -1;
   }
 }
 
@@ -578,7 +586,7 @@ async function _loadNewEventsImpl(sid: string): Promise<boolean> {
     if (replayToken === replayLoadToken) {
       state.replayTarget = null;
       state.replayInProgress = false;
-      drainReplayQueue();
+      drainReplayQueue(sid);
     }
   }
 }
@@ -1311,12 +1319,28 @@ function handleReplayContentEvent(
   }
 }
 
-/** Process queued WS events, skipping any that duplicate content already in the DOM. */
-function drainReplayQueue() {
+/** Process queued SSE events, skipping any that duplicate content already in the DOM. */
+function drainReplayQueue(replayedSessionId: string) {
   const queue = state.replayQueue;
   state.replayQueue = [];
   for (const msg of queue) {
-    if (isDuplicateOfReplay(msg)) continue;
+    if (isDuplicateOfReplay(msg, replayedSessionId)) {
+      if (
+        msg.type === "user_message" &&
+        !(
+          state.sentMessageForSession === msg.sessionId &&
+          state.sentMessageOpId === msg.clientOpId
+        )
+      ) {
+        // Replay already rendered this foreign user's bubble, but the live
+        // handler normally also opens the new turn. Preserve that state
+        // transition without re-running its DOM boundary logic: the replayed
+        // assistant element may already be primed for queued tail chunks.
+        state.newTurnStarted = true;
+        state.turnEnded = false;
+      }
+      continue;
+    }
     handleEvent(msg);
   }
   if (state.awaitingOwnUserEcho && state.replayedOwnUserEcho) {
@@ -1325,8 +1349,12 @@ function drainReplayQueue() {
   state.replayedOwnUserEcho = false;
 }
 
-/** Check whether a queued WS event duplicates an element already rendered by replay. */
-function isDuplicateOfReplay(msg: AgentEvent): boolean {
+/** Check whether a queued SSE event duplicates an element already rendered by replay. */
+function isDuplicateOfReplay(
+  msg: AgentEvent,
+  replayedSessionId: string,
+): boolean {
+  if ("sessionId" in msg && msg.sessionId !== replayedSessionId) return false;
   // eslint-disable-next-line @typescript-eslint/switch-exhaustiveness-check -- intentionally partial, default handles the rest
   switch (msg.type) {
     case "tool_call":
@@ -1336,6 +1364,15 @@ function isDuplicateOfReplay(msg: AgentEvent): boolean {
         document.querySelector(
           `.permission[data-request-id="${msg.requestId}"]`,
         ),
+      );
+    case "user_message":
+      return (
+        typeof msg.clientOpId === "string" &&
+        Array.from(
+          document.querySelectorAll<HTMLElement>(
+            ".msg.user[data-client-op-id]",
+          ),
+        ).some((el) => el.dataset.clientOpId === msg.clientOpId)
       );
     // Streaming chunks were flushed to DB by the events endpoint, so the
     // content is already rendered.  The live currentThinkingEl / currentAssistantEl
@@ -1598,11 +1635,9 @@ export function handleEvent(msg: AgentEvent) {
       }
       state.awaitingNewSession = false;
       state.pendingNavigationSessionId = null;
-      {
-        const isSessionActivation = state.sessionId === null;
-        state.sessionId = msg.sessionId;
-        if (isSessionActivation) rearmHistoryObserverAfterSessionActivation();
-      }
+      const isSessionActivation = state.sessionId === null;
+      state.sessionId = msg.sessionId;
+      if (isSessionActivation) rearmHistoryObserverAfterSessionActivation();
       state.sessionCwd = msg.cwd ?? state.sessionCwd;
       state.sessionTitle = msg.title ?? null;
       if (msg.agentCommands) applyAgentCommandSnapshot(msg.agentCommands);
@@ -1628,7 +1663,9 @@ export function handleEvent(msg: AgentEvent) {
       dom.input.disabled = false;
       dom.sendBtn.disabled = false;
       // Placeholder is owned by updateModeUI (called above). No literal here.
-      state.newTurnStarted = false;
+      // Do not clear newTurnStarted here. Replay may have opened a foreign
+      // turn whose stale completion has not arrived yet; normal session
+      // switches already reset this state in resetSessionUI().
       // Adopt any in-flight bash block from history replay (snapshot carries
       // the busy truth; we just need to hook up the DOM element if present).
       {

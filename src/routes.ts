@@ -1387,12 +1387,13 @@ export function createRequestHandler(
             },
           ];
         });
+        const eventClientOpId = opId ?? randomUUID();
         store.saveEvent(
           sessionId,
           "user_message",
           {
             text: body.text,
-            ...(opId ? { clientOpId: opId } : {}),
+            clientOpId: eventClientOpId,
             ...(storedAttachments?.length
               ? { attachments: storedAttachments }
               : {}),
@@ -1405,7 +1406,7 @@ export function createRequestHandler(
           type: "user_message",
           sessionId,
           text: body.text,
-          clientOpId: opId ?? undefined,
+          clientOpId: eventClientOpId,
           attachments: storedAttachments,
         } as AgentEvent;
         sseManager.broadcast(userMsgEvent);
@@ -1982,14 +1983,15 @@ export function createRequestHandler(
         let streamingThinking = false;
         let streamingAssistant = false;
         if (sessions) {
-          if (sessions.thinkingBuffers.has(sessionId)) {
-            streamingThinking = true;
-            sessions.flushThinkingBuffer(sessionId);
-          }
-          if (sessions.assistantBuffers.has(sessionId)) {
-            streamingAssistant = true;
-            sessions.flushAssistantBuffer(sessionId);
-          }
+          const runtimeStreaming = sessions.state.peekStreaming(sessionId);
+          streamingThinking =
+            runtimeStreaming.thinking ||
+            Boolean(sessions.thinkingBuffers.get(sessionId));
+          streamingAssistant =
+            runtimeStreaming.assistant ||
+            Boolean(sessions.assistantBuffers.get(sessionId));
+          sessions.flushThinkingBuffer(sessionId);
+          sessions.flushAssistantBuffer(sessionId);
         }
         const events = store.getEvents(sessionId, {
           excludeThinking,

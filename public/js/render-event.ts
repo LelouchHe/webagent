@@ -166,6 +166,9 @@ function buildUserMessage(
   const text = typeof data.text === "string" ? data.text : "";
   const el = document.createElement("div");
   el.className = "msg user";
+  if (typeof data.clientOpId === "string") {
+    el.dataset.clientOpId = data.clientOpId;
+  }
   el.innerHTML = escHtml(text).replace(/\n/g, "<br>");
   const attachments = Array.isArray(data.attachments) ? data.attachments : [];
   for (const att of attachments) {

@@ -1073,5 +1073,72 @@ describe("Session REST API", () => {
       assert.equal(body.streaming.thinking, false);
       assert.equal(body.streaming.assistant, false);
     });
+
+    it("does not signal streaming for empty buffers", async () => {
+      const createRes = await makeRequest(
+        port,
+        "POST",
+        "/api/v1/sessions",
+        "{}",
+      );
+      const sessionId = JSON.parse(createRes.body).id;
+      sessions.assistantBuffers.set(sessionId, "");
+      sessions.thinkingBuffers.set(sessionId, "");
+
+      const res = await makeRequest(
+        port,
+        "GET",
+        `/api/v1/sessions/${sessionId}/events`,
+      );
+      const body = JSON.parse(res.body);
+
+      assert.deepEqual(body.streaming, {
+        thinking: false,
+        assistant: false,
+      });
+      assert.equal(sessions.assistantBuffers.has(sessionId), false);
+      assert.equal(sessions.thinkingBuffers.has(sessionId), false);
+    });
+
+    it("keeps an active stream open when its pending buffer is empty", async () => {
+      const createRes = await makeRequest(
+        port,
+        "POST",
+        "/api/v1/sessions",
+        "{}",
+      );
+      const sessionId = JSON.parse(createRes.body).id;
+      store.saveEvent(
+        sessionId,
+        "user_message",
+        { text: "question" },
+        { from_ref: "user" },
+      );
+      store.saveEvent(
+        sessionId,
+        "assistant_message",
+        { text: "partial reply" },
+        { from_ref: "agent" },
+      );
+      sessions.assistantBuffers.set(sessionId, "");
+      sessions.state.patch(sessionId, {
+        runtime: {
+          streaming: { thinking: false, assistant: true },
+        },
+      });
+
+      const res = await makeRequest(
+        port,
+        "GET",
+        `/api/v1/sessions/${sessionId}/events`,
+      );
+      const body = JSON.parse(res.body);
+
+      assert.deepEqual(body.streaming, {
+        thinking: false,
+        assistant: true,
+      });
+      assert.equal(sessions.assistantBuffers.has(sessionId), false);
+    });
   });
 });

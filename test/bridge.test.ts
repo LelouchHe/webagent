@@ -1,5 +1,6 @@
 import { afterEach, describe, it, mock } from "node:test";
 import assert from "node:assert/strict";
+import { EventEmitter } from "node:events";
 import { AgentBridge } from "../src/bridge.ts";
 
 describe("AgentBridge", () => {
@@ -496,9 +497,53 @@ describe("AgentBridge", () => {
     });
   });
 
+  it("waits for child stdio to close before shutdown resolves", async () => {
+    const bridge = new AgentBridge("fake-agent");
+    const proc = new EventEmitter() as EventEmitter & {
+      exitCode: number | null;
+      kill: () => boolean;
+    };
+    proc.exitCode = 0;
+    proc.kill = () => true;
+    (bridge as any).proc = proc;
+
+    let settled = false;
+    const shutdown = bridge.shutdown().then(() => {
+      settled = true;
+    });
+    proc.emit("exit", 0, null);
+    await new Promise((resolve) => setImmediate(resolve));
+
+    assert.equal(settled, false);
+    proc.emit("close", 0, null);
+    await shutdown;
+    assert.equal(settled, true);
+  });
+
+  it("does not wait again after child stdio has already closed", async () => {
+    const bridge = new AgentBridge("fake-agent");
+    let killCount = 0;
+    const proc = new EventEmitter() as EventEmitter & {
+      exitCode: number | null;
+      kill: () => boolean;
+    };
+    proc.exitCode = null;
+    proc.kill = () => {
+      killCount++;
+      return true;
+    };
+    (bridge as any).proc = proc;
+    (bridge as any).closedProcesses.add(proc);
+
+    await bridge.shutdown();
+
+    assert.equal(killCount, 0);
+  });
+
   describe("restart()", () => {
     function createMockSessions() {
       let plansCleared = false;
+      let streamingClearCount = 0;
       return {
         liveSessions: new Set(["s1", "s2"]),
         restoringSessions: new Set<string>(),
@@ -528,9 +573,15 @@ describe("AgentBridge", () => {
           clearPlans() {
             plansCleared = true;
           },
+          clearStreaming() {
+            streamingClearCount++;
+          },
         },
         get plansCleared() {
           return plansCleared;
+        },
+        get streamingClearCount() {
+          return streamingClearCount;
         },
       };
     }
@@ -634,6 +685,25 @@ describe("AgentBridge", () => {
 
       // Reloading flag should be cleared
       assert.equal(bridge.reloading, false);
+    });
+
+    it("flushes late chunks after the old process shuts down", async () => {
+      const bridge = new AgentBridge("fake-agent");
+      (bridge as any).conn = { cancel: async () => {} };
+      const sessions = createMockSessions();
+      const titleService = createMockTitleService();
+
+      (bridge as any).shutdown = async () => {
+        sessions.assistantBuffers.set("s1", "late chunk");
+      };
+      (bridge as any).start = async () => {
+        (bridge as any).conn = {};
+      };
+
+      await bridge.restart(sessions as any, titleService as any);
+
+      assert.equal(sessions.assistantBuffers.has("s1"), false);
+      assert.equal(sessions.streamingClearCount, 1);
     });
 
     it("rejects concurrent restart calls", async () => {
