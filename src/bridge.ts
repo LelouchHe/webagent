@@ -378,6 +378,7 @@ export class AgentBridge extends EventEmitter {
   ): Promise<void> {
     if (this.reloading) throw new Error("Already reloading");
     this.reloading = true;
+    const liveSessionIds = [...sessions.liveSessions];
     this.emit("event", { type: "agent_reloading" } satisfies AgentEvent);
     blog.info("reloading agent...");
 
@@ -397,7 +398,7 @@ export class AgentBridge extends EventEmitter {
       }
 
       // 2. Flush buffers to persist partial content
-      for (const sessionId of sessions.liveSessions) {
+      for (const sessionId of liveSessionIds) {
         sessions.flushBuffers(sessionId);
       }
 
@@ -433,6 +434,13 @@ export class AgentBridge extends EventEmitter {
 
       // 6. Shutdown old process
       await this.shutdown();
+      // Cancellation is asynchronous: the old agent may emit final chunks
+      // before shutdown completes. Persist that tail and make the terminal
+      // stream state authoritative before starting the replacement process.
+      for (const sessionId of liveSessionIds) {
+        sessions.flushBuffers(sessionId);
+      }
+      sessions.state.clearStreaming();
 
       // 7. Start new process with retry (exponential backoff, max 3 attempts)
       let lastError: unknown;

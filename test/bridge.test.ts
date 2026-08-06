@@ -499,6 +499,7 @@ describe("AgentBridge", () => {
   describe("restart()", () => {
     function createMockSessions() {
       let plansCleared = false;
+      let streamingClearCount = 0;
       return {
         liveSessions: new Set(["s1", "s2"]),
         restoringSessions: new Set<string>(),
@@ -528,9 +529,15 @@ describe("AgentBridge", () => {
           clearPlans() {
             plansCleared = true;
           },
+          clearStreaming() {
+            streamingClearCount++;
+          },
         },
         get plansCleared() {
           return plansCleared;
+        },
+        get streamingClearCount() {
+          return streamingClearCount;
         },
       };
     }
@@ -634,6 +641,25 @@ describe("AgentBridge", () => {
 
       // Reloading flag should be cleared
       assert.equal(bridge.reloading, false);
+    });
+
+    it("flushes late chunks after the old process shuts down", async () => {
+      const bridge = new AgentBridge("fake-agent");
+      (bridge as any).conn = { cancel: async () => {} };
+      const sessions = createMockSessions();
+      const titleService = createMockTitleService();
+
+      (bridge as any).shutdown = async () => {
+        sessions.assistantBuffers.set("s1", "late chunk");
+      };
+      (bridge as any).start = async () => {
+        (bridge as any).conn = {};
+      };
+
+      await bridge.restart(sessions as any, titleService as any);
+
+      assert.equal(sessions.assistantBuffers.has("s1"), false);
+      assert.equal(sessions.streamingClearCount, 1);
     });
 
     it("rejects concurrent restart calls", async () => {
