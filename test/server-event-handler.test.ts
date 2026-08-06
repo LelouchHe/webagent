@@ -246,6 +246,31 @@ describe("handleAgentEvent", () => {
     assert.equal(sessions.state.getState("s1").runtime.plan, null);
   });
 
+  it("clears streaming state when the agent disconnects", () => {
+    store.createSession("s1", "/tmp");
+    sessions.state.patch("s1", {
+      runtime: {
+        streaming: { assistant: true, thinking: true },
+      },
+    });
+    const { bridge } = createMockBridge();
+    const { sseManager } = createMockSseManager();
+
+    handleAgentEvent(
+      { type: "agent_disconnected", error: "agent exited" } as any,
+      sessions,
+      store,
+      bridge,
+      makeEventHandlerConfig(),
+      sseManager as any,
+    );
+
+    assert.deepEqual(sessions.state.getState("s1").runtime.streaming, {
+      assistant: false,
+      thinking: false,
+    });
+  });
+
   it("caches config options from session_created", () => {
     store.createSession("s1", "/tmp");
     const { bridge } = createMockBridge();
@@ -403,6 +428,36 @@ describe("handleAgentEvent", () => {
     );
 
     assert.equal(sessions.activePrompts.has("s1"), false);
+  });
+
+  it("flushes content and clears streaming state on error events", () => {
+    store.createSession("s1", "/tmp");
+    sessions.appendAssistant("s1", "partial answer");
+    sessions.state.patch("s1", {
+      runtime: {
+        streaming: { assistant: true, thinking: false },
+      },
+    });
+    const { bridge } = createMockBridge();
+    const { sseManager } = createMockSseManager();
+
+    handleAgentEvent(
+      { type: "error", sessionId: "s1", message: "something failed" } as any,
+      sessions,
+      store,
+      bridge,
+      makeEventHandlerConfig(),
+      sseManager as any,
+    );
+
+    assert.equal(sessions.assistantBuffers.has("s1"), false);
+    assert.ok(
+      store.getEvents("s1").some((event) => event.type === "assistant_message"),
+    );
+    assert.deepEqual(sessions.state.getState("s1").runtime.streaming, {
+      assistant: false,
+      thinking: false,
+    });
   });
 
   // --- Autopilot auto-approval ---

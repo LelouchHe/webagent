@@ -241,6 +241,22 @@ export class SessionStateManager {
     }
   }
 
+  /** Clear active stream markers for every known session on bridge teardown. */
+  clearStreaming(): void {
+    for (const [sessionId, state] of this.states) {
+      if (
+        state.runtime.streaming.assistant ||
+        state.runtime.streaming.thinking
+      ) {
+        this.patch(sessionId, {
+          runtime: {
+            streaming: { assistant: false, thinking: false },
+          },
+        });
+      }
+    }
+  }
+
   /**
    * Backend acknowledgement timer for cancel: if the same agent prompt is
    * still pending after `timeoutMs`, mark the request unconfirmed.
