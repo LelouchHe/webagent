@@ -1316,7 +1316,23 @@ function drainReplayQueue() {
   const queue = state.replayQueue;
   state.replayQueue = [];
   for (const msg of queue) {
-    if (isDuplicateOfReplay(msg)) continue;
+    if (isDuplicateOfReplay(msg)) {
+      if (
+        msg.type === "user_message" &&
+        !(
+          state.sentMessageForSession === msg.sessionId &&
+          state.sentMessageOpId === msg.clientOpId
+        )
+      ) {
+        // Replay already rendered this foreign user's bubble, but the live
+        // handler normally also opens the new turn. Preserve that state
+        // transition without re-running its DOM boundary logic: the replayed
+        // assistant element may already be primed for queued tail chunks.
+        state.newTurnStarted = true;
+        state.turnEnded = false;
+      }
+      continue;
+    }
     handleEvent(msg);
   }
   if (state.awaitingOwnUserEcho && state.replayedOwnUserEcho) {

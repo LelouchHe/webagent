@@ -4489,6 +4489,54 @@ describe("events", () => {
       assert.ok(rows[1].textContent.includes("new answer"));
     });
 
+    it("starts the replayed foreign turn before draining its queued answer", async () => {
+      const fakeEvents = [
+        {
+          seq: 1,
+          session_id: "s1",
+          type: "user_message",
+          data: JSON.stringify({
+            text: "new question",
+            clientOpId: "op-foreign",
+          }),
+        },
+      ];
+
+      let resolveFetch: Function;
+      globalThis.fetch = (() =>
+        new Promise((resolve) => {
+          resolveFetch = resolve;
+        })) as any;
+
+      state.sessionId = "s1";
+      state.turnEnded = true;
+      const historyPromise = events.loadHistory("s1");
+
+      events.handleEvent({
+        type: "user_message",
+        sessionId: "s1",
+        text: "new question",
+        clientOpId: "op-foreign",
+      });
+      events.handleEvent({
+        type: "message_chunk",
+        sessionId: "s1",
+        text: "new answer",
+      });
+
+      resolveFetch!({ ok: true, json: () => Promise.resolve(fakeEvents) });
+      await historyPromise;
+      render.finishAssistant();
+
+      const rows = [...dom.messages.children];
+      assert.equal(rows.length, 2);
+      assert.ok(rows[0].classList.contains("user"));
+      assert.ok(rows[1].classList.contains("assistant"));
+      assert.ok(rows[1].textContent.includes("new answer"));
+      assert.equal(state.turnEnded, false);
+      assert.equal(state.newTurnStarted, true);
+    });
+
     it("deduplicates permission_request events that were both replayed and queued", async () => {
       const fakeEvents = [
         {
