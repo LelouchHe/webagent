@@ -339,15 +339,16 @@ function primeStreamingState(
   if (streaming.thinking) {
     let el: HTMLDetailsElement | undefined;
     if (events.length) {
-      // Find the last thinking event — it was the flushed buffer
-      for (let i = events.length - 1; i >= 0; i--) {
-        if (events[i].type === "thinking") {
-          const allThinking = dom.messages.querySelectorAll(".thinking");
-          el = allThinking[allThinking.length - 1] as
-            | HTMLDetailsElement
-            | undefined;
-          break;
-        }
+      // Tools may follow an open stream, but a user message is a hard turn
+      // boundary. Never adopt thinking from before the latest user message.
+      if (
+        lastEventIndex(events, "thinking") >
+        lastEventIndex(events, "user_message")
+      ) {
+        const allThinking = dom.messages.querySelectorAll(".thinking");
+        el = allThinking[allThinking.length - 1] as
+          | HTMLDetailsElement
+          | undefined;
       }
     } else {
       // No new events but still streaming — re-prime from existing DOM
@@ -370,12 +371,12 @@ function primeStreamingState(
   if (streaming.assistant) {
     let el: HTMLDivElement | undefined;
     if (events.length) {
-      for (let i = events.length - 1; i >= 0; i--) {
-        if (events[i].type === "assistant_message") {
-          const allMsg = dom.messages.querySelectorAll(".msg.assistant");
-          el = allMsg[allMsg.length - 1] as HTMLDivElement | undefined;
-          break;
-        }
+      if (
+        lastEventIndex(events, "assistant_message") >
+        lastEventIndex(events, "user_message")
+      ) {
+        const allMsg = dom.messages.querySelectorAll(".msg.assistant");
+        el = allMsg[allMsg.length - 1] as HTMLDivElement | undefined;
       }
     } else {
       // No new events but still streaming — re-prime from existing DOM
@@ -387,6 +388,13 @@ function primeStreamingState(
       state.currentAssistantText = el.getAttribute("data-raw") ?? "";
       el.setAttribute("data-primed", "");
     }
+  }
+
+  function lastEventIndex(historyEvents: StoredEvent[], type: string): number {
+    for (let i = historyEvents.length - 1; i >= 0; i--) {
+      if (historyEvents[i].type === type) return i;
+    }
+    return -1;
   }
 }
 

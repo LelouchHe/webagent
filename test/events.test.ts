@@ -4881,6 +4881,50 @@ describe("events", () => {
       );
     });
 
+    it("does not prime an assistant that precedes the latest user message", async () => {
+      const fakeEvents = [
+        {
+          seq: 1,
+          type: "assistant_message",
+          data: JSON.stringify({ text: "old answer" }),
+        },
+        {
+          seq: 2,
+          type: "user_message",
+          data: JSON.stringify({
+            text: "new question",
+            clientOpId: "op-new",
+          }),
+        },
+      ];
+      const response = {
+        events: fakeEvents,
+        streaming: { thinking: false, assistant: true },
+      };
+      state.sessionId = "s1";
+      globalThis.fetch = (() =>
+        Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve(response),
+        })) as any;
+
+      await events.loadHistory("s1");
+      events.handleEvent({
+        type: "message_chunk",
+        sessionId: "s1",
+        text: "new answer",
+      });
+      render.finishAssistant();
+
+      const rows = [...dom.messages.children];
+      assert.equal(rows.length, 3);
+      assert.ok(rows[0].classList.contains("assistant"));
+      assert.ok(rows[0].textContent.includes("old answer"));
+      assert.ok(rows[1].classList.contains("user"));
+      assert.ok(rows[2].classList.contains("assistant"));
+      assert.ok(rows[2].textContent.includes("new answer"));
+    });
+
     it("allows new thought_chunk through when no streaming was signaled", async () => {
       // Non-streaming case: agent starts thinking AFTER replay finishes
       const fakeEvents = [

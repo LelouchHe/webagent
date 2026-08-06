@@ -1073,5 +1073,31 @@ describe("Session REST API", () => {
       assert.equal(body.streaming.thinking, false);
       assert.equal(body.streaming.assistant, false);
     });
+
+    it("does not signal streaming for empty buffers", async () => {
+      const createRes = await makeRequest(
+        port,
+        "POST",
+        "/api/v1/sessions",
+        "{}",
+      );
+      const sessionId = JSON.parse(createRes.body).id;
+      sessions.assistantBuffers.set(sessionId, "");
+      sessions.thinkingBuffers.set(sessionId, "");
+
+      const res = await makeRequest(
+        port,
+        "GET",
+        `/api/v1/sessions/${sessionId}/events`,
+      );
+      const body = JSON.parse(res.body);
+
+      assert.deepEqual(body.streaming, {
+        thinking: false,
+        assistant: false,
+      });
+      assert.equal(sessions.assistantBuffers.has(sessionId), false);
+      assert.equal(sessions.thinkingBuffers.has(sessionId), false);
+    });
   });
 });
