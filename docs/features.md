@@ -61,7 +61,7 @@ Commands with submenus (`/model`, `/mode`, `/think`, `/notify`, `/switch`, `/new
 | `/mode [name]`        | Switch mode (Agent / Plan / Autopilot)                                                                                        |
 | `/think [level]`      | Set thinking effort (low / medium / high)                                                                                     |
 | `/notify [on\|off]`   | Toggle push notifications                                                                                                     |
-| `/inbox`              | Manage inbox — pick a pending message to consume (opens a new session) or ack (dismiss). See [Messages / Inbox](messages.md). |
+| `/inbox`              | Manage inbox — pick a pending message to consume (opens a new session), or use `/inbox dismiss` to ack it. See [Messages / Inbox](messages.md). |
 | `/log [level]`        | Set local log level (`off`, `debug`, `info`, `warn`, `error`, `reset`). Log records render inline as system messages.         |
 | `/plan [show\|hide]`  | Toggle, show, or hide the current pinned plan panel                                                                           |
 | `/cancel`             | Cancel current response                                                                                                       |

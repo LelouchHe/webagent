@@ -105,13 +105,13 @@ longer add informational rows to the active conversation.
 Typing `/inbox` (with or without a trailing space) opens a picker listing all pending unbound messages, newest first. Each row shows:
 
 ```
-[x] Title                                     HH:MM
-    from · /cwd/left-ellipsed
+Title                                         HH:MM
+/cwd/left-ellipsed                            from
 ```
 
 - **Default action (click / Tab+Enter):** consume → creates session + switches the UI; model and reasoning effort follow the same inheritance rules as `/new`, while mode resets to the agent default
-- **`[x]` button:** ack (dismiss without consuming)
-- **Tab:** fills `/inbox <id>` into the input so the command is visible before you press Enter
+- **Dismiss:** drill into the `/inbox dismiss` submenu (type `/inbox dismiss`, or Tab on the `dismiss` row) and pick a message there — same list, but selecting acks instead of consuming
+- **Tab on a message row:** fills `/inbox <title>` into the input so the command is visible before you press Enter
 
 Typing `/inbox <id-prefix|title-substring>` (without picker) consumes the first match; `/inbox dismiss <id-prefix|title-substring>` dismisses it. Matching mirrors `/switch` (id prefix OR case-insensitive title substring, first hit wins). There is no `consume` keyword — plain `/inbox <query>` is the consume path.
 
@@ -197,7 +197,9 @@ Pass `X-Client-Op-Id: <uuid>`; repeated requests return the same message id (res
 | REST routes (`POST`, `GET`, `consume`, `ack`)                            | `src/routes.ts`                                                                                                 |
 | DB operations (`consumeMessageTx`, `findBySupersede`, `deleteOlderThan`) | `src/store.ts`                                                                                                  |
 | Push tag derivation, `session:<id>` routing                              | `src/push-service.ts` (`sendForMessage`, `tagToTopic`)                                                          |
-| Inbox slash menu, rendering, click/tab handlers                          | `public/js/commands.ts`                                                                                         |
+| Inbox slash tree (`/inbox`, `/inbox dismiss`) + actions              | `public/js/slash-commands.ts` (`listInbox`, `consumeInbox`, `ackInbox`)                                         |
+| Direct `/inbox <q>` and `/inbox dismiss <q>` execution                   | `public/js/slash-exec.ts`                                                                                       |
+| Menu walking, Tab/Click dispatch, rendering                              | `public/js/commands.ts`, `public/js/slash-tree.ts`, `public/js/slash-render.ts`                                 |
 | Inbox types + API client                                                 | `public/js/api.ts`                                                                                              |
 | SW banner-close + notificationclick routing                              | `public/sw.js`                                                                                                  |
-| Tests                                                                    | `test/messages-*.test.ts`, `test/push-egress*.test.ts`, `test/inbox-command.test.ts`, `test/slash-menu.test.ts` |
+| Tests                                                                    | `test/messages-*.test.ts`, `test/push-egress*.test.ts`, `test/inbox-indicator.test.ts`, `test/slash-menu.test.ts` |
