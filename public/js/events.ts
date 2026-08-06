@@ -1655,10 +1655,9 @@ export function handleEvent(msg: AgentEvent) {
       dom.input.disabled = false;
       dom.sendBtn.disabled = false;
       // Placeholder is owned by updateModeUI (called above). No literal here.
-      // Full-load replay may have opened a foreign turn whose queued stale
-      // completion still waits in pendingNavigationEvents. Preserve that
-      // boundary until drainNavigationEvents classifies the completion.
-      if (!isSessionActivation) state.newTurnStarted = false;
+      // Do not clear newTurnStarted here. Replay may have opened a foreign
+      // turn whose stale completion has not arrived yet; normal session
+      // switches already reset this state in resetSessionUI().
       // Adopt any in-flight bash block from history replay (snapshot carries
       // the busy truth; we just need to hook up the DOM element if present).
       {

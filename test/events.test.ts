@@ -4624,6 +4624,52 @@ describe("events", () => {
       assert.equal(state.newTurnStarted, false);
     });
 
+    it("preserves a replayed turn boundary when refreshing the active session", async () => {
+      const fakeEvents = [
+        {
+          seq: 1,
+          session_id: "s1",
+          type: "user_message",
+          data: JSON.stringify({
+            text: "new question",
+            clientOpId: "op-foreign",
+          }),
+        },
+      ];
+
+      let resolveFetch: Function;
+      globalThis.fetch = (() =>
+        new Promise((resolve) => {
+          resolveFetch = resolve;
+        })) as any;
+
+      state.sessionId = "s1";
+      state.turnEnded = true;
+      const historyPromise = events.loadHistory("s1");
+      events.handleEvent({
+        type: "user_message",
+        sessionId: "s1",
+        text: "new question",
+        clientOpId: "op-foreign",
+      });
+
+      resolveFetch!({ ok: true, json: () => Promise.resolve(fakeEvents) });
+      await historyPromise;
+      events.handleEvent({
+        type: "session_created",
+        sessionId: "s1",
+        configOptions: [],
+      });
+      events.handleEvent({
+        type: "prompt_done",
+        sessionId: "s1",
+        stopReason: "cancelled",
+      });
+
+      assert.equal(state.turnEnded, false);
+      assert.equal(state.newTurnStarted, false);
+    });
+
     it("deduplicates permission_request events that were both replayed and queued", async () => {
       const fakeEvents = [
         {
