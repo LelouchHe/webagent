@@ -1,5 +1,6 @@
 import { afterEach, describe, it, mock } from "node:test";
 import assert from "node:assert/strict";
+import { EventEmitter } from "node:events";
 import { AgentBridge } from "../src/bridge.ts";
 
 describe("AgentBridge", () => {
@@ -494,6 +495,29 @@ describe("AgentBridge", () => {
         },
       );
     });
+  });
+
+  it("waits for child stdio to close before shutdown resolves", async () => {
+    const bridge = new AgentBridge("fake-agent");
+    const proc = new EventEmitter() as EventEmitter & {
+      exitCode: number | null;
+      kill: () => boolean;
+    };
+    proc.exitCode = null;
+    proc.kill = () => true;
+    (bridge as any).proc = proc;
+
+    let settled = false;
+    const shutdown = bridge.shutdown().then(() => {
+      settled = true;
+    });
+    proc.emit("exit", 0, null);
+    await new Promise((resolve) => setImmediate(resolve));
+
+    assert.equal(settled, false);
+    proc.emit("close", 0, null);
+    await shutdown;
+    assert.equal(settled, true);
   });
 
   describe("restart()", () => {

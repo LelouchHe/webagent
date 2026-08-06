@@ -544,7 +544,7 @@ export class SessionManager {
   flushAssistantBuffer(sessionId: string): void {
     const assistant = this.assistantBuffers.get(sessionId);
     this.assistantBuffers.delete(sessionId);
-    if (assistant) {
+    if (assistant && this.store.getSession(sessionId)) {
       this.store.saveEvent(
         sessionId,
         "assistant_message",
@@ -558,7 +558,7 @@ export class SessionManager {
   flushThinkingBuffer(sessionId: string): void {
     const thinking = this.thinkingBuffers.get(sessionId);
     this.thinkingBuffers.delete(sessionId);
-    if (thinking) {
+    if (thinking && this.store.getSession(sessionId)) {
       this.store.saveEvent(
         sessionId,
         "thinking",

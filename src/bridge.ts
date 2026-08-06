@@ -483,14 +483,23 @@ export class AgentBridge extends EventEmitter {
     if (this.proc?.exitCode === null) {
       const proc = this.proc;
       await new Promise<void>((resolve) => {
-        const timer = setTimeout(() => {
+        let settled = false;
+        const finish = () => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(killTimer);
+          clearTimeout(drainTimer);
+          proc.off("close", finish);
+          resolve();
+        };
+        const killTimer = setTimeout(() => {
           proc.kill(process.platform === "win32" ? undefined : "SIGKILL");
-          resolve();
         }, 5000);
-        proc.on("exit", () => {
-          clearTimeout(timer);
-          resolve();
-        });
+        // `close` follows `exit` after stdio has drained. Keep a bounded
+        // fallback for pathological child-process implementations that never
+        // deliver close even after SIGKILL.
+        const drainTimer = setTimeout(finish, 6000);
+        proc.once("close", finish);
         proc.kill();
       });
     }
