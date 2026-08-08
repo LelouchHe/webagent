@@ -1,4 +1,4 @@
-import { after, before, beforeEach, describe, it } from "node:test";
+import { after, afterEach, before, beforeEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { setupDOM, teardownDOM, resetState } from "./frontend-setup.ts";
 
@@ -603,6 +603,88 @@ describe("connection", () => {
       "missed content must render",
     );
     assert.equal(state.lastEventSeq, 1);
+  });
+
+  describe("stream liveness watchdog", () => {
+    let realNow: () => number;
+    let now: number;
+
+    beforeEach(() => {
+      realNow = Date.now;
+      now = 1_000_000;
+      Date.now = () => now;
+    });
+
+    afterEach(() => {
+      Date.now = realNow;
+    });
+
+    it("reconnects when the stream goes silent past the stall threshold", async () => {
+      // EventSource can sit in OPEN forever after a NAT rebind or an HTTP/3
+      // stall: no bytes arrive and no `error` fires, so onerror-driven
+      // reconnect never runs. Silence is the only available signal.
+      setFetch(async () => mockResponse([]));
+      connection.connect();
+      const first = await latestES();
+      assert.equal(MockEventSource.instances.length, 1);
+
+      now += 60_000;
+      connection.checkStreamLiveness();
+      await flush();
+
+      assert.equal(first.readyState, MockEventSource.CLOSED);
+      assert.equal(
+        MockEventSource.instances.length,
+        2,
+        "a fresh stream must be opened",
+      );
+    });
+
+    it("stays connected while heartbeats keep arriving", async () => {
+      setFetch(async () => mockResponse([]));
+      connection.connect();
+      const es = await latestES();
+
+      // Three heartbeat intervals of traffic, checked in between.
+      for (let i = 0; i < 3; i++) {
+        now += 15_000;
+        es.listeners.get("heartbeat")?.forEach((cb) => cb({ data: "{}" }));
+        connection.checkStreamLiveness();
+      }
+      await flush();
+
+      assert.equal(es.readyState, MockEventSource.OPEN);
+      assert.equal(
+        MockEventSource.instances.length,
+        1,
+        "a live stream must not be torn down",
+      );
+    });
+
+    it("does not reconnect before any stream has been opened", async () => {
+      now += 600_000;
+      connection.checkStreamLiveness();
+      await flush();
+
+      assert.equal(MockEventSource.instances.length, 0);
+    });
+
+    it("arms only once per stream, so a stalled check cannot loop", async () => {
+      setFetch(async () => mockResponse([]));
+      connection.connect();
+      await latestES();
+
+      now += 60_000;
+      connection.checkStreamLiveness();
+      await flush();
+      const afterFirst = MockEventSource.instances.length;
+      // Same wall clock, no new traffic: the replacement stream is young and
+      // must not be judged stale by the timestamp of the one it replaced.
+      connection.checkStreamLiveness();
+      await flush();
+
+      assert.equal(MockEventSource.instances.length, afterFirst);
+    });
   });
 
   it("aborts session resume when sessionSwitchGen changes mid-flight", async () => {

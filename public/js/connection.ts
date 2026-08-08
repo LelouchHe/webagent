@@ -51,6 +51,60 @@ async function registerPushEndpoint(clientId: string) {
   }
 }
 
+/**
+ * How long the stream may stay silent before we treat it as dead. The server
+ * emits a heartbeat every 15s, so three missed beats is decisive without being
+ * trigger-happy on a slow link.
+ */
+const STALL_TIMEOUT_MS = 45_000;
+const WATCHDOG_INTERVAL_MS = 5_000;
+
+/**
+ * Timestamp of the last byte seen on the stream, or 0 when no stream is
+ * established. EventSource can stay in `readyState === OPEN` indefinitely after
+ * a NAT rebind, an HTTP/3 stall, or an OS resume — no bytes arrive and no
+ * `error` event fires, so the onerror-driven reconnect never runs and the UI
+ * keeps claiming it is connected. Silence is the only signal we get.
+ *
+ * Tracked here rather than on the EventSource because the stream may fail
+ * before one exists at all (a hung ticket mint leaves `state.eventSource` null),
+ * and a watchdog bound to an instance would have nothing to attach to.
+ */
+let lastStreamActivity = 0;
+let watchdogTimer: ReturnType<typeof setInterval> | null = null;
+
+function noteStreamActivity(): void {
+  lastStreamActivity = Date.now();
+}
+
+function startWatchdog(): void {
+  if (watchdogTimer) return;
+  watchdogTimer = setInterval(checkStreamLiveness, WATCHDOG_INTERVAL_MS);
+  (watchdogTimer as { unref?: () => void }).unref?.();
+}
+
+/**
+ * Tear down a silent stream and start a new one. Exported so the
+ * visibility handler can also probe on resume, where the interval itself may
+ * not have run (a suspended runtime freezes its own timers).
+ */
+export function checkStreamLiveness(): void {
+  if (!lastStreamActivity) return;
+  if (Date.now() - lastStreamActivity < STALL_TIMEOUT_MS) return;
+  // Disarm before reconnecting: the replacement stream re-arms on open, and
+  // until then a second check must not judge it by its predecessor's clock.
+  lastStreamActivity = 0;
+  const dead = state.eventSource;
+  if (dead) {
+    // Drop the handler first — a close() that synchronously fires onerror
+    // would schedule a second, competing reconnect.
+    dead.onerror = null;
+    dead.close();
+  }
+  cleanup();
+  connect();
+}
+
 export function connect() {
   setConnectionStatus("connecting", "connecting");
 
@@ -61,6 +115,9 @@ export function connect() {
 }
 
 async function openStream() {
+  // Arm before the ticket mint so a stream that never opens is also covered.
+  noteStreamActivity();
+  startWatchdog();
   let ticket: string;
   try {
     const resp = await api.mintSseTicket();
@@ -78,6 +135,7 @@ async function openStream() {
   state.eventSource = es;
 
   es.onmessage = (e: MessageEvent) => {
+    noteStreamActivity();
     const msg = JSON.parse(e.data as string) as {
       type: string;
       clientId?: string;
@@ -120,6 +178,7 @@ async function openStream() {
   // listener to this specific EventSource — on reconnect the old one is
   // GC'd with its parent; we install a fresh listener on the fresh `es`.
   es.addEventListener("heartbeat", () => {
+    noteStreamActivity();
     if (!state.clientId) return;
     if (document.hidden) return; // visibilitychange owns the hidden path
     void api.postVisibility(state.clientId, true, state.sessionId ?? undefined);
@@ -308,6 +367,10 @@ document.addEventListener("visibilitychange", () => {
       );
     }
   }
+  // Probe liveness on resume: a suspended runtime freezes its own timers, so
+  // the watchdog interval may not have run while we were away, and the stream
+  // most likely died exactly during that gap.
+  if (!document.hidden) checkStreamLiveness();
   // Sync missed events + runtime state when returning from background (iOS
   // can keep connections alive while suspending event delivery, silently
   // losing server messages). Reload snapshot is cheap and authoritative for
