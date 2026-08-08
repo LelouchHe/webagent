@@ -410,7 +410,12 @@ function setSyncBoundary() {
 }
 
 /** Per-session coalesce: concurrent loadNewEvents calls for the same session share one promise. */
-const inflightBySession = new Map<string, Promise<boolean>>();
+interface InflightEventLoad {
+  promise: Promise<boolean>;
+  preserveLiveOnEmpty: boolean;
+}
+
+const inflightBySession = new Map<string, InflightEventLoad>();
 let terminalReconcileRunning = false;
 let terminalReconcileDirty = false;
 let terminalReconcileSessionId: string | null = null;
@@ -459,13 +464,23 @@ export function loadNewEvents(
   options: { preserveLiveOnEmpty?: boolean } = {},
 ): Promise<boolean> {
   const existing = inflightBySession.get(sid);
-  if (existing) return existing;
+  if (existing) {
+    if (options.preserveLiveOnEmpty) existing.preserveLiveOnEmpty = true;
+    return existing.promise;
+  }
 
-  const promise = _loadNewEventsImpl(sid, options.preserveLiveOnEmpty === true);
-  inflightBySession.set(sid, promise);
+  const entry: InflightEventLoad = {
+    promise: Promise.resolve(false),
+    preserveLiveOnEmpty: options.preserveLiveOnEmpty === true,
+  };
+  const promise = _loadNewEventsImpl(sid, entry);
+  entry.promise = promise;
+  inflightBySession.set(sid, entry);
   promise
     .finally(() => {
-      inflightBySession.delete(sid);
+      if (inflightBySession.get(sid) === entry) {
+        inflightBySession.delete(sid);
+      }
     })
     .catch(() => {});
   return promise;
@@ -474,7 +489,7 @@ export function loadNewEvents(
 // eslint-disable-next-line complexity -- TODO: refactor to reduce branching in replay logic
 async function _loadNewEventsImpl(
   sid: string,
-  preserveLiveOnEmpty: boolean,
+  inflight: InflightEventLoad,
 ): Promise<boolean> {
   const replayToken = ++replayLoadToken;
   state.replayInProgress = true;
@@ -505,7 +520,7 @@ async function _loadNewEventsImpl(
     )
       return false;
     const { events, streaming } = normalizeEventsResponse(body);
-    if (preserveLiveOnEmpty && events.length === 0) return true;
+    if (inflight.preserveLiveOnEmpty && events.length === 0) return true;
 
     // Revert primed elements to their DB-only content before boundary cleanup.
     // primeStreamingState marks adopted elements with [data-primed]; live chunks

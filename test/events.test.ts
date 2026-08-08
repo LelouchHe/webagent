@@ -4720,6 +4720,72 @@ describe("events", () => {
       await p1;
     });
 
+    it("upgrades an in-flight empty replay to preserve optimistic DOM", async () => {
+      state.sessionId = "s1";
+      state.lastEventSeq = 1;
+      events.replayEvent("assistant_message", { text: "baseline" }, [], 0);
+      (dom.messages.lastElementChild as HTMLElement).dataset.syncBoundary = "";
+      render.addMessage("user", "optimistic");
+
+      let resolveFetch!: (response: unknown) => void;
+      globalThis.fetch = (() =>
+        new Promise((resolve) => {
+          resolveFetch = resolve;
+        })) as any;
+
+      const normalLoad = events.loadNewEvents("s1");
+      const terminalLoad = events.loadNewEvents("s1", {
+        preserveLiveOnEmpty: true,
+      });
+      assert.equal(normalLoad, terminalLoad);
+      resolveFetch({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            events: [],
+            streaming: { thinking: false, assistant: false },
+          }),
+      });
+      await normalLoad;
+
+      assert.match(dom.messages.textContent ?? "", /optimistic/);
+    });
+
+    it("does not let stale cleanup remove a newer same-session load", async () => {
+      state.sessionId = "s1";
+      state.lastEventSeq = 1;
+      let resolveFirst!: (response: unknown) => void;
+      let resolveSecond!: (response: unknown) => void;
+      let fetches = 0;
+      globalThis.fetch = (() => {
+        fetches++;
+        return new Promise((resolve) => {
+          if (fetches === 1) resolveFirst = resolve;
+          else resolveSecond = resolve;
+        });
+      }) as any;
+
+      const first = events.loadNewEvents("s1");
+      stateMod.resetSessionUI();
+      state.sessionId = "s1";
+      state.lastEventSeq = 1;
+      const second = events.loadNewEvents("s1");
+      resolveFirst({
+        ok: true,
+        json: () => Promise.resolve({ events: [] }),
+      });
+      await first;
+
+      const third = events.loadNewEvents("s1");
+      assert.equal(third, second);
+      assert.equal(fetches, 2);
+      resolveSecond({
+        ok: true,
+        json: () => Promise.resolve({ events: [] }),
+      });
+      await second;
+    });
+
     it("per-session coalesce allows independent sessions", async () => {
       events.replayEvent("user_message", { text: "msg" }, [], 0);
       state.lastEventSeq = 1;
