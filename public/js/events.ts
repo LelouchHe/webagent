@@ -48,6 +48,7 @@ import {
   escHtml,
   finishBash,
   appendMessageElement,
+  flushStreamingRender,
 } from "./render.ts";
 import * as api from "./api.ts";
 import { applyConnectedLogLevel } from "./log.ts";
@@ -494,16 +495,10 @@ async function _loadNewEventsImpl(
   const replayToken = ++replayLoadToken;
   state.replayInProgress = true;
   state.replayQueue = [];
-  // Cancel any pending streaming-render rAF so it doesn't fire later against
-  // an element this function is about to revert/truncate. We don't need to
-  // capture the live text — the revert at line ~377 will rebuild from
-  // data-raw (DB content), and post-boundary live DOM is removed below.
-  if (state.assistantRafToken != null) {
-    if (typeof cancelAnimationFrame === "function") {
-      cancelAnimationFrame(state.assistantRafToken);
-    }
-    state.assistantRafToken = null;
-  }
+  // Seal the latest buffered text before replay can revert or preserve the
+  // live element. In preserve-on-empty mode there may be no DB event to
+  // reconstruct this tail, so cancelling the rAF without flushing loses it.
+  flushStreamingRender();
   try {
     const url = `/api/v1/sessions/${sid}/events?after=${state.lastEventSeq}`;
     const res = await fetch(url);

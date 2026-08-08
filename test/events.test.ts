@@ -4751,6 +4751,33 @@ describe("events", () => {
       assert.match(dom.messages.textContent ?? "", /optimistic/);
     });
 
+    it("preserves the latest pending assistant frame on an empty replay", async () => {
+      state.sessionId = "s1";
+      state.lastEventSeq = 1;
+      events.replayEvent("assistant_message", { text: "baseline " }, [], 0);
+      const assistant = dom.messages.lastElementChild as HTMLElement;
+      assistant.dataset.syncBoundary = "";
+      state.currentAssistantEl = assistant;
+      state.currentAssistantText = "baseline latest tail";
+      state.assistantRafToken = requestAnimationFrame(() => {});
+
+      globalThis.fetch = (() =>
+        Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              events: [],
+              streaming: { thinking: false, assistant: true },
+            }),
+        })) as any;
+
+      await events.loadNewEvents("s1", { preserveLiveOnEmpty: true });
+
+      assert.equal(assistant.textContent, "baseline latest tail");
+      assert.equal(state.currentAssistantText, "baseline latest tail");
+      assert.equal(state.assistantRafToken, null);
+    });
+
     it("does not let stale cleanup remove a newer same-session load", async () => {
       state.sessionId = "s1";
       state.lastEventSeq = 1;
