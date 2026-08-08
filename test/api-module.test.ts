@@ -91,7 +91,33 @@ describe("api module", () => {
     };
     await api.listSessions();
     assert.equal(fetchCalls[0].url, "/api/v1/sessions");
-    assert.equal(fetchCalls[0].init, undefined); // GET, no init
+    assert.equal(fetchCalls[0].init?.method, undefined); // GET
+  });
+
+  it("puts every request under an abort deadline", async () => {
+    // A request with no deadline can stay pending forever on a stalled
+    // connection, and callers latch state on those promises.
+    fetchResponse = {
+      status: 200,
+      ok: true,
+      json: () => Promise.resolve([]),
+      text: () => Promise.resolve("[]"),
+    };
+    await api.listSessions();
+    const signal = fetchCalls[0].init?.signal;
+    assert.ok(signal, "GET must carry an abort signal");
+    assert.equal(signal.aborted, false);
+
+    fetchCalls.length = 0;
+    fetchResponse = {
+      status: 200,
+      ok: true,
+      json: () => Promise.resolve({}),
+      text: () => Promise.resolve("{}"),
+    };
+    await api.cancelSession("s1");
+    assert.ok(fetchCalls[0].init?.signal, "POST must carry an abort signal");
+    assert.equal(fetchCalls[0].init.method, "POST");
   });
 
   it("getSession sends GET /api/v1/sessions/:id", async () => {

@@ -2,6 +2,8 @@ import { after, before, beforeEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { setupDOM, teardownDOM, resetState } from "./frontend-setup.ts";
 
+const RECONNECT_DELAY_MS = 3000;
+
 describe("connection", () => {
   let state: any;
   let dom: any;
@@ -392,7 +394,12 @@ describe("connection", () => {
     assert.equal(state.lastStateSeq, 0);
     assert.equal(state.clientId, null);
     assert.equal(state.eventSource, null);
-    assert.deepEqual(timeoutCalls, [3000]);
+    // Filter to the reconnect cadence: request deadlines also arm timers now,
+    // and this test's subject is that exactly one reconnect was scheduled.
+    assert.deepEqual(
+      timeoutCalls.filter((ms) => ms === RECONNECT_DELAY_MS),
+      [RECONNECT_DELAY_MS],
+    );
   });
 
   it("reconnects and resumes the current hash session after error", async () => {
@@ -432,10 +439,17 @@ describe("connection", () => {
     // Disconnect
     const firstES = await latestES();
     firstES.onerror?.();
-    assert.deepEqual(timeoutCalls, [3000]);
+    // Filter to the reconnect cadence: request deadlines also arm timers now,
+    // and this test's subject is that exactly one reconnect was scheduled.
+    assert.deepEqual(
+      timeoutCalls.filter((ms) => ms === RECONNECT_DELAY_MS),
+      [RECONNECT_DELAY_MS],
+    );
 
-    // Reconnect — initSession runs immediately (incremental path)
-    timeoutFns[0]();
+    // Reconnect — initSession runs immediately (incremental path).
+    // Pick the reconnect timer by its cadence: request deadlines share the
+    // same mocked setTimeout, so index 0 is no longer necessarily ours.
+    timeoutFns[timeoutCalls.indexOf(RECONNECT_DELAY_MS)]();
     await flush();
 
     assert.equal(MockEventSource.instances.length, 2);

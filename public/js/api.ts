@@ -12,44 +12,92 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * Ceiling for a single request. Without one, a stalled connection (mobile
+ * handoff, suspended runtime) leaves the promise pending indefinitely — the
+ * browser's own network timeout is not guaranteed and can be minutes. Callers
+ * downstream latch state on those promises (the replay gate, the per-session
+ * inflight map, the SSE reconnect chain), so a request that never settles is
+ * indistinguishable from a hung app.
+ */
+export const DEFAULT_TIMEOUT_MS = 30_000;
+
+/** For small requests on the recovery path, where waiting out the default
+ *  would keep the client disconnected far longer than a retry costs. */
+export const FAST_TIMEOUT_MS = 10_000;
+
+/**
+ * Run a request under a deadline. The signal is threaded into `fetch` so the
+ * timeout covers reading the body too, not just the response headers, and the
+ * timer is always cleared — an armed timer keeps the event loop alive and
+ * silently inflates test runtime.
+ */
+export async function withTimeout<T>(
+  run: (signal: AbortSignal | undefined) => Promise<T>,
+  timeoutMs: number = DEFAULT_TIMEOUT_MS,
+): Promise<T> {
+  if (typeof AbortController !== "function") return run(undefined);
+  const controller = new AbortController();
+  const timer = setTimeout(() => {
+    controller.abort();
+  }, timeoutMs);
+  // A pending deadline must not by itself keep a host process alive; without
+  // this, any caller that legitimately abandons a request holds the runtime
+  // open for the full timeout. No-op in browsers, where timers have no unref.
+  (timer as { unref?: () => void }).unref?.();
+  try {
+    return await run(controller.signal);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function request<T = unknown>(
   url: string,
   init?: RequestInit,
+  timeoutMs: number = DEFAULT_TIMEOUT_MS,
 ): Promise<T> {
-  const res = await fetch(url, init);
-  if (!res.ok) {
-    let message = `HTTP ${res.status}`;
-    try {
-      const body = (await res.json()) as Record<string, unknown>;
-      if (body.error)
-        message =
-          typeof body.error === "string"
-            ? body.error
-            : JSON.stringify(body.error);
-    } catch {
-      /* non-JSON error body */
+  return withTimeout(async (signal) => {
+    const res = await fetch(url, signal ? { ...init, signal } : init);
+    if (!res.ok) {
+      let message = `HTTP ${res.status}`;
+      try {
+        const body = (await res.json()) as Record<string, unknown>;
+        if (body.error)
+          message =
+            typeof body.error === "string"
+              ? body.error
+              : JSON.stringify(body.error);
+      } catch {
+        /* non-JSON error body */
+      }
+      throw new ApiError(res.status, message);
     }
-    throw new ApiError(res.status, message);
-  }
-  const text = await res.text();
-  if (!text) return undefined as T;
-  return JSON.parse(text) as T;
+    const text = await res.text();
+    if (!text) return undefined as T;
+    return JSON.parse(text) as T;
+  }, timeoutMs);
 }
 
 function post<T = unknown>(
   url: string,
   body: Record<string, unknown>,
   clientOpId?: string,
+  timeoutMs: number = DEFAULT_TIMEOUT_MS,
 ): Promise<T> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
   };
   if (clientOpId) headers["X-Client-Op-Id"] = clientOpId;
-  return request<T>(url, {
-    method: "POST",
-    headers,
-    body: JSON.stringify(body),
-  });
+  return request<T>(
+    url,
+    {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+    },
+    timeoutMs,
+  );
 }
 
 export function newOpId(): string {
@@ -195,7 +243,12 @@ export function postVisibility(
 ): Promise<void> {
   const body: Record<string, unknown> = { visible };
   if (sessionId) body.sessionId = sessionId;
-  return post("/api/beta/clients/" + clientId + "/visibility", body);
+  return post(
+    "/api/beta/clients/" + clientId + "/visibility",
+    body,
+    undefined,
+    FAST_TIMEOUT_MS,
+  );
 }
 
 // --- Status ---
@@ -216,7 +269,9 @@ export function mintSseTicket(): Promise<{
   ticket: string;
   expiresIn: number;
 }> {
-  return post("/api/v1/sse-ticket", {});
+  // The reconnect chain blocks on this: a stalled mint used to leave the
+  // client permanently in "connecting" because the retry only runs on reject.
+  return post("/api/v1/sse-ticket", {}, undefined, FAST_TIMEOUT_MS);
 }
 
 // --- Inbox messages ---

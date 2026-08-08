@@ -1,4 +1,4 @@
-import { describe, it, before, after, beforeEach } from "node:test";
+import { describe, it, before, after, beforeEach, mock } from "node:test";
 import assert from "node:assert/strict";
 import { setupDOM, teardownDOM, resetState } from "./frontend-setup.ts";
 
@@ -4140,6 +4140,55 @@ describe("events", () => {
         "the waiting cursor must stay below the message it waits on",
       );
       assert.equal(optimistic.nextElementSibling, trailing);
+    });
+
+    it("recovers from a catch-up whose request never responds", async () => {
+      // A stalled request (mobile handoff, suspended runtime) used to leave
+      // replayInProgress latched true forever, so every later live event was
+      // queued and never rendered. Worse, the inflight entry is only cleared
+      // in the promise's finally, so the dead promise was handed to every
+      // subsequent caller — SSE reconnect included. Only a reload escaped.
+      mock.timers.enable({ apis: ["setTimeout"] });
+      try {
+        globalThis.fetch = ((_url: string, init?: RequestInit) =>
+          new Promise((_resolve, reject) => {
+            init?.signal?.addEventListener("abort", () => {
+              reject(new Error("aborted"));
+            });
+          })) as any;
+
+        const stalled = events.loadNewEvents("s1");
+        assert.equal(state.replayInProgress, true, "replay gate is armed");
+
+        for (let i = 0; i < 10; i++) {
+          mock.timers.tick(10_000);
+          await new Promise((r) => setImmediate(r));
+        }
+        assert.equal(await stalled, false, "the stalled load must settle");
+        assert.equal(
+          state.replayInProgress,
+          false,
+          "the replay gate must be released",
+        );
+
+        // The poisoned entry must be gone: a fresh call gets a fresh request.
+        globalThis.fetch = (() =>
+          Promise.resolve({
+            ok: true,
+            json: () =>
+              Promise.resolve([
+                {
+                  seq: 1,
+                  type: "assistant_message",
+                  data: JSON.stringify({ text: "after recovery" }),
+                },
+              ]),
+          })) as any;
+        assert.equal(await events.loadNewEvents("s1"), true);
+        assert.ok(dom.messages.textContent.includes("after recovery"));
+      } finally {
+        mock.timers.reset();
+      }
     });
 
     it("does not treat missing replay seq metadata as sequence zero", async () => {

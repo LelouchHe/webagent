@@ -272,11 +272,15 @@ export async function loadHistory(sid: string): Promise<boolean> {
   state.replayInProgress = true;
   state.replayQueue = [];
   try {
-    const res = await fetch(
-      `/api/v1/sessions/${sid}/events?limit=${HISTORY_PAGE_SIZE}`,
-    );
-    if (!res.ok) return false;
-    const body = (await res.json()) as Record<string, unknown>;
+    const body = await api.withTimeout(async (signal) => {
+      const res = await fetch(
+        `/api/v1/sessions/${sid}/events?limit=${HISTORY_PAGE_SIZE}`,
+        signal ? { signal } : undefined,
+      );
+      if (!res.ok) return null;
+      return (await res.json()) as Record<string, unknown>;
+    });
+    if (!body) return false;
     if (replayToken !== replayLoadToken) return false;
     const { events, streaming, hasMore } = normalizeEventsResponse(body);
 
@@ -524,14 +528,12 @@ async function _loadNewEventsImpl(
   flushStreamingRender();
   try {
     const url = `/api/v1/sessions/${sid}/events?after=${state.lastEventSeq}`;
-    const res = await fetch(url);
-    if (!res.ok) return false;
-    if (
-      replayToken !== replayLoadToken ||
-      (state.sessionId && state.sessionId !== sid)
-    )
-      return false;
-    const body = (await res.json()) as Record<string, unknown>;
+    const body = await api.withTimeout(async (signal) => {
+      const res = await fetch(url, signal ? { signal } : undefined);
+      if (!res.ok) return null;
+      return (await res.json()) as Record<string, unknown>;
+    });
+    if (!body) return false;
     if (
       replayToken !== replayLoadToken ||
       (state.sessionId && state.sessionId !== sid)
@@ -959,13 +961,16 @@ async function fetchOlderEventsPage(
   sessionId: string,
   loadToken: number,
 ): Promise<{ events: StoredEvent[]; hasMore: boolean | undefined } | null> {
-  const res = await fetch(
-    `/api/v1/sessions/${sessionId}/events?limit=${HISTORY_PAGE_SIZE}&before=${state.oldestLoadedSeq}`,
-  );
+  const body = await api.withTimeout(async (signal) => {
+    const res = await fetch(
+      `/api/v1/sessions/${sessionId}/events?limit=${HISTORY_PAGE_SIZE}&before=${state.oldestLoadedSeq}`,
+      signal ? { signal } : undefined,
+    );
+    if (!res.ok) return null;
+    return (await res.json()) as Record<string, unknown>;
+  });
   if (!isCurrentHistoryLoad(sessionId, loadToken)) return null;
-  if (!res.ok) return null;
-  const body = (await res.json()) as Record<string, unknown>;
-  if (!isCurrentHistoryLoad(sessionId, loadToken)) return null;
+  if (!body) return null;
   const { events, hasMore } = normalizeEventsResponse(body);
   return { events, hasMore };
 }
