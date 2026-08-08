@@ -312,12 +312,14 @@ document.addEventListener("visibilitychange", () => {
   // can keep connections alive while suspending event delivery, silently
   // losing server messages). Reload snapshot is cheap and authoritative for
   // runtime fields (busy).
-  if (
-    !document.hidden &&
-    state.sessionId &&
-    state.lastEventSeq > 0 &&
-    !state.replayInProgress
-  ) {
+  //
+  // Deliberately NOT gated on `state.lastEventSeq > 0`. Live SSE events never
+  // advance that frontier (only loadHistory/loadNewEvents do), and a session
+  // created via /new never calls loadHistory — so it sits at 0 for its entire
+  // lifetime. Gating on it disabled this recovery on the most common path.
+  // `after=0` is a well-formed catch-up: the server returns the full persisted
+  // transcript and _loadNewEventsImpl replays it from sequence zero.
+  if (!document.hidden && state.sessionId && !state.replayInProgress) {
     const sid = state.sessionId;
     void Promise.all([reloadSnapshot(sid), loadNewEvents(sid)]).then(() => {
       if (state.sessionId !== sid) return;

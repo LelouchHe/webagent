@@ -542,6 +542,55 @@ describe("connection", () => {
     assert.equal(state.lastEventSeq, 4);
   });
 
+  it("syncs a /new session whose events were never loaded from history", async () => {
+    // Regression: a session created via /new never calls loadHistory(), and
+    // live SSE events do not advance state.lastEventSeq. The frontier
+    // therefore stays 0 for the whole session, which used to gate this
+    // catch-up off entirely (`state.lastEventSeq > 0`) — the exact path most
+    // users are on. after=0 is a valid catch-up request: the server returns
+    // the full persisted transcript and _loadNewEventsImpl replays it from
+    // sequence zero.
+    state.sessionId = "fresh-session";
+    state.clientId = "cl-fresh";
+    state.lastEventSeq = 0;
+
+    setFetch(async (url: string) => {
+      if (url.includes("/visibility")) return mockResponse({});
+      if (url.includes("after=0")) {
+        return {
+          ok: true,
+          json: async () => [
+            {
+              seq: 1,
+              type: "assistant_message",
+              data: JSON.stringify({ text: "persisted while backgrounded" }),
+            },
+          ],
+        };
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+
+    Object.defineProperty(globalThis.document, "hidden", {
+      value: false,
+      configurable: true,
+    });
+    globalThis.document.dispatchEvent(
+      new (globalThis.window as any).Event("visibilitychange"),
+    );
+    await new Promise((r) => originalSetTimeout(r, 50));
+
+    assert.ok(
+      fetchCalls.some((c) => c.url.includes("after=0")),
+      "should catch up from sequence zero",
+    );
+    assert.ok(
+      dom.messages.textContent.includes("persisted while backgrounded"),
+      "missed content must render",
+    );
+    assert.equal(state.lastEventSeq, 1);
+  });
+
   it("aborts session resume when sessionSwitchGen changes mid-flight", async () => {
     history.replaceState(null, "", "/#session-a");
 
