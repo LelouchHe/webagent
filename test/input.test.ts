@@ -181,7 +181,7 @@ describe("input", () => {
     assert.equal(state.currentAssistantText, "new response");
   });
 
-  it("ignores prior prompt_done until the optimistic user echo arrives", () => {
+  it("ignores prior prompt_done until the optimistic user echo arrives", async () => {
     setFetch(() => ({
       ok: true,
       json: async () => ({ status: "accepted" }),
@@ -211,6 +211,7 @@ describe("input", () => {
       sessionId: "s1",
       text: "new response",
     });
+    await eventsModule.waitForTerminalReconciliation();
 
     assert.equal(state.awaitingOwnUserEcho, false);
     assert.equal(state.currentAssistantText, "new response");

@@ -414,9 +414,11 @@ const inflightBySession = new Map<string, Promise<boolean>>();
 let terminalReconcileRunning = false;
 let terminalReconcileDirty = false;
 let terminalReconcileSessionId: string | null = null;
+let terminalReconcileGeneration = 0;
+let terminalReconcilePromise: Promise<void> = Promise.resolve();
 
 function scheduleTerminalReconciliation(sessionId: string): void {
-  if (state.sessionId !== sessionId || state.lastEventSeq <= 0) return;
+  if (state.sessionId !== sessionId) return;
   if (terminalReconcileRunning) {
     terminalReconcileDirty = true;
     terminalReconcileSessionId = sessionId;
@@ -424,30 +426,42 @@ function scheduleTerminalReconciliation(sessionId: string): void {
   }
   terminalReconcileRunning = true;
   terminalReconcileSessionId = sessionId;
-  void loadNewEvents(sessionId).finally(() => {
-    terminalReconcileRunning = false;
-    const rerun =
+  const generation = terminalReconcileGeneration;
+  terminalReconcilePromise = (async () => {
+    do {
+      terminalReconcileDirty = false;
+      const attachedToExistingLoad = inflightBySession.has(sessionId);
+      await loadNewEvents(sessionId, { preserveLiveOnEmpty: true });
+      if (attachedToExistingLoad) terminalReconcileDirty = true;
+    } while (
+      generation === terminalReconcileGeneration &&
       terminalReconcileDirty &&
-      terminalReconcileSessionId !== null &&
-      terminalReconcileSessionId === state.sessionId;
+      terminalReconcileSessionId === state.sessionId
+    );
+  })().finally(() => {
+    if (generation !== terminalReconcileGeneration) return;
+    terminalReconcileRunning = false;
     terminalReconcileDirty = false;
-    const rerunSessionId = terminalReconcileSessionId;
     terminalReconcileSessionId = null;
-    if (rerun && rerunSessionId) {
-      scheduleTerminalReconciliation(rerunSessionId);
-    }
   });
+}
+
+export function waitForTerminalReconciliation(): Promise<void> {
+  return terminalReconcilePromise;
 }
 
 /**
  * Fetch only events added since the last sync point and replay them.
  * Returns true if new events were applied (or none needed), false on error.
  */
-export function loadNewEvents(sid: string): Promise<boolean> {
+export function loadNewEvents(
+  sid: string,
+  options: { preserveLiveOnEmpty?: boolean } = {},
+): Promise<boolean> {
   const existing = inflightBySession.get(sid);
   if (existing) return existing;
 
-  const promise = _loadNewEventsImpl(sid);
+  const promise = _loadNewEventsImpl(sid, options.preserveLiveOnEmpty === true);
   inflightBySession.set(sid, promise);
   promise
     .finally(() => {
@@ -458,7 +472,10 @@ export function loadNewEvents(sid: string): Promise<boolean> {
 }
 
 // eslint-disable-next-line complexity -- TODO: refactor to reduce branching in replay logic
-async function _loadNewEventsImpl(sid: string): Promise<boolean> {
+async function _loadNewEventsImpl(
+  sid: string,
+  preserveLiveOnEmpty: boolean,
+): Promise<boolean> {
   const replayToken = ++replayLoadToken;
   state.replayInProgress = true;
   state.replayQueue = [];
@@ -488,6 +505,7 @@ async function _loadNewEventsImpl(sid: string): Promise<boolean> {
     )
       return false;
     const { events, streaming } = normalizeEventsResponse(body);
+    if (preserveLiveOnEmpty && events.length === 0) return true;
 
     // Revert primed elements to their DB-only content before boundary cleanup.
     // primeStreamingState marks adopted elements with [data-primed]; live chunks
@@ -524,6 +542,8 @@ async function _loadNewEventsImpl(sid: string): Promise<boolean> {
     const boundary = dom.messages.querySelector("[data-sync-boundary]");
     if (boundary) {
       while (boundary.nextElementSibling) boundary.nextElementSibling.remove();
+    } else if (state.lastEventSeq === 0) {
+      dom.messages.replaceChildren();
     }
     // Sync boundary truncation may have detached the live streaming element;
     // reset its memo defensively before nulling so a future re-render against
@@ -893,8 +913,12 @@ async function fetchOlderEventsPage(
 onSessionReset(removeHistorySentinel);
 onSessionReset(() => {
   replayLoadToken++;
+  inflightBySession.clear();
+  terminalReconcileGeneration++;
+  terminalReconcileRunning = false;
   terminalReconcileDirty = false;
   terminalReconcileSessionId = null;
+  terminalReconcilePromise = Promise.resolve();
 });
 
 export async function loadOlderEvents(sid: string): Promise<boolean> {
@@ -1383,7 +1407,10 @@ function drainReplayQueue(replayedSessionId: string) {
     handleEvent(msg);
   }
   if (state.awaitingOwnUserEcho && state.replayedOwnUserEcho) {
+    const shouldReconcile = state.reconcileAfterOwnUserEcho;
     state.awaitingOwnUserEcho = false;
+    state.reconcileAfterOwnUserEcho = false;
+    if (shouldReconcile) scheduleTerminalReconciliation(replayedSessionId);
   }
   state.replayedOwnUserEcho = false;
 }

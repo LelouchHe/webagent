@@ -52,6 +52,7 @@ describe("events", () => {
     teardownDOM();
   });
   beforeEach(() => {
+    stateMod.resetSessionUI();
     resetState(state, dom);
     fetchCalls = [];
     setFetch(() => ({
@@ -2025,8 +2026,7 @@ describe("events", () => {
           text: "new question",
           clientOpId: "op-new",
         });
-        await new Promise((resolve) => setImmediate(resolve));
-        await new Promise((resolve) => setImmediate(resolve));
+        await events.waitForTerminalReconciliation();
 
         assert.equal(fetches, 1);
         assert.equal(
@@ -2035,6 +2035,63 @@ describe("events", () => {
           1,
         );
         assert.match(dom.messages.textContent ?? "", /late terminal output/);
+      });
+
+      it("reconciles a fresh session whose persisted frontier is zero", async () => {
+        state.sessionId = "s1";
+        state.lastEventSeq = 0;
+        state.awaitingOwnUserEcho = true;
+        state.sentMessageForSession = "s1";
+        state.sentMessageOpId = "op-fresh";
+        const optimistic = render.addMessage("user", "first question");
+        optimistic.dataset.clientOpId = "op-fresh";
+
+        globalThis.fetch = (() =>
+          Promise.resolve({
+            ok: true,
+            json: () =>
+              Promise.resolve({
+                events: [
+                  {
+                    seq: 1,
+                    type: "user_message",
+                    session_id: "s1",
+                    data: JSON.stringify({
+                      text: "first question",
+                      clientOpId: "op-fresh",
+                    }),
+                  },
+                  {
+                    seq: 2,
+                    type: "assistant_message",
+                    session_id: "s1",
+                    data: JSON.stringify({ text: "late first output" }),
+                  },
+                ],
+                streaming: { thinking: false, assistant: false },
+              }),
+          })) as any;
+
+        events.handleEvent({
+          type: "prompt_done",
+          sessionId: "s1",
+          stopReason: "cancelled",
+        });
+        events.handleEvent({
+          type: "user_message",
+          sessionId: "s1",
+          text: "first question",
+          clientOpId: "op-fresh",
+        });
+        await events.waitForTerminalReconciliation();
+
+        assert.equal(
+          dom.messages.querySelectorAll(
+            '.msg.user[data-client-op-id="op-fresh"]',
+          ).length,
+          1,
+        );
+        assert.match(dom.messages.textContent ?? "", /late first output/);
       });
 
       it("valid cancel on current turn still works normally", () => {
@@ -4834,6 +4891,84 @@ describe("events", () => {
   });
 
   describe("replay queue (dedup on reconnect)", () => {
+    it("reruns reconciliation when terminal output flushes during replay", async () => {
+      state.sessionId = "s1";
+      state.lastEventSeq = 1;
+      const baselineEvents = [
+        {
+          seq: 1,
+          type: "assistant_message",
+          data: JSON.stringify({ text: "old" }),
+        },
+      ] as any;
+      events.replayEvent(
+        "assistant_message",
+        { text: "old" },
+        baselineEvents,
+        0,
+      );
+      (dom.messages.lastElementChild as HTMLElement).dataset.syncBoundary = "";
+      state.awaitingOwnUserEcho = true;
+      state.sentMessageForSession = "s1";
+      state.sentMessageOpId = "op-race";
+      state.reconcileAfterOwnUserEcho = true;
+
+      let resolveFirst!: (response: unknown) => void;
+      let fetches = 0;
+      globalThis.fetch = (() => {
+        fetches++;
+        if (fetches === 1) {
+          return new Promise((resolve) => {
+            resolveFirst = resolve;
+          });
+        }
+        return Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              events: [
+                {
+                  seq: 3,
+                  type: "assistant_message",
+                  data: JSON.stringify({ text: "flushed after snapshot" }),
+                },
+              ],
+              streaming: { thinking: false, assistant: false },
+            }),
+        });
+      }) as any;
+
+      const firstLoad = events.loadNewEvents("s1");
+      events.handleEvent({
+        type: "prompt_done",
+        sessionId: "s1",
+        stopReason: "cancelled",
+      });
+      resolveFirst({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            events: [
+              {
+                seq: 2,
+                type: "user_message",
+                session_id: "s1",
+                data: JSON.stringify({
+                  text: "new",
+                  clientOpId: "op-race",
+                }),
+              },
+            ],
+            streaming: { thinking: false, assistant: false },
+          }),
+      });
+      await firstLoad;
+      await events.waitForTerminalReconciliation();
+
+      assert.equal(fetches, 2);
+      assert.match(dom.messages.textContent ?? "", /flushed after snapshot/);
+    });
+
     it("queues WS events arriving during loadHistory and drains after", async () => {
       const fakeEvents = [
         { seq: 1, type: "user_message", data: JSON.stringify({ text: "hi" }) },
