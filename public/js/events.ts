@@ -402,8 +402,28 @@ function primeStreamingState(
   }
 }
 
-/** Mark the last DOM child as the sync boundary for incremental reconnect. */
-function setSyncBoundary() {
+/**
+ * Re-attach the optimistic bubble detached by a transcript rebuild, unless the
+ * replayed transcript already carries the authoritative copy. `awaitingOwnUserEcho`
+ * only means this client never saw its own SSE echo — the message may well have
+ * been persisted, in which case re-attaching would duplicate it below the reply
+ * that answered it.
+ */
+function restorePendingEcho(el: HTMLElement | null): void {
+  if (!el) return;
+  const opId = el.dataset.optimisticOpId;
+  if (opId) {
+    const persisted = Array.from(
+      dom.messages.querySelectorAll<HTMLElement>(
+        ".msg.user[data-client-op-id]",
+      ),
+    ).some((node) => node.dataset.clientOpId === opId);
+    if (persisted) return;
+  }
+  dom.messages.appendChild(el);
+}
+
+/** Mark the last DOM child as the sync boundary for incremental reconnect. */ function setSyncBoundary() {
   const prev = dom.messages.querySelector("[data-sync-boundary]");
   if (prev) prev.removeAttribute("data-sync-boundary");
   const last = dom.messages.lastElementChild;
@@ -585,7 +605,7 @@ async function _loadNewEventsImpl(
 
     if (events.length === 0) {
       primeStreamingState(events, streaming);
-      if (pendingEcho) dom.messages.appendChild(pendingEcho);
+      restorePendingEcho(pendingEcho);
       return true;
     }
 
@@ -661,7 +681,7 @@ async function _loadNewEventsImpl(
     primeStreamingState(events, streaming);
     // After setSyncBoundary, so an unpersisted bubble never becomes the
     // persistence frontier the next catch-up truncates from.
-    if (pendingEcho) dom.messages.appendChild(pendingEcho);
+    restorePendingEcho(pendingEcho);
     return true;
   } catch {
     return false;

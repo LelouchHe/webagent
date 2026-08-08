@@ -4071,6 +4071,48 @@ describe("events", () => {
       assert.equal(dom.messages.querySelector("[data-optimistic-op-id]"), null);
     });
 
+    it("drops the optimistic bubble when the catch-up already contains it", async () => {
+      // awaitingOwnUserEcho means "this client hasn't seen its own echo", not
+      // "the message is unpersisted". They diverge precisely here: the POST
+      // landed and was persisted, but the SSE echo never arrived (stalled
+      // stream). The fetched transcript then carries the authoritative copy,
+      // so re-attaching the optimistic node would duplicate the message —
+      // and place the copy below the reply that answered it.
+      state.sessionId = "s1";
+      state.lastEventSeq = 0;
+      const optimistic = render.addMessage("user", "carry me");
+      optimistic.dataset.optimisticOpId = "op-42";
+      state.awaitingOwnUserEcho = true;
+      state.sentMessageOpId = "op-42";
+
+      globalThis.fetch = (() =>
+        Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve([
+              {
+                seq: 1,
+                type: "user_message",
+                data: JSON.stringify({ text: "carry me", clientOpId: "op-42" }),
+              },
+              {
+                seq: 2,
+                type: "assistant_message",
+                data: JSON.stringify({ text: "reply" }),
+              },
+            ]),
+        })) as any;
+
+      assert.equal(await events.loadNewEvents("s1"), true);
+      assert.equal(
+        dom.messages.querySelectorAll(".msg.user").length,
+        1,
+        "the persisted copy must not be duplicated by the optimistic node",
+      );
+      assert.equal(dom.messages.querySelector("[data-optimistic-op-id]"), null);
+      assert.ok(dom.messages.textContent.includes("reply"));
+    });
+
     it("does not treat missing replay seq metadata as sequence zero", async () => {
       events.replayEvent("assistant_message", { text: "legacy" }, [], 0);
       const existing = dom.messages.lastElementChild as HTMLElement;
