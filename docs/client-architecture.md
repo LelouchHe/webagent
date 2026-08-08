@@ -303,6 +303,27 @@ GET /api/v1/sessions/:id/events
 
 **Key difference from live events:** Replay uses aggregated types (`assistant_message` instead of `message_chunk`, `bash_result` instead of `bash_output`). The render logic is different because the full content is available at once.
 
+### Live / persisted reconciliation invariant
+
+The conversation DOM is the projection of three disjoint layers:
+
+1. persisted events through the monotonic `lastEventSeq` frontier;
+2. at most one volatile assistant/thinking tail for the active stream;
+3. an optimistic user message identified by `clientOpId`.
+
+The same text must never belong to both the persisted projection and volatile
+tail. In particular, live assistant rendering must not update `data-raw`:
+`data-raw` is the immutable persisted baseline used when incremental replay
+reverts a primed stream before applying newly flushed `assistant_message`
+events.
+
+When a terminal event for a superseded turn arrives before this client's
+optimistic user echo, the client defers incremental reconciliation until that
+echo confirms the user row is persisted. It then reuses `loadNewEvents()` to
+replace post-boundary optimistic/live DOM with the authoritative event sequence.
+Concurrent terminal triggers coalesce, with one dirty rerun if another trigger
+arrives while reconciliation is in flight.
+
 During replay, `state.replayInProgress = true` and live SSE events are queued in `state.replayQueue`.
 
 ### Incremental Sync

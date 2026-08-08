@@ -110,6 +110,7 @@ function sendMessage() {
   finishThinking();
   finishAssistant();
   state.awaitingOwnUserEcho = true;
+  state.reconcileAfterOwnUserEcho = false;
   const promptOpId = api.newOpId();
   state.sentMessageOpId = promptOpId;
 
@@ -186,6 +187,7 @@ function sendMessage() {
         msgEl.remove();
         addSystem("warn: Not connected, please retry");
         state.awaitingOwnUserEcho = false;
+        state.reconcileAfterOwnUserEcho = false;
         setBusy(false);
         return;
       }

@@ -224,6 +224,9 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - loadOlderEvents prepend and sentinel removal
   - loadNewEvents incremental sync and orphan cleanup
   - replay queue: dedup on reconnect for user_message (by client operation), tool_call, permission_request, thought_chunk, message_chunk
+  - terminal reconciliation waits for an optimistic user echo, restores
+    DB-only assistant output, and does not duplicate either the user row or a
+    volatile assistant tail already represented by persisted fragments
   - retryUnconfirmedPermissions after reconnect
 
 - `test/commands.test.ts`

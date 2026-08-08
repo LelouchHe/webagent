@@ -1953,6 +1953,90 @@ describe("events", () => {
         assert.equal(state.pendingPromptDone, false);
       });
 
+      it("reconciles DB-only terminal output after the optimistic user echo", async () => {
+        state.sessionId = "s1";
+        state.lastEventSeq = 1;
+        const baselineEvents = [
+          {
+            seq: 1,
+            type: "assistant_message",
+            data: JSON.stringify({ text: "old response" }),
+          },
+        ] as any;
+        events.replayEvent(
+          "assistant_message",
+          { text: "old response" },
+          baselineEvents,
+          0,
+        );
+        const boundary = dom.messages.lastElementChild as HTMLElement;
+        boundary.dataset.syncBoundary = "";
+        state.awaitingOwnUserEcho = true;
+        state.sentMessageForSession = "s1";
+        state.sentMessageOpId = "op-new";
+        const optimistic = render.addMessage("user", "new question");
+        optimistic.dataset.clientOpId = "op-new";
+
+        let fetches = 0;
+        globalThis.fetch = (() => {
+          fetches++;
+          return Promise.resolve({
+            ok: true,
+            json: () =>
+              Promise.resolve({
+                events: [
+                  {
+                    seq: 2,
+                    type: "user_message",
+                    session_id: "s1",
+                    data: JSON.stringify({
+                      text: "new question",
+                      clientOpId: "op-new",
+                    }),
+                  },
+                  {
+                    seq: 3,
+                    type: "assistant_message",
+                    session_id: "s1",
+                    data: JSON.stringify({ text: "late terminal output" }),
+                  },
+                  {
+                    seq: 4,
+                    type: "prompt_done",
+                    session_id: "s1",
+                    data: JSON.stringify({ stopReason: "cancelled" }),
+                  },
+                ],
+                streaming: { thinking: false, assistant: false },
+              }),
+          });
+        }) as any;
+
+        events.handleEvent({
+          type: "prompt_done",
+          sessionId: "s1",
+          stopReason: "cancelled",
+        });
+        assert.equal(fetches, 0, "wait for the own echo to reach SQLite");
+
+        events.handleEvent({
+          type: "user_message",
+          sessionId: "s1",
+          text: "new question",
+          clientOpId: "op-new",
+        });
+        await new Promise((resolve) => setImmediate(resolve));
+        await new Promise((resolve) => setImmediate(resolve));
+
+        assert.equal(fetches, 1);
+        assert.equal(
+          dom.messages.querySelectorAll('.msg.user[data-client-op-id="op-new"]')
+            .length,
+          1,
+        );
+        assert.match(dom.messages.textContent ?? "", /late terminal output/);
+      });
+
       it("valid cancel on current turn still works normally", () => {
         state.sessionId = "s1";
 
@@ -3896,6 +3980,56 @@ describe("events", () => {
       const msgs = dom.messages.querySelectorAll(".msg.assistant");
       assert.equal(msgs.length, 1);
       assert.equal(msgs[0].getAttribute("data-raw"), "reconnect { id: 3 }");
+    });
+
+    it("does not duplicate a live tail when its persisted fragment is reconciled", async () => {
+      state.sessionId = "s1";
+      const historyEvents = [
+        {
+          seq: 1,
+          type: "assistant_message",
+          data: JSON.stringify({ text: "persisted " }),
+        },
+      ] as any;
+      events.replayEvent(
+        "assistant_message",
+        { text: "persisted " },
+        historyEvents,
+        0,
+      );
+      const assistant = dom.messages.querySelector(
+        ".msg.assistant",
+      ) as HTMLElement;
+      assistant.dataset.primed = "";
+      assistant.dataset.lastEventSeq = "1";
+      assistant.dataset.firstEventSeq = "1";
+      assistant.dataset.syncBoundary = "";
+      state.currentAssistantEl = assistant;
+      state.currentAssistantText = "persisted live tail";
+      state.lastEventSeq = 1;
+      render.updateAssistantDisplay(assistant, state.currentAssistantText);
+
+      globalThis.fetch = (() =>
+        Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              events: [
+                {
+                  seq: 2,
+                  type: "assistant_message",
+                  data: JSON.stringify({ text: "live tail" }),
+                },
+              ],
+              streaming: { thinking: false, assistant: false },
+            }),
+        })) as any;
+
+      assert.equal(await events.loadNewEvents("s1"), true);
+      const messages = dom.messages.querySelectorAll(".msg.assistant");
+      assert.equal(messages.length, 1);
+      assert.equal(messages[0].textContent, "persisted live tail");
+      assert.equal(messages[0].textContent?.match(/live tail/g)?.length, 1);
     });
 
     it("keeps runtime plan when reconnect history reaches prompt_done", async () => {

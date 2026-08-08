@@ -128,6 +128,7 @@ export const state = {
   sentMessageOpId: null as string | null,
   awaitingOwnUserEcho: false,
   replayedOwnUserEcho: false,
+  reconcileAfterOwnUserEcho: false,
   // Set by bash input to suppress the SSE echo of our own bash_command
   sentBashForSession: null as string | null,
   cancelTimeout: 10_000,
@@ -701,6 +702,7 @@ export function resetSessionUI({
   state.sentMessageOpId = null;
   state.awaitingOwnUserEcho = false;
   state.replayedOwnUserEcho = false;
+  state.reconcileAfterOwnUserEcho = false;
   if (state._cancelTimerId != null) clearTimeout(state._cancelTimerId);
   state._cancelTimerId = null;
   state.lastEventSeq = 0;

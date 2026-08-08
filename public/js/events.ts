@@ -411,6 +411,33 @@ function setSyncBoundary() {
 
 /** Per-session coalesce: concurrent loadNewEvents calls for the same session share one promise. */
 const inflightBySession = new Map<string, Promise<boolean>>();
+let terminalReconcileRunning = false;
+let terminalReconcileDirty = false;
+let terminalReconcileSessionId: string | null = null;
+
+function scheduleTerminalReconciliation(sessionId: string): void {
+  if (state.sessionId !== sessionId || state.lastEventSeq <= 0) return;
+  if (terminalReconcileRunning) {
+    terminalReconcileDirty = true;
+    terminalReconcileSessionId = sessionId;
+    return;
+  }
+  terminalReconcileRunning = true;
+  terminalReconcileSessionId = sessionId;
+  void loadNewEvents(sessionId).finally(() => {
+    terminalReconcileRunning = false;
+    const rerun =
+      terminalReconcileDirty &&
+      terminalReconcileSessionId !== null &&
+      terminalReconcileSessionId === state.sessionId;
+    terminalReconcileDirty = false;
+    const rerunSessionId = terminalReconcileSessionId;
+    terminalReconcileSessionId = null;
+    if (rerun && rerunSessionId) {
+      scheduleTerminalReconciliation(rerunSessionId);
+    }
+  });
+}
 
 /**
  * Fetch only events added since the last sync point and replay them.
@@ -866,6 +893,8 @@ async function fetchOlderEventsPage(
 onSessionReset(removeHistorySentinel);
 onSessionReset(() => {
   replayLoadToken++;
+  terminalReconcileDirty = false;
+  terminalReconcileSessionId = null;
 });
 
 export async function loadOlderEvents(sid: string): Promise<boolean> {
@@ -1706,9 +1735,12 @@ export function handleEvent(msg: AgentEvent) {
         state.sentMessageForSession === msg.sessionId &&
         state.sentMessageOpId === msg.clientOpId
       ) {
+        const shouldReconcile = state.reconcileAfterOwnUserEcho;
         state.sentMessageForSession = null;
         state.sentMessageOpId = null;
         state.awaitingOwnUserEcho = false;
+        state.reconcileAfterOwnUserEcho = false;
+        if (shouldReconcile) scheduleTerminalReconciliation(msg.sessionId);
         break;
       }
       // A new turn is starting (from another client's broadcast).
@@ -1892,6 +1924,7 @@ export function handleEvent(msg: AgentEvent) {
           sessionId: msg.sessionId,
           stopReason: msg.stopReason,
         });
+        state.reconcileAfterOwnUserEcho = true;
         break;
       }
       if (msg.stopReason === "cancelled" && state.newTurnStarted) {
@@ -1980,6 +2013,7 @@ export function handleEvent(msg: AgentEvent) {
           sessionId: msg.sessionId,
           message: msg.message,
         });
+        state.reconcileAfterOwnUserEcho = true;
         break;
       }
       state.awaitingNewSession = false;

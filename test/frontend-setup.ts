@@ -100,6 +100,7 @@ export function resetState(state: any, dom: any) {
   state.sentMessageOpId = null;
   state.awaitingOwnUserEcho = false;
   state.replayedOwnUserEcho = false;
+  state.reconcileAfterOwnUserEcho = false;
   state.sentMessageForSession = null;
   state.cancelTimeout = 10_000;
   state.serverVersion = null;
