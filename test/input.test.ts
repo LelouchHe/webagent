@@ -239,6 +239,24 @@ describe("input", () => {
     assert.doesNotMatch(dom.messages.textContent, /old prompt failed/);
   });
 
+  it("tags the optimistic bubble with the op id that identifies it", async () => {
+    // The bubble is the only copy of the message until the POST is persisted,
+    // and the server's echo for it is suppressed as this client's own. The tag
+    // is what lets an incremental catch-up carry it across a DOM rebuild.
+    setFetch(() => ({ ok: true, status: 202, json: async () => ({}) }));
+    state.sessionId = "s1";
+    state.clientId = "cl-1";
+    dom.input.value = "carry me";
+
+    clickSend();
+
+    const tagged = dom.messages.querySelector("[data-optimistic-op-id]");
+    assert.ok(tagged, "optimistic bubble must be tagged");
+    assert.ok(tagged.classList.contains("user"));
+    assert.equal(tagged.dataset.optimisticOpId, state.sentMessageOpId);
+    assert.ok(state.sentMessageOpId, "op id must be set");
+  });
+
   it("clears the own-echo guard when the prompt request fails", async () => {
     setFetch(() => ({
       ok: false,

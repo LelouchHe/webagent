@@ -3991,6 +3991,86 @@ describe("events", () => {
       assert.equal(state.lastEventSeq, 1);
     });
 
+    it("carries an unpersisted optimistic bubble across the frontier-zero wipe", async () => {
+      // An in-flight prompt (e.g. still uploading attachments) exists only in
+      // the DOM: it is not in the transcript we are about to fetch, and the
+      // server's eventual user_message broadcast is suppressed as this
+      // client's own echo. Wiping it would make the message unrecoverable
+      // without a manual reload.
+      state.sessionId = "s1";
+      state.lastEventSeq = 0;
+      render.addMessage("assistant", "earlier reply");
+      const optimistic = render.addMessage("user", "still uploading");
+      optimistic.dataset.optimisticOpId = "op-42";
+      state.awaitingOwnUserEcho = true;
+      state.sentMessageOpId = "op-42";
+
+      globalThis.fetch = (() =>
+        Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve([
+              {
+                seq: 1,
+                type: "assistant_message",
+                data: JSON.stringify({ text: "authoritative earlier reply" }),
+              },
+            ]),
+        })) as any;
+
+      assert.equal(await events.loadNewEvents("s1"), true);
+      assert.ok(
+        dom.messages.textContent.includes("authoritative earlier reply"),
+        "authoritative transcript must be applied",
+      );
+      assert.ok(
+        dom.messages.textContent.includes("still uploading"),
+        "in-flight bubble must survive",
+      );
+      assert.equal(
+        dom.messages.lastElementChild,
+        optimistic,
+        "it must stay at the tail, after the replayed transcript",
+      );
+      assert.ok(
+        !optimistic.hasAttribute("data-sync-boundary"),
+        "an unpersisted bubble must not become the persistence boundary",
+      );
+    });
+
+    it("drops the optimistic bubble once its own echo is no longer awaited", async () => {
+      // Control: once the POST is confirmed the bubble is redundant with the
+      // persisted copy, so the wipe must still remove it. Without this the
+      // preservation above could be keeping stale duplicates alive forever.
+      state.sessionId = "s1";
+      state.lastEventSeq = 0;
+      const stale = render.addMessage("user", "already persisted");
+      stale.dataset.optimisticOpId = "op-41";
+      state.awaitingOwnUserEcho = false;
+      state.sentMessageOpId = null;
+
+      globalThis.fetch = (() =>
+        Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve([
+              {
+                seq: 1,
+                type: "user_message",
+                data: JSON.stringify({ text: "already persisted" }),
+              },
+            ]),
+        })) as any;
+
+      assert.equal(await events.loadNewEvents("s1"), true);
+      assert.equal(
+        dom.messages.querySelectorAll(".msg.user").length,
+        1,
+        "only the persisted copy remains",
+      );
+      assert.equal(dom.messages.querySelector("[data-optimistic-op-id]"), null);
+    });
+
     it("does not treat missing replay seq metadata as sequence zero", async () => {
       events.replayEvent("assistant_message", { text: "legacy" }, [], 0);
       const existing = dom.messages.lastElementChild as HTMLElement;

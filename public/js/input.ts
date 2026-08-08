@@ -123,6 +123,7 @@ function sendMessage() {
   // chip until reload (sender's own SSE echo is suppressed below via
   // sentMessageForSession). See test/e2e/file-attachment-download.spec.ts.
   const msgEl = addMessage("user", text || "(attachment)");
+  msgEl.dataset.optimisticOpId = promptOpId;
   const fileChips: (HTMLElement | null)[] = [];
   for (const att of state.pendingAttachments) {
     if (att.kind === "image" && att.previewUrl) {

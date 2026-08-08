@@ -549,6 +549,22 @@ async function _loadNewEventsImpl(
     // in-progress streaming state.  This must run even when the event list is
     // empty so that partially-streamed elements left over from a disconnect
     // don't stay in the DOM.
+    // An in-flight prompt's optimistic bubble is the only copy of that message:
+    // it is not in the transcript we just fetched, and the server's eventual
+    // user_message broadcast is suppressed as this client's own echo. Hold a
+    // reference so the DOM rebuild below can put it back at the tail.
+    let pendingEcho: HTMLElement | null = null;
+    if (state.awaitingOwnUserEcho && state.sentMessageOpId) {
+      for (const el of dom.messages.querySelectorAll(
+        "[data-optimistic-op-id]",
+      )) {
+        if (
+          (el as HTMLElement).dataset.optimisticOpId === state.sentMessageOpId
+        )
+          pendingEcho = el as HTMLElement;
+      }
+    }
+
     const boundary = dom.messages.querySelector("[data-sync-boundary]");
     if (boundary) {
       while (boundary.nextElementSibling) boundary.nextElementSibling.remove();
@@ -569,6 +585,7 @@ async function _loadNewEventsImpl(
 
     if (events.length === 0) {
       primeStreamingState(events, streaming);
+      if (pendingEcho) dom.messages.appendChild(pendingEcho);
       return true;
     }
 
@@ -642,6 +659,9 @@ async function _loadNewEventsImpl(
     state.lastEventSeq = events[events.length - 1].seq;
     setSyncBoundary();
     primeStreamingState(events, streaming);
+    // After setSyncBoundary, so an unpersisted bubble never becomes the
+    // persistence frontier the next catch-up truncates from.
+    if (pendingEcho) dom.messages.appendChild(pendingEcho);
     return true;
   } catch {
     return false;
