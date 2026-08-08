@@ -411,6 +411,9 @@ function primeStreamingState(
  */
 function restorePendingEcho(el: HTMLElement | null): void {
   if (!el) return;
+  // Nothing detached it, so leave it in place: appending would move it past
+  // siblings added after it (e.g. the waiting cursor) and reorder the view.
+  if (el.parentNode === dom.messages) return;
   const opId = el.dataset.optimisticOpId;
   if (opId) {
     const persisted = Array.from(

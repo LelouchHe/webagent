@@ -4113,6 +4113,35 @@ describe("events", () => {
       assert.ok(dom.messages.textContent.includes("reply"));
     });
 
+    it("leaves an undetached optimistic bubble in place", async () => {
+      // With no boundary and an empty response nothing removes the bubble, so
+      // re-appending would move it past siblings mounted after it (the waiting
+      // cursor) and show the reply spinner above the message it belongs to.
+      state.sessionId = "s1";
+      state.lastEventSeq = 0;
+      const optimistic = render.addMessage("user", "still uploading");
+      optimistic.dataset.optimisticOpId = "op-42";
+      const trailing = globalThis.document.createElement("div");
+      trailing.id = "waiting";
+      dom.messages.appendChild(trailing);
+      state.awaitingOwnUserEcho = true;
+      state.sentMessageOpId = "op-42";
+
+      globalThis.fetch = (() =>
+        Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve([]),
+        })) as any;
+
+      assert.equal(await events.loadNewEvents("s1"), true);
+      assert.equal(
+        dom.messages.lastElementChild,
+        trailing,
+        "the waiting cursor must stay below the message it waits on",
+      );
+      assert.equal(optimistic.nextElementSibling, trailing);
+    });
+
     it("does not treat missing replay seq metadata as sequence zero", async () => {
       events.replayEvent("assistant_message", { text: "legacy" }, [], 0);
       const existing = dom.messages.lastElementChild as HTMLElement;
