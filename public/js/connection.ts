@@ -60,6 +60,7 @@ async function registerPushEndpoint(clientId: string) {
  */
 const STALL_TIMEOUT_MS = 45_000;
 const WATCHDOG_INTERVAL_MS = 5_000;
+const RECONNECT_DELAY_MS = 3_000;
 
 /**
  * Timestamp of the last byte seen on the stream, or 0 when no stream is
@@ -74,6 +75,25 @@ const WATCHDOG_INTERVAL_MS = 5_000;
  */
 let lastStreamActivity = 0;
 let watchdogTimer: ReturnType<typeof setInterval> | null = null;
+/**
+ * Identifies the current connection attempt. Opening a stream awaits a ticket
+ * mint, so without a generation the continuation of a superseded attempt would
+ * happily construct a second EventSource that nothing owns or closes. An
+ * orphan is not merely wasteful: its `onmessage` keeps marking activity, which
+ * would make a genuinely dead current stream look alive forever.
+ */
+let streamGen = 0;
+let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** Schedule at most one pending reconnect. */
+function scheduleReconnect(): void {
+  if (reconnectTimer) return;
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null;
+    connect();
+  }, RECONNECT_DELAY_MS);
+  (reconnectTimer as { unref?: () => void }).unref?.();
+}
 
 function noteStreamActivity(): void {
   lastStreamActivity = Date.now();
@@ -115,15 +135,22 @@ export function checkStreamLiveness(): void {
 }
 
 export function connect() {
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
+  // Supersede any attempt still in flight so its continuation cannot open a
+  // stream nobody owns.
+  const gen = ++streamGen;
   setConnectionStatus("connecting", "connecting");
 
   // SSE for receiving server events. EventSource cannot send Authorization,
   // so we exchange a Bearer for a single-use 60s ticket first, then open
   // the stream with ?ticket=…
-  void openStream();
+  void openStream(gen);
 }
 
-async function openStream() {
+async function openStream(gen: number) {
   // Arm before the ticket mint so a stream that never opens is also covered.
   noteStreamActivity();
   startWatchdog();
@@ -134,9 +161,12 @@ async function openStream() {
   } catch {
     // Auth wrapper already redirects to /login on 401. For transient errors
     // schedule a retry on the same cadence as the SSE reconnect path.
-    setTimeout(connect, 3000);
+    if (gen === streamGen) scheduleReconnect();
     return;
   }
+  // A newer attempt started while we were awaiting the mint; this ticket and
+  // everything downstream of it belongs to a connection nobody is waiting for.
+  if (gen !== streamGen) return;
 
   const es = new EventSource(
     `/api/v1/events/stream?ticket=${encodeURIComponent(ticket)}`,
@@ -144,6 +174,10 @@ async function openStream() {
   state.eventSource = es;
 
   es.onmessage = (e: MessageEvent) => {
+    if (gen !== streamGen) {
+      es.close();
+      return;
+    }
     noteStreamActivity();
     const msg = JSON.parse(e.data as string) as {
       type: string;
@@ -173,8 +207,12 @@ async function openStream() {
 
   es.onerror = () => {
     es.close();
+    if (gen !== streamGen) return; // superseded stream: close and stay quiet
+    // Disarm the watchdog for the backoff window, or it would see the stale
+    // timestamp and connect in parallel with the scheduled retry.
+    lastStreamActivity = 0;
     cleanup();
-    setTimeout(connect, 3000);
+    scheduleReconnect();
   };
 
   // SSE "heartbeat" named event — server emits one every 15s, plus one
@@ -187,6 +225,7 @@ async function openStream() {
   // listener to this specific EventSource — on reconnect the old one is
   // GC'd with its parent; we install a fresh listener on the fresh `es`.
   es.addEventListener("heartbeat", () => {
+    if (gen !== streamGen) return;
     noteStreamActivity();
     if (!state.clientId) return;
     if (document.hidden) return; // visibilitychange owns the hidden path

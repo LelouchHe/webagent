@@ -685,6 +685,86 @@ describe("connection", () => {
 
       assert.equal(MockEventSource.instances.length, afterFirst);
     });
+
+    it("does not open a second stream when a stalled check races the error backoff", async () => {
+      // On resume the browser often surfaces `error` for a connection that
+      // already died minutes ago. That schedules a backoff reconnect, but the
+      // silence is also long past the threshold, so the watchdog would fire
+      // inside the backoff window and connect a second time. An orphaned
+      // stream is not merely wasteful: its onmessage keeps marking activity,
+      // so the watchdog can never fire again.
+      setFetch(async () => mockResponse([]));
+      connection.connect();
+      const first = await latestES();
+
+      now += 60_000;
+      first.onerror?.();
+      connection.checkStreamLiveness();
+      await flush();
+
+      const pending = timeoutCalls.indexOf(RECONNECT_DELAY_MS);
+      assert.ok(pending >= 0, "error path must schedule a reconnect");
+      timeoutFns[pending]();
+      await flush();
+
+      assert.equal(
+        MockEventSource.instances.length,
+        2,
+        "exactly one replacement stream",
+      );
+      const live = MockEventSource.instances.filter(
+        (es: any) => es.readyState !== MockEventSource.CLOSED,
+      );
+      assert.equal(live.length, 1, "no orphaned stream may stay open");
+      assert.equal(state.eventSource, live[0]);
+    });
+
+    it("abandons a stream whose ticket resolved after a newer connect", async () => {
+      // The mint is awaited, so a reconnect started during it would otherwise
+      // let the stale continuation construct a second EventSource.
+      let releaseTicket!: (v: unknown) => void;
+      let mintCount = 0;
+      // Bypass setFetch: its helper auto-answers the ticket mint, which is the
+      // very await this test needs to hold open.
+      globalThis.fetch = (async (url: string, init?: RequestInit) => {
+        fetchCalls.push({ url, init });
+        if (url === "/api/v1/sse-ticket") {
+          mintCount++;
+          if (mintCount === 1) {
+            return new Promise((resolve) => {
+              releaseTicket = resolve;
+            });
+          }
+          return mockResponse({ ticket: "tkt-2", expiresIn: 60 });
+        }
+        if (url.endsWith("/snapshot"))
+          return mockResponse({
+            version: 1,
+            seq: 0,
+            session: {},
+            runtime: { busy: null },
+          });
+        return mockResponse([]);
+      }) as unknown as typeof fetch;
+
+      connection.connect();
+      await flush();
+      assert.equal(MockEventSource.instances.length, 0, "first mint pending");
+
+      connection.connect();
+      await flush();
+      const opened = MockEventSource.instances.length;
+      assert.equal(opened, 1, "the newer attempt opens exactly one stream");
+
+      releaseTicket(mockResponse({ ticket: "stale", expiresIn: 60 }));
+      await flush();
+
+      assert.equal(
+        MockEventSource.instances.length,
+        opened,
+        "the superseded mint must not open a stream",
+      );
+    });
   });
 
   it("aborts session resume when sessionSwitchGen changes mid-flight", async () => {
