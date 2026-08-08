@@ -552,8 +552,6 @@ async function _loadNewEventsImpl(
     const boundary = dom.messages.querySelector("[data-sync-boundary]");
     if (boundary) {
       while (boundary.nextElementSibling) boundary.nextElementSibling.remove();
-    } else if (state.lastEventSeq === 0) {
-      dom.messages.replaceChildren();
     }
     // Sync boundary truncation may have detached the live streaming element;
     // reset its memo defensively before nulling so a future re-render against
@@ -572,6 +570,16 @@ async function _loadNewEventsImpl(
     if (events.length === 0) {
       primeStreamingState(events, streaming);
       return true;
+    }
+
+    // A never-replayed session (frontier 0) has no boundary to truncate at, so
+    // everything in the pane is live-rendered or client-only. Replace it
+    // wholesale with the authoritative transcript — but only now that the
+    // server has actually returned one. Wiping before the empty-response check
+    // would discard unpersisted content (optimistic user bubbles, addSystem
+    // rows) with nothing to put back.
+    if (!boundary && state.lastEventSeq === 0) {
+      dom.messages.replaceChildren();
     }
 
     // Batch DOM operations into a fragment to avoid per-element reflow

@@ -3928,6 +3928,69 @@ describe("events", () => {
       );
     });
 
+    it("keeps live DOM when a frontier-zero catch-up returns no events", async () => {
+      // A /new session sits at frontier 0 with no [data-sync-boundary], so the
+      // catch-up takes the `replaceChildren()` branch that wipes the whole
+      // pane. That wipe must not happen when the server has nothing to replace
+      // the content with: the pane holds client-only rows (addSystem banners,
+      // slash-command output) that are never persisted, plus any optimistic
+      // user bubble whose POST has not been flushed to the DB yet.
+      state.sessionId = "s1";
+      state.lastEventSeq = 0;
+      render.addSystem("Session created: fresh");
+      render.addMessage("user", "optimistic, not yet persisted");
+      assert.equal(
+        dom.messages.querySelector("[data-sync-boundary]"),
+        null,
+        "precondition: no sync boundary on a never-replayed session",
+      );
+      const liveContent = dom.messages.textContent;
+      assert.ok(liveContent.includes("optimistic, not yet persisted"));
+
+      globalThis.fetch = (() =>
+        Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve([]),
+        })) as any;
+
+      assert.equal(await events.loadNewEvents("s1"), true);
+      assert.equal(
+        dom.messages.textContent,
+        liveContent,
+        "empty catch-up must leave the pane untouched",
+      );
+    });
+
+    it("still replaces live DOM when a frontier-zero catch-up returns events", async () => {
+      // Control for the test above: proves the wipe is still reachable, so the
+      // preservation assertion is not vacuously true.
+      state.sessionId = "s1";
+      state.lastEventSeq = 0;
+      render.addSystem("Session created: fresh");
+      render.addMessage("user", "optimistic, not yet persisted");
+
+      globalThis.fetch = (() =>
+        Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve([
+              {
+                seq: 1,
+                type: "user_message",
+                data: JSON.stringify({ text: "authoritative copy" }),
+              },
+            ]),
+        })) as any;
+
+      assert.equal(await events.loadNewEvents("s1"), true);
+      assert.ok(dom.messages.textContent.includes("authoritative copy"));
+      assert.ok(
+        !dom.messages.textContent.includes("Session created: fresh"),
+        "authoritative transcript replaces the live pane",
+      );
+      assert.equal(state.lastEventSeq, 1);
+    });
+
     it("does not treat missing replay seq metadata as sequence zero", async () => {
       events.replayEvent("assistant_message", { text: "legacy" }, [], 0);
       const existing = dom.messages.lastElementChild as HTMLElement;
