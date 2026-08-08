@@ -3059,6 +3059,73 @@ describe("events", () => {
       assert.equal((msgs[0] as HTMLElement).dataset.lastEventSeq, "201");
     });
 
+    it("preserves a final-answer boundary across older-history pagination", async () => {
+      state.oldestLoadedSeq = 203;
+      state.hasMoreHistory = true;
+      state.sessionId = "s1";
+      const toolText = "<final_answer>\nResult body";
+      const currentEvents = [
+        {
+          seq: 203,
+          type: "assistant_message",
+          data: JSON.stringify({ text: "Parent continuation" }),
+        },
+      ] as any;
+      events.replayEvent(
+        "assistant_message",
+        { text: "Parent continuation" },
+        currentEvents,
+        0,
+      );
+
+      globalThis.fetch = (() =>
+        Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              events: [
+                {
+                  seq: 200,
+                  type: "tool_call",
+                  data: JSON.stringify({
+                    id: "wrapper",
+                    kind: "other",
+                    title: "Run task",
+                  }),
+                },
+                {
+                  seq: 201,
+                  type: "tool_call_update",
+                  data: JSON.stringify({
+                    id: "wrapper",
+                    status: "completed",
+                    content: [
+                      {
+                        type: "content",
+                        content: { type: "text", text: toolText },
+                      },
+                    ],
+                  }),
+                },
+                {
+                  seq: 202,
+                  type: "assistant_message",
+                  data: JSON.stringify({ text: toolText }),
+                },
+              ],
+              hasMore: false,
+            }),
+        })) as any;
+
+      assert.equal(await events.loadOlderEvents("s1"), true);
+      const assistant = dom.messages.querySelector(".msg.assistant");
+      assert.ok(assistant?.querySelector(".subagent-result"));
+      assert.equal(
+        assistant?.querySelector(".assistant-continuation")?.textContent,
+        "Parent continuation",
+      );
+    });
+
     it("preserves scroll position when the sole child merges with older history", async () => {
       state.oldestLoadedSeq = 201;
       state.hasMoreHistory = true;
@@ -4029,6 +4096,64 @@ describe("events", () => {
         "primed element should have data-primed",
       );
       assert.ok(state.currentAssistantEl === el);
+    });
+
+    it("preserves the verified final-answer boundary while a replayed stream resumes", async () => {
+      state.sessionId = "s1";
+      const toolText = "<final_answer>\nResult body";
+      const response = {
+        events: [
+          {
+            seq: 1,
+            type: "tool_call",
+            data: JSON.stringify({
+              id: "wrapper",
+              kind: "other",
+              title: "Run task",
+            }),
+          },
+          {
+            seq: 2,
+            type: "tool_call_update",
+            data: JSON.stringify({
+              id: "wrapper",
+              status: "completed",
+              content: [
+                {
+                  type: "content",
+                  content: { type: "text", text: toolText },
+                },
+              ],
+            }),
+          },
+          {
+            seq: 3,
+            type: "assistant_message",
+            data: JSON.stringify({ text: "<final_answer>\nResult" }),
+          },
+        ],
+        streaming: { thinking: false, assistant: true },
+      };
+      globalThis.fetch = (() =>
+        Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve(response),
+        })) as any;
+
+      await events.loadHistory("s1");
+      events.handleEvent({
+        type: "message_chunk",
+        sessionId: "s1",
+        text: " bodyParent continuation",
+      });
+      render.flushStreamingRender();
+
+      const assistant = dom.messages.querySelector(".msg.assistant");
+      assert.ok(assistant?.querySelector(".subagent-result"));
+      assert.equal(
+        assistant?.querySelector(".assistant-continuation")?.textContent,
+        "Parent continuation",
+      );
     });
 
     it("primeStreamingState sets data-primed on adopted thinking element", async () => {

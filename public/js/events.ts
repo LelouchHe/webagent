@@ -63,6 +63,7 @@ import {
   renderContentEvent,
   isContentEventType,
   getLastMarkdownStreamTiming,
+  inheritAssistantDisplayState,
   type RenderHooks,
   type ContentEventType,
 } from "./render-event.ts";
@@ -1167,6 +1168,7 @@ function mergeOlderReplayBoundary(
     const combined =
       (older.getAttribute("data-raw") ?? "") +
       (newer.getAttribute("data-raw") ?? "");
+    inheritAssistantDisplayState(newer, older);
     newer.setAttribute("data-raw", combined);
     resetMarkdownStream(newer);
     newer.replaceChildren();
@@ -1420,7 +1422,7 @@ function doAssistantRender() {
   updateAssistantDisplay(
     el,
     state.currentAssistantText,
-    state.pendingFinalAnswerToolText,
+    state.pendingFinalAnswerToolText ?? undefined,
   );
   const tRender = performance.now();
   const ms = tRender - t0;

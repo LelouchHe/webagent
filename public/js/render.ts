@@ -26,7 +26,11 @@ export function addMessage(role: string, text: string): HTMLDivElement {
   if (role === "user") {
     el.innerHTML = escHtml(text).replace(/\n/g, "<br>");
   } else if (role === "assistant") {
-    updateAssistantDisplay(el, text, state.pendingFinalAnswerToolText);
+    updateAssistantDisplay(
+      el,
+      text,
+      state.pendingFinalAnswerToolText ?? undefined,
+    );
   } else {
     updateMarkdownStream(el, text);
   }
@@ -69,7 +73,7 @@ export function finishAssistant() {
     updateAssistantDisplay(
       assistantEl,
       assistantText,
-      state.pendingFinalAnswerToolText,
+      state.pendingFinalAnswerToolText ?? undefined,
       true,
     );
   state.pendingFinalAnswerToolText = null;
@@ -105,7 +109,7 @@ export function flushStreamingRender() {
     updateAssistantDisplay(
       el,
       state.currentAssistantText,
-      state.pendingFinalAnswerToolText,
+      state.pendingFinalAnswerToolText ?? undefined,
     );
 }
 

@@ -116,6 +116,15 @@ export interface RenderHooks {
 
 const finalAnswerCandidates = new WeakMap<HTMLElement, string>();
 
+/** Carry a verified wrapper boundary when assistant fragments are re-parented. */
+export function inheritAssistantDisplayState(
+  target: HTMLElement,
+  source: HTMLElement,
+): void {
+  const candidate = finalAnswerCandidates.get(source);
+  if (candidate) finalAnswerCandidates.set(target, candidate);
+}
+
 /**
  * Render one content event. Returns a NEW element to be appended by the
  * caller, or `null` when the event mutated existing DOM in place via

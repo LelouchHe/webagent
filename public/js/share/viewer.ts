@@ -11,7 +11,11 @@
 //     but not wired to any onclick handler. Public viewers cannot act.
 //  3. Code highlighting: lazy-loads the same hljs chunk as the main app.
 
-import { renderContentEvent, isContentEventType } from "../render-event.ts";
+import {
+  renderContentEvent,
+  isContentEventType,
+  updateAssistantDisplay,
+} from "../render-event.ts";
 import { extractCompletedFinalAnswer } from "../event-interpreter.ts";
 import { enhanceCodeBlocks } from "../highlight.ts";
 import { formatRelativeTime, formatExactUtc } from "../relative-time.ts";
@@ -44,6 +48,29 @@ function parseData(ev: StoredEvent): Record<string, unknown> {
     }
   }
   return ev.data;
+}
+
+function mergeAdjacentAssistant(
+  event: StoredEvent,
+  previous: StoredEvent | null,
+  previousEl: HTMLElement | null,
+  data: Record<string, unknown>,
+): boolean {
+  if (
+    event.type !== "assistant_message" ||
+    previous?.type !== "assistant_message" ||
+    event.seq !== previous.seq + 1 ||
+    !previousEl?.classList.contains("assistant")
+  ) {
+    return false;
+  }
+  const combined =
+    (previousEl.getAttribute("data-raw") ?? "") +
+    (typeof data.text === "string" ? data.text : "");
+  previousEl.setAttribute("data-raw", combined);
+  updateAssistantDisplay(previousEl, combined, undefined, true);
+  enhanceCodeBlocks(previousEl);
+  return true;
 }
 
 function renderEvents(
@@ -84,9 +111,16 @@ function renderEvents(
     finalAnswerToolText: null as string | null,
   };
 
-  for (const ev of events) {
+  for (let index = 0; index < events.length; index++) {
+    const ev = events[index];
     if (!isContentEventType(ev.type)) continue;
     const d = parseData(ev);
+    const previous = index > 0 ? events[index - 1] : null;
+    const previousEl = host.lastElementChild as HTMLElement | null;
+    if (mergeAdjacentAssistant(ev, previous, previousEl, d)) {
+      finalAnswerToolText = null;
+      continue;
+    }
     hooks.finalAnswerToolText =
       ev.type === "assistant_message" ? finalAnswerToolText : null;
     const el = renderContentEvent(ev.type, d, hooks);

@@ -1,5 +1,10 @@
 import { test, expect } from "playwright/test";
-import { createNewSession, gotoConnected, sendPrompt } from "./helpers.ts";
+import {
+  createNewSession,
+  currentSessionId,
+  gotoConnected,
+  sendPrompt,
+} from "./helpers.ts";
 
 for (const ordering of ["CHUNK_FIRST", "WRAPPER_FIRST"]) {
   test(`folds a sub-agent result while streaming (${ordering})`, async ({
@@ -62,4 +67,48 @@ test("folds an exact echo after a nested tool chain", async ({ page }) => {
   await expect(result).not.toHaveAttribute("open", "");
   await expect(result).toContainText("Commands run:");
   await expect(assistant.locator(".assistant-continuation")).toHaveCount(0);
+});
+
+test("share viewer coalesces persisted final-answer fragments", async ({
+  page,
+}) => {
+  await gotoConnected(page);
+  await createNewSession(page);
+  await sendPrompt(page, "E2E_FINAL_ANSWER_STREAM_WRAPPER_FIRST");
+
+  const assistant = page.locator(".msg.assistant").last();
+  await expect(assistant.locator(".subagent-result")).toBeVisible();
+  const sessionId = await currentSessionId(page);
+
+  // Force the first streaming fragment into SQLite while the mock agent is
+  // paused. prompt_done later flushes the remainder into a consecutive row.
+  const flush = await page.request.get(
+    `/api/v1/sessions/${sessionId}/events?limit=200`,
+  );
+  expect(flush.ok()).toBe(true);
+  await expect(assistant.locator(".assistant-continuation")).toHaveText(
+    "Parent narration remains visible.",
+  );
+
+  const preview = await page.request.post(
+    `/api/v1/sessions/${sessionId}/share`,
+    { data: {} },
+  );
+  expect(preview.status()).toBe(201);
+  const { token } = (await preview.json()) as { token: string };
+  const publish = await page.request.post(
+    `/api/v1/sessions/${sessionId}/share/publish`,
+    { data: { token } },
+  );
+  expect(publish.ok()).toBe(true);
+
+  const viewer = await page.context().newPage();
+  await viewer.goto(`/s/${token}`);
+  const viewerAssistant = viewer.locator(".msg.assistant");
+  await expect(viewerAssistant).toHaveCount(1);
+  await expect(viewerAssistant.locator(".subagent-result")).toBeVisible();
+  await expect(viewerAssistant.locator(".assistant-continuation")).toHaveText(
+    "Parent narration remains visible.",
+  );
+  await viewer.close();
 });

@@ -418,6 +418,33 @@ describe("render-event", () => {
       assert.equal(el.getAttribute("data-raw"), "persisted prefix");
       assert.ok(el.querySelector("details.subagent-result"));
     });
+
+    it("inherits a verified wrapper boundary when fragments are re-parented", () => {
+      const toolText = "<final_answer>\nResult body";
+      const source = append(
+        mod.renderContentEvent(
+          "assistant_message",
+          { text: "<final_answer>\nResult" },
+          makeHooks({ finalAnswerToolText: toolText }),
+        ),
+      )!;
+      const target = document.createElement("div");
+      target.className = "msg assistant";
+      mod.inheritAssistantDisplayState(target, source);
+
+      mod.updateAssistantDisplay(
+        target,
+        `${toolText}Parent continuation`,
+        undefined,
+        true,
+      );
+
+      assert.ok(target.querySelector(".subagent-result"));
+      assert.equal(
+        target.querySelector(".assistant-continuation")?.textContent,
+        "Parent continuation",
+      );
+    });
   });
 
   describe("thinking", () => {
