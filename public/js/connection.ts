@@ -27,7 +27,9 @@ import {
   fallbackToNextSession,
 } from "./events.ts";
 import * as api from "./api.ts";
-import { applyConnectedLogLevel } from "./log.ts";
+import { applyConnectedLogLevel, log } from "./log.ts";
+
+const clog = log.scope("sse");
 import type { SessionDetail } from "../../src/types.ts";
 import {
   getStartupMessageIntent,
@@ -93,6 +95,13 @@ export function checkStreamLiveness(): void {
   if (Date.now() - lastStreamActivity < STALL_TIMEOUT_MS) return;
   // Disarm before reconnecting: the replacement stream re-arms on open, and
   // until then a second check must not judge it by its predecessor's clock.
+  // Rendered inline in the conversation flow at `/log warn`, which is the only
+  // way to observe this on a device with no DevTools (iOS PWA). If a user
+  // reports the transcript freezing, the presence or absence of this line says
+  // whether the transport died or the render pipeline did.
+  clog.warn("stream silent, reconnecting", {
+    silentMs: Date.now() - lastStreamActivity,
+  });
   lastStreamActivity = 0;
   const dead = state.eventSource;
   if (dead) {

@@ -3,6 +3,9 @@ import { randomBytes } from "node:crypto";
 import type { AgentEvent } from "./types.ts";
 import { reSignAttachmentUrlsInJson } from "./auth.ts";
 import { enrichEventForDisplay, type LabelMap } from "./attachment-labels.ts";
+import { log } from "./log.ts";
+
+const slog = log.scope("sse");
 
 /**
  * SSE heartbeat frame — a NAMED event so the frontend can hook
@@ -83,7 +86,7 @@ export class SseManager {
           } catch {
             /* already torn down */
           }
-          this.remove(client.id);
+          this.remove(client.id, "token-revoked");
           continue;
         }
         client.res.write(SSE_HEARTBEAT_FRAME);
@@ -108,8 +111,13 @@ export class SseManager {
   /** Register a new SSE client connection. */
   add(client: SseClient): void {
     this.clients.set(client.id, client);
+    slog.info("connected", {
+      clientId: client.id,
+      sessionId: client.sessionId ?? "*",
+      clients: this.clients.size,
+    });
     client.res.on("close", () => {
-      this.remove(client.id);
+      this.remove(client.id, "closed");
     });
   }
 
@@ -126,9 +134,16 @@ export class SseManager {
     }
   }
 
-  /** Remove a client by ID. */
-  remove(id: string): void {
-    this.clients.delete(id);
+  /** Remove a client by ID. `reason` is recorded so an operator can tell an
+   *  ordinary disconnect apart from a write failure or a revoked token. */
+  remove(id: string, reason = "closed"): void {
+    if (this.clients.delete(id)) {
+      slog.info("disconnected", {
+        clientId: id,
+        reason,
+        clients: this.clients.size,
+      });
+    }
     this.onRemoveCallback?.(id);
   }
 
@@ -154,10 +169,11 @@ export class SseManager {
     msg += `data: ${data}\n\n`;
     try {
       client.res.write(msg);
-    } catch {
+    } catch (err) {
       // Socket torn down between writableEnded check and write.
       // Drop the client so we stop writing to it on every broadcast.
-      this.remove(client.id);
+      slog.warn("write failed", { clientId: client.id, err: String(err) });
+      this.remove(client.id, "write-failed");
     }
   }
 
