@@ -12,12 +12,14 @@
 //  3. Code highlighting: lazy-loads the same hljs chunk as the main app.
 
 import { renderContentEvent, isContentEventType } from "../render-event.ts";
+import { extractCompletedFinalAnswer } from "../event-interpreter.ts";
 import { enhanceCodeBlocks } from "../highlight.ts";
 import { formatRelativeTime, formatExactUtc } from "../relative-time.ts";
 import { makeAttachmentRewriter } from "./attachment-rewriter.ts";
 import "../lightbox.ts"; // click-to-enlarge user-image, same as main app
 import "../theme.ts"; // wires #theme-btn click + applies saved theme
 import type { StoredEvent } from "../../../src/types.ts";
+import type { ToolContentItem } from "../../../src/types.ts";
 import { HTTP_STATUS } from "../../../src/http-status.ts";
 
 interface SharePayload {
@@ -70,6 +72,7 @@ function renderEvents(
   const toolCalls = new Map<string, HTMLElement>();
   const permissions = new Map<string, HTMLElement>();
   let currentBashEl: HTMLElement | null = null;
+  let finalAnswerToolText: string | null = null;
 
   const hooks = {
     rewriteAttachmentSrc: makeAttachmentRewriter(token),
@@ -78,11 +81,14 @@ function renderEvents(
     findPermissionEl: (reqId: string) => permissions.get(reqId) ?? null,
     findBashEl: () => currentBashEl,
     isPermissionResolved: (reqId: string) => resolved.has(reqId),
+    finalAnswerToolText: null as string | null,
   };
 
   for (const ev of events) {
     if (!isContentEventType(ev.type)) continue;
     const d = parseData(ev);
+    hooks.finalAnswerToolText =
+      ev.type === "assistant_message" ? finalAnswerToolText : null;
     const el = renderContentEvent(ev.type, d, hooks);
     if (el) {
       host.appendChild(el);
@@ -98,6 +104,15 @@ function renderEvents(
       }
     } else if (ev.type === "bash_result") {
       currentBashEl = null;
+    }
+
+    if (ev.type === "tool_call_update") {
+      finalAnswerToolText = extractCompletedFinalAnswer(
+        typeof d.status === "string" ? d.status : "",
+        Array.isArray(d.content) ? (d.content as ToolContentItem[]) : undefined,
+      );
+    } else {
+      finalAnswerToolText = null;
     }
   }
 }

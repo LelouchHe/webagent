@@ -99,6 +99,7 @@ export const state = {
   sessionModel: null as string | null,
   currentAssistantEl: null as HTMLElement | null,
   currentAssistantText: "",
+  pendingFinalAnswerToolText: null as string | null,
   // requestAnimationFrame token for the coalesced markdown render scheduler
   // (see public/js/events.ts:scheduleAssistantRender). null = no render
   // pending. MUST be cancelled via cancelAnimationFrame before
@@ -684,6 +685,7 @@ export function resetSessionUI({
   }
   state.currentAssistantEl = null;
   state.currentAssistantText = "";
+  state.pendingFinalAnswerToolText = null;
   state.currentThinkingEl = null;
   state.currentThinkingText = "";
   state.busyKind = null;

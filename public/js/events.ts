@@ -43,6 +43,7 @@ import {
   hideWaiting,
   scrollToBottom,
   updateMarkdownStream,
+  updateAssistantDisplay,
   resetMarkdownStream,
   escHtml,
   finishBash,
@@ -56,7 +57,7 @@ import {
   classifyPermissionOption,
   normalizeEventsResponse,
   isPromptIdle,
-  normalizeAssistantDisplayText,
+  extractCompletedFinalAnswer,
 } from "./event-interpreter.ts";
 import {
   renderContentEvent,
@@ -71,6 +72,7 @@ import type {
   AgentEvent,
   ConfigOption,
   StoredEvent,
+  ToolContentItem,
 } from "../../src/types.ts";
 import "./plan-panel.ts";
 
@@ -472,10 +474,7 @@ async function _loadNewEventsImpl(sid: string): Promise<boolean> {
       ) {
         resetMarkdownStream(primed as HTMLElement);
         (primed as HTMLElement).replaceChildren();
-        updateMarkdownStream(
-          primed as HTMLElement,
-          normalizeAssistantDisplayText(raw),
-        );
+        updateAssistantDisplay(primed as HTMLElement, raw, undefined, true);
         enhanceCodeBlocks(primed);
       } else if (primed.classList.contains("thinking")) {
         const content = primed.querySelector(".thinking-content");
@@ -507,6 +506,7 @@ async function _loadNewEventsImpl(sid: string): Promise<boolean> {
     }
     state.currentAssistantEl = null;
     state.currentAssistantText = "";
+    state.pendingFinalAnswerToolText = null;
     state.currentThinkingEl = null;
     state.currentThinkingText = "";
     state.currentBashEl = null;
@@ -548,10 +548,7 @@ async function _loadNewEventsImpl(sid: string): Promise<boolean> {
         lastInDom.setAttribute("data-raw", combined);
         resetMarkdownStream(lastInDom);
         lastInDom.replaceChildren();
-        updateMarkdownStream(
-          lastInDom,
-          normalizeAssistantDisplayText(combined),
-        );
+        updateAssistantDisplay(lastInDom, combined, undefined, true);
         enhanceCodeBlocks(lastInDom);
         const lastEventSeq = firstInFrag.dataset.lastEventSeq;
         if (lastEventSeq) lastInDom.dataset.lastEventSeq = lastEventSeq;
@@ -1038,6 +1035,7 @@ function liveHooks(): RenderHooks {
       ),
     findBashEl: () => state.currentBashEl,
     enhanceMarkdown: enhanceCodeBlocks,
+    finalAnswerToolText: state.pendingFinalAnswerToolText,
   };
 }
 
@@ -1047,6 +1045,18 @@ function replayHooks(
   events: StoredEvent[],
   idx: number,
 ): RenderHooks {
+  let finalAnswerToolText: string | null = null;
+  const previous = idx > 0 ? events[idx - 1] : null;
+  if (previous?.type === "tool_call_update") {
+    const data = JSON.parse(previous.data) as {
+      status?: string;
+      content?: ToolContentItem[];
+    };
+    finalAnswerToolText = extractCompletedFinalAnswer(
+      data.status ?? "",
+      data.content,
+    );
+  }
   return {
     findToolCallEl: (id) =>
       ri ? (ri.toolCalls.get(id) ?? null) : replayById(`tc-${id}`),
@@ -1068,6 +1078,7 @@ function replayHooks(
             );
           }),
     enhanceMarkdown: enhanceCodeBlocks,
+    finalAnswerToolText,
   };
 }
 
@@ -1159,7 +1170,7 @@ function mergeOlderReplayBoundary(
     newer.setAttribute("data-raw", combined);
     resetMarkdownStream(newer);
     newer.replaceChildren();
-    updateMarkdownStream(newer, combined);
+    updateAssistantDisplay(newer, combined, undefined, true);
     enhanceCodeBlocks(newer);
   } else if (
     older.classList.contains("thinking") &&
@@ -1206,10 +1217,7 @@ function handleReplayContentEvent(
         lastChild.setAttribute("data-raw", combined);
         resetMarkdownStream(lastChild);
         lastChild.replaceChildren();
-        updateMarkdownStream(
-          lastChild,
-          normalizeAssistantDisplayText(combined),
-        );
+        updateAssistantDisplay(lastChild, combined, undefined, true);
         enhanceCodeBlocks(lastChild);
         markReplayEventEndSeq(lastChild, events[idx]);
         break;
@@ -1409,9 +1417,10 @@ function doAssistantRender() {
   const el = state.currentAssistantEl;
   if (!el) return;
   const t0 = performance.now();
-  updateMarkdownStream(
+  updateAssistantDisplay(
     el,
-    normalizeAssistantDisplayText(state.currentAssistantText),
+    state.currentAssistantText,
+    state.pendingFinalAnswerToolText,
   );
   const tRender = performance.now();
   const ms = tRender - t0;
@@ -1758,6 +1767,19 @@ export function handleEvent(msg: AgentEvent) {
     case "tool_call_update": {
       if (msg.status === "completed" || msg.status === "failed") {
         state.pendingToolCallIds.delete(msg.id);
+      }
+      if (msg.status === "completed") {
+        state.pendingFinalAnswerToolText = extractCompletedFinalAnswer(
+          msg.status,
+          msg.content,
+        );
+        if (state.currentAssistantEl && state.pendingFinalAnswerToolText) {
+          updateAssistantDisplay(
+            state.currentAssistantEl,
+            state.currentAssistantText,
+            state.pendingFinalAnswerToolText,
+          );
+        }
       }
       renderContentEvent("tool_call_update", msg, liveHooks());
       finishPromptIfIdle();

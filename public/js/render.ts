@@ -10,14 +10,14 @@ export {
   renderPatchDiff,
   updateMarkdownStream,
   resetMarkdownStream,
+  updateAssistantDisplay,
 } from "./render-event.ts";
 import {
   escHtml,
   updateMarkdownStream,
   resetMarkdownStream,
+  updateAssistantDisplay,
 } from "./render-event.ts";
-import { normalizeAssistantDisplayText } from "./event-interpreter.ts";
-
 // --- Message helpers ---
 
 export function addMessage(role: string, text: string): HTMLDivElement {
@@ -25,11 +25,10 @@ export function addMessage(role: string, text: string): HTMLDivElement {
   el.className = `msg ${role}`;
   if (role === "user") {
     el.innerHTML = escHtml(text).replace(/\n/g, "<br>");
+  } else if (role === "assistant") {
+    updateAssistantDisplay(el, text, state.pendingFinalAnswerToolText);
   } else {
-    updateMarkdownStream(
-      el,
-      role === "assistant" ? normalizeAssistantDisplayText(text) : text,
-    );
+    updateMarkdownStream(el, text);
   }
   appendMessageElement(el);
   return el;
@@ -46,6 +45,12 @@ export function addSystem(text: string): HTMLDivElement {
 export function finishAssistant() {
   const assistantEl = state.currentAssistantEl;
   const assistantText = state.currentAssistantText;
+  const needsFinalAnswerResolution =
+    (assistantEl instanceof HTMLElement &&
+      assistantEl.dataset.assistantDisplay === "final-answer") ||
+    state.pendingFinalAnswerToolText !== null;
+  const pendingRenderToken = state.assistantRafToken;
+  const hasPendingRender = pendingRenderToken != null;
   state.currentAssistantEl = null;
   state.currentAssistantText = "";
   // Cancel any pending coalesced rAF render and run one final sync render
@@ -54,17 +59,20 @@ export function finishAssistant() {
   // if we left this inside the `if (assistantEl)` branch below, the state
   // mutations above would have already wiped the text. See
   // public/js/events.ts:scheduleAssistantRender for the partner code.
-  if (state.assistantRafToken != null) {
+  if (hasPendingRender) {
     if (typeof cancelAnimationFrame === "function") {
-      cancelAnimationFrame(state.assistantRafToken);
+      cancelAnimationFrame(pendingRenderToken);
     }
     state.assistantRafToken = null;
-    if (assistantEl)
-      updateMarkdownStream(
-        assistantEl,
-        normalizeAssistantDisplayText(assistantText),
-      );
   }
+  if (assistantEl && (hasPendingRender || needsFinalAnswerResolution))
+    updateAssistantDisplay(
+      assistantEl,
+      assistantText,
+      state.pendingFinalAnswerToolText,
+      true,
+    );
+  state.pendingFinalAnswerToolText = null;
   if (assistantEl && typeof assistantEl.querySelector === "function") {
     assistantEl.removeAttribute("data-primed");
     enhanceCodeBlocks(assistantEl);
@@ -94,9 +102,10 @@ export function flushStreamingRender() {
   state.assistantRafToken = null;
   const el = state.currentAssistantEl;
   if (el)
-    updateMarkdownStream(
+    updateAssistantDisplay(
       el,
-      normalizeAssistantDisplayText(state.currentAssistantText),
+      state.currentAssistantText,
+      state.pendingFinalAnswerToolText,
     );
 }
 

@@ -388,6 +388,201 @@ describe("events", () => {
         assert.equal(dom.messages.children.length, 1);
       });
 
+      it("folds a completed-wrapper echo before releasing its parent suffix", () => {
+        state.sessionId = "s1";
+        const toolText =
+          "<final_answer>\nCommands run:\n- `git status --short`\nResult: clean";
+        const parentText = "状态符合 push gate；现在推送 feature branch。";
+        events.handleEvent({
+          type: "tool_call",
+          sessionId: "s1",
+          id: "call_wrapper",
+          kind: "other",
+          title: "Verify branch before push",
+        });
+        events.handleEvent({
+          type: "tool_call_update",
+          sessionId: "s1",
+          id: "call_wrapper",
+          status: "completed",
+          content: [
+            {
+              type: "content",
+              content: { type: "text", text: toolText },
+            },
+          ],
+        });
+        events.handleEvent({
+          type: "message_chunk",
+          sessionId: "s1",
+          text: toolText.slice(0, 24),
+        });
+        render.flushStreamingRender();
+
+        const assistant = dom.messages.querySelector(".msg.assistant");
+        const earlyFold = assistant?.querySelector("details.subagent-result");
+        assert.ok(earlyFold, "matching chunks enter a fold immediately");
+        assert.equal(earlyFold.hasAttribute("open"), false);
+        assert.equal(
+          assistant?.querySelector(".assistant-continuation"),
+          null,
+          "nothing enters the normal flow before the verified boundary",
+        );
+
+        events.handleEvent({
+          type: "message_chunk",
+          sessionId: "s1",
+          text: `${toolText.slice(24)}${parentText}`,
+        });
+        render.flushStreamingRender();
+
+        assert.ok(assistant?.querySelector("details.subagent-result"));
+        assert.equal(
+          assistant?.querySelector(".assistant-continuation")?.textContent,
+          parentText,
+        );
+      });
+
+      it("folds the latest chunks when prompt_done wins the animation-frame race", () => {
+        state.sessionId = "s1";
+        const toolText =
+          "<final_answer>\nCommands run:\n- `npm test`\nResult: passed";
+        events.handleEvent({
+          type: "tool_call_update",
+          sessionId: "s1",
+          id: "call_wrapper",
+          status: "completed",
+          content: [
+            {
+              type: "content",
+              content: { type: "text", text: toolText },
+            },
+          ],
+        });
+        events.handleEvent({
+          type: "message_chunk",
+          sessionId: "s1",
+          text: toolText,
+        });
+        events.handleEvent({
+          type: "prompt_done",
+          sessionId: "s1",
+          stopReason: "end_turn",
+        });
+
+        const assistant = dom.messages.querySelector(".msg.assistant");
+        assert.ok(assistant?.querySelector("details.subagent-result"));
+        assert.equal(
+          assistant?.getAttribute("data-raw"),
+          null,
+          "live content must not overwrite the persisted replay baseline",
+        );
+      });
+
+      it("restores the full stream when it diverges before the verified boundary", () => {
+        state.sessionId = "s1";
+        const toolText = "<final_answer>\nExpected sub-agent result";
+        events.handleEvent({
+          type: "tool_call_update",
+          sessionId: "s1",
+          id: "call_wrapper",
+          status: "completed",
+          content: [
+            {
+              type: "content",
+              content: { type: "text", text: toolText },
+            },
+          ],
+        });
+        events.handleEvent({
+          type: "message_chunk",
+          sessionId: "s1",
+          text: "<final_answer>\nExp",
+        });
+        render.flushStreamingRender();
+        const assistant = dom.messages.querySelector(".msg.assistant");
+        assert.ok(assistant?.querySelector("details.subagent-result"));
+
+        events.handleEvent({
+          type: "message_chunk",
+          sessionId: "s1",
+          text: "X",
+        });
+        render.flushStreamingRender();
+
+        assert.equal(assistant?.querySelector(".subagent-result"), null);
+        assert.equal(
+          assistant?.getAttribute("data-raw"),
+          null,
+          "divergent live content remains volatile until persisted replay",
+        );
+        assert.match(assistant?.textContent ?? "", /ExpX/);
+      });
+
+      it("folds provisionally when tagged chunks arrive before wrapper completion", () => {
+        state.sessionId = "s1";
+        const toolText =
+          "<final_answer>\nCommands run:\n- `npm test`\nResult: passed";
+        const split = 24;
+        events.handleEvent({
+          type: "message_chunk",
+          sessionId: "s1",
+          text: toolText.slice(0, split),
+        });
+        render.flushStreamingRender();
+        const assistant = dom.messages.querySelector(".msg.assistant");
+        assert.ok(assistant?.querySelector("details.subagent-result"));
+
+        events.handleEvent({
+          type: "tool_call_update",
+          sessionId: "s1",
+          id: "call_wrapper",
+          status: "completed",
+          content: [
+            {
+              type: "content",
+              content: { type: "text", text: toolText },
+            },
+          ],
+        });
+        events.handleEvent({
+          type: "message_chunk",
+          sessionId: "s1",
+          text: `${toolText.slice(split)}Parent narration.`,
+        });
+        render.flushStreamingRender();
+
+        assert.equal(
+          assistant?.querySelector(".assistant-continuation")?.textContent,
+          "Parent narration.",
+        );
+      });
+
+      it("restores an unverified provisional fold when the turn ends", () => {
+        state.sessionId = "s1";
+        const text = "<final_answer>\nStandalone parent response";
+        events.handleEvent({
+          type: "message_chunk",
+          sessionId: "s1",
+          text,
+        });
+        render.flushStreamingRender();
+        const assistant = dom.messages.querySelector(".msg.assistant");
+        assert.ok(assistant?.querySelector("details.subagent-result"));
+
+        events.handleEvent({
+          type: "prompt_done",
+          sessionId: "s1",
+          stopReason: "end_turn",
+        });
+
+        assert.equal(assistant?.querySelector(".subagent-result"), null);
+        assert.match(
+          assistant?.textContent ?? "",
+          /Standalone parent response/,
+        );
+      });
+
       it("enhances streamed code blocks when the stream finishes", async () => {
         events.handleEvent({ type: "message_chunk", text: "```js\nconst " });
         events.handleEvent({ type: "message_chunk", text: "x = 1;\n```" });
@@ -2072,6 +2267,59 @@ describe("events", () => {
       events.replayEvent("assistant_message", { text: "response" }, [], 0);
       assert.equal(dom.messages.children.length, 1);
       assert.ok(dom.messages.children[0].classList.contains("assistant"));
+    });
+
+    it("replays a real completed-wrapper echo without folding parent narration", () => {
+      const toolText =
+        "<final_answer>\nCommands run:\n- `git status --short`\nResult: clean";
+      const parentText = "状态符合 push gate；现在推送 feature branch。";
+      const storedEvents = [
+        {
+          seq: 1,
+          type: "tool_call",
+          data: JSON.stringify({
+            id: "call_wrapper",
+            kind: "other",
+            title: "Verify branch before push",
+          }),
+        },
+        {
+          seq: 2,
+          type: "tool_call_update",
+          data: JSON.stringify({
+            id: "call_wrapper",
+            status: "completed",
+            content: [
+              {
+                type: "content",
+                content: { type: "text", text: toolText },
+              },
+            ],
+          }),
+        },
+        {
+          seq: 3,
+          type: "assistant_message",
+          data: JSON.stringify({ text: `${toolText}${parentText}` }),
+        },
+      ] as any;
+
+      storedEvents.forEach((event: any, index: number) => {
+        events.replayEvent(
+          event.type,
+          JSON.parse(event.data),
+          storedEvents,
+          index,
+        );
+      });
+
+      const assistant = dom.messages.querySelector(".msg.assistant");
+      assert.ok(assistant);
+      assert.ok(assistant.querySelector("details.subagent-result"));
+      assert.equal(
+        assistant.querySelector(".assistant-continuation")?.textContent,
+        parentText,
+      );
     });
 
     it("merges consecutive assistant_messages into one bubble", () => {

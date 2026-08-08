@@ -25,6 +25,7 @@ import {
   normalizeEventsResponse,
   isPromptIdle,
   normalizeAssistantDisplayText,
+  splitFinalAnswerEcho,
 } from "../public/js/event-interpreter.ts";
 
 describe("normalizeAssistantDisplayText", () => {
@@ -35,6 +36,64 @@ describe("normalizeAssistantDisplayText", () => {
       ),
       "Info: Operation cancelled — next response",
     );
+  });
+
+  describe("splitFinalAnswerEcho", () => {
+    const toolText =
+      "<final_answer>\nCommands run:\n- `git status --short`\nResult: clean";
+
+    it("recognizes the production-shaped exact sub-agent echo", () => {
+      assert.deepEqual(splitFinalAnswerEcho(toolText, toolText), {
+        foldedText: "\nCommands run:\n- `git status --short`\nResult: clean",
+        continuationText: "",
+      });
+    });
+
+    it("keeps parent narration after the verified tool-result prefix visible", () => {
+      assert.deepEqual(
+        splitFinalAnswerEcho(
+          `${toolText}状态符合 push gate；现在推送 feature branch。`,
+          toolText,
+        ),
+        {
+          foldedText: "\nCommands run:\n- `git status --short`\nResult: clean",
+          continuationText: "状态符合 push gate；现在推送 feature branch。",
+        },
+      );
+    });
+
+    it("does not fold an unverified open tag", () => {
+      assert.equal(
+        splitFinalAnswerEcho(
+          "<final_answer>\nCommands run:\n- truncated",
+          null,
+        ),
+        null,
+      );
+    });
+
+    it("uses a balanced closing tag when no completed tool result is available", () => {
+      assert.deepEqual(
+        splitFinalAnswerEcho(
+          "<final_answer>\nSub-agent result\n</final_answer>Parent narration.",
+          null,
+        ),
+        {
+          foldedText: "\nSub-agent result\n",
+          continuationText: "Parent narration.",
+        },
+      );
+    });
+
+    it("does not fold when the completed tool output differs", () => {
+      assert.equal(
+        splitFinalAnswerEcho(
+          "<final_answer>\nParent response",
+          "<final_answer>\nDifferent tool result",
+        ),
+        null,
+      );
+    });
   });
 
   it("leaves unrelated assistant text unchanged", () => {

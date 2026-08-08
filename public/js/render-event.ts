@@ -22,6 +22,7 @@ import {
   resolvePermissionLabel,
   parseDiff,
   normalizeAssistantDisplayText,
+  splitFinalAnswerEcho,
 } from "./event-interpreter.ts";
 import { buildPlanElement } from "./plan-view.ts";
 import type {
@@ -109,7 +110,11 @@ export interface RenderHooks {
    * When true, the renderer omits buttons.
    */
   isPermissionResolved?: (reqId: string) => boolean;
+  /** Completed task-wrapper output immediately preceding an assistant echo. */
+  finalAnswerToolText?: string | null;
 }
+
+const finalAnswerCandidates = new WeakMap<HTMLElement, string>();
 
 /**
  * Render one content event. Returns a NEW element to be appended by the
@@ -266,9 +271,118 @@ function buildAssistantMessage(
   const el = document.createElement("div");
   el.className = "msg assistant";
   el.setAttribute("data-raw", text);
-  updateMarkdownStream(el, normalizeAssistantDisplayText(text));
+  updateAssistantDisplay(el, text, hooks.finalAnswerToolText, true);
   hooks.enhanceMarkdown?.(el);
   return el;
+}
+
+function resetAssistantChildren(el: HTMLElement): void {
+  if (el.dataset.assistantDisplay === "final-answer") {
+    const folded = el.querySelector<HTMLElement>(".subagent-result-content");
+    const continuation = el.querySelector<HTMLElement>(
+      ".assistant-continuation",
+    );
+    if (folded) resetMarkdownStream(folded);
+    if (continuation) resetMarkdownStream(continuation);
+  } else {
+    resetMarkdownStream(el);
+  }
+}
+
+function provisionalFinalAnswerParts(
+  text: string,
+  hasCandidate: boolean,
+  finalize: boolean,
+): { foldedText: string; continuationText: string } | null {
+  const open = "<final_answer>";
+  if (
+    hasCandidate ||
+    finalize ||
+    text.length === 0 ||
+    (!text.startsWith(open) && !open.startsWith(text))
+  ) {
+    return null;
+  }
+  return {
+    foldedText: text.startsWith(open) ? text.slice(open.length) : "",
+    continuationText: "",
+  };
+}
+
+/**
+ * Render assistant markdown, folding only a prefix verified against the
+ * immediately preceding completed task-wrapper output.
+ */
+export function updateAssistantDisplay(
+  el: HTMLElement,
+  text: string,
+  finalAnswerToolText?: string | null,
+  finalize = false,
+): void {
+  if (finalAnswerToolText !== undefined) {
+    if (finalAnswerToolText) {
+      finalAnswerCandidates.set(el, finalAnswerToolText);
+    } else {
+      finalAnswerCandidates.delete(el);
+    }
+  }
+  const finalAnswerCandidate = finalAnswerCandidates.get(el) ?? null;
+  const parts =
+    splitFinalAnswerEcho(text, finalAnswerCandidate) ??
+    provisionalFinalAnswerParts(text, finalAnswerCandidate !== null, finalize);
+
+  if (!parts) {
+    if (el.dataset.assistantDisplay === "final-answer") {
+      resetAssistantChildren(el);
+      resetMarkdownStream(el);
+      el.replaceChildren();
+    }
+    delete el.dataset.assistantDisplay;
+    if (finalize) finalAnswerCandidates.delete(el);
+    updateMarkdownStream(el, normalizeAssistantDisplayText(text));
+    return;
+  }
+
+  if (el.dataset.assistantDisplay !== "final-answer") {
+    resetMarkdownStream(el);
+    el.replaceChildren();
+    el.dataset.assistantDisplay = "final-answer";
+  }
+
+  let details = el.querySelector<HTMLDetailsElement>("details.subagent-result");
+  if (!details) {
+    details = document.createElement("details");
+    details.className = "subagent-result";
+    const summary = document.createElement("summary");
+    summary.textContent = "sub-agent result";
+    const content = document.createElement("div");
+    content.className = "subagent-result-content";
+    details.append(summary, content);
+    el.appendChild(details);
+  }
+  const folded = details.querySelector<HTMLElement>(".subagent-result-content");
+  if (folded) {
+    updateMarkdownStream(
+      folded,
+      normalizeAssistantDisplayText(parts.foldedText),
+    );
+  }
+
+  let continuation = el.querySelector<HTMLElement>(".assistant-continuation");
+  if (parts.continuationText) {
+    if (!continuation) {
+      continuation = document.createElement("div");
+      continuation.className = "assistant-continuation";
+      el.appendChild(continuation);
+    }
+    updateMarkdownStream(
+      continuation,
+      normalizeAssistantDisplayText(parts.continuationText),
+    );
+  } else if (continuation) {
+    resetMarkdownStream(continuation);
+    continuation.remove();
+  }
 }
 
 function buildThinking(data: Record<string, unknown>): HTMLElement {

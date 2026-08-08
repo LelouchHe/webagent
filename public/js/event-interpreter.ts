@@ -22,6 +22,9 @@ import type {
 } from "../../src/types.ts";
 
 const MISATTRIBUTED_CANCEL_TEXT = "Info: Operation cancelled by user";
+const FINAL_ANSWER_OPEN = "<final_answer>";
+const FINAL_ANSWER_CLOSE_BOUNDARY_RE = /<\/final_answer\s*>/i;
+const FINAL_ANSWER_CLOSE_RE = /<\/final_answer>\s*$/i;
 
 /** Remove an unverified user attribution while preserving the agent's raw text. */
 export function normalizeAssistantDisplayText(text: string): string {
@@ -29,6 +32,60 @@ export function normalizeAssistantDisplayText(text: string): string {
     MISATTRIBUTED_CANCEL_TEXT,
     "Info: Operation cancelled — ",
   );
+}
+
+export interface FinalAnswerEchoParts {
+  foldedText: string;
+  continuationText: string;
+}
+
+/**
+ * Split a verified sub-agent result echo from parent narration.
+ *
+ * Copilot task wrappers emit the same text twice: first as a completed tool
+ * result, then as the prefix of the following assistant stream. Most wrappers
+ * omit `</final_answer>`, so the completed tool-result boundary is the only
+ * reliable delimiter. Unverified tags are deliberately left untouched.
+ */
+export function splitFinalAnswerEcho(
+  assistantText: string,
+  completedToolText: string | null,
+): FinalAnswerEchoParts | null {
+  if (
+    completedToolText?.startsWith(FINAL_ANSWER_OPEN) &&
+    (assistantText.startsWith(completedToolText) ||
+      completedToolText.startsWith(assistantText))
+  ) {
+    const verifiedPrefix = assistantText.startsWith(completedToolText)
+      ? completedToolText
+      : assistantText;
+    return {
+      foldedText: verifiedPrefix
+        .slice(FINAL_ANSWER_OPEN.length)
+        .replace(FINAL_ANSWER_CLOSE_RE, ""),
+      continuationText: assistantText.startsWith(completedToolText)
+        ? assistantText.slice(completedToolText.length)
+        : "",
+    };
+  }
+
+  if (!assistantText.startsWith(FINAL_ANSWER_OPEN)) return null;
+  const close = FINAL_ANSWER_CLOSE_BOUNDARY_RE.exec(assistantText);
+  if (!close || close.index < FINAL_ANSWER_OPEN.length) return null;
+  return {
+    foldedText: assistantText.slice(FINAL_ANSWER_OPEN.length, close.index),
+    continuationText: assistantText.slice(close.index + close[0].length),
+  };
+}
+
+/** Extract a completed wrapper result eligible for final-answer echo folding. */
+export function extractCompletedFinalAnswer(
+  status: string,
+  content: ToolContentItem[] | undefined,
+): string | null {
+  if (status !== "completed" || !content) return null;
+  const text = extractToolCallContent(content);
+  return text.startsWith(FINAL_ANSWER_OPEN) ? text : null;
 }
 
 /** Interpret a tool_call event into a display-ready view model. */

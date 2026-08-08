@@ -379,6 +379,10 @@ class MockAgent implements Agent {
       return { stopReason: "end_turn" };
     }
 
+    if (text.startsWith("E2E_FINAL_ANSWER_STREAM")) {
+      return await this.runFinalAnswerStream(params.sessionId, text);
+    }
+
     await this.conn.sessionUpdate({
       sessionId: params.sessionId,
       update: {
@@ -387,6 +391,100 @@ class MockAgent implements Agent {
       },
     });
     return { stopReason: "end_turn" };
+  }
+
+  private async runFinalAnswerStream(
+    sessionId: string,
+    scenario: string,
+  ): Promise<PromptResponse> {
+    const toolCallId = `tool-${++this.toolCallCounter}`;
+    const toolText =
+      "<final_answer>\nCommands run:\n- `npm test`\nResult: passed";
+    const continuation = scenario.includes("EXACT")
+      ? ""
+      : "Parent narration remains visible.";
+    await this.conn.sessionUpdate({
+      sessionId,
+      update: {
+        sessionUpdate: "tool_call",
+        toolCallId,
+        title: "Run validation",
+        kind: "other",
+      },
+    });
+    if (scenario.includes("NESTED")) {
+      const nestedId = `tool-${++this.toolCallCounter}`;
+      await this.conn.sessionUpdate({
+        sessionId,
+        update: {
+          sessionUpdate: "tool_call",
+          toolCallId: nestedId,
+          title: "Run nested validation",
+          kind: "execute",
+        },
+      });
+      await this.conn.sessionUpdate({
+        sessionId,
+        update: {
+          sessionUpdate: "tool_call_update",
+          toolCallId: nestedId,
+          status: "completed",
+          content: [
+            {
+              type: "content",
+              content: { type: "text", text: "nested command output" },
+            },
+          ],
+        },
+      });
+    }
+    const split = 24;
+    if (scenario.includes("WRAPPER_FIRST")) {
+      await this.sendFinalAnswerCompletion(sessionId, toolCallId, toolText);
+    }
+    await this.conn.sessionUpdate({
+      sessionId,
+      update: {
+        sessionUpdate: "agent_message_chunk",
+        content: { type: "text", text: toolText.slice(0, split) },
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+    if (!scenario.includes("WRAPPER_FIRST")) {
+      await this.sendFinalAnswerCompletion(sessionId, toolCallId, toolText);
+    }
+    await this.conn.sessionUpdate({
+      sessionId,
+      update: {
+        sessionUpdate: "agent_message_chunk",
+        content: {
+          type: "text",
+          text: `${toolText.slice(split)}${continuation}`,
+        },
+      },
+    });
+    return { stopReason: "end_turn" };
+  }
+
+  private async sendFinalAnswerCompletion(
+    sessionId: string,
+    toolCallId: string,
+    text: string,
+  ): Promise<void> {
+    await this.conn.sessionUpdate({
+      sessionId,
+      update: {
+        sessionUpdate: "tool_call_update",
+        toolCallId,
+        status: "completed",
+        content: [
+          {
+            type: "content",
+            content: { type: "text", text },
+          },
+        ],
+      },
+    });
   }
 
   private async runPermissionStep(

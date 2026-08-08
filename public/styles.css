@@ -338,6 +338,22 @@ body {
   font-weight: normal;
 }
 
+.msg.assistant .subagent-result {
+  color: var(--text-dim);
+  font-size: 14px;
+  margin: 2px 0;
+}
+.msg.assistant .subagent-result summary {
+  cursor: pointer;
+}
+.msg.assistant .subagent-result-content {
+  color: var(--text);
+  margin: 4px 0 4px 16px;
+}
+.msg.assistant .assistant-continuation {
+  margin-top: 4px;
+}
+
 /* Thinking */
 .thinking {
   color: var(--text-dim);

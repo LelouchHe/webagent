@@ -363,6 +363,61 @@ describe("render-event", () => {
       assert.equal(el.getAttribute("data-raw"), raw);
       assert.equal(el.textContent, "Info: Operation cancelled — next response");
     });
+
+    it("folds only the verified sub-agent prefix and keeps parent narration visible", () => {
+      const toolText =
+        "<final_answer>\nCommands run:\n- `git status --short`\nResult: clean";
+      const parentText = "状态符合 push gate；现在推送 feature branch。";
+      const raw = `${toolText}${parentText}`;
+      const el = append(
+        mod.renderContentEvent(
+          "assistant_message",
+          { text: raw },
+          makeHooks({ finalAnswerToolText: toolText }),
+        ),
+      )!;
+
+      assert.equal(el.getAttribute("data-raw"), raw);
+      const folded = el.querySelector("details.subagent-result");
+      assert.ok(folded);
+      assert.equal(folded.hasAttribute("open"), false);
+      assert.equal(
+        folded.querySelector("summary")?.textContent,
+        "sub-agent result",
+      );
+      assert.match(
+        folded.querySelector(".subagent-result-content")?.textContent ?? "",
+        /Commands run:/,
+      );
+      const continuation = el.querySelector(".assistant-continuation");
+      assert.equal(continuation?.textContent, parentText);
+      assert.equal(
+        folded.textContent.includes(parentText),
+        false,
+        "parent narration must never be hidden inside the fold",
+      );
+    });
+
+    it("renders an unverified final_answer tag as an ordinary assistant message", () => {
+      const raw = "<final_answer>\nunmatched result";
+      const el = append(
+        mod.renderContentEvent("assistant_message", { text: raw }, makeHooks()),
+      )!;
+
+      assert.equal(el.querySelector(".subagent-result"), null);
+      assert.match(el.textContent, /unmatched result/);
+    });
+
+    it("does not overwrite the persisted data-raw baseline during live rendering", () => {
+      const el = document.createElement("div");
+      el.className = "msg assistant";
+      el.setAttribute("data-raw", "persisted prefix");
+
+      mod.updateAssistantDisplay(el, "<final_answer>\nvolatile live tail");
+
+      assert.equal(el.getAttribute("data-raw"), "persisted prefix");
+      assert.ok(el.querySelector("details.subagent-result"));
+    });
   });
 
   describe("thinking", () => {

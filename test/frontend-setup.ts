@@ -75,6 +75,7 @@ export function resetState(state: any, dom: any) {
   state.sessionModel = null;
   state.currentAssistantEl = null;
   state.currentAssistantText = "";
+  state.pendingFinalAnswerToolText = null;
   // Cancel any pending rAF from previous test so tokens don't leak across tests.
   if (state.assistantRafToken != null) {
     if (typeof cancelAnimationFrame === "function") {

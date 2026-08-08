@@ -362,6 +362,13 @@ spot gaps, and decide what still needs to be added without reading every spec.
 - `session-send-message.spec.ts`
   - normal prompt / assistant reply round-trip
 
+- `final-answer-fold.spec.ts`
+  - sub-agent results fold while their assistant echo is still streaming for
+    both chunk-before-wrapper and wrapper-before-chunk ordering
+  - animation-frame observation catches any normal-flow text leak before folding
+  - parent narration after the verified result boundary remains in the normal flow
+  - an exact echo after nested tool calls still folds with no continuation
+
 - `session-reload-history.spec.ts`
   - reload restores the same session and replays chat history
 

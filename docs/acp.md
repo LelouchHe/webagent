@@ -49,10 +49,41 @@ a reliable ACP cancellation signal:
   the cancel endpoint.
 
 Copilot sub-agent results also commonly use `<final_answer>` as a one-sided
-opening marker rather than a balanced HTML/XML element. In one observed
-session, 48 of 50 logical results had no closing `</final_answer>`. Clients must
-therefore use the ACP message/tool lifecycle as the boundary instead of waiting
-for a closing tag.
+opening marker rather than a balanced HTML/XML element. This marker is not part
+of ACP; it is text emitted by Copilot CLI's task wrapper. The wrapper result is
+then commonly echoed into the following assistant stream, sometimes with parent
+agent narration appended directly after it.
+
+A 2026-08-08 dogfood database scan found:
+
+| Sample                                                    | Count |
+| --------------------------------------------------------- | ----: |
+| Sessions scanned                                          |     8 |
+| Sessions containing leading `<final_answer>` messages     |     5 |
+| Leading-marker assistant messages                         |   207 |
+| Missing `</final_answer>`                                  |   193 |
+| Balanced markers                                          |    14 |
+| Safely recognized by lifecycle prefix or closing boundary |   202 |
+| Conservatively left unfolded                              |     5 |
+| Observed reconstruction mismatches                        |     0 |
+
+The five unresolved records were cancelled, truncated, or lacked both a closing
+marker and an adjacent completed wrapper result. WebAgent deliberately leaves
+those records unfolded rather than risk hiding parent-agent narration.
+
+Live ACP chunk order cannot be reconstructed from SQLite row order because
+assistant chunks are buffered before storage. The assistant echo may therefore
+start before the wrapper's completed `tool_call_update` arrives. WebAgent folds
+a leading marker provisionally while streaming, confirms its exact boundary
+when the completed wrapper arrives, and restores ordinary assistant rendering
+if the text diverges or the turn ends unverified. Replay and share rendering use
+the same pure boundary matcher. Raw stored events are unchanged.
+
+Balanced closing markers from the upstream agent would remove the ambiguous
+boundary even when the wrapper completion is late or absent: WebAgent can fold
+exactly through `</final_answer>` and leave following parent narration visible.
+It would not remove the duplicate tool-result/assistant representation itself,
+but it would make display handling deterministic without lifecycle correlation.
 
 WebAgent preserves the emitted assistant text and normalized projections of the
 supported ACP events in SQLite; it does not retain every complete ACP
