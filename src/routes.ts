@@ -2607,10 +2607,14 @@ export function createRequestHandler(
             },
           );
         }
+        const betaPromptId =
+          sessions.state.getState(sessionId).runtime.busy?.promptId ??
+          undefined;
         bridge
-          .prompt(sessionId, text)
+          .prompt(sessionId, text, undefined, betaPromptId)
           .catch(() => {})
           .finally(() => {
+            if (!sessions.isCurrentPrompt(sessionId, betaPromptId)) return;
             sessions.activePrompts.delete(sessionId);
             sessions.syncBusy(sessionId);
           });

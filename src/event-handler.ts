@@ -333,8 +333,12 @@ function handlePromptDone(
 
 function handleError(event: ErrorEvent, sessions: SessionManager): void {
   if (event.sessionId) {
-    sessions.activePrompts.delete(event.sessionId);
-    sessions.syncBusy(event.sessionId);
+    // Same attribution as a completion: a superseded turn failing late must
+    // not end the turn that replaced it. The buffered tail still flushes.
+    if (sessions.isCurrentPrompt(event.sessionId, event.promptId)) {
+      sessions.activePrompts.delete(event.sessionId);
+      sessions.syncBusy(event.sessionId);
+    }
     sessions.flushBuffers(event.sessionId);
     sessions.state.patch(event.sessionId, {
       runtime: { streaming: { assistant: false, thinking: false } },

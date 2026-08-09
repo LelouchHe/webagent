@@ -4229,30 +4229,6 @@ describe("events", () => {
       );
     });
 
-    it("ignores a replayed completion that belongs to a superseded turn", async () => {
-      // A refresh replays the same interleaving from the DB. Without the same
-      // judgement the live path makes, reload re-arms the gate and the live
-      // turn goes silent again — the exact symptom, now surviving a reload.
-      state.sessionId = "s1";
-      state.currentPromptId = "prompt-2";
-      state.pendingToolCallIds.add("tc-live");
-      state.busy = true;
-
-      events.replayEvent(
-        "prompt_done",
-        { stopReason: "end_turn", promptId: "prompt-1" },
-        [],
-        0,
-      );
-
-      assert.equal(
-        state.pendingToolCallIds.has("tc-live"),
-        true,
-        "the live turn's pending work must survive",
-      );
-      assert.equal(state.busy, true, "the live turn must stay busy");
-    });
-
     it("still ends the turn its own completion belongs to", async () => {
       // Control: the guard must not swallow the live turn's real terminator,
       // or the spinner would never stop.

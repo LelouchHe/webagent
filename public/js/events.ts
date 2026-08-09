@@ -1133,15 +1133,10 @@ export function replayEvent(
   }
   switch (type) {
     case "prompt_done":
-      // Replay makes the same judgement the live path does: a completion that
-      // names a turn other than the live one ended something already gone, and
-      // applying it would re-arm the gate on every reload.
-      if (
-        typeof d.promptId === "string" &&
-        state.currentPromptId &&
-        d.promptId !== state.currentPromptId
-      )
-        break;
+      // No turn-identity guard here on purpose: replay never sets `turnEnded`
+      // (only the live handler does), so a replayed terminator cannot re-arm
+      // the gate. A guard would also misfire, because `currentPromptId` is
+      // populated from the snapshot that history replay runs *before*.
       if (state.awaitingOwnUserEcho) break;
       state.pendingToolCallIds.clear();
       state.pendingPermissionRequestIds.clear();

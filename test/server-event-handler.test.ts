@@ -270,6 +270,67 @@ describe("handleAgentEvent", () => {
     assert.equal(sessions.state.getState("s1").runtime.busy?.kind, "agent");
   });
 
+  it("keeps the live turn busy when a superseded turn errors out", () => {
+    // `error` is the other terminal event a prompt can end with, and it takes
+    // the same interleaving as a completion: the abandoned turn fails late and
+    // must not clear the busy state of the turn that replaced it, or the
+    // spinner dies mid-turn and the session accepts a concurrent prompt.
+    store.createSession("s1", "/tmp");
+    sessions.activePrompts.add("s1");
+    sessions.syncBusy("s1");
+    const { bridge } = createMockBridge();
+    const { sseManager } = createMockSseManager();
+
+    handleAgentEvent(
+      {
+        type: "error",
+        sessionId: "s1",
+        message: "agent blew up",
+        promptId: "prompt-superseded",
+      } as any,
+      sessions,
+      store,
+      bridge,
+      makeEventHandlerConfig(),
+      sseManager as any,
+    );
+
+    assert.equal(
+      sessions.activePrompts.has("s1"),
+      true,
+      "the live turn must stay active",
+    );
+    assert.equal(sessions.state.getState("s1").runtime.busy?.kind, "agent");
+  });
+
+  it("still clears busy when the live turn errors out", () => {
+    // Control: an error for the current turn must end it, or the UI hangs.
+    store.createSession("s1", "/tmp");
+    sessions.activePrompts.add("s1");
+    sessions.syncBusy("s1");
+    const livePromptId =
+      sessions.state.getState("s1").runtime.busy?.promptId ?? undefined;
+    assert.ok(livePromptId, "precondition: the live turn has an identity");
+    const { bridge } = createMockBridge();
+    const { sseManager } = createMockSseManager();
+
+    handleAgentEvent(
+      {
+        type: "error",
+        sessionId: "s1",
+        message: "agent blew up",
+        promptId: livePromptId,
+      } as any,
+      sessions,
+      store,
+      bridge,
+      makeEventHandlerConfig(),
+      sseManager as any,
+    );
+
+    assert.equal(sessions.activePrompts.has("s1"), false);
+  });
+
   it("keeps runtime plan across prompt_done for cross-turn work", () => {
     store.createSession("s1", "/tmp");
     const plan = [{ content: "Continue later", status: "in_progress" }];

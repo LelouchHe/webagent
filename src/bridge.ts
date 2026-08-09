@@ -278,6 +278,7 @@ export class AgentBridge extends EventEmitter {
         type: "error",
         sessionId,
         message,
+        ...(promptId ? { promptId } : {}),
       } satisfies AgentEvent);
     } finally {
       this.pendingAborts.delete(sessionId);

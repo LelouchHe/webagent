@@ -692,16 +692,21 @@ export class SessionManager {
     });
     this.activePrompts.add(sessionId);
     this.syncBusy(sessionId);
+    const promptId =
+      this.state.getState(sessionId).runtime.busy?.promptId ?? undefined;
     bridge
       .prompt(
         sessionId,
         "Continue your previous response — it was interrupted mid-way.",
+        undefined,
+        promptId,
       )
       .catch((err: unknown) => {
         slog.error("auto-retry failed", {
           sessionId: sessionId.slice(0, 8) + "…",
           error: err,
         });
+        if (!this.isCurrentPrompt(sessionId, promptId)) return;
         this.activePrompts.delete(sessionId);
         this.syncBusy(sessionId);
       });
