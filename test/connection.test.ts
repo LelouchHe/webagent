@@ -605,6 +605,96 @@ describe("connection", () => {
     assert.equal(state.lastEventSeq, 1);
   });
 
+  it("retries missed-event recovery after the reconnect shared a failed catch-up", async () => {
+    history.replaceState(null, "", "/#recover-session");
+    state.sessionId = "recover-session";
+    state.lastEventSeq = 0;
+
+    let rejectFirstCatchUp!: (error: Error) => void;
+    const firstCatchUp = new Promise<MockResponse>((_resolve, reject) => {
+      rejectFirstCatchUp = reject;
+    });
+    let eventsFetchCount = 0;
+    setFetch(async (url: string) => {
+      if (url.includes("/visibility")) return mockResponse({});
+      if (url === "/api/v1/sessions/recover-session")
+        return mockResponse(sessionResponse("recover-session"));
+      if (url.startsWith("/api/v1/sessions/recover-session/events")) {
+        eventsFetchCount++;
+        if (eventsFetchCount === 1) return firstCatchUp;
+        return mockResponse([
+          {
+            seq: 1,
+            type: "assistant_message",
+            data: JSON.stringify({ text: "recovered without refresh" }),
+          },
+          {
+            seq: 2,
+            type: "prompt_done",
+            data: JSON.stringify({ stopReason: "end_turn" }),
+          },
+        ]);
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+
+    connection.connect();
+    const es = await latestES();
+    fireConnected(es, "client-recovered");
+    rejectFirstCatchUp(new Error("network resumed with a stale request"));
+    await flush(100);
+
+    assert.equal(eventsFetchCount, 2, "handshake recovery must retry once");
+    assert.ok(dom.messages.textContent.includes("recovered without refresh"));
+    assert.equal(state.lastEventSeq, 2);
+    assert.equal(dom.status.dataset.state, "connected");
+  });
+
+  it("runs a fresh catch-up after the reconnect shared a stale successful load", async () => {
+    history.replaceState(null, "", "/#stale-success-session");
+    state.sessionId = "stale-success-session";
+    state.lastEventSeq = 0;
+
+    let releaseFirstCatchUp!: (response: MockResponse) => void;
+    const firstCatchUp = new Promise<MockResponse>((resolve) => {
+      releaseFirstCatchUp = resolve;
+    });
+    let eventsFetchCount = 0;
+    setFetch(async (url: string) => {
+      if (url.includes("/visibility")) return mockResponse({});
+      if (url === "/api/v1/sessions/stale-success-session")
+        return mockResponse(sessionResponse("stale-success-session"));
+      if (url.startsWith("/api/v1/sessions/stale-success-session/events")) {
+        eventsFetchCount++;
+        if (eventsFetchCount === 1) return firstCatchUp;
+        return mockResponse([
+          {
+            seq: 1,
+            type: "assistant_message",
+            data: JSON.stringify({ text: "persisted after the stale query" }),
+          },
+        ]);
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+
+    connection.connect();
+    const es = await latestES();
+    fireConnected(es, "client-stale-success");
+    releaseFirstCatchUp(mockResponse([]));
+    await flush(100);
+
+    assert.equal(
+      eventsFetchCount,
+      2,
+      "handshake recovery must query again after an older successful load",
+    );
+    assert.ok(
+      dom.messages.textContent.includes("persisted after the stale query"),
+    );
+    assert.equal(state.lastEventSeq, 1);
+  });
+
   describe("stream liveness watchdog", () => {
     let realNow: () => number;
     let now: number;

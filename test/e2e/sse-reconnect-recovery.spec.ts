@@ -49,3 +49,34 @@ test("SSE reconnect keeps the same session without duplicating history", async (
     "Echo: survive a reconnect",
   );
 });
+
+test("SSE reconnect recovers a reply completed while the stream was down", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    const NativeES = window.EventSource;
+    class TrackingES extends NativeES {
+      constructor(url: string | URL, init?: EventSourceInit) {
+        super(url, init);
+        (window as any).__latestEventSource = this;
+      }
+    }
+    window.EventSource = TrackingES as typeof EventSource;
+  });
+
+  await gotoConnected(page);
+  await createNewSession(page);
+
+  await sendPrompt(page, "completed during reconnect");
+  await page.evaluate(() => {
+    const es = (window as any).__latestEventSource;
+    if (es?.onerror) es.onerror(new Event("error"));
+  });
+  await expectConnectionStatus(page, "disconnected");
+
+  await expectConnectionStatus(page, "connected", { timeout: 15_000 });
+  await expect(page.locator(".msg.assistant").last()).toContainText(
+    "Echo: completed during reconnect",
+    { timeout: 15_000 },
+  );
+});

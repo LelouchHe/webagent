@@ -142,15 +142,16 @@ export function connect() {
   // Supersede any attempt still in flight so its continuation cannot open a
   // stream nobody owns.
   const gen = ++streamGen;
+  const activeSessionId = state.sessionId;
   setConnectionStatus("connecting", "connecting");
 
   // SSE for receiving server events. EventSource cannot send Authorization,
   // so we exchange a Bearer for a single-use 60s ticket first, then open
   // the stream with ?ticket=…
-  void openStream(gen);
+  void openStream(gen, activeSessionId);
 }
 
-async function openStream(gen: number) {
+async function openStream(gen: number, activeSessionId: string | null) {
   // Arm before the ticket mint so a stream that never opens is also covered.
   noteStreamActivity();
   startWatchdog();
@@ -189,6 +190,10 @@ async function openStream(gen: number) {
     // SSE initial handshake: server assigns clientId (no agent field)
     if (msg.type === "connected" && msg.clientId) {
       state.clientId = msg.clientId;
+      if (activeSessionId && state.sessionId === activeSessionId) {
+        setConnectionStatus("connected", "connected");
+        void recoverAfterHandshake(activeSessionId, gen);
+      }
       if (typeof msg.pendingCount === "number") {
         updateInboxCount(msg.pendingCount);
       }
@@ -236,6 +241,30 @@ async function openStream(gen: number) {
   void initializeSessionAndIntent();
 }
 
+async function recoverAfterHandshake(
+  sessionId: string,
+  gen: number,
+): Promise<void> {
+  void reloadSnapshot(sessionId, () => {
+    return gen === streamGen && state.sessionId === sessionId;
+  });
+  await loadNewEvents(sessionId);
+  if (gen !== streamGen || state.sessionId !== sessionId) return;
+
+  // The first call may have joined a pre-handshake request. Even a successful
+  // result can be stale if an event was persisted after its query but before
+  // the replacement stream registered, so always follow it with a fresh load.
+  await Promise.resolve();
+  let loaded = await loadNewEvents(sessionId);
+  if (!loaded && gen === streamGen && state.sessionId === sessionId) {
+    await Promise.resolve();
+    loaded = await loadNewEvents(sessionId);
+  }
+  if (loaded && gen === streamGen && state.sessionId === sessionId) {
+    scrollToBottom(false);
+  }
+}
+
 async function initializeSessionAndIntent(): Promise<void> {
   await initSession();
   await processStartupMessageIntent();
@@ -248,7 +277,7 @@ async function initSession() {
   const existingId = getHashSessionId();
 
   // Incremental reconnect: same session still in memory — skip DOM wipe
-  if (existingId && existingId === state.sessionId && state.lastEventSeq > 0) {
+  if (existingId && existingId === state.sessionId) {
     await resumeAndLoad(existingId, true, gen);
     if (gen !== state.sessionSwitchGen) return;
     scrollToBottom(false);
