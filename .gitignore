@@ -24,3 +24,6 @@ Thumbs.db
 data-dev/
 data/
 lib/
+
+# Node crash reports (--report-on-fatalerror / OOM)
+report.*.json
