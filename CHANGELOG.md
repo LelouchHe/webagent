@@ -4,6 +4,28 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/), and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.8.0] - 2026-08-08
+
+### Added
+
+- **Pinned plan panel** — the agent's current plan stays visible above the input instead of scrolling away with the transcript. Toggle it with `/plan`; entries show per-step status markers with the active step highlighted, the panel scrolls independently when the plan is long, and it clears when the turn ends so finished work cannot linger as if still in progress.
+- **Pending message count in the header** — the inbox badge now shows how many messages are waiting, and tapping a push notification opens the session that produced it.
+- **Sub-agent answers are folded in the transcript** — a `<final_answer>` block from a sub-agent is collapsed into a summary you can expand, so a long delegated result no longer buries the parent agent's own narration.
+
+### Fixed
+
+- **Transcript stopped updating live after `^C`** — cancelling a turn and immediately sending another interleaved the two, and the abandoned turn's completion was applied to the live one. That silently gated every subsequent message, thought, tool call and permission request until the next message was sent, while a refresh revealed the content had been persisted all along. Turns now carry an identity and a completion is only honoured by the turn it belongs to.
+- **A dropped connection could go unnoticed indefinitely** — the event stream can stay open with no traffic and no error after a network handoff or an OS resume, and nothing reconnected because only an explicit error triggered it. Silence past three missed heartbeats now forces a reconnect.
+- **A stalled request could freeze the transcript until reload** — no client request had a timeout, so one that never completed left the replay gate armed and poisoned every later catch-up on that session, including reconnects. All requests now run under a deadline.
+- **Background catch-up never ran for most sessions** — the resync that recovers missed messages when returning to the app was gated on a marker that only history loading sets, so a session created in-app never qualified for it.
+- **Duplicated and out-of-order messages with multiple clients open** — replayed history and live events could render the same user message twice, attribute a turn boundary to the wrong turn, or drop a plan update that arrived during a session switch.
+- **An in-flight message could disappear while attachments uploaded** — its bubble existed only on screen until the upload finished, and a background catch-up in that window discarded it.
+- **Cancellation left work running or state stuck** — cancelling now also stops the session's own bash and permission work, survives an agent reload, and no longer strands the busy indicator when the agent finishes on its own first.
+
+### Changed
+
+- Event-stream connections are now logged with the reason they ended, and a client-side forced reconnect is reported in the conversation at `warn` level, so a transport fault can be told apart from a rendering one without attaching a debugger.
+
 ## [0.7.0] - 2026-07-10
 
 ### Added
@@ -362,6 +384,7 @@ Initial release of WebAgent — a terminal-style web UI for ACP-compatible agent
 - **CI/CD**: GitHub Actions for CI (unit + E2E tests) and npm publishing on tag push
 - **npm package**: Published as `@lelouchhe/webagent`
 
+[0.8.0]: https://github.com/LelouchHe/webagent/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/LelouchHe/webagent/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/LelouchHe/webagent/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/LelouchHe/webagent/compare/v0.5.0...v0.5.1
