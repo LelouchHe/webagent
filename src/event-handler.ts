@@ -338,6 +338,12 @@ function handleError(event: ErrorEvent, sessions: SessionManager): void {
     if (sessions.isCurrentPrompt(event.sessionId, event.promptId)) {
       sessions.activePrompts.delete(event.sessionId);
       sessions.syncBusy(event.sessionId);
+    } else {
+      clog.info("failure from a superseded turn", {
+        sessionId: event.sessionId.slice(0, 8),
+        promptId: event.promptId,
+        message: event.message,
+      });
     }
     sessions.flushBuffers(event.sessionId);
     sessions.state.patch(event.sessionId, {
