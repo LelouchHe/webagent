@@ -4191,6 +4191,85 @@ describe("events", () => {
       }
     });
 
+    it("keeps rendering a new turn when the previous turn's completion lands late", async () => {
+      // Pressing ^C and immediately sending a new message interleaves the two
+      // turns: the server persists the new user_message first, then flushes the
+      // cancelled turn's buffered text and its prompt_done. That terminator
+      // carries stopReason "end_turn" — a cancelled Copilot turn exits
+      // gracefully — and arrives after this client's own echo has already
+      // cleared the own-echo shield. Applying it to the live turn sets
+      // turnEnded, which silently gates message_chunk / thought_chunk /
+      // tool_call / permission_request until the *next* user message.
+      state.sessionId = "s1";
+      state.currentPromptId = "prompt-2"; // the turn the user just started
+      state.turnEnded = false;
+
+      events.handleEvent({
+        type: "prompt_done",
+        sessionId: "s1",
+        stopReason: "end_turn",
+        promptId: "prompt-1", // the superseded turn
+      });
+
+      assert.equal(
+        state.turnEnded,
+        false,
+        "a superseded terminator must not end the live turn",
+      );
+
+      events.handleEvent({
+        type: "message_chunk",
+        sessionId: "s1",
+        text: "reply to the new message",
+      });
+      assert.equal(
+        state.currentAssistantText,
+        "reply to the new message",
+        "the new turn's content must be accepted, not gated",
+      );
+    });
+
+    it("ignores a replayed completion that belongs to a superseded turn", async () => {
+      // A refresh replays the same interleaving from the DB. Without the same
+      // judgement the live path makes, reload re-arms the gate and the live
+      // turn goes silent again — the exact symptom, now surviving a reload.
+      state.sessionId = "s1";
+      state.currentPromptId = "prompt-2";
+      state.pendingToolCallIds.add("tc-live");
+      state.busy = true;
+
+      events.replayEvent(
+        "prompt_done",
+        { stopReason: "end_turn", promptId: "prompt-1" },
+        [],
+        0,
+      );
+
+      assert.equal(
+        state.pendingToolCallIds.has("tc-live"),
+        true,
+        "the live turn's pending work must survive",
+      );
+      assert.equal(state.busy, true, "the live turn must stay busy");
+    });
+
+    it("still ends the turn its own completion belongs to", async () => {
+      // Control: the guard must not swallow the live turn's real terminator,
+      // or the spinner would never stop.
+      state.sessionId = "s1";
+      state.currentPromptId = "prompt-2";
+      state.turnEnded = false;
+
+      events.handleEvent({
+        type: "prompt_done",
+        sessionId: "s1",
+        stopReason: "end_turn",
+        promptId: "prompt-2",
+      });
+
+      assert.equal(state.turnEnded, true, "the matching terminator must apply");
+    });
+
     it("does not treat missing replay seq metadata as sequence zero", async () => {
       events.replayEvent("assistant_message", { text: "legacy" }, [], 0);
       const existing = dom.messages.lastElementChild as HTMLElement;

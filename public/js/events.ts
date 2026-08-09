@@ -1133,6 +1133,15 @@ export function replayEvent(
   }
   switch (type) {
     case "prompt_done":
+      // Replay makes the same judgement the live path does: a completion that
+      // names a turn other than the live one ended something already gone, and
+      // applying it would re-arm the gate on every reload.
+      if (
+        typeof d.promptId === "string" &&
+        state.currentPromptId &&
+        d.promptId !== state.currentPromptId
+      )
+        break;
       if (state.awaitingOwnUserEcho) break;
       state.pendingToolCallIds.clear();
       state.pendingPermissionRequestIds.clear();
@@ -2008,6 +2017,28 @@ export function handleEvent(msg: AgentEvent) {
 
     case "prompt_done": {
       clearCancelTimer();
+      // A terminator names the turn it ends. Cancelling a turn and immediately
+      // sending a new message interleaves the two: the server persists the new
+      // user_message first, then flushes the cancelled turn's tail and its
+      // prompt_done. That completion carries stopReason "end_turn" — a
+      // cancelled Copilot turn exits gracefully — and lands after this client's
+      // own echo has already cleared the own-echo shield below, so identity is
+      // the only thing left that can tell the two turns apart.
+      if (
+        msg.promptId &&
+        state.currentPromptId &&
+        msg.promptId !== state.currentPromptId
+      ) {
+        log.warn("dropping completion from a superseded turn", {
+          sessionId: msg.sessionId,
+          stopReason: msg.stopReason,
+          promptId: msg.promptId,
+          currentPromptId: state.currentPromptId,
+        });
+        finishThinking();
+        finishAssistant();
+        break;
+      }
       if (state.awaitingOwnUserEcho) {
         // Stale completion from the turn we just superseded. Busy state is not
         // stranded by dropping it: `state_patch` / snapshot drive `setBusy`

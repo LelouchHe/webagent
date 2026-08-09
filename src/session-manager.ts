@@ -592,6 +592,19 @@ export class SessionManager {
     return null;
   }
 
+  /**
+   * True when `promptId` still names the session's live turn. A turn can
+   * outlive its own supersession — cancelling one and immediately starting
+   * another interleaves them — and its terminal work must not clear state
+   * that now belongs to the replacement. An absent id is treated as current
+   * so callers predating turn identity keep their old behaviour.
+   */
+  isCurrentPrompt(sessionId: string, promptId: string | undefined): boolean {
+    if (!promptId) return true;
+    const current = this.state.getState(sessionId).runtime.busy?.promptId;
+    return current == null || current === promptId;
+  }
+
   reservePromptSubmission(sessionId: string): number | null {
     if (this.getBusyKind(sessionId) !== null) return null;
     const submissionId = ++this.nextPromptSubmissionNumber;

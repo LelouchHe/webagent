@@ -1436,12 +1436,18 @@ export function createRequestHandler(
         sessions.releasePromptSubmission(sessionId, promptSubmissionId, false);
         sessions.activePrompts.add(sessionId);
         sessions.syncBusy(sessionId);
+        const promptId =
+          sessions.state.getState(sessionId).runtime.busy?.promptId ??
+          undefined;
         bridge
-          .prompt(sessionId, agentText, attachments)
+          .prompt(sessionId, agentText, attachments, promptId)
           .catch((err: unknown) => {
             plog.error("error", { sessionId, error: err });
           })
           .finally(() => {
+            // A turn that outlived its own supersession must not clear the
+            // busy state of the turn that replaced it.
+            if (!sessions.isCurrentPrompt(sessionId, promptId)) return;
             sessions.activePrompts.delete(sessionId);
             sessions.syncBusy(sessionId);
           });

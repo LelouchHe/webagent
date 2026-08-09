@@ -302,8 +302,19 @@ function handlePromptDone(
       stopReason: event.stopReason,
     });
   }
-  sessions.activePrompts.delete(event.sessionId);
-  sessions.syncBusy(event.sessionId);
+  // The tail this turn buffered must always land, even when the turn has
+  // already been superseded — it is the only copy of that text.
+  const isCurrent = sessions.isCurrentPrompt(event.sessionId, event.promptId);
+  if (isCurrent) {
+    sessions.activePrompts.delete(event.sessionId);
+    sessions.syncBusy(event.sessionId);
+  } else {
+    clog.info("completion from a superseded turn", {
+      sessionId: event.sessionId.slice(0, 8),
+      promptId: event.promptId,
+      stopReason: event.stopReason,
+    });
+  }
   sessions.flushBuffers(event.sessionId);
   sessions.state.patch(event.sessionId, {
     runtime: { streaming: { assistant: false, thinking: false } },
@@ -311,7 +322,11 @@ function handlePromptDone(
   store.saveEvent(
     event.sessionId,
     event.type,
-    { stopReason: event.stopReason },
+    {
+      stopReason: event.stopReason,
+      // Replay must be able to make the same judgement the live path does.
+      ...(event.promptId ? { promptId: event.promptId } : {}),
+    },
     { from_ref: "agent" },
   );
 }

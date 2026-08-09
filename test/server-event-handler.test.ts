@@ -204,6 +204,72 @@ describe("handleAgentEvent", () => {
     assert.equal(broadcasted.length, 1);
   });
 
+  it("stores the turn a completion ends", () => {
+    // Replay has to make the same judgement the live path does. If the stored
+    // event drops its identity, a refresh replays the interleaving with no way
+    // to tell a superseded terminator from the live turn's own.
+    store.createSession("s1", "/tmp");
+    sessions.activePrompts.add("s1");
+    const { bridge } = createMockBridge();
+    const { sseManager } = createMockSseManager();
+
+    handleAgentEvent(
+      {
+        type: "prompt_done",
+        sessionId: "s1",
+        stopReason: "end_turn",
+        promptId: "prompt-7",
+      } as any,
+      sessions,
+      store,
+      bridge,
+      makeEventHandlerConfig(),
+      sseManager as any,
+    );
+
+    const done = store.getEvents("s1").find((e) => e.type === "prompt_done");
+    assert.ok(done, "the completion must be stored");
+    assert.equal(
+      (JSON.parse(done.data) as { promptId?: string }).promptId,
+      "prompt-7",
+    );
+  });
+
+  it("keeps the live turn busy when a superseded turn completes", () => {
+    // Cancelling a turn and immediately sending another interleaves them: the
+    // abandoned turn finishes late, and clearing busy here would strand the
+    // replacement turn's spinner and let a second prompt through.
+    store.createSession("s1", "/tmp");
+    sessions.activePrompts.add("s1");
+    sessions.syncBusy("s1");
+    const livePromptId =
+      sessions.state.getState("s1").runtime.busy?.promptId ?? null;
+    assert.ok(livePromptId, "precondition: the live turn has an identity");
+    const { bridge } = createMockBridge();
+    const { sseManager } = createMockSseManager();
+
+    handleAgentEvent(
+      {
+        type: "prompt_done",
+        sessionId: "s1",
+        stopReason: "end_turn",
+        promptId: "prompt-superseded",
+      } as any,
+      sessions,
+      store,
+      bridge,
+      makeEventHandlerConfig(),
+      sseManager as any,
+    );
+
+    assert.equal(
+      sessions.activePrompts.has("s1"),
+      true,
+      "the live turn must stay active",
+    );
+    assert.equal(sessions.state.getState("s1").runtime.busy?.kind, "agent");
+  });
+
   it("keeps runtime plan across prompt_done for cross-turn work", () => {
     store.createSession("s1", "/tmp");
     const plan = [{ content: "Continue later", status: "in_progress" }];

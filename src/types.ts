@@ -182,7 +182,14 @@ export type AgentEvent =
       locations?: { path: string; line?: number | null }[];
       rawInput?: Record<string, unknown>;
     }
-  | { type: "prompt_done"; sessionId: string; stopReason: string }
+  | {
+      type: "prompt_done";
+      sessionId: string;
+      stopReason: string;
+      /** Turn this completion belongs to. Absent on events stored before
+       *  turn identity existed; consumers must treat that as "unknown". */
+      promptId?: string;
+    }
   | { type: "session_deleted"; sessionId: string }
   | { type: "session_title_updated"; sessionId: string; title: string }
   | { type: "session_expired"; sessionId: string }

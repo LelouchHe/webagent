@@ -209,6 +209,9 @@ export class AgentBridge extends EventEmitter {
     sessionId: string,
     text: string,
     attachments?: AttachmentRef[],
+    /** Turn identity echoed back on this prompt's terminal event, so a
+     *  completion that outlives its turn can be told apart from the live one. */
+    promptId?: string,
   ): Promise<void> {
     if (this.deadReason) {
       this.emit("event", {
@@ -253,6 +256,7 @@ export class AgentBridge extends EventEmitter {
         type: "prompt_done",
         sessionId,
         stopReason: result.stopReason ?? "end_turn",
+        ...(promptId ? { promptId } : {}),
       } satisfies AgentEvent);
     } catch (err: unknown) {
       const message =
@@ -266,6 +270,7 @@ export class AgentBridge extends EventEmitter {
           type: "prompt_done",
           sessionId,
           stopReason: "cancelled",
+          ...(promptId ? { promptId } : {}),
         } satisfies AgentEvent);
         return;
       }

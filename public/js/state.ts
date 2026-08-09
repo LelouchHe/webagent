@@ -121,6 +121,11 @@ export const state = {
   pendingPermissionRequestIds: new Set<string>(),
   pendingPromptDone: false,
   turnEnded: false,
+  // Identity of the turn the server currently considers active. Terminators
+  // for any other turn must not be applied to it: cancelling a turn and
+  // immediately sending a new message interleaves the two, and the stale
+  // completion would otherwise gate the live turn's rendering.
+  currentPromptId: null as string | null,
   newTurnStarted: false,
   // Set by sendPrompt to suppress the SSE echo of our own user_message
   // (SSE broadcasts to all clients including the sender, unlike WS which excluded sender)
@@ -355,6 +360,7 @@ function applyRuntimePlan(plan: PlanEntry[] | null): void {
 export function applySnapshot(snap: SessionSnapshot): void {
   state.lastStateSeq = snap.seq;
   const busy = snap.runtime.busy;
+  if (busy?.promptId) state.currentPromptId = busy.promptId;
   state.busyKind = busy?.kind ?? null;
   state.cancelStatus = busy?.cancelStatus ?? null;
   setBusy(busy != null);
@@ -398,6 +404,9 @@ export function applyStatePatch(patchEvent: {
   const r = patchEvent.patch.runtime;
   if (r && "busy" in r) {
     const busy = r.busy ?? null;
+    // Only ever advance to a newer turn; a patch clearing busy must not erase
+    // the identity, or a terminator arriving after it could not be judged.
+    if (busy?.promptId) state.currentPromptId = busy.promptId;
     state.busyKind = busy?.kind ?? null;
     state.cancelStatus = busy?.cancelStatus ?? null;
     setBusy(busy != null);
