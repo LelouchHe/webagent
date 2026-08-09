@@ -4229,6 +4229,63 @@ describe("events", () => {
       );
     });
 
+    it("keeps the live turn intact when a superseded turn errors out", async () => {
+      // An error ends a prompt just as a completion does, and the server now
+      // keeps the live turn busy for a superseded one. Without the same
+      // judgement here the two sides disagree: the client would go idle while
+      // the server stays busy, and nothing re-syncs — the error carries no
+      // busy patch, so the next send is rejected as "Session is busy".
+      state.sessionId = "s1";
+      state.currentPromptId = "prompt-2";
+      state.pendingToolCallIds.add("tc-live");
+      state.busy = true;
+      state.busyKind = "agent";
+
+      events.handleEvent({
+        type: "error",
+        sessionId: "s1",
+        message: "superseded turn blew up",
+        promptId: "prompt-1",
+      });
+
+      assert.equal(
+        state.pendingToolCallIds.has("tc-live"),
+        true,
+        "the live turn's pending work must survive",
+      );
+      assert.equal(state.busy, true, "the live turn must stay busy");
+    });
+
+    it("clears the turn when its own error arrives", async () => {
+      // Control: the live turn's own failure must still end it.
+      state.sessionId = "s1";
+      state.currentPromptId = "prompt-2";
+      state.pendingToolCallIds.add("tc-live");
+      state.busy = true;
+      state.busyKind = "agent";
+
+      events.handleEvent({
+        type: "error",
+        sessionId: "s1",
+        message: "live turn blew up",
+        promptId: "prompt-2",
+      });
+
+      assert.equal(state.pendingToolCallIds.has("tc-live"), false);
+      assert.equal(state.busy, false);
+    });
+
+    it("forgets turn identity when the session is reset", async () => {
+      // Ids come from one per-process counter, so an id left over from another
+      // session can never match the new one's — every terminator would be
+      // dropped and its spinners stranded.
+      state.currentPromptId = "prompt-5";
+
+      stateMod.resetSessionUI();
+
+      assert.equal(state.currentPromptId, null);
+    });
+
     it("still ends the turn its own completion belongs to", async () => {
       // Control: the guard must not swallow the live turn's real terminator,
       // or the spinner would never stop.

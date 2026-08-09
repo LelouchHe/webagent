@@ -2124,6 +2124,23 @@ export function handleEvent(msg: AgentEvent) {
       break;
 
     case "error":
+      // An error ends a prompt just as a completion does, so it needs the same
+      // attribution. The server keeps the live turn busy for a superseded one
+      // and sends no busy patch with the error, so clearing here would leave
+      // the two sides disagreeing with nothing to re-sync them.
+      if (
+        msg.promptId &&
+        state.currentPromptId &&
+        msg.promptId !== state.currentPromptId
+      ) {
+        log.warn("dropping failure from a superseded turn", {
+          sessionId: msg.sessionId,
+          message: msg.message,
+          promptId: msg.promptId,
+          currentPromptId: state.currentPromptId,
+        });
+        break;
+      }
       if (state.awaitingOwnUserEcho) {
         // Terminal error from the superseded turn. Note this drops errors for
         // *any* session during the window (this case has no sessionId filter),

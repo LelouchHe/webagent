@@ -707,6 +707,9 @@ export function resetSessionUI({
   state.pendingPermissionRequestIds.clear();
   state.pendingPromptDone = false;
   state.turnEnded = false;
+  // Ids come from one per-process counter, so one left over from another
+  // session can never match the new one's and would drop every terminator.
+  state.currentPromptId = null;
   state.newTurnStarted = false;
   state.sentMessageOpId = null;
   state.awaitingOwnUserEcho = false;

@@ -374,6 +374,9 @@ function cleanup() {
   state.pendingPermissionRequestIds.clear();
   state.pendingPromptDone = false;
   state.turnEnded = false;
+  // Reconnect re-establishes identity from the snapshot; a value held across
+  // the gap could outlive its turn and drop the next one's terminator.
+  state.currentPromptId = null;
   // Runtime patch sequences are scoped to one server process. Reconnect
   // establishes a fresh snapshot baseline, including after server restart.
   state.lastStateSeq = 0;
