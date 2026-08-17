@@ -93,13 +93,22 @@ describe("input focus recovery", () => {
     target.dispatchEvent(event);
   }
 
-  function shortTap(target: Element): void {
+  function shortTap(
+    target: Element,
+    startTs = 100,
+    startX = 10,
+    startY = 10,
+  ): void {
     pointer("pointerdown", target, {
-      timeStamp: 100,
-      clientX: 10,
-      clientY: 10,
+      timeStamp: startTs,
+      clientX: startX,
+      clientY: startY,
     });
-    pointer("pointerup", target, { timeStamp: 180, clientX: 12, clientY: 12 });
+    pointer("pointerup", target, {
+      timeStamp: startTs + 80,
+      clientX: startX + 2,
+      clientY: startY + 2,
+    });
   }
 
   it("does not blur on pointerdown so long-press menus can start", () => {
@@ -116,6 +125,34 @@ describe("input focus recovery", () => {
     setInputActive();
 
     shortTap(dom.input);
+
+    assert.equal(blurCount, 1);
+    assert.equal(focusCount, 0);
+    assert.equal(document.activeElement, document.body);
+  });
+
+  it("uses the pointerdown viewport when recovering stale focus", () => {
+    setInputActive();
+
+    pointer("pointerdown", dom.input, {
+      timeStamp: 100,
+      clientX: 10,
+      clientY: 10,
+    });
+    Object.defineProperty(window, "visualViewport", {
+      value: {
+        height: 420,
+        offsetTop: 0,
+        scale: 1,
+        addEventListener: () => {},
+      },
+      configurable: true,
+    });
+    pointer("pointerup", dom.input, {
+      timeStamp: 180,
+      clientX: 12,
+      clientY: 12,
+    });
 
     assert.equal(blurCount, 1);
     assert.equal(focusCount, 0);
@@ -198,6 +235,95 @@ describe("input focus recovery", () => {
 
     assert.equal(blurCount, 0);
     assert.equal(focusCount, 0);
+  });
+
+  it("unlocks a stale half-open keyboard on a double tap", () => {
+    Object.defineProperty(window, "visualViewport", {
+      value: {
+        height: 420,
+        offsetTop: 0,
+        scale: 1,
+        addEventListener: () => {},
+      },
+      configurable: true,
+    });
+    setInputActive();
+
+    shortTap(dom.input, 1_000);
+    shortTap(dom.input, 1_250);
+
+    assert.equal(blurCount, 1);
+    assert.equal(focusCount, 0);
+    assert.equal(document.activeElement, document.body);
+  });
+
+  it("does not treat two distant taps as the keyboard unlock gesture", () => {
+    Object.defineProperty(window, "visualViewport", {
+      value: {
+        height: 420,
+        offsetTop: 0,
+        scale: 1,
+        addEventListener: () => {},
+      },
+      configurable: true,
+    });
+    setInputActive();
+
+    shortTap(dom.input, 1_000, 10, 10);
+    shortTap(dom.input, 1_250, 80, 10);
+
+    assert.equal(blurCount, 0);
+    assert.equal(focusCount, 0);
+    assert.equal(document.activeElement, dom.input);
+  });
+
+  it("does not treat two slow taps as the keyboard unlock gesture", () => {
+    Object.defineProperty(window, "visualViewport", {
+      value: {
+        height: 420,
+        offsetTop: 0,
+        scale: 1,
+        addEventListener: () => {},
+      },
+      configurable: true,
+    });
+    setInputActive();
+
+    shortTap(dom.input, 1_000);
+    shortTap(dom.input, 1_500);
+
+    assert.equal(blurCount, 0);
+    assert.equal(focusCount, 0);
+    assert.equal(document.activeElement, dom.input);
+  });
+
+  it("does not let a prior short tap turn a long press into an unlock", () => {
+    Object.defineProperty(window, "visualViewport", {
+      value: {
+        height: 420,
+        offsetTop: 0,
+        scale: 1,
+        addEventListener: () => {},
+      },
+      configurable: true,
+    });
+    setInputActive();
+
+    shortTap(dom.input, 1_000);
+    pointer("pointerdown", dom.input, {
+      timeStamp: 1_200,
+      clientX: 10,
+      clientY: 10,
+    });
+    pointer("pointerup", dom.input, {
+      timeStamp: 1_600,
+      clientX: 10,
+      clientY: 10,
+    });
+
+    assert.equal(blurCount, 0);
+    assert.equal(focusCount, 0);
+    assert.equal(document.activeElement, dom.input);
   });
 
   it("does not recover when the input is disabled", () => {

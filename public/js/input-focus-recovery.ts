@@ -1,22 +1,32 @@
 // iOS/PWA can leave the textarea focused while the virtual keyboard is closed.
-// Recover only after a short tap: blurring on pointerdown cancels iPad Safari's
-// native long-press Paste/Select menu, especially with floating/split keyboards
-// that do not shrink visualViewport.
+// A short tap recovers fully closed stale focus; a same-position double tap
+// explicitly recovers a half-open keyplane that still shrinks visualViewport.
+// Waiting for pointerup preserves iPad Safari's long-press Paste/Select menu.
 
 import { dom } from "./state.ts";
 
 const KEYBOARD_OPEN_DELTA_PX = 80;
 const TAP_MAX_DURATION_MS = 300;
 const TAP_MAX_MOVE_PX = 10;
+const DOUBLE_TAP_MAX_GAP_MS = 350;
+const DOUBLE_TAP_MAX_MOVE_PX = 24;
 
 let installed = false;
 let pendingRecovery: PendingRecovery | null = null;
+let previousShortTap: CompletedTap | null = null;
 
 interface PendingRecovery {
   pointerId: number;
   startX: number;
   startY: number;
   startTs: number;
+  keyboardLikelyOpenAtStart: boolean;
+}
+
+interface CompletedTap {
+  endX: number;
+  endY: number;
+  endTs: number;
 }
 
 function getVisualViewport(): VisualViewport | null {
@@ -44,16 +54,21 @@ function getPointerId(e: PointerEvent): number {
 function onPointerDown(e: PointerEvent): void {
   if (e.pointerType !== "touch") return;
   pendingRecovery = null;
-  if (!isInputActivationTarget(e.target)) return;
-  if (document.activeElement !== dom.input) return;
-  if (dom.input.disabled) return;
-  if (keyboardLikelyOpen()) return;
+  if (
+    !isInputActivationTarget(e.target) ||
+    document.activeElement !== dom.input ||
+    dom.input.disabled
+  ) {
+    previousShortTap = null;
+    return;
+  }
 
   pendingRecovery = {
     pointerId: getPointerId(e),
     startX: e.clientX,
     startY: e.clientY,
     startTs: e.timeStamp,
+    keyboardLikelyOpenAtStart: keyboardLikelyOpen(),
   };
 }
 
@@ -67,17 +82,52 @@ function onPointerUp(e: PointerEvent): void {
     e.clientX - pending.startX,
     e.clientY - pending.startY,
   );
-  if (durationMs > TAP_MAX_DURATION_MS || movePx > TAP_MAX_MOVE_PX) return;
-  if (document.activeElement !== dom.input || dom.input.disabled) return;
-  if (keyboardLikelyOpen()) return;
+  if (durationMs > TAP_MAX_DURATION_MS || movePx > TAP_MAX_MOVE_PX) {
+    previousShortTap = null;
+    return;
+  }
+  if (document.activeElement !== dom.input || dom.input.disabled) {
+    previousShortTap = null;
+    return;
+  }
 
-  dom.input.blur();
+  if (!pending.keyboardLikelyOpenAtStart) {
+    previousShortTap = null;
+    dom.input.blur();
+    return;
+  }
+
+  const gapMs = previousShortTap
+    ? pending.startTs - previousShortTap.endTs
+    : Number.POSITIVE_INFINITY;
+  const betweenTapMovePx = previousShortTap
+    ? Math.hypot(
+        e.clientX - previousShortTap.endX,
+        e.clientY - previousShortTap.endY,
+      )
+    : Number.POSITIVE_INFINITY;
+  if (
+    gapMs >= 0 &&
+    gapMs <= DOUBLE_TAP_MAX_GAP_MS &&
+    betweenTapMovePx <= DOUBLE_TAP_MAX_MOVE_PX
+  ) {
+    previousShortTap = null;
+    dom.input.blur();
+    return;
+  }
+
+  previousShortTap = {
+    endX: e.clientX,
+    endY: e.clientY,
+    endTs: e.timeStamp,
+  };
 }
 
 function onPointerCancel(e: PointerEvent): void {
   if (!pendingRecovery) return;
   if (getPointerId(e) !== pendingRecovery.pointerId) return;
   pendingRecovery = null;
+  previousShortTap = null;
 }
 
 export function installInputFocusRecovery(): void {
