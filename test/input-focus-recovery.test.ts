@@ -257,6 +257,28 @@ describe("input focus recovery", () => {
     assert.equal(document.activeElement, document.body);
   });
 
+  it("unlocks when the double tap lands on status bar content", () => {
+    Object.defineProperty(window, "visualViewport", {
+      value: {
+        height: 420,
+        offsetTop: 0,
+        scale: 1,
+        addEventListener: () => {},
+      },
+      configurable: true,
+    });
+    const statusContent = document.createElement("span");
+    dom.statusBar.append(statusContent);
+    setInputActive();
+
+    shortTap(statusContent, 1_000);
+    shortTap(statusContent, 1_250);
+
+    assert.equal(blurCount, 1);
+    assert.equal(focusCount, 0);
+    assert.equal(document.activeElement, document.body);
+  });
+
   it("does not treat two distant taps as the keyboard unlock gesture", () => {
     Object.defineProperty(window, "visualViewport", {
       value: {

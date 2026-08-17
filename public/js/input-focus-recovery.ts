@@ -58,7 +58,7 @@ function onPointerDown(e: PointerEvent): void {
   const target =
     e.target === dom.input
       ? "input"
-      : e.target === dom.statusBar
+      : e.target instanceof window.Node && dom.statusBar.contains(e.target)
         ? "status-bar"
         : null;
   if (!target) {
