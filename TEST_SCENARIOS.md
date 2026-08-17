@@ -1,6 +1,6 @@
 # Test Scenarios
 
-Last updated: 2026-07-12
+Last updated: 2026-08-17
 
 This file is a scenario-level map of the current automated test suite.
 It is intentionally higher-level than raw test names so we can review coverage,
@@ -200,6 +200,14 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - slash command bypass while busy
   - send-button label switching (↵ vs ^C) while busy
   - not-connected and not-ready warnings
+
+- `test/input-focus-recovery.test.ts`
+  - fully closed stale iOS keyboard focus unlocks after a short textarea tap
+  - half-open keyplane unlocks after a same-position status-bar double tap
+  - status-bar child content participates in the recovery gesture
+  - healthy textarea double-tap selection, long press, movement, cancellation,
+    slow taps, and distant taps do not trigger recovery
+  - a keyboard that reopens between pointerdown and pointerup is not blurred
 
 - `test/events.test.ts`
   - session creation / busy-state restoration

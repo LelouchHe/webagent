@@ -112,6 +112,15 @@ not be reflected everywhere in WebAgent.
 
 Tap the `❯` prompt indicator to cycle mode.
 
+### iOS PWA keyboard recovery
+
+iOS WebKit can rarely leave the input focused while the keyboard is unusable.
+If the keyboard is completely hidden, tap the input once to clear the stale
+focus, then tap it again to reopen the keyboard. If the keyboard accessory bar
+is still visible but the main keys are missing, double-tap the bottom status
+bar (`model · cwd`), then tap the input. The status-bar gesture avoids
+interfering with native double-tap text selection inside the textarea.
+
 ## Theme
 
 - Dark / light / system, toggle with `◑`
