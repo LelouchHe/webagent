@@ -1,7 +1,7 @@
 // iOS/PWA can leave the textarea focused while the virtual keyboard is closed.
-// A short tap recovers fully closed stale focus; a same-position double tap
-// explicitly recovers a half-open keyplane that still shrinks visualViewport.
-// Waiting for pointerup preserves iPad Safari's long-press Paste/Select menu.
+// A short input tap recovers fully closed stale focus. A same-position double
+// tap on the status bar explicitly recovers a half-open keyplane without
+// stealing the textarea's native double-tap selection gesture.
 
 import { dom } from "./state.ts";
 
@@ -21,6 +21,7 @@ interface PendingRecovery {
   startY: number;
   startTs: number;
   keyboardLikelyOpenAtStart: boolean;
+  target: "input" | "status-bar";
 }
 
 interface CompletedTap {
@@ -43,10 +44,6 @@ function keyboardLikelyOpen(): boolean {
   );
 }
 
-function isInputActivationTarget(target: EventTarget | null): boolean {
-  return target === dom.input;
-}
-
 function getPointerId(e: PointerEvent): number {
   return typeof e.pointerId === "number" ? e.pointerId : 1;
 }
@@ -54,11 +51,17 @@ function getPointerId(e: PointerEvent): number {
 function onPointerDown(e: PointerEvent): void {
   if (e.pointerType !== "touch") return;
   pendingRecovery = null;
-  if (
-    !isInputActivationTarget(e.target) ||
-    document.activeElement !== dom.input ||
-    dom.input.disabled
-  ) {
+  if (document.activeElement !== dom.input || dom.input.disabled) {
+    previousShortTap = null;
+    return;
+  }
+  const target =
+    e.target === dom.input
+      ? "input"
+      : e.target === dom.statusBar
+        ? "status-bar"
+        : null;
+  if (!target) {
     previousShortTap = null;
     return;
   }
@@ -69,6 +72,7 @@ function onPointerDown(e: PointerEvent): void {
     startY: e.clientY,
     startTs: e.timeStamp,
     keyboardLikelyOpenAtStart: keyboardLikelyOpen(),
+    target,
   };
 }
 
@@ -91,9 +95,17 @@ function onPointerUp(e: PointerEvent): void {
     return;
   }
 
-  if (!pending.keyboardLikelyOpenAtStart) {
+  if (
+    pending.target === "input" &&
+    !pending.keyboardLikelyOpenAtStart &&
+    !keyboardLikelyOpen()
+  ) {
     previousShortTap = null;
     dom.input.blur();
+    return;
+  }
+  if (pending.target === "input") {
+    previousShortTap = null;
     return;
   }
 

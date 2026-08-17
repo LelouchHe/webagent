@@ -131,7 +131,7 @@ describe("input focus recovery", () => {
     assert.equal(document.activeElement, document.body);
   });
 
-  it("uses the pointerdown viewport when recovering stale focus", () => {
+  it("does not blur when the keyboard recovers before pointerup", () => {
     setInputActive();
 
     pointer("pointerdown", dom.input, {
@@ -154,9 +154,9 @@ describe("input focus recovery", () => {
       clientY: 12,
     });
 
-    assert.equal(blurCount, 1);
+    assert.equal(blurCount, 0);
     assert.equal(focusCount, 0);
-    assert.equal(document.activeElement, document.body);
+    assert.equal(document.activeElement, dom.input);
   });
 
   it("does not recover from touches on the surrounding input area", () => {
@@ -237,7 +237,7 @@ describe("input focus recovery", () => {
     assert.equal(focusCount, 0);
   });
 
-  it("unlocks a stale half-open keyboard on a double tap", () => {
+  it("unlocks a stale half-open keyboard by double tapping the status bar", () => {
     Object.defineProperty(window, "visualViewport", {
       value: {
         height: 420,
@@ -249,8 +249,8 @@ describe("input focus recovery", () => {
     });
     setInputActive();
 
-    shortTap(dom.input, 1_000);
-    shortTap(dom.input, 1_250);
+    shortTap(dom.statusBar, 1_000);
+    shortTap(dom.statusBar, 1_250);
 
     assert.equal(blurCount, 1);
     assert.equal(focusCount, 0);
@@ -269,8 +269,8 @@ describe("input focus recovery", () => {
     });
     setInputActive();
 
-    shortTap(dom.input, 1_000, 10, 10);
-    shortTap(dom.input, 1_250, 80, 10);
+    shortTap(dom.statusBar, 1_000, 10, 10);
+    shortTap(dom.statusBar, 1_250, 80, 10);
 
     assert.equal(blurCount, 0);
     assert.equal(focusCount, 0);
@@ -289,8 +289,8 @@ describe("input focus recovery", () => {
     });
     setInputActive();
 
-    shortTap(dom.input, 1_000);
-    shortTap(dom.input, 1_500);
+    shortTap(dom.statusBar, 1_000);
+    shortTap(dom.statusBar, 1_500);
 
     assert.equal(blurCount, 0);
     assert.equal(focusCount, 0);
@@ -309,17 +309,37 @@ describe("input focus recovery", () => {
     });
     setInputActive();
 
-    shortTap(dom.input, 1_000);
-    pointer("pointerdown", dom.input, {
+    shortTap(dom.statusBar, 1_000);
+    pointer("pointerdown", dom.statusBar, {
       timeStamp: 1_200,
       clientX: 10,
       clientY: 10,
     });
-    pointer("pointerup", dom.input, {
+    pointer("pointerup", dom.statusBar, {
       timeStamp: 1_600,
       clientX: 10,
       clientY: 10,
     });
+
+    assert.equal(blurCount, 0);
+    assert.equal(focusCount, 0);
+    assert.equal(document.activeElement, dom.input);
+  });
+
+  it("preserves native double-tap selection when the keyboard is healthy", () => {
+    Object.defineProperty(window, "visualViewport", {
+      value: {
+        height: 420,
+        offsetTop: 0,
+        scale: 1,
+        addEventListener: () => {},
+      },
+      configurable: true,
+    });
+    setInputActive();
+
+    shortTap(dom.input, 1_000);
+    shortTap(dom.input, 1_250);
 
     assert.equal(blurCount, 0);
     assert.equal(focusCount, 0);
