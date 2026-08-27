@@ -56,7 +56,7 @@ describe("POST /api/v1/messages — ingress", () => {
     const publicDir = join(tmpDir, "public");
     mkdirSync(publicDir);
     writeFileSync(join(publicDir, "index.html"), "<h1>t</h1>");
-    store = new Store(tmpDir);
+    store = new Store(tmpDir, "test-agent");
     sseManager = new SseManager();
 
     // Spy on broadcasts

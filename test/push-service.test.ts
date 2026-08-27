@@ -24,7 +24,7 @@ describe("Store — push_subscriptions", () => {
 
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), "webagent-push-test-"));
-    store = new Store(tmpDir);
+    store = new Store(tmpDir, "test-agent");
   });
 
   afterEach(() => {
@@ -90,14 +90,14 @@ describe("Store — push_subscriptions", () => {
     store.close();
 
     // Re-open same DB
-    const store2 = new Store(tmpDir);
+    const store2 = new Store(tmpDir, "test-agent");
     const subs = store2.getAllSubscriptions();
     assert.equal(subs.length, 1);
     assert.equal(subs[0].endpoint, "https://push.example.com/1");
     store2.close();
 
     // Replace for afterEach cleanup
-    store = new Store(tmpDir);
+    store = new Store(tmpDir, "test-agent");
   });
 });
 
@@ -128,7 +128,7 @@ describe("PushService", () => {
 
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), "webagent-push-svc-"));
-    store = new Store(tmpDir);
+    store = new Store(tmpDir, "test-agent");
     registry = new ClientRegistry();
   });
 

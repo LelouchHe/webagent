@@ -11,7 +11,7 @@ describe("Store attachments", () => {
 
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), "webagent-att-"));
-    store = new Store(tmpDir);
+    store = new Store(tmpDir, "test-agent");
     store.createSession("s1", "/tmp/cwd1");
     store.createSession("s2", "/tmp/cwd2");
   });

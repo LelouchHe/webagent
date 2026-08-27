@@ -75,7 +75,7 @@ describe("HTTP routes", () => {
     mkdirSync(publicDir);
     writeFileSync(join(publicDir, "index.html"), "<h1>Test</h1>");
 
-    store = new Store(tmpDir);
+    store = new Store(tmpDir, "test-agent");
     const handler = createRequestHandler({
       store,
       publicDir,
@@ -237,6 +237,35 @@ describe("HTTP routes", () => {
     const sessions = JSON.parse(res.body);
     assert.equal(sessions.length, 1);
     assert.equal(sessions[0].id, "s1");
+  });
+
+  it("hides sessions owned by another agent from list and direct routes", async () => {
+    const other = new Store(tmpDir, "other-agent");
+    other.createSession("other-session", "/tmp", "auto", "other-agent-id");
+    other.saveEvent(
+      "other-session",
+      "user_message",
+      { text: "private" },
+      { from_ref: "user" },
+    );
+    other.close();
+
+    const list = await makeRequest(port, "GET", "/api/v1/sessions");
+    assert.deepEqual(JSON.parse(list.body), []);
+
+    const session = await makeRequest(
+      port,
+      "GET",
+      "/api/v1/sessions/other-session",
+    );
+    assert.equal(session.status, 404);
+
+    const events = await makeRequest(
+      port,
+      "GET",
+      "/api/v1/sessions/other-session/events",
+    );
+    assert.equal(events.status, 404);
   });
 
   it("GET /api/v1/sessions/:id/events returns 404 for unknown session", async () => {
@@ -441,7 +470,7 @@ describe("Image upload", () => {
     mkdirSync(publicDir);
     writeFileSync(join(publicDir, "index.html"), "<h1>Test</h1>");
 
-    store = new Store(tmpDir);
+    store = new Store(tmpDir, "test-agent");
     // Make sessions exist so the upload handler doesn't 404. Multiple session
     // IDs are used across tests, register all of them up front.
     for (const sid of ["test-session", "s1"]) {
@@ -688,7 +717,7 @@ describe("Push API routes", () => {
     mkdirSync(publicDir);
     writeFileSync(join(publicDir, "index.html"), "<h1>Test</h1>");
 
-    store = new Store(tmpDir);
+    store = new Store(tmpDir, "test-agent");
     registry = new ClientRegistry();
     pushService = new PushService(store, tmpDir, "mailto:test@localhost", {
       clientRegistry: registry,
@@ -857,7 +886,7 @@ describe("POST /api/v1/bridge/reload", () => {
     publicDir = join(tmpDir, "public");
     mkdirSync(publicDir);
     writeFileSync(join(publicDir, "index.html"), "<h1>Test</h1>");
-    store = new Store(tmpDir);
+    store = new Store(tmpDir, "test-agent");
     broadcastEvents = [];
     mockBridge = {
       reloading: false,

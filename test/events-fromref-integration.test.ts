@@ -29,7 +29,7 @@ describe("event writers populate from_ref correctly", () => {
 
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), "webagent-fromref-"));
-    store = new Store(tmpDir);
+    store = new Store(tmpDir, "test-agent");
     sessions = new SessionManager(store, tmpDir, tmpDir);
     store.createSession("s1", "/tmp");
   });

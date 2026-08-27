@@ -89,7 +89,7 @@ export class TitleService {
     this.cancelledSourceSessions.add(sessionId);
     if (!this.titleSessionId || !this.activeSourceSessions.has(sessionId))
       return;
-    await bridge.cancel(this.titleSessionId);
+    await bridge.cancelAgentSession(this.titleSessionId);
   }
 
   /** Clear the cached title session ID (e.g. after agent reload). */
@@ -107,14 +107,14 @@ export class TitleService {
         this.defaultCwd,
         { silent: true },
       );
-      this.sessions.liveSessions.add(id);
+      this.store.registerInternalAgentSession(id);
       // Pick the cheapest available model by matching id substrings against
       // the agent's reported availableModels (`configOptions[id=model].options`).
       // Empty pattern list, no model option, or no match → skip the call and
       // inherit the agent's default model (`currentModelId`).
       const picked = pickModelByPatterns(configOptions, this.modelPatterns);
       if (picked) {
-        await bridge.setConfigOption(id, "model", picked).catch(() => []);
+        await bridge.setAgentConfigOption(id, "model", picked).catch(() => []);
       }
       this.titleSessionId = id;
       return id;

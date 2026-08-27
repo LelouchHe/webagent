@@ -41,7 +41,7 @@ describe("GET /api/v1/sessions/:id/snapshot", () => {
   beforeEach(async () => {
     tmpDir = mkdtempSync(join(tmpdir(), "webagent-snapshot-"));
     mkdirSync(join(tmpDir, "public"));
-    store = new Store(tmpDir);
+    store = new Store(tmpDir, "test-agent");
     sessions = new SessionManager(store, tmpDir, tmpDir);
     sse = new SseManager();
     const handler = createRequestHandler({

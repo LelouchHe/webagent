@@ -47,7 +47,7 @@ describe("PushService — PushNotification payload shape", () => {
 
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), "webagent-push-egress-"));
-    store = new Store(tmpDir);
+    store = new Store(tmpDir, "test-agent");
     registry = new ClientRegistry();
     push = new StubbedPushService(store, tmpDir, "mailto:test@example.com", {
       clientRegistry: registry,
@@ -387,7 +387,7 @@ describe("PushService — Apple endpoint skip for kind:'close'", () => {
 
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), "webagent-push-apple-filter-"));
-    store = new Store(tmpDir);
+    store = new Store(tmpDir, "test-agent");
     registry = new ClientRegistry();
     push = new StubbedPushService(store, tmpDir, "mailto:test@example.com", {
       clientRegistry: registry,

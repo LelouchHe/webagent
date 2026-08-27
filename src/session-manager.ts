@@ -46,7 +46,8 @@ export function interruptBashProc(
 type SessionBridge = Pick<
   AgentBridge,
   "newSession" | "setConfigOption" | "loadSession"
->;
+> &
+  Partial<Pick<AgentBridge, "sessionMapped" | "discardUnboundSession">>;
 
 /** Minimum age (seconds) before an empty session is eligible for cleanup. */
 const EMPTY_SESSION_MIN_AGE_S = 60;
@@ -152,20 +153,28 @@ export class SessionManager {
     const sourceSession = inheritFromSessionId
       ? this.store.getSession(inheritFromSessionId)
       : null;
-    const { sessionId, configOptions: createdConfigOptions } =
+    const webSessionId = randomUUID();
+    const { sessionId: agentSessionId, configOptions: createdConfigOptions } =
       await bridge.newSession(sessionCwd, { silent: opts?.silent });
     let configOptions = createdConfigOptions;
     try {
-      this.store.createSession(sessionId, sessionCwd, source);
+      this.store.createSession(
+        webSessionId,
+        sessionCwd,
+        source,
+        agentSessionId,
+      );
     } catch (err) {
       slog.warn("ACP session created but local persistence failed", {
-        sessionId,
+        agentSessionId,
         error: err,
       });
+      bridge.discardUnboundSession?.(agentSessionId);
       throw err;
     }
-    this.liveSessions.add(sessionId);
-    this.recordConfigOptions(sessionId, createdConfigOptions);
+    this.liveSessions.add(webSessionId);
+    this.recordConfigOptions(webSessionId, createdConfigOptions);
+    bridge.sessionMapped?.(agentSessionId);
 
     // Inherit config options from source session
     if (sourceSession) {
@@ -177,15 +186,15 @@ export class SessionManager {
         if (!value) continue;
         try {
           const updatedConfigOptions = await bridge.setConfigOption(
-            sessionId,
+            webSessionId,
             configId,
             value,
           );
           if (updatedConfigOptions.length > 0) {
             configOptions = updatedConfigOptions;
-            this.recordConfigOptions(sessionId, updatedConfigOptions);
+            this.recordConfigOptions(webSessionId, updatedConfigOptions);
           } else {
-            this.store.updateSessionConfig(sessionId, configId, value);
+            this.store.updateSessionConfig(webSessionId, configId, value);
           }
         } catch {
           // Option may no longer be available; ignore
@@ -193,9 +202,9 @@ export class SessionManager {
       }
     }
 
-    const session = this.store.getSession(sessionId);
+    const session = this.store.getSession(webSessionId);
     return {
-      sessionId,
+      sessionId: webSessionId,
       configOptions: session
         ? this.applyStoredConfig(configOptions, session)
         : [],

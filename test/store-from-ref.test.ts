@@ -20,7 +20,7 @@ describe("Store events.from_ref + orphan cleanup + FK", () => {
   });
 
   it("saveEvent persists explicit from_ref values per category", () => {
-    const store = new Store(tmpDir);
+    const store = new Store(tmpDir, "test-agent");
     store.createSession("s1", "/tmp");
 
     const userMsg = store.saveEvent(
@@ -64,7 +64,7 @@ describe("Store events.from_ref + orphan cleanup + FK", () => {
   });
 
   it("saveEvent accepts msg:<id> form for inbox-authored events", () => {
-    const store = new Store(tmpDir);
+    const store = new Store(tmpDir, "test-agent");
     store.createSession("s1", "/tmp");
 
     const ev = store.saveEvent(
@@ -81,7 +81,7 @@ describe("Store events.from_ref + orphan cleanup + FK", () => {
   });
 
   it("saveEvent THROWS when from_ref is missing (guard active)", () => {
-    const store = new Store(tmpDir);
+    const store = new Store(tmpDir, "test-agent");
     store.createSession("s1", "/tmp");
     assert.throws(
       () => store.saveEvent("s1", "user_message", { text: "x" }),
@@ -116,7 +116,7 @@ describe("Store events.from_ref + orphan cleanup + FK", () => {
     legacy.close();
 
     // Open via Store -- migrate() must add the column and backfill all rows.
-    const store = new Store(tmpDir);
+    const store = new Store(tmpDir, "test-agent");
     const rows = store["db"]
       .prepare(
         "SELECT seq, type, from_ref FROM events WHERE session_id = 's1' ORDER BY seq",
@@ -156,7 +156,7 @@ describe("Store events.from_ref + orphan cleanup + FK", () => {
     `);
     legacy.close();
 
-    const store = new Store(tmpDir);
+    const store = new Store(tmpDir, "test-agent");
     const orphans = store["db"]
       .prepare("SELECT COUNT(*) AS n FROM events WHERE session_id = 'orphan'")
       .get() as { n: number };
@@ -174,7 +174,7 @@ describe("Store events.from_ref + orphan cleanup + FK", () => {
   });
 
   it("foreign_keys pragma is on after construction (rejects orphan inserts)", () => {
-    const store = new Store(tmpDir);
+    const store = new Store(tmpDir, "test-agent");
     const fk = store["db"].pragma("foreign_keys", { simple: true });
     assert.equal(fk, 1, "foreign_keys pragma must be on");
 
@@ -194,7 +194,7 @@ describe("Store events.from_ref + orphan cleanup + FK", () => {
   });
 
   it("idx_events_type exists after migrate", () => {
-    const store = new Store(tmpDir);
+    const store = new Store(tmpDir, "test-agent");
     const idx = store["db"]
       .prepare(
         "SELECT name FROM sqlite_master WHERE type='index' AND name='idx_events_type'",

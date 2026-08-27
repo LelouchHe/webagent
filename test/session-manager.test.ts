@@ -13,7 +13,7 @@ describe("SessionManager", () => {
 
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), "webagent-test-"));
-    store = new Store(tmpDir);
+    store = new Store(tmpDir, "test-agent");
     sm = new SessionManager(store, tmpDir, tmpDir);
   });
 
@@ -184,10 +184,25 @@ describe("SessionManager", () => {
 
       // mode is intentionally NOT inherited — new sessions always start in default (agent) mode
       assert.deepEqual(configCalls, [
-        { sessionId: "s2", configId: "model", value: "claude-sonnet-4.6" },
-        { sessionId: "s2", configId: "reasoning_effort", value: "high" },
+        {
+          sessionId: created.sessionId,
+          configId: "model",
+          value: "claude-sonnet-4.6",
+        },
+        {
+          sessionId: created.sessionId,
+          configId: "reasoning_effort",
+          value: "high",
+        },
       ]);
-      assert.equal(created.sessionId, "s2");
+      assert.match(
+        created.sessionId,
+        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+      );
+      assert.notEqual(created.sessionId, "s2");
+      assert.equal(store.getAgentSessionId(created.sessionId), "s2");
+      assert.ok(sm.liveSessions.has(created.sessionId));
+      assert.ok(!sm.liveSessions.has("s2"));
       assert.deepEqual(
         created.configOptions.map((opt) => ({
           id: opt.id,
@@ -199,9 +214,15 @@ describe("SessionManager", () => {
           { id: "reasoning_effort", currentValue: "high" },
         ],
       );
-      assert.equal(store.getSession("s2")!.model, "claude-sonnet-4.6");
-      assert.equal(store.getSession("s2")!.mode, "agent");
-      assert.equal(store.getSession("s2")!.reasoning_effort, "high");
+      assert.equal(
+        store.getSession(created.sessionId)!.model,
+        "claude-sonnet-4.6",
+      );
+      assert.equal(store.getSession(created.sessionId)!.mode, "agent");
+      assert.equal(
+        store.getSession(created.sessionId)!.reasoning_effort,
+        "high",
+      );
     });
 
     it("does not set config when no source session is provided", async () => {
@@ -222,9 +243,14 @@ describe("SessionManager", () => {
       const created = await sm.createSession(bridge);
 
       assert.equal(configCalled, false);
-      assert.equal(created.sessionId, "s2");
+      assert.notEqual(created.sessionId, "s2");
+      assert.match(
+        created.sessionId,
+        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+      );
       assert.deepEqual(created.configOptions, []);
-      assert.equal(store.getSession("s2")!.model, null);
+      assert.equal(store.getSession(created.sessionId)!.model, null);
+      assert.equal(store.getAgentSessionId(created.sessionId), "s2");
     });
 
     it("rejects a non-existent cwd", async () => {

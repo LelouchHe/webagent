@@ -105,7 +105,7 @@ describe("acp-push-close: handled signals fire sendClose", () => {
     const publicDir = join(tmpDir, "public");
     mkdirSync(publicDir);
     writeFileSync(join(publicDir, "index.html"), "<h1>t</h1>");
-    store = new Store(tmpDir);
+    store = new Store(tmpDir, "test-agent");
     registry = new ClientRegistry();
     sessionId = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
     store.createSession(sessionId, "/tmp");

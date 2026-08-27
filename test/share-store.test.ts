@@ -13,7 +13,7 @@ describe("shares store", () => {
 
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), "webagent-shares-"));
-    store = new Store(tmpDir);
+    store = new Store(tmpDir, "test-agent");
     store.createSession(sessionId, "/tmp");
   });
 
@@ -118,6 +118,7 @@ describe("shares store", () => {
       sessionId: "sess-b",
       snapshotSeq: 1,
     });
+
     store.activateShare(t2);
     store.revokeShare(t2);
     store.insertSharePreview({
@@ -129,6 +130,34 @@ describe("shares store", () => {
     assert.equal(rows.length, 2);
     const t1Row = rows.find((r) => r.token === t1)!;
     assert.equal(t1Row.session_title, "Demo title");
+  });
+
+  it("listOwnerShares only returns shares for the current agent", () => {
+    const ownToken = generateShareToken();
+    store.insertSharePreview({
+      token: ownToken,
+      sessionId,
+      snapshotSeq: 0,
+    });
+
+    const other = new Store(tmpDir, "other-agent");
+    other.createSession("other-session", "/tmp", "auto", "other-agent-id");
+    const otherToken = generateShareToken();
+    other.insertSharePreview({
+      token: otherToken,
+      sessionId: "other-session",
+      snapshotSeq: 0,
+    });
+
+    assert.deepEqual(
+      store.listOwnerShares().map((share) => share.token),
+      [ownToken],
+    );
+    assert.deepEqual(
+      other.listOwnerShares().map((share) => share.token),
+      [otherToken],
+    );
+    other.close();
   });
 
   it("pruneStalePreviews removes previews older than 24h", () => {
@@ -169,6 +198,7 @@ describe("shares store", () => {
       assert.equal(store.getSession(sessionId), undefined);
       assert.equal(store.getSessionIncludingDeleted(sessionId), undefined);
       assert.equal(store.getEvents(sessionId).length, 0);
+      assert.equal(store.getAgentSessionBinding(sessionId), undefined);
     });
 
     it("deleteSession with active share soft-deletes; events + viewer-side lookup keep working", () => {
@@ -191,6 +221,10 @@ describe("shares store", () => {
       assert.notEqual(tomb, undefined);
       assert.notEqual(tomb.deleted_at, null);
       assert.equal(store.getEvents(sessionId).length, 1);
+      assert.equal(
+        store.getAgentSessionBinding(sessionId)?.web_session_id,
+        sessionId,
+      );
       // Share row still live:
       assert.notEqual(store.getShareByToken(tok), undefined);
     });
@@ -252,7 +286,7 @@ describe("owner_prefs store", () => {
 
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), "webagent-prefs-"));
-    store = new Store(tmpDir);
+    store = new Store(tmpDir, "test-agent");
   });
 
   afterEach(() => {

@@ -195,7 +195,7 @@ describe("DELETE /api/v1/sessions/:id/share — revoke", () => {
 
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), "wa-share-rvk-"));
-    store = new Store(tmpDir);
+    store = new Store(tmpDir, "test-agent");
     store.createSession(sid, "/tmp/p");
     store.saveEvent(sid, "user_message", { text: "hi" }, { from_ref: "agent" });
     deps = { store, config: cfg, dataDir: tmpDir, publicDir: "/tmp" };
@@ -290,7 +290,7 @@ describe("PATCH /api/v1/sessions/:id/share — label/display_name", () => {
 
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), "wa-share-pch-"));
-    store = new Store(tmpDir);
+    store = new Store(tmpDir, "test-agent");
     store.createSession(sid, "/tmp/p");
     store.saveEvent(sid, "user_message", { text: "hi" }, { from_ref: "agent" });
     deps = { store, config: cfg, dataDir: tmpDir, publicDir: "/tmp" };
@@ -424,7 +424,7 @@ describe("GET /api/v1/shares — owner list", () => {
 
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), "wa-share-ls-"));
-    store = new Store(tmpDir);
+    store = new Store(tmpDir, "test-agent");
     deps = { store, config: cfg, dataDir: tmpDir, publicDir: "/tmp" };
   });
   afterEach(() => {
@@ -482,7 +482,7 @@ describe("GET/PUT /api/v1/share/by — default display_name", () => {
 
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), "wa-share-by-"));
-    store = new Store(tmpDir);
+    store = new Store(tmpDir, "test-agent");
     deps = { store, config: cfg, dataDir: tmpDir, publicDir: "/tmp" };
   });
   afterEach(() => {

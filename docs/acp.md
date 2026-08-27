@@ -5,6 +5,10 @@ WebAgent uses ACP for the core agent loop: session creation / restore, prompt tu
 ## Core ACP Surface
 
 - Session lifecycle goes through ACP (`newSession`, `loadSession`, `prompt`, `cancel`)
+- WebAgent exposes its own stable UUID in REST/SSE and stores the agent's opaque
+  ACP session ID in an internal mapping keyed by the `agent_cmd` executable
+  token (normally an absolute path). Switching backends hides sessions belonging to other agents;
+  switching back restores their original WebAgent URLs.
 - ACP cancel is a notification rather than an acknowledgement. WebAgent keeps
   the prompt active until its prompt response supplies the terminal stop reason;
   timeout only marks the request unconfirmed.
@@ -138,7 +142,10 @@ ACP is a protocol-level abstraction. The trade-off for agent-agnosticism is a th
 - **Model discovery** — no standard method to query available models. Currently uses the SDK's unstable session-model API.
 - **Progress / phase signals** — no structured "thinking", "searching", "editing" stage indicators. Only raw streaming chunks; phase information depends on agent-specific event content.
 - **Error semantics** — agent errors have no structured classification (rate limit vs. model error vs. tool failure). All failures are opaque.
-- **Session portability** — switching agents means abandoning existing sessions. No export/import of session state across different agent backends.
+- **Session portability** — sessions remain bound to the backend that created
+  them. Switching agents hides rather than converts them; switching back makes
+  them available again. ACP provides no export/import of context between
+  different backends.
 - **Permission granularity** — binary allow/deny only. No scoped permissions ("allow reads in this directory") or conditional approval.
 - **Agent behavior configuration** — beyond capability declarations, the client cannot set temperature, system prompt, safety settings, or other agent parameters.
 - **Streaming backpressure** — no flow control when the agent outputs faster than the client can process. WebAgent mitigates this with `limits.bash_output` but the protocol has no mechanism for it.

@@ -40,7 +40,7 @@ describe("GET /api/v1/messages — list + single", () => {
     const publicDir = join(tmpDir, "public");
     mkdirSync(publicDir);
     writeFileSync(join(publicDir, "index.html"), "<h1>t</h1>");
-    store = new Store(tmpDir);
+    store = new Store(tmpDir, "test-agent");
     const handler = createRequestHandler({
       sseManager: new SseManager(),
       store,

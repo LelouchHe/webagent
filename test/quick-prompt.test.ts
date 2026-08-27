@@ -94,7 +94,7 @@ describe("Quick Prompt REST API", () => {
     mkdirSync(publicDir);
     writeFileSync(join(publicDir, "index.html"), "<h1>Test</h1>");
 
-    store = new Store(join(tmpDir, "test.db"));
+    store = new Store(join(tmpDir, "test.db"), "test-agent");
     sessions = new SessionManager(store, tmpDir, tmpDir);
     sseManager = new SseManager();
     mockBridge = createMockBridge();

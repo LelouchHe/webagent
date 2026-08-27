@@ -63,7 +63,7 @@ describe("POST /api/v1/messages/:id/consume + ack + DELETE", () => {
     const publicDir = join(tmpDir, "public");
     mkdirSync(publicDir);
     writeFileSync(join(publicDir, "index.html"), "<h1>t</h1>");
-    store = new Store(tmpDir);
+    store = new Store(tmpDir, "test-agent");
     sessions = new SessionManager(store, tmpDir, tmpDir);
     newSessionCalls = [];
     newSessionOptions = [];
@@ -202,7 +202,8 @@ describe("POST /api/v1/messages/:id/consume + ack + DELETE", () => {
     const r = await send(port, "POST", "/api/v1/messages/m1/consume");
     assert.equal(r.status, 200);
     const body = JSON.parse(r.body);
-    assert.equal(body.sessionId, "agent-session-1");
+    assert.match(body.sessionId, /^[0-9a-f-]{36}$/);
+    assert.equal(store.getAgentSessionId(body.sessionId), "agent-session-1");
     assert.deepEqual(newSessionCalls, [join(tmpDir, "work")]);
     assert.deepEqual(newSessionOptions, [{ silent: true }]);
 
@@ -320,13 +321,13 @@ describe("POST /api/v1/messages/:id/consume + ack + DELETE", () => {
     const [r1, r2] = await Promise.all([first, second]);
     assert.equal(r1.status, 200);
     assert.equal(r2.status, 200);
-    assert.equal(JSON.parse(r1.body).sessionId, "agent-session-1");
-    assert.equal(JSON.parse(r2.body).sessionId, "agent-session-1");
+    const sessionId = JSON.parse(r1.body).sessionId as string;
+    assert.equal(JSON.parse(r2.body).sessionId, sessionId);
+    assert.equal(store.getAgentSessionId(sessionId), "agent-session-1");
     assert.equal(newSessionCalls.length, 1);
     assert.equal(
-      store
-        .getEvents("agent-session-1")
-        .filter((event) => event.type === "message").length,
+      store.getEvents(sessionId).filter((event) => event.type === "message")
+        .length,
       1,
     );
   });
@@ -352,7 +353,8 @@ describe("POST /api/v1/messages/:id/consume + ack + DELETE", () => {
     failNewSession = false;
     const retry = await send(port, "POST", "/api/v1/messages/m-fail/consume");
     assert.equal(retry.status, 200);
-    assert.equal(JSON.parse(retry.body).sessionId, "agent-session-2");
+    const sessionId = JSON.parse(retry.body).sessionId as string;
+    assert.equal(store.getAgentSessionId(sessionId), "agent-session-2");
   });
 
   it("rolls back the local session when the message transaction fails", async () => {
@@ -365,8 +367,9 @@ describe("POST /api/v1/messages/:id/consume + ack + DELETE", () => {
 
     assert.equal(r.status, 500);
     assert.ok(store.getMessage("m-store-fail"));
-    assert.equal(store.getSession("agent-session-1"), undefined);
-    assert.equal(sessions.liveSessions.has("agent-session-1"), false);
+    assert.equal(store.listSessions({ source: "message" }).length, 0);
+    assert.equal(store.getWebSessionId("agent-session-1"), undefined);
+    assert.equal(sessions.liveSessions.size, 0);
   });
 
   it("keeps the inbox row when its cwd no longer exists", async () => {
@@ -412,7 +415,8 @@ describe("POST /api/v1/messages/:id/consume + ack + DELETE", () => {
 
     assert.equal(r.status, 200);
     assert.deepEqual(newSessionCalls, [tmpDir]);
-    assert.equal(store.getSession("agent-session-1")?.cwd, tmpDir);
+    const sessionId = JSON.parse(r.body).sessionId as string;
+    assert.equal(store.getSession(sessionId)?.cwd, tmpDir);
   });
 
   it("consume of unknown id returns 404", async () => {

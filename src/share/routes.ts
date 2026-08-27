@@ -566,6 +566,10 @@ async function handlePublish(
     json(res, HTTP_STATUS.BAD_REQUEST, { error: "token required" });
     return;
   }
+  if (!deps.store.ownsSession(sessionId)) {
+    json(res, HTTP_STATUS.NOT_FOUND, { error: "share not found" });
+    return;
+  }
 
   const row = deps.store.getShareByToken(body.token);
   if (!row) {
@@ -1041,6 +1045,10 @@ async function handleRevoke(
     json(res, HTTP_STATUS.BAD_REQUEST, { error: "token required" });
     return;
   }
+  if (!deps.store.ownsSession(sessionId)) {
+    json(res, HTTP_STATUS.NOT_FOUND, { error: "share not found" });
+    return;
+  }
 
   const row = deps.store.getShareByToken(body.token);
   if (!row) {
@@ -1107,6 +1115,10 @@ async function handlePatchLabel(
 
   if (!body.token || typeof body.token !== "string") {
     json(res, HTTP_STATUS.BAD_REQUEST, { error: "token required" });
+    return;
+  }
+  if (!deps.store.ownsSession(sessionId)) {
+    json(res, HTTP_STATUS.NOT_FOUND, { error: "share not found" });
     return;
   }
 

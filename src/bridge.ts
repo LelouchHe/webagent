@@ -22,6 +22,11 @@ import { log } from "./log.ts";
 
 const blog = log.scope("bridge");
 
+export interface AgentSessionIds {
+  getAgentSessionId(webSessionId: string): string | undefined;
+  getWebSessionId(agentSessionId: string): string | undefined;
+}
+
 export class AgentBridge extends EventEmitter {
   private proc: ChildProcess | null = null;
   private conn: acp.ClientSideConnection | null = null;
@@ -32,17 +37,34 @@ export class AgentBridge extends EventEmitter {
   private readonly permissionRequestSessions = new Map<string, string>();
   private readonly silentSessions = new Set<string>(); // Sessions that don't emit events
   private readonly silentBuffers = new Map<string, string>(); // Text buffers for silent sessions
+  private pendingNewSessions = 0;
+  private readonly unboundNewSessionIds = new Set<string>();
+  private readonly pendingSessionUpdates = new Map<
+    string,
+    acp.SessionNotification["update"][]
+  >();
   private readonly pendingAborts = new Map<string, (e: Error) => void>();
   private deadReason: string | null = null;
   private stderrTail = "";
   private readonly closedProcesses = new WeakSet<ChildProcess>();
   readonly agentCmd: string;
+  private readonly sessionIds: AgentSessionIds;
   reloading = false;
   private attachmentDispatcher: AttachmentDispatcher | null = null;
 
-  constructor(agentCmd: string) {
+  constructor(agentCmd: string, sessionIds: AgentSessionIds) {
     super();
     this.agentCmd = agentCmd;
+    this.sessionIds = sessionIds;
+  }
+
+  private agentSessionId(webSessionId: string): string {
+    const id = this.sessionIds.getAgentSessionId(webSessionId);
+    if (!id)
+      throw new Error(
+        `Session is not available for the current agent: ${webSessionId}`,
+      );
+    return id;
   }
 
   /**
@@ -134,21 +156,48 @@ export class AgentBridge extends EventEmitter {
     opts?: { silent?: boolean },
   ): Promise<{ sessionId: string; configOptions: ConfigOption[] }> {
     if (!this.conn) throw new Error("Not connected");
-    const session = await this.conn.newSession({
-      cwd,
-      mcpServers: [],
-    });
-    const configOptions = (session.configOptions ??
-      []) as unknown as ConfigOption[];
-    if (!opts?.silent) {
-      this.emit("event", {
-        type: "session_created",
-        sessionId: session.sessionId,
+    this.pendingNewSessions++;
+    try {
+      const session = await this.conn.newSession({
         cwd,
-        configOptions,
-      } satisfies AgentEvent);
+        mcpServers: [],
+      });
+      if (opts?.silent) {
+        this.pendingSessionUpdates.delete(session.sessionId);
+        this.silentSessions.add(session.sessionId);
+      } else {
+        this.unboundNewSessionIds.add(session.sessionId);
+      }
+      const configOptions = (session.configOptions ??
+        []) as unknown as ConfigOption[];
+      return { sessionId: session.sessionId, configOptions };
+    } finally {
+      this.pendingNewSessions--;
+      if (this.pendingNewSessions === 0) {
+        for (const sessionId of this.pendingSessionUpdates.keys()) {
+          if (!this.unboundNewSessionIds.has(sessionId)) {
+            this.pendingSessionUpdates.delete(sessionId);
+            blog.warn("discarded update for unrelated unmapped ACP session", {
+              sessionId,
+            });
+          }
+        }
+      }
     }
-    return { sessionId: session.sessionId, configOptions };
+  }
+
+  sessionMapped(agentSessionId: string): void {
+    this.unboundNewSessionIds.delete(agentSessionId);
+    const updates = this.pendingSessionUpdates.get(agentSessionId) ?? [];
+    this.pendingSessionUpdates.delete(agentSessionId);
+    for (const update of updates) {
+      void this.handleSessionUpdate({ sessionId: agentSessionId, update });
+    }
+  }
+
+  discardUnboundSession(agentSessionId: string): void {
+    this.unboundNewSessionIds.delete(agentSessionId);
+    this.pendingSessionUpdates.delete(agentSessionId);
   }
 
   async loadSession(
@@ -156,10 +205,11 @@ export class AgentBridge extends EventEmitter {
     cwd: string,
   ): Promise<{ sessionId: string; configOptions: ConfigOption[] }> {
     if (!this.conn) throw new Error("Not connected");
+    const agentSessionId = this.agentSessionId(sessionId);
     let session: acp.LoadSessionResponse;
     try {
       session = await this.conn.loadSession({
-        sessionId,
+        sessionId: agentSessionId,
         cwd,
         mcpServers: [],
       });
@@ -196,7 +246,23 @@ export class AgentBridge extends EventEmitter {
   ): Promise<ConfigOption[]> {
     if (!this.conn) throw new Error("Not connected");
     const result = await this.conn.setSessionConfigOption({
-      sessionId,
+      sessionId: this.agentSessionId(sessionId),
+      configId,
+      ...(typeof value === "boolean"
+        ? { type: "boolean" as const, value }
+        : { value }),
+    });
+    return result.configOptions as unknown as ConfigOption[];
+  }
+
+  async setAgentConfigOption(
+    agentSessionId: string,
+    configId: string,
+    value: ConfigValue,
+  ): Promise<ConfigOption[]> {
+    if (!this.conn) throw new Error("Not connected");
+    const result = await this.conn.setSessionConfigOption({
+      sessionId: agentSessionId,
       configId,
       ...(typeof value === "boolean"
         ? { type: "boolean" as const, value }
@@ -247,7 +313,7 @@ export class AgentBridge extends EventEmitter {
       promptParts.push({ type: "text", text });
       const result = (await Promise.race([
         this.conn.prompt({
-          sessionId,
+          sessionId: this.agentSessionId(sessionId),
           prompt: promptParts,
         }),
         abortPromise,
@@ -292,7 +358,11 @@ export class AgentBridge extends EventEmitter {
         this.denyPermission(requestId);
       }
     }
-    await this.conn?.cancel({ sessionId });
+    await this.conn?.cancel({ sessionId: this.agentSessionId(sessionId) });
+  }
+
+  async cancelAgentSession(agentSessionId: string): Promise<void> {
+    await this.conn?.cancel({ sessionId: agentSessionId });
   }
 
   /**
@@ -431,6 +501,8 @@ export class AgentBridge extends EventEmitter {
       // 4. Clean up bridge-side silent session state
       this.silentSessions.clear();
       this.silentBuffers.clear();
+      this.unboundNewSessionIds.clear();
+      this.pendingSessionUpdates.clear();
 
       // 5. Invalidate title service session
       titleService.invalidate();
@@ -523,6 +595,10 @@ export class AgentBridge extends EventEmitter {
   private handlePermission(
     params: acp.RequestPermissionRequest,
   ): Promise<acp.RequestPermissionResponse> {
+    const webSessionId = this.sessionIds.getWebSessionId(params.sessionId);
+    if (!webSessionId) {
+      return Promise.resolve({ outcome: { outcome: "cancelled" } });
+    }
     const requestId = crypto.randomUUID();
     const toolCall = params.toolCall;
     // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- toolCall may be undefined in practice
@@ -541,11 +617,11 @@ export class AgentBridge extends EventEmitter {
     return new Promise((resolve) => {
       // Register resolver BEFORE emitting, so synchronous auto-approve can find it
       this.permissionResolvers.set(requestId, resolve);
-      this.permissionRequestSessions.set(requestId, params.sessionId);
+      this.permissionRequestSessions.set(requestId, webSessionId);
       this.emit("event", {
         type: "permission_request",
         requestId,
-        sessionId: params.sessionId,
+        sessionId: webSessionId,
         title,
         toolCallId,
         options: params.options,
@@ -559,13 +635,29 @@ export class AgentBridge extends EventEmitter {
 
   private handleSessionUpdate(params: acp.SessionNotification): Promise<void> {
     const update = params.update;
-    const sessionId = params.sessionId;
+    const agentSessionId = params.sessionId;
 
-    if (this.silentSessions.has(sessionId)) {
-      this.captureSilentText(sessionId, update);
+    if (this.silentSessions.has(agentSessionId)) {
+      this.captureSilentText(agentSessionId, update);
       return Promise.resolve();
     }
 
+    const sessionId = this.sessionIds.getWebSessionId(agentSessionId);
+    if (!sessionId) {
+      if (
+        this.pendingNewSessions > 0 ||
+        this.unboundNewSessionIds.has(agentSessionId)
+      ) {
+        const updates = this.pendingSessionUpdates.get(agentSessionId) ?? [];
+        updates.push(update);
+        this.pendingSessionUpdates.set(agentSessionId, updates);
+        return Promise.resolve();
+      }
+      blog.warn("ignored event for unmapped ACP session", {
+        sessionId: agentSessionId,
+      });
+      return Promise.resolve();
+    }
     const event = this.sessionUpdateToEvent(sessionId, update);
     if (event) this.emit("event", event);
     return Promise.resolve();

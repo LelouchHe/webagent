@@ -27,7 +27,7 @@ describe("attachment-labels integration (replay egress)", () => {
 
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), "webagent-att-int-"));
-    store = new Store(tmpDir);
+    store = new Store(tmpDir, "test-agent");
     sm = new SessionManager(store, tmpDir, tmpDir);
     store.createSession("s1", "/x");
     store.insertAttachment({

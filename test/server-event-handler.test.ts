@@ -42,7 +42,7 @@ describe("handleAgentEvent", () => {
 
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), "webagent-server-test-"));
-    store = new Store(tmpDir);
+    store = new Store(tmpDir, "test-agent");
     sessions = new SessionManager(store, tmpDir, tmpDir);
   });
 

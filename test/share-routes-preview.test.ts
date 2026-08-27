@@ -108,7 +108,7 @@ describe("share preview routes — POST /api/v1/sessions/:id/share", () => {
 
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), "wa-share-routes-"));
-    store = new Store(tmpDir);
+    store = new Store(tmpDir, "test-agent");
     store.createSession(sessionId, "/tmp/project");
     deps = {
       store,
@@ -321,7 +321,7 @@ describe("share preview routes — GET /api/v1/sessions/:id/share/preview", () =
 
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), "wa-share-preview-"));
-    store = new Store(tmpDir);
+    store = new Store(tmpDir, "test-agent");
     store.createSession(sessionId, "/tmp/project");
     store.updateSessionTitle(sessionId, "Test session");
     deps = {

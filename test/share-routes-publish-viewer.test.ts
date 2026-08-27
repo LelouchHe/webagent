@@ -150,7 +150,7 @@ describe("share publish route — POST /api/v1/sessions/:id/share/publish", () =
 
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), "wa-share-pub-"));
-    store = new Store(tmpDir);
+    store = new Store(tmpDir, "test-agent");
     store.createSession(sessionId, "/tmp/project");
     store.saveEvent(
       sessionId,
@@ -349,7 +349,7 @@ describe("share public viewer — GET /s/:token + /api/v1/shared/:token/events",
       join(publicDir, "share-viewer.html"),
       "<!doctype html><html><body data-viewer>ok</body></html>",
     );
-    store = new Store(tmpDir);
+    store = new Store(tmpDir, "test-agent");
     store.createSession(sessionId, "/tmp/project");
     store.saveEvent(
       sessionId,
@@ -535,7 +535,7 @@ describe("share image proxy — GET /s/:token/attachments/:file", () => {
       Buffer.from([0x89, 0x50, 0x4e, 0x47]),
     );
 
-    store = new Store(tmpDir);
+    store = new Store(tmpDir, "test-agent");
     store.createSession(sessionId, "/tmp/project");
     store.saveEvent(
       sessionId,

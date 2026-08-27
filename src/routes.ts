@@ -2578,13 +2578,23 @@ export function createRequestHandler(
         }
 
         const cwd = typeof body.cwd === "string" ? body.cwd : undefined;
-        const { sessionId } = await sessions.createSession(
+        const { sessionId, configOptions } = await sessions.createSession(
           bridge,
           cwd,
           undefined,
           "auto",
         );
         const streamUrl = `/api/v1/sessions/${sessionId}/events/stream`;
+        const session = store.getSession(sessionId);
+
+        sseManager.broadcast({
+          type: "session_created",
+          sessionId,
+          cwd: session?.cwd,
+          title: session?.title,
+          configOptions,
+          agentCommands: sessions.getAgentCommands(sessionId),
+        });
 
         json(res, HTTP_STATUS.ACCEPTED, { sessionId, streamUrl });
 

@@ -28,7 +28,7 @@ describe("PushService — visibility reads delegate to ClientRegistry (Plan C St
 
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), "webagent-push-step3-"));
-    store = new Store(tmpDir);
+    store = new Store(tmpDir, "test-agent");
     nowMs = 1_000_000;
     registry = new ClientRegistry({
       visibilityTtlMs: 60_000,

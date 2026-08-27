@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { loadConfig } from "./config.ts";
 import { setLogLevel, log } from "./log.ts";
 import { AgentBridge } from "./bridge.ts";
+import { agentKeyFromCommand } from "./agent-key.ts";
 import { Store } from "./store.ts";
 import { SessionManager } from "./session-manager.ts";
 import { TitleService } from "./title-service.ts";
@@ -67,7 +68,10 @@ const PKG_VERSION = (() => {
 
 // --- Core dependencies ---
 
-const store = new Store(config.data_dir);
+const store = new Store(
+  config.data_dir,
+  agentKeyFromCommand(preflight.agentCmd),
+);
 console.log(`[store] using ${config.data_dir}/`);
 
 // Pin <data_dir>/sessions realpath at boot so all later anchor checks
@@ -171,7 +175,7 @@ const server = createServer((req, res) => {
 });
 
 async function initBridge(agentCmd: string): Promise<AgentBridge> {
-  const b = new AgentBridge(agentCmd);
+  const b = new AgentBridge(agentCmd, store);
   b.setAttachmentDispatcher(attachmentDispatcher);
 
   const eventHandlerConfig = _buildBridgeEventHandlerConfig({

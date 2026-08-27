@@ -50,7 +50,7 @@ describe("HTTP /events attachment label egress", () => {
     mkdirSync(publicDir);
     writeFileSync(join(publicDir, "index.html"), "ok");
 
-    store = new Store(tmpDir);
+    store = new Store(tmpDir, "test-agent");
     sessions = new SessionManager(store, tmpDir, tmpDir);
 
     store.createSession("s1", "/x");

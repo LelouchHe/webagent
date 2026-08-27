@@ -112,7 +112,7 @@ describe("Session REST API", () => {
     mkdirSync(publicDir);
     writeFileSync(join(publicDir, "index.html"), "<h1>Test</h1>");
 
-    store = new Store(tmpDir);
+    store = new Store(tmpDir, "test-agent");
     sessions = new SessionManager(store, tmpDir, tmpDir);
     mockBridge = createMockBridge();
     broadcastEvents = [];
@@ -158,7 +158,8 @@ describe("Session REST API", () => {
       const res = await makeRequest(port, "POST", "/api/v1/sessions", "{}");
       assert.equal(res.status, 201);
       const body = JSON.parse(res.body);
-      assert.equal(body.id, "mock-session-1");
+      assert.match(body.id, /^[0-9a-f-]{36}$/);
+      assert.equal(store.getAgentSessionId(body.id), "mock-session-1");
       assert.equal(body.cwd, tmpDir);
       assert.equal(body.title, null);
       assert.ok(Array.isArray(body.configOptions));

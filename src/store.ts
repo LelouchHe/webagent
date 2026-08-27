@@ -16,6 +16,13 @@ export interface SessionRow {
   deleted_at: number | null;
 }
 
+export interface AgentSessionRow {
+  agent_key: string;
+  agent_session_id: string;
+  web_session_id: string | null;
+  created_at: string;
+}
+
 export interface EventRow {
   id: number;
   session_id: string;
@@ -126,8 +133,11 @@ export interface AttachmentInput {
 
 export class Store {
   private readonly db: Database.Database;
+  readonly agentKey: string;
 
-  constructor(dataDir: string) {
+  constructor(dataDir: string, agentKey: string) {
+    if (!agentKey) throw new Error("agentKey is required");
+    this.agentKey = agentKey;
     mkdirSync(dataDir, { recursive: true });
     this.db = new Database(join(dataDir, "webagent.db"));
     this.db.pragma("journal_mode = WAL");
@@ -146,6 +156,16 @@ export class Store {
         created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now')),
         last_active_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now'))
       );
+      CREATE TABLE IF NOT EXISTS agent_sessions (
+        agent_key TEXT NOT NULL,
+        agent_session_id TEXT NOT NULL,
+        web_session_id TEXT REFERENCES sessions(id) ON DELETE CASCADE,
+        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now')),
+        PRIMARY KEY (agent_key, agent_session_id)
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_sessions_web
+        ON agent_sessions(web_session_id)
+        WHERE web_session_id IS NOT NULL;
       CREATE TABLE IF NOT EXISTS events (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         session_id TEXT NOT NULL REFERENCES sessions(id),
@@ -196,6 +216,24 @@ export class Store {
     if (!colNames.has("deleted_at")) {
       this.db.exec("ALTER TABLE sessions ADD COLUMN deleted_at INTEGER");
     }
+
+    // One-time dual-ID migration. Existing WebAgent session IDs were also the
+    // ACP agent's IDs, so preserve the public IDs and record that identity
+    // mapping under the agent command active during the upgrade.
+    this.db
+      .prepare(
+        `
+        INSERT INTO agent_sessions (
+          agent_key, agent_session_id, web_session_id, created_at
+        )
+        SELECT ?, s.id, s.id, s.created_at
+        FROM sessions s
+        WHERE NOT EXISTS (
+          SELECT 1 FROM agent_sessions a WHERE a.web_session_id = s.id
+        )
+      `,
+      )
+      .run(this.agentKey);
 
     // messages — pending unbound notifications. POST /api/v1/messages with
     // `to = "user"` lands here; consumeMessageTx transactionally moves the
@@ -390,35 +428,110 @@ export class Store {
     `);
   }
 
-  createSession(id: string, cwd: string, source: string = "auto"): SessionRow {
-    this.db
-      .prepare("INSERT INTO sessions (id, cwd, source) VALUES (?, ?, ?)")
-      .run(id, cwd, source);
-    return this.db
-      .prepare("SELECT * FROM sessions WHERE id = ?")
-      .get(id) as SessionRow;
+  createSession(
+    id: string,
+    cwd: string,
+    source: string = "auto",
+    agentSessionId: string = id,
+  ): SessionRow {
+    return this.db.transaction(() => {
+      this.db
+        .prepare("INSERT INTO sessions (id, cwd, source) VALUES (?, ?, ?)")
+        .run(id, cwd, source);
+      this.db
+        .prepare(
+          "INSERT INTO agent_sessions (agent_key, agent_session_id, web_session_id) VALUES (?, ?, ?)",
+        )
+        .run(this.agentKey, agentSessionId, id);
+      return this.db
+        .prepare("SELECT * FROM sessions WHERE id = ?")
+        .get(id) as SessionRow;
+    })();
   }
 
   listSessions(opts?: { source?: string }): SessionRow[] {
     if (opts?.source) {
       return this.db
         .prepare(
-          "SELECT * FROM sessions WHERE source = ? AND deleted_at IS NULL ORDER BY COALESCE(last_active_at, created_at) DESC",
+          `SELECT s.* FROM sessions s
+           JOIN agent_sessions a ON a.web_session_id = s.id
+           WHERE a.agent_key = ? AND s.source = ? AND s.deleted_at IS NULL
+           ORDER BY COALESCE(s.last_active_at, s.created_at) DESC`,
         )
-        .all(opts.source) as SessionRow[];
+        .all(this.agentKey, opts.source) as SessionRow[];
     }
     return this.db
       .prepare(
-        "SELECT * FROM sessions WHERE deleted_at IS NULL ORDER BY COALESCE(last_active_at, created_at) DESC",
+        `SELECT s.* FROM sessions s
+         JOIN agent_sessions a ON a.web_session_id = s.id
+         WHERE a.agent_key = ? AND s.deleted_at IS NULL
+         ORDER BY COALESCE(s.last_active_at, s.created_at) DESC`,
       )
-      .all() as SessionRow[];
+      .all(this.agentKey) as SessionRow[];
   }
 
   /** Returns live sessions only. Soft-deleted (tombstone) rows are hidden. */
   getSession(id: string): SessionRow | undefined {
     return this.db
-      .prepare("SELECT * FROM sessions WHERE id = ? AND deleted_at IS NULL")
-      .get(id) as SessionRow | undefined;
+      .prepare(
+        `SELECT s.* FROM sessions s
+         JOIN agent_sessions a ON a.web_session_id = s.id
+         WHERE s.id = ? AND a.agent_key = ? AND s.deleted_at IS NULL`,
+      )
+      .get(id, this.agentKey) as SessionRow | undefined;
+  }
+
+  registerInternalAgentSession(agentSessionId: string): AgentSessionRow {
+    this.db
+      .prepare(
+        "INSERT OR IGNORE INTO agent_sessions (agent_key, agent_session_id, web_session_id) VALUES (?, ?, NULL)",
+      )
+      .run(this.agentKey, agentSessionId);
+    const row = this.db
+      .prepare(
+        "SELECT * FROM agent_sessions WHERE agent_key = ? AND agent_session_id = ?",
+      )
+      .get(this.agentKey, agentSessionId) as AgentSessionRow;
+    if (row.web_session_id) {
+      throw new Error("Agent reused a user-visible session ID internally");
+    }
+    return row;
+  }
+
+  getAgentSessionId(webSessionId: string): string | undefined {
+    return (
+      this.db
+        .prepare(
+          "SELECT agent_session_id FROM agent_sessions WHERE agent_key = ? AND web_session_id = ?",
+        )
+        .get(this.agentKey, webSessionId) as
+        | { agent_session_id: string }
+        | undefined
+    )?.agent_session_id;
+  }
+
+  getWebSessionId(agentSessionId: string): string | undefined {
+    return (
+      this.db
+        .prepare(
+          "SELECT web_session_id FROM agent_sessions WHERE agent_key = ? AND agent_session_id = ? AND web_session_id IS NOT NULL",
+        )
+        .get(this.agentKey, agentSessionId) as
+        | { web_session_id: string }
+        | undefined
+    )?.web_session_id;
+  }
+
+  getAgentSessionBinding(webSessionId: string): AgentSessionRow | undefined {
+    return this.db
+      .prepare(
+        "SELECT * FROM agent_sessions WHERE agent_key = ? AND web_session_id = ?",
+      )
+      .get(this.agentKey, webSessionId) as AgentSessionRow | undefined;
+  }
+
+  ownsSession(webSessionId: string): boolean {
+    return this.getAgentSessionBinding(webSessionId) !== undefined;
   }
 
   /**
@@ -501,12 +614,15 @@ export class Store {
       .prepare(
         `
       SELECT s.id FROM sessions s
+      JOIN agent_sessions a ON a.web_session_id = s.id
       LEFT JOIN events e ON e.session_id = s.id
       WHERE e.id IS NULL
+        AND a.agent_key = ?
+        AND s.deleted_at IS NULL
         AND strftime('%s', 'now') - strftime('%s', s.created_at) >= ?
     `,
       )
-      .all(minAgeS) as Array<{ id: string }>;
+      .all(this.agentKey, minAgeS) as Array<{ id: string }>;
     if (empties.length === 0) return [];
     const del = this.db.prepare("DELETE FROM sessions WHERE id = ?");
     for (const r of empties) del.run(r.id);
@@ -1106,10 +1222,12 @@ export class Store {
          s.ttl_hours AS ttl_hours,
          s.last_accessed_at AS last_accessed_at
        FROM shares s
+       JOIN agent_sessions a ON a.web_session_id = s.session_id
        LEFT JOIN sessions sess ON sess.id = s.session_id
+       WHERE a.agent_key = ?
        ORDER BY s.created_at DESC`,
       )
-      .all() as ShareSummaryRow[];
+      .all(this.agentKey) as ShareSummaryRow[];
   }
 
   /**

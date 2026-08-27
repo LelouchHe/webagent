@@ -52,7 +52,7 @@ describe("tokens CRUD", () => {
     mkdirSync(publicDir);
     writeFileSync(join(publicDir, "index.html"), "");
 
-    store = new Store(tmpDir);
+    store = new Store(tmpDir, "test-agent");
     authStore = new AuthStore(join(tmpDir, "auth.json"));
     await authStore.load();
     adminToken = (await authStore.addToken("admin1", "admin")).token;

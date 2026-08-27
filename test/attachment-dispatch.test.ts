@@ -15,7 +15,7 @@ const warnings: string[] = [];
 
 before(() => {
   dataDir = mkdtempSync(join(tmpdir(), "dispatch-"));
-  store = new Store(dataDir);
+  store = new Store(dataDir, "test-agent");
   anchor = resolveSessionsAnchor(dataDir);
   dispatcher = new AttachmentDispatcher(store, anchor, {
     warn: (msg) => warnings.push(msg),

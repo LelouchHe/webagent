@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import Database from "better-sqlite3";
 import { Store } from "../src/store.ts";
 
 describe("Store", () => {
@@ -11,7 +12,7 @@ describe("Store", () => {
 
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), "webagent-test-"));
-    store = new Store(tmpDir);
+    store = new Store(tmpDir, "test-agent");
   });
 
   afterEach(() => {
@@ -20,6 +21,41 @@ describe("Store", () => {
   });
 
   describe("sessions", () => {
+    it("stores WebAgent and ACP session identities separately", () => {
+      store.createSession("web-1", "/tmp/cwd", "auto", "agent-1");
+
+      assert.equal(store.getAgentSessionId("web-1"), "agent-1");
+      assert.equal(store.getWebSessionId("agent-1"), "web-1");
+    });
+
+    it("keeps internal ACP sessions out of the user session list", () => {
+      store.registerInternalAgentSession("agent-title");
+
+      assert.equal(store.getWebSessionId("agent-title"), undefined);
+      assert.deepEqual(store.listSessions(), []);
+    });
+
+    it("only exposes sessions owned by the current agent", () => {
+      store.createSession("web-a", "/a", "auto", "agent-a");
+      store.close();
+
+      const other = new Store(tmpDir, "other-agent");
+      other.createSession("web-b", "/b", "auto", "agent-b");
+
+      assert.deepEqual(
+        other.listSessions().map((session) => session.id),
+        ["web-b"],
+      );
+      assert.equal(other.getSession("web-a"), undefined);
+      assert.equal(other.getSessionIncludingDeleted("web-a")?.id, "web-a");
+      other.close();
+
+      store = new Store(tmpDir, "test-agent");
+      assert.equal(store.getSession("web-a")?.id, "web-a");
+      assert.equal(store.getAgentSessionId("web-a"), "agent-a");
+      assert.equal(store.getSession("web-b"), undefined);
+    });
+
     it("creates and retrieves a session", () => {
       const session = store.createSession("sess-1", "/tmp/cwd");
       assert.equal(session.id, "sess-1");
@@ -30,6 +66,7 @@ describe("Store", () => {
     it("lists sessions ordered by last_active_at desc", () => {
       store.createSession("old", "/a");
       store.createSession("new", "/b");
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 2);
       store.updateSessionLastActive("old"); // touch "old" to make it most recent
 
       const list = store.listSessions();
@@ -77,7 +114,7 @@ describe("Store", () => {
     });
 
     it("deletes session and its events", () => {
-      store.createSession("s1", "/x");
+      store.createSession("s1", "/x", "auto", "agent-s1");
       store.saveEvent(
         "s1",
         "user_message",
@@ -88,6 +125,7 @@ describe("Store", () => {
 
       assert.equal(store.getSession("s1"), undefined);
       assert.deepEqual(store.getEvents("s1"), []);
+      assert.equal(store.getWebSessionId("agent-s1"), undefined);
     });
   });
 
@@ -231,6 +269,21 @@ describe("Store", () => {
       assert.ok(store.getSession("fresh-empty")); // still there
     });
 
+    it("does not delete empty sessions owned by another agent", () => {
+      store.createSession("other-empty", "/a");
+      store.close();
+
+      const other = new Store(tmpDir, "other-agent");
+      assert.deepEqual(other.deleteEmptySessions(0), []);
+      assert.equal(
+        other.getSessionIncludingDeleted("other-empty")?.id,
+        "other-empty",
+      );
+      other.close();
+
+      store = new Store(tmpDir, "test-agent");
+    });
+
     it("deletes multiple old empty sessions", () => {
       store.createSession("e1", "/a");
       store.createSession("e2", "/b");
@@ -271,13 +324,42 @@ describe("Store", () => {
       store.close();
 
       // Re-open same DB (triggers migration again)
-      const store2 = new Store(tmpDir);
+      const store2 = new Store(tmpDir, "test-agent");
       const session = store2.getSession("s1");
       assert.equal(session!.id, "s1");
       store2.close();
 
       // Replace store so afterEach doesn't double-close
-      store = new Store(tmpDir);
+      store = new Store(tmpDir, "test-agent");
+    });
+
+    it("backfills legacy sessions to the agent active during migration", () => {
+      store.close();
+      rmSync(join(tmpDir, "webagent.db"), { force: true });
+
+      const legacy = new Database(join(tmpDir, "webagent.db"));
+      legacy.exec(`
+        CREATE TABLE sessions (
+          id TEXT PRIMARY KEY,
+          cwd TEXT NOT NULL,
+          title TEXT,
+          created_at TEXT NOT NULL,
+          last_active_at TEXT
+        );
+        INSERT INTO sessions (id, cwd, created_at, last_active_at)
+        VALUES ('legacy-id', '/legacy', '2026-01-01 00:00:00', '2026-01-01 00:00:00');
+      `);
+      legacy.close();
+
+      store = new Store(tmpDir, "/path/to/copilot-acp");
+
+      assert.equal(store.getAgentSessionId("legacy-id"), "legacy-id");
+      assert.deepEqual(store.getAgentSessionBinding("legacy-id"), {
+        agent_key: "/path/to/copilot-acp",
+        agent_session_id: "legacy-id",
+        web_session_id: "legacy-id",
+        created_at: "2026-01-01 00:00:00",
+      });
     });
   });
 
@@ -478,7 +560,7 @@ describe("Store", () => {
 
       // Re-run migration (simulates upgrade)
       store.close();
-      store = new Store(tmpDir);
+      store = new Store(tmpDir, "test-agent");
 
       const paths = store.listRecentPaths();
       const cwds = paths.map((p) => p.cwd).sort();
