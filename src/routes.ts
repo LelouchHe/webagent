@@ -13,7 +13,7 @@ import type { PushService } from "./push-service.ts";
 import type { TitleService } from "./title-service.ts";
 import type { ClientRegistry } from "./client-registry.ts";
 import { errorMessage, MessageIngressSchema } from "./types.ts";
-import type { AgentEvent } from "./types.ts";
+import type { AgentEvent, ConfigOption } from "./types.ts";
 import {
   interruptBashProc,
   InvalidSessionDirectoryError,
@@ -540,6 +540,15 @@ export function createRequestHandler(
   deps: RequestHandlerDeps,
 ): (req: IncomingMessage, res: ServerResponse) => Promise<void> {
   const { store, sessions, getBridge, sseManager, titleService } = deps;
+  let bootstrapSessionPromise: Promise<{
+    id: string;
+    cwd: string;
+    title: string | null;
+    source: string;
+    configOptions: ConfigOption[];
+    agentCommands: ReturnType<SessionManager["getAgentCommands"]>;
+    created: boolean;
+  }> | null = null;
 
   // eslint-disable-next-line complexity -- TODO: refactor main route handler into smaller handlers
   return async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
@@ -1720,6 +1729,78 @@ export function createRequestHandler(
         } as AgentEvent;
         sseManager.broadcast(titleEvent);
         json(res, HTTP_STATUS.OK, { title: body.value });
+        return;
+      }
+
+      // POST /api/v1/sessions/bootstrap — atomically return the current
+      // agent's latest session, creating one only when none exists.
+      if (url === "/api/v1/sessions/bootstrap" && req.method === "POST") {
+        const bridge = getBridge?.();
+        if (!bridge) {
+          json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
+            error: "Agent not ready yet",
+          });
+          return;
+        }
+        if (!sessions) {
+          json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
+            error: "Session manager not available",
+          });
+          return;
+        }
+        const sessionManager = sessions;
+
+        bootstrapSessionPromise ??= (async () => {
+          const existing = store.listSessions().at(0);
+          if (existing) {
+            return {
+              id: existing.id,
+              cwd: existing.cwd,
+              title: existing.title,
+              source: existing.source,
+              configOptions: [],
+              agentCommands: sessionManager.getAgentCommands(existing.id),
+              created: false,
+            };
+          }
+
+          const { sessionId, configOptions } =
+            await sessionManager.createSession(bridge);
+          const session = store.getSession(sessionId);
+          const result = {
+            id: sessionId,
+            cwd: session?.cwd ?? deps.dataDir,
+            title: session?.title ?? null,
+            source: session?.source ?? "auto",
+            configOptions,
+            agentCommands: sessionManager.getAgentCommands(sessionId),
+            created: true,
+          };
+          sseManager.broadcast({
+            type: "session_created",
+            sessionId,
+            cwd: result.cwd,
+            title: result.title,
+            configOptions,
+            agentCommands: result.agentCommands,
+            clientOpId: getClientOpId(req) ?? undefined,
+          });
+          return result;
+        })().finally(() => {
+          bootstrapSessionPromise = null;
+        });
+
+        try {
+          const result = await bootstrapSessionPromise;
+          json(res, HTTP_STATUS.OK, {
+            ...result,
+            clientOpId: getClientOpId(req) ?? undefined,
+          });
+        } catch (err) {
+          json(res, HTTP_STATUS.INTERNAL_SERVER_ERROR, {
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
         return;
       }
 

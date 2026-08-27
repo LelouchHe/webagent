@@ -5,7 +5,7 @@ import { addSystem, scrollToBottom } from "./render.ts";
 import {
   hydrateSessionRuntime,
   finishNewSessionRequest,
-  requestNewSession,
+  requestBootstrapSession,
   resetSessionUI,
   setHashSessionId,
   state,
@@ -130,7 +130,7 @@ export async function processStartupMessageIntent(): Promise<NavigationResult> {
         error.status === HTTP_STATUS.NOT_FOUND);
     if (terminal) {
       clearStartupMessageIntent();
-      if (!state.sessionId) requestNewSession();
+      if (!state.sessionId) requestBootstrapSession();
     }
     const message = error instanceof Error ? error.message : String(error);
     addSystem(`err: notification consume failed (${message})`);

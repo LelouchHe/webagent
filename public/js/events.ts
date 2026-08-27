@@ -20,7 +20,7 @@ import {
   updateModeUI,
   updateStatusBar,
   resetSessionUI,
-  requestNewSession,
+  requestBootstrapSession,
   setHashSessionId,
   updateSessionInfo,
   setConnectionStatus,
@@ -111,7 +111,7 @@ setCreatedSessionActivator((session) => {
  */
 export async function fallbackToNextSession(
   expiredId: string | null,
-  cwd?: string,
+  _cwd?: string,
 ): Promise<void> {
   state.sessionSwitchGen++;
   const gen = state.sessionSwitchGen;
@@ -150,7 +150,7 @@ export async function fallbackToNextSession(
   if (gen !== state.sessionSwitchGen) return;
   resetSessionUI();
   state.sessionId = null;
-  requestNewSession({ cwd: cwd ?? undefined });
+  requestBootstrapSession();
 }
 
 // During replay, elements live in a detached DocumentFragment (no getElementById).

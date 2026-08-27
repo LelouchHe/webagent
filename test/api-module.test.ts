@@ -76,6 +76,22 @@ describe("api module", () => {
     assert.equal(body.inheritFromSessionId, undefined);
   });
 
+  it("bootstrapSession sends POST /api/v1/sessions/bootstrap", async () => {
+    fetchResponse = {
+      status: 200,
+      ok: true,
+      json: () => Promise.resolve({ id: "s1", created: false }),
+      text: () => Promise.resolve('{"id":"s1","created":false}'),
+    };
+
+    const result = await api.bootstrapSession();
+
+    assert.equal(fetchCalls[0].url, "/api/v1/sessions/bootstrap");
+    assert.equal(fetchCalls[0].init!.method, "POST");
+    assert.equal(fetchCalls[0].init!.body, undefined);
+    assert.equal(result.id, "s1");
+  });
+
   it("deleteSession sends DELETE /api/v1/sessions/:id", async () => {
     await api.deleteSession("s1");
     assert.equal(fetchCalls[0].url, "/api/v1/sessions/s1");

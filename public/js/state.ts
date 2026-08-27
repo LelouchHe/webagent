@@ -543,12 +543,18 @@ export function requestNewSession({
   void createNewSessionRequest({ cwd, inheritFromSessionId });
 }
 
+export function requestBootstrapSession(): void {
+  void createNewSessionRequest({ bootstrap: true, inheritFromSessionId: null });
+}
+
 export async function createNewSessionRequest({
   cwd,
   inheritFromSessionId = state.sessionId,
+  bootstrap = false,
 }: {
   cwd?: string;
   inheritFromSessionId?: string | null;
+  bootstrap?: boolean;
 } = {}): Promise<boolean> {
   if (state.newSessionRequestInFlight || state.pendingNewSessionOpId)
     return false;
@@ -564,10 +570,9 @@ export async function createNewSessionRequest({
   const clientOpId = api.newOpId();
   state.pendingNewSessionOpId = clientOpId;
   try {
-    const session = await api.createSession(
-      { cwd, inheritFromSessionId },
-      clientOpId,
-    );
+    const session = bootstrap
+      ? await api.bootstrapSession(clientOpId)
+      : await api.createSession({ cwd, inheritFromSessionId }, clientOpId);
     state.newSessionRequestInFlight = false;
     if (generation !== state.sessionSwitchGen) {
       if (state.pendingNewSessionOpId === clientOpId) {

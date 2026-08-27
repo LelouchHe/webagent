@@ -1603,7 +1603,7 @@ describe("events", () => {
             (!init?.method || init.method === "GET")
           )
             return { ok: true, text: async () => "[]" };
-          if (url === "/api/v1/sessions" && init?.method === "POST")
+          if (url === "/api/v1/sessions/bootstrap" && init?.method === "POST")
             return {
               ok: true,
               text: async () =>

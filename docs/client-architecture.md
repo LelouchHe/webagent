@@ -168,8 +168,14 @@ initSession()
   │     ├── Same as current session ──→ incremental=true  (reconnect)
   │     └── Different session ──→ incremental=false (full load)
   ├── No hash? ──→ listSessions() → resumeAndLoad(most recent)
-  └── No sessions? ──→ requestNewSession()
+  └── No sessions? ──→ POST /sessions/bootstrap
 ```
+
+Bootstrap is a backend-serialized get-or-create operation. This prevents
+multiple browser tabs or installed PWAs from each creating an empty session
+when they simultaneously discover that an agent switch has hidden the previous
+agent's sessions. User-initiated `/new` and `/clear` continue to use ordinary
+session creation and always create a distinct session.
 
 **`resumeAndLoad(sessionId, incremental)`:**
 

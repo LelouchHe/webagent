@@ -338,8 +338,8 @@ describe("connection", () => {
         (!init?.method || init.method === "GET")
       )
         return mockResponse([]);
-      if (url === "/api/v1/sessions" && init?.method === "POST")
-        return mockResponse({ id: "new-1" });
+      if (url === "/api/v1/sessions/bootstrap" && init?.method === "POST")
+        return mockResponse({ id: "new-1", created: true });
       throw new Error(`Unexpected fetch: ${url} ${init?.method}`);
     });
 
@@ -358,8 +358,8 @@ describe("connection", () => {
         (!init?.method || init.method === "GET")
       )
         return mockResponse([]);
-      if (url === "/api/v1/sessions" && init?.method === "POST")
-        return mockResponse({ id: "new-1" });
+      if (url === "/api/v1/sessions/bootstrap" && init?.method === "POST")
+        return mockResponse({ id: "new-1", created: true });
       throw new Error(`Unexpected fetch: ${url} ${init?.method}`);
     });
 
@@ -368,6 +368,14 @@ describe("connection", () => {
 
     assert.equal(state.awaitingNewSession, false);
     assert.equal(state.sessionId, "new-1");
+    assert.equal(
+      fetchCalls.filter(
+        (call) =>
+          call.url === "/api/v1/sessions/bootstrap" &&
+          call.init?.method === "POST",
+      ).length,
+      1,
+    );
   });
 
   it("marks the UI disconnected and schedules reconnect on SSE error", async () => {

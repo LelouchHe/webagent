@@ -165,6 +165,67 @@ describe("Session REST API", () => {
       assert.ok(Array.isArray(body.configOptions));
     });
 
+    it("coalesces concurrent bootstrap requests into one session", async () => {
+      const responses = await Promise.all(
+        Array.from({ length: 5 }, () =>
+          makeRequest(port, "POST", "/api/v1/sessions/bootstrap"),
+        ),
+      );
+
+      assert.ok(responses.every((response) => response.status === 200));
+      const bodies = responses.map((response) => JSON.parse(response.body));
+      assert.equal(new Set(bodies.map((body) => body.id)).size, 1);
+      assert.equal(store.listSessions().length, 1);
+      assert.equal(
+        broadcastEvents.filter((event) => event.type === "session_created")
+          .length,
+        1,
+      );
+    });
+
+    it("bootstrap reuses the current-agent session while explicit create does not", async () => {
+      const first = await makeRequest(
+        port,
+        "POST",
+        "/api/v1/sessions/bootstrap",
+      );
+      const bootstrapId = JSON.parse(first.body).id;
+
+      const second = await makeRequest(
+        port,
+        "POST",
+        "/api/v1/sessions/bootstrap",
+      );
+      assert.equal(JSON.parse(second.body).id, bootstrapId);
+
+      const explicit = await makeRequest(
+        port,
+        "POST",
+        "/api/v1/sessions",
+        "{}",
+      );
+      assert.notEqual(JSON.parse(explicit.body).id, bootstrapId);
+      assert.equal(store.listSessions().length, 2);
+    });
+
+    it("bootstrap ignores sessions owned by another agent", async () => {
+      const other = new Store(tmpDir, "other-agent");
+      other.createSession("other-web", tmpDir, "auto", "other-agent-session");
+      other.close();
+
+      const response = await makeRequest(
+        port,
+        "POST",
+        "/api/v1/sessions/bootstrap",
+      );
+      const body = JSON.parse(response.body);
+
+      assert.equal(response.status, 200);
+      assert.notEqual(body.id, "other-web");
+      assert.equal(store.listSessions().length, 1);
+      assert.equal(store.getSession("other-web"), undefined);
+    });
+
     describe("POST /api/v1/sessions/:id/cancel", () => {
       it("resends cancel while the agent prompt remains active", async () => {
         store.createSession("s-cancel", tmpDir);

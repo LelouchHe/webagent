@@ -511,7 +511,11 @@ describe("shared session navigation", () => {
     assert.equal(result, "terminal-error");
     assert.equal(location.search, "");
     assert.equal(
-      fetchCalls.some((call) => call.url === "/api/v1/sessions"),
+      fetchCalls.some(
+        (call) =>
+          call.url === "/api/v1/sessions/bootstrap" &&
+          call.init?.method === "POST",
+      ),
       true,
     );
   });

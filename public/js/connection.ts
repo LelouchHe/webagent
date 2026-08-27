@@ -4,7 +4,7 @@ import {
   state,
   setBusy,
   getHashSessionId,
-  requestNewSession,
+  requestBootstrapSession,
   resetSessionUI,
   setConnectionStatus,
   clearCancelTimer,
@@ -313,7 +313,7 @@ async function initSession() {
   if (gen !== state.sessionSwitchGen) return;
   // No previous sessions — create new
   if (getStartupMessageIntent()) return;
-  requestNewSession();
+  requestBootstrapSession();
 }
 
 async function resumeAndLoad(

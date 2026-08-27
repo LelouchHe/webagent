@@ -127,6 +127,17 @@ export function createSession(
   return post("/api/v1/sessions", body, clientOpId);
 }
 
+export function bootstrapSession(
+  clientOpId?: string,
+): Promise<Record<string, unknown>> {
+  const headers: Record<string, string> = {};
+  if (clientOpId) headers["X-Client-Op-Id"] = clientOpId;
+  return request("/api/v1/sessions/bootstrap", {
+    method: "POST",
+    headers,
+  });
+}
+
 export function deleteSession(id: string): Promise<void> {
   return request("/api/v1/sessions/" + id, { method: "DELETE" });
 }

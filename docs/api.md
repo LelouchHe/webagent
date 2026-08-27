@@ -171,6 +171,31 @@ Create a new session. Optionally inherits model and reasoning_effort from anothe
 
 ---
 
+#### `POST /api/v1/sessions/bootstrap`
+
+Return the most recent session for the current agent, creating one only when
+none exists. The request has no body. Concurrent bootstrap requests are
+coalesced, so multiple clients starting after an agent switch receive the same
+WebAgent session ID.
+
+**Response** `200`:
+
+```json
+{
+  "id": "session-id",
+  "cwd": "/home/user/project",
+  "title": null,
+  "source": "auto",
+  "configOptions": [],
+  "created": true
+}
+```
+
+`created` is `false` when an existing session is returned. Explicit
+`POST /api/v1/sessions` requests are never deduplicated.
+
+---
+
 #### `GET /api/v1/sessions/:id`
 
 Get session details. **Auto-resumes** the session in the ACP agent if it's not already live (e.g., after server restart). Also **auto-retries interrupted turns** (see [Auto-Retry](#auto-retry-interrupted-turns)).

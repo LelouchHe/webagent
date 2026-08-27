@@ -153,25 +153,27 @@ let sharePreviewCleanup: SharePreviewCleanupHandle | null = null;
 
 // --- HTTP server ---
 
+const requestHandler = createRequestHandler({
+  store,
+  sessions,
+  sseManager,
+  clientRegistry,
+  titleService,
+  getBridge: () => bridge,
+  publicDir: PUBLIC_DIR,
+  dataDir: config.data_dir,
+  limits: config.limits,
+  pushService,
+  serverVersion: PKG_VERSION,
+  debugLevel: config.debug.level,
+  authStore,
+  ticketStore,
+  attachmentSecret,
+  shareConfig: config.share,
+});
+
 const server = createServer((req, res) => {
-  void createRequestHandler({
-    store,
-    sessions,
-    sseManager,
-    clientRegistry,
-    titleService,
-    getBridge: () => bridge,
-    publicDir: PUBLIC_DIR,
-    dataDir: config.data_dir,
-    limits: config.limits,
-    pushService,
-    serverVersion: PKG_VERSION,
-    debugLevel: config.debug.level,
-    authStore,
-    ticketStore,
-    attachmentSecret,
-    shareConfig: config.share,
-  })(req, res);
+  void requestHandler(req, res);
 });
 
 async function initBridge(agentCmd: string): Promise<AgentBridge> {
