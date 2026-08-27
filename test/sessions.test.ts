@@ -181,6 +181,11 @@ describe("Session REST API", () => {
           .length,
         1,
       );
+      assert.equal(
+        broadcastEvents.find((event) => event.type === "session_created")
+          ?.clientOpId,
+        undefined,
+      );
     });
 
     it("bootstrap reuses the current-agent session while explicit create does not", async () => {

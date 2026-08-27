@@ -1783,7 +1783,6 @@ export function createRequestHandler(
             title: result.title,
             configOptions,
             agentCommands: result.agentCommands,
-            clientOpId: getClientOpId(req) ?? undefined,
           });
           return result;
         })().finally(() => {
