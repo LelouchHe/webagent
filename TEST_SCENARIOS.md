@@ -54,7 +54,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - assistant / thinking buffer flush behavior
   - busy-kind reporting
   - cwd lookup fallback
-  - auto-retry of interrupted turns
+  - interrupted-turn detection (recovery is user-driven)
   - deduplicated resume (ensureResumed)
   - revisioned Agent command snapshot lifecycle and cleanup
   - authoritative snapshot waits for command discovery during warm-cache restore

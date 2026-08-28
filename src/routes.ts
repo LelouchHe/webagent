@@ -1856,32 +1856,12 @@ export function createRequestHandler(
                   });
                 })
                 .catch(() => {});
-              // Auto-retry if the last turn was interrupted (must wait for resume)
-              const hasInterrupted = store.hasInterruptedTurn(sessionId);
-              if (hasInterrupted) {
-                // Optimistically mark busy so concurrent POST sees the session as active
-                sessions.activePrompts.add(sessionId);
-                sessions.syncBusy(sessionId);
-                void resumePromise
-                  .then(() => {
-                    if (!sessions.autoRetryIfNeeded(bridge, sessionId)) {
-                      // Retry not needed after all — release the optimistic lock
-                      sessions.activePrompts.delete(sessionId);
-                      sessions.syncBusy(sessionId);
-                    }
-                  })
-                  .catch(() => {
-                    sessions.activePrompts.delete(sessionId);
-                    sessions.syncBusy(sessionId);
-                  });
-              } else {
-                resumePromise.catch((err) => {
-                  slog.error("background resume failed", {
-                    sessionId: sessionId.slice(0, 8) + "…",
-                    error: err,
-                  });
+              resumePromise.catch((err) => {
+                slog.error("background resume failed", {
+                  sessionId: sessionId.slice(0, 8) + "…",
+                  error: err,
                 });
-              }
+              });
             }
           }
           // If cache is cold and we kicked off a resume, wait briefly so the

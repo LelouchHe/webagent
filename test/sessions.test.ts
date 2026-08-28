@@ -571,6 +571,32 @@ describe("Session REST API", () => {
       assert.ok(sessions.liveSessions.has("stored-only"));
     });
 
+    it("does not continue an interrupted turn while restoring", async () => {
+      store.createSession("interrupted", tmpDir);
+      store.saveEvent(
+        "interrupted",
+        "user_message",
+        { text: "perform a non-idempotent action" },
+        { from_ref: "user" },
+      );
+      let promptCalls = 0;
+      mockBridge.prompt = async () => {
+        promptCalls++;
+      };
+
+      const res = await makeRequest(
+        port,
+        "GET",
+        "/api/v1/sessions/interrupted",
+      );
+      assert.equal(res.status, 200);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      assert.ok(sessions.liveSessions.has("interrupted"));
+      assert.equal(promptCalls, 0);
+      assert.equal(sessions.getBusyKind("interrupted"), null);
+    });
+
     it("snapshot waits for command discovery during a warm-cache resume", async () => {
       store.createSession("stored-only", tmpDir);
       sessions.cachedConfigOptions.push({

@@ -41,7 +41,7 @@ WebAgent exposes a **REST + SSE** API for managing agent sessions, sending promp
   - [Event Storage and Aggregation](#event-storage-and-aggregation)
   - [SSE Architecture](#sse-architecture)
   - [Gzip Compression](#gzip-compression)
-  - [Auto-Retry Interrupted Turns](#auto-retry-interrupted-turns)
+  - [Interrupted Turns](#interrupted-turns)
   - [Autopilot Mode](#autopilot-mode)
 - [Database Schema](#database-schema)
   - [`sessions`](#sessions-1)
@@ -198,7 +198,7 @@ WebAgent session ID.
 
 #### `GET /api/v1/sessions/:id`
 
-Get session details. **Auto-resumes** the session in the ACP agent if it's not already live (e.g., after server restart). Also **auto-retries interrupted turns** (see [Auto-Retry](#auto-retry-interrupted-turns)).
+Get session details. **Auto-resumes** the session in the ACP agent if it's not already live (e.g., after server restart). Interrupted turns are restored without being continued automatically; the user decides whether to continue.
 
 **Response** `200`:
 
@@ -1501,11 +1501,11 @@ Applied to large-payload endpoints:
 
 Uses `gzipSync` from `node:zlib` for simplicity (synchronous, single-threaded server).
 
-### Auto-Retry Interrupted Turns
+### Interrupted Turns
 
-When a session is resumed after a server restart, the server checks if the last agent turn was interrupted (a `user_message` exists with no subsequent `prompt_done`). If so, it automatically sends a continuation prompt: `"Continue your previous response — it was interrupted mid-way."`.
+When a session is resumed after a server or agent restart, WebAgent restores the ACP session without sending a continuation prompt. Completion is unknown when a `user_message` has no subsequent `prompt_done`, and automatically continuing could repeat non-idempotent tool actions. The user can inspect the restored state and explicitly ask the agent to continue.
 
-See `SessionManager.autoRetryIfNeeded()` in `src/session-manager.ts` and `Store.hasInterruptedTurn()` in `src/store.ts`.
+`Store.hasInterruptedTurn()` in `src/store.ts` retains the detection primitive for future UI or explicit retry flows.
 
 ### Autopilot Mode
 
