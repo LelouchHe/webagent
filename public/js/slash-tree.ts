@@ -194,6 +194,12 @@ export function buildCandidates(
     }
   }
 
+  // An actionable freeform row already covers an empty/no-match result.
+  // Suppress the redundant placeholder and its separator in that case.
+  if (freeformCand && (dataState === "empty" || dataState === "no-match")) {
+    dataState = "none";
+  }
+
   // 4. Separator: only when navigate/commit group AND data section both present
   const hasArrowGroup = subcommands.length > 0 || freeformCand !== null;
   const hasDataSection = dataState !== "none";

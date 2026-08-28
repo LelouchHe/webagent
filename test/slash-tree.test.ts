@@ -278,6 +278,24 @@ describe("slash-tree — buildCandidates", () => {
     assert.equal(c[0].spec.primary, "(no match)");
   });
 
+  it("omits an empty placeholder when an actionable freeform row exists", () => {
+    const node: CmdNode = {
+      name: "/new",
+      fetch: async () => [],
+      toSpec: (item: any) => ({ primary: item.cwd }),
+      freeform: (q) =>
+        q.trim()
+          ? { primary: `create '${q.trim()}'`, onSelect: async () => {} }
+          : null,
+    };
+
+    const candidates = buildCandidates(node, "~/project", []);
+
+    assert.equal(candidates.length, 1);
+    assert.equal(candidates[0].kind, "freeform");
+    assert.equal(candidates[0].spec.primary, "create '~/project'");
+  });
+
   it("freeform appended after subcommands, before data, with prefix '↵'", () => {
     const token: CmdNode = {
       name: "/token",
