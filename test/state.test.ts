@@ -415,6 +415,7 @@ describe("state", () => {
     it("clears session title and metadata", () => {
       mod.state.sessionTitle = "Old Title";
       mod.state.sessionCwd = "/old/path";
+      mod.state.sessionCwdDisplay = "~/old/path";
       mod.state.configOptions = [
         { id: "model", name: "Model", currentValue: "x", options: [] },
       ];
@@ -425,6 +426,7 @@ describe("state", () => {
 
       assert.equal(mod.state.sessionTitle, null);
       assert.equal(mod.state.sessionCwd, null);
+      assert.equal(mod.state.sessionCwdDisplay, null);
       assert.deepEqual(mod.state.configOptions, []);
       assert.equal(mod.dom.sessionInfo.textContent, "");
       assert.equal(document.title, ">_");
@@ -619,6 +621,12 @@ describe("state", () => {
       mod.applySnapshot(snapshot);
 
       assert.deepEqual(mod.state.plan, plan);
+    });
+
+    it("applySnapshot installs display cwd", () => {
+      mod.applySnapshot(snap(4, null, { cwdDisplay: "~/project" }));
+
+      assert.equal(mod.state.sessionCwdDisplay, "~/project");
     });
 
     it("applySnapshot installs context usage", () => {

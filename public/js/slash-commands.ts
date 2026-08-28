@@ -119,6 +119,7 @@ async function listSessions(): Promise<SessionSummary[]> {
 
 interface PathItem {
   cwd: string;
+  cwdDisplay: string;
   time: string;
 }
 async function listRecentPaths(): Promise<PathItem[]> {
@@ -128,10 +129,12 @@ async function listRecentPaths(): Promise<PathItem[]> {
   const res = await fetch(url);
   const data = (await res.json()) as Array<{
     cwd: string;
+    cwdDisplay?: string;
     last_used_at: string;
   }>;
   return data.map((p) => ({
     cwd: p.cwd,
+    cwdDisplay: p.cwdDisplay ?? p.cwd,
     time: p.last_used_at,
   }));
 }
@@ -324,7 +327,7 @@ export const ROOT: CmdNode = {
         const isCurrent =
           p.cwd.toLowerCase() === (state.sessionCwd ?? "").toLowerCase();
         return {
-          primary: p.cwd,
+          primary: p.cwdDisplay,
           current: isCurrent,
           onSelect: () => {
             void replaceCurrentSession({ cwd: p.cwd, showCwd: true });
@@ -494,7 +497,7 @@ export const ROOT: CmdNode = {
         const isCurrent =
           p.cwd.toLowerCase() === (state.sessionCwd ?? "").toLowerCase();
         return {
-          primary: p.cwd,
+          primary: p.cwdDisplay,
           current: isCurrent,
           onSelect: () => {
             resetSessionUI();

@@ -89,6 +89,7 @@ export interface SessionSummary {
 export interface SessionDetail {
   id: string;
   cwd: string;
+  cwdDisplay?: string;
   title: string | null;
   source: string;
   model: string | null;
@@ -141,6 +142,7 @@ export type AgentEvent =
       type: "session_created";
       sessionId: string;
       cwd?: string;
+      cwdDisplay?: string;
       title?: string | null;
       configOptions: ConfigOption[];
       agentCommands?: AgentCommandSnapshot;

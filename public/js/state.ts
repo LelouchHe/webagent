@@ -82,6 +82,7 @@ export const state = {
   pendingNavigationEvents: [] as AgentEvent[],
   runtimeHydrationSessionId: null as string | null,
   sessionCwd: null as string | null,
+  sessionCwdDisplay: null as string | null,
   sessionTitle: null as string | null,
   contextUsage: null as ContextUsage | null,
   inboxCount: 0,
@@ -314,7 +315,7 @@ export function displayModelName(model: string): string {
 export function updateStatusBar() {
   // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- see updateModeUI
   const model = getStringConfigValue("model") || getFallback("model");
-  const cwd = state.sessionCwd ?? "";
+  const cwd = state.sessionCwdDisplay ?? state.sessionCwd ?? "";
   const parts: Array<{
     text: string;
     className: string;
@@ -363,6 +364,7 @@ export interface SessionSnapshot {
     id: string;
     title: string | null;
     cwd: string;
+    cwdDisplay?: string;
     model: string | null;
     mode: string | null;
     createdAt: string | null;
@@ -426,6 +428,7 @@ export function applySnapshot(snap: SessionSnapshot): void {
   state.contextUsage = snap.runtime.contextUsage
     ? { ...snap.runtime.contextUsage }
     : null;
+  state.sessionCwdDisplay = snap.session.cwdDisplay ?? snap.session.cwd;
   applyAgentCommandSnapshot(
     snap.agentCommands ?? { epoch: "", revision: 0, commands: [] },
   );
@@ -809,6 +812,7 @@ export function resetSessionUI({
   // Clear session metadata so stale title/model don't linger on switch failure
   state.sessionTitle = null;
   state.sessionCwd = null;
+  state.sessionCwdDisplay = null;
   state.contextUsage = null;
   state.configOptions = [];
   state.agentCommands = [];

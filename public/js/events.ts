@@ -91,6 +91,8 @@ setCreatedSessionActivator((session) => {
     type: "session_created",
     sessionId: session.id,
     cwd: typeof session.cwd === "string" ? session.cwd : undefined,
+    cwdDisplay:
+      typeof session.cwdDisplay === "string" ? session.cwdDisplay : undefined,
     title: typeof session.title === "string" ? session.title : null,
     configOptions: Array.isArray(session.configOptions)
       ? (session.configOptions as ConfigOption[])
@@ -1776,6 +1778,8 @@ export function handleEvent(msg: AgentEvent) {
       state.sessionId = msg.sessionId;
       if (isSessionActivation) rearmHistoryObserverAfterSessionActivation();
       state.sessionCwd = msg.cwd ?? state.sessionCwd;
+      state.sessionCwdDisplay =
+        msg.cwdDisplay ?? msg.cwd ?? state.sessionCwdDisplay;
       state.sessionTitle = msg.title ?? null;
       if (msg.agentCommands) applyAgentCommandSnapshot(msg.agentCommands);
       // eslint-disable-next-line @typescript-eslint/prefer-optional-chain, @typescript-eslint/no-unnecessary-condition -- runtime safety for legacy events

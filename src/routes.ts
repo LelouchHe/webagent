@@ -24,6 +24,7 @@ import { handleShareRoutes } from "./share/routes.ts";
 import { authenticate, isWhitelistedPath } from "./auth-middleware.ts";
 import { enrichStoredEventsForDisplay } from "./attachment-labels.ts";
 import { agentCommandToken, resolveAgentCommand } from "./agent-commands.ts";
+import { abbreviateHomePath } from "./home-path.ts";
 import { log } from "./log.ts";
 
 const rlog = log.scope("routes");
@@ -650,7 +651,14 @@ export function createRequestHandler(
           limit: isNaN(limit) ? 0 : limit,
           ttlDays,
         });
-        json(res, HTTP_STATUS.OK, paths);
+        json(
+          res,
+          HTTP_STATUS.OK,
+          paths.map((entry) => ({
+            ...entry,
+            cwdDisplay: abbreviateHomePath(entry.cwd),
+          })),
+        );
         return;
       }
 
@@ -1105,6 +1113,7 @@ export function createRequestHandler(
               id: session.id,
               title: session.title,
               cwd: session.cwd,
+              cwdDisplay: abbreviateHomePath(session.cwd),
               model: session.model,
               mode: session.mode,
               createdAt: session.created_at,
@@ -1756,6 +1765,7 @@ export function createRequestHandler(
             return {
               id: existing.id,
               cwd: existing.cwd,
+              cwdDisplay: abbreviateHomePath(existing.cwd),
               title: existing.title,
               source: existing.source,
               configOptions: [],
@@ -1770,6 +1780,7 @@ export function createRequestHandler(
           const result = {
             id: sessionId,
             cwd: session?.cwd ?? deps.dataDir,
+            cwdDisplay: abbreviateHomePath(session?.cwd ?? deps.dataDir),
             title: session?.title ?? null,
             source: session?.source ?? "auto",
             configOptions,
@@ -1780,6 +1791,7 @@ export function createRequestHandler(
             type: "session_created",
             sessionId,
             cwd: result.cwd,
+            cwdDisplay: result.cwdDisplay,
             title: result.title,
             configOptions,
             agentCommands: result.agentCommands,
@@ -1905,6 +1917,7 @@ export function createRequestHandler(
             {
               id: freshSession.id,
               cwd: freshSession.cwd,
+              cwdDisplay: abbreviateHomePath(freshSession.cwd),
               title: freshSession.title,
               source: freshSession.source,
               model: freshSession.model,
@@ -1985,6 +1998,9 @@ export function createRequestHandler(
             type: "session_created",
             sessionId,
             cwd: session?.cwd,
+            cwdDisplay: session?.cwd
+              ? abbreviateHomePath(session.cwd)
+              : undefined,
             title: session?.title,
             configOptions,
             agentCommands: sessions.getAgentCommands(sessionId),
@@ -2003,6 +2019,9 @@ export function createRequestHandler(
           json(res, HTTP_STATUS.CREATED, {
             id: sessionId,
             cwd: session?.cwd ?? body.cwd,
+            cwdDisplay: session?.cwd
+              ? abbreviateHomePath(session.cwd)
+              : undefined,
             title: session?.title ?? null,
             source: session?.source ?? source,
             configOptions,
@@ -2651,6 +2670,9 @@ export function createRequestHandler(
           type: "session_created",
           sessionId,
           cwd: session?.cwd,
+          cwdDisplay: session?.cwd
+            ? abbreviateHomePath(session.cwd)
+            : undefined,
           title: session?.title,
           configOptions,
           agentCommands: sessions.getAgentCommands(sessionId),

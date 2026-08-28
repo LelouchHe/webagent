@@ -18,6 +18,7 @@ import type {
   AttachmentRef,
   PromptBlock,
 } from "./attachment-dispatch.ts";
+import { abbreviateHomePath } from "./home-path.ts";
 import { log } from "./log.ts";
 
 const blog = log.scope("bridge");
@@ -234,6 +235,7 @@ export class AgentBridge extends EventEmitter {
       type: "session_created",
       sessionId,
       cwd,
+      cwdDisplay: abbreviateHomePath(cwd),
       configOptions,
     } satisfies AgentEvent);
     return { sessionId, configOptions };

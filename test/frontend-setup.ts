@@ -58,6 +58,7 @@ export function resetState(state: any, dom: any) {
   state.messageNavigationGen = 0;
   state.pendingNavigationSessionId = null;
   state.sessionCwd = null;
+  state.sessionCwdDisplay = null;
   state.sessionTitle = null;
   state.contextUsage = null;
   state.inboxCount = 0;

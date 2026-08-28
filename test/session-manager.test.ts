@@ -2,7 +2,7 @@ import { describe, it, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { Store } from "../src/store.ts";
 import { SessionManager } from "../src/session-manager.ts";
 import type { ConfigOption } from "../src/types.ts";
@@ -304,6 +304,27 @@ describe("SessionManager", () => {
       assert.deepEqual(created.configOptions, []);
       assert.equal(store.getSession(created.sessionId)!.model, null);
       assert.equal(store.getAgentSessionId(created.sessionId), "s2");
+    });
+
+    it("expands home shorthand before creating a session", async () => {
+      let agentCwd = "";
+      const bridge = {
+        async newSession(cwd: string) {
+          agentCwd = cwd;
+          return { sessionId: "agent-home", configOptions: [] };
+        },
+        async setConfigOption() {
+          return [];
+        },
+        async loadSession() {
+          return { sessionId: "agent-home", configOptions: [] };
+        },
+      };
+
+      const created = await sm.createSession(bridge, "~");
+
+      assert.equal(agentCwd, homedir());
+      assert.equal(store.getSession(created.sessionId)?.cwd, homedir());
     });
 
     it("rejects a non-existent cwd", async () => {

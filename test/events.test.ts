@@ -2235,6 +2235,24 @@ describe("events", () => {
       assert.equal(cwdSpan.textContent, "/Users/lelouch/mine/code/webagent");
     });
 
+    it("shows cwdDisplay without replacing the canonical cwd", () => {
+      state.awaitingNewSession = true;
+      events.handleEvent({
+        type: "session_created",
+        sessionId: "s1",
+        cwd: "/Users/lelouch/mine/code/webagent",
+        cwdDisplay: "~/mine/code/webagent",
+        configOptions: [],
+      });
+
+      assert.equal(state.sessionCwd, "/Users/lelouch/mine/code/webagent");
+      assert.equal(state.sessionCwdDisplay, "~/mine/code/webagent");
+      assert.equal(
+        dom.statusBar.querySelector(".status-cwd")?.textContent,
+        "~/mine/code/webagent",
+      );
+    });
+
     it("shows short cwd without truncation", () => {
       state.awaitingNewSession = true;
       events.handleEvent({

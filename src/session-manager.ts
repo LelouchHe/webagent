@@ -16,6 +16,7 @@ import type {
 
 import { SessionStateManager } from "./session-state.ts";
 import { buildLabelMap, type LabelMap } from "./attachment-labels.ts";
+import { abbreviateHomePath, expandHomePath } from "./home-path.ts";
 import { log } from "./log.ts";
 
 const slog = log.scope("session");
@@ -133,7 +134,7 @@ export class SessionManager {
     source: string = "auto",
     opts?: { silent?: boolean },
   ): Promise<{ sessionId: string; configOptions: ConfigOption[] }> {
-    const sessionCwd = cwd ?? this.defaultCwd;
+    const sessionCwd = expandHomePath(cwd ?? this.defaultCwd);
     try {
       const info = await stat(sessionCwd);
       if (!info.isDirectory()) throw new Error("not a directory");
@@ -324,6 +325,7 @@ export class SessionManager {
         type: "session_created",
         sessionId,
         cwd: session.cwd,
+        cwdDisplay: abbreviateHomePath(session.cwd),
         title: session.title,
         configOptions,
       };
@@ -350,6 +352,7 @@ export class SessionManager {
         type: "session_created",
         sessionId,
         cwd: session.cwd,
+        cwdDisplay: abbreviateHomePath(session.cwd),
         title: session.title,
         configOptions,
       };

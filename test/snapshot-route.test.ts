@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import http from "node:http";
 import { mkdtempSync, rmSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { Store } from "../src/store.ts";
 import { SessionManager } from "../src/session-manager.ts";
 import { SseManager } from "../src/sse-manager.ts";
@@ -93,6 +93,16 @@ describe("GET /api/v1/sessions/:id/snapshot", () => {
     });
     assert.equal(body.runtime.plan, null);
     assert.equal(body.session.lastEventSeq, 0);
+  });
+
+  it("includes a home-abbreviated display cwd", async () => {
+    store.createSession("s1", join(homedir(), "mine", "project"));
+
+    const res = await req(port, "GET", "/api/v1/sessions/s1/snapshot");
+    const body = JSON.parse(res.body);
+
+    assert.equal(body.session.cwd, join(homedir(), "mine", "project"));
+    assert.equal(body.session.cwdDisplay, join("~", "mine", "project"));
   });
 
   it("includes the current in-memory plan", async () => {
