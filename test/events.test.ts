@@ -732,6 +732,105 @@ describe("events", () => {
     });
 
     describe("tool_call_update", () => {
+      it("applies a merged diff update when the tool call host appears later", async () => {
+        events.handleEvent({
+          type: "tool_call_update",
+          id: "tc-late-diff",
+          status: "in_progress",
+          content: [
+            {
+              type: "diff",
+              path: "src/late.ts",
+              oldText: "const n = 1;\n",
+              newText: "const n = 2;\n",
+            },
+          ],
+        });
+        events.handleEvent({
+          type: "tool_call_update",
+          id: "tc-late-diff",
+          status: "completed",
+        });
+        events.handleEvent({
+          type: "tool_call",
+          id: "tc-late-diff",
+          kind: "edit",
+          title: "Late diff",
+          rawInput: {},
+        });
+
+        await new Promise((resolve) => setTimeout(resolve, 20));
+
+        const tool = document.getElementById("tc-tc-late-diff");
+        assert.ok(tool?.classList.contains("completed"));
+        assert.match(
+          tool?.querySelector(".diff-view")?.textContent ?? "",
+          /src\/late\.ts/,
+        );
+      });
+
+      it("applies an orphan diff when replay recreates the tool host", async () => {
+        events.handleEvent({
+          type: "tool_call_update",
+          id: "tc-replayed-diff",
+          status: "completed",
+          content: [
+            {
+              type: "diff",
+              path: "src/replayed.ts",
+              oldText: "const n = 1;\n",
+              newText: "const n = 2;\n",
+            },
+          ],
+        });
+
+        events.replayEvent(
+          "tool_call",
+          {
+            id: "tc-replayed-diff",
+            kind: "edit",
+            title: "Replayed diff",
+            rawInput: {},
+          },
+          [],
+          0,
+        );
+        await new Promise((resolve) => setTimeout(resolve, 20));
+
+        assert.match(
+          document.querySelector("#tc-tc-replayed-diff .diff-view")
+            ?.textContent ?? "",
+          /src\/replayed\.ts/,
+        );
+      });
+
+      it("clears orphan updates on session reset", () => {
+        events.handleEvent({
+          type: "tool_call_update",
+          id: "tc-old-session",
+          status: "completed",
+          content: [
+            {
+              type: "diff",
+              path: "src/old.ts",
+              oldText: "old\n",
+              newText: "new\n",
+            },
+          ],
+        });
+        stateMod.resetSessionUI();
+
+        events.handleEvent({
+          type: "tool_call",
+          id: "tc-old-session",
+          kind: "edit",
+          title: "New session tool",
+          rawInput: {},
+        });
+
+        assert.equal(document.querySelector(".tc-diff"), null);
+      });
+
       it("updates tool call status to completed", () => {
         events.handleEvent({
           type: "tool_call",
@@ -3241,6 +3340,92 @@ describe("events", () => {
   });
 
   describe("loadOlderEvents", () => {
+    it("reconciles a newer terminal update after an older page creates its tool host", async () => {
+      state.sessionId = "s1";
+      let request = 0;
+      setFetch(() => {
+        request++;
+        if (request === 1) {
+          return {
+            ok: true,
+            json: async () => ({
+              events: [
+                {
+                  seq: 301,
+                  session_id: "s1",
+                  type: "tool_call_update",
+                  data: JSON.stringify({
+                    id: "tc-cross-page",
+                    status: "completed",
+                    content: [
+                      {
+                        type: "content",
+                        content: { text: "final output" },
+                      },
+                    ],
+                  }),
+                },
+              ],
+              hasMore: true,
+              streaming: {},
+            }),
+          };
+        }
+        return {
+          ok: true,
+          json: async () => ({
+            events: [
+              {
+                seq: 100,
+                session_id: "s1",
+                type: "tool_call",
+                data: JSON.stringify({
+                  id: "tc-cross-page",
+                  kind: "task",
+                  title: "Cross-page tool",
+                  rawInput: {},
+                }),
+              },
+              {
+                seq: 200,
+                session_id: "s1",
+                type: "tool_call_update",
+                data: JSON.stringify({
+                  id: "tc-cross-page",
+                  status: "in_progress",
+                  content: [
+                    {
+                      type: "content",
+                      content: { text: "old progress" },
+                    },
+                  ],
+                }),
+              },
+            ],
+            hasMore: false,
+            streaming: {},
+          }),
+        };
+      });
+
+      assert.equal(await events.loadHistory("s1"), true);
+      assert.equal(document.getElementById("tc-tc-cross-page"), null);
+      assert.equal(await events.loadOlderEvents("s1"), true);
+
+      const tool = document.getElementById("tc-tc-cross-page");
+      assert.ok(tool);
+      assert.ok(tool.classList.contains("completed"));
+      assert.equal(tool.querySelector(".icon")?.textContent, "✓");
+      assert.match(
+        tool.querySelector(".tc-output")?.textContent ?? "",
+        /final output/,
+      );
+      assert.doesNotMatch(
+        tool.querySelector(".tc-output")?.textContent ?? "",
+        /old progress/,
+      );
+    });
+
     it("prepends older events and updates pagination state", async () => {
       // Set up initial state as if loadHistory loaded events 5-6
       state.oldestLoadedSeq = 5;

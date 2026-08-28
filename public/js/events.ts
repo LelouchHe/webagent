@@ -78,6 +78,9 @@ import type {
   ToolContentItem,
 } from "../../src/types.ts";
 import "./plan-panel.ts";
+import { OrphanToolUpdateCache } from "./orphan-tool-updates.ts";
+
+const orphanToolUpdates = new OrphanToolUpdateCache();
 
 setNavigationLoadInvalidator(() => {
   historyLoadToken++;
@@ -311,6 +314,7 @@ export async function loadHistory(sid: string): Promise<boolean> {
       const data = JSON.parse(events[i].data) as Record<string, unknown>;
       replayEvent(events[i].type, data, events, i, ri);
     }
+    flushReplayOrphanToolUpdates(ri, events);
     state.replayTarget = null;
 
     // Hide container to avoid layout during append, then show
@@ -650,6 +654,7 @@ async function _loadNewEventsImpl(
       const data = JSON.parse(events[i].data) as Record<string, unknown>;
       replayEvent(events[i].type, data, events, i, ri);
     }
+    flushReplayOrphanToolUpdates(ri, events);
     state.replayTarget = null;
 
     // Post-merge: if the last DOM element and first fragment child are the same
@@ -1003,6 +1008,7 @@ onSessionReset(() => {
   terminalReconcileDirty = false;
   terminalReconcileSessionId = null;
   terminalReconcilePromise = Promise.resolve();
+  orphanToolUpdates.clear();
 });
 
 export async function loadOlderEvents(sid: string): Promise<boolean> {
@@ -1041,6 +1047,7 @@ export async function loadOlderEvents(sid: string): Promise<boolean> {
       const data = JSON.parse(events[i].data) as Record<string, unknown>;
       replayEvent(events[i].type, data, events, i, ri);
     }
+    flushReplayOrphanToolUpdates(ri, events);
     state.replayTarget = null;
 
     // Prepend to DOM while preserving scroll position
@@ -1404,14 +1411,30 @@ function handleReplayContentEvent(
         if (ri) {
           ri.toolCalls.set(id, el);
           if (ri.trackPending) state.pendingToolCallIds.add(id);
+        } else {
+          const orphan = orphanToolUpdates.take(id);
+          if (orphan) renderContentEvent("tool_call_update", orphan, hooks);
         }
       }
       break;
     }
     case "tool_call_update": {
-      renderContentEvent(type, d, hooks);
+      const id = d.id as string;
+      if (hooks.findToolCallEl(id)) {
+        renderContentEvent(type, d, hooks);
+      } else {
+        const stored = events[idx];
+        orphanToolUpdates.put(
+          {
+            ...d,
+            type: "tool_call_update",
+            sessionId: stored.session_id,
+          } as ToolCallUpdateEvent,
+          stored.seq,
+        );
+      }
       if (d.status === "completed" || d.status === "failed") {
-        state.pendingToolCallIds.delete(d.id as string);
+        state.pendingToolCallIds.delete(id);
       }
       break;
     }
@@ -1658,6 +1681,48 @@ function scheduleAssistantRender() {
     state.assistantRafToken = null;
     doAssistantRender();
   });
+}
+
+type ToolCallUpdateEvent = Extract<AgentEvent, { type: "tool_call_update" }>;
+
+function flushReplayOrphanToolUpdates(
+  ri: ReplayIndex,
+  events: StoredEvent[],
+): void {
+  const hooks = replayHooks(ri, events, events.length);
+  for (const id of ri.toolCalls.keys()) {
+    const update = orphanToolUpdates.take(id);
+    if (!update) continue;
+    renderContentEvent("tool_call_update", update, hooks);
+    if (update.status === "completed" || update.status === "failed") {
+      state.pendingToolCallIds.delete(id);
+    }
+  }
+}
+
+function applyLiveToolCallUpdate(
+  msg: ToolCallUpdateEvent,
+  hooks: RenderHooks,
+): void {
+  if (msg.status === "completed" || msg.status === "failed") {
+    state.pendingToolCallIds.delete(msg.id);
+  }
+  if (msg.status === "completed") {
+    state.pendingFinalAnswerToolText = extractCompletedFinalAnswer(
+      msg.status,
+      msg.content,
+    );
+    if (state.currentAssistantEl && state.pendingFinalAnswerToolText) {
+      updateAssistantDisplay(
+        state.currentAssistantEl,
+        state.currentAssistantText,
+        state.pendingFinalAnswerToolText,
+      );
+    }
+  }
+  renderContentEvent("tool_call_update", msg, hooks);
+  finishPromptIfIdle();
+  scrollToBottom();
 }
 
 export function drainNavigationEvents(sessionId: string): void {
@@ -1926,31 +1991,26 @@ export function handleEvent(msg: AgentEvent) {
       hideWaiting();
       finishThinking();
       finishAssistant();
-      const el = renderContentEvent("tool_call", msg, liveHooks());
+      const hooks = liveHooks();
+      const el = renderContentEvent("tool_call", msg, hooks);
       if (el) appendMessageElement(el);
+      const orphan = orphanToolUpdates.take(msg.id);
+      if (orphan) applyLiveToolCallUpdate(orphan, hooks);
       break;
     }
 
     case "tool_call_update": {
-      if (msg.status === "completed" || msg.status === "failed") {
-        state.pendingToolCallIds.delete(msg.id);
+      const hooks = liveHooks();
+      if (!hooks.findToolCallEl(msg.id)) {
+        orphanToolUpdates.put(msg);
+        log.debug("buffering tool update without host", {
+          id: msg.id,
+          status: msg.status,
+        });
       }
-      if (msg.status === "completed") {
-        state.pendingFinalAnswerToolText = extractCompletedFinalAnswer(
-          msg.status,
-          msg.content,
-        );
-        if (state.currentAssistantEl && state.pendingFinalAnswerToolText) {
-          updateAssistantDisplay(
-            state.currentAssistantEl,
-            state.currentAssistantText,
-            state.pendingFinalAnswerToolText,
-          );
-        }
-      }
-      renderContentEvent("tool_call_update", msg, liveHooks());
-      finishPromptIfIdle();
-      scrollToBottom();
+      // Preserve the original lifecycle effects immediately even when the DOM
+      // host is absent. Replaying them after host creation is idempotent.
+      applyLiveToolCallUpdate(msg, hooks);
       break;
     }
 

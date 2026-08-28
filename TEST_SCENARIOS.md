@@ -218,6 +218,8 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - unsolicited live assistant → thought → assistant ordering after prompt
     completion matches database replay
   - tool-call render and completion state
+  - sequence-aware bounded orphan tool-update recovery when live rendering or
+    newest-first history pagination sees an update before its DOM host
   - generic bounded/escaped rawOutput inspector with replacement semantics,
     stable output-before-raw ordering across patches, and no persistence
   - task_complete summary rendering (visible, not collapsed) with ✔ icon
