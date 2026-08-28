@@ -589,6 +589,17 @@ function applyBufferedStatePatches(sessionId: string): boolean {
   return true;
 }
 
+let runtimeHydrationReconciler: () => void = () => {};
+
+export function setRuntimeHydrationReconciler(fn: () => void): void {
+  runtimeHydrationReconciler = fn;
+}
+
+function finishRuntimeHydration(): true {
+  runtimeHydrationReconciler();
+  return true;
+}
+
 export async function hydrateSessionRuntime(
   sessionId: string,
   isStillCurrent?: () => boolean,
@@ -600,11 +611,12 @@ export async function hydrateSessionRuntime(
       const result = await reloadSnapshotResult(sessionId, isStillCurrent);
       if (result.status === "stale") return false;
       if (result.status === "superseded") {
-        if (applyBufferedStatePatches(sessionId)) return true;
+        if (applyBufferedStatePatches(sessionId))
+          return finishRuntimeHydration();
         continue;
       }
       if (result.status === "failed") continue;
-      if (applyBufferedStatePatches(sessionId)) return true;
+      if (applyBufferedStatePatches(sessionId)) return finishRuntimeHydration();
     }
     return false;
   } finally {

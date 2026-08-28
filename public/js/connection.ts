@@ -9,7 +9,6 @@ import {
   setConnectionStatus,
   clearCancelTimer,
   hydrateSessionRuntime,
-  reloadSnapshot,
   updateInboxCount,
 } from "./state.ts";
 import {
@@ -25,6 +24,7 @@ import {
   loadHistory,
   loadNewEvents,
   fallbackToNextSession,
+  reconcileReplayedPendingTools,
 } from "./events.ts";
 import * as api from "./api.ts";
 import { applyConnectedLogLevel, log } from "./log.ts";
@@ -245,7 +245,7 @@ async function recoverAfterHandshake(
   sessionId: string,
   gen: number,
 ): Promise<void> {
-  void reloadSnapshot(sessionId, () => {
+  const hydrationPromise = hydrateSessionRuntime(sessionId, () => {
     return gen === streamGen && state.sessionId === sessionId;
   });
   await loadNewEvents(sessionId);
@@ -260,9 +260,10 @@ async function recoverAfterHandshake(
     await Promise.resolve();
     loaded = await loadNewEvents(sessionId);
   }
-  if (loaded && gen === streamGen && state.sessionId === sessionId) {
-    scrollToBottom(false);
-  }
+  const hydrated = await hydrationPromise;
+  if (!hydrated || gen !== streamGen || state.sessionId !== sessionId) return;
+  reconcileReplayedPendingTools();
+  if (loaded) scrollToBottom(false);
 }
 
 async function initializeSessionAndIntent(): Promise<void> {
@@ -348,6 +349,8 @@ async function resumeAndLoad(
     if (gen !== state.sessionSwitchGen) return;
     if (!hydrated) {
       await fallbackToNextSession(sessionId, state.sessionCwd ?? undefined);
+    } else {
+      reconcileReplayedPendingTools();
     }
   } else {
     // Full load: fetch session details and history in parallel.
@@ -371,6 +374,7 @@ async function resumeAndLoad(
         await fallbackToNextSession(sessionId, state.sessionCwd ?? undefined);
         return;
       }
+      reconcileReplayedPendingTools();
       session = s;
       if (!loaded) {
         addSystem("warn: Failed to load history.");
@@ -466,8 +470,12 @@ document.addEventListener("visibilitychange", () => {
   // transcript and _loadNewEventsImpl replays it from sequence zero.
   if (!document.hidden && state.sessionId && !state.replayInProgress) {
     const sid = state.sessionId;
-    void Promise.all([reloadSnapshot(sid), loadNewEvents(sid)]).then(() => {
-      if (state.sessionId !== sid) return;
+    void Promise.all([
+      hydrateSessionRuntime(sid, () => state.sessionId === sid),
+      loadNewEvents(sid),
+    ]).then(([hydrated]) => {
+      if (!hydrated || state.sessionId !== sid) return;
+      reconcileReplayedPendingTools();
       scrollToBottom(false);
     });
   }

@@ -707,6 +707,46 @@ describe("connection", () => {
     assert.equal(state.lastEventSeq, 1);
   });
 
+  it("reconciles replayed pending tools after an idle handshake snapshot", async () => {
+    history.replaceState(null, "", "/#idle-tool-session");
+    state.sessionId = "idle-tool-session";
+    state.lastEventSeq = 0;
+
+    setFetch(async (url: string) => {
+      if (url.includes("/visibility")) return mockResponse({});
+      if (url === "/api/v1/sessions/idle-tool-session")
+        return mockResponse(sessionResponse("idle-tool-session"));
+      if (url.startsWith("/api/v1/sessions/idle-tool-session/events")) {
+        if (url.includes("after=0")) {
+          return mockResponse([
+            {
+              seq: 1,
+              type: "tool_call",
+              data: JSON.stringify({
+                id: "tc-reconnected",
+                kind: "read",
+                title: "Reconnect tool",
+                rawInput: {},
+              }),
+            },
+          ]);
+        }
+        return mockResponse([]);
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+
+    connection.connect();
+    const es = await latestES();
+    fireConnected(es, "client-idle-tool");
+    await flush(100);
+
+    const tool = document.getElementById("tc-tc-reconnected");
+    assert.ok(tool?.classList.contains("completed"));
+    assert.equal(state.pendingToolCallIds.size, 0);
+    assert.equal(state.busy, false);
+  });
+
   describe("stream liveness watchdog", () => {
     let realNow: () => number;
     let now: number;

@@ -62,7 +62,7 @@ describe("shared session navigation", () => {
           configOptions: [],
         });
       }
-      if (url === "/api/v1/sessions/message-session/events?limit=500") {
+      if (url.startsWith("/api/v1/sessions/message-session/events?limit=")) {
         if (delayedHistory) return delayedHistory;
         return response({ events: [], streaming: {} });
       }
@@ -141,6 +141,40 @@ describe("shared session navigation", () => {
     assert.equal(result, "switched");
     assert.equal(state.sessionId, "message-session");
     assert.equal(location.hash, "#message-session");
+  });
+
+  it("reconciles replayed pending tools after switching to an idle session", async () => {
+    state.sessionId = "current-session";
+    delayedHistory = Promise.resolve(
+      new Response(
+        JSON.stringify({
+          events: [
+            {
+              seq: 1,
+              type: "tool_call",
+              data: JSON.stringify({
+                id: "tc-switched",
+                kind: "read",
+                title: "Switched tool",
+                rawInput: {},
+              }),
+            },
+          ],
+          streaming: {},
+        }),
+        { status: 200 },
+      ),
+    );
+
+    assert.equal(
+      await navigation.switchToSession("message-session"),
+      "switched",
+    );
+
+    const tool = document.getElementById("tc-tc-switched");
+    assert.ok(tool?.classList.contains("completed"));
+    assert.equal(state.pendingToolCallIds.size, 0);
+    assert.equal(state.busy, false);
   });
 
   it("does not complete a switch when snapshot hydration fails", async () => {

@@ -213,10 +213,13 @@ spot gaps, and decide what still needs to be added without reading every spec.
 - `test/events.test.ts`
   - session creation / busy-state restoration
   - user / assistant / thinking rendering
-  - unsolicited Main-agent output renders while the foreground turn stays idle
-  - unsolicited live assistant → thought → assistant ordering after prompt completion matches database replay
+  - unsolicited Main-agent text and tool calls render while the foreground turn
+    stays idle without reopening busy state
+  - unsolicited live assistant → thought → assistant ordering after prompt
+    completion matches database replay
   - tool-call render and completion state
-  - generic bounded/escaped rawOutput inspector with replacement semantics, stable output-before-raw ordering across patches, and no persistence
+  - generic bounded/escaped rawOutput inspector with replacement semantics,
+    stable output-before-raw ordering across patches, and no persistence
   - task_complete summary rendering (visible, not collapsed) with ✔ icon
   - plan transcript render (collapsed by default), pinned input panel updates,
     status colors/icons, panel show/hide, snapshot/state-patch restoration, and
@@ -226,13 +229,17 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - prompt completion rules
   - historical prompt replay cannot override authoritative runtime busy state
   - cancelled-turn cleanup for tool calls and permissions
-  - late-event suppression after prompt_done (tool_call, permission_request)
+  - late permission suppression after prompt_done; late tool calls render without
+    taking foreground pending/busy ownership
   - cancel acknowledgement timeout transitions to unconfirmed while busy
   - config update application
   - session deletion and title update handling
   - cross-session event filtering
   - Agent command update revision ordering
-  - history replay for all major stored event types (incl. task_complete with visible summary)
+  - history replay for all major stored event types (incl. task_complete with
+    visible summary)
+  - active reconnect restores pending tool ownership for terminal cleanup;
+    older-history pagination never takes foreground ownership
   - paginated loadHistory (limit param, hasMoreHistory)
   - loadOlderEvents prepend and sentinel removal
   - loadNewEvents incremental sync and orphan cleanup

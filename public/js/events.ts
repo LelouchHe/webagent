@@ -34,6 +34,7 @@ import {
   setCreatedSessionActivator,
   finishNewSessionRequest,
   setNavigationLoadInvalidator,
+  setRuntimeHydrationReconciler,
 } from "./state.ts";
 import {
   addMessage,
@@ -267,6 +268,20 @@ function completePendingTurnUI() {
   state.pendingPermissionRequestIds.clear();
 }
 
+export function reconcileReplayedPendingTools(): void {
+  if (state.busy && state.busyKind === "agent") return;
+  for (const id of state.pendingToolCallIds) {
+    const el = document.getElementById(`tc-${id}`);
+    if (!el) continue;
+    el.className = "tool-call completed";
+    const iconSpan = el.querySelector(".icon");
+    if (iconSpan) iconSpan.textContent = "✓";
+  }
+  state.pendingToolCallIds.clear();
+}
+
+setRuntimeHydrationReconciler(reconcileReplayedPendingTools);
+
 const HISTORY_PAGE_SIZE = 200;
 
 export async function loadHistory(sid: string): Promise<boolean> {
@@ -290,7 +305,7 @@ export async function loadHistory(sid: string): Promise<boolean> {
     // Batch DOM operations: render into an offscreen fragment, then append once.
     // ReplayIndex provides O(1) element lookup, replacing querySelector on the fragment.
     const fragment = document.createDocumentFragment();
-    const ri = createReplayIndex(events);
+    const ri = createReplayIndex(events, true);
     state.replayTarget = fragment;
     for (let i = 0; i < events.length; i++) {
       const data = JSON.parse(events[i].data) as Record<string, unknown>;
@@ -629,7 +644,7 @@ async function _loadNewEventsImpl(
 
     // Batch DOM operations into a fragment to avoid per-element reflow
     const fragment = document.createDocumentFragment();
-    const ri = createReplayIndex(events);
+    const ri = createReplayIndex(events, true);
     state.replayTarget = fragment;
     for (let i = 0; i < events.length; i++) {
       const data = JSON.parse(events[i].data) as Record<string, unknown>;
@@ -1020,7 +1035,7 @@ export async function loadOlderEvents(sid: string): Promise<boolean> {
 
     // Render into a fragment
     const fragment = document.createDocumentFragment();
-    const ri = createReplayIndex(events);
+    const ri = createReplayIndex(events, false);
     state.replayTarget = fragment;
     for (let i = 0; i < events.length; i++) {
       const data = JSON.parse(events[i].data) as Record<string, unknown>;
@@ -1082,9 +1097,13 @@ interface ReplayIndex {
   permissions: Map<string, HTMLElement>;
   resolvedPermissions: Set<string>;
   currentBashEl: HTMLElement | null;
+  trackPending: boolean;
 }
 
-function createReplayIndex(events: StoredEvent[]): ReplayIndex {
+function createReplayIndex(
+  events: StoredEvent[],
+  trackPending: boolean,
+): ReplayIndex {
   // Pre-scan for resolved permission requestIds so permission_request can
   // check resolution status without forward-scanning the events array.
   const resolvedPermissions = new Set<string>();
@@ -1099,6 +1118,7 @@ function createReplayIndex(events: StoredEvent[]): ReplayIndex {
     permissions: new Map(),
     resolvedPermissions,
     currentBashEl: null,
+    trackPending,
   };
 }
 
@@ -1136,9 +1156,9 @@ export function replayEvent(
   }
   switch (type) {
     case "prompt_done":
-      // Persisted completion marks a transcript boundary only. Runtime state
-      // is authoritative from snapshot + state_patch; replaying an older
-      // terminator must not clear a currently active prompt or its controls.
+      // Persisted completion marks a transcript boundary only. A superseded
+      // turn's delayed terminator may follow a newer tool call in storage, so
+      // runtime snapshot/state_patch — not replay order — owns completion.
       break;
     case "message":
       renderMessageCard(d as unknown as AgentEvent & { type: "message" });
@@ -1377,10 +1397,14 @@ function handleReplayContentEvent(
       break;
     }
     case "tool_call": {
+      const id = d.id as string;
       const el = renderContentEvent(type, d, hooks);
       if (el) {
         appendMessageElement(el);
-        if (ri) ri.toolCalls.set(d.id as string, el);
+        if (ri) {
+          ri.toolCalls.set(id, el);
+          if (ri.trackPending) state.pendingToolCallIds.add(id);
+        }
       }
       break;
     }
@@ -1468,6 +1492,7 @@ function drainReplayQueue(replayedSessionId: string) {
         // assistant element may already be primed for queued tail chunks.
         state.newTurnStarted = true;
         state.turnEnded = false;
+        if (state.busyKind !== "bash") setBusy(true);
       }
       continue;
     }
@@ -1847,6 +1872,9 @@ export function handleEvent(msg: AgentEvent) {
       state.newTurnStarted = true;
       state.turnEnded = false;
       if (msg.sessionId === state.sessionId) {
+        // Mirror the sender's optimistic busy transition. The authoritative
+        // state patch/snapshot will confirm or correct it.
+        if (state.busyKind !== "bash") setBusy(true);
         const el = renderContentEvent("user_message", msg, liveHooks());
         if (el) appendMessageElement(el);
       }
@@ -1889,9 +1917,12 @@ export function handleEvent(msg: AgentEvent) {
       break;
 
     case "tool_call": {
-      if (state.turnEnded) break;
-      state.pendingToolCallIds.add(msg.id);
-      setBusy(true);
+      // Background ACP work may emit a tool call while the foreground runtime
+      // is idle. Render it, but only an authoritative/optimistic busy agent
+      // owns pending UI. Transcript hints reset independently on reconnect.
+      if (state.busy && state.busyKind !== "bash") {
+        state.pendingToolCallIds.add(msg.id);
+      }
       hideWaiting();
       finishThinking();
       finishAssistant();
@@ -2051,10 +2082,16 @@ export function handleEvent(msg: AgentEvent) {
         state.reconcileAfterOwnUserEcho = true;
         break;
       }
-      if (msg.stopReason === "cancelled" && state.newTurnStarted) {
-        // This prompt_done belongs to a previous turn — a new turn has already
-        // started (signaled by user_message from another client).  Don't clobber
-        // the current turn's pending state; just tidy up leftover streaming elements.
+      if (
+        msg.stopReason === "cancelled" &&
+        !msg.promptId &&
+        state.newTurnStarted &&
+        state.busy &&
+        state.busyKind !== "bash"
+      ) {
+        // Legacy completion without turn identity: a new agent turn is already
+        // busy, so preserve it. Identified completions use promptId above and
+        // must not be overridden by a stale reconnect transcript hint.
         state.newTurnStarted = false;
         finishThinking();
         finishAssistant();

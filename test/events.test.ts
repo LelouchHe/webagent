@@ -1327,6 +1327,47 @@ describe("events", () => {
         assert.equal(state.pendingToolCallIds.size, 0);
       });
 
+      it("renders an unsolicited tool call after prompt_done without reopening busy", () => {
+        state.sessionId = "s1";
+        state.busy = true;
+        events.handleEvent({ type: "prompt_done", stopReason: "end_turn" });
+        assert.equal(state.busy, false);
+        // Reconnect resets turnEnded, while a remote-turn hint can remain
+        // stale; the authoritative idle snapshot must still win ownership.
+        state.turnEnded = false;
+        state.newTurnStarted = true;
+
+        events.handleEvent({
+          type: "tool_call",
+          id: "tc-background",
+          kind: "task",
+          title: "Background task",
+          rawInput: {},
+        });
+        events.handleEvent({
+          type: "tool_call_update",
+          id: "tc-background",
+          status: "completed",
+          content: [
+            { type: "content", content: { type: "text", text: "done" } },
+          ],
+          rawOutput: { status: "completed" },
+        });
+
+        const tool = document.getElementById("tc-tc-background");
+        assert.ok(tool, "unsolicited tool call should be rendered");
+        assert.equal(
+          tool.querySelector(".tc-output")?.textContent,
+          "outputdone",
+        );
+        assert.match(
+          tool.querySelector(".tc-raw-output")?.textContent ?? "",
+          /completed/,
+        );
+        assert.equal(state.busy, false);
+        assert.equal(state.pendingToolCallIds.size, 0);
+      });
+
       it("ignores permission_request arriving after prompt_done", () => {
         state.sessionId = "s1";
         state.busy = true;
@@ -2139,7 +2180,12 @@ describe("events", () => {
       it("valid cancel on current turn still works normally", () => {
         state.sessionId = "s1";
 
-        // Turn starts (user sent message locally, no user_message event on sender)
+        // Turn starts locally: sendPrompt sets busy before sending, and the
+        // sender does not receive its own user_message event.
+        state.busy = true;
+        state.currentPromptId = "prompt-current";
+        // A stale reconnect hint must not override explicit turn identity.
+        state.newTurnStarted = true;
         events.handleEvent({ type: "message_chunk", text: "response" });
         events.handleEvent({
           type: "tool_call",
@@ -2151,7 +2197,11 @@ describe("events", () => {
         assert.equal(state.busy, true);
 
         // User cancels the current turn
-        events.handleEvent({ type: "prompt_done", stopReason: "cancelled" });
+        events.handleEvent({
+          type: "prompt_done",
+          stopReason: "cancelled",
+          promptId: "prompt-current",
+        });
 
         // Should clear pending state and busy (valid cancel for current turn)
         assert.equal(state.pendingToolCallIds.size, 0);
@@ -3232,6 +3282,38 @@ describe("events", () => {
       assert.equal(state.hasMoreHistory, true);
       // Should have 4 children: 2 prepended + 2 original
       assert.equal(dom.messages.children.length, 4);
+    });
+
+    it("does not make historical tool calls foreground-pending", async () => {
+      state.oldestLoadedSeq = 5;
+      state.hasMoreHistory = true;
+      state.sessionId = "s1";
+      events.replayEvent("user_message", { text: "current" }, [], 0);
+
+      globalThis.fetch = (() =>
+        Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              events: [
+                {
+                  seq: 4,
+                  type: "tool_call",
+                  data: JSON.stringify({
+                    id: "tc-historical",
+                    kind: "read",
+                    title: "Historical tool",
+                    rawInput: {},
+                  }),
+                },
+              ],
+              hasMore: false,
+            }),
+        })) as any;
+
+      assert.equal(await events.loadOlderEvents("s1"), true);
+      assert.ok(document.getElementById("tc-tc-historical"));
+      assert.equal(state.pendingToolCallIds.size, 0);
     });
 
     it("merges adjacent assistant fragments across older-history pagination", async () => {
@@ -5397,6 +5479,98 @@ describe("events", () => {
   });
 
   describe("loadNewEvents clears pending state from replayed events", () => {
+    it("restores pending ownership so prompt_done completes a replayed tool", async () => {
+      events.replayEvent("user_message", { text: "hi" }, [], 0);
+      state.lastEventSeq = 1;
+      state.sessionId = "s1";
+      state.busy = true;
+      state.busyKind = "agent";
+      dom.messages.lastElementChild?.setAttribute("data-sync-boundary", "");
+
+      globalThis.fetch = (() =>
+        Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve([
+              {
+                seq: 2,
+                type: "tool_call",
+                data: JSON.stringify({
+                  id: "tc-restored",
+                  kind: "read",
+                  title: "Restored tool",
+                  rawInput: {},
+                }),
+              },
+            ]),
+        })) as any;
+
+      await events.loadNewEvents("s1");
+      assert.equal(state.pendingToolCallIds.has("tc-restored"), true);
+
+      events.handleEvent({ type: "prompt_done", stopReason: "end_turn" });
+
+      const tool = document.getElementById("tc-tc-restored");
+      assert.ok(tool?.classList.contains("completed"));
+      assert.equal(state.pendingToolCallIds.size, 0);
+      assert.equal(state.busy, false);
+    });
+
+    it("defers replayed pending-tool completion to authoritative runtime state", async () => {
+      events.replayEvent("user_message", { text: "old" }, [], 0);
+      state.lastEventSeq = 1;
+      state.sessionId = "s1";
+      state.busy = true;
+      state.busyKind = "agent";
+      dom.messages.lastElementChild?.setAttribute("data-sync-boundary", "");
+
+      globalThis.fetch = (() =>
+        Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve([
+              {
+                seq: 2,
+                type: "user_message",
+                data: JSON.stringify({ text: "new turn" }),
+              },
+              {
+                seq: 3,
+                type: "tool_call",
+                data: JSON.stringify({
+                  id: "tc-current",
+                  kind: "read",
+                  title: "Current tool",
+                  rawInput: {},
+                }),
+              },
+              {
+                seq: 4,
+                type: "prompt_done",
+                data: JSON.stringify({
+                  stopReason: "cancelled",
+                  promptId: "superseded-prompt",
+                }),
+              },
+            ]),
+        })) as any;
+
+      await events.loadNewEvents("s1");
+      const tool = document.getElementById("tc-tc-current");
+      assert.ok(tool);
+      assert.equal(tool.classList.contains("completed"), false);
+      assert.equal(state.pendingToolCallIds.has("tc-current"), true);
+
+      events.reconcileReplayedPendingTools();
+      assert.equal(tool.classList.contains("completed"), false);
+
+      state.busy = false;
+      state.busyKind = null;
+      events.reconcileReplayedPendingTools();
+      assert.ok(tool.classList.contains("completed"));
+      assert.equal(state.pendingToolCallIds.size, 0);
+    });
+
     it("clears pendingToolCallIds for tool_call_updates replayed from DB", async () => {
       // Simulate: live session had a tool_call that was added to pendingToolCallIds
       events.replayEvent("user_message", { text: "hi" }, [], 0);
