@@ -139,6 +139,10 @@ describe("state", () => {
         "204,481 / 1,050,000 tokens",
       );
       assert.equal(mod.dom.statusBar.lastElementChild?.className, "status-cwd");
+      assert.equal(
+        mod.dom.statusBar.querySelector(".status-cwd-prefix")?.textContent,
+        "/",
+      );
     });
 
     it("omits usage and extra separators when unavailable", () => {
@@ -159,6 +163,21 @@ describe("state", () => {
         "claude-sonnet-4-5 · /tmp/project",
       );
       assert.equal(mod.dom.statusBar.querySelector(".status-usage"), null);
+    });
+
+    it("keeps path roots outside the truncating tail", () => {
+      assert.deepEqual(mod.splitDisplayPath("~/mine/code/webagent"), {
+        prefix: "~/",
+        tail: "mine/code/webagent",
+      });
+      assert.deepEqual(mod.splitDisplayPath("/Users/me/project"), {
+        prefix: "/",
+        tail: "Users/me/project",
+      });
+      assert.deepEqual(mod.splitDisplayPath("C:\\Users\\me"), {
+        prefix: "C:\\",
+        tail: "Users\\me",
+      });
     });
 
     it("formats compact token values", () => {

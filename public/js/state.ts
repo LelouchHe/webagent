@@ -312,6 +312,19 @@ export function displayModelName(model: string): string {
   return slash === -1 ? model : model.slice(slash + 1);
 }
 
+export function splitDisplayPath(cwd: string): {
+  prefix: string;
+  tail: string;
+} {
+  if (cwd.startsWith("~/") || cwd.startsWith("~\\")) {
+    return { prefix: cwd.slice(0, 2), tail: cwd.slice(2) };
+  }
+  if (cwd.startsWith("/")) return { prefix: "/", tail: cwd.slice(1) };
+  const drive = cwd.match(/^[A-Za-z]:[\\/]/)?.[0];
+  if (drive) return { prefix: drive, tail: cwd.slice(drive.length) };
+  return { prefix: "", tail: cwd };
+}
+
 export function updateStatusBar() {
   // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- see updateModeUI
   const model = getStringConfigValue("model") || getFallback("model");
@@ -349,7 +362,21 @@ export function updateStatusBar() {
     }
     const span = document.createElement("span");
     span.className = part.className;
-    span.textContent = part.text;
+    if (part.className === "status-cwd") {
+      const path = splitDisplayPath(part.text);
+      if (path.prefix) {
+        const prefix = document.createElement("span");
+        prefix.className = "status-cwd-prefix";
+        prefix.textContent = path.prefix;
+        span.appendChild(prefix);
+      }
+      const tail = document.createElement("span");
+      tail.className = "status-cwd-tail";
+      tail.textContent = path.tail;
+      span.appendChild(tail);
+    } else {
+      span.textContent = part.text;
+    }
     if (part.title) span.title = part.title;
     dom.statusBar.appendChild(span);
   });
