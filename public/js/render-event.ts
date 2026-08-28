@@ -482,6 +482,129 @@ function buildToolCall(data: Record<string, unknown>): HTMLElement {
   return el;
 }
 
+const RAW_OUTPUT_MAX_DEPTH = 6;
+const RAW_OUTPUT_MAX_ARRAY_ITEMS = 100;
+const RAW_OUTPUT_MAX_OBJECT_KEYS = 100;
+const RAW_OUTPUT_MAX_KEY_CHARS = 256;
+const RAW_OUTPUT_MAX_NODES = 1000;
+const RAW_OUTPUT_MAX_STRING_CHARS = 4096;
+const RAW_OUTPUT_MAX_RENDER_CHARS = 16 * 1024;
+
+type RawOutputBudget = { remaining: number };
+type NormalizedRawScalar =
+  | { handled: true; value: unknown }
+  | { handled: false };
+
+function normalizeRawScalar(value: unknown): NormalizedRawScalar {
+  if (value === null || typeof value === "boolean" || typeof value === "number")
+    return { handled: true, value };
+  if (typeof value === "string") {
+    const normalized =
+      value.length <= RAW_OUTPUT_MAX_STRING_CHARS
+        ? value
+        : `${value.slice(0, RAW_OUTPUT_MAX_STRING_CHARS)}… [${value.length - RAW_OUTPUT_MAX_STRING_CHARS} chars truncated]`;
+    return { handled: true, value: normalized };
+  }
+  if (typeof value === "undefined")
+    return { handled: true, value: "[undefined]" };
+  if (typeof value === "bigint")
+    return { handled: true, value: `${value.toString()}n` };
+  if (typeof value === "symbol" || typeof value === "function")
+    return { handled: true, value: `[${typeof value}]` };
+  return { handled: false };
+}
+
+function normalizeRawOutput(
+  value: unknown,
+  depth: number,
+  seen: WeakSet<object>,
+  budget: RawOutputBudget,
+): unknown {
+  if (budget.remaining-- <= 0) return "[node limit reached]";
+  const scalar = normalizeRawScalar(value);
+  if (scalar.handled) return scalar.value;
+  if (typeof value !== "object" || value === null) return "[unsupported]";
+  if (depth >= RAW_OUTPUT_MAX_DEPTH) return "[max depth reached]";
+  if (seen.has(value)) return "[circular]";
+  seen.add(value);
+  try {
+    if (Array.isArray(value)) {
+      const items = value
+        .slice(0, RAW_OUTPUT_MAX_ARRAY_ITEMS)
+        .map((item) => normalizeRawOutput(item, depth + 1, seen, budget));
+      if (value.length > RAW_OUTPUT_MAX_ARRAY_ITEMS) {
+        items.push(
+          `[${value.length - RAW_OUTPUT_MAX_ARRAY_ITEMS} items omitted]`,
+        );
+      }
+      return items;
+    }
+
+    const input = value as Record<string, unknown>;
+    const output: Record<string, unknown> = {};
+    let keyCount = 0;
+    for (const rawKey in input) {
+      if (!Object.hasOwn(input, rawKey)) continue;
+      if (keyCount >= RAW_OUTPUT_MAX_OBJECT_KEYS) {
+        output["…"] = "additional keys omitted";
+        break;
+      }
+      const key =
+        rawKey.length <= RAW_OUTPUT_MAX_KEY_CHARS
+          ? rawKey
+          : `${rawKey.slice(0, RAW_OUTPUT_MAX_KEY_CHARS)}… [key truncated]`;
+      const uniqueKey = Object.hasOwn(output, key)
+        ? `${key} #${keyCount}`
+        : key;
+      try {
+        output[uniqueKey] = normalizeRawOutput(
+          input[rawKey],
+          depth + 1,
+          seen,
+          budget,
+        );
+      } catch {
+        output[uniqueKey] = "[unavailable]";
+      }
+      keyCount++;
+    }
+    return output;
+  } finally {
+    seen.delete(value);
+  }
+}
+
+function formatRawOutput(value: unknown): string {
+  let text: string;
+  try {
+    text = JSON.stringify(
+      normalizeRawOutput(value, 0, new WeakSet<object>(), {
+        remaining: RAW_OUTPUT_MAX_NODES,
+      }),
+      null,
+      2,
+    );
+  } catch {
+    text = "[raw output unavailable]";
+  }
+  if (text.length <= RAW_OUTPUT_MAX_RENDER_CHARS) return text;
+  const suffix = "\n… [raw output truncated]";
+  return `${text.slice(0, RAW_OUTPUT_MAX_RENDER_CHARS - suffix.length)}${suffix}`;
+}
+
+function applyRawOutput(el: HTMLElement, value: unknown): void {
+  let details = el.querySelector<HTMLDetailsElement>("details.tc-raw-output");
+  if (!details) {
+    details = document.createElement("details");
+    details.className = "tc-raw-output";
+    details.innerHTML =
+      '<summary>raw</summary><pre class="tc-content tc-raw-content"></pre>';
+    el.appendChild(details);
+  }
+  const body = details.querySelector<HTMLElement>(".tc-raw-content");
+  if (body) body.textContent = formatRawOutput(value);
+}
+
 function applyToolCallUpdate(
   data: Record<string, unknown>,
   hooks: RenderHooks,
@@ -498,32 +621,38 @@ function applyToolCallUpdate(
   const content = Array.isArray(data.content)
     ? (data.content as ToolContentItem[])
     : [];
-  if (!content.length) return;
-  applyStructuredDiff(el, content);
-  const text = extractToolCallContent(content);
-  if (!text) return;
-
-  // ACP agents stream cumulative snapshots (full output-so-far), not deltas.
-  // Find-or-create the output body, then overwrite with the latest snapshot.
-  if (el.dataset.kind === "task_complete") {
-    let div = el.querySelector(".tc-summary");
-    if (!div) {
-      div = document.createElement("div");
-      div.className = "tc-summary";
-      el.appendChild(div);
+  if (content.length > 0) {
+    applyStructuredDiff(el, content);
+    const text = extractToolCallContent(content);
+    if (text) {
+      // ACP agents stream cumulative snapshots (full output-so-far), not deltas.
+      // Find-or-create the output body, then overwrite with the latest snapshot.
+      if (el.dataset.kind === "task_complete") {
+        let div = el.querySelector(".tc-summary");
+        if (!div) {
+          div = document.createElement("div");
+          div.className = "tc-summary";
+          el.appendChild(div);
+        }
+        div.textContent = text;
+      } else {
+        let body = el.querySelector(".tc-output .tc-content");
+        if (!body) {
+          const details = document.createElement("details");
+          details.className = "tc-output";
+          details.innerHTML = `<summary>output</summary><div class="tc-content"></div>`;
+          el.appendChild(details);
+          body = details.querySelector(".tc-content");
+        }
+        if (body) body.textContent = text;
+      }
     }
-    div.textContent = text;
-  } else {
-    let body = el.querySelector(".tc-output .tc-content");
-    if (!body) {
-      const details = document.createElement("details");
-      details.className = "tc-output";
-      details.innerHTML = `<summary>output</summary><div class="tc-content"></div>`;
-      el.appendChild(details);
-      body = details.querySelector(".tc-content");
-    }
-    if (body) body.textContent = text;
   }
+  if (Object.hasOwn(data, "rawOutput")) applyRawOutput(el, data.rawOutput);
+  // A raw-only update may arrive before a later content-only update. Re-home
+  // the existing inspector after every patch so standard output stays first.
+  const raw = el.querySelector<HTMLDetailsElement>("details.tc-raw-output");
+  if (raw && raw !== el.lastElementChild) el.appendChild(raw);
 }
 
 function applyToolCallMetadata(

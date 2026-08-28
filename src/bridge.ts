@@ -717,6 +717,9 @@ export class AgentBridge extends EventEmitter {
           ...(typeof update.title === "string" ? { title: update.title } : {}),
           ...(typeof update.kind === "string" ? { kind: update.kind } : {}),
           ...(update.rawInput ? { rawInput: update.rawInput as RawInput } : {}),
+          ...(Object.hasOwn(update, "rawOutput")
+            ? { rawOutput: update.rawOutput }
+            : {}),
           ...(Array.isArray(update.locations)
             ? { locations: update.locations }
             : {}),

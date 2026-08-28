@@ -98,10 +98,16 @@ describe("event writers populate from_ref correctly", () => {
       sessionId: "s1",
       id: "t1",
       status: "completed",
+      rawOutput: { details: { progress: 100 } },
     });
     const ev = store.getEvents("s1").find((e) => e.type === "tool_call_update");
     assert.ok(ev);
     assert.equal(ev.from_ref, "agent");
+    assert.equal(
+      Object.hasOwn(JSON.parse(ev.data), "rawOutput"),
+      false,
+      "rawOutput is live-only and must not be persisted",
+    );
   });
 
   it("plan is from_ref='agent'", () => {

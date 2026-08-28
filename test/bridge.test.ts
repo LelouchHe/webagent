@@ -385,6 +385,10 @@ describe("AgentBridge", () => {
         rawInput: { command: "npm test", cwd: "/tmp/project" },
         locations: [{ path: "/tmp/project" }],
         content: [{ type: "text", text: "done" }],
+        rawOutput: {
+          content: [{ type: "text", text: "done" }],
+          details: { progress: 100 },
+        },
       },
     });
     await (bridge as any).handleSessionUpdate({
@@ -451,6 +455,10 @@ describe("AgentBridge", () => {
         rawInput: { command: "npm test", cwd: "/tmp/project" },
         locations: [{ path: "/tmp/project" }],
         content: [{ type: "text", text: "done" }],
+        rawOutput: {
+          content: [{ type: "text", text: "done" }],
+          details: { progress: 100 },
+        },
       },
       {
         type: "plan",

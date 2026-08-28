@@ -578,6 +578,182 @@ describe("render-event", () => {
       assert.ok(details.querySelector(".tc-content"));
     });
 
+    it("renders rawOutput as collapsed, escaped JSON for any tool", () => {
+      const existing = document.createElement("div");
+      existing.className = "tool-call pending";
+      existing.id = "tc-raw";
+      existing.innerHTML = '<span class="icon">·</span>';
+      host.appendChild(existing);
+
+      mod.renderContentEvent(
+        "tool_call_update",
+        {
+          id: "raw",
+          status: "in_progress",
+          rawOutput: {
+            details: { progress: 50, activity: "<script>alert(1)</script>" },
+          },
+        },
+        makeHooks({ findToolCallEl: () => existing }),
+      );
+
+      const details = existing.querySelector<HTMLDetailsElement>(
+        "details.tc-raw-output",
+      );
+      assert.ok(details);
+      assert.equal(details.open, false);
+      assert.equal(details.querySelector("summary")?.textContent, "raw");
+      assert.match(details.textContent, /"progress": 50/);
+      assert.match(details.textContent, /<script>alert\(1\)<\/script>/);
+      assert.equal(details.querySelector("script"), null);
+    });
+
+    it("places output before raw details when both are present", () => {
+      const existing = document.createElement("div");
+      existing.className = "tool-call pending";
+      existing.id = "tc-output-before-raw";
+      existing.innerHTML = '<span class="icon">·</span>';
+      host.appendChild(existing);
+
+      mod.renderContentEvent(
+        "tool_call_update",
+        {
+          id: "output-before-raw",
+          status: "completed",
+          content: [
+            { type: "content", content: { type: "text", text: "visible" } },
+          ],
+          rawOutput: { content: [{ type: "text", text: "visible" }] },
+        },
+        makeHooks({ findToolCallEl: () => existing }),
+      );
+
+      const output = existing.querySelector("details.tc-output");
+      const raw = existing.querySelector("details.tc-raw-output");
+      assert.ok(output);
+      assert.ok(raw);
+      const children = [...existing.children];
+      assert.ok(
+        children.indexOf(output) < children.indexOf(raw),
+        "raw should follow output",
+      );
+    });
+
+    it("keeps raw after output when content arrives in a later update", () => {
+      const existing = document.createElement("div");
+      existing.className = "tool-call pending";
+      existing.id = "tc-raw-before-output";
+      existing.innerHTML = '<span class="icon">·</span>';
+      host.appendChild(existing);
+      const hooks = makeHooks({ findToolCallEl: () => existing });
+
+      mod.renderContentEvent(
+        "tool_call_update",
+        { id: "raw-before-output", rawOutput: { progress: 50 } },
+        hooks,
+      );
+      mod.renderContentEvent(
+        "tool_call_update",
+        {
+          id: "raw-before-output",
+          content: [
+            { type: "content", content: { type: "text", text: "visible" } },
+          ],
+        },
+        hooks,
+      );
+
+      const output = existing.querySelector("details.tc-output");
+      const raw = existing.querySelector("details.tc-raw-output");
+      assert.ok(output);
+      assert.ok(raw);
+      const children = [...existing.children];
+      assert.ok(
+        children.indexOf(output) < children.indexOf(raw),
+        "raw should remain after later output",
+      );
+    });
+
+    it("replaces rawOutput only when an update supplies the field", () => {
+      const existing = document.createElement("div");
+      existing.className = "tool-call pending";
+      existing.id = "tc-raw-replace";
+      existing.innerHTML = '<span class="icon">·</span>';
+      host.appendChild(existing);
+      const hooks = makeHooks({ findToolCallEl: () => existing });
+
+      mod.renderContentEvent(
+        "tool_call_update",
+        { id: "raw-replace", rawOutput: { phase: "first" } },
+        hooks,
+      );
+      mod.renderContentEvent(
+        "tool_call_update",
+        { id: "raw-replace", status: "in_progress" },
+        hooks,
+      );
+      assert.match(
+        existing.querySelector(".tc-raw-content")?.textContent ?? "",
+        /first/,
+      );
+
+      mod.renderContentEvent(
+        "tool_call_update",
+        { id: "raw-replace", rawOutput: ["second"] },
+        hooks,
+      );
+      const text = existing.querySelector(".tc-raw-content")?.textContent ?? "";
+      assert.match(text, /second/);
+      assert.doesNotMatch(text, /first/);
+      assert.equal(
+        existing.querySelectorAll("details.tc-raw-output").length,
+        1,
+      );
+    });
+
+    it("bounds deeply nested and oversized rawOutput", () => {
+      const existing = document.createElement("div");
+      existing.className = "tool-call pending";
+      existing.id = "tc-raw-bounded";
+      existing.innerHTML = '<span class="icon">·</span>';
+      host.appendChild(existing);
+      let deep: Record<string, unknown> = { value: "x".repeat(20_000) };
+      for (let i = 0; i < 10; i++) deep = { nested: deep };
+
+      mod.renderContentEvent(
+        "tool_call_update",
+        { id: "raw-bounded", rawOutput: { deep, items: Array(150).fill(1) } },
+        makeHooks({ findToolCallEl: () => existing }),
+      );
+
+      const text = existing.querySelector(".tc-raw-content")?.textContent ?? "";
+      assert.ok(text.length <= 16_500, `raw output was ${text.length} chars`);
+      assert.match(text, /truncated|max depth|items omitted|node limit/);
+    });
+
+    it("bounds object key enumeration and key-name length", () => {
+      const existing = document.createElement("div");
+      existing.className = "tool-call pending";
+      existing.id = "tc-raw-keys";
+      existing.innerHTML = '<span class="icon">·</span>';
+      host.appendChild(existing);
+      const rawOutput: Record<string, number> = {
+        [`0-${"k".repeat(1000)}`]: 0,
+      };
+      for (let i = 1; i < 150; i++) rawOutput[`key-${i}`] = i;
+
+      mod.renderContentEvent(
+        "tool_call_update",
+        { id: "raw-keys", rawOutput },
+        makeHooks({ findToolCallEl: () => existing }),
+      );
+
+      const text = existing.querySelector(".tc-raw-content")?.textContent ?? "";
+      assert.ok(text.length <= 16_500);
+      assert.match(text, /key truncated/);
+      assert.match(text, /additional keys omitted/);
+    });
+
     it("overwrites output with the latest cumulative snapshot across updates", () => {
       // ACP agents (e.g. Copilot CLI) stream cumulative snapshots, not deltas:
       // each tool_call_update carries the full output-so-far. The renderer must

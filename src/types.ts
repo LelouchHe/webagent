@@ -179,6 +179,7 @@ export type AgentEvent =
       title?: string;
       kind?: string;
       rawInput?: RawInput;
+      rawOutput?: unknown;
       locations?: { path: string; line?: number | null }[];
     }
   | { type: "plan"; sessionId: string; entries: PlanEntry[] }

@@ -32,7 +32,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - permission request resolution ordering
   - targeted cancellation of pending permission requests
   - config-option update return path
-  - ACP session update event translation
+  - ACP session update event translation, including live-only rawOutput forwarding
   - available_commands_update translation
   - ACP text file read/write callbacks
 
@@ -216,6 +216,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - unsolicited Main-agent output renders while the foreground turn stays idle
   - unsolicited live assistant → thought → assistant ordering after prompt completion matches database replay
   - tool-call render and completion state
+  - generic bounded/escaped rawOutput inspector with replacement semantics, stable output-before-raw ordering across patches, and no persistence
   - task_complete summary rendering (visible, not collapsed) with ✔ icon
   - plan transcript render (collapsed by default), pinned input panel updates,
     status colors/icons, panel show/hide, snapshot/state-patch restoration, and
