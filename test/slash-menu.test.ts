@@ -102,6 +102,30 @@ describe("slash menu — Tab vs Click behavior", () => {
     assert.equal(messageLines().length, 0, "Tab should not execute /notify");
   });
 
+  it("uses the agent's thought_level option for the /think menu", async () => {
+    state.configOptions = [
+      {
+        type: "select",
+        id: "thought_level",
+        category: "thought_level",
+        name: "Thinking",
+        currentValue: "medium",
+        options: [
+          { value: "medium", name: "Medium" },
+          { value: "high", name: "High" },
+        ],
+      },
+    ];
+    dom.input.value = "/think ";
+
+    commands.updateSlashMenu();
+    await new Promise((r) => setTimeout(r, 0));
+
+    assert.ok(dom.slashMenu.classList.contains("active"));
+    assert.match(dom.slashMenu.textContent, /Medium/);
+    assert.match(dom.slashMenu.textContent, /High/);
+  });
+
   it("shows plan visibility options with descriptions and current marker", async () => {
     const events = await import("../public/js/events.ts");
     events.handleEvent({

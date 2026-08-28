@@ -650,6 +650,7 @@ export class Store {
         model: "model",
         mode: "mode",
         reasoning_effort: "reasoning_effort",
+        thought_level: "reasoning_effort",
       } as Record<string, string>
     )[configId];
     if (!column) return;

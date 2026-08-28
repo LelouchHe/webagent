@@ -178,9 +178,19 @@ export class SessionManager {
 
     // Inherit config options from source session
     if (sourceSession) {
+      const thinkingOption = createdConfigOptions.find(
+        (option) =>
+          "options" in option &&
+          (option.id === "reasoning_effort" ||
+            option.id === "thought_level" ||
+            option.category === "thought_level"),
+      );
       const inherited: Array<{ configId: string; value: string | null }> = [
         { configId: "model", value: sourceSession.model },
-        { configId: "reasoning_effort", value: sourceSession.reasoning_effort },
+        {
+          configId: thinkingOption?.id ?? "reasoning_effort",
+          value: sourceSession.reasoning_effort,
+        },
       ];
       for (const { configId, value } of inherited) {
         if (!value) continue;
@@ -436,9 +446,13 @@ export class SessionManager {
       model: session.model,
       mode: session.mode,
       reasoning_effort: session.reasoning_effort,
+      thought_level: session.reasoning_effort,
     };
     return configOptions.map((opt) => {
-      const override = stored[opt.id];
+      const override =
+        opt.category === "thought_level"
+          ? session.reasoning_effort
+          : stored[opt.id];
       if (override && "options" in opt)
         return { ...opt, currentValue: override };
       return opt;

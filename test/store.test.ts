@@ -104,6 +104,9 @@ describe("Store", () => {
       assert.equal(s.model, "claude-sonnet");
       assert.equal(s.mode, "plan");
       assert.equal(s.reasoning_effort, "high");
+
+      store.updateSessionConfig("s1", "thought_level", "xhigh");
+      assert.equal(store.getSession("s1")!.reasoning_effort, "xhigh");
     });
 
     it("ignores unknown config option ids", () => {

@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Store } from "../src/store.ts";
 import { SessionManager } from "../src/session-manager.ts";
+import type { ConfigOption } from "../src/types.ts";
 
 describe("SessionManager", () => {
   let store: Store;
@@ -219,6 +220,58 @@ describe("SessionManager", () => {
         "claude-sonnet-4.6",
       );
       assert.equal(store.getSession(created.sessionId)!.mode, "agent");
+      assert.equal(
+        store.getSession(created.sessionId)!.reasoning_effort,
+        "high",
+      );
+    });
+
+    it("inherits thinking through an agent's thought_level option", async () => {
+      store.createSession("s1", "/x");
+      store.saveEvent(
+        "s1",
+        "user_message",
+        { text: "hi" },
+        { from_ref: "user" },
+      );
+      store.updateSessionConfig("s1", "reasoning_effort", "high");
+      const configOptions: ConfigOption[] = [
+        {
+          type: "select",
+          id: "thought_level",
+          category: "thought_level",
+          name: "Thinking",
+          currentValue: "medium",
+          options: [
+            { value: "medium", name: "Medium" },
+            { value: "high", name: "High" },
+          ],
+        },
+      ];
+      const configCalls: Array<{ configId: string; value: string }> = [];
+      const bridge = {
+        async newSession() {
+          return { sessionId: "agent-s2", configOptions };
+        },
+        async setConfigOption(
+          _sessionId: string,
+          configId: string,
+          value: string,
+        ) {
+          configCalls.push({ configId, value });
+          return [];
+        },
+        async loadSession() {
+          throw new Error("loadSession should not be called");
+        },
+      };
+
+      const created = await sm.createSession(bridge, undefined, "s1");
+
+      assert.deepEqual(configCalls, [
+        { configId: "thought_level", value: "high" },
+      ]);
+      assert.equal(created.configOptions[0]?.currentValue, "high");
       assert.equal(
         store.getSession(created.sessionId)!.reasoning_effort,
         "high",

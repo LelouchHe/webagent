@@ -12,6 +12,7 @@ import {
   requestNewSession,
   sendCancel,
   getSelectConfigOption,
+  getThinkingConfigOption,
   updateModeUI,
   updateStatusBar,
 } from "./state.ts";
@@ -401,8 +402,12 @@ export async function handleSlashCommand(text: string): Promise<boolean> {
         "/mode": "mode",
         "/think": "reasoning_effort",
       };
-      const configId = configMap[cmd];
-      const opt = getSelectConfigOption(configId);
+      let configId = configMap[cmd];
+      const opt =
+        cmd === "/think"
+          ? getThinkingConfigOption()
+          : getSelectConfigOption(configId);
+      if (cmd === "/think" && opt) configId = opt.id;
       if (!arg) {
         const valueName =
           opt?.options.find((o) => o.value === opt.currentValue)?.name ??

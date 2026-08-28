@@ -10,6 +10,7 @@ import {
   requestNewSession,
   sendCancel,
   getSelectConfigOption,
+  getThinkingConfigOption,
   getConfigValue,
   updateModeUI,
   updateStatusBar,
@@ -658,7 +659,13 @@ export const ROOT: CmdNode = {
         };
       },
     },
-    configCmdNode("/think", "Set thinking effort", "reasoning_effort"),
+    configCmdNode(
+      "/think",
+      "Set thinking effort",
+      "reasoning_effort",
+      false,
+      true,
+    ),
     {
       name: "/token",
       desc: "Manage API tokens",
@@ -716,22 +723,29 @@ function configCmdNode(
   desc: string,
   configId: string,
   showOptionValue = false,
+  thinking = false,
 ): CmdNode {
   return {
     name,
     desc,
     fetch: () => {
-      const opt = getSelectConfigOption(configId);
+      const opt = thinking
+        ? getThinkingConfigOption()
+        : getSelectConfigOption(configId);
       return opt ? opt.options : [];
     },
     toSpec: (item: unknown) => {
       const o = item as { value: string; name: string };
-      const current = getConfigValue(configId);
+      const opt = thinking
+        ? getThinkingConfigOption()
+        : getSelectConfigOption(configId);
+      const current = opt?.currentValue ?? getConfigValue(configId);
       return {
         primary: o.name,
         secondary: showOptionValue ? `(${o.value})` : undefined,
         current: o.value === current,
-        onSelect: () => setConfigAndUpdate(configId, o.value, o.name),
+        onSelect: () =>
+          setConfigAndUpdate(opt?.id ?? configId, o.value, o.name),
       };
     },
     matches: showOptionValue

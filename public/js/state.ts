@@ -4,6 +4,7 @@ import type {
   AgentCommand,
   AgentCommandSnapshot,
   ConfigOption,
+  ConfigSelectOption,
   AgentEvent,
   PlanEntry,
 } from "../../src/types.ts";
@@ -204,6 +205,17 @@ export function getConfigOption(id: string) {
 export function getSelectConfigOption(id: string) {
   const opt = getConfigOption(id);
   return opt && "options" in opt ? opt : null;
+}
+export function getThinkingConfigOption(): ConfigSelectOption | null {
+  const exact =
+    getSelectConfigOption("reasoning_effort") ??
+    getSelectConfigOption("thought_level");
+  if (exact) return exact;
+  const opt = state.configOptions.find(
+    (option): option is ConfigSelectOption =>
+      option.category === "thought_level" && "options" in option,
+  );
+  return opt ?? null;
 }
 export function getConfigValue(id: string) {
   return getConfigOption(id)?.currentValue ?? null;
