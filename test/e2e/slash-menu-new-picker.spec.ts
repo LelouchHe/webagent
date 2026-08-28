@@ -8,10 +8,8 @@ import {
 async function readStatusBarCwd(
   page: import("playwright/test").Page,
 ): Promise<string> {
-  const text = await page.locator("#status-bar").textContent();
-  // Status bar format: "<model> · <cwd>"  (or just "<cwd>")
-  const parts = (text ?? "").split(" · ");
-  return (parts[parts.length - 1] ?? "").trim();
+  const text = await page.locator("#status-bar .status-cwd").textContent();
+  return (text ?? "").trim();
 }
 
 test("slash-menu /new picker can create a session from a previously used cwd", async ({
