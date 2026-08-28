@@ -641,6 +641,40 @@ describe("render-event", () => {
       assert.equal(summaries[0].textContent, "partial summary done");
     });
 
+    it("renders ACP structured diff content after lazy loading", async () => {
+      const existing = document.createElement("div");
+      existing.className = "tool-call pending";
+      existing.id = "tc-D";
+      existing.dataset.kind = "edit";
+      existing.innerHTML = '<span class="icon">·</span>';
+      host.appendChild(existing);
+
+      mod.renderContentEvent(
+        "tool_call_update",
+        {
+          id: "D",
+          status: "completed",
+          content: [
+            {
+              type: "diff",
+              path: "src/example.ts",
+              oldText: "const value = 1;\n",
+              newText: "const value = 2;\n",
+            },
+          ],
+        },
+        makeHooks({ findToolCallEl: () => existing }),
+      );
+
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      const diff = existing.querySelector("details.tc-diff .diff-view");
+      assert.ok(diff);
+      assert.match(diff.textContent, /\*\*\* src\/example\.ts/);
+      assert.match(diff.textContent, /-const value = 1;/);
+      assert.match(diff.textContent, /\+const value = 2;/);
+    });
+
     it("does not clobber an edit diff details when output arrives", () => {
       // buildToolCall appends a diff <details> for edit kind; the output body
       // must be a separate node, not overwrite the diff.

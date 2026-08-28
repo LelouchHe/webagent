@@ -337,6 +337,9 @@ export interface ToolContentItem {
   type?: string;
   terminalId?: string;
   content?: { text?: string } | Array<{ text?: string }>;
+  path?: string;
+  oldText?: string | null;
+  newText?: string;
 }
 
 export interface NormalizedEventsResponse {

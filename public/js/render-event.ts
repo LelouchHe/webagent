@@ -25,6 +25,7 @@ import {
   splitFinalAnswerEcho,
 } from "./event-interpreter.ts";
 import { buildPlanElement } from "./plan-view.ts";
+import { buildStructuredDiffLines } from "./structured-diff.ts";
 import type {
   RawInput,
   DiffLine,
@@ -57,9 +58,7 @@ const DIFF_KIND_CLASS: Record<DiffLine["kind"], string | null> = {
   context: null,
 };
 
-export function renderPatchDiff(ri: RawInput | undefined): string | null {
-  const lines = parseDiff(ri);
-  if (!lines) return null;
+function renderDiffLines(lines: DiffLine[]): string {
   return lines
     .map((line) => {
       const cls = DIFF_KIND_CLASS[line.kind];
@@ -68,6 +67,51 @@ export function renderPatchDiff(ri: RawInput | undefined): string | null {
         : escHtml(line.text);
     })
     .join("\n");
+}
+
+export function renderPatchDiff(ri: RawInput | undefined): string | null {
+  const lines = parseDiff(ri);
+  return lines ? renderDiffLines(lines) : null;
+}
+
+const diffRenderVersions = new WeakMap<HTMLElement, number>();
+
+function applyStructuredDiff(
+  el: HTMLElement,
+  content: ToolContentItem[],
+): void {
+  const diffs = content.filter((item) => item.type === "diff");
+  if (diffs.length === 0) return;
+
+  let details = el.querySelector<HTMLDetailsElement>("details.tc-diff");
+  if (!details) {
+    details = document.createElement("details");
+    details.className = "tc-diff";
+    details.innerHTML = '<summary>diff</summary><div class="diff-view"></div>';
+    el.appendChild(details);
+  }
+  const body = details.querySelector<HTMLElement>(".diff-view");
+  if (!body) return;
+
+  const version = (diffRenderVersions.get(el) ?? 0) + 1;
+  diffRenderVersions.set(el, version);
+  body.textContent = "loading diff…";
+  void Promise.all(diffs.map(buildStructuredDiffLines)).then(
+    (groups) => {
+      if (diffRenderVersions.get(el) !== version) return;
+      const lines = groups.flat();
+      if (lines.length === 0) {
+        body.textContent = "no changes";
+        return;
+      }
+      body.innerHTML = renderDiffLines(lines);
+    },
+    () => {
+      if (diffRenderVersions.get(el) === version) {
+        body.textContent = "diff unavailable";
+      }
+    },
+  );
 }
 
 // --- Content event surface ---
@@ -423,6 +467,7 @@ function buildToolCall(data: Record<string, unknown>): HTMLElement {
     const diffHtml = renderPatchDiff(rawInput);
     if (diffHtml) {
       const details = document.createElement("details");
+      details.className = "tc-diff";
       details.innerHTML = `<summary>diff</summary><div class="diff-view">${diffHtml}</div>`;
       el.appendChild(details);
     }
@@ -454,6 +499,7 @@ function applyToolCallUpdate(
     ? (data.content as ToolContentItem[])
     : [];
   if (!content.length) return;
+  applyStructuredDiff(el, content);
   const text = extractToolCallContent(content);
   if (!text) return;
 
