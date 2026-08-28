@@ -203,7 +203,9 @@ describe("connection", () => {
         if (url.includes("/visibility")) return mockResponse({});
         if (url === "/api/v1/sessions/hash-session") {
           await sessionReady;
-          return mockResponse(sessionResponse("hash-session"));
+          return mockResponse(
+            sessionResponse("hash-session", { cwdDisplay: "~/project" }),
+          );
         }
         if (url.startsWith("/api/v1/sessions/hash-session/events")) {
           await historyReady;
@@ -252,6 +254,8 @@ describe("connection", () => {
 
     assert.equal(state.clientId, "cl-test");
     assert.equal(state.sessionId, "hash-session");
+    assert.equal(state.sessionCwd, "/tmp");
+    assert.equal(state.sessionCwdDisplay, "~/project");
     const urls = fetchCalls.map((c) => c.url);
     assert.ok(urls.some((u) => u === "/api/v1/sessions/hash-session"));
     assert.ok(

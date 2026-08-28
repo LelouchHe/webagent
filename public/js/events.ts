@@ -140,6 +140,7 @@ export async function fallbackToNextSession(
         type: "session_created",
         sessionId: session.id,
         cwd: session.cwd,
+        cwdDisplay: session.cwdDisplay,
         title: session.title,
         configOptions: session.configOptions,
       });
