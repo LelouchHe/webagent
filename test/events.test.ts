@@ -382,6 +382,28 @@ describe("events", () => {
         assert.equal(state.currentAssistantText, "hello ");
       });
 
+      it("renders unsolicited Main output after the foreground turn ends", () => {
+        state.busy = true;
+        events.handleEvent({ type: "prompt_done", stopReason: "end_turn" });
+        assert.equal(state.turnEnded, true);
+        assert.equal(state.busy, false);
+
+        events.handleEvent({
+          type: "message_chunk",
+          text: "background agent completed",
+        });
+
+        assert.equal(state.currentAssistantText, "background agent completed");
+        assert.ok(state.currentAssistantEl);
+        assert.equal(dom.messages.children.length, 1);
+        assert.equal(
+          state.turnEnded,
+          true,
+          "background output must not reopen the foreground turn",
+        );
+        assert.equal(state.busy, false);
+      });
+
       it("appends to existing assistant element", () => {
         events.handleEvent({ type: "message_chunk", text: "hello " });
         events.handleEvent({ type: "message_chunk", text: "world" });
@@ -644,6 +666,26 @@ describe("events", () => {
         events.handleEvent({ type: "thought_chunk", text: "me think" });
         assert.equal(state.currentThinkingText, "let me think");
         assert.equal(dom.messages.querySelectorAll(".thinking").length, 1);
+      });
+
+      it("preserves unsolicited assistant → thought → assistant order after prompt_done", () => {
+        state.busy = true;
+        events.handleEvent({ type: "prompt_done", stopReason: "end_turn" });
+
+        events.handleEvent({ type: "message_chunk", text: "before" });
+        events.handleEvent({ type: "thought_chunk", text: "reasoning" });
+        events.handleEvent({ type: "message_chunk", text: "after" });
+        render.flushStreamingRender();
+
+        assert.equal(dom.messages.children.length, 3);
+        assert.ok(dom.messages.children[0].classList.contains("assistant"));
+        assert.ok(dom.messages.children[1].classList.contains("thinking"));
+        assert.ok(dom.messages.children[2].classList.contains("assistant"));
+        assert.equal(dom.messages.children[0].textContent, "before");
+        assert.ok(dom.messages.children[1].textContent.includes("reasoning"));
+        assert.equal(dom.messages.children[2].textContent, "after");
+        assert.equal(state.turnEnded, true);
+        assert.equal(state.busy, false);
       });
     });
 
@@ -2383,6 +2425,28 @@ describe("events", () => {
 
       assert.equal(state.awaitingOwnUserEcho, true);
       assert.equal(state.sentMessageOpId, "op-new");
+    });
+
+    it("does not let replayed prompt_done clear authoritative busy state", () => {
+      state.busy = true;
+      state.busyKind = "agent";
+
+      events.replayEvent(
+        "prompt_done",
+        { stopReason: "end_turn" },
+        [
+          {
+            seq: 10,
+            session_id: "s1",
+            type: "prompt_done",
+            data: JSON.stringify({ stopReason: "end_turn" }),
+          },
+        ] as any,
+        0,
+      );
+
+      assert.equal(state.busy, true);
+      assert.equal(state.busyKind, "agent");
     });
 
     it("ignores replayed prior prompt_done until the own user echo", () => {

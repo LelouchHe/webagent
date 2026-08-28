@@ -282,6 +282,32 @@ describe("slash menu — Tab vs Click behavior", () => {
   // Click: fills input AND executes (tab + enter)
   // -----------------------------------------------------------------------
 
+  it("click on /cancel force-checks the server when frontend state is idle", async () => {
+    globalThis.fetch = ((url: string, init?: any) => {
+      fetchCalls.push({ url, init });
+      return Promise.resolve({
+        ok: true,
+        text: () =>
+          Promise.resolve(JSON.stringify({ ok: true, status: "cancelling" })),
+      });
+    }) as any;
+    state.busy = false;
+    dom.input.value = "/cancel";
+    commands.updateSlashMenu();
+
+    const item = dom.slashMenu.querySelector(".slash-item");
+    assert.ok(item, "cancel menu item should be visible");
+    item.dispatchEvent(
+      new (globalThis.window as any).MouseEvent("mousedown", { bubbles: true }),
+    );
+    await new Promise((r) => setTimeout(r, 10));
+
+    const cancelCall = fetchCalls.find((call) => call.url.includes("/cancel"));
+    assert.ok(cancelCall, "menu cancel should call the authoritative endpoint");
+    assert.equal(cancelCall.url, "/api/v1/sessions/s1/cancel");
+    assert.ok(messageLines().includes("^C cancelling…"));
+  });
+
   it("click on notify submenu item executes the command", async () => {
     dom.input.value = "/notify ";
     commands.updateSlashMenu();

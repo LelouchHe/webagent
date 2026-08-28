@@ -734,6 +734,25 @@ describe("commands", () => {
       assert.ok(messageLines().includes("^C cancelling…"));
     });
 
+    it("sends /cancel even when frontend state is incorrectly idle", async () => {
+      setFetch(() => ({
+        ok: true,
+        json: async () => ({ ok: true, status: "cancelling" }),
+        text: async () => JSON.stringify({ ok: true, status: "cancelling" }),
+      }));
+      state.sessionId = "s1";
+      state.busy = false;
+
+      assert.equal(await commands.handleSlashCommand("/cancel"), true);
+      await new Promise((r) => setTimeout(r, 0));
+
+      const cancelCall = fetchCalls.find((c) => c.url.includes("/cancel"));
+      assert.ok(cancelCall, "expected an authoritative cancel fetch call");
+      assert.equal(cancelCall.url, "/api/v1/sessions/s1/cancel");
+      assert.equal(cancelCall.init?.method, "POST");
+      assert.ok(messageLines().includes("^C cancelling…"));
+    });
+
     it("persists /log level locally", async () => {
       const handled = await commands.handleSlashCommand("/log debug");
 

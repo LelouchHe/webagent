@@ -8,7 +8,6 @@ import {
   state,
   resetSessionUI,
   requestNewSession,
-  sendCancel,
   getSelectConfigOption,
   getThinkingConfigOption,
   getConfigValue,
@@ -30,6 +29,7 @@ import type { SessionSummary } from "../../src/types.ts";
 import { HTTP_STATUS } from "../../src/http-status.ts";
 import { TOKEN_STORAGE_KEY } from "./login-core.ts";
 import { resetLocalFrontendState } from "./local-reset.ts";
+import { requestAuthoritativeCancel } from "./cancel-command.ts";
 import { replaceCurrentSession } from "./session-actions.ts";
 import {
   createPreview,
@@ -308,15 +308,7 @@ export const ROOT: CmdNode = {
     {
       name: "/cancel",
       desc: "Cancel current response",
-      onSelect: () => {
-        if (state.busy) {
-          void sendCancel()
-            .then(() => addSystem("^C cancelling…"))
-            .catch((err: unknown) => {
-              addSystem(`err: cancel failed — ${String(err)}`);
-            });
-        } else addSystem("Nothing to cancel.");
-      },
+      onSelect: requestAuthoritativeCancel,
     },
     {
       name: "/clear",

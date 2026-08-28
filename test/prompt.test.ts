@@ -316,6 +316,29 @@ describe("Prompt REST API", () => {
       assert.equal(JSON.parse(userMsg.data).text, "hello");
     });
 
+    it("flushes unsolicited Main output before storing the next user turn", async () => {
+      const sessionId = await createSession();
+      sessions.appendAssistant(sessionId, "background agent completed");
+
+      await makeRequest(
+        port,
+        "POST",
+        `/api/v1/sessions/${sessionId}/prompt`,
+        JSON.stringify({ text: "next question" }),
+      );
+
+      const stored = store.getEvents(sessionId);
+      assert.deepEqual(
+        stored.map((event) => event.type),
+        ["assistant_message", "user_message"],
+      );
+      assert.equal(
+        JSON.parse(stored[0].data).text,
+        "background agent completed",
+      );
+      assert.equal(JSON.parse(stored[1].data).text, "next question");
+    });
+
     it("broadcasts user_message event", async () => {
       const sessionId = await createSession();
       broadcastEvents = [];

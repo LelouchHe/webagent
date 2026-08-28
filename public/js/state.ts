@@ -854,8 +854,10 @@ export function resetSessionUI({
 // The backend (session-state.ts `armCancelSafety`) owns the safety net that
 // marks the request unconfirmed if the agent does not acknowledge it within
 // the configured timeout; the resulting `state_patch` lands here via SSE.
-export async function sendCancel(): Promise<api.CancelResult | null> {
-  if (!state.busy || !state.sessionId) return null;
+export async function sendCancel(
+  options: { force?: boolean } = {},
+): Promise<api.CancelResult | null> {
+  if ((!state.busy && !options.force) || !state.sessionId) return null;
   const sessionId = state.sessionId;
   const stateSeq = state.lastStateSeq;
   state.cancelStatus = "requested";

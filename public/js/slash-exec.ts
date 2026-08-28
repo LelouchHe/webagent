@@ -10,7 +10,6 @@ import {
   state,
   resetSessionUI,
   requestNewSession,
-  sendCancel,
   getSelectConfigOption,
   getThinkingConfigOption,
   updateModeUI,
@@ -39,6 +38,7 @@ import {
   openShare,
 } from "./share/commands.ts";
 import { controlPlanPanel } from "./plan-panel.ts";
+import { requestAuthoritativeCancel } from "./cancel-command.ts";
 
 async function subscribePush(): Promise<void> {
   try {
@@ -338,18 +338,7 @@ export async function handleSlashCommand(text: string): Promise<boolean> {
     }
 
     case "/cancel":
-      // Preview mode disables the input, so /cancel from typed slash can
-      // only mean "cancel the busy turn". The ^C button covers the
-      // preview-cancel case.
-      if (state.busy) {
-        void sendCancel()
-          .then(() => addSystem("^C cancelling…"))
-          .catch((err: unknown) => {
-            addSystem(`err: cancel failed — ${String(err)}`);
-          });
-      } else {
-        addSystem("Nothing to cancel.");
-      }
+      requestAuthoritativeCancel();
       return true;
 
     case "/reload": {

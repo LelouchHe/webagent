@@ -499,6 +499,27 @@ describe("state", () => {
       assert.equal(await mod.sendCancel(), null);
     });
 
+    it("force-sends cancel when frontend state is incorrectly idle", async () => {
+      const calls: Array<{ url: string; init?: RequestInit }> = [];
+      globalThis.fetch = (async (url: string, init?: RequestInit) => {
+        calls.push({ url, init });
+        return {
+          ok: true,
+          text: async () => JSON.stringify({ ok: true, status: "cancelling" }),
+        };
+      }) as any;
+      mod.state.sessionId = "s1";
+      mod.state.busy = false;
+
+      assert.equal(
+        (await mod.sendCancel({ force: true }))?.status,
+        "cancelling",
+      );
+      assert.equal(calls.length, 1);
+      assert.equal(calls[0].url, "/api/v1/sessions/s1/cancel");
+      assert.equal(calls[0].init?.method, "POST");
+    });
+
     it("surfaces cancel request failures", async () => {
       globalThis.fetch = (async () => ({
         ok: false,

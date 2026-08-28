@@ -1136,15 +1136,9 @@ export function replayEvent(
   }
   switch (type) {
     case "prompt_done":
-      // No turn-identity guard here on purpose: replay never sets `turnEnded`
-      // (only the live handler does), so a replayed terminator cannot re-arm
-      // the gate. A guard would also misfire, because `currentPromptId` is
-      // populated from the snapshot that history replay runs *before*.
-      if (state.awaitingOwnUserEcho) break;
-      state.pendingToolCallIds.clear();
-      state.pendingPermissionRequestIds.clear();
-      state.pendingPromptDone = false;
-      setBusy(false);
+      // Persisted completion marks a transcript boundary only. Runtime state
+      // is authoritative from snapshot + state_patch; replaying an older
+      // terminator must not clear a currently active prompt or its controls.
       break;
     case "message":
       renderMessageCard(d as unknown as AgentEvent & { type: "message" });
@@ -1860,7 +1854,9 @@ export function handleEvent(msg: AgentEvent) {
     }
 
     case "message_chunk":
-      if (state.turnEnded) break;
+      // ACP background work may trigger a new Main-agent message while the
+      // foreground prompt remains ended/idle. Render that unsolicited stream
+      // as a fresh assistant bubble without reopening the foreground turn.
       hideWaiting();
       finishThinking();
       if (!state.currentAssistantEl) {
@@ -1872,8 +1868,12 @@ export function handleEvent(msg: AgentEvent) {
       break;
 
     case "thought_chunk":
-      if (state.turnEnded) break;
+      // Like assistant chunks, thought chunks may belong to Main-agent work
+      // triggered by background activity while the foreground turn stays idle.
       hideWaiting();
+      // Match the backend buffer boundary: assistant → thought → assistant
+      // must produce three ordered live elements, just as replay does.
+      finishAssistant();
       if (!state.currentThinkingEl) {
         state.currentThinkingEl = document.createElement("details");
         state.currentThinkingEl.className = "thinking";

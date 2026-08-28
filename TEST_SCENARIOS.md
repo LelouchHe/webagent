@@ -97,6 +97,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
 
 - `test/prompt.test.ts`
   - prompt acceptance and bridge forwarding
+  - unsolicited Main-agent buffer flush before the next user turn
   - user_message storage and broadcast
   - last_active_at update and active-prompt tracking
   - busy-state conflict (409) for agent and bash
@@ -185,7 +186,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - mode-class updates
   - new-session request payloads (with custom cwd)
   - reset-session cleanup (messages, input, title, metadata)
-  - global session cancel payloads
+  - global session cancel payloads, including forced cancel when frontend busy state is stale
   - hash routing and session info updates
 
 - `test/input.test.ts`
@@ -212,6 +213,8 @@ spot gaps, and decide what still needs to be added without reading every spec.
 - `test/events.test.ts`
   - session creation / busy-state restoration
   - user / assistant / thinking rendering
+  - unsolicited Main-agent output renders while the foreground turn stays idle
+  - unsolicited live assistant → thought → assistant ordering after prompt completion matches database replay
   - tool-call render and completion state
   - task_complete summary rendering (visible, not collapsed) with ✔ icon
   - plan transcript render (collapsed by default), pinned input panel updates,
@@ -220,6 +223,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - permission request / response / resolution handling
   - bash command / output / completion handling
   - prompt completion rules
+  - historical prompt replay cannot override authoritative runtime busy state
   - cancelled-turn cleanup for tool calls and permissions
   - late-event suppression after prompt_done (tool_call, permission_request)
   - cancel acknowledgement timeout transitions to unconfirmed while busy
@@ -237,8 +241,9 @@ spot gaps, and decide what still needs to be added without reading every spec.
     volatile assistant tail already represented by persisted fragments
   - retryUnconfirmedPermissions after reconnect
 
-- `test/commands.test.ts`
+- `test/commands.test.ts`, `test/slash-menu.test.ts`
   - `/new`, `/pwd`, `/switch`, `/exit`, `/prune`, `/cancel`, `/rename`
+  - typed and menu-clicked `/cancel` remain authoritative escape hatches when frontend busy state is stale
   - `/model`, `/mode`, `/think` query / fuzzy match / ambiguity handling
   - help output and shortcut listing
   - version display in `?` / help command

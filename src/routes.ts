@@ -1405,6 +1405,12 @@ export function createRequestHandler(
             },
           ];
         });
+        // A background task can trigger unsolicited Main-agent output after
+        // the foreground ACP prompt has ended. Its chunks remain buffered
+        // until a real protocol boundary arrives; seal them before this user
+        // row so they cannot merge into the next turn's assistant response.
+        sessions.flushBuffers(sessionId);
+
         const eventClientOpId = opId ?? randomUUID();
         store.saveEvent(
           sessionId,
