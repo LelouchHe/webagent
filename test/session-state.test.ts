@@ -291,6 +291,38 @@ describe("SessionStateManager", () => {
     });
   });
 
+  describe("context usage", () => {
+    const usage = {
+      used: 61_234,
+      size: 272_000,
+      cost: { amount: 0.45, currency: "USD" },
+    };
+
+    it("is null by default", () => {
+      assert.equal(sm.getState("s1").runtime.contextUsage, null);
+    });
+
+    it("patches usage and skips an unchanged snapshot", () => {
+      sm.patch("s1", { runtime: { contextUsage: usage } });
+      assert.deepEqual(sm.getState("s1").runtime.contextUsage, usage);
+      const seq = sm.getState("s1").seq;
+
+      sm.patch("s1", { runtime: { contextUsage: { ...usage } } });
+
+      assert.equal(sm.getState("s1").seq, seq);
+    });
+
+    it("clears usage for every known session", () => {
+      sm.patch("s1", { runtime: { contextUsage: usage } });
+      sm.patch("s2", { runtime: { contextUsage: usage } });
+
+      sm.clearContextUsage();
+
+      assert.equal(sm.getState("s1").runtime.contextUsage, null);
+      assert.equal(sm.getState("s2").runtime.contextUsage, null);
+    });
+  });
+
   describe("plan", () => {
     const activePlan = [
       { status: "in_progress", content: "Implement runtime plan" },

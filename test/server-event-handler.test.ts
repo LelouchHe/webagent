@@ -373,6 +373,26 @@ describe("handleAgentEvent", () => {
     assert.equal(sessions.state.getState("s1").runtime.plan, null);
   });
 
+  it("clears context usage when the agent disconnects", () => {
+    store.createSession("s1", "/tmp");
+    sessions.state.patch("s1", {
+      runtime: { contextUsage: { used: 61_234, size: 272_000 } },
+    });
+    const { bridge } = createMockBridge();
+    const { sseManager } = createMockSseManager();
+
+    handleAgentEvent(
+      { type: "agent_disconnected" } as any,
+      sessions,
+      store,
+      bridge,
+      makeEventHandlerConfig(),
+      sseManager as any,
+    );
+
+    assert.equal(sessions.state.getState("s1").runtime.contextUsage, null);
+  });
+
   it("clears streaming state when the agent disconnects", () => {
     store.createSession("s1", "/tmp");
     sessions.state.patch("s1", {
@@ -436,6 +456,33 @@ describe("handleAgentEvent", () => {
 
     assert.equal(broadcasted.length, 0);
     assert.equal(sessions.assistantBuffers.has("s1"), false);
+  });
+
+  it("captures context usage during restore", () => {
+    store.createSession("s1", "/tmp");
+    sessions.restoringSessions.add("s1");
+    const { bridge } = createMockBridge();
+    const { sseManager, broadcasted } = createMockSseManager();
+
+    handleAgentEvent(
+      {
+        type: "usage_update",
+        sessionId: "s1",
+        used: 61_234,
+        size: 272_000,
+      },
+      sessions,
+      store,
+      bridge,
+      makeEventHandlerConfig(),
+      sseManager as any,
+    );
+
+    assert.deepEqual(sessions.state.getState("s1").runtime.contextUsage, {
+      used: 61_234,
+      size: 272_000,
+    });
+    assert.equal(broadcasted.length, 0);
   });
 
   it("caches available commands during restore without broadcasting", () => {

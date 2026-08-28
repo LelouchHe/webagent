@@ -52,6 +52,15 @@ export interface PlanEntry {
   content: string;
 }
 
+export interface ContextUsage {
+  used: number;
+  size: number;
+  cost?: {
+    amount: number;
+    currency: string;
+  } | null;
+}
+
 /** rawInput payload attached to tool_call events. */
 export type RawInput =
   | string
@@ -171,6 +180,7 @@ export type AgentEvent =
       locations?: { path: string; line?: number | null }[];
     }
   | { type: "plan"; sessionId: string; entries: PlanEntry[] }
+  | ({ type: "usage_update"; sessionId: string } & ContextUsage)
   | {
       type: "permission_request";
       requestId: string;

@@ -723,6 +723,15 @@ export class AgentBridge extends EventEmitter {
       case "plan":
         return { type: "plan", sessionId, entries: update.entries };
 
+      case "usage_update":
+        return {
+          type: "usage_update",
+          sessionId,
+          used: update.used,
+          size: update.size,
+          cost: update.cost,
+        };
+
       case "config_option_update":
         return {
           type: "config_option_update",

@@ -397,6 +397,15 @@ describe("AgentBridge", () => {
     await (bridge as any).handleSessionUpdate({
       sessionId: "s1",
       update: {
+        sessionUpdate: "usage_update",
+        used: 61_234,
+        size: 272_000,
+        cost: { amount: 0.45, currency: "USD" },
+      },
+    });
+    await (bridge as any).handleSessionUpdate({
+      sessionId: "s1",
+      update: {
         sessionUpdate: "config_option_update",
         configOptions: [
           { id: "model", name: "Model", currentValue: "x", options: [] },
@@ -447,6 +456,13 @@ describe("AgentBridge", () => {
         type: "plan",
         sessionId: "s1",
         entries: [{ content: "Step 1", status: "pending" }],
+      },
+      {
+        type: "usage_update",
+        sessionId: "s1",
+        used: 61_234,
+        size: 272_000,
+        cost: { amount: 0.45, currency: "USD" },
       },
       {
         type: "config_option_update",

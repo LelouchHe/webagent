@@ -8,7 +8,7 @@
  * grew one-off sync paths per state field.
  */
 
-import type { PlanEntry } from "./types.ts";
+import type { ContextUsage, PlanEntry } from "./types.ts";
 import { log } from "./log.ts";
 
 const clog = log.scope("cancel");
@@ -40,6 +40,7 @@ export interface Runtime {
   pendingPermissions: PendingPermission[];
   streaming: StreamingState;
   plan: PlanEntry[] | null;
+  contextUsage: ContextUsage | null;
 }
 
 export interface RuntimePatch {
@@ -47,6 +48,7 @@ export interface RuntimePatch {
   pendingPermissions?: PendingPermission[];
   streaming?: Partial<StreamingState>;
   plan?: PlanEntry[] | null;
+  contextUsage?: ContextUsage | null;
 }
 
 export interface StatePatch {
@@ -75,6 +77,7 @@ function defaultState(): SessionRuntimeState {
       pendingPermissions: [],
       streaming: { assistant: false, thinking: false },
       plan: null,
+      contextUsage: null,
     },
   };
 }
@@ -122,6 +125,19 @@ function plansEqual(a: PlanEntry[] | null, b: PlanEntry[] | null): boolean {
   );
 }
 
+function contextUsageEqual(
+  a: ContextUsage | null,
+  b: ContextUsage | null,
+): boolean {
+  if (a === null || b === null) return a === b;
+  return (
+    a.used === b.used &&
+    a.size === b.size &&
+    (a.cost?.amount ?? null) === (b.cost?.amount ?? null) &&
+    (a.cost?.currency ?? null) === (b.cost?.currency ?? null)
+  );
+}
+
 /** True when the patch would change the current runtime state. */
 function hasRuntimeChanges(
   current: Runtime,
@@ -137,6 +153,11 @@ function hasRuntimeChanges(
   )
     return true;
   if ("plan" in patch && !plansEqual(current.plan, patch.plan ?? null))
+    return true;
+  if (
+    "contextUsage" in patch &&
+    !contextUsageEqual(current.contextUsage, patch.contextUsage ?? null)
+  )
     return true;
   if ("streaming" in patch && patch.streaming) {
     const s = patch.streaming;
@@ -200,6 +221,15 @@ export class SessionStateManager {
         state.runtime.plan =
           patch.runtime.plan?.map((entry) => ({ ...entry })) ?? null;
       }
+      if ("contextUsage" in patch.runtime) {
+        const usage = patch.runtime.contextUsage;
+        state.runtime.contextUsage = usage
+          ? {
+              ...usage,
+              ...(usage.cost ? { cost: { ...usage.cost } } : {}),
+            }
+          : null;
+      }
       if ("streaming" in patch.runtime && patch.runtime.streaming) {
         if (patch.runtime.streaming.assistant !== undefined) {
           state.runtime.streaming.assistant = patch.runtime.streaming.assistant;
@@ -243,6 +273,15 @@ export class SessionStateManager {
     for (const [sessionId, state] of this.states) {
       if (state.runtime.plan !== null) {
         this.patch(sessionId, { runtime: { plan: null } });
+      }
+    }
+  }
+
+  /** Clear context usage for every known session on bridge teardown. */
+  clearContextUsage(): void {
+    for (const [sessionId, state] of this.states) {
+      if (state.runtime.contextUsage !== null) {
+        this.patch(sessionId, { runtime: { contextUsage: null } });
       }
     }
   }

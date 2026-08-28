@@ -36,6 +36,7 @@ type MessageChunkEvent = Extract<AgentEvent, { type: "message_chunk" }>;
 type ThoughtChunkEvent = Extract<AgentEvent, { type: "thought_chunk" }>;
 type ToolCallEvent = Extract<AgentEvent, { type: "tool_call" }>;
 type PlanEvent = Extract<AgentEvent, { type: "plan" }>;
+type UsageUpdateEvent = Extract<AgentEvent, { type: "usage_update" }>;
 type PermissionRequestEvent = Extract<
   AgentEvent,
   { type: "permission_request" }
@@ -103,6 +104,21 @@ function handleToolCall(
     },
     { from_ref: "agent" },
   );
+}
+
+function handleUsageUpdate(
+  event: UsageUpdateEvent,
+  sessions: SessionManager,
+): void {
+  sessions.state.patch(event.sessionId, {
+    runtime: {
+      contextUsage: {
+        used: event.used,
+        size: event.size,
+        ...(event.cost !== undefined ? { cost: event.cost } : {}),
+      },
+    },
+  });
 }
 
 function handlePlan(
@@ -449,6 +465,10 @@ export function handleAgentEvent(
   pushService?: PushService,
   _clientRegistry?: ClientRegistry,
 ): void {
+  if (event.type === "usage_update") {
+    handleUsageUpdate(event, sessions);
+    return;
+  }
   if (event.type === "available_commands_update") {
     const snapshot = sessions.updateAgentCommands(
       event.sessionId,
@@ -464,6 +484,7 @@ export function handleAgentEvent(
     }
     sessions.state.clearStreaming();
     sessions.state.clearPlans();
+    sessions.state.clearContextUsage();
     for (const snapshot of sessions.clearAgentCommands()) {
       sseManager.broadcast({
         type: "available_commands_update",
