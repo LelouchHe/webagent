@@ -382,7 +382,15 @@ function dispatchAgentEvent(
       store.saveEvent(
         event.sessionId,
         event.type,
-        { id: event.id, status: event.status, content: event.content },
+        {
+          id: event.id,
+          status: event.status,
+          content: event.content,
+          title: event.title,
+          kind: event.kind,
+          rawInput: event.rawInput,
+          locations: event.locations,
+        },
         { from_ref: "agent" },
       );
       return false;

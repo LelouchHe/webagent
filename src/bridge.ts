@@ -712,6 +712,12 @@ export class AgentBridge extends EventEmitter {
           content: (update.content ?? undefined) as
             | ToolContentItem[]
             | undefined,
+          ...(typeof update.title === "string" ? { title: update.title } : {}),
+          ...(typeof update.kind === "string" ? { kind: update.kind } : {}),
+          ...(update.rawInput ? { rawInput: update.rawInput as RawInput } : {}),
+          ...(Array.isArray(update.locations)
+            ? { locations: update.locations }
+            : {}),
         };
 
       case "plan":

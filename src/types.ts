@@ -165,6 +165,10 @@ export type AgentEvent =
       id: string;
       status: string;
       content?: ToolContentItem[];
+      title?: string;
+      kind?: string;
+      rawInput?: RawInput;
+      locations?: { path: string; line?: number | null }[];
     }
   | { type: "plan"; sessionId: string; entries: PlanEntry[] }
   | {

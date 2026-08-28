@@ -380,6 +380,10 @@ describe("AgentBridge", () => {
         sessionUpdate: "tool_call_update",
         toolCallId: "tc1",
         status: "completed",
+        title: "npm test",
+        kind: "execute",
+        rawInput: { command: "npm test", cwd: "/tmp/project" },
+        locations: [{ path: "/tmp/project" }],
         content: [{ type: "text", text: "done" }],
       },
     });
@@ -433,6 +437,10 @@ describe("AgentBridge", () => {
         sessionId: "s1",
         id: "tc1",
         status: "completed",
+        title: "npm test",
+        kind: "execute",
+        rawInput: { command: "npm test", cwd: "/tmp/project" },
+        locations: [{ path: "/tmp/project" }],
         content: [{ type: "text", text: "done" }],
       },
       {

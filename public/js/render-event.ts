@@ -413,7 +413,8 @@ function buildToolCall(data: Record<string, unknown>): HTMLElement {
   el.className = "tool-call";
   el.id = `tc-${id}`;
   el.dataset.kind = kind;
-  let label = `<span class="icon">${tc.icon}</span> ${escHtml(tc.title)}`;
+  el.dataset.initialTitle = title;
+  let label = `<span class="icon">${tc.icon}</span> <span class="tc-title">${escHtml(tc.title)}</span>`;
   if (tc.detail) {
     label += `<span class="tc-detail">${tc.detailPrefix ?? ""}${escHtml(tc.detail)}</span>`;
   }
@@ -446,6 +447,7 @@ function applyToolCallUpdate(
   const status = typeof data.status === "string" ? data.status : "pending";
   const si = getStatusIcon(status);
   el.className = si.className;
+  applyToolCallMetadata(el, data);
   const iconSpan = el.querySelector(".icon");
   if (iconSpan) iconSpan.textContent = si.icon;
   const content = Array.isArray(data.content)
@@ -476,6 +478,45 @@ function applyToolCallUpdate(
     }
     if (body) body.textContent = text;
   }
+}
+
+function applyToolCallMetadata(
+  el: HTMLElement,
+  data: Record<string, unknown>,
+): void {
+  const title = typeof data.title === "string" ? data.title : undefined;
+  const kind = typeof data.kind === "string" ? data.kind : undefined;
+  const rawInput = data.rawInput as RawInput | undefined;
+  if (!title && !kind && !rawInput) return;
+
+  const titleEl = el.querySelector(".tc-title");
+  const tc = interpretToolCall(
+    kind ?? el.dataset.kind ?? "",
+    title ?? titleEl?.textContent ?? "",
+    rawInput,
+  );
+  if (kind) el.dataset.kind = kind;
+  const titleMatchesDetail =
+    tc.detail !== undefined &&
+    normalizeToolLabel(tc.title) === normalizeToolLabel(tc.detail);
+  if (titleEl) {
+    titleEl.textContent = titleMatchesDetail
+      ? (el.dataset.initialTitle ?? tc.title)
+      : tc.title;
+  }
+  if (!tc.detail) return;
+
+  let detail = el.querySelector<HTMLElement>(".tc-detail");
+  if (!detail) {
+    detail = document.createElement("span");
+    detail.className = "tc-detail";
+    titleEl?.after(detail);
+  }
+  detail.textContent = `${tc.detailPrefix ?? ""}${tc.detail}`;
+}
+
+function normalizeToolLabel(value: string): string {
+  return value.trim().replace(/\s+/g, " ");
 }
 
 function buildPlan(data: Record<string, unknown>): HTMLElement {

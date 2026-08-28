@@ -479,6 +479,62 @@ describe("render-event", () => {
   });
 
   describe("tool_call_update", () => {
+    it("keeps the initial tool title when a progressive title duplicates the command", () => {
+      const tool = append(
+        mod.renderContentEvent(
+          "tool_call",
+          { id: "tc-progress", title: "bash", kind: "execute", rawInput: {} },
+          makeHooks(),
+        ),
+      )!;
+
+      mod.renderContentEvent(
+        "tool_call_update",
+        {
+          id: "tc-progress",
+          status: "in_progress",
+          title: "pwd",
+          kind: "execute",
+          rawInput: { command: "pwd", cwd: "/tmp/project" },
+        },
+        makeHooks({ findToolCallEl: () => tool }),
+      );
+
+      assert.equal(tool.querySelector(".tc-title")?.textContent, "bash");
+      assert.equal(tool.querySelector(".tc-detail")?.textContent, "$ pwd");
+      assert.equal(tool.dataset.kind, "execute");
+    });
+
+    it("keeps a descriptive Copilot title when it differs from the command", () => {
+      const tool = append(
+        mod.renderContentEvent(
+          "tool_call",
+          {
+            id: "tc-copilot",
+            title: "Print current working directory",
+            kind: "execute",
+            rawInput: {
+              command: "pwd",
+              description: "Print current working directory",
+            },
+          },
+          makeHooks(),
+        ),
+      )!;
+
+      mod.renderContentEvent(
+        "tool_call_update",
+        { id: "tc-copilot", status: "completed" },
+        makeHooks({ findToolCallEl: () => tool }),
+      );
+
+      assert.equal(
+        tool.querySelector(".tc-title")?.textContent,
+        "Print current working directory",
+      );
+      assert.equal(tool.querySelector(".tc-detail")?.textContent, "$ pwd");
+    });
+
     it("mutates existing tool-call via findToolCallEl hook", () => {
       const existing = document.createElement("div");
       existing.className = "tool-call pending";
