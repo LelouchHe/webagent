@@ -357,7 +357,7 @@ export function updateStatusBar() {
     if (index > 0) {
       const separator = document.createElement("span");
       separator.className = "status-separator";
-      separator.textContent = " \u00b7 ";
+      separator.textContent = "\u00a0\u00b7\u00a0";
       dom.statusBar.appendChild(separator);
     }
     const span = document.createElement("span");

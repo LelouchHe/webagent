@@ -128,7 +128,7 @@ describe("state", () => {
 
       assert.equal(
         mod.dom.statusBar.textContent,
-        "gpt-5.6-sol · 204k/1.05m · /Users/lelouch/mine/code/webagent/main",
+        "gpt-5.6-sol\u00a0·\u00a0204k/1.05m\u00a0·\u00a0/Users/lelouch/mine/code/webagent/main",
       );
       assert.equal(
         mod.dom.statusBar.querySelector(".status-model")?.getAttribute("title"),
@@ -160,7 +160,7 @@ describe("state", () => {
 
       assert.equal(
         mod.dom.statusBar.textContent,
-        "claude-sonnet-4-5 · /tmp/project",
+        "claude-sonnet-4-5\u00a0·\u00a0/tmp/project",
       );
       assert.equal(mod.dom.statusBar.querySelector(".status-usage"), null);
     });
