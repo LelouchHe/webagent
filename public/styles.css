@@ -748,7 +748,18 @@ body {
 #status-bar::before {
   content: "\200b";
 }
+#status-bar .status-model {
+  flex: 0 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+#status-bar .status-separator,
+#status-bar .status-usage {
+  flex: 0 0 auto;
+}
 #status-bar .status-cwd {
+  flex: 1 1 auto;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   direction: rtl;

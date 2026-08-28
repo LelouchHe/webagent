@@ -111,6 +111,64 @@ describe("state", () => {
     });
   });
 
+  describe("updateStatusBar", () => {
+    it("shows model without provider, usage, then cwd", () => {
+      mod.state.configOptions = [
+        {
+          id: "model",
+          name: "Model",
+          currentValue: "github-copilot/gpt-5.6-sol",
+          options: [],
+        },
+      ];
+      mod.state.contextUsage = { used: 204_481, size: 1_050_000 };
+      mod.state.sessionCwd = "/Users/lelouch/mine/code/webagent/main";
+
+      mod.updateStatusBar();
+
+      assert.equal(
+        mod.dom.statusBar.textContent,
+        "gpt-5.6-sol · 204k/1.05m · /Users/lelouch/mine/code/webagent/main",
+      );
+      assert.equal(
+        mod.dom.statusBar.querySelector(".status-model")?.getAttribute("title"),
+        "github-copilot/gpt-5.6-sol",
+      );
+      assert.equal(
+        mod.dom.statusBar.querySelector(".status-usage")?.getAttribute("title"),
+        "204,481 / 1,050,000 tokens",
+      );
+      assert.equal(mod.dom.statusBar.lastElementChild?.className, "status-cwd");
+    });
+
+    it("omits usage and extra separators when unavailable", () => {
+      mod.state.configOptions = [
+        {
+          id: "model",
+          name: "Model",
+          currentValue: "opencode/claude-sonnet-4-5",
+          options: [],
+        },
+      ];
+      mod.state.sessionCwd = "/tmp/project";
+
+      mod.updateStatusBar();
+
+      assert.equal(
+        mod.dom.statusBar.textContent,
+        "claude-sonnet-4-5 · /tmp/project",
+      );
+      assert.equal(mod.dom.statusBar.querySelector(".status-usage"), null);
+    });
+
+    it("formats compact token values", () => {
+      assert.equal(mod.formatTokenCount(842), "842");
+      assert.equal(mod.formatTokenCount(8_400), "8.4k");
+      assert.equal(mod.formatTokenCount(61_234), "61k");
+      assert.equal(mod.formatTokenCount(1_050_000), "1.05m");
+    });
+  });
+
   describe("setBusy", () => {
     it("sets busy state and updates UI", () => {
       mod.setBusy(true);
@@ -563,6 +621,18 @@ describe("state", () => {
       assert.deepEqual(mod.state.plan, plan);
     });
 
+    it("applySnapshot installs context usage", () => {
+      const snapshot = snap(4, null);
+      snapshot.runtime.contextUsage = { used: 61_234, size: 272_000 };
+
+      mod.applySnapshot(snapshot);
+
+      assert.deepEqual(mod.state.contextUsage, {
+        used: 61_234,
+        size: 272_000,
+      });
+    });
+
     it("applyStatePatch applies in-order patch and bumps seq", () => {
       mod.state.lastStateSeq = 5;
       const ok = mod.applyStatePatch({
@@ -642,6 +712,35 @@ describe("state", () => {
         true,
       );
       assert.equal(mod.state.plan, null);
+    });
+
+    it("applyStatePatch updates and clears context usage", () => {
+      mod.state.lastStateSeq = 0;
+
+      assert.equal(
+        mod.applyStatePatch({
+          seq: 1,
+          patch: {
+            runtime: {
+              contextUsage: { used: 61_234, size: 272_000 },
+            },
+          },
+        }),
+        true,
+      );
+      assert.deepEqual(mod.state.contextUsage, {
+        used: 61_234,
+        size: 272_000,
+      });
+
+      assert.equal(
+        mod.applyStatePatch({
+          seq: 2,
+          patch: { runtime: { contextUsage: null } },
+        }),
+        true,
+      );
+      assert.equal(mod.state.contextUsage, null);
     });
 
     it("reloadSnapshot applies fetched snapshot", async () => {

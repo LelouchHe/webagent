@@ -6,6 +6,7 @@ import type {
   ConfigOption,
   ConfigSelectOption,
   AgentEvent,
+  ContextUsage,
   PlanEntry,
 } from "../../src/types.ts";
 import {
@@ -82,6 +83,7 @@ export const state = {
   runtimeHydrationSessionId: null as string | null,
   sessionCwd: null as string | null,
   sessionTitle: null as string | null,
+  contextUsage: null as ContextUsage | null,
   inboxCount: 0,
   awaitingNewSession: false,
   newSessionRequestInFlight: false,
@@ -293,22 +295,63 @@ export function updateModeUI() {
   refreshInputActions();
 }
 
+export function formatTokenCount(value: number): string {
+  if (value < 1_000) return String(value);
+  if (value < 10_000) return `${trimDecimal(value / 1_000, 1)}k`;
+  if (value < 1_000_000) return `${Math.round(value / 1_000)}k`;
+  return `${trimDecimal(value / 1_000_000, 2)}m`;
+}
+
+function trimDecimal(value: number, digits: number): string {
+  return value.toFixed(digits).replace(/\.?0+$/, "");
+}
+
+export function displayModelName(model: string): string {
+  const slash = model.indexOf("/");
+  return slash === -1 ? model : model.slice(slash + 1);
+}
+
 export function updateStatusBar() {
   // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- see updateModeUI
   const model = getStringConfigValue("model") || getFallback("model");
   const cwd = state.sessionCwd ?? "";
-  dom.statusBar.textContent = "";
-  if (cwd) {
-    if (model) {
-      dom.statusBar.appendChild(document.createTextNode(model + " \u00b7 "));
-    }
-    const cwdSpan = document.createElement("span");
-    cwdSpan.className = "status-cwd";
-    cwdSpan.textContent = cwd;
-    dom.statusBar.appendChild(cwdSpan);
-  } else if (model) {
-    dom.statusBar.textContent = model;
+  const parts: Array<{
+    text: string;
+    className: string;
+    title?: string;
+  }> = [];
+
+  if (model) {
+    parts.push({
+      text: displayModelName(model),
+      className: "status-model",
+      title: model,
+    });
   }
+  if (state.contextUsage) {
+    const { used, size } = state.contextUsage;
+    parts.push({
+      text: `${formatTokenCount(used)}/${formatTokenCount(size)}`,
+      className: "status-usage",
+      title: `${used.toLocaleString("en-US")} / ${size.toLocaleString("en-US")} tokens`,
+    });
+  }
+  if (cwd) parts.push({ text: cwd, className: "status-cwd", title: cwd });
+
+  dom.statusBar.textContent = "";
+  parts.forEach((part, index) => {
+    if (index > 0) {
+      const separator = document.createElement("span");
+      separator.className = "status-separator";
+      separator.textContent = " \u00b7 ";
+      dom.statusBar.appendChild(separator);
+    }
+    const span = document.createElement("span");
+    span.className = part.className;
+    span.textContent = part.text;
+    if (part.title) span.title = part.title;
+    dom.statusBar.appendChild(span);
+  });
 }
 
 // --- Snapshot / state_patch (client-server-split M1) ---
@@ -335,6 +378,7 @@ export interface SessionSnapshot {
     pendingPermissions?: unknown[];
     streaming?: { assistant: boolean; thinking: boolean };
     plan?: PlanEntry[] | null;
+    contextUsage?: ContextUsage | null;
   };
   agentCommands?: AgentCommandSnapshot;
 }
@@ -348,6 +392,7 @@ export interface StatePatchPayload {
       cancelStatus?: "requested" | "unconfirmed" | null;
     } | null;
     plan?: PlanEntry[] | null;
+    contextUsage?: ContextUsage | null;
   };
 }
 
@@ -378,6 +423,9 @@ export function applySnapshot(snap: SessionSnapshot): void {
   setBusy(busy != null);
   if (busy == null) clearCancelTimer();
   applyRuntimePlan(snap.runtime.plan ?? null);
+  state.contextUsage = snap.runtime.contextUsage
+    ? { ...snap.runtime.contextUsage }
+    : null;
   applyAgentCommandSnapshot(
     snap.agentCommands ?? { epoch: "", revision: 0, commands: [] },
   );
@@ -425,6 +473,10 @@ export function applyStatePatch(patchEvent: {
     if (busy == null) clearCancelTimer();
   }
   if (r && "plan" in r) applyRuntimePlan(r.plan ?? null);
+  if (r && "contextUsage" in r) {
+    state.contextUsage = r.contextUsage ? { ...r.contextUsage } : null;
+    updateStatusBar();
+  }
   return true;
 }
 
@@ -757,6 +809,7 @@ export function resetSessionUI({
   // Clear session metadata so stale title/model don't linger on switch failure
   state.sessionTitle = null;
   state.sessionCwd = null;
+  state.contextUsage = null;
   state.configOptions = [];
   state.agentCommands = [];
   state.agentCommandsEpoch = null;
