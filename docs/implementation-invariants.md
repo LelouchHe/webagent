@@ -1,8 +1,8 @@
-# WebAgent Agent Reference
+# WebAgent Implementation Invariants
 
-Detailed implementation invariants and historical decisions for coding agents.
-This document is intentionally loaded on demand rather than included wholesale
-in every session. Locate the relevant heading before reading a bounded section.
+Runtime, security, protocol, frontend, browser, and platform constraints that
+are expensive to rediscover. Read the relevant section when changing the
+corresponding implementation area; do not load the entire file by default.
 
 For build, configuration, testing, and publishing commands, use
 [`CLAUDE.md`](../CLAUDE.md) and [`development.md`](./development.md).
@@ -46,7 +46,7 @@ When the agent reads a user-uploaded attachment, it sees and emits the internal 
 
 ## Auth (0.4.0+)
 
-Bearer token authentication is **required**. Server refuses to start when `data/auth.json` has zero tokens. See [docs/security.md](./docs/security.md) for the full model — bootstrap, token storage, scopes, SSE ticket flow, signed image URLs, CSP invariants, data directory layout, E2E setup, and what's deliberately not protected.
+Bearer token authentication is **required**. Server refuses to start when `data/auth.json` has zero tokens. See [security.md](./security.md) for the full model — bootstrap, token storage, scopes, SSE ticket flow, signed image URLs, CSP invariants, data directory layout, E2E setup, and what's deliberately not protected.
 
 Quick reference for code-level work:
 

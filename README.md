@@ -116,5 +116,5 @@ Frontend source lives in `public/js/*.ts`, bundled by esbuild into a single cont
 | **[Share Links](docs/share.md)**                        | Public read-only session snapshots via `/share` + `/s/<token>`                 |
 | **[Database Schema](docs/schema.md)**                   | SQLite tables, indexes, FK policy, cascade/lifecycle rules, migrations         |
 | **[Development](docs/development.md)**                  | Building from source, dev mode, testing, publishing                            |
-| **[Agent Reference](docs/agent-reference.md)**          | Detailed implementation invariants and historical frontend/platform decisions  |
+| **[Implementation Invariants](docs/implementation-invariants.md)** | Runtime, security, protocol, frontend, browser, and platform constraints |
 | **[Auto-Start on Boot](docs/autostart.md)**             | launchd, systemd, crontab, Windows Task Scheduler                              |

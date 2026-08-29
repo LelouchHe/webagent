@@ -65,7 +65,7 @@ Locate and read only the sections relevant to the task.
 
 | Topic | Reference |
 |---|---|
-| Detailed architecture, attachment egress, auth, ACP limits, frontend and iOS conventions | [`docs/agent-reference.md`](./docs/agent-reference.md) |
+| Detailed runtime, security, protocol, frontend, browser, and platform invariants | [`docs/implementation-invariants.md`](./docs/implementation-invariants.md) |
 | REST/SSE behavior and database API | [`docs/api.md`](./docs/api.md) |
 | Frontend lifecycle and reconciliation | [`docs/client-architecture.md`](./docs/client-architecture.md) |
 | ACP surface and agent compatibility | [`docs/acp.md`](./docs/acp.md) |
