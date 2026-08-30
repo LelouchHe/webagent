@@ -32,13 +32,42 @@ npm run test:e2e      # Playwright browser E2E
 Published to npm as `@lelouchhe/webagent`. CI and release are handled by GitHub Actions:
 
 - **CI** (`.github/workflows/ci.yml`): Runs `npm test` + Playwright E2E on every push to `main` and on PRs.
-- **Publish** (`.github/workflows/publish.yml`): Triggers on `v*` tag push. Builds `dist/` and publishes to npm with provenance.
+- **Publish** (`.github/workflows/publish.yml`): Triggers on a pushed `v*` tag, reuses CI, and publishes to npm with provenance.
 
-Release workflow:
+Release from the `main` worktree and `origin` remote. Before changing release files, require a clean worktree, choose the SemVer bump, and prepare the matching Keep a Changelog entry.
+
+After the bump and changelog are approved:
 
 ```bash
-npm version patch      # or minor / major — bumps version, creates commit + tag
-git push --follow-tags # pushes commit + tag, triggers publish workflow
+# Update package.json and package-lock.json without creating Git history.
+npm version <patch|minor|major> --no-git-tag-version
+
+# Add the approved section and compare link to CHANGELOG.md, then verify.
+npm run format:check
+npm run lint
+npm run typecheck
+npm test
+npm run test:e2e
+npm run compile
+npm run build
+npm pack --dry-run
 ```
 
-Requires `NPM_TOKEN` secret in GitHub repo settings (npmjs.com → Granular Access Token → Read and write on `@lelouchhe/webagent`).
+`npm pack --dry-run` must include `bin/`, `lib/`, `dist/`, and `config.toml`. Review the final diff and stage exactly `CHANGELOG.md`, `package.json`, and `package-lock.json`.
+
+After explicit commit/tag confirmation:
+
+```bash
+git commit -m 'v<version>'
+git tag -a 'v<version>' -m 'v<version>'
+```
+
+Push is a separate confirmation. Push only the owned branch and exact release tag; do not use `--follow-tags`:
+
+```bash
+git push origin main 'v<version>'
+```
+
+After pushing, verify the exact tag on `origin`, the GitHub Actions publish run, and the registry's `latest` version. Do not infer success from the npm badge because its CDN can lag.
+
+Requires `NPM_TOKEN` in GitHub repo settings (npmjs.com → Granular Access Token → Read and write on `@lelouchhe/webagent`).
