@@ -889,14 +889,22 @@ describe("SessionManager", () => {
       store.updateSessionConfig("s1", "model", "gpt-5.4");
       sm.cachedConfigOptions = [];
 
-      let picked: { id: string; value: string } | null = null;
+      const setCalls: Array<{ id: string; value: string }> = [];
       const bridge = {
         async newSession() {
           return { sessionId: "", configOptions: [] };
         },
         async setConfigOption(_sid: string, id: string, value: string) {
-          picked = { id, value };
-          return [];
+          setCalls.push({ id, value });
+          return [
+            {
+              type: "select" as const,
+              id,
+              name: "Thinking",
+              currentValue: value,
+              options: [{ value, name: value }],
+            },
+          ];
         },
         async loadSession() {
           return { sessionId: "s1", configOptions: [] };
@@ -904,7 +912,54 @@ describe("SessionManager", () => {
       };
 
       await sm.ensureResumed(bridge, "s1");
-      assert.deepEqual(picked, { id: "reasoning_effort", value: "medium" });
+      assert.deepEqual(setCalls, [{ id: "reasoning_effort", value: "medium" }]);
+    });
+
+    it("falls back to thought_level when reasoning_effort is unsupported", async () => {
+      store.createSession("s1", "/x");
+      store.updateSessionConfig("s1", "reasoning_effort", "medium");
+      sm.cachedConfigOptions = [];
+
+      const setCalls: Array<{ id: string; value: string }> = [];
+      const bridge = {
+        async newSession() {
+          return { sessionId: "", configOptions: [] };
+        },
+        async setConfigOption(_sid: string, id: string, value: string) {
+          setCalls.push({ id, value });
+          if (id === "reasoning_effort") {
+            throw new Error("Unknown config option: reasoning_effort");
+          }
+          return [
+            {
+              type: "select" as const,
+              id: "thought_level",
+              category: "thought_level" as const,
+              name: "Thinking",
+              currentValue: value,
+              options: [{ value: "medium", name: "Medium" }],
+            },
+            {
+              type: "select" as const,
+              id: "model",
+              name: "Model",
+              currentValue: "gpt-5.4",
+              options: [{ value: "gpt-5.4", name: "GPT-5.4" }],
+            },
+          ];
+        },
+        async loadSession() {
+          return { sessionId: "s1", configOptions: [] };
+        },
+      };
+
+      await sm.ensureResumed(bridge, "s1");
+      assert.deepEqual(setCalls, [
+        { id: "reasoning_effort", value: "medium" },
+        { id: "thought_level", value: "medium" },
+      ]);
+      assert.equal(sm.cachedConfigOptions.length, 2);
+      assert.ok(sm.liveSessions.has("s1"));
     });
 
     it("resume still succeeds when setConfigOption throws", async () => {

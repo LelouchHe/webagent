@@ -372,8 +372,9 @@ export class SessionManager {
    * DB row — setConfigOption's currentValue for unrelated keys is the
    * agent's in-memory default, not the user's preference.
    *
-   * Key priority mode > reasoning_effort > model:
+   * Key priority mode > thinking aliases > model:
    *   - mode is a small stable enum, rewriting current value is idempotent.
+   *   - ACP agents use both reasoning_effort and thought_level for thinking.
    *   - model has the highest schema-drift risk (agent upgrades drop values).
    */
   private async tryWarmCache(
@@ -386,24 +387,39 @@ export class SessionManager {
     },
   ): Promise<void> {
     if (this.cachedConfigOptions.length > 0) return;
-    const pick = session.mode
-      ? { id: "mode", value: session.mode }
-      : session.reasoning_effort
-        ? { id: "reasoning_effort", value: session.reasoning_effort }
-        : session.model
-          ? { id: "model", value: session.model }
-          : null;
-    if (!pick) return;
-    try {
-      const opts = await bridge.setConfigOption(sessionId, pick.id, pick.value);
-      if (opts.length > 0) {
-        this.cachedConfigOptions = opts;
-        slog.info("warmed cache on resume", { options: opts.length });
+    const candidates: Array<{ id: string; value: string }> = [];
+    if (session.mode) candidates.push({ id: "mode", value: session.mode });
+    if (session.reasoning_effort) {
+      candidates.push(
+        { id: "reasoning_effort", value: session.reasoning_effort },
+        { id: "thought_level", value: session.reasoning_effort },
+      );
+    }
+    if (session.model) candidates.push({ id: "model", value: session.model });
+    if (candidates.length === 0) return;
+
+    let lastError: unknown = null;
+    for (const candidate of candidates) {
+      try {
+        const opts = await bridge.setConfigOption(
+          sessionId,
+          candidate.id,
+          candidate.value,
+        );
+        if (opts.length > 0) {
+          this.cachedConfigOptions = opts;
+          slog.info("warmed cache on resume", { options: opts.length });
+          return;
+        }
+      } catch (err) {
+        lastError = err;
       }
-    } catch (err) {
+    }
+
+    if (lastError) {
       slog.warn("cache warming failed", {
         sessionId: sessionId.slice(0, 8) + "…",
-        error: err,
+        error: lastError,
       });
     }
   }
