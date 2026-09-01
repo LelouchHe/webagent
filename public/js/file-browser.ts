@@ -10,9 +10,24 @@ export interface BrowseTarget {
   filter: string;
 }
 
+function normalizeDisplayInput(input: string): string {
+  // The server emits portable `/` display paths on Windows, but accept native
+  // forms typed by the user as well. On POSIX, backslashes remain legal name
+  // characters unless the whole input unmistakably has Windows path syntax.
+  if (/^(?:~\\|[A-Za-z]:[\\/]|\\\\)/.test(input)) {
+    return input.replace(/\\/g, "/");
+  }
+  return input;
+}
+
+function isAbsoluteDisplayPath(input: string): boolean {
+  return input.startsWith("/") || /^[A-Za-z]:\//.test(input);
+}
+
 function appendRelative(base: string, relative: string): string {
-  if (base === "/") return `/${relative}`;
-  return `${base.replace(/\/+$/, "")}/${relative}`;
+  const normalizedBase = normalizeDisplayInput(base);
+  if (normalizedBase === "/") return `/${relative}`;
+  return `${normalizedBase.replace(/\/+$/, "")}/${relative}`;
 }
 
 /** Resolve one exact user path to the backend's absolute/~ path contract. */
@@ -20,15 +35,15 @@ export function resolveViewPath(
   query: string,
   sessionCwd: string | null,
 ): string {
-  const raw = query.trim();
+  const raw = normalizeDisplayInput(query.trim());
   if (raw === "") {
     if (!sessionCwd) throw new Error("No active session cwd");
-    return sessionCwd;
+    return normalizeDisplayInput(sessionCwd);
   }
   if (raw.startsWith("~") && raw !== "~" && !raw.startsWith("~/")) {
     throw new Error("Unsupported ~user expansion");
   }
-  if (raw.startsWith("/") || raw.startsWith("~")) return raw;
+  if (isAbsoluteDisplayPath(raw) || raw.startsWith("~")) return raw;
   if (!sessionCwd) throw new Error("No active session cwd");
   return appendRelative(sessionCwd, raw);
 }
@@ -58,7 +73,7 @@ export function resolveBrowseTarget(
 
 /** Final segment only, used by the existing local slash-menu filter. */
 export function fileFilter(query: string): string {
-  const raw = query.trim();
+  const raw = normalizeDisplayInput(query.trim());
   if (raw === "" || raw === "/" || raw === "~" || raw.endsWith("/")) {
     return "";
   }

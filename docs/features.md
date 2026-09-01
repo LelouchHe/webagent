@@ -28,8 +28,10 @@
   filter, tap a folder to enter one level, or use the `..` row to go back
 - Absolute `/...` and `~/...` paths can browse anywhere available to the
   single-operator WebAgent process
-- Markdown reuses the chat renderer, code/text has syntax highlighting and line
-  numbers, images render inline, and unknown binaries fall back to metadata + download
+- Markdown and code/text up to 1 MiB render with the existing chat pipeline,
+  syntax highlighting, and line numbers; supported images render inline
+- Larger text/images and unknown binaries use the same signed URL for an
+  immediate, complete, streaming browser download
 - Full-screen viewer with a top-right close button on mobile; responsive
   right-side split keeps chat visible on desktop
 - Read-only throughout: special files are rejected, mutable content is not
@@ -87,7 +89,7 @@ Commands with submenus (`/model`, `/mode`, `/think`, `/notify`, `/switch`, `/new
 | `/logout`             | Log out — clear local token and return to login page                                                                          |
 | `/token`              | Manage API tokens (list, create, revoke) — see [Auth & Security](security.md)                                                 |
 | `/share`              | List active public shares · Enter creates a read-only snapshot (preview → `^P` publish / `^C` cancel). See [Share Links](share.md). |
-| `/view [path]`        | Browse local folders and open a read-only Markdown, code/text, image, or download view                                                  |
+| `/view [path]`        | Browse local folders; preview supported files up to their cap or directly download larger/unknown files                               |
 
 Type `?` for inline help listing all commands and shortcuts.
 

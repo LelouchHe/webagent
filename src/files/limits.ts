@@ -4,18 +4,15 @@
  * Kept as plain exported constants for now so the routes have a single,
  * testable knob; wiring these into `[limits]` config is a later milestone.
  * Values stay in the same order of magnitude as attachment limits and keep
- * the rendered/preview payloads bounded — the viewer never executes content,
- * but a 20 GB "text" file must not be read into memory either.
+ * rendered previews bounded. Files outside preview limits stream as downloads
+ * instead of being buffered in server or browser memory.
  */
 
 /** Directory listings cap — beyond this the response is truncated + flagged. */
 export const MAX_LIST_ITEMS = 2000;
 
-/** Text (mime "text/plain") render cap — larger files are truncated + flagged. */
-export const MAX_TEXT_BYTES = 4 * 1024 * 1024; // 4 MB
+/** Text/Markdown/code preview + highlight cap; larger files download. */
+export const MAX_TEXT_PREVIEW_BYTES = 1024 * 1024; // 1 MiB
 
-/** Image render cap — larger images are refused with 413 (no truncation). */
+/** Image render cap — larger images stream as downloads. */
 export const MAX_IMAGE_BYTES = 20 * 1024 * 1024; // 20 MB
-
-/** Everything else (binaries): refuse above this with 413. */
-export const MAX_OTHER_BYTES = 100 * 1024 * 1024; // 100 MB

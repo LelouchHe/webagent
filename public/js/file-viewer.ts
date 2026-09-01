@@ -6,9 +6,7 @@ import * as api from "./api.ts";
 import { dom } from "./state.ts";
 import { updateMarkdownStream } from "./markdown-stream.ts";
 import { enhanceCodeBlocks, highlightCodeElement } from "./highlight.ts";
-
-const MAX_HIGHLIGHT_CHARS = 512 * 1024;
-const MAX_RICH_MARKDOWN_CHARS = 1024 * 1024;
+import { MAX_TEXT_PREVIEW_BYTES } from "../../src/files/limits.ts";
 
 let openGeneration = 0;
 
@@ -75,8 +73,25 @@ function isMarkdown(name: string): boolean {
 }
 
 function lineNumbers(text: string): string {
-  const count = text.split("\n").length;
-  return Array.from({ length: count }, (_, i) => String(i + 1)).join("\n");
+  let count = 1;
+  for (let i = 0; i < text.length; i++) {
+    if (text.charCodeAt(i) === 10) count++;
+  }
+
+  // Keep only a small batch of number strings live at once. The final gutter
+  // is still one text node, but a newline-dense file no longer creates an
+  // array containing hundreds of thousands of individual strings.
+  const chunks: string[] = [];
+  let batch: string[] = [];
+  for (let line = 1; line <= count; line++) {
+    batch.push(String(line));
+    if (batch.length === 1024) {
+      chunks.push(batch.join("\n"));
+      batch = [];
+    }
+  }
+  if (batch.length > 0) chunks.push(batch.join("\n"));
+  return chunks.join("\n");
 }
 
 async function renderCode(text: string, name: string): Promise<void> {
@@ -101,9 +116,7 @@ async function renderCode(text: string, name: string): Promise<void> {
   scroll.appendChild(grid);
   dom.fileViewerContent.appendChild(scroll);
 
-  if (text.length <= MAX_HIGHLIGHT_CHARS) {
-    await highlightCodeElement(code, LANGUAGE_BY_EXTENSION[extension(name)]);
-  }
+  await highlightCodeElement(code, LANGUAGE_BY_EXTENSION[extension(name)]);
 }
 
 function renderMarkdown(text: string): void {
@@ -124,26 +137,24 @@ function renderImage(info: api.FileInfo): void {
   dom.fileViewerContent.appendChild(img);
 }
 
-function formatBytes(size: number): string {
-  if (size < 1024) return `${size} B`;
-  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KiB`;
-  return `${(size / (1024 * 1024)).toFixed(1)} MiB`;
-}
-
-function renderDownload(info: api.FileInfo, downloadable = true): void {
-  const meta = document.createElement("p");
-  meta.className = "file-viewer-binary-meta";
-  meta.textContent = `${info.mime ?? "application/octet-stream"} · ${formatBytes(info.size)}`;
-
-  dom.fileViewerContent.appendChild(meta);
-  if (!downloadable) return;
-
+function triggerDownload(info: api.FileInfo): void {
   const link = document.createElement("a");
-  link.className = "file-viewer-download";
   link.href = info.contentUrl!;
   link.download = info.name;
-  link.textContent = "Download";
-  dom.fileViewerContent.appendChild(link);
+  link.hidden = true;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+}
+
+function isPreviewable(info: api.FileInfo, mime: string): boolean {
+  if (mime.startsWith("text/")) {
+    return info.size <= MAX_TEXT_PREVIEW_BYTES;
+  }
+  if (mime.startsWith("image/")) {
+    return info.maxBytes !== undefined && info.size <= info.maxBytes;
+  }
+  return false;
 }
 
 async function fetchText(contentUrl: string): Promise<Response> {
@@ -152,16 +163,21 @@ async function fetchText(contentUrl: string): Promise<Response> {
   );
 }
 
-function renderNonText(info: api.FileInfo, mime: string): boolean {
-  if (mime.startsWith("text/")) return false;
-  if (info.maxBytes !== undefined && info.size > info.maxBytes) {
-    renderDownload(info, false);
-    showNotice("File exceeds the preview/download limit");
-  } else if (mime.startsWith("image/")) {
-    renderImage(info);
-  } else {
-    renderDownload(info);
+async function switchFetchToDownload(
+  response: Response,
+  info: api.FileInfo,
+  generation: number,
+): Promise<boolean> {
+  const disposition = response.headers.get("Content-Disposition") ?? "";
+  const responseMime =
+    response.headers.get("Content-Type")?.toLowerCase() ?? "";
+  if (!/^attachment\b/i.test(disposition) && responseMime.startsWith("text/")) {
+    return false;
   }
+  await response.body?.cancel();
+  if (generation !== openGeneration) return true;
+  closeFileViewer();
+  triggerDownload(info);
   return true;
 }
 
@@ -174,21 +190,17 @@ async function renderTextFile(
     const response = await fetchText(info.contentUrl!);
     if (generation !== openGeneration) return;
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    if (await switchFetchToDownload(response, info, generation)) return;
     const text = await response.text();
     if (generation !== openGeneration) return;
 
     clearContent();
-    const truncated = response.headers.get("X-File-Truncated") === "1";
-    if (isMarkdown(info.name) && text.length <= MAX_RICH_MARKDOWN_CHARS) {
+    if (isMarkdown(info.name)) {
       renderMarkdown(text);
     } else {
       await renderCode(text, info.name);
       if (generation !== openGeneration) return;
-      if (isMarkdown(info.name)) {
-        showNotice("Large Markdown shown as plain text");
-      }
     }
-    if (truncated) showNotice("File truncated to the preview limit");
   } catch (err) {
     if (generation !== openGeneration) return;
     clearContent();
@@ -200,18 +212,29 @@ async function renderTextFile(
 
 /** Open a metadata-confirmed regular file in the responsive viewer. */
 export async function openFileInfo(info: api.FileInfo): Promise<void> {
-  const generation = showShell(info.pathDisplay ?? info.path);
   if (info.kind !== "file") {
+    showShell(info.pathDisplay ?? info.path);
     showNotice("Not a regular file");
     return;
   }
   if (!info.contentUrl) {
+    showShell(info.pathDisplay ?? info.path);
     showNotice("File content is temporarily unavailable");
     return;
   }
 
   const mime = info.mime?.toLowerCase() ?? "application/octet-stream";
-  if (renderNonText(info, mime)) return;
+  if (!isPreviewable(info, mime)) {
+    closeFileViewer();
+    triggerDownload(info);
+    return;
+  }
+
+  const generation = showShell(info.pathDisplay ?? info.path);
+  if (mime.startsWith("image/")) {
+    renderImage(info);
+    return;
+  }
   await renderTextFile(info, generation);
 }
 

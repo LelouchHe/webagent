@@ -1,7 +1,26 @@
 import { test, expect } from "playwright/test";
+import { mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { gotoConnected } from "./helpers.ts";
+import { MAX_TEXT_PREVIEW_BYTES } from "../../src/files/limits.ts";
 
 const FIXTURE = "test/e2e/fixtures/file-viewer.md";
+let downloadDir: string;
+let oversizedText: string;
+
+test.beforeAll(() => {
+  downloadDir = mkdtempSync(join(tmpdir(), "webagent-view-download-"));
+  oversizedText = join(downloadDir, "oversized.txt");
+  writeFileSync(
+    oversizedText,
+    Buffer.alloc(MAX_TEXT_PREVIEW_BYTES + 1234, 0x61),
+  );
+});
+
+test.afterAll(() => {
+  rmSync(downloadDir, { recursive: true, force: true });
+});
 
 test("mobile /view drills into a folder and opens a full-screen file", async ({
   page,
@@ -40,6 +59,25 @@ test("mobile /view drills into a folder and opens a full-screen file", async ({
 
   await page.locator("#file-viewer-close").click();
   await expect(viewer).toBeHidden();
+});
+
+test("text over 1 MiB downloads in full without opening the viewer", async ({
+  page,
+}) => {
+  await gotoConnected(page);
+  const input = page.locator("#input");
+  await input.fill(`/view ${oversizedText}`);
+
+  const [download] = await Promise.all([
+    page.waitForEvent("download"),
+    input.press("Enter"),
+  ]);
+
+  expect(download.suggestedFilename()).toBe("oversized.txt");
+  const downloadedPath = await download.path();
+  if (!downloadedPath) throw new Error("download did not produce a file");
+  expect(statSync(downloadedPath).size).toBe(MAX_TEXT_PREVIEW_BYTES + 1234);
+  await expect(page.locator("#file-viewer")).toBeHidden();
 });
 
 test("desktop /view opens a right-hand split and close restores chat", async ({

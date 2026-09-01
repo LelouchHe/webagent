@@ -1,5 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { win32 } from "node:path";
 import { abbreviateHomePath, expandHomePath } from "../src/home-path.ts";
 
 describe("home paths", () => {
@@ -29,5 +30,25 @@ describe("home paths", () => {
       "/Users/lelouch-old/project",
     );
     assert.equal(abbreviateHomePath("/tmp/project", home), "/tmp/project");
+  });
+
+  it("round-trips Windows HOME paths through portable display syntax", () => {
+    const windowsHome = "C:\\Users\\lelouch";
+    assert.equal(
+      abbreviateHomePath("C:\\Users\\lelouch\\mine\\code", windowsHome, win32),
+      "~/mine/code",
+    );
+    assert.equal(
+      expandHomePath("~\\mine\\code", windowsHome, win32),
+      "C:\\Users\\lelouch\\mine\\code",
+    );
+    assert.equal(
+      expandHomePath("~/mine/code", windowsHome, win32),
+      "C:\\Users\\lelouch\\mine\\code",
+    );
+    assert.equal(
+      abbreviateHomePath("D:\\project\\file.ts", windowsHome, win32),
+      "D:/project/file.ts",
+    );
   });
 });

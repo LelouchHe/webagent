@@ -24,6 +24,7 @@ export { handleSlashCommand };
 
 let currentPath: string | null = null;
 let currentFetchKey: string | null = null;
+let fetchGeneration = 0;
 let currentNode: CmdNode = ROOT;
 let currentData: FetchData | undefined = undefined;
 let candidates: Candidate[] = [];
@@ -58,6 +59,7 @@ function rootForInput(input: string): CmdNode {
 function showPlaceholder(primary: string): void {
   currentPath = "";
   currentFetchKey = null;
+  fetchGeneration++;
   currentNode = rootForInput(dom.input.value);
   currentData = undefined;
   candidates = [
@@ -75,6 +77,7 @@ function showPlaceholder(primary: string): void {
 export function __resetCommandsForTest(): void {
   currentPath = null;
   currentFetchKey = null;
+  fetchGeneration++;
   currentNode = ROOT;
   currentData = undefined;
   candidates = [];
@@ -137,6 +140,7 @@ export function updateSlashMenu(): void {
   // The dual guard drops stale responses when either dimension moves. A
   // stable fetch key keeps the resolved data and uses local filtering only.
   if (shouldFetch) {
+    const myFetchGeneration = ++fetchGeneration;
     if (node.fetch && node.toSpec) {
       let result: unknown[] | Promise<unknown[]>;
       try {
@@ -152,13 +156,21 @@ export function updateSlashMenu(): void {
         const myFetchKey = nextFetchKey;
         void result.then(
           (items) => {
-            if (currentPath !== myPath || currentFetchKey !== myFetchKey)
+            if (
+              fetchGeneration !== myFetchGeneration ||
+              currentPath !== myPath ||
+              currentFetchKey !== myFetchKey
+            )
               return;
             currentData = items;
             rebuild(currentTailQueryFromInput(), pathPrefix);
           },
           (err: unknown) => {
-            if (currentPath !== myPath || currentFetchKey !== myFetchKey)
+            if (
+              fetchGeneration !== myFetchGeneration ||
+              currentPath !== myPath ||
+              currentFetchKey !== myFetchKey
+            )
               return;
             currentData = { error: fetchErrorMessage(err) };
             rebuild(currentTailQueryFromInput(), pathPrefix);
@@ -255,6 +267,7 @@ export function hideSlashMenu(): void {
   candidates = [];
   currentPath = null;
   currentFetchKey = null;
+  fetchGeneration++;
   currentNode = ROOT;
   currentData = undefined;
   dismissedFor = dismissedInput;

@@ -292,6 +292,45 @@ describe("slash menu — Tab vs Click behavior", () => {
     }
   });
 
+  it("drops an old response after a fetchKey A→B→A cycle", async () => {
+    const alphaResolvers: Array<(items: unknown[]) => void> = [];
+    let resolveBeta!: (items: unknown[]) => void;
+    const node = {
+      name: "/dynamic-aba",
+      fetch: (query: string) =>
+        new Promise<unknown[]>((resolve) => {
+          if (query.startsWith("alpha")) alphaResolvers.push(resolve);
+          else resolveBeta = resolve;
+        }),
+      fetchKey: (query: string) => query.split("/")[0],
+      matches: () => true,
+      toSpec: (item: unknown) => ({
+        primary: (item as { name: string }).name,
+      }),
+    };
+    slashCommands.ROOT.children.push(node);
+    try {
+      dom.input.value = "/dynamic-aba alpha/first";
+      commands.updateSlashMenu();
+      dom.input.value = "/dynamic-aba beta/middle";
+      commands.updateSlashMenu();
+      dom.input.value = "/dynamic-aba alpha/latest";
+      commands.updateSlashMenu();
+
+      alphaResolvers[1]([{ name: "new-alpha" }]);
+      await new Promise((r) => setTimeout(r, 0));
+      assert.match(dom.slashMenu.textContent, /new-alpha/);
+
+      alphaResolvers[0]([{ name: "old-alpha" }]);
+      await new Promise((r) => setTimeout(r, 0));
+      assert.match(dom.slashMenu.textContent, /new-alpha/);
+      assert.doesNotMatch(dom.slashMenu.textContent, /old-alpha/);
+      resolveBeta([]);
+    } finally {
+      slashCommands.ROOT.children.pop();
+    }
+  });
+
   it("Tab uses a data row fill value without changing its display label", () => {
     const node = {
       name: "/fill-test",

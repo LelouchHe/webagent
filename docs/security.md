@@ -171,11 +171,18 @@ its own URL before reading disk:
 For the file viewer, `info` and `list` remain Bearer-only and are the only way to
 mint a signed content URL. `GET /api/v1/files/content` requires a valid
 signature even if the caller also supplies a Bearer header; if the signing
-secret is missing it fails closed with `503`. Mutable file content is served
-with `Cache-Control: no-store`, `nosniff`, and a restrictive CSP. Only regular
-files are opened, so FIFOs, sockets, and device nodes cannot block the server.
-The public `/s/:token` share viewer cannot call `info` or `list` and therefore
-cannot mint arbitrary file URLs.
+secret is missing it fails closed with `503`. On use, the route verifies that
+the signed canonical path still resolves to itself, then uses one
+nonblocking/no-follow descriptor for `fstat`, MIME sniffing, disposition choice,
+and streaming. This prevents a capability from being retargeted through a
+replacement symlink and prevents check/read descriptor races.
+
+Mutable file content is served with `Cache-Control: no-store`, `nosniff`, and a
+restrictive CSP. Previewable text is bounded at 1 MiB; larger or unknown content
+uses the same capability URL with attachment disposition and streams under
+backpressure without whole-file buffering. FIFOs, sockets, and device nodes are
+never streamed. The public `/s/:token` share viewer cannot call `info` or `list`
+and therefore cannot mint arbitrary file URLs.
 
 A stolen signed URL is usable only for its single bound path and at most one
 hour (or until the next server restart).

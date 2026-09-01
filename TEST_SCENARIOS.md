@@ -98,11 +98,11 @@ spot gaps, and decide what still needs to be added without reading every spec.
 
 - `test/file-viewer-routes.test.ts`
   - Bearer-gated `info` / `list` and independently HMAC-signed `content`
-  - absolute / `~` / `..` / symlink canonicalization, HOME-abbreviated display paths, relative/invalid rejection
-  - directory listing order, hidden/special entry omission, and 2,000-entry truncation
-  - regular-file guards for directories, FIFOs, and oversized non-text payloads
-  - bounded text reads with truncation metadata; mutable content is never cached
-  - signed URL tamper rejection and URL-safe Unicode/space paths
+  - absolute / `~` / `..` / symlink canonicalization, portable HOME display paths, relative/invalid rejection
+  - bounded `opendir` scanning, directory order, hidden/special omission, and truncation
+  - one-descriptor regular-file validation/sniff/stream flow for directories, FIFOs, and mutable paths
+  - 1 MiB inline text preview; complete streamed attachment fallback for larger/unknown content
+  - signed URL tamper/retarget rejection, no-store responses, and URL-safe Unicode/space paths
 
 - `test/prompt.test.ts`
   - prompt acceptance and bridge forwarding
@@ -306,13 +306,13 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - error handling (ApiError, non-JSON responses)
 
 - `test/file-browser.test.ts`, `test/view-command.test.ts`, `test/file-viewer-frontend.test.ts`
-  - cwd-relative, absolute, `~`, root, trailing-slash, and local-filter path semantics
-  - Enter dispatch: directory drill-down vs direct file open
-  - existing Markdown pipeline reuse, safe code/text + line numbers, image, binary fallback, truncation, and close lifecycle
+  - cwd-relative, absolute, portable Windows/HOME, root, trailing-slash, and local-filter path semantics
+  - Enter dispatch: directory drill-down vs direct file open/download
+  - existing Markdown pipeline reuse, safe highlighted code/text + batched line numbers, image, attachment fallback, and close lifecycle
 
 - `test/slash-menu.test.ts`
   - Tab fills input without executing (top-level, notify submenu, config submenu)
-  - query-dependent `fetchKey` partitioning, stale response suppression, and separate display/fill values
+  - query-dependent `fetchKey` partitioning, monotonic stale/ABA suppression, and separate display/fill values
   - `/view` cwd listing, local filtering, `~`-preserving Tab completion, folder Tab continuation, and one-level drill-down
   - click on submenu item executes the command
 
@@ -525,6 +525,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
 
 - `file-viewer.spec.ts`
   - mobile `/view` taps through one folder level and opens Markdown full-screen
+  - text over 1 MiB downloads directly and completely without opening the viewer
   - desktop `/view` opens a 55%-up-to-800px right split and close restores chat width
 
 ### Mode / config persistence / inheritance / sync

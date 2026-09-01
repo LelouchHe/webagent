@@ -50,6 +50,31 @@ describe("file browser path resolution", () => {
     });
   });
 
+  it("normalizes Windows display paths without expanding HOME", () => {
+    assert.equal(
+      resolveBrowseTarget("~\\mine\\code\\file.ts", null).directory,
+      "~/mine/code",
+    );
+    assert.deepEqual(
+      resolveBrowseTarget("C:\\Users\\me\\project\\file.ts", null),
+      {
+        directory: "C:/Users/me/project",
+        filter: "file.ts",
+      },
+    );
+    assert.deepEqual(
+      resolveBrowseTarget("\\\\server\\share\\dir\\file.ts", null),
+      {
+        directory: "//server/share/dir",
+        filter: "file.ts",
+      },
+    );
+    assert.deepEqual(resolveBrowseTarget("", "C:\\Users\\me\\project"), {
+      directory: "C:/Users/me/project",
+      filter: "",
+    });
+  });
+
   it("rejects a relative query without a session cwd", () => {
     assert.throws(() => resolveBrowseTarget("src", null), /active session/i);
   });

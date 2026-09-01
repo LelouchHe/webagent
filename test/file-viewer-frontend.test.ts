@@ -2,6 +2,7 @@ import { describe, it, before, after, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { setupDOM, teardownDOM, resetState } from "./frontend-setup.ts";
 import type { FileInfo } from "../public/js/api.ts";
+import { MAX_TEXT_PREVIEW_BYTES } from "../src/files/limits.ts";
 
 describe("file viewer frontend", () => {
   let state: any;
@@ -9,6 +10,7 @@ describe("file viewer frontend", () => {
   let viewer: typeof import("../public/js/file-viewer.ts");
   let response: Response;
   let fetchCalls: string[];
+  let downloads: string[];
 
   before(async () => {
     setupDOM();
@@ -26,6 +28,10 @@ describe("file viewer frontend", () => {
     resetState(state, dom);
     viewer.closeFileViewer();
     fetchCalls = [];
+    downloads = [];
+    window.HTMLAnchorElement.prototype.click = function () {
+      downloads.push(this.getAttribute("href") ?? "");
+    };
     response = new Response("", { status: 200 });
     globalThis.fetch = async (input: RequestInfo | URL) => {
       const url =
@@ -47,7 +53,7 @@ describe("file viewer frontend", () => {
       size: 4,
       mtime: 1,
       mime: "text/plain",
-      maxBytes: 4 * 1024 * 1024,
+      maxBytes: MAX_TEXT_PREVIEW_BYTES,
       contentUrl: "/api/v1/files/content?path=x&exp=1&sig=s",
       ...overrides,
     };
@@ -110,7 +116,7 @@ describe("file viewer frontend", () => {
     assert.equal(fetchCalls.length, 0);
   });
 
-  it("does not fetch unknown binaries and offers download only", async () => {
+  it("directly downloads unknown binaries without opening the viewer", async () => {
     const contentUrl = "/api/v1/files/content?path=zip&exp=1&sig=s";
 
     await viewer.openFileInfo(
@@ -118,47 +124,43 @@ describe("file viewer frontend", () => {
         path: "/tmp/archive.zip",
         name: "archive.zip",
         mime: "application/zip",
+        maxBytes: undefined,
         contentUrl,
       }),
     );
 
-    const link = dom.fileViewerContent.querySelector(
-      "a[download]",
-    ) as HTMLAnchorElement | null;
-    assert.ok(link);
-    assert.equal(link.getAttribute("href"), contentUrl);
+    assert.deepEqual(downloads, [contentUrl]);
+    assert.equal(dom.fileViewer.hidden, true);
     assert.equal(fetchCalls.length, 0);
   });
 
-  it("does not offer a download that exceeds the server cap", async () => {
+  it("directly downloads text over the shared 1 MiB preview cap", async () => {
+    const contentUrl = "/api/v1/files/content?path=large&exp=1&sig=s";
+
     await viewer.openFileInfo(
-      info({
-        path: "/tmp/huge.zip",
-        name: "huge.zip",
-        mime: "application/zip",
-        size: 200,
-        maxBytes: 100,
-      }),
+      info({ size: MAX_TEXT_PREVIEW_BYTES + 1, contentUrl }),
     );
 
-    assert.equal(
-      Boolean(dom.fileViewerContent.querySelector("a[download]")),
-      false,
-    );
-    assert.match(dom.fileViewerNotice.textContent, /exceeds/i);
+    assert.deepEqual(downloads, [contentUrl]);
+    assert.equal(dom.fileViewer.hidden, true);
+    assert.equal(fetchCalls.length, 0);
   });
 
-  it("shows server truncation without dropping rendered text", async () => {
-    response = new Response("partial", {
+  it("switches a stale text preview response to download on attachment", async () => {
+    const contentUrl = "/api/v1/files/content?path=changed&exp=1&sig=s";
+    response = new Response("changed after info", {
       status: 200,
-      headers: { "X-File-Truncated": "1" },
+      headers: {
+        "Content-Type": "text/plain",
+        "Content-Disposition": "attachment; filename=changed.txt",
+      },
     });
 
-    await viewer.openFileInfo(info());
+    await viewer.openFileInfo(info({ contentUrl }));
 
-    assert.match(dom.fileViewerContent.textContent, /partial/);
-    assert.match(dom.fileViewerNotice.textContent, /truncated/i);
-    assert.equal(dom.fileViewerNotice.hidden, false);
+    assert.deepEqual(downloads, [contentUrl]);
+    assert.equal(dom.fileViewer.hidden, true);
+    assert.equal(fetchCalls.length, 1);
   });
 
   it("close button exits the viewer and restores the page layout", async () => {

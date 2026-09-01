@@ -6,12 +6,20 @@
  * ambiguity to exploit. `~` expands to HOME, then `realpath` canonicalizes
  * symlinks and `..` segments once; every path on the system is legal by
  * design (single-owner personal tool), so there is deliberately no escape
- * rejection logic — the guards here are about not hanging on special files
- * and not reading unbounded data.
+ * rejection logic — the guards here prevent blocking on special files,
+ * unbounded directory scans, and whole-file buffering.
  */
-import { open, readdir, realpath, stat } from "node:fs/promises";
+import { constants } from "node:fs";
+import {
+  open,
+  opendir,
+  realpath,
+  stat,
+  type FileHandle,
+} from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, join, basename } from "node:path";
+import { expandHomePath } from "../home-path.ts";
 import { MAX_LIST_ITEMS } from "./limits.ts";
 
 /** HTTP status-backed error; routes map it to a JSON error response. */
@@ -31,15 +39,14 @@ export class FilePathError extends Error {
 export function expandPath(raw: string, home: string = homedir()): string {
   if (raw.length === 0) throw new FilePathError(400, "Missing path");
   if (raw.includes("\0")) throw new FilePathError(400, "Invalid path");
-  if (raw === "~") return home;
-  if (raw.startsWith("~/")) return join(home, raw.slice(2));
-  if (raw.startsWith("~")) {
+  const expanded = expandHomePath(raw, home);
+  if (raw.startsWith("~") && expanded === raw) {
     throw new FilePathError(400, "Unsupported ~user expansion");
   }
-  if (!isAbsolute(raw)) {
+  if (!isAbsolute(expanded)) {
     throw new FilePathError(400, "Path must be absolute or start with ~");
   }
-  return raw;
+  return expanded;
 }
 
 /** realpath canonicalization; missing paths map to 404. */
@@ -86,27 +93,35 @@ export interface DirEntry {
 }
 
 /**
- * List one directory: dotfiles excluded, entries sorted dirs-first then
- * lexicographically, capped at MAX_LIST_ITEMS with
- * a `truncated` flag. Entries that vanish mid-list are skipped.
+ * List one directory: scan at most MAX_LIST_ITEMS plus one sentinel raw entry,
+ * omit dotfiles/special nodes, then sort the bounded result dirs-first and
+ * lexicographically. Entries that vanish mid-list are skipped.
  */
 export async function listDirectory(
   target: string,
 ): Promise<{ entries: DirEntry[]; truncated: boolean }> {
-  const names = await readdir(target);
-  names.sort();
-  const visible = names.filter((n) => !n.startsWith("."));
-  const truncated = visible.length > MAX_LIST_ITEMS;
+  const dir = await opendir(target);
   const entries: DirEntry[] = [];
-  for (const name of visible.slice(0, MAX_LIST_ITEMS)) {
+  let scanned = 0;
+  let truncated = false;
+  // Dir's async iterator closes the descriptor both at EOF and on break.
+  for await (const entry of dir) {
+    scanned++;
+    // Read one sentinel beyond the cap so `truncated` is authoritative,
+    // but never materialize/sort an unbounded directory.
+    if (scanned > MAX_LIST_ITEMS) {
+      truncated = true;
+      break;
+    }
+    if (entry.name.startsWith(".")) continue;
     try {
-      const s = await stat(join(target, name));
+      const s = await stat(join(target, entry.name));
       // Only expose targets the viewer can actually open. Symlinks to
       // regular files/dirs pass because stat follows them; fifos, sockets,
       // and devices are omitted rather than mislabelled as files.
       if (!s.isDirectory() && !s.isFile()) continue;
       entries.push({
-        name,
+        name: entry.name,
         kind: s.isDirectory() ? "dir" : "file",
         size: s.isFile() ? s.size : null,
         mtime: s.mtimeMs,
@@ -139,22 +154,26 @@ export async function readHead(file: string, n = 4096): Promise<Buffer> {
 }
 
 /**
- * Read a file bounded by `cap` bytes. Files within the cap are read fully;
- * larger files yield only the first `cap` bytes with `truncated: true`
- * (used for text — never reads a multi-GB "text" file into memory whole).
+ * Open without following a final symlink and without blocking on a FIFO.
+ * Windows lacks equivalent POSIX flags; fstat below remains authoritative.
  */
-export async function readFileCapped(
-  file: string,
-  cap: number,
-): Promise<{ data: Buffer; truncated: boolean }> {
-  const h = await open(file, "r");
-  try {
-    const st = await h.stat();
-    if (st.size <= cap) return { data: await h.readFile(), truncated: false };
-    const data = Buffer.alloc(cap);
-    const { bytesRead } = await h.read(data, 0, cap, 0);
-    return { data: data.subarray(0, bytesRead), truncated: true };
-  } finally {
-    await h.close();
-  }
+export function openForStreaming(file: string): Promise<FileHandle> {
+  const safeFlags =
+    process.platform === "win32"
+      ? constants.O_RDONLY
+      : constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK;
+  return open(file, safeFlags);
+}
+
+/** Read mime-sniff bytes from an already validated descriptor. */
+export async function readHandleHead(
+  handle: FileHandle,
+  size: number,
+  n = 4096,
+): Promise<Buffer> {
+  const len = Math.min(size, n);
+  const buf = Buffer.alloc(len);
+  if (len === 0) return buf;
+  const { bytesRead } = await handle.read(buf, 0, len, 0);
+  return buf.subarray(0, bytesRead);
 }

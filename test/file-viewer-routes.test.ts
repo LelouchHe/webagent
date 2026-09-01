@@ -8,6 +8,7 @@ import {
   mkdirSync,
   writeFileSync,
   symlinkSync,
+  unlinkSync,
   realpathSync,
 } from "node:fs";
 import { spawnSync } from "node:child_process";
@@ -20,7 +21,7 @@ import { signAttachmentUrl } from "../src/auth.ts";
 import {
   MAX_IMAGE_BYTES,
   MAX_LIST_ITEMS,
-  MAX_TEXT_BYTES,
+  MAX_TEXT_PREVIEW_BYTES,
 } from "../src/files/limits.ts";
 
 interface Resp {
@@ -180,7 +181,7 @@ describe("file viewer routes", () => {
     assert.equal(typeof b.size, "number");
     assert.equal(typeof b.mtime, "number");
     assert.equal(b.mime, "text/plain");
-    assert.equal(typeof b.maxBytes, "number");
+    assert.equal(b.maxBytes, MAX_TEXT_PREVIEW_BYTES);
     assert.match(
       b.contentUrl,
       /^\/api\/v1\/files\/content\?path=[^&]+&exp=\d+&sig=[a-f0-9]+$/,
@@ -348,15 +349,19 @@ describe("file viewer routes", () => {
     assert.equal(r.headers["x-content-type-options"], "nosniff");
     assert.equal(r.headers["cache-control"], "no-store");
     assert.match(String(r.headers["content-type"]), /text\/plain/);
+    assert.match(String(r.headers["content-disposition"]), /^inline\b/);
   });
 
-  it("truncates oversized text and flags it", async () => {
+  it("streams oversized text in full as an attachment", async () => {
     const bigText = join(dir, "big.txt");
-    writeFileSync(bigText, Buffer.alloc(MAX_TEXT_BYTES + 1024, 0x61));
+    const bytes = MAX_TEXT_PREVIEW_BYTES + 1024;
+    writeFileSync(bigText, Buffer.alloc(bytes, 0x61));
     const r = await req(port, "GET", signedContentUrl(bigText));
     assert.equal(r.status, 200);
-    assert.equal(r.headers["x-file-truncated"], "1");
-    assert.equal(r.body.length, MAX_TEXT_BYTES);
+    assert.match(String(r.headers["content-disposition"]), /^attachment\b/);
+    assert.equal(r.headers["x-file-truncated"], undefined);
+    assert.equal(r.headers["content-length"], undefined);
+    assert.equal(r.body.length, bytes);
   });
 
   it("content on a directory returns 400", async () => {
@@ -371,17 +376,43 @@ describe("file viewer routes", () => {
     assert.equal(r.status, 400);
   });
 
-  it("rejects oversized images with 413 + metadata", async () => {
+  it("streams oversized images as attachments instead of returning 413", async () => {
     const bigImg = join(dir, "big.png");
     writeFileSync(
       bigImg,
       Buffer.concat([PNG, Buffer.alloc(MAX_IMAGE_BYTES + 1)]),
     );
     const r = await req(port, "GET", signedContentUrl(bigImg));
-    assert.equal(r.status, 413);
-    const b = JSON.parse(r.body);
-    assert.equal(b.error, "file_too_large");
-    assert.equal(typeof b.maxBytes, "number");
+    assert.equal(r.status, 200);
+    assert.match(String(r.headers["content-disposition"]), /^attachment\b/);
+    assert.equal(r.headers["content-length"], undefined);
+  });
+
+  it("streams unknown binary types as attachments", async () => {
+    const binary = join(dir, "unknown.bin");
+    writeFileSync(binary, Buffer.from([0, 1, 2, 3, 4]));
+    const metadata = JSON.parse((await info(binary)).body);
+    assert.equal(metadata.mime, "application/octet-stream");
+    assert.equal(metadata.maxBytes, undefined);
+
+    const r = await req(port, "GET", metadata.contentUrl);
+    assert.equal(r.status, 200);
+    assert.match(String(r.headers["content-disposition"]), /^attachment\b/);
+    assert.equal(r.headers["content-length"], undefined);
+  });
+
+  it("uses the opened file size when content grows after info", async () => {
+    const mutable = join(dir, "mutable.txt");
+    writeFileSync(mutable, "small");
+    const issued = JSON.parse((await info(mutable)).body);
+    const bytes = MAX_TEXT_PREVIEW_BYTES + 2048;
+    writeFileSync(mutable, Buffer.alloc(bytes, 0x62));
+
+    const r = await req(port, "GET", issued.contentUrl);
+
+    assert.equal(r.status, 200);
+    assert.match(String(r.headers["content-disposition"]), /^attachment\b/);
+    assert.equal(r.body.length, bytes);
   });
 
   it("rejects content without a signature, even with a Bearer header", async () => {
@@ -400,6 +431,22 @@ describe("file viewer routes", () => {
     const c = await req(port, "GET", contentUrl);
     assert.equal(c.status, 200);
     assert.equal(c.body, "# Hello\n\nworld\n");
+  });
+
+  it("rejects a signed path retargeted to a symlink after issuance", async () => {
+    const original = join(dir, "retarget.txt");
+    const secret = join(dir, "secret.txt");
+    writeFileSync(original, "public");
+    writeFileSync(secret, "secret");
+    const issued = await info(original);
+    const contentUrl = JSON.parse(issued.body).contentUrl as string;
+    unlinkSync(original);
+    symlinkSync(secret, original);
+
+    const r = await req(port, "GET", contentUrl);
+
+    assert.equal(r.status, 401);
+    assert.doesNotMatch(r.body, /secret/);
   });
 
   it("rejects a tampered signed URL", async () => {

@@ -976,15 +976,17 @@ query string.
   "size": 4812,
   "mtime": 1777098000123,
   "mime": "text/plain",
-  "maxBytes": 4194304,
+  "maxBytes": 1048576,
   "contentUrl": "/api/v1/files/content?path=%2FUsers%2Fme%2Fproject%2FREADME.md&exp=1777101600&sig=..."
 }
 ```
 
 `path` is the canonical filesystem identity used for reads/signing;
-`pathDisplay` abbreviates the current HOME prefix as `~` and is intended for
-UI display and completion. Directory responses omit `mime`, `maxBytes`, and
-`contentUrl`. `mime` is content-sniffed rather than trusted from the filename. The signed content URL
+`pathDisplay` abbreviates the current HOME prefix as `~`, normalizes Windows
+separators to `/`, and is intended for UI display and completion. Directory
+responses omit `mime`, `maxBytes`, and `contentUrl`; unknown binary files omit
+`maxBytes` because they are download-only. `mime` is content-sniffed rather
+than trusted from the filename. The signed content URL
 expires after one hour and is invalidated by a server restart.
 
 **Errors:** `400` (missing, relative, invalid, or non-regular path), `403`
@@ -994,10 +996,12 @@ expires after one hour and is invalidated by a server restart.
 
 #### `GET /api/v1/files/list?path=`
 
-List one directory (no recursive tree expansion). Returns directories first,
-then files, with each group sorted lexicographically. Dotfiles are omitted by
-default. Symlinks to regular files/directories are followed; FIFOs, sockets,
-and device nodes are omitted. Listings are capped at 2,000 visible entries.
+List one directory (no recursive tree expansion). Scans at most 2,001 raw
+entries, returns eligible entries from the first 2,000, and marks `truncated`
+when the sentinel entry exists; this bounds memory/CPU even for enormous
+directories. Returned directories are sorted first, then files, with each group
+sorted lexicographically. Dotfiles are omitted. Symlinks to regular
+files/directories are followed; FIFOs, sockets, and device nodes are omitted.
 
 **Response** `200`:
 
@@ -1022,17 +1026,22 @@ denied), `404` (not found), `405` (non-GET method).
 
 #### `GET /api/v1/files/content?path=&exp=&sig=`
 
-Serve bytes for a regular file. Obtain the full signed URL from `info`; callers
-must not construct signatures themselves. The response is `no-store` because
-project files change in place, includes `X-Content-Type-Options: nosniff`, and
-uses an inline RFC 5987 filename. Text is capped at 4 MiB and returned truncated
-with `X-File-Truncated: 1`; oversized images/binaries return `413` instead of
-partial content. No special file (FIFO/socket/device) is ever opened.
+Serve bytes for a regular file. Obtain the signed URL from `info`; callers must
+not construct signatures themselves. One endpoint handles both preview and
+download: text/Markdown/code up to 1 MiB and supported images within their
+image cap use `Content-Disposition: inline`; larger text/images and all unknown
+binary types use `attachment`. Attachment responses stream the complete file
+with backpressure — they are never buffered or truncated.
+
+The handler re-resolves the signed canonical path, rejects target changes, then
+uses one nonblocking/no-follow file descriptor for `fstat`, MIME sniffing, size
+decision, and streaming. Responses are `no-store`, include
+`X-Content-Type-Options: nosniff`, and carry an RFC 5987 filename. FIFOs,
+sockets, and device nodes are never streamed.
 
 **Errors:** `400` (directory, invalid, or non-regular path), `401` (missing,
-expired, or tampered signature), `403` (permission denied), `404` (not found),
-`405` (non-GET method), `413` (non-text payload exceeds its type cap), `503`
-(signing secret unavailable).
+expired, tampered, or retargeted signature), `403` (permission denied), `404`
+(not found), `405` (non-GET method), `503` (signing secret unavailable).
 
 ---
 

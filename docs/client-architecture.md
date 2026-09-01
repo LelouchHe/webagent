@@ -596,18 +596,25 @@ Pressing Enter on a complete path follows the same directory/file split through
 
 The viewer dispatches by server-sniffed MIME plus filename extension:
 
-- Markdown reuses `updateMarkdownStream` and the existing DOMPurify/marked/Temml pipeline;
-- text/code is inserted with `textContent`, gets a separate line-number column,
-  and reuses the lazy highlight.js loader;
-- images use the signed content URL directly;
-- unknown binary content displays metadata and a signed download link.
+- Markdown up to 1 MiB reuses `updateMarkdownStream` and the existing DOMPurify/marked/Temml pipeline;
+- text/code up to 1 MiB is inserted with `textContent`, gets a separate
+  batched line-number column, and always uses the lazy highlight.js loader;
+- supported images within their image cap use the signed content URL directly;
+- larger text/images and unknown binary content trigger that same URL as a
+  browser download; the server selects attachment disposition and streams it.
+
+The 1 MiB text limit is exported once from `src/files/limits.ts` and consumed by
+both server and browser. If a file changes between `info` and content fetch, the
+viewer checks the final response disposition before reading its body and
+switches to download rather than buffering an attachment as text.
 
 On viewports below 1024px it is a fixed full-screen overlay. At 1024px and
 above, the body reserves 55vw for the right pane, capped at 800px, leaving chat
 usable on the left while fitting roughly 80 columns of 14px monospace code on
 common wide displays. Closing or Escape removes the viewer and
-restores the chat layout. A generation counter prevents stale file responses
-from replacing a newer file or reopening a closed viewer.
+restores the chat layout. Generation counters prevent stale file responses
+from replacing a newer file or reopening a closed viewer, and prevent slash
+fetch-key ABA sequences (`A → B → A`) from applying the first A response.
 
 ---
 
