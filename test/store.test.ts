@@ -412,6 +412,23 @@ describe("Store", () => {
       assert.equal(store.hasInterruptedTurn("s1"), false);
     });
 
+    it("returns false when an error follows user_message", () => {
+      store.createSession("s1", "/x");
+      store.saveEvent(
+        "s1",
+        "user_message",
+        { text: "hello" },
+        { from_ref: "user" },
+      );
+      store.saveEvent(
+        "s1",
+        "error",
+        { message: "provider failed" },
+        { from_ref: "agent" },
+      );
+      assert.equal(store.hasInterruptedTurn("s1"), false);
+    });
+
     it("detects interrupted turn after a completed turn", () => {
       store.createSession("s1", "/x");
       // First turn — completed

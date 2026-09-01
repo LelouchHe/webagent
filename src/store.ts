@@ -754,7 +754,7 @@ export class Store {
     return row.seq;
   }
 
-  /** Check if the most recent agent turn was interrupted (user_message without a following prompt_done). */
+  /** Check if the most recent agent turn lacks a completion or error terminal event. */
   hasInterruptedTurn(sessionId: string): boolean {
     const row = this.db
       .prepare(
@@ -762,7 +762,10 @@ export class Store {
       SELECT 1 FROM events
       WHERE session_id = ? AND type = 'user_message'
         AND seq > COALESCE(
-          (SELECT MAX(seq) FROM events WHERE session_id = ? AND type = 'prompt_done'),
+          (
+            SELECT MAX(seq) FROM events
+            WHERE session_id = ? AND type IN ('prompt_done', 'error')
+          ),
           0
         )
       LIMIT 1

@@ -1482,8 +1482,8 @@ These events are streamed in real-time via SSE as the agent works.
 | `plan`                  | `sessionId`, `entries`                                                                   | Agent plan update. Each entry: `{ status, content }`                                                                |
 | `permission_request`    | `requestId`, `sessionId`, `title`, `options`                                             | Agent needs permission to proceed                                                                                   |
 | `permission_response`   | `requestId`, `sessionId`, `optionName`, `denied`                                         | Permission was resolved (server-generated)                                                                          |
-| `prompt_done`           | `sessionId`, `stopReason`                                                                | Agent turn complete                                                                                                 |
-| `error`                 | `message`, `sessionId?`                                                                  | Error occurred                                                                                                      |
+| `prompt_done`           | `sessionId`, `stopReason`, `promptId?`                                                    | Agent turn completed with a standard ACP stop reason                                                               |
+| `error`                 | `message`, `sessionId?`, `promptId?`                                                      | Prompt or agent error; session-scoped errors are persisted for replay                                               |
 | `user_message`          | `sessionId`, `text`, `attachments?` (array of `{kind, attachmentId, displayName, mimeType, path?, width?, height?}`) | User message broadcast (for multi-client sync)                                                                      |
 | `bash_command`          | `sessionId`, `command`                                                                   | Bash command started                                                                                                |
 | `bash_output`           | `sessionId`, `text`, `stream`                                                            | Bash output chunk (`stream`: `"stdout"` or `"stderr"`)                                                              |
@@ -1509,8 +1509,8 @@ These are **aggregated** events stored in the database. They appear in `GET /api
 The server buffers streaming chunks in memory and flushes them to the database as complete events at natural boundaries:
 
 ```
-message_chunk + message_chunk + ... → assistant_message  (flushed on tool_call, plan, prompt_done)
-thought_chunk + thought_chunk + ... → thinking            (flushed on message_chunk, tool_call, prompt_done)
+message_chunk + message_chunk + ... → assistant_message  (flushed on tool_call, plan, prompt_done, error)
+thought_chunk + thought_chunk + ... → thinking            (flushed on message_chunk, tool_call, prompt_done, error)
 bash_output + bash_output + ...     → bash_result         (flushed on bash close)
 ```
 
@@ -1605,7 +1605,7 @@ Uses `gzipSync` from `node:zlib` for simplicity (synchronous, single-threaded se
 
 ### Interrupted Turns
 
-When a session is resumed after a server or agent restart, WebAgent restores the ACP session without sending a continuation prompt. Completion is unknown when a `user_message` has no subsequent `prompt_done`, and automatically continuing could repeat non-idempotent tool actions. The user can inspect the restored state and explicitly ask the agent to continue.
+When a session is resumed after a server or agent restart, WebAgent restores the ACP session without sending a continuation prompt. Completion is unknown when a `user_message` has no subsequent terminal event (`prompt_done` or `error`), and automatically continuing could repeat non-idempotent tool actions. The user can inspect the restored state and explicitly ask the agent to continue.
 
 `Store.hasInterruptedTurn()` in `src/store.ts` retains the detection primitive for future UI or explicit retry flows.
 

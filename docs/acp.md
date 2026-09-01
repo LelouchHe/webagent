@@ -13,6 +13,8 @@ WebAgent uses ACP for the core agent loop: session creation / restore, prompt tu
   the prompt active until its prompt response supplies the terminal stop reason;
   timeout only marks the request unconfirmed.
 - The UI renders a subset of ACP session updates: assistant text, thinking text, tool calls, tool call updates, and plans
+- Standard prompt stop reasons are preserved in history. `end_turn` completes silently; `cancelled`, `max_tokens`, `max_turn_requests`, and `refusal` also render a system notice explaining why the turn stopped.
+- Rejected `session/prompt` requests render and persist as system errors rather than assistant messages, so UI diagnostics remain outside agent context.
 - Session history is persisted locally and restored after server restart
 
 ## Client Extensions

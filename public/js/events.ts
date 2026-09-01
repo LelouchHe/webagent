@@ -258,6 +258,25 @@ function cancelPendingTurnUI() {
   state.pendingPermissionRequestIds.clear();
 }
 
+function promptStopNotice(stopReason: unknown): string | null {
+  switch (stopReason) {
+    case "cancelled":
+      return "Generation cancelled.";
+    case "max_tokens":
+      return "Response stopped after reaching the token limit.";
+    case "max_turn_requests":
+      return "Agent stopped after reaching the turn request limit.";
+    case "refusal":
+      return "Agent refused to continue. This prompt will not be included in the next turn.";
+    case "end_turn":
+    case undefined:
+    case null:
+      return null;
+    default:
+      return `Agent stopped: ${String(stopReason)}.`;
+  }
+}
+
 /** Mark any leftover pending tool calls as completed when the turn ends normally. */
 function completePendingTurnUI() {
   for (const id of state.pendingToolCallIds) {
@@ -1162,10 +1181,19 @@ export function replayEvent(
     return;
   }
   switch (type) {
-    case "prompt_done":
+    case "prompt_done": {
       // Persisted completion marks a transcript boundary only. A superseded
       // turn's delayed terminator may follow a newer tool call in storage, so
       // runtime snapshot/state_patch — not replay order — owns completion.
+      // A notice is transcript-only and does not mutate authoritative state.
+      const notice = promptStopNotice(d.stopReason);
+      if (notice) addSystem(notice);
+      break;
+    }
+    case "error":
+      addSystem(
+        `err: ${typeof d.message === "string" ? d.message : "Unknown agent error"}`,
+      );
       break;
     case "message":
       renderMessageCard(d as unknown as AgentEvent & { type: "message" });
@@ -2166,6 +2194,8 @@ export function handleEvent(msg: AgentEvent) {
         // mark them completed and clear the sets so the spinner stops.
         completePendingTurnUI();
       }
+      const stopNotice = promptStopNotice(msg.stopReason);
+      if (stopNotice) addSystem(stopNotice);
       state.turnEnded = true;
       state.pendingPromptDone = true;
       finishPromptIfIdle();

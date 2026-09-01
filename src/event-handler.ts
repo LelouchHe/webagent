@@ -347,7 +347,11 @@ function handlePromptDone(
   );
 }
 
-function handleError(event: ErrorEvent, sessions: SessionManager): void {
+function handleError(
+  event: ErrorEvent,
+  sessions: SessionManager,
+  store: Store,
+): void {
   if (event.sessionId) {
     // Same attribution as a completion: a superseded turn failing late must
     // not end the turn that replaced it. The buffered tail still flushes.
@@ -365,6 +369,15 @@ function handleError(event: ErrorEvent, sessions: SessionManager): void {
     sessions.state.patch(event.sessionId, {
       runtime: { streaming: { assistant: false, thinking: false } },
     });
+    store.saveEvent(
+      event.sessionId,
+      event.type,
+      {
+        message: event.message,
+        ...(event.promptId ? { promptId: event.promptId } : {}),
+      },
+      { from_ref: "agent" },
+    );
   }
 }
 
@@ -426,7 +439,7 @@ function dispatchAgentEvent(
       handlePromptDone(event, sessions, store);
       return false;
     case "error":
-      handleError(event, sessions);
+      handleError(event, sessions, store);
       return false;
   }
   return false;

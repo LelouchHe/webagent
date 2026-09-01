@@ -586,6 +586,34 @@ describe("handleAgentEvent", () => {
     ]);
   });
 
+  it("persists error events with their turn identity", () => {
+    store.createSession("s1", "/tmp");
+    sessions.activePrompts.add("s1");
+    const { bridge } = createMockBridge();
+    const { sseManager } = createMockSseManager();
+
+    handleAgentEvent(
+      {
+        type: "error",
+        sessionId: "s1",
+        message: "provider failed",
+        promptId: "prompt-7",
+      } as any,
+      sessions,
+      store,
+      bridge,
+      makeEventHandlerConfig(),
+      sseManager as any,
+    );
+
+    const error = store.getEvents("s1").find((event) => event.type === "error");
+    assert.ok(error);
+    assert.deepEqual(JSON.parse(error.data), {
+      message: "provider failed",
+      promptId: "prompt-7",
+    });
+  });
+
   it("removes active prompt on error events", () => {
     store.createSession("s1", "/tmp");
     sessions.activePrompts.add("s1");

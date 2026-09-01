@@ -1385,6 +1385,40 @@ describe("events", () => {
         assert.equal(state.busy, false);
       });
 
+      for (const [stopReason, expected] of [
+        ["cancelled", "Generation cancelled."],
+        ["max_tokens", "Response stopped after reaching the token limit."],
+        [
+          "max_turn_requests",
+          "Agent stopped after reaching the turn request limit.",
+        ],
+        [
+          "refusal",
+          "Agent refused to continue. This prompt will not be included in the next turn.",
+        ],
+      ] as const) {
+        it(`shows a system message for ${stopReason}`, () => {
+          state.busy = true;
+          events.handleEvent({ type: "prompt_done", stopReason });
+
+          const messages = Array.from(
+            document.querySelectorAll(".system-msg"),
+          ).map((element) => element.textContent);
+          assert.ok(messages.includes(expected));
+          assert.equal(state.busy, false);
+        });
+      }
+
+      it("does not add a stop message for a normal end_turn", () => {
+        state.busy = true;
+        events.handleEvent({ type: "prompt_done", stopReason: "end_turn" });
+
+        const messages = Array.from(
+          document.querySelectorAll(".system-msg"),
+        ).map((element) => element.textContent);
+        assert.equal(messages.includes("Agent stopped: end_turn."), false);
+      });
+
       it("keeps busy when the prompt finishes during local bash", () => {
         state.busy = true;
         state.busyKind = "bash";
@@ -2596,6 +2630,34 @@ describe("events", () => {
 
       assert.equal(state.busy, true);
       assert.equal(state.busyKind, "agent");
+    });
+
+    it("replays a non-success prompt stop as a system notice without changing runtime state", () => {
+      state.busy = true;
+      state.busyKind = "agent";
+
+      events.replayEvent("prompt_done", { stopReason: "max_tokens" }, [], 0);
+
+      assert.equal(
+        dom.messages.querySelector(".system-msg")?.textContent,
+        "Response stopped after reaching the token limit.",
+      );
+      assert.equal(state.busy, true);
+      assert.equal(state.busyKind, "agent");
+    });
+
+    it("replays a persisted prompt error as a system message", () => {
+      events.replayEvent(
+        "error",
+        { message: "provider request failed" },
+        [],
+        0,
+      );
+
+      assert.equal(
+        dom.messages.querySelector(".system-msg")?.textContent,
+        "err: provider request failed",
+      );
     });
 
     it("ignores replayed prior prompt_done until the own user echo", () => {
