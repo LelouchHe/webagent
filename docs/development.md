@@ -70,4 +70,4 @@ git push origin main 'v<version>'
 
 After pushing, verify the exact tag on `origin`, the GitHub Actions publish run, the registry's `latest` version, and the GitHub Release (`gh release view v<version>`) showing the official changelog body. Do not infer success from the npm badge because its CDN can lag.
 
-Requires `NPM_TOKEN` in GitHub repo settings (npmjs.com → Granular Access Token → Read and write on `@lelouchhe/webagent`).
+Requires `NPM_TOKEN` in GitHub repo settings (npmjs.com → Granular Access Token → **Read and write** on `@lelouchhe/webagent`). The token must have its **2FA mode set to "Bypass"**: npm now requires bypass-2FA enabled to publish packages on a 2FA-protected account. Wrong-scope or stale tokens fail `npm publish` with `E404`, and a valid token without bypass fails with `E403 Two-factor authentication or granular access token with bypass 2fa enabled is required to publish packages`. After fixing the token, rerun the failed publish job and re-check the registry; npm may report "your package is being processed" and only show the new version after a few minutes.
