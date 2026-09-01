@@ -220,6 +220,100 @@ describe("slash menu — Tab vs Click behavior", () => {
     assert.equal(putCall, undefined, "Tab should not send config change");
   });
 
+  it("query fetches rerun only when fetchKey changes", async () => {
+    const calls: string[] = [];
+    const node = {
+      name: "/dynamic-test",
+      fetch: (query: string) => {
+        calls.push(query);
+        return [{ name: "item" }];
+      },
+      fetchKey: (query: string) => query.split("/")[0],
+      toSpec: (item: unknown) => ({
+        primary: (item as { name: string }).name,
+      }),
+    };
+    slashCommands.ROOT.children.push(node);
+    try {
+      dom.input.value = "/dynamic-test alpha/a";
+      commands.updateSlashMenu();
+      await new Promise((r) => setTimeout(r, 0));
+      assert.deepEqual(calls, ["alpha/a"]);
+
+      // Same fetch key (`alpha`) — only local filtering should run.
+      dom.input.value = "/dynamic-test alpha/b";
+      commands.updateSlashMenu();
+      await new Promise((r) => setTimeout(r, 0));
+      assert.deepEqual(calls, ["alpha/a"]);
+
+      // New key (`beta`) — fetch the new scope once.
+      dom.input.value = "/dynamic-test beta/b";
+      commands.updateSlashMenu();
+      await new Promise((r) => setTimeout(r, 0));
+      assert.deepEqual(calls, ["alpha/a", "beta/b"]);
+    } finally {
+      slashCommands.ROOT.children.pop();
+    }
+  });
+
+  it("drops a stale query-fetch response after fetchKey changes", async () => {
+    let resolveAlpha!: (items: unknown[]) => void;
+    let resolveBeta!: (items: unknown[]) => void;
+    const node = {
+      name: "/dynamic-race",
+      fetch: (query: string) =>
+        new Promise<unknown[]>((resolve) => {
+          if (query.startsWith("alpha")) resolveAlpha = resolve;
+          else resolveBeta = resolve;
+        }),
+      fetchKey: (query: string) => query.split("/")[0],
+      matches: () => true,
+      toSpec: (item: unknown) => ({
+        primary: (item as { name: string }).name,
+      }),
+    };
+    slashCommands.ROOT.children.push(node);
+    try {
+      dom.input.value = "/dynamic-race alpha/a";
+      commands.updateSlashMenu();
+      dom.input.value = "/dynamic-race beta/b";
+      commands.updateSlashMenu();
+
+      resolveBeta([{ name: "beta-item" }]);
+      await new Promise((r) => setTimeout(r, 0));
+      assert.match(dom.slashMenu.textContent, /beta-item/);
+
+      resolveAlpha([{ name: "alpha-item" }]);
+      await new Promise((r) => setTimeout(r, 0));
+      assert.match(dom.slashMenu.textContent, /beta-item/);
+      assert.doesNotMatch(dom.slashMenu.textContent, /alpha-item/);
+    } finally {
+      slashCommands.ROOT.children.pop();
+    }
+  });
+
+  it("Tab uses a data row fill value without changing its display label", () => {
+    const node = {
+      name: "/fill-test",
+      fetch: () => [{ label: "short.md", path: "/full/path/short.md" }],
+      toSpec: (item: unknown) => {
+        const row = item as { label: string; path: string };
+        return { primary: row.label, fill: row.path };
+      },
+    };
+    slashCommands.ROOT.children.push(node);
+    try {
+      dom.input.value = "/fill-test ";
+      commands.updateSlashMenu();
+      assert.ok(dom.slashMenu.textContent.includes("short.md"));
+
+      commands.handleSlashMenuKey(makeTabEvent());
+      assert.equal(dom.input.value, "/fill-test /full/path/short.md");
+    } finally {
+      slashCommands.ROOT.children.pop();
+    }
+  });
+
   it("Tab on config submenu uses option name not value", () => {
     state.configOptions = [
       {
@@ -276,6 +370,90 @@ describe("slash menu — Tab vs Click behavior", () => {
       dom.slashMenu.textContent.includes("clear and start at '/tmp/new-place'"),
       `expected clear freeform row, got: ${dom.slashMenu.textContent}`,
     );
+  });
+
+  it("/view lists cwd, filters locally, and Tab fills the absolute path", async () => {
+    state.sessionCwd = "/work";
+    globalThis.fetch = ((url: string, init?: any) => {
+      fetchCalls.push({ url, init });
+      const data = {
+        path: "/work",
+        parent: "/",
+        truncated: false,
+        entries: [
+          { name: "src", kind: "dir", size: null, mtime: 1 },
+          { name: "README.md", kind: "file", size: 20, mtime: 2 },
+        ],
+      };
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        text: () => Promise.resolve(JSON.stringify(data)),
+      });
+    }) as any;
+
+    dom.input.value = "/view ";
+    commands.updateSlashMenu();
+    await new Promise((r) => setTimeout(r, 10));
+
+    assert.equal(fetchCalls[0].url, "/api/v1/files/list?path=%2Fwork");
+    assert.match(dom.slashMenu.textContent, /src\//);
+    assert.match(dom.slashMenu.textContent, /README\.md/);
+
+    dom.input.value = "/view src";
+    commands.updateSlashMenu();
+    await new Promise((r) => setTimeout(r, 0));
+    assert.equal(fetchCalls.length, 1, "leaf filtering must not refetch");
+    assert.match(dom.slashMenu.textContent, /src\//);
+    assert.doesNotMatch(dom.slashMenu.textContent, /README\.md/);
+
+    commands.handleSlashMenuKey(makeTabEvent());
+    assert.equal(dom.input.value, "/view /work/src/");
+  });
+
+  it("clicking a /view folder drills down exactly one level", async () => {
+    state.sessionCwd = "/work";
+    globalThis.fetch = ((url: string, init?: any) => {
+      fetchCalls.push({ url, init });
+      const isSrc = url.includes("%2Fwork%2Fsrc%2F");
+      const data = isSrc
+        ? {
+            path: "/work/src",
+            parent: "/work",
+            truncated: false,
+            entries: [{ name: "inner.ts", kind: "file", size: 12, mtime: 1 }],
+          }
+        : {
+            path: "/work",
+            parent: "/",
+            truncated: false,
+            entries: [{ name: "src", kind: "dir", size: null, mtime: 1 }],
+          };
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        text: () => Promise.resolve(JSON.stringify(data)),
+      });
+    }) as any;
+
+    dom.input.value = "/view src";
+    commands.updateSlashMenu();
+    await new Promise((r) => setTimeout(r, 10));
+    const folder = [...dom.slashMenu.querySelectorAll(".slash-item")].find(
+      (row: any) => row.querySelector(".slash-primary")?.textContent === "src/",
+    ) as HTMLElement;
+    assert.ok(folder);
+
+    folder.dispatchEvent(new window.MouseEvent("mousedown", { bubbles: true }));
+    await new Promise((r) => setTimeout(r, 10));
+
+    assert.equal(dom.input.value, "/view /work/src/");
+    assert.ok(
+      fetchCalls.some(
+        (call) => call.url === "/api/v1/files/list?path=%2Fwork%2Fsrc%2F",
+      ),
+    );
+    assert.match(dom.slashMenu.textContent, /inner\.ts/);
   });
 
   // -----------------------------------------------------------------------

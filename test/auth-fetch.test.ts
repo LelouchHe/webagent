@@ -112,6 +112,22 @@ describe("auth-fetch wrapper", () => {
     assert.equal(redirectedTo, "/login");
   });
 
+  it("does NOT clear token when a signed file URL expires", async () => {
+    const { fetch } = recordedFetch(new Response("{}", { status: 401 }));
+    let redirected = false;
+    restore = installAuthFetch({
+      baseFetch: fetch,
+      onUnauthorized: () => {
+        redirected = true;
+      },
+    });
+    await globalThis.fetch(
+      "/api/v1/files/content?path=%2Ftmp%2Fa.md&exp=1&sig=expired",
+    );
+    assert.equal(localStorage.getItem(TOKEN_STORAGE_KEY), "wat_test");
+    assert.equal(redirected, false);
+  });
+
   it("does NOT clear token on 401 from non-/api", async () => {
     const { fetch } = recordedFetch(new Response("{}", { status: 401 }));
     let redirected = false;

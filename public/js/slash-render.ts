@@ -1,8 +1,9 @@
 // SlashItemSpec — visual template for a single slash menu item.
 // One renderer (`renderItem`) consumes this; sources (walker / tests) produce it.
 //
-// 6 fields total: 5 content + 1 behavior. `prefix` and CSS classes are NOT spec
-// fields — the walker decides them based on item source (see slash-tree.ts).
+// Seven optional/required fields cover visual content, completion value, and
+// selection behavior. `prefix` and CSS classes are NOT spec fields — the
+// walker decides them based on item source (see slash-tree.ts).
 //
 // The presence of `path` is *form-determining*: with `path` the row renders as
 // two lines; without it, single line.
@@ -17,6 +18,9 @@ export interface SlashItemSpec {
   pathSecondary?: string;
   /** Current value marker — walker auto-renders `*` prefix + green color. */
   current?: boolean;
+  /** Value inserted by Tab. Defaults to `primary`; useful when a short label
+   *  represents a full path/id. Not rendered. */
+  fill?: string;
   /** Selection action (Click, or Tab+Enter). Missing = read-only entry. */
   onSelect?: () => void | Promise<void>;
 }

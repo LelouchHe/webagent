@@ -165,6 +165,63 @@ describe("api module", () => {
     });
   });
 
+  // --- File viewer ---
+
+  it("getFileInfo URL-encodes arbitrary paths", async () => {
+    const data = {
+      path: "/tmp/a b #ç.md",
+      name: "a b #ç.md",
+      kind: "file",
+      size: 12,
+      mtime: 1,
+      mime: "text/plain",
+      maxBytes: 1024,
+      contentUrl: "/signed",
+    };
+    fetchResponse = {
+      status: 200,
+      ok: true,
+      json: () => Promise.resolve(data),
+      text: () => Promise.resolve(JSON.stringify(data)),
+    };
+
+    const result = await api.getFileInfo(data.path);
+
+    assert.equal(
+      fetchCalls[0].url,
+      `/api/v1/files/info?path=${encodeURIComponent(data.path)}`,
+    );
+    assert.equal(result.path, data.path);
+    assert.equal(result.kind, "file");
+  });
+
+  it("listFiles URL-encodes paths and returns typed entries", async () => {
+    const data = {
+      path: "/tmp/project",
+      parent: "/tmp",
+      truncated: false,
+      entries: [
+        { name: "src", kind: "dir", size: null, mtime: 1 },
+        { name: "a.ts", kind: "file", size: 12, mtime: 2 },
+      ],
+    };
+    fetchResponse = {
+      status: 200,
+      ok: true,
+      json: () => Promise.resolve(data),
+      text: () => Promise.resolve(JSON.stringify(data)),
+    };
+
+    const result = await api.listFiles(data.path);
+
+    assert.equal(
+      fetchCalls[0].url,
+      `/api/v1/files/list?path=${encodeURIComponent(data.path)}`,
+    );
+    assert.equal(result.entries[0].kind, "dir");
+    assert.equal(result.entries[1].name, "a.ts");
+  });
+
   // --- Prompt ---
 
   it("sendMessage sends POST /api/v1/sessions/:id/prompt", async () => {

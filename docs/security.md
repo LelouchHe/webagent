@@ -132,7 +132,10 @@ Anything else (chat history, prompt submission, model selection, bash, push subs
 - Token persists in `localStorage` under `wa_token`. Key is exported as `TOKEN_STORAGE_KEY` from `public/js/login-core.ts` so the login page and the API wrapper agree.
 - `public/js/api.ts` exposes `request()` which auto-attaches `Authorization: Bearer ...` to every API call.
 - `app.ts` does an early pre-bootstrap check (line 5-10): if no token in `localStorage`, immediately `location.replace('/login')` before any other module loads.
-- On any 401 from `request()`, the wrapper clears `wa_token` and bounces to `/login`.
+- On a 401 from a Bearer-authenticated API, the wrapper clears `wa_token` and
+  bounces to `/login`. Capability-authenticated byte routes (attachments and
+  `/api/v1/files/content`) are excluded: their 401 means the URL signature
+  expired or was tampered with, not that the operator token is invalid.
 
 ### Login page
 

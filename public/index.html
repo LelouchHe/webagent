@@ -71,6 +71,22 @@
     </div>
     <div id="status-bar"></div>
 
+    <aside id="file-viewer" aria-label="File viewer" hidden>
+      <div class="file-viewer-header">
+        <span id="file-viewer-path"></span>
+        <button
+          id="file-viewer-close"
+          type="button"
+          title="Close file viewer (Esc)"
+          aria-label="Close file viewer"
+        >
+          ×
+        </button>
+      </div>
+      <div id="file-viewer-notice" role="status" hidden></div>
+      <div id="file-viewer-content"></div>
+    </aside>
+
     <script type="module" src="/js/app.js"></script>
   </body>
 </html>

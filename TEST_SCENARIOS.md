@@ -21,6 +21,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - REST API surface (sessions, prompt, bash, permissions, ops, SSE, push)
   - Share links (token issue, owner auth, sanitizer, viewer routes, attachment proxy, build prune)
   - Attachment upload pipeline (image + file, send-time upload, atomic disk writes)
+  - Local file viewer (arbitrary paths, signed bytes, slash picker, responsive viewer)
 
 ## Unit / Integration Scenarios
 
@@ -301,12 +302,18 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - send-time upload + AbortController cancel; file chip swap to anchor on success
 
 - `test/api-module.test.ts`
-  - frontend API client: all REST endpoints (sessions, prompt, cancel, permissions, bash, config, visibility, status)
+  - frontend API client: all REST endpoints (sessions, prompt, cancel, permissions, bash, files, config, visibility, status)
   - error handling (ApiError, non-JSON responses)
+
+- `test/file-browser.test.ts`, `test/view-command.test.ts`, `test/file-viewer-frontend.test.ts`
+  - cwd-relative, absolute, `~`, root, trailing-slash, and local-filter path semantics
+  - Enter dispatch: directory drill-down vs direct file open
+  - existing Markdown pipeline reuse, safe code/text + line numbers, image, binary fallback, truncation, and close lifecycle
 
 - `test/slash-menu.test.ts`
   - Tab fills input without executing (top-level, notify submenu, config submenu)
-  - Tab uses option name not value for config items
+  - query-dependent `fetchKey` partitioning, stale response suppression, and separate display/fill values
+  - `/view` cwd listing, local filtering, absolute Tab completion, and one-level folder drill-down
   - click on submenu item executes the command
 
 - `test/push-frontend.test.ts`
@@ -515,6 +522,10 @@ spot gaps, and decide what still needs to be added without reading every spec.
 
 - `slash-menu-think-picker.spec.ts`
   - `/think` picker changes reasoning effort
+
+- `file-viewer.spec.ts`
+  - mobile `/view` taps through one folder level and opens Markdown full-screen
+  - desktop `/view` opens a 50/50 right-hand split and close restores chat width
 
 ### Mode / config persistence / inheritance / sync
 

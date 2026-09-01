@@ -22,6 +22,19 @@
 - Server-side storage under `<data_dir>/sessions/<sid>/attachments/`, classified as `image` or `file` from sniffed MIME (drives size cap and per-prompt auto-approve gating)
 - Image attachments are referenced by `attachmentId` in the wire protocol; the browser never sees raw bytes after upload, and the server resolves the on-disk path itself
 
+## File Viewer
+
+- `/view` opens a live picker rooted at the current session cwd; type a path to
+  filter, tap a folder to enter one level, or use the `..` row to go back
+- Absolute `/...` and `~/...` paths can browse anywhere available to the
+  single-operator WebAgent process
+- Markdown reuses the chat renderer, code/text has syntax highlighting and line
+  numbers, images render inline, and unknown binaries fall back to metadata + download
+- Full-screen viewer with a top-right close button on mobile; responsive
+  right-side split keeps chat visible on desktop
+- Read-only throughout: special files are rejected, mutable content is not
+  cached, and public share links cannot access the local file API
+
 ## Bash Execution
 
 - `!<command>` to run shell commands directly
@@ -51,7 +64,7 @@ Type `/` to trigger an autocomplete menu with arrow keys to navigate, Esc to clo
 | `Enter`   | Send current input            | Send current input |
 | Click/Tap | Fill and send (Tab + Enter)   | —                  |
 
-Commands with submenus (`/model`, `/mode`, `/think`, `/notify`, `/switch`, `/new`, `/clear`, `/inbox`, `/log`, `/plan`) show a picker after typing the command and a space. Tab completes the selection into the input so you can review or edit before pressing Enter to send.
+Commands with submenus (`/model`, `/mode`, `/think`, `/notify`, `/switch`, `/new`, `/clear`, `/view`, `/inbox`, `/log`, `/plan`) show a picker after typing the command and a space. Tab completes the selection into the input so you can review or edit before pressing Enter to send.
 
 | Command               | Description                                                                                                                   |
 | --------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
@@ -74,6 +87,7 @@ Commands with submenus (`/model`, `/mode`, `/think`, `/notify`, `/switch`, `/new
 | `/logout`             | Log out — clear local token and return to login page                                                                          |
 | `/token`              | Manage API tokens (list, create, revoke) — see [Auth & Security](security.md)                                                 |
 | `/share`              | List active public shares · Enter creates a read-only snapshot (preview → `^P` publish / `^C` cancel). See [Share Links](share.md). |
+| `/view [path]`        | Browse local folders and open a read-only Markdown, code/text, image, or download view                                                  |
 
 Type `?` for inline help listing all commands and shortcuts.
 

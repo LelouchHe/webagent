@@ -22,22 +22,24 @@ function defaultRedirect(loginUrl: string): void {
   location.replace(loginUrl);
 }
 
-/** True if the URL targets the same origin we're loaded from and starts with /api/. */
-function isAuthedApiCall(url: string): boolean {
-  let pathname: string;
+/** Same-origin pathname, or null for malformed/cross-origin URLs. */
+function apiPathname(url: string): string | null {
   try {
-    if (url.startsWith("/")) {
-      pathname = url.split("?")[0]!;
-    } else {
-      const parsed = new URL(url);
-      // Different origin? leave it alone.
-      if (parsed.origin !== location.origin) return false;
-      pathname = parsed.pathname;
-    }
+    if (url.startsWith("/")) return url.split("?")[0];
+    const parsed = new URL(url);
+    if (parsed.origin !== location.origin) return null;
+    return parsed.pathname;
   } catch {
-    return false;
+    return null;
   }
-  return pathname.startsWith("/api/");
+}
+
+/** Routes whose 401 means an expired/tampered capability, not a bad token. */
+function usesUrlCapability(pathname: string): boolean {
+  return (
+    pathname === "/api/v1/files/content" ||
+    /^\/api\/v1\/sessions\/[A-Za-z0-9_-]+\/attachments\/[^/]+$/.test(pathname)
+  );
 }
 
 function extractInputUrl(input: RequestInfo | URL): string {
@@ -55,7 +57,8 @@ export function installAuthFetch(opts: AuthFetchOptions = {}): () => void {
 
   const wrapped: typeof fetch = async (input, init) => {
     const url = extractInputUrl(input);
-    const isApi = isAuthedApiCall(url);
+    const pathname = apiPathname(url);
+    const isApi = pathname?.startsWith("/api/") ?? false;
 
     let nextInit = init;
     if (isApi) {
@@ -75,7 +78,12 @@ export function installAuthFetch(opts: AuthFetchOptions = {}): () => void {
 
     const res = await base(input, nextInit);
 
-    if (isApi && res.status === HTTP_STATUS.UNAUTHORIZED) {
+    if (
+      isApi &&
+      res.status === HTTP_STATUS.UNAUTHORIZED &&
+      pathname !== null &&
+      !usesUrlCapability(pathname)
+    ) {
       try {
         localStorage.removeItem(TOKEN_STORAGE_KEY);
       } catch {

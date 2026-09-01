@@ -14,9 +14,10 @@ WebAgent is a thin browser client + Node.js server that lets you drive any ACP a
 - **Web Push notifications** — Get pinged on `prompt_done`, `permission_request`, or `bash_done` when the tab isn't focused. Smart per-session suppression: if any device is actively viewing session X, no buzz from session X.
 - **PWA + mobile-friendly** — Installable to iOS / Android home screen. Mobile-first input, attach via paste/upload, dark-mode native.
 - **Attachments** — Drag, paste, or `^U` any file (images, code, PDFs, …). Server sniffs real MIME from content, so agents reliably read it.
+- **Local file viewer** — `/view` browses arbitrary local paths and renders Markdown, highlighted code/text, and images; mobile opens full-screen while desktop keeps chat in a split pane.
 - **Inline bash** — `!ls -la` runs directly in your session's cwd, output streams in real time, cancellable.
 - **Sessions that survive everything** — SQLite-persisted history, auto-resume on page open, auto-restore via ACP `loadSession` after server restart, auto-generated titles via a fast model.
-- **Rich slash menu** — `/new`, `/switch`, `/model`, `/mode`, `/think`, `/notify`, `/inbox`, `/share`, `/token`, `/log` — autocomplete with Tab, submenus for pickable values.
+- **Rich slash menu** — `/new`, `/switch`, `/view`, `/model`, `/mode`, `/think`, `/notify`, `/inbox`, `/share`, `/token`, `/log` — autocomplete with Tab, submenus for pickable values.
 - **Public share links** — `/share` snapshots a session into a sanitized read-only viewer at `/s/<token>` for show-and-tell.
 - **Daemon mode with crash recovery** — `webagent start` runs as a background service with PID file, log rotation, and exponential-backoff restart on crash.
 - **Built-in security** — Bearer token auth, per-device tokens, signed image URLs, strict CSP, single-operator threat model.

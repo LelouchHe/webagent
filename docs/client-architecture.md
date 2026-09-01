@@ -569,9 +569,41 @@ Triggered by `/` prefix in input. Handled in `commands.ts`.
 | `/compact`          | `api.sendMessage(sessionId, '/compact')`                    | Send as prompt (agent handles)       |
 | `/notify [on\|off]` | Push API + `/api/beta/push/subscribe`                       | Manage push notifications            |
 | `/clear [path]`     | `api.createSession()` + `api.deleteSession()`               | Clear and start fresh                |
+| `/view [path]`      | `api.listFiles()` + `api.getFileInfo()`                     | Browse and view a local file          |
 | `/? [query]`        | —                                                           | Search sessions by title             |
 
 The slash menu provides autocomplete with keyboard navigation (arrow keys, Tab to fill, Enter to send).
+
+Query-dependent pickers may supply `fetch(query)` plus `fetchKey(query)`. The
+controller fetches again only when the key changes and otherwise applies the
+existing local filtering. `/view` uses the directory as its key, so typing a
+filename never generates per-keystroke I/O; entering another directory does.
+`SlashItemSpec.fill` separates the short displayed label from the full value
+inserted by Tab (for `/view`, the canonical absolute path).
+
+### File viewer
+
+`/view` starts at `state.sessionCwd`. Relative input is made absolute in the
+client; `/` and `~` paths pass through to the sessionless file API. The final
+path segment filters the current directory. Clicking a directory (including the
+synthetic `..` row) replaces the input with that directory and fetches exactly
+one level. Clicking a file calls `getFileInfo`, then opens `file-viewer.ts`.
+Pressing Enter on a complete path follows the same directory/file split through
+`slash-exec.ts`.
+
+The viewer dispatches by server-sniffed MIME plus filename extension:
+
+- Markdown reuses `updateMarkdownStream` and the existing DOMPurify/marked/Temml pipeline;
+- text/code is inserted with `textContent`, gets a separate line-number column,
+  and reuses the lazy highlight.js loader;
+- images use the signed content URL directly;
+- unknown binary content displays metadata and a signed download link.
+
+On viewports below 1024px it is a fixed full-screen overlay. At 1024px and
+above, the body reserves a right pane up to 640px (half of a 1280px viewport),
+leaving chat usable on the left. Closing or Escape removes the viewer and
+restores the chat layout. A generation counter prevents stale file responses
+from replacing a newer file or reopening a closed viewer.
 
 ---
 

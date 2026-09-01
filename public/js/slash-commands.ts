@@ -45,6 +45,12 @@ import {
   hasCurrentPlan,
   isPlanPanelShown,
 } from "./plan-panel.ts";
+import {
+  fetchViewItems,
+  viewFetchKey,
+  viewItemMatches,
+  viewItemSpec,
+} from "./view-command.ts";
 
 // --- shared helpers used by onSelect handlers ---
 
@@ -653,6 +659,14 @@ export const ROOT: CmdNode = {
           },
         };
       },
+    },
+    {
+      name: "/view",
+      desc: "View a local file",
+      fetch: fetchViewItems,
+      fetchKey: viewFetchKey,
+      matches: viewItemMatches,
+      toSpec: viewItemSpec,
     },
     configCmdNode(
       "/think",

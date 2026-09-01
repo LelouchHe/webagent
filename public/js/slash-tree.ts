@@ -12,9 +12,15 @@ export interface CmdNode {
   desc?: string;
   /** Subcommands (walker renders with `›` prefix). */
   children?: CmdNode[];
-  /** Fetch this layer's data items. Absent = no data view. May return a
-   *  plain array (for state-backed lists like config options) or a Promise. */
-  fetch?: () => unknown[] | Promise<unknown[]>;
+  /** Fetch this layer's data items. Receives the current tail query; existing
+   *  query-independent fetchers may ignore it. May return a plain array (for
+   *  state-backed lists) or a Promise. */
+  fetch?: (query: string) => unknown[] | Promise<unknown[]>;
+  /** Optional cache-partition key for query-dependent data. The controller
+   *  refetches only when this key changes; otherwise it reuses the current
+   *  data and applies local filtering. Absent preserves the historical
+   *  fetch-on-command-path-change behavior. */
+  fetchKey?: (query: string) => string;
   /** Render data item → SlashItemSpec. Required when `fetch` is defined. */
   toSpec?: (item: unknown) => SlashItemSpec;
   /** Optional custom filter for data items. Receives raw item + lowercased
