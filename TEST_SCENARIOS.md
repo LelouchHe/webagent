@@ -313,7 +313,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
 - `test/slash-menu.test.ts`
   - Tab fills input without executing (top-level, notify submenu, config submenu)
   - query-dependent `fetchKey` partitioning, stale response suppression, and separate display/fill values
-  - `/view` cwd listing, local filtering, `~`-preserving Tab completion, and one-level folder drill-down
+  - `/view` cwd listing, local filtering, `~`-preserving Tab completion, folder Tab continuation, and one-level drill-down
   - click on submenu item executes the command
 
 - `test/push-frontend.test.ts`

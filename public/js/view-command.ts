@@ -94,6 +94,7 @@ export function viewItemSpec(item: unknown): SlashItemSpec {
       primary: display,
       secondary: row.parent ? "parent" : "folder",
       fill: directoryInput(row.pathDisplay).slice("/view ".length),
+      continueOnFill: true,
       onSelect: () => {
         enterViewDirectory(row.pathDisplay);
       },

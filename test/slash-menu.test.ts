@@ -411,6 +411,17 @@ describe("slash menu — Tab vs Click behavior", () => {
 
     commands.handleSlashMenuKey(makeTabEvent());
     assert.equal(dom.input.value, "/view ~/work/src/");
+    await new Promise((r) => setTimeout(r, 10));
+    assert.equal(
+      dom.slashMenu.classList.contains("active"),
+      true,
+      "folder Tab completion must keep the next directory menu open",
+    );
+    assert.ok(
+      fetchCalls.some(
+        (call) => call.url === "/api/v1/files/list?path=~%2Fwork%2Fsrc%2F",
+      ),
+    );
   });
 
   it("clicking a /view folder drills down exactly one level", async () => {

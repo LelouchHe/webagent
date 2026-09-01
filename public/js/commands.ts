@@ -268,6 +268,24 @@ export function openSlashMenuForPath(path: string): void {
 
 // --- Tab: fill input only, never execute ---
 
+function fillDataCandidate(
+  candidate: Candidate,
+  pathPrefix: string,
+  preserveInput: boolean,
+): void {
+  if (preserveInput) {
+    hideSlashMenu();
+    return;
+  }
+  const sep = pathPrefix ? " " : "";
+  const keepOpen = candidate.spec.continueOnFill === true;
+  if (keepOpen) dismissedFor = null;
+  setInputValue(
+    `${pathPrefix}${sep}${candidate.spec.fill ?? candidate.spec.primary}`,
+  );
+  if (!keepOpen) hideSlashMenu();
+}
+
 function tabComplete(): void {
   const c = candidates[selectedIdx];
   // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- array access safety
@@ -303,13 +321,7 @@ function tabComplete(): void {
       }
     }
   } else if (c.kind === "data") {
-    if (preserveInput) {
-      hideSlashMenu();
-    } else {
-      const sep = pathPrefix ? " " : "";
-      setInputValue(`${pathPrefix}${sep}${c.spec.fill ?? c.spec.primary}`);
-      hideSlashMenu();
-    }
+    fillDataCandidate(c, pathPrefix, preserveInput);
   } else if (c.kind === "freeform") {
     // Freeform spec reflects the user's typed query — Tab is a no-op
     // (input already contains what the freeform represents).

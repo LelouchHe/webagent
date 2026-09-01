@@ -21,6 +21,9 @@ export interface SlashItemSpec {
   /** Value inserted by Tab. Defaults to `primary`; useful when a short label
    *  represents a full path/id. Not rendered. */
   fill?: string;
+  /** Keep the menu open after Tab fills this data row, allowing hierarchical
+   *  pickers to load the next scope. Defaults to false. */
+  continueOnFill?: boolean;
   /** Selection action (Click, or Tab+Enter). Missing = read-only entry. */
   onSelect?: () => void | Promise<void>;
 }

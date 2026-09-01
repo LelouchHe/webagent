@@ -579,7 +579,10 @@ controller fetches again only when the key changes and otherwise applies the
 existing local filtering. `/view` uses the directory as its key, so typing a
 filename never generates per-keystroke I/O; entering another directory does.
 `SlashItemSpec.fill` separates the short displayed label from the full value
-inserted by Tab (for `/view`, the HOME-abbreviated `pathDisplay`).
+inserted by Tab (for `/view`, the HOME-abbreviated `pathDisplay`). Hierarchical
+data rows can also set `continueOnFill`: `/view` folders and `..` use it so Tab
+fills the directory and immediately keeps the next-level menu open; file rows
+retain the normal fill-and-close behavior.
 
 ### File viewer
 
