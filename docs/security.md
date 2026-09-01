@@ -123,6 +123,7 @@ Whitelisted paths (no auth required):
 | `GET /js/*.js`, `/styles*.css`, `/icons/*`                       | Static bundles (content-hashed)                                           |
 | `GET /api/v1/events/stream`                                      | SSE — auth via short-lived ticket in query string instead (see below)     |
 | `GET /api/v1/attachments/*`                                           | Auth via HMAC signature in query string instead (see below)               |
+| `GET /api/v1/files/content`                                           | Auth via a path-bound HMAC signature; file info/list remain Bearer-only   |
 
 Anything else (chat history, prompt submission, model selection, bash, push subscriptions) requires a Bearer token.
 
@@ -131,7 +132,10 @@ Anything else (chat history, prompt submission, model selection, bash, push subs
 - Token persists in `localStorage` under `wa_token`. Key is exported as `TOKEN_STORAGE_KEY` from `public/js/login-core.ts` so the login page and the API wrapper agree.
 - `public/js/api.ts` exposes `request()` which auto-attaches `Authorization: Bearer ...` to every API call.
 - `app.ts` does an early pre-bootstrap check (line 5-10): if no token in `localStorage`, immediately `location.replace('/login')` before any other module loads.
-- On any 401 from `request()`, the wrapper clears `wa_token` and bounces to `/login`.
+- On a 401 from a Bearer-authenticated API, the wrapper clears `wa_token` and
+  bounces to `/login`. Capability-authenticated byte routes (attachments and
+  `/api/v1/files/content`) are excluded: their 401 means the URL signature
+  expired or was tampered with, not that the operator token is invalid.
 
 ### Login page
 
@@ -151,16 +155,37 @@ Anything else (chat history, prompt submission, model selection, bash, push subs
 
 Tickets are in-memory only; restarting the server invalidates all of them. Clients reconnect automatically and re-issue.
 
-## Signed Image URLs
+## Signed Content URLs
 
-Images uploaded to a session render as `<img src="/api/v1/attachments/sess/abc/xyz.png?sig=...&exp=...">`. The image route is whitelisted; auth is in the URL itself:
+Uploaded images and ordinary file-viewer bytes use short-lived capability URLs
+because `<img>` and download links cannot attach the Bearer header. Their GET
+routes are whitelisted only at the outer auth middleware; each route verifies
+its own URL before reading disk:
 
 - The server holds a per-restart HMAC secret (random 32 bytes, never persisted).
-- When an image event is serialized for history or SSE, the path is signed: `sig = HMAC-SHA256(secret, "<path>|<exp>")` with `exp = now + 1h`.
-- The image route verifies signature + expiry before serving.
-- Every server restart rotates the secret, invalidating all previously rendered URLs. Clients re-fetch the parent event to get fresh signed URLs.
+- The signature is `HMAC-SHA256(secret, "<path>:<exp>")`, where `exp = now + 1h`.
+- Changing either the URL path/query-bound file path or the expiry invalidates the signature.
+- Every server restart rotates the secret. Clients re-fetch the attachment event
+  or `GET /api/v1/files/info` to obtain a fresh signed URL.
 
-This trades occasional "broken image" reloads after restart for a hard guarantee: a stolen image URL is useless after at most 1h, and after restart instantly.
+For the file viewer, `info` and `list` remain Bearer-only and are the only way to
+mint a signed content URL. `GET /api/v1/files/content` requires a valid
+signature even if the caller also supplies a Bearer header; if the signing
+secret is missing it fails closed with `503`. On use, the route verifies that
+the signed canonical path still resolves to itself, then uses one
+nonblocking/no-follow descriptor for `fstat`, MIME sniffing, disposition choice,
+and streaming. This prevents a capability from being retargeted through a
+replacement symlink and prevents check/read descriptor races.
+
+Mutable file content is served with `Cache-Control: no-store`, `nosniff`, and a
+restrictive CSP. Previewable text is bounded at 1 MiB; larger or unknown content
+uses the same capability URL with attachment disposition and streams under
+backpressure without whole-file buffering. FIFOs, sockets, and device nodes are
+never streamed. The public `/s/:token` share viewer cannot call `info` or `list`
+and therefore cannot mint arbitrary file URLs.
+
+A stolen signed URL is usable only for its single bound path and at most one
+hour (or until the next server restart).
 
 ## Content Security Policy
 

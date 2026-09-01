@@ -569,9 +569,52 @@ Triggered by `/` prefix in input. Handled in `commands.ts`.
 | `/compact`          | `api.sendMessage(sessionId, '/compact')`                    | Send as prompt (agent handles)       |
 | `/notify [on\|off]` | Push API + `/api/beta/push/subscribe`                       | Manage push notifications            |
 | `/clear [path]`     | `api.createSession()` + `api.deleteSession()`               | Clear and start fresh                |
+| `/view [path]`      | `api.listFiles()` + `api.getFileInfo()`                     | Browse and view a local file          |
 | `/? [query]`        | —                                                           | Search sessions by title             |
 
 The slash menu provides autocomplete with keyboard navigation (arrow keys, Tab to fill, Enter to send).
+
+Query-dependent pickers may supply `fetch(query)` plus `fetchKey(query)`. The
+controller fetches again only when the key changes and otherwise applies the
+existing local filtering. `/view` uses the directory as its key, so typing a
+filename never generates per-keystroke I/O; entering another directory does.
+`SlashItemSpec.fill` separates the short displayed label from the full value
+inserted by Tab (for `/view`, the HOME-abbreviated `pathDisplay`). Hierarchical
+data rows can also set `continueOnFill`: `/view` folders and `..` use it so Tab
+fills the directory and immediately keeps the next-level menu open; file rows
+retain the normal fill-and-close behavior.
+
+### File viewer
+
+`/view` starts at `state.sessionCwd`. Relative input is made absolute in the
+client; `/` and `~` paths pass through to the sessionless file API. The final
+path segment filters the current directory. Clicking a directory (including the
+synthetic `..` row) replaces the input with that directory and fetches exactly
+one level. Clicking a file calls `getFileInfo`, then opens `file-viewer.ts`.
+Pressing Enter on a complete path follows the same directory/file split through
+`slash-exec.ts`.
+
+The viewer dispatches by server-sniffed MIME plus filename extension:
+
+- Markdown up to 1 MiB reuses `updateMarkdownStream` and the existing DOMPurify/marked/Temml pipeline;
+- text/code up to 1 MiB is inserted with `textContent`, gets a separate
+  batched line-number column, and always uses the lazy highlight.js loader;
+- supported images within their image cap use the signed content URL directly;
+- larger text/images and unknown binary content trigger that same URL as a
+  browser download; the server selects attachment disposition and streams it.
+
+The 1 MiB text limit is exported once from `src/files/limits.ts` and consumed by
+both server and browser. If a file changes between `info` and content fetch, the
+viewer checks the final response disposition before reading its body and
+switches to download rather than buffering an attachment as text.
+
+On viewports below 1024px it is a fixed full-screen overlay. At 1024px and
+above, the body reserves 55vw for the right pane, capped at 800px, leaving chat
+usable on the left while fitting roughly 80 columns of 14px monospace code on
+common wide displays. Closing or Escape removes the viewer and
+restores the chat layout. Generation counters prevent stale file responses
+from replacing a newer file or reopening a closed viewer, and prevent slash
+fetch-key ABA sequences (`A → B → A`) from applying the first A response.
 
 ---
 

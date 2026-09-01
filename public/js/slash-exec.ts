@@ -39,6 +39,7 @@ import {
 } from "./share/commands.ts";
 import { controlPlanPanel } from "./plan-panel.ts";
 import { requestAuthoritativeCancel } from "./cancel-command.ts";
+import { openViewPath } from "./view-command.ts";
 
 async function subscribePush(): Promise<void> {
   try {
@@ -151,6 +152,11 @@ export async function handleSlashCommand(text: string): Promise<boolean> {
       addSystem(
         `share: unknown subcommand '${sub}' — try /share, /share by <name>, /share <token>, or /share revoke <token>`,
       );
+      return true;
+    }
+
+    case "/view": {
+      await openViewPath(arg);
       return true;
     }
 

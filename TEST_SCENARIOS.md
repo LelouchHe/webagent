@@ -21,6 +21,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - REST API surface (sessions, prompt, bash, permissions, ops, SSE, push)
   - Share links (token issue, owner auth, sanitizer, viewer routes, attachment proxy, build prune)
   - Attachment upload pipeline (image + file, send-time upload, atomic disk writes)
+  - Local file viewer (arbitrary paths, signed bytes, slash picker, responsive viewer)
 
 ## Unit / Integration Scenarios
 
@@ -94,6 +95,14 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - streaming buffer flush on events endpoint
   - auto-resume of non-live sessions
   - input validation and bridge-not-ready errors
+
+- `test/file-viewer-routes.test.ts`
+  - Bearer-gated `info` / `list` and independently HMAC-signed `content`
+  - absolute / `~` / `..` / symlink canonicalization, portable HOME display paths, relative/invalid rejection
+  - bounded `opendir` scanning, directory order, hidden/special omission, and truncation
+  - one-descriptor regular-file validation/sniff/stream flow for directories, FIFOs, and mutable paths
+  - 1 MiB inline text preview; complete streamed attachment fallback for larger/unknown content
+  - signed URL tamper/retarget rejection, no-store responses, and URL-safe Unicode/space paths
 
 - `test/prompt.test.ts`
   - prompt acceptance and bridge forwarding
@@ -293,12 +302,18 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - send-time upload + AbortController cancel; file chip swap to anchor on success
 
 - `test/api-module.test.ts`
-  - frontend API client: all REST endpoints (sessions, prompt, cancel, permissions, bash, config, visibility, status)
+  - frontend API client: all REST endpoints (sessions, prompt, cancel, permissions, bash, files, config, visibility, status)
   - error handling (ApiError, non-JSON responses)
+
+- `test/file-browser.test.ts`, `test/view-command.test.ts`, `test/file-viewer-frontend.test.ts`
+  - cwd-relative, absolute, portable Windows/HOME, root, trailing-slash, and local-filter path semantics
+  - Enter dispatch: directory drill-down vs direct file open/download
+  - existing Markdown pipeline reuse, safe highlighted code/text + batched line numbers, image, attachment fallback, and close lifecycle
 
 - `test/slash-menu.test.ts`
   - Tab fills input without executing (top-level, notify submenu, config submenu)
-  - Tab uses option name not value for config items
+  - query-dependent `fetchKey` partitioning, monotonic stale/ABA suppression, and separate display/fill values
+  - `/view` cwd listing, local filtering, `~`-preserving Tab completion, folder Tab continuation, and one-level drill-down
   - click on submenu item executes the command
 
 - `test/push-frontend.test.ts`
@@ -507,6 +522,11 @@ spot gaps, and decide what still needs to be added without reading every spec.
 
 - `slash-menu-think-picker.spec.ts`
   - `/think` picker changes reasoning effort
+
+- `file-viewer.spec.ts`
+  - mobile `/view` taps through one folder level and opens Markdown full-screen
+  - text over 1 MiB downloads directly and completely without opening the viewer
+  - desktop `/view` opens a 55%-up-to-800px right split and close restores chat width
 
 ### Mode / config persistence / inheritance / sync
 

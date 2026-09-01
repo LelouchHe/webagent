@@ -150,6 +150,45 @@ export function getSession(id: string): Promise<SessionDetail> {
   return request("/api/v1/sessions/" + id);
 }
 
+// --- File viewer ---
+
+export interface FileInfo {
+  path: string;
+  /** Home-abbreviated display form (e.g. `~/project/a.ts`). */
+  pathDisplay?: string;
+  name: string;
+  kind: "file" | "dir";
+  size: number;
+  mtime: number;
+  mime?: string;
+  maxBytes?: number;
+  contentUrl?: string;
+}
+
+export interface FileListEntry {
+  name: string;
+  kind: "file" | "dir";
+  size: number | null;
+  mtime: number;
+}
+
+export interface FileListResponse {
+  path: string;
+  pathDisplay?: string;
+  parent: string;
+  parentDisplay?: string;
+  truncated: boolean;
+  entries: FileListEntry[];
+}
+
+export function getFileInfo(path: string): Promise<FileInfo> {
+  return request(`/api/v1/files/info?path=${encodeURIComponent(path)}`);
+}
+
+export function listFiles(path: string): Promise<FileListResponse> {
+  return request(`/api/v1/files/list?path=${encodeURIComponent(path)}`);
+}
+
 /** client-server-split M1: fetch the current runtime snapshot. */
 export function getSnapshot(id: string): Promise<Record<string, unknown>> {
   return request("/api/v1/sessions/" + id + "/snapshot");

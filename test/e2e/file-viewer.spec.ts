@@ -1,0 +1,150 @@
+import { test, expect } from "playwright/test";
+import { mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { gotoConnected } from "./helpers.ts";
+import { MAX_TEXT_PREVIEW_BYTES } from "../../src/files/limits.ts";
+
+const FIXTURE = "test/e2e/fixtures/file-viewer.md";
+let downloadDir: string;
+let oversizedText: string;
+
+test.beforeAll(() => {
+  downloadDir = mkdtempSync(join(tmpdir(), "webagent-view-download-"));
+  oversizedText = join(downloadDir, "oversized.txt");
+  writeFileSync(
+    oversizedText,
+    Buffer.alloc(MAX_TEXT_PREVIEW_BYTES + 1234, 0x61),
+  );
+});
+
+test.afterAll(() => {
+  rmSync(downloadDir, { recursive: true, force: true });
+});
+
+test("mobile /view drills into a folder and opens a full-screen file", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await gotoConnected(page);
+
+  const input = page.locator("#input");
+  await input.fill("/view test/e2e/fi");
+  const folder = page.locator("#slash-menu .slash-item", {
+    has: page.locator(".slash-primary", { hasText: "fixtures/" }),
+  });
+  await expect(folder).toBeVisible();
+  await folder.click();
+
+  await expect(input).toHaveValue(/^\/view ~\/.*\/test\/e2e\/fixtures\/$/);
+  const file = page.locator("#slash-menu .slash-item", {
+    has: page.locator(".slash-primary", { hasText: "file-viewer.md" }),
+  });
+  await expect(file).toBeVisible();
+  await file.click();
+
+  const viewer = page.locator("#file-viewer");
+  await expect(viewer).toBeVisible();
+  await expect(page.locator("#file-viewer-path")).toHaveText(
+    /^~\/.*\/file-viewer\.md$/,
+  );
+  await expect(viewer.locator("h1")).toHaveText("File Viewer Fixture");
+
+  const rect = await viewer.boundingBox();
+  expect(rect).not.toBeNull();
+  expect(rect!.x).toBe(0);
+  expect(rect!.y).toBe(0);
+  expect(rect!.width).toBe(390);
+  expect(rect!.height).toBe(844);
+
+  await page.locator("#file-viewer-close").click();
+  await expect(viewer).toBeHidden();
+});
+
+test("text over 1 MiB downloads in full without opening the viewer", async ({
+  page,
+}) => {
+  await gotoConnected(page);
+  const input = page.locator("#input");
+  await input.fill(`/view ${oversizedText}`);
+
+  const [download] = await Promise.all([
+    page.waitForEvent("download"),
+    input.press("Enter"),
+  ]);
+
+  expect(download.suggestedFilename()).toBe("oversized.txt");
+  const downloadedPath = await download.path();
+  if (!downloadedPath) throw new Error("download did not produce a file");
+  expect(statSync(downloadedPath).size).toBe(MAX_TEXT_PREVIEW_BYTES + 1234);
+  await expect(page.locator("#file-viewer")).toBeHidden();
+});
+
+test("desktop /view opens a right-hand split and close restores chat", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await gotoConnected(page);
+
+  await page.locator("#input").fill(`/view ${FIXTURE}`);
+  await page.locator("#input").press("Enter");
+
+  const viewer = page.locator("#file-viewer");
+  await expect(viewer).toBeVisible();
+  await expect(viewer.locator("h1")).toHaveText("File Viewer Fixture");
+
+  const layout = await page.evaluate(() => {
+    const viewer = document.getElementById("file-viewer");
+    const header = document.getElementById("header");
+    const fileHeader = document.querySelector<HTMLElement>(
+      ".file-viewer-header",
+    );
+    const themeButton = document.getElementById("theme-btn");
+    const closeButton = document.getElementById("file-viewer-close");
+    if (!viewer || !header || !fileHeader || !themeButton || !closeButton) {
+      throw new Error("missing split layout elements");
+    }
+    const viewerRect = viewer.getBoundingClientRect();
+    const headerRect = header.getBoundingClientRect();
+    const fileHeaderRect = fileHeader.getBoundingClientRect();
+    const themeStyle = getComputedStyle(themeButton);
+    const closeStyle = getComputedStyle(closeButton);
+    return {
+      viewerLeft: viewerRect.left,
+      viewerRight: viewerRect.right,
+      viewerWidth: viewerRect.width,
+      headerRight: headerRect.right,
+      appHeaderHeight: headerRect.height,
+      fileHeaderHeight: fileHeaderRect.height,
+      bodyPaddingRight: getComputedStyle(document.body).paddingRight,
+      themeButton: {
+        fontSize: themeStyle.fontSize,
+        padding: themeStyle.padding,
+        borderWidth: themeStyle.borderWidth,
+      },
+      closeButton: {
+        fontSize: closeStyle.fontSize,
+        padding: closeStyle.padding,
+        borderWidth: closeStyle.borderWidth,
+      },
+    };
+  });
+
+  expect(layout.viewerLeft).toBe(648);
+  expect(layout.viewerRight).toBe(1440);
+  expect(layout.viewerWidth).toBe(792);
+  expect(layout.headerRight).toBeLessThanOrEqual(layout.viewerLeft);
+  expect(layout.bodyPaddingRight).toBe("792px");
+  expect(
+    Math.abs(layout.fileHeaderHeight - layout.appHeaderHeight),
+  ).toBeLessThanOrEqual(1);
+  expect(layout.closeButton).toEqual(layout.themeButton);
+
+  await page.locator("#file-viewer-close").click();
+  await expect(viewer).toBeHidden();
+  await expect
+    .poll(() =>
+      page.evaluate(() => getComputedStyle(document.body).paddingRight),
+    )
+    .toBe("0px");
+});

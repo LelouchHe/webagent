@@ -17,6 +17,7 @@ const HTML = `
 <details id="plan-panel" class="input-panel" hidden></details>
 <div id="input-area"><div id="slash-menu" class="input-panel"></div><span id="mode-pill"></span><span id="input-prompt">x</span><textarea id="input" placeholder="Message or ?"></textarea><button id="attach-btn" class="input-btn">x</button><button id="send-btn" class="input-btn">x</button><input type="file" id="file-input" hidden></div>
 <div id="status-bar"></div>
+<aside id="file-viewer" aria-label="File viewer" hidden><div class="file-viewer-header"><span id="file-viewer-path"></span><button id="file-viewer-close" type="button">×</button></div><div id="file-viewer-notice" role="status" hidden></div><div id="file-viewer-content"></div></aside>
 `;
 
 let win: InstanceType<typeof Window> | null = null;
@@ -139,6 +140,14 @@ export function resetState(state: any, dom: any) {
   dom.attachPreview.className = "";
   dom.slashMenu.innerHTML = "";
   dom.slashMenu.className = "";
+  if (dom.fileViewer) {
+    dom.fileViewer.hidden = true;
+    dom.fileViewerPath.textContent = "";
+    dom.fileViewerNotice.textContent = "";
+    dom.fileViewerNotice.hidden = true;
+    dom.fileViewerContent.innerHTML = "";
+    document.body.classList.remove("file-viewer-open");
+  }
   if (dom.planPanel) {
     dom.planPanel.innerHTML = "";
     dom.planPanel.hidden = true;

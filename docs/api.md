@@ -25,6 +25,7 @@ WebAgent exposes a **REST + SSE** API for managing agent sessions, sending promp
   - [Bash](#bash)
   - [Bridge](#bridge)
   - [Inbox](#inbox)
+  - [Files](#files)
   - [Attachments](#attachments)
   - [SSE Streams](#sse-streams)
   - [Share](#share)
@@ -96,6 +97,8 @@ API discovery endpoint. Returns the API version and top-level endpoint paths.
   "version": "v1",
   "endpoints": {
     "sessions": "/api/v1/sessions",
+    "paths": "/api/v1/recent-paths",
+    "files": "/api/v1/files",
     "config": "/api/v1/config",
     "events_stream": "/api/v1/events/stream",
     "prompt": "/api/beta/prompt",
@@ -940,6 +943,105 @@ Ack (dismiss) a message without consuming. Deletes the row.
 **Side effects:** broadcasts `message_acked` SSE; triggers `pushService.sendClose(id)`.
 
 **Errors:** `404` (message not found).
+
+---
+
+### Files
+
+Read-only access to ordinary local files for the authenticated operator. These
+endpoints are deliberately sessionless: callers send an absolute path or a
+`~`-prefixed path, and the server expands `~` and returns the `realpath`
+canonical form. Bare relative paths and `~user` expansion are rejected. The
+single-operator threat model permits paths anywhere on the host; this is not a
+sandbox or project-root boundary.
+
+`info` and `list` require normal Bearer authentication. File bytes use a
+short-lived HMAC-signed URL issued by `info`, because `<img>` and download links
+cannot attach the Authorization header. A Bearer header alone does not bypass
+the content signature.
+
+#### `GET /api/v1/files/info?path=`
+
+Inspect one file or directory. `path` must be URL-encoded when inserted into the
+query string.
+
+**File response** `200`:
+
+```json
+{
+  "path": "/Users/me/project/README.md",
+  "pathDisplay": "~/project/README.md",
+  "name": "README.md",
+  "kind": "file",
+  "size": 4812,
+  "mtime": 1777098000123,
+  "mime": "text/plain",
+  "maxBytes": 1048576,
+  "contentUrl": "/api/v1/files/content?path=%2FUsers%2Fme%2Fproject%2FREADME.md&exp=1777101600&sig=..."
+}
+```
+
+`path` is the canonical filesystem identity used for reads/signing;
+`pathDisplay` abbreviates the current HOME prefix as `~`, normalizes Windows
+separators to `/`, and is intended for UI display and completion. Directory
+responses omit `mime`, `maxBytes`, and `contentUrl`; unknown binary files omit
+`maxBytes` because they are download-only. `mime` is content-sniffed rather
+than trusted from the filename. The signed content URL
+expires after one hour and is invalidated by a server restart.
+
+**Errors:** `400` (missing, relative, invalid, or non-regular path), `403`
+(permission denied), `404` (not found), `405` (non-GET method).
+
+---
+
+#### `GET /api/v1/files/list?path=`
+
+List one directory (no recursive tree expansion). Scans at most 2,001 raw
+entries, returns eligible entries from the first 2,000, and marks `truncated`
+when the sentinel entry exists; this bounds memory/CPU even for enormous
+directories. Returned directories are sorted first, then files, with each group
+sorted lexicographically. Dotfiles are omitted. Symlinks to regular
+files/directories are followed; FIFOs, sockets, and device nodes are omitted.
+
+**Response** `200`:
+
+```json
+{
+  "path": "/Users/me/project/src",
+  "pathDisplay": "~/project/src",
+  "parent": "/Users/me/project",
+  "parentDisplay": "~/project",
+  "truncated": false,
+  "entries": [
+    { "name": "lib", "kind": "dir", "size": null, "mtime": 1777098000123 },
+    { "name": "server.ts", "kind": "file", "size": 8123, "mtime": 1777097999000 }
+  ]
+}
+```
+
+**Errors:** `400` (not a directory or invalid path), `403` (permission
+denied), `404` (not found), `405` (non-GET method).
+
+---
+
+#### `GET /api/v1/files/content?path=&exp=&sig=`
+
+Serve bytes for a regular file. Obtain the signed URL from `info`; callers must
+not construct signatures themselves. One endpoint handles both preview and
+download: text/Markdown/code up to 1 MiB and supported images within their
+image cap use `Content-Disposition: inline`; larger text/images and all unknown
+binary types use `attachment`. Attachment responses stream the complete file
+with backpressure — they are never buffered or truncated.
+
+The handler re-resolves the signed canonical path, rejects target changes, then
+uses one nonblocking/no-follow file descriptor for `fstat`, MIME sniffing, size
+decision, and streaming. Responses are `no-store`, include
+`X-Content-Type-Options: nosniff`, and carry an RFC 5987 filename. FIFOs,
+sockets, and device nodes are never streamed.
+
+**Errors:** `400` (directory, invalid, or non-regular path), `401` (missing,
+expired, tampered, or retargeted signature), `403` (permission denied), `404`
+(not found), `405` (non-GET method), `503` (signing secret unavailable).
 
 ---
 

@@ -13,9 +13,10 @@ import {
 
 describe("auth-middleware", () => {
   describe("isWhitelistedPath", () => {
-    it("allows known unauthenticated endpoints", () => {
+    it("allows known unauthenticated or independently signed endpoints", () => {
       assert.equal(isWhitelistedPath("GET", "/api/v1/version"), true);
       assert.equal(isWhitelistedPath("GET", "/api/beta/push/vapid-key"), true);
+      assert.equal(isWhitelistedPath("GET", "/api/v1/files/content"), true);
     });
 
     it("allows static assets and root", () => {
@@ -41,6 +42,7 @@ describe("auth-middleware", () => {
 
     it("blocks non-whitelisted methods on whitelisted paths", () => {
       assert.equal(isWhitelistedPath("POST", "/api/v1/version"), false);
+      assert.equal(isWhitelistedPath("POST", "/api/v1/files/content"), false);
       assert.equal(isWhitelistedPath("DELETE", "/"), false);
     });
 

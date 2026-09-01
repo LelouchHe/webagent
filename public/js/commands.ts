@@ -23,6 +23,8 @@ export { handleSlashCommand };
 // --- walker state ---
 
 let currentPath: string | null = null;
+let currentFetchKey: string | null = null;
+let fetchGeneration = 0;
 let currentNode: CmdNode = ROOT;
 let currentData: FetchData | undefined = undefined;
 let candidates: Candidate[] = [];
@@ -56,6 +58,8 @@ function rootForInput(input: string): CmdNode {
 
 function showPlaceholder(primary: string): void {
   currentPath = "";
+  currentFetchKey = null;
+  fetchGeneration++;
   currentNode = rootForInput(dom.input.value);
   currentData = undefined;
   candidates = [
@@ -72,6 +76,8 @@ function showPlaceholder(primary: string): void {
 
 export function __resetCommandsForTest(): void {
   currentPath = null;
+  currentFetchKey = null;
+  fetchGeneration++;
   currentNode = ROOT;
   currentData = undefined;
   candidates = [];
@@ -107,32 +113,66 @@ export function updateSlashMenu(): void {
 
   const root = rootForInput(text);
   const { node, pathPrefix, tailQuery } = resolvePath(text, root);
-
-  // Path changed → reset data, kick fresh fetch if node has one.
-  // Active-path guard: stale fetch responses are dropped if currentPath has
-  // moved on. No cache: the cost is one re-fetch per visit, which is cheap
-  // and removes the "stale data sticks across menu sessions" hazard.
-  if (pathPrefix !== currentPath) {
+  let nextFetchKey: string | null;
+  try {
+    nextFetchKey =
+      node.fetch && node.toSpec
+        ? node.fetchKey
+          ? `${pathPrefix}\0${node.fetchKey(tailQuery)}`
+          : pathPrefix
+        : null;
+  } catch (err) {
     currentPath = pathPrefix;
+    currentFetchKey = null;
     currentNode = node;
+    currentData = { error: fetchErrorMessage(err) };
+    rebuild(tailQuery, pathPrefix);
+    return;
+  }
+  const shouldFetch =
+    pathPrefix !== currentPath || nextFetchKey !== currentFetchKey;
+
+  currentPath = pathPrefix;
+  currentFetchKey = nextFetchKey;
+  currentNode = node;
+
+  // Command path or query-dependent fetch key changed → load that scope.
+  // The dual guard drops stale responses when either dimension moves. A
+  // stable fetch key keeps the resolved data and uses local filtering only.
+  if (shouldFetch) {
+    const myFetchGeneration = ++fetchGeneration;
     if (node.fetch && node.toSpec) {
-      const result = node.fetch();
+      let result: unknown[] | Promise<unknown[]>;
+      try {
+        result = node.fetch(tailQuery);
+      } catch (err) {
+        currentData = { error: fetchErrorMessage(err) };
+        rebuild(tailQuery, pathPrefix);
+        return;
+      }
       if (result instanceof Promise) {
         currentData = "loading";
         const myPath = pathPrefix;
+        const myFetchKey = nextFetchKey;
         void result.then(
           (items) => {
-            if (currentPath !== myPath) return;
+            if (
+              fetchGeneration !== myFetchGeneration ||
+              currentPath !== myPath ||
+              currentFetchKey !== myFetchKey
+            )
+              return;
             currentData = items;
             rebuild(currentTailQueryFromInput(), pathPrefix);
           },
           (err: unknown) => {
-            if (currentPath !== myPath) return;
-            const msg =
-              err instanceof Error && err.message
-                ? err.message
-                : "fetch failed";
-            currentData = { error: msg };
+            if (
+              fetchGeneration !== myFetchGeneration ||
+              currentPath !== myPath ||
+              currentFetchKey !== myFetchKey
+            )
+              return;
+            currentData = { error: fetchErrorMessage(err) };
             rebuild(currentTailQueryFromInput(), pathPrefix);
           },
         );
@@ -143,8 +183,6 @@ export function updateSlashMenu(): void {
     } else {
       currentData = undefined;
     }
-  } else {
-    currentNode = node;
   }
 
   rebuild(tailQuery, pathPrefix);
@@ -156,6 +194,10 @@ function currentTailQueryFromInput(): string {
   const input = currentMenuInput();
   const { tailQuery } = resolvePath(input, rootForInput(input));
   return tailQuery;
+}
+
+function fetchErrorMessage(err: unknown): string {
+  return err instanceof Error && err.message ? err.message : "fetch failed";
 }
 
 function rebuild(tailQuery: string, pathPrefix: string): void {
@@ -224,6 +266,8 @@ export function hideSlashMenu(): void {
   selectedIdx = -1;
   candidates = [];
   currentPath = null;
+  currentFetchKey = null;
+  fetchGeneration++;
   currentNode = ROOT;
   currentData = undefined;
   dismissedFor = dismissedInput;
@@ -236,6 +280,24 @@ export function openSlashMenuForPath(path: string): void {
 }
 
 // --- Tab: fill input only, never execute ---
+
+function fillDataCandidate(
+  candidate: Candidate,
+  pathPrefix: string,
+  preserveInput: boolean,
+): void {
+  if (preserveInput) {
+    hideSlashMenu();
+    return;
+  }
+  const sep = pathPrefix ? " " : "";
+  const keepOpen = candidate.spec.continueOnFill === true;
+  if (keepOpen) dismissedFor = null;
+  setInputValue(
+    `${pathPrefix}${sep}${candidate.spec.fill ?? candidate.spec.primary}`,
+  );
+  if (!keepOpen) hideSlashMenu();
+}
 
 function tabComplete(): void {
   const c = candidates[selectedIdx];
@@ -272,13 +334,7 @@ function tabComplete(): void {
       }
     }
   } else if (c.kind === "data") {
-    if (preserveInput) {
-      hideSlashMenu();
-    } else {
-      const sep = pathPrefix ? " " : "";
-      setInputValue(`${pathPrefix}${sep}${c.spec.primary}`);
-      hideSlashMenu();
-    }
+    fillDataCandidate(c, pathPrefix, preserveInput);
   } else if (c.kind === "freeform") {
     // Freeform spec reflects the user's typed query — Tab is a no-op
     // (input already contains what the freeform represents).

@@ -14,12 +14,20 @@ let hljsPromise: Promise<
 const getHljs = () =>
   (hljsPromise ??= import("highlight.js/lib/common").then((m) => m.default));
 
-async function highlightAllIn(container: Element) {
+export async function highlightCodeElement(
+  code: HTMLElement,
+  language?: string,
+): Promise<void> {
   const hljs = await getHljs();
+  if (language && hljs.getLanguage(language)) {
+    code.classList.add(`language-${language}`);
+  }
+  if (!code.dataset.highlighted) hljs.highlightElement(code);
+}
+
+async function highlightAllIn(container: Element) {
   for (const code of container.querySelectorAll("pre code")) {
-    if (!(code as HTMLElement).dataset.highlighted) {
-      hljs.highlightElement(code as HTMLElement);
-    }
+    await highlightCodeElement(code as HTMLElement);
   }
 }
 

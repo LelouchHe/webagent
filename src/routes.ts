@@ -21,6 +21,7 @@ import {
 import { randomUUID } from "node:crypto";
 import { createWriteStream } from "node:fs";
 import { handleShareRoutes } from "./share/routes.ts";
+import { handleFileRoutes } from "./files/routes.ts";
 import { authenticate, isWhitelistedPath } from "./auth-middleware.ts";
 import { enrichStoredEventsForDisplay } from "./attachment-labels.ts";
 import { agentCommandToken, resolveAgentCommand } from "./agent-commands.ts";
@@ -595,6 +596,15 @@ export function createRequestHandler(
       return;
     }
 
+    // File viewer — sessionless read-only access to arbitrary local paths.
+    // Claims /api/v1/files/{info,list,content} before the generic /api/v1
+    // branch. info/list use the Bearer gate above; content is whitelisted
+    // only because its handler requires an HMAC-signed URL for headerless
+    // media/download fetches (see src/files/routes.ts).
+    if (await handleFileRoutes(req, res, { secret: deps.attachmentSecret })) {
+      return;
+    }
+
     // --- API routes ---
     if (url === "/api/v1" || url.startsWith("/api/v1/")) {
       res.setHeader("Content-Type", "application/json");
@@ -606,6 +616,7 @@ export function createRequestHandler(
           endpoints: {
             sessions: "/api/v1/sessions",
             paths: "/api/v1/recent-paths",
+            files: "/api/v1/files",
             config: "/api/v1/config",
             events_stream: "/api/v1/events/stream",
             prompt: "/api/beta/prompt",
