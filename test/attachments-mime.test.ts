@@ -37,6 +37,29 @@ describe("sniffMime", () => {
     assert.equal(await sniffMime(cjk), "text/plain");
   });
 
+  it("classifies a sampled head whose tail cuts a multi-byte char as text/plain", async () => {
+    // The file viewer / upload pipeline hands sniffMime only the first 4096
+    // bytes of a larger file. Dense multi-byte content (Chinese, Japanese,
+    // emoji, ...) can leave that window slicing clean through a character;
+    // a strict whole-buffer fatal decode then misclassifies valid UTF-8 text
+    // as binary, so the viewer force-downloads it instead of previewing.
+    // 4096 = 3 * 1365 + 1: the head ends one byte into the 1366th 中.
+    const text = Buffer.from("中".repeat(2000), "utf8"); // 6000 bytes
+    const head = text.subarray(0, 4096);
+    assert.equal(await sniffMime(head), "text/plain");
+  });
+
+  it("still rejects invalid UTF-8 in the middle of the buffer", async () => {
+    // The tail tolerance must not swallow genuine corruption: bytes that are
+    // invalid well before the buffer end fail every prefix attempt.
+    const bad = Buffer.concat([
+      Buffer.from("正常的开头内容".repeat(100), "utf8"),
+      Buffer.from([0xff, 0xfe, 0x80]),
+      Buffer.from("的结尾内容", "utf8"),
+    ]);
+    assert.equal(await sniffMime(bad), "application/octet-stream");
+  });
+
   it("classifies random binary as octet-stream", async () => {
     // Random non-magic bytes containing a NUL — clearly binary.
     const bin = Buffer.from([

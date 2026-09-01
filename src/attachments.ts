@@ -71,13 +71,56 @@ function looksLikeUtf8Text(buf: Buffer): boolean {
   for (const byte of buf) {
     if (byte === 0) return false;
   }
-  try {
-    const decoder = new TextDecoder("utf-8", { fatal: true });
-    decoder.decode(buf);
-    return true;
-  } catch {
-    return false;
+  return decodesAsUtf8ToleratingTailTruncation(buf);
+}
+
+/**
+ * Maximum bytes one UTF-8 code point can occupy. A TRAILING code point that
+ * was cut off by the sampling window contributes at most one byte less than
+ * a full character (a complete 4-byte character would decode), so backing up
+ * `MAX_UTF8_CHAR_BYTES - 1` bytes always reaches the preceding boundary.
+ */
+const MAX_UTF8_CHAR_BYTES = 4;
+
+/**
+ * Whether `buf` decodes cleanly as UTF-8, allowing its FINAL multi-byte
+ * character to be cut off at the buffer end.
+ *
+ * Why the tolerance: sniffMime only receives the first 4096 bytes of a
+ * larger file (the viewer's `SNIFF_BYTES` window in src/files/routes.ts and
+ * the upload-pipeline head). Content dense in multi-byte characters —
+ * Chinese, Japanese, emoji, ... — regularly leaves that window slicing
+ * clean through a character. A strict whole-buffer fatal decode then
+ * misclassifies perfectly valid UTF-8 text as binary, so the viewer
+ * force-downloads it instead of previewing it (real-world regression:
+ * ~100 of the markdown notes under ~/mine/space downloaded instead of
+ * rendering, even though every one of them was valid UTF-8).
+ *
+ * This relaxes ONLY the tail: a truncated trailing code point occupies at
+ * most 3 bytes of the buffer, so backing up at most 3 bytes reaches a
+ * character boundary — and the loop never trims the whole buffer, because an
+ * empty prefix would trivially "decode" and would turn short garbage buffers
+ * into text. NUL bytes and genuinely invalid sequences elsewhere fail every
+ * prefix attempt and still fall through to application/octet-stream — the
+ * "binary stays binary" security posture of the sniff is unchanged.
+ */
+function decodesAsUtf8ToleratingTailTruncation(buf: Buffer): boolean {
+  for (
+    let end = buf.length;
+    end >= Math.max(1, buf.length - (MAX_UTF8_CHAR_BYTES - 1));
+    end--
+  ) {
+    try {
+      // Fresh decoder per attempt: reuse-after-throw is not part of the
+      // TextDecoder contract across implementations.
+      new TextDecoder("utf-8", { fatal: true }).decode(buf.subarray(0, end));
+      return true;
+    } catch {
+      // Cut deeper into the tail. Only a trailing truncated character can
+      // make a later attempt succeed — real corruption fails all of them.
+    }
   }
+  return false;
 }
 
 /**
