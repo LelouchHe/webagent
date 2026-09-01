@@ -13,7 +13,7 @@ jobs:
     needs: test
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write
       id-token: write
     steps:
       - uses: actions/checkout@v5
@@ -28,3 +28,17 @@ jobs:
       - run: npm publish --access public --provenance
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      # Create the GitHub Release with the official changelog section as its
+      # body. Without this, a pushed tag only produces a bare-tag page with
+      # GitHub's auto-generated notes and /releases stays empty.
+      - name: Extract changelog section
+        run: python3 scripts/release-notes.py "${GITHUB_REF_NAME#v}" --out RELEASE_NOTES.md
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: ${{ github.ref_name }}
+          tag_name: ${{ github.ref_name }}
+          target_commitish: ${{ github.sha }}
+          body_path: RELEASE_NOTES.md

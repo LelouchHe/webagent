@@ -32,9 +32,9 @@ npm run test:e2e      # Playwright browser E2E
 Published to npm as `@lelouchhe/webagent`. CI and release are handled by GitHub Actions:
 
 - **CI** (`.github/workflows/ci.yml`): Runs `npm test` + Playwright E2E on every push to `main` and on PRs.
-- **Publish** (`.github/workflows/publish.yml`): Triggers on a pushed `v*` tag, reuses CI, and publishes to npm with provenance.
+- **Publish** (`.github/workflows/publish.yml`): Triggers on a pushed `v*` tag, reuses CI, publishes to npm with provenance, and creates a GitHub Release whose body is the matching `CHANGELOG.md` section plus its compare link.
 
-Release from the `main` worktree and `origin` remote. Before changing release files, require a clean worktree, choose the SemVer bump, and prepare the matching Keep a Changelog entry.
+Release from the `main` worktree and `origin` remote. Before changing release files, require a clean worktree, choose the SemVer bump, and prepare the matching Keep a Changelog entry (including the `[<version>]:` compare link, which the publish workflow uses in the GitHub Release body).
 
 After the bump and changelog are approved:
 
@@ -68,6 +68,6 @@ Push is a separate confirmation. Push only the owned branch and exact release ta
 git push origin main 'v<version>'
 ```
 
-After pushing, verify the exact tag on `origin`, the GitHub Actions publish run, and the registry's `latest` version. Do not infer success from the npm badge because its CDN can lag.
+After pushing, verify the exact tag on `origin`, the GitHub Actions publish run, the registry's `latest` version, and the GitHub Release (`gh release view v<version>`) showing the official changelog body. Do not infer success from the npm badge because its CDN can lag.
 
 Requires `NPM_TOKEN` in GitHub repo settings (npmjs.com → Granular Access Token → Read and write on `@lelouchhe/webagent`).
