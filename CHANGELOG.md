@@ -4,6 +4,35 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/), and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.9.0] - 2026-09-01
+
+### Added
+
+- **Local file viewer** — `/view` opens a live path picker rooted in the session's working directory. Type to filter, tap a folder to descend one level, or use the `..` row to go back; absolute `/…` and home-relative `~/…` paths can browse anywhere the server process can read. Markdown reuses the chat renderer, code and text get syntax highlighting with line numbers, images render inline, and unknown binaries fall back to a metadata + download view. Desktop keeps the chat in a responsive split pane; mobile opens the viewer full-screen. Read-only throughout — special files are rejected, mutable content is never cached, and public share links cannot reach the file API. Backed by a new signed content-URL API (`GET /api/v1/files/info|list|content`) so `<img>` and download links keep the token auth model.
+- **Raw tool output inspector** — each tool call now has a collapsible *raw* section showing the agent's unformatted `rawOutput` JSON, bounded and safely rendered, previewed live as updates stream in.
+- **Structured diffs for tool output** — ACP tool content of type `diff` renders as a proper unified diff (file header, hunks, per-line add/remove colors) instead of a text blob that is hard to scan.
+- **Context usage in the status bar** — the status bar now shows the session's token usage (`used/size`, with `k`/`m` abbreviations) and the model by its short name, so heavy contexts are visible at a glance.
+- **Home-relative session paths** — `~/…` paths are accepted when opening or switching sessions and displayed abbreviated everywhere they appear, including the recent-paths picker, instead of the full home-directory prefix.
+- **Turn termination reasons** — when a turn ends the transcript says why: cancelled, token limit reached, agent refusal, turn-request limit, or an unknown stop reason. Session-scoped agent errors are now persisted and appear in the transcript after a reload instead of only in logs.
+
+### Changed
+
+- **Sessions are scoped to their agent backend** — WebAgent session IDs and the agent's internal ACP session IDs are now stored separately and keyed by the configured `agent_cmd`. Switching agents hides sessions belonging to other agents; switching back restores them with their original URLs. Upgrading is in-place and non-destructive: the new mapping is backfilled automatically from your existing data on first boot, so current session IDs and share URLs stay exactly the same. Internal title-generation sessions stay hidden from the UI.
+- **Status bar layout reworked** — model, context usage, and cwd are now separate segments with consistent spacing; long working directories truncate in the middle instead of pushing the model label off-screen.
+
+### Fixed
+
+- **Agent output outside the foreground turn is no longer dropped** — tool calls, assistant, and thinking chunks triggered by background or unsolicited agent work while the turn is idle now render as normal transcript entries, and a tool update arriving before its tool-call row exists is buffered and replayed once the row renders (including after reconnect pagination).
+- **Tool-call labels now track progressive metadata** — title, kind, and raw input that agents send in later updates update the rendered row instead of leaving the original placeholder label.
+- **UTF-8 text cut mid-character no longer force-downloads** — MIME sniffing reads only a 4096-byte prefix and treated a trailing character sliced in half as invalid UTF-8, so content dense with Chinese/emoji (e.g. Markdown notes) was misclassified as binary and downloaded instead of previewed.
+- **Downloading a file no longer leaves the PWA stuck** — binary downloads now open in a new tab instead of navigating the standalone window into the raw response, where there is no address bar or back button to return from.
+- **Interrupted turns require explicit continuation** — after an interruption or a server/agent restart, sending a message no longer auto-continues the interrupted turn (which could repeat non-idempotent tool actions); the restored state is shown and you explicitly tell the agent to continue.
+- **Thinking effort survives resume for more agents** — the saved `/think` setting is re-applied across all thinking-option IDs (`reasoning_effort` / `thought_level`) when restoring a session, and `/think` resolves the correct option for agents that advertise `thought_level`.
+- **iOS keyboard recovery** — double-tapping the input now recovers a half-open keyboard that still shrinks the visual viewport; recovery no longer interferes with text selection/long-press menus and works when tapping over status-bar content.
+- **SSE recovery after background suspension** — reconnecting after the app was suspended forces a fresh incremental catch-up that supersedes stale in-flight requests, so no events are lost and old responses cannot overwrite newer state.
+- **Concurrent session bootstrap is serialized** — when several clients open the app at once, startup recovery shares one get-or-create session instead of racing to create duplicates, and the shared session-created broadcast is no longer attributed to the first caller.
+- **Slash menu polish** — empty folder/command menus no longer show a redundant "no results" placeholder row beneath the freeform action.
+
 ## [0.8.0] - 2026-08-08
 
 ### Added
