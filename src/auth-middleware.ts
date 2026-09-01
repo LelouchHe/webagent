@@ -11,8 +11,9 @@ interface WhitelistEntry {
   test: (path: string) => boolean;
 }
 
-// All whitelisted paths must be GETs that read non-sensitive data, or static
-// assets needed before the user can present a token.
+// All whitelisted paths must be GETs that either read non-sensitive data,
+// serve static assets needed before the user can present a token, or enforce
+// independent ticket/HMAC authentication inside their route handler.
 const WHITELIST: readonly WhitelistEntry[] = [
   // Public probes
   { method: "GET", test: (p) => p === "/api/v1/version" },
@@ -58,6 +59,13 @@ const WHITELIST: readonly WhitelistEntry[] = [
         p,
       ),
   },
+
+  // File viewer content — read-only bytes for one confirmed path,
+  // authenticated via HMAC sig+exp query string for the same reason as
+  // image GETs above (media tags / downloads cannot send Authorization
+  // headers). The content handler verifies the signature before serving:
+  // without a valid sig+exp it returns 401, never bytes.
+  { method: "GET", test: (p) => p === "/api/v1/files/content" },
 
   // --- Share viewer (public read-only snapshots) ---
   // Viewer HTML shell + image proxy + viewer-namespaced static assets

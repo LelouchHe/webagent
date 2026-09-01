@@ -123,6 +123,7 @@ Whitelisted paths (no auth required):
 | `GET /js/*.js`, `/styles*.css`, `/icons/*`                       | Static bundles (content-hashed)                                           |
 | `GET /api/v1/events/stream`                                      | SSE — auth via short-lived ticket in query string instead (see below)     |
 | `GET /api/v1/attachments/*`                                           | Auth via HMAC signature in query string instead (see below)               |
+| `GET /api/v1/files/content`                                           | Auth via a path-bound HMAC signature; file info/list remain Bearer-only   |
 
 Anything else (chat history, prompt submission, model selection, bash, push subscriptions) requires a Bearer token.
 
@@ -151,16 +152,30 @@ Anything else (chat history, prompt submission, model selection, bash, push subs
 
 Tickets are in-memory only; restarting the server invalidates all of them. Clients reconnect automatically and re-issue.
 
-## Signed Image URLs
+## Signed Content URLs
 
-Images uploaded to a session render as `<img src="/api/v1/attachments/sess/abc/xyz.png?sig=...&exp=...">`. The image route is whitelisted; auth is in the URL itself:
+Uploaded images and ordinary file-viewer bytes use short-lived capability URLs
+because `<img>` and download links cannot attach the Bearer header. Their GET
+routes are whitelisted only at the outer auth middleware; each route verifies
+its own URL before reading disk:
 
 - The server holds a per-restart HMAC secret (random 32 bytes, never persisted).
-- When an image event is serialized for history or SSE, the path is signed: `sig = HMAC-SHA256(secret, "<path>|<exp>")` with `exp = now + 1h`.
-- The image route verifies signature + expiry before serving.
-- Every server restart rotates the secret, invalidating all previously rendered URLs. Clients re-fetch the parent event to get fresh signed URLs.
+- The signature is `HMAC-SHA256(secret, "<path>:<exp>")`, where `exp = now + 1h`.
+- Changing either the URL path/query-bound file path or the expiry invalidates the signature.
+- Every server restart rotates the secret. Clients re-fetch the attachment event
+  or `GET /api/v1/files/info` to obtain a fresh signed URL.
 
-This trades occasional "broken image" reloads after restart for a hard guarantee: a stolen image URL is useless after at most 1h, and after restart instantly.
+For the file viewer, `info` and `list` remain Bearer-only and are the only way to
+mint a signed content URL. `GET /api/v1/files/content` requires a valid
+signature even if the caller also supplies a Bearer header; if the signing
+secret is missing it fails closed with `503`. Mutable file content is served
+with `Cache-Control: no-store`, `nosniff`, and a restrictive CSP. Only regular
+files are opened, so FIFOs, sockets, and device nodes cannot block the server.
+The public `/s/:token` share viewer cannot call `info` or `list` and therefore
+cannot mint arbitrary file URLs.
+
+A stolen signed URL is usable only for its single bound path and at most one
+hour (or until the next server restart).
 
 ## Content Security Policy
 

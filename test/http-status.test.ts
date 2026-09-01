@@ -72,6 +72,7 @@ describe("HTTP_STATUS", () => {
       UNAUTHORIZED: 401,
       FORBIDDEN: 403,
       NOT_FOUND: 404,
+      METHOD_NOT_ALLOWED: 405,
       CONFLICT: 409,
       GONE: 410,
       PAYLOAD_TOO_LARGE: 413,

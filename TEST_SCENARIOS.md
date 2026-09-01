@@ -95,6 +95,14 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - auto-resume of non-live sessions
   - input validation and bridge-not-ready errors
 
+- `test/file-viewer-routes.test.ts`
+  - Bearer-gated `info` / `list` and independently HMAC-signed `content`
+  - absolute / `~` / `..` / symlink canonicalization; relative and invalid path rejection
+  - directory listing order, hidden/special entry omission, and 2,000-entry truncation
+  - regular-file guards for directories, FIFOs, and oversized non-text payloads
+  - bounded text reads with truncation metadata; mutable content is never cached
+  - signed URL tamper rejection and URL-safe Unicode/space paths
+
 - `test/prompt.test.ts`
   - prompt acceptance and bridge forwarding
   - unsolicited Main-agent buffer flush before the next user turn

@@ -25,6 +25,7 @@ WebAgent exposes a **REST + SSE** API for managing agent sessions, sending promp
   - [Bash](#bash)
   - [Bridge](#bridge)
   - [Inbox](#inbox)
+  - [Files](#files)
   - [Attachments](#attachments)
   - [SSE Streams](#sse-streams)
   - [Share](#share)
@@ -96,6 +97,8 @@ API discovery endpoint. Returns the API version and top-level endpoint paths.
   "version": "v1",
   "endpoints": {
     "sessions": "/api/v1/sessions",
+    "paths": "/api/v1/recent-paths",
+    "files": "/api/v1/files",
     "config": "/api/v1/config",
     "events_stream": "/api/v1/events/stream",
     "prompt": "/api/beta/prompt",
@@ -940,6 +943,91 @@ Ack (dismiss) a message without consuming. Deletes the row.
 **Side effects:** broadcasts `message_acked` SSE; triggers `pushService.sendClose(id)`.
 
 **Errors:** `404` (message not found).
+
+---
+
+### Files
+
+Read-only access to ordinary local files for the authenticated operator. These
+endpoints are deliberately sessionless: callers send an absolute path or a
+`~`-prefixed path, and the server expands `~` and returns the `realpath`
+canonical form. Bare relative paths and `~user` expansion are rejected. The
+single-operator threat model permits paths anywhere on the host; this is not a
+sandbox or project-root boundary.
+
+`info` and `list` require normal Bearer authentication. File bytes use a
+short-lived HMAC-signed URL issued by `info`, because `<img>` and download links
+cannot attach the Authorization header. A Bearer header alone does not bypass
+the content signature.
+
+#### `GET /api/v1/files/info?path=`
+
+Inspect one file or directory. `path` must be URL-encoded when inserted into the
+query string.
+
+**File response** `200`:
+
+```json
+{
+  "path": "/Users/me/project/README.md",
+  "name": "README.md",
+  "kind": "file",
+  "size": 4812,
+  "mtime": 1777098000123,
+  "mime": "text/plain",
+  "maxBytes": 4194304,
+  "contentUrl": "/api/v1/files/content?path=%2FUsers%2Fme%2Fproject%2FREADME.md&exp=1777101600&sig=..."
+}
+```
+
+Directory responses omit `mime`, `maxBytes`, and `contentUrl`. `mime` is
+content-sniffed rather than trusted from the filename. The signed content URL
+expires after one hour and is invalidated by a server restart.
+
+**Errors:** `400` (missing, relative, invalid, or non-regular path), `403`
+(permission denied), `404` (not found), `405` (non-GET method).
+
+---
+
+#### `GET /api/v1/files/list?path=`
+
+List one directory (no recursive tree expansion). Returns directories first,
+then files, with each group sorted lexicographically. Dotfiles are omitted by
+default. Symlinks to regular files/directories are followed; FIFOs, sockets,
+and device nodes are omitted. Listings are capped at 2,000 visible entries.
+
+**Response** `200`:
+
+```json
+{
+  "path": "/Users/me/project/src",
+  "parent": "/Users/me/project",
+  "truncated": false,
+  "entries": [
+    { "name": "lib", "kind": "dir", "size": null, "mtime": 1777098000123 },
+    { "name": "server.ts", "kind": "file", "size": 8123, "mtime": 1777097999000 }
+  ]
+}
+```
+
+**Errors:** `400` (not a directory or invalid path), `403` (permission
+denied), `404` (not found), `405` (non-GET method).
+
+---
+
+#### `GET /api/v1/files/content?path=&exp=&sig=`
+
+Serve bytes for a regular file. Obtain the full signed URL from `info`; callers
+must not construct signatures themselves. The response is `no-store` because
+project files change in place, includes `X-Content-Type-Options: nosniff`, and
+uses an inline RFC 5987 filename. Text is capped at 4 MiB and returned truncated
+with `X-File-Truncated: 1`; oversized images/binaries return `413` instead of
+partial content. No special file (FIFO/socket/device) is ever opened.
+
+**Errors:** `400` (directory, invalid, or non-regular path), `401` (missing,
+expired, or tampered signature), `403` (permission denied), `404` (not found),
+`405` (non-GET method), `413` (non-text payload exceeds its type cap), `503`
+(signing secret unavailable).
 
 ---
 
