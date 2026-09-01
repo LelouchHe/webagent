@@ -154,6 +154,8 @@ export function getSession(id: string): Promise<SessionDetail> {
 
 export interface FileInfo {
   path: string;
+  /** Home-abbreviated display form (e.g. `~/project/a.ts`). */
+  pathDisplay?: string;
   name: string;
   kind: "file" | "dir";
   size: number;
@@ -172,7 +174,9 @@ export interface FileListEntry {
 
 export interface FileListResponse {
   path: string;
+  pathDisplay?: string;
   parent: string;
+  parentDisplay?: string;
   truncated: boolean;
   entries: FileListEntry[];
 }

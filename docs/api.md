@@ -970,6 +970,7 @@ query string.
 ```json
 {
   "path": "/Users/me/project/README.md",
+  "pathDisplay": "~/project/README.md",
   "name": "README.md",
   "kind": "file",
   "size": 4812,
@@ -980,8 +981,10 @@ query string.
 }
 ```
 
-Directory responses omit `mime`, `maxBytes`, and `contentUrl`. `mime` is
-content-sniffed rather than trusted from the filename. The signed content URL
+`path` is the canonical filesystem identity used for reads/signing;
+`pathDisplay` abbreviates the current HOME prefix as `~` and is intended for
+UI display and completion. Directory responses omit `mime`, `maxBytes`, and
+`contentUrl`. `mime` is content-sniffed rather than trusted from the filename. The signed content URL
 expires after one hour and is invalidated by a server restart.
 
 **Errors:** `400` (missing, relative, invalid, or non-regular path), `403`
@@ -1001,7 +1004,9 @@ and device nodes are omitted. Listings are capped at 2,000 visible entries.
 ```json
 {
   "path": "/Users/me/project/src",
+  "pathDisplay": "~/project/src",
   "parent": "/Users/me/project",
+  "parentDisplay": "~/project",
   "truncated": false,
   "entries": [
     { "name": "lib", "kind": "dir", "size": null, "mtime": 1777098000123 },

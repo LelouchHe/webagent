@@ -17,7 +17,7 @@ test("mobile /view drills into a folder and opens a full-screen file", async ({
   await expect(folder).toBeVisible();
   await folder.click();
 
-  await expect(input).toHaveValue(/\/test\/e2e\/fixtures\/$/);
+  await expect(input).toHaveValue(/^\/view ~\/.*\/test\/e2e\/fixtures\/$/);
   const file = page.locator("#slash-menu .slash-item", {
     has: page.locator(".slash-primary", { hasText: "file-viewer.md" }),
   });
@@ -27,7 +27,7 @@ test("mobile /view drills into a folder and opens a full-screen file", async ({
   const viewer = page.locator("#file-viewer");
   await expect(viewer).toBeVisible();
   await expect(page.locator("#file-viewer-path")).toHaveText(
-    /file-viewer\.md$/,
+    /^~\/.*\/file-viewer\.md$/,
   );
   await expect(viewer.locator("h1")).toHaveText("File Viewer Fixture");
 
@@ -45,7 +45,7 @@ test("mobile /view drills into a folder and opens a full-screen file", async ({
 test("desktop /view opens a right-hand split and close restores chat", async ({
   page,
 }) => {
-  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.setViewportSize({ width: 1440, height: 900 });
   await gotoConnected(page);
 
   await page.locator("#input").fill(`/view ${FIXTURE}`);
@@ -58,23 +58,49 @@ test("desktop /view opens a right-hand split and close restores chat", async ({
   const layout = await page.evaluate(() => {
     const viewer = document.getElementById("file-viewer");
     const header = document.getElementById("header");
-    if (!viewer || !header) throw new Error("missing split layout elements");
+    const fileHeader = document.querySelector<HTMLElement>(
+      ".file-viewer-header",
+    );
+    const themeButton = document.getElementById("theme-btn");
+    const closeButton = document.getElementById("file-viewer-close");
+    if (!viewer || !header || !fileHeader || !themeButton || !closeButton) {
+      throw new Error("missing split layout elements");
+    }
     const viewerRect = viewer.getBoundingClientRect();
     const headerRect = header.getBoundingClientRect();
+    const fileHeaderRect = fileHeader.getBoundingClientRect();
+    const themeStyle = getComputedStyle(themeButton);
+    const closeStyle = getComputedStyle(closeButton);
     return {
       viewerLeft: viewerRect.left,
       viewerRight: viewerRect.right,
       viewerWidth: viewerRect.width,
       headerRight: headerRect.right,
+      appHeaderHeight: headerRect.height,
+      fileHeaderHeight: fileHeaderRect.height,
       bodyPaddingRight: getComputedStyle(document.body).paddingRight,
+      themeButton: {
+        fontSize: themeStyle.fontSize,
+        padding: themeStyle.padding,
+        borderWidth: themeStyle.borderWidth,
+      },
+      closeButton: {
+        fontSize: closeStyle.fontSize,
+        padding: closeStyle.padding,
+        borderWidth: closeStyle.borderWidth,
+      },
     };
   });
 
-  expect(layout.viewerLeft).toBe(640);
-  expect(layout.viewerRight).toBe(1280);
-  expect(layout.viewerWidth).toBe(640);
+  expect(layout.viewerLeft).toBe(648);
+  expect(layout.viewerRight).toBe(1440);
+  expect(layout.viewerWidth).toBe(792);
   expect(layout.headerRight).toBeLessThanOrEqual(layout.viewerLeft);
-  expect(layout.bodyPaddingRight).toBe("640px");
+  expect(layout.bodyPaddingRight).toBe("792px");
+  expect(
+    Math.abs(layout.fileHeaderHeight - layout.appHeaderHeight),
+  ).toBeLessThanOrEqual(1);
+  expect(layout.closeButton).toEqual(layout.themeButton);
 
   await page.locator("#file-viewer-close").click();
   await expect(viewer).toBeHidden();

@@ -60,11 +60,15 @@ describe("file viewer frontend", () => {
     });
 
     await viewer.openFileInfo(
-      info({ path: "/tmp/readme.md", name: "readme.md" }),
+      info({
+        path: "/Users/me/readme.md",
+        pathDisplay: "~/readme.md",
+        name: "readme.md",
+      }),
     );
 
     assert.equal(dom.fileViewer.hidden, false);
-    assert.equal(dom.fileViewerPath.textContent, "/tmp/readme.md");
+    assert.equal(dom.fileViewerPath.textContent, "~/readme.md");
     assert.equal(
       dom.fileViewerContent.querySelector("h1")?.textContent,
       "Heading",

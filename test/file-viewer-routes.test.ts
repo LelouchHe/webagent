@@ -174,6 +174,7 @@ describe("file viewer routes", () => {
     assert.equal(r.status, 200);
     const b = JSON.parse(r.body);
     assert.equal(b.path, textFile);
+    assert.equal(b.pathDisplay, textFile);
     assert.equal(b.name, "notes.md");
     assert.equal(b.kind, "file");
     assert.equal(typeof b.size, "number");
@@ -221,7 +222,9 @@ describe("file viewer routes", () => {
     try {
       const r = await info("~/h.txt");
       assert.equal(r.status, 200);
-      assert.equal(JSON.parse(r.body).path, homeFile);
+      const b = JSON.parse(r.body);
+      assert.equal(b.path, homeFile);
+      assert.equal(b.pathDisplay, "~/h.txt");
     } finally {
       if (prev === undefined) delete process.env.HOME;
       else process.env.HOME = prev;
@@ -261,7 +264,9 @@ describe("file viewer routes", () => {
     assert.equal(r.status, 200);
     const b = JSON.parse(r.body);
     assert.equal(b.path, projDir);
+    assert.equal(b.pathDisplay, projDir);
     assert.equal(typeof b.parent, "string");
+    assert.equal(b.parentDisplay, b.parent);
     assert.equal(b.truncated, false);
     const names = b.entries.map((e: { name: string }) => e.name);
     assert.deepEqual(names, ["sub", "a.txt", "b.txt", "link.md", "notes.md"]);

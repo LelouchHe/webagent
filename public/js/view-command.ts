@@ -15,7 +15,10 @@ import { openFileInfo } from "./file-viewer.ts";
 
 export interface FileBrowserItem {
   name: string;
+  /** Canonical path for identity/debugging; not written into the input UI. */
   path: string;
+  /** Home-abbreviated path used by Tab, clicks, and the viewer header. */
+  pathDisplay: string;
   kind: "file" | "dir";
   size: number | null;
   mtime: number;
@@ -48,6 +51,7 @@ export async function fetchViewItems(
     items.push({
       name: "..",
       path: result.parent,
+      pathDisplay: result.parentDisplay ?? result.parent,
       kind: "dir",
       size: null,
       mtime: 0,
@@ -58,6 +62,10 @@ export async function fetchViewItems(
     items.push({
       ...entry,
       path: joinListedPath(result.path, entry.name),
+      pathDisplay: joinListedPath(
+        result.pathDisplay ?? result.path,
+        entry.name,
+      ),
     });
   }
   return items;
@@ -85,17 +93,17 @@ export function viewItemSpec(item: unknown): SlashItemSpec {
     return {
       primary: display,
       secondary: row.parent ? "parent" : "folder",
-      fill: directoryInput(row.path).slice("/view ".length),
+      fill: directoryInput(row.pathDisplay).slice("/view ".length),
       onSelect: () => {
-        enterViewDirectory(row.path);
+        enterViewDirectory(row.pathDisplay);
       },
     };
   }
   return {
     primary: row.name,
     secondary: formatSize(row.size),
-    fill: row.path,
-    onSelect: () => openViewPath(row.path),
+    fill: row.pathDisplay,
+    onSelect: () => openViewPath(row.pathDisplay),
   };
 }
 
@@ -105,7 +113,7 @@ export async function openViewPath(query: string): Promise<void> {
     const path = resolveViewPath(query, state.sessionCwd);
     const info = await api.getFileInfo(path);
     if (info.kind === "dir") {
-      enterViewDirectory(info.path);
+      enterViewDirectory(info.pathDisplay ?? info.path);
       return;
     }
     await openFileInfo(info);

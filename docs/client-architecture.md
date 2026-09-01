@@ -579,7 +579,7 @@ controller fetches again only when the key changes and otherwise applies the
 existing local filtering. `/view` uses the directory as its key, so typing a
 filename never generates per-keystroke I/O; entering another directory does.
 `SlashItemSpec.fill` separates the short displayed label from the full value
-inserted by Tab (for `/view`, the canonical absolute path).
+inserted by Tab (for `/view`, the HOME-abbreviated `pathDisplay`).
 
 ### File viewer
 
@@ -600,8 +600,9 @@ The viewer dispatches by server-sniffed MIME plus filename extension:
 - unknown binary content displays metadata and a signed download link.
 
 On viewports below 1024px it is a fixed full-screen overlay. At 1024px and
-above, the body reserves a right pane up to 640px (half of a 1280px viewport),
-leaving chat usable on the left. Closing or Escape removes the viewer and
+above, the body reserves 55vw for the right pane, capped at 800px, leaving chat
+usable on the left while fitting roughly 80 columns of 14px monospace code on
+common wide displays. Closing or Escape removes the viewer and
 restores the chat layout. A generation counter prevents stale file responses
 from replacing a newer file or reopening a closed viewer.
 

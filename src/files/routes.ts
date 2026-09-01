@@ -21,6 +21,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { signAttachmentUrl, verifyAttachmentSig } from "../auth.ts";
 import { buildContentDisposition, sniffMime } from "../attachments.ts";
 import { HTTP_STATUS } from "../http-status.ts";
+import { abbreviateHomePath } from "../home-path.ts";
 import { log } from "../log.ts";
 import { MAX_IMAGE_BYTES, MAX_OTHER_BYTES, MAX_TEXT_BYTES } from "./limits.ts";
 import {
@@ -146,6 +147,7 @@ async function handleInfo(
   const meta = await statMeta(canonical);
   const out: Record<string, unknown> = {
     path: meta.path,
+    pathDisplay: abbreviateHomePath(meta.path),
     name: meta.name,
     kind: meta.kind,
     size: meta.size,
@@ -174,9 +176,12 @@ async function handleList(res: ServerResponse, pathRaw: string): Promise<void> {
     throw new FilePathError(HTTP_STATUS.BAD_REQUEST, "Not a directory");
   }
   const { entries, truncated } = await listDirectory(canonical);
+  const parent = dirname(canonical);
   json(res, HTTP_STATUS.OK, {
     path: canonical,
-    parent: dirname(canonical),
+    pathDisplay: abbreviateHomePath(canonical),
+    parent,
+    parentDisplay: abbreviateHomePath(parent),
     truncated,
     entries,
   });

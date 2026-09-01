@@ -169,7 +169,8 @@ describe("api module", () => {
 
   it("getFileInfo URL-encodes arbitrary paths", async () => {
     const data = {
-      path: "/tmp/a b #ç.md",
+      path: "/Users/me/a b #ç.md",
+      pathDisplay: "~/a b #ç.md",
       name: "a b #ç.md",
       kind: "file",
       size: 12,
@@ -192,13 +193,16 @@ describe("api module", () => {
       `/api/v1/files/info?path=${encodeURIComponent(data.path)}`,
     );
     assert.equal(result.path, data.path);
+    assert.equal(result.pathDisplay, data.pathDisplay);
     assert.equal(result.kind, "file");
   });
 
   it("listFiles URL-encodes paths and returns typed entries", async () => {
     const data = {
-      path: "/tmp/project",
-      parent: "/tmp",
+      path: "/Users/me/project",
+      pathDisplay: "~/project",
+      parent: "/Users/me",
+      parentDisplay: "~",
       truncated: false,
       entries: [
         { name: "src", kind: "dir", size: null, mtime: 1 },
@@ -218,6 +222,8 @@ describe("api module", () => {
       fetchCalls[0].url,
       `/api/v1/files/list?path=${encodeURIComponent(data.path)}`,
     );
+    assert.equal(result.pathDisplay, "~/project");
+    assert.equal(result.parentDisplay, "~");
     assert.equal(result.entries[0].kind, "dir");
     assert.equal(result.entries[1].name, "a.ts");
   });

@@ -372,13 +372,15 @@ describe("slash menu — Tab vs Click behavior", () => {
     );
   });
 
-  it("/view lists cwd, filters locally, and Tab fills the absolute path", async () => {
+  it("/view lists cwd, filters locally, and Tab preserves the display path", async () => {
     state.sessionCwd = "/work";
     globalThis.fetch = ((url: string, init?: any) => {
       fetchCalls.push({ url, init });
       const data = {
         path: "/work",
+        pathDisplay: "~/work",
         parent: "/",
+        parentDisplay: "/",
         truncated: false,
         entries: [
           { name: "src", kind: "dir", size: null, mtime: 1 },
@@ -408,7 +410,7 @@ describe("slash menu — Tab vs Click behavior", () => {
     assert.doesNotMatch(dom.slashMenu.textContent, /README\.md/);
 
     commands.handleSlashMenuKey(makeTabEvent());
-    assert.equal(dom.input.value, "/view /work/src/");
+    assert.equal(dom.input.value, "/view ~/work/src/");
   });
 
   it("clicking a /view folder drills down exactly one level", async () => {
@@ -419,13 +421,17 @@ describe("slash menu — Tab vs Click behavior", () => {
       const data = isSrc
         ? {
             path: "/work/src",
+            pathDisplay: "~/work/src",
             parent: "/work",
+            parentDisplay: "~/work",
             truncated: false,
             entries: [{ name: "inner.ts", kind: "file", size: 12, mtime: 1 }],
           }
         : {
             path: "/work",
+            pathDisplay: "~/work",
             parent: "/",
+            parentDisplay: "/",
             truncated: false,
             entries: [{ name: "src", kind: "dir", size: null, mtime: 1 }],
           };
@@ -447,10 +453,10 @@ describe("slash menu — Tab vs Click behavior", () => {
     folder.dispatchEvent(new window.MouseEvent("mousedown", { bubbles: true }));
     await new Promise((r) => setTimeout(r, 10));
 
-    assert.equal(dom.input.value, "/view /work/src/");
+    assert.equal(dom.input.value, "/view ~/work/src/");
     assert.ok(
       fetchCalls.some(
-        (call) => call.url === "/api/v1/files/list?path=%2Fwork%2Fsrc%2F",
+        (call) => call.url === "/api/v1/files/list?path=~%2Fwork%2Fsrc%2F",
       ),
     );
     assert.match(dom.slashMenu.textContent, /inner\.ts/);

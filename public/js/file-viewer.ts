@@ -200,7 +200,7 @@ async function renderTextFile(
 
 /** Open a metadata-confirmed regular file in the responsive viewer. */
 export async function openFileInfo(info: api.FileInfo): Promise<void> {
-  const generation = showShell(info.path);
+  const generation = showShell(info.pathDisplay ?? info.path);
   if (info.kind !== "file") {
     showNotice("Not a regular file");
     return;

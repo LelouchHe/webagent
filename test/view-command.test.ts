@@ -30,6 +30,7 @@ describe("/view Enter dispatch", () => {
     fetchCalls = [];
     infoBody = {
       path: "/work/src",
+      pathDisplay: "~/work/src",
       name: "src",
       kind: "dir",
       size: 0,
@@ -58,13 +59,14 @@ describe("/view Enter dispatch", () => {
       fetchCalls[0],
       `/api/v1/files/info?path=${encodeURIComponent("/work/src")}`,
     );
-    assert.equal(dom.input.value, "/view /work/src/");
+    assert.equal(dom.input.value, "/view ~/work/src/");
     assert.equal(dom.fileViewer.hidden, true);
   });
 
   it("opens a relative file directly in the viewer", async () => {
     infoBody = {
       path: "/work/notes.md",
+      pathDisplay: "~/work/notes.md",
       name: "notes.md",
       kind: "file",
       size: 9,
@@ -83,13 +85,14 @@ describe("/view Enter dispatch", () => {
     );
     assert.equal(fetchCalls[1], infoBody.contentUrl);
     assert.equal(dom.fileViewer.hidden, false);
-    assert.equal(dom.fileViewerPath.textContent, "/work/notes.md");
+    assert.equal(dom.fileViewerPath.textContent, "~/work/notes.md");
     assert.match(dom.fileViewerContent.textContent, /file body/);
   });
 
   it("opens /view with no argument at the current cwd", async () => {
     infoBody = {
       path: "/work",
+      pathDisplay: "~/work",
       name: "work",
       kind: "dir",
       size: 0,
@@ -102,6 +105,6 @@ describe("/view Enter dispatch", () => {
       fetchCalls[0],
       `/api/v1/files/info?path=${encodeURIComponent("/work")}`,
     );
-    assert.equal(dom.input.value, "/view /work/");
+    assert.equal(dom.input.value, "/view ~/work/");
   });
 });

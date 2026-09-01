@@ -98,7 +98,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
 
 - `test/file-viewer-routes.test.ts`
   - Bearer-gated `info` / `list` and independently HMAC-signed `content`
-  - absolute / `~` / `..` / symlink canonicalization; relative and invalid path rejection
+  - absolute / `~` / `..` / symlink canonicalization, HOME-abbreviated display paths, relative/invalid rejection
   - directory listing order, hidden/special entry omission, and 2,000-entry truncation
   - regular-file guards for directories, FIFOs, and oversized non-text payloads
   - bounded text reads with truncation metadata; mutable content is never cached
@@ -313,7 +313,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
 - `test/slash-menu.test.ts`
   - Tab fills input without executing (top-level, notify submenu, config submenu)
   - query-dependent `fetchKey` partitioning, stale response suppression, and separate display/fill values
-  - `/view` cwd listing, local filtering, absolute Tab completion, and one-level folder drill-down
+  - `/view` cwd listing, local filtering, `~`-preserving Tab completion, and one-level folder drill-down
   - click on submenu item executes the command
 
 - `test/push-frontend.test.ts`
@@ -525,7 +525,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
 
 - `file-viewer.spec.ts`
   - mobile `/view` taps through one folder level and opens Markdown full-screen
-  - desktop `/view` opens a 50/50 right-hand split and close restores chat width
+  - desktop `/view` opens a 55%-up-to-800px right split and close restores chat width
 
 ### Mode / config persistence / inheritance / sync
 
