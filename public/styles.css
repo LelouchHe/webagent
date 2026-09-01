@@ -920,10 +920,6 @@ body {
 #slash-menu.active {
   display: block;
 }
-#slash-menu[data-path-prefix="/view"] .slash-item:not(.slash-placeholder) {
-  min-height: 44px;
-  justify-content: center;
-}
 
 .slash-item {
   padding: 6px 6px;
