@@ -141,6 +141,14 @@ function triggerDownload(info: api.FileInfo): void {
   const link = document.createElement("a");
   link.href = info.contentUrl!;
   link.download = info.name;
+  // Open in a new tab so the PWA's own page is never navigated into the
+  // attachment/download response. Without `target="_blank"` the hidden click
+  // navigates the current standalone window to the content URL, where there
+  // is no address bar or back button to return from (a dead-end that forces
+  // the user to kill and reopen the PWA). Matches the attachment bubbles in
+  // render-event.ts / input.ts.
+  link.target = "_blank";
+  link.rel = "noopener";
   link.hidden = true;
   document.body.appendChild(link);
   link.click();
