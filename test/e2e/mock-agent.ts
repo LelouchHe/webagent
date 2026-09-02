@@ -18,6 +18,7 @@ import {
 } from "@agentclientprotocol/sdk";
 import { randomUUID } from "node:crypto";
 import { Readable, Writable } from "node:stream";
+import type { McpServer, McpServerHttp } from "@agentclientprotocol/sdk";
 
 type SessionState = {
   cwd: string;
@@ -70,6 +71,7 @@ function createConfigOptions(): SessionConfigOption[] {
 
 class MockAgent implements Agent {
   private sessions = new Map<string, SessionState>();
+  private mcpServersBySession = new Map<string, McpServer[]>();
   private conn: AgentSideConnection;
   private toolCallCounter = 0;
   private pendingPrompts = new Map<string, PendingPrompt>();
@@ -77,6 +79,116 @@ class MockAgent implements Agent {
 
   constructor(conn: AgentSideConnection) {
     this.conn = conn;
+  }
+
+  /** Emit a plan update and park the prompt (assert-from-far e2e fixture). */
+  private runSlowPlanPrompt(sessionId: string): Promise<PromptResponse> {
+    void this.conn.sessionUpdate({
+      sessionId,
+      update: {
+        sessionUpdate: "plan",
+        entries: [
+          { content: "Waiting", priority: "medium", status: "pending" },
+          { content: "Working", priority: "medium", status: "in_progress" },
+          { content: "Finished", priority: "medium", status: "completed" },
+        ],
+      },
+    });
+    return new Promise<PromptResponse>((resolve) => {
+      this.pendingPrompts.set(sessionId, { resolve });
+    });
+  }
+
+  /** Park a prompt for later resolution (used by slow/cancel test branches). */
+  private runPendingPrompt(
+    sessionId: string,
+    retryCancelAttempts: number,
+  ): Promise<PromptResponse> {
+    this.retryCancelAttempts.set(sessionId, retryCancelAttempts);
+    return new Promise<PromptResponse>((resolve) => {
+      this.pendingPrompts.set(sessionId, { resolve });
+    });
+  }
+
+  private async runMcpEchoPrompt(
+    sessionId: string,
+    mcpServers: McpServer[],
+    echoArg: string,
+  ): Promise<PromptResponse> {
+    const result = await this.runMcpEchoRoundTrip(mcpServers, echoArg);
+    await this.conn.sessionUpdate({
+      sessionId,
+      update: {
+        sessionUpdate: "agent_message_chunk",
+        content: { type: "text", text: result },
+      },
+    });
+    return { stopReason: "end_turn" };
+  }
+
+  /**
+   * Perform a real MCP round trip against the Task Server definitions
+   * carried in ACP mcpServers: discover the http entry, initialize,
+   * list tools, and call the echo tool with its capability header. Returns
+   * a human-readable summary or the raw error for e2e assertions.
+   */
+  private async runMcpEchoRoundTrip(
+    mcpServers: McpServer[],
+    echoArg: string,
+  ): Promise<string> {
+    const httpCandidate = mcpServers.find((s) => "url" in s && "headers" in s);
+    if (!httpCandidate) return "E2E_MCP_RESULT: no http mcp server provided";
+    const entry = httpCandidate as unknown as McpServerHttp;
+    const bearer = entry.headers.find((h) => h.name === "Authorization");
+    if (!bearer) return "E2E_MCP_RESULT: missing Authorization header";
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+      Accept: "application/json, text/event-stream",
+      Authorization: bearer.value,
+    };
+    try {
+      const post = (body: unknown): Promise<any> =>
+        fetch(entry.url, {
+          method: "POST",
+          headers,
+          body: JSON.stringify(body),
+        }).then(async (res) => ({
+          status: res.status,
+          // 202 (notifications/initialized etc.) and 204 carry no body;
+          // only parse JSON when there is content to read.
+          body:
+            res.status === 204 || res.status === 202 ? null : await res.json(),
+        }));
+
+      const init = await post({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: {
+          protocolVersion: "2025-06-18",
+          capabilities: {},
+          clientInfo: { name: "mock-agent", version: "0.1.0" },
+        },
+      });
+      await post({ jsonrpc: "2.0", method: "notifications/initialized" });
+      const list = await post({ jsonrpc: "2.0", id: 2, method: "tools/list" });
+      const names = (list.body?.result?.tools ?? []).map(
+        (t: { name: string }) => t.name,
+      );
+      const call = await post({
+        jsonrpc: "2.0",
+        id: 3,
+        method: "tools/call",
+        params: { name: "echo", arguments: { text: echoArg } },
+      });
+      const content =
+        call.body?.result?.content
+          ?.map((c: { text?: string }) => c.text ?? "")
+          .join("") ?? JSON.stringify(call.body);
+      return `E2E_MCP_RESULT: ${init.status} tools=${names.join(",")} echo=${content}`;
+    } catch (error) {
+      return `E2E_MCP_RESULT: error ${error instanceof Error ? error.message : String(error)}`;
+    }
   }
 
   private async advertiseCommands(sessionId: string): Promise<void> {
@@ -109,6 +221,9 @@ class MockAgent implements Agent {
 
   async newSession(params: NewSessionRequest): Promise<NewSessionResponse> {
     const sessionId = randomUUID();
+    if (params.mcpServers.length > 0) {
+      this.mcpServersBySession.set(sessionId, params.mcpServers);
+    }
     const session = {
       cwd: params.cwd,
       configOptions: createConfigOptions(),
@@ -156,6 +271,7 @@ class MockAgent implements Agent {
     return { configOptions: session.configOptions };
   }
 
+  // eslint-disable-next-line complexity -- TODO: refactor E2E dispatch into a route table
   async prompt(params: PromptRequest): Promise<PromptResponse> {
     const text = params.prompt
       .filter((part) => part.type === "text")
@@ -164,31 +280,22 @@ class MockAgent implements Agent {
       .trim();
 
     if (text.startsWith("E2E_RETRY_CANCEL")) {
-      this.retryCancelAttempts.set(params.sessionId, 0);
-      return await new Promise<PromptResponse>((resolve) => {
-        this.pendingPrompts.set(params.sessionId, { resolve });
-      });
+      return await this.runPendingPrompt(params.sessionId, 0);
     }
 
     if (text.startsWith("E2E_SLOW_PLAN")) {
-      await this.conn.sessionUpdate({
-        sessionId: params.sessionId,
-        update: {
-          sessionUpdate: "plan",
-          entries: [
-            { content: "Waiting", priority: "medium", status: "pending" },
-            {
-              content: "Working",
-              priority: "medium",
-              status: "in_progress",
-            },
-            { content: "Finished", priority: "medium", status: "completed" },
-          ],
-        },
-      });
-      return await new Promise<PromptResponse>((resolve) => {
-        this.pendingPrompts.set(params.sessionId, { resolve });
-      });
+      return await this.runSlowPlanPrompt(params.sessionId);
+    }
+
+    if (text.startsWith("E2E_MCP_ECHO")) {
+      // Real MCP round trip against the Task Server the WebAgent attached
+      // through ACP mcpServers: discover the http entry, call initialize +
+      // tools/list + tools/call(echo), and surface the result as a message.
+      // This is the P0b transport proof: session capability → capability
+      // header → serving endpoint → echo result with the derived session.
+      const mcpServers = this.mcpServersBySession.get(params.sessionId) ?? [];
+      const echoArg = text.replace(/^E2E_MCP_ECHO\s*/, "").trim() || "hello";
+      return await this.runMcpEchoPrompt(params.sessionId, mcpServers, echoArg);
     }
 
     if (text.startsWith("E2E_SLOW_TOOL")) {

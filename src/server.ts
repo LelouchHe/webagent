@@ -9,6 +9,8 @@ import { agentKeyFromCommand } from "./agent-key.ts";
 import { Store } from "./store.ts";
 import { SessionManager } from "./session-manager.ts";
 import { TitleService } from "./title-service.ts";
+import { CapabilityStore } from "./mcp/capability.ts";
+import { createMcpEndpoint } from "./mcp/server.ts";
 import { createRequestHandler } from "./routes.ts";
 import { handleAgentEvent } from "./event-handler.ts";
 import { PushService } from "./push-service.ts";
@@ -97,7 +99,20 @@ setInterval(() => {
     .info("counters", { ...attachmentInterceptorCounters });
 }, ATTACHMENT_INTERCEPTOR_DUMP_MS).unref();
 
-const sessions = new SessionManager(store, config.default_cwd, config.data_dir);
+// Per-session MCP capability store; minted/revoked by SessionManager. The
+// Task Server MCP endpoint authenticates against it. Tokens are in-memory
+// only, so a restart invalidates every outstanding capability.
+const capabilities = new CapabilityStore();
+// Agent subprocesses run on the same host as WebAgent, so the Task Server
+// URL is always loopback even when the HTTP listener binds elsewhere.
+const mcpBaseUrl = `http://127.0.0.1:${config.port}`;
+const sessions = new SessionManager(
+  store,
+  config.default_cwd,
+  config.data_dir,
+  capabilities,
+  mcpBaseUrl,
+);
 const titleService = new TitleService(
   store,
   sessions,
@@ -170,6 +185,10 @@ const requestHandler = createRequestHandler({
   ticketStore,
   attachmentSecret,
   shareConfig: config.share,
+  mcpEndpoint: createMcpEndpoint({
+    capabilities,
+    isLiveSession: (sessionId) => sessions.liveSessions.has(sessionId),
+  }),
 });
 
 const server = createServer((req, res) => {

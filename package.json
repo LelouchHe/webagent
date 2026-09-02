@@ -60,6 +60,7 @@
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "^0.25.0",
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "@types/proper-lockfile": "^4.1.4",
     "@types/web-push": "^3.6.4",
     "better-sqlite3": "^12.6.2",

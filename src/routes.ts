@@ -163,6 +163,12 @@ export interface RequestHandlerDeps {
    *  requires `?sig=&exp=`; image upload returns a signed URL. When absent
    *  (legacy/tests), images are served unauthenticated. */
   attachmentSecret?: Buffer;
+  /**
+   * Optional MCP Task Server endpoint. When present, `/mcp` requests are
+   * dispatched here before the generic API router; the handler authenticates
+   * by per-session capability (see src/mcp/server.ts).
+   */
+  mcpEndpoint?: (req: IncomingMessage, res: ServerResponse) => Promise<boolean>;
 }
 
 /** Read the full request body as a string. */
@@ -555,6 +561,10 @@ export function createRequestHandler(
   // eslint-disable-next-line complexity -- TODO: refactor main route handler into smaller handlers
   return async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     const url = req.url ?? "/";
+
+    // --- MCP Task Server: claims /mcp before the auth gate (the endpoint
+    // is outside /api/** and authenticates by per-session capability).
+    if (deps.mcpEndpoint && (await deps.mcpEndpoint(req, res))) return;
 
     // --- Auth gate: any /api/** outside whitelist requires Bearer ---
     if (deps.authStore && url.startsWith("/api/")) {
