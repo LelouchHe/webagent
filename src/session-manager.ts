@@ -74,6 +74,8 @@ export interface ConsumeMessageResult {
  */
 export class SessionManager {
   readonly liveSessions = new Set<string>();
+  /** Sessions with a minted MCP capability awaiting ACP session/new. */
+  readonly creatingSessions = new Set<string>();
   readonly restoringSessions = new Set<string>();
   readonly sessionHasTitle = new Set<string>();
   readonly assistantBuffers = new Map<string, string>();
@@ -141,6 +143,19 @@ export class SessionManager {
   }
 
   /**
+   * MCP may connect while ACP session/new or session/load is still pending.
+   * Treat those capability-backed sessions as active for that narrow window;
+   * they are promoted to live only after persistence/ACP succeeds.
+   */
+  isMcpSessionActive(sessionId: string): boolean {
+    return (
+      this.liveSessions.has(sessionId) ||
+      this.creatingSessions.has(sessionId) ||
+      this.restoringSessions.has(sessionId)
+    );
+  }
+
+  /**
    * Mint a capability for one session and build its Task Server
    * `mcpServers` entry. Returns undefined (no MCP) when the server was not
    * configured with a capability store + base URL, keeping sessions
@@ -185,10 +200,32 @@ export class SessionManager {
     const cleaned = this.store.deleteEmptySessions(EMPTY_SESSION_MIN_AGE_S);
     for (const id of cleaned) {
       this.liveSessions.delete(id);
+      this.capabilities?.revokeBySession(id);
       this.agentCommandSnapshots.delete(id);
     }
     if (cleaned.length > 0)
       slog.info("cleaned empty session(s)", { count: cleaned.length });
+  }
+
+  /**
+   * Create the ACP session while exposing its freshly minted capability as an
+   * active initializing session. The caller promotes it to live only after
+   * local persistence succeeds.
+   */
+  private async createAgentSession(
+    bridge: SessionBridge,
+    webSessionId: string,
+    cwd: string,
+    options: { silent?: boolean; mcpServers?: AcpMcpServer[] },
+  ): Promise<{ sessionId: string; configOptions: ConfigOption[] }> {
+    this.creatingSessions.add(webSessionId);
+    try {
+      return await bridge.newSession(cwd, options);
+    } catch (error) {
+      this.creatingSessions.delete(webSessionId);
+      this.capabilities?.revokeBySession(webSessionId);
+      throw error;
+    }
   }
 
   /** Create a new session in both bridge and store, inheriting the source session's config. */
@@ -220,7 +257,9 @@ export class SessionManager {
     // create. The failed-persistence path below revokes it again.
     const mcpServers = this.buildTaskServers(webSessionId);
     const { sessionId: agentSessionId, configOptions: createdConfigOptions } =
-      await bridge.newSession(
+      await this.createAgentSession(
+        bridge,
+        webSessionId,
         sessionCwd,
         this.buildNewSessionOptions(opts?.silent, mcpServers),
       );
@@ -238,10 +277,12 @@ export class SessionManager {
         error: err,
       });
       bridge.discardUnboundSession?.(agentSessionId);
+      this.creatingSessions.delete(webSessionId);
       this.capabilities?.revokeBySession(webSessionId);
       throw err;
     }
     this.liveSessions.add(webSessionId);
+    this.creatingSessions.delete(webSessionId);
     this.recordConfigOptions(webSessionId, createdConfigOptions);
     bridge.sessionMapped?.(agentSessionId);
 
@@ -429,6 +470,7 @@ export class SessionManager {
         configOptions,
       };
     } catch (err) {
+      this.capabilities?.revokeBySession(sessionId);
       slog.error("restore failed", { error: err });
       throw err;
     } finally {

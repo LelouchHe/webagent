@@ -1,11 +1,69 @@
 import { describe, it, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
+import http from "node:http";
+import type { AddressInfo } from "node:net";
 import { join } from "node:path";
 import { homedir, tmpdir } from "node:os";
 import { Store } from "../src/store.ts";
 import { SessionManager } from "../src/session-manager.ts";
+import { CapabilityStore } from "../src/mcp/capability.ts";
+import { createMcpEndpoint } from "../src/mcp/server.ts";
 import type { ConfigOption } from "../src/types.ts";
+
+async function startMcpTestServer(
+  capabilities: CapabilityStore,
+  isActive: (sessionId: string) => boolean,
+): Promise<{ baseUrl: string; close: () => Promise<void> }> {
+  const endpoint = createMcpEndpoint({
+    capabilities,
+    isSessionActive: isActive,
+  });
+  const server = http.createServer((req, res) => {
+    void endpoint(req, res).then((handled) => {
+      if (!handled) {
+        res.writeHead(404);
+        res.end();
+      }
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const { port } = server.address() as AddressInfo;
+  return {
+    baseUrl: `http://127.0.0.1:${port}`,
+    close: () =>
+      new Promise<void>((resolve) => {
+        server.close(() => {
+          resolve();
+        });
+      }),
+  };
+}
+
+async function assertMcpInitialize(
+  url: string,
+  authorization: string,
+): Promise<void> {
+  const response = await fetch(`${url}/mcp`, {
+    method: "POST",
+    headers: {
+      Authorization: authorization,
+      "Content-Type": "application/json",
+      Accept: "application/json, text/event-stream",
+    },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "initialize",
+      params: {
+        protocolVersion: "2025-06-18",
+        capabilities: {},
+        clientInfo: { name: "session-manager-test", version: "1.0.0" },
+      },
+    }),
+  });
+  assert.equal(response.status, 200);
+}
 
 describe("SessionManager", () => {
   let store: Store;
@@ -33,6 +91,159 @@ describe("SessionManager", () => {
 
       assert.ok(sm.sessionHasTitle.has("s1"));
       assert.ok(!sm.sessionHasTitle.has("s2"));
+    });
+  });
+
+  describe("MCP capability lifecycle", () => {
+    it("allows MCP auto-connect while a new ACP session is being created", async () => {
+      const capabilities = new CapabilityStore();
+      const mcpSessionManagerRef: { current?: SessionManager } = {};
+      const mcpServer = await startMcpTestServer(capabilities, (sessionId) =>
+        mcpSessionManagerRef.current!.isMcpSessionActive(sessionId),
+      );
+      const mcpSessionManager = new SessionManager(
+        store,
+        tmpDir,
+        tmpDir,
+        capabilities,
+        mcpServer.baseUrl,
+      );
+      mcpSessionManagerRef.current = mcpSessionManager;
+
+      const bridge = {
+        async newSession(_cwd: string, options?: { mcpServers?: any[] }) {
+          const entry = options?.mcpServers?.[0] as {
+            headers: Array<{ name: string; value: string }>;
+          };
+          const authorization = entry.headers.find(
+            (header) => header.name === "Authorization",
+          )?.value;
+          assert.ok(authorization);
+          const sessionId = capabilities.resolve(
+            authorization.replace(/^Bearer\s+/, ""),
+          );
+          assert.ok(sessionId);
+          assert.equal(mcpSessionManager.liveSessions.has(sessionId), false);
+          assert.equal(mcpSessionManager.isMcpSessionActive(sessionId), true);
+          await assertMcpInitialize(mcpServer.baseUrl, authorization);
+          return { sessionId: "agent-new", configOptions: [] };
+        },
+        async setConfigOption() {
+          return [];
+        },
+        async loadSession() {
+          throw new Error("loadSession should not be called");
+        },
+      };
+
+      try {
+        const created = await mcpSessionManager.createSession(bridge);
+        assert.equal(
+          mcpSessionManager.liveSessions.has(created.sessionId),
+          true,
+        );
+        assert.equal(
+          mcpSessionManager.isMcpSessionActive(created.sessionId),
+          true,
+        );
+      } finally {
+        await mcpServer.close();
+      }
+    });
+
+    it("allows MCP auto-connect while an ACP session is being restored", async () => {
+      const sessionId = "restore-mcp";
+      store.createSession(sessionId, tmpDir);
+      const capabilities = new CapabilityStore();
+      const mcpSessionManagerRef: { current?: SessionManager } = {};
+      const mcpServer = await startMcpTestServer(
+        capabilities,
+        (activeSessionId) =>
+          mcpSessionManagerRef.current!.isMcpSessionActive(activeSessionId),
+      );
+      const mcpSessionManager = new SessionManager(
+        store,
+        tmpDir,
+        tmpDir,
+        capabilities,
+        mcpServer.baseUrl,
+      );
+      mcpSessionManagerRef.current = mcpSessionManager;
+
+      const bridge = {
+        async newSession() {
+          throw new Error("newSession should not be called");
+        },
+        async setConfigOption() {
+          return [];
+        },
+        async loadSession(
+          _webSessionId: string,
+          _cwd: string,
+          mcpServers?: any[],
+        ) {
+          const entry = mcpServers?.[0] as {
+            headers: Array<{ name: string; value: string }>;
+          };
+          const authorization = entry.headers.find(
+            (header) => header.name === "Authorization",
+          )?.value;
+          assert.ok(authorization);
+          assert.equal(mcpSessionManager.liveSessions.has(sessionId), false);
+          assert.equal(mcpSessionManager.isMcpSessionActive(sessionId), true);
+          await assertMcpInitialize(mcpServer.baseUrl, authorization);
+          return { sessionId, configOptions: [] };
+        },
+      };
+
+      try {
+        await mcpSessionManager.resumeSession(bridge, sessionId);
+        assert.equal(mcpSessionManager.liveSessions.has(sessionId), true);
+      } finally {
+        await mcpServer.close();
+      }
+    });
+
+    it("revokes a capability when ACP session creation fails", async () => {
+      const capabilities = new CapabilityStore();
+      let mintedSessionId: string | null = null;
+      let mintedToken: string | null = null;
+      const mcpSessionManager = new SessionManager(
+        store,
+        tmpDir,
+        tmpDir,
+        capabilities,
+        "http://127.0.0.1:1",
+      );
+      const bridge = {
+        async newSession(_cwd: string, options?: { mcpServers?: any[] }) {
+          const entry = options?.mcpServers?.[0] as {
+            headers: Array<{ name: string; value: string }>;
+          };
+          const authorization = entry.headers[0]?.value;
+          assert.ok(authorization);
+          mintedToken = authorization.replace(/^Bearer\s+/, "");
+          mintedSessionId = capabilities.resolve(mintedToken);
+          throw new Error("ACP startup failed");
+        },
+        async setConfigOption() {
+          return [];
+        },
+        async loadSession() {
+          throw new Error("loadSession should not be called");
+        },
+      };
+
+      await assert.rejects(() => mcpSessionManager.createSession(bridge), {
+        message: "ACP startup failed",
+      });
+      assert.ok(mintedSessionId);
+      assert.ok(mintedToken);
+      assert.equal(capabilities.resolve(mintedToken), null);
+      assert.equal(
+        mcpSessionManager.isMcpSessionActive(mintedSessionId),
+        false,
+      );
     });
   });
 

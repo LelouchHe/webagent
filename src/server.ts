@@ -187,7 +187,7 @@ const requestHandler = createRequestHandler({
   shareConfig: config.share,
   mcpEndpoint: createMcpEndpoint({
     capabilities,
-    isLiveSession: (sessionId) => sessions.liveSessions.has(sessionId),
+    isSessionActive: (sessionId) => sessions.isMcpSessionActive(sessionId),
   }),
 });
 

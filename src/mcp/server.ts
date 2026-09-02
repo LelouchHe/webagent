@@ -52,11 +52,11 @@ export interface McpEndpointOptions {
   /** Per-session capability store. */
   capabilities: CapabilityStore;
   /**
-   * Confirms a resolved session is still live (rejects capabilities of
-   * sessions that were replaced or removed without revoke — the ledge for
-   * S1's current_session_id fence).
+   * Confirms a resolved session is active. Creating/restoring sessions are
+   * included because the ACP agent may auto-connect before the bridge call
+   * returns and SessionManager promotes the session to live.
    */
-  isLiveSession: (webSessionId: string) => boolean;
+  isSessionActive: (webSessionId: string) => boolean;
   /** Mount path; the response `true` claims that path. */
   path?: string;
 }
@@ -77,7 +77,7 @@ export function createMcpEndpoint(
   options: McpEndpointOptions,
 ): (req: IncomingMessage, res: ServerResponse) => Promise<boolean> {
   const path = options.path ?? DEFAULT_PATH;
-  const { capabilities, isLiveSession } = options;
+  const { capabilities, isSessionActive } = options;
 
   return async (
     req: IncomingMessage,
@@ -109,7 +109,7 @@ export function createMcpEndpoint(
     // --- Capability gate (fail closed) ---
     const capability = capabilityFromRequest(req);
     const webSessionId = capability ? capabilities.resolve(capability) : null;
-    if (!webSessionId || !isLiveSession(webSessionId)) {
+    if (!webSessionId || !isSessionActive(webSessionId)) {
       res.writeHead(HTTP_STATUS.UNAUTHORIZED, {
         "Content-Type": "application/json",
         "WWW-Authenticate": "Bearer",

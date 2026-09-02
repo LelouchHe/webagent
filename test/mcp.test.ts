@@ -77,7 +77,7 @@ describe("createMcpEndpoint", () => {
   before(async () => {
     const handler = createMcpEndpoint({
       capabilities: caps,
-      isLiveSession: (id) => live.has(id),
+      isSessionActive: (id) => live.has(id),
     });
     server = http.createServer((req, res) => {
       void handler(req, res).then((handled) => {
@@ -124,7 +124,7 @@ describe("createMcpEndpoint", () => {
   it("leaves non-mcp paths for the router (returns false)", async () => {
     const handler = createMcpEndpoint({
       capabilities: caps,
-      isLiveSession: (id) => live.has(id),
+      isSessionActive: (id) => live.has(id),
     });
     const req = new http.IncomingMessage(null as never);
     const res = new http.ServerResponse(req);
