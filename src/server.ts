@@ -270,8 +270,8 @@ server.listen(config.port, config.host, () => {
   void (async () => {
     // S1 一次性上线切换：Root 必须存在后才能服务任何会话创建。
     // 幂等：Root 已存在即 no-op。失败即拒绝启动（fail closed）：
-    // 否则每次启动重复尝试，遗留状态不明。dogfood carry/快照由
-    // WEBAGENT_TASK_SWITCH env 门控（见 src/migration/task-switch.ts）。
+    // 否则每次启动重复尝试，遗留状态不明。无条件快照 + carry
+    // 见 src/migration/task-switch.ts。
     try {
       await runTaskSwitch(store, {
         dataDir: config.data_dir,
