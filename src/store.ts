@@ -14,6 +14,41 @@ export interface SessionRow {
   last_active_at: string;
   /** epoch ms; NULL = live; non-NULL = soft-deleted (kept alive for active shares). */
   deleted_at: number | null;
+  /** S1: 出生证明，Task 的唯一持久映射；NULL 仅存在于上线切换前的遗留行。 */
+  task_id: string | null;
+}
+
+export interface TaskRow {
+  id: string;
+  parent_id: string | null;
+  name: string;
+  brief: string | null;
+  workflow_status: string;
+  title: string | null;
+  cwd: string;
+  model: string | null;
+  mode: string | null;
+  reasoning_effort: string | null;
+  tts_policy: string | null;
+  voice_mode: string | null;
+  voice_verbosity: string | null;
+  voice_wrapper_fallback: number;
+  last_active_at: string;
+  deleted_at: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TaskInput {
+  id: string;
+  parentId?: string | null;
+  name: string;
+  brief?: string | null;
+  title?: string | null;
+  cwd: string;
+  model?: string | null;
+  mode?: string | null;
+  reasoningEffort?: string | null;
 }
 
 export interface AgentSessionRow {
@@ -32,6 +67,8 @@ export interface EventRow {
   /** Origin marker: 'user' | 'system' | 'agent' | 'msg:<id>'. NULL only on legacy rows that pre-date the column. */
   from_ref: string | null;
   created_at: string;
+  /** S1: Task 归属；跨执行查询（getTaskEvents）按此列聚合。 */
+  task_id: string | null;
 }
 
 export interface SubscriptionRow {
@@ -117,6 +154,8 @@ export interface AttachmentRow {
   width: number | null;
   height: number | null;
   created_at: string;
+  /** S1: Task 归属；跨 clear 保留的实现基础。 */
+  task_id: string | null;
 }
 
 export interface AttachmentInput {
@@ -426,6 +465,79 @@ export class Store {
         updated_at INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER) * 1000)
       );
     `);
+
+    // ---- S1: tasks + task ownership (2026-09) ----
+    // Task = 稳定工作身份（二进制），Session = 执行现场（进程）。sessions.task_id
+    // 是唯一持久映射；「当前 Session」= 该 Task 的活 Session（deleted_at IS NULL），
+    // 部分唯一索引强制同一时刻至多一个活现场。
+    // task_id 列在 schema 层可空：上线切换（src/migration/task-switch.ts）一次性
+    // 迁移负责 backfill/清理；运行时 API（createSession/saveEvent/insertAttachment）
+    // 始终携带 task_id，遗留 NULL 行只存在于切换前。
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS tasks (
+        id TEXT PRIMARY KEY,
+        parent_id TEXT REFERENCES tasks(id),
+        name TEXT NOT NULL,
+        brief TEXT,
+        workflow_status TEXT NOT NULL DEFAULT 'running',
+        title TEXT,
+        cwd TEXT NOT NULL,
+        model TEXT,
+        mode TEXT,
+        reasoning_effort TEXT,
+        tts_policy TEXT,
+        voice_mode TEXT,
+        voice_verbosity TEXT,
+        voice_wrapper_fallback INTEGER NOT NULL DEFAULT 0,
+        last_active_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now')),
+        deleted_at INTEGER,
+        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now')),
+        updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now'))
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS ux_tasks_name_per_parent
+        ON tasks(parent_id, name)
+        WHERE parent_id IS NOT NULL AND deleted_at IS NULL;
+      CREATE INDEX IF NOT EXISTS idx_tasks_parent ON tasks(parent_id);
+    `);
+
+    const taskSessCols = this.db
+      .prepare("PRAGMA table_info(sessions)")
+      .all() as Array<{ name: string }>;
+    const taskSessColNames = new Set(taskSessCols.map((c) => c.name));
+    if (!taskSessColNames.has("task_id")) {
+      this.db.exec(
+        "ALTER TABLE sessions ADD COLUMN task_id TEXT REFERENCES tasks(id)",
+      );
+    }
+    const taskEventCols = this.db
+      .prepare("PRAGMA table_info(events)")
+      .all() as Array<{ name: string }>;
+    const taskEventColNames = new Set(taskEventCols.map((c) => c.name));
+    if (!taskEventColNames.has("task_id")) {
+      this.db.exec(
+        "ALTER TABLE events ADD COLUMN task_id TEXT REFERENCES tasks(id)",
+      );
+    }
+    this.db.exec(
+      "CREATE INDEX IF NOT EXISTS idx_events_task ON events(task_id, id)",
+    );
+    const taskAttCols = this.db
+      .prepare("PRAGMA table_info(attachments)")
+      .all() as Array<{ name: string }>;
+    const taskAttColNames = new Set(taskAttCols.map((c) => c.name));
+    if (!taskAttColNames.has("task_id")) {
+      this.db.exec(
+        "ALTER TABLE attachments ADD COLUMN task_id TEXT REFERENCES tasks(id)",
+      );
+    }
+    this.db.exec(
+      "CREATE INDEX IF NOT EXISTS idx_attachments_task ON attachments(task_id)",
+    );
+    this.db.exec(`
+      CREATE UNIQUE INDEX IF NOT EXISTS ux_sessions_live_per_task
+        ON sessions(task_id)
+        WHERE task_id IS NOT NULL AND deleted_at IS NULL;
+    `);
   }
 
   createSession(
@@ -433,11 +545,15 @@ export class Store {
     cwd: string,
     source: string = "auto",
     agentSessionId: string = id,
+    /** S1: 出生证明——进程属于哪个 Task；转换后恒定必填。 */
+    taskId?: string | null,
   ): SessionRow {
     return this.db.transaction(() => {
       this.db
-        .prepare("INSERT INTO sessions (id, cwd, source) VALUES (?, ?, ?)")
-        .run(id, cwd, source);
+        .prepare(
+          "INSERT INTO sessions (id, cwd, source, task_id) VALUES (?, ?, ?, ?)",
+        )
+        .run(id, cwd, source, taskId ?? null);
       this.db
         .prepare(
           "INSERT INTO agent_sessions (agent_key, agent_session_id, web_session_id) VALUES (?, ?, ?)",
@@ -629,6 +745,230 @@ export class Store {
     return empties.map((r) => r.id);
   }
 
+  // ===== tasks (S1) + session retirement =====
+
+  /** task_id of a session（NULL 仅存在于切换前遗留行）。 */
+  private taskOfSession(sessionId: string): string | null {
+    return (
+      (
+        this.db
+          .prepare("SELECT task_id FROM sessions WHERE id = ?")
+          .get(sessionId) as { task_id: string | null } | undefined
+      )?.task_id ?? null
+    );
+  }
+
+  /**
+   * 退役 session 而不丢记录：置 deleted_at，Task 的活 session 谓词自然迁移。
+   * clear 的 store 原语；events/attachments 保留（task-owned）。
+   * share 感知的删除路径仍走 deleteSession。
+   */
+  retireSession(id: string): void {
+    this.db
+      .prepare("UPDATE sessions SET deleted_at = ? WHERE id = ?")
+      .run(Date.now(), id);
+  }
+
+  createTask(input: TaskInput): TaskRow {
+    this.db
+      .prepare(
+        `INSERT INTO tasks
+           (id, parent_id, name, brief, workflow_status, title, cwd, model, mode, reasoning_effort)
+         VALUES (?, ?, ?, ?, 'running', ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        input.id,
+        input.parentId ?? null,
+        input.name,
+        input.brief ?? null,
+        input.title ?? null,
+        input.cwd,
+        input.model ?? null,
+        input.mode ?? null,
+        input.reasoningEffort ?? null,
+      );
+    return this.getTask(input.id)!;
+  }
+
+  /** 活 Task 查询：soft-deleted（deleted_at）任务不可见。 */
+  getTask(id: string): TaskRow | undefined {
+    return this.db
+      .prepare("SELECT * FROM tasks WHERE id = ? AND deleted_at IS NULL")
+      .get(id) as TaskRow | undefined;
+  }
+
+  /** 全部活 Task，最近活跃在前。 */
+  listTasks(): TaskRow[] {
+    return this.db
+      .prepare(
+        `SELECT * FROM tasks WHERE deleted_at IS NULL
+         ORDER BY COALESCE(last_active_at, created_at) DESC`,
+      )
+      .all() as TaskRow[];
+  }
+
+  /** 改名/改标题/改简报；同父重名会命中唯一索引抛错。 */
+  renameTask(
+    id: string,
+    fields: { name?: string; title?: string | null; brief?: string | null },
+  ): void {
+    const updates: string[] = [];
+    const params: unknown[] = [];
+    if (fields.name !== undefined) {
+      updates.push("name = ?");
+      params.push(fields.name);
+    }
+    if (fields.title !== undefined) {
+      updates.push("title = ?");
+      params.push(fields.title);
+    }
+    if (fields.brief !== undefined) {
+      updates.push("brief = ?");
+      params.push(fields.brief);
+    }
+    if (updates.length === 0) return;
+    updates.push("updated_at = strftime('%Y-%m-%d %H:%M:%f', 'now')");
+    params.push(id);
+    this.db
+      .prepare(`UPDATE tasks SET ${updates.join(", ")} WHERE id = ?`)
+      .run(...params);
+  }
+
+  /** Task 级配置（终局：config 从 session 上移到 task）。 */
+  updateTaskConfig(id: string, configId: string, value: string): void {
+    const column = (
+      {
+        model: "model",
+        mode: "mode",
+        reasoning_effort: "reasoning_effort",
+        thought_level: "reasoning_effort",
+      } as Record<string, string>
+    )[configId];
+    if (!column) return;
+    this.db
+      .prepare(
+        `UPDATE tasks SET ${column} = ?, updated_at = strftime('%Y-%m-%d %H:%M:%f', 'now') WHERE id = ?`,
+      )
+      .run(value, id);
+  }
+
+  touchTaskLastActive(id: string): void {
+    this.db
+      .prepare(
+        `UPDATE tasks SET last_active_at = strftime('%Y-%m-%d %H:%M:%f', 'now') WHERE id = ?`,
+      )
+      .run(id);
+  }
+
+  /**
+   * 「当前 Session」= 该 Task 的活 Session。部分唯一索引
+   * ux_sessions_live_per_task 保证恒 ≤1 行；此查询返回 0..1 行。
+   */
+  getTaskLiveSession(taskId: string): SessionRow | undefined {
+    return this.db
+      .prepare(
+        `SELECT * FROM sessions
+         WHERE task_id = ? AND deleted_at IS NULL
+         ORDER BY created_at ASC LIMIT 1`,
+      )
+      .get(taskId) as SessionRow | undefined;
+  }
+
+  /**
+   * 跨执行聚合原始事件：task 一生的记录。events.id 是全局自增主键，
+   * 按它排序即得跨 session 的全局插入序；session 内 seq 不参与跨执行排序。
+   */
+  getTaskEvents(
+    taskId: string,
+    opts?: {
+      excludeThinking?: boolean;
+      afterId?: number;
+      limit?: number;
+    },
+  ): EventRow[] {
+    const hasLimit = opts?.limit != null && opts.limit > 0;
+    const conditions = ["task_id = ?"];
+    const params: unknown[] = [taskId];
+    if (opts?.afterId != null) {
+      conditions.push("id > ?");
+      params.push(opts.afterId);
+    }
+    if (opts?.excludeThinking) {
+      conditions.push("type != 'thinking'");
+    }
+    const where = conditions.join(" AND ");
+    if (hasLimit) {
+      const sql = `SELECT * FROM (SELECT * FROM events WHERE ${where} ORDER BY id DESC LIMIT ?) ORDER BY id`;
+      params.push(opts.limit);
+      return this.db.prepare(sql).all(...params) as EventRow[];
+    }
+    return this.db
+      .prepare(`SELECT * FROM events WHERE ${where} ORDER BY id`)
+      .all(...params) as EventRow[];
+  }
+
+  /** 附件按 task 聚合（跨 clear 保留的查询面）。 */
+  getTaskAttachments(taskId: string): AttachmentRow[] {
+    return this.db
+      .prepare(
+        `SELECT * FROM attachments WHERE task_id = ? ORDER BY created_at, rowid`,
+      )
+      .all(taskId) as AttachmentRow[];
+  }
+
+  /**
+   * 删除 Task（含整个子树）。Root（parent_id IS NULL）不可删除。
+   * S1 不做批准样式二次确认（阶段性简化，S3 恢复 design 语义）：
+   * 直接硬删子树 sessions/events/attachments/shares/bindings。
+   */
+  deleteTask(id: string): void {
+    this.db.transaction(() => {
+      const task = this.db
+        .prepare("SELECT * FROM tasks WHERE id = ?")
+        .get(id) as TaskRow | undefined;
+      if (!task) return;
+      if (task.parent_id === null) {
+        throw new Error("root task cannot be deleted");
+      }
+      const subtree = this.db
+        .prepare(
+          `WITH RECURSIVE subtree(id, depth) AS (
+             SELECT ?, 0 UNION ALL
+             SELECT t.id, s.depth + 1 FROM tasks t JOIN subtree s ON t.parent_id = s.id
+           )
+           SELECT id FROM subtree ORDER BY depth DESC`,
+        )
+        .all(id) as Array<{ id: string }>;
+      const ids = subtree.map((r) => r.id);
+      const placeholders = ids.map(() => "?").join(", ");
+
+      const sessions = this.db
+        .prepare(`SELECT id FROM sessions WHERE task_id IN (${placeholders})`)
+        .all(...ids) as Array<{ id: string }>;
+      const delShare = this.db.prepare(
+        "DELETE FROM shares WHERE session_id = ?",
+      );
+      const delOps = this.db.prepare(
+        "DELETE FROM client_ops WHERE session_id = ?",
+      );
+      const delEvents = this.db.prepare(
+        "DELETE FROM events WHERE session_id = ?",
+      );
+      for (const s of sessions) {
+        delShare.run(s.id);
+        delOps.run(s.id);
+        delEvents.run(s.id);
+      }
+      // sessions 删除级联 attachments（FK CASCADE）+ agent_sessions。
+      this.db
+        .prepare(`DELETE FROM sessions WHERE task_id IN (${placeholders})`)
+        .run(...ids);
+      // tasks 自引用 FK（parent_id → tasks.id）；按 depth DESC（叶子先）逐个删。
+      const delTask = this.db.prepare("DELETE FROM tasks WHERE id = ?");
+      for (const r of subtree) delTask.run(r.id);
+    })();
+  }
+
   updateSessionTitle(id: string, title: string): void {
     this.db
       .prepare("UPDATE sessions SET title = ? WHERE id = ?")
@@ -686,9 +1026,16 @@ export class Store {
 
     this.db
       .prepare(
-        "INSERT INTO events (session_id, seq, type, data, from_ref) VALUES (?, ?, ?, ?, ?)",
+        "INSERT INTO events (session_id, seq, type, data, from_ref, task_id) VALUES (?, ?, ?, ?, ?, ?)",
       )
-      .run(sessionId, seq, type, JSON.stringify(data), fromRef);
+      .run(
+        sessionId,
+        seq,
+        type,
+        JSON.stringify(data),
+        fromRef,
+        this.taskOfSession(sessionId),
+      );
 
     return this.db
       .prepare("SELECT * FROM events WHERE session_id = ? AND seq = ?")
@@ -1028,16 +1375,18 @@ export class Store {
         "SELECT COALESCE(MAX(seq), 0) AS s FROM events WHERE session_id = ?",
       )
       .get(input.sessionId) as { s: number };
+    const taskId = this.taskOfSession(input.sessionId);
     const uploadSeq = seqRow.s;
     this.db
       .prepare(
         `INSERT INTO attachments
-           (id, session_id, kind, name, mime, size, realpath, upload_seq, width, height)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           (id, session_id, task_id, kind, name, mime, size, realpath, upload_seq, width, height)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         input.id,
         input.sessionId,
+        taskId,
         input.kind,
         input.name,
         input.mime,
