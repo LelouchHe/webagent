@@ -842,6 +842,28 @@ export class Store {
     );
   }
 
+  /** S1 生效配置：task 优先，退化 session 行（遗留）。mode/model/reasoning_effort */
+  getSessionEffectiveConfig(sessionId: string): {
+    mode: string | null;
+    model: string | null;
+    reasoning_effort: string | null;
+  } {
+    const row = this.db
+      .prepare("SELECT * FROM sessions WHERE id = ?")
+      .get(sessionId) as SessionRow | undefined;
+    if (!row) return { mode: null, model: null, reasoning_effort: null };
+    const task = row.task_id
+      ? (this.db
+          .prepare("SELECT * FROM tasks WHERE id = ?")
+          .get(row.task_id) as TaskRow | undefined)
+      : undefined;
+    return {
+      mode: task?.mode ?? row.mode,
+      model: task?.model ?? row.model,
+      reasoning_effort: task?.reasoning_effort ?? row.reasoning_effort,
+    };
+  }
+
   /**
    * 退役 session 而不丢记录：置 deleted_at，Task 的活 session 谓词自然迁移。
    * clear 的 store 原语；events/attachments 保留（task-owned）。

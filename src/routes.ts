@@ -1124,6 +1124,10 @@ export function createRequestHandler(
         sessions.syncPendingPermissions(sessionId);
         const runtimeState = sessions.state.getState(sessionId);
         const lastEventSeq = store.getLastEventSeq(sessionId);
+        // S1：config 落点在 task（session 行仅遗留）；snapshot 读 task 生效值
+        const snapTask = session.task_id
+          ? store.getTask(session.task_id)
+          : null;
         json(
           res,
           HTTP_STATUS.OK,
@@ -1135,8 +1139,8 @@ export function createRequestHandler(
               title: session.title,
               cwd: session.cwd,
               cwdDisplay: abbreviateHomePath(session.cwd),
-              model: session.model,
-              mode: session.mode,
+              model: snapTask?.model ?? session.model,
+              mode: snapTask?.mode ?? session.mode,
               createdAt: session.created_at,
               lastEventSeq,
             },
@@ -1881,11 +1885,16 @@ export function createRequestHandler(
                 .then(() => {
                   const cur = store.getSession(sessionId);
                   if (!cur || !sessions.cachedConfigOptions.length) return;
+                  // S1：config 落点在 task；warm 广播也读 task 生效值
+                  const warmTask = cur.task_id
+                    ? store.getTask(cur.task_id)
+                    : null;
                   const opts = sessions.cachedConfigOptions.map((opt) => {
                     const stored: Record<string, string | null> = {
-                      model: cur.model,
-                      mode: cur.mode,
-                      reasoning_effort: cur.reasoning_effort,
+                      model: warmTask?.model ?? cur.model,
+                      mode: warmTask?.mode ?? cur.mode,
+                      reasoning_effort:
+                        warmTask?.reasoning_effort ?? cur.reasoning_effort,
                     };
                     const override = stored[opt.id];
                     return override && "options" in opt
@@ -1925,14 +1934,19 @@ export function createRequestHandler(
           }
           // Re-read session in case resume mutated stored config
           const freshSession = store.getSession(sessionId) ?? session;
+          const freshTask = freshSession.task_id
+            ? store.getTask(freshSession.task_id)
+            : null;
           const configOptions = sessions
             ? (() => {
-                // Build configOptions from cached + stored overrides
+                // Build configOptions from cached + stored overrides (S1: task)
                 const opts = sessions.cachedConfigOptions.map((opt) => {
                   const stored: Record<string, string | null> = {
-                    model: freshSession.model,
-                    mode: freshSession.mode,
-                    reasoning_effort: freshSession.reasoning_effort,
+                    model: freshTask?.model ?? freshSession.model,
+                    mode: freshTask?.mode ?? freshSession.mode,
+                    reasoning_effort:
+                      freshTask?.reasoning_effort ??
+                      freshSession.reasoning_effort,
                   };
                   const override = stored[opt.id];
                   return override && "options" in opt
@@ -1951,8 +1965,8 @@ export function createRequestHandler(
               cwdDisplay: abbreviateHomePath(freshSession.cwd),
               title: freshSession.title,
               source: freshSession.source,
-              model: freshSession.model,
-              mode: freshSession.mode,
+              model: freshTask?.model ?? freshSession.model,
+              mode: freshTask?.mode ?? freshSession.mode,
               configOptions,
             },
             req,

@@ -185,7 +185,7 @@ function maybeAutoApprovePermission(
   bridge: AgentBridge,
   sseManager: SseManager,
 ): boolean {
-  const mode = store.getSession(event.sessionId)?.mode ?? "";
+  const { mode } = store.getSessionEffectiveConfig(event.sessionId);
   if (!isAutopilotMode(mode)) return false;
   const opt = event.options.find(
     (o: { kind?: string }) => o.kind === "allow_once",
