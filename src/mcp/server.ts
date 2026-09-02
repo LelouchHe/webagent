@@ -41,6 +41,10 @@ export function buildTaskServerEntry(
     name: TASK_SERVER_NAME,
     url: `${base}${DEFAULT_PATH}`,
     headers: [{ name: "Authorization", value: `Bearer ${capability}` }],
+    // ACP reserves _meta for extension metadata. pi-acp translates this
+    // generic direct-tools hint into the adapter's internal setting; agents
+    // that do not understand it can safely ignore the metadata.
+    _meta: { directTools: true },
   };
 }
 

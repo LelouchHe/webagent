@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 import { CapabilityStore } from "../src/mcp/capability.ts";
-import { createMcpEndpoint } from "../src/mcp/server.ts";
+import { buildTaskServerEntry, createMcpEndpoint } from "../src/mcp/server.ts";
 
 // --- CapabilityStore ---
 
@@ -48,6 +48,21 @@ describe("CapabilityStore", () => {
     caps.clear();
     assert.equal(caps.resolve(a), null);
     assert.equal(caps.resolve(b), null);
+  });
+});
+
+describe("buildTaskServerEntry", () => {
+  it("builds an HTTP ACP server entry with direct tools enabled", () => {
+    assert.deepEqual(
+      buildTaskServerEntry("mcp_test", "http://127.0.0.1:6800/"),
+      {
+        type: "http",
+        name: "webagent-task",
+        url: "http://127.0.0.1:6800/mcp",
+        headers: [{ name: "Authorization", value: "Bearer mcp_test" }],
+        _meta: { directTools: true },
+      },
+    );
   });
 });
 
