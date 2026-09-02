@@ -511,6 +511,13 @@ export function handleAgentEvent(
     sessions.restoringSessions.has(event.sessionId)
   )
     return;
+  // S1 旧现场 fence：非其 task 活 Session 的迟到事件拒收（不持久、不广播）
+  if (
+    "sessionId" in event &&
+    event.sessionId &&
+    !sessions.isCurrentExecution(event.sessionId)
+  )
+    return;
   const suppress = dispatchAgentEvent(
     event,
     sessions,

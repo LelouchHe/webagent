@@ -107,8 +107,44 @@ describe("handleAgentEvent", () => {
     assert.ok(events.some((e) => e.type === "thinking"));
   });
 
+  it("drops late events from a retired execution (S1 fence)", () => {
+    const tid = "fence-task";
+    store.createTask({ id: tid, name: "fence", cwd: tmpDir });
+    store.createSession("live", tmpDir, "auto", "live", tid);
+    sessions.rebuildTaskLiveSessions();
+
+    const { bridge } = createMockBridge();
+    const { sseManager, broadcasted } = createMockSseManager();
+
+    // live 阶段：广播 + 缓冲
+    handleAgentEvent(
+      { type: "message_chunk", sessionId: "live", text: "ok" } as any,
+      sessions,
+      store,
+      bridge,
+      makeEventHandlerConfig(),
+      sseManager as any,
+    );
+    assert.equal(broadcasted.length, 1);
+
+    // 退役 + 重建镜像 → 旧现场的迟到事件不广播、不持久
+    store.retireSession("live");
+    sessions.rebuildTaskLiveSessions();
+    handleAgentEvent(
+      { type: "message_chunk", sessionId: "live", text: "late" } as any,
+      sessions,
+      store,
+      bridge,
+      makeEventHandlerConfig(),
+      sseManager as any,
+    );
+    assert.equal(broadcasted.length, 1); // 无新广播
+    assert.equal(sessions.assistantBuffers.get("live"), "ok"); // 缓冲未追加
+  });
+
   it("saves tool_call events to store and broadcasts", () => {
     store.createSession("s1", "/tmp");
+
     const { bridge } = createMockBridge();
     const { sseManager, broadcasted } = createMockSseManager();
 

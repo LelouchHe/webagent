@@ -768,6 +768,17 @@ export class Store {
     );
   }
 
+  /** 活 Root 的 id（无 Root 时 undefined）。 */
+  getRootTaskId(): string | undefined {
+    return (
+      this.db
+        .prepare(
+          "SELECT id FROM tasks WHERE parent_id IS NULL AND deleted_at IS NULL LIMIT 1",
+        )
+        .get() as { id: string } | undefined
+    )?.id;
+  }
+
   /** 是否存在遗留（即将导前、未被 task 收养）的 session。 */
   hasLegacySessions(): boolean {
     return (

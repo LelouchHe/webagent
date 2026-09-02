@@ -3,8 +3,8 @@ import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { rm } from "node:fs/promises";
 import { stat } from "node:fs/promises";
-import { join } from "node:path";
-import { MessageNotFoundError, type Store } from "./store.ts";
+import { basename, join } from "node:path";
+import { MessageNotFoundError, type Store, type SessionRow } from "./store.ts";
 import type { AgentBridge } from "./bridge.ts";
 import { buildMcpServerEntry } from "./mcp/server.ts";
 import type { CapabilityStore } from "./mcp/capability.ts";
@@ -105,6 +105,8 @@ export class SessionManager {
    * DELETE. Lookup is cheap (Map.get); rebuild is one SQLite query.
    */
   private readonly attachmentLabelCache = new Map<string, LabelMap>();
+  /** S1: taskId → 活 Session 镜像（热路径缓存；DB 是权威，可 rebuild）。 */
+  private readonly taskLiveSessions = new Map<string, string>();
   private readonly agentCommandSnapshots = new Map<
     string,
     AgentCommandSnapshot
@@ -153,6 +155,88 @@ export class SessionManager {
       this.creatingSessions.has(sessionId) ||
       this.restoringSessions.has(sessionId)
     );
+  }
+
+  /**
+   * S1「当前 Session」镜像：taskId → 活 sessionId。启动（switch 后）/测试
+   * 调用 rebuildTaskLiveSessions() 灌入；create/clear 写点同步更新。
+   * DB（sessions.task_id + deleted_at + 部分唯一索引）始终是权威。
+   */
+  rebuildTaskLiveSessions(): void {
+    this.taskLiveSessions.clear();
+    for (const task of this.store.listTasks()) {
+      const live = this.store.getTaskLiveSession(task.id);
+      if (live) this.taskLiveSessions.set(task.id, live.id);
+    }
+  }
+
+  getLiveSessionForTask(taskId: string): string | undefined {
+    return this.taskLiveSessions.get(taskId);
+  }
+
+  /**
+   * S1 旧现场 fence：入站 session 必须仍是其 task 的活 Session
+   * （creating/restoring 窗口放行）。内部静默 session（无 sessions 行）
+   * 与切换前遗留行（无 task_id）保持原行为（放行）。
+   */
+  isCurrentExecution(sessionId: string): boolean {
+    if (this.creatingSessions.has(sessionId)) return true;
+    if (this.restoringSessions.has(sessionId)) return true;
+    const row = this.store.getSessionIncludingDeleted(sessionId);
+    if (!row?.task_id) return true;
+    return this.taskLiveSessions.get(row.task_id) === sessionId;
+  }
+
+  /** 确保 Root 存在（上线切换后恒真；首启/旧测试环境自足）。 */
+  private ensureRootTask(): void {
+    if (this.store.hasRootTask()) return;
+    this.store.createTask({
+      id: randomUUID(),
+      name: "root",
+      cwd: this.defaultCwd,
+    });
+  }
+
+  /**
+   * 为新 session 解析所属 task：显式 taskId 直用；否则在 Root 下自动建
+   * 子 Task（legacy /new 语义 = 新建一份工作）。
+   */
+  private resolveTaskForNewSession(
+    cwd: string,
+    taskId?: string,
+    title: string | null = null,
+  ): string {
+    if (taskId) {
+      if (!this.store.getTask(taskId)) {
+        throw new Error(`task not found: ${taskId}`);
+      }
+      return taskId;
+    }
+    this.ensureRootTask();
+    const rootId = this.store.getRootTaskId();
+    if (!rootId) throw new Error("no root task to attach new session");
+    const id = randomUUID();
+    this.store.createTask({
+      id,
+      parentId: rootId,
+      name: this.pickChildName(rootId, basename(cwd) || "task"),
+      cwd,
+      title,
+    });
+    return id;
+  }
+
+  /** 同父下取未占用名字：冲突追加 " 2"、" 3"… */
+  private pickChildName(parentId: string, base: string): string {
+    const taken = new Set(
+      this.store
+        .listTasks()
+        .filter((t) => t.parent_id === parentId && t.name.startsWith(base))
+        .map((t) => t.name),
+    );
+    let candidate = base;
+    for (let n = 2; taken.has(candidate); n++) candidate = `${base} ${n}`;
+    return candidate;
   }
 
   /**
@@ -234,7 +318,7 @@ export class SessionManager {
     cwd?: string,
     inheritFromSessionId?: string,
     source: string = "auto",
-    opts?: { silent?: boolean },
+    opts?: { silent?: boolean; taskId?: string; retireSessionId?: string },
   ): Promise<{ sessionId: string; configOptions: ConfigOption[] }> {
     const sessionCwd = expandHomePath(cwd ?? this.defaultCwd);
     try {
@@ -251,6 +335,15 @@ export class SessionManager {
       ? this.store.getSession(inheritFromSessionId)
       : null;
     const webSessionId = randomUUID();
+    // S1：每个 session 必须绑定 task。无显式 taskId 时在 Root 下自动建
+    // 子 Task（legacy "新建会话" = 新建一份工作）。clear 的旧现场退役
+    // 由 retireSessionId 在同一事务内完成。
+    const createdTaskForSession = opts?.taskId === undefined;
+    const taskId = this.resolveTaskForNewSession(
+      sessionCwd,
+      opts?.taskId,
+      sourceSession?.title ?? null,
+    );
     // Mint the session capability and build its mcpServers entry BEFORE the
     // ACP session exists (the definition is carried in session/new itself),
     // so a capability is only ever issued for a session we are about to
@@ -265,11 +358,13 @@ export class SessionManager {
       );
     let configOptions = createdConfigOptions;
     try {
-      this.store.createSession(
+      this.persistNewSession(
         webSessionId,
         sessionCwd,
         source,
         agentSessionId,
+        taskId,
+        opts?.retireSessionId,
       );
     } catch (err) {
       slog.warn("ACP session created but local persistence failed", {
@@ -279,47 +374,31 @@ export class SessionManager {
       bridge.discardUnboundSession?.(agentSessionId);
       this.creatingSessions.delete(webSessionId);
       this.capabilities?.revokeBySession(webSessionId);
+      // legacy 路径自动建的子 Task 未成功落库 → 回收，避免孤儿 task
+      if (createdTaskForSession) {
+        try {
+          this.store.deleteTask(taskId);
+        } catch {
+          // Root 或已不存在；不阻断原错误
+        }
+      }
       throw err;
     }
     this.liveSessions.add(webSessionId);
     this.creatingSessions.delete(webSessionId);
+    this.taskLiveSessions.set(taskId, webSessionId);
     this.recordConfigOptions(webSessionId, createdConfigOptions);
     bridge.sessionMapped?.(agentSessionId);
 
     // Inherit config options from source session
     if (sourceSession) {
-      const thinkingOption = createdConfigOptions.find(
-        (option) =>
-          "options" in option &&
-          (option.id === "reasoning_effort" ||
-            option.id === "thought_level" ||
-            option.category === "thought_level"),
+      configOptions = await this.applyInheritedConfig(
+        bridge,
+        webSessionId,
+        configOptions,
+        createdConfigOptions,
+        sourceSession,
       );
-      const inherited: Array<{ configId: string; value: string | null }> = [
-        { configId: "model", value: sourceSession.model },
-        {
-          configId: thinkingOption?.id ?? "reasoning_effort",
-          value: sourceSession.reasoning_effort,
-        },
-      ];
-      for (const { configId, value } of inherited) {
-        if (!value) continue;
-        try {
-          const updatedConfigOptions = await bridge.setConfigOption(
-            webSessionId,
-            configId,
-            value,
-          );
-          if (updatedConfigOptions.length > 0) {
-            configOptions = updatedConfigOptions;
-            this.recordConfigOptions(webSessionId, updatedConfigOptions);
-          } else {
-            this.store.updateSessionConfig(webSessionId, configId, value);
-          }
-        } catch {
-          // Option may no longer be available; ignore
-        }
-      }
     }
 
     const session = this.store.getSession(webSessionId);
@@ -329,6 +408,78 @@ export class SessionManager {
         ? this.applyStoredConfig(configOptions, session)
         : [],
     };
+  }
+
+  /**
+   * 单事务落库：clear 场景 = 旧现场退役 + 新现场创建（单活不变量原子达成）。
+   */
+  private persistNewSession(
+    webSessionId: string,
+    cwd: string,
+    source: string,
+    agentSessionId: string,
+    taskId: string,
+    retireSessionId?: string,
+  ): void {
+    this.store.transaction(() => {
+      if (retireSessionId) {
+        this.store.retireSession(retireSessionId);
+      }
+      this.store.createSession(
+        webSessionId,
+        cwd,
+        source,
+        agentSessionId,
+        taskId,
+      );
+    });
+  }
+
+  /**
+   * 从 source session 继承 model/reasoning 等配置（既有行为）。
+   * 终局（Step 4）改从 task 继承。
+   */
+  private async applyInheritedConfig(
+    bridge: SessionBridge,
+    webSessionId: string,
+    configOptions: ConfigOption[],
+    createdConfigOptions2: ConfigOption[],
+    sourceSession: SessionRow,
+  ): Promise<ConfigOption[]> {
+    const thinkingOption = createdConfigOptions2.find(
+      (option) =>
+        "options" in option &&
+        (option.id === "reasoning_effort" ||
+          option.id === "thought_level" ||
+          option.category === "thought_level"),
+    );
+    const inherited: Array<{ configId: string; value: string | null }> = [
+      { configId: "model", value: sourceSession.model },
+      {
+        configId: thinkingOption?.id ?? "reasoning_effort",
+        value: sourceSession.reasoning_effort,
+      },
+    ];
+    let updated = configOptions;
+    for (const { configId, value } of inherited) {
+      if (!value) continue;
+      try {
+        const updatedConfigOptions = await bridge.setConfigOption(
+          webSessionId,
+          configId,
+          value,
+        );
+        if (updatedConfigOptions.length > 0) {
+          updated = updatedConfigOptions;
+          this.recordConfigOptions(webSessionId, updatedConfigOptions);
+        } else {
+          this.store.updateSessionConfig(webSessionId, configId, value);
+        }
+      } catch {
+        // Option may no longer be available; ignore
+      }
+    }
+    return updated;
   }
 
   /** Cache the ACP config schema and persist this session's current values. */
@@ -658,10 +809,8 @@ export class SessionManager {
     return cleared;
   }
 
-  /** Delete a session from store and clean up all state (including images). */
-  deleteSession(sessionId: string): void {
-    const mode = this.store.deleteSession(sessionId);
-    this.capabilities?.revokeBySession(sessionId);
+  /** 清掉一个 session 的全部内存运行态（buffers/状态/快照/权限等）。 */
+  private cleanupSessionRuntime(sessionId: string): void {
     this.liveSessions.delete(sessionId);
     this.sessionHasTitle.delete(sessionId);
     this.assistantBuffers.delete(sessionId);
@@ -680,6 +829,13 @@ export class SessionManager {
       if (perm.sessionId === sessionId) this.pendingPermissions.delete(reqId);
     }
     this.state.delete(sessionId);
+  }
+
+  /** Delete a session from store and clean up all state (including images). */
+  deleteSession(sessionId: string): void {
+    const mode = this.store.deleteSession(sessionId);
+    this.capabilities?.revokeBySession(sessionId);
+    this.cleanupSessionRuntime(sessionId);
     if (mode === "hard") {
       // Tombstoned sessions keep their attachments alive for the share viewer
       // (shared files still resolve via /s/:token/attachments/...). The reap
@@ -689,6 +845,37 @@ export class SessionManager {
         force: true,
       }).catch(() => {});
     }
+  }
+
+  /**
+   * S1 clear：同一 Task 换执行现场。旧现场退役（records 保留）+ 新现场
+   * 落库在同一事务内（createSession 内完成，单活不变量原子达成）；随后
+   * 清理旧现场运行态并 revoke 其 capability。失败时事务整体回滚。
+   */
+  async clearTask(
+    bridge: SessionBridge,
+    taskId: string,
+    opts?: { silent?: boolean },
+  ): Promise<{ sessionId: string; configOptions: ConfigOption[] }> {
+    const task = this.store.getTask(taskId);
+    if (!task) throw new Error(`task not found: ${taskId}`);
+    const oldId = this.taskLiveSessions.get(taskId);
+    const result = await this.createSession(
+      bridge,
+      task.cwd,
+      undefined,
+      "auto",
+      {
+        ...opts,
+        taskId,
+        retireSessionId: oldId,
+      },
+    );
+    if (oldId && oldId !== result.sessionId) {
+      this.capabilities?.revokeBySession(oldId);
+      this.cleanupSessionRuntime(oldId);
+    }
+    return result;
   }
 
   /** Flush assistant/thinking buffers to store. */

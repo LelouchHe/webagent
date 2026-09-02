@@ -277,6 +277,8 @@ server.listen(config.port, config.host, () => {
         dataDir: config.data_dir,
         defaultCwd: config.default_cwd,
       });
+      // S1 当前 Session 镜像：switch 后重建（Root/子 Task 的活 Session 落内存）
+      sessions.rebuildTaskLiveSessions();
     } catch (err) {
       console.error("[task-switch] migration failed:", err);
       process.exit(78);
