@@ -76,8 +76,7 @@ export class TitleService {
         .slice(0, 30);
       if (!cleaned) return;
 
-      this.store.updateSessionTitle(sessionId, cleaned);
-      this.sessions.sessionHasTitle.add(sessionId);
+      this.sessions.setSessionTitle(sessionId, cleaned);
       return cleaned;
     } finally {
       this.activeSourceSessions.delete(sessionId);

@@ -174,6 +174,42 @@ export class SessionManager {
     return this.taskLiveSessions.get(taskId);
   }
 
+  /** session → 其 task（无 session 行/无 task 绑定时为 undefined，过渡期回退）。 */
+  private resolveTaskForSession(sessionId: string): string | undefined {
+    return (
+      this.store.getSessionIncludingDeleted(sessionId)?.task_id ?? undefined
+    );
+  }
+
+  /**
+   * config 落点从 session 移到 task（S1）：调用方仍传 sessionId（执行面
+   * API 不动），存储写到 session 所属 task。无 task 绑定的遗留行回退写
+   * session（仅存在于切换前）。
+   */
+  updateSessionConfig(
+    sessionId: string,
+    configId: string,
+    value: string,
+  ): void {
+    const taskId = this.resolveTaskForSession(sessionId);
+    if (taskId) {
+      this.store.updateTaskConfig(taskId, configId, value);
+    } else {
+      this.store.updateSessionConfig(sessionId, configId, value);
+    }
+  }
+
+  /** 标题落点从 session 移到 task；sessionHasTitle 镜像同步。 */
+  setSessionTitle(sessionId: string, title: string | null): void {
+    const taskId = this.resolveTaskForSession(sessionId);
+    if (taskId) {
+      this.store.renameTask(taskId, { title });
+    } else {
+      this.store.updateSessionTitle(sessionId, title ?? "");
+    }
+    if (title) this.sessionHasTitle.add(sessionId);
+  }
+
   /**
    * S1 旧现场 fence：入站 session 必须仍是其 task 的活 Session
    * （creating/restoring 窗口放行）。内部静默 session（无 sessions 行）
@@ -334,6 +370,10 @@ export class SessionManager {
     const sourceSession = inheritFromSessionId
       ? this.store.getSession(inheritFromSessionId)
       : null;
+    // S1：配置继承来自 source 的 TASK（config 已上移 task）
+    const sourceTask = sourceSession?.task_id
+      ? this.store.getTask(sourceSession.task_id)
+      : null;
     const webSessionId = randomUUID();
     // S1：每个 session 必须绑定 task。无显式 taskId 时在 Root 下自动建
     // 子 Task（legacy "新建会话" = 新建一份工作）。clear 的旧现场退役
@@ -374,30 +414,26 @@ export class SessionManager {
       bridge.discardUnboundSession?.(agentSessionId);
       this.creatingSessions.delete(webSessionId);
       this.capabilities?.revokeBySession(webSessionId);
-      // legacy 路径自动建的子 Task 未成功落库 → 回收，避免孤儿 task
-      if (createdTaskForSession) {
-        try {
-          this.store.deleteTask(taskId);
-        } catch {
-          // Root 或已不存在；不阻断原错误
-        }
-      }
+      if (createdTaskForSession) this.reclaimOrphanTask(taskId);
       throw err;
     }
-    this.liveSessions.add(webSessionId);
-    this.creatingSessions.delete(webSessionId);
-    this.taskLiveSessions.set(taskId, webSessionId);
-    this.recordConfigOptions(webSessionId, createdConfigOptions);
-    bridge.sessionMapped?.(agentSessionId);
+    this.finalizeCreatedSession(
+      webSessionId,
+      taskId,
+      createdConfigOptions,
+      agentSessionId,
+      bridge,
+    );
 
-    // Inherit config options from source session
-    if (sourceSession) {
-      configOptions = await this.applyInheritedConfig(
+    // Inherit config options from source task (S1: config lives on task)
+    if (sourceTask) {
+      configOptions = await this.inheritTaskConfig(
         bridge,
         webSessionId,
         configOptions,
         createdConfigOptions,
-        sourceSession,
+        sourceTask,
+        taskId,
       );
     }
 
@@ -436,15 +472,16 @@ export class SessionManager {
   }
 
   /**
-   * 从 source session 继承 model/reasoning 等配置（既有行为）。
-   * 终局（Step 4）改从 task 继承。
+   * 从 source Task 继承 model/reasoning 到新 Task（/new 的"model 继承"体验）。
+   * bridge.setConfigOption 负责 agent 侧生效；持久化写到 target task。
    */
-  private async applyInheritedConfig(
+  private async inheritTaskConfig(
     bridge: SessionBridge,
     webSessionId: string,
     configOptions: ConfigOption[],
     createdConfigOptions2: ConfigOption[],
-    sourceSession: SessionRow,
+    sourceTask: { model: string | null; reasoning_effort: string | null },
+    targetTaskId: string,
   ): Promise<ConfigOption[]> {
     const thinkingOption = createdConfigOptions2.find(
       (option) =>
@@ -454,10 +491,10 @@ export class SessionManager {
           option.category === "thought_level"),
     );
     const inherited: Array<{ configId: string; value: string | null }> = [
-      { configId: "model", value: sourceSession.model },
+      { configId: "model", value: sourceTask.model },
       {
         configId: thinkingOption?.id ?? "reasoning_effort",
-        value: sourceSession.reasoning_effort,
+        value: sourceTask.reasoning_effort,
       },
     ];
     let updated = configOptions;
@@ -472,14 +509,37 @@ export class SessionManager {
         if (updatedConfigOptions.length > 0) {
           updated = updatedConfigOptions;
           this.recordConfigOptions(webSessionId, updatedConfigOptions);
-        } else {
-          this.store.updateSessionConfig(webSessionId, configId, value);
         }
+        this.store.updateTaskConfig(targetTaskId, configId, value);
       } catch {
         // Option may no longer be available; ignore
       }
     }
     return updated;
+  }
+
+  /** 回收 persist 失败时 legacy 路径自动建的孤儿子 Task（不阻断原错误）。 */
+  private reclaimOrphanTask(taskId: string): void {
+    try {
+      this.store.deleteTask(taskId);
+    } catch {
+      // Root 或已不存在
+    }
+  }
+
+  /** 创建成功收尾：live/creating 集合、task 镜像、config 记录、bridge 映射。 */
+  private finalizeCreatedSession(
+    webSessionId: string,
+    taskId: string,
+    createdConfigOptions: ConfigOption[],
+    agentSessionId: string,
+    bridge: SessionBridge,
+  ): void {
+    this.liveSessions.add(webSessionId);
+    this.creatingSessions.delete(webSessionId);
+    this.taskLiveSessions.set(taskId, webSessionId);
+    this.recordConfigOptions(webSessionId, createdConfigOptions);
+    bridge.sessionMapped?.(agentSessionId);
   }
 
   /** Cache the ACP config schema and persist this session's current values. */
@@ -488,11 +548,7 @@ export class SessionManager {
     this.cachedConfigOptions = configOptions;
     for (const option of configOptions) {
       if (typeof option.currentValue === "string") {
-        this.store.updateSessionConfig(
-          sessionId,
-          option.id,
-          option.currentValue,
-        );
+        this.updateSessionConfig(sessionId, option.id, option.currentValue);
       }
     }
   }
@@ -712,31 +768,46 @@ export class SessionManager {
     model: string | null;
     mode: string | null;
     reasoning_effort: string | null;
+    task_id?: string | null;
   }): ConfigOption[] {
-    return this.applyStoredConfig(this.cachedConfigOptions, session);
-  }
-
-  /** Override currentValue in configOptions with stored session values. */
-  private applyStoredConfig(
-    configOptions: ConfigOption[],
-    session: {
-      model: string | null;
-      mode: string | null;
-      reasoning_effort: string | null;
-    },
-  ): ConfigOption[] {
-    if (!configOptions.length) return configOptions;
-    const stored: Record<string, string | null> = {
+    const row: Pick<
+      SessionRow,
+      "model" | "mode" | "reasoning_effort" | "task_id"
+    > = {
       model: session.model,
       mode: session.mode,
       reasoning_effort: session.reasoning_effort,
-      thought_level: session.reasoning_effort,
+      task_id: session.task_id ?? null,
+    };
+    return this.applyStoredConfig(this.cachedConfigOptions, row);
+  }
+
+  /**
+   * Override currentValue in configOptions with stored values.
+   * S1：config 落点在 task（session 行仅 transition 前的遗留）；
+   * 先从 task 读，退化到 session 行。
+   */
+  private applyStoredConfig(
+    configOptions: ConfigOption[],
+    session: Pick<
+      SessionRow,
+      "model" | "mode" | "reasoning_effort" | "task_id"
+    >,
+  ): ConfigOption[] {
+    if (!configOptions.length) return configOptions;
+    const task = session.task_id ? this.store.getTask(session.task_id) : null;
+    const model = task?.model ?? session.model;
+    const mode = task?.mode ?? session.mode;
+    const reasoning = task?.reasoning_effort ?? session.reasoning_effort;
+    const stored: Record<string, string | null> = {
+      model,
+      mode,
+      reasoning_effort: reasoning,
+      thought_level: reasoning,
     };
     return configOptions.map((opt) => {
       const override =
-        opt.category === "thought_level"
-          ? session.reasoning_effort
-          : stored[opt.id];
+        opt.category === "thought_level" ? reasoning : stored[opt.id];
       if (override && "options" in opt)
         return { ...opt, currentValue: override };
       return opt;

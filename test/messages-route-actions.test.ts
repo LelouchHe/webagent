@@ -241,10 +241,22 @@ describe("POST /api/v1/messages/:id/consume + ack + DELETE", () => {
 
   it("reuses new-session config inheritance without inheriting mode", async () => {
     mkMsg("m-inherit");
-    store.createSession("source-session", tmpDir);
-    store.updateSessionConfig("source-session", "model", "inherited-model");
-    store.updateSessionConfig("source-session", "mode", "autopilot-mode");
-    store.updateSessionConfig("source-session", "reasoning_effort", "high");
+    // S1：源配置在 task 上
+    store.createTask({
+      id: "src-task",
+      name: "src",
+      cwd: tmpDir,
+      model: "inherited-model",
+      mode: "autopilot-mode",
+      reasoningEffort: "high",
+    });
+    store.createSession(
+      "source-session",
+      tmpDir,
+      "auto",
+      "source-session",
+      "src-task",
+    );
     sessions.cachedConfigOptions = [
       {
         type: "select",
@@ -273,9 +285,12 @@ describe("POST /api/v1/messages/:id/consume + ack + DELETE", () => {
     ]);
     const stored = store.getSession(sessionId);
     assert.ok(stored);
-    assert.equal(stored.model, "inherited-model");
-    assert.equal(stored.reasoning_effort, "high");
-    assert.equal(stored.mode, "agent-mode");
+    // config 落在新 session 所属 task，而非 session 行
+    const childTask = store.getTask(stored.task_id!);
+    assert.ok(childTask);
+    assert.equal(childTask.model, "inherited-model");
+    assert.equal(childTask.reasoning_effort, "high");
+    assert.equal(childTask.mode, "agent-mode"); // 默认 mode，未继承 autopilot-mode
 
     const response = await send(port, "GET", `/api/v1/sessions/${sessionId}`);
     const detail = JSON.parse(response.body) as {

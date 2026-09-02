@@ -17,6 +17,10 @@ describe("TitleService", () => {
     const sessions = {
       sessionHasTitle: new Set<string>(),
       liveSessions: new Set<string>(),
+      setSessionTitle(sessionId: string, title: string) {
+        store.updateSessionTitle(sessionId, title);
+        this.sessionHasTitle.add(sessionId);
+      },
     };
     const bridgeCalls = {
       newSession: [] as any[],
@@ -89,11 +93,15 @@ describe("TitleService", () => {
   it("skips setAgentConfigOption when modelPatterns is empty (inherit currentModelId)", async () => {
     const store = {
       registerInternalAgentSession() {},
-      updateSessionTitle() {},
+      updateSessionTitle(_sessionId: string, _title: string) {},
     };
     const sessions = {
       sessionHasTitle: new Set<string>(),
       liveSessions: new Set<string>(),
+      setSessionTitle(sessionId: string, title: string) {
+        store.updateSessionTitle(sessionId, title);
+        this.sessionHasTitle.add(sessionId);
+      },
     };
     const bridgeCalls = {
       setAgentConfigOption: [] as Array<{
@@ -144,11 +152,15 @@ describe("TitleService", () => {
   it("picks first matching model by case-insensitive substring (cheap-tier preference)", async () => {
     const store = {
       registerInternalAgentSession() {},
-      updateSessionTitle() {},
+      updateSessionTitle(_sessionId: string, _title: string) {},
     };
     const sessions = {
       sessionHasTitle: new Set<string>(),
       liveSessions: new Set<string>(),
+      setSessionTitle(sessionId: string, title: string) {
+        store.updateSessionTitle(sessionId, title);
+        this.sessionHasTitle.add(sessionId);
+      },
     };
     const bridgeCalls = {
       setAgentConfigOption: [] as Array<{
@@ -217,11 +229,15 @@ describe("TitleService", () => {
   it("falls back to currentModelId (no setAgentConfigOption) when no pattern matches", async () => {
     const store = {
       registerInternalAgentSession() {},
-      updateSessionTitle() {},
+      updateSessionTitle(_sessionId: string, _title: string) {},
     };
     const sessions = {
       sessionHasTitle: new Set<string>(),
       liveSessions: new Set<string>(),
+      setSessionTitle(sessionId: string, title: string) {
+        store.updateSessionTitle(sessionId, title);
+        this.sessionHasTitle.add(sessionId);
+      },
     };
     const bridgeCalls = {
       setAgentConfigOption: [] as any[],
@@ -266,13 +282,17 @@ describe("TitleService", () => {
   it("swallows title-session setup failure and returns nothing", async () => {
     const store = {
       registerInternalAgentSession() {},
-      updateSessionTitle() {
+      updateSessionTitle(_sessionId: string, _title: string) {
         throw new Error("should not be called");
       },
     };
     const sessions = {
       sessionHasTitle: new Set<string>(),
       liveSessions: new Set<string>(),
+      setSessionTitle(sessionId: string, title: string) {
+        store.updateSessionTitle(sessionId, title);
+        this.sessionHasTitle.add(sessionId);
+      },
     };
     const bridge = {
       async newSession() {
@@ -300,11 +320,15 @@ describe("TitleService", () => {
   it("generate calls the callback only when a title is produced", async () => {
     const store = {
       registerInternalAgentSession() {},
-      updateSessionTitle() {},
+      updateSessionTitle(_sessionId: string, _title: string) {},
     };
     const sessions = {
       sessionHasTitle: new Set<string>(),
       liveSessions: new Set<string>(),
+      setSessionTitle(sessionId: string, title: string) {
+        store.updateSessionTitle(sessionId, title);
+        this.sessionHasTitle.add(sessionId);
+      },
     };
     const bridge = {
       async newSession() {
@@ -331,11 +355,15 @@ describe("TitleService", () => {
   it("cancels title generation only for the matching source session", async () => {
     const store = {
       registerInternalAgentSession() {},
-      updateSessionTitle() {},
+      updateSessionTitle(_sessionId: string, _title: string) {},
     };
     const sessions = {
       sessionHasTitle: new Set<string>(),
       liveSessions: new Set<string>(),
+      setSessionTitle(sessionId: string, title: string) {
+        store.updateSessionTitle(sessionId, title);
+        this.sessionHasTitle.add(sessionId);
+      },
     };
     const cancelCalls: string[] = [];
     let releasePrompt: ((value: string) => void) | null = null;
@@ -370,13 +398,17 @@ describe("TitleService", () => {
   it("deduplicates in-flight title generation and allows retry after cancellation", async () => {
     const store = {
       registerInternalAgentSession() {},
-      updateSessionTitle() {
+      updateSessionTitle(_sessionId: string, _title: string) {
         throw new Error("should not be called");
       },
     };
     const sessions = {
       sessionHasTitle: new Set<string>(),
       liveSessions: new Set<string>(),
+      setSessionTitle(sessionId: string, title: string) {
+        store.updateSessionTitle(sessionId, title);
+        this.sessionHasTitle.add(sessionId);
+      },
     };
     const promptCalls: string[] = [];
     let releasePrompt: ((value: string) => void) | null = null;
@@ -423,6 +455,10 @@ describe("TitleService", () => {
     const sessions = {
       sessionHasTitle: new Set<string>(),
       liveSessions: new Set<string>(),
+      setSessionTitle(sessionId: string, title: string) {
+        store.updateSessionTitle(sessionId, title);
+        this.sessionHasTitle.add(sessionId);
+      },
     };
     let releasePrompt: ((value: string) => void) | null = null;
     const bridge = {
@@ -462,11 +498,15 @@ describe("TitleService", () => {
   it("invalidate() clears the cached title session so next generate creates a new one", async () => {
     const store = {
       registerInternalAgentSession() {},
-      updateSessionTitle() {},
+      updateSessionTitle(_sessionId: string, _title: string) {},
     };
     const sessions = {
       sessionHasTitle: new Set<string>(),
       liveSessions: new Set<string>(),
+      setSessionTitle(sessionId: string, title: string) {
+        store.updateSessionTitle(sessionId, title);
+        this.sessionHasTitle.add(sessionId);
+      },
     };
     let newSessionCalls = 0;
     const bridge = {

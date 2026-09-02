@@ -1706,7 +1706,11 @@ export function createRequestHandler(
           );
           for (const opt of configOptions) {
             if (typeof opt.currentValue === "string") {
-              store.updateSessionConfig(sessionId, opt.id, opt.currentValue);
+              sessions?.updateSessionConfig(
+                sessionId,
+                opt.id,
+                opt.currentValue,
+              );
             }
           }
           sseManager.broadcast({
@@ -1753,7 +1757,7 @@ export function createRequestHandler(
           });
           return;
         }
-        store.updateSessionTitle(sessionId, body.value);
+        sessions?.setSessionTitle(sessionId, body.value);
         if (sessions) sessions.sessionHasTitle.add(sessionId);
         const bridge = getBridge?.();
         if (titleService && bridge)

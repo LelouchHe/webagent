@@ -331,17 +331,23 @@ describe("SessionManager", () => {
   });
 
   describe("createSession", () => {
-    it("inherits config from the source session", async () => {
-      store.createSession("s1", "/x");
+    it("inherits config from the source task", async () => {
+      // S1：配置在 task 上（不再从 session 行继承）
+      store.createTask({
+        id: "source-task",
+        name: "src",
+        cwd: "/x",
+        model: "claude-sonnet-4.6",
+        mode: "plan-mode",
+        reasoningEffort: "high",
+      });
+      store.createSession("s1", "/x", "auto", "s1", "source-task");
       store.saveEvent(
         "s1",
         "user_message",
         { text: "hi" },
         { from_ref: "user" },
       );
-      store.updateSessionConfig("s1", "model", "claude-sonnet-4.6");
-      store.updateSessionConfig("s1", "mode", "plan-mode");
-      store.updateSessionConfig("s1", "reasoning_effort", "high");
       sm.cachedConfigOptions = [
         {
           type: "select",
@@ -426,26 +432,23 @@ describe("SessionManager", () => {
           { id: "reasoning_effort", currentValue: "high" },
         ],
       );
-      assert.equal(
-        store.getSession(created.sessionId)!.model,
-        "claude-sonnet-4.6",
-      );
-      assert.equal(store.getSession(created.sessionId)!.mode, "agent");
-      assert.equal(
-        store.getSession(created.sessionId)!.reasoning_effort,
-        "high",
-      );
+      // config 落点在新建的 child task（继承 model/reasoning；mode 取 agent 默认，不继承 plan-mode）
+      const child = store.listTasks().find((t) => t.parent_id !== null);
+      assert.ok(child);
+      assert.equal(child.model, "claude-sonnet-4.6");
+      assert.equal(child.reasoning_effort, "high");
+      assert.equal(child.mode, "agent");
     });
 
     it("inherits thinking through an agent's thought_level option", async () => {
-      store.createSession("s1", "/x");
-      store.saveEvent(
-        "s1",
-        "user_message",
-        { text: "hi" },
-        { from_ref: "user" },
-      );
-      store.updateSessionConfig("s1", "reasoning_effort", "high");
+      const srcTaskId = "think-task";
+      store.createTask({
+        id: srcTaskId,
+        name: "think",
+        cwd: "/x",
+        reasoningEffort: "high",
+      });
+      store.createSession("s1", "/x", "auto", "s1", srcTaskId);
       const configOptions: ConfigOption[] = [
         {
           type: "select",
@@ -483,10 +486,9 @@ describe("SessionManager", () => {
         { configId: "thought_level", value: "high" },
       ]);
       assert.equal(created.configOptions[0]?.currentValue, "high");
-      assert.equal(
-        store.getSession(created.sessionId)!.reasoning_effort,
-        "high",
-      );
+      const child = store.listTasks().find((t) => t.parent_id !== null);
+      assert.ok(child);
+      assert.equal(child.reasoning_effort, "high");
     });
 
     it("does not set config when no source session is provided", async () => {
