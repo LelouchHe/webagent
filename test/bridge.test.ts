@@ -206,7 +206,7 @@ describe("AgentBridge", () => {
     const mcpServers: import("@agentclientprotocol/sdk").McpServer[] = [
       {
         type: "http",
-        name: "webagent-task",
+        name: "webagent",
         url: "http://127.0.0.1:6800/mcp",
         headers: [{ name: "Authorization", value: "Bearer mcp_abc" }],
       },

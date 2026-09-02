@@ -164,7 +164,7 @@ export interface RequestHandlerDeps {
    *  (legacy/tests), images are served unauthenticated. */
   attachmentSecret?: Buffer;
   /**
-   * Optional MCP Task Server endpoint. When present, `/mcp` requests are
+   * Optional MCP server endpoint. When present, `/mcp` requests are
    * dispatched here before the generic API router; the handler authenticates
    * by per-session capability (see src/mcp/server.ts).
    */
@@ -562,7 +562,7 @@ export function createRequestHandler(
   return async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     const url = req.url ?? "/";
 
-    // --- MCP Task Server: claims /mcp before the auth gate (the endpoint
+    // --- MCP server: claims /mcp before the auth gate (the endpoint
     // is outside /api/** and authenticates by per-session capability).
     if (deps.mcpEndpoint && (await deps.mcpEndpoint(req, res))) return;
 

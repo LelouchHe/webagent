@@ -2,7 +2,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
 /**
- * Tool definitions for the WebAgent Task Server.
+ * Tool definitions for the WebAgent MCP server.
  *
  * P0b spike exposes a single `echo` tool to prove the transport path
  * (ACP `mcpServers` → pi-acp → pi-mcp-adapter → agent tool surface) before
@@ -18,7 +18,7 @@ import { z } from "zod";
  * The echo result includes it so the spike test can prove capability
  * derivation works end to end.
  */
-export function registerTaskTools(
+export function registerMcpTools(
   server: McpServer,
   webSessionId: string,
 ): void {

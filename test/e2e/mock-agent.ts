@@ -127,7 +127,7 @@ class MockAgent implements Agent {
   }
 
   /**
-   * Perform a real MCP round trip against the Task Server definitions
+   * Perform a real MCP round trip against the MCP server definitions
    * carried in ACP mcpServers: discover the http entry, initialize,
    * list tools, and call the echo tool with its capability header. Returns
    * a human-readable summary or the raw error for e2e assertions.
@@ -288,7 +288,7 @@ class MockAgent implements Agent {
     }
 
     if (text.startsWith("E2E_MCP_ECHO")) {
-      // Real MCP round trip against the Task Server the WebAgent attached
+      // Real MCP round trip against the MCP server the WebAgent attached
       // through ACP mcpServers: discover the http entry, call initialize +
       // tools/list + tools/call(echo), and surface the result as a message.
       // This is the P0b transport proof: session capability → capability

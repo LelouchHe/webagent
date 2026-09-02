@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 import { CapabilityStore } from "../src/mcp/capability.ts";
-import { buildTaskServerEntry, createMcpEndpoint } from "../src/mcp/server.ts";
+import { buildMcpServerEntry, createMcpEndpoint } from "../src/mcp/server.ts";
 
 // --- CapabilityStore ---
 
@@ -51,13 +51,13 @@ describe("CapabilityStore", () => {
   });
 });
 
-describe("buildTaskServerEntry", () => {
+describe("buildMcpServerEntry", () => {
   it("builds an HTTP ACP server entry with direct tools enabled", () => {
     assert.deepEqual(
-      buildTaskServerEntry("mcp_test", "http://127.0.0.1:6800/"),
+      buildMcpServerEntry("mcp_test", "http://127.0.0.1:6800/"),
       {
         type: "http",
-        name: "webagent-task",
+        name: "webagent",
         url: "http://127.0.0.1:6800/mcp",
         headers: [{ name: "Authorization", value: "Bearer mcp_test" }],
         _meta: { directTools: true },
@@ -187,7 +187,7 @@ describe("createMcpEndpoint", () => {
     const initBody = (await init.json()) as {
       result?: { serverInfo?: { name: string } };
     };
-    assert.equal(initBody.result?.serverInfo?.name, "webagent-task");
+    assert.equal(initBody.result?.serverInfo?.name, "webagent");
 
     // notifications/initialized — fire and forget, must not error
     const notif = await mcpPost(

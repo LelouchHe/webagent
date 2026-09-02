@@ -100,10 +100,10 @@ setInterval(() => {
 }, ATTACHMENT_INTERCEPTOR_DUMP_MS).unref();
 
 // Per-session MCP capability store; minted/revoked by SessionManager. The
-// Task Server MCP endpoint authenticates against it. Tokens are in-memory
+// MCP endpoint authenticates against it. Tokens are in-memory
 // only, so a restart invalidates every outstanding capability.
 const capabilities = new CapabilityStore();
-// Agent subprocesses run on the same host as WebAgent, so the Task Server
+// Agent subprocesses run on the same host as WebAgent, so the MCP server
 // URL is always loopback even when the HTTP listener binds elsewhere.
 const mcpBaseUrl = `http://127.0.0.1:${config.port}`;
 const sessions = new SessionManager(

@@ -3,11 +3,11 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import type { McpServer as AcpMcpServer } from "@agentclientprotocol/sdk";
 import type { CapabilityStore } from "./capability.ts";
-import { registerTaskTools } from "./tools.ts";
+import { registerMcpTools } from "./tools.ts";
 import { HTTP_STATUS } from "../http-status.ts";
 
 /**
- * WebAgent Task Server MCP endpoint.
+ * WebAgent MCP server endpoint.
  *
  * Serves the MCP control plane for ACP sessions over Streamable HTTP.
  * Each request is authenticated by the capability token minted for its
@@ -20,8 +20,8 @@ import { HTTP_STATUS } from "../http-status.ts";
  * the per-session capability, distinct from operator UI tokens.
  */
 
-/** Uniquely-named Task Server appended to an ACP session's mcpServers. */
-export const TASK_SERVER_NAME = "webagent-task";
+/** Uniquely-named WebAgent MCP server appended to an ACP session's mcpServers. */
+export const MCP_SERVER_NAME = "webagent";
 
 const DEFAULT_PATH = "/mcp";
 
@@ -31,14 +31,14 @@ const DEFAULT_PATH = "/mcp";
  * `authBaseUrl` is the WebAgent's own origin (e.g. `http://127.0.0.1:6800`);
  * the endpoint path is appended here so callers pass the base only.
  */
-export function buildTaskServerEntry(
+export function buildMcpServerEntry(
   capability: string,
   authBaseUrl: string,
 ): AcpMcpServer {
   const base = authBaseUrl.replace(/\/$/, "");
   return {
     type: "http",
-    name: TASK_SERVER_NAME,
+    name: MCP_SERVER_NAME,
     url: `${base}${DEFAULT_PATH}`,
     headers: [{ name: "Authorization", value: `Bearer ${capability}` }],
     // ACP reserves _meta for extension metadata. pi-acp translates this
@@ -117,7 +117,7 @@ export function createMcpEndpoint(
       res.end(
         JSON.stringify({
           jsonrpc: "2.0",
-          error: { code: -32001, message: "Unauthorized" },
+          error: { code: -32000, message: "Unauthorized" },
           id: null,
         }),
       );
@@ -126,10 +126,10 @@ export function createMcpEndpoint(
 
     // --- MCP protocol (stateless, one server+transport per request) ---
     const server = new McpServer(
-      { name: TASK_SERVER_NAME, version: "0.1.0" },
+      { name: MCP_SERVER_NAME, version: "0.1.0" },
       {},
     );
-    registerTaskTools(server, webSessionId);
+    registerMcpTools(server, webSessionId);
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: undefined,
       // JSON responses for POST round trips (no SSE streaming needed for the

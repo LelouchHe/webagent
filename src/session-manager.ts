@@ -6,7 +6,7 @@ import { stat } from "node:fs/promises";
 import { join } from "node:path";
 import { MessageNotFoundError, type Store } from "./store.ts";
 import type { AgentBridge } from "./bridge.ts";
-import { buildTaskServerEntry } from "./mcp/server.ts";
+import { buildMcpServerEntry } from "./mcp/server.ts";
 import type { CapabilityStore } from "./mcp/capability.ts";
 import type { McpServer as AcpMcpServer } from "@agentclientprotocol/sdk";
 import type {
@@ -127,8 +127,8 @@ export class SessionManager {
     /**
      * Optional MCP capability store. When provided together with
      * `mcpBaseUrl`, every created/restored session is given a uniquely
-     * named Task Server entry whose Authorization header carries a freshly
-     * minted capability — the MCP control plane for Task mode. Lifecycle
+     * named MCP server entry whose Authorization header carries a freshly
+     * minted capability — the MCP control plane for ACP sessions. Lifecycle
      * here is the single source of truth: mint happens next to
      * `liveSessions.add`, revoke next to `liveSessions.delete`.
      */
@@ -156,15 +156,15 @@ export class SessionManager {
   }
 
   /**
-   * Mint a capability for one session and build its Task Server
+   * Mint a capability for one session and build its MCP server
    * `mcpServers` entry. Returns undefined (no MCP) when the server was not
    * configured with a capability store + base URL, keeping sessions
-   * without Task mode on the previous empty-mcpServers path.
+   * without MCP on the previous empty-mcpServers path.
    */
-  private buildTaskServers(webSessionId: string): AcpMcpServer[] | undefined {
+  private buildMcpServers(webSessionId: string): AcpMcpServer[] | undefined {
     if (!this.capabilities || !this.mcpBaseUrl) return undefined;
     return [
-      buildTaskServerEntry(
+      buildMcpServerEntry(
         this.capabilities.mint(webSessionId),
         this.mcpBaseUrl,
       ),
@@ -255,7 +255,7 @@ export class SessionManager {
     // ACP session exists (the definition is carried in session/new itself),
     // so a capability is only ever issued for a session we are about to
     // create. The failed-persistence path below revokes it again.
-    const mcpServers = this.buildTaskServers(webSessionId);
+    const mcpServers = this.buildMcpServers(webSessionId);
     const { sessionId: agentSessionId, configOptions: createdConfigOptions } =
       await this.createAgentSession(
         bridge,
@@ -445,8 +445,8 @@ export class SessionManager {
     try {
       // Mint a fresh capability for the restored session: any token from
       // before a restart is gone with the old process, and the session is
-      // still live, so it gets a Task Server entry like a new session does.
-      const mcpServers = this.buildTaskServers(sessionId);
+      // still live, so it gets an MCP server entry like a new session does.
+      const mcpServers = this.buildMcpServers(sessionId);
       await bridge.loadSession(sessionId, session.cwd, mcpServers);
       this.liveSessions.add(sessionId);
       if (session.title) this.sessionHasTitle.add(sessionId);
