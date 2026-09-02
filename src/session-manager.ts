@@ -6,6 +6,9 @@ import { stat } from "node:fs/promises";
 import { join } from "node:path";
 import { MessageNotFoundError, type Store } from "./store.ts";
 import type { AgentBridge } from "./bridge.ts";
+import { buildMcpServerEntry } from "./mcp/server.ts";
+import type { CapabilityStore } from "./mcp/capability.ts";
+import type { McpServer as AcpMcpServer } from "@agentclientprotocol/sdk";
 import type {
   AgentCommand,
   AgentCommandSnapshot,
@@ -71,6 +74,8 @@ export interface ConsumeMessageResult {
  */
 export class SessionManager {
   readonly liveSessions = new Set<string>();
+  /** Sessions with a minted MCP capability awaiting ACP session/new. */
+  readonly creatingSessions = new Set<string>();
   readonly restoringSessions = new Set<string>();
   readonly sessionHasTitle = new Set<string>();
   readonly assistantBuffers = new Map<string, string>();
@@ -112,17 +117,114 @@ export class SessionManager {
   private readonly store: Store;
   private readonly defaultCwd: string;
   private readonly dataDir: string;
+  private readonly capabilities?: CapabilityStore;
+  private readonly mcpBaseUrl?: string;
 
-  constructor(store: Store, defaultCwd: string, dataDir: string) {
+  constructor(
+    store: Store,
+    defaultCwd: string,
+    dataDir: string,
+    /**
+     * Optional MCP capability store. When provided together with
+     * `mcpBaseUrl`, every created/restored session is given a uniquely
+     * named MCP server entry whose Authorization header carries a freshly
+     * minted capability — the MCP control plane for ACP sessions. Lifecycle
+     * here is the single source of truth: mint happens next to
+     * `liveSessions.add`, revoke next to `liveSessions.delete`.
+     */
+    capabilities?: CapabilityStore,
+    mcpBaseUrl?: string,
+  ) {
     this.store = store;
     this.defaultCwd = defaultCwd;
     this.dataDir = dataDir;
+    this.capabilities = capabilities;
+    this.mcpBaseUrl = mcpBaseUrl;
+  }
+
+  /**
+   * MCP may connect while ACP session/new or session/load is still pending.
+   * Treat those capability-backed sessions as active for that narrow window;
+   * they are promoted to live only after persistence/ACP succeeds.
+   */
+  isMcpSessionActive(sessionId: string): boolean {
+    return (
+      this.liveSessions.has(sessionId) ||
+      this.creatingSessions.has(sessionId) ||
+      this.restoringSessions.has(sessionId)
+    );
+  }
+
+  /**
+   * Mint a capability for one session and build its MCP server
+   * `mcpServers` entry. Returns undefined (no MCP) when the server was not
+   * configured with a capability store + base URL, keeping sessions
+   * without MCP on the previous empty-mcpServers path.
+   */
+  private buildMcpServers(webSessionId: string): AcpMcpServer[] | undefined {
+    if (!this.capabilities || !this.mcpBaseUrl) return undefined;
+    return [
+      buildMcpServerEntry(
+        this.capabilities.mint(webSessionId),
+        this.mcpBaseUrl,
+      ),
+    ];
+  }
+
+  /**
+   * newSession options with an optional mcpServers entry only when Task mode
+   * is configured — otherwise the previous call shape stays untouched.
+   */
+  private buildNewSessionOptions(
+    silent: boolean | undefined,
+    mcpServers: AcpMcpServer[] | undefined,
+  ): { silent?: boolean; mcpServers?: AcpMcpServer[] } {
+    const options: { silent?: boolean; mcpServers?: AcpMcpServer[] } = {
+      silent,
+    };
+    if (mcpServers !== undefined) options.mcpServers = mcpServers;
+    return options;
   }
 
   /** Populate sessionHasTitle from existing DB sessions on startup. */
   hydrate(): void {
     for (const s of this.store.listSessions()) {
       if (s.title) this.sessionHasTitle.add(s.id);
+    }
+  }
+
+  /**
+   * Drop live state for sessions that the store cleaned as empty.
+   */
+  private cleanupEmptySessions(): void {
+    const cleaned = this.store.deleteEmptySessions(EMPTY_SESSION_MIN_AGE_S);
+    for (const id of cleaned) {
+      this.liveSessions.delete(id);
+      this.capabilities?.revokeBySession(id);
+      this.agentCommandSnapshots.delete(id);
+    }
+    if (cleaned.length > 0)
+      slog.info("cleaned empty session(s)", { count: cleaned.length });
+  }
+
+  /**
+   * Create the ACP session while exposing its freshly minted capability as an
+   * active initializing session. The caller promotes it to live only after
+   * local persistence succeeds.
+   */
+  private async createAgentSession(
+    bridge: SessionBridge,
+    webSessionId: string,
+    cwd: string,
+    options: { silent?: boolean; mcpServers?: AcpMcpServer[] },
+  ): Promise<{ sessionId: string; configOptions: ConfigOption[] }> {
+    this.creatingSessions.add(webSessionId);
+    try {
+      return await bridge.newSession(cwd, options);
+    } catch (error) {
+      this.creatingSessions.delete(webSessionId);
+      this.capabilities?.revokeBySession(webSessionId);
+      throw error;
     }
   }
 
@@ -143,20 +245,24 @@ export class SessionManager {
     }
 
     // Clean up empty sessions (no events) older than the threshold
-    const cleaned = this.store.deleteEmptySessions(EMPTY_SESSION_MIN_AGE_S);
-    for (const id of cleaned) {
-      this.liveSessions.delete(id);
-      this.agentCommandSnapshots.delete(id);
-    }
-    if (cleaned.length > 0)
-      slog.info("cleaned empty session(s)", { count: cleaned.length });
+    this.cleanupEmptySessions();
 
     const sourceSession = inheritFromSessionId
       ? this.store.getSession(inheritFromSessionId)
       : null;
     const webSessionId = randomUUID();
+    // Mint the session capability and build its mcpServers entry BEFORE the
+    // ACP session exists (the definition is carried in session/new itself),
+    // so a capability is only ever issued for a session we are about to
+    // create. The failed-persistence path below revokes it again.
+    const mcpServers = this.buildMcpServers(webSessionId);
     const { sessionId: agentSessionId, configOptions: createdConfigOptions } =
-      await bridge.newSession(sessionCwd, { silent: opts?.silent });
+      await this.createAgentSession(
+        bridge,
+        webSessionId,
+        sessionCwd,
+        this.buildNewSessionOptions(opts?.silent, mcpServers),
+      );
     let configOptions = createdConfigOptions;
     try {
       this.store.createSession(
@@ -171,9 +277,12 @@ export class SessionManager {
         error: err,
       });
       bridge.discardUnboundSession?.(agentSessionId);
+      this.creatingSessions.delete(webSessionId);
+      this.capabilities?.revokeBySession(webSessionId);
       throw err;
     }
     this.liveSessions.add(webSessionId);
+    this.creatingSessions.delete(webSessionId);
     this.recordConfigOptions(webSessionId, createdConfigOptions);
     bridge.sessionMapped?.(agentSessionId);
 
@@ -334,7 +443,11 @@ export class SessionManager {
     // Restore via ACP
     this.restoringSessions.add(sessionId);
     try {
-      await bridge.loadSession(sessionId, session.cwd);
+      // Mint a fresh capability for the restored session: any token from
+      // before a restart is gone with the old process, and the session is
+      // still live, so it gets an MCP server entry like a new session does.
+      const mcpServers = this.buildMcpServers(sessionId);
+      await bridge.loadSession(sessionId, session.cwd, mcpServers);
       this.liveSessions.add(sessionId);
       if (session.title) this.sessionHasTitle.add(sessionId);
       // Piggyback a cache-warming setConfigOption on the user's own resume
@@ -357,6 +470,7 @@ export class SessionManager {
         configOptions,
       };
     } catch (err) {
+      this.capabilities?.revokeBySession(sessionId);
       slog.error("restore failed", { error: err });
       throw err;
     } finally {
@@ -547,6 +661,7 @@ export class SessionManager {
   /** Delete a session from store and clean up all state (including images). */
   deleteSession(sessionId: string): void {
     const mode = this.store.deleteSession(sessionId);
+    this.capabilities?.revokeBySession(sessionId);
     this.liveSessions.delete(sessionId);
     this.sessionHasTitle.delete(sessionId);
     this.assistantBuffers.delete(sessionId);

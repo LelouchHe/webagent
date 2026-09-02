@@ -60,6 +60,7 @@
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "^0.25.0",
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "@types/proper-lockfile": "^4.1.4",
     "@types/web-push": "^3.6.4",
     "better-sqlite3": "^12.6.2",
@@ -92,5 +93,10 @@
     "prettier": "^3.8.3",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.59.0"
+  },
+  "allowScripts": {
+    "better-sqlite3@12.6.2": true,
+    "esbuild@0.27.3": true,
+    "fsevents@2.3.2": true
   }
 }

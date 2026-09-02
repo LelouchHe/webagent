@@ -154,14 +154,14 @@ export class AgentBridge extends EventEmitter {
 
   async newSession(
     cwd: string,
-    opts?: { silent?: boolean },
+    opts?: { silent?: boolean; mcpServers?: acp.McpServer[] },
   ): Promise<{ sessionId: string; configOptions: ConfigOption[] }> {
     if (!this.conn) throw new Error("Not connected");
     this.pendingNewSessions++;
     try {
       const session = await this.conn.newSession({
         cwd,
-        mcpServers: [],
+        mcpServers: opts?.mcpServers ?? [],
       });
       if (opts?.silent) {
         this.pendingSessionUpdates.delete(session.sessionId);
@@ -204,6 +204,7 @@ export class AgentBridge extends EventEmitter {
   async loadSession(
     sessionId: string,
     cwd: string,
+    mcpServers?: acp.McpServer[],
   ): Promise<{ sessionId: string; configOptions: ConfigOption[] }> {
     if (!this.conn) throw new Error("Not connected");
     const agentSessionId = this.agentSessionId(sessionId);
@@ -212,7 +213,7 @@ export class AgentBridge extends EventEmitter {
       session = await this.conn.loadSession({
         sessionId: agentSessionId,
         cwd,
-        mcpServers: [],
+        mcpServers: mcpServers ?? [],
       });
     } catch (err: unknown) {
       // -32002 = Resource not found. Some agents (e.g. claude-agent-acp) don't

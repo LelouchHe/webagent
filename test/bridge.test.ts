@@ -189,6 +189,51 @@ describe("AgentBridge", () => {
     ]);
   });
 
+  it("forwards mcpServers to newSession and loadSession when provided", async () => {
+    const bridge = new AgentBridge("fake-agent", mappedSessions);
+    const calls: Array<{ method: string; payload: unknown }> = [];
+    (bridge as any).conn = {
+      newSession: async (payload: unknown) => {
+        calls.push({ method: "new", payload });
+        return { sessionId: "agent-2", configOptions: [] };
+      },
+      loadSession: async (payload: unknown) => {
+        calls.push({ method: "load", payload });
+        return { configOptions: [] };
+      },
+    };
+
+    const mcpServers: import("@agentclientprotocol/sdk").McpServer[] = [
+      {
+        type: "http",
+        name: "webagent",
+        url: "http://127.0.0.1:6800/mcp",
+        headers: [{ name: "Authorization", value: "Bearer mcp_abc" }],
+      },
+    ];
+
+    await bridge.newSession("/repo", { mcpServers });
+    await bridge.loadSession("web-1", "/repo", mcpServers);
+
+    assert.deepEqual(calls, [
+      {
+        method: "new",
+        payload: {
+          cwd: "/repo",
+          mcpServers,
+        },
+      },
+      {
+        method: "load",
+        payload: {
+          sessionId: "agent-1",
+          cwd: "/repo",
+          mcpServers,
+        },
+      },
+    ]);
+  });
+
   it("emits prompt_done when a prompt is cancelled", async () => {
     const bridge = new AgentBridge("fake-agent", mappedSessions);
     const events: any[] = [];
