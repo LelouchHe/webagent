@@ -11,6 +11,7 @@ import { SessionManager } from "./session-manager.ts";
 import { TitleService } from "./title-service.ts";
 import { CapabilityStore } from "./mcp/capability.ts";
 import { createMcpEndpoint } from "./mcp/server.ts";
+import { runTaskSwitch } from "./migration/task-switch.ts";
 import { createRequestHandler } from "./routes.ts";
 import { handleAgentEvent } from "./event-handler.ts";
 import { PushService } from "./push-service.ts";
@@ -267,6 +268,20 @@ process.on("SIGHUP", () => {
 
 server.listen(config.port, config.host, () => {
   void (async () => {
+    // S1 一次性上线切换：Root 必须存在后才能服务任何会话创建。
+    // 幂等：Root 已存在即 no-op。失败即拒绝启动（fail closed）：
+    // 否则每次启动重复尝试，遗留状态不明。dogfood carry/快照由
+    // WEBAGENT_TASK_SWITCH env 门控（见 src/migration/task-switch.ts）。
+    try {
+      await runTaskSwitch(store, {
+        dataDir: config.data_dir,
+        defaultCwd: config.default_cwd,
+        agentKey: agentKeyFromCommand(preflight.agentCmd),
+      });
+    } catch (err) {
+      console.error("[task-switch] migration failed:", err);
+      process.exit(78);
+    }
     // The auth gate already ran in runStartupChecks (above) — either in
     // this process or in a parent that handed off via WEBAGENT_STARTUP_
     // CHECKED. Just open the AuthStore handle the rest of the server

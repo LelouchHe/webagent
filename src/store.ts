@@ -747,6 +747,79 @@ export class Store {
 
   // ===== tasks (S1) + session retirement =====
 
+  /** 暴露 better-sqlite3 在线备份：迁移模块快照用，运行中安全。 */
+  backup(dest: string): Promise<import("better-sqlite3").BackupMetadata> {
+    return this.db.backup(dest);
+  }
+
+  /** 显式事务边界：迁移等需要原子性的写操作走这里。 */
+  transaction<T>(fn: () => T): T {
+    return this.db.transaction(fn)();
+  }
+
+  /** 是否存在活 Root（parent_id IS NULL）。Root 由服务器创建，唯一。 */
+  hasRootTask(): boolean {
+    return (
+      this.db
+        .prepare(
+          "SELECT 1 FROM tasks WHERE parent_id IS NULL AND deleted_at IS NULL LIMIT 1",
+        )
+        .get() !== undefined
+    );
+  }
+
+  /** 是否存在遗留（即将导前、未被 task 收养）的 session。 */
+  hasLegacySessions(): boolean {
+    return (
+      this.db
+        .prepare("SELECT 1 FROM sessions WHERE task_id IS NULL LIMIT 1")
+        .get() !== undefined
+    );
+  }
+
+  /**
+   * 把一次执行（session + 其 events/attachments）收养到某 task。
+   * 迁移/跨执行收养用；正常创建路径走 createSession(taskId)。
+   */
+  adoptSession(sessionId: string, taskId: string): void {
+    this.db
+      .prepare("UPDATE sessions SET task_id = ? WHERE id = ?")
+      .run(taskId, sessionId);
+    this.db
+      .prepare("UPDATE events SET task_id = ? WHERE session_id = ?")
+      .run(taskId, sessionId);
+    this.db
+      .prepare("UPDATE attachments SET task_id = ? WHERE session_id = ?")
+      .run(taskId, sessionId);
+  }
+
+  /**
+   * 硬删遗留 session（task_id IS NULL；上线切换用）。一次性破坏性：
+   * 连 shares/client_ops/events 一起删（不保留 share 观众视图）。
+   * 返回删除的 session 数。
+   */
+  deleteLegacySessions(): number {
+    const legacy = this.db
+      .prepare("SELECT id FROM sessions WHERE task_id IS NULL")
+      .all() as Array<{ id: string }>;
+    if (legacy.length === 0) return 0;
+    const delShare = this.db.prepare("DELETE FROM shares WHERE session_id = ?");
+    const delOps = this.db.prepare(
+      "DELETE FROM client_ops WHERE session_id = ?",
+    );
+    const delEvents = this.db.prepare(
+      "DELETE FROM events WHERE session_id = ?",
+    );
+    const delSession = this.db.prepare("DELETE FROM sessions WHERE id = ?");
+    for (const r of legacy) {
+      delShare.run(r.id);
+      delOps.run(r.id);
+      delEvents.run(r.id);
+      delSession.run(r.id);
+    }
+    return legacy.length;
+  }
+
   /** task_id of a session（NULL 仅存在于切换前遗留行）。 */
   private taskOfSession(sessionId: string): string | null {
     return (
