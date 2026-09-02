@@ -42,7 +42,7 @@ describe("task-switch migration (S1)", () => {
       assert.equal(root.cwd, "/work");
       assert.equal(store.getTaskLiveSession(root.id)?.cwd, "/work");
 
-      // 幂等：Root 已存在
+      // idempotent: Root already exists
       const second = await run();
       assert.equal(second.ran, false);
       assert.equal(second.snapshotTaken, false);
@@ -77,7 +77,7 @@ describe("task-switch migration (S1)", () => {
       const snap = join(tmpDir, TASK_SWITCH_SNAPSHOT);
       assert.ok(existsSync(snap));
 
-      // 树：Root + carried child；carried 继承 session 的非运行时属性
+      // tree: Root + carried child; the child inherits the session's non-runtime attributes
       const root = store.listTasks().find((t) => t.parent_id === null);
       assert.ok(root);
       const child = store.listTasks().find((t) => t.parent_id === root.id);
@@ -86,7 +86,7 @@ describe("task-switch migration (S1)", () => {
       assert.equal(child.model, "gpt-x");
       assert.equal(child.cwd, "/old");
 
-      // carried session 归属 child；events 也随过去
+      // the carried session belongs to the child; its events move along
       assert.equal(store.getTaskLiveSession(child.id)?.id, "old-new");
       const childEvents = store.getTaskEvents(child.id);
       assert.equal(childEvents.length, 1);
@@ -95,11 +95,11 @@ describe("task-switch migration (S1)", () => {
         "new",
       );
 
-      // 其余遗留删除
+      // the rest of the legacy sessions are deleted
       assert.equal(store.getSessionIncludingDeleted("old-stale"), undefined);
       assert.equal(store.hasLegacySessions(), false);
 
-      // Root 已有自己的活 session——不新建第二个（单活不变量）
+      // Root already has its own live session — no second one (single-live invariant)
       const rootSess = store.getTaskLiveSession(root.id);
       assert.ok(rootSess);
       store.saveEvent(
@@ -128,7 +128,7 @@ describe("task-switch migration (S1)", () => {
       await run();
       store.close();
 
-      // 回滚：用快照文件覆盖 webagent.db（close 后 WAL 已 checkpoint）
+      // rollback: overwrite webagent.db with the snapshot (WAL is checkpointed on close)
       copyFileSync(
         join(tmpDir, TASK_SWITCH_SNAPSHOT),
         join(tmpDir, "webagent.db"),

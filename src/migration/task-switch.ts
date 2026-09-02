@@ -4,34 +4,39 @@ import { join } from "node:path";
 import type { Store } from "../store.ts";
 
 /**
- * 一次性上线切换（S1，2026-09）。**验证通过后移除**（impl-plan/handover TODO）；
- * 不是长期能力。
+ * One-shot upgrade switch (S1, 2026-09). **Remove after validation**
+ * (impl-plan/handover TODO); not a permanent capability.
  *
- * 语义（2026-09-02 定案，design 修订）：
- * 1. 无条件在线快照 `db.backup(<dataDir>/webagent.pre-s1.db)`（keep-first：
- *    文件已存在即不覆盖——回滚恢复后重跑时该文件正是未迁移状态）；
- * 2. 单事务：建 Root（含首个 session）→ carry 当前 agent 最近活跃的 live
- *    session 为 Root 首个子 Task（title/cwd/model/mode/reasoning 随 session
- *    上移 Task，events/attachments 经 adoptSession 收养）→ 删除其余遗留
- *    session（task_id IS NULL）。
+ * Semantics (finalized 2026-09-02, amended in design):
+ * 1. Unconditional online snapshot `db.backup(<dataDir>/webagent.pre-s1.db)`
+ *    (keep-first: an existing file is never overwritten — after a rollback the
+ *    restored file *is* the pre-switch state, so re-running the switch against
+ *    it is exactly right);
+ * 2. Single transaction: create Root (with its first session) -> carry the
+ *    current agent's most-recent live session as Root's first child task
+ *    (title/cwd/model/mode/reasoning move up to the task; events/attachments
+ *    adopted via adoptSession) -> hard-delete remaining legacy sessions
+ *    (task_id IS NULL).
  *
- * 幂等：Root 已存在即 no-op。回滚 = 用快照覆盖 webagent.db → tasks 表无
- * Root → 下次启动自连重跑。原子性：写操作全在单事务；快照在事务前。
+ * Idempotent: no-op when a Root already exists. Rollback = overwrite
+ * webagent.db with the snapshot -> tasks table has no Root -> the switch
+ * re-runs naturally on next boot. Atomicity: all writes in one transaction;
+ * snapshot taken before the transaction.
  */
 export const TASK_SWITCH_SNAPSHOT = "webagent.pre-s1.db";
 
 export interface TaskSwitchOptions {
-  /** dataDir —— 快照写到 <dataDir>/webagent.pre-s1.db */
+  /** dataDir — snapshot is written to <dataDir>/webagent.pre-s1.db */
   dataDir: string;
-  /** Root Task 的 cwd */
+  /** cwd for the Root task */
   defaultCwd: string;
 }
 
 export interface TaskSwitchResult {
   ran: boolean;
-  /** 被 carry 的 session id（无可用候选时 undefined） */
+  /** session id carried as Root's first child (undefined when no candidate) */
   carriedSessionId?: string;
-  /** 本次是否真正创建了快照（keep-first 命中时为 false） */
+  /** whether a snapshot was actually created this time (false on keep-first) */
   snapshotTaken: boolean;
 }
 
@@ -43,7 +48,7 @@ export async function runTaskSwitch(
 
   const out: TaskSwitchResult = { ran: true, snapshotTaken: false };
 
-  // 无条件在线快照（keep-first）：切换前的地基，回滚点。
+  // Unconditional online snapshot (keep-first): the rollback baseline.
   const snapshotPath = join(opts.dataDir, TASK_SWITCH_SNAPSHOT);
   if (!existsSync(snapshotPath)) {
     await store.backup(snapshotPath);
@@ -51,7 +56,8 @@ export async function runTaskSwitch(
   }
 
   store.transaction(() => {
-    // Root + 首个 session（唯一的活 Root；正常创建流程也绑定此 task）
+    // Root + its first session (the only live Root; the normal creation path
+    // binds further sessions to tasks as well).
     const rootId = randomUUID();
     store.createTask({ id: rootId, name: "root", cwd: opts.defaultCwd });
     const rootSessionId = randomUUID();
@@ -63,7 +69,8 @@ export async function runTaskSwitch(
       rootId,
     );
 
-    // carry 当前 agent 最近活跃的 live session 为 Root 首个 child（延续性）
+    // Carry the current agent's most-recent live session as Root's first
+    // child (continuity: the work in progress survives the switch).
     const candidate = store.listSessions().find((s) => s.task_id == null);
     if (candidate) {
       const childId = randomUUID();
@@ -81,7 +88,8 @@ export async function runTaskSwitch(
       out.carriedSessionId = candidate.id;
     }
 
-    // 其余遗留 session 全部硬删（design：不迁移旧 Session）
+    // Delete all remaining legacy sessions (design: old sessions are not
+    // migrated).
     store.deleteLegacySessions();
   });
 

@@ -332,7 +332,7 @@ describe("SessionManager", () => {
 
   describe("createSession", () => {
     it("inherits config from the source task", async () => {
-      // S1：配置在 task 上（不再从 session 行继承）
+      // S1: config lives on the task (no longer inherited from the session row)
       store.createTask({
         id: "source-task",
         name: "src",
@@ -432,7 +432,7 @@ describe("SessionManager", () => {
           { id: "reasoning_effort", currentValue: "high" },
         ],
       );
-      // config 落点在新建的 child task（继承 model/reasoning；mode 取 agent 默认，不继承 plan-mode）
+      // config lands on the new child task (inherited model/reasoning; mode stays the agent default, plan-mode not inherited)
       const child = store.listTasks().find((t) => t.parent_id !== null);
       assert.ok(child);
       assert.equal(child.model, "claude-sonnet-4.6");

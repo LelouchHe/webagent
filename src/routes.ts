@@ -1124,7 +1124,8 @@ export function createRequestHandler(
         sessions.syncPendingPermissions(sessionId);
         const runtimeState = sessions.state.getState(sessionId);
         const lastEventSeq = store.getLastEventSeq(sessionId);
-        // S1：config 落点在 task（session 行仅遗留）；snapshot 读 task 生效值
+        // S1: config lives on the task (session rows are pre-transition only);
+        // the snapshot reads the effective task value
         const snapTask = session.task_id
           ? store.getTask(session.task_id)
           : null;
@@ -1885,7 +1886,7 @@ export function createRequestHandler(
                 .then(() => {
                   const cur = store.getSession(sessionId);
                   if (!cur || !sessions.cachedConfigOptions.length) return;
-                  // S1：config 落点在 task；warm 广播也读 task 生效值
+                  // S1: config lives on the task; the warm broadcast reads the effective task value
                   const warmTask = cur.task_id
                     ? store.getTask(cur.task_id)
                     : null;

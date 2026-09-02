@@ -46,23 +46,23 @@ deletion contract.
 
 ### `tasks`
 
-S1 稳定工作身份（Task = 二进制，Session = 执行现场/进程）。持有全部非运行时属性与记录所有权；`sessions.task_id` 是唯一持久映射（"出生证明"），「当前 Session」由活 Session 谓词（`deleted_at IS NULL`）派生，`ux_sessions_live_per_task` 强制同一时刻至多一个活现场。Root（`parent_id IS NULL`）由服务器创建、不可删除。
+S1 stable work identity (Task = the binary, Session = the process). Owns all non-runtime attributes and records; `sessions.task_id` is the only persistent mapping (a birth certificate), "current Session" is derived from the live-session predicate (`deleted_at IS NULL`), and `ux_sessions_live_per_task` enforces at most one live execution at a time. The Root (`parent_id IS NULL`) is created by the server and cannot be deleted.
 
 | Column | Type | Notes |
 |---|---|---|
-| `id` | TEXT PRIMARY KEY | 稳定 Task UUID；前端锚点 `#task-id` |
-| `parent_id` | TEXT REFERENCES `tasks(id)` | `NULL` = Root（唯一、不可删） |
-| `name` | TEXT NOT NULL | 同父唯一（partial UNIQUE 索引） |
-| `brief` | TEXT | 任务简报（bootstrap 时注入） |
+| `id` | TEXT PRIMARY KEY | Stable Task UUID; frontend anchor `#task-id` |
+| `parent_id` | TEXT REFERENCES `tasks(id)` | `NULL` = Root (unique, undeletable) |
+| `name` | TEXT NOT NULL | Unique per parent (partial UNIQUE index) |
+| `brief` | TEXT | Task brief (injected at bootstrap) |
 | `workflow_status` | TEXT NOT NULL DEFAULT `'running'` | `running`/`blocked`/`done` |
-| `title` | TEXT | 显示标题（标题生成目标） |
-| `cwd` | TEXT NOT NULL | 工作目录（跨 clear 保留） |
-| `model` | TEXT | Task 级模型偏好 |
-| `mode` | TEXT | Task 级模式（agent/plan/autopilot） |
-| `reasoning_effort` | TEXT | Task 级思考强度 |
-| `tts_policy` / `voice_mode` / `voice_verbosity` / `voice_wrapper_fallback` | TEXT / INTEGER | 语音配置（随二进制上移 Task） |
-| `last_active_at` | TEXT NOT NULL DEFAULT now | 活跃排序 |
-| `deleted_at` | INTEGER | Tombstone；`NULL` = 活 |
+| `title` | TEXT | Display title (title-generation target) |
+| `cwd` | TEXT NOT NULL | Working directory (kept across clear) |
+| `model` | TEXT | Task-level model preference |
+| `mode` | TEXT | Task-level mode (agent/plan/autopilot) |
+| `reasoning_effort` | TEXT | Task-level reasoning intensity |
+| `tts_policy` / `voice_mode` / `voice_verbosity` / `voice_wrapper_fallback` | TEXT / INTEGER | Voice config (moved up to the Task with the binary) |
+| `last_active_at` | TEXT NOT NULL DEFAULT now | Activity ordering |
+| `deleted_at` | INTEGER | Tombstone; `NULL` = live |
 | `created_at` / `updated_at` | TEXT NOT NULL DEFAULT now | |
 
 ### `sessions`
@@ -80,8 +80,8 @@ Chat sessions. One row per session created via `POST /api/v1/sessions`.
 | `mode` | TEXT | Last mode (`agent` / `plan` / `autopilot`) (added in migration) |
 | `reasoning_effort` | TEXT | Last reasoning effort selection (added in migration) |
 | `source` | TEXT NOT NULL DEFAULT `'auto'` | How the session was created (`auto`, `inbox`, …) |
-| `deleted_at` | INTEGER | Unix-millis tombstone；`NULL` = 活。两种语义：share 软删保留（旧）与 S1 clear 退役（不删 records） |
-| `task_id` | TEXT REFERENCES `tasks(id)` | S1 出生证明：进程属于哪个 Task；唯一持久映射；切换前遗留行可为 NULL |
+| `deleted_at` | INTEGER | Unix-millis tombstone; `NULL` = live. Two meanings: share soft-delete preservation (legacy) and S1 clear retirement (records kept) |
+| `task_id` | TEXT REFERENCES `tasks(id)` | S1 birth certificate: which Task the process belongs to; the only persistent mapping; NULL allowed only on pre-switch legacy rows |
 
 ### `agent_sessions`
 
@@ -114,7 +114,7 @@ Replayed top-to-bottom on session resume.
 | `data` | TEXT NOT NULL DEFAULT `'{}'` | JSON payload — shape depends on `type` |
 | `created_at` | TEXT NOT NULL DEFAULT now | |
 | `from_ref` | TEXT | Origin marker: `user` / `system` / `agent` / `msg:<id>`. Backfilled on migration |
-| `task_id` | TEXT REFERENCES `tasks(id)` | S1 Task 归属（跨执行聚合/跨 clear 保留的基础） |
+| `task_id` | TEXT REFERENCES `tasks(id)` | S1 Task ownership (base for cross-execution aggregation / surviving clear) |
 
 ### `push_subscriptions`
 
@@ -224,7 +224,7 @@ does, even when the session is tombstoned for an active share.
 | `width` | INTEGER | Server-derived image width in pixels (`NULL` for files/legacy rows) |
 | `height` | INTEGER | Server-derived image height in pixels (`NULL` for files/legacy rows) |
 | `created_at` | TEXT NOT NULL DEFAULT now() | ISO timestamp |
-| `task_id` | TEXT REFERENCES `tasks(id)` | S1 Task 归属；随 session 级联（改建/删时由 session 侧派生） |
+| `task_id` | TEXT REFERENCES `tasks(id)` | S1 Task ownership; cascades with the session (derived session-side on insert/delete) |
 
 ### `owner_prefs`
 
@@ -251,11 +251,11 @@ selection, etc.). Single-user model = single owner scope.
 | `shares_one_active_preview` | `shares` | `(session_id) WHERE shared_at IS NULL` | At most one preview per session (partial UNIQUE) |
 | `idx_attachments_session` | `attachments` | `(session_id)` | Per-session listing + GC sweep |
 | `idx_agent_sessions_web` | `agent_sessions` | `(web_session_id) WHERE web_session_id IS NOT NULL` | One ACP binding per visible WebAgent session (partial UNIQUE) |
-| `ux_tasks_name_per_parent` | `tasks` | `(parent_id, name) WHERE parent_id IS NOT NULL AND deleted_at IS NULL` | 同父 name 唯一（partial UNIQUE） |
-| `idx_tasks_parent` | `tasks` | `(parent_id)` | 子树查询/候选 |
-| `idx_events_task` | `events` | `(task_id, id)` | 跨执行聚合（全局插入序） |
-| `idx_attachments_task` | `attachments` | `(task_id)` | Task 附件清单 |
-| `ux_sessions_live_per_task` | `sessions` | `(task_id) WHERE task_id IS NOT NULL AND deleted_at IS NULL` | 单活不变量：task 同一时刻至多一个活 Session（partial UNIQUE） |
+| `ux_tasks_name_per_parent` | `tasks` | `(parent_id, name) WHERE parent_id IS NOT NULL AND deleted_at IS NULL` | Name unique per parent (partial UNIQUE) |
+| `idx_tasks_parent` | `tasks` | `(parent_id)` | Subtree queries / candidate lookup |
+| `idx_events_task` | `events` | `(task_id, id)` | Cross-execution aggregation (global insertion order) |
+| `idx_attachments_task` | `attachments` | `(task_id)` | Task attachment listing |
+| `ux_sessions_live_per_task` | `sessions` | `(task_id) WHERE task_id IS NOT NULL AND deleted_at IS NULL` | Single-live invariant: at most one live Session per Task (partial UNIQUE) |
 
 ---
 

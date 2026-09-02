@@ -241,7 +241,7 @@ describe("POST /api/v1/messages/:id/consume + ack + DELETE", () => {
 
   it("reuses new-session config inheritance without inheriting mode", async () => {
     mkMsg("m-inherit");
-    // S1：源配置在 task 上
+    // S1: the source config lives on the task
     store.createTask({
       id: "src-task",
       name: "src",
@@ -285,12 +285,12 @@ describe("POST /api/v1/messages/:id/consume + ack + DELETE", () => {
     ]);
     const stored = store.getSession(sessionId);
     assert.ok(stored);
-    // config 落在新 session 所属 task，而非 session 行
+    // config lands on the task owning the new session, not the session row
     const childTask = store.getTask(stored.task_id!);
     assert.ok(childTask);
     assert.equal(childTask.model, "inherited-model");
     assert.equal(childTask.reasoning_effort, "high");
-    assert.equal(childTask.mode, "agent-mode"); // 默认 mode，未继承 autopilot-mode
+    assert.equal(childTask.mode, "agent-mode"); // default mode, autopilot-mode not inherited
 
     const response = await send(port, "GET", `/api/v1/sessions/${sessionId}`);
     const detail = JSON.parse(response.body) as {

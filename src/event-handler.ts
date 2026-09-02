@@ -511,7 +511,8 @@ export function handleAgentEvent(
     sessions.restoringSessions.has(event.sessionId)
   )
     return;
-  // S1 旧现场 fence：非其 task 活 Session 的迟到事件拒收（不持久、不广播）
+  // S1 stale-execution fence: late events not belonging to the task's live
+  // session are dropped (no persist, no broadcast)
   if (
     "sessionId" in event &&
     event.sessionId &&

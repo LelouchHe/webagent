@@ -116,7 +116,7 @@ describe("handleAgentEvent", () => {
     const { bridge } = createMockBridge();
     const { sseManager, broadcasted } = createMockSseManager();
 
-    // live 阶段：广播 + 缓冲
+    // live phase: broadcast + buffer
     handleAgentEvent(
       { type: "message_chunk", sessionId: "live", text: "ok" } as any,
       sessions,
@@ -127,7 +127,7 @@ describe("handleAgentEvent", () => {
     );
     assert.equal(broadcasted.length, 1);
 
-    // 退役 + 重建镜像 → 旧现场的迟到事件不广播、不持久
+    // retire + rebuild mirror -> late events from the old execution are not broadcast/persisted
     store.retireSession("live");
     sessions.rebuildTaskLiveSessions();
     handleAgentEvent(
@@ -138,8 +138,8 @@ describe("handleAgentEvent", () => {
       makeEventHandlerConfig(),
       sseManager as any,
     );
-    assert.equal(broadcasted.length, 1); // 无新广播
-    assert.equal(sessions.assistantBuffers.get("live"), "ok"); // 缓冲未追加
+    assert.equal(broadcasted.length, 1); // no new broadcast
+    assert.equal(sessions.assistantBuffers.get("live"), "ok"); // buffer not appended
   });
 
   it("saves tool_call events to store and broadcasts", () => {

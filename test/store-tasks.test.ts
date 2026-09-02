@@ -88,7 +88,7 @@ describe("Store tasks (S1)", () => {
         brief: "do things",
       });
       const listed = store.listTasks();
-      // 同秒创建时 last_active_at 可能并列，排序不定——按集合断言
+      // same-second creation can tie last_active_at; assert by set
       assert.deepEqual(listed.map((t) => t.id).sort(), ["child", "root"]);
       assert.equal(store.getTask("child")?.brief, "do things");
       assert.equal(store.getTask("gone"), undefined);
@@ -106,7 +106,7 @@ describe("Store tasks (S1)", () => {
         }),
       );
       store.createTask({ id: "r2", name: "root2", cwd: "/x" });
-      // 跨度父同名（跨父可同名）——r2 下也可以叫 dup
+      // same name under a different parent is allowed (dup under r2 too)
       store.createTask({ id: "c3", parentId: "r2", name: "dup", cwd: "/c" });
     });
 
@@ -149,9 +149,9 @@ describe("Store tasks (S1)", () => {
     it("returns undefined when the only session is retired", () => {
       store.createTask({ id: "root", name: "root", cwd: "/tmp" });
       store.createSession("s1", "/tmp", "auto", "s1", "root");
-      store.retireSession("s1"); // clear 语义：退役，不删记录
+      store.retireSession("s1"); // clear semantics: retire without losing records
       assert.equal(store.getTaskLiveSession("root"), undefined);
-      assert.equal(store.getSession("s1"), undefined); // 已退役不可作为活 session
+      assert.equal(store.getSession("s1"), undefined); // retired rows are no longer live sessions
     });
   });
 
@@ -171,7 +171,7 @@ describe("Store tasks (S1)", () => {
         { text: "a" },
         { from_ref: "agent" },
       );
-      // clear → 旧 session 退役（记录保留）、新 session 接过
+      // clear: old session retires (records kept), the new one takes over
       store.retireSession("s1");
       store.createSession("s2", "/tmp", "auto", "s2", "root");
       store.saveEvent(
@@ -283,7 +283,7 @@ describe("Store tasks (S1)", () => {
         name: "grand",
         cwd: "/tmp",
       });
-      // sessions + events under child and grand；cs2 先建后退役（模拟 previous execution）
+      // sessions + events under child and grand; cs2 is created then retired (like a previous execution)
       store.createSession("cs2", "/tmp", "auto", "cs2", "child");
       store.retireSession("cs2");
       store.createSession("cs", "/tmp", "auto", "cs", "child");
@@ -330,7 +330,7 @@ describe("Store tasks (S1)", () => {
       assert.equal(store.getSessionIncludingDeleted("cs2"), undefined);
       assert.equal(store.getSession("gs"), undefined);
       assert.equal(store.getAgentSessionId("cs"), undefined);
-      assert.equal(store.getTaskAttachments("aunt").length, 0); // aunt 无附件
+      assert.equal(store.getTaskAttachments("aunt").length, 0); // aunt has none
     });
   });
 });

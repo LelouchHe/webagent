@@ -105,7 +105,7 @@ export class SessionManager {
    * DELETE. Lookup is cheap (Map.get); rebuild is one SQLite query.
    */
   private readonly attachmentLabelCache = new Map<string, LabelMap>();
-  /** S1: taskId → 活 Session 镜像（热路径缓存；DB 是权威，可 rebuild）。 */
+  /** S1: taskId -> live Session mirror (hot-path cache; the DB is authoritative and rebuildable). */
   private readonly taskLiveSessions = new Map<string, string>();
   private readonly agentCommandSnapshots = new Map<
     string,
@@ -158,9 +158,10 @@ export class SessionManager {
   }
 
   /**
-   * S1「当前 Session」镜像：taskId → 活 sessionId。启动（switch 后）/测试
-   * 调用 rebuildTaskLiveSessions() 灌入；create/clear 写点同步更新。
-   * DB（sessions.task_id + deleted_at + 部分唯一索引）始终是权威。
+   * S1 "current Session" mirror: taskId -> live sessionId. Populated by
+   * rebuildTaskLiveSessions() at startup (after the switch) and in tests;
+   * kept in sync at create/clear write points. The DB (sessions.task_id +
+   * deleted_at + partial unique index) is always authoritative.
    */
   rebuildTaskLiveSessions(): void {
     this.taskLiveSessions.clear();
@@ -174,7 +175,7 @@ export class SessionManager {
     return this.taskLiveSessions.get(taskId);
   }
 
-  /** session → 其 task（无 session 行/无 task 绑定时为 undefined，过渡期回退）。 */
+  /** Resolve a session to its task (undefined for no row / no binding; transitional fallback below). */
   private resolveTaskForSession(sessionId: string): string | undefined {
     return (
       this.store.getSessionIncludingDeleted(sessionId)?.task_id ?? undefined
@@ -182,9 +183,9 @@ export class SessionManager {
   }
 
   /**
-   * config 落点从 session 移到 task（S1）：调用方仍传 sessionId（执行面
-   * API 不动），存储写到 session 所属 task。无 task 绑定的遗留行回退写
-   * session（仅存在于切换前）。
+   * Config writes land on the task (S1): callers still pass a sessionId
+   * (execution-plane APIs unchanged) and the write goes to its task. Legacy
+   * rows without a task binding fall back to the session row.
    */
   updateSessionConfig(
     sessionId: string,
@@ -199,7 +200,7 @@ export class SessionManager {
     }
   }
 
-  /** 标题落点从 session 移到 task；sessionHasTitle 镜像同步。 */
+  /** Title writes land on the task; sessionHasTitle mirror stays in sync. */
   setSessionTitle(sessionId: string, title: string | null): void {
     const taskId = this.resolveTaskForSession(sessionId);
     if (taskId) {
@@ -211,9 +212,10 @@ export class SessionManager {
   }
 
   /**
-   * S1 旧现场 fence：入站 session 必须仍是其 task 的活 Session
-   * （creating/restoring 窗口放行）。内部静默 session（无 sessions 行）
-   * 与切换前遗留行（无 task_id）保持原行为（放行）。
+   * S1 stale-execution fence: an inbound session must still be its task's
+   * live Session (creating/restoring windows pass). Internal silent sessions
+   * (no sessions row) and pre-switch legacy rows (no task_id) keep the
+   * original behavior (pass).
    */
   isCurrentExecution(sessionId: string): boolean {
     if (this.creatingSessions.has(sessionId)) return true;
@@ -223,7 +225,7 @@ export class SessionManager {
     return this.taskLiveSessions.get(row.task_id) === sessionId;
   }
 
-  /** 确保 Root 存在（上线切换后恒真；首启/旧测试环境自足）。 */
+  /** Ensure a Root exists (always true after the switch; self-sufficient for first boot / older test envs). */
   private ensureRootTask(): void {
     if (this.store.hasRootTask()) return;
     this.store.createTask({
@@ -234,8 +236,9 @@ export class SessionManager {
   }
 
   /**
-   * 为新 session 解析所属 task：显式 taskId 直用；否则在 Root 下自动建
-   * 子 Task（legacy /new 语义 = 新建一份工作）。
+   * Resolve the owning task for a new session: an explicit taskId is used
+   * as-is; otherwise a child Task is auto-created under Root (legacy /new
+   * semantics = a fresh piece of work).
    */
   private resolveTaskForNewSession(
     cwd: string,
@@ -262,7 +265,7 @@ export class SessionManager {
     return id;
   }
 
-  /** 同父下取未占用名字：冲突追加 " 2"、" 3"… */
+  /** Pick an unused name under a parent: append " 2", " 3", … on conflicts. */
   private pickChildName(parentId: string, base: string): string {
     const taken = new Set(
       this.store
@@ -370,14 +373,15 @@ export class SessionManager {
     const sourceSession = inheritFromSessionId
       ? this.store.getSession(inheritFromSessionId)
       : null;
-    // S1：配置继承来自 source 的 TASK（config 已上移 task）
+    // S1: config inheritance comes from the source TASK (config has moved up to the task)
     const sourceTask = sourceSession?.task_id
       ? this.store.getTask(sourceSession.task_id)
       : null;
     const webSessionId = randomUUID();
-    // S1：每个 session 必须绑定 task。无显式 taskId 时在 Root 下自动建
-    // 子 Task（legacy "新建会话" = 新建一份工作）。clear 的旧现场退役
-    // 由 retireSessionId 在同一事务内完成。
+    // S1: every session must bind to a task. Without an explicit taskId a
+    // child Task is auto-created under Root (legacy "new session" = fresh
+    // work). clear retires the old execution via retireSessionId within the
+    // same transaction.
     const createdTaskForSession = opts?.taskId === undefined;
     const taskId = this.resolveTaskForNewSession(
       sessionCwd,
@@ -447,7 +451,7 @@ export class SessionManager {
   }
 
   /**
-   * 单事务落库：clear 场景 = 旧现场退役 + 新现场创建（单活不变量原子达成）。
+   * Single-transaction persistence: clear = retire old execution + create new (single-live invariant atomically met).
    */
   private persistNewSession(
     webSessionId: string,
@@ -472,8 +476,9 @@ export class SessionManager {
   }
 
   /**
-   * 从 source Task 继承 model/reasoning 到新 Task（/new 的"model 继承"体验）。
-   * bridge.setConfigOption 负责 agent 侧生效；持久化写到 target task。
+   * Inherit model/reasoning from the source Task into the new Task (/new's
+   * "model inherited" experience). bridge.setConfigOption applies it agent-side;
+   * the durable write goes to the target task.
    */
   private async inheritTaskConfig(
     bridge: SessionBridge,
@@ -518,16 +523,16 @@ export class SessionManager {
     return updated;
   }
 
-  /** 回收 persist 失败时 legacy 路径自动建的孤儿子 Task（不阻断原错误）。 */
+  /** Reclaim the orphan child Task auto-created by the legacy path when persistence fails (never masks the original error). */
   private reclaimOrphanTask(taskId: string): void {
     try {
       this.store.deleteTask(taskId);
     } catch {
-      // Root 或已不存在
+      // Root or already gone
     }
   }
 
-  /** 创建成功收尾：live/creating 集合、task 镜像、config 记录、bridge 映射。 */
+  /** Successful-create finalization: live/creating sets, task mirror, config record, bridge mapping. */
   private finalizeCreatedSession(
     webSessionId: string,
     taskId: string,
@@ -784,8 +789,8 @@ export class SessionManager {
 
   /**
    * Override currentValue in configOptions with stored values.
-   * S1：config 落点在 task（session 行仅 transition 前的遗留）；
-   * 先从 task 读，退化到 session 行。
+   * S1: config lives on the task (session rows are only pre-transition remants);
+   * read from the task first, fall back to the session row.
    */
   private applyStoredConfig(
     configOptions: ConfigOption[],
@@ -880,7 +885,7 @@ export class SessionManager {
     return cleared;
   }
 
-  /** 清掉一个 session 的全部内存运行态（buffers/状态/快照/权限等）。 */
+  /** Drop all in-memory runtime state of a session (buffers/state/snapshots/permissions etc.). */
   private cleanupSessionRuntime(sessionId: string): void {
     this.liveSessions.delete(sessionId);
     this.sessionHasTitle.delete(sessionId);
@@ -919,9 +924,11 @@ export class SessionManager {
   }
 
   /**
-   * S1 clear：同一 Task 换执行现场。旧现场退役（records 保留）+ 新现场
-   * 落库在同一事务内（createSession 内完成，单活不变量原子达成）；随后
-   * 清理旧现场运行态并 revoke 其 capability。失败时事务整体回滚。
+   * S1 clear: swap a Task to a new execution site. The old execution retires
+   * (records kept) and the new one persists in the same transaction (inside
+   * createSession; single-live invariant is met atomically); then the old
+   * runtime state is cleaned and its capability revoked. On failure the
+   * transaction rolls back wholesale.
    */
   async clearTask(
     bridge: SessionBridge,

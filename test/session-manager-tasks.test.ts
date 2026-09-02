@@ -71,7 +71,7 @@ describe("SessionManager S1 task lifecycle", () => {
       const root = store.listTasks().find((t) => t.parent_id === null)!;
       const children = store.listTasks().filter((t) => t.parent_id === root.id);
       assert.equal(children.length, 2);
-      // 每个 child 各自一个活 session（不同 task，不冲突）
+      // each child has its own live session (distinct tasks, no collision)
       for (const child of children) {
         assert.equal(
           store.getTaskLiveSession(child.id)?.id,
@@ -93,7 +93,7 @@ describe("SessionManager S1 task lifecycle", () => {
           taskId: tid,
         },
       );
-      assert.equal(store.getTask(sessionId), undefined); // session 不是 task
+      assert.equal(store.getTask(sessionId), undefined); // a session is not a task
       assert.equal(store.getSession(sessionId)?.task_id, tid);
       assert.equal(sm.getLiveSessionForTask(tid), sessionId);
       assert.equal(store.listTasks().filter((t) => t.parent_id).length, 0);
@@ -118,7 +118,7 @@ describe("SessionManager S1 task lifecycle", () => {
       const second = await sm.clearTask(bridge, tid);
       assert.notEqual(second.sessionId, first.sessionId);
 
-      // 旧现场退役（行保留 + deleted_at），records 仍归 task
+      // the old execution retires (row kept + deleted_at), records stay with the task
       const retired = store.getSessionIncludingDeleted(first.sessionId);
       assert.ok(retired);
       assert.ok(retired.deleted_at !== null);
@@ -128,7 +128,7 @@ describe("SessionManager S1 task lifecycle", () => {
         "before",
       );
 
-      // 新现场绑定同一 task，镜像更新，旧现场不再 current
+      // the new execution binds to the same task; mirror moves; old one is no longer current
       assert.equal(store.getSession(second.sessionId)?.task_id, tid);
       assert.equal(sm.getLiveSessionForTask(tid), second.sessionId);
       assert.equal(store.getTaskLiveSession(tid)?.id, second.sessionId);
@@ -158,7 +158,7 @@ describe("SessionManager S1 task lifecycle", () => {
       const second = await mcpSm.clearTask(bridge, tid);
       assert.notEqual(second.sessionId, first.sessionId);
       assert.equal(mcpSm.getLiveSessionForTask(tid), second.sessionId);
-      // 被清理：旧现场不再 live（其 capability 已在 clear 中 revoke）
+      // cleaned up: the old execution is no longer live (its capability was revoked in clear)
       assert.equal(mcpSm.liveSessions.has(first.sessionId), false);
       assert.equal(mcpSm.isCurrentExecution(first.sessionId), false);
     });
@@ -179,7 +179,7 @@ describe("SessionManager S1 task lifecycle", () => {
       sm.creatingSessions.add("creating-1");
       assert.equal(sm.isCurrentExecution("creating-1"), true);
       sm.creatingSessions.delete("creating-1");
-      assert.equal(sm.isCurrentExecution("not-a-session"), true); // 内部/未知行保持放行
+      assert.equal(sm.isCurrentExecution("not-a-session"), true); // internal/unknown rows stay allowed
 
       store.createSession("live", tmpDir, "auto", "live", tid);
       sm.rebuildTaskLiveSessions();

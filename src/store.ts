@@ -14,7 +14,7 @@ export interface SessionRow {
   last_active_at: string;
   /** epoch ms; NULL = live; non-NULL = soft-deleted (kept alive for active shares). */
   deleted_at: number | null;
-  /** S1: 出生证明，Task 的唯一持久映射；NULL 仅存在于上线切换前的遗留行。 */
+  /** S1: birth certificate — the only persistent mapping to a Task. NULL only on pre-switch legacy rows. */
   task_id: string | null;
 }
 
@@ -67,7 +67,7 @@ export interface EventRow {
   /** Origin marker: 'user' | 'system' | 'agent' | 'msg:<id>'. NULL only on legacy rows that pre-date the column. */
   from_ref: string | null;
   created_at: string;
-  /** S1: Task 归属；跨执行查询（getTaskEvents）按此列聚合。 */
+  /** S1: Task ownership; used by the cross-execution query (getTaskEvents). */
   task_id: string | null;
 }
 
@@ -154,7 +154,7 @@ export interface AttachmentRow {
   width: number | null;
   height: number | null;
   created_at: string;
-  /** S1: Task 归属；跨 clear 保留的实现基础。 */
+  /** S1: Task ownership — the basis for attachments surviving clear. */
   task_id: string | null;
 }
 
@@ -467,12 +467,14 @@ export class Store {
     `);
 
     // ---- S1: tasks + task ownership (2026-09) ----
-    // Task = 稳定工作身份（二进制），Session = 执行现场（进程）。sessions.task_id
-    // 是唯一持久映射；「当前 Session」= 该 Task 的活 Session（deleted_at IS NULL），
-    // 部分唯一索引强制同一时刻至多一个活现场。
-    // task_id 列在 schema 层可空：上线切换（src/migration/task-switch.ts）一次性
-    // 迁移负责 backfill/清理；运行时 API（createSession/saveEvent/insertAttachment）
-    // 始终携带 task_id，遗留 NULL 行只存在于切换前。
+    // S1: tasks + task ownership (2026-09). Task = stable work identity (binary),
+    // Session = execution (process). sessions.task_id is the only persistent
+    // mapping; "current Session" = the Task's live Session (deleted_at IS NULL),
+    // enforced to at most one live row per Task by a partial unique index.
+    // task_id is nullable at the schema level: the one-shot upgrade switch
+    // (src/migration/task-switch.ts) backfills/cleans; runtime APIs
+    // (createSession/saveEvent/insertAttachment) always carry task_id, and
+    // legacy NULL rows exist only before the switch.
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS tasks (
         id TEXT PRIMARY KEY,
@@ -545,7 +547,7 @@ export class Store {
     cwd: string,
     source: string = "auto",
     agentSessionId: string = id,
-    /** S1: 出生证明——进程属于哪个 Task；转换后恒定必填。 */
+    /** S1: birth certificate — which process/Task this belongs to; required after the switch. */
     taskId?: string | null,
   ): SessionRow {
     return this.db.transaction(() => {
@@ -747,17 +749,17 @@ export class Store {
 
   // ===== tasks (S1) + session retirement =====
 
-  /** 暴露 better-sqlite3 在线备份：迁移模块快照用，运行中安全。 */
+  /** Expose better-sqlite3's online backup: used for the migration snapshot; safe while running. */
   backup(dest: string): Promise<import("better-sqlite3").BackupMetadata> {
     return this.db.backup(dest);
   }
 
-  /** 显式事务边界：迁移等需要原子性的写操作走这里。 */
+  /** Explicit transaction boundary for writes that need atomicity (migration etc.). */
   transaction<T>(fn: () => T): T {
     return this.db.transaction(fn)();
   }
 
-  /** 是否存在活 Root（parent_id IS NULL）。Root 由服务器创建，唯一。 */
+  /** Whether a live Root (parent_id IS NULL) exists. Root is created by the server; unique. */
   hasRootTask(): boolean {
     return (
       this.db
@@ -768,7 +770,7 @@ export class Store {
     );
   }
 
-  /** 活 Root 的 id（无 Root 时 undefined）。 */
+  /** The live Root's id (undefined when no Root). */
   getRootTaskId(): string | undefined {
     return (
       this.db
@@ -779,7 +781,7 @@ export class Store {
     )?.id;
   }
 
-  /** 是否存在遗留（即将导前、未被 task 收养）的 session。 */
+  /** Whether any legacy session (pre-switch, not yet adopted by a task) exists. */
   hasLegacySessions(): boolean {
     return (
       this.db
@@ -789,8 +791,9 @@ export class Store {
   }
 
   /**
-   * 把一次执行（session + 其 events/attachments）收养到某 task。
-   * 迁移/跨执行收养用；正常创建路径走 createSession(taskId)。
+   * Adopt one execution (a session plus its events/attachments) into a task.
+   * Used by the migration / cross-execution adoption; the normal creation
+   * path goes through createSession(taskId).
    */
   adoptSession(sessionId: string, taskId: string): void {
     this.db
@@ -805,9 +808,10 @@ export class Store {
   }
 
   /**
-   * 硬删遗留 session（task_id IS NULL；上线切换用）。一次性破坏性：
-   * 连 shares/client_ops/events 一起删（不保留 share 观众视图）。
-   * 返回删除的 session 数。
+   * Hard-delete legacy sessions (task_id IS NULL; used by the upgrade switch).
+   * One-shot and destructive: shares/client_ops/events are dropped too
+   * (no share-viewer preservation).
+   * Returns the number of sessions deleted.
    */
   deleteLegacySessions(): number {
     const legacy = this.db
@@ -831,7 +835,7 @@ export class Store {
     return legacy.length;
   }
 
-  /** task_id of a session（NULL 仅存在于切换前遗留行）。 */
+  /** A session's task_id (NULL only on pre-switch legacy rows). */
   private taskOfSession(sessionId: string): string | null {
     return (
       (
@@ -842,7 +846,7 @@ export class Store {
     );
   }
 
-  /** S1 生效配置：task 优先，退化 session 行（遗留）。mode/model/reasoning_effort */
+  /** Effective config for a session (S1): task first, falls back to the session row (legacy). mode/model/reasoning_effort */
   getSessionEffectiveConfig(sessionId: string): {
     mode: string | null;
     model: string | null;
@@ -865,9 +869,10 @@ export class Store {
   }
 
   /**
-   * 退役 session 而不丢记录：置 deleted_at，Task 的活 session 谓词自然迁移。
-   * clear 的 store 原语；events/attachments 保留（task-owned）。
-   * share 感知的删除路径仍走 deleteSession。
+   * Retire a session without losing its records: sets deleted_at so a Task's
+   * live-session predicate moves on. The clear store primitive; events and
+   * attachments stay (task-owned). Share-aware deletion still goes through
+   * deleteSession.
    */
   retireSession(id: string): void {
     this.db
@@ -896,14 +901,14 @@ export class Store {
     return this.getTask(input.id)!;
   }
 
-  /** 活 Task 查询：soft-deleted（deleted_at）任务不可见。 */
+  /** Live-task lookup: soft-deleted (deleted_at) tasks are hidden. */
   getTask(id: string): TaskRow | undefined {
     return this.db
       .prepare("SELECT * FROM tasks WHERE id = ? AND deleted_at IS NULL")
       .get(id) as TaskRow | undefined;
   }
 
-  /** 全部活 Task，最近活跃在前。 */
+  /** All live tasks, most recently active first. */
   listTasks(): TaskRow[] {
     return this.db
       .prepare(
@@ -913,7 +918,7 @@ export class Store {
       .all() as TaskRow[];
   }
 
-  /** 改名/改标题/改简报；同父重名会命中唯一索引抛错。 */
+  /** Rename/retitle/re-rebrief; a duplicate name under the same parent throws via the unique index. */
   renameTask(
     id: string,
     fields: { name?: string; title?: string | null; brief?: string | null },
@@ -940,7 +945,7 @@ export class Store {
       .run(...params);
   }
 
-  /** Task 级配置（终局：config 从 session 上移到 task）。 */
+  /** Task-level config (end state: config moved from session up to task). */
   updateTaskConfig(id: string, configId: string, value: string): void {
     const column = (
       {
@@ -967,8 +972,8 @@ export class Store {
   }
 
   /**
-   * 「当前 Session」= 该 Task 的活 Session。部分唯一索引
-   * ux_sessions_live_per_task 保证恒 ≤1 行；此查询返回 0..1 行。
+   * "Current Session" = the Task's live Session. The partial unique index
+   * ux_sessions_live_per_task guarantees ≤1 row; this returns 0..1 rows.
    */
   getTaskLiveSession(taskId: string): SessionRow | undefined {
     return this.db
@@ -981,8 +986,9 @@ export class Store {
   }
 
   /**
-   * 跨执行聚合原始事件：task 一生的记录。events.id 是全局自增主键，
-   * 按它排序即得跨 session 的全局插入序；session 内 seq 不参与跨执行排序。
+   * Aggregate raw events across executions: a task's full record. events.id
+   * is a global autoincrement key — ordering by it yields global insertion
+   * order across sessions; per-session seq does not participate.
    */
   getTaskEvents(
     taskId: string,
@@ -1013,7 +1019,7 @@ export class Store {
       .all(...params) as EventRow[];
   }
 
-  /** 附件按 task 聚合（跨 clear 保留的查询面）。 */
+  /** Attachments aggregated by task (the cross-clear ownership view). */
   getTaskAttachments(taskId: string): AttachmentRow[] {
     return this.db
       .prepare(
@@ -1023,9 +1029,10 @@ export class Store {
   }
 
   /**
-   * 删除 Task（含整个子树）。Root（parent_id IS NULL）不可删除。
-   * S1 不做批准样式二次确认（阶段性简化，S3 恢复 design 语义）：
-   * 直接硬删子树 sessions/events/attachments/shares/bindings。
+   * Delete a Task (including its whole subtree). The Root (parent_id IS NULL)
+   * cannot be deleted. S1 performs no approval-style second confirmation
+   * (staged simplification; S3 restores the design semantics): the subtree's
+   * sessions/events/attachments/shares/bindings are hard-deleted.
    */
   deleteTask(id: string): void {
     this.db.transaction(() => {
@@ -1065,11 +1072,12 @@ export class Store {
         delOps.run(s.id);
         delEvents.run(s.id);
       }
-      // sessions 删除级联 attachments（FK CASCADE）+ agent_sessions。
+      // Deleting sessions cascades attachments (FK CASCADE) + agent_sessions.
       this.db
         .prepare(`DELETE FROM sessions WHERE task_id IN (${placeholders})`)
         .run(...ids);
-      // tasks 自引用 FK（parent_id → tasks.id）；按 depth DESC（叶子先）逐个删。
+      // tasks has a self-referential FK (parent_id -> tasks.id); delete one by one
+      // in depth DESC (leaf-first) order.
       const delTask = this.db.prepare("DELETE FROM tasks WHERE id = ?");
       for (const r of subtree) delTask.run(r.id);
     })();

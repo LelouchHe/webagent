@@ -268,16 +268,17 @@ process.on("SIGHUP", () => {
 
 server.listen(config.port, config.host, () => {
   void (async () => {
-    // S1 一次性上线切换：Root 必须存在后才能服务任何会话创建。
-    // 幂等：Root 已存在即 no-op。失败即拒绝启动（fail closed）：
-    // 否则每次启动重复尝试，遗留状态不明。无条件快照 + carry
-    // 见 src/migration/task-switch.ts。
+    // S1 one-shot upgrade switch: a Root must exist before any session can
+    // be served. Idempotent: no-op once a Root exists. Fail-closed on error
+    // (exit 78): otherwise every boot would retry with unknown legacy state.
+    // Unconditional snapshot + carry live in src/migration/task-switch.ts.
     try {
       await runTaskSwitch(store, {
         dataDir: config.data_dir,
         defaultCwd: config.default_cwd,
       });
-      // S1 当前 Session 镜像：switch 后重建（Root/子 Task 的活 Session 落内存）
+      // S1 current-session mirror: rebuilt after the switch so the live
+      // sessions of Root/child tasks land in memory
       sessions.rebuildTaskLiveSessions();
     } catch (err) {
       console.error("[task-switch] migration failed:", err);
