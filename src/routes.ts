@@ -1851,6 +1851,259 @@ export function createRequestHandler(
         return;
       }
 
+      // --- Task plane: /api/v1/tasks/* (S1) ---
+      const taskListMatch = url.match(/^\/api\/v1\/tasks\/?$/);
+      if (taskListMatch && req.method === "GET") {
+        const tasks = store.listTasks().map((t) => ({
+          ...t,
+          liveSessionId: sessions?.getLiveSessionForTask(t.id) ?? null,
+        }));
+        json(res, HTTP_STATUS.OK, { tasks });
+        return;
+      }
+      if (taskListMatch && req.method === "POST") {
+        // Create a child Task under Root, then spawn its first session.
+        const bridge = getBridge?.();
+        if (!bridge || !sessions) {
+          json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
+            error: "Agent not ready yet",
+          });
+          return;
+        }
+        const root = store.getRootTaskId();
+        if (!root) {
+          json(res, HTTP_STATUS.CONFLICT, {
+            error: "No root task yet (switch not run)",
+          });
+          return;
+        }
+        let body: { name?: string; brief?: string; cwd?: string };
+        try {
+          body = JSON.parse(await readBody(req)) as {
+            name?: string;
+            brief?: string;
+            cwd?: string;
+          };
+        } catch {
+          json(res, HTTP_STATUS.BAD_REQUEST, { error: "Invalid JSON" });
+          return;
+        }
+        const name = (body.name ?? "").trim();
+        if (!name) {
+          json(res, HTTP_STATUS.BAD_REQUEST, {
+            error: "Missing required field: name",
+          });
+          return;
+        }
+        const rootTask = store.getTask(root);
+        const cwd = body.cwd ?? rootTask?.cwd ?? "";
+        const taskId = randomUUID();
+        try {
+          store.createTask({
+            id: taskId,
+            parentId: root,
+            name,
+            brief: body.brief ?? null,
+            cwd,
+          });
+        } catch {
+          json(res, HTTP_STATUS.CONFLICT, {
+            error: "Duplicate name under the same parent",
+          });
+          return;
+        }
+        try {
+          await sessions.createSession(bridge, cwd, undefined, "auto", {
+            taskId,
+          });
+        } catch (err) {
+          json(res, HTTP_STATUS.INTERNAL_SERVER_ERROR, {
+            error: errorMessage(err),
+          });
+          return;
+        }
+        sseManager.broadcast({
+          type: "task_created",
+          taskId,
+        });
+        json(res, HTTP_STATUS.CREATED, {
+          task: sessions.getTaskDetail(taskId),
+        });
+        return;
+      }
+
+      const taskDetailMatch = url.match(
+        /^\/api\/v1\/tasks\/([^/]+)\/events\/?$/,
+      );
+      if (taskDetailMatch && req.method === "GET") {
+        // Aggregated raw records across executions (global insertion order).
+        const taskId = decodeURIComponent(taskDetailMatch[1]);
+        const task = store.getTask(taskId);
+        if (!task) {
+          json(res, HTTP_STATUS.NOT_FOUND, { error: "Task not found" });
+          return;
+        }
+        const parsedUrl = new URL(req.url ?? "/", "http://localhost");
+        const afterId = parsedUrl.searchParams.get("afterId");
+        const limit = parsedUrl.searchParams.get("limit");
+        const events = store.getTaskEvents(taskId, {
+          excludeThinking:
+            parsedUrl.searchParams.get("excludeThinking") === "1",
+          afterId: afterId ? Number(afterId) : undefined,
+          limit: limit ? Number(limit) : undefined,
+        });
+        json(res, HTTP_STATUS.OK, {
+          task: { id: task.id },
+          events,
+        });
+        return;
+      }
+
+      const taskActionMatch = url.match(
+        /^\/api\/v1\/tasks\/([^/]+)(?:\/(clear))?\/?$/,
+      );
+      if (taskActionMatch && req.method === "GET") {
+        const taskId = decodeURIComponent(taskActionMatch[1]);
+        const detail = sessions?.getTaskDetail(taskId);
+        if (!detail) {
+          json(res, HTTP_STATUS.NOT_FOUND, { error: "Task not found" });
+          return;
+        }
+        json(res, HTTP_STATUS.OK, { task: detail });
+        return;
+      }
+      if (taskActionMatch && req.method === "PUT") {
+        const taskId = decodeURIComponent(taskActionMatch[1]);
+        if (!store.getTask(taskId)) {
+          json(res, HTTP_STATUS.NOT_FOUND, { error: "Task not found" });
+          return;
+        }
+        let body: {
+          name?: string;
+          title?: string | null;
+          brief?: string | null;
+        };
+        try {
+          body = JSON.parse(await readBody(req)) as {
+            name?: string;
+            title?: string | null;
+            brief?: string | null;
+          };
+        } catch {
+          json(res, HTTP_STATUS.BAD_REQUEST, { error: "Invalid JSON" });
+          return;
+        }
+        try {
+          store.renameTask(taskId, body);
+        } catch {
+          json(res, HTTP_STATUS.CONFLICT, {
+            error: "Duplicate name under the same parent",
+          });
+          return;
+        }
+        sseManager.broadcast({
+          type: "task_updated",
+          taskId,
+        });
+        json(res, HTTP_STATUS.OK, { task: store.getTask(taskId) });
+        return;
+      }
+      if (taskActionMatch && req.method === "DELETE") {
+        const taskId = decodeURIComponent(taskActionMatch[1]);
+        if (!sessions || !getBridge?.()) {
+          json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
+            error: "Agent not ready yet",
+          });
+          return;
+        }
+        try {
+          sessions.deleteTask(getBridge()!, taskId);
+        } catch (err) {
+          json(res, HTTP_STATUS.BAD_REQUEST, { error: errorMessage(err) });
+          return;
+        }
+        sseManager.broadcast({
+          type: "task_deleted",
+          taskId,
+        });
+        json(res, HTTP_STATUS.NO_CONTENT, null);
+        return;
+      }
+      if (taskActionMatch?.[2] === "clear" && req.method === "POST") {
+        const taskId = decodeURIComponent(taskActionMatch[1]);
+        const bridge = getBridge?.();
+        if (!bridge || !sessions) {
+          json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
+            error: "Agent not ready yet",
+          });
+          return;
+        }
+        let result;
+        try {
+          result = await sessions.clearTask(bridge, taskId);
+        } catch (err) {
+          json(res, HTTP_STATUS.BAD_REQUEST, { error: errorMessage(err) });
+          return;
+        }
+        sseManager.broadcast({
+          type: "task_cleared",
+          taskId,
+        });
+        json(res, HTTP_STATUS.OK, {
+          task: sessions.getTaskDetail(taskId),
+          sessionId: result.sessionId,
+        });
+        return;
+      }
+
+      const taskConfigMatch = url.match(
+        /^\/api\/v1\/tasks\/([^/]+)\/([^/]+)\/?$/,
+      );
+      if (taskConfigMatch && req.method === "PUT") {
+        const taskId = decodeURIComponent(taskConfigMatch[1]);
+        const configId = decodeURIComponent(taskConfigMatch[2]).replace(
+          /-/g,
+          "_",
+        );
+        if (!store.getTask(taskId)) {
+          json(res, HTTP_STATUS.NOT_FOUND, { error: "Task not found" });
+          return;
+        }
+        let body: { value?: string | boolean };
+        try {
+          body = JSON.parse(await readBody(req)) as {
+            value?: string | boolean;
+          };
+        } catch {
+          json(res, HTTP_STATUS.BAD_REQUEST, { error: "Invalid JSON" });
+          return;
+        }
+        if (body.value === undefined) {
+          json(res, HTTP_STATUS.BAD_REQUEST, {
+            error: "Missing required field: value",
+          });
+          return;
+        }
+        const value = String(body.value);
+        store.updateTaskConfig(taskId, configId, value);
+        // Apply agent-side when the live session exists (transitional surface).
+        const liveId = sessions?.getLiveSessionForTask(taskId);
+        const bridge = getBridge?.();
+        if (liveId && bridge) {
+          try {
+            await bridge.setConfigOption(liveId, configId, value);
+          } catch {
+            // agent-side apply is best-effort; durable write already landed
+          }
+        }
+        sseManager.broadcast({
+          type: "task_updated",
+          taskId,
+        });
+        json(res, HTTP_STATUS.OK, { task: store.getTask(taskId) });
+        return;
+      }
+
       // --- Session CRUD: /api/v1/sessions/:id ---
       const sessionIdMatch = url.match(
         /^\/api\/v1\/sessions\/([^/?]+)\/?(\?.*)?$/,

@@ -4,7 +4,12 @@ import { randomUUID } from "node:crypto";
 import { rm } from "node:fs/promises";
 import { stat } from "node:fs/promises";
 import { basename, join } from "node:path";
-import { MessageNotFoundError, type Store, type SessionRow } from "./store.ts";
+import {
+  MessageNotFoundError,
+  type Store,
+  type SessionRow,
+  type TaskRow,
+} from "./store.ts";
 import type { AgentBridge } from "./bridge.ts";
 import { buildMcpServerEntry } from "./mcp/server.ts";
 import type { CapabilityStore } from "./mcp/capability.ts";
@@ -920,6 +925,38 @@ export class SessionManager {
         recursive: true,
         force: true,
       }).catch(() => {});
+    }
+  }
+
+  /** Task detail view for the task-plane API: identity + live session. */
+  getTaskDetail(
+    taskId: string,
+  ): (TaskRow & { liveSessionId: string | null }) | undefined {
+    const task = this.store.getTask(taskId);
+    if (!task) return undefined;
+    return {
+      ...task,
+      liveSessionId: this.taskLiveSessions.get(taskId) ?? null,
+    };
+  }
+
+  /**
+   * Delete a Task (and its whole subtree): discard bridge sessions, revoke
+   * capabilities, drop in-memory runtime state for its executions, then run
+   * the store cascade. Root protection lives in store.deleteTask.
+   */
+  deleteTask(bridge: SessionBridge, taskId: string): void {
+    const sessionIds = this.store.listSessionIdsByTask(taskId);
+    for (const sessionId of sessionIds) {
+      const binding = this.store.getAgentSessionBinding(sessionId);
+      if (binding) bridge.discardUnboundSession?.(binding.agent_session_id);
+      this.capabilities?.revokeBySession(sessionId);
+      this.cleanupSessionRuntime(sessionId);
+    }
+    this.store.deleteTask(taskId);
+    // Drop mirror entries pointing at tasks that no longer exist (whole subtree).
+    for (const [tid] of this.taskLiveSessions) {
+      if (!this.store.getTask(tid)) this.taskLiveSessions.delete(tid);
     }
   }
 

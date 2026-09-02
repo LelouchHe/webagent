@@ -1028,6 +1028,14 @@ export class Store {
       .all(taskId) as AttachmentRow[];
   }
 
+  /** All session ids under a task (including retired ones; cross-execution provenance). */
+  listSessionIdsByTask(taskId: string): string[] {
+    const rows = this.db
+      .prepare("SELECT id FROM sessions WHERE task_id = ?")
+      .all(taskId) as Array<{ id: string }>;
+    return rows.map((r) => r.id);
+  }
+
   /**
    * Delete a Task (including its whole subtree). The Root (parent_id IS NULL)
    * cannot be deleted. S1 performs no approval-style second confirmation

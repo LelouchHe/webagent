@@ -208,6 +208,10 @@ export type AgentEvent =
       promptId?: string;
     }
   | { type: "session_deleted"; sessionId: string }
+  | { type: "task_created"; taskId: string }
+  | { type: "task_updated"; taskId: string }
+  | { type: "task_cleared"; taskId: string }
+  | { type: "task_deleted"; taskId: string }
   | { type: "session_title_updated"; sessionId: string; title: string }
   | { type: "session_expired"; sessionId: string }
   | {
