@@ -276,7 +276,6 @@ server.listen(config.port, config.host, () => {
       await runTaskSwitch(store, {
         dataDir: config.data_dir,
         defaultCwd: config.default_cwd,
-        agentKey: agentKeyFromCommand(preflight.agentCmd),
       });
     } catch (err) {
       console.error("[task-switch] migration failed:", err);
