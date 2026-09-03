@@ -130,6 +130,15 @@ describe("Store", () => {
       assert.equal(store.getSession("root")?.id, "root");
     });
 
+    it("protects the Root session from deletion", () => {
+      store.ensureRootSession("/tmp/root");
+
+      assert.throws(
+        () => store.deleteSession("root"),
+        /Root session cannot be deleted/,
+      );
+    });
+
     it("lists sessions ordered by last_active_at desc", () => {
       store.createSession("old", "/a");
       store.createSession("new", "/b");

@@ -651,6 +651,9 @@ export class Store {
    * use this to decide whether to clean up filesystem artefacts (images).
    */
   deleteSession(id: string): "hard" | "soft" {
+    if (id === ROOT_SESSION_ID) {
+      throw new Error("Root session cannot be deleted");
+    }
     // Drop preview shares regardless — they are owner-only drafts and
     // share the session's lifecycle by design.
     this.db

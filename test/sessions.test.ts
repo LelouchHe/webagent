@@ -702,6 +702,17 @@ describe("Session REST API", () => {
       assert.equal(res.status, 404);
     });
 
+    it("protects the Root session from deletion", async () => {
+      store.ensureRootSession(tmpDir);
+      store.bindAgentSession("root", "agent-root");
+
+      const res = await makeRequest(port, "DELETE", "/api/v1/sessions/root");
+
+      assert.equal(res.status, 400);
+      assert.match(res.body, /Root session cannot be deleted/);
+      assert.equal(store.getSession("root")?.id, "root");
+    });
+
     it("rejects deletion while prompt work is active", async () => {
       store.createSession("s-active-delete", tmpDir);
       sessions.activePrompts.add("s-active-delete");

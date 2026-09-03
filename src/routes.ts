@@ -2035,10 +2035,17 @@ export function createRequestHandler(
             });
             return;
           }
-          if (sessions) {
-            sessions.deleteSession(sessionId);
-          } else {
-            store.deleteSession(sessionId);
+          try {
+            if (sessions) {
+              sessions.deleteSession(sessionId);
+            } else {
+              store.deleteSession(sessionId);
+            }
+          } catch (err) {
+            json(res, HTTP_STATUS.BAD_REQUEST, {
+              error: err instanceof Error ? err.message : String(err),
+            });
+            return;
           }
           sseManager.broadcast({ type: "session_deleted", sessionId });
           res.writeHead(HTTP_STATUS.NO_CONTENT);
