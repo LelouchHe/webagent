@@ -348,7 +348,7 @@ export const ROOT: CmdNode = {
     },
     {
       name: "/compact",
-      desc: "Compact context and continue with a fresh execution",
+      desc: "Summarize current conversation and continue",
       onSelect: () => {
         void compactCurrentSession();
       },
