@@ -714,12 +714,13 @@ export class Store {
       JOIN agent_sessions a ON a.web_session_id = s.id
       LEFT JOIN events e ON e.session_id = s.id
       WHERE e.id IS NULL
+        AND s.id != ?
         AND a.agent_key = ?
         AND s.deleted_at IS NULL
         AND strftime('%s', 'now') - strftime('%s', s.created_at) >= ?
     `,
       )
-      .all(this.agentKey, minAgeS) as Array<{ id: string }>;
+      .all(ROOT_SESSION_ID, this.agentKey, minAgeS) as Array<{ id: string }>;
     if (empties.length === 0) return [];
     const del = this.db.prepare("DELETE FROM sessions WHERE id = ?");
     for (const r of empties) del.run(r.id);

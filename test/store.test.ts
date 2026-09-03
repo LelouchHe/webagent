@@ -139,6 +139,14 @@ describe("Store", () => {
       );
     });
 
+    it("does not garbage-collect the Root session when it is empty", () => {
+      store.ensureRootSession("/tmp/root");
+      store.bindAgentSession("root", "agent-root");
+
+      assert.deepEqual(store.deleteEmptySessions(0), []);
+      assert.equal(store.getSession("root")?.id, "root");
+    });
+
     it("lists sessions ordered by last_active_at desc", () => {
       store.createSession("old", "/a");
       store.createSession("new", "/b");
