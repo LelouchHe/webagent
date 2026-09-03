@@ -147,6 +147,38 @@ describe("AgentBridge", () => {
     ]);
   });
 
+  it("drops ACP updates after their WebAgent binding is retired", async () => {
+    const bindings = new Map<string, string>([["agent-old", "web-1"]]);
+    const bridge = new AgentBridge("fake-agent", {
+      getAgentSessionId: (webSessionId) =>
+        [...bindings].find(([, webId]) => webId === webSessionId)?.[0],
+      getWebSessionId: (agentSessionId) => bindings.get(agentSessionId),
+    });
+    const events: unknown[] = [];
+    bridge.on("event", (event) => events.push(event));
+
+    await (bridge as any).handleSessionUpdate({
+      sessionId: "agent-old",
+      update: {
+        sessionUpdate: "agent_message_chunk",
+        content: { type: "text", text: "before clear" },
+      },
+    });
+    bindings.delete("agent-old");
+    bindings.set("agent-new", "web-1");
+    await (bridge as any).handleSessionUpdate({
+      sessionId: "agent-old",
+      update: {
+        sessionUpdate: "agent_message_chunk",
+        content: { type: "text", text: "after clear" },
+      },
+    });
+
+    assert.deepEqual(events, [
+      { type: "message_chunk", sessionId: "web-1", text: "before clear" },
+    ]);
+  });
+
   it("maps WebAgent IDs for load, config, and cancel calls", async () => {
     const bridge = new AgentBridge("fake-agent", mappedSessions);
     const calls: Array<{ method: string; payload: unknown }> = [];
