@@ -4,7 +4,12 @@ import { randomUUID } from "node:crypto";
 import { rm } from "node:fs/promises";
 import { stat } from "node:fs/promises";
 import { join } from "node:path";
-import { MessageNotFoundError, type SessionRow, type Store } from "./store.ts";
+import {
+  MessageNotFoundError,
+  ROOT_SESSION_ID,
+  type SessionRow,
+  type Store,
+} from "./store.ts";
 import type { AgentBridge } from "./bridge.ts";
 import { buildMcpServerEntry } from "./mcp/server.ts";
 import type { CapabilityStore } from "./mcp/capability.ts";
@@ -395,6 +400,33 @@ export class SessionManager {
       sessionId,
       configOptions: this.applyStoredConfig(configOptions, session),
     };
+  }
+
+  /** Bind an ACP execution to the reserved Root record after bridge startup. */
+  async ensureRootSession(bridge: SessionBridge): Promise<void> {
+    const root = this.store.getSessionIncludingDeleted(ROOT_SESSION_ID);
+    if (!root || this.store.getAgentSessionId(ROOT_SESSION_ID)) return;
+
+    const execution = this.buildMcpServerForExecution(ROOT_SESSION_ID, false);
+    const created = await this.createAgentSession(
+      bridge,
+      ROOT_SESSION_ID,
+      root.cwd,
+      this.buildNewSessionOptions(undefined, execution?.servers),
+      execution?.token,
+    );
+    try {
+      this.store.bindAgentSession(ROOT_SESSION_ID, created.sessionId);
+    } catch (error) {
+      bridge.discardUnboundSession?.(created.sessionId);
+      this.creatingSessions.delete(ROOT_SESSION_ID);
+      if (execution?.token) this.capabilities?.revoke(execution.token);
+      throw error;
+    }
+    this.liveSessions.add(ROOT_SESSION_ID);
+    this.creatingSessions.delete(ROOT_SESSION_ID);
+    this.recordConfigOptions(ROOT_SESSION_ID, created.configOptions);
+    bridge.sessionMapped?.(created.sessionId);
   }
 
   /** Reapply the stable Session config to a newly created ACP execution. */

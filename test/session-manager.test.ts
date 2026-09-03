@@ -729,6 +729,35 @@ describe("SessionManager", () => {
     });
   });
 
+  describe("Root execution", () => {
+    it("binds one ACP execution to the existing Root session", async () => {
+      store.ensureRootSession(tmpDir);
+      let newSessionCalls = 0;
+      const bridge = {
+        async newSession() {
+          newSessionCalls++;
+          return { sessionId: "agent-root", configOptions: [] };
+        },
+        async setConfigOption() {
+          return [];
+        },
+        async loadSession() {
+          throw new Error("loadSession should not be called");
+        },
+      };
+
+      await sm.ensureRootSession(bridge);
+      await sm.ensureRootSession(bridge);
+
+      assert.equal(newSessionCalls, 1);
+      assert.equal(store.getAgentSessionId("root"), "agent-root");
+      assert.deepEqual(
+        store.listSessions().map((session) => session.id),
+        ["root"],
+      );
+    });
+  });
+
   describe("buffer management", () => {
     it("appends and flushes assistant buffer", () => {
       store.createSession("s1", "/x");

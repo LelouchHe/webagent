@@ -2,6 +2,8 @@ import Database from "better-sqlite3";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 
+export const ROOT_SESSION_ID = "root";
+
 export interface SessionRow {
   id: string;
   cwd: string;
