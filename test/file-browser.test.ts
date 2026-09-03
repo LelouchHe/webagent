@@ -7,14 +7,14 @@ import {
 } from "../public/js/file-browser.ts";
 
 describe("file browser path resolution", () => {
-  it("starts an empty /view query at the session cwd", () => {
+  it("starts an empty /view query at the task cwd", () => {
     assert.deepEqual(resolveBrowseTarget("", "/work/project"), {
       directory: "/work/project",
       filter: "",
     });
   });
 
-  it("resolves relative input against the session cwd", () => {
+  it("resolves relative input against the task cwd", () => {
     assert.deepEqual(resolveBrowseTarget("src/comp", "/work/project"), {
       directory: "/work/project/src",
       filter: "comp",
@@ -75,8 +75,8 @@ describe("file browser path resolution", () => {
     });
   });
 
-  it("rejects a relative query without a session cwd", () => {
-    assert.throws(() => resolveBrowseTarget("src", null), /active session/i);
+  it("rejects a relative query without a task cwd", () => {
+    assert.throws(() => resolveBrowseTarget("src", null), /active task/i);
   });
 
   it("extracts the current segment for local filtering", () => {

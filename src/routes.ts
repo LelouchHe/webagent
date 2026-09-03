@@ -5,7 +5,7 @@ import { gzipSync } from "node:zlib";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import busboy from "busboy";
 import type { Store } from "./store.ts";
-import type { SessionManager } from "./session-manager.ts";
+import type { TaskManager } from "./task-manager.ts";
 import type { SseManager } from "./sse-manager.ts";
 import type { AgentBridge } from "./bridge.ts";
 import type { Config } from "./config.ts";
@@ -16,8 +16,8 @@ import { errorMessage, MessageIngressSchema } from "./types.ts";
 import type { AgentEvent, ConfigOption } from "./types.ts";
 import {
   interruptBashProc,
-  InvalidSessionDirectoryError,
-} from "./session-manager.ts";
+  InvalidTaskDirectoryError,
+} from "./task-manager.ts";
 import { randomUUID } from "node:crypto";
 import { createWriteStream } from "node:fs";
 import { handleShareRoutes } from "./share/routes.ts";
@@ -30,11 +30,11 @@ import { log } from "./log.ts";
 
 const rlog = log.scope("routes");
 const plog = rlog.scope("prompt");
-const slog = rlog.scope("session");
+const slog = rlog.scope("task");
 const mlog = rlog.scope("msg");
 
 const COMPACT_SUMMARY_PROMPT = [
-  "Prepare a concise context handoff for a fresh execution of this WebAgent session.",
+  "Prepare a concise context handoff for a fresh execution of this WebAgent task.",
   "Summarize the user's current goal, completed work, current state, key decisions,",
   "unresolved blockers, and the exact next action. Do not use tools, modify files,",
   "or continue the task. Output only the handoff summary in plain text or Markdown.",
@@ -141,7 +141,7 @@ export const CSP_POLICY = [
 
 export interface RequestHandlerDeps {
   store: Store;
-  sessions?: SessionManager;
+  tasks?: TaskManager;
   sseManager: SseManager;
   clientRegistry?: ClientRegistry;
   titleService?: TitleService;
@@ -192,7 +192,7 @@ export interface RequestHandlerDeps {
   /**
    * Optional MCP server endpoint. When present, `/mcp` requests are
    * dispatched here before the generic API router; the handler authenticates
-   * by per-session capability (see src/mcp/server.ts).
+   * by per-task capability (see src/mcp/server.ts).
    */
   mcpEndpoint?: (req: IncomingMessage, res: ServerResponse) => Promise<boolean>;
 }
@@ -223,7 +223,7 @@ function getClientOpId(req: IncomingMessage): string | null {
 }
 
 function logPromptRejectBeforeSave(fields: {
-  sessionId: string;
+  taskId: string;
   status: number;
   reason: string;
   opId?: string | null;
@@ -233,7 +233,7 @@ function logPromptRejectBeforeSave(fields: {
   error?: unknown;
 }): void {
   plog.warn("rejected before save", {
-    sessionId: fields.sessionId.slice(0, 8),
+    taskId: fields.taskId.slice(0, 8),
     status: fields.status,
     reason: fields.reason,
     ...(fields.opId ? { opId: fields.opId } : {}),
@@ -250,11 +250,11 @@ function tryReplayClientOp(
   req: IncomingMessage,
   res: ServerResponse,
   store: Store,
-  sessionId: string,
+  taskId: string,
 ): { opId: string | null; replayed: boolean } {
   const opId = getClientOpId(req);
   if (!opId) return { opId: null, replayed: false };
-  const cached = store.getClientOp(sessionId, opId) as {
+  const cached = store.getClientOp(taskId, opId) as {
     status: number;
     body: unknown;
   } | null;
@@ -273,12 +273,12 @@ function tryReplayClientOp(
 function saveClientOpResult(
   store: Store,
   opId: string | null,
-  sessionId: string,
+  taskId: string,
   status: number,
   body: unknown,
 ): void {
   if (!opId) return;
-  store.saveClientOp(sessionId, opId, { status, body });
+  store.saveClientOp(taskId, opId, { status, body });
 }
 
 /** Send a JSON response, gzip-compressed when the client supports it. */
@@ -331,16 +331,16 @@ export function getPrincipal(req: IncomingMessage): TokenRecord | undefined {
 async function handleAttachmentUpload(
   req: IncomingMessage,
   res: ServerResponse,
-  sessionId: string,
+  taskId: string,
   deps: RequestHandlerDeps,
 ): Promise<void> {
-  const { store, dataDir, limits, sessions } = deps;
+  const { store, dataDir, limits, tasks } = deps;
   const fileUploadLimit = limits.file_upload ?? 52_428_800;
-  if (!store.getSession(sessionId)) {
-    json(res, HTTP_STATUS.NOT_FOUND, { error: "Session not found" });
+  if (!store.getTask(taskId)) {
+    json(res, HTTP_STATUS.NOT_FOUND, { error: "Task not found" });
     return;
   }
-  const dir = join(dataDir, "sessions", sessionId, "attachments");
+  const dir = join(dataDir, "sessions", taskId, "attachments");
   await mkdir(dir, { recursive: true });
 
   const uploadId = randomUUID();
@@ -526,7 +526,7 @@ async function handleAttachmentUpload(
           const rp = await realpath(finalPath);
           const row = store.insertAttachment({
             id: uploadId,
-            sessionId,
+            taskId,
             kind,
             name: displayName,
             mime: fileMime,
@@ -535,13 +535,13 @@ async function handleAttachmentUpload(
             width: imageDimensions?.width ?? null,
             height: imageDimensions?.height ?? null,
           });
-          // Invalidate the per-session attachment label cache so the
+          // Invalidate the per-task attachment label cache so the
           // next egress (SSE broadcast or replay) sees this new row.
-          sessions?.invalidateLabelCache(sessionId);
+          tasks?.invalidateLabelCache(taskId);
           const fileName = `${row.id}.${fileExt}`;
-          const basePath = `/api/v1/sessions/${sessionId}/attachments/${fileName}`;
+          const basePath = `/api/v1/tasks/${taskId}/attachments/${fileName}`;
           // 1h signed URL — long enough that the browser holds the rendered
-          // image in <img> cache for the full session lifetime, short enough
+          // image in <img> cache for the full task lifetime, short enough
           // that a leaked URL (screenshot, link share) expires within the day.
           const fileUrl = deps.attachmentSecret
             ? `${basePath}?${signAttachmentUrl(basePath, deps.attachmentSecret, 3600)}`
@@ -554,7 +554,7 @@ async function handleAttachmentUpload(
             width: row.width,
             height: row.height,
             kind: row.kind,
-            path: `sessions/${sessionId}/attachments/${fileName}`,
+            path: `tasks/${taskId}/attachments/${fileName}`,
             url: fileUrl,
           });
         } catch (err) {
@@ -573,14 +573,14 @@ async function handleAttachmentUpload(
 export function createRequestHandler(
   deps: RequestHandlerDeps,
 ): (req: IncomingMessage, res: ServerResponse) => Promise<void> {
-  const { store, sessions, getBridge, sseManager, titleService } = deps;
-  let bootstrapSessionPromise: Promise<{
+  const { store, tasks, getBridge, sseManager, titleService } = deps;
+  let bootstrapTaskPromise: Promise<{
     id: string;
     cwd: string;
     title: string | null;
     source: string;
     configOptions: ConfigOption[];
-    agentCommands: ReturnType<SessionManager["getAgentCommands"]>;
+    agentCommands: ReturnType<TaskManager["getAgentCommands"]>;
     created: boolean;
   }> | null = null;
 
@@ -589,7 +589,7 @@ export function createRequestHandler(
     const url = req.url ?? "/";
 
     // --- MCP server: claims /mcp before the auth gate (the endpoint
-    // is outside /api/** and authenticates by per-session capability).
+    // is outside /api/** and authenticates by per-task capability).
     if (deps.mcpEndpoint && (await deps.mcpEndpoint(req, res))) return;
 
     // --- Auth gate: any /api/** outside whitelist requires Bearer ---
@@ -616,14 +616,14 @@ export function createRequestHandler(
     // their URL space before the generic /api/v1 branch. When
     // `shareConfig.enabled === false` handleShareRoutes is a no-op.
     // The auth gate above has already enforced Bearer on owner endpoints
-    // (/api/v1/sessions/:id/share*, /api/v1/shares); viewer endpoints
+    // (/api/v1/tasks/:id/share*, /api/v1/shares); viewer endpoints
     // (/s/:token, /api/v1/shared/:token/events) must be whitelisted in
     // auth-middleware.ts so they remain public.
     if (
       deps.shareConfig &&
       (await handleShareRoutes(req, res, {
         store,
-        sessions,
+        tasks,
         config: deps.shareConfig,
         dataDir: deps.dataDir,
         publicDir: deps.publicDir,
@@ -632,7 +632,7 @@ export function createRequestHandler(
       return;
     }
 
-    // File viewer — sessionless read-only access to arbitrary local paths.
+    // File viewer — task-less read-only access to arbitrary local paths.
     // Claims /api/v1/files/{info,list,content} before the generic /api/v1
     // branch. info/list use the Bearer gate above; content is whitelisted
     // only because its handler requires an HMAC-signed URL for headerless
@@ -650,7 +650,7 @@ export function createRequestHandler(
         json(res, HTTP_STATUS.OK, {
           version: "v1",
           endpoints: {
-            sessions: "/api/v1/sessions",
+            tasks: "/api/v1/tasks",
             paths: "/api/v1/recent-paths",
             files: "/api/v1/files",
             config: "/api/v1/config",
@@ -663,31 +663,31 @@ export function createRequestHandler(
         return;
       }
 
-      // GET /api/v1/sessions
+      // GET /api/v1/tasks
       if (
-        url.startsWith("/api/v1/sessions") &&
-        !url.slice("/api/v1/sessions".length).match(/^\//) &&
+        url.startsWith("/api/v1/tasks") &&
+        !url.slice("/api/v1/tasks".length).match(/^\//) &&
         req.method === "GET"
       ) {
         const params = new URLSearchParams(url.split("?")[1] ?? "");
         const source = params.get("source") ?? undefined;
-        const publicSessions = store
-          .listSessions(source ? { source } : undefined)
-          .map((session) => {
+        const publicTasks = store
+          .listTasks(source ? { source } : undefined)
+          .map((task) => {
             const {
               pending_compact_summary: _pendingCompactSummary,
-              ...publicSession
-            } = session;
-            return publicSession;
+              ...publicTask
+            } = task;
+            return publicTask;
           });
-        res.end(JSON.stringify(publicSessions));
+        res.end(JSON.stringify(publicTasks));
         return;
       }
 
       // --- GET /api/v1/config ---
       if (url === "/api/v1/config" && req.method === "GET") {
         json(res, HTTP_STATUS.OK, {
-          configOptions: sessions?.cachedConfigOptions ?? [],
+          configOptions: tasks?.cachedConfigOptions ?? [],
           cancelTimeout: deps.limits.cancel_timeout ?? 0,
           recentPathsLimit: deps.limits.recent_paths ?? 10,
         });
@@ -720,7 +720,7 @@ export function createRequestHandler(
       if (url === "/api/v1/version" && req.method === "GET") {
         json(res, HTTP_STATUS.OK, {
           server: deps.serverVersion ?? "unknown",
-          agent: sessions?.agentInfo ?? null,
+          agent: tasks?.agentInfo ?? null,
         });
         return;
       }
@@ -875,7 +875,7 @@ export function createRequestHandler(
           return;
         }
         try {
-          await bridge.restart(sessions!, titleService!);
+          await bridge.restart(tasks!, titleService!);
           json(res, HTTP_STATUS.OK, { ok: true });
         } catch (err: unknown) {
           json(res, HTTP_STATUS.INTERNAL_SERVER_ERROR, {
@@ -885,40 +885,35 @@ export function createRequestHandler(
         return;
       }
 
-      // --- Permissions (session-scoped) ---
+      // --- Permissions (task-scoped) ---
 
-      // GET /api/v1/sessions/:id/permissions
+      // GET /api/v1/tasks/:id/permissions
       const permListMatch = url.match(
-        /^\/api\/v1\/sessions\/([^/]+)\/permissions\/?(\?.*)?$/,
+        /^\/api\/v1\/tasks\/([^/]+)\/permissions\/?(\?.*)?$/,
       );
       if (permListMatch && req.method === "GET") {
-        const sessionId = decodeURIComponent(permListMatch[1]);
-        const perms = sessions?.getPendingPermissions(sessionId) ?? [];
+        const taskId = decodeURIComponent(permListMatch[1]);
+        const perms = tasks?.getPendingPermissions(taskId) ?? [];
         json(res, HTTP_STATUS.OK, perms);
         return;
       }
 
-      // POST /api/v1/sessions/:id/permissions/:reqId
+      // POST /api/v1/tasks/:id/permissions/:reqId
       const permActionMatch = url.match(
-        /^\/api\/v1\/sessions\/([^/]+)\/permissions\/([^/?]+)\/?$/,
+        /^\/api\/v1\/tasks\/([^/]+)\/permissions\/([^/?]+)\/?$/,
       );
       if (permActionMatch && req.method === "POST") {
-        const sessionId = decodeURIComponent(permActionMatch[1]);
+        const taskId = decodeURIComponent(permActionMatch[1]);
         const requestId = decodeURIComponent(permActionMatch[2]);
-        const { opId, replayed } = tryReplayClientOp(
-          req,
-          res,
-          store,
-          sessionId,
-        );
+        const { opId, replayed } = tryReplayClientOp(req, res, store, taskId);
         if (replayed) return;
-        const perm = sessions?.pendingPermissions.get(requestId);
+        const perm = tasks?.pendingPermissions.get(requestId);
         if (!perm) {
           json(res, HTTP_STATUS.NOT_FOUND, { error: "Permission not found" });
           return;
         }
-        if (perm.sessionId !== sessionId) {
-          json(res, HTTP_STATUS.BAD_REQUEST, { error: "Session ID mismatch" });
+        if (perm.taskId !== taskId) {
+          json(res, HTTP_STATUS.BAD_REQUEST, { error: "Task ID mismatch" });
           return;
         }
         const bridge = getBridge?.();
@@ -957,20 +952,20 @@ export function createRequestHandler(
           bridge.resolvePermission(requestId, optionId);
         }
 
-        sessions!.pendingPermissions.delete(requestId);
-        sessions!.syncPendingPermissions(sessionId);
+        tasks!.pendingPermissions.delete(requestId);
+        tasks!.syncPendingPermissions(taskId);
 
         // Store event and broadcast (same type so SSE drops are recoverable via sync)
         const permEventData = { requestId, optionName, denied };
         store.saveEvent(
-          perm.sessionId,
+          perm.taskId,
           "permission_response",
           { ...permEventData, optionId },
           { from_ref: "user" },
         );
         sseManager.broadcast({
           type: "permission_response",
-          sessionId: perm.sessionId,
+          taskId: perm.taskId,
           ...permEventData,
         });
 
@@ -979,55 +974,48 @@ export function createRequestHandler(
         // handled by this client.
         if (deps.pushService) {
           void deps.pushService.sendClose(
-            `sess-${perm.sessionId}-perm-${requestId}`,
+            `sess-${perm.taskId}-perm-${requestId}`,
           );
         }
 
         const okBody = { ok: true };
-        saveClientOpResult(store, opId, sessionId, HTTP_STATUS.OK, okBody);
+        saveClientOpResult(store, opId, taskId, HTTP_STATUS.OK, okBody);
         json(res, HTTP_STATUS.OK, okBody);
         return;
       }
 
-      // --- POST /api/v1/sessions/:id/cancel ---
-      const cancelMatch = url.match(
-        /^\/api\/v1\/sessions\/([^/]+)\/cancel\/?$/,
-      );
+      // --- POST /api/v1/tasks/:id/cancel ---
+      const cancelMatch = url.match(/^\/api\/v1\/tasks\/([^/]+)\/cancel\/?$/);
       if (cancelMatch && req.method === "POST") {
-        const sessionId = decodeURIComponent(cancelMatch[1]);
-        const session = store.getSession(sessionId);
-        if (!session) {
-          json(res, HTTP_STATUS.NOT_FOUND, { error: "Session not found" });
+        const taskId = decodeURIComponent(cancelMatch[1]);
+        const task = store.getTask(taskId);
+        if (!task) {
+          json(res, HTTP_STATUS.NOT_FOUND, { error: "Task not found" });
           return;
         }
-        const { opId, replayed } = tryReplayClientOp(
-          req,
-          res,
-          store,
-          sessionId,
-        );
+        const { opId, replayed } = tryReplayClientOp(req, res, store, taskId);
         if (replayed) return;
 
-        const hadAgentPrompt = sessions?.activePrompts.has(sessionId) ?? false;
+        const hadAgentPrompt = tasks?.activePrompts.has(taskId) ?? false;
         const hadPendingPrompt =
-          sessions?.cancelPendingPromptSubmission(sessionId) ?? false;
-        const hadBash = sessions?.runningBashProcs.has(sessionId) ?? false;
+          tasks?.cancelPendingPromptSubmission(taskId) ?? false;
+        const hadBash = tasks?.runningBashProcs.has(taskId) ?? false;
         if (!hadAgentPrompt && !hadPendingPrompt && !hadBash) {
           const idleBody = { ok: true, status: "idle" };
-          saveClientOpResult(store, opId, sessionId, HTTP_STATUS.OK, idleBody);
+          saveClientOpResult(store, opId, taskId, HTTP_STATUS.OK, idleBody);
           json(res, HTTP_STATUS.OK, idleBody);
           return;
         }
         const cancelledPromptId = hadAgentPrompt
-          ? (sessions?.state.getState(sessionId).runtime.busy?.promptId ?? null)
+          ? (tasks?.state.getState(taskId).runtime.busy?.promptId ?? null)
           : null;
 
         // Kill running bash process if any
-        const proc = sessions?.runningBashProcs.get(sessionId);
+        const proc = tasks?.runningBashProcs.get(taskId);
         if (proc) {
-          const force = sessions!.interruptedBashProcs.has(proc);
+          const force = tasks!.interruptedBashProcs.has(proc);
           interruptBashProc(proc, force);
-          sessions!.interruptedBashProcs.add(proc);
+          tasks!.interruptedBashProcs.add(proc);
         }
         const bridge = hadAgentPrompt ? getBridge?.() : null;
         if (hadAgentPrompt && !bridge) {
@@ -1039,45 +1027,43 @@ export function createRequestHandler(
         // ACP cancel is a notification, not an acknowledgement. Keep the
         // prompt active until its prompt response supplies the terminal stop
         // reason, and allow repeated requests to resend the notification.
-        if (hadAgentPrompt && sessions && bridge) {
+        if (hadAgentPrompt && tasks && bridge) {
           const previousCancelStatus =
-            sessions.state.getState(sessionId).runtime.busy?.cancelStatus ??
-            null;
+            tasks.state.getState(taskId).runtime.busy?.cancelStatus ?? null;
           rlog.info("cancel requested", {
-            sessionId: sessionId.slice(0, 8),
+            taskId: taskId.slice(0, 8),
             retry: previousCancelStatus !== null,
             previousStatus: previousCancelStatus,
           });
-          await bridge.cancel(sessionId);
-          const busy = sessions.state.getState(sessionId).runtime.busy;
+          await bridge.cancel(taskId);
+          const busy = tasks.state.getState(taskId).runtime.busy;
           const stillCancellingSamePrompt =
-            sessions.activePrompts.has(sessionId) &&
+            tasks.activePrompts.has(taskId) &&
             busy?.kind === "agent" &&
             busy.promptId === cancelledPromptId;
           if (stillCancellingSamePrompt) {
-            sessions.state.markCancelRequested(sessionId);
+            tasks.state.markCancelRequested(taskId);
           }
         }
         // If prompt_done does not arrive, expose the lack of acknowledgement
         // instead of pretending the prompt stopped.
         const cancelTimeout = deps.limits.cancel_timeout ?? 0;
-        const busyAfterCancel =
-          sessions?.state.getState(sessionId).runtime.busy;
+        const busyAfterCancel = tasks?.state.getState(taskId).runtime.busy;
         const cancelPending =
           hadAgentPrompt &&
-          sessions?.activePrompts.has(sessionId) === true &&
+          tasks?.activePrompts.has(taskId) === true &&
           busyAfterCancel?.kind === "agent" &&
           busyAfterCancel.promptId === cancelledPromptId;
         if (cancelPending && cancelTimeout > 0)
-          sessions.state.armCancelSafety(sessionId, cancelTimeout);
-        sessions?.syncBusy(sessionId);
+          tasks.state.armCancelSafety(taskId, cancelTimeout);
+        tasks?.syncBusy(taskId);
         const workPending = cancelPending || hadBash;
         const replacementPromptActive =
           hadAgentPrompt &&
-          ((sessions?.activePrompts.has(sessionId) === true &&
+          ((tasks?.activePrompts.has(taskId) === true &&
             busyAfterCancel?.kind === "agent" &&
             busyAfterCancel.promptId !== cancelledPromptId) ||
-            sessions?.pendingPromptSubmissions.has(sessionId) === true);
+            tasks?.pendingPromptSubmissions.has(taskId) === true);
         const status =
           workPending || replacementPromptActive
             ? HTTP_STATUS.ACCEPTED
@@ -1090,24 +1076,22 @@ export function createRequestHandler(
               ? "superseded"
               : "cancelled",
         };
-        saveClientOpResult(store, opId, sessionId, status, okBody);
+        saveClientOpResult(store, opId, taskId, status, okBody);
         json(res, status, okBody);
         return;
       }
 
-      // --- GET /api/v1/sessions/:id/status ---
-      const statusMatch = url.match(
-        /^\/api\/v1\/sessions\/([^/]+)\/status\/?$/,
-      );
+      // --- GET /api/v1/tasks/:id/status ---
+      const statusMatch = url.match(/^\/api\/v1\/tasks\/([^/]+)\/status\/?$/);
       if (statusMatch && req.method === "GET") {
-        const sessionId = decodeURIComponent(statusMatch[1]);
-        const session = store.getSession(sessionId);
-        if (!session) {
-          json(res, HTTP_STATUS.NOT_FOUND, { error: "Session not found" });
+        const taskId = decodeURIComponent(statusMatch[1]);
+        const task = store.getTask(taskId);
+        if (!task) {
+          json(res, HTTP_STATUS.NOT_FOUND, { error: "Task not found" });
           return;
         }
-        const busyKind = sessions?.getBusyKind(sessionId) ?? null;
-        const pendingPerms = sessions?.getPendingPermissions(sessionId) ?? [];
+        const busyKind = tasks?.getBusyKind(taskId) ?? null;
+        const pendingPerms = tasks?.getPendingPermissions(taskId) ?? [];
         json(res, HTTP_STATUS.OK, {
           busy: busyKind != null,
           busyKind,
@@ -1116,93 +1100,93 @@ export function createRequestHandler(
         return;
       }
 
-      // --- GET /api/v1/sessions/:id/snapshot ---
+      // --- GET /api/v1/tasks/:id/snapshot ---
       // client-server-split M1: single source of truth for "what state is
-      // this session in right now". Frontend calls this on connect / reconnect
+      // this task in right now". Frontend calls this on connect / reconnect
       // / after long backgrounding, then applies incremental `state_patch`
       // SSE events.
       const snapshotMatch = url.match(
-        /^\/api\/v1\/sessions\/([^/]+)\/snapshot\/?$/,
+        /^\/api\/v1\/tasks\/([^/]+)\/snapshot\/?$/,
       );
       if (snapshotMatch && req.method === "GET") {
-        const sessionId = decodeURIComponent(snapshotMatch[1]);
-        const session = store.getSession(sessionId);
-        if (!session) {
-          json(res, HTTP_STATUS.NOT_FOUND, { error: "Session not found" });
+        const taskId = decodeURIComponent(snapshotMatch[1]);
+        const task = store.getTask(taskId);
+        if (!task) {
+          json(res, HTTP_STATUS.NOT_FOUND, { error: "Task not found" });
           return;
         }
-        if (!sessions) {
+        if (!tasks) {
           json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
-            error: "Session manager not available",
+            error: "Task manager not available",
           });
           return;
         }
         const bridge = getBridge?.();
-        if (bridge && !sessions.liveSessions.has(sessionId)) {
+        if (bridge && !tasks.liveTasks.has(taskId)) {
           try {
-            // Command discovery happens during session/load. Snapshot is the
+            // Command discovery happens during task/load. Snapshot is the
             // authoritative hydration boundary, so it must join any in-flight
-            // restore before reading the per-session command state.
-            await sessions.ensureResumed(bridge, sessionId);
+            // restore before reading the per-task command state.
+            await tasks.ensureResumed(bridge, taskId);
           } catch {
             json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
-              error: "Failed to restore session",
+              error: "Failed to restore task",
             });
             return;
           }
         }
         // Make sure runtime reflects the current activePrompts/bash state even
-        // if no patch has been emitted yet for this session.
-        sessions.syncBusy(sessionId);
-        sessions.syncPendingPermissions(sessionId);
-        const runtimeState = sessions.state.getState(sessionId);
-        const lastEventSeq = store.getLastEventSeq(sessionId);
+        // if no patch has been emitted yet for this task.
+        tasks.syncBusy(taskId);
+        tasks.syncPendingPermissions(taskId);
+        const runtimeState = tasks.state.getState(taskId);
+        const lastEventSeq = store.getLastEventSeq(taskId);
         json(
           res,
           HTTP_STATUS.OK,
           {
             version: 1,
             seq: runtimeState.seq,
-            session: {
-              id: session.id,
-              title: session.title,
-              cwd: session.cwd,
-              cwdDisplay: abbreviateHomePath(session.cwd),
-              model: session.model,
-              mode: session.mode,
-              createdAt: session.created_at,
+            task: {
+              id: task.id,
+              title: task.title,
+              cwd: task.cwd,
+              cwdDisplay: abbreviateHomePath(task.cwd),
+              model: task.model,
+              mode: task.mode,
+              createdAt: task.created_at,
               lastEventSeq,
             },
             runtime: runtimeState.runtime,
-            agentCommands: sessions.getAgentCommands(sessionId),
+            agentCommands: tasks.getAgentCommands(taskId),
           },
           req,
         );
         return;
       }
 
-      // --- POST /api/v1/sessions/:id/prompt ---
+      // --- POST /api/v1/tasks/:id/prompt ---
       const promptMatch = url.match(
-        /^\/api\/v1\/sessions\/([^/]+)\/prompt\/?(\?.*)?$/,
+        /^\/api\/v1\/tasks\/([^/]+)\/prompt\/?(\?.*)?$/,
       );
       if (promptMatch && req.method === "POST") {
-        const sessionId = decodeURIComponent(promptMatch[1]);
+        const taskId = decodeURIComponent(promptMatch[1]);
         const requestOpId = getClientOpId(req);
-        const session = store.getSession(sessionId);
-        if (!session) {
+        const task = store.getTask(taskId);
+        if (!task) {
           logPromptRejectBeforeSave({
-            sessionId,
+            taskId,
             status: HTTP_STATUS.NOT_FOUND,
-            reason: "session_not_found",
+            reason: "task_not_found",
             opId: requestOpId,
           });
-          json(res, HTTP_STATUS.NOT_FOUND, { error: "Session not found" });
+          json(res, HTTP_STATUS.NOT_FOUND, { error: "Task not found" });
           return;
         }
         const bridge = getBridge?.();
         if (!bridge) {
           logPromptRejectBeforeSave({
-            sessionId,
+            taskId,
             status: HTTP_STATUS.SERVICE_UNAVAILABLE,
             reason: "agent_not_ready",
             opId: requestOpId,
@@ -1212,39 +1196,34 @@ export function createRequestHandler(
           });
           return;
         }
-        if (!sessions) {
+        if (!tasks) {
           logPromptRejectBeforeSave({
-            sessionId,
+            taskId,
             status: HTTP_STATUS.SERVICE_UNAVAILABLE,
-            reason: "session_manager_unavailable",
+            reason: "task_manager_unavailable",
             opId: requestOpId,
           });
           json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
-            error: "Session manager not available",
+            error: "Task manager not available",
           });
           return;
         }
 
-        const { opId, replayed } = tryReplayClientOp(
-          req,
-          res,
-          store,
-          sessionId,
-        );
+        const { opId, replayed } = tryReplayClientOp(req, res, store, taskId);
         if (replayed) return;
 
-        const promptSubmissionId = sessions.reservePromptSubmission(sessionId);
+        const promptSubmissionId = tasks.reservePromptSubmission(taskId);
         if (promptSubmissionId === null) {
-          const busyKind = sessions.getBusyKind(sessionId);
+          const busyKind = tasks.getBusyKind(taskId);
           logPromptRejectBeforeSave({
-            sessionId,
+            taskId,
             status: HTTP_STATUS.CONFLICT,
-            reason: "session_busy",
+            reason: "task_busy",
             opId,
             busyKind: busyKind ?? undefined,
           });
           json(res, HTTP_STATUS.CONFLICT, {
-            error: "Session is busy",
+            error: "Task is busy",
             busyKind,
           });
           return;
@@ -1253,40 +1232,40 @@ export function createRequestHandler(
         const isRequestAborted = () => requestState.aborted;
         const abortPromptSubmission = () => {
           requestState.aborted = true;
-          sessions.releasePromptSubmission(sessionId, promptSubmissionId);
+          tasks.releasePromptSubmission(taskId, promptSubmissionId);
         };
         res.once("finish", () => {
-          sessions.releasePromptSubmission(sessionId, promptSubmissionId);
+          tasks.releasePromptSubmission(taskId, promptSubmissionId);
         });
         req.once("aborted", abortPromptSubmission);
         res.once("close", () => {
           if (!res.writableEnded) abortPromptSubmission();
         });
 
-        // Ensure session is live in ACP before prompting (awaits in-flight resume)
+        // Ensure task is live in ACP before prompting (awaits in-flight resume)
         try {
-          await sessions.ensureResumed(bridge, sessionId);
+          await tasks.ensureResumed(bridge, taskId);
         } catch (err) {
           if (isRequestAborted()) return;
           logPromptRejectBeforeSave({
-            sessionId,
+            taskId,
             status: HTTP_STATUS.INTERNAL_SERVER_ERROR,
             reason: "resume_failed",
             opId,
             error: errorMessage(err),
           });
           json(res, HTTP_STATUS.INTERNAL_SERVER_ERROR, {
-            error: `Failed to resume session: ${err instanceof Error ? err.message : String(err)}`,
+            error: `Failed to resume task: ${err instanceof Error ? err.message : String(err)}`,
           });
           return;
         }
 
         if (
           isRequestAborted() ||
-          sessions.isPromptSubmissionCancelled(promptSubmissionId)
+          tasks.isPromptSubmissionCancelled(promptSubmissionId)
         ) {
           logPromptRejectBeforeSave({
-            sessionId,
+            taskId,
             status: HTTP_STATUS.CONFLICT,
             reason: "prompt_cancelled_before_start",
             opId,
@@ -1311,7 +1290,7 @@ export function createRequestHandler(
         } catch {
           if (isRequestAborted()) return;
           logPromptRejectBeforeSave({
-            sessionId,
+            taskId,
             status: HTTP_STATUS.BAD_REQUEST,
             reason: "invalid_json",
             opId,
@@ -1321,7 +1300,7 @@ export function createRequestHandler(
         }
         if (
           isRequestAborted() ||
-          sessions.isPromptSubmissionCancelled(promptSubmissionId)
+          tasks.isPromptSubmissionCancelled(promptSubmissionId)
         ) {
           json(res, HTTP_STATUS.CONFLICT, {
             error: "Prompt was cancelled before start",
@@ -1330,7 +1309,7 @@ export function createRequestHandler(
         }
         if (!body.text) {
           logPromptRejectBeforeSave({
-            sessionId,
+            taskId,
             status: HTTP_STATUS.BAD_REQUEST,
             reason: "missing_text",
             opId,
@@ -1352,7 +1331,7 @@ export function createRequestHandler(
         if (attachments) {
           if (!Array.isArray(attachments)) {
             logPromptRejectBeforeSave({
-              sessionId,
+              taskId,
               status: HTTP_STATUS.BAD_REQUEST,
               reason: "attachments_not_array",
               opId,
@@ -1374,7 +1353,7 @@ export function createRequestHandler(
               typeof att.mimeType !== "string"
             ) {
               logPromptRejectBeforeSave({
-                sessionId,
+                taskId,
                 status: HTTP_STATUS.BAD_REQUEST,
                 reason: "invalid_attachment_entry",
                 opId,
@@ -1394,7 +1373,7 @@ export function createRequestHandler(
               typeof att.height === "number"
             ) {
               logPromptRejectBeforeSave({
-                sessionId,
+                taskId,
                 status: HTTP_STATUS.BAD_REQUEST,
                 reason: "client_supplied_attachment_data",
                 opId,
@@ -1413,12 +1392,12 @@ export function createRequestHandler(
         if (body.text.startsWith("//")) {
           const resolved = resolveAgentCommand(
             body.text,
-            sessions.getAgentCommands(sessionId).commands,
+            tasks.getAgentCommands(taskId).commands,
           );
           if (!resolved) {
             const command = agentCommandToken(body.text);
             logPromptRejectBeforeSave({
-              sessionId,
+              taskId,
               status: HTTP_STATUS.UNPROCESSABLE_CONTENT,
               reason: "unknown_command",
               opId,
@@ -1435,20 +1414,20 @@ export function createRequestHandler(
           agentText = resolved.agentText;
         }
 
-        const pendingCompactSummary = store.getPendingCompactSummary(sessionId);
+        const pendingCompactSummary = store.getPendingCompactSummary(taskId);
         if (pendingCompactSummary) {
           agentText = prependCompactSummary(pendingCompactSummary, agentText);
         }
 
         // Stored shape mirrors the wire shape PLUS a server-derived `path`
         // for renderers. The path is the unsigned base URL
-        // (`/api/v1/sessions/<sid>/attachments/<filename>`); reSign on
+        // (`/api/v1/tasks/<sid>/attachments/<filename>`); reSign on
         // egress (history GET + SSE broadcast) appends a fresh `?sig=&exp=`.
         // Renderers use it to mount `<img>` (kind=image) or `<a>` (kind=file).
         // Refs whose attachment row is missing are dropped (defense — the
         // dispatcher's [attachment removed] fallback covers that case).
         const storedAttachments = attachments?.flatMap((a) => {
-          const row = store.getAttachment(sessionId, a.attachmentId);
+          const row = store.getAttachment(taskId, a.attachmentId);
           if (!row) return [];
           const fileName = basename(row.realpath);
           return [
@@ -1457,7 +1436,7 @@ export function createRequestHandler(
               attachmentId: a.attachmentId,
               displayName: a.displayName,
               mimeType: a.mimeType,
-              path: `/api/v1/sessions/${sessionId}/attachments/${fileName}`,
+              path: `/api/v1/tasks/${taskId}/attachments/${fileName}`,
               ...(row.width != null && row.height != null
                 ? { width: row.width, height: row.height }
                 : {}),
@@ -1468,11 +1447,11 @@ export function createRequestHandler(
         // the foreground ACP prompt has ended. Its chunks remain buffered
         // until a real protocol boundary arrives; seal them before this user
         // row so they cannot merge into the next turn's assistant response.
-        sessions.flushBuffers(sessionId);
+        tasks.flushBuffers(taskId);
 
         const eventClientOpId = opId ?? randomUUID();
         store.saveEvent(
-          sessionId,
+          taskId,
           "user_message",
           {
             text: body.text,
@@ -1483,11 +1462,11 @@ export function createRequestHandler(
           },
           { from_ref: "user" },
         );
-        store.updateSessionLastActive(sessionId);
-        store.touchRecentPath(session.cwd);
+        store.updateTaskLastActive(taskId);
+        store.touchRecentPath(task.cwd);
         const userMsgEvent = {
           type: "user_message",
-          sessionId,
+          taskId,
           text: body.text,
           clientOpId: eventClientOpId,
           attachments: storedAttachments,
@@ -1497,17 +1476,17 @@ export function createRequestHandler(
         // Generate title (fire-and-forget)
         if (
           titleService &&
-          sessions && // eslint-disable-line @typescript-eslint/no-unnecessary-condition -- optional dep
-          !sessions.sessionHasTitle.has(sessionId)
+          tasks && // eslint-disable-line @typescript-eslint/no-unnecessary-condition -- optional dep
+          !tasks.taskHasTitle.has(taskId)
         ) {
           titleService.generate(
             bridge as AgentBridge,
             body.text,
-            sessionId,
+            taskId,
             (title) => {
               const titleEvent = {
-                type: "session_title_updated",
-                sessionId,
+                type: "task_title_updated",
+                taskId,
                 title,
               } as AgentEvent;
               sseManager.broadcast(titleEvent);
@@ -1516,14 +1495,13 @@ export function createRequestHandler(
         }
 
         // Fire prompt asynchronously (don't await — response is 202)
-        sessions.releasePromptSubmission(sessionId, promptSubmissionId, false);
-        sessions.activePrompts.add(sessionId);
-        sessions.syncBusy(sessionId);
+        tasks.releasePromptSubmission(taskId, promptSubmissionId, false);
+        tasks.activePrompts.add(taskId);
+        tasks.syncBusy(taskId);
         const promptId =
-          sessions.state.getState(sessionId).runtime.busy?.promptId ??
-          undefined;
+          tasks.state.getState(taskId).runtime.busy?.promptId ?? undefined;
         const promptPromise = bridge.prompt(
-          sessionId,
+          taskId,
           agentText,
           attachments,
           promptId,
@@ -1534,28 +1512,25 @@ export function createRequestHandler(
         promptPromise
           .then(() => {
             if (pendingCompactSummary) {
-              store.clearPendingCompactSummary(
-                sessionId,
-                pendingCompactSummary,
-              );
+              store.clearPendingCompactSummary(taskId, pendingCompactSummary);
             }
           })
           .catch((err: unknown) => {
-            plog.error("error", { sessionId, error: err });
+            plog.error("error", { taskId, error: err });
           })
           .finally(() => {
             // A turn that outlived its own supersession must not clear the
             // busy state of the turn that replaced it.
-            if (!sessions.isCurrentPrompt(sessionId, promptId)) return;
-            sessions.activePrompts.delete(sessionId);
-            sessions.syncBusy(sessionId);
+            if (!tasks.isCurrentPrompt(taskId, promptId)) return;
+            tasks.activePrompts.delete(taskId);
+            tasks.syncBusy(taskId);
           });
 
         const acceptedBody = { status: "accepted" };
         saveClientOpResult(
           store,
           opId,
-          sessionId,
+          taskId,
           HTTP_STATUS.ACCEPTED,
           acceptedBody,
         );
@@ -1563,24 +1538,24 @@ export function createRequestHandler(
         return;
       }
 
-      // --- POST /api/v1/sessions/:id/bash ---
-      const bashMatch = url.match(/^\/api\/v1\/sessions\/([^/]+)\/bash\/?$/);
+      // --- POST /api/v1/tasks/:id/bash ---
+      const bashMatch = url.match(/^\/api\/v1\/tasks\/([^/]+)\/bash\/?$/);
       if (bashMatch && req.method === "POST") {
-        const sessionId = decodeURIComponent(bashMatch[1]);
-        const session = store.getSession(sessionId);
-        if (!session) {
-          json(res, HTTP_STATUS.NOT_FOUND, { error: "Session not found" });
+        const taskId = decodeURIComponent(bashMatch[1]);
+        const task = store.getTask(taskId);
+        if (!task) {
+          json(res, HTTP_STATUS.NOT_FOUND, { error: "Task not found" });
           return;
         }
-        if (!sessions) {
+        if (!tasks) {
           json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
-            error: "Session manager not available",
+            error: "Task manager not available",
           });
           return;
         }
-        if (sessions.runningBashProcs.has(sessionId)) {
+        if (tasks.runningBashProcs.has(taskId)) {
           json(res, HTTP_STATUS.CONFLICT, {
-            error: "A bash command is already running in this session",
+            error: "A bash command is already running in this task",
           });
           return;
         }
@@ -1599,16 +1574,16 @@ export function createRequestHandler(
           return;
         }
 
-        const cwd = sessions.getSessionCwd(sessionId);
+        const cwd = tasks.getTaskCwd(taskId);
         store.saveEvent(
-          sessionId,
+          taskId,
           "bash_command",
           { command: body.command },
           { from_ref: "user" },
         );
         const bashCmdEvent = {
           type: "bash_command",
-          sessionId,
+          taskId,
           command: body.command,
         } as AgentEvent;
         sseManager.broadcast(bashCmdEvent);
@@ -1625,8 +1600,8 @@ export function createRequestHandler(
           env: { ...process.env, TERM: "dumb" },
           stdio: ["ignore", "pipe", "pipe"],
         });
-        sessions.runningBashProcs.set(sessionId, child);
-        sessions.syncBusy(sessionId);
+        tasks.runningBashProcs.set(taskId, child);
+        tasks.syncBusy(taskId);
         let output = "";
         let outputTruncated = false;
         const limit = deps.limits.bash_output;
@@ -1644,7 +1619,7 @@ export function createRequestHandler(
           }
           const bashOutEvent = {
             type: "bash_output",
-            sessionId,
+            taskId,
             text,
             stream,
           } as AgentEvent;
@@ -1654,18 +1629,18 @@ export function createRequestHandler(
         child.stderr.on("data", onData("stderr"));
 
         child.on("close", (code, signal) => {
-          sessions.runningBashProcs.delete(sessionId);
-          sessions.syncBusy(sessionId);
+          tasks.runningBashProcs.delete(taskId);
+          tasks.syncBusy(taskId);
           const stored = outputTruncated ? "[truncated]\n" + output : output;
           store.saveEvent(
-            sessionId,
+            taskId,
             "bash_result",
             { output: stored, code, signal },
             { from_ref: "system" },
           );
           const bashDoneEvent = {
             type: "bash_done",
-            sessionId,
+            taskId,
             code,
             signal,
           } as AgentEvent;
@@ -1673,18 +1648,18 @@ export function createRequestHandler(
         });
 
         child.on("error", (err) => {
-          sessions.runningBashProcs.delete(sessionId);
-          sessions.syncBusy(sessionId);
+          tasks.runningBashProcs.delete(taskId);
+          tasks.syncBusy(taskId);
           const errMsg = errorMessage(err);
           store.saveEvent(
-            sessionId,
+            taskId,
             "bash_result",
             { output: errMsg, code: -1, signal: null },
             { from_ref: "system" },
           );
           const bashErrEvent = {
             type: "bash_done",
-            sessionId,
+            taskId,
             code: -1,
             signal: null,
             error: errMsg,
@@ -1696,38 +1671,38 @@ export function createRequestHandler(
         return;
       }
 
-      // --- POST /api/v1/sessions/:id/bash/cancel ---
+      // --- POST /api/v1/tasks/:id/bash/cancel ---
       const bashCancelMatch = url.match(
-        /^\/api\/v1\/sessions\/([^/]+)\/bash\/cancel\/?$/,
+        /^\/api\/v1\/tasks\/([^/]+)\/bash\/cancel\/?$/,
       );
       if (bashCancelMatch && req.method === "POST") {
-        const sessionId = decodeURIComponent(bashCancelMatch[1]);
-        const session = store.getSession(sessionId);
-        if (!session) {
-          json(res, HTTP_STATUS.NOT_FOUND, { error: "Session not found" });
+        const taskId = decodeURIComponent(bashCancelMatch[1]);
+        const task = store.getTask(taskId);
+        if (!task) {
+          json(res, HTTP_STATUS.NOT_FOUND, { error: "Task not found" });
           return;
         }
-        interruptBashProc(sessions?.runningBashProcs.get(sessionId));
+        interruptBashProc(tasks?.runningBashProcs.get(taskId));
         json(res, HTTP_STATUS.OK, { ok: true });
         return;
       }
 
-      // --- PUT /api/v1/sessions/:id/{model,mode,reasoning-effort} ---
-      // --- PUT /api/v1/sessions/:id/config/:configId ---
+      // --- PUT /api/v1/tasks/:id/{model,mode,reasoning-effort} ---
+      // --- PUT /api/v1/tasks/:id/config/:configId ---
       const legacyConfigPutMatch = url.match(
-        /^\/api\/v1\/sessions\/([^/]+)\/(model|mode|reasoning-effort)\/?$/,
+        /^\/api\/v1\/tasks\/([^/]+)\/(model|mode|reasoning-effort)\/?$/,
       );
       const genericConfigPutMatch = url.match(
-        /^\/api\/v1\/sessions\/([^/]+)\/config\/([^/]+)\/?$/,
+        /^\/api\/v1\/tasks\/([^/]+)\/config\/([^/]+)\/?$/,
       );
       const configPutMatch = legacyConfigPutMatch ?? genericConfigPutMatch;
       if (configPutMatch && req.method === "PUT") {
-        const sessionId = decodeURIComponent(configPutMatch[1]);
+        const taskId = decodeURIComponent(configPutMatch[1]);
         const configPath = decodeURIComponent(configPutMatch[2]);
         const configId = configPath.replace(/-/g, "_");
-        const session = store.getSession(sessionId);
-        if (!session) {
-          json(res, HTTP_STATUS.NOT_FOUND, { error: "Session not found" });
+        const task = store.getTask(taskId);
+        if (!task) {
+          json(res, HTTP_STATUS.NOT_FOUND, { error: "Task not found" });
           return;
         }
         const bridge = getBridge?.();
@@ -1754,23 +1729,23 @@ export function createRequestHandler(
         }
         try {
           const configOptions = await bridge.setConfigOption(
-            sessionId,
+            taskId,
             configId,
             body.value,
           );
           for (const opt of configOptions) {
             if (typeof opt.currentValue === "string") {
-              store.updateSessionConfig(sessionId, opt.id, opt.currentValue);
+              store.updateTaskConfig(taskId, opt.id, opt.currentValue);
             }
           }
           sseManager.broadcast({
             type: "config_option_update",
-            sessionId,
+            taskId,
             configOptions,
           });
           sseManager.broadcast({
             type: "config_set",
-            sessionId,
+            taskId,
             configId,
             value: body.value,
           } as AgentEvent);
@@ -1783,15 +1758,13 @@ export function createRequestHandler(
         return;
       }
 
-      // --- PUT /api/v1/sessions/:id/title ---
-      const titlePutMatch = url.match(
-        /^\/api\/v1\/sessions\/([^/]+)\/title\/?$/,
-      );
+      // --- PUT /api/v1/tasks/:id/title ---
+      const titlePutMatch = url.match(/^\/api\/v1\/tasks\/([^/]+)\/title\/?$/);
       if (titlePutMatch && req.method === "PUT") {
-        const sessionId = decodeURIComponent(titlePutMatch[1]);
-        const session = store.getSession(sessionId);
-        if (!session) {
-          json(res, HTTP_STATUS.NOT_FOUND, { error: "Session not found" });
+        const taskId = decodeURIComponent(titlePutMatch[1]);
+        const task = store.getTask(taskId);
+        if (!task) {
+          json(res, HTTP_STATUS.NOT_FOUND, { error: "Task not found" });
           return;
         }
         let body: { value?: string };
@@ -1807,14 +1780,14 @@ export function createRequestHandler(
           });
           return;
         }
-        store.updateSessionTitle(sessionId, body.value);
-        if (sessions) sessions.sessionHasTitle.add(sessionId);
+        store.updateTaskTitle(taskId, body.value);
+        if (tasks) tasks.taskHasTitle.add(taskId);
         const bridge = getBridge?.();
         if (titleService && bridge)
-          void titleService.cancel(sessionId, bridge as AgentBridge);
+          void titleService.cancel(taskId, bridge as AgentBridge);
         const titleEvent = {
-          type: "session_title_updated",
-          sessionId,
+          type: "task_title_updated",
+          taskId,
           title: body.value,
         } as AgentEvent;
         sseManager.broadcast(titleEvent);
@@ -1822,9 +1795,9 @@ export function createRequestHandler(
         return;
       }
 
-      // POST /api/v1/sessions/bootstrap — atomically return the current
-      // agent's latest session, creating one only when none exists.
-      if (url === "/api/v1/sessions/bootstrap" && req.method === "POST") {
+      // POST /api/v1/tasks/bootstrap — atomically return the current
+      // agent's latest task, creating one only when none exists.
+      if (url === "/api/v1/tasks/bootstrap" && req.method === "POST") {
         const bridge = getBridge?.();
         if (!bridge) {
           json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
@@ -1832,16 +1805,16 @@ export function createRequestHandler(
           });
           return;
         }
-        if (!sessions) {
+        if (!tasks) {
           json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
-            error: "Session manager not available",
+            error: "Task manager not available",
           });
           return;
         }
-        const sessionManager = sessions;
+        const taskManager = tasks;
 
-        bootstrapSessionPromise ??= (async () => {
-          const existing = store.listSessions().at(0);
+        bootstrapTaskPromise ??= (async () => {
+          const existing = store.listTasks().at(0);
           if (existing) {
             return {
               id: existing.id,
@@ -1850,27 +1823,27 @@ export function createRequestHandler(
               title: existing.title,
               source: existing.source,
               configOptions: [],
-              agentCommands: sessionManager.getAgentCommands(existing.id),
+              agentCommands: taskManager.getAgentCommands(existing.id),
               created: false,
             };
           }
 
-          const { sessionId, configOptions } =
-            await sessionManager.createSession(bridge);
-          const session = store.getSession(sessionId);
+          const { taskId, configOptions } =
+            await taskManager.createTask(bridge);
+          const task = store.getTask(taskId);
           const result = {
-            id: sessionId,
-            cwd: session?.cwd ?? deps.dataDir,
-            cwdDisplay: abbreviateHomePath(session?.cwd ?? deps.dataDir),
-            title: session?.title ?? null,
-            source: session?.source ?? "auto",
+            id: taskId,
+            cwd: task?.cwd ?? deps.dataDir,
+            cwdDisplay: abbreviateHomePath(task?.cwd ?? deps.dataDir),
+            title: task?.title ?? null,
+            source: task?.source ?? "auto",
             configOptions,
-            agentCommands: sessionManager.getAgentCommands(sessionId),
+            agentCommands: taskManager.getAgentCommands(taskId),
             created: true,
           };
           sseManager.broadcast({
-            type: "session_created",
-            sessionId,
+            type: "task_created",
+            taskId,
             cwd: result.cwd,
             cwdDisplay: result.cwdDisplay,
             title: result.title,
@@ -1879,11 +1852,11 @@ export function createRequestHandler(
           });
           return result;
         })().finally(() => {
-          bootstrapSessionPromise = null;
+          bootstrapTaskPromise = null;
         });
 
         try {
-          const result = await bootstrapSessionPromise;
+          const result = await bootstrapTaskPromise;
           json(res, HTTP_STATUS.OK, {
             ...result,
             clientOpId: getClientOpId(req) ?? undefined,
@@ -1896,70 +1869,70 @@ export function createRequestHandler(
         return;
       }
 
-      // POST /api/v1/sessions/:id/compact — generate a visible assistant
+      // POST /api/v1/tasks/:id/compact — generate a visible assistant
       // handoff, rotate the ACP execution, and defer injecting the handoff
       // until the next real user prompt.
-      const compactSessionMatch = url.match(
-        /^\/api\/v1\/sessions\/([^/?]+)\/compact\/?$/,
+      const compactTaskMatch = url.match(
+        /^\/api\/v1\/tasks\/([^/?]+)\/compact\/?$/,
       );
-      if (compactSessionMatch && req.method === "POST") {
-        const sessionId = decodeURIComponent(compactSessionMatch[1]);
-        const session = store.getSession(sessionId);
-        if (!session) {
-          json(res, HTTP_STATUS.NOT_FOUND, { error: "Session not found" });
+      if (compactTaskMatch && req.method === "POST") {
+        const taskId = decodeURIComponent(compactTaskMatch[1]);
+        const task = store.getTask(taskId);
+        if (!task) {
+          json(res, HTTP_STATUS.NOT_FOUND, { error: "Task not found" });
           return;
         }
         const bridge = getBridge?.();
-        if (!bridge || !sessions || !bridge.promptForText) {
+        if (!bridge || !tasks || !bridge.promptForText) {
           json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
             error: "Agent not ready yet",
           });
           return;
         }
-        if (sessions.getBusyKind(sessionId) !== null) {
+        if (tasks.getBusyKind(taskId) !== null) {
           json(res, HTTP_STATUS.CONFLICT, {
-            error: "Cancel active work before compacting the session",
+            error: "Cancel active work before compacting the task",
           });
           return;
         }
-        if (store.getPendingCompactSummary(sessionId)) {
+        if (store.getPendingCompactSummary(taskId)) {
           json(res, HTTP_STATUS.CONFLICT, {
-            error: "Session already has a pending compact summary",
+            error: "Task already has a pending compact summary",
           });
           return;
         }
 
-        const submissionId = sessions.reservePromptSubmission(sessionId);
+        const submissionId = tasks.reservePromptSubmission(taskId);
         if (submissionId === null) {
           json(res, HTTP_STATUS.CONFLICT, {
-            error: "Session is busy",
-            busyKind: sessions.getBusyKind(sessionId),
+            error: "Task is busy",
+            busyKind: tasks.getBusyKind(taskId),
           });
           return;
         }
         try {
-          await sessions.ensureResumed(bridge, sessionId);
+          await tasks.ensureResumed(bridge, taskId);
         } catch (err) {
-          sessions.releasePromptSubmission(sessionId, submissionId);
+          tasks.releasePromptSubmission(taskId, submissionId);
           json(res, HTTP_STATUS.INTERNAL_SERVER_ERROR, {
-            error: `Failed to resume session: ${errorMessage(err)}`,
+            error: `Failed to resume task: ${errorMessage(err)}`,
           });
           return;
         }
-        const agentSessionId = store.getAgentSessionId(sessionId);
+        const agentSessionId = store.getAgentSessionId(taskId);
         if (!agentSessionId) {
-          sessions.releasePromptSubmission(sessionId, submissionId);
+          tasks.releasePromptSubmission(taskId, submissionId);
           json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
-            error: "Session is not available for the current agent",
+            error: "Task is not available for the current agent",
           });
           return;
         }
         const promptForText = bridge.promptForText;
 
-        sessions.compactingSessions.add(sessionId);
-        sessions.releasePromptSubmission(sessionId, submissionId, false);
-        sessions.activePrompts.add(sessionId);
-        sessions.syncBusy(sessionId);
+        tasks.compactingTasks.add(taskId);
+        tasks.releasePromptSubmission(taskId, submissionId, false);
+        tasks.activePrompts.add(taskId);
+        tasks.syncBusy(taskId);
         const previousAgentSessionId = agentSessionId;
 
         void (async () => {
@@ -1974,24 +1947,24 @@ export function createRequestHandler(
             ).trim();
             if (!summary) throw new Error("Agent returned an empty summary");
 
-            const summaryEvent = store.saveCompactSummary(sessionId, summary);
+            const summaryEvent = store.saveCompactSummary(taskId, summary);
             sseManager.broadcast({
               type: "assistant_message",
-              sessionId,
+              taskId,
               text: summary,
               seq: summaryEvent.seq,
             });
 
-            const clearResult = await sessions.clearSession(
+            const clearResult = await tasks.clearTask(
               bridge,
-              sessionId,
+              taskId,
               undefined,
               {
                 preservePendingCompactSummary: true,
                 preserveRuntimeState: true,
               },
             );
-            sessions.state.patch(sessionId, {
+            tasks.state.patch(taskId, {
               runtime: {
                 busy: null,
                 streaming: { assistant: false, thinking: false },
@@ -2001,34 +1974,33 @@ export function createRequestHandler(
               },
             });
 
-            const fresh = store.getSession(sessionId);
-            if (!fresh)
-              throw new Error("Session disappeared during compaction");
+            const fresh = store.getTask(taskId);
+            if (!fresh) throw new Error("Task disappeared during compaction");
             sseManager.broadcast({
-              type: "session_created",
-              sessionId,
+              type: "task_created",
+              taskId,
               cwd: fresh.cwd,
               cwdDisplay: abbreviateHomePath(fresh.cwd),
               title: fresh.title,
               configOptions: clearResult.configOptions,
-              agentCommands: sessions.getAgentCommands(sessionId),
+              agentCommands: tasks.getAgentCommands(taskId),
             } satisfies AgentEvent);
           } catch (err) {
             // If rotation did not move the binding, the old ACP execution is
             // still current and must not receive this handoff on its next turn.
             if (
               summary &&
-              store.getAgentSessionId(sessionId) === previousAgentSessionId
+              store.getAgentSessionId(taskId) === previousAgentSessionId
             ) {
-              store.clearPendingCompactSummary(sessionId, summary);
+              store.clearPendingCompactSummary(taskId, summary);
             }
             const message = `Compact failed: ${errorMessage(err)}`;
-            // The session may have been deleted mid-compaction (cascade); the
+            // The task may have been deleted mid-compaction (cascade); the
             // FK rejects writes to a removed row, so make the error event
             // optional and keep the SSE broadcast authoritative.
             try {
               store.saveEvent(
-                sessionId,
+                taskId,
                 "error",
                 { message },
                 {
@@ -2036,17 +2008,17 @@ export function createRequestHandler(
                 },
               );
             } catch {
-              // Session is gone; nothing durable to write.
+              // Task is gone; nothing durable to write.
             }
             sseManager.broadcast({
               type: "error",
-              sessionId,
+              taskId,
               message,
             });
           } finally {
-            sessions.activePrompts.delete(sessionId);
-            sessions.compactingSessions.delete(sessionId);
-            sessions.syncBusy(sessionId);
+            tasks.activePrompts.delete(taskId);
+            tasks.compactingTasks.delete(taskId);
+            tasks.syncBusy(taskId);
           }
         })();
 
@@ -2054,28 +2026,28 @@ export function createRequestHandler(
         return;
       }
 
-      // POST /api/v1/sessions/:id/clear — rotate the ACP execution while
-      // preserving the stable WebAgent session identity and its records.
-      const clearSessionMatch = url.match(
-        /^\/api\/v1\/sessions\/([^/?]+)\/clear\/?$/,
+      // POST /api/v1/tasks/:id/clear — rotate the ACP execution while
+      // preserving the stable WebAgent task identity and its records.
+      const clearTaskMatch = url.match(
+        /^\/api\/v1\/tasks\/([^/?]+)\/clear\/?$/,
       );
-      if (clearSessionMatch && req.method === "POST") {
-        const sessionId = decodeURIComponent(clearSessionMatch[1]);
-        const session = store.getSession(sessionId);
-        if (!session) {
-          json(res, HTTP_STATUS.NOT_FOUND, { error: "Session not found" });
+      if (clearTaskMatch && req.method === "POST") {
+        const taskId = decodeURIComponent(clearTaskMatch[1]);
+        const task = store.getTask(taskId);
+        if (!task) {
+          json(res, HTTP_STATUS.NOT_FOUND, { error: "Task not found" });
           return;
         }
         const bridge = getBridge?.();
-        if (!bridge || !sessions) {
+        if (!bridge || !tasks) {
           json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
             error: "Agent not ready yet",
           });
           return;
         }
-        if (sessions.getBusyKind(sessionId) !== null) {
+        if (tasks.getBusyKind(taskId) !== null) {
           json(res, HTTP_STATUS.CONFLICT, {
-            error: "Cancel active work before clearing the session",
+            error: "Cancel active work before clearing the task",
           });
           return;
         }
@@ -2088,30 +2060,26 @@ export function createRequestHandler(
           return;
         }
         try {
-          const result = await sessions.clearSession(
-            bridge,
-            sessionId,
-            body.cwd,
-          );
-          const fresh = store.getSession(sessionId)!;
+          const result = await tasks.clearTask(bridge, taskId, body.cwd);
+          const fresh = store.getTask(taskId)!;
           const event = {
-            type: "session_created",
-            sessionId,
+            type: "task_created",
+            taskId,
             cwd: fresh.cwd,
             cwdDisplay: abbreviateHomePath(fresh.cwd),
             title: fresh.title,
             configOptions: result.configOptions,
-            agentCommands: sessions.getAgentCommands(sessionId),
+            agentCommands: tasks.getAgentCommands(taskId),
           } satisfies AgentEvent;
           sseManager.broadcast(event);
           json(res, HTTP_STATUS.OK, {
-            id: sessionId,
+            id: taskId,
             cwd: fresh.cwd,
             cwdDisplay: abbreviateHomePath(fresh.cwd),
             title: fresh.title,
             source: fresh.source,
             configOptions: result.configOptions,
-            agentCommands: sessions.getAgentCommands(sessionId),
+            agentCommands: tasks.getAgentCommands(taskId),
           });
         } catch (err) {
           json(res, HTTP_STATUS.BAD_REQUEST, {
@@ -2121,21 +2089,19 @@ export function createRequestHandler(
         return;
       }
 
-      // --- Session CRUD: /api/v1/sessions/:id ---
-      const sessionIdMatch = url.match(
-        /^\/api\/v1\/sessions\/([^/?]+)\/?(\?.*)?$/,
-      );
-      if (sessionIdMatch) {
-        const sessionId = decodeURIComponent(sessionIdMatch[1]);
+      // --- Task CRUD: /api/v1/tasks/:id ---
+      const taskIdMatch = url.match(/^\/api\/v1\/tasks\/([^/?]+)\/?(\?.*)?$/);
+      if (taskIdMatch) {
+        const taskId = decodeURIComponent(taskIdMatch[1]);
 
-        // POST /api/v1/sessions (create) — handled below since :id would match "sessions" literally
-        // This match is for /api/v1/sessions/:id only (not /api/sessions)
+        // POST /api/v1/tasks (create) — handled below since :id would match "tasks" literally
+        // This match is for /api/v1/tasks/:id only (not /api/tasks)
 
-        // GET /api/v1/sessions/:id
+        // GET /api/v1/tasks/:id
         if (req.method === "GET") {
-          const session = store.getSession(sessionId);
-          if (!session) {
-            json(res, HTTP_STATUS.NOT_FOUND, { error: "Session not found" });
+          const task = store.getTask(taskId);
+          if (!task) {
+            json(res, HTTP_STATUS.NOT_FOUND, { error: "Task not found" });
             return;
           }
           // Start resume in background (non-blocking) so the client gets metadata fast.
@@ -2143,20 +2109,20 @@ export function createRequestHandler(
           // configOptions returns inline. This eliminates the race where the
           // post-resume `config_option_update` broadcast can arrive before the
           // client's SSE is fully wired up — a flake observed on slow CI runners.
-          const wasLive = sessions?.liveSessions.has(sessionId) ?? true;
+          const wasLive = tasks?.liveTasks.has(taskId) ?? true;
           let resumePromise: Promise<void> | null = null;
-          if (sessions && getBridge && !wasLive) {
+          if (tasks && getBridge && !wasLive) {
             const bridge = getBridge();
             if (bridge) {
-              resumePromise = sessions.ensureResumed(bridge, sessionId);
+              resumePromise = tasks.ensureResumed(bridge, taskId);
               // Broadcast config_option_update too, so any OTHER client viewing
-              // the same session (whose own GET may have raced and returned cold)
+              // the same task (whose own GET may have raced and returned cold)
               // also picks up the warm values.
               resumePromise
                 .then(() => {
-                  const cur = store.getSession(sessionId);
-                  if (!cur || !sessions.cachedConfigOptions.length) return;
-                  const opts = sessions.cachedConfigOptions.map((opt) => {
+                  const cur = store.getTask(taskId);
+                  if (!cur || !tasks.cachedConfigOptions.length) return;
+                  const opts = tasks.cachedConfigOptions.map((opt) => {
                     const stored: Record<string, string | null> = {
                       model: cur.model,
                       mode: cur.mode,
@@ -2169,14 +2135,14 @@ export function createRequestHandler(
                   });
                   sseManager.broadcast({
                     type: "config_option_update",
-                    sessionId,
+                    taskId,
                     configOptions: opts,
                   });
                 })
                 .catch(() => {});
               resumePromise.catch((err) => {
                 slog.error("background resume failed", {
-                  sessionId: sessionId.slice(0, 8) + "…",
+                  taskId: taskId.slice(0, 8) + "…",
                   error: err,
                 });
               });
@@ -2186,7 +2152,7 @@ export function createRequestHandler(
           // GET response includes warm configOptions. Bounded to 8s — past that
           // we fall back to returning empty configOptions and rely on the
           // broadcast above. The frontend retries (re-fetches) on broadcast.
-          if (resumePromise && !sessions?.cachedConfigOptions.length) {
+          if (resumePromise && !tasks?.cachedConfigOptions.length) {
             let timer: NodeJS.Timeout | null = null;
             const timeoutPromise = new Promise<void>((resolve) => {
               timer = setTimeout(resolve, 8000);
@@ -2198,16 +2164,16 @@ export function createRequestHandler(
               timeoutPromise,
             ]).catch(() => {});
           }
-          // Re-read session in case resume mutated stored config
-          const freshSession = store.getSession(sessionId) ?? session;
-          const configOptions = sessions
+          // Re-read task in case resume mutated stored config
+          const freshTask = store.getTask(taskId) ?? task;
+          const configOptions = tasks
             ? (() => {
                 // Build configOptions from cached + stored overrides
-                const opts = sessions.cachedConfigOptions.map((opt) => {
+                const opts = tasks.cachedConfigOptions.map((opt) => {
                   const stored: Record<string, string | null> = {
-                    model: freshSession.model,
-                    mode: freshSession.mode,
-                    reasoning_effort: freshSession.reasoning_effort,
+                    model: freshTask.model,
+                    mode: freshTask.mode,
+                    reasoning_effort: freshTask.reasoning_effort,
                   };
                   const override = stored[opt.id];
                   return override && "options" in opt
@@ -2221,14 +2187,14 @@ export function createRequestHandler(
             res,
             HTTP_STATUS.OK,
             {
-              id: freshSession.id,
-              cwd: freshSession.cwd,
-              cwdDisplay: abbreviateHomePath(freshSession.cwd),
-              title: freshSession.title,
-              source: freshSession.source,
-              model: freshSession.model,
-              mode: freshSession.mode,
-              parentSessionId: freshSession.parent_session_id,
+              id: freshTask.id,
+              cwd: freshTask.cwd,
+              cwdDisplay: abbreviateHomePath(freshTask.cwd),
+              title: freshTask.title,
+              source: freshTask.source,
+              model: freshTask.model,
+              mode: freshTask.mode,
+              parentId: freshTask.parent_id,
               configOptions,
             },
             req,
@@ -2236,31 +2202,29 @@ export function createRequestHandler(
           return;
         }
 
-        // DELETE /api/v1/sessions/:id
+        // DELETE /api/v1/tasks/:id
         if (req.method === "DELETE") {
-          const session = store.getSession(sessionId);
-          if (!session) {
-            json(res, HTTP_STATUS.NOT_FOUND, { error: "Session not found" });
+          const task = store.getTask(taskId);
+          if (!task) {
+            json(res, HTTP_STATUS.NOT_FOUND, { error: "Task not found" });
             return;
           }
-          if (sessions && sessions.getBusyKind(sessionId) !== null) {
+          if (tasks && tasks.getBusyKind(taskId) !== null) {
             json(res, HTTP_STATUS.CONFLICT, {
-              error: "Cancel active work before deleting the session",
+              error: "Cancel active work before deleting the task",
             });
             return;
           }
           // The cascade removes descendants too; gate on their busy state as
           // well so deleting an idle parent cannot silently abort an
           // in-flight prompt or bash run in a child.
-          if (sessions) {
+          if (tasks) {
             const busyDescendant = store
-              .getDescendantSessionIds(sessionId)
-              .find(
-                (descendantId) => sessions.getBusyKind(descendantId) !== null,
-              );
+              .getDescendantTaskIds(taskId)
+              .find((descendantId) => tasks.getBusyKind(descendantId) !== null);
             if (busyDescendant) {
               json(res, HTTP_STATUS.CONFLICT, {
-                error: "Cancel active work before deleting the session",
+                error: "Cancel active work before deleting the task",
               });
               return;
             }
@@ -2274,18 +2238,18 @@ export function createRequestHandler(
                 agentSessionId: string | null;
               }>;
             };
-            if (sessions) {
-              affectedStore = sessions.deleteSession(
+            if (tasks) {
+              affectedStore = tasks.deleteTask(
                 getBridge?.() ?? undefined,
-                sessionId,
+                taskId,
               );
             } else {
-              affectedStore = store.deleteSession(sessionId);
+              affectedStore = store.deleteTask(taskId);
             }
             for (const entry of affectedStore.affected) {
               sseManager.broadcast({
-                type: "session_deleted",
-                sessionId: entry.id,
+                type: "task_deleted",
+                taskId: entry.id,
               });
             }
           } catch (err) {
@@ -2300,8 +2264,8 @@ export function createRequestHandler(
         }
       }
 
-      // POST /api/v1/sessions (create new session)
-      if (url === "/api/v1/sessions" && req.method === "POST") {
+      // POST /api/v1/tasks (create new task)
+      if (url === "/api/v1/tasks" && req.method === "POST") {
         const clientOpId = getClientOpId(req);
         const bridge = getBridge?.();
         if (!bridge) {
@@ -2310,24 +2274,24 @@ export function createRequestHandler(
           });
           return;
         }
-        if (!sessions) {
+        if (!tasks) {
           json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
-            error: "Session manager not available",
+            error: "Task manager not available",
           });
           return;
         }
         let body: {
           cwd?: string;
-          inheritFromSessionId?: string;
+          inheritFromTaskId?: string;
           source?: string;
-          parentSessionId?: string;
+          parentId?: string;
         };
         try {
           body = JSON.parse(await readBody(req)) as {
             cwd?: string;
-            inheritFromSessionId?: string;
+            inheritFromTaskId?: string;
             source?: string;
-            parentSessionId?: string;
+            parentId?: string;
           };
         } catch {
           json(res, HTTP_STATUS.BAD_REQUEST, { error: "Invalid JSON" });
@@ -2337,62 +2301,58 @@ export function createRequestHandler(
         // The parent must exist and be live (not tombstoned); the FK would
         // reject a dangling reference with a raw database error otherwise.
         // A live parent row is enough — it need not have an ACP binding yet.
-        if (body.parentSessionId) {
-          const parent = store.getSessionIncludingDeleted(body.parentSessionId);
+        if (body.parentId) {
+          const parent = store.getTaskIncludingDeleted(body.parentId);
           if (parent?.deleted_at !== null) {
             json(res, HTTP_STATUS.BAD_REQUEST, {
-              error: "Parent session not found",
+              error: "Parent task not found",
             });
             return;
           }
         }
         try {
-          const { sessionId, configOptions } = await sessions.createSession(
+          const { taskId, configOptions } = await tasks.createTask(
             bridge,
             body.cwd,
-            body.inheritFromSessionId,
+            body.inheritFromTaskId,
             source,
-            { parentSessionId: body.parentSessionId },
+            { parentId: body.parentId },
           );
-          const session = store.getSession(sessionId);
-          const sessionCreatedEvent = {
-            type: "session_created",
-            sessionId,
-            cwd: session?.cwd,
-            cwdDisplay: session?.cwd
-              ? abbreviateHomePath(session.cwd)
-              : undefined,
-            title: session?.title,
+          const task = store.getTask(taskId);
+          const taskCreatedEvent = {
+            type: "task_created",
+            taskId,
+            cwd: task?.cwd,
+            cwdDisplay: task?.cwd ? abbreviateHomePath(task.cwd) : undefined,
+            title: task?.title,
             configOptions,
-            agentCommands: sessions.getAgentCommands(sessionId),
+            agentCommands: tasks.getAgentCommands(taskId),
             clientOpId: clientOpId ?? undefined,
           } as AgentEvent;
-          sseManager.broadcast(sessionCreatedEvent);
-          // ACP's session_created event fires before inheritance runs, so
+          sseManager.broadcast(taskCreatedEvent);
+          // ACP's task_created event fires before inheritance runs, so
           // broadcast final configOptions so SSE clients get the inherited values.
           if (configOptions.length) {
             sseManager.broadcast({
               type: "config_option_update",
-              sessionId,
+              taskId,
               configOptions,
             });
           }
           json(res, HTTP_STATUS.CREATED, {
-            id: sessionId,
-            cwd: session?.cwd ?? body.cwd,
-            cwdDisplay: session?.cwd
-              ? abbreviateHomePath(session.cwd)
-              : undefined,
-            title: session?.title ?? null,
-            source: session?.source ?? source,
-            parentSessionId: session?.parent_session_id ?? null,
+            id: taskId,
+            cwd: task?.cwd ?? body.cwd,
+            cwdDisplay: task?.cwd ? abbreviateHomePath(task.cwd) : undefined,
+            title: task?.title ?? null,
+            source: task?.source ?? source,
+            parentId: task?.parent_id ?? null,
             configOptions,
-            agentCommands: sessions.getAgentCommands(sessionId),
+            agentCommands: tasks.getAgentCommands(taskId),
             clientOpId: clientOpId ?? undefined,
           });
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
-          if (err instanceof InvalidSessionDirectoryError) {
+          if (err instanceof InvalidTaskDirectoryError) {
             json(res, HTTP_STATUS.BAD_REQUEST, { error: msg });
           } else {
             json(res, HTTP_STATUS.INTERNAL_SERVER_ERROR, { error: msg });
@@ -2401,12 +2361,12 @@ export function createRequestHandler(
         return;
       }
 
-      // GET /api/v1/sessions/:id/events?thinking=0|1&limit=N&before=SEQ&after=SEQ
+      // GET /api/v1/tasks/:id/events?thinking=0|1&limit=N&before=SEQ&after=SEQ
       const eventsMatch = url.match(
-        /^\/api\/v1\/sessions\/([^/]+)\/events(\?.*)?$/,
+        /^\/api\/v1\/tasks\/([^/]+)\/events(\?.*)?$/,
       );
       if (eventsMatch && req.method === "GET") {
-        const sessionId = decodeURIComponent(eventsMatch[1]);
+        const taskId = decodeURIComponent(eventsMatch[1]);
         const queryPart = eventsMatch[2];
         const params = new URLSearchParams(queryPart ? queryPart.slice(1) : "");
         const excludeThinking = params.get("thinking") === "0";
@@ -2419,9 +2379,9 @@ export function createRequestHandler(
           limitRaw != null
             ? Math.max(1, Math.min(10000, Number(limitRaw)))
             : undefined;
-        const session = store.getSession(sessionId);
-        if (!session) {
-          json(res, HTTP_STATUS.NOT_FOUND, { error: "Session not found" });
+        const task = store.getTask(taskId);
+        if (!task) {
+          json(res, HTTP_STATUS.NOT_FOUND, { error: "Task not found" });
           return;
         }
         // Flush pending buffers so their content becomes part of the event list.
@@ -2429,18 +2389,18 @@ export function createRequestHandler(
         // last thinking/assistant element "open" for continued live streaming.
         let streamingThinking = false;
         let streamingAssistant = false;
-        if (sessions) {
-          const runtimeStreaming = sessions.state.peekStreaming(sessionId);
+        if (tasks) {
+          const runtimeStreaming = tasks.state.peekStreaming(taskId);
           streamingThinking =
             runtimeStreaming.thinking ||
-            Boolean(sessions.thinkingBuffers.get(sessionId));
+            Boolean(tasks.thinkingBuffers.get(taskId));
           streamingAssistant =
             runtimeStreaming.assistant ||
-            Boolean(sessions.assistantBuffers.get(sessionId));
-          sessions.flushThinkingBuffer(sessionId);
-          sessions.flushAssistantBuffer(sessionId);
+            Boolean(tasks.assistantBuffers.get(taskId));
+          tasks.flushThinkingBuffer(taskId);
+          tasks.flushAssistantBuffer(taskId);
         }
-        const events = store.getEvents(sessionId, {
+        const events = store.getEvents(taskId, {
           excludeThinking,
           afterSeq,
           beforeSeq,
@@ -2449,8 +2409,8 @@ export function createRequestHandler(
         // Replace internal uuid attachment paths with `<name> [#<id4>]`
         // labels at egress (CLAUDE.md "Attachment label egress
         // rewrite"). DB rows still hold raw paths.
-        if (sessions) {
-          enrichStoredEventsForDisplay(events, sessions.getLabelMap(sessionId));
+        if (tasks) {
+          enrichStoredEventsForDisplay(events, tasks.getLabelMap(taskId));
         }
         // Re-sign image URLs at egress so 1h-old stored URLs become valid
         // again — the user can reload history days later and images still
@@ -2477,10 +2437,10 @@ export function createRequestHandler(
           },
         };
         if (limit != null) {
-          const total = store.getEventCount(sessionId, { excludeThinking });
+          const total = store.getEventCount(taskId, { excludeThinking });
           const hasMore =
             events.length > 0
-              ? store.getEvents(sessionId, {
+              ? store.getEvents(taskId, {
                   excludeThinking,
                   beforeSeq: events[0].seq,
                   limit: 1,
@@ -2540,12 +2500,12 @@ export function createRequestHandler(
         return;
       }
 
-      // GET /api/v1/sessions/:id/events/stream — per-session SSE stream
-      const sseSessionMatch = url.match(
-        /^\/api\/v1\/sessions\/([^/]+)\/events\/stream(\?.*)?$/,
+      // GET /api/v1/tasks/:id/events/stream — per-task SSE stream
+      const sseTaskMatch = url.match(
+        /^\/api\/v1\/tasks\/([^/]+)\/events\/stream(\?.*)?$/,
       );
-      if (sseSessionMatch && req.method === "GET") {
-        const sessionId = decodeURIComponent(sseSessionMatch[1]);
+      if (sseTaskMatch && req.method === "GET") {
+        const taskId = decodeURIComponent(sseTaskMatch[1]);
 
         let tokenName: string | undefined;
         if (deps.authStore) {
@@ -2561,9 +2521,9 @@ export function createRequestHandler(
           tokenName = principal.tokenName;
         }
 
-        const session = store.getSession(sessionId);
-        if (!session) {
-          json(res, HTTP_STATUS.NOT_FOUND, { error: "Session not found" });
+        const task = store.getTask(taskId);
+        if (!task) {
+          json(res, HTTP_STATUS.NOT_FOUND, { error: "Task not found" });
           return;
         }
 
@@ -2577,7 +2537,7 @@ export function createRequestHandler(
         const client: import("./sse-manager.ts").SseClient = {
           id: clientId,
           res,
-          sessionId,
+          taskId,
           tokenName,
         };
         sseManager.add(client);
@@ -2596,7 +2556,7 @@ export function createRequestHandler(
         if (lastEventId) {
           const afterSeq = parseInt(lastEventId as string, 10);
           if (!isNaN(afterSeq)) {
-            const events = store.getEvents(sessionId, { afterSeq });
+            const events = store.getEvents(taskId, { afterSeq });
             for (const evt of events) {
               try {
                 sseManager.sendEvent(
@@ -2616,22 +2576,22 @@ export function createRequestHandler(
         return;
       }
 
-      // --- Attachments (session-scoped) ---
+      // --- Attachments (task-scoped) ---
 
-      // POST /api/v1/sessions/:id/attachments — multipart/form-data upload.
+      // POST /api/v1/tasks/:id/attachments — multipart/form-data upload.
       //
       // Wire format: a single `file` field. busboy streams chunks straight
-      // to <data_dir>/sessions/<sid>/attachments/<uuid>.<ext>.tmp; on close
+      // to <data_dir>/tasks/<sid>/attachments/<uuid>.<ext>.tmp; on close
       // we atomic-rename to the final name and insert an attachments row.
       // Aborts / mid-stream errors / oversize / wrong field name all leave
       // the .tmp removed before responding.
       const imgUploadMatch = url.match(
-        /^\/api\/v1\/sessions\/([^/]+)\/attachments\/?$/,
+        /^\/api\/v1\/tasks\/([^/]+)\/attachments\/?$/,
       );
       if (imgUploadMatch && req.method === "POST") {
-        const sessionId = decodeURIComponent(imgUploadMatch[1]);
-        if (!SAFE_ID.test(sessionId)) {
-          json(res, HTTP_STATUS.BAD_REQUEST, { error: "Invalid session ID" });
+        const taskId = decodeURIComponent(imgUploadMatch[1]);
+        if (!SAFE_ID.test(taskId)) {
+          json(res, HTTP_STATUS.BAD_REQUEST, { error: "Invalid task ID" });
           return;
         }
         const ctype = req.headers["content-type"] ?? "";
@@ -2641,19 +2601,19 @@ export function createRequestHandler(
           });
           return;
         }
-        await handleAttachmentUpload(req, res, sessionId, deps);
+        await handleAttachmentUpload(req, res, taskId, deps);
         return;
       }
 
-      // GET /api/v1/sessions/:id/attachments/:file — serve a previously
+      // GET /api/v1/tasks/:id/attachments/:file — serve a previously
       // uploaded attachment. Mime + displayName are looked up from the
       // attachments table so the response carries the original filename
       // (RFC 5987) and the per-mime inline/attachment disposition.
       const imgGetMatch = url.match(
-        /^\/api\/v1\/sessions\/([^/]+)\/attachments\/([^/?]+)(\?.*)?$/,
+        /^\/api\/v1\/tasks\/([^/]+)\/attachments\/([^/?]+)(\?.*)?$/,
       );
       if (imgGetMatch && req.method === "GET") {
-        const sessionId = decodeURIComponent(imgGetMatch[1]);
+        const taskId = decodeURIComponent(imgGetMatch[1]);
         const file = decodeURIComponent(imgGetMatch[2]);
         // When secret is configured, GET requires sig+exp in query — there
         // is no Bearer fallback because <img src=...> / <a href=...> can't
@@ -2662,7 +2622,7 @@ export function createRequestHandler(
           const params = new URLSearchParams(url.split("?")[1] ?? "");
           const sig = params.get("sig") ?? "";
           const exp = params.get("exp") ?? "";
-          const basePath = `/api/v1/sessions/${sessionId}/attachments/${file}`;
+          const basePath = `/api/v1/tasks/${taskId}/attachments/${file}`;
           if (!verifyAttachmentSig(basePath, exp, sig, deps.attachmentSecret)) {
             res.writeHead(HTTP_STATUS.UNAUTHORIZED, {
               "Content-Type": "application/json",
@@ -2674,7 +2634,7 @@ export function createRequestHandler(
         const filePath = join(
           deps.dataDir,
           "sessions",
-          sessionId,
+          taskId,
           "attachments",
           file,
         );
@@ -2686,7 +2646,7 @@ export function createRequestHandler(
         // Look up the row to recover the original mime + display name.
         // Pre-attachments-table uploads (none in v0.4+) would miss here;
         // we degrade gracefully to extension-based mime.
-        const row = store.getAttachmentByFile(sessionId, file);
+        const row = store.getAttachmentByFile(taskId, file);
         try {
           const fileData = await readFile(filePath);
           const mime =
@@ -2718,7 +2678,7 @@ export function createRequestHandler(
       // POST /api/v1/messages — create ingress message
       if (url === "/api/v1/messages" && req.method === "POST") {
         // client-server-split M2: idempotency for the ingress message
-        // creator. /messages has no real session id, so we scope the
+        // creator. /messages has no real task id, so we scope the
         // cache under the synthetic key "__ingress__".
         const { opId, replayed } = tryReplayClientOp(
           req,
@@ -2753,14 +2713,14 @@ export function createRequestHandler(
         const input = validation.data;
         const id = `msg-${randomUUID().replace(/-/g, "").slice(0, 16)}`;
 
-        if (input.to.startsWith("session:")) {
-          const targetSid = input.to.slice("session:".length);
-          const session = store.getSession(targetSid);
-          if (!session) {
-            json(res, HTTP_STATUS.BAD_REQUEST, { error: "session_not_found" });
+        if (input.to.startsWith("task:")) {
+          const targetSid = input.to.slice("task:".length);
+          const task = store.getTask(targetSid);
+          if (!task) {
+            json(res, HTTP_STATUS.BAD_REQUEST, { error: "task_not_found" });
             return;
           }
-          sessions?.flushBuffers(targetSid);
+          tasks?.flushBuffers(targetSid);
           const data = {
             message_id: id,
             from_ref: input.from_ref,
@@ -2774,7 +2734,7 @@ export function createRequestHandler(
           });
           sseManager.broadcast({
             type: "message",
-            sessionId: targetSid,
+            taskId: targetSid,
             ...data,
           });
           if (deps.pushService) {
@@ -2792,7 +2752,7 @@ export function createRequestHandler(
             msg_id: id,
             sess_id: targetSid.slice(0, 8),
           });
-          const boundBody = { id, delivered: "session" };
+          const boundBody = { id, delivered: "task" };
           saveClientOpResult(
             store,
             opId,
@@ -2872,45 +2832,41 @@ export function createRequestHandler(
         const consumeMatch = tail.match(/^([^/?]+)\/consume\/?$/);
         if (consumeMatch && req.method === "POST") {
           const id = decodeURIComponent(consumeMatch[1]);
-          let inheritFromSessionId: string | undefined;
+          let inheritFromTaskId: string | undefined;
           try {
             const rawBody = await readBody(req);
             if (rawBody) {
               const body = JSON.parse(rawBody) as Record<string, unknown>;
               if (
-                body.inheritFromSessionId !== undefined &&
-                typeof body.inheritFromSessionId !== "string"
+                body.inheritFromTaskId !== undefined &&
+                typeof body.inheritFromTaskId !== "string"
               ) {
                 json(res, HTTP_STATUS.BAD_REQUEST, {
-                  error: "inheritFromSessionId must be a string",
+                  error: "inheritFromTaskId must be a string",
                 });
                 return;
               }
-              inheritFromSessionId = body.inheritFromSessionId;
+              inheritFromTaskId = body.inheritFromTaskId;
             }
           } catch {
             json(res, HTTP_STATUS.BAD_REQUEST, { error: "Invalid JSON" });
             return;
           }
           const bridge = getBridge?.();
-          if (!sessions || !bridge) {
+          if (!tasks || !bridge) {
             json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
               error: "Agent not available",
             });
             return;
           }
           let out: {
-            sessionId: string;
+            taskId: string;
             alreadyConsumed: boolean;
           } | null;
           try {
-            out = await sessions.consumeMessage(
-              bridge,
-              id,
-              inheritFromSessionId,
-            );
+            out = await tasks.consumeMessage(bridge, id, inheritFromTaskId);
           } catch (err) {
-            if (err instanceof InvalidSessionDirectoryError) {
+            if (err instanceof InvalidTaskDirectoryError) {
               json(res, HTTP_STATUS.BAD_REQUEST, {
                 error: err.message,
               });
@@ -2928,7 +2884,7 @@ export function createRequestHandler(
           sseManager.broadcast({
             type: "message_consumed",
             messageId: id,
-            sessionId: out.sessionId,
+            taskId: out.taskId,
           });
           broadcastInboxCount(store, sseManager);
           if (!out.alreadyConsumed && deps.pushService) {
@@ -2936,11 +2892,11 @@ export function createRequestHandler(
           }
           mlog.info("consume", {
             msg_id: id,
-            sess_id: out.sessionId.slice(0, 8),
+            sess_id: out.taskId.slice(0, 8),
             already_consumed: out.alreadyConsumed,
           });
           json(res, HTTP_STATUS.OK, {
-            sessionId: out.sessionId,
+            taskId: out.taskId,
             alreadyConsumed: out.alreadyConsumed,
           });
           return;
@@ -2986,9 +2942,9 @@ export function createRequestHandler(
     if (url.startsWith("/api/beta/")) {
       res.setHeader("Content-Type", "application/json");
 
-      // POST /api/beta/prompt — quick one-shot prompt (create temp session + send)
+      // POST /api/beta/prompt — quick one-shot prompt (create temp task + send)
       if (url === "/api/beta/prompt" && req.method === "POST") {
-        if (!sessions || !getBridge) {
+        if (!tasks || !getBridge) {
           json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
             error: "Agent not available",
           });
@@ -3019,42 +2975,40 @@ export function createRequestHandler(
         }
 
         const cwd = typeof body.cwd === "string" ? body.cwd : undefined;
-        const { sessionId, configOptions } = await sessions.createSession(
+        const { taskId, configOptions } = await tasks.createTask(
           bridge,
           cwd,
           undefined,
           "auto",
         );
-        const streamUrl = `/api/v1/sessions/${sessionId}/events/stream`;
-        const session = store.getSession(sessionId);
+        const streamUrl = `/api/v1/tasks/${taskId}/events/stream`;
+        const task = store.getTask(taskId);
 
         sseManager.broadcast({
-          type: "session_created",
-          sessionId,
-          cwd: session?.cwd,
-          cwdDisplay: session?.cwd
-            ? abbreviateHomePath(session.cwd)
-            : undefined,
-          title: session?.title,
+          type: "task_created",
+          taskId,
+          cwd: task?.cwd,
+          cwdDisplay: task?.cwd ? abbreviateHomePath(task.cwd) : undefined,
+          title: task?.title,
           configOptions,
-          agentCommands: sessions.getAgentCommands(sessionId),
+          agentCommands: tasks.getAgentCommands(taskId),
         });
 
-        json(res, HTTP_STATUS.ACCEPTED, { sessionId, streamUrl });
+        json(res, HTTP_STATUS.ACCEPTED, { taskId, streamUrl });
 
         // Fire-and-forget: send the prompt asynchronously, tracking busy state
-        sessions.activePrompts.add(sessionId);
-        sessions.syncBusy(sessionId);
+        tasks.activePrompts.add(taskId);
+        tasks.syncBusy(taskId);
         // Generate title (fire-and-forget)
-        if (titleService && !sessions.sessionHasTitle.has(sessionId)) {
+        if (titleService && !tasks.taskHasTitle.has(taskId)) {
           titleService.generate(
             bridge as AgentBridge,
             text,
-            sessionId,
+            taskId,
             (title) => {
               const titleEvent = {
-                type: "session_title_updated",
-                sessionId,
+                type: "task_title_updated",
+                taskId,
                 title,
               } as AgentEvent;
               sseManager.broadcast(titleEvent);
@@ -3062,15 +3016,14 @@ export function createRequestHandler(
           );
         }
         const betaPromptId =
-          sessions.state.getState(sessionId).runtime.busy?.promptId ??
-          undefined;
+          tasks.state.getState(taskId).runtime.busy?.promptId ?? undefined;
         bridge
-          .prompt(sessionId, text, undefined, betaPromptId)
+          .prompt(taskId, text, undefined, betaPromptId)
           .catch(() => {})
           .finally(() => {
-            if (!sessions.isCurrentPrompt(sessionId, betaPromptId)) return;
-            sessions.activePrompts.delete(sessionId);
-            sessions.syncBusy(sessionId);
+            if (!tasks.isCurrentPrompt(taskId, betaPromptId)) return;
+            tasks.activePrompts.delete(taskId);
+            tasks.syncBusy(taskId);
           });
         return;
       }
@@ -3108,25 +3061,22 @@ export function createRequestHandler(
           return;
         }
 
-        // sessionId patch semantics: absent = preserve, null = clear,
+        // taskId patch semantics: absent = preserve, null = clear,
         // string = replace. Zod can't distinguish omitted from explicit
         // null after parse, so branch on raw body key.
-        const hasSessionIdKey = Object.prototype.hasOwnProperty.call(
+        const hasTaskIdKey = Object.prototype.hasOwnProperty.call(
           body,
-          "sessionId",
+          "taskId",
         );
-        let sessionIdPatch: string | null | undefined;
-        if (!hasSessionIdKey) {
-          sessionIdPatch = undefined;
-        } else if (body.sessionId === null) {
-          sessionIdPatch = null;
-        } else if (
-          typeof body.sessionId === "string" &&
-          body.sessionId.length > 0
-        ) {
-          sessionIdPatch = body.sessionId;
+        let taskIdPatch: string | null | undefined;
+        if (!hasTaskIdKey) {
+          taskIdPatch = undefined;
+        } else if (body.taskId === null) {
+          taskIdPatch = null;
+        } else if (typeof body.taskId === "string" && body.taskId.length > 0) {
+          taskIdPatch = body.taskId;
         } else {
-          sessionIdPatch = null;
+          taskIdPatch = null;
         }
 
         if (deps.clientRegistry) {
@@ -3140,18 +3090,18 @@ export function createRequestHandler(
             clientId,
             {
               visible: body.visible,
-              active: sessionIdPatch,
+              active: taskIdPatch,
             },
           );
           // Edge-triggered only: heartbeat refreshes repeat the same
-          // (visible:true, sessionId:X) POST every 15s — firing sendClose
+          // (visible:true, taskId:X) POST every 15s — firing sendClose
           // on each would hammer banner recall. Only the first such
           // transition after a change should recall stale banners.
           if (becameVisibleFor && deps.pushService) {
             void deps.pushService.sendClose(`sess-${becameVisibleFor}-done`);
-            if (sessions) {
-              for (const perm of sessions.pendingPermissions.values()) {
-                if (perm.sessionId === becameVisibleFor) {
+            if (tasks) {
+              for (const perm of tasks.pendingPermissions.values()) {
+                if (perm.taskId === becameVisibleFor) {
                   void deps.pushService.sendClose(
                     `sess-${becameVisibleFor}-perm-${perm.requestId}`,
                   );

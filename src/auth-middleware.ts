@@ -45,8 +45,7 @@ const WHITELIST: readonly WhitelistEntry[] = [
   { method: "GET", test: (p) => p === "/api/v1/events/stream" },
   {
     method: "GET",
-    test: (p) =>
-      /^\/api\/v1\/sessions\/[A-Za-z0-9_-]+\/events\/stream$/.test(p),
+    test: (p) => /^\/api\/v1\/tasks\/[A-Za-z0-9_-]+\/events\/stream$/.test(p),
   },
 
   // Image GETs — authenticated via HMAC sig+exp query string (an <img>
@@ -55,7 +54,7 @@ const WHITELIST: readonly WhitelistEntry[] = [
   {
     method: "GET",
     test: (p) =>
-      /^\/api\/v1\/sessions\/[A-Za-z0-9_-]+\/attachments\/[A-Za-z0-9._-]+$/.test(
+      /^\/api\/v1\/tasks\/[A-Za-z0-9_-]+\/attachments\/[A-Za-z0-9._-]+$/.test(
         p,
       ),
   },

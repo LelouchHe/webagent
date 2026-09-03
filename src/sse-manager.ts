@@ -9,7 +9,7 @@ const slog = log.scope("sse");
 
 /**
  * SSE heartbeat frame — a NAMED event so the frontend can hook
- * `es.addEventListener("heartbeat", ...)` and refresh its per-session
+ * `es.addEventListener("heartbeat", ...)` and refresh its per-task
  * visibility record on the server. Comment-line form (`: heartbeat\n\n`)
  * is silently discarded by EventSource — no `onmessage` fires — which is
  * why we use a named event instead. Riding the SSE connection's natural
@@ -21,7 +21,7 @@ const SSE_HEARTBEAT_FRAME = "event: heartbeat\ndata: {}\n\n";
 export interface SseClient {
   id: string;
   res: ServerResponse;
-  sessionId?: string; // undefined = global stream
+  taskId?: string; // undefined = global stream
   tokenName?: string; // bound at connect via SSE ticket; used for revoke detection
 }
 
@@ -36,7 +36,7 @@ export class SseManager {
   private onRemoveCallback: ((clientId: string) => void) | null = null;
   private isTokenRevoked: ((tokenName: string) => boolean) | null = null;
   private attachmentSecret: Buffer | null = null;
-  private getLabelMap: ((sessionId: string) => LabelMap) | null = null;
+  private getLabelMap: ((taskId: string) => LabelMap) | null = null;
 
   constructor(heartbeatMs = 15_000) {
     this.heartbeatInterval = heartbeatMs;
@@ -57,12 +57,12 @@ export class SseManager {
   /**
    * Wire a label-map provider to enrich attachment uuid paths with
    * user-friendly labels at egress (CLAUDE.md "Attachment label
-   * egress rewrite"). Applied per-event-session inside `sendEvent`,
+   * egress rewrite"). Applied per-event-task inside `sendEvent`,
    * so both `broadcast()` and direct `sendEvent()` callers (e.g.
    * SSE Last-Event-ID replay) get enriched output. DB still stores
    * raw events.
    */
-  setLabelMapProvider(fn: (sessionId: string) => LabelMap): void {
+  setLabelMapProvider(fn: (taskId: string) => LabelMap): void {
     this.getLabelMap = fn;
   }
 
@@ -113,7 +113,7 @@ export class SseManager {
     this.clients.set(client.id, client);
     slog.info("connected", {
       clientId: client.id,
-      sessionId: client.sessionId ?? "*",
+      taskId: client.taskId ?? "*",
       clients: this.clients.size,
     });
     client.res.on("close", () => {
@@ -152,7 +152,7 @@ export class SseManager {
     if (client.res.writableEnded) return;
     let outEvent = event;
     if (this.getLabelMap) {
-      const sid = (event as Record<string, unknown>).sessionId as
+      const sid = (event as Record<string, unknown>).taskId as
         | string
         | undefined;
       if (sid) {
@@ -179,21 +179,21 @@ export class SseManager {
 
   /**
    * Broadcast an event to all connected SSE clients.
-   * Global clients get all events. Per-session clients only get events for their session.
+   * Global clients get all events. Per-task clients only get events for their task.
    */
   broadcast(event: AgentEvent): void {
-    const sessionId = (event as Record<string, unknown>).sessionId as
+    const taskId = (event as Record<string, unknown>).taskId as
       | string
       | undefined;
     const snapshot = [...this.clients.values()];
     for (const client of snapshot) {
       if (client.res.writableEnded) continue;
-      if (client.sessionId && client.sessionId !== sessionId) continue;
+      if (client.taskId && client.taskId !== taskId) continue;
       this.sendEvent(client, event);
     }
   }
 
-  /** Broadcast global application state regardless of a client's session filter. */
+  /** Broadcast global application state regardless of a client's task filter. */
   broadcastGlobal(event: AgentEvent): void {
     const snapshot = [...this.clients.values()];
     for (const client of snapshot) {

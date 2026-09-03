@@ -21,9 +21,7 @@ test("discovers and sends ACP agent slash commands", async ({ page }) => {
   );
 });
 
-test("blocks agent slash commands while the session is busy", async ({
-  page,
-}) => {
+test("blocks agent slash commands while the task is busy", async ({ page }) => {
   await gotoConnected(page);
   await createNewSession(page);
 

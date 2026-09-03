@@ -5,7 +5,7 @@ import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Store } from "../src/store.ts";
-import { SessionManager } from "../src/session-manager.ts";
+import { TaskManager } from "../src/task-manager.ts";
 import { createRequestHandler } from "../src/routes.ts";
 import { getLogLevel, setLogLevel, setLogSink } from "../src/log.ts";
 import type { ConfigOption, AgentEvent } from "../src/types.ts";
@@ -68,7 +68,7 @@ function createMockBridge() {
   ];
   let idCounter = 0;
   let lastPromptArgs: {
-    sessionId: string;
+    taskId: string;
     text: string;
     attachments?: unknown[];
   } | null = null;
@@ -76,14 +76,14 @@ function createMockBridge() {
     ...mockBridgeStubs(),
     newSession: async (_cwd: string) => {
       idCounter++;
-      return { sessionId: `mock-session-${idCounter}`, configOptions: [] };
+      return { sessionId: `mock-task-${idCounter}`, configOptions: [] };
     },
-    loadSession: async (_sessionId: string, _cwd: string) => ({
-      sessionId: _sessionId,
+    loadSession: async (_taskId: string, _cwd: string) => ({
+      taskId: _taskId,
       configOptions,
     }),
     setConfigOption: async (
-      _sessionId: string,
+      _taskId: string,
       configId: string,
       value: string | boolean,
     ) => {
@@ -94,12 +94,8 @@ function createMockBridge() {
       );
     },
     cancel: async () => {},
-    prompt: async (
-      sessionId: string,
-      text: string,
-      attachments?: unknown[],
-    ) => {
-      lastPromptArgs = { sessionId, text, attachments };
+    prompt: async (taskId: string, text: string, attachments?: unknown[]) => {
+      lastPromptArgs = { taskId, text, attachments };
     },
     resolvePermission: async () => {},
     denyPermission: async () => {},
@@ -114,7 +110,7 @@ function createMockBridge() {
 
 describe("Prompt REST API", () => {
   let store: Store;
-  let sessions: SessionManager;
+  let tasks: TaskManager;
   let tmpDir: string;
   let publicDir: string;
   let server: http.Server;
@@ -129,13 +125,13 @@ describe("Prompt REST API", () => {
     writeFileSync(join(publicDir, "index.html"), "<h1>Test</h1>");
 
     store = new Store(join(tmpDir, "test.db"), "test-agent");
-    sessions = new SessionManager(store, tmpDir, tmpDir);
+    tasks = new TaskManager(store, tmpDir, tmpDir);
     mockBridge = createMockBridge();
     broadcastEvents = [];
 
     const handler = createRequestHandler({
       store,
-      sessions,
+      tasks,
       getBridge: () => mockBridge,
       publicDir,
       dataDir: tmpDir,
@@ -178,23 +174,23 @@ describe("Prompt REST API", () => {
     }
   }
 
-  async function createSession(): Promise<string> {
+  async function createTask(): Promise<string> {
     const res = await makeRequest(
       port,
       "POST",
-      "/api/v1/sessions",
+      "/api/v1/tasks",
       JSON.stringify({ cwd: tmpDir }),
     );
     return JSON.parse(res.body).id;
   }
 
-  describe("POST /api/v1/sessions/:id/prompt", () => {
+  describe("POST /api/v1/tasks/:id/prompt", () => {
     it("accepts a prompt and returns 202", async () => {
-      const sessionId = await createSession();
+      const taskId = await createTask();
       const res = await makeRequest(
         port,
         "POST",
-        `/api/v1/sessions/${sessionId}/prompt`,
+        `/api/v1/tasks/${taskId}/prompt`,
         JSON.stringify({ text: "hello" }),
       );
       assert.equal(res.status, 202);
@@ -202,20 +198,20 @@ describe("Prompt REST API", () => {
     });
 
     it("calls bridge.prompt with correct args", async () => {
-      const sessionId = await createSession();
+      const taskId = await createTask();
       await makeRequest(
         port,
         "POST",
-        `/api/v1/sessions/${sessionId}/prompt`,
+        `/api/v1/tasks/${taskId}/prompt`,
         JSON.stringify({ text: "hello world" }),
       );
-      assert.equal(mockBridge.lastPromptArgs!.sessionId, sessionId);
+      assert.equal(mockBridge.lastPromptArgs!.taskId, taskId);
       assert.equal(mockBridge.lastPromptArgs!.text, "hello world");
     });
 
     it("stores and broadcasts raw agent slash text but sends the canonical command to the bridge", async () => {
-      const sessionId = await createSession();
-      sessions.updateAgentCommands(sessionId, [
+      const taskId = await createTask();
+      tasks.updateAgentCommands(taskId, [
         {
           name: "compact",
           description: "Compact conversation",
@@ -227,7 +223,7 @@ describe("Prompt REST API", () => {
       const res = await makeRequest(
         port,
         "POST",
-        `/api/v1/sessions/${sessionId}/prompt`,
+        `/api/v1/tasks/${taskId}/prompt`,
         JSON.stringify({ text: "//COMPACT  unresolved work" }),
       );
 
@@ -237,7 +233,7 @@ describe("Prompt REST API", () => {
         "/compact  unresolved work",
       );
       const stored = store
-        .getEvents(sessionId)
+        .getEvents(taskId)
         .find((event) => event.type === "user_message");
       assert.ok(stored);
       assert.equal(JSON.parse(stored.data).text, "//COMPACT  unresolved work");
@@ -251,8 +247,8 @@ describe("Prompt REST API", () => {
     });
 
     it("rejects an unavailable agent command before prompt side effects", async () => {
-      const sessionId = await createSession();
-      sessions.updateAgentCommands(sessionId, [
+      const taskId = await createTask();
+      tasks.updateAgentCommands(taskId, [
         { name: "context", description: "Show context usage" },
       ]);
       broadcastEvents = [];
@@ -260,7 +256,7 @@ describe("Prompt REST API", () => {
       const res = await makeRequest(
         port,
         "POST",
-        `/api/v1/sessions/${sessionId}/prompt`,
+        `/api/v1/tasks/${taskId}/prompt`,
         JSON.stringify({ text: "//compact now" }),
       );
 
@@ -271,14 +267,14 @@ describe("Prompt REST API", () => {
         prefix: "//",
       });
       assert.equal(mockBridge.lastPromptArgs, null);
-      assert.deepEqual(store.getEvents(sessionId), []);
+      assert.deepEqual(store.getEvents(taskId), []);
       assert.deepEqual(broadcastEvents, []);
-      assert.equal(sessions.activePrompts.has(sessionId), false);
+      assert.equal(tasks.activePrompts.has(taskId), false);
     });
 
     it("preserves attachments while canonicalizing agent slash text", async () => {
-      const sessionId = await createSession();
-      sessions.updateAgentCommands(sessionId, [
+      const taskId = await createTask();
+      tasks.updateAgentCommands(taskId, [
         { name: "context", description: "Show context usage" },
       ]);
       const attachments = [
@@ -293,7 +289,7 @@ describe("Prompt REST API", () => {
       const res = await makeRequest(
         port,
         "POST",
-        `/api/v1/sessions/${sessionId}/prompt`,
+        `/api/v1/tasks/${taskId}/prompt`,
         JSON.stringify({ text: "//CONTEXT", attachments }),
       );
 
@@ -303,31 +299,31 @@ describe("Prompt REST API", () => {
     });
 
     it("stores user_message event", async () => {
-      const sessionId = await createSession();
+      const taskId = await createTask();
       await makeRequest(
         port,
         "POST",
-        `/api/v1/sessions/${sessionId}/prompt`,
+        `/api/v1/tasks/${taskId}/prompt`,
         JSON.stringify({ text: "hello" }),
       );
-      const events = store.getEvents(sessionId);
+      const events = store.getEvents(taskId);
       const userMsg = events.find((e) => e.type === "user_message");
       assert.ok(userMsg);
       assert.equal(JSON.parse(userMsg.data).text, "hello");
     });
 
     it("flushes unsolicited Main output before storing the next user turn", async () => {
-      const sessionId = await createSession();
-      sessions.appendAssistant(sessionId, "background agent completed");
+      const taskId = await createTask();
+      tasks.appendAssistant(taskId, "background agent completed");
 
       await makeRequest(
         port,
         "POST",
-        `/api/v1/sessions/${sessionId}/prompt`,
+        `/api/v1/tasks/${taskId}/prompt`,
         JSON.stringify({ text: "next question" }),
       );
 
-      const stored = store.getEvents(sessionId);
+      const stored = store.getEvents(taskId);
       assert.deepEqual(
         stored.map((event) => event.type),
         ["assistant_message", "user_message"],
@@ -340,12 +336,12 @@ describe("Prompt REST API", () => {
     });
 
     it("broadcasts user_message event", async () => {
-      const sessionId = await createSession();
+      const taskId = await createTask();
       broadcastEvents = [];
       await makeRequest(
         port,
         "POST",
-        `/api/v1/sessions/${sessionId}/prompt`,
+        `/api/v1/tasks/${taskId}/prompt`,
         JSON.stringify({ text: "hello" }),
       );
       const userMsg = broadcastEvents.find(
@@ -355,17 +351,17 @@ describe("Prompt REST API", () => {
     });
 
     it("assigns a client operation id when the prompt omits one", async () => {
-      const sessionId = await createSession();
+      const taskId = await createTask();
       broadcastEvents = [];
       await makeRequest(
         port,
         "POST",
-        `/api/v1/sessions/${sessionId}/prompt`,
+        `/api/v1/tasks/${taskId}/prompt`,
         JSON.stringify({ text: "hello" }),
       );
 
       const stored = store
-        .getEvents(sessionId)
+        .getEvents(taskId)
         .find((event) => event.type === "user_message");
       assert.ok(stored);
       const storedOpId = JSON.parse(stored.data).clientOpId;
@@ -383,27 +379,27 @@ describe("Prompt REST API", () => {
     });
 
     it("updates last_active_at", async () => {
-      const sessionId = await createSession();
-      const before = store.getSession(sessionId)!.last_active_at;
+      const taskId = await createTask();
+      const before = store.getTask(taskId)!.last_active_at;
       // Small delay to ensure timestamp difference
       await new Promise((r) => setTimeout(r, 10));
       await makeRequest(
         port,
         "POST",
-        `/api/v1/sessions/${sessionId}/prompt`,
+        `/api/v1/tasks/${taskId}/prompt`,
         JSON.stringify({ text: "hello" }),
       );
-      const after = store.getSession(sessionId)!.last_active_at;
+      const after = store.getTask(taskId)!.last_active_at;
       assert.ok(after >= before);
     });
 
     it("touches recent path on prompt", async () => {
-      const sessionId = await createSession();
+      const taskId = await createTask();
       assert.equal(store.listRecentPaths().length, 0);
       await makeRequest(
         port,
         "POST",
-        `/api/v1/sessions/${sessionId}/prompt`,
+        `/api/v1/tasks/${taskId}/prompt`,
         JSON.stringify({ text: "hello" }),
       );
       const paths = store.listRecentPaths();
@@ -411,45 +407,45 @@ describe("Prompt REST API", () => {
       assert.equal(paths[0].cwd, tmpDir);
     });
 
-    it("marks session as active prompt", async () => {
-      const sessionId = await createSession();
+    it("marks task as active prompt", async () => {
+      const taskId = await createTask();
       // Mock prompt that doesn't resolve immediately
       mockBridge.prompt = async () => {
         // Check that activePrompts was set before prompt completes
-        assert.ok(sessions.activePrompts.has(sessionId));
+        assert.ok(tasks.activePrompts.has(taskId));
       };
       await makeRequest(
         port,
         "POST",
-        `/api/v1/sessions/${sessionId}/prompt`,
+        `/api/v1/tasks/${taskId}/prompt`,
         JSON.stringify({ text: "hello" }),
       );
     });
 
-    it("returns 409 when session is busy with agent", async () => {
-      const sessionId = await createSession();
-      sessions.activePrompts.add(sessionId);
+    it("returns 409 when task is busy with agent", async () => {
+      const taskId = await createTask();
+      tasks.activePrompts.add(taskId);
       const res = await makeRequest(
         port,
         "POST",
-        `/api/v1/sessions/${sessionId}/prompt`,
+        `/api/v1/tasks/${taskId}/prompt`,
         JSON.stringify({ text: "hello" }),
       );
       assert.equal(res.status, 409);
       const body = JSON.parse(res.body);
-      assert.equal(body.error, "Session is busy");
+      assert.equal(body.error, "Task is busy");
       assert.equal(body.busyKind, "agent");
     });
 
     it("logs prompt rejects that happen before user_message is saved", async () => {
-      const sessionId = await createSession();
-      sessions.activePrompts.add(sessionId);
+      const taskId = await createTask();
+      tasks.activePrompts.add(taskId);
 
       const logs = await captureWarnLogs(async () => {
         const res = await makeRequest(
           port,
           "POST",
-          `/api/v1/sessions/${sessionId}/prompt`,
+          `/api/v1/tasks/${taskId}/prompt`,
           JSON.stringify({ text: "hello" }),
           { "X-Client-Op-Id": "op-busy" },
         );
@@ -460,15 +456,15 @@ describe("Prompt REST API", () => {
       assert.ok(line, `expected prompt reject log, got: ${logs.join(" | ")}`);
       assert.match(line, /rejected before save/);
       assert.match(line, /"status":409/);
-      assert.match(line, /"reason":"session_busy"/);
+      assert.match(line, /"reason":"task_busy"/);
       assert.match(line, /"busyKind":"agent"/);
       assert.match(line, /"opId":"op-busy"/);
       assert.doesNotMatch(line, /hello/);
     });
 
     it("logs resume failures before user_message is saved", async () => {
-      const sessionId = await createSession();
-      sessions.liveSessions.delete(sessionId);
+      const taskId = await createTask();
+      tasks.liveTasks.delete(taskId);
       mockBridge.loadSession = async () => {
         throw new Error("resume exploded");
       };
@@ -477,14 +473,14 @@ describe("Prompt REST API", () => {
         const res = await makeRequest(
           port,
           "POST",
-          `/api/v1/sessions/${sessionId}/prompt`,
+          `/api/v1/tasks/${taskId}/prompt`,
           JSON.stringify({ text: "lockscreen send" }),
           { "X-Client-Op-Id": "op-resume" },
         );
         assert.equal(res.status, 500);
       });
 
-      const events = store.getEvents(sessionId);
+      const events = store.getEvents(taskId);
       assert.equal(
         events.some((e) => e.type === "user_message"),
         false,
@@ -499,52 +495,52 @@ describe("Prompt REST API", () => {
       assert.doesNotMatch(line, /lockscreen send/);
     });
 
-    it("returns 409 when session is busy with bash", async () => {
-      const sessionId = await createSession();
+    it("returns 409 when task is busy with bash", async () => {
+      const taskId = await createTask();
       const { EventEmitter } = await import("node:events");
       const fakeProc = new EventEmitter() as any;
       fakeProc.pid = 1;
       fakeProc.kill = () => true;
       fakeProc.stdout = new EventEmitter();
       fakeProc.stderr = new EventEmitter();
-      sessions.runningBashProcs.set(sessionId, fakeProc);
+      tasks.runningBashProcs.set(taskId, fakeProc);
       const res = await makeRequest(
         port,
         "POST",
-        `/api/v1/sessions/${sessionId}/prompt`,
+        `/api/v1/tasks/${taskId}/prompt`,
         JSON.stringify({ text: "hello" }),
       );
       assert.equal(res.status, 409);
       assert.equal(JSON.parse(res.body).busyKind, "bash");
     });
 
-    it("returns 404 for unknown session", async () => {
+    it("returns 404 for unknown task", async () => {
       const res = await makeRequest(
         port,
         "POST",
-        "/api/v1/sessions/nonexistent/prompt",
+        "/api/v1/tasks/nonexistent/prompt",
         JSON.stringify({ text: "hello" }),
       );
       assert.equal(res.status, 404);
     });
 
     it("returns 400 for missing text", async () => {
-      const sessionId = await createSession();
+      const taskId = await createTask();
       const res = await makeRequest(
         port,
         "POST",
-        `/api/v1/sessions/${sessionId}/prompt`,
+        `/api/v1/tasks/${taskId}/prompt`,
         JSON.stringify({}),
       );
       assert.equal(res.status, 400);
     });
 
     it("returns 400 for invalid JSON", async () => {
-      const sessionId = await createSession();
+      const taskId = await createTask();
       const res = await makeRequest(
         port,
         "POST",
-        `/api/v1/sessions/${sessionId}/prompt`,
+        `/api/v1/tasks/${taskId}/prompt`,
         "not json",
       );
       assert.equal(res.status, 400);
@@ -553,7 +549,7 @@ describe("Prompt REST API", () => {
     it("returns 503 when bridge is not ready", async () => {
       const handler = createRequestHandler({
         store,
-        sessions,
+        tasks,
         getBridge: () => null,
         publicDir,
         dataDir: tmpDir,
@@ -563,11 +559,11 @@ describe("Prompt REST API", () => {
       const srv = http.createServer(handler);
       await new Promise<void>((r) => srv.listen(0, "127.0.0.1", r));
       const p = (srv.address() as { port: number }).port;
-      const sessionId = await createSession();
+      const taskId = await createTask();
       const res = await makeRequest(
         p,
         "POST",
-        `/api/v1/sessions/${sessionId}/prompt`,
+        `/api/v1/tasks/${taskId}/prompt`,
         JSON.stringify({ text: "hello" }),
       );
       assert.equal(res.status, 503);
@@ -579,7 +575,7 @@ describe("Prompt REST API", () => {
     });
 
     it("accepts attachments alongside text", async () => {
-      const sessionId = await createSession();
+      const taskId = await createTask();
       const att = {
         kind: "image",
         attachmentId: "a1",
@@ -589,7 +585,7 @@ describe("Prompt REST API", () => {
       const res = await makeRequest(
         port,
         "POST",
-        `/api/v1/sessions/${sessionId}/prompt`,
+        `/api/v1/tasks/${taskId}/prompt`,
         JSON.stringify({
           text: "describe this",
           attachments: [att],
@@ -607,15 +603,15 @@ describe("Prompt REST API", () => {
     // both the main app and share viewer. See test/render-event.test.ts
     // for the renderer-level guard and docs/uploads.md for the contract.
     it("stored user_message.attachments includes server-derived path", async () => {
-      const sessionId = await createSession();
+      const taskId = await createTask();
       // Pre-populate an attachment row as if upload had succeeded.
-      const dir = join(tmpDir, "sessions", sessionId, "attachments");
+      const dir = join(tmpDir, "sessions", taskId, "attachments");
       mkdirSync(dir, { recursive: true });
       const realpath = join(dir, "att-X.png");
       writeFileSync(realpath, Buffer.from("PNG"));
       store.insertAttachment({
         id: "att-X",
-        sessionId,
+        taskId,
         kind: "image",
         name: "tiny.png",
         mime: "image/png",
@@ -628,7 +624,7 @@ describe("Prompt REST API", () => {
       const res = await makeRequest(
         port,
         "POST",
-        `/api/v1/sessions/${sessionId}/prompt`,
+        `/api/v1/tasks/${taskId}/prompt`,
         JSON.stringify({
           text: "describe",
           attachments: [
@@ -643,7 +639,7 @@ describe("Prompt REST API", () => {
       );
       assert.equal(res.status, 202);
 
-      const events = store.getEvents(sessionId);
+      const events = store.getEvents(taskId);
       const userMsg = events.find((e) => e.type === "user_message");
       assert.ok(userMsg);
       const data = JSON.parse(userMsg.data) as {
@@ -652,18 +648,18 @@ describe("Prompt REST API", () => {
       assert.ok(data.attachments?.[0]);
       assert.equal(
         data.attachments[0].path,
-        `/api/v1/sessions/${sessionId}/attachments/att-X.png`,
+        `/api/v1/tasks/${taskId}/attachments/att-X.png`,
       );
       assert.equal(data.attachments[0].width, 320);
       assert.equal(data.attachments[0].height, 240);
     });
 
     it("drops attachment refs whose row is missing (defense)", async () => {
-      const sessionId = await createSession();
+      const taskId = await createTask();
       const res = await makeRequest(
         port,
         "POST",
-        `/api/v1/sessions/${sessionId}/prompt`,
+        `/api/v1/tasks/${taskId}/prompt`,
         JSON.stringify({
           text: "x",
           attachments: [
@@ -677,7 +673,7 @@ describe("Prompt REST API", () => {
         }),
       );
       assert.equal(res.status, 202);
-      const events = store.getEvents(sessionId);
+      const events = store.getEvents(taskId);
       const userMsg = events.find((e) => e.type === "user_message");
       const data = JSON.parse(userMsg!.data) as {
         attachments?: unknown[];
@@ -687,11 +683,11 @@ describe("Prompt REST API", () => {
     });
 
     it("rejects attachments smuggling uri/data/path", async () => {
-      const sessionId = await createSession();
+      const taskId = await createTask();
       const res = await makeRequest(
         port,
         "POST",
-        `/api/v1/sessions/${sessionId}/prompt`,
+        `/api/v1/tasks/${taskId}/prompt`,
         JSON.stringify({
           text: "x",
           attachments: [
@@ -709,11 +705,11 @@ describe("Prompt REST API", () => {
     });
 
     it("rejects client-supplied attachment dimensions", async () => {
-      const sessionId = await createSession();
+      const taskId = await createTask();
       const res = await makeRequest(
         port,
         "POST",
-        `/api/v1/sessions/${sessionId}/prompt`,
+        `/api/v1/tasks/${taskId}/prompt`,
         JSON.stringify({
           text: "x",
           attachments: [
@@ -732,7 +728,7 @@ describe("Prompt REST API", () => {
     });
 
     it("is idempotent when X-Client-Op-Id is replayed", async () => {
-      const sessionId = await createSession();
+      const taskId = await createTask();
       let promptCount = 0;
       const origPrompt = mockBridge.prompt;
       mockBridge.prompt = (async (...args: unknown[]) => {
@@ -747,18 +743,18 @@ describe("Prompt REST API", () => {
       const res1 = await makeRequest(
         port,
         "POST",
-        `/api/v1/sessions/${sessionId}/prompt`,
+        `/api/v1/tasks/${taskId}/prompt`,
         JSON.stringify({ text: "hello" }),
         headers,
       );
       assert.equal(res1.status, 202);
-      // Wait for session to go idle again
+      // Wait for task to go idle again
       await new Promise((r) => setTimeout(r, 10));
 
       const res2 = await makeRequest(
         port,
         "POST",
-        `/api/v1/sessions/${sessionId}/prompt`,
+        `/api/v1/tasks/${taskId}/prompt`,
         JSON.stringify({ text: "hello" }),
         headers,
       );
@@ -768,17 +764,17 @@ describe("Prompt REST API", () => {
     });
   });
 
-  describe("GET /api/v1/sessions/:id/events", () => {
-    it("returns session events", async () => {
-      const sessionId = await createSession();
+  describe("GET /api/v1/tasks/:id/events", () => {
+    it("returns task events", async () => {
+      const taskId = await createTask();
       store.saveEvent(
-        sessionId,
+        taskId,
         "user_message",
         { text: "hello" },
         { from_ref: "user" },
       );
       store.saveEvent(
-        sessionId,
+        taskId,
         "assistant_message",
         { text: "hi there" },
         { from_ref: "agent" },
@@ -787,7 +783,7 @@ describe("Prompt REST API", () => {
       const res = await makeRequest(
         port,
         "GET",
-        `/api/v1/sessions/${sessionId}/events`,
+        `/api/v1/tasks/${taskId}/events`,
       );
       assert.equal(res.status, 200);
       const body = JSON.parse(res.body);
@@ -797,21 +793,21 @@ describe("Prompt REST API", () => {
     });
 
     it("supports thinking filter", async () => {
-      const sessionId = await createSession();
+      const taskId = await createTask();
       store.saveEvent(
-        sessionId,
+        taskId,
         "user_message",
         { text: "hello" },
         { from_ref: "user" },
       );
       store.saveEvent(
-        sessionId,
+        taskId,
         "thinking",
         { text: "hmm..." },
         { from_ref: "agent" },
       );
       store.saveEvent(
-        sessionId,
+        taskId,
         "assistant_message",
         { text: "hi" },
         { from_ref: "agent" },
@@ -820,7 +816,7 @@ describe("Prompt REST API", () => {
       const res = await makeRequest(
         port,
         "GET",
-        `/api/v1/sessions/${sessionId}/events?thinking=0`,
+        `/api/v1/tasks/${taskId}/events?thinking=0`,
       );
       const body = JSON.parse(res.body);
       assert.equal(body.events.length, 2);
@@ -828,49 +824,49 @@ describe("Prompt REST API", () => {
     });
 
     it("supports after pagination", async () => {
-      const sessionId = await createSession();
+      const taskId = await createTask();
       store.saveEvent(
-        sessionId,
+        taskId,
         "user_message",
         { text: "first" },
         { from_ref: "user" },
       );
       store.saveEvent(
-        sessionId,
+        taskId,
         "user_message",
         { text: "second" },
         { from_ref: "user" },
       );
 
-      const allEvents = store.getEvents(sessionId);
+      const allEvents = store.getEvents(taskId);
       const firstSeq = allEvents[0].seq;
 
       const res = await makeRequest(
         port,
         "GET",
-        `/api/v1/sessions/${sessionId}/events?after=${firstSeq}`,
+        `/api/v1/tasks/${taskId}/events?after=${firstSeq}`,
       );
       const body = JSON.parse(res.body);
       assert.equal(body.events.length, 1);
       assert.equal(JSON.parse(body.events[0].data).text, "second");
     });
 
-    it("returns 404 for unknown session", async () => {
+    it("returns 404 for unknown task", async () => {
       const res = await makeRequest(
         port,
         "GET",
-        "/api/v1/sessions/nonexistent/events",
+        "/api/v1/tasks/nonexistent/events",
       );
       assert.equal(res.status, 404);
     });
   });
 
   describe("title generation via REST prompt", () => {
-    it("triggers title generation for untitled session", async () => {
+    it("triggers title generation for untitled task", async () => {
       type TitleGenResult = {
         bridge: unknown;
         text: string;
-        sessionId: string;
+        taskId: string;
         cb?: Function; // eslint-disable-line @typescript-eslint/no-unsafe-function-type
       };
       let generatedTitle: TitleGenResult | null = null;
@@ -878,17 +874,17 @@ describe("Prompt REST API", () => {
         generate(
           bridge: unknown,
           text: string,
-          sessionId: string,
+          taskId: string,
           onTitle?: (title: string) => void,
         ) {
-          generatedTitle = { bridge, text, sessionId, cb: onTitle };
+          generatedTitle = { bridge, text, taskId, cb: onTitle };
           if (onTitle) onTitle("Test Title");
         },
       };
       const titleBroadcast: AgentEvent[] = [];
       const handler = createRequestHandler({
         store,
-        sessions,
+        tasks,
         getBridge: () => mockBridge,
         titleService: mockTitleService as any,
         publicDir,
@@ -902,22 +898,22 @@ describe("Prompt REST API", () => {
       await new Promise<void>((r) => srv.listen(0, "127.0.0.1", r));
       const p = (srv.address() as { port: number }).port;
 
-      const sessionId = await createSession();
+      const taskId = await createTask();
       await makeRequest(
         p,
         "POST",
-        `/api/v1/sessions/${sessionId}/prompt`,
+        `/api/v1/tasks/${taskId}/prompt`,
         JSON.stringify({ text: "hello world" }),
       );
 
       const gt = generatedTitle as TitleGenResult | null;
       assert.ok(gt, "titleService.generate should have been called");
       assert.equal(gt.text, "hello world");
-      assert.equal(gt.sessionId, sessionId);
+      assert.equal(gt.taskId, taskId);
       const titleEvent = titleBroadcast.find(
-        (e: any) => e.type === "session_title_updated",
+        (e: any) => e.type === "task_title_updated",
       );
-      assert.ok(titleEvent, "session_title_updated should be broadcast");
+      assert.ok(titleEvent, "task_title_updated should be broadcast");
 
       await new Promise<void>((r) =>
         srv.close(() => {
@@ -926,7 +922,7 @@ describe("Prompt REST API", () => {
       );
     });
 
-    it("skips title generation for session that already has a title", async () => {
+    it("skips title generation for task that already has a title", async () => {
       let generateCalled = false;
       const mockTitleService = {
         generate() {
@@ -935,7 +931,7 @@ describe("Prompt REST API", () => {
       };
       const handler = createRequestHandler({
         store,
-        sessions,
+        tasks,
         getBridge: () => mockBridge,
         titleService: mockTitleService as any,
         publicDir,
@@ -947,18 +943,18 @@ describe("Prompt REST API", () => {
       await new Promise<void>((r) => srv.listen(0, "127.0.0.1", r));
       const p = (srv.address() as { port: number }).port;
 
-      const sessionId = await createSession();
-      sessions.sessionHasTitle.add(sessionId);
+      const taskId = await createTask();
+      tasks.taskHasTitle.add(taskId);
       await makeRequest(
         p,
         "POST",
-        `/api/v1/sessions/${sessionId}/prompt`,
+        `/api/v1/tasks/${taskId}/prompt`,
         JSON.stringify({ text: "hello" }),
       );
 
       assert.ok(
         !generateCalled,
-        "titleService.generate should NOT be called for titled session",
+        "titleService.generate should NOT be called for titled task",
       );
 
       await new Promise<void>((r) =>

@@ -8,7 +8,7 @@ WebAgent persists state to a single SQLite database at `<data_dir>/webagent.db`
 
 - [Pragmas & Foreign Key Policy](#pragmas--foreign-key-policy)
 - [Tables](#tables)
-  - [sessions](#sessions)
+  - [tasks](#tasks)
   - [agent_sessions](#agent_sessions)
   - [events](#events)
   - [push_subscriptions](#push_subscriptions)
@@ -31,8 +31,8 @@ WebAgent persists state to a single SQLite database at `<data_dir>/webagent.db`
 | `foreign_keys` | `ON` (set after `migrate()` finishes) | Reject deletes that would orphan child rows |
 
 `foreign_keys` is intentionally turned on **after** `migrate()` so the one-time
-orphan-cleanup query (`DELETE FROM events WHERE session_id NOT IN (SELECT id
-FROM sessions)`) can sweep up legacy rows from the FK-off era without being
+orphan-cleanup query (`DELETE FROM events WHERE task_id NOT IN (SELECT id
+FROM tasks)`) can sweep up legacy rows from the FK-off era without being
 blocked.
 
 Foreign-key deletion behavior is explicit per table. Event and share rows use
@@ -44,11 +44,11 @@ deletion contract.
 
 ## Tables
 
-### `sessions`
+### `tasks`
 
-WebAgent Sessions. Each row is a stable user-visible work thread created
-via `POST /api/v1/sessions`; its ACP execution can be rotated by clear. The
-reserved Root Session has id `root` and no parent.
+WebAgent Tasks. Each row is a stable user-visible work thread created
+via `POST /api/v1/tasks`; its ACP execution can be rotated by clear. The
+reserved Root Task has id `root` and no parent.
 
 | Column | Type | Notes |
 |---|---|---|
@@ -60,38 +60,38 @@ reserved Root Session has id `root` and no parent.
 | `model` | TEXT | Last selected model id (added in migration) |
 | `mode` | TEXT | Last mode (`agent` / `plan` / `autopilot`) (added in migration) |
 | `reasoning_effort` | TEXT | Last reasoning effort selection (added in migration) |
-| `source` | TEXT NOT NULL DEFAULT `'auto'` | How the session was created (`auto`, `inbox`, …) |
+| `source` | TEXT NOT NULL DEFAULT `'auto'` | How the task was created (`auto`, `inbox`, …) |
 | `deleted_at` | INTEGER | Unix-millis tombstone marker; `NULL` = live, set = soft-deleted (kept alive only because shares still reference the row) |
-| `parent_session_id` | TEXT REFERENCES `sessions(id)` | Optional parent WebAgent Session; `NULL` for Root and pre-hierarchy rows. Deleting a session cascades to every descendant; a share-tombstoned descendant is re-parented under Root so the FK stays valid |
+| `parent_task_id` | TEXT REFERENCES `tasks(id)` | Optional parent WebAgent Task; `NULL` for Root and pre-hierarchy rows. Deleting a task cascades to every descendant; a share-tombstoned descendant is re-parented under Root so the FK stays valid |
 | `pending_compact_summary` | TEXT | One-shot agent-generated handoff waiting for the next real prompt; `NULL` when consumed |
 
 ### `agent_sessions`
 
-Maps WebAgent session IDs to backend-specific ACP session IDs. This keeps
+Maps WebAgent task IDs to backend-specific ACP task IDs. This keeps
 public URLs stable while treating ACP IDs as opaque values owned by the
 configured agent.
 
 | Column | Type | Notes |
 |---|---|---|
 | `agent_key` | TEXT NOT NULL | Resolved `agent_cmd` executable path; identifies one stable agent/profile |
-| `agent_session_id` | TEXT NOT NULL | Opaque ACP session ID |
-| `web_session_id` | TEXT REFERENCES `sessions(id)` ON DELETE CASCADE | Current WebAgent Session ID; `NULL` for internal sessions such as title generation. Retired ACP executions (rotated or deleted) have their binding row removed and are explicitly retired via `session/delete`/`session/close` when the agent advertises support |
+| `agent_session_id` | TEXT NOT NULL | Opaque ACP task ID |
+| `task_id` | TEXT REFERENCES `tasks(id)` ON DELETE CASCADE | Current WebAgent Task ID; `NULL` for internal tasks such as title generation. Retired ACP executions (rotated or deleted) have their binding row removed and are explicitly retired via `task/delete`/`task/close` when the agent advertises support |
 | `created_at` | TEXT NOT NULL DEFAULT now | ISO-ish `%Y-%m-%d %H:%M:%f` |
 
 PK: `(agent_key, agent_session_id)`. A partial unique index ensures a non-null
-WebAgent session belongs to exactly one agent session.
+WebAgent task belongs to exactly one agent task.
 
 ### `events`
 
-Append-only ordered log of everything that happened in a session — user
+Append-only ordered log of everything that happened in a task — user
 messages, agent updates, tool calls, plans, permissions, bash, system messages.
-Replayed top-to-bottom on session resume.
+Replayed top-to-bottom on task resume.
 
 | Column | Type | Notes |
 |---|---|---|
 | `id` | INTEGER PRIMARY KEY AUTOINCREMENT | |
-| `session_id` | TEXT NOT NULL REFERENCES `sessions(id)` | FK enforced (NO ACTION) |
-| `seq` | INTEGER NOT NULL | Per-session monotonic ordering |
+| `task_id` | TEXT NOT NULL REFERENCES `tasks(id)` | FK enforced (NO ACTION) |
+| `seq` | INTEGER NOT NULL | Per-task monotonic ordering |
 | `type` | TEXT NOT NULL | `user_message`, `assistant_message`, `thinking`, `tool_call`, `tool_call_update`, `plan`, `prompt_done`, `permission_request`, `permission_response`, `bash_command`, `bash_result`, `system_message`, … |
 | `data` | TEXT NOT NULL DEFAULT `'{}'` | JSON payload — shape depends on `type` |
 | `created_at` | TEXT NOT NULL DEFAULT now | |
@@ -115,7 +115,7 @@ consecutive failures (`MAX_CONSECUTIVE_FAILURES` in `push-service.ts`).
 ### `messages`
 
 Pending unbound inbox messages (POST `/api/v1/messages` with `to = "user"`).
-Bound messages (`to = <session_id>`) skip this table and go straight to
+Bound messages (`to = <task_id>`) skip this table and go straight to
 `events`.
 
 | Column | Type | Notes |
@@ -123,33 +123,33 @@ Bound messages (`to = <session_id>`) skip this table and go straight to
 | `id` | TEXT PRIMARY KEY | |
 | `from_ref` | TEXT NOT NULL | Sender identifier |
 | `from_label` | TEXT | Display label |
-| `to_ref` | TEXT NOT NULL | `"user"` (unbound) or session id (rare) |
+| `to_ref` | TEXT NOT NULL | `"user"` (unbound) or task id (rare) |
 | `deliver` | TEXT NOT NULL DEFAULT `'push'` | Delivery hint |
 | `dedup_key` | TEXT | Optional sender-supplied idempotency key |
 | `title` | TEXT NOT NULL | |
 | `body` | TEXT NOT NULL | |
-| `cwd` | TEXT | Optional cwd hint for the consuming session |
+| `cwd` | TEXT | Optional cwd hint for the consuming task |
 | `created_at` | INTEGER NOT NULL | Unix millis |
 
-`SessionManager.consumeMessage()` creates the destination through ACP first.
+`TaskManager.consumeMessage()` creates the destination through ACP first.
 `consumeMessageTx()` then transactionally moves the row's content into that
-existing session's `events` and deletes the `messages` row.
+existing task's `events` and deletes the `messages` row.
 
 ### `client_ops`
 
 Idempotency cache for mutating REST calls (M2 of client-server-split). Lets a
-client safely retry after SSE/network reconnect — same `(session_id,
+client safely retry after SSE/network reconnect — same `(task_id,
 client_op_id)` returns the cached response instead of re-executing the side
 effect.
 
 | Column | Type | Notes |
 |---|---|---|
-| `session_id` | TEXT NOT NULL | Part of compound PK |
+| `task_id` | TEXT NOT NULL | Part of compound PK |
 | `client_op_id` | TEXT NOT NULL | Client-generated UUID for the op |
 | `result_json` | TEXT NOT NULL | Serialized response body |
 | `created_at` | TEXT NOT NULL DEFAULT now | |
 
-PK: `(session_id, client_op_id)`. Old rows GC'd by age (see `cleanupClientOps`
+PK: `(task_id, client_op_id)`. Old rows GC'd by age (see `cleanupClientOps`
 in `store.ts`).
 
 ### `recent_paths`
@@ -161,19 +161,19 @@ LRU of working directories shown in the `/new` menu.
 | `cwd` | TEXT PRIMARY KEY | |
 | `last_used_at` | TEXT NOT NULL DEFAULT now | |
 
-Backfilled from `sessions` on first creation. TTL-pruned by
+Backfilled from `tasks` on first creation. TTL-pruned by
 `limits.recent_paths_ttl` (days).
 
 ### `shares`
 
-Public read-only share links for sessions (see [docs/share.md](./share.md)).
+Public read-only share links for tasks (see [docs/share.md](./share.md)).
 State machine: **preview** (`shared_at IS NULL`) → **active** (`shared_at` set).
 Revocation is hard-delete; no audit trail.
 
 | Column | Type | Notes |
 |---|---|---|
 | `token` | TEXT PRIMARY KEY | URL token (`/s/<token>`) |
-| `session_id` | TEXT NOT NULL REFERENCES `sessions(id)` | FK enforced (NO ACTION) |
+| `task_id` | TEXT NOT NULL REFERENCES `tasks(id)` | FK enforced (NO ACTION) |
 | `shared_at` | INTEGER | Unix millis when activated; `NULL` while still a preview |
 | `share_snapshot_seq` | INTEGER NOT NULL | Last `events.seq` included in this share |
 | `ttl_hours` | INTEGER | Optional auto-expire window |
@@ -182,20 +182,20 @@ Revocation is hard-delete; no audit trail.
 | `created_at` | INTEGER NOT NULL DEFAULT now-ms | |
 | `last_accessed_at` | INTEGER | Bumped on each viewer GET |
 
-Multi-share per session is allowed, but a partial unique index
-(`shares_one_active_preview`) caps un-activated previews to one per session.
+Multi-share per task is allowed, but a partial unique index
+(`shares_one_active_preview`) caps un-activated previews to one per task.
 
 ### `attachments`
 
-Per-session uploaded files (images and arbitrary files) — see
+Per-task uploaded files (images and arbitrary files) — see
 [docs/uploads.md](./uploads.md) for the upload pipeline and lifecycle.
-Lifecycle is tied to the session: rows live as long as the session row
-does, even when the session is tombstoned for an active share.
+Lifecycle is tied to the task: rows live as long as the task row
+does, even when the task is tombstoned for an active share.
 
 | Column | Type | Notes |
 |---|---|---|
 | `id` | TEXT PRIMARY KEY | UUID — also forms the on-disk filename `<id>.<ext>` |
-| `session_id` | TEXT NOT NULL REFERENCES `sessions(id)` ON DELETE CASCADE | Hard-delete cascade |
+| `task_id` | TEXT NOT NULL REFERENCES `tasks(id)` ON DELETE CASCADE | Hard-delete cascade |
 | `kind` | TEXT NOT NULL | `image` or `file` (drives 10MB vs 50MB cap and auto-approve gating) |
 | `name` | TEXT NOT NULL | Display name (NFC, control chars stripped, slashes stripped, ≤255 bytes) |
 | `mime` | TEXT NOT NULL | Server-trusted MIME (drives Content-Disposition + extension) |
@@ -223,45 +223,45 @@ selection, etc.). Single-user model = single owner scope.
 
 | Index | Table | Columns | Purpose |
 |---|---|---|---|
-| `idx_events_session` | `events` | `(session_id, seq)` | Replay order per session |
-| `idx_events_type` | `events` | `(session_id, type, created_at)` | Inbox/message consume queries |
+| `idx_events_task` | `events` | `(task_id, seq)` | Replay order per task |
+| `idx_events_type` | `events` | `(task_id, type, created_at)` | Inbox/message consume queries |
 | `idx_messages_created` | `messages` | `(created_at)` | Age-based GC + ordering |
 | `idx_messages_dedup` | `messages` | `(to_ref, dedup_key)` | Idempotency lookup |
-| `idx_shares_session` | `shares` | `(session_id, created_at DESC)` | Owner share-list view |
-| `shares_one_active_preview` | `shares` | `(session_id) WHERE shared_at IS NULL` | At most one preview per session (partial UNIQUE) |
-| `idx_attachments_session` | `attachments` | `(session_id)` | Per-session listing + GC sweep |
-| `idx_agent_sessions_web` | `agent_sessions` | `(web_session_id) WHERE web_session_id IS NOT NULL` | One current ACP binding per visible WebAgent Session (partial UNIQUE) |
-| `idx_sessions_parent` | `sessions` | `(parent_session_id)` | Root/child Session relationship and future family queries |
+| `idx_shares_task` | `shares` | `(task_id, created_at DESC)` | Owner share-list view |
+| `shares_one_active_preview` | `shares` | `(task_id) WHERE shared_at IS NULL` | At most one preview per task (partial UNIQUE) |
+| `idx_attachments_task` | `attachments` | `(task_id)` | Per-task listing + GC sweep |
+| `idx_agent_sessions_task` | `agent_sessions` | `(task_id) WHERE task_id IS NOT NULL` | One current ACP binding per visible WebAgent Task (partial UNIQUE) |
+| `idx_tasks_parent` | `tasks` | `(parent_task_id)` | Root/child Task relationship and future family queries |
 
 ---
 
 ## Cascade & Lifecycle
 
 Events and shares use `NO ACTION`; mappings and attachments cascade from their
-session. The parent/child hierarchy is a hard ownership link: deleting a
-session deletes every descendant recursively (immediate, no confirmation
+task. The parent/child hierarchy is a hard ownership link: deleting a
+task deletes every descendant recursively (immediate, no confirmation
 until a tree UI exists), each following its own share rules, and a
 share-tombstoned descendant is re-parented under Root so the FK stays valid.
-The reserved Root Session has id `root`, no parent, and cannot be
-deleted. Three rules govern any code that deletes a session:
+The reserved Root Task has id `root`, no parent, and cannot be
+deleted. Three rules govern any code that deletes a task:
 
-1. **Hard delete** (`deleteSession()` → `"hard"`): drop preview shares + client
-   ops, then `DELETE FROM events` then `DELETE FROM sessions`. The final delete
+1. **Hard delete** (`deleteTask()` → `"hard"`): drop preview shares + client
+   ops, then `DELETE FROM events` then `DELETE FROM tasks`. The final delete
    cascades to `agent_sessions` and `attachments`. Order matters for event and
    share rows, whose FKs use `NO ACTION`.
-2. **Soft delete** (`deleteSession()` → `"soft"`): if any **active** share
-   (`shared_at IS NOT NULL`) still points at the session, set `deleted_at` and
-   keep `events` + `sessions` row alive. Public viewers can still resolve the
+2. **Soft delete** (`deleteTask()` → `"soft"`): if any **active** share
+   (`shared_at IS NOT NULL`) still points at the task, set `deleted_at` and
+   keep `events` + `tasks` row alive. Public viewers can still resolve the
    share. The row is reaped by `reapTombstoneIfOrphaned()` when the last share
    is revoked.
-3. **Empty-session GC** (`deleteEmptySessions()`): only deletes sessions with
+3. **Empty-task GC** (`deleteEmptyTasks()`): only deletes tasks with
    zero rows in `events` (LEFT JOIN guard), so no events to clean up. The FK
    is the safety net if a row were inserted between SELECT and DELETE.
 
 Invariant: **no orphan events**. Verified by:
 
 ```sql
-SELECT COUNT(*) FROM events WHERE session_id NOT IN (SELECT id FROM sessions);
+SELECT COUNT(*) FROM events WHERE task_id NOT IN (SELECT id FROM tasks);
 -- expected: 0
 ```
 
@@ -281,12 +281,12 @@ PRAGMA table_info(<table>)  →  if column missing  →  ALTER TABLE ADD COLUMN 
 
 Existing migrations:
 
-- `sessions`: added nullable `pending_compact_summary`; compact handoffs survive
+- `tasks`: added nullable `pending_compact_summary`; compact handoffs survive
   ACP rotation and server restart until the next real prompt is accepted
-- `sessions`: added nullable `parent_session_id`; the first upgraded server
-  creates the reserved `root` record and attaches existing top-level sessions
+- `tasks`: added nullable `parent_task_id`; the first upgraded server
+  creates the reserved `root` record and attaches existing top-level tasks
   without deleting any rows or records
-- `sessions`: added `title`, `last_active_at`, `model`, `mode`,
+- `tasks`: added `title`, `last_active_at`, `model`, `mode`,
   `reasoning_effort`, `source`, `deleted_at` (in roughly that order over the
   project's history)
 - `events`: added `from_ref` with bucketed backfill (`user_message` → `user`,
@@ -294,8 +294,8 @@ Existing migrations:
 - `shares`: dropped legacy `revoked_at` column (revocation is now hard-delete);
   the partial unique index was rebuilt without the `revoked_at` clause
 - `agent_sessions`: created as the WebAgent ↔ ACP identity boundary. Existing
-  `sessions` rows without a mapping are backfilled once with
-  `web_session_id = sessions.id`, `agent_session_id = sessions.id`, and the
+  `tasks` rows without a mapping are backfilled once with
+  `task_id = tasks.id`, `agent_session_id = tasks.id`, and the
   agent key active during that first upgraded startup. Start the upgraded
   server once with the pre-upgrade `agent_cmd` before switching backends.
 

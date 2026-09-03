@@ -31,7 +31,7 @@ self.addEventListener("push", (e) => {
 
   // Backward-compat: older payloads had no `kind`. Treat as notify.
   const { title, body, tag, data } = payload;
-  const finalTag = tag || data?.sessionId || "default";
+  const finalTag = tag || data?.taskId || "default";
   e.waitUntil(showNotify(title, body, finalTag, data));
 });
 
@@ -79,15 +79,15 @@ self.addEventListener("notificationclick", (e) => {
   e.notification.close();
 
   const data = e.notification.data || {};
-  const sessionId = data.sessionId;
+  const taskId = data.taskId;
   const messageId = data.messageId;
-  const target = sessionId
-    ? { type: "navigate", sessionId }
+  const target = taskId
+    ? { type: "navigate", taskId }
     : messageId
       ? { type: "navigate", messageId }
       : { type: "navigate" };
-  const targetUrl = sessionId
-    ? `/#${encodeURIComponent(sessionId)}`
+  const targetUrl = taskId
+    ? `/#${encodeURIComponent(taskId)}`
     : messageId
       ? `/?message=${encodeURIComponent(messageId)}`
       : "/";

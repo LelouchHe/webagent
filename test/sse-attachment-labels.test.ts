@@ -12,7 +12,7 @@ import { buildLabelMap } from "../src/attachment-labels.ts";
  * We don't need a real server; sendEvent + broadcast write to a fake
  * response object whose accumulated buffer we parse.
  */
-function makeFakeClient(id: string, sessionId?: string) {
+function makeFakeClient(id: string, taskId?: string) {
   const chunks: string[] = [];
   const res = {
     writableEnded: false,
@@ -24,7 +24,7 @@ function makeFakeClient(id: string, sessionId?: string) {
       /* fake — no real socket events */
     },
   } as unknown as SseClient["res"];
-  const client: SseClient = { id, res, sessionId };
+  const client: SseClient = { id, res, taskId };
   return { client, chunks };
 }
 
@@ -53,7 +53,7 @@ describe("SseManager attachment label egress rewrite", () => {
 
     const ev: AgentEvent = {
       type: "tool_call",
-      sessionId: "s1",
+      taskId: "s1",
       id: "t1",
       title: "Read /data/uploads/s1/abcd1234.pdf",
       kind: "read",
@@ -91,7 +91,7 @@ describe("SseManager attachment label egress rewrite", () => {
     sm.broadcast({
       type: "permission_request",
       requestId: "r1",
-      sessionId: "s1",
+      taskId: "s1",
       title: "Allow read /data/uploads/s1/abcd1234.pdf",
       options: [],
       rawInput: { path: "/data/uploads/s1/abcd1234.pdf" },
@@ -116,7 +116,7 @@ describe("SseManager attachment label egress rewrite", () => {
 
     sm.broadcast({
       type: "tool_call",
-      sessionId: "s1",
+      taskId: "s1",
       id: "t1",
       title: "Read /any/path.pdf",
       kind: "read",
@@ -126,7 +126,7 @@ describe("SseManager attachment label egress rewrite", () => {
     assert.equal(out.title, "Read /any/path.pdf");
   });
 
-  it("does nothing when label map for the session is empty", () => {
+  it("does nothing when label map for the task is empty", () => {
     const sm = new SseManager();
     sm.setLabelMapProvider(() => new Map());
     const { client, chunks } = makeFakeClient("c1");
@@ -134,7 +134,7 @@ describe("SseManager attachment label egress rewrite", () => {
 
     sm.broadcast({
       type: "tool_call",
-      sessionId: "s1",
+      taskId: "s1",
       id: "t1",
       title: "Read /any/path.pdf",
       kind: "read",
@@ -143,7 +143,7 @@ describe("SseManager attachment label egress rewrite", () => {
     assert.equal(out.title, "Read /any/path.pdf");
   });
 
-  it("looks up label map by event sessionId per-call (no leak across sessions)", () => {
+  it("looks up label map by event taskId per-call (no leak across tasks)", () => {
     const sm = new SseManager();
     const m1 = buildLabelMap([
       { id: "1111aaaa", name: "a.txt", realpath: "/r/1.txt" },
@@ -158,14 +158,14 @@ describe("SseManager attachment label egress rewrite", () => {
 
     sm.broadcast({
       type: "tool_call",
-      sessionId: "s2",
+      taskId: "s2",
       id: "t1",
       title: "Read /r/2.txt",
       kind: "read",
     });
     sm.broadcast({
       type: "tool_call",
-      sessionId: "s1",
+      taskId: "s1",
       id: "t2",
       title: "Read /r/1.txt",
       kind: "read",

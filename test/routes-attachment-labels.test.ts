@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 import { Store } from "../src/store.ts";
-import { SessionManager } from "../src/session-manager.ts";
+import { TaskManager } from "../src/task-manager.ts";
 import { createRequestHandler } from "../src/routes.ts";
 
 function makeRequest(
@@ -30,8 +30,8 @@ function makeRequest(
 }
 
 /**
- * Wires Store + SessionManager + createRequestHandler end-to-end and
- * verifies the GET /api/v1/sessions/:id/events route applies the
+ * Wires Store + TaskManager + createRequestHandler end-to-end and
+ * verifies the GET /api/v1/tasks/:id/events route applies the
  * attachment label egress rewrite. Complements:
  *  - test/attachment-labels.test.ts (pure unit on enrich fn)
  *  - test/sse-attachment-labels.test.ts (live SSE chokepoint)
@@ -39,7 +39,7 @@ function makeRequest(
  */
 describe("HTTP /events attachment label egress", () => {
   let store: Store;
-  let sessions: SessionManager;
+  let tasks: TaskManager;
   let tmpDir: string;
   let server: http.Server;
   let port: number;
@@ -51,12 +51,12 @@ describe("HTTP /events attachment label egress", () => {
     writeFileSync(join(publicDir, "index.html"), "ok");
 
     store = new Store(tmpDir, "test-agent");
-    sessions = new SessionManager(store, tmpDir, tmpDir);
+    tasks = new TaskManager(store, tmpDir, tmpDir);
 
-    store.createSession("s1", "/x");
+    store.createTask("s1", "/x");
     store.insertAttachment({
       id: "abcd1234",
-      sessionId: "s1",
+      taskId: "s1",
       kind: "file",
       name: "report.pdf",
       mime: "application/pdf",
@@ -66,7 +66,7 @@ describe("HTTP /events attachment label egress", () => {
 
     const handler = createRequestHandler({
       store,
-      sessions,
+      tasks,
       publicDir,
       dataDir: tmpDir,
       limits: {
@@ -98,7 +98,7 @@ describe("HTTP /events attachment label egress", () => {
       "s1",
       "tool_call",
       {
-        sessionId: "s1",
+        taskId: "s1",
         id: "t1",
         title: "Read /data/uploads/s1/abcd1234.pdf",
         kind: "read",
@@ -107,7 +107,7 @@ describe("HTTP /events attachment label egress", () => {
       { from_ref: "agent" },
     );
 
-    const res = await makeRequest(port, "/api/v1/sessions/s1/events");
+    const res = await makeRequest(port, "/api/v1/tasks/s1/events");
     assert.equal(res.status, 200);
     const body = JSON.parse(res.body) as {
       events: Array<{ type: string; data: string }>;
@@ -130,7 +130,7 @@ describe("HTTP /events attachment label egress", () => {
       "permission_request",
       {
         requestId: "r1",
-        sessionId: "s1",
+        taskId: "s1",
         title: "Allow read /data/uploads/s1/abcd1234.pdf",
         options: [],
         rawInput: { path: "/data/uploads/s1/abcd1234.pdf" },
@@ -138,7 +138,7 @@ describe("HTTP /events attachment label egress", () => {
       { from_ref: "agent" },
     );
 
-    const res = await makeRequest(port, "/api/v1/sessions/s1/events");
+    const res = await makeRequest(port, "/api/v1/tasks/s1/events");
     const body = JSON.parse(res.body) as {
       events: Array<{ type: string; data: string }>;
     };

@@ -238,7 +238,7 @@ webagent --create-token phone
 webagent --create-token cli-laptop
 ```
 
-Or after the first admin token, use the `/token` slash command (or `POST /api/v1/tokens`) from an authenticated session — those default to `api` scope.
+Or after the first admin token, use the `/token` slash command (or `POST /api/v1/tokens`) from an authenticated task — those default to `api` scope.
 
 ### Revocation
 
@@ -273,17 +273,17 @@ There is no built-in expiry. Tokens live until revoked. To rotate:
 ```
 data/
 ├── auth.json          # tokens (0600, JSON, hashed) — see "Token Storage"
-├── webagent.db        # sessions, events, messages — SQLite
+├── webagent.db        # tasks, events, messages — SQLite
 ├── webagent.db-shm    # SQLite shared-memory (transient)
 ├── webagent.db-wal    # SQLite write-ahead log (transient)
 ├── vapid.json         # VAPID keypair for Web Push (regenerated if deleted)
-└── sessions/
-    └── <sessionId>/attachments/<file>   # uploaded files (images, docs, etc.)
+└── tasks/
+    └── <taskId>/attachments/<file>   # uploaded files (images, docs, etc.)
 ```
 
 - All paths are inside `data_dir` (defaults to `./data`). The dev config uses `./data-dev`. The E2E suite uses `./test/e2e-data`.
-- `auth.json` is the only file with mode `0600`. The SQLite files inherit umask defaults — that is intentional: SQLite holds session content, not credentials, and tightening the mode breaks `litecli`-style introspection. If your OS user is shared, restrict the parent directory instead.
-- **Backup**: `auth.json` + `webagent.db` are sufficient. The WAL/SHM are transient. Attachment files under `sessions/` are referenced by events but the app degrades gracefully (renders broken-image placeholder) if they're missing.
+- `auth.json` is the only file with mode `0600`. The SQLite files inherit umask defaults — that is intentional: SQLite holds task content, not credentials, and tightening the mode breaks `litecli`-style introspection. If your OS user is shared, restrict the parent directory instead.
+- **Backup**: `auth.json` + `webagent.db` are sufficient. The WAL/SHM are transient. Attachment files under `tasks/` are referenced by events but the app degrades gracefully (renders broken-image placeholder) if they're missing.
 - **Reset**: `rm -rf data/` and start over. The server will refuse to serve until you `--create-token` again.
 
 ## E2E Test Setup
@@ -316,6 +316,6 @@ These are explicit non-goals — single-user self-hosting trades them away for s
 - **No agent sandbox.** Anything you can do in a terminal, the agent can do via permission requests. `autopilot` mode auto-approves everything; only enable it when you trust the prompt source.
 - **No CSRF token on state-changing requests.** `Authorization: Bearer` is set explicitly by the frontend; cross-origin requests cannot read or send it back. With strict CSP `frame-ancestors 'none'` we don't allow embedding either.
 - **No rate limiting.** A leaked token grants the same throughput as a legitimate one. Rotate immediately if you suspect leakage.
-- **No multi-user RBAC.** `admin` vs `api` is the entire authorization surface; both can read all sessions and run all commands.
+- **No multi-user RBAC.** `admin` vs `api` is the entire authorization surface; both can read all tasks and run all commands.
 
 If you need any of the above, terminate webagent at a reverse proxy that adds them. The Bearer model is compatible with proxy-injected `Authorization` headers.

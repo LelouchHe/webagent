@@ -4,13 +4,13 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Store } from "../src/store.ts";
-import { SessionManager } from "../src/session-manager.ts";
+import { TaskManager } from "../src/task-manager.ts";
 import { handleAgentEvent } from "../src/event-handler.ts";
 import type { AgentEvent } from "../src/types.ts";
 
 /**
  * Every event row must persist a correct `from_ref`. These integration
- * tests exercise the backend writers end-to-end (Store + SessionManager
+ * tests exercise the backend writers end-to-end (Store + TaskManager
  * + event-handler) and assert the stored origin marker for each
  * category. Complements unit tests by pinning the cross-module contract.
  *
@@ -25,13 +25,13 @@ import type { AgentEvent } from "../src/types.ts";
 describe("event writers populate from_ref correctly", () => {
   let tmpDir: string;
   let store: Store;
-  let sessions: SessionManager;
+  let tasks: TaskManager;
 
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), "webagent-fromref-"));
     store = new Store(tmpDir, "test-agent");
-    sessions = new SessionManager(store, tmpDir, tmpDir);
-    store.createSession("s1", "/tmp");
+    tasks = new TaskManager(store, tmpDir, tmpDir);
+    store.createTask("s1", "/tmp");
   });
 
   afterEach(() => {
@@ -48,13 +48,13 @@ describe("event writers populate from_ref correctly", () => {
   const config = { cancelTimeout: 10000, recentPathsLimit: 10 };
 
   function emit(event: AgentEvent) {
-    handleAgentEvent(event, sessions, store, bridge, config, sseManager);
+    handleAgentEvent(event, tasks, store, bridge, config, sseManager);
   }
 
   it("assistant_message (flushed from buffer) is from_ref='agent'", () => {
-    emit({ type: "message_chunk", sessionId: "s1", text: "hi" });
+    emit({ type: "message_chunk", taskId: "s1", text: "hi" });
     // Boundary event forces flush
-    emit({ type: "prompt_done", sessionId: "s1", stopReason: "end_turn" });
+    emit({ type: "prompt_done", taskId: "s1", stopReason: "end_turn" });
 
     const events = store.getEvents("s1");
     const asst = events.find((e) => e.type === "assistant_message");
@@ -65,10 +65,10 @@ describe("event writers populate from_ref correctly", () => {
   });
 
   it("thinking (flushed from buffer) is from_ref='agent'", () => {
-    emit({ type: "thought_chunk", sessionId: "s1", text: "hmm" });
+    emit({ type: "thought_chunk", taskId: "s1", text: "hmm" });
     emit({
       type: "tool_call",
-      sessionId: "s1",
+      taskId: "s1",
       id: "t1",
       title: "read",
       kind: "read",
@@ -82,7 +82,7 @@ describe("event writers populate from_ref correctly", () => {
   it("tool_call is from_ref='agent'", () => {
     emit({
       type: "tool_call",
-      sessionId: "s1",
+      taskId: "s1",
       id: "t1",
       title: "read",
       kind: "read",
@@ -95,7 +95,7 @@ describe("event writers populate from_ref correctly", () => {
   it("tool_call_update is from_ref='agent'", () => {
     emit({
       type: "tool_call_update",
-      sessionId: "s1",
+      taskId: "s1",
       id: "t1",
       status: "completed",
       rawOutput: { details: { progress: 100 } },
@@ -113,7 +113,7 @@ describe("event writers populate from_ref correctly", () => {
   it("plan is from_ref='agent'", () => {
     emit({
       type: "plan",
-      sessionId: "s1",
+      taskId: "s1",
       entries: [{ content: "do a thing", status: "pending" }],
     });
     const ev = store.getEvents("s1").find((e) => e.type === "plan");
@@ -124,7 +124,7 @@ describe("event writers populate from_ref correctly", () => {
   it("permission_request is from_ref='agent' (agent asked for permission)", () => {
     emit({
       type: "permission_request",
-      sessionId: "s1",
+      taskId: "s1",
       requestId: "p1",
       title: "Read file",
       options: [{ optionId: "allow_once", name: "Allow", kind: "allow_once" }],
@@ -137,18 +137,18 @@ describe("event writers populate from_ref correctly", () => {
   });
 
   it("prompt_done is from_ref='agent'", () => {
-    emit({ type: "prompt_done", sessionId: "s1", stopReason: "end_turn" });
+    emit({ type: "prompt_done", taskId: "s1", stopReason: "end_turn" });
     const ev = store.getEvents("s1").find((e) => e.type === "prompt_done");
     assert.ok(ev);
     assert.equal(ev.from_ref, "agent");
   });
 
   it("autopilot auto-approve writes permission_response with from_ref='system'", () => {
-    // Put session in autopilot mode so the auto-approve branch fires.
-    store.updateSessionConfig("s1", "mode", "agent#autopilot");
+    // Put task in autopilot mode so the auto-approve branch fires.
+    store.updateTaskConfig("s1", "mode", "agent#autopilot");
     emit({
       type: "permission_request",
-      sessionId: "s1",
+      taskId: "s1",
       requestId: "p2",
       title: "Read file",
       options: [{ optionId: "allow_once", name: "Allow", kind: "allow_once" }],

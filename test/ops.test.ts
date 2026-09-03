@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { EventEmitter } from "node:events";
 import { Store } from "../src/store.ts";
-import { SessionManager } from "../src/session-manager.ts";
+import { TaskManager } from "../src/task-manager.ts";
 import { createRequestHandler } from "../src/routes.ts";
 import type { ConfigOption } from "../src/types.ts";
 import { mockBridgeStubs } from "./fixtures.ts";
@@ -63,14 +63,14 @@ function createMockBridge() {
     ...mockBridgeStubs(),
     newSession: async (_cwd: string) => {
       idCounter++;
-      return { sessionId: `mock-session-${idCounter}`, configOptions: [] };
+      return { sessionId: `mock-task-${idCounter}`, configOptions: [] };
     },
-    loadSession: async (_sessionId: string, _cwd: string) => ({
-      sessionId: _sessionId,
+    loadSession: async (_taskId: string, _cwd: string) => ({
+      taskId: _taskId,
       configOptions,
     }),
     setConfigOption: async (
-      _sessionId: string,
+      _taskId: string,
       configId: string,
       value: string | boolean,
     ) => {
@@ -80,12 +80,8 @@ function createMockBridge() {
           : opt,
       );
     },
-    cancel: async (_sessionId: string) => {},
-    prompt: async (
-      _sessionId: string,
-      _text: string,
-      _images?: unknown[],
-    ) => {},
+    cancel: async (_taskId: string) => {},
+    prompt: async (_taskId: string, _text: string, _images?: unknown[]) => {},
     resolvePermission: async (_requestId: string, _optionId: string) => {},
     denyPermission: async (_requestId: string) => {},
   };
@@ -93,7 +89,7 @@ function createMockBridge() {
 
 describe("Operations REST API", () => {
   let store: Store;
-  let sessions: SessionManager;
+  let tasks: TaskManager;
   let tmpDir: string;
   let publicDir: string;
   let server: http.Server;
@@ -107,12 +103,12 @@ describe("Operations REST API", () => {
     writeFileSync(join(publicDir, "index.html"), "<h1>Test</h1>");
 
     store = new Store(join(tmpDir, "test.db"), "test-agent");
-    sessions = new SessionManager(store, tmpDir, tmpDir);
+    tasks = new TaskManager(store, tmpDir, tmpDir);
     mockBridge = createMockBridge();
 
     const handler = createRequestHandler({
       store,
-      sessions,
+      tasks,
       getBridge: () => mockBridge,
       publicDir,
       dataDir: tmpDir,
@@ -136,22 +132,22 @@ describe("Operations REST API", () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  // Helper to create a session and return its ID
-  async function createSession(): Promise<string> {
+  // Helper to create a task and return its ID
+  async function createTask(): Promise<string> {
     const res = await makeRequest(
       port,
       "POST",
-      "/api/v1/sessions",
+      "/api/v1/tasks",
       JSON.stringify({ cwd: tmpDir }),
     );
     return JSON.parse(res.body).id;
   }
 
-  describe("POST /api/v1/sessions/:id/cancel", () => {
+  describe("POST /api/v1/tasks/:id/cancel", () => {
     it("cancels an active prompt", async () => {
-      const sessionId = await createSession();
-      sessions.activePrompts.add(sessionId);
-      sessions.syncBusy(sessionId);
+      const taskId = await createTask();
+      tasks.activePrompts.add(taskId);
+      tasks.syncBusy(taskId);
 
       let cancelCalled = false;
       mockBridge.cancel = async () => {
@@ -161,7 +157,7 @@ describe("Operations REST API", () => {
       const res = await makeRequest(
         port,
         "POST",
-        `/api/v1/sessions/${sessionId}/cancel`,
+        `/api/v1/tasks/${taskId}/cancel`,
       );
       assert.equal(res.status, 202);
       assert.deepEqual(JSON.parse(res.body), {
@@ -169,11 +165,11 @@ describe("Operations REST API", () => {
         status: "cancelling",
       });
       assert.ok(cancelCalled);
-      assert.equal(sessions.activePrompts.has(sessionId), true);
+      assert.equal(tasks.activePrompts.has(taskId), true);
     });
 
     it("kills running bash process", async () => {
-      const sessionId = await createSession();
+      const taskId = await createTask();
       // Create a fake child process with a kill method
       let killed = false;
       const fakeProc = new EventEmitter() as any;
@@ -184,12 +180,12 @@ describe("Operations REST API", () => {
       };
       fakeProc.stdout = new EventEmitter();
       fakeProc.stderr = new EventEmitter();
-      sessions.runningBashProcs.set(sessionId, fakeProc);
+      tasks.runningBashProcs.set(taskId, fakeProc);
 
       const res = await makeRequest(
         port,
         "POST",
-        `/api/v1/sessions/${sessionId}/cancel`,
+        `/api/v1/tasks/${taskId}/cancel`,
       );
       assert.equal(res.status, 202);
       assert.deepEqual(JSON.parse(res.body), {
@@ -197,11 +193,11 @@ describe("Operations REST API", () => {
         status: "cancelling",
       });
       assert.ok(killed);
-      assert.equal(sessions.runningBashProcs.has(sessionId), true);
+      assert.equal(tasks.runningBashProcs.has(taskId), true);
     });
 
     it("kills bash even when the agent bridge is unavailable", async () => {
-      const sessionId = await createSession();
+      const taskId = await createTask();
       let killed = false;
       const fakeProc = new EventEmitter() as any;
       fakeProc.pid = 12346;
@@ -211,12 +207,12 @@ describe("Operations REST API", () => {
       };
       fakeProc.stdout = new EventEmitter();
       fakeProc.stderr = new EventEmitter();
-      sessions.runningBashProcs.set(sessionId, fakeProc);
-      sessions.activePrompts.add(sessionId);
-      sessions.syncBusy(sessionId);
+      tasks.runningBashProcs.set(taskId, fakeProc);
+      tasks.activePrompts.add(taskId);
+      tasks.syncBusy(taskId);
       const handler = createRequestHandler({
         store,
-        sessions,
+        tasks,
         getBridge: () => null,
         publicDir,
         dataDir: tmpDir,
@@ -231,7 +227,7 @@ describe("Operations REST API", () => {
         const res = await makeRequest(
           bashPort,
           "POST",
-          `/api/v1/sessions/${sessionId}/cancel`,
+          `/api/v1/tasks/${taskId}/cancel`,
         );
         assert.equal(res.status, 503);
         assert.equal(killed, true);
@@ -245,7 +241,7 @@ describe("Operations REST API", () => {
     });
 
     it("escalates repeated bash cancel from SIGINT to SIGKILL", async () => {
-      const sessionId = await createSession();
+      const taskId = await createTask();
       const signals: string[] = [];
       const fakeProc = new EventEmitter() as any;
       fakeProc.kill = (signal: string) => {
@@ -254,13 +250,13 @@ describe("Operations REST API", () => {
       };
       fakeProc.stdout = new EventEmitter();
       fakeProc.stderr = new EventEmitter();
-      sessions.runningBashProcs.set(sessionId, fakeProc);
+      tasks.runningBashProcs.set(taskId, fakeProc);
 
-      await makeRequest(port, "POST", `/api/v1/sessions/${sessionId}/cancel`);
-      await makeRequest(port, "POST", `/api/v1/sessions/${sessionId}/cancel`);
+      await makeRequest(port, "POST", `/api/v1/tasks/${taskId}/cancel`);
+      await makeRequest(port, "POST", `/api/v1/tasks/${taskId}/cancel`);
 
       assert.deepEqual(signals, ["SIGINT", "SIGKILL"]);
-      assert.equal(sessions.runningBashProcs.has(sessionId), true);
+      assert.equal(tasks.runningBashProcs.has(taskId), true);
 
       const replacementSignals: string[] = [];
       const replacementProc = new EventEmitter() as any;
@@ -270,18 +266,18 @@ describe("Operations REST API", () => {
       };
       replacementProc.stdout = new EventEmitter();
       replacementProc.stderr = new EventEmitter();
-      sessions.runningBashProcs.set(sessionId, replacementProc);
+      tasks.runningBashProcs.set(taskId, replacementProc);
 
-      await makeRequest(port, "POST", `/api/v1/sessions/${sessionId}/cancel`);
+      await makeRequest(port, "POST", `/api/v1/tasks/${taskId}/cancel`);
       assert.deepEqual(replacementSignals, ["SIGINT"]);
     });
 
-    it("returns idempotent idle status when session is idle", async () => {
-      const sessionId = await createSession();
+    it("returns idempotent idle status when task is idle", async () => {
+      const taskId = await createTask();
       const res = await makeRequest(
         port,
         "POST",
-        `/api/v1/sessions/${sessionId}/cancel`,
+        `/api/v1/tasks/${taskId}/cancel`,
       );
       assert.equal(res.status, 200);
       assert.deepEqual(JSON.parse(res.body), {
@@ -290,22 +286,22 @@ describe("Operations REST API", () => {
       });
     });
 
-    it("returns 404 for unknown session", async () => {
+    it("returns 404 for unknown task", async () => {
       const res = await makeRequest(
         port,
         "POST",
-        "/api/v1/sessions/nonexistent/cancel",
+        "/api/v1/tasks/nonexistent/cancel",
       );
       assert.equal(res.status, 404);
     });
 
     it("returns 503 when bridge is not ready", async () => {
-      const sessionId = await createSession();
-      sessions.activePrompts.add(sessionId);
+      const taskId = await createTask();
+      tasks.activePrompts.add(taskId);
 
       const handler = createRequestHandler({
         store,
-        sessions,
+        tasks,
         getBridge: () => null,
         publicDir,
         dataDir: tmpDir,
@@ -319,7 +315,7 @@ describe("Operations REST API", () => {
       const res = await makeRequest(
         p,
         "POST",
-        `/api/v1/sessions/${sessionId}/cancel`,
+        `/api/v1/tasks/${taskId}/cancel`,
       );
       assert.equal(res.status, 503);
       await new Promise<void>((r) =>
@@ -330,9 +326,9 @@ describe("Operations REST API", () => {
     });
 
     it("is idempotent when the same X-Client-Op-Id is replayed", async () => {
-      const sessionId = await createSession();
-      sessions.activePrompts.add(sessionId);
-      sessions.syncBusy(sessionId);
+      const taskId = await createTask();
+      tasks.activePrompts.add(taskId);
+      tasks.syncBusy(taskId);
 
       let callCount = 0;
       mockBridge.cancel = async () => {
@@ -343,7 +339,7 @@ describe("Operations REST API", () => {
       const res1 = await makeRequest(
         port,
         "POST",
-        `/api/v1/sessions/${sessionId}/cancel`,
+        `/api/v1/tasks/${taskId}/cancel`,
         undefined,
         headers,
       );
@@ -353,7 +349,7 @@ describe("Operations REST API", () => {
       const res2 = await makeRequest(
         port,
         "POST",
-        `/api/v1/sessions/${sessionId}/cancel`,
+        `/api/v1/tasks/${taskId}/cancel`,
         undefined,
         headers,
       );
@@ -364,7 +360,7 @@ describe("Operations REST API", () => {
       const res3 = await makeRequest(
         port,
         "POST",
-        `/api/v1/sessions/${sessionId}/cancel`,
+        `/api/v1/tasks/${taskId}/cancel`,
         undefined,
         { "X-Client-Op-Id": "op-cancel-2" },
       );
@@ -373,13 +369,13 @@ describe("Operations REST API", () => {
     });
   });
 
-  describe("GET /api/v1/sessions/:id/status", () => {
+  describe("GET /api/v1/tasks/:id/status", () => {
     it("returns idle status when no active work", async () => {
-      const sessionId = await createSession();
+      const taskId = await createTask();
       const res = await makeRequest(
         port,
         "GET",
-        `/api/v1/sessions/${sessionId}/status`,
+        `/api/v1/tasks/${taskId}/status`,
       );
       assert.equal(res.status, 200);
       const body = JSON.parse(res.body);
@@ -389,13 +385,13 @@ describe("Operations REST API", () => {
     });
 
     it("returns busy with agent when prompt is active", async () => {
-      const sessionId = await createSession();
-      sessions.activePrompts.add(sessionId);
+      const taskId = await createTask();
+      tasks.activePrompts.add(taskId);
 
       const res = await makeRequest(
         port,
         "GET",
-        `/api/v1/sessions/${sessionId}/status`,
+        `/api/v1/tasks/${taskId}/status`,
       );
       const body = JSON.parse(res.body);
       assert.equal(body.busy, true);
@@ -403,29 +399,29 @@ describe("Operations REST API", () => {
     });
 
     it("returns busy with bash when bash is running", async () => {
-      const sessionId = await createSession();
+      const taskId = await createTask();
       const fakeProc = new EventEmitter() as any;
       fakeProc.pid = 12345;
       fakeProc.kill = () => true;
       fakeProc.stdout = new EventEmitter();
       fakeProc.stderr = new EventEmitter();
-      sessions.runningBashProcs.set(sessionId, fakeProc);
+      tasks.runningBashProcs.set(taskId, fakeProc);
 
       const res = await makeRequest(
         port,
         "GET",
-        `/api/v1/sessions/${sessionId}/status`,
+        `/api/v1/tasks/${taskId}/status`,
       );
       const body = JSON.parse(res.body);
       assert.equal(body.busy, true);
       assert.equal(body.busyKind, "bash");
     });
 
-    it("returns 404 for unknown session", async () => {
+    it("returns 404 for unknown task", async () => {
       const res = await makeRequest(
         port,
         "GET",
-        "/api/v1/sessions/nonexistent/status",
+        "/api/v1/tasks/nonexistent/status",
       );
       assert.equal(res.status, 404);
     });
@@ -433,8 +429,8 @@ describe("Operations REST API", () => {
 
   describe("GET /api/v1/config", () => {
     it("returns configOptions and cancelTimeout", async () => {
-      // Create a session to populate cachedConfigOptions
-      await createSession();
+      // Create a task to populate cachedConfigOptions
+      await createTask();
 
       const res = await makeRequest(port, "GET", "/api/v1/config");
       assert.equal(res.status, 200);
@@ -443,7 +439,7 @@ describe("Operations REST API", () => {
       assert.equal(body.cancelTimeout, 10000);
     });
 
-    it("returns empty configOptions when no sessions exist", async () => {
+    it("returns empty configOptions when no tasks exist", async () => {
       const res = await makeRequest(port, "GET", "/api/v1/config");
       assert.equal(res.status, 200);
       const body = JSON.parse(res.body);

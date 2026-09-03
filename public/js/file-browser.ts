@@ -1,7 +1,7 @@
 // File-browser path semantics shared by `/view` menu fetching and filtering.
 //
 // The backend accepts only absolute paths or `~` prefixes. The slash UI starts
-// at the active session cwd and resolves relative input here before calling the
+// at the active task cwd and resolves relative input here before calling the
 // API. The final path segment is a local filter; everything before it is the
 // directory fetch key, so typing within one directory never causes extra I/O.
 
@@ -31,21 +31,18 @@ function appendRelative(base: string, relative: string): string {
 }
 
 /** Resolve one exact user path to the backend's absolute/~ path contract. */
-export function resolveViewPath(
-  query: string,
-  sessionCwd: string | null,
-): string {
+export function resolveViewPath(query: string, taskCwd: string | null): string {
   const raw = normalizeDisplayInput(query.trim());
   if (raw === "") {
-    if (!sessionCwd) throw new Error("No active session cwd");
-    return normalizeDisplayInput(sessionCwd);
+    if (!taskCwd) throw new Error("No active task cwd");
+    return normalizeDisplayInput(taskCwd);
   }
   if (raw.startsWith("~") && raw !== "~" && !raw.startsWith("~/")) {
     throw new Error("Unsupported ~user expansion");
   }
   if (isAbsoluteDisplayPath(raw) || raw.startsWith("~")) return raw;
-  if (!sessionCwd) throw new Error("No active session cwd");
-  return appendRelative(sessionCwd, raw);
+  if (!taskCwd) throw new Error("No active task cwd");
+  return appendRelative(taskCwd, raw);
 }
 
 /**
@@ -54,12 +51,12 @@ export function resolveViewPath(
  */
 export function resolveBrowseTarget(
   query: string,
-  sessionCwd: string | null,
+  taskCwd: string | null,
 ): BrowseTarget {
   if (query.trim() === "") {
-    return { directory: resolveViewPath("", sessionCwd), filter: "" };
+    return { directory: resolveViewPath("", taskCwd), filter: "" };
   }
-  const path = resolveViewPath(query, sessionCwd);
+  const path = resolveViewPath(query, taskCwd);
 
   if (path === "/" || path === "~" || path.endsWith("/")) {
     return { directory: path, filter: "" };

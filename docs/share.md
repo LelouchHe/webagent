@@ -1,8 +1,8 @@
 # Share Links
 
-WebAgent can expose a **read-only, sanitized snapshot** of a session at a
+WebAgent can expose a **read-only, sanitized snapshot** of a task at a
 public URL so you can send a conversation to a reviewer, teammate, or
-public audience without giving them any access to the live session.
+public audience without giving them any access to the live task.
 
 ## Quick start
 
@@ -31,7 +31,7 @@ The workflow has two explicit gates:
    returns the public `/s/<token>` URL. Publishing is a separate,
    conscious step so you can inspect the preview first.
 
-A published share is a **frozen snapshot**: new session events after
+A published share is a **frozen snapshot**: new task events after
 `shared_at` are not visible to viewers. To refresh, create a new share.
 
 ## What viewers see (and don't)
@@ -39,14 +39,14 @@ A published share is a **frozen snapshot**: new session events after
 | | Preview (owner) | Public viewer |
 |-|-|-|
 | URL | — (token in header) | `/s/<token>` |
-| Session ID | yes | **no (never exposed)** |
+| Task ID | yes | **no (never exposed)** |
 | Events up to snapshot | ✅ | ✅ (re-sanitized per request) |
 | Events after snapshot | flagged as stale | hidden |
 | Live updates | — | — |
-| Fork into new session | — | deferred to v2 |
+| Fork into new task | — | deferred to v2 |
 
-Viewers see only: session title (if any), `display_name` set at publish,
-`shared_at`, and the sanitized event stream. No `session_id`, cwd, file
+Viewers see only: task title (if any), `display_name` set at publish,
+`shared_at`, and the sanitized event stream. No `task_id`, cwd, file
 paths, or tool metadata leaks through the sanitizer.
 
 ## Sanitizer
@@ -79,14 +79,14 @@ secret-pattern updates.
   of the token is sufficient. Treat the URL like a password.
 - **Frame-ancestors deny:** the viewer cannot be embedded.
 - **Referrer-Policy no-referrer**, **X-Robots-Tag noindex, nofollow**.
-- **No session_id in public JSON.** The public events endpoint
-  (`/api/v1/shared/<token>/events`) strips session_id from its
-  response. Viewers have no way to find the original session.
+- **No task_id in public JSON.** The public events endpoint
+  (`/api/v1/shared/<token>/events`) strips task_id from its
+  response. Viewers have no way to find the original task.
 - **Image proxy:** images are served from
   `/s/<token>/attachments/<file>`. Filenames are validated against
   `[A-Za-z0-9._-]+` and the final path must stay under
-  `<data_dir>/sessions/<session_id>/attachments/`.
-- **Revoke is immediate and destructive:** `DELETE /api/v1/sessions/<id>/share`
+  `<data_dir>/sessions/<task_id>/attachments/`.
+- **Revoke is immediate and destructive:** `DELETE /api/v1/tasks/<id>/share`
   hard-deletes the row from the `shares` table; subsequent viewer hits
   get HTTP 410. There is no `revoked_at` audit column — revoke is a
   tombstone-free delete by design, to keep the public surface as small
@@ -113,11 +113,11 @@ internal_hosts = []             # sanitizer will scrub these hostnames
 
 | Route | Auth | Purpose |
 |-|-|-|
-| `POST /api/v1/sessions/:id/share` | owner | Create (or reuse) preview |
-| `GET  /api/v1/sessions/:id/share/preview` | owner + X-Share-Token | Read preview events |
-| `POST /api/v1/sessions/:id/share/publish` | owner | Activate |
-| `DELETE /api/v1/sessions/:id/share` | owner | Revoke (idempotent) |
-| `PATCH /api/v1/sessions/:id/share` | owner | Update owner_label / display_name |
+| `POST /api/v1/tasks/:id/share` | owner | Create (or reuse) preview |
+| `GET  /api/v1/tasks/:id/share/preview` | owner + X-Share-Token | Read preview events |
+| `POST /api/v1/tasks/:id/share/publish` | owner | Activate |
+| `DELETE /api/v1/tasks/:id/share` | owner | Revoke (idempotent) |
+| `PATCH /api/v1/tasks/:id/share` | owner | Update owner_label / display_name |
 | `GET  /api/v1/shares` | owner | List live shares |
 | `GET  /s/:token` | public | Viewer HTML (strict CSP) |
 | `GET  /s/:token/attachments/:file` | public | Image proxy |
@@ -151,7 +151,7 @@ tokens never appear in owner-side URLs.
 ## Known limitations (v1)
 
 - **No inline fork:** viewers cannot "continue this conversation". The
-  viewer footer is static — fork needs `unstable_forkSession` support
+  viewer footer is static — fork needs `unstable_forkTask` support
   and is deferred.
 - **No background image purge:** revoke blocks access at the route
   edge; images remain on disk until a future GC pass.

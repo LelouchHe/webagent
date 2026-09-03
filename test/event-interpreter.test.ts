@@ -437,7 +437,7 @@ describe("normalizeEventsResponse", () => {
       events: [
         {
           id: 1,
-          session_id: "s1",
+          task_id: "s1",
           seq: 1,
           type: "user_message",
           data: "{}",
@@ -459,7 +459,7 @@ describe("normalizeEventsResponse", () => {
     const body = [
       {
         id: 1,
-        session_id: "s1",
+        task_id: "s1",
         seq: 1,
         type: "user_message",
         data: "{}",

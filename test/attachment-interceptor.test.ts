@@ -60,7 +60,7 @@ describe("attachment permission interceptor", () => {
   it("happy path: kind=read + no name + locations match + no rawInput", async () => {
     const ok = await shouldAutoApproveAttachmentRead(
       {
-        sessionId: "s1",
+        taskId: "s1",
         toolKind: "read",
         locations: [{ path: attRealpath }],
       },
@@ -74,7 +74,7 @@ describe("attachment permission interceptor", () => {
   it("kind=execute → false", async () => {
     const ok = await shouldAutoApproveAttachmentRead(
       {
-        sessionId: "s1",
+        taskId: "s1",
         toolKind: "execute",
         locations: [{ path: attRealpath }],
       },
@@ -86,7 +86,7 @@ describe("attachment permission interceptor", () => {
 
   it("kind undefined → false", async () => {
     const ok = await shouldAutoApproveAttachmentRead(
-      { sessionId: "s1", locations: [{ path: attRealpath }] },
+      { taskId: "s1", locations: [{ path: attRealpath }] },
       baseDeps(),
     );
     assert.equal(ok, false);
@@ -95,7 +95,7 @@ describe("attachment permission interceptor", () => {
   it("name=view (allowlisted) → true", async () => {
     const ok = await shouldAutoApproveAttachmentRead(
       {
-        sessionId: "s1",
+        taskId: "s1",
         toolKind: "read",
         toolName: "view",
         locations: [{ path: attRealpath }],
@@ -108,7 +108,7 @@ describe("attachment permission interceptor", () => {
   it("name=bash (not allowlisted) → false", async () => {
     const ok = await shouldAutoApproveAttachmentRead(
       {
-        sessionId: "s1",
+        taskId: "s1",
         toolKind: "read",
         toolName: "bash",
         locations: [{ path: attRealpath }],
@@ -120,7 +120,7 @@ describe("attachment permission interceptor", () => {
 
   it("locations === [] → false", async () => {
     const ok = await shouldAutoApproveAttachmentRead(
-      { sessionId: "s1", toolKind: "read", locations: [] },
+      { taskId: "s1", toolKind: "read", locations: [] },
       baseDeps(),
     );
     assert.equal(ok, false);
@@ -128,7 +128,7 @@ describe("attachment permission interceptor", () => {
 
   it("locations missing → false", async () => {
     const ok = await shouldAutoApproveAttachmentRead(
-      { sessionId: "s1", toolKind: "read" },
+      { taskId: "s1", toolKind: "read" },
       baseDeps(),
     );
     assert.equal(ok, false);
@@ -137,7 +137,7 @@ describe("attachment permission interceptor", () => {
   it("location outside attachment set → false", async () => {
     const ok = await shouldAutoApproveAttachmentRead(
       {
-        sessionId: "s1",
+        taskId: "s1",
         toolKind: "read",
         locations: [{ path: outsideRealpath }],
       },
@@ -149,7 +149,7 @@ describe("attachment permission interceptor", () => {
   it("rawInput.path matching → true", async () => {
     const ok = await shouldAutoApproveAttachmentRead(
       {
-        sessionId: "s1",
+        taskId: "s1",
         toolKind: "read",
         locations: [{ path: attRealpath }],
         rawInput: { path: attRealpath },
@@ -162,7 +162,7 @@ describe("attachment permission interceptor", () => {
   it("rawInput.filePath matching → true", async () => {
     const ok = await shouldAutoApproveAttachmentRead(
       {
-        sessionId: "s1",
+        taskId: "s1",
         toolKind: "read",
         locations: [{ path: attRealpath }],
         rawInput: { filePath: attRealpath },
@@ -175,7 +175,7 @@ describe("attachment permission interceptor", () => {
   it("rawInput.path outside attachment set → false", async () => {
     const ok = await shouldAutoApproveAttachmentRead(
       {
-        sessionId: "s1",
+        taskId: "s1",
         toolKind: "read",
         locations: [{ path: attRealpath }],
         rawInput: { path: outsideRealpath },
@@ -188,7 +188,7 @@ describe("attachment permission interceptor", () => {
   it("rawInput.filePath mismatch → false even if path matches", async () => {
     const ok = await shouldAutoApproveAttachmentRead(
       {
-        sessionId: "s1",
+        taskId: "s1",
         toolKind: "read",
         locations: [{ path: attRealpath }],
         rawInput: { path: attRealpath, filePath: outsideRealpath },
@@ -202,7 +202,7 @@ describe("attachment permission interceptor", () => {
     let drifted = 0;
     const ok = await shouldAutoApproveAttachmentRead(
       {
-        sessionId: "s1",
+        taskId: "s1",
         toolKind: "read",
         locations: [{ path: attRealpath }],
         rawInput: { mystery_path: attRealpath },
@@ -219,10 +219,10 @@ describe("attachment permission interceptor", () => {
     assert.equal(drifted, 1);
   });
 
-  it("cross-session attachment → false", async () => {
+  it("cross-task attachment → false", async () => {
     const ok = await shouldAutoApproveAttachmentRead(
       {
-        sessionId: "s2",
+        taskId: "s2",
         toolKind: "read",
         locations: [{ path: attRealpath }],
       },
@@ -237,7 +237,7 @@ describe("attachment permission interceptor", () => {
   it("multi-location: one match + one outside → false", async () => {
     const ok = await shouldAutoApproveAttachmentRead(
       {
-        sessionId: "s1",
+        taskId: "s1",
         toolKind: "read",
         locations: [{ path: attRealpath }, { path: outsideRealpath }],
       },
@@ -249,7 +249,7 @@ describe("attachment permission interceptor", () => {
   it("realpath ENOENT → false + counter", async () => {
     const ok = await shouldAutoApproveAttachmentRead(
       {
-        sessionId: "s1",
+        taskId: "s1",
         toolKind: "read",
         locations: [{ path: join(tmp, "does-not-exist") }],
       },
@@ -262,7 +262,7 @@ describe("attachment permission interceptor", () => {
   it("listAttachmentRealpaths throws → false (db_error)", async () => {
     const ok = await shouldAutoApproveAttachmentRead(
       {
-        sessionId: "s1",
+        taskId: "s1",
         toolKind: "read",
         locations: [{ path: attRealpath }],
       },

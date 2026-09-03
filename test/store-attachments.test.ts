@@ -12,8 +12,8 @@ describe("Store attachments", () => {
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), "webagent-att-"));
     store = new Store(tmpDir, "test-agent");
-    store.createSession("s1", "/tmp/cwd1");
-    store.createSession("s2", "/tmp/cwd2");
+    store.createTask("s1", "/tmp/cwd1");
+    store.createTask("s2", "/tmp/cwd2");
   });
 
   afterEach(() => {
@@ -21,10 +21,10 @@ describe("Store attachments", () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("insertAttachment + getAttachment round-trips by (sessionId, id)", () => {
+  it("insertAttachment + getAttachment round-trips by (taskId, id)", () => {
     const row = store.insertAttachment({
       id: "a1",
-      sessionId: "s1",
+      taskId: "s1",
       kind: "image",
       name: "tiny.png",
       mime: "image/png",
@@ -34,8 +34,8 @@ describe("Store attachments", () => {
       height: 240,
     });
     assert.equal(row.id, "a1");
-    assert.equal(row.session_id, "s1");
-    // upload_seq is sourced from MAX(events.seq) per session — no events
+    assert.equal(row.task_id, "s1");
+    // upload_seq is sourced from MAX(events.seq) per task — no events
     // yet means 0.
     assert.equal(row.upload_seq, 0);
 
@@ -49,7 +49,7 @@ describe("Store attachments", () => {
   it("keeps dimensions nullable for non-image or legacy attachments", () => {
     const row = store.insertAttachment({
       id: "a1",
-      sessionId: "s1",
+      taskId: "s1",
       kind: "file",
       name: "notes.txt",
       mime: "text/plain",
@@ -61,10 +61,10 @@ describe("Store attachments", () => {
     assert.equal(row.height, null);
   });
 
-  it("getAttachment scopes by session — cross-session lookup returns undefined", () => {
+  it("getAttachment scopes by task — cross-task lookup returns undefined", () => {
     store.insertAttachment({
       id: "a1",
-      sessionId: "s1",
+      taskId: "s1",
       kind: "file",
       name: "notes.pdf",
       mime: "application/pdf",
@@ -74,11 +74,11 @@ describe("Store attachments", () => {
     assert.equal(store.getAttachment("s2", "a1"), undefined);
   });
 
-  it("upload_seq tracks the session's event seq cursor at insert time", () => {
+  it("upload_seq tracks the task's event seq cursor at insert time", () => {
     // No events yet — both rows tagged 0
     const r1 = store.insertAttachment({
       id: "a1",
-      sessionId: "s1",
+      taskId: "s1",
       kind: "image",
       name: "a.png",
       mime: "image/png",
@@ -90,7 +90,7 @@ describe("Store attachments", () => {
     store.saveEvent("s1", "user_message", { text: "hi" }, { from_ref: "user" });
     const r2 = store.insertAttachment({
       id: "a2",
-      sessionId: "s1",
+      taskId: "s1",
       kind: "image",
       name: "b.png",
       mime: "image/png",
@@ -98,10 +98,10 @@ describe("Store attachments", () => {
       realpath: "/x/b.png",
     });
     assert.ok(r2.upload_seq >= 1);
-    // Different session — counter is independent
+    // Different task — counter is independent
     const r3 = store.insertAttachment({
       id: "a3",
-      sessionId: "s2",
+      taskId: "s2",
       kind: "image",
       name: "c.png",
       mime: "image/png",
@@ -111,10 +111,10 @@ describe("Store attachments", () => {
     assert.equal(r3.upload_seq, 0);
   });
 
-  it("listAttachmentRealpaths returns only the requested session's realpaths", () => {
+  it("listAttachmentRealpaths returns only the requested task's realpaths", () => {
     store.insertAttachment({
       id: "a1",
-      sessionId: "s1",
+      taskId: "s1",
       kind: "file",
       name: "a",
       mime: "text/plain",
@@ -123,7 +123,7 @@ describe("Store attachments", () => {
     });
     store.insertAttachment({
       id: "b1",
-      sessionId: "s1",
+      taskId: "s1",
       kind: "file",
       name: "b",
       mime: "text/plain",
@@ -132,7 +132,7 @@ describe("Store attachments", () => {
     });
     store.insertAttachment({
       id: "c1",
-      sessionId: "s2",
+      taskId: "s2",
       kind: "file",
       name: "c",
       mime: "text/plain",
@@ -147,10 +147,10 @@ describe("Store attachments", () => {
     assert.deepEqual(empty, []);
   });
 
-  it("FK CASCADE: deleting a session drops its attachment rows", () => {
+  it("FK CASCADE: deleting a task drops its attachment rows", () => {
     store.insertAttachment({
       id: "a1",
-      sessionId: "s1",
+      taskId: "s1",
       kind: "file",
       name: "x",
       mime: "text/plain",
@@ -159,23 +159,23 @@ describe("Store attachments", () => {
     });
     store.insertAttachment({
       id: "a2",
-      sessionId: "s2",
+      taskId: "s2",
       kind: "file",
       name: "y",
       mime: "text/plain",
       size: 1,
       realpath: "/r/b",
     });
-    store.deleteSession("s1");
+    store.deleteTask("s1");
     assert.equal(store.getAttachment("s1", "a1"), undefined);
-    // Other sessions are untouched
+    // Other tasks are untouched
     assert.ok(store.getAttachment("s2", "a2"));
   });
 
   it("getAttachmentByFile parses '<id>.<ext>' filenames", () => {
     store.insertAttachment({
       id: "deadbeef-1234",
-      sessionId: "s1",
+      taskId: "s1",
       kind: "image",
       name: "tiny.png",
       mime: "image/png",
@@ -188,10 +188,10 @@ describe("Store attachments", () => {
   });
 
   describe("listAttachmentLabels", () => {
-    it("returns {realpath, name, id} rows scoped to session", () => {
+    it("returns {realpath, name, id} rows scoped to task", () => {
       store.insertAttachment({
         id: "abc12345-1111-2222-3333-444455556666",
-        sessionId: "s1",
+        taskId: "s1",
         kind: "file",
         name: "report.pdf",
         mime: "application/pdf",
@@ -200,7 +200,7 @@ describe("Store attachments", () => {
       });
       store.insertAttachment({
         id: "def67890-aaaa-bbbb-cccc-ddddeeeeffff",
-        sessionId: "s1",
+        taskId: "s1",
         kind: "file",
         name: "notes.md",
         mime: "text/markdown",
@@ -209,7 +209,7 @@ describe("Store attachments", () => {
       });
       store.insertAttachment({
         id: "ffffffff-0000-0000-0000-000000000000",
-        sessionId: "s2",
+        taskId: "s2",
         kind: "file",
         name: "other.txt",
         mime: "text/plain",
@@ -232,11 +232,11 @@ describe("Store attachments", () => {
       });
     });
 
-    it("returns [] for unknown session", () => {
+    it("returns [] for unknown task", () => {
       assert.deepEqual(store.listAttachmentLabels("nope"), []);
     });
 
-    it("returns [] for session with no attachments", () => {
+    it("returns [] for task with no attachments", () => {
       assert.deepEqual(store.listAttachmentLabels("s1"), []);
     });
   });

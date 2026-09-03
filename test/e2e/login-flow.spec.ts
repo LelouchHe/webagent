@@ -7,7 +7,7 @@ import { test, expect } from "playwright/test";
  *
  *  1. Clearing localStorage and visiting / bounces the user to /login.
  *  2. Submitting the seeded admin token (written to test/e2e-data/.token
- *     by test/e2e/seed.ts) authenticates the session.
+ *     by test/e2e/seed.ts) authenticates the task.
  *  3. After successful sign-in the page lands on / with the input
  *     enabled — the same readiness signal the rest of the suite uses.
  *  4. The token persists in localStorage under wa_token.

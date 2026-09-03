@@ -2,12 +2,12 @@ import { after, before, beforeEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { resetState, setupDOM, teardownDOM } from "./frontend-setup.ts";
 
-describe("shared session navigation", () => {
+describe("shared task navigation", () => {
   let state: typeof import("../public/js/state.ts").state;
   let dom: typeof import("../public/js/state.ts").dom;
-  let resetSessionUI: typeof import("../public/js/state.ts").resetSessionUI;
-  let requestNewSession: typeof import("../public/js/state.ts").requestNewSession;
-  let navigation: typeof import("../public/js/session-navigation.ts");
+  let resetTaskUI: typeof import("../public/js/state.ts").resetTaskUI;
+  let requestNewTask: typeof import("../public/js/state.ts").requestNewTask;
+  let navigation: typeof import("../public/js/task-navigation.ts");
   let handleEvent: typeof import("../public/js/events.ts").handleEvent;
   let fetchCalls: Array<{ url: string; init?: RequestInit }>;
   let delayedHistory: Promise<Response> | null;
@@ -16,11 +16,11 @@ describe("shared session navigation", () => {
 
   before(async () => {
     setupDOM();
-    ({ state, dom, resetSessionUI, requestNewSession } =
+    ({ state, dom, resetTaskUI, requestNewTask } =
       await import("../public/js/state.ts"));
     await import("../public/js/render.ts");
     ({ handleEvent } = await import("../public/js/events.ts"));
-    navigation = await import("../public/js/session-navigation.ts");
+    navigation = await import("../public/js/task-navigation.ts");
   });
 
   after(() => {
@@ -44,7 +44,7 @@ describe("shared session navigation", () => {
       });
       if (url === "/api/v1/messages/m1/consume") {
         return response({
-          sessionId: "message-session",
+          taskId: "message-task",
           alreadyConsumed: false,
         });
       }
@@ -54,19 +54,19 @@ describe("shared session navigation", () => {
       if (url === "/api/v1/messages/retry/consume") {
         return response({ error: "Unavailable" }, 500);
       }
-      if (url === "/api/v1/sessions/message-session") {
+      if (url === "/api/v1/tasks/message-task") {
         return response({
-          id: "message-session",
+          id: "message-task",
           cwd: "/tmp",
           title: "Message",
           configOptions: [],
         });
       }
-      if (url.startsWith("/api/v1/sessions/message-session/events?limit=")) {
+      if (url.startsWith("/api/v1/tasks/message-task/events?limit=")) {
         if (delayedHistory) return delayedHistory;
         return response({ events: [], streaming: {} });
       }
-      if (url === "/api/v1/sessions/message-session/snapshot") {
+      if (url === "/api/v1/tasks/message-task/snapshot") {
         if (delayedSnapshot) {
           onDelayedSnapshotFetch?.();
           return delayedSnapshot;
@@ -74,7 +74,7 @@ describe("shared session navigation", () => {
         return response({
           version: 1,
           seq: 0,
-          session: {},
+          task: {},
           runtime: { busy: null },
         });
       }
@@ -82,8 +82,8 @@ describe("shared session navigation", () => {
     }) as typeof fetch;
   });
 
-  it("consumes a message using the current session and then shares session switching", async () => {
-    state.sessionId = "current-session";
+  it("consumes a message using the current task and then shares task switching", async () => {
+    state.taskId = "current-task";
 
     const result = await navigation.consumeAndSwitch("m1");
 
@@ -93,15 +93,15 @@ describe("shared session navigation", () => {
     );
     assert.ok(consume);
     assert.deepEqual(JSON.parse(consume.init!.body as string), {
-      inheritFromSessionId: "current-session",
+      inheritFromTaskId: "current-task",
     });
-    assert.equal(state.sessionId, "message-session");
-    assert.equal(location.hash, "#message-session");
+    assert.equal(state.taskId, "message-task");
+    assert.equal(location.hash, "#message-task");
   });
 
-  it("routes a session target directly without consuming a message", async () => {
+  it("routes a task target directly without consuming a message", async () => {
     const result = await navigation.navigateFromNotification({
-      sessionId: "message-session",
+      taskId: "message-task",
       messageId: "m1",
     });
 
@@ -110,27 +110,27 @@ describe("shared session navigation", () => {
       fetchCalls.some((call) => call.url.includes("/messages/")),
       false,
     );
-    assert.equal(state.sessionId, "message-session");
+    assert.equal(state.taskId, "message-task");
   });
 
-  it("does not let a competing session creation hijack a switch", async () => {
-    state.sessionId = "current-session";
+  it("does not let a competing task creation hijack a switch", async () => {
+    state.taskId = "current-task";
     let releaseHistory!: (response: Response) => void;
     delayedHistory = new Promise<Response>((resolve) => {
       releaseHistory = resolve;
     });
 
-    const pending = navigation.switchToSession("message-session");
-    resetSessionUI({ preserveNavigationTarget: true });
-    assert.equal(state.pendingNavigationSessionId, "message-session");
-    assert.equal(state.sessionId, null);
+    const pending = navigation.switchToTask("message-task");
+    resetTaskUI({ preserveNavigationTarget: true });
+    assert.equal(state.pendingNavigationTaskId, "message-task");
+    assert.equal(state.taskId, null);
     handleEvent({
-      type: "session_created",
-      sessionId: "competing-session",
+      type: "task_created",
+      taskId: "competing-task",
       cwd: "/other",
       configOptions: [],
     });
-    assert.equal(state.sessionId, null);
+    assert.equal(state.taskId, null);
     releaseHistory(
       new Response(JSON.stringify({ events: [], streaming: {} }), {
         status: 200,
@@ -139,12 +139,12 @@ describe("shared session navigation", () => {
     const result = await pending;
 
     assert.equal(result, "switched");
-    assert.equal(state.sessionId, "message-session");
-    assert.equal(location.hash, "#message-session");
+    assert.equal(state.taskId, "message-task");
+    assert.equal(location.hash, "#message-task");
   });
 
-  it("reconciles replayed pending tools after switching to an idle session", async () => {
-    state.sessionId = "current-session";
+  it("reconciles replayed pending tools after switching to an idle task", async () => {
+    state.taskId = "current-task";
     delayedHistory = Promise.resolve(
       new Response(
         JSON.stringify({
@@ -166,10 +166,7 @@ describe("shared session navigation", () => {
       ),
     );
 
-    assert.equal(
-      await navigation.switchToSession("message-session"),
-      "switched",
-    );
+    assert.equal(await navigation.switchToTask("message-task"), "switched");
 
     const tool = document.getElementById("tc-tc-switched");
     assert.ok(tool?.classList.contains("completed"));
@@ -178,39 +175,36 @@ describe("shared session navigation", () => {
   });
 
   it("does not complete a switch when snapshot hydration fails", async () => {
-    state.sessionId = "current-session";
+    state.taskId = "current-task";
     delayedSnapshot = Promise.resolve(
       new Response(JSON.stringify({ error: "snapshot failed" }), {
         status: 500,
       }),
     );
 
-    await assert.rejects(
-      navigation.switchToSession("message-session"),
-      /snapshot/i,
-    );
-    assert.equal(state.sessionId, null);
+    await assert.rejects(navigation.switchToTask("message-task"), /snapshot/i);
+    assert.equal(state.taskId, null);
     assert.equal(state.busy, false);
-    assert.equal(state.pendingNavigationSessionId, null);
-    assert.equal(location.hash, "#current-session");
+    assert.equal(state.pendingNavigationTaskId, null);
+    assert.equal(location.hash, "#current-task");
   });
 
-  it("explicit switch supersedes stale new-session ownership", async () => {
-    state.sessionId = "current-session";
-    state.awaitingNewSession = true;
-    state.newSessionRequestInFlight = true;
-    state.pendingNewSessionOpId = "old-create";
-    state._newSessionRecoveryTimer = setTimeout(() => {}, 3000);
+  it("explicit switch supersedes stale new-task ownership", async () => {
+    state.taskId = "current-task";
+    state.awaitingNewTask = true;
+    state.newTaskRequestInFlight = true;
+    state.pendingNewTaskOpId = "old-create";
+    state._newTaskRecoveryTimer = setTimeout(() => {}, 3000);
     let releaseHistory!: (response: Response) => void;
     delayedHistory = new Promise<Response>((resolve) => {
       releaseHistory = resolve;
     });
 
-    const pending = navigation.switchToSession("message-session");
-    assert.equal(state.awaitingNewSession, false);
-    assert.equal(state.newSessionRequestInFlight, false);
-    assert.equal(state.pendingNewSessionOpId, null);
-    assert.equal(state._newSessionRecoveryTimer, null);
+    const pending = navigation.switchToTask("message-task");
+    assert.equal(state.awaitingNewTask, false);
+    assert.equal(state.newTaskRequestInFlight, false);
+    assert.equal(state.pendingNewTaskOpId, null);
+    assert.equal(state._newTaskRecoveryTimer, null);
     releaseHistory(
       new Response(JSON.stringify({ events: [], streaming: {} }), {
         status: 200,
@@ -218,12 +212,12 @@ describe("shared session navigation", () => {
     );
 
     assert.equal(await pending, "switched");
-    assert.equal(state.sessionId, "message-session");
-    assert.equal(state.awaitingNewSession, false);
+    assert.equal(state.taskId, "message-task");
+    assert.equal(state.awaitingNewTask, false);
   });
 
   it("does not let a slower notification consume override a newer one", async () => {
-    state.sessionId = "current-session";
+    state.taskId = "current-task";
     let releaseSlow!: (response: Response) => void;
     const slowConsume = new Promise<Response>((resolve) => {
       releaseSlow = resolve;
@@ -233,24 +227,24 @@ describe("shared session navigation", () => {
     globalThis.fetch = (async (url: string) => {
       if (url === "/api/v1/messages/slow/consume") return slowConsume;
       if (url === "/api/v1/messages/fast/consume") {
-        return response({ sessionId: "fast-session", alreadyConsumed: false });
+        return response({ taskId: "fast-task", alreadyConsumed: false });
       }
-      if (url === "/api/v1/sessions/fast-session") {
+      if (url === "/api/v1/tasks/fast-task") {
         return response({
-          id: "fast-session",
+          id: "fast-task",
           cwd: "/fast",
           title: "Fast",
           configOptions: [],
         });
       }
-      if (url === "/api/v1/sessions/fast-session/events?limit=500") {
+      if (url === "/api/v1/tasks/fast-task/events?limit=500") {
         return response({ events: [], streaming: {} });
       }
-      if (url === "/api/v1/sessions/fast-session/snapshot") {
+      if (url === "/api/v1/tasks/fast-task/snapshot") {
         return response({
           version: 1,
           seq: 0,
-          session: {},
+          task: {},
           runtime: { busy: null },
         });
       }
@@ -261,17 +255,15 @@ describe("shared session navigation", () => {
     const older = navigation.consumeAndSwitch("slow");
     const newer = navigation.consumeAndSwitch("fast");
     assert.equal(await newer, "switched");
-    releaseSlow(
-      response({ sessionId: "slow-session", alreadyConsumed: false }),
-    );
+    releaseSlow(response({ taskId: "slow-task", alreadyConsumed: false }));
 
     assert.equal(await older, "ignored");
-    assert.equal(state.sessionId, "fast-session");
-    assert.equal(location.hash, "#fast-session");
+    assert.equal(state.taskId, "fast-task");
+    assert.equal(location.hash, "#fast-task");
   });
 
-  it("same-session selection supersedes a pending notification consume", async () => {
-    state.sessionId = "current-session";
+  it("same-task selection supersedes a pending notification consume", async () => {
+    state.taskId = "current-task";
     let releaseSlow!: (response: Response) => void;
     globalThis.fetch = (async (url: string) => {
       if (url === "/api/v1/messages/slow/consume") {
@@ -283,14 +275,11 @@ describe("shared session navigation", () => {
     }) as typeof fetch;
 
     const pending = navigation.consumeAndSwitch("slow");
-    assert.equal(
-      await navigation.switchToSession("current-session"),
-      "unchanged",
-    );
+    assert.equal(await navigation.switchToTask("current-task"), "unchanged");
     releaseSlow(
       new Response(
         JSON.stringify({
-          sessionId: "slow-session",
+          taskId: "slow-task",
           alreadyConsumed: false,
         }),
         { status: 200 },
@@ -298,34 +287,31 @@ describe("shared session navigation", () => {
     );
 
     assert.equal(await pending, "ignored");
-    assert.equal(state.sessionId, "current-session");
+    assert.equal(state.taskId, "current-task");
   });
 
-  it("same-session selection does not cancel an in-flight create", async () => {
-    state.sessionId = "current-session";
-    state.awaitingNewSession = true;
-    state.newSessionRequestInFlight = true;
-    state.pendingNewSessionOpId = "create-op";
-    const switchGeneration = state.sessionSwitchGen;
+  it("same-task selection does not cancel an in-flight create", async () => {
+    state.taskId = "current-task";
+    state.awaitingNewTask = true;
+    state.newTaskRequestInFlight = true;
+    state.pendingNewTaskOpId = "create-op";
+    const switchGeneration = state.taskSwitchGen;
 
-    assert.equal(
-      await navigation.switchToSession("current-session"),
-      "unchanged",
-    );
+    assert.equal(await navigation.switchToTask("current-task"), "unchanged");
 
-    assert.equal(state.sessionSwitchGen, switchGeneration);
-    assert.equal(state.awaitingNewSession, true);
-    assert.equal(state.pendingNewSessionOpId, "create-op");
+    assert.equal(state.taskSwitchGen, switchGeneration);
+    assert.equal(state.awaitingNewTask, true);
+    assert.equal(state.pendingNewTaskOpId, "create-op");
   });
 
   it("failed notification consume does not invalidate an existing switch", async () => {
-    state.sessionId = "current-session";
+    state.taskId = "current-task";
     let releaseHistory!: (response: Response) => void;
     delayedHistory = new Promise<Response>((resolve) => {
       releaseHistory = resolve;
     });
 
-    const pendingSwitch = navigation.switchToSession("message-session");
+    const pendingSwitch = navigation.switchToTask("message-task");
     await assert.rejects(navigation.consumeAndSwitch("missing"), /Not found/);
     releaseHistory(
       new Response(JSON.stringify({ events: [], streaming: {} }), {
@@ -334,11 +320,11 @@ describe("shared session navigation", () => {
     );
 
     assert.equal(await pendingSwitch, "switched");
-    assert.equal(state.sessionId, "message-session");
+    assert.equal(state.taskId, "message-task");
   });
 
   it("applies target state patches that arrive during snapshot hydration", async () => {
-    state.sessionId = "current-session";
+    state.taskId = "current-task";
     let releaseSnapshot!: (response: Response) => void;
     let markSnapshotStarted!: () => void;
     const snapshotStarted = new Promise<void>((resolve) => {
@@ -349,11 +335,11 @@ describe("shared session navigation", () => {
       releaseSnapshot = resolve;
     });
 
-    const pending = navigation.switchToSession("message-session");
+    const pending = navigation.switchToTask("message-task");
     await snapshotStarted;
     handleEvent({
       type: "state_patch",
-      sessionId: "message-session",
+      taskId: "message-task",
       seq: 5,
       patch: {
         runtime: {
@@ -366,7 +352,7 @@ describe("shared session navigation", () => {
         JSON.stringify({
           version: 1,
           seq: 4,
-          session: {},
+          task: {},
           runtime: { busy: null },
         }),
         { status: 200 },
@@ -380,7 +366,7 @@ describe("shared session navigation", () => {
   });
 
   it("drains target live events after snapshot hydration", async () => {
-    state.sessionId = "current-session";
+    state.taskId = "current-task";
     let releaseSnapshot!: (response: Response) => void;
     let markSnapshotStarted!: () => void;
     const snapshotStarted = new Promise<void>((resolve) => {
@@ -391,11 +377,11 @@ describe("shared session navigation", () => {
       releaseSnapshot = resolve;
     });
 
-    const pending = navigation.switchToSession("message-session");
+    const pending = navigation.switchToTask("message-task");
     await snapshotStarted;
     handleEvent({
       type: "message_chunk",
-      sessionId: "message-session",
+      taskId: "message-task",
       text: "arrived during hydration",
     });
     releaseSnapshot(
@@ -403,7 +389,7 @@ describe("shared session navigation", () => {
         JSON.stringify({
           version: 1,
           seq: 0,
-          session: {},
+          task: {},
           runtime: { busy: null },
         }),
         { status: 200 },
@@ -414,19 +400,19 @@ describe("shared session navigation", () => {
     assert.equal(state.currentAssistantText, "arrived during hydration");
   });
 
-  it("abandons a switch superseded by ordinary session creation", async () => {
-    state.sessionId = "current-session";
+  it("abandons a switch superseded by ordinary task creation", async () => {
+    state.taskId = "current-task";
     let releaseHistory!: (response: Response) => void;
     delayedHistory = new Promise<Response>((resolve) => {
       releaseHistory = resolve;
     });
 
-    const pending = navigation.switchToSession("message-session");
-    resetSessionUI();
-    state.awaitingNewSession = true;
+    const pending = navigation.switchToTask("message-task");
+    resetTaskUI();
+    state.awaitingNewTask = true;
     handleEvent({
-      type: "session_created",
-      sessionId: "new-session",
+      type: "task_created",
+      taskId: "new-task",
       cwd: "/new",
       configOptions: [],
     });
@@ -438,17 +424,17 @@ describe("shared session navigation", () => {
     const result = await pending;
 
     assert.equal(result, "ignored");
-    assert.equal(state.sessionId, "new-session");
+    assert.equal(state.taskId, "new-task");
     assert.equal(
       fetchCalls.some(
-        (call) => call.url === "/api/v1/sessions/message-session/snapshot",
+        (call) => call.url === "/api/v1/tasks/message-task/snapshot",
       ),
       false,
     );
   });
 
-  it("new-session intent invalidates stale history replay", async () => {
-    state.sessionId = "current-session";
+  it("new-task intent invalidates stale history replay", async () => {
+    state.taskId = "current-task";
     let releaseHistory!: (response: Response) => void;
     const historyResponse = new Promise<Response>((resolve) => {
       releaseHistory = resolve;
@@ -456,20 +442,20 @@ describe("shared session navigation", () => {
     const response = (body: unknown) =>
       new Response(JSON.stringify(body), { status: 200 });
     globalThis.fetch = (async (url: string, init?: RequestInit) => {
-      if (url === "/api/v1/sessions/message-session") {
+      if (url === "/api/v1/tasks/message-task") {
         return response({
-          id: "message-session",
+          id: "message-task",
           cwd: "/old",
           title: "Old",
           configOptions: [],
         });
       }
-      if (url === "/api/v1/sessions/message-session/events?limit=500") {
+      if (url === "/api/v1/tasks/message-task/events?limit=500") {
         return historyResponse;
       }
-      if (url === "/api/v1/sessions" && init?.method === "POST") {
+      if (url === "/api/v1/tasks" && init?.method === "POST") {
         return response({
-          id: "new-session",
+          id: "new-task",
           cwd: "/new",
           title: "New",
           configOptions: [],
@@ -478,8 +464,8 @@ describe("shared session navigation", () => {
       throw new Error(`Unexpected fetch: ${url}`);
     }) as typeof fetch;
 
-    const staleSwitch = navigation.switchToSession("message-session");
-    requestNewSession();
+    const staleSwitch = navigation.switchToTask("message-task");
+    requestNewTask();
     await new Promise((resolve) => setImmediate(resolve));
     releaseHistory(
       response([
@@ -492,12 +478,12 @@ describe("shared session navigation", () => {
     );
 
     assert.equal(await staleSwitch, "ignored");
-    assert.equal(state.sessionId, "new-session");
+    assert.equal(state.taskId, "new-task");
     assert.doesNotMatch(dom.messages.textContent, /stale history/);
   });
 
   it("does not apply a snapshot after navigation ownership is revoked", async () => {
-    state.sessionId = "current-session";
+    state.taskId = "current-task";
     let releaseSnapshot!: (response: Response) => void;
     let markSnapshotStarted!: () => void;
     const snapshotStarted = new Promise<void>((resolve) => {
@@ -508,13 +494,13 @@ describe("shared session navigation", () => {
       releaseSnapshot = resolve;
     });
 
-    const pending = navigation.switchToSession("message-session");
+    const pending = navigation.switchToTask("message-task");
     await snapshotStarted;
-    resetSessionUI();
-    state.awaitingNewSession = true;
+    resetTaskUI();
+    state.awaitingNewTask = true;
     handleEvent({
-      type: "session_created",
-      sessionId: "new-session",
+      type: "task_created",
+      taskId: "new-task",
       cwd: "/new",
       configOptions: [],
     });
@@ -523,7 +509,7 @@ describe("shared session navigation", () => {
         JSON.stringify({
           version: 1,
           seq: 77,
-          session: {},
+          task: {},
           runtime: { busy: { kind: "prompt" } },
         }),
         { status: 200 },
@@ -532,7 +518,7 @@ describe("shared session navigation", () => {
     const result = await pending;
 
     assert.equal(result, "ignored");
-    assert.equal(state.sessionId, "new-session");
+    assert.equal(state.taskId, "new-task");
     assert.equal(state.busy, false);
     assert.equal(state.lastStateSeq, 0);
   });
@@ -547,7 +533,7 @@ describe("shared session navigation", () => {
     assert.equal(
       fetchCalls.some(
         (call) =>
-          call.url === "/api/v1/sessions/bootstrap" &&
+          call.url === "/api/v1/tasks/bootstrap" &&
           call.init?.method === "POST",
       ),
       true,

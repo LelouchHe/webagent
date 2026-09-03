@@ -113,7 +113,7 @@ describe("connection", () => {
     snapshot: Record<string, unknown> = {
       version: 1,
       seq: 0,
-      session: {},
+      task: {},
       runtime: { busy: null },
     },
   ) {
@@ -161,7 +161,7 @@ describe("connection", () => {
     });
   }
 
-  function sessionResponse(id: string, overrides?: Record<string, unknown>) {
+  function taskResponse(id: string, overrides?: Record<string, unknown>) {
     return {
       id,
       cwd: "/tmp",
@@ -172,7 +172,7 @@ describe("connection", () => {
     };
   }
 
-  /** Flush microtask queue so fire-and-forget async (initSession) completes. */
+  /** Flush microtask queue so fire-and-forget async (initTask) completes. */
   async function flush(n = 30) {
     for (let i = 0; i < n; i++) await Promise.resolve();
   }
@@ -188,11 +188,11 @@ describe("connection", () => {
     assert.equal(dom.inboxCount.textContent, "(5)");
   });
 
-  it("resumes the session from the URL hash on connect", async () => {
-    history.replaceState(null, "", "/#hash-session");
-    let releaseSession!: () => void;
-    const sessionReady = new Promise<void>((resolve) => {
-      releaseSession = resolve;
+  it("resumes the task from the URL hash on connect", async () => {
+    history.replaceState(null, "", "/#hash-task");
+    let releaseTask!: () => void;
+    const taskReady = new Promise<void>((resolve) => {
+      releaseTask = resolve;
     });
     let releaseHistory!: () => void;
     const historyReady = new Promise<void>((resolve) => {
@@ -201,13 +201,13 @@ describe("connection", () => {
     setFetch(
       async (url: string) => {
         if (url.includes("/visibility")) return mockResponse({});
-        if (url === "/api/v1/sessions/hash-session") {
-          await sessionReady;
+        if (url === "/api/v1/tasks/hash-task") {
+          await taskReady;
           return mockResponse(
-            sessionResponse("hash-session", { cwdDisplay: "~/project" }),
+            taskResponse("hash-task", { cwdDisplay: "~/project" }),
           );
         }
-        if (url.startsWith("/api/v1/sessions/hash-session/events")) {
+        if (url.startsWith("/api/v1/tasks/hash-task/events")) {
           await historyReady;
           return mockResponse([
             {
@@ -227,7 +227,7 @@ describe("connection", () => {
       {
         version: 1,
         seq: 2,
-        session: {},
+        task: {},
         runtime: {
           busy: {
             kind: "agent",
@@ -244,37 +244,34 @@ describe("connection", () => {
     // Snapshot hydration must wait until metadata and history are complete.
     await flush();
     const snapshotStartedBeforeReplayFinished = fetchCalls.some(
-      (c) => c.url === "/api/v1/sessions/hash-session/snapshot",
+      (c) => c.url === "/api/v1/tasks/hash-task/snapshot",
     );
-    releaseSession();
+    releaseTask();
     releaseHistory();
     await flush();
     // SSE connected arrives — sets clientId only
     fireConnected(es, "cl-test");
 
     assert.equal(state.clientId, "cl-test");
-    assert.equal(state.sessionId, "hash-session");
-    assert.equal(state.sessionCwd, "/tmp");
-    assert.equal(state.sessionCwdDisplay, "~/project");
+    assert.equal(state.taskId, "hash-task");
+    assert.equal(state.taskCwd, "/tmp");
+    assert.equal(state.taskCwdDisplay, "~/project");
     const urls = fetchCalls.map((c) => c.url);
-    assert.ok(urls.some((u) => u === "/api/v1/sessions/hash-session"));
-    assert.ok(
-      urls.some((u) => u.startsWith("/api/v1/sessions/hash-session/events")),
-    );
+    assert.ok(urls.some((u) => u === "/api/v1/tasks/hash-task"));
+    assert.ok(urls.some((u) => u.startsWith("/api/v1/tasks/hash-task/events")));
     assert.equal(snapshotStartedBeforeReplayFinished, false);
     assert.ok(dom.messages.textContent.includes("restored"));
     assert.equal(state.lastEventSeq, 2);
     assert.equal(state.busy, true);
   });
 
-  it("resumes the most recent session when there is no hash and no Root", async () => {
+  it("resumes the most recent task when there is no hash and no Root", async () => {
     setFetch(async (url: string) => {
       if (url.includes("/visibility")) return mockResponse({});
-      if (url === "/api/v1/sessions")
-        return mockResponse([{ id: "recent-session" }]);
-      if (url === "/api/v1/sessions/recent-session")
-        return mockResponse(sessionResponse("recent-session"));
-      if (url.startsWith("/api/v1/sessions/recent-session/events"))
+      if (url === "/api/v1/tasks") return mockResponse([{ id: "recent-task" }]);
+      if (url === "/api/v1/tasks/recent-task")
+        return mockResponse(taskResponse("recent-task"));
+      if (url.startsWith("/api/v1/tasks/recent-task/events"))
         return mockResponse([]);
       throw new Error(`Unexpected fetch: ${url}`);
     });
@@ -283,59 +280,55 @@ describe("connection", () => {
     await flush();
 
     const urls = fetchCalls.map((c) => c.url);
-    assert.ok(urls.some((u) => u === "/api/v1/sessions"));
-    assert.ok(urls.some((u) => u === "/api/v1/sessions/recent-session"));
-    assert.equal(state.sessionId, "recent-session");
+    assert.ok(urls.some((u) => u === "/api/v1/tasks"));
+    assert.ok(urls.some((u) => u === "/api/v1/tasks/recent-task"));
+    assert.equal(state.taskId, "recent-task");
   });
 
   it("prefers Root when there is no hash", async () => {
     setFetch(async (url: string) => {
       if (url.includes("/visibility")) return mockResponse({});
-      if (url === "/api/v1/sessions")
-        return mockResponse([{ id: "recent-session" }, { id: "root" }]);
-      if (url === "/api/v1/sessions/root")
-        return mockResponse(sessionResponse("root"));
-      if (url.startsWith("/api/v1/sessions/root/events"))
-        return mockResponse([]);
+      if (url === "/api/v1/tasks")
+        return mockResponse([{ id: "recent-task" }, { id: "root" }]);
+      if (url === "/api/v1/tasks/root")
+        return mockResponse(taskResponse("root"));
+      if (url.startsWith("/api/v1/tasks/root/events")) return mockResponse([]);
       throw new Error(`Unexpected fetch: ${url}`);
     });
 
     connection.connect();
     await flush(30);
 
-    assert.equal(state.sessionId, "root");
+    assert.equal(state.taskId, "root");
     assert.equal(location.hash, "");
-    assert.ok(fetchCalls.some((call) => call.url === "/api/v1/sessions/root"));
+    assert.ok(fetchCalls.some((call) => call.url === "/api/v1/tasks/root"));
     assert.equal(
-      fetchCalls.some((call) => call.url === "/api/v1/sessions/recent-session"),
+      fetchCalls.some((call) => call.url === "/api/v1/tasks/recent-task"),
       false,
     );
   });
 
-  it("falls back to next existing session when hash session is expired", async () => {
-    history.replaceState(null, "", "/#expired-session");
+  it("falls back to next existing task when hash task is expired", async () => {
+    history.replaceState(null, "", "/#expired-task");
     setFetch(async (url: string, init?: RequestInit) => {
       if (url.includes("/visibility")) return mockResponse({});
-      // The expired session returns 404
-      if (url === "/api/v1/sessions/expired-session")
+      // The expired task returns 404
+      if (url === "/api/v1/tasks/expired-task")
         return {
           ok: false,
           status: 404,
           json: async () => ({ error: "not found" }),
         };
-      if (url.startsWith("/api/v1/sessions/expired-session/events"))
+      if (url.startsWith("/api/v1/tasks/expired-task/events"))
         return mockResponse([]);
-      // listSessions returns another available session
-      if (
-        url === "/api/v1/sessions" &&
-        (!init?.method || init.method === "GET")
-      )
-        return mockResponse([{ id: "fallback-session" }]);
-      if (url === "/api/v1/sessions/fallback-session")
+      // listTasks returns another available task
+      if (url === "/api/v1/tasks" && (!init?.method || init.method === "GET"))
+        return mockResponse([{ id: "fallback-task" }]);
+      if (url === "/api/v1/tasks/fallback-task")
         return mockResponse(
-          sessionResponse("fallback-session", { title: "Fallback" }),
+          taskResponse("fallback-task", { title: "Fallback" }),
         );
-      if (url.startsWith("/api/v1/sessions/fallback-session/events"))
+      if (url.startsWith("/api/v1/tasks/fallback-task/events"))
         return mockResponse([]);
       throw new Error(`Unexpected fetch: ${url} ${init?.method}`);
     });
@@ -343,30 +336,27 @@ describe("connection", () => {
     connection.connect();
     await flush(30);
 
-    // Should have switched to the fallback session, not created a new one
-    assert.equal(state.sessionId, "fallback-session");
-    assert.equal(state.awaitingNewSession, false);
+    // Should have switched to the fallback task, not created a new one
+    assert.equal(state.taskId, "fallback-task");
+    assert.equal(state.awaitingNewTask, false);
   });
 
-  it("creates new session when hash session is expired and no other sessions exist", async () => {
-    history.replaceState(null, "", "/#expired-session");
+  it("creates new task when hash task is expired and no other tasks exist", async () => {
+    history.replaceState(null, "", "/#expired-task");
     setFetch(async (url: string, init?: RequestInit) => {
       if (url.includes("/visibility")) return mockResponse({});
-      if (url === "/api/v1/sessions/expired-session")
+      if (url === "/api/v1/tasks/expired-task")
         return {
           ok: false,
           status: 404,
           json: async () => ({ error: "not found" }),
         };
-      if (url.startsWith("/api/v1/sessions/expired-session/events"))
+      if (url.startsWith("/api/v1/tasks/expired-task/events"))
         return mockResponse([]);
-      // No other sessions available
-      if (
-        url === "/api/v1/sessions" &&
-        (!init?.method || init.method === "GET")
-      )
+      // No other tasks available
+      if (url === "/api/v1/tasks" && (!init?.method || init.method === "GET"))
         return mockResponse([]);
-      if (url === "/api/v1/sessions/bootstrap" && init?.method === "POST")
+      if (url === "/api/v1/tasks/bootstrap" && init?.method === "POST")
         return mockResponse({ id: "new-1", created: true });
       throw new Error(`Unexpected fetch: ${url} ${init?.method}`);
     });
@@ -374,19 +364,16 @@ describe("connection", () => {
     connection.connect();
     await flush(30);
 
-    assert.equal(state.awaitingNewSession, false);
-    assert.equal(state.sessionId, "new-1");
+    assert.equal(state.awaitingNewTask, false);
+    assert.equal(state.taskId, "new-1");
   });
 
-  it("creates a new session when no previous session exists", async () => {
+  it("creates a new task when no previous task exists", async () => {
     setFetch(async (url: string, init?: RequestInit) => {
       if (url.includes("/visibility")) return mockResponse({});
-      if (
-        url === "/api/v1/sessions" &&
-        (!init?.method || init.method === "GET")
-      )
+      if (url === "/api/v1/tasks" && (!init?.method || init.method === "GET"))
         return mockResponse([]);
-      if (url === "/api/v1/sessions/bootstrap" && init?.method === "POST")
+      if (url === "/api/v1/tasks/bootstrap" && init?.method === "POST")
         return mockResponse({ id: "new-1", created: true });
       throw new Error(`Unexpected fetch: ${url} ${init?.method}`);
     });
@@ -394,12 +381,12 @@ describe("connection", () => {
     connection.connect();
     await flush();
 
-    assert.equal(state.awaitingNewSession, false);
-    assert.equal(state.sessionId, "new-1");
+    assert.equal(state.awaitingNewTask, false);
+    assert.equal(state.taskId, "new-1");
     assert.equal(
       fetchCalls.filter(
         (call) =>
-          call.url === "/api/v1/sessions/bootstrap" &&
+          call.url === "/api/v1/tasks/bootstrap" &&
           call.init?.method === "POST",
       ).length,
       1,
@@ -438,14 +425,14 @@ describe("connection", () => {
     );
   });
 
-  it("reconnects and resumes the current hash session after error", async () => {
-    history.replaceState(null, "", "/#restored-session");
+  it("reconnects and resumes the current hash task after error", async () => {
+    history.replaceState(null, "", "/#restored-task");
     let eventsFetchCount = 0;
     setFetch(async (url: string) => {
       if (url.includes("/visibility")) return mockResponse({});
-      if (url === "/api/v1/sessions/restored-session")
-        return mockResponse(sessionResponse("restored-session"));
-      if (url.includes("/api/v1/sessions/restored-session/events")) {
+      if (url === "/api/v1/tasks/restored-task")
+        return mockResponse(taskResponse("restored-task"));
+      if (url.includes("/api/v1/tasks/restored-task/events")) {
         eventsFetchCount++;
         if (eventsFetchCount === 1)
           return mockResponse([
@@ -466,10 +453,10 @@ describe("connection", () => {
       throw new Error(`Unexpected fetch: ${url}`);
     });
 
-    // First connect — initSession runs immediately
+    // First connect — initTask runs immediately
     connection.connect();
     await flush();
-    assert.equal(state.sessionId, "restored-session");
+    assert.equal(state.taskId, "restored-task");
     assert.equal(state.lastEventSeq, 1);
 
     // Disconnect
@@ -482,20 +469,20 @@ describe("connection", () => {
       [RECONNECT_DELAY_MS],
     );
 
-    // Reconnect — initSession runs immediately (incremental path).
+    // Reconnect — initTask runs immediately (incremental path).
     // Pick the reconnect timer by its cadence: request deadlines share the
     // same mocked setTimeout, so index 0 is no longer necessarily ours.
     timeoutFns[timeoutCalls.indexOf(RECONNECT_DELAY_MS)]();
     await flush();
 
     assert.equal(MockEventSource.instances.length, 2);
-    assert.equal(state.sessionId, "restored-session");
+    assert.equal(state.taskId, "restored-task");
     assert.equal(state.lastEventSeq, 2);
   });
 
-  it("uses incremental sync on reconnect when sessionId matches hash", async () => {
-    history.replaceState(null, "", "/#incr-session");
-    state.sessionId = "incr-session";
+  it("uses incremental sync on reconnect when taskId matches hash", async () => {
+    history.replaceState(null, "", "/#incr-task");
+    state.taskId = "incr-task";
     state.lastEventSeq = 2;
 
     const existingEl = globalThis.document.createElement("div");
@@ -511,9 +498,9 @@ describe("connection", () => {
 
     setFetch(async (url: string) => {
       if (url.includes("/visibility")) return mockResponse({});
-      if (url === "/api/v1/sessions/incr-session")
-        return mockResponse(sessionResponse("incr-session"));
-      if (url.includes("/api/v1/sessions/incr-session/events")) {
+      if (url === "/api/v1/tasks/incr-task")
+        return mockResponse(taskResponse("incr-task"));
+      if (url.includes("/api/v1/tasks/incr-task/events")) {
         assert.ok(
           url.includes("after=2"),
           `Expected after=2 in URL, got: ${url}`,
@@ -539,7 +526,7 @@ describe("connection", () => {
   });
 
   it("syncs missed events on visibilitychange hidden→visible", async () => {
-    state.sessionId = "vis-session";
+    state.taskId = "vis-task";
     state.clientId = "cl-vis";
     state.lastEventSeq = 3;
 
@@ -592,15 +579,15 @@ describe("connection", () => {
     assert.equal(state.lastEventSeq, 4);
   });
 
-  it("syncs a /new session whose events were never loaded from history", async () => {
-    // Regression: a session created via /new never calls loadHistory(), and
+  it("syncs a /new task whose events were never loaded from history", async () => {
+    // Regression: a task created via /new never calls loadHistory(), and
     // live SSE events do not advance state.lastEventSeq. The frontier
-    // therefore stays 0 for the whole session, which used to gate this
+    // therefore stays 0 for the whole task, which used to gate this
     // catch-up off entirely (`state.lastEventSeq > 0`) — the exact path most
     // users are on. after=0 is a valid catch-up request: the server returns
     // the full persisted transcript and _loadNewEventsImpl replays it from
     // sequence zero.
-    state.sessionId = "fresh-session";
+    state.taskId = "fresh-task";
     state.clientId = "cl-fresh";
     state.lastEventSeq = 0;
 
@@ -642,8 +629,8 @@ describe("connection", () => {
   });
 
   it("retries missed-event recovery after the reconnect shared a failed catch-up", async () => {
-    history.replaceState(null, "", "/#recover-session");
-    state.sessionId = "recover-session";
+    history.replaceState(null, "", "/#recover-task");
+    state.taskId = "recover-task";
     state.lastEventSeq = 0;
 
     let rejectFirstCatchUp!: (error: Error) => void;
@@ -653,9 +640,9 @@ describe("connection", () => {
     let eventsFetchCount = 0;
     setFetch(async (url: string) => {
       if (url.includes("/visibility")) return mockResponse({});
-      if (url === "/api/v1/sessions/recover-session")
-        return mockResponse(sessionResponse("recover-session"));
-      if (url.startsWith("/api/v1/sessions/recover-session/events")) {
+      if (url === "/api/v1/tasks/recover-task")
+        return mockResponse(taskResponse("recover-task"));
+      if (url.startsWith("/api/v1/tasks/recover-task/events")) {
         eventsFetchCount++;
         if (eventsFetchCount === 1) return firstCatchUp;
         return mockResponse([
@@ -687,8 +674,8 @@ describe("connection", () => {
   });
 
   it("runs a fresh catch-up after the reconnect shared a stale successful load", async () => {
-    history.replaceState(null, "", "/#stale-success-session");
-    state.sessionId = "stale-success-session";
+    history.replaceState(null, "", "/#stale-success-task");
+    state.taskId = "stale-success-task";
     state.lastEventSeq = 0;
 
     let releaseFirstCatchUp!: (response: MockResponse) => void;
@@ -698,9 +685,9 @@ describe("connection", () => {
     let eventsFetchCount = 0;
     setFetch(async (url: string) => {
       if (url.includes("/visibility")) return mockResponse({});
-      if (url === "/api/v1/sessions/stale-success-session")
-        return mockResponse(sessionResponse("stale-success-session"));
-      if (url.startsWith("/api/v1/sessions/stale-success-session/events")) {
+      if (url === "/api/v1/tasks/stale-success-task")
+        return mockResponse(taskResponse("stale-success-task"));
+      if (url.startsWith("/api/v1/tasks/stale-success-task/events")) {
         eventsFetchCount++;
         if (eventsFetchCount === 1) return firstCatchUp;
         return mockResponse([
@@ -732,15 +719,15 @@ describe("connection", () => {
   });
 
   it("reconciles replayed pending tools after an idle handshake snapshot", async () => {
-    history.replaceState(null, "", "/#idle-tool-session");
-    state.sessionId = "idle-tool-session";
+    history.replaceState(null, "", "/#idle-tool-task");
+    state.taskId = "idle-tool-task";
     state.lastEventSeq = 0;
 
     setFetch(async (url: string) => {
       if (url.includes("/visibility")) return mockResponse({});
-      if (url === "/api/v1/sessions/idle-tool-session")
-        return mockResponse(sessionResponse("idle-tool-session"));
-      if (url.startsWith("/api/v1/sessions/idle-tool-session/events")) {
+      if (url === "/api/v1/tasks/idle-tool-task")
+        return mockResponse(taskResponse("idle-tool-task"));
+      if (url.startsWith("/api/v1/tasks/idle-tool-task/events")) {
         if (url.includes("after=0")) {
           return mockResponse([
             {
@@ -907,7 +894,7 @@ describe("connection", () => {
           return mockResponse({
             version: 1,
             seq: 0,
-            session: {},
+            task: {},
             runtime: { busy: null },
           });
         return mockResponse([]);
@@ -933,21 +920,21 @@ describe("connection", () => {
     });
   });
 
-  it("aborts session resume when sessionSwitchGen changes mid-flight", async () => {
-    history.replaceState(null, "", "/#session-a");
+  it("aborts task resume when taskSwitchGen changes mid-flight", async () => {
+    history.replaceState(null, "", "/#task-a");
 
-    let resolveSessionA!: () => void;
-    const sessionADeferred = new Promise<void>((r) => {
-      resolveSessionA = r;
+    let resolveTaskA!: () => void;
+    const taskADeferred = new Promise<void>((r) => {
+      resolveTaskA = r;
     });
 
     setFetch(async (url: string) => {
       if (url.includes("/visibility")) return mockResponse({});
-      if (url === "/api/v1/sessions/session-a") {
-        await sessionADeferred;
-        return mockResponse(sessionResponse("session-a"));
+      if (url === "/api/v1/tasks/task-a") {
+        await taskADeferred;
+        return mockResponse(taskResponse("task-a"));
       }
-      if (url.startsWith("/api/v1/sessions/session-a/events"))
+      if (url.startsWith("/api/v1/tasks/task-a/events"))
         return mockResponse([]);
       throw new Error(`Unexpected fetch: ${url}`);
     });
@@ -955,20 +942,20 @@ describe("connection", () => {
     connection.connect();
     await flush(5);
 
-    // Simulate a user-initiated session switch (notification click, /switch)
-    state.sessionSwitchGen++;
+    // Simulate a user-initiated task switch (notification click, /switch)
+    state.taskSwitchGen++;
 
-    // Let the stale session-a fetch resolve
-    resolveSessionA();
+    // Let the stale task-a fetch resolve
+    resolveTaskA();
     await flush();
 
-    // The stale initSession should have aborted — session-a NOT activated
-    assert.notEqual(state.sessionId, "session-a");
+    // The stale initTask should have aborted — task-a NOT activated
+    assert.notEqual(state.taskId, "task-a");
   });
 
   it("skips DOM changes when no new events on incremental reconnect", async () => {
-    history.replaceState(null, "", "/#idle-session");
-    state.sessionId = "idle-session";
+    history.replaceState(null, "", "/#idle-task");
+    state.taskId = "idle-task";
     state.lastEventSeq = 5;
 
     const existingEl = globalThis.document.createElement("div");
@@ -979,9 +966,9 @@ describe("connection", () => {
 
     setFetch(async (url: string) => {
       if (url.includes("/visibility")) return mockResponse({});
-      if (url === "/api/v1/sessions/idle-session")
-        return mockResponse(sessionResponse("idle-session"));
-      if (url.includes("/api/v1/sessions/idle-session/events"))
+      if (url === "/api/v1/tasks/idle-task")
+        return mockResponse(taskResponse("idle-task"));
+      if (url.includes("/api/v1/tasks/idle-task/events"))
         return mockResponse([]);
       throw new Error(`Unexpected fetch: ${url}`);
     });
@@ -995,12 +982,12 @@ describe("connection", () => {
   });
 
   it("passes bridge connected event (with agent) through to handleEvent", async () => {
-    history.replaceState(null, "", "/#reload-session");
+    history.replaceState(null, "", "/#reload-task");
     setFetch(async (url: string) => {
       if (url.includes("/visibility")) return mockResponse({});
-      if (url === "/api/v1/sessions/reload-session")
-        return mockResponse(sessionResponse("reload-session"));
-      if (url.startsWith("/api/v1/sessions/reload-session/events"))
+      if (url === "/api/v1/tasks/reload-task")
+        return mockResponse(taskResponse("reload-task"));
+      if (url.startsWith("/api/v1/tasks/reload-task/events"))
         return mockResponse([]);
       throw new Error(`Unexpected fetch: ${url}`);
     });

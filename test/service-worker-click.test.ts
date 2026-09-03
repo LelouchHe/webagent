@@ -68,11 +68,11 @@ describe("service worker notification click routing", () => {
     await pending[0];
   }
 
-  it("opens a session hash when a session notification has no window", async () => {
+  it("opens a task hash when a task notification has no window", async () => {
     clients.length = 0;
     openedUrls.length = 0;
 
-    await click({ sessionId: "s1" });
+    await click({ taskId: "s1" });
 
     assert.deepEqual(openedUrls, ["/#s1"]);
   });

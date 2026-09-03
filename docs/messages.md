@@ -11,13 +11,13 @@ Endpoint-level contract and schemas: [API Reference → Inbox (Messages Primitiv
 An ACP agent's prompt stream is a conversation between one user and one model. It is not suitable for:
 
 - **Unsolicited, asynchronous events** (a backup just failed; a long-running build just finished; a teammate mentioned you)
-- **Cross-session routing** (this belongs in project X's session, not the one I'm currently typing in)
+- **Cross-task routing** (this belongs in project X's task, not the one I'm currently typing in)
 - **Senders without LLM access** (a bash cron job can't form a good follow-up prompt; it can only describe what happened)
 
 The inbox addresses all three:
 
 - Messages live in a separate `messages` table until the user decides what to do with them.
-- Each message declares its target — either `user` (unbound) or a specific session (bound).
+- Each message declares its target — either `user` (unbound) or a specific task (bound).
 - The payload is plain `title` / `body`; the user frames the follow-up prompt themselves.
 
 It is deliberately **not** an auto-inject mechanism. Nothing a cron job sends ever goes into an agent prompt without an explicit user action.
@@ -30,8 +30,8 @@ Two shapes on ingress:
 
 | Mode        | `to` field       | Behavior                                                                                                                                                                     |
 | ----------- | ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Unbound** | `"user"`         | Message goes into the inbox. User opens `/inbox`, picks it, and either **consume** (creates a new session, cwd inherited if provided) or **ack** (dismiss without engaging). |
-| **Bound**   | `"session:<id>"` | Message is appended as a `message` event directly to the target session's event stream. No inbox hop. Unknown session id → `400`.                                            |
+| **Unbound** | `"user"`         | Message goes into the inbox. User opens `/inbox`, picks it, and either **consume** (creates a new task, cwd inherited if provided) or **ack** (dismiss without engaging). |
+| **Bound**   | `"task:<id>"` | Message is appended as a `message` event directly to the target task's event stream. No inbox hop. Unknown task id → `400`.                                            |
 
 Supersede (optional): pass `dedup_key`. A new unbound message with the same `(to, dedup_key)` pair replaces any older unprocessed row. Useful for "build status" style pings where only the latest matters.
 
@@ -48,7 +48,7 @@ Every message must declare its origin. Enforced by regex in `src/types.ts`:
 - `cron:<name>` — scheduled local jobs (e.g. `cron:nightly-backup`)
 - `external:<label>` — other one-off integrations (e.g. `external:gh-webhook`, `external:copilot-cli-dogfood`)
 
-Reserved strings (`agent`, `user`, `system`) and `session:<id>` are rejected. This keeps server-emitted events and user input distinguishable from ingress messages throughout the data path (`from_ref` survives in the stored event; the UI displays the label accordingly).
+Reserved strings (`agent`, `user`, `system`) and `task:<id>` are rejected. This keeps server-emitted events and user input distinguishable from ingress messages throughout the data path (`from_ref` survives in the stored event; the UI displays the label accordingly).
 
 ---
 
@@ -67,7 +67,7 @@ Reserved strings (`agent`, `user`, `system`) and `session:<id>` are rejected. Th
                                        ack  ◀───┘           └───▶  consume
                                         │                           │
                                         ▼                           ▼
-                         row deleted                    session created
+                         row deleted                    task created
                          SSE message_acked              message event appended
                          push close sent                row deleted
                                                         SSE message_consumed
@@ -77,11 +77,11 @@ Every pending-row mutation also broadcasts the authoritative global
 `inbox_count_changed` event. TTL cleanup uses the same event when it removes
 expired rows.
 
-Bound path (to:"session:<id>") skips the inbox entirely:
-external tool → POST → message event on target session → session SSE + push
+Bound path (to:"task:<id>") skips the inbox entirely:
+external tool → POST → message event on target task → task SSE + push
 ```
 
-Messages are physically deleted on ack/consume (no soft-delete). Historical record lives in the owning session's `message` event once consumed; ack leaves no trace.
+Messages are physically deleted on ack/consume (no soft-delete). Historical record lives in the owning task's `message` event once consumed; ack leaves no trace.
 
 ---
 
@@ -96,7 +96,7 @@ logo/count button opens the `/inbox` picker.
 The SSE `connected` handshake supplies the initial `pendingCount`, so startup
 does not fetch message bodies. Later create, consume, dismiss, and TTL cleanup
 operations broadcast a global `inbox_count_changed` event with the
-authoritative post-mutation count. Global delivery bypasses per-session SSE
+authoritative post-mutation count. Global delivery bypasses per-task SSE
 filtering, keeping every connected client in sync. Inbox lifecycle events no
 longer add informational rows to the active conversation.
 
@@ -109,7 +109,7 @@ Title                                         HH:MM
 /cwd/left-ellipsed                            from
 ```
 
-- **Default action (click / Tab+Enter):** consume → creates session + switches the UI; model and reasoning effort follow the same inheritance rules as `/new`, while mode resets to the agent default
+- **Default action (click / Tab+Enter):** consume → creates task + switches the UI; model and reasoning effort follow the same inheritance rules as `/new`, while mode resets to the agent default
 - **Dismiss:** drill into the `/inbox dismiss` submenu (type `/inbox dismiss`, or Tab on the `dismiss` row) and pick a message there — same list, but selecting acks instead of consuming
 - **Tab on a message row:** fills `/inbox <title>` into the input so the command is visible before you press Enter
 
@@ -121,9 +121,9 @@ kept in frontend state.
 
 ### Push notifications
 
-Unbound messages fire a web-push with tag `msg-<id>`. Clicking the banner consumes the message, creates its ACP-backed session with the same inheritance rules as `/new`, and switches to it. An open app receives the message ID from the service worker; a closed app opens with `?message=<id>` and processes the same flow after startup. Acking or consuming fires a silent `sendClose("msg-<id>")` so stale banners on other devices disappear.
+Unbound messages fire a web-push with tag `msg-<id>`. Clicking the banner consumes the message, creates its ACP-backed task with the same inheritance rules as `/new`, and switches to it. An open app receives the message ID from the service worker; a closed app opens with `?message=<id>` and processes the same flow after startup. Acking or consuming fires a silent `sendClose("msg-<id>")` so stale banners on other devices disappear.
 
-For bound messages the push tag is the owning session's event tag (`sess-<sid>-...`) and clicking routes to that session directly (`data.sessionId` set on send).
+For bound messages the push tag is the owning task's event tag (`sess-<sid>-...`) and clicking routes to that task directly (`data.taskId` set on send).
 
 ---
 
@@ -145,15 +145,15 @@ if ! rsync -a "$SRC" "$DEST"; then
 fi
 ```
 
-### 2. Route to a specific project session
+### 2. Route to a specific project task
 
 ```bash
-# Append a tool-result style message into an existing long-lived session.
+# Append a tool-result style message into an existing long-lived task.
 curl -s -X POST http://localhost:6800/api/v1/messages \
   -H "Content-Type: application/json" \
   -d '{
     "from_ref": "external:gh-action",
-    "to": "session:2b7f9e1a-...",
+    "to": "task:2b7f9e1a-...",
     "title": "Build #423 passed",
     "body": "All 1516 tests green. Artifacts: ..."
   }'
@@ -176,7 +176,7 @@ curl -s -X POST http://localhost:6800/api/v1/messages \
 
 ### 4. Idempotent retries
 
-Pass `X-Client-Op-Id: <uuid>`; repeated requests return the same message id (response is cached under the reserved `__ingress__` session key).
+Pass `X-Client-Op-Id: <uuid>`; repeated requests return the same message id (response is cached under the reserved `__ingress__` task key).
 
 ---
 
@@ -185,7 +185,7 @@ Pass `X-Client-Op-Id: <uuid>`; repeated requests return the same message id (res
 - **No `prompt` field.** An earlier design had senders pre-populate a follow-up prompt for the user. Dropped: senders without LLM access can't reliably predict phrasing, and users compose better prompts after reading `body`. The DB column is retained for forward-compat but the API neither reads nor writes it.
 - **Plain text only.** `body` is displayed verbatim; no markdown rendering, no image attach via the ingress path. The main chat supports those, but inbox content stays deliberately simple.
 - **Local by design.** There is no auth on `/api/v1/messages` today — WebAgent is expected to listen on localhost or behind a trusted reverse proxy. Do not expose the ingress endpoint publicly without adding auth.
-- **Browser push only.** Notification delivery piggybacks on the same `web-push` / VAPID stack as session push (see [API → Push Notifications](api.md#push-notifications)). Other transports would need separate plumbing.
+- **Browser push only.** Notification delivery piggybacks on the same `web-push` / VAPID stack as task push (see [API → Push Notifications](api.md#push-notifications)). Other transports would need separate plumbing.
 
 ---
 
@@ -196,7 +196,7 @@ Pass `X-Client-Op-Id: <uuid>`; repeated requests return the same message id (res
 | Zod schema, `from_ref` regex                                             | `src/types.ts` (`MessageIngressSchema`)                                                                         |
 | REST routes (`POST`, `GET`, `consume`, `ack`)                            | `src/routes.ts`                                                                                                 |
 | DB operations (`consumeMessageTx`, `findBySupersede`, `deleteOlderThan`) | `src/store.ts`                                                                                                  |
-| Push tag derivation, `session:<id>` routing                              | `src/push-service.ts` (`sendForMessage`, `tagToTopic`)                                                          |
+| Push tag derivation, `task:<id>` routing                              | `src/push-service.ts` (`sendForMessage`, `tagToTopic`)                                                          |
 | Inbox slash tree (`/inbox`, `/inbox dismiss`) + actions              | `public/js/slash-commands.ts` (`listInbox`, `consumeInbox`, `ackInbox`)                                         |
 | Direct `/inbox <q>` and `/inbox dismiss <q>` execution                   | `public/js/slash-exec.ts`                                                                                       |
 | Menu walking, Tab/Click dispatch, rendering                              | `public/js/commands.ts`, `public/js/slash-tree.ts`, `public/js/slash-render.ts`                                 |

@@ -40,9 +40,9 @@ describe("sse lifecycle logging", () => {
     setLogLevel(previousLevel as "off");
   });
 
-  it("records a connect with the client and session it belongs to", () => {
+  it("records a connect with the client and task it belongs to", () => {
     const mgr = new SseManager();
-    mgr.add({ id: "cl-1", res: fakeRes(), sessionId: "s-9" });
+    mgr.add({ id: "cl-1", res: fakeRes(), taskId: "s-9" });
 
     const line = lines.find((l) => l.includes("connected"));
     assert.ok(line, "connect must be logged");
@@ -62,7 +62,7 @@ describe("sse lifecycle logging", () => {
     };
     mgr.sendEvent({ id: "cl-2", res }, {
       type: "prompt_done",
-      sessionId: "s-9",
+      taskId: "s-9",
     } as never);
 
     const line = lines.find((l) => l.includes("disconnected"));

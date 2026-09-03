@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Store } from "../src/store.ts";
 import { AttachmentDispatcher } from "../src/attachment-dispatch.ts";
-import { resolveSessionsAnchor } from "../src/sessions-anchor.ts";
+import { resolveTasksAnchor } from "../src/tasks-anchor.ts";
 
 let dataDir: string;
 let store: Store;
@@ -16,14 +16,14 @@ const warnings: string[] = [];
 before(() => {
   dataDir = mkdtempSync(join(tmpdir(), "dispatch-"));
   store = new Store(dataDir, "test-agent");
-  anchor = resolveSessionsAnchor(dataDir);
+  anchor = resolveTasksAnchor(dataDir);
   dispatcher = new AttachmentDispatcher(store, anchor, {
     warn: (msg) => warnings.push(msg),
   });
 
-  // Two real sessions with one attachment each on disk.
-  store.createSession("s1", dataDir);
-  store.createSession("s2", dataDir);
+  // Two real tasks with one attachment each on disk.
+  store.createTask("s1", dataDir);
+  store.createTask("s2", dataDir);
 
   for (const sid of ["s1", "s2"]) {
     const dir = join(anchor, sid, "attachments");
@@ -32,7 +32,7 @@ before(() => {
     writeFileSync(realpath, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
     store.insertAttachment({
       id: `${sid}-img`,
-      sessionId: sid,
+      taskId: sid,
       kind: "image",
       name: "tiny.png",
       mime: "image/png",
@@ -43,7 +43,7 @@ before(() => {
     writeFileSync(filePath, Buffer.from("%PDF-1.4 fake"));
     store.insertAttachment({
       id: `${sid}-doc`,
-      sessionId: sid,
+      taskId: sid,
       kind: "file",
       name: "notes.pdf",
       mime: "application/pdf",
@@ -104,9 +104,9 @@ describe("AttachmentDispatcher", () => {
     assert.ok(warnings.some((w) => w.includes("row_not_found")));
   });
 
-  it("cross-session reference (s1's id used for s2) falls back to text", async () => {
+  it("cross-task reference (s1's id used for s2) falls back to text", async () => {
     warnings.length = 0;
-    // Looking up s1-img under sessionId=s2 — store scopes by session_id so
+    // Looking up s1-img under taskId=s2 — store scopes by task_id so
     // this should miss with row_not_found.
     const block = await dispatcher.dispatch("s2", {
       kind: "image",
@@ -145,7 +145,7 @@ describe("AttachmentDispatcher", () => {
     writeFileSync(escapeFile, Buffer.from([1, 2, 3]));
     store.insertAttachment({
       id: "escapee",
-      sessionId: "s1",
+      taskId: "s1",
       kind: "image",
       name: "escape.png",
       mime: "image/png",
@@ -169,7 +169,7 @@ describe("AttachmentDispatcher", () => {
     const ghost = join(anchor, "s1", "attachments", "ghost.png");
     store.insertAttachment({
       id: "ghost",
-      sessionId: "s1",
+      taskId: "s1",
       kind: "image",
       name: "ghost.png",
       mime: "image/png",

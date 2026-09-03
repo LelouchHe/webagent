@@ -1,27 +1,27 @@
 import { test, expect } from "playwright/test";
-import { currentSessionId, expectConnectionStatus } from "./helpers.ts";
+import { currentTaskId, expectConnectionStatus } from "./helpers.ts";
 
-test("concurrent clients converge on the shared Root session without creating one", async ({
+test("concurrent clients converge on the shared Root task without creating one", async ({
   context,
   request,
 }) => {
-  const sessionPosts: string[] = [];
+  const taskPosts: string[] = [];
   context.on("request", (browserRequest) => {
     if (
       browserRequest.method() === "POST" &&
-      browserRequest.url().includes("/api/v1/sessions")
+      browserRequest.url().includes("/api/v1/tasks")
     ) {
-      sessionPosts.push(new URL(browserRequest.url()).pathname);
+      taskPosts.push(new URL(browserRequest.url()).pathname);
     }
   });
   const existing = (await (
-    await request.get("/api/v1/sessions")
+    await request.get("/api/v1/tasks")
   ).json()) as Array<{
     id: string;
   }>;
-  for (const session of existing) {
-    if (session.id === "root") continue;
-    const response = await request.delete(`/api/v1/sessions/${session.id}`);
+  for (const task of existing) {
+    if (task.id === "root") continue;
+    const response = await request.delete(`/api/v1/tasks/${task.id}`);
     expect(response.ok()).toBe(true);
   }
 
@@ -38,17 +38,13 @@ test("concurrent clients converge on the shared Root session without creating on
     pages.map((page) => expect(page.locator("#input")).toBeEnabled()),
   );
 
-  const sessionIds = await Promise.all(
-    pages.map((page) => currentSessionId(page)),
-  );
-  expect(new Set(sessionIds).size).toBe(1);
-  expect(sessionIds[0]).toBe("root");
-  expect(sessionPosts).toEqual([]);
+  const taskIds = await Promise.all(pages.map((page) => currentTaskId(page)));
+  expect(new Set(taskIds).size).toBe(1);
+  expect(taskIds[0]).toBe("root");
+  expect(taskPosts).toEqual([]);
 
-  const sessions = (await (
-    await request.get("/api/v1/sessions")
-  ).json()) as Array<{
+  const tasks = (await (await request.get("/api/v1/tasks")).json()) as Array<{
     id: string;
   }>;
-  expect(sessions.map((session) => session.id)).toEqual(["root"]);
+  expect(tasks.map((task) => task.id)).toEqual(["root"]);
 });

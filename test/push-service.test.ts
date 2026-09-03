@@ -113,7 +113,7 @@ describe("PushService", () => {
   let registry: ClientRegistry;
 
   // Helper: post-Plan-C, push-service's visibility was demolished. Tests that
-  // exercise hasVisibleClient / isEndpointVisible / isSessionVisibleToAnyClient
+  // exercise hasVisibleClient / isEndpointVisible / isTaskVisibleToAnyClient
   // need to push state into the registry; auto-register on first encounter so
   // setVisibility (which no-ops on unknown clients) takes effect.
   function visBoth(
@@ -199,8 +199,8 @@ describe("PushService", () => {
         clientRegistry: registry,
       });
       const n = svc.formatNotification(
-        "session-1",
-        "My Session",
+        "task-1",
+        "My Task",
         "permission_request",
         {
           description: "Execute rm -rf node_modules",
@@ -208,10 +208,10 @@ describe("PushService", () => {
         "test-tag",
       );
       if (n.kind !== "notify") throw new Error("unreachable");
-      assert.equal(n.title, "My Session");
+      assert.equal(n.title, "My Task");
       assert.ok(n.body.includes("⚿"));
       assert.ok(n.body.includes("Execute rm -rf node_modules"));
-      assert.equal(n.data.sessionId, "session-1");
+      assert.equal(n.data.taskId, "task-1");
     });
 
     it("formats prompt_done notification", () => {
@@ -248,7 +248,7 @@ describe("PushService", () => {
       assert.ok(n.body.includes("npm run build"));
     });
 
-    it("uses fallback title when session title is null", () => {
+    it("uses fallback title when task title is null", () => {
       const svc = new PushService(store, tmpDir, "mailto:test@localhost", {
         clientRegistry: registry,
       });
@@ -364,39 +364,39 @@ describe("PushService", () => {
     });
   });
 
-  describe("global session visibility (isSessionVisibleToAnyClient)", () => {
-    it("returns true when a visible client is viewing the session", () => {
+  describe("global task visibility (isTaskVisibleToAnyClient)", () => {
+    it("returns true when a visible client is viewing the task", () => {
       const svc = new PushService(store, tmpDir, "mailto:test@localhost", {
         clientRegistry: registry,
       });
       svc.registerClient("cl-1", "https://push.example.com/1");
       visBoth(svc, registry, "cl-1", { visible: true });
-      visBoth(svc, registry, "cl-1", { active: "session-A" });
+      visBoth(svc, registry, "cl-1", { active: "task-A" });
 
-      assert.equal(svc.isSessionVisibleToAnyClient("session-A"), true);
-      assert.equal(svc.isSessionVisibleToAnyClient("session-B"), false);
+      assert.equal(svc.isTaskVisibleToAnyClient("task-A"), true);
+      assert.equal(svc.isTaskVisibleToAnyClient("task-B"), false);
     });
 
-    it("client with no session does not suppress any session", () => {
+    it("client with no task does not suppress any task", () => {
       const svc = new PushService(store, tmpDir, "mailto:test@localhost", {
         clientRegistry: registry,
       });
       svc.registerClient("cl-1", "https://push.example.com/1");
       visBoth(svc, registry, "cl-1", { visible: true });
-      // No setClientSession call
+      // No setClientTask call
 
-      assert.equal(svc.isSessionVisibleToAnyClient("session-A"), false);
+      assert.equal(svc.isTaskVisibleToAnyClient("task-A"), false);
     });
 
-    it("hidden client does not suppress even for its own session", () => {
+    it("hidden client does not suppress even for its own task", () => {
       const svc = new PushService(store, tmpDir, "mailto:test@localhost", {
         clientRegistry: registry,
       });
       svc.registerClient("cl-1", "https://push.example.com/1");
       visBoth(svc, registry, "cl-1", { visible: false });
-      visBoth(svc, registry, "cl-1", { active: "session-A" });
+      visBoth(svc, registry, "cl-1", { active: "task-A" });
 
-      assert.equal(svc.isSessionVisibleToAnyClient("session-A"), false);
+      assert.equal(svc.isTaskVisibleToAnyClient("task-A"), false);
     });
 
     it("two clients on different endpoints — one viewing suppresses globally", () => {
@@ -407,14 +407,14 @@ describe("PushService", () => {
       svc.registerClient("cl-2", "https://push.example.com/phone");
       visBoth(svc, registry, "cl-1", { visible: true });
       visBoth(svc, registry, "cl-2", { visible: false });
-      visBoth(svc, registry, "cl-1", { active: "session-A" });
+      visBoth(svc, registry, "cl-1", { active: "task-A" });
 
-      // Desktop viewing session-A → globally visible
-      assert.equal(svc.isSessionVisibleToAnyClient("session-A"), true);
-      assert.equal(svc.isSessionVisibleToAnyClient("session-B"), false);
+      // Desktop viewing task-A → globally visible
+      assert.equal(svc.isTaskVisibleToAnyClient("task-A"), true);
+      assert.equal(svc.isTaskVisibleToAnyClient("task-B"), false);
     });
 
-    it("two clients viewing different sessions — each suppresses its own", () => {
+    it("two clients viewing different tasks — each suppresses its own", () => {
       const svc = new PushService(store, tmpDir, "mailto:test@localhost", {
         clientRegistry: registry,
       });
@@ -422,42 +422,42 @@ describe("PushService", () => {
       svc.registerClient("cl-2", "https://push.example.com/shared");
       visBoth(svc, registry, "cl-1", { visible: true });
       visBoth(svc, registry, "cl-2", { visible: true });
-      visBoth(svc, registry, "cl-1", { active: "session-A" });
-      visBoth(svc, registry, "cl-2", { active: "session-B" });
+      visBoth(svc, registry, "cl-1", { active: "task-A" });
+      visBoth(svc, registry, "cl-2", { active: "task-B" });
 
-      assert.equal(svc.isSessionVisibleToAnyClient("session-A"), true);
-      assert.equal(svc.isSessionVisibleToAnyClient("session-B"), true);
-      assert.equal(svc.isSessionVisibleToAnyClient("session-C"), false);
+      assert.equal(svc.isTaskVisibleToAnyClient("task-A"), true);
+      assert.equal(svc.isTaskVisibleToAnyClient("task-B"), true);
+      assert.equal(svc.isTaskVisibleToAnyClient("task-C"), false);
     });
 
-    it("removeClient clears session mapping", () => {
+    it("removeClient clears task mapping", () => {
       const svc = new PushService(store, tmpDir, "mailto:test@localhost", {
         clientRegistry: registry,
       });
       svc.registerClient("cl-1", "https://push.example.com/1");
       visBoth(svc, registry, "cl-1", { visible: true });
-      visBoth(svc, registry, "cl-1", { active: "session-A" });
-      assert.equal(svc.isSessionVisibleToAnyClient("session-A"), true);
+      visBoth(svc, registry, "cl-1", { active: "task-A" });
+      assert.equal(svc.isTaskVisibleToAnyClient("task-A"), true);
 
       svc.removeClient("cl-1");
-      assert.equal(svc.isSessionVisibleToAnyClient("session-A"), false);
+      assert.equal(svc.isTaskVisibleToAnyClient("task-A"), false);
     });
 
-    it("session switch updates which session is suppressed", () => {
+    it("task switch updates which task is suppressed", () => {
       const svc = new PushService(store, tmpDir, "mailto:test@localhost", {
         clientRegistry: registry,
       });
       svc.registerClient("cl-1", "https://push.example.com/1");
       visBoth(svc, registry, "cl-1", { visible: true });
-      visBoth(svc, registry, "cl-1", { active: "session-A" });
+      visBoth(svc, registry, "cl-1", { active: "task-A" });
 
-      assert.equal(svc.isSessionVisibleToAnyClient("session-A"), true);
-      assert.equal(svc.isSessionVisibleToAnyClient("session-B"), false);
+      assert.equal(svc.isTaskVisibleToAnyClient("task-A"), true);
+      assert.equal(svc.isTaskVisibleToAnyClient("task-B"), false);
 
-      // User switches to session B
-      visBoth(svc, registry, "cl-1", { active: "session-B" });
-      assert.equal(svc.isSessionVisibleToAnyClient("session-A"), false);
-      assert.equal(svc.isSessionVisibleToAnyClient("session-B"), true);
+      // User switches to task B
+      visBoth(svc, registry, "cl-1", { active: "task-B" });
+      assert.equal(svc.isTaskVisibleToAnyClient("task-A"), false);
+      assert.equal(svc.isTaskVisibleToAnyClient("task-B"), true);
     });
   });
 
@@ -526,7 +526,7 @@ describe("PushService", () => {
         title: "T",
         body: "B",
         tag: "test",
-        data: { sessionId: "s1" },
+        data: { taskId: "s1" },
       };
 
       // Failures 1-4: subscription should still exist
@@ -558,7 +558,7 @@ describe("PushService", () => {
         title: "T",
         body: "B",
         tag: "test",
-        data: { sessionId: "s1" },
+        data: { taskId: "s1" },
       };
 
       // 4 failures
@@ -596,7 +596,7 @@ describe("PushService", () => {
         title: "T",
         body: "B",
         tag: "test",
-        data: { sessionId: "s1" },
+        data: { taskId: "s1" },
       };
       await svc.sendToAll(notification);
 
@@ -607,17 +607,17 @@ describe("PushService", () => {
       );
     });
 
-    it("suppresses all endpoints when any client views the session", async () => {
+    it("suppresses all endpoints when any client views the task", async () => {
       const svc = new TestPushService(store, tmpDir, "mailto:test@localhost", {
         clientRegistry: registry,
       });
       store.saveSubscription("https://push.example.com/desktop", "a", "b");
       store.saveSubscription("https://push.example.com/phone", "c", "d");
 
-      // Desktop client is visible, viewing session-A
+      // Desktop client is visible, viewing task-A
       svc.registerClient("cl-1", "https://push.example.com/desktop");
       visBoth(svc, registry, "cl-1", { visible: true });
-      visBoth(svc, registry, "cl-1", { active: "session-A" });
+      visBoth(svc, registry, "cl-1", { active: "task-A" });
 
       svc.outcomes.set("https://push.example.com/desktop", "ok");
       svc.outcomes.set("https://push.example.com/phone", "ok");
@@ -630,44 +630,44 @@ describe("PushService", () => {
         return realSendOne.call(svc, sub, payload);
       };
 
-      // Notification for session-A — ALL endpoints suppressed (user is viewing it on desktop)
+      // Notification for task-A — ALL endpoints suppressed (user is viewing it on desktop)
       await svc.sendToAll({
         kind: "notify" as const,
         title: "T",
         body: "B",
         tag: "test",
-        data: { sessionId: "session-A" },
+        data: { taskId: "task-A" },
       });
       assert.deepEqual(
         sent,
         [],
-        "should suppress all endpoints for session-A (global visibility)",
+        "should suppress all endpoints for task-A (global visibility)",
       );
 
-      // Notification for session-B — both endpoints should fire (no one is viewing it)
+      // Notification for task-B — both endpoints should fire (no one is viewing it)
       sent.length = 0;
       await svc.sendToAll({
         kind: "notify" as const,
         title: "T",
         body: "B",
         tag: "test",
-        data: { sessionId: "session-B" },
+        data: { taskId: "task-B" },
       });
       assert.deepEqual(
         sent.sort(),
         ["https://push.example.com/desktop", "https://push.example.com/phone"],
-        "should send to both for session-B",
+        "should send to both for task-B",
       );
     });
 
-    it("visible client without session does not suppress push (no session = no suppression)", async () => {
+    it("visible client without task does not suppress push (no task = no suppression)", async () => {
       const svc = new TestPushService(store, tmpDir, "mailto:test@localhost", {
         clientRegistry: registry,
       });
       store.saveSubscription("https://push.example.com/desktop", "a", "b");
       store.saveSubscription("https://push.example.com/phone", "c", "d");
 
-      // Desktop client is visible but has no session set
+      // Desktop client is visible but has no task set
       svc.registerClient("cl-1", "https://push.example.com/desktop");
       visBoth(svc, registry, "cl-1", { visible: true });
 
@@ -687,14 +687,14 @@ describe("PushService", () => {
         title: "T",
         body: "B",
         tag: "test",
-        data: { sessionId: "s1" },
+        data: { taskId: "s1" },
       };
       await svc.sendToAll(notification);
 
       assert.deepEqual(
         sent.sort(),
         ["https://push.example.com/desktop", "https://push.example.com/phone"],
-        "should send to both — visible client has no session set",
+        "should send to both — visible client has no task set",
       );
     });
 
@@ -718,7 +718,7 @@ describe("PushService", () => {
         title: "T",
         body: "B",
         tag: "test",
-        data: { sessionId: "s1" },
+        data: { taskId: "s1" },
       };
       await svc.sendToAll(notification);
 

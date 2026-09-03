@@ -14,19 +14,16 @@ import { z } from "zod";
 /**
  * Register the spike tool set on an MCP server.
  *
- * `webSessionId` is the identity derived from the request's capability token.
+ * `taskId` is the identity derived from the request's capability token.
  * The echo result includes it so the spike test can prove capability
  * derivation works end to end.
  */
-export function registerMcpTools(
-  server: McpServer,
-  webSessionId: string,
-): void {
+export function registerMcpTools(server: McpServer, taskId: string): void {
   server.registerTool(
     "echo",
     {
       description:
-        "Echo the provided text back together with the invoking session id. " +
+        "Echo the provided text back together with the invoking task id. " +
         "Temporary spike tool used to validate the WebAgent MCP transport.",
       inputSchema: {
         text: z.string().describe("Text to echo back"),
@@ -37,7 +34,7 @@ export function registerMcpTools(
         content: [
           {
             type: "text" as const,
-            text: `echo: ${text} (session ${webSessionId})`,
+            text: `echo: ${text} (task ${taskId})`,
           },
         ],
       };

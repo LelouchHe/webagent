@@ -1,5 +1,5 @@
 import type { AgentBridge } from "./bridge.ts";
-import type { SessionManager } from "./session-manager.ts";
+import type { TaskManager } from "./task-manager.ts";
 import type { Store } from "./store.ts";
 import { log } from "./log.ts";
 import { pickModelByPatterns } from "./model-picker.ts";
@@ -8,39 +8,39 @@ const tlog = log.scope("title");
 
 export class TitleService {
   private titleSessionId: string | null = null;
-  private readonly activeSourceSessions = new Set<string>();
-  private readonly cancelledSourceSessions = new Set<string>();
+  private readonly activeSourceTasks = new Set<string>();
+  private readonly cancelledSourceTasks = new Set<string>();
   private readonly defaultCwd: string;
   private readonly modelPatterns: string[];
 
   private readonly store: Store;
-  private readonly sessions: SessionManager;
+  private readonly tasks: TaskManager;
 
   constructor(
     store: Store,
-    sessions: SessionManager,
+    tasks: TaskManager,
     defaultCwd: string,
     modelPatterns: string[] = [],
   ) {
     this.store = store;
-    this.sessions = sessions;
+    this.tasks = tasks;
     this.defaultCwd = defaultCwd;
     this.modelPatterns = modelPatterns;
   }
 
-  /** Generate a title for the session (non-blocking, fire-and-forget). */
+  /** Generate a title for the task (non-blocking, fire-and-forget). */
   generate(
     bridge: AgentBridge,
     userMessage: string,
-    sessionId: string,
+    taskId: string,
     onTitle?: (title: string) => void,
   ): void {
     if (
-      this.sessions.sessionHasTitle.has(sessionId) ||
-      this.activeSourceSessions.has(sessionId)
+      this.tasks.taskHasTitle.has(taskId) ||
+      this.activeSourceTasks.has(taskId)
     )
       return;
-    this._generate(bridge, userMessage, sessionId)
+    this._generate(bridge, userMessage, taskId)
       .then((title) => {
         if (title && onTitle) onTitle(title);
       })
@@ -52,23 +52,23 @@ export class TitleService {
   private async _generate(
     bridge: AgentBridge,
     userMessage: string,
-    sessionId: string,
+    taskId: string,
   ): Promise<string | undefined> {
-    this.activeSourceSessions.add(sessionId);
+    this.activeSourceTasks.add(taskId);
     const tsId = await this.ensureTitleSession(bridge);
     if (!tsId) {
-      this.activeSourceSessions.delete(sessionId);
-      this.cancelledSourceSessions.delete(sessionId);
+      this.activeSourceTasks.delete(taskId);
+      this.cancelledSourceTasks.delete(taskId);
       return;
     }
 
     try {
       const prompt = `Generate a short title (max 30 chars, no quotes) for a chat that starts with this message. Reply with ONLY the title, nothing else:\n\n${userMessage.slice(0, 500)}`;
       const title = await bridge.promptForText(tsId, prompt);
-      if (!title || this.cancelledSourceSessions.has(sessionId)) return;
+      if (!title || this.cancelledSourceTasks.has(taskId)) return;
 
       // User may have set a title while generation was in flight
-      if (this.sessions.sessionHasTitle.has(sessionId)) return;
+      if (this.tasks.taskHasTitle.has(taskId)) return;
 
       const cleaned = title
         .replace(/^["']|["']$/g, "")
@@ -76,28 +76,27 @@ export class TitleService {
         .slice(0, 30);
       if (!cleaned) return;
 
-      this.store.updateSessionTitle(sessionId, cleaned);
-      this.sessions.sessionHasTitle.add(sessionId);
+      this.store.updateTaskTitle(taskId, cleaned);
+      this.tasks.taskHasTitle.add(taskId);
       return cleaned;
     } finally {
-      this.activeSourceSessions.delete(sessionId);
-      this.cancelledSourceSessions.delete(sessionId);
+      this.activeSourceTasks.delete(taskId);
+      this.cancelledSourceTasks.delete(taskId);
     }
   }
 
-  async cancel(sessionId: string, bridge: AgentBridge): Promise<void> {
-    this.cancelledSourceSessions.add(sessionId);
-    if (!this.titleSessionId || !this.activeSourceSessions.has(sessionId))
-      return;
+  async cancel(taskId: string, bridge: AgentBridge): Promise<void> {
+    this.cancelledSourceTasks.add(taskId);
+    if (!this.titleSessionId || !this.activeSourceTasks.has(taskId)) return;
     await bridge.cancelAgentSession(this.titleSessionId);
   }
 
-  /** Clear the cached title session ID (e.g. after agent reload). */
+  /** Clear the cached title task ID (e.g. after agent reload). */
   invalidate(): void {
     this.titleSessionId = null;
   }
 
-  /** Ensure the dedicated title session exists. Returns session ID or null. */
+  /** Ensure the dedicated title task exists. Returns task ID or null. */
   private async ensureTitleSession(
     bridge: AgentBridge,
   ): Promise<string | null> {

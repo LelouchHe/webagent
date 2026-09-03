@@ -1,24 +1,24 @@
 import { test, expect } from "playwright/test";
-import { currentSessionId, gotoConnected } from "./helpers.ts";
+import { currentTaskId, gotoConnected } from "./helpers.ts";
 
-test("app boots into a connected usable session", async ({ page }) => {
+test("app boots into a connected usable task", async ({ page }) => {
   await gotoConnected(page);
 
-  // Root is the canonical landing and carries no URL hash; currentSessionId
+  // Root is the canonical landing and carries no URL hash; currentTaskId
   // resolves the empty hash to "root". Its title defaults to the literal
   // "root" (renameable /rename).
-  await expect.poll(() => currentSessionId(page)).toBe("root");
-  await expect(page.locator("#session-info")).toHaveText("root");
+  await expect.poll(() => currentTaskId(page)).toBe("root");
+  await expect(page.locator("#task-info")).toHaveText("root");
   await expect(page.locator("#input")).toBeEnabled();
 });
 
-test("desktop header visually centers the session title", async ({ page }) => {
+test("desktop header visually centers the task title", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 900 });
   await gotoConnected(page);
 
   const layout = await page.locator("#header").evaluate((header) => {
-    const title = header.querySelector("#session-info");
-    if (!title) throw new Error("Missing session info");
+    const title = header.querySelector("#task-info");
+    if (!title) throw new Error("Missing task info");
 
     const headerRect = header.getBoundingClientRect();
     const titleRect = title.getBoundingClientRect();
@@ -44,8 +44,8 @@ test("mobile header lets the title use remaining space instead of forcing center
   await gotoConnected(page);
 
   const layout = await page.locator("#header").evaluate((header) => {
-    const title = header.querySelector("#session-info");
-    if (!title) throw new Error("Missing session info");
+    const title = header.querySelector("#task-info");
+    if (!title) throw new Error("Missing task info");
 
     const headerStyles = getComputedStyle(header);
     const titleStyles = getComputedStyle(title);

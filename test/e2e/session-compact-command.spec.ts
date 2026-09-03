@@ -1,5 +1,5 @@
 import { test, expect } from "playwright/test";
-import { currentSessionId, gotoConnected, sendPrompt } from "./helpers.ts";
+import { currentTaskId, gotoConnected, sendPrompt } from "./helpers.ts";
 
 test("/compact shows an assistant handoff and injects it into the next prompt", async ({
   page,
@@ -10,7 +10,7 @@ test("/compact shows an assistant handoff and injects it into the next prompt", 
     "Echo: before compact",
   );
 
-  const sessionId = await currentSessionId(page);
+  const taskId = await currentTaskId(page);
   await sendPrompt(page, "/compact");
 
   await expect(page.locator("#messages")).toContainText("Compacting context…");
@@ -18,7 +18,7 @@ test("/compact shows an assistant handoff and injects it into the next prompt", 
     "Echo: Prepare a concise context handoff",
   );
   await expectConnectionIdle(page);
-  expect(await currentSessionId(page)).toBe(sessionId);
+  expect(await currentTaskId(page)).toBe(taskId);
 
   await sendPrompt(page, "after compact");
   await expect(page.locator(".msg.assistant").last()).toContainText(
@@ -32,12 +32,12 @@ test("/compact shows an assistant handoff and injects it into the next prompt", 
   );
 
   const events = await page.evaluate(async (id) => {
-    const response = await fetch(`/api/v1/sessions/${id}/events`);
+    const response = await fetch(`/api/v1/tasks/${id}/events`);
     const body = (await response.json()) as
       | Array<{ type: string; data: string }>
       | { events: Array<{ type: string; data: string }> };
     return Array.isArray(body) ? body : body.events;
-  }, sessionId);
+  }, taskId);
   const userMessage = events
     .reverse()
     .find((event) => event.type === "user_message");

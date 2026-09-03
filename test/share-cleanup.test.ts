@@ -18,7 +18,7 @@ describe("share preview cleanup — sweepStaleSharePreviewsOnce", () => {
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), "wa-share-cleanup-"));
     store = new Store(tmpDir, "test-agent");
-    store.createSession("s", "/tmp/x");
+    store.createTask("s", "/tmp/x");
   });
 
   afterEach(() => {
@@ -28,7 +28,7 @@ describe("share preview cleanup — sweepStaleSharePreviewsOnce", () => {
 
   // Helpers to stamp a share row with a manually-set created_at.
   function insertPreviewWithAge(token: string, ageMs: number) {
-    store.insertSharePreview({ token, sessionId: "s", snapshotSeq: 1 });
+    store.insertSharePreview({ token, taskId: "s", snapshotSeq: 1 });
     const t = Date.now() - ageMs;
     // direct UPDATE — Store's insertSharePreview uses the default strftime timestamp.
     (
@@ -72,13 +72,13 @@ describe("share preview cleanup — sweepStaleSharePreviewsOnce", () => {
   });
 
   it("sweeps multiple stale previews in one call", () => {
-    // Partial unique index allows only one active preview per session —
-    // use distinct sessions to seed multiple orphans.
-    store.createSession("s2", "/tmp/x");
-    store.createSession("s3", "/tmp/x");
-    store.createSession("s4", "/tmp/x");
+    // Partial unique index allows only one active preview per task —
+    // use distinct tasks to seed multiple orphans.
+    store.createTask("s2", "/tmp/x");
+    store.createTask("s3", "/tmp/x");
+    store.createTask("s4", "/tmp/x");
     const seed = (tok: string, sess: string, age: number) => {
-      store.insertSharePreview({ token: tok, sessionId: sess, snapshotSeq: 1 });
+      store.insertSharePreview({ token: tok, taskId: sess, snapshotSeq: 1 });
       (
         store as unknown as {
           db: { prepare: (q: string) => { run: (...a: unknown[]) => void } };
@@ -104,7 +104,7 @@ describe("share preview cleanup — startSharePreviewCleanup", () => {
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), "wa-share-cleanup-sched-"));
     store = new Store(tmpDir, "test-agent");
-    store.createSession("s", "/tmp/x");
+    store.createTask("s", "/tmp/x");
   });
 
   afterEach(() => {
@@ -116,7 +116,7 @@ describe("share preview cleanup — startSharePreviewCleanup", () => {
     // Seed a stale preview then start the scheduler.
     store.insertSharePreview({
       token: "t-stale",
-      sessionId: "s",
+      taskId: "s",
       snapshotSeq: 1,
     });
     (

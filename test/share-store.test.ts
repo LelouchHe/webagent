@@ -9,12 +9,12 @@ import { generateShareToken } from "../src/tokens.ts";
 describe("shares store", () => {
   let tmpDir: string;
   let store: Store;
-  const sessionId = "sess-a";
+  const taskId = "sess-a";
 
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), "webagent-shares-"));
     store = new Store(tmpDir, "test-agent");
-    store.createSession(sessionId, "/tmp");
+    store.createTask(taskId, "/tmp");
   });
 
   afterEach(() => {
@@ -26,7 +26,7 @@ describe("shares store", () => {
     const tok = generateShareToken();
     const row = store.insertSharePreview({
       token: tok,
-      sessionId,
+      taskId,
       snapshotSeq: 10,
     });
     assert.equal(row.token, tok);
@@ -37,49 +37,49 @@ describe("shares store", () => {
   it("partial unique index: second preview insert throws", () => {
     store.insertSharePreview({
       token: generateShareToken(),
-      sessionId,
+      taskId,
       snapshotSeq: 1,
     });
     assert.throws(
       () =>
         store.insertSharePreview({
           token: generateShareToken(),
-          sessionId,
+          taskId,
           snapshotSeq: 2,
         }),
       /UNIQUE/,
     );
   });
 
-  it("findActivePreviewBySession returns NULL when none, row when exists", () => {
-    assert.equal(store.findActivePreviewBySession(sessionId), undefined);
+  it("findActivePreviewByTask returns NULL when none, row when exists", () => {
+    assert.equal(store.findActivePreviewByTask(taskId), undefined);
     const tok = generateShareToken();
-    store.insertSharePreview({ token: tok, sessionId, snapshotSeq: 5 });
-    const found = store.findActivePreviewBySession(sessionId);
+    store.insertSharePreview({ token: tok, taskId, snapshotSeq: 5 });
+    const found = store.findActivePreviewByTask(taskId);
     assert.ok(found);
     assert.equal(found.token, tok);
   });
 
   it("after activateShare, partial unique index allows a new preview", () => {
     const tok1 = generateShareToken();
-    store.insertSharePreview({ token: tok1, sessionId, snapshotSeq: 1 });
+    store.insertSharePreview({ token: tok1, taskId, snapshotSeq: 1 });
     assert.equal(store.activateShare(tok1), true);
     // Now can insert another preview
     const tok2 = generateShareToken();
-    store.insertSharePreview({ token: tok2, sessionId, snapshotSeq: 2 });
-    assert.equal(store.findActivePreviewBySession(sessionId)!.token, tok2);
+    store.insertSharePreview({ token: tok2, taskId, snapshotSeq: 2 });
+    assert.equal(store.findActivePreviewByTask(taskId)!.token, tok2);
   });
 
   it("activateShare is idempotent (returns false second time)", () => {
     const tok = generateShareToken();
-    store.insertSharePreview({ token: tok, sessionId, snapshotSeq: 1 });
+    store.insertSharePreview({ token: tok, taskId, snapshotSeq: 1 });
     assert.equal(store.activateShare(tok), true);
     assert.equal(store.activateShare(tok), false);
   });
 
   it("activateShare with displayName/ownerLabel updates row", () => {
     const tok = generateShareToken();
-    store.insertSharePreview({ token: tok, sessionId, snapshotSeq: 1 });
+    store.insertSharePreview({ token: tok, taskId, snapshotSeq: 1 });
     store.activateShare(tok, { displayName: "Alice", ownerLabel: "demo" });
     const row = store.getShareByToken(tok)!;
     assert.equal(row.display_name, "Alice");
@@ -89,7 +89,7 @@ describe("shares store", () => {
 
   it("revokeShare hard-deletes the row; second call is a no-op", () => {
     const tok = generateShareToken();
-    store.insertSharePreview({ token: tok, sessionId, snapshotSeq: 1 });
+    store.insertSharePreview({ token: tok, taskId, snapshotSeq: 1 });
     store.activateShare(tok);
     assert.equal(store.revokeShare(tok), true);
     assert.equal(store.revokeShare(tok), false);
@@ -98,24 +98,24 @@ describe("shares store", () => {
 
   it("touchShareAccessed only writes once", () => {
     const tok = generateShareToken();
-    store.insertSharePreview({ token: tok, sessionId, snapshotSeq: 1 });
+    store.insertSharePreview({ token: tok, taskId, snapshotSeq: 1 });
     store.activateShare(tok);
     assert.equal(store.touchShareAccessed(tok), true);
     assert.equal(store.touchShareAccessed(tok), false);
     assert.notEqual(store.getShareByToken(tok)!.last_accessed_at, null);
   });
 
-  it("listOwnerShares excludes hard-deleted (revoked) shares and includes session title", () => {
+  it("listOwnerShares excludes hard-deleted (revoked) shares and includes task title", () => {
     const t1 = generateShareToken();
     const t2 = generateShareToken();
     const t3 = generateShareToken();
-    store.updateSessionTitle(sessionId, "Demo title");
-    store.insertSharePreview({ token: t1, sessionId, snapshotSeq: 1 });
+    store.updateTaskTitle(taskId, "Demo title");
+    store.insertSharePreview({ token: t1, taskId, snapshotSeq: 1 });
     store.activateShare(t1);
-    store.createSession("sess-b", "/tmp");
+    store.createTask("sess-b", "/tmp");
     store.insertSharePreview({
       token: t2,
-      sessionId: "sess-b",
+      taskId: "sess-b",
       snapshotSeq: 1,
     });
 
@@ -123,29 +123,29 @@ describe("shares store", () => {
     store.revokeShare(t2);
     store.insertSharePreview({
       token: t3,
-      sessionId: "sess-b",
+      taskId: "sess-b",
       snapshotSeq: 1,
     });
     const rows = store.listOwnerShares();
     assert.equal(rows.length, 2);
     const t1Row = rows.find((r) => r.token === t1)!;
-    assert.equal(t1Row.session_title, "Demo title");
+    assert.equal(t1Row.task_title, "Demo title");
   });
 
   it("listOwnerShares only returns shares for the current agent", () => {
     const ownToken = generateShareToken();
     store.insertSharePreview({
       token: ownToken,
-      sessionId,
+      taskId,
       snapshotSeq: 0,
     });
 
     const other = new Store(tmpDir, "other-agent");
-    other.createSession("other-session", "/tmp", "auto", "other-agent-id");
+    other.createTask("other-task", "/tmp", "auto", "other-agent-id");
     const otherToken = generateShareToken();
     other.insertSharePreview({
       token: otherToken,
-      sessionId: "other-session",
+      taskId: "other-task",
       snapshotSeq: 0,
     });
 
@@ -162,7 +162,7 @@ describe("shares store", () => {
 
   it("pruneStalePreviews removes previews older than 24h", () => {
     const tok = generateShareToken();
-    store.insertSharePreview({ token: tok, sessionId, snapshotSeq: 1 });
+    store.insertSharePreview({ token: tok, taskId, snapshotSeq: 1 });
     // Simulate a 25h-old row by direct UPDATE
     const old = Date.now() - 25 * 60 * 60 * 1000;
     (
@@ -178,7 +178,7 @@ describe("shares store", () => {
 
   it("updateShareOwnerLabel patches only label, leaves revoked rows alone", () => {
     const t1 = generateShareToken();
-    store.insertSharePreview({ token: t1, sessionId, snapshotSeq: 1 });
+    store.insertSharePreview({ token: t1, taskId, snapshotSeq: 1 });
     store.activateShare(t1);
     assert.equal(store.updateShareOwnerLabel(t1, "v1"), true);
     assert.equal(store.getShareByToken(t1)!.owner_label, "v1");
@@ -186,55 +186,55 @@ describe("shares store", () => {
     assert.equal(store.updateShareOwnerLabel(t1, "v2"), false);
   });
 
-  describe("session lifecycle ↔ shares", () => {
-    it("deleteSession with no shares hard-deletes session + events", () => {
+  describe("task lifecycle ↔ shares", () => {
+    it("deleteTask with no shares hard-deletes task + events", () => {
       store.saveEvent(
-        sessionId,
+        taskId,
         "user_message",
         { text: "hi" },
         { from_ref: "user" },
       );
-      assert.equal(store.deleteSession(sessionId).mode, "hard");
-      assert.equal(store.getSession(sessionId), undefined);
-      assert.equal(store.getSessionIncludingDeleted(sessionId), undefined);
-      assert.equal(store.getEvents(sessionId).length, 0);
-      assert.equal(store.getAgentSessionBinding(sessionId), undefined);
+      assert.equal(store.deleteTask(taskId).mode, "hard");
+      assert.equal(store.getTask(taskId), undefined);
+      assert.equal(store.getTaskIncludingDeleted(taskId), undefined);
+      assert.equal(store.getEvents(taskId).length, 0);
+      assert.equal(store.getAgentSessionBinding(taskId), undefined);
     });
 
-    it("deleteSession with active share soft-deletes; events + viewer-side lookup keep working", () => {
+    it("deleteTask with active share soft-deletes; events + viewer-side lookup keep working", () => {
       const tok = generateShareToken();
       store.saveEvent(
-        sessionId,
+        taskId,
         "user_message",
         { text: "hi" },
         { from_ref: "user" },
       );
-      store.insertSharePreview({ token: tok, sessionId, snapshotSeq: 1 });
+      store.insertSharePreview({ token: tok, taskId, snapshotSeq: 1 });
       store.activateShare(tok);
 
-      assert.equal(store.deleteSession(sessionId).mode, "soft");
+      assert.equal(store.deleteTask(taskId).mode, "soft");
       // Owner-facing lookup hides tombstone:
-      assert.equal(store.getSession(sessionId), undefined);
-      assert.equal(store.listSessions().length, 0);
-      // Public viewer can still resolve session metadata:
-      const tomb = store.getSessionIncludingDeleted(sessionId)!;
+      assert.equal(store.getTask(taskId), undefined);
+      assert.equal(store.listTasks().length, 0);
+      // Public viewer can still resolve task metadata:
+      const tomb = store.getTaskIncludingDeleted(taskId)!;
       assert.notEqual(tomb, undefined);
       assert.notEqual(tomb.deleted_at, null);
-      assert.equal(store.getEvents(sessionId).length, 1);
+      assert.equal(store.getEvents(taskId).length, 1);
       // The owner-side binding is retired and removed alongside the tombstone.
-      assert.equal(store.getAgentSessionBinding(sessionId), undefined);
+      assert.equal(store.getAgentSessionBinding(taskId), undefined);
       // Share row still live:
       assert.notEqual(store.getShareByToken(tok), undefined);
     });
 
-    it("deleteSession drops preview shares but keeps published siblings", () => {
+    it("deleteTask drops preview shares but keeps published siblings", () => {
       const tPub = generateShareToken();
       const tPrev = generateShareToken();
-      store.insertSharePreview({ token: tPub, sessionId, snapshotSeq: 1 });
+      store.insertSharePreview({ token: tPub, taskId, snapshotSeq: 1 });
       store.activateShare(tPub);
-      store.insertSharePreview({ token: tPrev, sessionId, snapshotSeq: 2 });
+      store.insertSharePreview({ token: tPrev, taskId, snapshotSeq: 2 });
 
-      assert.equal(store.deleteSession(sessionId).mode, "soft");
+      assert.equal(store.deleteTask(taskId).mode, "soft");
       assert.equal(store.getShareByToken(tPrev), undefined);
       assert.notEqual(store.getShareByToken(tPub), undefined);
     });
@@ -243,37 +243,37 @@ describe("shares store", () => {
       const t1 = generateShareToken();
       const t2 = generateShareToken();
       store.saveEvent(
-        sessionId,
+        taskId,
         "user_message",
         { text: "hi" },
         { from_ref: "user" },
       );
-      store.insertSharePreview({ token: t1, sessionId, snapshotSeq: 1 });
+      store.insertSharePreview({ token: t1, taskId, snapshotSeq: 1 });
       store.activateShare(t1);
-      store.insertSharePreview({ token: t2, sessionId, snapshotSeq: 2 });
+      store.insertSharePreview({ token: t2, taskId, snapshotSeq: 2 });
       store.activateShare(t2);
-      store.deleteSession(sessionId);
+      store.deleteTask(taskId);
 
       // First revoke: tombstone still has another share — reap is a no-op.
       store.revokeShare(t1);
-      assert.equal(store.reapTombstoneIfOrphaned(sessionId), false);
-      assert.notEqual(store.getSessionIncludingDeleted(sessionId), undefined);
+      assert.equal(store.reapTombstoneIfOrphaned(taskId), false);
+      assert.notEqual(store.getTaskIncludingDeleted(taskId), undefined);
 
       // Last revoke: reap finishes the hard-delete.
       store.revokeShare(t2);
-      assert.equal(store.reapTombstoneIfOrphaned(sessionId), true);
-      assert.equal(store.getSessionIncludingDeleted(sessionId), undefined);
-      assert.equal(store.getEvents(sessionId).length, 0);
+      assert.equal(store.reapTombstoneIfOrphaned(taskId), true);
+      assert.equal(store.getTaskIncludingDeleted(taskId), undefined);
+      assert.equal(store.getEvents(taskId).length, 0);
     });
 
-    it("reapTombstoneIfOrphaned is a no-op on a live (not-tombstoned) session", () => {
+    it("reapTombstoneIfOrphaned is a no-op on a live (not-tombstoned) task", () => {
       const tok = generateShareToken();
-      store.insertSharePreview({ token: tok, sessionId, snapshotSeq: 1 });
+      store.insertSharePreview({ token: tok, taskId, snapshotSeq: 1 });
       store.activateShare(tok);
       store.revokeShare(tok);
-      assert.equal(store.reapTombstoneIfOrphaned(sessionId), false);
-      // Live session row untouched.
-      assert.notEqual(store.getSession(sessionId), undefined);
+      assert.equal(store.reapTombstoneIfOrphaned(taskId), false);
+      // Live task row untouched.
+      assert.notEqual(store.getTask(taskId), undefined);
     });
   });
 });

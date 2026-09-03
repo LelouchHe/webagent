@@ -26,7 +26,7 @@ describe("/view Enter dispatch", () => {
   beforeEach(() => {
     resetState(state, dom);
     viewer.closeFileViewer();
-    state.sessionCwd = "/work";
+    state.taskCwd = "/work";
     fetchCalls = [];
     infoBody = {
       path: "/work/src",

@@ -1,9 +1,5 @@
 import { test, expect } from "playwright/test";
-import {
-  createNewSession,
-  currentSessionId,
-  gotoConnected,
-} from "./helpers.ts";
+import { createNewSession, currentTaskId, gotoConnected } from "./helpers.ts";
 
 const PNG_1X1 = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wn3mXQAAAAASUVORK5CYII=",
@@ -41,20 +37,20 @@ test("uploaded images are sent and restored in reloaded history", async ({
     "Echo: describe this image",
   );
 
-  const sessionId = await currentSessionId(page);
+  const taskId = await currentTaskId(page);
   await page.reload();
 
-  await expect.poll(() => currentSessionId(page)).toBe(sessionId);
+  await expect.poll(() => currentTaskId(page)).toBe(taskId);
   await expect(page.locator(".msg.user")).toContainText([
     "describe this image",
   ]);
   const restoredImg = page.locator(".msg.user img.user-image").last();
   await expect(restoredImg).toBeVisible();
   await expect(restoredImg).toHaveAttribute("alt", "tiny.png");
-  // Server-side path is `/api/v1/sessions/.../attachments/<file>`; reSign at
+  // Server-side path is `/api/v1/tasks/.../attachments/<file>`; reSign at
   // egress appends ?sig=&exp= so the browser can fetch with a fresh sig.
   await expect(restoredImg).toHaveAttribute(
     "src",
-    /\/api\/v1\/sessions\/[^/]+\/attachments\/[^/?]+\?[^"]*sig=/,
+    /\/api\/v1\/tasks\/[^/]+\/attachments\/[^/?]+\?[^"]*sig=/,
   );
 });

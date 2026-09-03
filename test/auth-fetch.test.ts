@@ -49,7 +49,7 @@ describe("auth-fetch wrapper", () => {
   it("attaches Bearer to same-origin /api/* requests", async () => {
     const { fetch, calls } = recordedFetch(new Response("{}", { status: 200 }));
     restore = installAuthFetch({ baseFetch: fetch });
-    await globalThis.fetch("/api/v1/sessions");
+    await globalThis.fetch("/api/v1/tasks");
     assert.equal(calls.length, 1);
     assert.equal(calls[0].headers.get("Authorization"), "Bearer wat_test");
   });
@@ -81,7 +81,7 @@ describe("auth-fetch wrapper", () => {
   it("preserves existing Authorization header (no override)", async () => {
     const { fetch, calls } = recordedFetch(new Response("{}", { status: 200 }));
     restore = installAuthFetch({ baseFetch: fetch });
-    await globalThis.fetch("/api/v1/sessions", {
+    await globalThis.fetch("/api/v1/tasks", {
       headers: { Authorization: "Bearer custom-override" },
     });
     assert.equal(
@@ -94,7 +94,7 @@ describe("auth-fetch wrapper", () => {
     localStorage.removeItem(TOKEN_STORAGE_KEY);
     const { fetch, calls } = recordedFetch(new Response("{}", { status: 200 }));
     restore = installAuthFetch({ baseFetch: fetch });
-    await globalThis.fetch("/api/v1/sessions");
+    await globalThis.fetch("/api/v1/tasks");
     assert.equal(calls[0].headers.get("Authorization"), null);
   });
 
@@ -107,7 +107,7 @@ describe("auth-fetch wrapper", () => {
         redirectedTo = url;
       },
     });
-    await globalThis.fetch("/api/v1/sessions");
+    await globalThis.fetch("/api/v1/tasks");
     assert.equal(localStorage.getItem(TOKEN_STORAGE_KEY), null);
     assert.equal(redirectedTo, "/login");
   });
@@ -151,7 +151,7 @@ describe("auth-fetch wrapper", () => {
         redirected = true;
       },
     });
-    await globalThis.fetch("/api/v1/sessions");
+    await globalThis.fetch("/api/v1/tasks");
     assert.equal(localStorage.getItem(TOKEN_STORAGE_KEY), "wat_test");
     assert.equal(redirected, false);
   });
@@ -160,7 +160,7 @@ describe("auth-fetch wrapper", () => {
     const original = new Response(JSON.stringify({ x: 1 }), { status: 200 });
     const { fetch } = recordedFetch(original);
     restore = installAuthFetch({ baseFetch: fetch });
-    const res = await globalThis.fetch("/api/v1/sessions");
+    const res = await globalThis.fetch("/api/v1/tasks");
     assert.equal(res.status, 200);
     const body = await res.json();
     assert.deepEqual(body, { x: 1 });
@@ -169,7 +169,7 @@ describe("auth-fetch wrapper", () => {
   it("works with Request object input (not just string)", async () => {
     const { fetch, calls } = recordedFetch(new Response("{}", { status: 200 }));
     restore = installAuthFetch({ baseFetch: fetch });
-    const req = new Request("http://localhost:6801/api/v1/sessions");
+    const req = new Request("http://localhost:6801/api/v1/tasks");
     await globalThis.fetch(req);
     assert.equal(calls[0].headers.get("Authorization"), "Bearer wat_test");
   });
@@ -177,16 +177,14 @@ describe("auth-fetch wrapper", () => {
   it("works with URL object input", async () => {
     const { fetch, calls } = recordedFetch(new Response("{}", { status: 200 }));
     restore = installAuthFetch({ baseFetch: fetch });
-    await globalThis.fetch(
-      new URL("/api/v1/sessions", "http://localhost:6801"),
-    );
+    await globalThis.fetch(new URL("/api/v1/tasks", "http://localhost:6801"));
     assert.equal(calls[0].headers.get("Authorization"), "Bearer wat_test");
   });
 
   it("uninstallAuthFetch restores the original fetch", async () => {
     const { fetch, calls } = recordedFetch(new Response("{}", { status: 200 }));
     restore = installAuthFetch({ baseFetch: fetch });
-    await globalThis.fetch("/api/v1/sessions");
+    await globalThis.fetch("/api/v1/tasks");
     assert.equal(calls[0].headers.get("Authorization"), "Bearer wat_test");
     uninstallAuthFetch();
     // Subsequent calls go through the original (which would be jsdom's, but

@@ -43,7 +43,7 @@ describe("slash menu — Tab vs Click behavior", () => {
       });
     }) as any;
     state.clientId = "cl-1";
-    state.sessionId = "s1";
+    state.taskId = "s1";
   });
 
   function makeTabEvent(): any {
@@ -130,12 +130,12 @@ describe("slash menu — Tab vs Click behavior", () => {
     const events = await import("../public/js/events.ts");
     events.handleEvent({
       type: "plan",
-      sessionId: "s1",
+      taskId: "s1",
       entries: [{ content: "Current work", status: "in_progress" }],
     });
     events.handleEvent({
       type: "state_patch",
-      sessionId: "s1",
+      taskId: "s1",
       seq: 1,
       patch: {
         runtime: {
@@ -174,7 +174,7 @@ describe("slash menu — Tab vs Click behavior", () => {
     const events = await import("../public/js/events.ts");
     events.handleEvent({
       type: "state_patch",
-      sessionId: "s1",
+      taskId: "s1",
       seq: state.lastStateSeq + 1,
       patch: { runtime: { plan: null } },
     });
@@ -376,7 +376,7 @@ describe("slash menu — Tab vs Click behavior", () => {
   });
 
   it("/clear menu lists recent paths", async () => {
-    state.sessionCwd = "/current";
+    state.taskCwd = "/current";
     globalThis.fetch = ((url: string, init?: any) => {
       fetchCalls.push({ url, init });
       const data = [
@@ -412,7 +412,7 @@ describe("slash menu — Tab vs Click behavior", () => {
   });
 
   it("/view lists cwd, filters locally, and Tab preserves the display path", async () => {
-    state.sessionCwd = "/work";
+    state.taskCwd = "/work";
     globalThis.fetch = ((url: string, init?: any) => {
       fetchCalls.push({ url, init });
       const data = {
@@ -464,7 +464,7 @@ describe("slash menu — Tab vs Click behavior", () => {
   });
 
   it("clicking a /view folder drills down exactly one level", async () => {
-    state.sessionCwd = "/work";
+    state.taskCwd = "/work";
     globalThis.fetch = ((url: string, init?: any) => {
       fetchCalls.push({ url, init });
       const isSrc = url.includes("%2Fwork%2Fsrc%2F");
@@ -538,7 +538,7 @@ describe("slash menu — Tab vs Click behavior", () => {
 
     const cancelCall = fetchCalls.find((call) => call.url.includes("/cancel"));
     assert.ok(cancelCall, "menu cancel should call the authoritative endpoint");
-    assert.equal(cancelCall.url, "/api/v1/sessions/s1/cancel");
+    assert.equal(cancelCall.url, "/api/v1/tasks/s1/cancel");
     assert.ok(messageLines().includes("^C cancelling…"));
   });
 
@@ -592,7 +592,7 @@ describe("slash menu — Tab vs Click behavior", () => {
 
     // Should have sent a config change via REST PUT
     const putCall = fetchCalls.find(
-      (c) => c.url === "/api/v1/sessions/s1/model" && c.init?.method === "PUT",
+      (c) => c.url === "/api/v1/tasks/s1/model" && c.init?.method === "PUT",
     );
     assert.ok(putCall, "click should execute config change via REST");
     const body = JSON.parse(putCall.init.body);
@@ -600,8 +600,8 @@ describe("slash menu — Tab vs Click behavior", () => {
   });
 
   it("menu /exit suppresses failed delete cleanup", async () => {
-    state.sessionId = "s1";
-    state.sessionCwd = "/tmp/project";
+    state.taskId = "s1";
+    state.taskCwd = "/tmp/project";
     const unhandled: unknown[] = [];
     const onUnhandled = (reason: unknown) => {
       unhandled.push(reason);
@@ -610,7 +610,7 @@ describe("slash menu — Tab vs Click behavior", () => {
     try {
       globalThis.fetch = ((url: string, init?: any) => {
         fetchCalls.push({ url, init });
-        if (url === "/api/v1/sessions/s1" && init?.method === "DELETE") {
+        if (url === "/api/v1/tasks/s1" && init?.method === "DELETE") {
           return Promise.reject(new Error("delete failed"));
         }
         const respond = (obj: any) =>
@@ -620,11 +620,11 @@ describe("slash menu — Tab vs Click behavior", () => {
             json: () => Promise.resolve(obj),
             text: () => Promise.resolve(JSON.stringify(obj)),
           });
-        if (url === "/api/v1/sessions" && !init?.method) {
+        if (url === "/api/v1/tasks" && !init?.method) {
           return respond([{ id: "s1" }]);
         }
-        if (url === "/api/v1/sessions" && init?.method === "POST") {
-          return respond({ id: "new-session" });
+        if (url === "/api/v1/tasks" && init?.method === "POST") {
+          return respond({ id: "new-task" });
         }
         return respond({});
       }) as any;
@@ -643,7 +643,7 @@ describe("slash menu — Tab vs Click behavior", () => {
   });
 });
 
-describe("inbox consume — switches session via switchToSession", () => {
+describe("inbox consume — switches task via switchToTask", () => {
   let state: any;
   let dom: any;
   let slashCommands: any;
@@ -666,7 +666,7 @@ describe("inbox consume — switches session via switchToSession", () => {
   beforeEach(() => {
     resetState(state, dom);
     fetchCalls = [];
-    state.sessionId = "old-session";
+    state.taskId = "old-task";
     globalThis.fetch = ((url: string, init?: any) => {
       fetchCalls.push({ url, init });
       const respond = (obj: any) =>
@@ -677,22 +677,22 @@ describe("inbox consume — switches session via switchToSession", () => {
           text: () => Promise.resolve(JSON.stringify(obj)),
         });
       if (url.includes("/messages/") && url.endsWith("/consume")) {
-        return respond({ sessionId: "new-session", alreadyConsumed: false });
+        return respond({ taskId: "new-task", alreadyConsumed: false });
       }
-      if (url === "/api/v1/sessions/new-session") {
+      if (url === "/api/v1/tasks/new-task") {
         return respond({
-          id: "new-session",
+          id: "new-task",
           cwd: "/x",
           title: "from inbox",
           configOptions: [],
           busyKind: null,
         });
       }
-      if (url === "/api/v1/sessions/new-session/snapshot") {
+      if (url === "/api/v1/tasks/new-task/snapshot") {
         return respond({
           version: 1,
           seq: 0,
-          session: {},
+          task: {},
           runtime: { busy: null },
         });
       }
@@ -706,7 +706,7 @@ describe("inbox consume — switches session via switchToSession", () => {
     }) as any;
   });
 
-  it("consumeInbox switches session state to the consumed sessionId", async () => {
+  it("consumeInbox switches task state to the consumed taskId", async () => {
     await slashCommands.consumeInbox({
       id: "m1",
       from_ref: "x",
@@ -714,22 +714,16 @@ describe("inbox consume — switches session via switchToSession", () => {
       body: "b",
       createdAt: 0,
     } as any);
-    assert.equal(
-      state.sessionId,
-      "new-session",
-      "should switch to the new session",
-    );
+    assert.equal(state.taskId, "new-task", "should switch to the new task");
     const consumeCall = fetchCalls.find((c) => c.url.endsWith("/consume"));
     assert.ok(consumeCall, "should call consume endpoint");
     assert.deepEqual(JSON.parse(consumeCall.init.body as string), {
-      inheritFromSessionId: "old-session",
+      inheritFromTaskId: "old-task",
     });
-    const sessionCall = fetchCalls.find(
-      (c) => c.url === "/api/v1/sessions/new-session",
-    );
+    const taskCall = fetchCalls.find((c) => c.url === "/api/v1/tasks/new-task");
     assert.ok(
-      sessionCall,
-      "should fetch new session metadata (proves switchToSession ran)",
+      taskCall,
+      "should fetch new task metadata (proves switchToTask ran)",
     );
   });
 });

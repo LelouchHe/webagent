@@ -6,8 +6,8 @@ import { createNewSession, gotoConnected, sendPrompt } from "./helpers.ts";
 //
 // We can't truly simulate iOS PWA suspension in Chromium, but page.reload()
 // exercises the same recovery path: a fresh page load goes through
-// initSession() → GET /api/v1/sessions/:id which returns busyKind from the
-// server, and `session_created` then calls setBusy(Boolean(msg.busyKind)).
+// initTask() → GET /api/v1/tasks/:id which returns busyKind from the
+// server, and `task_created` then calls setBusy(Boolean(msg.busyKind)).
 //
 // If `busyKind` were dropped anywhere along that chain (server response,
 // client event handler, status bar update interfering), this test catches it.

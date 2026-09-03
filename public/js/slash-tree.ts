@@ -26,7 +26,7 @@ export interface CmdNode {
   /** Optional custom filter for data items. Receives raw item + lowercased
    *  trimmed query; returns true to keep. Defaults to substring match on
    *  `toSpec(item).primary`. Use when filtering should consider fields not
-   *  shown in primary (e.g. session id prefix). */
+   *  shown in primary (e.g. task id prefix). */
   matches?: (item: unknown, q: string) => boolean;
   /** Freeform fallback entry. Returns spec or null (null = no freeform row). */
   freeform?: (query: string) => SlashItemSpec | null;

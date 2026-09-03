@@ -2,18 +2,18 @@ import Database from "better-sqlite3";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 
-export const ROOT_SESSION_ID = "root";
+export const ROOT_TASK_ID = "root";
 
-/** One session removed by a delete (the requested id or a cascaded descendant). */
-export interface SessionDelete {
+/** One task removed by a delete (the requested id or a cascaded descendant). */
+export interface TaskDelete {
   id: string;
-  /** How this session itself was removed: hard (row gone) or soft (tombstoned). */
+  /** How this task itself was removed: hard (row gone) or soft (tombstoned). */
   mode: "hard" | "soft";
   /** The ACP execution bound at deletion time, for explicit retirement. */
   agentSessionId: string | null;
 }
 
-export interface SessionRow {
+export interface TaskRow {
   id: string;
   cwd: string;
   title: string | null;
@@ -25,8 +25,8 @@ export interface SessionRow {
   last_active_at: string;
   /** epoch ms; NULL = live; non-NULL = soft-deleted (kept alive for active shares). */
   deleted_at: number | null;
-  /** Optional parent WebAgent session; the reserved Root has NULL. */
-  parent_session_id: string | null;
+  /** Optional parent WebAgent task; the reserved Root has NULL. */
+  parent_id: string | null;
   /** Agent-generated context handoff waiting for the next real prompt. */
   pending_compact_summary: string | null;
 }
@@ -34,13 +34,13 @@ export interface SessionRow {
 export interface AgentSessionRow {
   agent_key: string;
   agent_session_id: string;
-  web_session_id: string | null;
+  task_id: string | null;
   created_at: string;
 }
 
 export interface EventRow {
   id: number;
-  session_id: string;
+  task_id: string;
   seq: number;
   type: string;
   data: string; // JSON
@@ -94,7 +94,7 @@ export class MessageNotFoundError extends Error {
 /** share-plan §4.1 full row shape. */
 export interface ShareRow {
   token: string;
-  session_id: string;
+  task_id: string;
   /** epoch ms; NULL = preview (un-activated). */
   shared_at: number | null;
   share_snapshot_seq: number;
@@ -106,11 +106,11 @@ export interface ShareRow {
   last_accessed_at: number | null;
 }
 
-/** Summary projection for GET /api/v1/shares (joins session title). */
+/** Summary projection for GET /api/v1/shares (joins task title). */
 export interface ShareSummaryRow {
   token: string;
-  session_id: string;
-  session_title: string | null;
+  task_id: string;
+  task_title: string | null;
   shared_at: number | null;
   created_at: number;
   display_name: string | null;
@@ -122,7 +122,7 @@ export interface ShareSummaryRow {
 
 export interface AttachmentRow {
   id: string;
-  session_id: string;
+  task_id: string;
   kind: string;
   name: string;
   mime: string;
@@ -136,7 +136,7 @@ export interface AttachmentRow {
 
 export interface AttachmentInput {
   id: string;
-  sessionId: string;
+  taskId: string;
   kind: "image" | "file";
   name: string;
   mime: string;
@@ -162,13 +162,65 @@ export class Store {
     this.db.pragma("foreign_keys = ON");
   }
 
+  /**
+   * One-time vocabulary migration (2026-09-04): the product entity is now
+   * `task`; `session` is reserved for the ACP execution binding. Databases
+   * created before the rename carry the `sessions` table and
+   * `*_session_id`/`web_session_id` columns; rename in place so no data is
+   * lost. Fresh installs never have `sessions` and skip this entirely.
+   *
+   * Runs with foreign_keys ON: `ALTER TABLE ... RENAME TO` only rewrites
+   * REFERENCES clauses in dependent tables while the pragma is enabled
+   * (verified empirically against the live dogfood schema). The pragma is
+   * restored to OFF afterwards, preserving the FK-off window the legacy
+   * orphan cleanup below relies on.
+   */
+  private renameLegacyTables(): void {
+    const rows = this.db
+      .prepare(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('sessions', 'tasks')",
+      )
+      .all() as Array<{ name: string }>;
+    const names = new Set(rows.map((r) => r.name));
+    if (!names.has("sessions") || names.has("tasks")) return;
+
+    this.db.pragma("foreign_keys = ON");
+    try {
+      this.db.exec("ALTER TABLE sessions RENAME TO tasks");
+      const renameCol = (table: string, from: string, to: string) => {
+        const cols = this.db
+          .prepare(`PRAGMA table_info(${table})`)
+          .all() as Array<{ name: string }>;
+        if (cols.some((c) => c.name === from)) {
+          this.db.exec(`ALTER TABLE ${table} RENAME COLUMN ${from} TO ${to}`);
+        }
+      };
+      renameCol("tasks", "parent_session_id", "parent_id");
+      renameCol("events", "session_id", "task_id");
+      renameCol("attachments", "session_id", "task_id");
+      renameCol("shares", "session_id", "task_id");
+      renameCol("client_ops", "session_id", "task_id");
+      renameCol("agent_sessions", "web_session_id", "task_id");
+      this.db.exec(`
+        DROP INDEX IF EXISTS idx_events_session;
+        DROP INDEX IF EXISTS idx_attachments_session;
+        DROP INDEX IF EXISTS idx_shares_session;
+        DROP INDEX IF EXISTS idx_agent_sessions_web;
+      `);
+    } finally {
+      this.db.pragma("foreign_keys = OFF");
+    }
+  }
+
   private migrate(): void {
+    this.renameLegacyTables();
+
     this.db.exec(`
-      CREATE TABLE IF NOT EXISTS sessions (
+      CREATE TABLE IF NOT EXISTS tasks (
         id TEXT PRIMARY KEY,
         cwd TEXT NOT NULL,
         title TEXT,
-        parent_session_id TEXT REFERENCES sessions(id),
+        parent_id TEXT REFERENCES tasks(id),
         pending_compact_summary TEXT,
         created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now')),
         last_active_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now'))
@@ -176,22 +228,22 @@ export class Store {
       CREATE TABLE IF NOT EXISTS agent_sessions (
         agent_key TEXT NOT NULL,
         agent_session_id TEXT NOT NULL,
-        web_session_id TEXT REFERENCES sessions(id) ON DELETE CASCADE,
+        task_id TEXT REFERENCES tasks(id) ON DELETE CASCADE,
         created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now')),
         PRIMARY KEY (agent_key, agent_session_id)
       );
-      CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_sessions_web
-        ON agent_sessions(web_session_id)
-        WHERE web_session_id IS NOT NULL;
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_sessions_task
+        ON agent_sessions(task_id)
+        WHERE task_id IS NOT NULL;
       CREATE TABLE IF NOT EXISTS events (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        session_id TEXT NOT NULL REFERENCES sessions(id),
+        task_id TEXT NOT NULL REFERENCES tasks(id),
         seq INTEGER NOT NULL,
         type TEXT NOT NULL,
         data TEXT NOT NULL DEFAULT '{}',
         created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now'))
       );
-      CREATE INDEX IF NOT EXISTS idx_events_session ON events(session_id, seq);
+      CREATE INDEX IF NOT EXISTS idx_events_task ON events(task_id, seq);
       CREATE TABLE IF NOT EXISTS push_subscriptions (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         endpoint TEXT NOT NULL UNIQUE,
@@ -202,61 +254,59 @@ export class Store {
     `);
 
     // Migrate existing tables: add columns if missing
-    const cols = this.db.prepare("PRAGMA table_info(sessions)").all() as Array<{
+    const cols = this.db.prepare("PRAGMA table_info(tasks)").all() as Array<{
       name: string;
     }>;
     const colNames = new Set(cols.map((c) => c.name));
     if (!colNames.has("title")) {
-      this.db.exec("ALTER TABLE sessions ADD COLUMN title TEXT");
+      this.db.exec("ALTER TABLE tasks ADD COLUMN title TEXT");
     }
     if (!colNames.has("last_active_at")) {
-      this.db.exec("ALTER TABLE sessions ADD COLUMN last_active_at TEXT");
+      this.db.exec("ALTER TABLE tasks ADD COLUMN last_active_at TEXT");
       // Backfill from created_at
       this.db.exec(
-        "UPDATE sessions SET last_active_at = created_at WHERE last_active_at IS NULL",
+        "UPDATE tasks SET last_active_at = created_at WHERE last_active_at IS NULL",
       );
     }
     if (!colNames.has("model")) {
-      this.db.exec("ALTER TABLE sessions ADD COLUMN model TEXT");
+      this.db.exec("ALTER TABLE tasks ADD COLUMN model TEXT");
     }
     if (!colNames.has("mode")) {
-      this.db.exec("ALTER TABLE sessions ADD COLUMN mode TEXT");
+      this.db.exec("ALTER TABLE tasks ADD COLUMN mode TEXT");
     }
     if (!colNames.has("reasoning_effort")) {
-      this.db.exec("ALTER TABLE sessions ADD COLUMN reasoning_effort TEXT");
+      this.db.exec("ALTER TABLE tasks ADD COLUMN reasoning_effort TEXT");
     }
     if (!colNames.has("source")) {
       this.db.exec(
-        "ALTER TABLE sessions ADD COLUMN source TEXT NOT NULL DEFAULT 'auto'",
+        "ALTER TABLE tasks ADD COLUMN source TEXT NOT NULL DEFAULT 'auto'",
       );
     }
     if (!colNames.has("deleted_at")) {
-      this.db.exec("ALTER TABLE sessions ADD COLUMN deleted_at INTEGER");
+      this.db.exec("ALTER TABLE tasks ADD COLUMN deleted_at INTEGER");
     }
-    if (!colNames.has("parent_session_id")) {
+    if (!colNames.has("parent_id")) {
       this.db.exec(
-        "ALTER TABLE sessions ADD COLUMN parent_session_id TEXT REFERENCES sessions(id)",
+        "ALTER TABLE tasks ADD COLUMN parent_id TEXT REFERENCES tasks(id)",
       );
     }
     if (!colNames.has("pending_compact_summary")) {
-      this.db.exec(
-        "ALTER TABLE sessions ADD COLUMN pending_compact_summary TEXT",
-      );
+      this.db.exec("ALTER TABLE tasks ADD COLUMN pending_compact_summary TEXT");
     }
 
-    // One-time dual-ID migration. Existing WebAgent session IDs were also the
+    // One-time dual-ID migration. Existing WebAgent task IDs were also the
     // ACP agent's IDs, so preserve the public IDs and record that identity
     // mapping under the agent command active during the upgrade.
     this.db
       .prepare(
         `
         INSERT INTO agent_sessions (
-          agent_key, agent_session_id, web_session_id, created_at
+          agent_key, agent_session_id, task_id, created_at
         )
         SELECT ?, s.id, s.id, s.created_at
-        FROM sessions s
+        FROM tasks s
         WHERE NOT EXISTS (
-          SELECT 1 FROM agent_sessions a WHERE a.web_session_id = s.id
+          SELECT 1 FROM agent_sessions a WHERE a.task_id = s.id
         )
       `,
       )
@@ -264,8 +314,8 @@ export class Store {
 
     // messages — pending unbound notifications. POST /api/v1/messages with
     // `to = "user"` lands here; consumeMessageTx transactionally moves the
-    // content into an existing ACP-backed session's events and deletes the
-    // row. Bound messages (to = session id) skip this table entirely and go
+    // content into an existing ACP-backed task's events and deletes the
+    // row. Bound messages (to = task id) skip this table entirely and go
     // straight to `events`.
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS messages (
@@ -285,16 +335,16 @@ export class Store {
     `);
 
     // client-server-split M2: idempotency for mutating REST calls. Stores
-    // the cached response per (session_id, client_op_id) so retries (after
+    // the cached response per (task_id, client_op_id) so retries (after
     // network/SSE reconnect) return the same result instead of re-executing
     // side effects.
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS client_ops (
-        session_id   TEXT NOT NULL,
+        task_id   TEXT NOT NULL,
         client_op_id TEXT NOT NULL,
         result_json  TEXT NOT NULL,
         created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now')),
-        PRIMARY KEY (session_id, client_op_id)
+        PRIMARY KEY (task_id, client_op_id)
       );
     `);
 
@@ -311,11 +361,11 @@ export class Store {
           last_used_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now'))
         );
       `);
-      // Backfill from existing sessions
+      // Backfill from existing tasks
       this.db.exec(`
         INSERT OR IGNORE INTO recent_paths (cwd, last_used_at)
         SELECT cwd, MAX(COALESCE(last_active_at, created_at))
-        FROM sessions GROUP BY cwd;
+        FROM tasks GROUP BY cwd;
       `);
     }
 
@@ -347,30 +397,30 @@ export class Store {
       `);
     }
 
-    // One-time orphan cleanup: rows whose session_id no longer exists in
-    // `sessions`. Pre-FK writes could leave these behind (a session DELETE
+    // One-time orphan cleanup: rows whose task_id no longer exists in
+    // `tasks`. Pre-FK writes could leave these behind (a task DELETE
     // that didn't cascade because the FK pragma was off). Must run before
     // enabling FK pragma.
     this.db.exec(
-      "DELETE FROM events WHERE session_id NOT IN (SELECT id FROM sessions)",
+      "DELETE FROM events WHERE task_id NOT IN (SELECT id FROM tasks)",
     );
 
-    // Secondary index for events queried by (session_id, type, created_at)
+    // Secondary index for events queried by (task_id, type, created_at)
     // -- used by upcoming inbox/message consume queries.
     this.db.exec(
-      "CREATE INDEX IF NOT EXISTS idx_events_type ON events(session_id, type, created_at)",
+      "CREATE INDEX IF NOT EXISTS idx_events_type ON events(task_id, type, created_at)",
     );
 
     // shares — public read-only share links (share-plan §4.1).
     // State machine: preview (shared_at NULL) → active (shared_at set).
     // Revocation = hard-delete the row (no audit trail kept).
-    // Multiple active siblings per session allowed (v4 multi-share).
+    // Multiple active siblings per task allowed (v4 multi-share).
     // Partial unique index enforces at most one un-activated preview per
-    // session at any time.
+    // task at any time.
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS shares (
         token TEXT PRIMARY KEY,
-        session_id TEXT NOT NULL REFERENCES sessions(id),
+        task_id TEXT NOT NULL REFERENCES tasks(id),
         shared_at INTEGER,
         share_snapshot_seq INTEGER NOT NULL,
         ttl_hours INTEGER,
@@ -379,7 +429,7 @@ export class Store {
         created_at INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER) * 1000),
         last_accessed_at INTEGER
       );
-      CREATE INDEX IF NOT EXISTS idx_shares_session ON shares(session_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_shares_task ON shares(task_id, created_at DESC);
     `);
 
     // Migrate: drop revoked_at column from existing tables (v0.5+).
@@ -399,14 +449,14 @@ export class Store {
     }
     this.db.exec(`
       CREATE UNIQUE INDEX IF NOT EXISTS shares_one_active_preview
-        ON shares(session_id)
+        ON shares(task_id)
         WHERE shared_at IS NULL;
     `);
 
-    // attachments — server-managed file uploads bound to a session.
-    // Lifecycle = session lifecycle: FK CASCADE removes the row when the
-    // session row is deleted (hard-delete path). Tombstoned (soft-deleted)
-    // sessions keep the row alive so the share viewer can still resolve
+    // attachments — server-managed file uploads bound to a task.
+    // Lifecycle = task lifecycle: FK CASCADE removes the row when the
+    // task row is deleted (hard-delete path). Tombstoned (soft-deleted)
+    // tasks keep the row alive so the share viewer can still resolve
     // file references for active shares.
     //
     // upload_seq = MAX(events.seq) at upload time. The share proxy uses
@@ -419,7 +469,7 @@ export class Store {
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS attachments (
         id           TEXT PRIMARY KEY,
-        session_id   TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+        task_id   TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
         kind         TEXT NOT NULL,
         name         TEXT NOT NULL,
         mime         TEXT NOT NULL,
@@ -430,7 +480,7 @@ export class Store {
         height       INTEGER,
         created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now'))
       );
-      CREATE INDEX IF NOT EXISTS idx_attachments_session ON attachments(session_id);
+      CREATE INDEX IF NOT EXISTS idx_attachments_task ON attachments(task_id);
     `);
     const attachmentCols = this.db
       .prepare("PRAGMA table_info(attachments)")
@@ -456,8 +506,8 @@ export class Store {
   }
 
   /**
-   * Ensure the reserved Root record exists and attach existing live sessions
-   * that do not have a parent. This is additive and keeps every old session,
+   * Ensure the reserved Root record exists and attach existing live tasks
+   * that do not have a parent. This is additive and keeps every old task,
    * event, attachment, and share intact; the Root's ACP binding is created by
    * SessionManager after the bridge is ready.
    *
@@ -465,95 +515,95 @@ export class Store {
    * title is still NULL, so a user rename survives restarts. The non-null
    * title also keeps title generation from ever overwriting Root.
    */
-  ensureRootSession(cwd: string): SessionRow {
+  ensureRootTask(cwd: string): TaskRow {
     return this.db.transaction(() => {
       this.db
         .prepare(
-          "INSERT OR IGNORE INTO sessions (id, cwd, source, parent_session_id, title) VALUES (?, ?, 'root', NULL, 'root')",
+          "INSERT OR IGNORE INTO tasks (id, cwd, source, parent_id, title) VALUES (?, ?, 'root', NULL, 'root')",
         )
         .run("root", cwd);
       this.db
-        .prepare("UPDATE sessions SET parent_session_id = NULL WHERE id = ?")
+        .prepare("UPDATE tasks SET parent_id = NULL WHERE id = ?")
         .run("root");
       // Default title only while NULL so a user rename survives restarts.
       this.db
         .prepare(
-          "UPDATE sessions SET title = 'root' WHERE id = ? AND title IS NULL",
+          "UPDATE tasks SET title = 'root' WHERE id = ? AND title IS NULL",
         )
         .run("root");
       this.db
         .prepare(
-          `UPDATE sessions
-           SET parent_session_id = ?
-           WHERE id != ? AND parent_session_id IS NULL AND deleted_at IS NULL`,
+          `UPDATE tasks
+           SET parent_id = ?
+           WHERE id != ? AND parent_id IS NULL AND deleted_at IS NULL`,
         )
         .run("root", "root");
       return this.db
-        .prepare("SELECT * FROM sessions WHERE id = ?")
-        .get("root") as SessionRow;
+        .prepare("SELECT * FROM tasks WHERE id = ?")
+        .get("root") as TaskRow;
     })();
   }
 
-  createSession(
+  createTask(
     id: string,
     cwd: string,
     source: string = "auto",
     agentSessionId: string = id,
-    parentSessionId: string | null = null,
-  ): SessionRow {
+    parentId: string | null = null,
+  ): TaskRow {
     return this.db.transaction(() => {
       this.db
         .prepare(
-          "INSERT INTO sessions (id, cwd, source, parent_session_id) VALUES (?, ?, ?, ?)",
+          "INSERT INTO tasks (id, cwd, source, parent_id) VALUES (?, ?, ?, ?)",
         )
-        .run(id, cwd, source, parentSessionId);
+        .run(id, cwd, source, parentId);
       this.db
         .prepare(
-          "INSERT INTO agent_sessions (agent_key, agent_session_id, web_session_id) VALUES (?, ?, ?)",
+          "INSERT INTO agent_sessions (agent_key, agent_session_id, task_id) VALUES (?, ?, ?)",
         )
         .run(this.agentKey, agentSessionId, id);
       return this.db
-        .prepare("SELECT * FROM sessions WHERE id = ?")
-        .get(id) as SessionRow;
+        .prepare("SELECT * FROM tasks WHERE id = ?")
+        .get(id) as TaskRow;
     })();
   }
 
-  listSessions(opts?: { source?: string }): SessionRow[] {
+  listTasks(opts?: { source?: string }): TaskRow[] {
     if (opts?.source) {
       return this.db
         .prepare(
-          `SELECT s.* FROM sessions s
-           JOIN agent_sessions a ON a.web_session_id = s.id
+          `SELECT s.* FROM tasks s
+           JOIN agent_sessions a ON a.task_id = s.id
            WHERE a.agent_key = ? AND s.source = ? AND s.deleted_at IS NULL
            ORDER BY COALESCE(s.last_active_at, s.created_at) DESC`,
         )
-        .all(this.agentKey, opts.source) as SessionRow[];
+        .all(this.agentKey, opts.source) as TaskRow[];
     }
     return this.db
       .prepare(
-        `SELECT s.* FROM sessions s
-         JOIN agent_sessions a ON a.web_session_id = s.id
+        `SELECT s.* FROM tasks s
+         JOIN agent_sessions a ON a.task_id = s.id
          WHERE a.agent_key = ? AND s.deleted_at IS NULL
          ORDER BY COALESCE(s.last_active_at, s.created_at) DESC`,
       )
-      .all(this.agentKey) as SessionRow[];
+      .all(this.agentKey) as TaskRow[];
   }
 
-  /** Returns live sessions only. Soft-deleted (tombstone) rows are hidden. */
-  getSession(id: string): SessionRow | undefined {
+  /** Returns live tasks only. Soft-deleted (tombstone) rows are hidden. */
+  getTask(id: string): TaskRow | undefined {
     return this.db
       .prepare(
-        `SELECT s.* FROM sessions s
-         JOIN agent_sessions a ON a.web_session_id = s.id
+        `SELECT s.* FROM tasks s
+         JOIN agent_sessions a ON a.task_id = s.id
          WHERE s.id = ? AND a.agent_key = ? AND s.deleted_at IS NULL`,
       )
-      .get(id, this.agentKey) as SessionRow | undefined;
+      .get(id, this.agentKey) as TaskRow | undefined;
   }
 
   registerInternalAgentSession(agentSessionId: string): AgentSessionRow {
     this.db
       .prepare(
-        "INSERT OR IGNORE INTO agent_sessions (agent_key, agent_session_id, web_session_id) VALUES (?, ?, NULL)",
+        "INSERT OR IGNORE INTO agent_sessions (agent_key, agent_session_id, task_id) VALUES (?, ?, NULL)",
       )
       .run(this.agentKey, agentSessionId);
     const row = this.db
@@ -561,147 +611,140 @@ export class Store {
         "SELECT * FROM agent_sessions WHERE agent_key = ? AND agent_session_id = ?",
       )
       .get(this.agentKey, agentSessionId) as AgentSessionRow;
-    if (row.web_session_id) {
-      throw new Error("Agent reused a user-visible session ID internally");
+    if (row.task_id) {
+      throw new Error("Agent reused a user-visible task ID internally");
     }
     return row;
   }
 
-  getAgentSessionId(webSessionId: string): string | undefined {
+  getAgentSessionId(taskId: string): string | undefined {
     return (
       this.db
         .prepare(
-          "SELECT agent_session_id FROM agent_sessions WHERE agent_key = ? AND web_session_id = ?",
+          "SELECT agent_session_id FROM agent_sessions WHERE agent_key = ? AND task_id = ?",
         )
-        .get(this.agentKey, webSessionId) as
-        | { agent_session_id: string }
-        | undefined
+        .get(this.agentKey, taskId) as { agent_session_id: string } | undefined
     )?.agent_session_id;
   }
 
-  getWebSessionId(agentSessionId: string): string | undefined {
+  getTaskId(agentSessionId: string): string | undefined {
     return (
       this.db
         .prepare(
-          "SELECT web_session_id FROM agent_sessions WHERE agent_key = ? AND agent_session_id = ? AND web_session_id IS NOT NULL",
+          "SELECT task_id FROM agent_sessions WHERE agent_key = ? AND agent_session_id = ? AND task_id IS NOT NULL",
         )
-        .get(this.agentKey, agentSessionId) as
-        | { web_session_id: string }
-        | undefined
-    )?.web_session_id;
+        .get(this.agentKey, agentSessionId) as { task_id: string } | undefined
+    )?.task_id;
   }
 
-  getAgentSessionBinding(webSessionId: string): AgentSessionRow | undefined {
+  getAgentSessionBinding(taskId: string): AgentSessionRow | undefined {
     return this.db
       .prepare(
-        "SELECT * FROM agent_sessions WHERE agent_key = ? AND web_session_id = ?",
+        "SELECT * FROM agent_sessions WHERE agent_key = ? AND task_id = ?",
       )
-      .get(this.agentKey, webSessionId) as AgentSessionRow | undefined;
+      .get(this.agentKey, taskId) as AgentSessionRow | undefined;
   }
 
   /**
-   * Replace the current ACP execution for a stable WebAgent session.
+   * Replace the current ACP execution for a stable WebAgent task.
    * The previous binding row is removed: its execution is explicitly
    * retired by the caller and must never accept WebAgent events again.
    */
   rotateAgentSession(
-    webSessionId: string,
+    taskId: string,
     agentSessionId: string,
     cwd?: string,
   ): AgentSessionRow {
     return this.db.transaction(() => {
-      const current = this.getAgentSessionBinding(webSessionId);
-      if (!current) throw new Error(`Session not found: ${webSessionId}`);
+      const current = this.getAgentSessionBinding(taskId);
+      if (!current) throw new Error(`Task not found: ${taskId}`);
       // Persist a requested cwd even when the agent returns the same
       // execution id (no-op rotation); the caller decides whether to retire
       // based on whether the binding actually moved.
       if (cwd !== undefined) {
         this.db
-          .prepare("UPDATE sessions SET cwd = ? WHERE id = ?")
-          .run(cwd, webSessionId);
+          .prepare("UPDATE tasks SET cwd = ? WHERE id = ?")
+          .run(cwd, taskId);
       }
       if (current.agent_session_id === agentSessionId) return current;
 
       this.db
         .prepare(
-          "DELETE FROM agent_sessions WHERE agent_key = ? AND web_session_id = ?",
+          "DELETE FROM agent_sessions WHERE agent_key = ? AND task_id = ?",
         )
-        .run(this.agentKey, webSessionId);
+        .run(this.agentKey, taskId);
       this.db
         .prepare(
-          "INSERT INTO agent_sessions (agent_key, agent_session_id, web_session_id) VALUES (?, ?, ?)",
+          "INSERT INTO agent_sessions (agent_key, agent_session_id, task_id) VALUES (?, ?, ?)",
         )
-        .run(this.agentKey, agentSessionId, webSessionId);
+        .run(this.agentKey, agentSessionId, taskId);
 
-      return this.getAgentSessionBinding(webSessionId)!;
+      return this.getAgentSessionBinding(taskId)!;
     })();
   }
 
-  /** Bind an ACP execution to an existing WebAgent session without creating a row. */
-  bindAgentSession(
-    webSessionId: string,
-    agentSessionId: string,
-  ): AgentSessionRow {
+  /** Bind an ACP execution to an existing WebAgent task without creating a row. */
+  bindAgentSession(taskId: string, agentSessionId: string): AgentSessionRow {
     return this.db.transaction(() => {
-      if (!this.getSessionIncludingDeleted(webSessionId)) {
-        throw new Error(`Session not found: ${webSessionId}`);
+      if (!this.getTaskIncludingDeleted(taskId)) {
+        throw new Error(`Task not found: ${taskId}`);
       }
-      const current = this.getAgentSessionBinding(webSessionId);
+      const current = this.getAgentSessionBinding(taskId);
       if (current) {
         if (current.agent_session_id === agentSessionId) return current;
-        throw new Error(`Session already has an ACP binding: ${webSessionId}`);
+        throw new Error(`Task already has an ACP binding: ${taskId}`);
       }
       this.db
         .prepare(
-          "INSERT INTO agent_sessions (agent_key, agent_session_id, web_session_id) VALUES (?, ?, ?)",
+          "INSERT INTO agent_sessions (agent_key, agent_session_id, task_id) VALUES (?, ?, ?)",
         )
-        .run(this.agentKey, agentSessionId, webSessionId);
-      return this.getAgentSessionBinding(webSessionId)!;
+        .run(this.agentKey, agentSessionId, taskId);
+      return this.getAgentSessionBinding(taskId)!;
     })();
   }
 
-  ownsSession(webSessionId: string): boolean {
-    return this.getAgentSessionBinding(webSessionId) !== undefined;
+  ownsTask(taskId: string): boolean {
+    return this.getAgentSessionBinding(taskId) !== undefined;
   }
 
   /**
-   * Returns a session row even if soft-deleted. Used by the public share
+   * Returns a task row even if soft-deleted. Used by the public share
    * viewer, which must keep working after the owner deletes the source
-   * session (events stay alive as long as any active share references them).
+   * task (events stay alive as long as any active share references them).
    */
-  getSessionIncludingDeleted(id: string): SessionRow | undefined {
-    return this.db.prepare("SELECT * FROM sessions WHERE id = ?").get(id) as
-      | SessionRow
+  getTaskIncludingDeleted(id: string): TaskRow | undefined {
+    return this.db.prepare("SELECT * FROM tasks WHERE id = ?").get(id) as
+      | TaskRow
       | undefined;
   }
 
-  /** Re-parent surviving children of a hard-deleted session under Root so the
-   *  FK on parent_session_id stays valid. Root is guaranteed to exist post-boot
-   *  (ensureRootSession runs before listen). No-op when there are no children. */
+  /** Re-parent surviving children of a hard-deleted task under Root so the
+   *  FK on parent_id stays valid. Root is guaranteed to exist post-boot
+   *  (ensureRootTask runs before listen). No-op when there are no children. */
   private reparentChildrenToRoot(parentId: string): void {
     this.db
       .prepare(
-        "UPDATE sessions SET parent_session_id = ? WHERE parent_session_id = ? AND id != ? AND id != ?",
+        "UPDATE tasks SET parent_id = ? WHERE parent_id = ? AND id != ? AND id != ?",
       )
-      .run(ROOT_SESSION_ID, parentId, parentId, ROOT_SESSION_ID);
+      .run(ROOT_TASK_ID, parentId, parentId, ROOT_TASK_ID);
   }
 
-  /** Direct child ids of a session (excluding itself and Root), in any order. */
+  /** Direct child ids of a task (excluding itself and Root), in any order. */
   private listChildren(parentId: string): string[] {
     return (
       this.db
         .prepare(
-          "SELECT id FROM sessions WHERE parent_session_id = ? AND id != ? AND id != ?",
+          "SELECT id FROM tasks WHERE parent_id = ? AND id != ? AND id != ?",
         )
-        .all(parentId, parentId, ROOT_SESSION_ID) as Array<{ id: string }>
+        .all(parentId, parentId, ROOT_TASK_ID) as Array<{ id: string }>
     ).map((row) => row.id);
   }
 
   /**
-   * Every descendant of a session, transitively (used to gate destructive
+   * Every descendant of a task, transitively (used to gate destructive
    * operations such as the DELETE busy check against in-flight children).
    */
-  getDescendantSessionIds(rootId: string): string[] {
+  getDescendantTaskIds(rootId: string): string[] {
     const out: string[] = [];
     const queue = [rootId];
     while (queue.length > 0) {
@@ -714,53 +757,53 @@ export class Store {
   }
 
   /**
-   * Delete a session and every descendant session recursively. The
+   * Delete a task and every descendant task recursively. The
    * parent/child hierarchy is a hard ownership link, so the deletion is
    * immediate and needs no confirmation (a confirmation step is deferred
-   * until a tree UI exists). Each affected session follows its own share
-   * rules: a session with active shares is tombstoned (kept so share
+   * until a tree UI exists). Each affected task follows its own share
+   * rules: a task with active shares is tombstoned (kept so share
    * viewers still resolve) and its binding removed; a share-tombstoned
    * descendant of a hard-deleted parent is re-parented under Root.
    *
-   * Returns every affected session with its deletion mode and the ACP
+   * Returns every affected task with its deletion mode and the ACP
    * execution bound at deletion time, so callers can retire executions,
-   * clean up in-memory state, and broadcast `session_deleted` per id.
+   * clean up in-memory state, and broadcast `task_deleted` per id.
    */
-  deleteSession(id: string): {
+  deleteTask(id: string): {
     mode: "hard" | "soft";
-    affected: SessionDelete[];
+    affected: TaskDelete[];
   } {
-    if (id === ROOT_SESSION_ID) {
-      throw new Error("Root session cannot be deleted");
+    if (id === ROOT_TASK_ID) {
+      throw new Error("Root task cannot be deleted");
     }
-    const affected: SessionDelete[] = [];
+    const affected: TaskDelete[] = [];
     // Delete descendants first (children before parents) so the FK on
-    // parent_session_id can never block the parent's own row removal.
+    // parent_id can never block the parent's own row removal.
     const children = this.listChildren(id);
     for (const childId of children) {
-      affected.push(...this.deleteSession(childId).affected);
+      affected.push(...this.deleteTask(childId).affected);
     }
     const binding = this.getAgentSessionBinding(id);
     // Drop preview shares regardless — they are owner-only drafts and
-    // share the session's lifecycle by design.
+    // share the task's lifecycle by design.
     this.db
-      .prepare("DELETE FROM shares WHERE session_id = ? AND shared_at IS NULL")
+      .prepare("DELETE FROM shares WHERE task_id = ? AND shared_at IS NULL")
       .run(id);
     const activeShareCount = (
       this.db
         .prepare(
-          "SELECT COUNT(*) AS n FROM shares WHERE session_id = ? AND shared_at IS NOT NULL",
+          "SELECT COUNT(*) AS n FROM shares WHERE task_id = ? AND shared_at IS NOT NULL",
         )
         .get(id) as { n: number }
     ).n;
-    this.db.prepare("DELETE FROM client_ops WHERE session_id = ?").run(id);
+    this.db.prepare("DELETE FROM client_ops WHERE task_id = ?").run(id);
     if (activeShareCount > 0) {
-      // Soft-delete: keep events + sessions row so public share viewers
+      // Soft-delete: keep events + tasks row so public share viewers
       // can still resolve. The owner-side binding is retired like a hard
       // delete; revokeShare() / reapTombstoneIfOrphaned() finishes the job
       // once the last share is gone.
       this.db
-        .prepare("UPDATE sessions SET deleted_at = ? WHERE id = ?")
+        .prepare("UPDATE tasks SET deleted_at = ? WHERE id = ?")
         .run(Date.now(), id);
       if (binding) {
         this.db
@@ -779,8 +822,8 @@ export class Store {
     // Hard delete: re-parent any survivor (share-tombstoned descendants)
     // under Root, then drop events and the row (agent_sessions cascades).
     this.reparentChildrenToRoot(id);
-    this.db.prepare("DELETE FROM events WHERE session_id = ?").run(id);
-    this.db.prepare("DELETE FROM sessions WHERE id = ?").run(id);
+    this.db.prepare("DELETE FROM events WHERE task_id = ?").run(id);
+    this.db.prepare("DELETE FROM tasks WHERE id = ?").run(id);
     affected.unshift({
       id,
       mode: "hard",
@@ -790,44 +833,42 @@ export class Store {
   }
 
   /**
-   * Hard-delete events + sessions row for a session that has been soft-
-   * deleted and whose last share was just revoked. No-op if the session
+   * Hard-delete events + tasks row for a task that has been soft-
+   * deleted and whose last share was just revoked. No-op if the task
    * is still live (deleted_at IS NULL) or still has active shares.
    * Returns true if a tombstone was reaped.
    */
-  reapTombstoneIfOrphaned(sessionId: string): boolean {
-    const sess = this.db
-      .prepare(
-        "SELECT id FROM sessions WHERE id = ? AND deleted_at IS NOT NULL",
-      )
-      .get(sessionId) as { id: string } | undefined;
-    if (!sess) return false;
+  reapTombstoneIfOrphaned(taskId: string): boolean {
+    const row = this.db
+      .prepare("SELECT id FROM tasks WHERE id = ? AND deleted_at IS NOT NULL")
+      .get(taskId) as { id: string } | undefined;
+    if (!row) return false;
     const remaining = (
       this.db
-        .prepare("SELECT COUNT(*) AS n FROM shares WHERE session_id = ?")
-        .get(sessionId) as { n: number }
+        .prepare("SELECT COUNT(*) AS n FROM shares WHERE task_id = ?")
+        .get(taskId) as { n: number }
     ).n;
     if (remaining > 0) return false;
     // Its live children were deleted when it was tombstoned; any survivor
     // (a share-tombstoned descendant of this tombstone) still references it
     // and must be re-parented under Root before the row goes away.
-    this.reparentChildrenToRoot(sessionId);
-    this.db.prepare("DELETE FROM events WHERE session_id = ?").run(sessionId);
-    this.db.prepare("DELETE FROM sessions WHERE id = ?").run(sessionId);
+    this.reparentChildrenToRoot(taskId);
+    this.db.prepare("DELETE FROM events WHERE task_id = ?").run(taskId);
+    this.db.prepare("DELETE FROM tasks WHERE id = ?").run(taskId);
     return true;
   }
 
-  /** Delete sessions that have zero events and are older than minAgeS seconds. Returns IDs deleted. */
-  deleteEmptySessions(minAgeS: number): Array<{
+  /** Delete tasks that have zero events and are older than minAgeS seconds. Returns IDs deleted. */
+  deleteEmptyTasks(minAgeS: number): Array<{
     id: string;
     agentSessionId: string | null;
   }> {
     const empties = this.db
       .prepare(
         `
-      SELECT s.id, a.agent_session_id FROM sessions s
-      JOIN agent_sessions a ON a.web_session_id = s.id
-      LEFT JOIN events e ON e.session_id = s.id
+      SELECT s.id, a.agent_session_id FROM tasks s
+      JOIN agent_sessions a ON a.task_id = s.id
+      LEFT JOIN events e ON e.task_id = s.id
       WHERE e.id IS NULL
         AND s.id != ?
         AND a.agent_key = ?
@@ -835,15 +876,15 @@ export class Store {
         AND strftime('%s', 'now') - strftime('%s', s.created_at) >= ?
     `,
       )
-      .all(ROOT_SESSION_ID, this.agentKey, minAgeS) as Array<{
+      .all(ROOT_TASK_ID, this.agentKey, minAgeS) as Array<{
       id: string;
       agent_session_id: string;
     }>;
     if (empties.length === 0) return [];
-    const del = this.db.prepare("DELETE FROM sessions WHERE id = ?");
+    const del = this.db.prepare("DELETE FROM tasks WHERE id = ?");
     const removed: Array<{ id: string; agentSessionId: string | null }> = [];
     for (const r of empties) {
-      // A junk session may still be someone's parent; keep the children by
+      // A junk task may still be someone's parent; keep the children by
       // re-parenting them under Root instead of deleting them.
       this.reparentChildrenToRoot(r.id);
       del.run(r.id);
@@ -852,16 +893,14 @@ export class Store {
     return removed;
   }
 
-  updateSessionTitle(id: string, title: string): void {
-    this.db
-      .prepare("UPDATE sessions SET title = ? WHERE id = ?")
-      .run(title, id);
+  updateTaskTitle(id: string, title: string): void {
+    this.db.prepare("UPDATE tasks SET title = ? WHERE id = ?").run(title, id);
   }
 
-  updateSessionLastActive(id: string): void {
+  updateTaskLastActive(id: string): void {
     this.db
       .prepare(
-        "UPDATE sessions SET last_active_at = strftime('%Y-%m-%d %H:%M:%f', 'now') WHERE id = ?",
+        "UPDATE tasks SET last_active_at = strftime('%Y-%m-%d %H:%M:%f', 'now') WHERE id = ?",
       )
       .run(id);
   }
@@ -869,7 +908,7 @@ export class Store {
   /** Return the hidden summary waiting to be prepended to the next prompt. */
   getPendingCompactSummary(id: string): string | null {
     const row = this.db
-      .prepare("SELECT pending_compact_summary FROM sessions WHERE id = ?")
+      .prepare("SELECT pending_compact_summary FROM tasks WHERE id = ?")
       .get(id) as { pending_compact_summary: string | null } | undefined;
     return row?.pending_compact_summary ?? null;
   }
@@ -878,32 +917,32 @@ export class Store {
    * Persist the visible assistant summary and its hidden pending copy together.
    * The latter is consumed only when the next real prompt is accepted.
    */
-  saveCompactSummary(sessionId: string, summary: string): EventRow {
+  saveCompactSummary(taskId: string, summary: string): EventRow {
     return this.db.transaction(() => {
       const seq = (
         this.db
           .prepare(
-            "SELECT COALESCE(MAX(seq), 0) + 1 AS next FROM events WHERE session_id = ?",
+            "SELECT COALESCE(MAX(seq), 0) + 1 AS next FROM events WHERE task_id = ?",
           )
-          .get(sessionId) as { next: number }
+          .get(taskId) as { next: number }
       ).next;
       this.db
         .prepare(
-          "INSERT INTO events (session_id, seq, type, data, from_ref) VALUES (?, ?, ?, ?, ?)",
+          "INSERT INTO events (task_id, seq, type, data, from_ref) VALUES (?, ?, ?, ?, ?)",
         )
         .run(
-          sessionId,
+          taskId,
           seq,
           "assistant_message",
           JSON.stringify({ text: summary }),
           "agent",
         );
       this.db
-        .prepare("UPDATE sessions SET pending_compact_summary = ? WHERE id = ?")
-        .run(summary, sessionId);
+        .prepare("UPDATE tasks SET pending_compact_summary = ? WHERE id = ?")
+        .run(summary, taskId);
       return this.db
-        .prepare("SELECT * FROM events WHERE session_id = ? AND seq = ?")
-        .get(sessionId, seq) as EventRow;
+        .prepare("SELECT * FROM events WHERE task_id = ? AND seq = ?")
+        .get(taskId, seq) as EventRow;
     })();
   }
 
@@ -913,19 +952,19 @@ export class Store {
       expected === undefined
         ? this.db
             .prepare(
-              "UPDATE sessions SET pending_compact_summary = NULL WHERE id = ?",
+              "UPDATE tasks SET pending_compact_summary = NULL WHERE id = ?",
             )
             .run(id)
         : this.db
             .prepare(
-              "UPDATE sessions SET pending_compact_summary = NULL WHERE id = ? AND pending_compact_summary = ?",
+              "UPDATE tasks SET pending_compact_summary = NULL WHERE id = ? AND pending_compact_summary = ?",
             )
             .run(id, expected);
     return result.changes > 0;
   }
 
-  /** Update a config option value (model, mode, reasoning_effort) for a session. */
-  updateSessionConfig(id: string, configId: string, value: string): void {
+  /** Update a config option value (model, mode, reasoning_effort) for a task. */
+  updateTaskConfig(id: string, configId: string, value: string): void {
     const column = (
       {
         model: "model",
@@ -936,12 +975,12 @@ export class Store {
     )[configId];
     if (!column) return;
     this.db
-      .prepare(`UPDATE sessions SET ${column} = ? WHERE id = ?`)
+      .prepare(`UPDATE tasks SET ${column} = ? WHERE id = ?`)
       .run(value, id);
   }
 
   saveEvent(
-    sessionId: string,
+    taskId: string,
     type: string,
     data: Record<string, unknown> = {},
     opts?: { from_ref?: string },
@@ -949,9 +988,9 @@ export class Store {
     const seq = (
       this.db
         .prepare(
-          "SELECT COALESCE(MAX(seq), 0) + 1 AS next FROM events WHERE session_id = ?",
+          "SELECT COALESCE(MAX(seq), 0) + 1 AS next FROM events WHERE task_id = ?",
         )
-        .get(sessionId) as { next: number }
+        .get(taskId) as { next: number }
     ).next;
 
     // Origin marker is required. Every writer must pass an explicit value;
@@ -961,23 +1000,23 @@ export class Store {
     const fromRef = opts?.from_ref;
     if (!fromRef) {
       throw new Error(
-        `saveEvent: from_ref is required (type=${type} session=${sessionId.slice(0, 8)}) — pass { from_ref: 'user' | 'system' | 'agent' | 'msg:<id>' }`,
+        `saveEvent: from_ref is required (type=${type} task=${taskId.slice(0, 8)}) — pass { from_ref: 'user' | 'system' | 'agent' | 'msg:<id>' }`,
       );
     }
 
     this.db
       .prepare(
-        "INSERT INTO events (session_id, seq, type, data, from_ref) VALUES (?, ?, ?, ?, ?)",
+        "INSERT INTO events (task_id, seq, type, data, from_ref) VALUES (?, ?, ?, ?, ?)",
       )
-      .run(sessionId, seq, type, JSON.stringify(data), fromRef);
+      .run(taskId, seq, type, JSON.stringify(data), fromRef);
 
     return this.db
-      .prepare("SELECT * FROM events WHERE session_id = ? AND seq = ?")
-      .get(sessionId, seq) as EventRow;
+      .prepare("SELECT * FROM events WHERE task_id = ? AND seq = ?")
+      .get(taskId, seq) as EventRow;
   }
 
   getEvents(
-    sessionId: string,
+    taskId: string,
     opts?: {
       excludeThinking?: boolean;
       afterSeq?: number;
@@ -986,8 +1025,8 @@ export class Store {
     },
   ): EventRow[] {
     const hasLimit = opts?.limit != null && opts.limit > 0;
-    const conditions = ["session_id = ?"];
-    const params: unknown[] = [sessionId];
+    const conditions = ["task_id = ?"];
+    const params: unknown[] = [taskId];
     if (opts?.afterSeq != null) {
       conditions.push("seq > ?");
       params.push(opts.afterSeq);
@@ -1013,46 +1052,43 @@ export class Store {
       .all(...params) as EventRow[];
   }
 
-  getEventCount(
-    sessionId: string,
-    opts?: { excludeThinking?: boolean },
-  ): number {
-    let query = "SELECT COUNT(*) as count FROM events WHERE session_id = ?";
-    const params: unknown[] = [sessionId];
+  getEventCount(taskId: string, opts?: { excludeThinking?: boolean }): number {
+    let query = "SELECT COUNT(*) as count FROM events WHERE task_id = ?";
+    const params: unknown[] = [taskId];
     if (opts?.excludeThinking) {
       query += " AND type != 'thinking'";
     }
     return (this.db.prepare(query).get(...params) as { count: number }).count;
   }
 
-  /** Highest seq of any stored event for this session (0 when empty). */
-  getLastEventSeq(sessionId: string): number {
+  /** Highest seq of any stored event for this task (0 when empty). */
+  getLastEventSeq(taskId: string): number {
     const row = this.db
       .prepare(
-        "SELECT COALESCE(MAX(seq), 0) AS seq FROM events WHERE session_id = ?",
+        "SELECT COALESCE(MAX(seq), 0) AS seq FROM events WHERE task_id = ?",
       )
-      .get(sessionId) as { seq: number };
+      .get(taskId) as { seq: number };
     return row.seq;
   }
 
   /** Check if the most recent agent turn lacks a completion or error terminal event. */
-  hasInterruptedTurn(sessionId: string): boolean {
+  hasInterruptedTurn(taskId: string): boolean {
     const row = this.db
       .prepare(
         `
       SELECT 1 FROM events
-      WHERE session_id = ? AND type = 'user_message'
+      WHERE task_id = ? AND type = 'user_message'
         AND seq > COALESCE(
           (
             SELECT MAX(seq) FROM events
-            WHERE session_id = ? AND type IN ('prompt_done', 'error')
+            WHERE task_id = ? AND type IN ('prompt_done', 'error')
           ),
           0
         )
       LIMIT 1
     `,
       )
-      .get(sessionId, sessionId);
+      .get(taskId, taskId);
     return Boolean(row);
   }
 
@@ -1195,17 +1231,17 @@ export class Store {
   }
 
   /**
-   * Atomically move a pending message into an existing session. Session
+   * Atomically move a pending message into an existing task. Task
    * lifecycle belongs to SessionManager because ACP creation is asynchronous
    * and cannot participate in this SQLite transaction.
    */
   consumeMessageTx(
     messageId: string,
-    sessionId: string,
-  ): { sessionId: string; alreadyConsumed: boolean } {
-    const existing = this.findConsumedMessageSession(messageId);
+    taskId: string,
+  ): { taskId: string; alreadyConsumed: boolean } {
+    const existing = this.findConsumedMessageTask(messageId);
     if (existing) {
-      return { sessionId: existing, alreadyConsumed: true };
+      return { taskId: existing, alreadyConsumed: true };
     }
 
     const row = this.getMessage(messageId);
@@ -1215,7 +1251,7 @@ export class Store {
 
     const tx = this.db.transaction(() => {
       this.saveEvent(
-        sessionId,
+        taskId,
         "message",
         {
           message_id: row.id,
@@ -1236,33 +1272,33 @@ export class Store {
     });
     tx();
 
-    return { sessionId, alreadyConsumed: false };
+    return { taskId, alreadyConsumed: false };
   }
 
-  findConsumedMessageSession(messageId: string): string | undefined {
+  findConsumedMessageTask(messageId: string): string | undefined {
     const row = this.db
       .prepare(
-        `SELECT session_id FROM events
+        `SELECT task_id FROM events
          WHERE type = 'message'
            AND json_extract(data, '$.message_id') = ?
          LIMIT 1`,
       )
-      .get(messageId) as { session_id: string } | undefined;
-    return row?.session_id;
+      .get(messageId) as { task_id: string } | undefined;
+    return row?.task_id;
   }
 
   // --- client-server-split M2: client_ops idempotency ---
 
   /**
-   * Look up a previously-cached response for (sessionId, clientOpId).
+   * Look up a previously-cached response for (taskId, clientOpId).
    * Returns the parsed result or null if no cached entry exists.
    */
-  getClientOp(sessionId: string, clientOpId: string): unknown {
+  getClientOp(taskId: string, clientOpId: string): unknown {
     const row = this.db
       .prepare(
-        "SELECT result_json FROM client_ops WHERE session_id = ? AND client_op_id = ?",
+        "SELECT result_json FROM client_ops WHERE task_id = ? AND client_op_id = ?",
       )
-      .get(sessionId, clientOpId) as { result_json: string } | undefined;
+      .get(taskId, clientOpId) as { result_json: string } | undefined;
     if (!row) return null;
     try {
       return JSON.parse(row.result_json);
@@ -1272,15 +1308,15 @@ export class Store {
   }
 
   /**
-   * Cache a successful response for (sessionId, clientOpId). Uses
+   * Cache a successful response for (taskId, clientOpId). Uses
    * INSERT OR IGNORE so a concurrent winner is preserved.
    */
-  saveClientOp(sessionId: string, clientOpId: string, result: unknown): void {
+  saveClientOp(taskId: string, clientOpId: string, result: unknown): void {
     this.db
       .prepare(
-        "INSERT OR IGNORE INTO client_ops (session_id, client_op_id, result_json) VALUES (?, ?, ?)",
+        "INSERT OR IGNORE INTO client_ops (task_id, client_op_id, result_json) VALUES (?, ?, ?)",
       )
-      .run(sessionId, clientOpId, JSON.stringify(result));
+      .run(taskId, clientOpId, JSON.stringify(result));
   }
 
   /** Prune client_ops rows older than `maxAgeMs` (milliseconds). Returns rows deleted. */
@@ -1298,27 +1334,27 @@ export class Store {
 
   /**
    * Insert a new attachment row. upload_seq is computed as
-   * `COALESCE(MAX(events.seq), 0)` for the session at insert time. Callers
+   * `COALESCE(MAX(events.seq), 0)` for the task at insert time. Callers
    * must have already written the file under
-   * <data_dir>/sessions/<sid>/attachments/<id>.<ext> and resolved its
-   * realpath. The row is bound by FK CASCADE to its session.
+   * <data_dir>/tasks/<sid>/attachments/<id>.<ext> and resolved its
+   * realpath. The row is bound by FK CASCADE to its task.
    */
   insertAttachment(input: AttachmentInput): AttachmentRow {
     const seqRow = this.db
       .prepare(
-        "SELECT COALESCE(MAX(seq), 0) AS s FROM events WHERE session_id = ?",
+        "SELECT COALESCE(MAX(seq), 0) AS s FROM events WHERE task_id = ?",
       )
-      .get(input.sessionId) as { s: number };
+      .get(input.taskId) as { s: number };
     const uploadSeq = seqRow.s;
     this.db
       .prepare(
         `INSERT INTO attachments
-           (id, session_id, kind, name, mime, size, realpath, upload_seq, width, height)
+           (id, task_id, kind, name, mime, size, realpath, upload_seq, width, height)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         input.id,
-        input.sessionId,
+        input.taskId,
         input.kind,
         input.name,
         input.mime,
@@ -1333,42 +1369,40 @@ export class Store {
       .get(input.id) as AttachmentRow;
   }
 
-  /** Look up an attachment row by (session_id, id). */
-  getAttachment(sessionId: string, id: string): AttachmentRow | undefined {
+  /** Look up an attachment row by (task_id, id). */
+  getAttachment(taskId: string, id: string): AttachmentRow | undefined {
     return this.db
-      .prepare("SELECT * FROM attachments WHERE session_id = ? AND id = ?")
-      .get(sessionId, id) as AttachmentRow | undefined;
+      .prepare("SELECT * FROM attachments WHERE task_id = ? AND id = ?")
+      .get(taskId, id) as AttachmentRow | undefined;
   }
 
   /**
    * For the permission interceptor: list all attachment realpaths for a
-   * session so we can compare against `toolCall.locations[].path` after
+   * task so we can compare against `toolCall.locations[].path` after
    * realpath-ing each side. The set is small (≤ a few hundred per
-   * session) so we hand back an in-memory array.
+   * task) so we hand back an in-memory array.
    */
-  listAttachmentRealpaths(sessionId: string): string[] {
+  listAttachmentRealpaths(taskId: string): string[] {
     const rows = this.db
-      .prepare("SELECT realpath FROM attachments WHERE session_id = ?")
-      .all(sessionId) as { realpath: string }[];
+      .prepare("SELECT realpath FROM attachments WHERE task_id = ?")
+      .all(taskId) as { realpath: string }[];
     return rows.map((r) => r.realpath);
   }
 
   /**
    * For the egress label-rewrite (CLAUDE.md "Attachment label egress
    * rewrite"): list each attachment's id, user-supplied name, and
-   * realpath for a session. Caller (session-manager label cache)
+   * realpath for a task. Caller (task-manager label cache)
    * derives the label string `<name> [#<id4>]`. Pure DB read; no
    * realpath syscalls (the stored realpath is already resolved at
    * upload time).
    */
   listAttachmentLabels(
-    sessionId: string,
+    taskId: string,
   ): Array<{ id: string; name: string; realpath: string }> {
     const rows = this.db
-      .prepare(
-        "SELECT id, name, realpath FROM attachments WHERE session_id = ?",
-      )
-      .all(sessionId) as Array<{ id: string; name: string; realpath: string }>;
+      .prepare("SELECT id, name, realpath FROM attachments WHERE task_id = ?")
+      .all(taskId) as Array<{ id: string; name: string; realpath: string }>;
     return rows;
   }
 
@@ -1377,13 +1411,10 @@ export class Store {
    * filename portion of its URL (`<id>.<ext>`). The id is the uuid prefix
    * of the file segment.
    */
-  getAttachmentByFile(
-    sessionId: string,
-    file: string,
-  ): AttachmentRow | undefined {
+  getAttachmentByFile(taskId: string, file: string): AttachmentRow | undefined {
     const dot = file.indexOf(".");
     const id = dot === -1 ? file : file.slice(0, dot);
-    return this.getAttachment(sessionId, id);
+    return this.getAttachment(taskId, id);
   }
 
   close(): void {
@@ -1398,11 +1429,11 @@ export class Store {
    * §4.3 R1-c2). Returns the inserted row.
    *
    * May throw SQLITE_CONSTRAINT_UNIQUE on shares_one_active_preview;
-   * callers handle via findActivePreviewBySession fallback (§4.3 R2-c2).
+   * callers handle via findActivePreviewByTask fallback (§4.3 R2-c2).
    */
   insertSharePreview(input: {
     token: string;
-    sessionId: string;
+    taskId: string;
     snapshotSeq: number;
     ttlHours?: number | null;
     displayName?: string | null;
@@ -1410,12 +1441,12 @@ export class Store {
   }): ShareRow {
     this.db
       .prepare(
-        `INSERT INTO shares (token, session_id, share_snapshot_seq, ttl_hours, display_name, owner_label)
+        `INSERT INTO shares (token, task_id, share_snapshot_seq, ttl_hours, display_name, owner_label)
        VALUES (?, ?, ?, ?, ?, ?)`,
       )
       .run(
         input.token,
-        input.sessionId,
+        input.taskId,
         input.snapshotSeq,
         input.ttlHours ?? null,
         input.displayName ?? null,
@@ -1424,15 +1455,15 @@ export class Store {
     return this.getShareByToken(input.token)!;
   }
 
-  /** SELECT the single un-activated preview for this session (partial unique). */
-  findActivePreviewBySession(sessionId: string): ShareRow | undefined {
+  /** SELECT the single un-activated preview for this task (partial unique). */
+  findActivePreviewByTask(taskId: string): ShareRow | undefined {
     return this.db
       .prepare(
         `SELECT * FROM shares
-       WHERE session_id = ? AND shared_at IS NULL
+       WHERE task_id = ? AND shared_at IS NULL
        ORDER BY created_at DESC LIMIT 1`,
       )
-      .get(sessionId) as ShareRow | undefined;
+      .get(taskId) as ShareRow | undefined;
   }
 
   getShareByToken(token: string): ShareRow | undefined {
@@ -1497,8 +1528,8 @@ export class Store {
       .prepare(
         `SELECT
          s.token AS token,
-         s.session_id AS session_id,
-         sess.title AS session_title,
+         s.task_id AS task_id,
+         t.title AS task_title,
          s.shared_at AS shared_at,
          s.created_at AS created_at,
          s.display_name AS display_name,
@@ -1507,8 +1538,8 @@ export class Store {
          s.ttl_hours AS ttl_hours,
          s.last_accessed_at AS last_accessed_at
        FROM shares s
-       JOIN agent_sessions a ON a.web_session_id = s.session_id
-       LEFT JOIN sessions sess ON sess.id = s.session_id
+       JOIN agent_sessions a ON a.task_id = s.task_id
+       LEFT JOIN tasks t ON t.id = s.task_id
        WHERE a.agent_key = ?
        ORDER BY s.created_at DESC`,
       )

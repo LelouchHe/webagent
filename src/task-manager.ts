@@ -6,9 +6,9 @@ import { stat } from "node:fs/promises";
 import { join } from "node:path";
 import {
   MessageNotFoundError,
-  ROOT_SESSION_ID,
-  type SessionDelete,
-  type SessionRow,
+  ROOT_TASK_ID,
+  type TaskDelete,
+  type TaskRow,
   type Store,
 } from "./store.ts";
 import type { AgentBridge } from "./bridge.ts";
@@ -23,17 +23,17 @@ import type {
   PendingPermission,
 } from "./types.ts";
 
-import { SessionStateManager } from "./session-state.ts";
+import { TaskStateManager } from "./task-state.ts";
 import { buildLabelMap, type LabelMap } from "./attachment-labels.ts";
 import { abbreviateHomePath, expandHomePath } from "./home-path.ts";
 import { log } from "./log.ts";
 
-const slog = log.scope("session");
+const slog = log.scope("task");
 
 const IS_WIN = process.platform === "win32";
 
 export function interruptBashProc(
-  proc: ReturnType<SessionManager["runningBashProcs"]["get"]>,
+  proc: ReturnType<TaskManager["runningBashProcs"]["get"]>,
   force = false,
 ): void {
   if (!proc) return;
@@ -64,47 +64,47 @@ type SessionBridge = Pick<
     >
   >;
 
-/** Minimum age (seconds) before an empty session is eligible for cleanup. */
-const EMPTY_SESSION_MIN_AGE_S = 60;
+/** Minimum age (seconds) before an empty task is eligible for cleanup. */
+const EMPTY_TASK_MIN_AGE_S = 60;
 
-export class InvalidSessionDirectoryError extends Error {
+export class InvalidTaskDirectoryError extends Error {
   constructor(cwd: string) {
     super(`Directory does not exist: ${cwd}`);
-    this.name = "InvalidSessionDirectoryError";
+    this.name = "InvalidTaskDirectoryError";
   }
 }
 
 export interface ConsumeMessageResult {
-  sessionId: string;
+  taskId: string;
   alreadyConsumed: boolean;
 }
 
 /**
- * Centralizes all session-related state that was previously scattered
+ * Centralizes all task-related state that was previously scattered
  * across module-level variables in server.ts.
  */
-export class SessionManager {
-  readonly liveSessions = new Set<string>();
-  /** Sessions with a minted MCP capability awaiting ACP session/new. */
-  readonly creatingSessions = new Set<string>();
-  readonly restoringSessions = new Set<string>();
-  readonly sessionHasTitle = new Set<string>();
+export class TaskManager {
+  readonly liveTasks = new Set<string>();
+  /** Tasks with a minted MCP capability awaiting ACP task/new. */
+  readonly creatingTasks = new Set<string>();
+  readonly restoringTasks = new Set<string>();
+  readonly taskHasTitle = new Set<string>();
   readonly assistantBuffers = new Map<string, string>();
   readonly thinkingBuffers = new Map<string, string>();
   readonly activePrompts = new Set<string>();
-  /** Sessions undergoing compact summary generation or ACP rotation. */
-  readonly compactingSessions = new Set<string>();
+  /** Tasks undergoing compact summary generation or ACP rotation. */
+  readonly compactingTasks = new Set<string>();
   /** Barrier covering the asynchronous ACP replacement itself. */
-  readonly rotatingSessions = new Set<string>();
+  readonly rotatingTasks = new Set<string>();
   readonly pendingPromptSubmissions = new Map<string, number>();
   readonly cancelledPromptSubmissions = new Set<number>();
   readonly runningBashProcs = new Map<string, ChildProcess>();
   readonly interruptedBashProcs = new WeakSet<ChildProcess>();
   /** Pending permission requests keyed by requestId. */
   readonly pendingPermissions = new Map<string, PendingPermission>();
-  /** Per-session runtime state (busy/streaming/permissions snapshots + patches). */
-  readonly state = new SessionStateManager();
-  /** Deduplicates concurrent resume calls for the same session. */
+  /** Per-task runtime state (busy/streaming/permissions snapshots + patches). */
+  readonly state = new TaskStateManager();
+  /** Deduplicates concurrent resume calls for the same task. */
   private readonly pendingResumes = new Map<string, Promise<void>>();
   private nextPromptNumber = 0;
   private nextPromptSubmissionNumber = 0;
@@ -114,9 +114,9 @@ export class SessionManager {
     Promise<ConsumeMessageResult | null>
   >();
   /**
-   * Per-session attachment label map (CLAUDE.md "Attachment label
+   * Per-task attachment label map (CLAUDE.md "Attachment label
    * egress rewrite"). Built lazily from the `attachments` table on
-   * first read; invalidated on attachment INSERT and session
+   * first read; invalidated on attachment INSERT and task
    * DELETE. Lookup is cheap (Map.get); rebuild is one SQLite query.
    */
   private readonly attachmentLabelCache = new Map<string, LabelMap>();
@@ -141,11 +141,11 @@ export class SessionManager {
     dataDir: string,
     /**
      * Optional MCP capability store. When provided together with
-     * `mcpBaseUrl`, every created/restored session is given a uniquely
+     * `mcpBaseUrl`, every created/restored task is given a uniquely
      * named MCP server entry whose Authorization header carries a freshly
-     * minted capability — the MCP control plane for ACP sessions. Lifecycle
+     * minted capability — the MCP control plane for ACP tasks. Lifecycle
      * here is the single source of truth: mint happens next to
-     * `liveSessions.add`, revoke next to `liveSessions.delete`.
+     * `liveTasks.add`, revoke next to `liveTasks.delete`.
      */
     capabilities?: CapabilityStore,
     mcpBaseUrl?: string,
@@ -158,47 +158,47 @@ export class SessionManager {
   }
 
   /**
-   * MCP may connect while ACP session/new or session/load is still pending.
-   * Treat those capability-backed sessions as active for that narrow window;
+   * MCP may connect while ACP task/new or task/load is still pending.
+   * Treat those capability-backed tasks as active for that narrow window;
    * they are promoted to live only after persistence/ACP succeeds.
    */
-  isMcpSessionActive(sessionId: string): boolean {
+  isMcpSessionActive(taskId: string): boolean {
     return (
-      this.liveSessions.has(sessionId) ||
-      this.creatingSessions.has(sessionId) ||
-      this.restoringSessions.has(sessionId)
+      this.liveTasks.has(taskId) ||
+      this.creatingTasks.has(taskId) ||
+      this.restoringTasks.has(taskId)
     );
   }
 
   /**
-   * Mint a capability for one session and build its MCP server
+   * Mint a capability for one task and build its MCP server
    * `mcpServers` entry. Returns undefined (no MCP) when the server was not
-   * configured with a capability store + base URL, keeping sessions
+   * configured with a capability store + base URL, keeping tasks
    * without MCP on the previous empty-mcpServers path.
    */
   private buildMcpServerForExecution(
-    webSessionId: string,
+    taskId: string,
     preserveExisting: boolean,
   ): { servers: AcpMcpServer[]; token: string } | undefined {
     if (!this.capabilities || !this.mcpBaseUrl) return undefined;
     const token = preserveExisting
-      ? this.capabilities.mintAdditional(webSessionId)
-      : this.capabilities.mint(webSessionId);
+      ? this.capabilities.mintAdditional(taskId)
+      : this.capabilities.mint(taskId);
     return {
       token,
       servers: [buildMcpServerEntry(token, this.mcpBaseUrl)],
     };
   }
 
-  private buildMcpServers(webSessionId: string): AcpMcpServer[] | undefined {
-    return this.buildMcpServerForExecution(webSessionId, false)?.servers;
+  private buildMcpServers(taskId: string): AcpMcpServer[] | undefined {
+    return this.buildMcpServerForExecution(taskId, false)?.servers;
   }
 
   /**
    * newSession options with an optional mcpServers entry only when Task mode
    * is configured — otherwise the previous call shape stays untouched.
    */
-  private buildNewSessionOptions(
+  private buildNewTaskOptions(
     silent: boolean | undefined,
     mcpServers: AcpMcpServer[] | undefined,
   ): { silent?: boolean; mcpServers?: AcpMcpServer[] } {
@@ -209,126 +209,122 @@ export class SessionManager {
     return options;
   }
 
-  /** Populate sessionHasTitle from existing DB sessions on startup. */
+  /** Populate taskHasTitle from existing DB tasks on startup. */
   hydrate(): void {
-    for (const s of this.store.listSessions()) {
-      if (s.title) this.sessionHasTitle.add(s.id);
+    for (const s of this.store.listTasks()) {
+      if (s.title) this.taskHasTitle.add(s.id);
     }
   }
 
   /**
-   * Drop live state for sessions that the store cleaned as empty.
+   * Drop live state for tasks that the store cleaned as empty.
    */
-  private cleanupEmptySessions(bridge?: SessionBridge): void {
-    const cleaned = this.store.deleteEmptySessions(EMPTY_SESSION_MIN_AGE_S);
+  private cleanupEmptyTasks(bridge?: SessionBridge): void {
+    const cleaned = this.store.deleteEmptyTasks(EMPTY_TASK_MIN_AGE_S);
     for (const entry of cleaned) {
       if (entry.agentSessionId) {
         void bridge?.retireExecution?.(entry.agentSessionId);
       }
-      this.liveSessions.delete(entry.id);
-      this.capabilities?.revokeBySession(entry.id);
+      this.liveTasks.delete(entry.id);
+      this.capabilities?.revokeByTask(entry.id);
       this.agentCommandSnapshots.delete(entry.id);
     }
     if (cleaned.length > 0)
-      slog.info("cleaned empty session(s)", { count: cleaned.length });
+      slog.info("cleaned empty task(s)", { count: cleaned.length });
   }
 
   /**
-   * Create the ACP session while exposing its freshly minted capability as an
-   * active initializing session. The caller promotes it to live only after
+   * Create the ACP task while exposing its freshly minted capability as an
+   * active initializing task. The caller promotes it to live only after
    * local persistence succeeds.
    */
   private async createAgentSession(
     bridge: SessionBridge,
-    webSessionId: string,
+    taskId: string,
     cwd: string,
     options: { silent?: boolean; mcpServers?: AcpMcpServer[] },
     capabilityToken?: string,
   ): Promise<{ sessionId: string; configOptions: ConfigOption[] }> {
-    this.creatingSessions.add(webSessionId);
+    this.creatingTasks.add(taskId);
     try {
       return await bridge.newSession(cwd, options);
     } catch (error) {
-      this.creatingSessions.delete(webSessionId);
+      this.creatingTasks.delete(taskId);
       if (capabilityToken) this.capabilities?.revoke(capabilityToken);
-      else this.capabilities?.revokeBySession(webSessionId);
+      else this.capabilities?.revokeByTask(taskId);
       throw error;
     }
   }
 
-  /** Default new WebAgent sessions to the reserved Root when it exists. */
-  private resolveParentSessionId(
-    parentSessionId?: string | null,
-  ): string | null {
+  /** Default new WebAgent tasks to the reserved Root when it exists. */
+  private resolveParentId(parentId?: string | null): string | null {
     return (
-      parentSessionId ??
-      (this.store.getSessionIncludingDeleted(ROOT_SESSION_ID)
-        ? ROOT_SESSION_ID
-        : null)
+      parentId ??
+      (this.store.getTaskIncludingDeleted(ROOT_TASK_ID) ? ROOT_TASK_ID : null)
     );
   }
 
-  /** Create a new session in both bridge and store, inheriting the source session's config. */
-  async createSession(
+  /** Create a new task in both bridge and store, inheriting the source task's config. */
+  async createTask(
     bridge: SessionBridge,
     cwd?: string,
-    inheritFromSessionId?: string,
+    inheritFromTaskId?: string,
     source: string = "auto",
-    opts?: { silent?: boolean; parentSessionId?: string | null },
-  ): Promise<{ sessionId: string; configOptions: ConfigOption[] }> {
-    const sessionCwd = expandHomePath(cwd ?? this.defaultCwd);
+    opts?: { silent?: boolean; parentId?: string | null },
+  ): Promise<{ taskId: string; configOptions: ConfigOption[] }> {
+    const taskCwd = expandHomePath(cwd ?? this.defaultCwd);
     try {
-      const info = await stat(sessionCwd);
+      const info = await stat(taskCwd);
       if (!info.isDirectory()) throw new Error("not a directory");
     } catch {
-      throw new InvalidSessionDirectoryError(sessionCwd);
+      throw new InvalidTaskDirectoryError(taskCwd);
     }
 
-    // Clean up empty sessions (no events) older than the threshold
-    this.cleanupEmptySessions(bridge);
+    // Clean up empty tasks (no events) older than the threshold
+    this.cleanupEmptyTasks(bridge);
 
-    const sourceSession = inheritFromSessionId
-      ? this.store.getSession(inheritFromSessionId)
+    const sourceTask = inheritFromTaskId
+      ? this.store.getTask(inheritFromTaskId)
       : null;
-    const webSessionId = randomUUID();
-    // Mint the session capability and build its mcpServers entry BEFORE the
-    // ACP session exists (the definition is carried in session/new itself),
-    // so a capability is only ever issued for a session we are about to
+    const taskId = randomUUID();
+    // Mint the task capability and build its mcpServers entry BEFORE the
+    // ACP task exists (the definition is carried in task/new itself),
+    // so a capability is only ever issued for a task we are about to
     // create. The failed-persistence path below revokes it again.
-    const mcpServers = this.buildMcpServers(webSessionId);
+    const mcpServers = this.buildMcpServers(taskId);
     const { sessionId: agentSessionId, configOptions: createdConfigOptions } =
       await this.createAgentSession(
         bridge,
-        webSessionId,
-        sessionCwd,
-        this.buildNewSessionOptions(opts?.silent, mcpServers),
+        taskId,
+        taskCwd,
+        this.buildNewTaskOptions(opts?.silent, mcpServers),
       );
     let configOptions = createdConfigOptions;
     try {
-      this.store.createSession(
-        webSessionId,
-        sessionCwd,
+      this.store.createTask(
+        taskId,
+        taskCwd,
         source,
         agentSessionId,
-        this.resolveParentSessionId(opts?.parentSessionId),
+        this.resolveParentId(opts?.parentId),
       );
     } catch (err) {
-      slog.warn("ACP session created but local persistence failed", {
+      slog.warn("ACP task created but local persistence failed", {
         agentSessionId,
         error: err,
       });
       bridge.discardUnboundSession?.(agentSessionId);
-      this.creatingSessions.delete(webSessionId);
-      this.capabilities?.revokeBySession(webSessionId);
+      this.creatingTasks.delete(taskId);
+      this.capabilities?.revokeByTask(taskId);
       throw err;
     }
-    this.liveSessions.add(webSessionId);
-    this.creatingSessions.delete(webSessionId);
-    this.recordConfigOptions(webSessionId, createdConfigOptions);
+    this.liveTasks.add(taskId);
+    this.creatingTasks.delete(taskId);
+    this.recordConfigOptions(taskId, createdConfigOptions);
     bridge.sessionMapped?.(agentSessionId);
 
-    // Inherit config options from source session
-    if (sourceSession) {
+    // Inherit config options from source task
+    if (sourceTask) {
       const thinkingOption = createdConfigOptions.find(
         (option) =>
           "options" in option &&
@@ -337,25 +333,25 @@ export class SessionManager {
             option.category === "thought_level"),
       );
       const inherited: Array<{ configId: string; value: string | null }> = [
-        { configId: "model", value: sourceSession.model },
+        { configId: "model", value: sourceTask.model },
         {
           configId: thinkingOption?.id ?? "reasoning_effort",
-          value: sourceSession.reasoning_effort,
+          value: sourceTask.reasoning_effort,
         },
       ];
       for (const { configId, value } of inherited) {
         if (!value) continue;
         try {
           const updatedConfigOptions = await bridge.setConfigOption(
-            webSessionId,
+            taskId,
             configId,
             value,
           );
           if (updatedConfigOptions.length > 0) {
             configOptions = updatedConfigOptions;
-            this.recordConfigOptions(webSessionId, updatedConfigOptions);
+            this.recordConfigOptions(taskId, updatedConfigOptions);
           } else {
-            this.store.updateSessionConfig(webSessionId, configId, value);
+            this.store.updateTaskConfig(taskId, configId, value);
           }
         } catch {
           // Option may no longer be available; ignore
@@ -363,96 +359,94 @@ export class SessionManager {
       }
     }
 
-    const session = this.store.getSession(webSessionId);
+    const task = this.store.getTask(taskId);
     return {
-      sessionId: webSessionId,
-      configOptions: session
-        ? this.applyStoredConfig(configOptions, session)
-        : [],
+      taskId: taskId,
+      configOptions: task ? this.applyStoredConfig(configOptions, task) : [],
     };
   }
 
   /**
-   * Rotate only the ACP execution for a stable WebAgent session.
+   * Rotate only the ACP execution for a stable WebAgent task.
    * The old execution remains persisted as historical binding provenance.
    */
-  async clearSession(
+  async clearTask(
     bridge: SessionBridge,
-    sessionId: string,
+    taskId: string,
     cwd?: string,
     opts: {
       preservePendingCompactSummary?: boolean;
       preserveRuntimeState?: boolean;
     } = {},
-  ): Promise<{ sessionId: string; configOptions: ConfigOption[] }> {
-    if (this.rotatingSessions.has(sessionId)) {
-      throw new Error(`Session is already being rotated: ${sessionId}`);
+  ): Promise<{ taskId: string; configOptions: ConfigOption[] }> {
+    if (this.rotatingTasks.has(taskId)) {
+      throw new Error(`Task is already being rotated: ${taskId}`);
     }
-    this.rotatingSessions.add(sessionId);
-    // Other clients watching this session see busy for the whole rotation
+    this.rotatingTasks.add(taskId);
+    // Other clients watching this task see busy for the whole rotation
     // window instead of racing into a 409.
-    this.syncBusy(sessionId);
+    this.syncBusy(taskId);
     try {
-      const result = await this.clearSessionImpl(
+      const result = await this.clearTaskImpl(
         bridge,
-        sessionId,
+        taskId,
         cwd,
         opts.preserveRuntimeState,
       );
       if (!opts.preservePendingCompactSummary) {
-        this.store.clearPendingCompactSummary(sessionId);
+        this.store.clearPendingCompactSummary(taskId);
       }
       return result;
     } finally {
-      this.rotatingSessions.delete(sessionId);
-      // Skip the idle sync when the session was hard-deleted mid-rotation
+      this.rotatingTasks.delete(taskId);
+      // Skip the idle sync when the task was hard-deleted mid-rotation
       // (parent cascade): syncBusy would lazily re-create a stale runtime
-      // state row that releaseSessionRuntime had already dropped.
-      if (this.store.getSessionIncludingDeleted(sessionId)) {
-        this.syncBusy(sessionId);
+      // state row that releaseTaskRuntime had already dropped.
+      if (this.store.getTaskIncludingDeleted(taskId)) {
+        this.syncBusy(taskId);
       }
     }
   }
 
-  private async clearSessionImpl(
+  private async clearTaskImpl(
     bridge: SessionBridge,
-    sessionId: string,
+    taskId: string,
     cwd?: string,
     preserveRuntimeState = false,
-  ): Promise<{ sessionId: string; configOptions: ConfigOption[] }> {
-    const session = this.store.getSession(sessionId);
-    if (!session) throw new Error(`Session not found: ${sessionId}`);
-    const sessionCwd = expandHomePath(cwd ?? session.cwd);
+  ): Promise<{ taskId: string; configOptions: ConfigOption[] }> {
+    const task = this.store.getTask(taskId);
+    if (!task) throw new Error(`Task not found: ${taskId}`);
+    const taskCwd = expandHomePath(cwd ?? task.cwd);
     try {
-      const info = await stat(sessionCwd);
+      const info = await stat(taskCwd);
       if (!info.isDirectory()) throw new Error("not a directory");
     } catch {
-      throw new InvalidSessionDirectoryError(sessionCwd);
+      throw new InvalidTaskDirectoryError(taskCwd);
     }
 
-    const execution = this.buildMcpServerForExecution(sessionId, true);
+    const execution = this.buildMcpServerForExecution(taskId, true);
     const created = await this.createAgentSession(
       bridge,
-      sessionId,
-      sessionCwd,
-      this.buildNewSessionOptions(undefined, execution?.servers),
+      taskId,
+      taskCwd,
+      this.buildNewTaskOptions(undefined, execution?.servers),
       execution?.token,
     );
 
-    const retiredAgentSessionId = this.store.getAgentSessionId(sessionId);
+    const retiredAgentSessionId = this.store.getAgentSessionId(taskId);
     try {
-      this.store.rotateAgentSession(sessionId, created.sessionId, sessionCwd);
+      this.store.rotateAgentSession(taskId, created.sessionId, taskCwd);
     } catch (error) {
       bridge.discardUnboundSession?.(created.sessionId);
-      this.creatingSessions.delete(sessionId);
+      this.creatingTasks.delete(taskId);
       if (execution?.token) this.capabilities?.revoke(execution.token);
       throw error;
     }
 
-    this.liveSessions.add(sessionId);
-    this.creatingSessions.delete(sessionId);
+    this.liveTasks.add(taskId);
+    this.creatingTasks.delete(taskId);
     if (execution?.token) {
-      this.capabilities?.revokeOtherTokens(sessionId, execution.token);
+      this.capabilities?.revokeOtherTokens(taskId, execution.token);
     }
     bridge.sessionMapped?.(created.sessionId);
     // The old ACP execution is explicitly retired now that the new binding
@@ -463,81 +457,78 @@ export class SessionManager {
     if (retiredAgentSessionId && retiredAgentSessionId !== created.sessionId) {
       void bridge.retireExecution?.(retiredAgentSessionId);
     }
-    this.resetSessionRuntime(sessionId, preserveRuntimeState);
+    this.resetTaskRuntime(taskId, preserveRuntimeState);
 
-    const configOptions = await this.restoreSessionConfig(
+    const configOptions = await this.restoreTaskConfig(
       bridge,
-      sessionId,
+      taskId,
       created.configOptions,
-      session,
+      task,
     );
     return {
-      sessionId,
-      configOptions: this.applyStoredConfig(configOptions, session),
+      taskId,
+      configOptions: this.applyStoredConfig(configOptions, task),
     };
   }
 
   /**
-   * Reset runtime-only state after replacing a Session's ACP execution.
+   * Reset runtime-only state after replacing a Task's ACP execution.
    * The runtime state ledger is reset to defaults but keeps its seq counter
-   * (never hard-deleted): the WebAgent session survives rotation, and clients
+   * (never hard-deleted): the WebAgent task survives rotation, and clients
    * validate incremental state_patch events against a monotonic server seq.
    */
-  private resetSessionRuntime(
-    sessionId: string,
-    preserveRuntimeState = false,
-  ): void {
-    this.assistantBuffers.delete(sessionId);
-    this.thinkingBuffers.delete(sessionId);
-    this.activePrompts.delete(sessionId);
-    const pendingSubmission = this.pendingPromptSubmissions.get(sessionId);
-    this.pendingPromptSubmissions.delete(sessionId);
+  private resetTaskRuntime(taskId: string, preserveRuntimeState = false): void {
+    this.assistantBuffers.delete(taskId);
+    this.thinkingBuffers.delete(taskId);
+    this.activePrompts.delete(taskId);
+    const pendingSubmission = this.pendingPromptSubmissions.get(taskId);
+    this.pendingPromptSubmissions.delete(taskId);
     if (pendingSubmission !== undefined) {
       this.cancelledPromptSubmissions.delete(pendingSubmission);
     }
-    this.runningBashProcs.delete(sessionId);
-    this.agentCommandSnapshots.delete(sessionId);
+    this.runningBashProcs.delete(taskId);
+    this.agentCommandSnapshots.delete(taskId);
     for (const [requestId, permission] of this.pendingPermissions) {
-      if (permission.sessionId === sessionId) {
+      if (permission.taskId === taskId) {
         this.pendingPermissions.delete(requestId);
       }
     }
-    if (!preserveRuntimeState) this.state.reset(sessionId);
+    if (!preserveRuntimeState) this.state.reset(taskId);
   }
 
   /** Bind an ACP execution to the reserved Root record after bridge startup. */
-  async ensureRootSession(bridge: SessionBridge): Promise<void> {
-    const root = this.store.getSessionIncludingDeleted(ROOT_SESSION_ID);
-    if (!root || this.store.getAgentSessionId(ROOT_SESSION_ID)) return;
+  async ensureRootTask(bridge: SessionBridge): Promise<void> {
+    const root = this.store.getTaskIncludingDeleted(ROOT_TASK_ID);
+    if (!root || this.store.getAgentSessionId(ROOT_TASK_ID)) return;
 
-    const execution = this.buildMcpServerForExecution(ROOT_SESSION_ID, false);
+    const execution = this.buildMcpServerForExecution(ROOT_TASK_ID, false);
     const created = await this.createAgentSession(
       bridge,
-      ROOT_SESSION_ID,
+      ROOT_TASK_ID,
       root.cwd,
-      this.buildNewSessionOptions(undefined, execution?.servers),
+      this.buildNewTaskOptions(undefined, execution?.servers),
       execution?.token,
     );
     try {
-      this.store.bindAgentSession(ROOT_SESSION_ID, created.sessionId);
+      this.store.bindAgentSession(ROOT_TASK_ID, created.sessionId);
     } catch (error) {
       bridge.discardUnboundSession?.(created.sessionId);
-      this.creatingSessions.delete(ROOT_SESSION_ID);
+      this.creatingTasks.delete(ROOT_TASK_ID);
       if (execution?.token) this.capabilities?.revoke(execution.token);
       throw error;
     }
-    this.liveSessions.add(ROOT_SESSION_ID);
-    this.creatingSessions.delete(ROOT_SESSION_ID);
-    this.recordConfigOptions(ROOT_SESSION_ID, created.configOptions);
+    this.liveTasks.add(ROOT_TASK_ID);
+    this.creatingTasks.delete(ROOT_TASK_ID);
+    this.recordConfigOptions(ROOT_TASK_ID, created.configOptions);
     bridge.sessionMapped?.(created.sessionId);
   }
 
-  /** Reapply the stable Session config to a newly created ACP execution. */
-  private async restoreSessionConfig(
+  /** Reapply the stable Task config to a newly created ACP execution. */
+  private async restoreTaskConfig(
     bridge: SessionBridge,
-    sessionId: string,
+    taskId: string,
     configOptions: ConfigOption[],
-    session: Pick<SessionRow, "mode" | "reasoning_effort" | "model">,
+    task: Pick<TaskRow, "mode" | "reasoning_effort" | "model">,
   ): Promise<ConfigOption[]> {
     const thinkingId =
       configOptions.find(
@@ -547,15 +538,15 @@ export class SessionManager {
           option.category === "thought_level",
       )?.id ?? "reasoning_effort";
     const values: Array<{ id: string; value: string | null }> = [
-      { id: "mode", value: session.mode },
-      { id: thinkingId, value: session.reasoning_effort },
-      { id: "model", value: session.model },
+      { id: "mode", value: task.mode },
+      { id: thinkingId, value: task.reasoning_effort },
+      { id: "model", value: task.model },
     ];
     let updated = configOptions;
     for (const { id, value } of values) {
       if (!value) continue;
       try {
-        const next = await bridge.setConfigOption(sessionId, id, value);
+        const next = await bridge.setConfigOption(taskId, id, value);
         if (next.length > 0) {
           updated = next;
           this.cachedConfigOptions = next;
@@ -567,37 +558,33 @@ export class SessionManager {
     return updated;
   }
 
-  /** Cache the ACP config schema and persist this session's current values. */
-  recordConfigOptions(sessionId: string, configOptions: ConfigOption[]): void {
+  /** Cache the ACP config schema and persist this task's current values. */
+  recordConfigOptions(taskId: string, configOptions: ConfigOption[]): void {
     if (configOptions.length === 0) return;
     this.cachedConfigOptions = configOptions;
     for (const option of configOptions) {
       if (typeof option.currentValue === "string") {
-        this.store.updateSessionConfig(
-          sessionId,
-          option.id,
-          option.currentValue,
-        );
+        this.store.updateTaskConfig(taskId, option.id, option.currentValue);
       }
     }
   }
 
   /**
-   * Materialize a pending inbox message as a real ACP-backed session.
+   * Materialize a pending inbox message as a real ACP-backed task.
    * Returns null when the message is neither pending nor previously consumed.
    */
   consumeMessage(
     bridge: SessionBridge,
     messageId: string,
-    inheritFromSessionId?: string,
+    inheritFromTaskId?: string,
   ): Promise<ConsumeMessageResult | null> {
     const pending = this.pendingMessageConsumes.get(messageId);
     if (pending) return pending;
 
-    const existing = this.store.findConsumedMessageSession(messageId);
+    const existing = this.store.findConsumedMessageTask(messageId);
     if (existing) {
       return Promise.resolve({
-        sessionId: existing,
+        taskId: existing,
         alreadyConsumed: true,
       });
     }
@@ -605,7 +592,7 @@ export class SessionManager {
     const operation = this.consumePendingMessage(
       bridge,
       messageId,
-      inheritFromSessionId,
+      inheritFromTaskId,
     ).finally(() => {
       if (this.pendingMessageConsumes.get(messageId) === operation) {
         this.pendingMessageConsumes.delete(messageId);
@@ -618,107 +605,103 @@ export class SessionManager {
   private async consumePendingMessage(
     bridge: SessionBridge,
     messageId: string,
-    inheritFromSessionId?: string,
+    inheritFromTaskId?: string,
   ): Promise<ConsumeMessageResult | null> {
     const message = this.store.getMessage(messageId);
     if (!message) return null;
 
-    const { sessionId } = await this.createSession(
+    const { taskId } = await this.createTask(
       bridge,
       message.cwd ?? undefined,
-      inheritFromSessionId,
+      inheritFromTaskId,
       "message",
       { silent: true },
     );
 
     try {
-      const result = this.store.consumeMessageTx(messageId, sessionId);
+      const result = this.store.consumeMessageTx(messageId, taskId);
       if (result.alreadyConsumed) {
-        this.deleteSession(bridge, sessionId);
+        this.deleteTask(bridge, taskId);
       }
       return result;
     } catch (err) {
-      this.deleteSession(bridge, sessionId);
+      this.deleteTask(bridge, taskId);
       if (err instanceof MessageNotFoundError) {
-        const consumedSessionId =
-          this.store.findConsumedMessageSession(messageId);
-        return consumedSessionId
-          ? { sessionId: consumedSessionId, alreadyConsumed: true }
+        const consumedTaskId = this.store.findConsumedMessageTask(messageId);
+        return consumedTaskId
+          ? { taskId: consumedTaskId, alreadyConsumed: true }
           : null;
       }
-      slog.warn("message consume left an unreachable ACP session", {
+      slog.warn("message consume left an unreachable ACP task", {
         messageId,
-        sessionId,
+        taskId,
         error: err,
       });
       throw err;
     }
   }
 
-  /** Resume a session — returns event to send to the requesting client. */
-  async resumeSession(
-    bridge: SessionBridge,
-    sessionId: string,
-  ): Promise<AgentEvent> {
-    const session = this.store.getSession(sessionId);
-    if (!session) throw new Error("Session not found");
+  /** Resume a task — returns event to send to the requesting client. */
+  async resumeTask(bridge: SessionBridge, taskId: string): Promise<AgentEvent> {
+    const task = this.store.getTask(taskId);
+    if (!task) throw new Error("Task not found");
 
-    if (this.liveSessions.has(sessionId)) {
-      // Session already live — build configOptions with stored overrides
-      const configOptions = this.buildConfigOptions(session);
+    if (this.liveTasks.has(taskId)) {
+      // Task already live — build configOptions with stored overrides
+      const configOptions = this.buildConfigOptions(task);
       return {
-        type: "session_created",
-        sessionId,
-        cwd: session.cwd,
-        cwdDisplay: abbreviateHomePath(session.cwd),
-        title: session.title,
+        type: "task_created",
+        taskId,
+        cwd: task.cwd,
+        cwdDisplay: abbreviateHomePath(task.cwd),
+        title: task.title,
         configOptions,
       };
     }
 
     // Restore via ACP
-    this.restoringSessions.add(sessionId);
+    this.restoringTasks.add(taskId);
     try {
-      // Mint a fresh capability for the restored session: any token from
-      // before a restart is gone with the old process, and the session is
-      // still live, so it gets an MCP server entry like a new session does.
-      const mcpServers = this.buildMcpServers(sessionId);
-      await bridge.loadSession(sessionId, session.cwd, mcpServers);
-      this.liveSessions.add(sessionId);
-      if (session.title) this.sessionHasTitle.add(sessionId);
+      // Mint a fresh capability for the restored task: any token from
+      // before a restart is gone with the old process, and the task is
+      // still live, so it gets an MCP server entry like a new task does.
+      const mcpServers = this.buildMcpServers(taskId);
+      await bridge.loadSession(taskId, task.cwd, mcpServers);
+      this.liveTasks.add(taskId);
+      if (task.title) this.taskHasTitle.add(taskId);
       // Piggyback a cache-warming setConfigOption on the user's own resume
       // when the global cache is empty (typical after bridge.restart). Uses
-      // the session's own stored value — idempotent, no side effect. Failure
+      // the task's own stored value — idempotent, no side effect. Failure
       // is swallowed: the resume still succeeds and the frontend falls back
       // to snapshot-based mode/model display (see public/js/state.ts).
-      await this.tryWarmCache(bridge, sessionId, session);
+      await this.tryWarmCache(bridge, taskId, task);
       const configOptions = this.applyStoredConfig(
         this.cachedConfigOptions,
-        session,
+        task,
       );
-      slog.info("restored", { sessionId: sessionId.slice(0, 8) + "…" });
+      slog.info("restored", { taskId: taskId.slice(0, 8) + "…" });
       return {
-        type: "session_created",
-        sessionId,
-        cwd: session.cwd,
-        cwdDisplay: abbreviateHomePath(session.cwd),
-        title: session.title,
+        type: "task_created",
+        taskId,
+        cwd: task.cwd,
+        cwdDisplay: abbreviateHomePath(task.cwd),
+        title: task.title,
         configOptions,
       };
     } catch (err) {
-      this.capabilities?.revokeBySession(sessionId);
+      this.capabilities?.revokeByTask(taskId);
       slog.error("restore failed", { error: err });
       throw err;
     } finally {
-      this.restoringSessions.delete(sessionId);
+      this.restoringTasks.delete(taskId);
     }
   }
 
   /**
-   * When cachedConfigOptions is empty, use the session's own stored config
+   * When cachedConfigOptions is empty, use the task's own stored config
    * value to trigger a setConfigOption. The agent's response carries the
    * full ConfigOption[] schema (options lists + in-memory currentValues),
-   * which we cache. Writes **only** the global cache, never the session's
+   * which we cache. Writes **only** the global cache, never the task's
    * DB row — setConfigOption's currentValue for unrelated keys is the
    * agent's in-memory default, not the user's preference.
    *
@@ -729,8 +712,8 @@ export class SessionManager {
    */
   private async tryWarmCache(
     bridge: SessionBridge,
-    sessionId: string,
-    session: {
+    taskId: string,
+    task: {
       model: string | null;
       mode: string | null;
       reasoning_effort: string | null;
@@ -738,21 +721,21 @@ export class SessionManager {
   ): Promise<void> {
     if (this.cachedConfigOptions.length > 0) return;
     const candidates: Array<{ id: string; value: string }> = [];
-    if (session.mode) candidates.push({ id: "mode", value: session.mode });
-    if (session.reasoning_effort) {
+    if (task.mode) candidates.push({ id: "mode", value: task.mode });
+    if (task.reasoning_effort) {
       candidates.push(
-        { id: "reasoning_effort", value: session.reasoning_effort },
-        { id: "thought_level", value: session.reasoning_effort },
+        { id: "reasoning_effort", value: task.reasoning_effort },
+        { id: "thought_level", value: task.reasoning_effort },
       );
     }
-    if (session.model) candidates.push({ id: "model", value: session.model });
+    if (task.model) candidates.push({ id: "model", value: task.model });
     if (candidates.length === 0) return;
 
     let lastError: unknown = null;
     for (const candidate of candidates) {
       try {
         const opts = await bridge.setConfigOption(
-          sessionId,
+          taskId,
           candidate.id,
           candidate.value,
         );
@@ -768,43 +751,43 @@ export class SessionManager {
 
     if (lastError) {
       slog.warn("cache warming failed", {
-        sessionId: sessionId.slice(0, 8) + "…",
+        taskId: taskId.slice(0, 8) + "…",
         error: lastError,
       });
     }
   }
 
   /**
-   * Ensure a session is resumed (live in ACP). Deduplicates concurrent calls.
-   * Unlike resumeSession(), this is fire-and-forget safe — callers that only
-   * need the session alive (but not the event payload) can await this.
+   * Ensure a task is resumed (live in ACP). Deduplicates concurrent calls.
+   * Unlike resumeTask(), this is fire-and-forget safe — callers that only
+   * need the task alive (but not the event payload) can await this.
    */
-  async ensureResumed(bridge: SessionBridge, sessionId: string): Promise<void> {
-    if (this.liveSessions.has(sessionId)) return;
+  async ensureResumed(bridge: SessionBridge, taskId: string): Promise<void> {
+    if (this.liveTasks.has(taskId)) return;
 
-    const existing = this.pendingResumes.get(sessionId);
+    const existing = this.pendingResumes.get(taskId);
     if (existing) return existing;
 
-    const p = this.resumeSession(bridge, sessionId)
+    const p = this.resumeTask(bridge, taskId)
       .then(() => {})
-      .finally(() => this.pendingResumes.delete(sessionId));
-    this.pendingResumes.set(sessionId, p);
+      .finally(() => this.pendingResumes.delete(taskId));
+    this.pendingResumes.set(taskId, p);
     return p;
   }
 
-  /** Build configOptions from cache, overriding currentValue with stored session values. */
-  private buildConfigOptions(session: {
+  /** Build configOptions from cache, overriding currentValue with stored task values. */
+  private buildConfigOptions(task: {
     model: string | null;
     mode: string | null;
     reasoning_effort: string | null;
   }): ConfigOption[] {
-    return this.applyStoredConfig(this.cachedConfigOptions, session);
+    return this.applyStoredConfig(this.cachedConfigOptions, task);
   }
 
-  /** Override currentValue in configOptions with stored session values. */
+  /** Override currentValue in configOptions with stored task values. */
   private applyStoredConfig(
     configOptions: ConfigOption[],
-    session: {
+    task: {
       model: string | null;
       mode: string | null;
       reasoning_effort: string | null;
@@ -812,15 +795,15 @@ export class SessionManager {
   ): ConfigOption[] {
     if (!configOptions.length) return configOptions;
     const stored: Record<string, string | null> = {
-      model: session.model,
-      mode: session.mode,
-      reasoning_effort: session.reasoning_effort,
-      thought_level: session.reasoning_effort,
+      model: task.model,
+      mode: task.mode,
+      reasoning_effort: task.reasoning_effort,
+      thought_level: task.reasoning_effort,
     };
     return configOptions.map((opt) => {
       const override =
         opt.category === "thought_level"
-          ? session.reasoning_effort
+          ? task.reasoning_effort
           : stored[opt.id];
       if (override && "options" in opt)
         return { ...opt, currentValue: override };
@@ -829,32 +812,32 @@ export class SessionManager {
   }
 
   /**
-   * Lazy-build and return the attachment label map for a session.
+   * Lazy-build and return the attachment label map for a task.
    * Used by both egress chokepoints (SSE broadcast + replay helper)
    * to translate uuid paths into `<name> [#<id4>]` labels.
    *
    * Cached; call `invalidateLabelCache(sid)` after any attachments
    * INSERT/DELETE to force rebuild. Restart-safe: empty on cold
-   * start, rebuilt on first egress per session.
+   * start, rebuilt on first egress per task.
    */
-  getLabelMap(sessionId: string): LabelMap {
-    const hit = this.attachmentLabelCache.get(sessionId);
+  getLabelMap(taskId: string): LabelMap {
+    const hit = this.attachmentLabelCache.get(taskId);
     if (hit) return hit;
-    const map = buildLabelMap(this.store.listAttachmentLabels(sessionId));
-    this.attachmentLabelCache.set(sessionId, map);
+    const map = buildLabelMap(this.store.listAttachmentLabels(taskId));
+    this.attachmentLabelCache.set(taskId, map);
     return map;
   }
 
-  /** Invalidate label cache for a session (call after attachment write). */
-  invalidateLabelCache(sessionId: string): void {
-    this.attachmentLabelCache.delete(sessionId);
+  /** Invalidate label cache for a task (call after attachment write). */
+  invalidateLabelCache(taskId: string): void {
+    this.attachmentLabelCache.delete(taskId);
   }
 
   updateAgentCommands(
-    sessionId: string,
+    taskId: string,
     commands: AgentCommand[],
   ): AgentCommandSnapshot {
-    const current = this.agentCommandSnapshots.get(sessionId);
+    const current = this.agentCommandSnapshots.get(taskId);
     const snapshot = {
       epoch: this.agentCommandEpoch,
       revision: (current?.revision ?? 0) + 1,
@@ -863,13 +846,13 @@ export class SessionManager {
         ...(command.input ? { input: { ...command.input } } : {}),
       })),
     };
-    this.agentCommandSnapshots.set(sessionId, snapshot);
+    this.agentCommandSnapshots.set(taskId, snapshot);
     return snapshot;
   }
 
-  getAgentCommands(sessionId: string): AgentCommandSnapshot {
+  getAgentCommands(taskId: string): AgentCommandSnapshot {
     return (
-      this.agentCommandSnapshots.get(sessionId) ?? {
+      this.agentCommandSnapshots.get(taskId) ?? {
         epoch: this.agentCommandEpoch,
         revision: 0,
         commands: [],
@@ -877,52 +860,52 @@ export class SessionManager {
     );
   }
 
-  clearAgentCommands(): Array<AgentCommandSnapshot & { sessionId: string }> {
-    const cleared: Array<AgentCommandSnapshot & { sessionId: string }> = [];
-    for (const [sessionId, current] of this.agentCommandSnapshots) {
+  clearAgentCommands(): Array<AgentCommandSnapshot & { taskId: string }> {
+    const cleared: Array<AgentCommandSnapshot & { taskId: string }> = [];
+    for (const [taskId, current] of this.agentCommandSnapshots) {
       const snapshot: AgentCommandSnapshot = {
         epoch: this.agentCommandEpoch,
         revision: current.revision + 1,
         commands: [],
       };
-      this.agentCommandSnapshots.set(sessionId, snapshot);
+      this.agentCommandSnapshots.set(taskId, snapshot);
       cleared.push({
-        sessionId,
+        taskId,
         ...snapshot,
       });
     }
     return cleared;
   }
 
-  /** Delete a session from store and clean up all state (including images).
-   *  Descendant sessions are deleted too (direct cascade, no confirmation yet
-   *  — a tree UI will add one). Every affected session's ACP execution is
+  /** Delete a task from store and clean up all state (including images).
+   *  Descendant tasks are deleted too (direct cascade, no confirmation yet
+   *  — a tree UI will add one). Every affected task's ACP execution is
    *  retired explicitly and hard-deleted image directories are removed.
    *  Returns the store's affected list so callers can broadcast
-   *  `session_deleted` for each removed session. */
-  deleteSession(
+   *  `task_deleted` for each removed task. */
+  deleteTask(
     bridge: SessionBridge | undefined,
-    sessionId: string,
-  ): { mode: "hard" | "soft"; affected: SessionDelete[] } {
-    const result = this.store.deleteSession(sessionId);
+    taskId: string,
+  ): { mode: "hard" | "soft"; affected: TaskDelete[] } {
+    const result = this.store.deleteTask(taskId);
     for (const entry of result.affected) {
       if (entry.agentSessionId)
         void bridge?.retireExecution?.(entry.agentSessionId);
-      this.releaseSessionRuntime(entry.id, entry.mode);
+      this.releaseTaskRuntime(entry.id, entry.mode);
     }
     return result;
   }
 
-  /** Drop in-memory state owned by a session that no longer exists. */
-  private releaseSessionRuntime(id: string, mode: "hard" | "soft"): void {
-    this.capabilities?.revokeBySession(id);
-    this.liveSessions.delete(id);
-    this.sessionHasTitle.delete(id);
+  /** Drop in-memory state owned by a task that no longer exists. */
+  private releaseTaskRuntime(id: string, mode: "hard" | "soft"): void {
+    this.capabilities?.revokeByTask(id);
+    this.liveTasks.delete(id);
+    this.taskHasTitle.delete(id);
     this.assistantBuffers.delete(id);
     this.thinkingBuffers.delete(id);
     this.activePrompts.delete(id);
-    this.compactingSessions.delete(id);
-    this.rotatingSessions.delete(id);
+    this.compactingTasks.delete(id);
+    this.rotatingTasks.delete(id);
     const pendingSubmission = this.pendingPromptSubmissions.get(id);
     this.pendingPromptSubmissions.delete(id);
     if (pendingSubmission !== undefined) {
@@ -931,16 +914,16 @@ export class SessionManager {
     this.runningBashProcs.delete(id);
     this.attachmentLabelCache.delete(id);
     this.agentCommandSnapshots.delete(id);
-    // Clean pending permissions for this session
+    // Clean pending permissions for this task
     for (const [reqId, perm] of this.pendingPermissions) {
-      if (perm.sessionId === id) this.pendingPermissions.delete(reqId);
+      if (perm.taskId === id) this.pendingPermissions.delete(reqId);
     }
     this.state.delete(id);
     if (mode === "hard") {
-      // Tombstoned sessions keep their attachments alive for the share viewer
+      // Tombstoned tasks keep their attachments alive for the share viewer
       // (shared files still resolve via /s/:token/attachments/...). The reap
       // path in share/routes.ts removes them once the last share is gone.
-      rm(join(this.dataDir, "sessions", id), {
+      rm(join(this.dataDir, "tasks", id), {
         recursive: true,
         force: true,
       }).catch(() => {});
@@ -948,18 +931,18 @@ export class SessionManager {
   }
 
   /** Flush assistant/thinking buffers to store. */
-  flushBuffers(sessionId: string): void {
-    this.flushAssistantBuffer(sessionId);
-    this.flushThinkingBuffer(sessionId);
+  flushBuffers(taskId: string): void {
+    this.flushAssistantBuffer(taskId);
+    this.flushThinkingBuffer(taskId);
   }
 
   /** Flush only the assistant message buffer to store. */
-  flushAssistantBuffer(sessionId: string): void {
-    const assistant = this.assistantBuffers.get(sessionId);
-    this.assistantBuffers.delete(sessionId);
-    if (assistant && this.store.getSession(sessionId)) {
+  flushAssistantBuffer(taskId: string): void {
+    const assistant = this.assistantBuffers.get(taskId);
+    this.assistantBuffers.delete(taskId);
+    if (assistant && this.store.getTask(taskId)) {
       this.store.saveEvent(
-        sessionId,
+        taskId,
         "assistant_message",
         { text: assistant },
         { from_ref: "agent" },
@@ -968,12 +951,12 @@ export class SessionManager {
   }
 
   /** Flush only the thinking buffer to store. */
-  flushThinkingBuffer(sessionId: string): void {
-    const thinking = this.thinkingBuffers.get(sessionId);
-    this.thinkingBuffers.delete(sessionId);
-    if (thinking && this.store.getSession(sessionId)) {
+  flushThinkingBuffer(taskId: string): void {
+    const thinking = this.thinkingBuffers.get(taskId);
+    this.thinkingBuffers.delete(taskId);
+    if (thinking && this.store.getTask(taskId)) {
       this.store.saveEvent(
-        sessionId,
+        taskId,
         "thinking",
         { text: thinking },
         { from_ref: "agent" },
@@ -982,53 +965,53 @@ export class SessionManager {
   }
 
   /** Append to assistant message buffer. */
-  appendAssistant(sessionId: string, text: string): void {
-    const buf = (this.assistantBuffers.get(sessionId) ?? "") + text;
-    this.assistantBuffers.set(sessionId, buf);
+  appendAssistant(taskId: string, text: string): void {
+    const buf = (this.assistantBuffers.get(taskId) ?? "") + text;
+    this.assistantBuffers.set(taskId, buf);
   }
 
   /** Append to thinking buffer. */
-  appendThinking(sessionId: string, text: string): void {
-    const buf = (this.thinkingBuffers.get(sessionId) ?? "") + text;
-    this.thinkingBuffers.set(sessionId, buf);
+  appendThinking(taskId: string, text: string): void {
+    const buf = (this.thinkingBuffers.get(taskId) ?? "") + text;
+    this.thinkingBuffers.set(taskId, buf);
   }
 
-  /** Get CWD for a session (falls back to default). */
-  getSessionCwd(sessionId: string): string {
-    return this.store.getSession(sessionId)?.cwd ?? this.defaultCwd;
+  /** Get CWD for a task (falls back to default). */
+  getTaskCwd(taskId: string): string {
+    return this.store.getTask(taskId)?.cwd ?? this.defaultCwd;
   }
 
-  getBusyKind(sessionId: string): "agent" | "bash" | null {
-    if (this.pendingPromptSubmissions.has(sessionId)) return "agent";
-    if (this.activePrompts.has(sessionId)) return "agent";
-    if (this.compactingSessions.has(sessionId)) return "agent";
-    if (this.rotatingSessions.has(sessionId)) return "agent";
-    if (this.runningBashProcs.has(sessionId)) return "bash";
+  getBusyKind(taskId: string): "agent" | "bash" | null {
+    if (this.pendingPromptSubmissions.has(taskId)) return "agent";
+    if (this.activePrompts.has(taskId)) return "agent";
+    if (this.compactingTasks.has(taskId)) return "agent";
+    if (this.rotatingTasks.has(taskId)) return "agent";
+    if (this.runningBashProcs.has(taskId)) return "bash";
     return null;
   }
 
   /**
-   * True when `promptId` still names the session's live turn. A turn can
-   * outlive its own supersession — cancelling one and immediately starting
+   * True when `promptId` still names the task's live turn. A turn can
+   * outlive its own supertask — cancelling one and immediately starting
    * another interleaves them — and its terminal work must not clear state
    * that now belongs to the replacement. An absent id is treated as current
    * so callers predating turn identity keep their old behaviour.
    */
-  isCurrentPrompt(sessionId: string, promptId: string | undefined): boolean {
+  isCurrentPrompt(taskId: string, promptId: string | undefined): boolean {
     if (!promptId) return true;
-    const current = this.state.getState(sessionId).runtime.busy?.promptId;
+    const current = this.state.getState(taskId).runtime.busy?.promptId;
     return current == null || current === promptId;
   }
 
-  reservePromptSubmission(sessionId: string): number | null {
-    if (this.getBusyKind(sessionId) !== null) return null;
+  reservePromptSubmission(taskId: string): number | null {
+    if (this.getBusyKind(taskId) !== null) return null;
     const submissionId = ++this.nextPromptSubmissionNumber;
-    this.pendingPromptSubmissions.set(sessionId, submissionId);
+    this.pendingPromptSubmissions.set(taskId, submissionId);
     return submissionId;
   }
 
-  cancelPendingPromptSubmission(sessionId: string): boolean {
-    const submissionId = this.pendingPromptSubmissions.get(sessionId);
+  cancelPendingPromptSubmission(taskId: string): boolean {
+    const submissionId = this.pendingPromptSubmissions.get(taskId);
     if (submissionId === undefined) return false;
     this.cancelledPromptSubmissions.add(submissionId);
     return true;
@@ -1039,15 +1022,15 @@ export class SessionManager {
   }
 
   releasePromptSubmission(
-    sessionId: string,
+    taskId: string,
     submissionId: number,
     sync = true,
   ): void {
-    if (this.pendingPromptSubmissions.get(sessionId) === submissionId) {
-      this.pendingPromptSubmissions.delete(sessionId);
+    if (this.pendingPromptSubmissions.get(taskId) === submissionId) {
+      this.pendingPromptSubmissions.delete(taskId);
     }
     this.cancelledPromptSubmissions.delete(submissionId);
-    if (sync) this.syncBusy(sessionId);
+    if (sync) this.syncBusy(taskId);
   }
 
   /**
@@ -1058,14 +1041,14 @@ export class SessionManager {
    * `promptId` attaches to an agent busy transition (ignored otherwise). If
    * omitted when staying agent-busy, the existing promptId is preserved.
    */
-  syncBusy(sessionId: string, promptId?: string | null): void {
-    const kind = this.getBusyKind(sessionId);
-    const current = this.state.getState(sessionId).runtime.busy;
+  syncBusy(taskId: string, promptId?: string | null): void {
+    const kind = this.getBusyKind(taskId);
+    const current = this.state.getState(taskId).runtime.busy;
     if (kind === null) {
       if (current !== null)
-        this.state.patch(sessionId, { runtime: { busy: null } });
+        this.state.patch(taskId, { runtime: { busy: null } });
       // Also clear any pending cancel safety net now that we are idle.
-      this.state.clearCancelSafety(sessionId);
+      this.state.clearCancelSafety(taskId);
       return;
     }
     const nextPromptId =
@@ -1078,7 +1061,7 @@ export class SessionManager {
     const sameWork =
       current?.kind === kind && current.promptId === nextPromptId;
     if (sameWork) return;
-    this.state.patch(sessionId, {
+    this.state.patch(taskId, {
       runtime: {
         busy: {
           kind: kind,
@@ -1092,46 +1075,46 @@ export class SessionManager {
   }
 
   /**
-   * If the session's last turn was interrupted (user_message without prompt_done),
+   * If the task's last turn was interrupted (user_message without prompt_done),
    * auto-retry by prompting the agent to continue. Returns true if retrying.
    */
   autoRetryIfNeeded(
     bridge: Pick<AgentBridge, "prompt">,
-    sessionId: string,
+    taskId: string,
   ): boolean {
-    if (this.activePrompts.has(sessionId)) return false;
-    if (!this.store.hasInterruptedTurn(sessionId)) return false;
+    if (this.activePrompts.has(taskId)) return false;
+    if (!this.store.hasInterruptedTurn(taskId)) return false;
 
     slog.info("auto-retrying interrupted turn", {
-      sessionId: sessionId.slice(0, 8) + "…",
+      taskId: taskId.slice(0, 8) + "…",
     });
-    this.activePrompts.add(sessionId);
-    this.syncBusy(sessionId);
+    this.activePrompts.add(taskId);
+    this.syncBusy(taskId);
     const promptId =
-      this.state.getState(sessionId).runtime.busy?.promptId ?? undefined;
+      this.state.getState(taskId).runtime.busy?.promptId ?? undefined;
     bridge
       .prompt(
-        sessionId,
+        taskId,
         "Continue your previous response — it was interrupted mid-way.",
         undefined,
         promptId,
       )
       .catch((err: unknown) => {
         slog.error("auto-retry failed", {
-          sessionId: sessionId.slice(0, 8) + "…",
+          taskId: taskId.slice(0, 8) + "…",
           error: err,
         });
-        if (!this.isCurrentPrompt(sessionId, promptId)) return;
-        this.activePrompts.delete(sessionId);
-        this.syncBusy(sessionId);
+        if (!this.isCurrentPrompt(taskId, promptId)) return;
+        this.activePrompts.delete(taskId);
+        this.syncBusy(taskId);
       });
     return true;
   }
 
-  /** Get pending permission requests for a session (or all sessions if no id). */
-  getPendingPermissions(sessionId?: string): PendingPermission[] {
+  /** Get pending permission requests for a task (or all tasks if no id). */
+  getPendingPermissions(taskId?: string): PendingPermission[] {
     const perms = [...this.pendingPermissions.values()];
-    return sessionId ? perms.filter((p) => p.sessionId === sessionId) : perms;
+    return taskId ? perms.filter((p) => p.taskId === taskId) : perms;
   }
 
   /**
@@ -1139,9 +1122,9 @@ export class SessionManager {
    * Call this after every mutation of `pendingPermissions` so the frontend
    * snapshot stays authoritative.
    */
-  syncPendingPermissions(sessionId: string): void {
-    const forSession = [...this.pendingPermissions.values()]
-      .filter((p) => p.sessionId === sessionId)
+  syncPendingPermissions(taskId: string): void {
+    const forTask = [...this.pendingPermissions.values()]
+      .filter((p) => p.taskId === taskId)
       .map((p) => ({
         requestId: p.requestId,
         toolName: "",
@@ -1151,8 +1134,8 @@ export class SessionManager {
           label: o.label,
         })),
       }));
-    this.state.patch(sessionId, {
-      runtime: { pendingPermissions: forSession },
+    this.state.patch(taskId, {
+      runtime: { pendingPermissions: forTask },
     });
   }
 

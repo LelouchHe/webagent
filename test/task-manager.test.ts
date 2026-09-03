@@ -6,18 +6,18 @@ import type { AddressInfo } from "node:net";
 import { join } from "node:path";
 import { homedir, tmpdir } from "node:os";
 import { Store } from "../src/store.ts";
-import { SessionManager } from "../src/session-manager.ts";
+import { TaskManager } from "../src/task-manager.ts";
 import { CapabilityStore } from "../src/mcp/capability.ts";
 import { createMcpEndpoint } from "../src/mcp/server.ts";
 import type { ConfigOption } from "../src/types.ts";
 
 async function startMcpTestServer(
   capabilities: CapabilityStore,
-  isActive: (sessionId: string) => boolean,
+  isActive: (taskId: string) => boolean,
 ): Promise<{ baseUrl: string; close: () => Promise<void> }> {
   const endpoint = createMcpEndpoint({
     capabilities,
-    isSessionActive: isActive,
+    isTaskActive: isActive,
   });
   const server = http.createServer((req, res) => {
     void endpoint(req, res).then((handled) => {
@@ -58,22 +58,22 @@ async function assertMcpInitialize(
       params: {
         protocolVersion: "2025-06-18",
         capabilities: {},
-        clientInfo: { name: "session-manager-test", version: "1.0.0" },
+        clientInfo: { name: "task-manager-test", version: "1.0.0" },
       },
     }),
   });
   assert.equal(response.status, 200);
 }
 
-describe("SessionManager", () => {
+describe("TaskManager", () => {
   let store: Store;
-  let sm: SessionManager;
+  let sm: TaskManager;
   let tmpDir: string;
 
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), "webagent-test-"));
     store = new Store(tmpDir, "test-agent");
-    sm = new SessionManager(store, tmpDir, tmpDir);
+    sm = new TaskManager(store, tmpDir, tmpDir);
   });
 
   afterEach(() => {
@@ -82,33 +82,33 @@ describe("SessionManager", () => {
   });
 
   describe("hydrate", () => {
-    it("populates sessionHasTitle from DB", () => {
-      store.createSession("s1", "/x");
-      store.updateSessionTitle("s1", "My Title");
-      store.createSession("s2", "/y"); // no title
+    it("populates taskHasTitle from DB", () => {
+      store.createTask("s1", "/x");
+      store.updateTaskTitle("s1", "My Title");
+      store.createTask("s2", "/y"); // no title
 
       sm.hydrate();
 
-      assert.ok(sm.sessionHasTitle.has("s1"));
-      assert.ok(!sm.sessionHasTitle.has("s2"));
+      assert.ok(sm.taskHasTitle.has("s1"));
+      assert.ok(!sm.taskHasTitle.has("s2"));
     });
   });
 
   describe("MCP capability lifecycle", () => {
-    it("allows MCP auto-connect while a new ACP session is being created", async () => {
+    it("allows MCP auto-connect while a new ACP task is being created", async () => {
       const capabilities = new CapabilityStore();
-      const mcpSessionManagerRef: { current?: SessionManager } = {};
-      const mcpServer = await startMcpTestServer(capabilities, (sessionId) =>
-        mcpSessionManagerRef.current!.isMcpSessionActive(sessionId),
+      const mcpTaskManagerRef: { current?: TaskManager } = {};
+      const mcpServer = await startMcpTestServer(capabilities, (taskId) =>
+        mcpTaskManagerRef.current!.isMcpSessionActive(taskId),
       );
-      const mcpSessionManager = new SessionManager(
+      const mcpTaskManager = new TaskManager(
         store,
         tmpDir,
         tmpDir,
         capabilities,
         mcpServer.baseUrl,
       );
-      mcpSessionManagerRef.current = mcpSessionManager;
+      mcpTaskManagerRef.current = mcpTaskManager;
 
       const bridge = {
         async newSession(_cwd: string, options?: { mcpServers?: any[] }) {
@@ -119,12 +119,12 @@ describe("SessionManager", () => {
             (header) => header.name === "Authorization",
           )?.value;
           assert.ok(authorization);
-          const sessionId = capabilities.resolve(
+          const taskId = capabilities.resolve(
             authorization.replace(/^Bearer\s+/, ""),
           );
-          assert.ok(sessionId);
-          assert.equal(mcpSessionManager.liveSessions.has(sessionId), false);
-          assert.equal(mcpSessionManager.isMcpSessionActive(sessionId), true);
+          assert.ok(taskId);
+          assert.equal(mcpTaskManager.liveTasks.has(taskId), false);
+          assert.equal(mcpTaskManager.isMcpSessionActive(taskId), true);
           await assertMcpInitialize(mcpServer.baseUrl, authorization);
           return { sessionId: "agent-new", configOptions: [] };
         },
@@ -137,38 +137,30 @@ describe("SessionManager", () => {
       };
 
       try {
-        const created = await mcpSessionManager.createSession(bridge);
-        assert.equal(
-          mcpSessionManager.liveSessions.has(created.sessionId),
-          true,
-        );
-        assert.equal(
-          mcpSessionManager.isMcpSessionActive(created.sessionId),
-          true,
-        );
+        const created = await mcpTaskManager.createTask(bridge);
+        assert.equal(mcpTaskManager.liveTasks.has(created.taskId), true);
+        assert.equal(mcpTaskManager.isMcpSessionActive(created.taskId), true);
       } finally {
         await mcpServer.close();
       }
     });
 
-    it("allows MCP auto-connect while an ACP session is being restored", async () => {
-      const sessionId = "restore-mcp";
-      store.createSession(sessionId, tmpDir);
+    it("allows MCP auto-connect while an ACP task is being restored", async () => {
+      const taskId = "restore-mcp";
+      store.createTask(taskId, tmpDir);
       const capabilities = new CapabilityStore();
-      const mcpSessionManagerRef: { current?: SessionManager } = {};
-      const mcpServer = await startMcpTestServer(
-        capabilities,
-        (activeSessionId) =>
-          mcpSessionManagerRef.current!.isMcpSessionActive(activeSessionId),
+      const mcpTaskManagerRef: { current?: TaskManager } = {};
+      const mcpServer = await startMcpTestServer(capabilities, (activeTaskId) =>
+        mcpTaskManagerRef.current!.isMcpSessionActive(activeTaskId),
       );
-      const mcpSessionManager = new SessionManager(
+      const mcpTaskManager = new TaskManager(
         store,
         tmpDir,
         tmpDir,
         capabilities,
         mcpServer.baseUrl,
       );
-      mcpSessionManagerRef.current = mcpSessionManager;
+      mcpTaskManagerRef.current = mcpTaskManager;
 
       const bridge = {
         async newSession() {
@@ -178,7 +170,7 @@ describe("SessionManager", () => {
           return [];
         },
         async loadSession(
-          _webSessionId: string,
+          _webTaskId: string,
           _cwd: string,
           mcpServers?: any[],
         ) {
@@ -189,26 +181,26 @@ describe("SessionManager", () => {
             (header) => header.name === "Authorization",
           )?.value;
           assert.ok(authorization);
-          assert.equal(mcpSessionManager.liveSessions.has(sessionId), false);
-          assert.equal(mcpSessionManager.isMcpSessionActive(sessionId), true);
+          assert.equal(mcpTaskManager.liveTasks.has(taskId), false);
+          assert.equal(mcpTaskManager.isMcpSessionActive(taskId), true);
           await assertMcpInitialize(mcpServer.baseUrl, authorization);
-          return { sessionId, configOptions: [] };
+          return { taskId, configOptions: [] };
         },
       };
 
       try {
-        await mcpSessionManager.resumeSession(bridge, sessionId);
-        assert.equal(mcpSessionManager.liveSessions.has(sessionId), true);
+        await mcpTaskManager.resumeTask(bridge, taskId);
+        assert.equal(mcpTaskManager.liveTasks.has(taskId), true);
       } finally {
         await mcpServer.close();
       }
     });
 
-    it("revokes a capability when ACP session creation fails", async () => {
+    it("revokes a capability when ACP task creation fails", async () => {
       const capabilities = new CapabilityStore();
-      let mintedSessionId: string | null = null;
+      let mintedTaskId: string | null = null;
       let mintedToken: string | null = null;
-      const mcpSessionManager = new SessionManager(
+      const mcpTaskManager = new TaskManager(
         store,
         tmpDir,
         tmpDir,
@@ -223,7 +215,7 @@ describe("SessionManager", () => {
           const authorization = entry.headers[0]?.value;
           assert.ok(authorization);
           mintedToken = authorization.replace(/^Bearer\s+/, "");
-          mintedSessionId = capabilities.resolve(mintedToken);
+          mintedTaskId = capabilities.resolve(mintedToken);
           throw new Error("ACP startup failed");
         },
         async setConfigOption() {
@@ -234,34 +226,31 @@ describe("SessionManager", () => {
         },
       };
 
-      await assert.rejects(() => mcpSessionManager.createSession(bridge), {
+      await assert.rejects(() => mcpTaskManager.createTask(bridge), {
         message: "ACP startup failed",
       });
-      assert.ok(mintedSessionId);
+      assert.ok(mintedTaskId);
       assert.ok(mintedToken);
       assert.equal(capabilities.resolve(mintedToken), null);
-      assert.equal(
-        mcpSessionManager.isMcpSessionActive(mintedSessionId),
-        false,
-      );
+      assert.equal(mcpTaskManager.isMcpSessionActive(mintedTaskId), false);
     });
   });
 
-  describe("deleteSession", () => {
+  describe("deleteTask", () => {
     it("cleans up all state", () => {
-      store.createSession("s1", "/x");
-      sm.liveSessions.add("s1");
-      sm.sessionHasTitle.add("s1");
+      store.createTask("s1", "/x");
+      sm.liveTasks.add("s1");
+      sm.taskHasTitle.add("s1");
       sm.assistantBuffers.set("s1", "partial");
       sm.thinkingBuffers.set("s1", "hmm");
       sm.updateAgentCommands("s1", [
         { name: "context", description: "Show context usage" },
       ]);
 
-      sm.deleteSession(undefined, "s1");
+      sm.deleteTask(undefined, "s1");
 
-      assert.ok(!sm.liveSessions.has("s1"));
-      assert.ok(!sm.sessionHasTitle.has("s1"));
+      assert.ok(!sm.liveTasks.has("s1"));
+      assert.ok(!sm.taskHasTitle.has("s1"));
       assert.ok(!sm.assistantBuffers.has("s1"));
       assert.ok(!sm.thinkingBuffers.has("s1"));
       const commands = sm.getAgentCommands("s1");
@@ -271,14 +260,14 @@ describe("SessionManager", () => {
         revision: 0,
         commands: [],
       });
-      assert.equal(store.getSession("s1"), undefined);
+      assert.equal(store.getTask("s1"), undefined);
     });
 
     it("cascades to descendants, cleaning their runtime state and retiring executions", () => {
-      store.createSession("parent", "/a", "auto", "agent-parent");
-      store.createSession("child", "/b", "auto", "agent-child", "parent");
-      sm.liveSessions.add("parent");
-      sm.liveSessions.add("child");
+      store.createTask("parent", "/a", "auto", "agent-parent");
+      store.createTask("child", "/b", "auto", "agent-child", "parent");
+      sm.liveTasks.add("parent");
+      sm.liveTasks.add("child");
       sm.assistantBuffers.set("child", "partial answer");
       sm.pendingPromptSubmissions.set("child", 7);
       const retired: string[] = [];
@@ -297,31 +286,31 @@ describe("SessionManager", () => {
         },
       };
 
-      const result = sm.deleteSession(bridge, "parent");
+      const result = sm.deleteTask(bridge, "parent");
 
       assert.deepEqual(result.affected.map((entry) => entry.id).sort(), [
         "child",
         "parent",
       ]);
       assert.deepEqual(retired.sort(), ["agent-child", "agent-parent"]);
-      assert.ok(!sm.liveSessions.has("parent"));
-      assert.ok(!sm.liveSessions.has("child"));
+      assert.ok(!sm.liveTasks.has("parent"));
+      assert.ok(!sm.liveTasks.has("child"));
       assert.ok(!sm.assistantBuffers.has("child"));
       assert.ok(!sm.pendingPromptSubmissions.has("child"));
     });
 
     it("skips retirement when no bridge is available", () => {
-      store.createSession("s1", "/x", "auto", "agent-s1");
+      store.createTask("s1", "/x", "auto", "agent-s1");
 
-      const result = sm.deleteSession(undefined, "s1");
+      const result = sm.deleteTask(undefined, "s1");
 
       assert.equal(result.mode, "hard");
-      assert.equal(store.getSession("s1"), undefined);
+      assert.equal(store.getTask("s1"), undefined);
     });
   });
 
   describe("agent command snapshots", () => {
-    it("replaces commands and increments the per-session revision", () => {
+    it("replaces commands and increments the per-task revision", () => {
       const first = sm.updateAgentCommands("s1", [
         { name: "context", description: "Show context usage" },
       ]);
@@ -364,8 +353,8 @@ describe("SessionManager", () => {
       const epoch = sm.getAgentCommands("s1").epoch;
 
       assert.deepEqual(cleared, [
-        { sessionId: "s1", epoch, revision: 2, commands: [] },
-        { sessionId: "s2", epoch, revision: 2, commands: [] },
+        { taskId: "s1", epoch, revision: 2, commands: [] },
+        { taskId: "s2", epoch, revision: 2, commands: [] },
       ]);
       assert.deepEqual(sm.getAgentCommands("s1"), {
         epoch,
@@ -375,18 +364,18 @@ describe("SessionManager", () => {
     });
   });
 
-  describe("createSession", () => {
-    it("inherits config from the source session", async () => {
-      store.createSession("s1", "/x");
+  describe("createTask", () => {
+    it("inherits config from the source task", async () => {
+      store.createTask("s1", "/x");
       store.saveEvent(
         "s1",
         "user_message",
         { text: "hi" },
         { from_ref: "user" },
       );
-      store.updateSessionConfig("s1", "model", "claude-sonnet-4.6");
-      store.updateSessionConfig("s1", "mode", "plan-mode");
-      store.updateSessionConfig("s1", "reasoning_effort", "high");
+      store.updateTaskConfig("s1", "model", "claude-sonnet-4.6");
+      store.updateTaskConfig("s1", "mode", "plan-mode");
+      store.updateTaskConfig("s1", "reasoning_effort", "high");
       sm.cachedConfigOptions = [
         {
           type: "select",
@@ -412,7 +401,7 @@ describe("SessionManager", () => {
       ];
 
       const configCalls: Array<{
-        sessionId: string;
+        taskId: string;
         configId: string;
         value: string;
       }> = [];
@@ -424,12 +413,8 @@ describe("SessionManager", () => {
             configOptions: sm.cachedConfigOptions,
           };
         },
-        async setConfigOption(
-          sessionId: string,
-          configId: string,
-          value: string,
-        ) {
-          configCalls.push({ sessionId, configId, value });
+        async setConfigOption(taskId: string, configId: string, value: string) {
+          configCalls.push({ taskId, configId, value });
           return [];
         },
         async loadSession() {
@@ -437,29 +422,29 @@ describe("SessionManager", () => {
         },
       };
 
-      const created = await sm.createSession(bridge, undefined, "s1");
+      const created = await sm.createTask(bridge, undefined, "s1");
 
-      // mode is intentionally NOT inherited — new sessions always start in default (agent) mode
+      // mode is intentionally NOT inherited — new tasks always start in default (agent) mode
       assert.deepEqual(configCalls, [
         {
-          sessionId: created.sessionId,
+          taskId: created.taskId,
           configId: "model",
           value: "claude-sonnet-4.6",
         },
         {
-          sessionId: created.sessionId,
+          taskId: created.taskId,
           configId: "reasoning_effort",
           value: "high",
         },
       ]);
       assert.match(
-        created.sessionId,
+        created.taskId,
         /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
       );
-      assert.notEqual(created.sessionId, "s2");
-      assert.equal(store.getAgentSessionId(created.sessionId), "s2");
-      assert.ok(sm.liveSessions.has(created.sessionId));
-      assert.ok(!sm.liveSessions.has("s2"));
+      assert.notEqual(created.taskId, "s2");
+      assert.equal(store.getAgentSessionId(created.taskId), "s2");
+      assert.ok(sm.liveTasks.has(created.taskId));
+      assert.ok(!sm.liveTasks.has("s2"));
       assert.deepEqual(
         created.configOptions.map((opt) => ({
           id: opt.id,
@@ -471,26 +456,20 @@ describe("SessionManager", () => {
           { id: "reasoning_effort", currentValue: "high" },
         ],
       );
-      assert.equal(
-        store.getSession(created.sessionId)!.model,
-        "claude-sonnet-4.6",
-      );
-      assert.equal(store.getSession(created.sessionId)!.mode, "agent");
-      assert.equal(
-        store.getSession(created.sessionId)!.reasoning_effort,
-        "high",
-      );
+      assert.equal(store.getTask(created.taskId)!.model, "claude-sonnet-4.6");
+      assert.equal(store.getTask(created.taskId)!.mode, "agent");
+      assert.equal(store.getTask(created.taskId)!.reasoning_effort, "high");
     });
 
     it("inherits thinking through an agent's thought_level option", async () => {
-      store.createSession("s1", "/x");
+      store.createTask("s1", "/x");
       store.saveEvent(
         "s1",
         "user_message",
         { text: "hi" },
         { from_ref: "user" },
       );
-      store.updateSessionConfig("s1", "reasoning_effort", "high");
+      store.updateTaskConfig("s1", "reasoning_effort", "high");
       const configOptions: ConfigOption[] = [
         {
           type: "select",
@@ -510,7 +489,7 @@ describe("SessionManager", () => {
           return { sessionId: "agent-s2", configOptions };
         },
         async setConfigOption(
-          _sessionId: string,
+          _taskId: string,
           configId: string,
           value: string,
         ) {
@@ -522,19 +501,16 @@ describe("SessionManager", () => {
         },
       };
 
-      const created = await sm.createSession(bridge, undefined, "s1");
+      const created = await sm.createTask(bridge, undefined, "s1");
 
       assert.deepEqual(configCalls, [
         { configId: "thought_level", value: "high" },
       ]);
       assert.equal(created.configOptions[0]?.currentValue, "high");
-      assert.equal(
-        store.getSession(created.sessionId)!.reasoning_effort,
-        "high",
-      );
+      assert.equal(store.getTask(created.taskId)!.reasoning_effort, "high");
     });
 
-    it("does not set config when no source session is provided", async () => {
+    it("does not set config when no source task is provided", async () => {
       let configCalled = false;
       const bridge = {
         async newSession() {
@@ -549,21 +525,21 @@ describe("SessionManager", () => {
         },
       };
 
-      const created = await sm.createSession(bridge);
+      const created = await sm.createTask(bridge);
 
       assert.equal(configCalled, false);
-      assert.notEqual(created.sessionId, "s2");
+      assert.notEqual(created.taskId, "s2");
       assert.match(
-        created.sessionId,
+        created.taskId,
         /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
       );
       assert.deepEqual(created.configOptions, []);
-      assert.equal(store.getSession(created.sessionId)!.model, null);
-      assert.equal(store.getAgentSessionId(created.sessionId), "s2");
+      assert.equal(store.getTask(created.taskId)!.model, null);
+      assert.equal(store.getAgentSessionId(created.taskId), "s2");
     });
 
-    it("creates new sessions as Root children when Root exists", async () => {
-      store.ensureRootSession(tmpDir);
+    it("creates new tasks as Root children when Root exists", async () => {
+      store.ensureRootTask(tmpDir);
       const bridge = {
         async newSession() {
           return { sessionId: "agent-child", configOptions: [] };
@@ -576,15 +552,12 @@ describe("SessionManager", () => {
         },
       };
 
-      const created = await sm.createSession(bridge);
+      const created = await sm.createTask(bridge);
 
-      assert.equal(
-        store.getSession(created.sessionId)?.parent_session_id,
-        "root",
-      );
+      assert.equal(store.getTask(created.taskId)?.parent_id, "root");
     });
 
-    it("expands home shorthand before creating a session", async () => {
+    it("expands home shorthand before creating a task", async () => {
       let agentCwd = "";
       const bridge = {
         async newSession(cwd: string) {
@@ -595,14 +568,14 @@ describe("SessionManager", () => {
           return [];
         },
         async loadSession() {
-          return { sessionId: "agent-home", configOptions: [] };
+          return { taskId: "agent-home", configOptions: [] };
         },
       };
 
-      const created = await sm.createSession(bridge, "~");
+      const created = await sm.createTask(bridge, "~");
 
       assert.equal(agentCwd, homedir());
-      assert.equal(store.getSession(created.sessionId)?.cwd, homedir());
+      assert.equal(store.getTask(created.taskId)?.cwd, homedir());
     });
 
     it("rejects a non-existent cwd", async () => {
@@ -618,31 +591,31 @@ describe("SessionManager", () => {
         },
       };
 
-      await assert.rejects(() => sm.createSession(bridge, "/no/such/path"), {
+      await assert.rejects(() => sm.createTask(bridge, "/no/such/path"), {
         message: "Directory does not exist: /no/such/path",
       });
     });
 
-    it("cleans up old empty sessions and removes them from liveSessions", async () => {
-      // Create an empty session and mark it as live (simulating a prior createSession)
-      store.createSession("empty-old", "/x");
-      sm.liveSessions.add("empty-old");
+    it("cleans up old empty tasks and removes them from liveTasks", async () => {
+      // Create an empty task and mark it as live (simulating a prior createTask)
+      store.createTask("empty-old", "/x");
+      sm.liveTasks.add("empty-old");
       // Backdate created_at so it's older than the threshold
       store["db"]
         .prepare(
-          "UPDATE sessions SET created_at = strftime('%Y-%m-%d %H:%M:%f', 'now', '-120 seconds') WHERE id = ?",
+          "UPDATE tasks SET created_at = strftime('%Y-%m-%d %H:%M:%f', 'now', '-120 seconds') WHERE id = ?",
         )
         .run("empty-old");
 
-      // Create a session with events — should not be cleaned
-      store.createSession("has-events", "/x");
+      // Create a task with events — should not be cleaned
+      store.createTask("has-events", "/x");
       store.saveEvent(
         "has-events",
         "user_message",
         { text: "hi" },
         { from_ref: "user" },
       );
-      sm.liveSessions.add("has-events");
+      sm.liveTasks.add("has-events");
 
       let nextId = 0;
       const bridge = {
@@ -657,20 +630,20 @@ describe("SessionManager", () => {
         },
       };
 
-      await sm.createSession(bridge);
+      await sm.createTask(bridge);
 
-      // empty-old should be gone from both DB and liveSessions
-      assert.equal(store.getSession("empty-old"), undefined);
-      assert.ok(!sm.liveSessions.has("empty-old"));
+      // empty-old should be gone from both DB and liveTasks
+      assert.equal(store.getTask("empty-old"), undefined);
+      assert.ok(!sm.liveTasks.has("empty-old"));
       // has-events should still exist
-      assert.ok(store.getSession("has-events"));
-      assert.ok(sm.liveSessions.has("has-events"));
+      assert.ok(store.getTask("has-events"));
+      assert.ok(sm.liveTasks.has("has-events"));
     });
 
-    it("does not clean recently created empty sessions", async () => {
-      // Create an empty session that's fresh (just now)
-      store.createSession("fresh-empty", "/x");
-      sm.liveSessions.add("fresh-empty");
+    it("does not clean recently created empty tasks", async () => {
+      // Create an empty task that's fresh (just now)
+      store.createTask("fresh-empty", "/x");
+      sm.liveTasks.add("fresh-empty");
 
       const bridge = {
         async newSession() {
@@ -684,20 +657,20 @@ describe("SessionManager", () => {
         },
       };
 
-      await sm.createSession(bridge);
+      await sm.createTask(bridge);
 
       // fresh-empty should still exist (too young to clean)
-      assert.ok(store.getSession("fresh-empty"));
-      assert.ok(sm.liveSessions.has("fresh-empty"));
+      assert.ok(store.getTask("fresh-empty"));
+      assert.ok(sm.liveTasks.has("fresh-empty"));
     });
   });
 
-  describe("clearSession", () => {
-    it("rotates the ACP execution while preserving the WebAgent session", async () => {
-      store.createSession("web-1", tmpDir, "auto", "agent-old");
-      store.updateSessionConfig("web-1", "model", "model-old");
-      store.updateSessionConfig("web-1", "mode", "plan");
-      sm.liveSessions.add("web-1");
+  describe("clearTask", () => {
+    it("rotates the ACP execution while preserving the WebAgent task", async () => {
+      store.createTask("web-1", tmpDir, "auto", "agent-old");
+      store.updateTaskConfig("web-1", "model", "model-old");
+      store.updateTaskConfig("web-1", "mode", "plan");
+      sm.liveTasks.add("web-1");
       const configCalls: Array<{ id: string; value: string }> = [];
       const retired: string[] = [];
 
@@ -705,7 +678,7 @@ describe("SessionManager", () => {
         async newSession() {
           return { sessionId: "agent-new", configOptions: [] };
         },
-        async setConfigOption(_sessionId: string, id: string, value: string) {
+        async setConfigOption(_taskId: string, id: string, value: string) {
           configCalls.push({ id, value });
           return [];
         },
@@ -717,15 +690,15 @@ describe("SessionManager", () => {
         },
       };
 
-      const result = await sm.clearSession(bridge, "web-1");
+      const result = await sm.clearTask(bridge, "web-1");
 
-      assert.equal(result.sessionId, "web-1");
+      assert.equal(result.taskId, "web-1");
       assert.deepEqual(
-        store.listSessions().map((session) => session.id),
+        store.listTasks().map((task) => task.id),
         ["web-1"],
       );
       assert.equal(store.getAgentSessionId("web-1"), "agent-new");
-      assert.equal(store.getWebSessionId("agent-old"), undefined);
+      assert.equal(store.getTaskId("agent-old"), undefined);
       // The retired execution is explicitly removed, not just unbound.
       assert.deepEqual(retired, ["agent-old"]);
       assert.deepEqual(configCalls, [
@@ -735,8 +708,8 @@ describe("SessionManager", () => {
     });
 
     it("never retires the current execution when the agent returns the same id", async () => {
-      store.createSession("web-1", tmpDir, "auto", "agent-same");
-      sm.liveSessions.add("web-1");
+      store.createTask("web-1", tmpDir, "auto", "agent-same");
+      sm.liveTasks.add("web-1");
       const retired: string[] = [];
       const bridge = {
         async newSession() {
@@ -753,7 +726,7 @@ describe("SessionManager", () => {
         },
       };
 
-      await sm.clearSession(bridge, "web-1");
+      await sm.clearTask(bridge, "web-1");
 
       // rotateAgentSession is a no-op, so the still-authoritative execution
       // must not be retired; retiring it would kill the live binding.
@@ -762,9 +735,9 @@ describe("SessionManager", () => {
     });
 
     it("restores thinking through the replacement execution's thought_level option", async () => {
-      store.createSession("web-1", tmpDir, "auto", "agent-old");
-      store.updateSessionConfig("web-1", "reasoning_effort", "high");
-      sm.liveSessions.add("web-1");
+      store.createTask("web-1", tmpDir, "auto", "agent-old");
+      store.updateTaskConfig("web-1", "reasoning_effort", "high");
+      sm.liveTasks.add("web-1");
       const configCalls: Array<{ id: string; value: string }> = [];
       const configOptions: ConfigOption[] = [
         {
@@ -780,7 +753,7 @@ describe("SessionManager", () => {
         async newSession() {
           return { sessionId: "agent-new", configOptions };
         },
-        async setConfigOption(_sessionId: string, id: string, value: string) {
+        async setConfigOption(_taskId: string, id: string, value: string) {
           configCalls.push({ id, value });
           return [];
         },
@@ -789,14 +762,14 @@ describe("SessionManager", () => {
         },
       };
 
-      await sm.clearSession(bridge, "web-1");
+      await sm.clearTask(bridge, "web-1");
 
       assert.deepEqual(configCalls, [{ id: "thought_level", value: "high" }]);
     });
 
     it("clears runtime buffers and command snapshots for the replacement execution", async () => {
-      store.createSession("web-1", tmpDir, "auto", "agent-old");
-      sm.liveSessions.add("web-1");
+      store.createTask("web-1", tmpDir, "auto", "agent-old");
+      sm.liveTasks.add("web-1");
       sm.assistantBuffers.set("web-1", "partial answer");
       sm.thinkingBuffers.set("web-1", "partial thought");
       sm.activePrompts.add("web-1");
@@ -816,7 +789,7 @@ describe("SessionManager", () => {
         },
       };
 
-      await sm.clearSession(bridge, "web-1");
+      await sm.clearTask(bridge, "web-1");
 
       assert.equal(sm.assistantBuffers.has("web-1"), false);
       assert.equal(sm.thinkingBuffers.has("web-1"), false);
@@ -826,13 +799,13 @@ describe("SessionManager", () => {
     });
 
     it("keeps the runtime state seq monotonic across rotation", async () => {
-      // A session with history has applied patches (seq > 0). The client
+      // A task with history has applied patches (seq > 0). The client
       // validates incremental state_patch events and snapshots against its
       // own lastStateSeq; if rotation restarted the server seq at 0, every
       // post-clear snapshot would look "superseded" and be dropped, leaving
       // the client permanently desynced (stuck busy).
-      store.createSession("web-1", tmpDir, "auto", "agent-old");
-      sm.liveSessions.add("web-1");
+      store.createTask("web-1", tmpDir, "auto", "agent-old");
+      sm.liveTasks.add("web-1");
       sm.state.patch("web-1", {
         runtime: {
           busy: { kind: "agent", since: "t0", promptId: "prompt-1" },
@@ -861,7 +834,7 @@ describe("SessionManager", () => {
         },
       };
 
-      await sm.clearSession(bridge, "web-1");
+      await sm.clearTask(bridge, "web-1");
 
       const after = sm.state.getState("web-1");
       assert.equal(after.runtime.busy, null);
@@ -873,12 +846,12 @@ describe("SessionManager", () => {
     });
 
     it("rotates MCP capability only after the replacement execution succeeds", async () => {
-      store.createSession("web-1", tmpDir, "auto", "agent-old");
-      sm.liveSessions.add("web-1");
+      store.createTask("web-1", tmpDir, "auto", "agent-old");
+      sm.liveTasks.add("web-1");
       const capabilities = new CapabilityStore();
       const oldToken = capabilities.mint("web-1");
       let newToken: string | undefined;
-      const manager = new SessionManager(
+      const manager = new TaskManager(
         store,
         tmpDir,
         tmpDir,
@@ -900,15 +873,15 @@ describe("SessionManager", () => {
         },
       };
 
-      await manager.clearSession(bridge, "web-1");
+      await manager.clearTask(bridge, "web-1");
 
       assert.equal(capabilities.resolve(oldToken), null);
       assert.equal(newToken && capabilities.resolve(newToken), "web-1");
     });
 
     it("does not reset the state ledger when replacement creation fails", async () => {
-      store.createSession("web-1", tmpDir, "auto", "agent-old");
-      sm.liveSessions.add("web-1");
+      store.createTask("web-1", tmpDir, "auto", "agent-old");
+      sm.liveTasks.add("web-1");
       sm.state.patch("web-1", {
         runtime: { busy: { kind: "agent", since: "t0", promptId: "prompt-1" } },
       });
@@ -927,7 +900,7 @@ describe("SessionManager", () => {
       };
 
       await assert.rejects(
-        () => sm.clearSession(bridge, "web-1"),
+        () => sm.clearTask(bridge, "web-1"),
         /replacement failed/,
       );
       // The rotation barrier patch (busy=true) bumps seq even on failure; the
@@ -937,11 +910,11 @@ describe("SessionManager", () => {
     });
 
     it("keeps the current MCP capability when replacement creation fails", async () => {
-      store.createSession("web-1", tmpDir, "auto", "agent-old");
-      sm.liveSessions.add("web-1");
+      store.createTask("web-1", tmpDir, "auto", "agent-old");
+      sm.liveTasks.add("web-1");
       const capabilities = new CapabilityStore();
       const oldToken = capabilities.mint("web-1");
-      const manager = new SessionManager(
+      const manager = new TaskManager(
         store,
         tmpDir,
         tmpDir,
@@ -962,7 +935,7 @@ describe("SessionManager", () => {
       };
 
       await assert.rejects(
-        () => manager.clearSession(bridge, "web-1"),
+        () => manager.clearTask(bridge, "web-1"),
         /replacement failed/,
       );
       assert.equal(capabilities.resolve(oldToken), "web-1");
@@ -971,12 +944,12 @@ describe("SessionManager", () => {
   });
 
   describe("Root execution", () => {
-    it("binds one ACP execution to the existing Root session", async () => {
-      store.ensureRootSession(tmpDir);
-      let newSessionCalls = 0;
+    it("binds one ACP execution to the existing Root task", async () => {
+      store.ensureRootTask(tmpDir);
+      let newTaskCalls = 0;
       const bridge = {
         async newSession() {
-          newSessionCalls++;
+          newTaskCalls++;
           return { sessionId: "agent-root", configOptions: [] };
         },
         async setConfigOption() {
@@ -987,13 +960,13 @@ describe("SessionManager", () => {
         },
       };
 
-      await sm.ensureRootSession(bridge);
-      await sm.ensureRootSession(bridge);
+      await sm.ensureRootTask(bridge);
+      await sm.ensureRootTask(bridge);
 
-      assert.equal(newSessionCalls, 1);
+      assert.equal(newTaskCalls, 1);
       assert.equal(store.getAgentSessionId("root"), "agent-root");
       assert.deepEqual(
-        store.listSessions().map((session) => session.id),
+        store.listTasks().map((task) => task.id),
         ["root"],
       );
     });
@@ -1001,7 +974,7 @@ describe("SessionManager", () => {
 
   describe("buffer management", () => {
     it("appends and flushes assistant buffer", () => {
-      store.createSession("s1", "/x");
+      store.createTask("s1", "/x");
 
       sm.appendAssistant("s1", "Hello ");
       sm.appendAssistant("s1", "world");
@@ -1017,7 +990,7 @@ describe("SessionManager", () => {
     });
 
     it("appends and flushes thinking buffer", () => {
-      store.createSession("s1", "/x");
+      store.createTask("s1", "/x");
 
       sm.appendThinking("s1", "Let me think...");
       sm.flushBuffers("s1");
@@ -1028,14 +1001,14 @@ describe("SessionManager", () => {
     });
 
     it("flush is a no-op when buffers are empty", () => {
-      store.createSession("s1", "/x");
+      store.createTask("s1", "/x");
       sm.flushBuffers("s1"); // should not throw
       assert.deepEqual(store.getEvents("s1"), []);
     });
 
-    it("discards late buffers for a deleted session", () => {
-      store.createSession("s1", "/x");
-      store.deleteSession("s1");
+    it("discards late buffers for a deleted task", () => {
+      store.createTask("s1", "/x");
+      store.deleteTask("s1");
       sm.assistantBuffers.set("s1", "late answer");
       sm.thinkingBuffers.set("s1", "late thought");
 
@@ -1047,7 +1020,7 @@ describe("SessionManager", () => {
     });
 
     it("flushAssistantBuffer saves only the assistant buffer", () => {
-      store.createSession("s1", "/x");
+      store.createTask("s1", "/x");
       sm.appendAssistant("s1", "Hello");
       sm.appendThinking("s1", "hmm");
 
@@ -1062,7 +1035,7 @@ describe("SessionManager", () => {
     });
 
     it("flushThinkingBuffer saves only the thinking buffer", () => {
-      store.createSession("s1", "/x");
+      store.createTask("s1", "/x");
       sm.appendAssistant("s1", "Hello");
       sm.appendThinking("s1", "hmm");
 
@@ -1077,19 +1050,19 @@ describe("SessionManager", () => {
     });
   });
 
-  describe("getSessionCwd", () => {
-    it("returns session cwd when exists", () => {
-      store.createSession("s1", "/my/project");
-      assert.equal(sm.getSessionCwd("s1"), "/my/project");
+  describe("getTaskCwd", () => {
+    it("returns task cwd when exists", () => {
+      store.createTask("s1", "/my/project");
+      assert.equal(sm.getTaskCwd("s1"), "/my/project");
     });
 
-    it("returns default cwd when session not found", () => {
-      assert.equal(sm.getSessionCwd("nonexistent"), tmpDir);
+    it("returns default cwd when task not found", () => {
+      assert.equal(sm.getTaskCwd("nonexistent"), tmpDir);
     });
   });
 
   describe("getBusyKind", () => {
-    it("reports agent busy sessions", () => {
+    it("reports agent busy tasks", () => {
       sm.activePrompts.add("s1");
       assert.equal(sm.getBusyKind("s1"), "agent");
     });
@@ -1132,8 +1105,8 @@ describe("SessionManager", () => {
   });
 
   describe("autoRetryIfNeeded", () => {
-    it("returns false when session has no interrupted turn", () => {
-      store.createSession("s1", "/x");
+    it("returns false when task has no interrupted turn", () => {
+      store.createTask("s1", "/x");
       store.saveEvent(
         "s1",
         "user_message",
@@ -1155,7 +1128,7 @@ describe("SessionManager", () => {
 
       const promptCalls: string[] = [];
       const bridge = {
-        async prompt(sessionId: string, text: string) {
+        async prompt(taskId: string, text: string) {
           promptCalls.push(text);
         },
       };
@@ -1166,7 +1139,7 @@ describe("SessionManager", () => {
     });
 
     it("auto-retries when turn was interrupted", () => {
-      store.createSession("s1", "/x");
+      store.createTask("s1", "/x");
       store.saveEvent(
         "s1",
         "user_message",
@@ -1180,22 +1153,22 @@ describe("SessionManager", () => {
         { from_ref: "agent" },
       );
 
-      const promptCalls: Array<{ sessionId: string; text: string }> = [];
+      const promptCalls: Array<{ taskId: string; text: string }> = [];
       const bridge = {
-        async prompt(sessionId: string, text: string) {
-          promptCalls.push({ sessionId, text });
+        async prompt(taskId: string, text: string) {
+          promptCalls.push({ taskId, text });
         },
       };
 
       assert.equal(sm.autoRetryIfNeeded(bridge, "s1"), true);
       assert.ok(sm.activePrompts.has("s1"));
       assert.equal(promptCalls.length, 1);
-      assert.equal(promptCalls[0].sessionId, "s1");
+      assert.equal(promptCalls[0].taskId, "s1");
       assert.ok(promptCalls[0].text.includes("interrupted"));
     });
 
-    it("skips if session is already actively prompting", () => {
-      store.createSession("s1", "/x");
+    it("skips if task is already actively prompting", () => {
+      store.createTask("s1", "/x");
       store.saveEvent(
         "s1",
         "user_message",
@@ -1217,7 +1190,7 @@ describe("SessionManager", () => {
     });
 
     it("cleans up activePrompts on prompt failure", async () => {
-      store.createSession("s1", "/x");
+      store.createTask("s1", "/x");
       store.saveEvent(
         "s1",
         "user_message",
@@ -1246,9 +1219,9 @@ describe("SessionManager", () => {
   });
 
   describe("ensureResumed", () => {
-    it("is a no-op when session is already live", async () => {
-      store.createSession("s1", "/x");
-      sm.liveSessions.add("s1");
+    it("is a no-op when task is already live", async () => {
+      store.createTask("s1", "/x");
+      sm.liveTasks.add("s1");
 
       let loadCalled = false;
       const bridge = {
@@ -1260,7 +1233,7 @@ describe("SessionManager", () => {
         },
         async loadSession() {
           loadCalled = true;
-          return { sessionId: "s1", configOptions: [] };
+          return { taskId: "s1", configOptions: [] };
         },
       };
 
@@ -1268,8 +1241,8 @@ describe("SessionManager", () => {
       assert.equal(loadCalled, false);
     });
 
-    it("calls loadSession for non-live sessions", async () => {
-      store.createSession("s1", "/x");
+    it("calls loadSession for non-live tasks", async () => {
+      store.createTask("s1", "/x");
       sm.cachedConfigOptions = [
         {
           type: "select",
@@ -1290,17 +1263,17 @@ describe("SessionManager", () => {
         },
         async loadSession() {
           loadCalled = true;
-          return { sessionId: "s1", configOptions: [] };
+          return { taskId: "s1", configOptions: [] };
         },
       };
 
       await sm.ensureResumed(bridge, "s1");
       assert.equal(loadCalled, true);
-      assert.ok(sm.liveSessions.has("s1"));
+      assert.ok(sm.liveTasks.has("s1"));
     });
 
     it("deduplicates concurrent resume calls", async () => {
-      store.createSession("s1", "/x");
+      store.createTask("s1", "/x");
       sm.cachedConfigOptions = [];
 
       let loadCount = 0;
@@ -1314,10 +1287,10 @@ describe("SessionManager", () => {
         },
         loadSession() {
           loadCount++;
-          return new Promise<{ sessionId: string; configOptions: never[] }>(
+          return new Promise<{ taskId: string; configOptions: never[] }>(
             (resolve) => {
               resolveLoad = () => {
-                resolve({ sessionId: "s1", configOptions: [] });
+                resolve({ taskId: "s1", configOptions: [] });
               };
             },
           );
@@ -1333,11 +1306,11 @@ describe("SessionManager", () => {
 
       resolveLoad!();
       await Promise.all([p1, p2]);
-      assert.ok(sm.liveSessions.has("s1"));
+      assert.ok(sm.liveTasks.has("s1"));
     });
 
     it("propagates errors to all waiters", async () => {
-      store.createSession("s1", "/x");
+      store.createTask("s1", "/x");
 
       const bridge = {
         async newSession() {
@@ -1356,7 +1329,7 @@ describe("SessionManager", () => {
 
       await assert.rejects(p1, { message: "ACP timeout" });
       await assert.rejects(p2, { message: "ACP timeout" });
-      assert.ok(!sm.liveSessions.has("s1"));
+      assert.ok(!sm.liveTasks.has("s1"));
     });
   });
 
@@ -1364,12 +1337,12 @@ describe("SessionManager", () => {
     // ACP's loadSession does not return configOptions (only newSession /
     // setConfigOption do). When the global cache is empty (e.g. after
     // bridge.restart), piggyback on the user's own resume: call
-    // setConfigOption with the session's own stored value (idempotent) to
+    // setConfigOption with the task's own stored value (idempotent) to
     // pull the full schema from the agent.
 
-    it("warms cachedConfigOptions on first resume when cache is empty and session has stored mode", async () => {
-      store.createSession("s1", "/x");
-      store.updateSessionConfig("s1", "mode", "#plan");
+    it("warms cachedConfigOptions on first resume when cache is empty and task has stored mode", async () => {
+      store.createTask("s1", "/x");
+      store.updateTaskConfig("s1", "mode", "#plan");
       sm.cachedConfigOptions = [];
 
       const setCalls: Array<{ id: string; value: string }> = [];
@@ -1401,7 +1374,7 @@ describe("SessionManager", () => {
           ];
         },
         async loadSession() {
-          return { sessionId: "s1", configOptions: [] };
+          return { taskId: "s1", configOptions: [] };
         },
       };
 
@@ -1410,12 +1383,12 @@ describe("SessionManager", () => {
       assert.equal(setCalls[0].id, "mode");
       assert.equal(setCalls[0].value, "#plan");
       assert.equal(sm.cachedConfigOptions.length, 2);
-      assert.ok(sm.liveSessions.has("s1"));
+      assert.ok(sm.liveTasks.has("s1"));
     });
 
     it("skips warming when cache is already populated", async () => {
-      store.createSession("s1", "/x");
-      store.updateSessionConfig("s1", "mode", "#plan");
+      store.createTask("s1", "/x");
+      store.updateTaskConfig("s1", "mode", "#plan");
       sm.cachedConfigOptions = [
         {
           type: "select",
@@ -1436,7 +1409,7 @@ describe("SessionManager", () => {
           return [];
         },
         async loadSession() {
-          return { sessionId: "s1", configOptions: [] };
+          return { taskId: "s1", configOptions: [] };
         },
       };
 
@@ -1444,8 +1417,8 @@ describe("SessionManager", () => {
       assert.equal(setCalled, false);
     });
 
-    it("skips warming when session has no stored config at all", async () => {
-      store.createSession("s1", "/x");
+    it("skips warming when task has no stored config at all", async () => {
+      store.createTask("s1", "/x");
       sm.cachedConfigOptions = [];
 
       let setCalled = false;
@@ -1458,20 +1431,20 @@ describe("SessionManager", () => {
           return [];
         },
         async loadSession() {
-          return { sessionId: "s1", configOptions: [] };
+          return { taskId: "s1", configOptions: [] };
         },
       };
 
       await sm.ensureResumed(bridge, "s1");
       assert.equal(setCalled, false);
       assert.equal(sm.cachedConfigOptions.length, 0);
-      assert.ok(sm.liveSessions.has("s1"));
+      assert.ok(sm.liveTasks.has("s1"));
     });
 
     it("prefers mode > reasoning_effort > model when picking the warming key", async () => {
-      store.createSession("s1", "/x");
-      store.updateSessionConfig("s1", "reasoning_effort", "medium");
-      store.updateSessionConfig("s1", "model", "gpt-5.4");
+      store.createTask("s1", "/x");
+      store.updateTaskConfig("s1", "reasoning_effort", "medium");
+      store.updateTaskConfig("s1", "model", "gpt-5.4");
       sm.cachedConfigOptions = [];
 
       const setCalls: Array<{ id: string; value: string }> = [];
@@ -1492,7 +1465,7 @@ describe("SessionManager", () => {
           ];
         },
         async loadSession() {
-          return { sessionId: "s1", configOptions: [] };
+          return { taskId: "s1", configOptions: [] };
         },
       };
 
@@ -1501,8 +1474,8 @@ describe("SessionManager", () => {
     });
 
     it("falls back to thought_level when reasoning_effort is unsupported", async () => {
-      store.createSession("s1", "/x");
-      store.updateSessionConfig("s1", "reasoning_effort", "medium");
+      store.createTask("s1", "/x");
+      store.updateTaskConfig("s1", "reasoning_effort", "medium");
       sm.cachedConfigOptions = [];
 
       const setCalls: Array<{ id: string; value: string }> = [];
@@ -1534,7 +1507,7 @@ describe("SessionManager", () => {
           ];
         },
         async loadSession() {
-          return { sessionId: "s1", configOptions: [] };
+          return { taskId: "s1", configOptions: [] };
         },
       };
 
@@ -1544,12 +1517,12 @@ describe("SessionManager", () => {
         { id: "thought_level", value: "medium" },
       ]);
       assert.equal(sm.cachedConfigOptions.length, 2);
-      assert.ok(sm.liveSessions.has("s1"));
+      assert.ok(sm.liveTasks.has("s1"));
     });
 
     it("resume still succeeds when setConfigOption throws", async () => {
-      store.createSession("s1", "/x");
-      store.updateSessionConfig("s1", "mode", "#plan");
+      store.createTask("s1", "/x");
+      store.updateTaskConfig("s1", "mode", "#plan");
       sm.cachedConfigOptions = [];
 
       const bridge = {
@@ -1560,25 +1533,25 @@ describe("SessionManager", () => {
           throw new Error("agent boom");
         },
         async loadSession() {
-          return { sessionId: "s1", configOptions: [] };
+          return { taskId: "s1", configOptions: [] };
         },
       };
 
       await sm.ensureResumed(bridge, "s1");
       assert.equal(sm.cachedConfigOptions.length, 0);
       assert.ok(
-        sm.liveSessions.has("s1"),
+        sm.liveTasks.has("s1"),
         "resume must succeed even if warming fails",
       );
     });
 
-    it("does not overwrite session DB row with agent defaults in the warm response", async () => {
+    it("does not overwrite task DB row with agent defaults in the warm response", async () => {
       // Probe responses carry agent in-memory defaults for unrelated keys
       // (e.g. setConfigOption(mode, #plan) response's model.currentValue is
       // NOT the user's preference). Warming must never write these back.
-      store.createSession("s1", "/x");
-      store.updateSessionConfig("s1", "mode", "#plan");
-      store.updateSessionConfig("s1", "model", "gpt-5.4");
+      store.createTask("s1", "/x");
+      store.updateTaskConfig("s1", "mode", "#plan");
+      store.updateTaskConfig("s1", "model", "gpt-5.4");
       sm.cachedConfigOptions = [];
 
       const bridge = {
@@ -1607,25 +1580,25 @@ describe("SessionManager", () => {
           ];
         },
         async loadSession() {
-          return { sessionId: "s1", configOptions: [] };
+          return { taskId: "s1", configOptions: [] };
         },
       };
 
       await sm.ensureResumed(bridge, "s1");
-      const row = store.getSession("s1")!;
+      const row = store.getTask("s1")!;
       assert.equal(row.model, "gpt-5.4", "DB model must stay as user's choice");
     });
   });
 
   describe("attachment label cache", () => {
     beforeEach(() => {
-      store.createSession("s1", "/x");
+      store.createTask("s1", "/x");
     });
 
     it("getLabelMap lazy-builds from store on first call", () => {
       store.insertAttachment({
         id: "abc12345-1111",
-        sessionId: "s1",
+        taskId: "s1",
         kind: "file",
         name: "report.pdf",
         mime: "application/pdf",
@@ -1639,7 +1612,7 @@ describe("SessionManager", () => {
     it("returns cached map on subsequent calls (same Map instance)", () => {
       store.insertAttachment({
         id: "abc12345-1111",
-        sessionId: "s1",
+        taskId: "s1",
         kind: "file",
         name: "x.pdf",
         mime: "application/pdf",
@@ -1654,7 +1627,7 @@ describe("SessionManager", () => {
     it("invalidateLabelCache forces rebuild on next access", () => {
       store.insertAttachment({
         id: "1111aaaa",
-        sessionId: "s1",
+        taskId: "s1",
         kind: "file",
         name: "a.txt",
         mime: "text/plain",
@@ -1666,7 +1639,7 @@ describe("SessionManager", () => {
 
       store.insertAttachment({
         id: "2222bbbb",
-        sessionId: "s1",
+        taskId: "s1",
         kind: "file",
         name: "b.txt",
         mime: "text/plain",
@@ -1682,11 +1655,11 @@ describe("SessionManager", () => {
       assert.equal(after.get("/r/b.txt"), "b.txt [#2222]");
     });
 
-    it("isolates per-session caches", () => {
-      store.createSession("s2", "/y");
+    it("isolates per-task caches", () => {
+      store.createTask("s2", "/y");
       store.insertAttachment({
         id: "aaaa1111",
-        sessionId: "s1",
+        taskId: "s1",
         kind: "file",
         name: "in1.txt",
         mime: "text/plain",
@@ -1695,7 +1668,7 @@ describe("SessionManager", () => {
       });
       store.insertAttachment({
         id: "bbbb2222",
-        sessionId: "s2",
+        taskId: "s2",
         kind: "file",
         name: "in2.txt",
         mime: "text/plain",
@@ -1710,10 +1683,10 @@ describe("SessionManager", () => {
       assert.ok(!m2.has("/r/1.txt"));
     });
 
-    it("deleteSession invalidates label cache", () => {
+    it("deleteTask invalidates label cache", () => {
       store.insertAttachment({
         id: "abc12345",
-        sessionId: "s1",
+        taskId: "s1",
         kind: "file",
         name: "x.txt",
         mime: "text/plain",
@@ -1721,14 +1694,14 @@ describe("SessionManager", () => {
         realpath: "/r/x.txt",
       });
       sm.getLabelMap("s1"); // populate cache
-      sm.deleteSession(undefined, "s1");
-      // Re-create session and request map — must NOT see stale entry.
-      store.createSession("s1", "/x");
+      sm.deleteTask(undefined, "s1");
+      // Re-create task and request map — must NOT see stale entry.
+      store.createTask("s1", "/x");
       const m = sm.getLabelMap("s1");
       assert.equal(m.size, 0);
     });
 
-    it("returns empty map for session with no attachments", () => {
+    it("returns empty map for task with no attachments", () => {
       assert.equal(sm.getLabelMap("s1").size, 0);
     });
   });

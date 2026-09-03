@@ -137,7 +137,7 @@ export function isContentEventType(t: string): t is ContentEventType {
 
 export interface RenderHooks {
   /** Rewrite an attachment URL (share viewer maps owner-side
-   *  `/api/v1/sessions/.../attachments/X` to public `/s/<token>/attachments/X`).
+   *  `/api/v1/tasks/.../attachments/X` to public `/s/<token>/attachments/X`).
    *  Applies to user_message `<img>` and `<a>` elements alike. */
   rewriteAttachmentSrc?: (src: string) => string;
   /** Post-render hook for the assistant_message element (e.g. hljs lazy enhance). */

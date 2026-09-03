@@ -1,7 +1,7 @@
 import { test, expect } from "playwright/test";
 import {
   createNewSession,
-  currentSessionId,
+  currentTaskId,
   gotoConnected,
   sendPrompt,
 } from "./helpers.ts";
@@ -17,10 +17,10 @@ test("reloading after a resolved permission shows collapsed history without butt
   await permission.getByRole("button", { name: "Allow" }).click();
   await expect(permission).toContainText("Allow");
 
-  const sessionId = await currentSessionId(page);
+  const taskId = await currentTaskId(page);
   await page.reload();
 
-  await expect.poll(() => currentSessionId(page)).toBe(sessionId);
+  await expect.poll(() => currentTaskId(page)).toBe(taskId);
   const restoredPermission = page.locator(".permission").last();
   await expect(restoredPermission).toContainText("Allow");
   await expect(restoredPermission.getByRole("button")).toHaveCount(0);

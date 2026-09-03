@@ -1,7 +1,7 @@
 // Cross-agent ACP mode classification.
 //
 // Different agents emit `currentModeId` in different forms:
-//   - Copilot CLI:   "https://agentclientprotocol.com/protocol/session-modes#autopilot"
+//   - Copilot CLI:   "https://agentclientprotocol.com/protocol/task-modes#autopilot"
 //   - Claude Code:   "bypassPermissions" (bare camelCase string)
 //   - Codex:         "read-only" / "auto" / "full-access" (bare hyphenated)
 //   - Gemini CLI:    "default" / "autoEdit" / "yolo" / "plan" (bare; enum-based)

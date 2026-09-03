@@ -6,8 +6,8 @@
 
 import {
   state,
-  resetSessionUI,
-  requestNewSession,
+  resetTaskUI,
+  requestNewTask,
   getSelectConfigOption,
   getThinkingConfigOption,
   getConfigValue,
@@ -15,9 +15,9 @@ import {
   updateStatusBar,
 } from "./state.ts";
 import { addSystem, formatLocalTime } from "./render.ts";
-import { fallbackToNextSession } from "./events.ts";
+import { fallbackToNextTask } from "./events.ts";
 import * as api from "./api.ts";
-import { consumeAndSwitch, switchToSession } from "./session-navigation.ts";
+import { consumeAndSwitch, switchToTask } from "./task-navigation.ts";
 import { log, getLogLevel, type LogLevel } from "./log.ts";
 import {
   getLogLevelSource,
@@ -25,15 +25,12 @@ import {
   setStoredLogLevel,
 } from "./log.ts";
 import type { CmdNode } from "./slash-tree.ts";
-import type { SessionSummary } from "../../src/types.ts";
+import type { TaskSummary } from "../../src/types.ts";
 import { HTTP_STATUS } from "../../src/http-status.ts";
 import { TOKEN_STORAGE_KEY } from "./login-core.ts";
 import { resetLocalFrontendState } from "./local-reset.ts";
 import { requestAuthoritativeCancel } from "./cancel-command.ts";
-import {
-  compactCurrentSession,
-  replaceCurrentSession,
-} from "./session-actions.ts";
+import { compactCurrentTask, replaceCurrentTask } from "./task-actions.ts";
 import {
   createPreview,
   listOwnerShares,
@@ -121,9 +118,9 @@ async function unsubscribePush(): Promise<void> {
 
 // --- shared data fetchers (keep call sites identical for /inbox + /inbox dismiss) ---
 
-async function listSessions(): Promise<SessionSummary[]> {
-  const res = await fetch("/api/v1/sessions");
-  return res.json() as Promise<SessionSummary[]>;
+async function listTasks(): Promise<TaskSummary[]> {
+  const res = await fetch("/api/v1/tasks");
+  return res.json() as Promise<TaskSummary[]>;
 }
 
 interface PathItem {
@@ -195,8 +192,8 @@ async function setConfigAndUpdate(
   updateModeUI();
   updateStatusBar();
   addSystem(`${opt?.name ?? configId} → ${name}`);
-  if (state.sessionId)
-    await api.setConfig(state.sessionId, configId, value).catch(() => {});
+  if (state.taskId)
+    await api.setConfig(state.taskId, configId, value).catch(() => {});
 }
 
 export async function consumeInbox(m: api.InboxMessage): Promise<void> {
@@ -291,7 +288,7 @@ async function notifyOff(): Promise<void> {
 // Unified row layout for /share lists (both top-level and revoke child).
 // The primary slot holds the token (so Tab fills `/share <token>` for the
 // open default; in the revoke child Tab fills `/share revoke <token>`).
-// Secondary carries the session title (line 1, prominent). The path slot
+// Secondary carries the task title (line 1, prominent). The path slot
 // shows the URL — left-indented dim text reads as a file path and matches
 // the "this is the link" mental model. pathSecondary carries the timestamp
 // (line 2, dim, right-aligned).
@@ -299,7 +296,7 @@ function shareRowSpec(s: ShareListRow, kind: "open" | "revoke") {
   const ago = s.shared_at ? formatLocalTime(s.shared_at) : "—";
   return {
     primary: s.token,
-    secondary: s.session_title ?? undefined,
+    secondary: s.task_title ?? undefined,
     path: `/s/${s.token}`,
     pathSecondary: ago,
     onSelect: () => {
@@ -321,17 +318,17 @@ export const ROOT: CmdNode = {
     },
     {
       name: "/clear",
-      desc: "Clear current session",
+      desc: "Clear current task",
       fetch: listRecentPaths,
       toSpec: (item: unknown) => {
         const p = item as PathItem;
         const isCurrent =
-          p.cwd.toLowerCase() === (state.sessionCwd ?? "").toLowerCase();
+          p.cwd.toLowerCase() === (state.taskCwd ?? "").toLowerCase();
         return {
           primary: p.cwdDisplay,
           current: isCurrent,
           onSelect: () => {
-            void replaceCurrentSession({ cwd: p.cwd, showCwd: true });
+            void replaceCurrentTask({ cwd: p.cwd, showCwd: true });
           },
         };
       },
@@ -341,7 +338,7 @@ export const ROOT: CmdNode = {
         return {
           primary: `clear and start at '${trimmed}'`,
           onSelect: () => {
-            void replaceCurrentSession({ cwd: trimmed, showCwd: true });
+            void replaceCurrentTask({ cwd: trimmed, showCwd: true });
           },
         };
       },
@@ -350,7 +347,7 @@ export const ROOT: CmdNode = {
       name: "/compact",
       desc: "Summarize current conversation and continue",
       onSelect: () => {
-        void compactCurrentSession();
+        void compactCurrentTask();
       },
     },
     {
@@ -414,22 +411,22 @@ export const ROOT: CmdNode = {
     },
     {
       name: "/exit",
-      desc: "End current session",
+      desc: "End current task",
       onSelect: async () => {
-        if (!state.sessionId) {
-          addSystem("warn: No active session");
+        if (!state.taskId) {
+          addSystem("warn: No active task");
           return;
         }
-        const exitId = state.sessionId;
+        const exitId = state.taskId;
         try {
           if (state.busy) {
-            addSystem("err: Cancel active work before exiting the session");
+            addSystem("err: Cancel active work before exiting the task");
             return;
           }
-          await api.deleteSession(exitId);
-          await fallbackToNextSession(exitId, state.sessionCwd ?? undefined);
+          await api.deleteTask(exitId);
+          await fallbackToNextTask(exitId, state.taskCwd ?? undefined);
         } catch {
-          addSystem("err: Failed to exit session");
+          addSystem("err: Failed to exit task");
         }
       },
     },
@@ -498,19 +495,19 @@ export const ROOT: CmdNode = {
     configCmdNode("/model", "Switch model", "model", true),
     {
       name: "/new",
-      desc: "Create new session",
+      desc: "Create new task",
       fetch: listRecentPaths,
       toSpec: (item: unknown) => {
         const p = item as PathItem;
         const isCurrent =
-          p.cwd.toLowerCase() === (state.sessionCwd ?? "").toLowerCase();
+          p.cwd.toLowerCase() === (state.taskCwd ?? "").toLowerCase();
         return {
           primary: p.cwdDisplay,
           current: isCurrent,
           onSelect: () => {
-            resetSessionUI();
-            addSystem("Creating new session…");
-            requestNewSession({ cwd: p.cwd });
+            resetTaskUI();
+            addSystem("Creating new task…");
+            requestNewTask({ cwd: p.cwd });
           },
         };
       },
@@ -518,11 +515,11 @@ export const ROOT: CmdNode = {
         const trimmed = q.trim();
         if (!trimmed) return null;
         return {
-          primary: `create session at '${trimmed}'`,
+          primary: `create task at '${trimmed}'`,
           onSelect: () => {
-            resetSessionUI();
-            addSystem("Creating new session…");
-            requestNewSession({ cwd: trimmed });
+            resetTaskUI();
+            addSystem("Creating new task…");
+            requestNewTask({ cwd: trimmed });
           },
         };
       },
@@ -562,22 +559,22 @@ export const ROOT: CmdNode = {
     },
     {
       name: "/rename",
-      desc: "Rename session",
+      desc: "Rename task",
       freeform: (q) => {
         const trimmed = q.trim();
         if (!trimmed) return null;
         return {
           primary: `rename to '${trimmed}'`,
           onSelect: async () => {
-            if (!state.sessionId) {
-              addSystem("err: No active session");
+            if (!state.taskId) {
+              addSystem("err: No active task");
               return;
             }
             try {
-              await api.setTitle(state.sessionId, trimmed);
+              await api.setTitle(state.taskId, trimmed);
               addSystem(`Renamed → ${trimmed}`);
             } catch {
-              addSystem("err: Failed to rename session");
+              addSystem("err: Failed to rename task");
             }
           },
         };
@@ -644,27 +641,27 @@ export const ROOT: CmdNode = {
     },
     {
       name: "/switch",
-      desc: "Switch session",
-      fetch: listSessions,
+      desc: "Switch task",
+      fetch: listTasks,
       matches: (item: unknown, q: string) => {
-        const s = item as SessionSummary;
+        const s = item as TaskSummary;
         const title = (s.title ?? "").toLowerCase();
         return title.includes(q) || s.id.startsWith(q);
       },
       toSpec: (item: unknown) => {
-        const s = item as SessionSummary;
+        const s = item as TaskSummary;
         const label = s.title ?? s.id;
         const time = formatLocalTime(s.last_active_at);
         return {
           primary: label,
           secondary: time,
           path: s.cwd,
-          current: s.id === state.sessionId,
+          current: s.id === state.taskId,
           onSelect: async () => {
             try {
-              await switchToSession(s.id);
+              await switchToTask(s.id);
             } catch {
-              addSystem("err: Failed to switch session");
+              addSystem("err: Failed to switch task");
             }
           },
         };

@@ -51,7 +51,7 @@ function makeRoot(): CmdNode {
       },
       {
         name: "/rename",
-        desc: "Rename session",
+        desc: "Rename task",
         freeform: (q) =>
           q.trim()
             ? { primary: `rename to '${q.trim()}'`, onSelect: async () => {} }

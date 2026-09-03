@@ -165,7 +165,7 @@ describe("math rendering (Temml)", () => {
   }
 
   it("repro: original ParseError sentence renders without leaking raw $", () => {
-    // The exact phrase from session c9846c10 that triggered the bug.
+    // The exact phrase from task c9846c10 that triggered the bug.
     const html = parse(
       "已知 $P(B \\mid A)$, $P(A)$, $P(B \\mid \\neg A)$，求 $P(A \\mid B)$。",
     );

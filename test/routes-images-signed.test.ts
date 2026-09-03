@@ -89,8 +89,8 @@ describe("image signed URLs", () => {
     await authStore.load();
     token = (await authStore.addToken("ui", "api")).token;
 
-    // Create a session so we have a valid sessionId for image upload
-    store.createSession("sess1", tmpDir);
+    // Create a task so we have a valid taskId for image upload
+    store.createTask("sess1", tmpDir);
 
     const handler = createRequestHandler({
       store,
@@ -135,7 +135,7 @@ describe("image signed URLs", () => {
     return req(
       port,
       "POST",
-      "/api/v1/sessions/sess1/attachments",
+      "/api/v1/tasks/sess1/attachments",
       {
         Authorization: `Bearer ${token}`,
         "Content-Type": contentType,
@@ -169,7 +169,7 @@ describe("image signed URLs", () => {
     const r = await req(
       port,
       "GET",
-      "/api/v1/sessions/sess1/attachments/anything.png",
+      "/api/v1/tasks/sess1/attachments/anything.png",
     );
     assert.equal(r.status, 401);
   });
@@ -189,7 +189,7 @@ describe("image signed URLs", () => {
       /\/attachments\/([^/?]+)\?/,
     );
     const fileName = fileMatch![1];
-    const path = `/api/v1/sessions/sess1/attachments/${fileName}`;
+    const path = `/api/v1/tasks/sess1/attachments/${fileName}`;
     // Sign with negative TTL
     const expiredQs = signAttachmentUrl(path, attachmentSecret, -10);
     const r = await req(port, "GET", `${path}?${expiredQs}`);
@@ -204,7 +204,7 @@ describe("image signed URLs", () => {
     const r = await req(
       port,
       "GET",
-      `/api/v1/sessions/sess1/attachments/other.png?${qs}`,
+      `/api/v1/tasks/sess1/attachments/other.png?${qs}`,
     );
     assert.equal(r.status, 401);
   });

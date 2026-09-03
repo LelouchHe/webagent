@@ -5,7 +5,7 @@ import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Store } from "../src/store.ts";
-import { SessionManager } from "../src/session-manager.ts";
+import { TaskManager } from "../src/task-manager.ts";
 import { createRequestHandler } from "../src/routes.ts";
 import type {
   ConfigOption,
@@ -60,9 +60,9 @@ function createMockBridge() {
     ...mockBridgeStubs(),
     newSession: async () => {
       idCounter++;
-      return { sessionId: `mock-session-${idCounter}`, configOptions: [] };
+      return { sessionId: `mock-task-${idCounter}`, configOptions: [] };
     },
-    loadSession: async () => ({ sessionId: "", configOptions }),
+    loadSession: async () => ({ taskId: "", configOptions }),
     setConfigOption: async (
       _s: string,
       configId: string,
@@ -96,7 +96,7 @@ function createMockBridge() {
 
 describe("Permissions REST API", () => {
   let store: Store;
-  let sessions: SessionManager;
+  let tasks: TaskManager;
   let tmpDir: string;
   let publicDir: string;
   let server: http.Server;
@@ -111,13 +111,13 @@ describe("Permissions REST API", () => {
     writeFileSync(join(publicDir, "index.html"), "<h1>Test</h1>");
 
     store = new Store(join(tmpDir, "test.db"), "test-agent");
-    sessions = new SessionManager(store, tmpDir, tmpDir);
+    tasks = new TaskManager(store, tmpDir, tmpDir);
     mockBridge = createMockBridge();
     broadcastEvents = [];
 
     const handler = createRequestHandler({
       store,
-      sessions,
+      tasks,
       getBridge: () => mockBridge,
       publicDir,
       dataDir: tmpDir,
@@ -143,23 +143,23 @@ describe("Permissions REST API", () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  async function createSession(): Promise<string> {
+  async function createTask(): Promise<string> {
     const res = await makeRequest(
       port,
       "POST",
-      "/api/v1/sessions",
+      "/api/v1/tasks",
       JSON.stringify({ cwd: tmpDir }),
     );
     return JSON.parse(res.body).id;
   }
 
   function addPendingPermission(
-    sessionId: string,
+    taskId: string,
     requestId: string,
   ): PendingPermission {
     const perm: PendingPermission = {
       requestId,
-      sessionId,
+      taskId,
       title: "Run bash: npm test",
       options: [
         { optionId: "allow_once", label: "Allow once" },
@@ -167,31 +167,31 @@ describe("Permissions REST API", () => {
         { optionId: "deny", label: "Deny" },
       ],
     };
-    sessions.pendingPermissions.set(requestId, perm);
+    tasks.pendingPermissions.set(requestId, perm);
     return perm;
   }
 
-  describe("GET /api/v1/sessions/:id/permissions", () => {
+  describe("GET /api/v1/tasks/:id/permissions", () => {
     it("returns empty array when no pending permissions", async () => {
-      const sessionId = await createSession();
+      const taskId = await createTask();
       const res = await makeRequest(
         port,
         "GET",
-        `/api/v1/sessions/${sessionId}/permissions`,
+        `/api/v1/tasks/${taskId}/permissions`,
       );
       assert.equal(res.status, 200);
       assert.deepEqual(JSON.parse(res.body), []);
     });
 
-    it("returns all pending permissions for a session", async () => {
-      const sessionId = await createSession();
-      addPendingPermission(sessionId, "perm-1");
-      addPendingPermission(sessionId, "perm-2");
+    it("returns all pending permissions for a task", async () => {
+      const taskId = await createTask();
+      addPendingPermission(taskId, "perm-1");
+      addPendingPermission(taskId, "perm-2");
 
       const res = await makeRequest(
         port,
         "GET",
-        `/api/v1/sessions/${sessionId}/permissions`,
+        `/api/v1/tasks/${taskId}/permissions`,
       );
       assert.equal(res.status, 200);
       const perms = JSON.parse(res.body);
@@ -200,16 +200,16 @@ describe("Permissions REST API", () => {
       assert.equal(perms[1].requestId, "perm-2");
     });
 
-    it("returns only permissions for the requested session", async () => {
-      const s1 = await createSession();
-      const s2 = await createSession();
+    it("returns only permissions for the requested task", async () => {
+      const s1 = await createTask();
+      const s2 = await createTask();
       addPendingPermission(s1, "perm-1");
       addPendingPermission(s2, "perm-2");
 
       const res = await makeRequest(
         port,
         "GET",
-        `/api/v1/sessions/${s1}/permissions`,
+        `/api/v1/tasks/${s1}/permissions`,
       );
       const perms = JSON.parse(res.body);
       assert.equal(perms.length, 1);
@@ -217,15 +217,15 @@ describe("Permissions REST API", () => {
     });
   });
 
-  describe("POST /api/v1/sessions/:id/permissions/:reqId", () => {
+  describe("POST /api/v1/tasks/:id/permissions/:reqId", () => {
     it("approves a permission with optionId", async () => {
-      const sessionId = await createSession();
-      addPendingPermission(sessionId, "perm-1");
+      const taskId = await createTask();
+      addPendingPermission(taskId, "perm-1");
 
       const res = await makeRequest(
         port,
         "POST",
-        `/api/v1/sessions/${sessionId}/permissions/perm-1`,
+        `/api/v1/tasks/${taskId}/permissions/perm-1`,
         JSON.stringify({ optionId: "allow_once" }),
       );
       assert.equal(res.status, 200);
@@ -235,35 +235,35 @@ describe("Permissions REST API", () => {
         optionId: "allow_once",
       });
       // Permission should be removed from pending
-      assert.ok(!sessions.pendingPermissions.has("perm-1"));
+      assert.ok(!tasks.pendingPermissions.has("perm-1"));
     });
 
     it("denies a permission", async () => {
-      const sessionId = await createSession();
-      addPendingPermission(sessionId, "perm-1");
+      const taskId = await createTask();
+      addPendingPermission(taskId, "perm-1");
 
       const res = await makeRequest(
         port,
         "POST",
-        `/api/v1/sessions/${sessionId}/permissions/perm-1`,
+        `/api/v1/tasks/${taskId}/permissions/perm-1`,
         JSON.stringify({ denied: true }),
       );
       assert.equal(res.status, 200);
       assert.equal(mockBridge.lastDeny, "perm-1");
-      assert.ok(!sessions.pendingPermissions.has("perm-1"));
+      assert.ok(!tasks.pendingPermissions.has("perm-1"));
     });
 
     it("stores permission_response event", async () => {
-      const sessionId = await createSession();
-      addPendingPermission(sessionId, "perm-1");
+      const taskId = await createTask();
+      addPendingPermission(taskId, "perm-1");
 
       await makeRequest(
         port,
         "POST",
-        `/api/v1/sessions/${sessionId}/permissions/perm-1`,
+        `/api/v1/tasks/${taskId}/permissions/perm-1`,
         JSON.stringify({ optionId: "allow_once" }),
       );
-      const events = store.getEvents(sessionId);
+      const events = store.getEvents(taskId);
       const permEvent = events.find((e) => e.type === "permission_response");
       assert.ok(permEvent);
       const data = JSON.parse(permEvent.data);
@@ -272,14 +272,14 @@ describe("Permissions REST API", () => {
     });
 
     it("broadcasts permission_response event", async () => {
-      const sessionId = await createSession();
-      addPendingPermission(sessionId, "perm-1");
+      const taskId = await createTask();
+      addPendingPermission(taskId, "perm-1");
       broadcastEvents = [];
 
       await makeRequest(
         port,
         "POST",
-        `/api/v1/sessions/${sessionId}/permissions/perm-1`,
+        `/api/v1/tasks/${taskId}/permissions/perm-1`,
         JSON.stringify({ optionId: "allow_once" }),
       );
       const resolved = broadcastEvents.find(
@@ -289,37 +289,37 @@ describe("Permissions REST API", () => {
     });
 
     it("returns 404 for unknown requestId", async () => {
-      const sessionId = await createSession();
+      const taskId = await createTask();
       const res = await makeRequest(
         port,
         "POST",
-        `/api/v1/sessions/${sessionId}/permissions/nonexistent`,
+        `/api/v1/tasks/${taskId}/permissions/nonexistent`,
         JSON.stringify({ optionId: "allow_once" }),
       );
       assert.equal(res.status, 404);
     });
 
     it("returns 400 for missing optionId and denied", async () => {
-      const sessionId = await createSession();
-      addPendingPermission(sessionId, "perm-1");
+      const taskId = await createTask();
+      addPendingPermission(taskId, "perm-1");
 
       const res = await makeRequest(
         port,
         "POST",
-        `/api/v1/sessions/${sessionId}/permissions/perm-1`,
+        `/api/v1/tasks/${taskId}/permissions/perm-1`,
         JSON.stringify({}),
       );
       assert.equal(res.status, 400);
     });
 
     it("returns 400 for invalid JSON", async () => {
-      const sessionId = await createSession();
-      addPendingPermission(sessionId, "perm-1");
+      const taskId = await createTask();
+      addPendingPermission(taskId, "perm-1");
 
       const res = await makeRequest(
         port,
         "POST",
-        `/api/v1/sessions/${sessionId}/permissions/perm-1`,
+        `/api/v1/tasks/${taskId}/permissions/perm-1`,
         "not json",
       );
       assert.equal(res.status, 400);
@@ -328,31 +328,31 @@ describe("Permissions REST API", () => {
     it("is idempotent — returns 200 for already-resolved permission", async () => {
       // After a permission is resolved, it's removed from pending.
       // A second POST should return 404 since it's gone.
-      const sessionId = await createSession();
-      addPendingPermission(sessionId, "perm-1");
+      const taskId = await createTask();
+      addPendingPermission(taskId, "perm-1");
       await makeRequest(
         port,
         "POST",
-        `/api/v1/sessions/${sessionId}/permissions/perm-1`,
+        `/api/v1/tasks/${taskId}/permissions/perm-1`,
         JSON.stringify({ optionId: "allow_once" }),
       );
 
       const res = await makeRequest(
         port,
         "POST",
-        `/api/v1/sessions/${sessionId}/permissions/perm-1`,
+        `/api/v1/tasks/${taskId}/permissions/perm-1`,
         JSON.stringify({ optionId: "allow_once" }),
       );
       assert.equal(res.status, 404);
     });
 
     it("returns 503 when bridge is not ready", async () => {
-      const sessionId = await createSession();
-      addPendingPermission(sessionId, "perm-1");
+      const taskId = await createTask();
+      addPendingPermission(taskId, "perm-1");
 
       const handler = createRequestHandler({
         store,
-        sessions,
+        tasks,
         getBridge: () => null,
         publicDir,
         dataDir: tmpDir,
@@ -366,7 +366,7 @@ describe("Permissions REST API", () => {
       const res = await makeRequest(
         p,
         "POST",
-        `/api/v1/sessions/${sessionId}/permissions/perm-1`,
+        `/api/v1/tasks/${taskId}/permissions/perm-1`,
         JSON.stringify({ optionId: "allow_once" }),
       );
       assert.equal(res.status, 503);

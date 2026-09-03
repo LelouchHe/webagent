@@ -1,32 +1,30 @@
 import { test, expect } from "playwright/test";
 import {
   createNewSession,
-  currentSessionId,
+  currentTaskId,
   gotoConnected,
   sendPrompt,
 } from "./helpers.ts";
 
-test("/exit deletes current session and switches to previous", async ({
+test("/exit deletes current task and switches to previous", async ({
   page,
 }) => {
   await gotoConnected(page);
-  const firstSessionId = await createNewSession(page);
-  await sendPrompt(page, "first session content");
+  const firstTaskId = await createNewSession(page);
+  await sendPrompt(page, "first task content");
 
-  const secondSessionId = await createNewSession(page);
-  await expect.poll(() => currentSessionId(page)).toBe(secondSessionId);
+  const secondTaskId = await createNewSession(page);
+  await expect.poll(() => currentTaskId(page)).toBe(secondTaskId);
 
   await sendPrompt(page, "/exit");
 
-  // Should land on the first session (MRU), not the deleted one
-  await expect.poll(() => currentSessionId(page)).toBe(firstSessionId);
-  await expect(page.locator("#messages")).toContainText(
-    "first session content",
-  );
+  // Should land on the first task (MRU), not the deleted one
+  await expect.poll(() => currentTaskId(page)).toBe(firstTaskId);
+  await expect(page.locator("#messages")).toContainText("first task content");
 
-  // Deleted session should not appear in switch menu
+  // Deleted task should not appear in switch menu
   await page.locator("#input").fill("/switch ");
   await expect(page.locator("#slash-menu.active")).not.toContainText(
-    secondSessionId.slice(0, 8),
+    secondTaskId.slice(0, 8),
   );
 });

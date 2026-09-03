@@ -1,17 +1,17 @@
 import { describe, it, beforeEach, afterEach, mock } from "node:test";
 import assert from "node:assert/strict";
-import { SessionStateManager } from "../src/session-state.ts";
-import type { StatePatchEvent } from "../src/session-state.ts";
+import { TaskStateManager } from "../src/task-state.ts";
+import type { StatePatchEvent } from "../src/task-state.ts";
 
-describe("SessionStateManager", () => {
-  let sm: SessionStateManager;
+describe("TaskStateManager", () => {
+  let sm: TaskStateManager;
 
   beforeEach(() => {
-    sm = new SessionStateManager();
+    sm = new TaskStateManager();
   });
 
   describe("getState", () => {
-    it("returns default state for unknown session (seq 0, busy null)", () => {
+    it("returns default state for unknown task (seq 0, busy null)", () => {
       const s = sm.getState("s1");
       assert.equal(s.seq, 0);
       assert.equal(s.runtime.busy, null);
@@ -47,7 +47,7 @@ describe("SessionStateManager", () => {
       assert.equal(sm.getState("s1").runtime.busy, null);
     });
 
-    it("isolates state per session", () => {
+    it("isolates state per task", () => {
       sm.patch("s1", {
         runtime: { busy: { kind: "agent", since: "t0", promptId: "p1" } },
       });
@@ -72,7 +72,7 @@ describe("SessionStateManager", () => {
       });
       assert.equal(events.length, 1);
       assert.equal(events[0].type, "state_patch");
-      assert.equal(events[0].sessionId, "s1");
+      assert.equal(events[0].taskId, "s1");
       assert.equal(events[0].seq, 1);
       assert.deepEqual(events[0].patch.runtime!.busy, {
         kind: "bash",
@@ -110,7 +110,7 @@ describe("SessionStateManager", () => {
   });
 
   describe("delete", () => {
-    it("clears state for a session", () => {
+    it("clears state for a task", () => {
       sm.patch("s1", {
         runtime: { busy: { kind: "agent", since: "t0", promptId: "p1" } },
       });
@@ -172,7 +172,7 @@ describe("SessionStateManager", () => {
       // setup patch + reset patch
       assert.equal(events.length, 2);
       assert.equal(events[1].type, "state_patch");
-      assert.equal(events[1].sessionId, "s1");
+      assert.equal(events[1].taskId, "s1");
       assert.deepEqual(events[1].patch.runtime!.busy, null);
       assert.deepEqual(events[1].patch.runtime!.pendingPermissions, []);
     });
@@ -251,7 +251,7 @@ describe("SessionStateManager", () => {
       );
     });
 
-    it("multiple arms on the same session coalesce (no double-clear)", () => {
+    it("multiple arms on the same task coalesce (no double-clear)", () => {
       sm.patch("s1", {
         runtime: {
           busy: {
@@ -323,7 +323,7 @@ describe("SessionStateManager", () => {
   });
 
   describe("streaming", () => {
-    it("peeks unknown streaming state without creating a session entry", () => {
+    it("peeks unknown streaming state without creating a task entry", () => {
       const states = (
         sm as unknown as {
           states: Map<string, unknown>;
@@ -398,7 +398,7 @@ describe("SessionStateManager", () => {
       assert.equal(sm.getState("s1").seq, seq);
     });
 
-    it("clears usage for every known session", () => {
+    it("clears usage for every known task", () => {
       sm.patch("s1", { runtime: { contextUsage: usage } });
       sm.patch("s2", { runtime: { contextUsage: usage } });
 

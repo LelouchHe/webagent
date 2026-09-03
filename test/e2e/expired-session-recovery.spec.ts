@@ -1,40 +1,38 @@
 import { test, expect } from "playwright/test";
 import {
   createNewSession,
-  currentSessionId,
+  currentTaskId,
   expectConnectionStatus,
   gotoConnected,
 } from "./helpers.ts";
 
-test("an expired session hash falls back to existing session instead of creating new", async ({
+test("an expired task hash falls back to existing task instead of creating new", async ({
   page,
 }) => {
-  // Create a real session first so there's something to fall back to
+  // Create a real task first so there's something to fall back to
   await gotoConnected(page);
-  const existingSessionId = await currentSessionId(page);
+  const existingTaskId = await currentTaskId(page);
 
-  // Full page reload with non-existent session hash
+  // Full page reload with non-existent task hash
   // (page.goto with hash-only change doesn't reload — must use evaluate + reload)
   await page.evaluate(() => {
-    location.href = "/#expired-session-id";
+    location.href = "/#expired-task-id";
     location.reload();
   });
 
   await expectConnectionStatus(page, "connected");
   await expect(page.locator("#input")).toBeEnabled();
-  // Should have fallen back to the existing session, not created a new one
-  await expect.poll(() => currentSessionId(page)).toBe(existingSessionId);
+  // Should have fallen back to the existing task, not created a new one
+  await expect.poll(() => currentTaskId(page)).toBe(existingTaskId);
 });
 
-test("an expired session hash creates new session when no others exist", async ({
+test("an expired task hash creates new task when no others exist", async ({
   page,
 }) => {
-  // Go directly to an expired hash with no prior sessions
-  await page.goto("/#expired-session-id");
+  // Go directly to an expired hash with no prior tasks
+  await page.goto("/#expired-task-id");
 
   await expectConnectionStatus(page, "connected");
   await expect(page.locator("#input")).toBeEnabled();
-  await expect
-    .poll(() => currentSessionId(page))
-    .not.toBe("expired-session-id");
+  await expect.poll(() => currentTaskId(page)).not.toBe("expired-task-id");
 });

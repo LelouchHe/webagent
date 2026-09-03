@@ -39,7 +39,7 @@ describe("doc coverage", () => {
 
   // Extract endpoint paths from route comments in routes.ts files.
   // Both styles accepted (existing convention in src/routes.ts):
-  //   // GET /api/v1/sessions
+  //   // GET /api/v1/tasks
   //   // --- POST /api/v1/bridge/reload ---
   const commentRoutes = [
     ...routesSrc.matchAll(
@@ -75,7 +75,7 @@ describe("doc coverage", () => {
 
   for (const [key, route] of allRoutes) {
     it(`docs/api.md should document ${key}`, () => {
-      // Normalize :param patterns — the doc may use :id, :sessionId, :requestId, :clientId
+      // Normalize :param patterns — the doc may use :id, :taskId, :requestId, :clientId
       // We check that both the method and a recognizable path fragment appear
       const pathFragment = route.path
         .replace(/:[^/]+/g, ":") // normalize params to just ":"
@@ -83,7 +83,7 @@ describe("doc coverage", () => {
 
       // For the doc, we check the path appears (with any param names)
       const pathParts = pathFragment.split("/").filter(Boolean);
-      // Build a pattern: /api/v1/sessions/:id/messages → should match /api/v1/sessions/:id/messages
+      // Build a pattern: /api/v1/tasks/:id/messages → should match /api/v1/tasks/:id/messages
       // We check the static parts are present near the method name
       const staticParts = pathParts.filter((p) => p !== ":");
       const methodInDoc = apiDoc.includes(

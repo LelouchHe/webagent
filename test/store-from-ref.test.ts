@@ -21,7 +21,7 @@ describe("Store events.from_ref + orphan cleanup + FK", () => {
 
   it("saveEvent persists explicit from_ref values per category", () => {
     const store = new Store(tmpDir, "test-agent");
-    store.createSession("s1", "/tmp");
+    store.createTask("s1", "/tmp");
 
     const userMsg = store.saveEvent(
       "s1",
@@ -65,7 +65,7 @@ describe("Store events.from_ref + orphan cleanup + FK", () => {
 
   it("saveEvent accepts msg:<id> form for inbox-authored events", () => {
     const store = new Store(tmpDir, "test-agent");
-    store.createSession("s1", "/tmp");
+    store.createTask("s1", "/tmp");
 
     const ev = store.saveEvent(
       "s1",
@@ -82,7 +82,7 @@ describe("Store events.from_ref + orphan cleanup + FK", () => {
 
   it("saveEvent THROWS when from_ref is missing (guard active)", () => {
     const store = new Store(tmpDir, "test-agent");
-    store.createSession("s1", "/tmp");
+    store.createTask("s1", "/tmp");
     assert.throws(
       () => store.saveEvent("s1", "user_message", { text: "x" }),
       /from_ref/,
@@ -94,19 +94,19 @@ describe("Store events.from_ref + orphan cleanup + FK", () => {
     // Build a legacy DB without the from_ref column and seed mixed rows.
     const legacy = new Database(dbPath);
     legacy.exec(`
-      CREATE TABLE sessions (id TEXT PRIMARY KEY, cwd TEXT NOT NULL,
+      CREATE TABLE tasks (id TEXT PRIMARY KEY, cwd TEXT NOT NULL,
         created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now')),
         last_active_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now')));
       CREATE TABLE events (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        session_id TEXT NOT NULL,
+        task_id TEXT NOT NULL,
         seq INTEGER NOT NULL,
         type TEXT NOT NULL,
         data TEXT NOT NULL DEFAULT '{}',
         created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now'))
       );
-      INSERT INTO sessions (id, cwd) VALUES ('s1', '/tmp');
-      INSERT INTO events (session_id, seq, type, data) VALUES
+      INSERT INTO tasks (id, cwd) VALUES ('s1', '/tmp');
+      INSERT INTO events (task_id, seq, type, data) VALUES
         ('s1', 1, 'user_message', '{}'),
         ('s1', 2, 'assistant_message', '{}'),
         ('s1', 3, 'bash_command', '{}'),
@@ -119,7 +119,7 @@ describe("Store events.from_ref + orphan cleanup + FK", () => {
     const store = new Store(tmpDir, "test-agent");
     const rows = store["db"]
       .prepare(
-        "SELECT seq, type, from_ref FROM events WHERE session_id = 's1' ORDER BY seq",
+        "SELECT seq, type, from_ref FROM events WHERE task_id = 's1' ORDER BY seq",
       )
       .all() as Array<{ seq: number; type: string; from_ref: string }>;
 
@@ -133,23 +133,23 @@ describe("Store events.from_ref + orphan cleanup + FK", () => {
     store.close();
   });
 
-  it("orphan cleanup removes events whose session_id is gone", () => {
+  it("orphan cleanup removes events whose task_id is gone", () => {
     // Build a legacy DB with FK off so orphan rows can exist.
     const legacy = new Database(dbPath);
     legacy.exec(`
-      CREATE TABLE sessions (id TEXT PRIMARY KEY, cwd TEXT NOT NULL,
+      CREATE TABLE tasks (id TEXT PRIMARY KEY, cwd TEXT NOT NULL,
         created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now')),
         last_active_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now')));
       CREATE TABLE events (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        session_id TEXT NOT NULL,
+        task_id TEXT NOT NULL,
         seq INTEGER NOT NULL,
         type TEXT NOT NULL,
         data TEXT NOT NULL DEFAULT '{}',
         created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now'))
       );
-      INSERT INTO sessions (id, cwd) VALUES ('alive', '/tmp');
-      INSERT INTO events (session_id, seq, type, data) VALUES
+      INSERT INTO tasks (id, cwd) VALUES ('alive', '/tmp');
+      INSERT INTO events (task_id, seq, type, data) VALUES
         ('alive', 1, 'user_message', '{}'),
         ('orphan', 1, 'user_message', '{}'),
         ('orphan', 2, 'assistant_message', '{}');
@@ -158,7 +158,7 @@ describe("Store events.from_ref + orphan cleanup + FK", () => {
 
     const store = new Store(tmpDir, "test-agent");
     const orphans = store["db"]
-      .prepare("SELECT COUNT(*) AS n FROM events WHERE session_id = 'orphan'")
+      .prepare("SELECT COUNT(*) AS n FROM events WHERE task_id = 'orphan'")
       .get() as { n: number };
     assert.equal(
       orphans.n,
@@ -166,7 +166,7 @@ describe("Store events.from_ref + orphan cleanup + FK", () => {
       "orphan rows must be cleaned up at migrate time",
     );
     const alive = store["db"]
-      .prepare("SELECT COUNT(*) AS n FROM events WHERE session_id = 'alive'")
+      .prepare("SELECT COUNT(*) AS n FROM events WHERE task_id = 'alive'")
       .get() as { n: number };
     assert.equal(alive.n, 1, "non-orphan rows must survive cleanup");
 
@@ -178,12 +178,12 @@ describe("Store events.from_ref + orphan cleanup + FK", () => {
     const fk = store["db"].pragma("foreign_keys", { simple: true });
     assert.equal(fk, 1, "foreign_keys pragma must be on");
 
-    store.createSession("s1", "/tmp");
-    // Insert into a real session works
+    store.createTask("s1", "/tmp");
+    // Insert into a real task works
     assert.doesNotThrow(() =>
       store.saveEvent("s1", "user_message", {}, { from_ref: "user" }),
     );
-    // Insert into a non-existent session is rejected by the FK
+    // Insert into a non-existent task is rejected by the FK
     assert.throws(
       () =>
         store.saveEvent("s2-missing", "user_message", {}, { from_ref: "user" }),

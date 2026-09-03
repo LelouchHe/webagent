@@ -1,31 +1,31 @@
 import { test, expect } from "playwright/test";
 import {
   createNewSession,
-  currentSessionId,
+  currentTaskId,
   gotoConnected,
   sendPrompt,
 } from "./helpers.ts";
 
-test("/exit broadcasts session_deleted — other tab auto-switches to next session", async ({
+test("/exit broadcasts task_deleted — other tab auto-switches to next task", async ({
   browser,
 }) => {
   const pageA = await browser.newPage();
   const pageB = await browser.newPage();
 
   await gotoConnected(pageA);
-  // Create a watched session; there is a fallback target (Root at minimum)
-  const watchedSessionId = await createNewSession(pageA);
+  // Create a watched task; there is a fallback target (Root at minimum)
+  const watchedTaskId = await createNewSession(pageA);
 
-  // pageB opens the watched session
-  await gotoConnected(pageB, `/#${watchedSessionId}`);
-  await expect.poll(() => currentSessionId(pageB)).toBe(watchedSessionId);
+  // pageB opens the watched task
+  await gotoConnected(pageB, `/#${watchedTaskId}`);
+  await expect.poll(() => currentTaskId(pageB)).toBe(watchedTaskId);
 
-  // pageA exits (deletes) the watched session
+  // pageA exits (deletes) the watched task
   await sendPrompt(pageA, "/exit");
 
-  // pageB should auto-switch away from the deleted session instead of being
-  // stuck. The exact fallback target depends on the live session list (Root or
-  // another remaining session), so assert the invariant: not the deleted id.
-  await expect.poll(() => currentSessionId(pageB)).not.toBe(watchedSessionId);
+  // pageB should auto-switch away from the deleted task instead of being
+  // stuck. The exact fallback target depends on the live task list (Root or
+  // another remaining task), so assert the invariant: not the deleted id.
+  await expect.poll(() => currentTaskId(pageB)).not.toBe(watchedTaskId);
   await expect(pageB.locator("#input")).toBeEnabled();
 });

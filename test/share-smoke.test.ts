@@ -104,7 +104,7 @@ describe("share smoke — end-to-end lifecycle", () => {
   before(() => {
     tmpDir = mkdtempSync(join(tmpdir(), "wa-share-smk-"));
     store = new Store(tmpDir, "test-agent");
-    store.createSession(sid, "/tmp/smoke");
+    store.createTask(sid, "/tmp/smoke");
     store.saveEvent(
       sid,
       "user_message",
@@ -133,11 +133,11 @@ describe("share smoke — end-to-end lifecycle", () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("create preview -> publish -> public JSON serves sanitized events with no session_id -> revoke -> 410", async () => {
+  it("create preview -> publish -> public JSON serves sanitized events with no task_id -> revoke -> 410", async () => {
     // 1. Create preview.
     const r1 = mockRes();
     await handleShareRoutes(
-      ownerReq(`/api/v1/sessions/${sid}/share`, "POST", {}),
+      ownerReq(`/api/v1/tasks/${sid}/share`, "POST", {}),
       r1.res,
       deps,
     );
@@ -148,7 +148,7 @@ describe("share smoke — end-to-end lifecycle", () => {
     // 2. Publish.
     const r2 = mockRes();
     await handleShareRoutes(
-      ownerReq(`/api/v1/sessions/${sid}/share/publish`, "POST", {
+      ownerReq(`/api/v1/tasks/${sid}/share/publish`, "POST", {
         token,
         display_name: "smoker",
       }),
@@ -173,9 +173,9 @@ describe("share smoke — end-to-end lifecycle", () => {
       events: unknown[];
     };
     assert.equal(
-      pv.share.session_id,
+      pv.share.task_id,
       undefined,
-      "public JSON must NOT expose session_id",
+      "public JSON must NOT expose task_id",
     );
     assert.equal(pv.share.display_name, "smoker");
     assert.ok(Array.isArray(pv.events));
@@ -189,7 +189,7 @@ describe("share smoke — end-to-end lifecycle", () => {
     // 5. Revoke.
     const r5 = mockRes();
     await handleShareRoutes(
-      ownerReq(`/api/v1/sessions/${sid}/share`, "DELETE", { token }),
+      ownerReq(`/api/v1/tasks/${sid}/share`, "DELETE", { token }),
       r5.res,
       deps,
     );

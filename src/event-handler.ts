@@ -1,6 +1,6 @@
 import type { AgentBridge } from "./bridge.ts";
 import type { Store } from "./store.ts";
-import type { SessionManager } from "./session-manager.ts";
+import type { TaskManager } from "./task-manager.ts";
 import type { PushService } from "./push-service.ts";
 import type { SseManager } from "./sse-manager.ts";
 import type { ClientRegistry } from "./client-registry.ts";
@@ -30,7 +30,7 @@ export interface EventHandlerConfig {
 type ConnectedEvent = Extract<AgentEvent, { type: "connected" }>;
 type ConfigLikeEvent = Extract<
   AgentEvent,
-  { type: "session_created" | "config_option_update" }
+  { type: "task_created" | "config_option_update" }
 >;
 type MessageChunkEvent = Extract<AgentEvent, { type: "message_chunk" }>;
 type ThoughtChunkEvent = Extract<AgentEvent, { type: "thought_chunk" }>;
@@ -46,55 +46,55 @@ type ErrorEvent = Extract<AgentEvent, { type: "error" }>;
 
 function handleConnected(
   event: ConnectedEvent,
-  sessions: SessionManager,
+  tasks: TaskManager,
   config: EventHandlerConfig,
 ): void {
   event.cancelTimeout = config.cancelTimeout;
   event.recentPathsLimit = config.recentPathsLimit;
   // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive check
-  if (event.agent) sessions.agentInfo = event.agent;
+  if (event.agent) tasks.agentInfo = event.agent;
 }
 
 function handleConfigLikeEvent(
   event: ConfigLikeEvent,
-  sessions: SessionManager,
+  tasks: TaskManager,
 ): void {
-  sessions.recordConfigOptions(event.sessionId, event.configOptions);
+  tasks.recordConfigOptions(event.taskId, event.configOptions);
 }
 
 function handleMessageChunk(
   event: MessageChunkEvent,
-  sessions: SessionManager,
+  tasks: TaskManager,
 ): void {
-  sessions.flushThinkingBuffer(event.sessionId);
-  sessions.appendAssistant(event.sessionId, event.text);
-  sessions.state.patch(event.sessionId, {
+  tasks.flushThinkingBuffer(event.taskId);
+  tasks.appendAssistant(event.taskId, event.text);
+  tasks.state.patch(event.taskId, {
     runtime: { streaming: { assistant: true, thinking: false } },
   });
 }
 
 function handleThoughtChunk(
   event: ThoughtChunkEvent,
-  sessions: SessionManager,
+  tasks: TaskManager,
 ): void {
-  sessions.flushAssistantBuffer(event.sessionId);
-  sessions.appendThinking(event.sessionId, event.text);
-  sessions.state.patch(event.sessionId, {
+  tasks.flushAssistantBuffer(event.taskId);
+  tasks.appendThinking(event.taskId, event.text);
+  tasks.state.patch(event.taskId, {
     runtime: { streaming: { assistant: false, thinking: true } },
   });
 }
 
 function handleToolCall(
   event: ToolCallEvent,
-  sessions: SessionManager,
+  tasks: TaskManager,
   store: Store,
 ): void {
-  sessions.flushBuffers(event.sessionId);
-  sessions.state.patch(event.sessionId, {
+  tasks.flushBuffers(event.taskId);
+  tasks.state.patch(event.taskId, {
     runtime: { streaming: { assistant: false, thinking: false } },
   });
   store.saveEvent(
-    event.sessionId,
+    event.taskId,
     event.type,
     {
       id: event.id,
@@ -106,11 +106,8 @@ function handleToolCall(
   );
 }
 
-function handleUsageUpdate(
-  event: UsageUpdateEvent,
-  sessions: SessionManager,
-): void {
-  sessions.state.patch(event.sessionId, {
+function handleUsageUpdate(event: UsageUpdateEvent, tasks: TaskManager): void {
+  tasks.state.patch(event.taskId, {
     runtime: {
       contextUsage: {
         used: event.used,
@@ -121,13 +118,9 @@ function handleUsageUpdate(
   });
 }
 
-function handlePlan(
-  event: PlanEvent,
-  sessions: SessionManager,
-  store: Store,
-): void {
-  sessions.flushBuffers(event.sessionId);
-  sessions.state.patch(event.sessionId, {
+function handlePlan(event: PlanEvent, tasks: TaskManager, store: Store): void {
+  tasks.flushBuffers(event.taskId);
+  tasks.state.patch(event.taskId, {
     runtime: {
       streaming: { assistant: false, thinking: false },
       plan:
@@ -138,7 +131,7 @@ function handlePlan(
     },
   });
   store.saveEvent(
-    event.sessionId,
+    event.taskId,
     event.type,
     { entries: event.entries },
     { from_ref: "agent" },
@@ -148,18 +141,18 @@ function handlePlan(
 function performAutoApprove(
   event: PermissionRequestEvent,
   opt: { optionId: string; label?: string },
-  sessions: SessionManager,
+  tasks: TaskManager,
   store: Store,
   bridge: AgentBridge,
   sseManager: SseManager,
   broadcastRequest: boolean,
 ): void {
   bridge.resolvePermission(event.requestId, opt.optionId);
-  sessions.pendingPermissions.delete(event.requestId);
-  sessions.syncPendingPermissions(event.sessionId);
+  tasks.pendingPermissions.delete(event.requestId);
+  tasks.syncPendingPermissions(event.taskId);
   const optionName = opt.label ?? opt.optionId;
   store.saveEvent(
-    event.sessionId,
+    event.taskId,
     "permission_response",
     {
       requestId: event.requestId,
@@ -171,7 +164,7 @@ function performAutoApprove(
   if (broadcastRequest) sseManager.broadcast(event);
   sseManager.broadcast({
     type: "permission_response" as const,
-    sessionId: event.sessionId,
+    taskId: event.taskId,
     requestId: event.requestId,
     optionName,
     denied: false,
@@ -180,24 +173,24 @@ function performAutoApprove(
 
 function maybeAutoApprovePermission(
   event: PermissionRequestEvent,
-  sessions: SessionManager,
+  tasks: TaskManager,
   store: Store,
   bridge: AgentBridge,
   sseManager: SseManager,
 ): boolean {
-  const mode = store.getSession(event.sessionId)?.mode ?? "";
+  const mode = store.getTask(event.taskId)?.mode ?? "";
   if (!isAutopilotMode(mode)) return false;
   const opt = event.options.find(
     (o: { kind?: string }) => o.kind === "allow_once",
   ) as { optionId: string; label?: string } | undefined;
   if (!opt) return false;
-  performAutoApprove(event, opt, sessions, store, bridge, sseManager, true);
+  performAutoApprove(event, opt, tasks, store, bridge, sseManager, true);
   return true;
 }
 
 function maybeAutoApproveAttachmentRead(
   event: PermissionRequestEvent,
-  sessions: SessionManager,
+  tasks: TaskManager,
   store: Store,
   bridge: AgentBridge,
   sseManager: SseManager,
@@ -216,7 +209,7 @@ function maybeAutoApproveAttachmentRead(
 
   void shouldAutoApproveAttachmentRead(
     {
-      sessionId: event.sessionId,
+      taskId: event.taskId,
       toolKind: event.toolKind,
       toolName: event.toolName,
       locations: event.locations,
@@ -233,16 +226,8 @@ function maybeAutoApproveAttachmentRead(
       if (!approved) return;
       // Race guard: the user (or another client) may have already
       // resolved the permission while we were realpath-ing.
-      if (!sessions.pendingPermissions.has(event.requestId)) return;
-      performAutoApprove(
-        event,
-        opt,
-        sessions,
-        store,
-        bridge,
-        sseManager,
-        false,
-      );
+      if (!tasks.pendingPermissions.has(event.requestId)) return;
+      performAutoApprove(event, opt, tasks, store, bridge, sseManager, false);
     },
     (err: unknown) => {
       ailog.warn("unexpected error", { error: (err as Error).message });
@@ -252,18 +237,18 @@ function maybeAutoApproveAttachmentRead(
 
 function handlePermissionRequest(
   event: PermissionRequestEvent,
-  sessions: SessionManager,
+  tasks: TaskManager,
   store: Store,
   bridge: AgentBridge,
   sseManager: SseManager,
   config: EventHandlerConfig,
 ): boolean {
-  sessions.flushBuffers(event.sessionId);
-  sessions.state.patch(event.sessionId, {
+  tasks.flushBuffers(event.taskId);
+  tasks.state.patch(event.taskId, {
     runtime: { streaming: { assistant: false, thinking: false } },
   });
   store.saveEvent(
-    event.sessionId,
+    event.taskId,
     event.type,
     {
       requestId: event.requestId,
@@ -272,9 +257,9 @@ function handlePermissionRequest(
     },
     { from_ref: "agent" },
   );
-  sessions.pendingPermissions.set(event.requestId, {
+  tasks.pendingPermissions.set(event.requestId, {
     requestId: event.requestId,
-    sessionId: event.sessionId,
+    taskId: event.taskId,
     title: event.title,
     options: event.options.map(
       (o: { optionId: string; label?: string; name?: string }) => ({
@@ -283,10 +268,10 @@ function handlePermissionRequest(
       }),
     ),
   });
-  sessions.syncPendingPermissions(event.sessionId);
+  tasks.syncPendingPermissions(event.taskId);
   const autopiloted = maybeAutoApprovePermission(
     event,
-    sessions,
+    tasks,
     store,
     bridge,
     sseManager,
@@ -295,7 +280,7 @@ function handlePermissionRequest(
   // Async attachment-read auto-approve runs after the request broadcasts.
   maybeAutoApproveAttachmentRead(
     event,
-    sessions,
+    tasks,
     store,
     bridge,
     sseManager,
@@ -306,37 +291,37 @@ function handlePermissionRequest(
 
 function handlePromptDone(
   event: PromptDoneEvent,
-  sessions: SessionManager,
+  tasks: TaskManager,
   store: Store,
 ): void {
   const cancelStatus =
-    sessions.state.getState(event.sessionId).runtime.busy?.cancelStatus ?? null;
+    tasks.state.getState(event.taskId).runtime.busy?.cancelStatus ?? null;
   if (cancelStatus !== null) {
     clog.info("agent completed after request", {
-      sessionId: event.sessionId.slice(0, 8),
+      taskId: event.taskId.slice(0, 8),
       requestedStatus: cancelStatus,
       stopReason: event.stopReason,
     });
   }
   // The tail this turn buffered must always land, even when the turn has
   // already been superseded — it is the only copy of that text.
-  const isCurrent = sessions.isCurrentPrompt(event.sessionId, event.promptId);
+  const isCurrent = tasks.isCurrentPrompt(event.taskId, event.promptId);
   if (isCurrent) {
-    sessions.activePrompts.delete(event.sessionId);
-    sessions.syncBusy(event.sessionId);
+    tasks.activePrompts.delete(event.taskId);
+    tasks.syncBusy(event.taskId);
   } else {
     clog.info("completion from a superseded turn", {
-      sessionId: event.sessionId.slice(0, 8),
+      taskId: event.taskId.slice(0, 8),
       promptId: event.promptId,
       stopReason: event.stopReason,
     });
   }
-  sessions.flushBuffers(event.sessionId);
-  sessions.state.patch(event.sessionId, {
+  tasks.flushBuffers(event.taskId);
+  tasks.state.patch(event.taskId, {
     runtime: { streaming: { assistant: false, thinking: false } },
   });
   store.saveEvent(
-    event.sessionId,
+    event.taskId,
     event.type,
     {
       stopReason: event.stopReason,
@@ -349,28 +334,28 @@ function handlePromptDone(
 
 function handleError(
   event: ErrorEvent,
-  sessions: SessionManager,
+  tasks: TaskManager,
   store: Store,
 ): void {
-  if (event.sessionId) {
+  if (event.taskId) {
     // Same attribution as a completion: a superseded turn failing late must
     // not end the turn that replaced it. The buffered tail still flushes.
-    if (sessions.isCurrentPrompt(event.sessionId, event.promptId)) {
-      sessions.activePrompts.delete(event.sessionId);
-      sessions.syncBusy(event.sessionId);
+    if (tasks.isCurrentPrompt(event.taskId, event.promptId)) {
+      tasks.activePrompts.delete(event.taskId);
+      tasks.syncBusy(event.taskId);
     } else {
       clog.info("failure from a superseded turn", {
-        sessionId: event.sessionId.slice(0, 8),
+        taskId: event.taskId.slice(0, 8),
         promptId: event.promptId,
         message: event.message,
       });
     }
-    sessions.flushBuffers(event.sessionId);
-    sessions.state.patch(event.sessionId, {
+    tasks.flushBuffers(event.taskId);
+    tasks.state.patch(event.taskId, {
       runtime: { streaming: { assistant: false, thinking: false } },
     });
     store.saveEvent(
-      event.sessionId,
+      event.taskId,
       event.type,
       {
         message: event.message,
@@ -383,7 +368,7 @@ function handleError(
 
 function dispatchAgentEvent(
   event: AgentEvent,
-  sessions: SessionManager,
+  tasks: TaskManager,
   store: Store,
   bridge: AgentBridge,
   config: EventHandlerConfig,
@@ -392,24 +377,24 @@ function dispatchAgentEvent(
   // eslint-disable-next-line @typescript-eslint/switch-exhaustiveness-check -- only handles events with side effects
   switch (event.type) {
     case "connected":
-      handleConnected(event, sessions, config);
+      handleConnected(event, tasks, config);
       return false;
-    case "session_created":
+    case "task_created":
     case "config_option_update":
-      handleConfigLikeEvent(event, sessions);
+      handleConfigLikeEvent(event, tasks);
       return false;
     case "message_chunk":
-      handleMessageChunk(event, sessions);
+      handleMessageChunk(event, tasks);
       return false;
     case "thought_chunk":
-      handleThoughtChunk(event, sessions);
+      handleThoughtChunk(event, tasks);
       return false;
     case "tool_call":
-      handleToolCall(event, sessions, store);
+      handleToolCall(event, tasks, store);
       return false;
     case "tool_call_update":
       store.saveEvent(
-        event.sessionId,
+        event.taskId,
         event.type,
         {
           id: event.id,
@@ -424,29 +409,29 @@ function dispatchAgentEvent(
       );
       return false;
     case "plan":
-      handlePlan(event, sessions, store);
+      handlePlan(event, tasks, store);
       return false;
     case "permission_request":
       return handlePermissionRequest(
         event,
-        sessions,
+        tasks,
         store,
         bridge,
         sseManager,
         config,
       );
     case "prompt_done":
-      handlePromptDone(event, sessions, store);
+      handlePromptDone(event, tasks, store);
       return false;
     case "error":
-      handleError(event, sessions, store);
+      handleError(event, tasks, store);
       return false;
   }
   return false;
 }
 
 function maybePushNotify(event: AgentEvent, pushService: PushService): void {
-  if (!("sessionId" in event) || !event.sessionId) return;
+  if (!("taskId" in event) || !event.taskId) return;
   const pushEvent: {
     type: string;
     title?: string;
@@ -463,14 +448,14 @@ function maybePushNotify(event: AgentEvent, pushService: PushService): void {
     // bash_done has `code` not `exitCode`; command not stored in the event
     pushEvent.exitCode = event.code ?? undefined;
   }
-  pushService.sendForEvent(event.sessionId, pushEvent).catch((err) => {
+  pushService.sendForEvent(event.taskId, pushEvent).catch((err) => {
     plog.error("failed to send", { error: err });
   });
 }
 
 export function handleAgentEvent(
   event: AgentEvent,
-  sessions: SessionManager,
+  tasks: TaskManager,
   store: Store,
   bridge: AgentBridge,
   config: EventHandlerConfig,
@@ -479,26 +464,23 @@ export function handleAgentEvent(
   _clientRegistry?: ClientRegistry,
 ): void {
   if (event.type === "usage_update") {
-    handleUsageUpdate(event, sessions);
+    handleUsageUpdate(event, tasks);
     return;
   }
   if (event.type === "available_commands_update") {
-    const snapshot = sessions.updateAgentCommands(
-      event.sessionId,
-      event.commands,
-    );
-    if (sessions.restoringSessions.has(event.sessionId)) return;
+    const snapshot = tasks.updateAgentCommands(event.taskId, event.commands);
+    if (tasks.restoringTasks.has(event.taskId)) return;
     sseManager.broadcast({ ...event, ...snapshot });
     return;
   }
   if (event.type === "agent_reloading" || event.type === "agent_disconnected") {
-    for (const sessionId of sessions.liveSessions) {
-      sessions.flushBuffers(sessionId);
+    for (const taskId of tasks.liveTasks) {
+      tasks.flushBuffers(taskId);
     }
-    sessions.state.clearStreaming();
-    sessions.state.clearPlans();
-    sessions.state.clearContextUsage();
-    for (const snapshot of sessions.clearAgentCommands()) {
+    tasks.state.clearStreaming();
+    tasks.state.clearPlans();
+    tasks.state.clearContextUsage();
+    for (const snapshot of tasks.clearAgentCommands()) {
       sseManager.broadcast({
         type: "available_commands_update",
         ...snapshot,
@@ -506,14 +488,14 @@ export function handleAgentEvent(
     }
   }
   if (
-    "sessionId" in event &&
-    event.sessionId &&
-    sessions.restoringSessions.has(event.sessionId)
+    "taskId" in event &&
+    event.taskId &&
+    tasks.restoringTasks.has(event.taskId)
   )
     return;
   const suppress = dispatchAgentEvent(
     event,
-    sessions,
+    tasks,
     store,
     bridge,
     config,

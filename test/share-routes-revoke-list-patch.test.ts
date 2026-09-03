@@ -107,11 +107,11 @@ const cfg: Config["share"] = {
 
 async function createPreview(
   deps: ShareRouteDeps,
-  sessionId: string,
+  taskId: string,
 ): Promise<string> {
   const r = mockRes();
   await handleShareRoutes(
-    ownerReq(`/api/v1/sessions/${sessionId}/share`, "POST", {}),
+    ownerReq(`/api/v1/tasks/${taskId}/share`, "POST", {}),
     r.res,
     deps,
   );
@@ -121,12 +121,12 @@ async function createPreview(
 
 async function publish(
   deps: ShareRouteDeps,
-  sessionId: string,
+  taskId: string,
   token: string,
 ): Promise<void> {
   const r = mockRes();
   await handleShareRoutes(
-    ownerReq(`/api/v1/sessions/${sessionId}/share/publish`, "POST", { token }),
+    ownerReq(`/api/v1/tasks/${taskId}/share/publish`, "POST", { token }),
     r.res,
     deps,
   );
@@ -187,7 +187,7 @@ describe("validateLabel — owner text rules", () => {
   });
 });
 
-describe("DELETE /api/v1/sessions/:id/share — revoke", () => {
+describe("DELETE /api/v1/tasks/:id/share — revoke", () => {
   let tmpDir: string;
   let store: Store;
   let deps: ShareRouteDeps;
@@ -196,7 +196,7 @@ describe("DELETE /api/v1/sessions/:id/share — revoke", () => {
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), "wa-share-rvk-"));
     store = new Store(tmpDir, "test-agent");
-    store.createSession(sid, "/tmp/p");
+    store.createTask(sid, "/tmp/p");
     store.saveEvent(sid, "user_message", { text: "hi" }, { from_ref: "agent" });
     deps = { store, config: cfg, dataDir: tmpDir, publicDir: "/tmp" };
   });
@@ -208,7 +208,7 @@ describe("DELETE /api/v1/sessions/:id/share — revoke", () => {
   it("400 when token missing", async () => {
     const r = mockRes();
     await handleShareRoutes(
-      ownerReq(`/api/v1/sessions/${sid}/share`, "DELETE", {}),
+      ownerReq(`/api/v1/tasks/${sid}/share`, "DELETE", {}),
       r.res,
       deps,
     );
@@ -221,7 +221,7 @@ describe("DELETE /api/v1/sessions/:id/share — revoke", () => {
 
     const r = mockRes();
     await handleShareRoutes(
-      ownerReq(`/api/v1/sessions/${sid}/share`, "DELETE", { token }),
+      ownerReq(`/api/v1/tasks/${sid}/share`, "DELETE", { token }),
       r.res,
       deps,
     );
@@ -249,13 +249,13 @@ describe("DELETE /api/v1/sessions/:id/share — revoke", () => {
     const token = await createPreview(deps, sid);
     await publish(deps, sid, token);
     await handleShareRoutes(
-      ownerReq(`/api/v1/sessions/${sid}/share`, "DELETE", { token }),
+      ownerReq(`/api/v1/tasks/${sid}/share`, "DELETE", { token }),
       mockRes().res,
       deps,
     );
     const r = mockRes();
     await handleShareRoutes(
-      ownerReq(`/api/v1/sessions/${sid}/share`, "DELETE", { token }),
+      ownerReq(`/api/v1/tasks/${sid}/share`, "DELETE", { token }),
       r.res,
       deps,
     );
@@ -263,8 +263,8 @@ describe("DELETE /api/v1/sessions/:id/share — revoke", () => {
     assert.equal((r.json() as { revoked: boolean }).revoked, false);
   });
 
-  it("404 if token belongs to a different session", async () => {
-    store.createSession("s2", "/tmp/p2");
+  it("404 if token belongs to a different task", async () => {
+    store.createTask("s2", "/tmp/p2");
     store.saveEvent(
       "s2",
       "user_message",
@@ -274,7 +274,7 @@ describe("DELETE /api/v1/sessions/:id/share — revoke", () => {
     const tokenS2 = await createPreview(deps, "s2");
     const r = mockRes();
     await handleShareRoutes(
-      ownerReq(`/api/v1/sessions/${sid}/share`, "DELETE", { token: tokenS2 }),
+      ownerReq(`/api/v1/tasks/${sid}/share`, "DELETE", { token: tokenS2 }),
       r.res,
       deps,
     );
@@ -282,7 +282,7 @@ describe("DELETE /api/v1/sessions/:id/share — revoke", () => {
   });
 });
 
-describe("PATCH /api/v1/sessions/:id/share — label/display_name", () => {
+describe("PATCH /api/v1/tasks/:id/share — label/display_name", () => {
   let tmpDir: string;
   let store: Store;
   let deps: ShareRouteDeps;
@@ -291,7 +291,7 @@ describe("PATCH /api/v1/sessions/:id/share — label/display_name", () => {
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), "wa-share-pch-"));
     store = new Store(tmpDir, "test-agent");
-    store.createSession(sid, "/tmp/p");
+    store.createTask(sid, "/tmp/p");
     store.saveEvent(sid, "user_message", { text: "hi" }, { from_ref: "agent" });
     deps = { store, config: cfg, dataDir: tmpDir, publicDir: "/tmp" };
   });
@@ -305,7 +305,7 @@ describe("PATCH /api/v1/sessions/:id/share — label/display_name", () => {
     await publish(deps, sid, token);
     const r = mockRes();
     await handleShareRoutes(
-      ownerReq(`/api/v1/sessions/${sid}/share`, "PATCH", {
+      ownerReq(`/api/v1/tasks/${sid}/share`, "PATCH", {
         token,
         owner_label: "demo-share",
       }),
@@ -325,7 +325,7 @@ describe("PATCH /api/v1/sessions/:id/share — label/display_name", () => {
     store.updateShareOwnerLabel(token, "old");
     const r = mockRes();
     await handleShareRoutes(
-      ownerReq(`/api/v1/sessions/${sid}/share`, "PATCH", {
+      ownerReq(`/api/v1/tasks/${sid}/share`, "PATCH", {
         token,
         owner_label: "",
       }),
@@ -340,7 +340,7 @@ describe("PATCH /api/v1/sessions/:id/share — label/display_name", () => {
     const token = await createPreview(deps, sid);
     const r = mockRes();
     await handleShareRoutes(
-      ownerReq(`/api/v1/sessions/${sid}/share`, "PATCH", {
+      ownerReq(`/api/v1/tasks/${sid}/share`, "PATCH", {
         token,
         owner_label: "nice\u202eevil.exe",
       }),
@@ -355,7 +355,7 @@ describe("PATCH /api/v1/sessions/:id/share — label/display_name", () => {
     const token = await createPreview(deps, sid);
     const r = mockRes();
     await handleShareRoutes(
-      ownerReq(`/api/v1/sessions/${sid}/share`, "PATCH", {
+      ownerReq(`/api/v1/tasks/${sid}/share`, "PATCH", {
         token,
         owner_label: "x".repeat(1025),
       }),
@@ -369,7 +369,7 @@ describe("PATCH /api/v1/sessions/:id/share — label/display_name", () => {
     const token = await createPreview(deps, sid);
     const r = mockRes();
     await handleShareRoutes(
-      ownerReq(`/api/v1/sessions/${sid}/share`, "PATCH", {
+      ownerReq(`/api/v1/tasks/${sid}/share`, "PATCH", {
         token,
         display_name: "x".repeat(257),
       }),
@@ -385,7 +385,7 @@ describe("PATCH /api/v1/sessions/:id/share — label/display_name", () => {
     store.revokeShare(token);
     const r = mockRes();
     await handleShareRoutes(
-      ownerReq(`/api/v1/sessions/${sid}/share`, "PATCH", {
+      ownerReq(`/api/v1/tasks/${sid}/share`, "PATCH", {
         token,
         owner_label: "x",
       }),
@@ -395,8 +395,8 @@ describe("PATCH /api/v1/sessions/:id/share — label/display_name", () => {
     assert.equal(r.status(), 404);
   });
 
-  it("404 if token belongs to different session", async () => {
-    store.createSession("s2", "/tmp/p2");
+  it("404 if token belongs to different task", async () => {
+    store.createTask("s2", "/tmp/p2");
     store.saveEvent(
       "s2",
       "user_message",
@@ -406,7 +406,7 @@ describe("PATCH /api/v1/sessions/:id/share — label/display_name", () => {
     const tokenS2 = await createPreview(deps, "s2");
     const r = mockRes();
     await handleShareRoutes(
-      ownerReq(`/api/v1/sessions/${sid}/share`, "PATCH", {
+      ownerReq(`/api/v1/tasks/${sid}/share`, "PATCH", {
         token: tokenS2,
         owner_label: "x",
       }),
@@ -440,11 +440,11 @@ describe("GET /api/v1/shares — owner list", () => {
   });
 
   it("lists preview + active, omits revoked", async () => {
-    store.createSession("sA", "/tmp/a");
+    store.createTask("sA", "/tmp/a");
     store.saveEvent("sA", "user_message", { text: "a" }, { from_ref: "agent" });
-    store.createSession("sB", "/tmp/b");
+    store.createTask("sB", "/tmp/b");
     store.saveEvent("sB", "user_message", { text: "b" }, { from_ref: "agent" });
-    store.createSession("sC", "/tmp/c");
+    store.createTask("sC", "/tmp/c");
     store.saveEvent("sC", "user_message", { text: "c" }, { from_ref: "agent" });
 
     const tA = await createPreview(deps, "sA"); // preview-only
@@ -553,7 +553,7 @@ describe("GET/PUT /api/v1/share/by — default display_name", () => {
 
   it("default flows into a fresh preview when display_name omitted", async () => {
     const sid = "s-default";
-    store.createSession(sid, "/tmp/p");
+    store.createTask(sid, "/tmp/p");
     store.saveEvent(sid, "user_message", { text: "hi" }, { from_ref: "agent" });
 
     await handleShareRoutes(
@@ -563,7 +563,7 @@ describe("GET/PUT /api/v1/share/by — default display_name", () => {
     );
     const r = mockRes();
     await handleShareRoutes(
-      ownerReq(`/api/v1/sessions/${sid}/share`, "POST", {}),
+      ownerReq(`/api/v1/tasks/${sid}/share`, "POST", {}),
       r.res,
       deps,
     );

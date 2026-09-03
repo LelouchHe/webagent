@@ -11,11 +11,11 @@ import {
   sendPrompt,
 } from "./helpers.ts";
 
-// Regression test for: after a cold server restart, sessions.cachedConfigOptions
-// is empty. The first GET /api/v1/sessions/:id used to return configOptions: []
+// Regression test for: after a cold server restart, tasks.cachedConfigOptions
+// is empty. The first GET /api/v1/tasks/:id used to return configOptions: []
 // because the cache was cold. The fix populates the cache after ACP loadSession
 // completes, then broadcasts config_option_update to any client whose
-// session_created event was constructed before the cache was warm.
+// task_created event was constructed before the cache was warm.
 //
 // This test catches regressions where the broadcast is dropped, or where the
 // resume hook stops populating the cache. Visible symptoms it asserts:
@@ -154,7 +154,7 @@ test("cold server restart still populates model + slash autocomplete", async ({
       "Model → Mock Model 2",
     );
 
-    // Cold restart: sessions.cachedConfigOptions starts empty in the new process.
+    // Cold restart: tasks.cachedConfigOptions starts empty in the new process.
     await stopServer(server);
     server = null;
     await expectConnectionStatus(page, "disconnected");
@@ -162,7 +162,7 @@ test("cold server restart still populates model + slash autocomplete", async ({
     await expectConnectionStatus(page, "connected", { timeout: 15_000 });
 
     // Status bar must eventually show model · cwd. Server now blocks GET
-    // /api/v1/sessions/:id on cold-cache resume (up to 8s) so configOptions
+    // /api/v1/tasks/:id on cold-cache resume (up to 8s) so configOptions
     // returns inline — no broadcast race.
     await expect(page.locator("#status-bar")).toContainText("mock-model-2", {
       timeout: 10_000,

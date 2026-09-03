@@ -11,7 +11,7 @@ import { Window } from "happy-dom";
 (globalThis as { __DEV__?: boolean }).__DEV__ = true;
 
 const HTML = `
-<div id="header"><div class="header-side header-left"><button id="inbox-btn" type="button" aria-label="Inbox, no pending messages"><span class="logo">>_</span><span id="inbox-count" hidden></span></button></div><span id="session-info" class="status"></span><div class="header-side header-right"><span id="status" class="status-dot is-disconnected" data-state="disconnected" role="status" aria-live="polite" aria-label="disconnected" title="disconnected"></span><button id="theme-btn">x</button></div></div>
+<div id="header"><div class="header-side header-left"><button id="inbox-btn" type="button" aria-label="Inbox, no pending messages"><span class="logo">>_</span><span id="inbox-count" hidden></span></button></div><span id="task-info" class="status"></span><div class="header-side header-right"><span id="status" class="status-dot is-disconnected" data-state="disconnected" role="status" aria-live="polite" aria-label="disconnected" title="disconnected"></span><button id="theme-btn">x</button></div></div>
 <div id="messages"></div>
 <div id="attach-preview"></div>
 <details id="plan-panel" class="input-panel" hidden></details>
@@ -54,28 +54,28 @@ export function teardownDOM() {
 export function resetState(state: any, dom: any) {
   state.eventSource = null;
   state.clientId = null;
-  state.sessionId = null;
-  state.sessionSwitchGen = 0;
+  state.taskId = null;
+  state.taskSwitchGen = 0;
   state.messageNavigationGen = 0;
-  state.pendingNavigationSessionId = null;
-  state.sessionCwd = null;
-  state.sessionCwdDisplay = null;
-  state.sessionTitle = null;
+  state.pendingNavigationTaskId = null;
+  state.taskCwd = null;
+  state.taskCwdDisplay = null;
+  state.taskTitle = null;
   state.contextUsage = null;
   state.inboxCount = 0;
-  state.awaitingNewSession = false;
-  state.newSessionRequestInFlight = false;
-  state.pendingNewSessionOpId = null;
-  if (state._newSessionRecoveryTimer != null) {
-    clearTimeout(state._newSessionRecoveryTimer);
+  state.awaitingNewTask = false;
+  state.newTaskRequestInFlight = false;
+  state.pendingNewTaskOpId = null;
+  if (state._newTaskRecoveryTimer != null) {
+    clearTimeout(state._newTaskRecoveryTimer);
   }
-  state._newSessionRecoveryTimer = null;
+  state._newTaskRecoveryTimer = null;
   state.configOptions = [];
   state.agentCommands = [];
   state.agentCommandsEpoch = null;
   state.agentCommandsRevision = 0;
-  state.sessionMode = null;
-  state.sessionModel = null;
+  state.taskMode = null;
+  state.taskModel = null;
   state.currentAssistantEl = null;
   state.currentAssistantText = "";
   state.pendingFinalAnswerToolText = null;
@@ -104,7 +104,7 @@ export function resetState(state: any, dom: any) {
   state.awaitingOwnUserEcho = false;
   state.replayedOwnUserEcho = false;
   state.reconcileAfterOwnUserEcho = false;
-  state.sentMessageForSession = null;
+  state.sentMessageForTask = null;
   state.cancelTimeout = 10_000;
   state.serverVersion = null;
   state.agentName = null;
@@ -114,7 +114,7 @@ export function resetState(state: any, dom: any) {
   state.lastEventSeq = 0;
   state.lastStateSeq = 0;
   state.pendingNavigationEvents = [];
-  state.runtimeHydrationSessionId = null;
+  state.runtimeHydrationTaskId = null;
   state.replayInProgress = false;
   state.replayQueue = [];
   if (state.unconfirmedPermissions) state.unconfirmedPermissions.clear();
@@ -126,7 +126,7 @@ export function resetState(state: any, dom: any) {
   dom.status.dataset.state = "disconnected";
   dom.status.setAttribute("aria-label", "disconnected");
   dom.status.setAttribute("title", "disconnected");
-  dom.sessionInfo.textContent = "";
+  dom.taskInfo.textContent = "";
   dom.inboxCount.textContent = "";
   dom.inboxCount.hidden = true;
   dom.inboxBtn.setAttribute("aria-label", "Inbox, no pending messages");
@@ -155,7 +155,7 @@ export function resetState(state: any, dom: any) {
   }
   dom.inputArea.className = "";
   if (dom.statusBar) dom.statusBar.textContent = "";
-  // Preview-mode is per-session and lives in memory only.
+  // Preview-mode is per-task and lives in memory only.
   state.previewToken = null;
   // Repaint action buttons so `dom.sendBtn.onclick` points back at "send"
   // (the previous test may have left it on "cancel" via setBusy(true)).

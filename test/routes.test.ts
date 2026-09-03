@@ -225,66 +225,62 @@ describe("HTTP routes", () => {
     assert.equal(res.headers["cache-control"], "no-cache");
   });
 
-  it("GET /api/v1/sessions returns empty list", async () => {
-    const res = await makeRequest(port, "GET", "/api/v1/sessions");
+  it("GET /api/v1/tasks returns empty list", async () => {
+    const res = await makeRequest(port, "GET", "/api/v1/tasks");
     assert.equal(res.status, 200);
     assert.deepEqual(JSON.parse(res.body), []);
   });
 
-  it("GET /api/v1/sessions returns created sessions", async () => {
-    store.createSession("s1", "/x");
-    const res = await makeRequest(port, "GET", "/api/v1/sessions");
-    const sessions = JSON.parse(res.body);
-    assert.equal(sessions.length, 1);
-    assert.equal(sessions[0].id, "s1");
+  it("GET /api/v1/tasks returns created tasks", async () => {
+    store.createTask("s1", "/x");
+    const res = await makeRequest(port, "GET", "/api/v1/tasks");
+    const tasks = JSON.parse(res.body);
+    assert.equal(tasks.length, 1);
+    assert.equal(tasks[0].id, "s1");
   });
 
-  it("hides sessions owned by another agent from list and direct routes", async () => {
+  it("hides tasks owned by another agent from list and direct routes", async () => {
     const other = new Store(tmpDir, "other-agent");
-    other.createSession("other-session", "/tmp", "auto", "other-agent-id");
+    other.createTask("other-task", "/tmp", "auto", "other-agent-id");
     other.saveEvent(
-      "other-session",
+      "other-task",
       "user_message",
       { text: "private" },
       { from_ref: "user" },
     );
     other.close();
 
-    const list = await makeRequest(port, "GET", "/api/v1/sessions");
+    const list = await makeRequest(port, "GET", "/api/v1/tasks");
     assert.deepEqual(JSON.parse(list.body), []);
 
-    const session = await makeRequest(
-      port,
-      "GET",
-      "/api/v1/sessions/other-session",
-    );
-    assert.equal(session.status, 404);
+    const task = await makeRequest(port, "GET", "/api/v1/tasks/other-task");
+    assert.equal(task.status, 404);
 
     const events = await makeRequest(
       port,
       "GET",
-      "/api/v1/sessions/other-session/events",
+      "/api/v1/tasks/other-task/events",
     );
     assert.equal(events.status, 404);
   });
 
-  it("GET /api/v1/sessions/:id/events returns 404 for unknown session", async () => {
-    const res = await makeRequest(port, "GET", "/api/v1/sessions/nope/events");
+  it("GET /api/v1/tasks/:id/events returns 404 for unknown task", async () => {
+    const res = await makeRequest(port, "GET", "/api/v1/tasks/nope/events");
     assert.equal(res.status, 404);
   });
 
-  it("GET /api/v1/sessions/:id/events returns events", async () => {
-    store.createSession("s1", "/x");
+  it("GET /api/v1/tasks/:id/events returns events", async () => {
+    store.createTask("s1", "/x");
     store.saveEvent("s1", "user_message", { text: "hi" }, { from_ref: "user" });
-    const res = await makeRequest(port, "GET", "/api/v1/sessions/s1/events");
+    const res = await makeRequest(port, "GET", "/api/v1/tasks/s1/events");
     assert.equal(res.status, 200);
     const body = JSON.parse(res.body);
     assert.equal(body.events.length, 1);
     assert.deepEqual(body.streaming, { thinking: false, assistant: false });
   });
 
-  it("GET /api/v1/sessions/:id/events?after=N returns only new events", async () => {
-    store.createSession("s1", "/x");
+  it("GET /api/v1/tasks/:id/events?after=N returns only new events", async () => {
+    store.createTask("s1", "/x");
     store.saveEvent("s1", "user_message", { text: "a" }, { from_ref: "user" });
     store.saveEvent(
       "s1",
@@ -297,7 +293,7 @@ describe("HTTP routes", () => {
     const res = await makeRequest(
       port,
       "GET",
-      "/api/v1/sessions/s1/events?after=1",
+      "/api/v1/tasks/s1/events?after=1",
     );
     assert.equal(res.status, 200);
     const body = JSON.parse(res.body);
@@ -305,8 +301,8 @@ describe("HTTP routes", () => {
     assert.equal(body.events[0].seq, 2);
   });
 
-  it("GET /api/v1/sessions/:id/events?limit=N returns latest N events in ASC order", async () => {
-    store.createSession("s1", "/x");
+  it("GET /api/v1/tasks/:id/events?limit=N returns latest N events in ASC order", async () => {
+    store.createTask("s1", "/x");
     for (let i = 0; i < 5; i++)
       store.saveEvent(
         "s1",
@@ -318,7 +314,7 @@ describe("HTTP routes", () => {
     const res = await makeRequest(
       port,
       "GET",
-      "/api/v1/sessions/s1/events?limit=3",
+      "/api/v1/tasks/s1/events?limit=3",
     );
     assert.equal(res.status, 200);
     const body = JSON.parse(res.body);
@@ -331,8 +327,8 @@ describe("HTTP routes", () => {
     assert.equal(body.hasMore, true);
   });
 
-  it("GET /api/v1/sessions/:id/events?limit=N&before=SEQ paginates backwards", async () => {
-    store.createSession("s1", "/x");
+  it("GET /api/v1/tasks/:id/events?limit=N&before=SEQ paginates backwards", async () => {
+    store.createTask("s1", "/x");
     for (let i = 0; i < 10; i++)
       store.saveEvent(
         "s1",
@@ -345,7 +341,7 @@ describe("HTTP routes", () => {
     const res1 = await makeRequest(
       port,
       "GET",
-      "/api/v1/sessions/s1/events?limit=3",
+      "/api/v1/tasks/s1/events?limit=3",
     );
     const body1 = JSON.parse(res1.body);
     assert.equal(body1.events[0].seq, 8);
@@ -355,7 +351,7 @@ describe("HTTP routes", () => {
     const res2 = await makeRequest(
       port,
       "GET",
-      "/api/v1/sessions/s1/events?limit=3&before=8",
+      "/api/v1/tasks/s1/events?limit=3&before=8",
     );
     const body2 = JSON.parse(res2.body);
     assert.equal(body2.events.length, 3);
@@ -367,7 +363,7 @@ describe("HTTP routes", () => {
     const res3 = await makeRequest(
       port,
       "GET",
-      "/api/v1/sessions/s1/events?limit=3&before=5",
+      "/api/v1/tasks/s1/events?limit=3&before=5",
     );
     const body3 = JSON.parse(res3.body);
     assert.equal(body3.events.length, 3);
@@ -379,7 +375,7 @@ describe("HTTP routes", () => {
     const res4 = await makeRequest(
       port,
       "GET",
-      "/api/v1/sessions/s1/events?limit=3&before=2",
+      "/api/v1/tasks/s1/events?limit=3&before=2",
     );
     const body4 = JSON.parse(res4.body);
     assert.equal(body4.events.length, 1);
@@ -387,11 +383,11 @@ describe("HTTP routes", () => {
     assert.equal(body4.hasMore, false);
   });
 
-  it("GET /api/v1/sessions/:id/events without limit omits total/hasMore (backward compat)", async () => {
-    store.createSession("s1", "/x");
+  it("GET /api/v1/tasks/:id/events without limit omits total/hasMore (backward compat)", async () => {
+    store.createTask("s1", "/x");
     store.saveEvent("s1", "user_message", { text: "a" }, { from_ref: "user" });
 
-    const res = await makeRequest(port, "GET", "/api/v1/sessions/s1/events");
+    const res = await makeRequest(port, "GET", "/api/v1/tasks/s1/events");
     const body = JSON.parse(res.body);
     assert.equal(body.events.length, 1);
     assert.equal(body.total, undefined);
@@ -471,10 +467,10 @@ describe("Image upload", () => {
     writeFileSync(join(publicDir, "index.html"), "<h1>Test</h1>");
 
     store = new Store(tmpDir, "test-agent");
-    // Make sessions exist so the upload handler doesn't 404. Multiple session
+    // Make tasks exist so the upload handler doesn't 404. Multiple task
     // IDs are used across tests, register all of them up front.
-    for (const sid of ["test-session", "s1"]) {
-      store.createSession(sid, "/tmp");
+    for (const sid of ["test-task", "s1"]) {
+      store.createTask(sid, "/tmp");
     }
     const handler = createRequestHandler({
       store,
@@ -508,7 +504,7 @@ describe("Image upload", () => {
   // Wrap multipart upload in one helper so each test stays focused on what
   // it's actually exercising rather than the request shape.
   async function uploadFile(
-    sessionId: string,
+    taskId: string,
     filename: string,
     mimeType: string,
     bytes: Buffer,
@@ -525,7 +521,7 @@ describe("Image upload", () => {
     return makeRequest(
       port,
       "POST",
-      `/api/v1/sessions/${sessionId}/attachments`,
+      `/api/v1/tasks/${taskId}/attachments`,
       body,
       headers,
     );
@@ -533,14 +529,12 @@ describe("Image upload", () => {
 
   it("uploads an image and returns its URL", async () => {
     const data = fakePngBytes("payload");
-    const res = await uploadFile("test-session", "tiny.png", "image/png", data);
+    const res = await uploadFile("test-task", "tiny.png", "image/png", data);
     assert.equal(res.status, 200);
     const body = JSON.parse(res.body);
-    assert.ok(
-      body.url.startsWith("/api/v1/sessions/test-session/attachments/"),
-    );
+    assert.ok(body.url.startsWith("/api/v1/tasks/test-task/attachments/"));
     assert.ok(/\.png(\?|$)/.test(body.url as string));
-    assert.ok(body.path.startsWith("sessions/test-session/attachments/"));
+    assert.ok(body.path.startsWith("tasks/test-task/attachments/"));
     assert.equal(body.kind, "image");
     assert.equal(body.mimeType, "image/png");
     assert.equal(body.displayName, "tiny.png");
@@ -552,7 +546,7 @@ describe("Image upload", () => {
 
   it("preserves UTF-8 (e.g. Chinese) filenames through multipart parsing", async () => {
     const res = await uploadFile(
-      "test-session",
+      "test-task",
       "中文文档.txt",
       "text/plain",
       Buffer.from("hi"),
@@ -574,7 +568,7 @@ describe("Image upload", () => {
       Buffer.alloc(64),
     ]);
     const res = await uploadFile(
-      "test-session",
+      "test-task",
       "stealth.bin",
       "application/octet-stream",
       pdfBody,
@@ -593,7 +587,7 @@ describe("Image upload", () => {
       "utf8",
     );
     const res = await uploadFile(
-      "test-session",
+      "test-task",
       "todo.clj",
       "application/octet-stream",
       cljBody,
@@ -608,7 +602,7 @@ describe("Image upload", () => {
   it("sniffer overrides a lying client mime: PNG buffer beats application/pdf claim", async () => {
     const data = fakePngBytes(64);
     const res = await uploadFile(
-      "test-session",
+      "test-task",
       "lie.pdf",
       "application/pdf",
       data,
@@ -621,7 +615,7 @@ describe("Image upload", () => {
 
   it("serves uploaded images back via GET", async () => {
     const uploadRes = await uploadFile(
-      "test-session",
+      "test-task",
       "tiny.png",
       "image/png",
       fakePngBytes("data"),
@@ -635,7 +629,7 @@ describe("Image upload", () => {
     assert.equal(res.headers["x-content-type-options"], "nosniff");
   });
 
-  it("rejects invalid session ID with 400", async () => {
+  it("rejects invalid task ID with 400", async () => {
     const res = await uploadFile(
       "bad%20id!",
       "tiny.png",
@@ -643,7 +637,7 @@ describe("Image upload", () => {
       fakePngBytes(),
     );
     assert.equal(res.status, 400);
-    assert.ok(JSON.parse(res.body).error.includes("Invalid session ID"));
+    assert.ok(JSON.parse(res.body).error.includes("Invalid task ID"));
   });
 
   it("rejects oversized upload via content-length header", async () => {
@@ -673,7 +667,7 @@ describe("Image upload", () => {
     const res = await makeRequest(
       port,
       "POST",
-      "/api/v1/sessions/s1/attachments",
+      "/api/v1/tasks/s1/attachments",
       "raw-body",
       // No Content-Type — handler should refuse rather than crash.
     );

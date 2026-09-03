@@ -25,7 +25,7 @@ export type PushNotification =
       title: string;
       body: string;
       tag: string;
-      data: { sessionId?: string; messageId?: string };
+      data: { taskId?: string; messageId?: string };
     }
   | {
       kind: "close";
@@ -60,19 +60,16 @@ export interface PushableMessage {
 
 /** Derive the push tag for an ACP event. Kept module-level so it can be
  *  reused by the close-on-handle path without instantiating the service. */
-export function pushTagForEvent(
-  sessionId: string,
-  event: PushableEvent,
-): string {
+export function pushTagForEvent(taskId: string, event: PushableEvent): string {
   switch (event.type) {
     case "prompt_done":
-      return `sess-${sessionId}-done`;
+      return `sess-${taskId}-done`;
     case "permission_request":
-      return `sess-${sessionId}-perm-${event.eventId ?? "0"}`;
+      return `sess-${taskId}-perm-${event.eventId ?? "0"}`;
     case "bash_done":
-      return `sess-${sessionId}-bash-${event.eventId ?? "0"}`;
+      return `sess-${taskId}-bash-${event.eventId ?? "0"}`;
     default:
-      return `sess-${sessionId}-${event.type}`;
+      return `sess-${taskId}-${event.type}`;
   }
 }
 
@@ -101,7 +98,7 @@ export function isAppleEndpoint(endpoint: string): boolean {
 
 /**
  * Per-client transport state. Identity-layer state (visibility, active
- * session) lives in ClientRegistry; this struct now only tracks the push
+ * task) lives in ClientRegistry; this struct now only tracks the push
  * endpoint owned by a clientId.
  */
 export interface ClientState {
@@ -115,7 +112,7 @@ export interface ClientStatePatch {
 }
 
 export interface PushServiceOptions {
-  /** When false, `isSessionVisibleToAnyClient` always returns false —
+  /** When false, `isTaskVisibleToAnyClient` always returns false —
    *  kill switch for the cross-device global suppression feature. */
   globalVisibilitySuppression?: boolean;
   /** Visibility records older than this (ms since last refresh) are treated
@@ -125,7 +122,7 @@ export interface PushServiceOptions {
   now?: () => number;
   /**
    * Visibility/identity-layer source of truth. Required for all visibility
-   * reads (hasVisibleClient / isSessionVisibleToAnyClient / isEndpointVisible).
+   * reads (hasVisibleClient / isTaskVisibleToAnyClient / isEndpointVisible).
    * pushService keeps only the transport mapping (clientId → endpoint).
    */
   clientRegistry: ClientRegistry;
@@ -200,13 +197,13 @@ export class PushService {
   // ---------------------------------------------------------------------------
 
   formatNotification(
-    sessionId: string,
-    sessionTitle: string | null,
+    taskId: string,
+    taskTitle: string | null,
     eventType: string,
     eventData: Record<string, unknown>,
     tag: string,
   ): PushNotification {
-    const title = sessionTitle ?? "WebAgent";
+    const title = taskTitle ?? "WebAgent";
     let body: string;
 
     switch (eventType) {
@@ -231,7 +228,7 @@ export class PushService {
         body = eventType;
     }
 
-    return { kind: "notify", title, body, tag, data: { sessionId } };
+    return { kind: "notify", title, body, tag, data: { taskId } };
   }
 
   // ---------------------------------------------------------------------------
@@ -240,7 +237,7 @@ export class PushService {
 
   /**
    * Set the push endpoint for a client. Identity-layer state (visibility,
-   * active session) goes through ClientRegistry.setVisibility, not here.
+   * active task) goes through ClientRegistry.setVisibility, not here.
    */
   updateClient(clientId: string, patch: ClientStatePatch): void {
     const prev = this.clients.get(clientId) ?? emptyClientState();
@@ -287,8 +284,8 @@ export class PushService {
 
   /**
    * Check if any client (across all endpoints) is visible and viewing the
-   * given session. A client with no session set does not suppress any
-   * session's push. Stale records (older than `visibilityTtlMs` since the
+   * given task. A client with no task set does not suppress any
+   * task's push. Stale records (older than `visibilityTtlMs` since the
    * last heartbeat refresh) are ignored — this is the server-side safety
    * net for iOS PWA suspension, where the client's `visible:false` POST may
    * never leave the device.
@@ -296,9 +293,9 @@ export class PushService {
    * Returns false unconditionally when global suppression is disabled via
    * the `globalVisibilitySuppression` option (kill switch).
    */
-  isSessionVisibleToAnyClient(sessionId: string): boolean {
+  isTaskVisibleToAnyClient(taskId: string): boolean {
     if (!this.globalVisibilitySuppression) return false;
-    return this.clientRegistry.isSessionVisibleToAnyClient(sessionId);
+    return this.clientRegistry.isTaskVisibleToAnyClient(taskId);
   }
 
   // ---------------------------------------------------------------------------
@@ -314,11 +311,11 @@ export class PushService {
   /**
    * Check if this event should trigger a push notification.
    * Returns true if a notification should be sent (caller should then call sendToAll).
-   * Global session visibility suppression happens inside sendToAll.
+   * Global task visibility suppression happens inside sendToAll.
    */
   maybeNotify(
-    sessionId: string,
-    sessionTitle: string | null,
+    taskId: string,
+    taskTitle: string | null,
     eventType: string,
     _eventData: Record<string, unknown>,
   ): boolean {
@@ -335,13 +332,12 @@ export class PushService {
     const allSubs = this.store.getAllSubscriptions();
     if (allSubs.length === 0) return;
 
-    // Global visibility: if any client is viewing this session, suppress notify pushes.
+    // Global visibility: if any client is viewing this task, suppress notify pushes.
     // Close pushes are never suppressed — they're silent and are the mechanism
     // by which cross-device recall actually closes banners on the "losing" devices.
     if (notification.kind === "notify") {
-      const targetSession = notification.data.sessionId;
-      if (targetSession && this.isSessionVisibleToAnyClient(targetSession))
-        return;
+      const targetTask = notification.data.taskId;
+      if (targetTask && this.isTaskVisibleToAnyClient(targetTask)) return;
     }
 
     // Skip Apple endpoints for silent close pushes to preserve iOS PWA's
@@ -472,12 +468,12 @@ export class PushService {
     const body =
       msg.body.length > 140 ? msg.body.slice(0, 137) + "…" : msg.body;
     const tag = msg.dedup_key ? `dedup-${msg.to}-${msg.dedup_key}` : msg.id;
-    // If this message targets a specific session, surface the sid in the
+    // If this message targets a specific task, surface the sid in the
     // push data so SW notificationclick can route the user there. Without
-    // this, clicks fall back to "/" and land on whatever session was last
-    // open — a confusing UX when multiple sessions get background pushes.
-    const sessionId = msg.to.startsWith("session:")
-      ? msg.to.slice("session:".length)
+    // this, clicks fall back to "/" and land on whatever task was last
+    // open — a confusing UX when multiple tasks get background pushes.
+    const taskId = msg.to.startsWith("task:")
+      ? msg.to.slice("task:".length)
       : undefined;
 
     // Observability signal #7 — sendForMessage entry.
@@ -494,27 +490,22 @@ export class PushService {
       title,
       body,
       tag,
-      data: sessionId
-        ? { messageId: msg.id, sessionId }
-        : { messageId: msg.id },
+      data: taskId ? { messageId: msg.id, taskId } : { messageId: msg.id },
     });
     return true;
   }
 
   /**
-   * Send a push for an ACP session event (permission_request / prompt_done /
-   * bash_done). Handles tag derivation, visibility suppression, and session-
+   * Send a push for an ACP task event (permission_request / prompt_done /
+   * bash_done). Handles tag derivation, visibility suppression, and task-
    * title lookup. Returns `true` if a push attempt was made.
    */
-  async sendForEvent(
-    sessionId: string,
-    event: PushableEvent,
-  ): Promise<boolean> {
+  async sendForEvent(taskId: string, event: PushableEvent): Promise<boolean> {
     if (!PushService.NOTIFIABLE.has(event.type)) return false;
 
-    const session = this.store.getSession(sessionId);
-    const sessionTitle = session?.title ?? null;
-    const tag = pushTagForEvent(sessionId, event);
+    const task = this.store.getTask(taskId);
+    const taskTitle = task?.title ?? null;
+    const tag = pushTagForEvent(taskId, event);
 
     const eventData: Record<string, unknown> = {};
     if (event.type === "permission_request" && event.title !== undefined) {
@@ -525,10 +516,10 @@ export class PushService {
       if (event.exitCode !== undefined) eventData.exitCode = event.exitCode;
     }
 
-    const suppressed = this.isSessionVisibleToAnyClient(sessionId);
+    const suppressed = this.isTaskVisibleToAnyClient(taskId);
     const subs = this.store.getAllSubscriptions();
     elog.info("sendForEvent", {
-      sess_id: sessionId.slice(0, 8),
+      sess_id: taskId.slice(0, 8),
       type: event.type,
       tag,
       endpoints: subs.length,
@@ -536,8 +527,8 @@ export class PushService {
     });
 
     const notification = this.formatNotification(
-      sessionId,
-      sessionTitle,
+      taskId,
+      taskTitle,
       event.type,
       eventData,
       tag,

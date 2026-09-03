@@ -62,15 +62,15 @@ describe("PushService — visibility reads delegate to ClientRegistry (Plan C St
     assert.equal(svc.hasVisibleClient(), false);
   });
 
-  it("isSessionVisibleToAnyClient reads registry, not pushService.clients", () => {
+  it("isTaskVisibleToAnyClient reads registry, not pushService.clients", () => {
     registry.register("c1", { capabilities: [] });
     registry.setVisibility("c1", { visible: true, active: "sid-A" });
 
-    assert.equal(svc.isSessionVisibleToAnyClient("sid-A"), true);
-    assert.equal(svc.isSessionVisibleToAnyClient("sid-B"), false);
+    assert.equal(svc.isTaskVisibleToAnyClient("sid-A"), true);
+    assert.equal(svc.isTaskVisibleToAnyClient("sid-B"), false);
   });
 
-  it("isSessionVisibleToAnyClient still honors the globalVisibilitySuppression kill switch", () => {
+  it("isTaskVisibleToAnyClient still honors the globalVisibilitySuppression kill switch", () => {
     const svcOff = new PushService(store, tmpDir, "mailto:test@localhost", {
       clientRegistry: registry,
       globalVisibilitySuppression: false,
@@ -79,7 +79,7 @@ describe("PushService — visibility reads delegate to ClientRegistry (Plan C St
     registry.register("c1", { capabilities: [] });
     registry.setVisibility("c1", { visible: true, active: "sid-A" });
 
-    assert.equal(svcOff.isSessionVisibleToAnyClient("sid-A"), false);
+    assert.equal(svcOff.isTaskVisibleToAnyClient("sid-A"), false);
   });
 
   it("isEndpointVisible: registry must say visible AND pushService.clients must own the endpoint", () => {
@@ -107,11 +107,11 @@ describe("PushService — visibility reads delegate to ClientRegistry (Plan C St
   it("registry TTL expiry flows through pushService reads", () => {
     registry.register("c1", { capabilities: [] });
     registry.setVisibility("c1", { visible: true, active: "sid-A" });
-    assert.equal(svc.isSessionVisibleToAnyClient("sid-A"), true);
+    assert.equal(svc.isTaskVisibleToAnyClient("sid-A"), true);
 
     // Jump past TTL.
     nowMs += 61_000;
-    assert.equal(svc.isSessionVisibleToAnyClient("sid-A"), false);
+    assert.equal(svc.isTaskVisibleToAnyClient("sid-A"), false);
     assert.equal(svc.hasVisibleClient(), false);
   });
 });

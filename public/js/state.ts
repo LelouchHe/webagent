@@ -1,4 +1,4 @@
-// Shared state, DOM refs, config helpers, routing, session management
+// Shared state, DOM refs, config helpers, routing, task management
 
 import type {
   AgentCommand,
@@ -36,7 +36,7 @@ export const dom = {
   sendBtn: $<HTMLButtonElement>("#send-btn"),
   prompt: $<HTMLSpanElement>("#input-prompt"),
   status: $<HTMLSpanElement>("#status"),
-  sessionInfo: $<HTMLSpanElement>("#session-info"),
+  taskInfo: $<HTMLSpanElement>("#task-info"),
   inboxBtn: $<HTMLButtonElement>("#inbox-btn"),
   inboxCount: $<HTMLSpanElement>("#inbox-count"),
   attachBtn: $<HTMLButtonElement>("#attach-btn"),
@@ -77,35 +77,35 @@ export function setInputValue(v: string): void {
 export const state = {
   eventSource: null as EventSource | null,
   clientId: null as string | null,
-  sessionId: null as string | null,
-  // Monotonic counter incremented by user-initiated session switches (notification
-  // click, /switch). initSession() captures the value before async work and bails
+  taskId: null as string | null,
+  // Monotonic counter incremented by user-initiated task switches (notification
+  // click, /switch). initTask() captures the value before async work and bails
   // out if it changed, preventing stale reconnects from overriding deliberate switches.
-  sessionSwitchGen: 0,
+  taskSwitchGen: 0,
   messageNavigationGen: 0,
-  pendingNavigationSessionId: null as string | null,
+  pendingNavigationTaskId: null as string | null,
   pendingNavigationEvents: [] as AgentEvent[],
-  runtimeHydrationSessionId: null as string | null,
-  sessionCwd: null as string | null,
-  sessionCwdDisplay: null as string | null,
-  sessionTitle: null as string | null,
+  runtimeHydrationTaskId: null as string | null,
+  taskCwd: null as string | null,
+  taskCwdDisplay: null as string | null,
+  taskTitle: null as string | null,
   contextUsage: null as ContextUsage | null,
   inboxCount: 0,
-  awaitingNewSession: false,
-  newSessionRequestInFlight: false,
-  pendingNewSessionOpId: null as string | null,
-  _newSessionRecoveryTimer: null as ReturnType<typeof setTimeout> | null,
+  awaitingNewTask: false,
+  newTaskRequestInFlight: false,
+  pendingNewTaskOpId: null as string | null,
+  _newTaskRecoveryTimer: null as ReturnType<typeof setTimeout> | null,
   configOptions: [] as ConfigOption[],
   agentCommands: [] as AgentCommand[],
   agentCommandsEpoch: null as string | null,
   agentCommandsRevision: 0,
-  // Fallback copies of session.mode / session.model from snapshot. Used by
+  // Fallback copies of task.mode / task.model from snapshot. Used by
   // updateModeUI / updateStatusBar when configOptions is empty (typical after
   // `svc webagent reload` before the lifecycle probe warms the global cache).
   // Written only by setFallbackFromSnapshot (and cleared by clearFallback) —
   // external code must go through getFallback() to read.
-  sessionMode: null as string | null,
-  sessionModel: null as string | null,
+  taskMode: null as string | null,
+  taskModel: null as string | null,
   currentAssistantEl: null as HTMLElement | null,
   currentAssistantText: "",
   pendingFinalAnswerToolText: null as string | null,
@@ -114,7 +114,7 @@ export const state = {
   // pending. MUST be cancelled via cancelAnimationFrame before
   // currentAssistantEl is reassigned or nulled, otherwise the rAF callback
   // will write stale text into a stale element. The finishAssistant() flush
-  // path and resetSessionUI both honor this contract; any new code that
+  // path and resetTaskUI both honor this contract; any new code that
   // clears currentAssistantEl must do the same.
   assistantRafToken: null as number | null,
   currentThinkingEl: null as HTMLElement | null,
@@ -138,13 +138,13 @@ export const state = {
   newTurnStarted: false,
   // Set by sendPrompt to suppress the SSE echo of our own user_message
   // (SSE broadcasts to all clients including the sender, unlike WS which excluded sender)
-  sentMessageForSession: null as string | null,
+  sentMessageForTask: null as string | null,
   sentMessageOpId: null as string | null,
   awaitingOwnUserEcho: false,
   replayedOwnUserEcho: false,
   reconcileAfterOwnUserEcho: false,
   // Set by bash input to suppress the SSE echo of our own bash_command
-  sentBashForSession: null as string | null,
+  sentBashForTask: null as string | null,
   cancelTimeout: 10_000,
   serverVersion: null as string | null,
   agentName: null as string | null,
@@ -168,7 +168,7 @@ export const state = {
   // /share preview mode: when non-null, the input area switches to
   // preview UI (textarea disabled, ^P publish / ^C cancel buttons).
   // Set by createPreview, cleared by publishPreview / cancelPreview.
-  // Lost on refresh / session switch (TTL prunes preview backend-side).
+  // Lost on refresh / task switch (TTL prunes preview backend-side).
   previewToken: null as string | null,
 };
 
@@ -254,20 +254,20 @@ export function updateConfigOptions(newOptions: ConfigOption[]) {
 // (DB-persisted), so updateModeUI/updateStatusBar fall back to snapshot values.
 // Single-writer: only setFallbackFromSnapshot writes these fields.
 export function setFallbackFromSnapshot(snap: {
-  session: { mode?: string | null; model?: string | null };
+  task: { mode?: string | null; model?: string | null };
 }): void {
   // Guard: once configOptions is populated it becomes the single source of
   // truth — don't let a late snapshot overwrite it with stale fallback.
   if (state.configOptions.length > 0) return;
-  state.sessionMode = snap.session.mode ?? null;
-  state.sessionModel = snap.session.model ?? null;
+  state.taskMode = snap.task.mode ?? null;
+  state.taskModel = snap.task.model ?? null;
 }
 export function clearFallback(): void {
-  state.sessionMode = null;
-  state.sessionModel = null;
+  state.taskMode = null;
+  state.taskModel = null;
 }
 export function getFallback(key: "mode" | "model"): string | null {
-  return key === "mode" ? state.sessionMode : state.sessionModel;
+  return key === "mode" ? state.taskMode : state.taskModel;
 }
 
 export function updateModeUI() {
@@ -333,7 +333,7 @@ export function splitDisplayPath(cwd: string): {
 export function updateStatusBar() {
   // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- see updateModeUI
   const model = getStringConfigValue("model") || getFallback("model");
-  const cwd = state.sessionCwdDisplay ?? state.sessionCwd ?? "";
+  const cwd = state.taskCwdDisplay ?? state.taskCwd ?? "";
   const parts: Array<{
     text: string;
     className: string;
@@ -389,10 +389,10 @@ export function updateStatusBar() {
 
 // --- Snapshot / state_patch (client-server-split M1) ---
 
-export interface SessionSnapshot {
+export interface TaskSnapshot {
   version: number;
   seq: number;
-  session: {
+  task: {
     id: string;
     title: string | null;
     cwd: string;
@@ -448,7 +448,7 @@ function applyRuntimePlan(plan: PlanEntry[] | null): void {
  * detected. Resets lastStateSeq to snapshot.seq so subsequent patches are
  * validated against the snapshot baseline.
  */
-export function applySnapshot(snap: SessionSnapshot): void {
+export function applySnapshot(snap: TaskSnapshot): void {
   state.lastStateSeq = snap.seq;
   const busy = snap.runtime.busy;
   if (busy?.promptId) state.currentPromptId = busy.promptId;
@@ -460,7 +460,7 @@ export function applySnapshot(snap: SessionSnapshot): void {
   state.contextUsage = snap.runtime.contextUsage
     ? { ...snap.runtime.contextUsage }
     : null;
-  state.sessionCwdDisplay = snap.session.cwdDisplay ?? snap.session.cwd;
+  state.taskCwdDisplay = snap.task.cwdDisplay ?? snap.task.cwd;
   applyAgentCommandSnapshot(
     snap.agentCommands ?? { epoch: "", revision: 0, commands: [] },
   );
@@ -516,38 +516,36 @@ export function applyStatePatch(patchEvent: {
 }
 
 /**
- * Fetch the authoritative snapshot for a session and apply it. Returns the
- * snapshot (for callers that need session meta like lastEventSeq) or null
+ * Fetch the authoritative snapshot for a task and apply it. Returns the
+ * snapshot (for callers that need task meta like lastEventSeq) or null
  * on failure.
  */
 export async function reloadSnapshot(
-  sessionId: string,
+  taskId: string,
   isStillCurrent?: () => boolean,
-): Promise<SessionSnapshot | null> {
-  const result = await reloadSnapshotResult(sessionId, isStillCurrent);
+): Promise<TaskSnapshot | null> {
+  const result = await reloadSnapshotResult(taskId, isStillCurrent);
   return result.status === "applied" ? result.snapshot : null;
 }
 
 type SnapshotReloadResult =
-  | { status: "applied"; snapshot: SessionSnapshot }
+  | { status: "applied"; snapshot: TaskSnapshot }
   | { status: "superseded" | "stale" | "failed" };
 
 async function reloadSnapshotResult(
-  sessionId: string,
+  taskId: string,
   isStillCurrent?: () => boolean,
 ): Promise<SnapshotReloadResult> {
-  // Capture sessionSwitchGen so an in-flight stale snapshot can be dropped
+  // Capture taskSwitchGen so an in-flight stale snapshot can be dropped
   // when a newer switch bumps the generation before the fetch resolves.
   // Without this guard, an A→B→A rapid switch could see A's slow response
   // clobber B's state because applySnapshot runs unconditionally.
-  const genAtStart = state.sessionSwitchGen;
+  const genAtStart = state.taskSwitchGen;
   const seqAtStart = state.lastStateSeq;
   try {
-    const snap = (await api.getSnapshot(
-      sessionId,
-    )) as unknown as SessionSnapshot;
+    const snap = (await api.getSnapshot(taskId)) as unknown as TaskSnapshot;
     if (
-      state.sessionSwitchGen !== genAtStart ||
+      state.taskSwitchGen !== genAtStart ||
       (isStillCurrent && !isStillCurrent())
     )
       return { status: "stale" };
@@ -562,30 +560,30 @@ async function reloadSnapshotResult(
 }
 
 function takeNavigationStatePatches(
-  sessionId: string,
+  taskId: string,
 ): Array<Extract<AgentEvent, { type: "state_patch" }>> {
   const matching = state.pendingNavigationEvents
     .filter(
       (event): event is Extract<AgentEvent, { type: "state_patch" }> =>
-        event.type === "state_patch" && event.sessionId === sessionId,
+        event.type === "state_patch" && event.taskId === taskId,
     )
     .sort((a, b) => a.seq - b.seq);
   state.pendingNavigationEvents = state.pendingNavigationEvents.filter(
-    (event) => event.type !== "state_patch" || event.sessionId !== sessionId,
+    (event) => event.type !== "state_patch" || event.taskId !== taskId,
   );
   return matching;
 }
 
-function discardNavigationStatePatches(sessionId: string): void {
+function discardNavigationStatePatches(taskId: string): void {
   state.pendingNavigationEvents = state.pendingNavigationEvents.filter(
-    (event) => event.type !== "state_patch" || event.sessionId !== sessionId,
+    (event) => event.type !== "state_patch" || event.taskId !== taskId,
   );
 }
 
 let runtimeHydrationToken = 0;
 
-function applyBufferedStatePatches(sessionId: string): boolean {
-  for (const patch of takeNavigationStatePatches(sessionId)) {
+function applyBufferedStatePatches(taskId: string): boolean {
+  for (const patch of takeNavigationStatePatches(taskId)) {
     if (patch.seq <= state.lastStateSeq) continue;
     if (!applyStatePatch({ seq: patch.seq, patch: patch.patch })) {
       return false;
@@ -605,30 +603,29 @@ function finishRuntimeHydration(): true {
   return true;
 }
 
-export async function hydrateSessionRuntime(
-  sessionId: string,
+export async function hydrateTaskRuntime(
+  taskId: string,
   isStillCurrent?: () => boolean,
 ): Promise<boolean> {
   const hydrationToken = ++runtimeHydrationToken;
-  state.runtimeHydrationSessionId = sessionId;
+  state.runtimeHydrationTaskId = taskId;
   try {
     for (let attempt = 0; attempt < 3; attempt++) {
-      const result = await reloadSnapshotResult(sessionId, isStillCurrent);
+      const result = await reloadSnapshotResult(taskId, isStillCurrent);
       if (result.status === "stale") return false;
       if (result.status === "superseded") {
-        if (applyBufferedStatePatches(sessionId))
-          return finishRuntimeHydration();
+        if (applyBufferedStatePatches(taskId)) return finishRuntimeHydration();
         continue;
       }
       if (result.status === "failed") continue;
-      if (applyBufferedStatePatches(sessionId)) return finishRuntimeHydration();
+      if (applyBufferedStatePatches(taskId)) return finishRuntimeHydration();
     }
     return false;
   } finally {
     if (hydrationToken === runtimeHydrationToken) {
-      state.runtimeHydrationSessionId = null;
-    } else if (state.runtimeHydrationSessionId !== sessionId) {
-      discardNavigationStatePatches(sessionId);
+      state.runtimeHydrationTaskId = null;
+    } else if (state.runtimeHydrationTaskId !== taskId) {
+      discardNavigationStatePatches(taskId);
     }
   }
 }
@@ -647,128 +644,125 @@ export function setBusy(on: boolean) {
   refreshInputActions();
 }
 
-export function requestNewSession({
+export function requestNewTask({
   cwd,
-  inheritFromSessionId = state.sessionId,
-}: { cwd?: string; inheritFromSessionId?: string | null } = {}) {
-  void createNewSessionRequest({ cwd, inheritFromSessionId });
+  inheritFromTaskId = state.taskId,
+}: { cwd?: string; inheritFromTaskId?: string | null } = {}) {
+  void createNewTaskRequest({ cwd, inheritFromTaskId });
 }
 
-export function requestBootstrapSession(): void {
-  void createNewSessionRequest({ bootstrap: true, inheritFromSessionId: null });
+export function requestBootstrapTask(): void {
+  void createNewTaskRequest({ bootstrap: true, inheritFromTaskId: null });
 }
 
-export async function createNewSessionRequest({
+export async function createNewTaskRequest({
   cwd,
-  inheritFromSessionId = state.sessionId,
+  inheritFromTaskId = state.taskId,
   bootstrap = false,
 }: {
   cwd?: string;
-  inheritFromSessionId?: string | null;
+  inheritFromTaskId?: string | null;
   bootstrap?: boolean;
 } = {}): Promise<boolean> {
-  if (state.newSessionRequestInFlight || state.pendingNewSessionOpId)
-    return false;
+  if (state.newTaskRequestInFlight || state.pendingNewTaskOpId) return false;
   invalidateNavigationLoads();
-  state.sessionSwitchGen++;
+  state.taskSwitchGen++;
   state.messageNavigationGen++;
-  const generation = state.sessionSwitchGen;
-  state.pendingNavigationSessionId = null;
+  const generation = state.taskSwitchGen;
+  state.pendingNavigationTaskId = null;
   state.pendingNavigationEvents = [];
-  state.runtimeHydrationSessionId = null;
-  state.awaitingNewSession = true;
-  state.newSessionRequestInFlight = true;
+  state.runtimeHydrationTaskId = null;
+  state.awaitingNewTask = true;
+  state.newTaskRequestInFlight = true;
   const clientOpId = api.newOpId();
-  state.pendingNewSessionOpId = clientOpId;
+  state.pendingNewTaskOpId = clientOpId;
   try {
-    const session = bootstrap
-      ? await api.bootstrapSession(clientOpId)
-      : await api.createSession({ cwd, inheritFromSessionId }, clientOpId);
-    state.newSessionRequestInFlight = false;
-    if (generation !== state.sessionSwitchGen) {
-      if (state.pendingNewSessionOpId === clientOpId) {
-        finishNewSessionRequest();
+    const task = bootstrap
+      ? await api.bootstrapTask(clientOpId)
+      : await api.createTask({ cwd, inheritFromTaskId }, clientOpId);
+    state.newTaskRequestInFlight = false;
+    if (generation !== state.taskSwitchGen) {
+      if (state.pendingNewTaskOpId === clientOpId) {
+        finishNewTaskRequest();
       }
       return false;
     }
-    if (typeof session.id !== "string") {
-      throw new Error("Session create response is missing an id");
+    if (typeof task.id !== "string") {
+      throw new Error("Task create response is missing an id");
     }
-    confirmedNewSessionOps.delete(clientOpId);
-    finishNewSessionRequest();
-    createdSessionActivator(session);
+    confirmedNewTaskOps.delete(clientOpId);
+    finishNewTaskRequest();
+    createdTaskActivator(task);
     return true;
   } catch {
-    if (confirmedNewSessionOps.delete(clientOpId)) return true;
+    if (confirmedNewTaskOps.delete(clientOpId)) return true;
     if (
-      generation === state.sessionSwitchGen &&
-      state.pendingNewSessionOpId === clientOpId
+      generation === state.taskSwitchGen &&
+      state.pendingNewTaskOpId === clientOpId
     ) {
-      // The server broadcasts session_created before writing the HTTP
+      // The server broadcasts task_created before writing the HTTP
       // response. Keep ownership briefly so that matching SSE can recover
       // an ambiguously committed create whose response was interrupted.
       return await new Promise<boolean>((resolve) => {
-        newSessionConfirmationWaiters.set(clientOpId, resolve);
-        state._newSessionRecoveryTimer = setTimeout(() => {
-          newSessionConfirmationWaiters.delete(clientOpId);
-          if (state.pendingNewSessionOpId === clientOpId) {
-            state.pendingNewSessionOpId = null;
-            if (generation === state.sessionSwitchGen) {
-              state.awaitingNewSession = false;
+        newTaskConfirmationWaiters.set(clientOpId, resolve);
+        state._newTaskRecoveryTimer = setTimeout(() => {
+          newTaskConfirmationWaiters.delete(clientOpId);
+          if (state.pendingNewTaskOpId === clientOpId) {
+            state.pendingNewTaskOpId = null;
+            if (generation === state.taskSwitchGen) {
+              state.awaitingNewTask = false;
             }
           }
-          state._newSessionRecoveryTimer = null;
+          state._newTaskRecoveryTimer = null;
           resolve(false);
         }, 3000);
       });
     }
     return false;
   } finally {
-    state.newSessionRequestInFlight = false;
+    state.newTaskRequestInFlight = false;
     if (
-      generation !== state.sessionSwitchGen &&
-      state.pendingNewSessionOpId === clientOpId
+      generation !== state.taskSwitchGen &&
+      state.pendingNewTaskOpId === clientOpId
     ) {
-      finishNewSessionRequest();
+      finishNewTaskRequest();
     }
   }
 }
 
-const confirmedNewSessionOps = new Set<string>();
-const newSessionConfirmationWaiters = new Map<
+const confirmedNewTaskOps = new Set<string>();
+const newTaskConfirmationWaiters = new Map<
   string,
   (confirmed: boolean) => void
 >();
 
-export function finishNewSessionRequest(confirmedOpId?: string): void {
+export function finishNewTaskRequest(confirmedOpId?: string): void {
   if (confirmedOpId) {
-    const waiter = newSessionConfirmationWaiters.get(confirmedOpId);
+    const waiter = newTaskConfirmationWaiters.get(confirmedOpId);
     if (waiter) {
-      newSessionConfirmationWaiters.delete(confirmedOpId);
+      newTaskConfirmationWaiters.delete(confirmedOpId);
       waiter(true);
     } else {
-      confirmedNewSessionOps.add(confirmedOpId);
+      confirmedNewTaskOps.add(confirmedOpId);
     }
   } else {
-    confirmedNewSessionOps.clear();
-    for (const waiter of newSessionConfirmationWaiters.values()) waiter(false);
-    newSessionConfirmationWaiters.clear();
+    confirmedNewTaskOps.clear();
+    for (const waiter of newTaskConfirmationWaiters.values()) waiter(false);
+    newTaskConfirmationWaiters.clear();
   }
-  if (state._newSessionRecoveryTimer != null) {
-    clearTimeout(state._newSessionRecoveryTimer);
-    state._newSessionRecoveryTimer = null;
+  if (state._newTaskRecoveryTimer != null) {
+    clearTimeout(state._newTaskRecoveryTimer);
+    state._newTaskRecoveryTimer = null;
   }
-  state.pendingNewSessionOpId = null;
-  state.newSessionRequestInFlight = false;
+  state.pendingNewTaskOpId = null;
+  state.newTaskRequestInFlight = false;
 }
 
-let createdSessionActivator: (
-  session: Record<string, unknown>,
-) => void = () => {};
-export function setCreatedSessionActivator(
-  fn: (session: Record<string, unknown>) => void,
+let createdTaskActivator: (task: Record<string, unknown>) => void = () => {};
+export function setCreatedTaskActivator(
+  fn: (task: Record<string, unknown>) => void,
 ): void {
-  createdSessionActivator = fn;
+  createdTaskActivator = fn;
 }
 
 let navigationLoadInvalidator: () => void = () => {};
@@ -780,9 +774,9 @@ function invalidateNavigationLoads(): void {
   navigationLoadInvalidator();
 }
 
-// Modules can register cleanup functions to run on session reset (avoids circular imports)
+// Modules can register cleanup functions to run on task reset (avoids circular imports)
 const resetHooks: (() => void)[] = [];
-export function onSessionReset(hook: () => void) {
+export function onTaskReset(hook: () => void) {
   resetHooks.push(hook);
 }
 
@@ -796,7 +790,7 @@ export function refreshInputActions(): void {
   inputActionsRefresher();
 }
 
-export function resetSessionUI({
+export function resetTaskUI({
   preserveNavigationTarget = false,
 }: { preserveNavigationTarget?: boolean } = {}) {
   for (const hook of resetHooks) hook();
@@ -824,7 +818,7 @@ export function resetSessionUI({
   state.pendingPromptDone = false;
   state.turnEnded = false;
   // Ids come from one per-process counter, so one left over from another
-  // session can never match the new one's and would drop every terminator.
+  // task can never match the new one's and would drop every terminator.
   state.currentPromptId = null;
   state.newTurnStarted = false;
   state.sentMessageOpId = null;
@@ -841,8 +835,8 @@ export function resetSessionUI({
   state.loadingOlderEvents = false;
   state.replayInProgress = false;
   state.replayQueue = [];
-  if (!preserveNavigationTarget) state.pendingNavigationSessionId = null;
-  // Clear preview mode on session reset — preview is per-session and lost
+  if (!preserveNavigationTarget) state.pendingNavigationTaskId = null;
+  // Clear preview mode on task reset — preview is per-task and lost
   // by design when switching/resetting (TTL cleans backend).
   state.previewToken = null;
   dom.attachPreview.innerHTML = "";
@@ -853,35 +847,35 @@ export function resetSessionUI({
   // was just cleared so this collapses preview-mode → default in one go.
   updateModeUI();
   setBusy(false);
-  // Clear session metadata so stale title/model don't linger on switch failure
-  state.sessionTitle = null;
-  state.sessionCwd = null;
-  state.sessionCwdDisplay = null;
+  // Clear task metadata so stale title/model don't linger on switch failure
+  state.taskTitle = null;
+  state.taskCwd = null;
+  state.taskCwdDisplay = null;
   state.contextUsage = null;
   state.configOptions = [];
   state.agentCommands = [];
   state.agentCommandsEpoch = null;
   state.agentCommandsRevision = 0;
   clearFallback();
-  updateSessionInfo(null, null);
+  updateTaskInfo(null, null);
   dom.statusBar.textContent = "";
 }
 
 // Send cancel without UI side-effect — callers add their own feedback.
-// The backend (session-state.ts `armCancelSafety`) owns the safety net that
+// The backend (task-state.ts `armCancelSafety`) owns the safety net that
 // marks the request unconfirmed if the agent does not acknowledge it within
 // the configured timeout; the resulting `state_patch` lands here via SSE.
 export async function sendCancel(
   options: { force?: boolean } = {},
 ): Promise<api.CancelResult | null> {
-  if ((!state.busy && !options.force) || !state.sessionId) return null;
-  const sessionId = state.sessionId;
+  if ((!state.busy && !options.force) || !state.taskId) return null;
+  const taskId = state.taskId;
   const stateSeq = state.lastStateSeq;
   state.cancelStatus = "requested";
   refreshInputActions();
   try {
-    const result = await api.cancelSession(sessionId);
-    if (state.sessionId === sessionId && state.lastStateSeq === stateSeq) {
+    const result = await api.cancelTask(taskId);
+    if (state.taskId === taskId && state.lastStateSeq === stateSeq) {
       if (result.status === "idle" || result.status === "cancelled") {
         setBusy(false);
       } else if (result.status === "superseded") {
@@ -891,7 +885,7 @@ export async function sendCancel(
     }
     return result;
   } catch (err) {
-    if (state.sessionId === sessionId && state.lastStateSeq === stateSeq) {
+    if (state.taskId === taskId && state.lastStateSeq === stateSeq) {
       state.cancelStatus = null;
       refreshInputActions();
     }
@@ -908,12 +902,12 @@ export function clearCancelTimer() {
 
 // --- Hash routing ---
 
-export function getHashSessionId(): string | null {
+export function getHashTaskId(): string | null {
   const h = location.hash.slice(1);
   return h || null;
 }
 
-export function setHashSessionId(id: string) {
+export function setHashTaskId(id: string) {
   if (id === "root") {
     const url = new URL(location.href);
     url.hash = "";
@@ -923,8 +917,8 @@ export function setHashSessionId(id: string) {
   history.replaceState(null, "", `#${id}`);
 }
 
-export function updateSessionInfo(id: string | null, title: string | null) {
-  dom.sessionInfo.textContent = title ?? (id ? id.slice(0, 8) + "…" : "");
+export function updateTaskInfo(id: string | null, title: string | null) {
+  dom.taskInfo.textContent = title ?? (id ? id.slice(0, 8) + "…" : "");
   document.title = title ?? ">_";
 }
 

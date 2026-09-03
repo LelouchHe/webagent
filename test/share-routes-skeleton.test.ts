@@ -87,23 +87,23 @@ describe("handleShareRoutes skeleton", () => {
     assert.equal(m.status(), 410);
   });
 
-  it("enabled: claims /api/v1/sessions/:id/share POST (now implemented)", async () => {
+  it("enabled: claims /api/v1/tasks/:id/share POST (now implemented)", async () => {
     const m = mockRes();
     const handled = await handleShareRoutes(
-      mockReq("/api/v1/sessions/s1/share", "POST"),
+      mockReq("/api/v1/tasks/s1/share", "POST"),
       m.res,
       { store, config: enabledCfg },
     );
     assert.equal(handled, true);
-    // POST /share is the real route (C2); session 's1' doesn't exist in the
+    // POST /share is the real route (C2); task 's1' doesn't exist in the
     // skeleton fixture, so we expect 404 — but the point of this test is
     // route-claim, not behavior.
   });
 
-  it("enabled: claims /api/v1/sessions/:id/share/publish", async () => {
+  it("enabled: claims /api/v1/tasks/:id/share/publish", async () => {
     const m = mockRes();
     const handled = await handleShareRoutes(
-      mockReq("/api/v1/sessions/s1/share/publish", "POST"),
+      mockReq("/api/v1/tasks/s1/share/publish", "POST"),
       m.res,
       { store, config: enabledCfg },
     );
@@ -128,9 +128,9 @@ describe("handleShareRoutes skeleton", () => {
 
   it("enabled: does NOT intercept existing routes", async () => {
     for (const url of [
-      "/api/v1/sessions",
-      "/api/v1/sessions/s1",
-      "/api/v1/sessions/s1/events",
+      "/api/v1/tasks",
+      "/api/v1/tasks/s1",
+      "/api/v1/tasks/s1/events",
       "/api/v1/config",
       "/index.html",
       "/",
@@ -145,10 +145,10 @@ describe("handleShareRoutes skeleton", () => {
   });
 
   // Guard against substring false-positives.
-  it("enabled: does NOT intercept /api/v1/sessions/:id/sharefoo (not a share route)", async () => {
+  it("enabled: does NOT intercept /api/v1/tasks/:id/sharefoo (not a share route)", async () => {
     const m = mockRes();
     const handled = await handleShareRoutes(
-      mockReq("/api/v1/sessions/s1/sharefoo"),
+      mockReq("/api/v1/tasks/s1/sharefoo"),
       m.res,
       { store, config: enabledCfg },
     );

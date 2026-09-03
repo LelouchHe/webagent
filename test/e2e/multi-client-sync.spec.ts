@@ -1,22 +1,22 @@
 import { test, expect } from "playwright/test";
 import {
   createNewSession,
-  currentSessionId,
+  currentTaskId,
   gotoConnected,
   sendPrompt,
 } from "./helpers.ts";
 
-test("messages and assistant replies sync across two clients in the same session", async ({
+test("messages and assistant replies sync across two clients in the same task", async ({
   browser,
 }) => {
   const pageA = await browser.newPage();
   const pageB = await browser.newPage();
 
   await gotoConnected(pageA);
-  const sessionId = await createNewSession(pageA);
+  const taskId = await createNewSession(pageA);
 
-  await gotoConnected(pageB, `/#${sessionId}`);
-  await expect.poll(() => currentSessionId(pageB)).toBe(sessionId);
+  await gotoConnected(pageB, `/#${taskId}`);
+  await expect.poll(() => currentTaskId(pageB)).toBe(taskId);
 
   await sendPrompt(pageA, "sync this message");
 

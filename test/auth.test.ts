@@ -198,21 +198,21 @@ describe("reSignAttachmentUrlsInJson", () => {
   const secret = Buffer.from("a".repeat(64), "hex");
 
   it("re-signs a bare image URL inside JSON string", () => {
-    const json = '{"path":"/api/v1/sessions/abc/attachments/123.png"}';
+    const json = '{"path":"/api/v1/tasks/abc/attachments/123.png"}';
     const out = reSignAttachmentUrlsInJson(json, secret, 3600);
     assert.match(out, /\?exp=\d+&sig=[a-f0-9]+/);
   });
 
   it("re-signs an already-signed URL with fresh exp/sig", () => {
     const json =
-      '{"u":"/api/v1/sessions/x/attachments/foo.png?exp=1&sig=deadbeef"}';
+      '{"u":"/api/v1/tasks/x/attachments/foo.png?exp=1&sig=deadbeef"}';
     const out = reSignAttachmentUrlsInJson(json, secret, 3600);
     assert.doesNotMatch(out, /exp=1&sig=deadbeef/);
     assert.match(out, /\?exp=\d{10,}&sig=[a-f0-9]+/);
   });
 
   it("leaves unrelated URLs untouched", () => {
-    const json = '{"a":"/api/v1/sessions/x","b":"/foo/bar"}';
+    const json = '{"a":"/api/v1/tasks/x","b":"/foo/bar"}';
     const out = reSignAttachmentUrlsInJson(json, secret, 3600);
     assert.equal(out, json);
   });
@@ -220,8 +220,8 @@ describe("reSignAttachmentUrlsInJson", () => {
   it("handles multiple images in one payload", () => {
     const json = JSON.stringify({
       images: [
-        { path: "/api/v1/sessions/s1/attachments/a.png" },
-        { path: "/api/v1/sessions/s1/attachments/b.jpg" },
+        { path: "/api/v1/tasks/s1/attachments/a.png" },
+        { path: "/api/v1/tasks/s1/attachments/b.jpg" },
       ],
     });
     const out = reSignAttachmentUrlsInJson(json, secret, 3600);

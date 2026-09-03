@@ -1,11 +1,11 @@
 import { test, expect } from "playwright/test";
-import { currentSessionId, gotoConnected, sendPrompt } from "./helpers.ts";
+import { currentTaskId, gotoConnected, sendPrompt } from "./helpers.ts";
 
 test("cold Message notification intent consumes and switches after startup", async ({
   page,
 }) => {
   await gotoConnected(page);
-  const sourceSessionId = await currentSessionId(page);
+  const sourceTaskId = await currentTaskId(page);
   await sendPrompt(page, "/model mock model 2");
   await expect(page.locator("#messages")).toContainText("Model → Mock Model 2");
 
@@ -26,7 +26,7 @@ test("cold Message notification intent consumes and switches after startup", asy
 
   await page.goto(`/?message=${encodeURIComponent(messageId)}`);
 
-  await expect.poll(() => currentSessionId(page)).not.toBe(sourceSessionId);
+  await expect.poll(() => currentTaskId(page)).not.toBe(sourceTaskId);
   await expect(page).not.toHaveURL(/message=/);
   await expect(page.locator("#messages")).toContainText("Cold notification");
   await sendPrompt(page, "/model");

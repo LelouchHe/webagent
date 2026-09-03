@@ -15,10 +15,10 @@ import { ClientRegistry } from "../src/client-registry.ts";
  * the matching push tag so stale banners on other devices disappear.
  *
  * Covered signals:
- *   1. Permission response (POST /sessions/:id/permissions/:reqId)
+ *   1. Permission response (POST /tasks/:id/permissions/:reqId)
  *        → sendClose("sess-<sid>-perm-<requestId>")
- *   2. Client visibility → viewing session X
- *        → sendClose("sess-<sid>-done") AND perm tags of that session's
+ *   2. Client visibility → viewing task X
+ *        → sendClose("sess-<sid>-done") AND perm tags of that task's
  *          pending permissions.
  *
  * Bash close is intentionally NOT server-side: the SW handles it on render
@@ -72,13 +72,13 @@ describe("acp-push-close: handled signals fire sendClose", () => {
   let registry: ClientRegistry;
   let server: http.Server;
   let port: number;
-  let sessionId: string;
-  let sessionManager: {
+  let taskId: string;
+  let taskManager: {
     pendingPermissions: Map<
       string,
       {
         requestId: string;
-        sessionId: string;
+        taskId: string;
         options: { optionId: string; label: string }[];
         title: string;
       }
@@ -107,14 +107,14 @@ describe("acp-push-close: handled signals fire sendClose", () => {
     writeFileSync(join(publicDir, "index.html"), "<h1>t</h1>");
     store = new Store(tmpDir, "test-agent");
     registry = new ClientRegistry();
-    sessionId = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
-    store.createSession(sessionId, "/tmp");
+    taskId = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+    store.createTask(taskId, "/tmp");
     push = new SpyPushService(store, tmpDir, "mailto:test@example.com", {
       clientRegistry: registry,
     });
 
     bridgeCalls = [];
-    sessionManager = {
+    taskManager = {
       pendingPermissions: new Map(),
       syncPendingPermissions: () => {},
       flushBuffers: () => {},
@@ -129,9 +129,9 @@ describe("acp-push-close: handled signals fire sendClose", () => {
       limits: { bash_output: 1_048_576, image_upload: 10_485_760 },
       pushService: push,
       clientRegistry: registry,
-      sessions: sessionManager as unknown as Parameters<
+      tasks: taskManager as unknown as Parameters<
         typeof createRequestHandler
-      >[0]["sessions"],
+      >[0]["tasks"],
       getBridge: () =>
         ({
           resolvePermission: (requestId: string, optionId: string) =>
@@ -161,9 +161,9 @@ describe("acp-push-close: handled signals fire sendClose", () => {
 
   it("permission response fires sendClose(sess-<sid>-perm-<requestId>)", async () => {
     const requestId = "req-abc";
-    sessionManager.pendingPermissions.set(requestId, {
+    taskManager.pendingPermissions.set(requestId, {
       requestId,
-      sessionId,
+      taskId,
       title: "Run ls?",
       options: [
         { optionId: "allow_once", label: "Allow" },
@@ -174,20 +174,20 @@ describe("acp-push-close: handled signals fire sendClose", () => {
     const r = await send(
       port,
       "POST",
-      `/api/v1/sessions/${sessionId}/permissions/${requestId}`,
+      `/api/v1/tasks/${taskId}/permissions/${requestId}`,
       {
         optionId: "allow_once",
       },
     );
     assert.equal(r.status, 200);
-    assert.deepEqual(push.closes, [`sess-${sessionId}-perm-${requestId}`]);
+    assert.deepEqual(push.closes, [`sess-${taskId}-perm-${requestId}`]);
   });
 
   it("permission deny also fires sendClose", async () => {
     const requestId = "req-xyz";
-    sessionManager.pendingPermissions.set(requestId, {
+    taskManager.pendingPermissions.set(requestId, {
       requestId,
-      sessionId,
+      taskId,
       title: "Run rm?",
       options: [{ optionId: "deny", label: "Deny" }],
     });
@@ -195,24 +195,24 @@ describe("acp-push-close: handled signals fire sendClose", () => {
     const r = await send(
       port,
       "POST",
-      `/api/v1/sessions/${sessionId}/permissions/${requestId}`,
+      `/api/v1/tasks/${taskId}/permissions/${requestId}`,
       {
         denied: true,
       },
     );
     assert.equal(r.status, 200);
-    assert.deepEqual(push.closes, [`sess-${sessionId}-perm-${requestId}`]);
+    assert.deepEqual(push.closes, [`sess-${taskId}-perm-${requestId}`]);
   });
 
-  it("client visibility → viewing session closes prompt-done + pending perms for that session", async () => {
+  it("client visibility → viewing task closes prompt-done + pending perms for that task", async () => {
     const clientId = "client-1";
     const pendingPerm = {
       requestId: "req-pending",
-      sessionId,
+      taskId,
       title: "Pending",
       options: [{ optionId: "deny", label: "Deny" }],
     };
-    sessionManager.pendingPermissions.set("req-pending", pendingPerm);
+    taskManager.pendingPermissions.set("req-pending", pendingPerm);
 
     addFakeSseClient(clientId);
     push.registerClient(clientId, "https://push.example.com/1");
@@ -223,22 +223,22 @@ describe("acp-push-close: handled signals fire sendClose", () => {
       `/api/beta/clients/${clientId}/visibility`,
       {
         visible: true,
-        sessionId,
+        taskId,
       },
     );
     assert.equal(r.status, 200);
 
     assert.ok(
-      push.closes.includes(`sess-${sessionId}-done`),
+      push.closes.includes(`sess-${taskId}-done`),
       `expected done close, got ${JSON.stringify(push.closes)}`,
     );
     assert.ok(
-      push.closes.includes(`sess-${sessionId}-perm-req-pending`),
+      push.closes.includes(`sess-${taskId}-perm-req-pending`),
       `expected pending perm close, got ${JSON.stringify(push.closes)}`,
     );
   });
 
-  it("visibility false does NOT fire session closes", async () => {
+  it("visibility false does NOT fire task closes", async () => {
     const clientId = "client-2";
     addFakeSseClient(clientId);
     push.registerClient(clientId, "https://push.example.com/2");
@@ -248,14 +248,14 @@ describe("acp-push-close: handled signals fire sendClose", () => {
       `/api/beta/clients/${clientId}/visibility`,
       {
         visible: false,
-        sessionId,
+        taskId,
       },
     );
     assert.equal(r.status, 200);
     assert.deepEqual(push.closes, []);
   });
 
-  it("visibility without sessionId does NOT fire any close", async () => {
+  it("visibility without taskId does NOT fire any close", async () => {
     const clientId = "client-3";
     addFakeSseClient(clientId);
     push.registerClient(clientId, "https://push.example.com/3");
@@ -276,27 +276,27 @@ describe("acp-push-close: handled signals fire sendClose", () => {
     addFakeSseClient(clientId);
     push.registerClient(clientId, "https://push.example.com/edge");
 
-    // First transition: visible:true + sessionId = edge → one sendClose.
+    // First transition: visible:true + taskId = edge → one sendClose.
     let r = await send(
       port,
       "POST",
       `/api/beta/clients/${clientId}/visibility`,
       {
         visible: true,
-        sessionId,
+        taskId,
       },
     );
     assert.equal(r.status, 200);
     const afterEdge = push.closes.length;
     assert.ok(afterEdge >= 1, `expected ≥1 close on edge, got ${afterEdge}`);
 
-    // Five heartbeat refreshes (same visible:true, same sessionId preserved)
+    // Five heartbeat refreshes (same visible:true, same taskId preserved)
     // must produce ZERO additional sendClose. This is what the previous
     // design got wrong — it would re-close banners every 15s on every device.
     for (let i = 0; i < 5; i++) {
       r = await send(port, "POST", `/api/beta/clients/${clientId}/visibility`, {
         visible: true,
-        sessionId,
+        taskId,
       });
       assert.equal(r.status, 200);
     }
@@ -307,34 +307,34 @@ describe("acp-push-close: handled signals fire sendClose", () => {
     );
   });
 
-  it("POST without sessionId key preserves previously-set session", async () => {
+  it("POST without taskId key preserves previously-set task", async () => {
     const clientId = "client-preserve";
     addFakeSseClient(clientId);
     push.registerClient(clientId, "https://push.example.com/p");
 
     await send(port, "POST", `/api/beta/clients/${clientId}/visibility`, {
       visible: true,
-      sessionId,
+      taskId,
     });
-    // Omit sessionId key entirely → preserve.
+    // Omit taskId key entirely → preserve.
     await send(port, "POST", `/api/beta/clients/${clientId}/visibility`, {
       visible: true,
     });
-    assert.equal(registry.get(clientId)?.active, sessionId);
+    assert.equal(registry.get(clientId)?.active, taskId);
   });
 
-  it("POST with sessionId:null explicitly clears the session", async () => {
+  it("POST with taskId:null explicitly clears the task", async () => {
     const clientId = "client-clear";
     addFakeSseClient(clientId);
     push.registerClient(clientId, "https://push.example.com/cl");
 
     await send(port, "POST", `/api/beta/clients/${clientId}/visibility`, {
       visible: true,
-      sessionId,
+      taskId,
     });
     await send(port, "POST", `/api/beta/clients/${clientId}/visibility`, {
       visible: true,
-      sessionId: null,
+      taskId: null,
     });
     assert.equal(registry.get(clientId)?.active, null);
   });

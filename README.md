@@ -5,21 +5,21 @@
 
 A terminal-style web UI for [ACP](https://agentclientprotocol.com/)-compatible agents — Copilot CLI, Claude Code, Gemini CLI, and [more](docs/configuration.md#acp-compatible-agents).
 
-WebAgent is a thin browser client + Node.js server that lets you drive any ACP agent from a desktop browser, phone, or PWA. Sessions, permissions, and notifications stay in sync across devices; nothing leaves your machine.
+WebAgent is a thin browser client + Node.js server that lets you drive any ACP agent from a desktop browser, phone, or PWA. Tasks, permissions, and notifications stay in sync across devices; nothing leaves your machine.
 
 ## Highlights
 
 - **Zero-config first run** — `npx @lelouchhe/webagent` and you're online. Auto-detects the ACP agent on your `PATH`, mints an admin token on first start, persists everything in `./data/`.
-- **Multi-device, real-time** — REST + SSE keeps sessions, permissions, and bash output synced. Approve a permission on your laptop, see it confirmed on your phone.
-- **Web Push notifications** — Get pinged on `prompt_done`, `permission_request`, or `bash_done` when the tab isn't focused. Smart per-session suppression: if any device is actively viewing session X, no buzz from session X.
+- **Multi-device, real-time** — REST + SSE keeps tasks, permissions, and bash output synced. Approve a permission on your laptop, see it confirmed on your phone.
+- **Web Push notifications** — Get pinged on `prompt_done`, `permission_request`, or `bash_done` when the tab isn't focused. Smart per-task suppression: if any device is actively viewing task X, no buzz from task X.
 - **PWA + mobile-friendly** — Installable to iOS / Android home screen. Mobile-first input, attach via paste/upload, dark-mode native.
 - **Attachments** — Drag, paste, or `^U` any file (images, code, PDFs, …). Server sniffs real MIME from content, so agents reliably read it.
 - **Local file viewer** — `/view` browses arbitrary local paths and renders Markdown, highlighted code/text, and images; mobile opens full-screen while desktop keeps chat in a split pane.
-- **Inline bash** — `!ls -la` runs directly in your session's cwd, output streams in real time, cancellable.
-- **Sessions that survive everything** — SQLite-persisted history, auto-resume on page open, auto-restore via ACP `loadSession` after server restart, auto-generated titles via a fast model.
+- **Inline bash** — `!ls -la` runs directly in your task's cwd, output streams in real time, cancellable.
+- **Tasks that survive everything** — SQLite-persisted history, auto-resume on page open, auto-restore via ACP `loadTask` after server restart, auto-generated titles via a fast model.
 - **Faithful ACP completion status** — standard `cancelled`, `max_tokens`, `max_turn_requests`, and `refusal` outcomes are shown as system notices; prompt errors are displayed and persisted without becoming assistant messages.
 - **Rich slash menu** — `/new`, `/switch`, `/view`, `/model`, `/mode`, `/think`, `/notify`, `/inbox`, `/share`, `/token`, `/log` — autocomplete with Tab, submenus for pickable values.
-- **Public share links** — `/share` snapshots a session into a sanitized read-only viewer at `/s/<token>` for show-and-tell.
+- **Public share links** — `/share` snapshots a task into a sanitized read-only viewer at `/s/<token>` for show-and-tell.
 - **Daemon mode with crash recovery** — `webagent start` runs as a background service with PID file, log rotation, and exponential-backoff restart on crash.
 - **Built-in security** — Bearer token auth, per-device tokens, signed image URLs, strict CSP, single-operator threat model.
 
@@ -92,7 +92,7 @@ The frontend is a standard browser client that talks to the server over REST + S
 | -------------------- | ----------------------------------------------------------- |
 | `routes.ts`          | REST API + static files ([full API reference](docs/api.md)) |
 | `event-handler.ts`   | ACP event routing → SSE broadcast                           |
-| `session-manager.ts` | Session state, buffers, bash processes                      |
+| `task-manager.ts` | Task state, buffers, bash processes                      |
 | `bridge.ts`          | ACP bridge — agent subprocess lifecycle                     |
 | `store.ts`           | SQLite persistence (WAL mode)                               |
 | `daemon.ts`          | Background service with crash recovery                      |
@@ -105,7 +105,7 @@ Frontend source lives in `public/js/*.ts`, bundled by esbuild into a single cont
 
 | Document                                                | Contents                                                                       |
 | ------------------------------------------------------- | ------------------------------------------------------------------------------ |
-| **[Features](docs/features.md)**                        | Chat, attachments, bash, sessions, slash commands, keyboard shortcuts, themes  |
+| **[Features](docs/features.md)**                        | Chat, attachments, bash, tasks, slash commands, keyboard shortcuts, themes  |
 | **[Configuration & Operations](docs/configuration.md)** | TOML config, daemon commands, agent setup, upgrading                           |
 | **[Security](docs/security.md)**                        | Bearer auth, token storage, SSE ticket, signed image URLs, CSP, data layout    |
 | **[API Reference](docs/api.md)**                        | REST endpoints, SSE events, implementation details                             |
@@ -115,7 +115,7 @@ Frontend source lives in `public/js/*.ts`, bundled by esbuild into a single cont
 | **[Streaming Render Performance](docs/performance.md)** | rAF coalescing, incremental lex, per-block memo, single-token fast path        |
 | **[Slash Menu](docs/slash-menu.md)**                    | Walker pipeline, `CmdNode` tree, Tab/Enter/Click contract, how to add commands |
 | **[Messages / Inbox](docs/messages.md)**                | `/inbox` slash command, POST ingress, bound vs unbound messages                |
-| **[Share Links](docs/share.md)**                        | Public read-only session snapshots via `/share` + `/s/<token>`                 |
+| **[Share Links](docs/share.md)**                        | Public read-only task snapshots via `/share` + `/s/<token>`                 |
 | **[Database Schema](docs/schema.md)**                   | SQLite tables, indexes, FK policy, cascade/lifecycle rules, migrations         |
 | **[Development](docs/development.md)**                  | Building from source, dev mode, testing, publishing                            |
 | **[Implementation Invariants](docs/implementation-invariants.md)** | Runtime, security, protocol, frontend, browser, and platform constraints |

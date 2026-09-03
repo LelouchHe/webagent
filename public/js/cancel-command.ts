@@ -3,7 +3,7 @@ import { addSystem } from "./render.ts";
 
 /** Cancel against server-authoritative state, even when the local busy flag is stale. */
 export function requestAuthoritativeCancel(): void {
-  if (!state.sessionId) {
+  if (!state.taskId) {
     addSystem("Nothing to cancel.");
     return;
   }
