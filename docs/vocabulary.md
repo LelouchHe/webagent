@@ -75,12 +75,12 @@ The historical term "WebAgent Session" is **obsolete**; it means `task`.
   (e.g. `rotateAgentSession` rotates an ACP binding). Identifiers whose
   primary subject is the product entity must become `task` (e.g.
   `clearSession` → `clearTask`).
-- **The on-disk attachment directory `<data_dir>/sessions/<sid>/`** (and
-  the same name in code comments/tests that refer to it) keeps the legacy
-  name on purpose: persisted `realpath` rows in the `attachments` table
-  point into it, so renaming would orphan live files. This is a data-path
-  exception, not a vocabulary one; new code must not introduce new uses of
-  `sessions` for product concepts.
+- The attachment data directory is **`<data_dir>/tasks/<sid>/`** — it
+  follows the rename. A one-time boot migration
+  (`Store.migrateAttachmentsDataDir`) moves a pre-rename
+  `<data_dir>/sessions/` directory to `tasks/` and rewrites persisted
+  `attachments.realpath` rows; it is idempotent and runs before the
+  server starts listening.
 
 ## Prose and UI rules
 

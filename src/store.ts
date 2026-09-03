@@ -1,5 +1,6 @@
 import Database from "better-sqlite3";
-import { mkdirSync } from "node:fs";
+import { log } from "./log.ts";
+import { existsSync, mkdirSync, renameSync } from "node:fs";
 import { join } from "node:path";
 
 export const ROOT_TASK_ID = "root";
@@ -148,11 +149,13 @@ export interface AttachmentInput {
 
 export class Store {
   private readonly db: Database.Database;
+  private readonly dataDir: string;
   readonly agentKey: string;
 
   constructor(dataDir: string, agentKey: string) {
     if (!agentKey) throw new Error("agentKey is required");
     this.agentKey = agentKey;
+    this.dataDir = dataDir;
     mkdirSync(dataDir, { recursive: true });
     this.db = new Database(join(dataDir, "webagent.db"));
     this.db.pragma("journal_mode = WAL");
@@ -209,6 +212,53 @@ export class Store {
       `);
     } finally {
       this.db.pragma("foreign_keys = OFF");
+    }
+  }
+
+  /**
+   * Vocabulary migration companion (2026-09-04): the attachment data
+   * directory follows the rename. Pre-rename installs stored files under
+   * `<data_dir>/sessions/<sid>/attachments/` and `attachments.realpath`
+   * rows reference them. On first boot after the rename we move the
+   * directory (nothing is served yet — the server has not started
+   * listening) and rewrite the persisted realpaths so attachment reads,
+   * shares, and cleanup resolve under `<data_dir>/tasks/`.
+   *
+   * Idempotent: skips when `sessions/` is already gone; the realpath
+   * rewrite is a no-op when no row matches. The directory move and the
+   * SQL update are intentionally not cross-atomic (fs vs SQLite); a
+   * partial failure is logged loudly so an operator can finish by hand.
+   */
+  private migrateAttachmentsDataDir(): void {
+    const oldDir = join(this.dataDir, "sessions");
+    const newDir = join(this.dataDir, "tasks");
+    let moved = false;
+    try {
+      if (existsSync(oldDir) && !existsSync(newDir)) {
+        renameSync(oldDir, newDir);
+        moved = true;
+      } else if (existsSync(oldDir) && existsSync(newDir)) {
+        // Both present: prefer the new one and leave the old for the
+        // operator to review; do not delete data silently.
+        moved = false;
+      }
+    } catch (err) {
+      throw new Error(
+        `attachment data dir migration failed (${oldDir} → ${newDir}): ${err instanceof Error ? err.message : String(err)}`,
+        { cause: err },
+      );
+    }
+    const updated = this.db
+      .prepare(
+        "UPDATE attachments SET realpath = REPLACE(realpath, ?, ?) WHERE realpath LIKE ?",
+      )
+      .run("/sessions/", "/tasks/", "%/sessions/%");
+    const changed = updated.changes > 0;
+    if (moved || changed) {
+      log.warn(
+        "migrated attachment data dir",
+        moved ? { oldDir, newDir } : { rewroteRealpaths: updated.changes },
+      );
     }
   }
 
@@ -503,6 +553,8 @@ export class Store {
         updated_at INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER) * 1000)
       );
     `);
+
+    this.migrateAttachmentsDataDir();
   }
 
   /**

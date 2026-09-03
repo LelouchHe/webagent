@@ -317,7 +317,7 @@ export function getPrincipal(req: IncomingMessage): TokenRecord | undefined {
 
 /**
  * Multipart upload handler. Streams the `file` field straight to disk under
- * <data_dir>/sessions/<sid>/attachments/<uuid>.<ext>.tmp, atomic-renames on
+ * <data_dir>/tasks/<sid>/attachments/<uuid>.<ext>.tmp, atomic-renames on
  * success, deletes on any failure path. Inserts an attachments row with the
  * resolved realpath so the bridge / permission interceptor can match it
  * later.
@@ -340,7 +340,7 @@ async function handleAttachmentUpload(
     json(res, HTTP_STATUS.NOT_FOUND, { error: "Task not found" });
     return;
   }
-  const dir = join(dataDir, "sessions", taskId, "attachments");
+  const dir = join(dataDir, "tasks", taskId, "attachments");
   await mkdir(dir, { recursive: true });
 
   const uploadId = randomUUID();
@@ -2633,12 +2633,12 @@ export function createRequestHandler(
         }
         const filePath = join(
           deps.dataDir,
-          "sessions",
+          "tasks",
           taskId,
           "attachments",
           file,
         );
-        if (!filePath.startsWith(join(deps.dataDir, "sessions"))) {
+        if (!filePath.startsWith(join(deps.dataDir, "tasks"))) {
           res.writeHead(HTTP_STATUS.FORBIDDEN);
           res.end("Forbidden");
           return;

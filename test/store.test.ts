@@ -1,6 +1,12 @@
 import { describe, it, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import {
+  mkdtempSync,
+  mkdirSync,
+  writeFileSync,
+  rmSync,
+  existsSync,
+} from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import Database from "better-sqlite3";
@@ -628,6 +634,47 @@ describe("Store", () => {
         task_id: "legacy-id",
         created_at: "2026-01-01 00:00:00",
       });
+    });
+
+    it("migrates the attachment data dir and rewrites realpaths", () => {
+      store.close();
+      rmSync(join(tmpDir, "webagent.db"), { force: true });
+      // Simulate a pre-rename install: attachment dir under `sessions/` and
+      // a persisted realpath pointing into it.
+      const oldDir = join(tmpDir, "sessions", "t1", "attachments");
+      mkdirSync(oldDir, { recursive: true });
+      writeFileSync(join(oldDir, "a.png"), "x");
+      store = new Store(tmpDir, "test-agent");
+      store.createTask("t1", "/tmp");
+      store.insertAttachment({
+        id: "att-1",
+        taskId: "t1",
+        kind: "image",
+        name: "a.png",
+        mime: "image/png",
+        size: 1,
+        realpath: join(oldDir, "a.png"),
+      });
+      store.close();
+
+      // Re-open: boot migration moves the directory and rewrites realpath.
+      store = new Store(tmpDir, "test-agent");
+      assert.equal(existsSync(join(tmpDir, "sessions")), false);
+      assert.equal(existsSync(join(tmpDir, "tasks")), true);
+      const row = store.getAttachment("t1", "att-1");
+      assert.equal(
+        row?.realpath,
+        join(tmpDir, "tasks", "t1", "attachments", "a.png"),
+      );
+      assert.equal(existsSync(row.realpath), true);
+      store.close();
+
+      // Idempotent: second open is a no-op that keeps paths intact.
+      store = new Store(tmpDir, "test-agent");
+      assert.equal(
+        store.getAttachment("t1", "att-1")!.realpath,
+        join(tmpDir, "tasks", "t1", "attachments", "a.png"),
+      );
     });
   });
 

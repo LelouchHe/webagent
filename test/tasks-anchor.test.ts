@@ -21,7 +21,7 @@ describe("resolveTasksAnchor", () => {
     tmpDirs.push(data);
 
     const anchor = resolveTasksAnchor(data);
-    assert.equal(anchor, realpathSync(join(data, "sessions")));
+    assert.equal(anchor, realpathSync(join(data, "tasks")));
     assert.ok(!anchor.endsWith(sep), "anchor should not end with separator");
   });
 
@@ -32,7 +32,7 @@ describe("resolveTasksAnchor", () => {
     tmpDirs.push(realTarget);
 
     // Make data/tasks a symlink to a realTarget directory.
-    symlinkSync(realTarget, join(data, "sessions"), "dir");
+    symlinkSync(realTarget, join(data, "tasks"), "dir");
 
     const anchor = resolveTasksAnchor(data);
     assert.equal(anchor, realpathSync(realTarget));
@@ -49,14 +49,14 @@ describe("resolveTasksAnchor", () => {
 });
 
 describe("isInsideTaskAttachments", () => {
-  const anchor = "/data/sessions";
+  const anchor = "/data/tasks";
 
   it("accepts a path strictly under <anchor>/<sid>/attachments/", () => {
     assert.equal(
       isInsideTaskAttachments(
         anchor,
         "s1",
-        "/data/sessions/s1/attachments/abc.png",
+        "/data/tasks/s1/attachments/abc.png",
       ),
       true,
     );
@@ -67,7 +67,7 @@ describe("isInsideTaskAttachments", () => {
       isInsideTaskAttachments(
         anchor,
         "s1",
-        "/data/sessions/s2/attachments/abc.png",
+        "/data/tasks/s2/attachments/abc.png",
       ),
       false,
     );
@@ -94,7 +94,7 @@ describe("isInsideTaskAttachments", () => {
 
   it("rejects the attachments dir itself (must be strict descendant)", () => {
     assert.equal(
-      isInsideTaskAttachments(anchor, "s1", "/data/sessions/s1/attachments"),
+      isInsideTaskAttachments(anchor, "s1", "/data/tasks/s1/attachments"),
       false,
     );
   });

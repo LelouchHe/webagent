@@ -32,7 +32,7 @@ For build, configuration, testing, and publishing commands, use
 
 ## Attachment label egress rewrite
 
-When the agent reads a user-uploaded attachment, it sees and emits the internal storage path (`<dataDir>/sessions/<sid>/attachments/<uuid>.<ext>`). Showing that to the user is unhelpful — we have the original filename in the `attachments` table, so we translate it back at egress.
+When the agent reads a user-uploaded attachment, it sees and emits the internal storage path (`<dataDir>/tasks/<sid>/attachments/<uuid>.<ext>`). Showing that to the user is unhelpful — we have the original filename in the `attachments` table, so we translate it back at egress.
 
 - **Storage invariant**: the `events` table stores raw ACP data. `tool_call.title`, `tool_call.rawInput.path`, and `permission_request.title` all keep the uuid path as agent emitted them. Ops `SELECT data FROM events` sees ground truth.
 - **Egress invariant**: every code path that ships event data to a client passes it through `enrichEventForDisplay` (`src/attachment-labels.ts`), which substring-replaces internal paths with `<displayName> [#<id4>]` (e.g. `report.pdf [#abc1]`). The `[#<id4>]` suffix is unconditional — disambiguates duplicates and gives users a stable reference anchor; no collision detection needed.

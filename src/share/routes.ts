@@ -917,14 +917,9 @@ async function handleViewerImage(
     return;
   }
 
-  const taskRoot = join(
-    deps.dataDir,
-    "sessions", // legacy on-disk directory, do not rename (realpaths reference it)
-    row.task_id,
-    "attachments",
-  );
+  const taskRoot = join(deps.dataDir, "tasks", row.task_id, "attachments");
   const filePath = join(taskRoot, file);
-  // Final realpath-style guard: must stay under <dataDir>/sessions/<sid>/attachments (legacy on-disk dir).
+  // Final realpath-style guard: must stay under <dataDir>/tasks/<sid>/attachments.
   if (!filePath.startsWith(taskRoot + "/") && filePath !== taskRoot) {
     res.writeHead(HTTP_STATUS.FORBIDDEN);
     res.end("Forbidden");
@@ -1072,7 +1067,7 @@ async function handleRevoke(
     const reaped = deps.store.reapTombstoneIfOrphaned(row.task_id);
     if (reaped && deps.dataDir) {
       // Tombstoned task is fully gone; sweep its attachments directory too.
-      rm(join(deps.dataDir, "sessions", row.task_id), {
+      rm(join(deps.dataDir, "tasks", row.task_id), {
         recursive: true,
         force: true,
       }).catch(() => {});

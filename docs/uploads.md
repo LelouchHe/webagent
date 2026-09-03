@@ -114,7 +114,7 @@ shows in the meantime — the agent is never silently denied.
 
 - DB rows: `attachments` rows go via SQLite `ON DELETE CASCADE` from
   `tasks.id` (covered by `test/store-attachments.test.ts`).
-- Disk: the task directory `<data_dir>/sessions/<sid>/` is removed
+- Disk: the task directory `<data_dir>/tasks/<sid>/` is removed
   recursively, which takes the `attachments/` subdir with it.
 
 ### Orphaned `.tmp` files

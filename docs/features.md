@@ -19,7 +19,7 @@
 - Paste images from clipboard (non-image clipboard items must use the file picker)
 - Preview before sending + removable, supports multiple files; images get an inline thumbnail and other files render as a name chip
 - Streaming multipart upload — no base64 in the browser
-- Server-side storage under `<data_dir>/sessions/<sid>/attachments/`, classified as `image` or `file` from sniffed MIME (drives size cap and per-prompt auto-approve gating)
+- Server-side storage under `<data_dir>/tasks/<sid>/attachments/`, classified as `image` or `file` from sniffed MIME (drives size cap and per-prompt auto-approve gating)
 - Image attachments are referenced by `attachmentId` in the wire protocol; the browser never sees raw bytes after upload, and the server resolves the on-disk path itself
 
 ## File Viewer

@@ -524,11 +524,11 @@ describe("share image proxy — GET /s/:token/attachments/:file", () => {
     tmpDir = mkdtempSync(join(tmpdir(), "wa-share-img-"));
     publicDir = mkdtempSync(join(tmpdir(), "wa-share-img-pub-"));
     writeFileSync(join(publicDir, "share-viewer.html"), "<!doctype html>");
-    mkdirSync(join(tmpDir, "sessions", taskId, "attachments"), {
+    mkdirSync(join(tmpDir, "tasks", taskId, "attachments"), {
       recursive: true,
     });
     writeFileSync(
-      join(tmpDir, "sessions", taskId, "attachments", "a.png"),
+      join(tmpDir, "tasks", taskId, "attachments", "a.png"),
       Buffer.from([0x89, 0x50, 0x4e, 0x47]),
     );
 
@@ -567,7 +567,7 @@ describe("share image proxy — GET /s/:token/attachments/:file", () => {
     // because the share viewer served Content-Type: octet-stream and no
     // Content-Disposition. With an attachments row present, mime + filename
     // should round-trip from DB so iOS uses the original name as-is.
-    const attDir = join(tmpDir, "sessions", taskId, "attachments");
+    const attDir = join(tmpDir, "tasks", taskId, "attachments");
     writeFileSync(join(attDir, "att-1.bin"), Buffer.from("// userscript"));
     store.insertAttachment({
       id: "att-1",

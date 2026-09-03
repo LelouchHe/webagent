@@ -605,7 +605,7 @@ describe("Prompt REST API", () => {
     it("stored user_message.attachments includes server-derived path", async () => {
       const taskId = await createTask();
       // Pre-populate an attachment row as if upload had succeeded.
-      const dir = join(tmpDir, "sessions", taskId, "attachments");
+      const dir = join(tmpDir, "tasks", taskId, "attachments");
       mkdirSync(dir, { recursive: true });
       const realpath = join(dir, "att-X.png");
       writeFileSync(realpath, Buffer.from("PNG"));
