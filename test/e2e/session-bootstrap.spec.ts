@@ -4,7 +4,9 @@ import { currentSessionId, gotoConnected } from "./helpers.ts";
 test("app boots into a connected usable session", async ({ page }) => {
   await gotoConnected(page);
 
-  await expect.poll(() => currentSessionId(page)).not.toBe("");
+  // Root is the canonical landing and carries no URL hash; currentSessionId
+  // resolves the empty hash to "root".
+  await expect.poll(() => currentSessionId(page)).toBe("root");
   await expect(page.locator("#session-info")).not.toHaveText("");
   await expect(page.locator("#input")).toBeEnabled();
 });

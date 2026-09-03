@@ -398,7 +398,12 @@ spot gaps, and decide what still needs to be added without reading every spec.
 ### Basic session and messaging flow
 
 - `session-bootstrap.spec.ts`
-  - app connects and creates / resumes a usable session
+  - app boots into the canonical Root session (clean URL, no hash) and is
+    ready for input
+
+- `bootstrap-concurrency.spec.ts`
+  - concurrent clients on the root path all converge on the reserved Root
+    session without posting a new session
 
 - `session-send-message.spec.ts`
   - normal prompt / assistant reply round-trip
@@ -471,6 +476,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
 
 - `session-delete-broadcast.spec.ts`
   - deleting the current session disables peer clients correctly
+  - other tabs auto-switch away from the deleted session to a remaining one
 
 - `session-delete-command.spec.ts`
   - `/exit` deletes current session and switches to previous
@@ -478,10 +484,15 @@ spot gaps, and decide what still needs to be added without reading every spec.
 - `session-prune-command.spec.ts`
   - `/prune` removes all non-current sessions
 
+- `session-clear-command.spec.ts`
+  - `/clear` keeps the stable WebAgent session id, history, and cwd; only the
+    ACP execution rotates and the session stays available through the API
+
 ### Resume / reconnect / restart recovery
 
 - `auto-resume-last-session.spec.ts`
-  - root page resumes the most recently active session
+  - the root path opens the canonical Root session instead of the most recent
+    session; existing sessions stay reachable through their stable hash
 
 - `sse-reconnect-recovery.spec.ts`
   - SSE reconnect restores the active session without duplicate replay
