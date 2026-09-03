@@ -80,7 +80,21 @@ import type {
 import "./plan-panel.ts";
 import { OrphanToolUpdateCache } from "./orphan-tool-updates.ts";
 
-const orphanToolUpdates = new OrphanToolUpdateCache();
+const orphanToolUpdates = new OrphanToolUpdateCache({
+  // An entry expiring without its host ever appearing is the one genuinely
+  // abnormal outcome worth surfacing; routine buffering during replay or
+  // DOM-rebuild windows is expected and silent.
+  onExpire: (id, update) => {
+    log.warn(
+      "tool update buffered but never recovered: host missing for the whole TTL",
+      {
+        id,
+        status: update.status,
+        sessionId: update.sessionId,
+      },
+    );
+  },
+});
 
 setNavigationLoadInvalidator(() => {
   historyLoadToken++;
@@ -2052,10 +2066,6 @@ export function handleEvent(msg: AgentEvent) {
       const hooks = liveHooks();
       if (!hooks.findToolCallEl(msg.id)) {
         orphanToolUpdates.put(msg);
-        log.debug("buffering tool update without host", {
-          id: msg.id,
-          status: msg.status,
-        });
       }
       // Preserve the original lifecycle effects immediately even when the DOM
       // host is absent. Replaying them after host creation is idempotent.

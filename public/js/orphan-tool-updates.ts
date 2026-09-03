@@ -15,6 +15,8 @@ interface CacheOptions {
   maxEntryBytes?: number;
   maxTotalBytes?: number;
   now?: () => number;
+  /** Fired when an entry expires without its host ever appearing (once per id). */
+  onExpire?: (id: string, update: ToolCallUpdateEvent) => void;
 }
 
 export class OrphanToolUpdateCache {
@@ -24,6 +26,7 @@ export class OrphanToolUpdateCache {
   private readonly maxEntryBytes: number;
   private readonly maxTotalBytes: number;
   private readonly now: () => number;
+  private readonly onExpire?: (id: string, update: ToolCallUpdateEvent) => void;
   private totalBytes = 0;
 
   constructor(options: CacheOptions = {}) {
@@ -32,6 +35,7 @@ export class OrphanToolUpdateCache {
     this.maxEntryBytes = options.maxEntryBytes ?? 256 * 1024;
     this.maxTotalBytes = options.maxTotalBytes ?? 2 * 1024 * 1024;
     this.now = options.now ?? (() => performance.now());
+    this.onExpire = options.onExpire;
   }
 
   put(update: ToolCallUpdateEvent, sequence?: number): void {
@@ -90,7 +94,12 @@ export class OrphanToolUpdateCache {
 
   private prune(now: number): void {
     for (const [id, entry] of this.entries) {
-      if (entry.expiresAt <= now) this.drop(id);
+      if (entry.expiresAt <= now) {
+        // Expiry-without-recovery is the one genuinely abnormal outcome:
+        // the buffered update never found a host before the TTL lapsed.
+        this.onExpire?.(id, entry.update);
+        this.drop(id);
+      }
     }
   }
 
