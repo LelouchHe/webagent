@@ -290,7 +290,6 @@ async function handlePreviewCreate(
     json(res, HTTP_STATUS.NOT_FOUND, { error: "session not found" });
     return;
   }
-
   // 409 guard: block while the agent is actively streaming into this session.
   if (deps.sessions?.getBusyKind(sessionId) === "agent") {
     json(res, HTTP_STATUS.CONFLICT, {
@@ -466,6 +465,7 @@ async function handlePreviewRead(
     json(res, HTTP_STATUS.NOT_FOUND, { error: "session not found" });
     return;
   }
+  const sessionMetadata = deps.store.getSessionEffectiveMetadata(sessionId);
 
   const allEvents = deps.store
     .getEvents(sessionId)
@@ -483,7 +483,7 @@ async function handlePreviewRead(
   try {
     const { events } = sanitizeEventsForShare({
       events: allEvents,
-      cwd: session.cwd,
+      cwd: sessionMetadata?.cwd ?? session.cwd,
       homeDir: homedir(),
       internalHosts: deps.config.internal_hosts,
     });
@@ -499,7 +499,7 @@ async function handlePreviewRead(
       share: {
         token: row.token,
         session_id: sessionId,
-        session_title: session.title,
+        session_title: sessionMetadata?.title ?? session.title,
         shared_at: null,
         snapshot_seq: row.share_snapshot_seq,
         current_last_seq: currentLastSeq,
@@ -762,6 +762,9 @@ async function handleSharedEvents(
     json(res, HTTP_STATUS.INTERNAL_SERVER_ERROR, { error: "session vanished" });
     return;
   }
+  const sessionMetadata = deps.store.getSessionEffectiveMetadata(
+    row.session_id,
+  );
 
   const allEvents = deps.store
     .getEvents(row.session_id)
@@ -776,7 +779,7 @@ async function handleSharedEvents(
   try {
     const { events } = sanitizeEventsForShare({
       events: allEvents,
-      cwd: session.cwd,
+      cwd: sessionMetadata?.cwd ?? session.cwd,
       homeDir: homedir(),
       internalHosts: deps.config.internal_hosts,
     });
@@ -792,7 +795,7 @@ async function handleSharedEvents(
         schema_version: "1.0",
         share: {
           token: row.token,
-          session_title: session.title,
+          session_title: sessionMetadata?.title ?? session.title,
           shared_at: row.shared_at,
           snapshot_seq: row.share_snapshot_seq,
           display_name: row.display_name,

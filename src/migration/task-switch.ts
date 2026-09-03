@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import type { Store } from "../store.ts";
+import { ROOT_TASK_ID, type Store } from "../store.ts";
 
 /**
  * One-shot upgrade switch (S1, 2026-09). **Remove after validation**
@@ -12,8 +12,8 @@ import type { Store } from "../store.ts";
  *    (keep-first: an existing file is never overwritten — after a rollback the
  *    restored file *is* the pre-switch state, so re-running the switch against
  *    it is exactly right);
- * 2. Single transaction: create Root (with its first session) -> carry the
- *    current agent's most-recent live session as Root's first child task
+ * 2. Single transaction: create Root -> carry the current agent's
+ *    most-recent live session as Root's first child task
  *    (title/cwd/model/mode/reasoning move up to the task; events/attachments
  *    adopted via adoptSession) -> hard-delete remaining legacy sessions
  *    (task_id IS NULL).
@@ -56,18 +56,10 @@ export async function runTaskSwitch(
   }
 
   store.transaction(() => {
-    // Root + its first session (the only live Root; the normal creation path
-    // binds further sessions to tasks as well).
-    const rootId = randomUUID();
+    // Create the stable Root identity. Its real ACP execution is created
+    // after the bridge is ready; this migration must not fabricate an ACP id.
+    const rootId = ROOT_TASK_ID;
     store.createTask({ id: rootId, name: "root", cwd: opts.defaultCwd });
-    const rootSessionId = randomUUID();
-    store.createSession(
-      rootSessionId,
-      opts.defaultCwd,
-      "auto",
-      rootSessionId,
-      rootId,
-    );
 
     // Carry the current agent's most-recent live session as Root's first
     // child (continuity: the work in progress survives the switch).

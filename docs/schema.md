@@ -46,11 +46,11 @@ deletion contract.
 
 ### `tasks`
 
-S1 stable work identity (Task = the binary, Session = the process). Owns all non-runtime attributes and records; `sessions.task_id` is the only persistent mapping (a birth certificate), "current Session" is derived from the live-session predicate (`deleted_at IS NULL`), and `ux_sessions_live_per_task` enforces at most one live execution at a time. The Root (`parent_id IS NULL`) is created by the server and cannot be deleted.
+Stable work identity (Task = the binary, Session = the process). Owns all non-runtime attributes and records; `sessions.task_id` is the only persistent mapping (a birth certificate), "current Session" is derived from the live-session predicate (`deleted_at IS NULL`), and `ux_sessions_live_per_task` enforces at most one live execution at a time. The Root (`id = 'root'`, `parent_id IS NULL`) is created by the server and cannot be deleted.
 
 | Column | Type | Notes |
 |---|---|---|
-| `id` | TEXT PRIMARY KEY | Stable Task UUID; frontend anchor `#task-id` |
+| `id` | TEXT PRIMARY KEY | Stable Task id; Root is the reserved `root`, other Tasks use UUIDs; frontend anchor `#task-id` |
 | `parent_id` | TEXT REFERENCES `tasks(id)` | `NULL` = Root (unique, undeletable) |
 | `name` | TEXT NOT NULL | Unique per parent (partial UNIQUE index) |
 | `brief` | TEXT | Task brief (injected at bootstrap) |

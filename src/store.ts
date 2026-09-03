@@ -2,6 +2,9 @@ import Database from "better-sqlite3";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 
+/** Reserved stable identifier for the server-created Root Task. */
+export const ROOT_TASK_ID = "root";
+
 export interface SessionRow {
   id: string;
   cwd: string;
@@ -607,6 +610,17 @@ export class Store {
       .get(id, this.agentKey) as SessionRow | undefined;
   }
 
+  /** Whether an ACP session id belongs to an internal, non-WebAgent session. */
+  isInternalAgentSession(agentSessionId: string): boolean {
+    return (
+      this.db
+        .prepare(
+          "SELECT 1 FROM agent_sessions WHERE agent_key = ? AND agent_session_id = ? AND web_session_id IS NULL LIMIT 1",
+        )
+        .get(this.agentKey, agentSessionId) !== undefined
+    );
+  }
+
   registerInternalAgentSession(agentSessionId: string): AgentSessionRow {
     this.db
       .prepare(
@@ -767,26 +781,20 @@ export class Store {
     return this.db.transaction(fn)();
   }
 
-  /** Whether a live Root (parent_id IS NULL) exists. Root is created by the server; unique. */
+  /** Whether the server-created Root exists. */
   hasRootTask(): boolean {
     return (
       this.db
         .prepare(
-          "SELECT 1 FROM tasks WHERE parent_id IS NULL AND deleted_at IS NULL LIMIT 1",
+          "SELECT 1 FROM tasks WHERE id = ? AND parent_id IS NULL AND deleted_at IS NULL LIMIT 1",
         )
-        .get() !== undefined
+        .get(ROOT_TASK_ID) !== undefined
     );
   }
 
-  /** The live Root's id (undefined when no Root). */
+  /** The server-created Root's stable id (undefined before migration). */
   getRootTaskId(): string | undefined {
-    return (
-      this.db
-        .prepare(
-          "SELECT id FROM tasks WHERE parent_id IS NULL AND deleted_at IS NULL LIMIT 1",
-        )
-        .get() as { id: string } | undefined
-    )?.id;
+    return this.hasRootTask() ? ROOT_TASK_ID : undefined;
   }
 
   /** Whether any legacy session (pre-switch, not yet adopted by a task) exists. */
@@ -873,6 +881,32 @@ export class Store {
       mode: task?.mode ?? row.mode,
       model: task?.model ?? row.model,
       reasoning_effort: task?.reasoning_effort ?? row.reasoning_effort,
+    };
+  }
+
+  /** Effective identity metadata: task first, with legacy session fallback. */
+  getSessionEffectiveMetadata(sessionId: string):
+    | {
+        cwd: string;
+        title: string | null;
+        task_id: string | null;
+      }
+    | undefined {
+    const row = this.db
+      .prepare("SELECT * FROM sessions WHERE id = ?")
+      .get(sessionId) as SessionRow | undefined;
+    if (!row) return undefined;
+    const task = row.task_id
+      ? (this.db
+          .prepare("SELECT cwd, title FROM tasks WHERE id = ?")
+          .get(row.task_id) as
+          | { cwd: string; title: string | null }
+          | undefined)
+      : undefined;
+    return {
+      cwd: task?.cwd ?? row.cwd,
+      title: task?.title ?? row.title,
+      task_id: row.task_id,
     };
   }
 

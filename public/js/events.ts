@@ -1907,9 +1907,12 @@ export function handleEvent(msg: AgentEvent) {
       // input area styled as default mode.
       updateModeUI();
       updateStatusBar();
-      // The URL anchors the owning Task when the event carries one;
-      // legacy events (no task_id) keep the session anchor.
-      setTaskAnchor(msg.task_id ?? null, state.sessionId);
+      // The URL anchors the owning Task. A legacy event without task_id may
+      // use the session anchor only before the current Task is known; it must
+      // not overwrite an already-established Task anchor.
+      if (msg.task_id || !state.taskId) {
+        setTaskAnchor(msg.task_id ?? null, state.sessionId);
+      }
       // Report which session this client is now viewing (for per-session push suppression)
       if (state.clientId) {
         api

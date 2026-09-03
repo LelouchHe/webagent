@@ -101,6 +101,17 @@ describe("SessionManager task lifecycle", () => {
   });
 
   describe("clearTask", () => {
+    it("creates a real Root execution after migration leaves Root without one", async () => {
+      store.createTask({ id: "root", name: "root", cwd: tmpDir });
+      const { bridge } = makeBridge();
+      await sm.ensureRootSession(bridge);
+      assert.ok(store.getTaskLiveSession("root"));
+      assert.equal(
+        sm.getLiveSessionForTask("root"),
+        store.getTaskLiveSession("root")?.id,
+      );
+    });
+
     it("retires the old execution (records kept) and spawns a fresh one on the same task", async () => {
       const tid = "clr";
       store.createTask({ id: tid, name: "clr", cwd: tmpDir });
@@ -170,16 +181,37 @@ describe("SessionManager task lifecycle", () => {
         /task not found/,
       );
     });
+
+    it("drops the task mirror when a live session is deleted", async () => {
+      const taskId = "delete-mirror";
+      store.createTask({ id: taskId, name: "delete", cwd: tmpDir });
+      const { bridge } = makeBridge();
+      const { sessionId } = await sm.createSession(
+        bridge,
+        tmpDir,
+        undefined,
+        "auto",
+        {
+          taskId,
+        },
+      );
+      assert.equal(sm.getLiveSessionForTask(taskId), sessionId);
+      sm.deleteSession(sessionId);
+      assert.equal(sm.getLiveSessionForTask(taskId), undefined);
+      assert.equal(sm.isCurrentExecution(sessionId), false);
+    });
   });
 
   describe("isCurrentExecution fence", () => {
-    it("allows creating/restoring windows and the live session", () => {
+    it("allows creating/internal windows and the live session, but rejects unknown ids", () => {
       const tid = "fence";
       store.createTask({ id: tid, name: "fence", cwd: tmpDir });
       sm.creatingSessions.add("creating-1");
       assert.equal(sm.isCurrentExecution("creating-1"), true);
       sm.creatingSessions.delete("creating-1");
-      assert.equal(sm.isCurrentExecution("not-a-session"), true); // internal/unknown rows stay allowed
+      assert.equal(sm.isCurrentExecution("not-a-session"), false);
+      store.registerInternalAgentSession("internal-1");
+      assert.equal(sm.isCurrentExecution("internal-1"), true);
 
       store.createSession("live", tmpDir, "auto", "live", tid);
       sm.rebuildTaskLiveSessions();

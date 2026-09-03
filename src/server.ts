@@ -300,6 +300,8 @@ server.listen(config.port, config.host, () => {
     try {
       await initBridge(agentCmd);
       console.log(`[bridge] ready`);
+      await sessions.ensureRootSession(bridge!);
+      sessions.rebuildTaskLiveSessions();
       sessions.hydrate();
     } catch (err) {
       console.error(`[bridge] failed to start:`, err);

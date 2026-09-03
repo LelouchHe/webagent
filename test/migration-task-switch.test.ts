@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync, existsSync, copyFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { Store } from "../src/store.ts";
+import { ROOT_TASK_ID, Store } from "../src/store.ts";
 import {
   runTaskSwitch,
   TASK_SWITCH_SNAPSHOT,
@@ -30,7 +30,7 @@ describe("task-switch migration (S1)", () => {
     });
 
   describe("fresh install", () => {
-    it("creates a Root task, its first session, and a snapshot; no-ops later", async () => {
+    it("creates a Root task and a snapshot; no-ops later", async () => {
       const first = await run();
       assert.equal(first.ran, true);
       assert.equal(first.carriedSessionId, undefined);
@@ -38,9 +38,11 @@ describe("task-switch migration (S1)", () => {
 
       const root = store.listTasks().find((t) => t.parent_id === null);
       assert.ok(root);
+      assert.equal(root.id, ROOT_TASK_ID);
       assert.equal(root.name, "root");
       assert.equal(root.cwd, "/work");
-      assert.equal(store.getTaskLiveSession(root.id)?.cwd, "/work");
+      // The migration does not fabricate an ACP session; bridge startup creates it.
+      assert.equal(store.getTaskLiveSession(root.id), undefined);
 
       // idempotent: Root already exists
       const second = await run();
@@ -99,15 +101,8 @@ describe("task-switch migration (S1)", () => {
       assert.equal(store.getSessionIncludingDeleted("old-stale"), undefined);
       assert.equal(store.hasLegacySessions(), false);
 
-      // Root already has its own live session — no second one (single-live invariant)
-      const rootSess = store.getTaskLiveSession(root.id);
-      assert.ok(rootSess);
-      store.saveEvent(
-        rootSess.id,
-        "user_message",
-        { text: "z" },
-        { from_ref: "user" },
-      );
+      // Root has no fabricated ACP session; bridge startup creates its real execution.
+      assert.equal(store.getTaskLiveSession(root.id), undefined);
       assert.equal(store.getTaskEvents(child.id).length, 1);
     });
 

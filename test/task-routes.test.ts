@@ -4,7 +4,7 @@ import http from "node:http";
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { Store } from "../src/store.ts";
+import { ROOT_TASK_ID, Store } from "../src/store.ts";
 import { createRequestHandler } from "../src/routes.ts";
 import { SseManager } from "../src/sse-manager.ts";
 import { SessionManager } from "../src/session-manager.ts";
@@ -46,6 +46,7 @@ describe("task-plane API", () => {
   let server: http.Server;
   let port: number;
   let broadcasts: AgentEvent[];
+  let failNewSession: boolean;
 
   beforeEach(async () => {
     tmpDir = mkdtempSync(join(tmpdir(), "webagent-task-routes-"));
@@ -54,9 +55,11 @@ describe("task-plane API", () => {
     writeFileSync(join(publicDir, "index.html"), "<h1>t</h1>");
     store = new Store(tmpDir, "test-agent");
     const sessions = new SessionManager(store, tmpDir, tmpDir);
+    failNewSession = false;
     const bridge = {
       ...mockBridgeStubs(),
       async newSession(_cwd: string, _opts?: unknown) {
+        if (failNewSession) throw new Error("agent create failed");
         return { sessionId: `agent-${randomId()}`, configOptions: [] };
       },
       async setConfigOption() {
@@ -102,9 +105,8 @@ describe("task-plane API", () => {
   }
 
   function seedRoot(): string {
-    const rootId = randomId();
-    store.createTask({ id: rootId, name: "root", cwd: tmpDir });
-    return rootId;
+    store.createTask({ id: ROOT_TASK_ID, name: "root", cwd: tmpDir });
+    return ROOT_TASK_ID;
   }
 
   it("GET /tasks lists live tasks with liveSessionId", async () => {
@@ -142,6 +144,17 @@ describe("task-plane API", () => {
     await send(port, "POST", "/api/v1/tasks", { name: "dup" });
     const dup = await send(port, "POST", "/api/v1/tasks", { name: "dup" });
     assert.equal(dup.status, 409);
+  });
+
+  it("POST /tasks removes the task when its first session fails", async () => {
+    seedRoot();
+    failNewSession = true;
+    const res = await send(port, "POST", "/api/v1/tasks", { name: "orphan" });
+    assert.equal(res.status, 500);
+    assert.equal(
+      store.listTasks().some((t) => t.name === "orphan"),
+      false,
+    );
   });
 
   it("GET /tasks/:id returns the detail incl. live session; 404 for unknowns", async () => {

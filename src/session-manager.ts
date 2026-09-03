@@ -9,6 +9,7 @@ import {
   type Store,
   type SessionRow,
   type TaskRow,
+  ROOT_TASK_ID,
 } from "./store.ts";
 import type { AgentBridge } from "./bridge.ts";
 import { buildMcpServerEntry } from "./mcp/server.ts";
@@ -180,6 +181,18 @@ export class SessionManager {
     return this.taskLiveSessions.get(taskId);
   }
 
+  /** Ensure the server-created Root has a real ACP execution after bridge startup. */
+  async ensureRootSession(bridge: SessionBridge): Promise<void> {
+    const rootId = this.store.getRootTaskId();
+    if (!rootId || this.store.getTaskLiveSession(rootId)) return;
+    const root = this.store.getTask(rootId);
+    if (!root) return;
+    await this.createSession(bridge, root.cwd, undefined, "auto", {
+      taskId: rootId,
+      silent: true,
+    });
+  }
+
   /** Resolve a session to its task (undefined for no row / no binding; transitional fallback below). */
   private resolveTaskForSession(sessionId: string): string | undefined {
     return (
@@ -226,7 +239,8 @@ export class SessionManager {
     if (this.creatingSessions.has(sessionId)) return true;
     if (this.restoringSessions.has(sessionId)) return true;
     const row = this.store.getSessionIncludingDeleted(sessionId);
-    if (!row?.task_id) return true;
+    if (!row) return this.store.isInternalAgentSession(sessionId);
+    if (!row.task_id) return true;
     return this.taskLiveSessions.get(row.task_id) === sessionId;
   }
 
@@ -234,7 +248,7 @@ export class SessionManager {
   private ensureRootTask(): void {
     if (this.store.hasRootTask()) return;
     this.store.createTask({
-      id: randomUUID(),
+      id: ROOT_TASK_ID,
       name: "root",
       cwd: this.defaultCwd,
     });
@@ -647,12 +661,16 @@ export class SessionManager {
     if (this.liveSessions.has(sessionId)) {
       // Session already live — build configOptions with stored overrides
       const configOptions = this.buildConfigOptions(session);
+      const task = session.task_id ? this.store.getTask(session.task_id) : null;
+      const cwd = task?.cwd ?? session.cwd;
+      const title = task?.title ?? session.title;
       return {
         type: "session_created",
         sessionId,
-        cwd: session.cwd,
-        cwdDisplay: abbreviateHomePath(session.cwd),
-        title: session.title,
+        task_id: session.task_id,
+        cwd,
+        cwdDisplay: abbreviateHomePath(cwd),
+        title,
         configOptions,
       };
     }
@@ -914,9 +932,13 @@ export class SessionManager {
 
   /** Delete a session from store and clean up all state (including images). */
   deleteSession(sessionId: string): void {
+    const taskId = this.store.getSessionIncludingDeleted(sessionId)?.task_id;
     const mode = this.store.deleteSession(sessionId);
     this.capabilities?.revokeBySession(sessionId);
     this.cleanupSessionRuntime(sessionId);
+    if (taskId && this.taskLiveSessions.get(taskId) === sessionId) {
+      this.taskLiveSessions.delete(taskId);
+    }
     if (mode === "hard") {
       // Tombstoned sessions keep their attachments alive for the share viewer
       // (shared files still resolve via /s/:token/attachments/...). The reap

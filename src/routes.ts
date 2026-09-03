@@ -25,7 +25,7 @@ import { handleFileRoutes } from "./files/routes.ts";
 import { authenticate, isWhitelistedPath } from "./auth-middleware.ts";
 import { enrichStoredEventsForDisplay } from "./attachment-labels.ts";
 import { agentCommandToken, resolveAgentCommand } from "./agent-commands.ts";
-import { abbreviateHomePath } from "./home-path.ts";
+import { abbreviateHomePath, expandHomePath } from "./home-path.ts";
 import { log } from "./log.ts";
 
 const rlog = log.scope("routes");
@@ -1129,9 +1129,9 @@ export function createRequestHandler(
             seq: runtimeState.seq,
             session: {
               id: session.id,
-              title: session.title,
-              cwd: session.cwd,
-              cwdDisplay: abbreviateHomePath(session.cwd),
+              title: snapTask?.title ?? session.title,
+              cwd: snapTask?.cwd ?? session.cwd,
+              cwdDisplay: abbreviateHomePath(snapTask?.cwd ?? session.cwd),
               task_id: session.task_id,
               model: snapTask?.model ?? session.model,
               mode: snapTask?.mode ?? session.mode,
@@ -1790,17 +1790,21 @@ export function createRequestHandler(
 
         // Serialize concurrent bootstraps: the first call creates, the rest
         // re-check the store and reuse. A bare promise + finally-reset leaves
-        // a window where a second request starts its own create (task creation
-        // it because createSession now does task work too).
+        // a window where a second request starts its own create; task creation
+        // adds work to this critical section.
+        // eslint-disable-next-line complexity -- serialize bootstrap, task creation, and response shaping in one critical section
         const runBootstrap = bootstrapLock.then(async () => {
           const existing = store.listSessions().at(0);
           if (existing) {
+            const existingTask = existing.task_id
+              ? store.getTask(existing.task_id)
+              : undefined;
             return {
               id: existing.id,
               task_id: existing.task_id ?? null,
-              cwd: existing.cwd,
-              cwdDisplay: abbreviateHomePath(existing.cwd),
-              title: existing.title,
+              cwd: existingTask?.cwd ?? existing.cwd,
+              cwdDisplay: abbreviateHomePath(existingTask?.cwd ?? existing.cwd),
+              title: existingTask?.title ?? existing.title,
               source: existing.source,
               configOptions: [],
               agentCommands: sessionManager.getAgentCommands(existing.id),
@@ -1808,15 +1812,29 @@ export function createRequestHandler(
             };
           }
 
-          const { sessionId, configOptions } =
-            await sessionManager.createSession(bridge);
+          const rootId = store.getRootTaskId();
+          const rootTask = rootId ? store.getTask(rootId) : undefined;
+          const { sessionId, configOptions } = rootId
+            ? await sessionManager.createSession(
+                bridge,
+                rootTask?.cwd,
+                undefined,
+                "auto",
+                { taskId: rootId },
+              )
+            : await sessionManager.createSession(bridge);
           const session = store.getSession(sessionId);
+          const sessionTask = session?.task_id
+            ? store.getTask(session.task_id)
+            : undefined;
           const result = {
             id: sessionId,
             task_id: session?.task_id ?? null,
-            cwd: session?.cwd ?? deps.dataDir,
-            cwdDisplay: abbreviateHomePath(session?.cwd ?? deps.dataDir),
-            title: session?.title ?? null,
+            cwd: sessionTask?.cwd ?? session?.cwd ?? deps.dataDir,
+            cwdDisplay: abbreviateHomePath(
+              sessionTask?.cwd ?? session?.cwd ?? deps.dataDir,
+            ),
+            title: sessionTask?.title ?? session?.title ?? null,
             source: session?.source ?? "auto",
             configOptions,
             agentCommands: sessionManager.getAgentCommands(sessionId),
@@ -1898,7 +1916,7 @@ export function createRequestHandler(
         }
         const name = (body.name ?? "").trim();
         const rootTask = store.getTask(root);
-        const cwd = body.cwd ?? rootTask?.cwd ?? "";
+        const cwd = expandHomePath(body.cwd ?? rootTask?.cwd ?? "");
         // Auto-derived name when the caller sends none: cwd basename, made
         // unique under the parent (/new repeatedly from the same cwd).
         // Explicit names stay the caller's pick (duplicates -> 409).
@@ -1934,6 +1952,11 @@ export function createRequestHandler(
             { taskId },
           );
         } catch (err) {
+          try {
+            store.deleteTask(taskId);
+          } catch {
+            // Preserve the original session-creation error.
+          }
           json(res, HTTP_STATUS.INTERNAL_SERVER_ERROR, {
             error: errorMessage(err),
           });
@@ -1961,13 +1984,27 @@ export function createRequestHandler(
           return;
         }
         const parsedUrl = new URL(req.url ?? "/", "http://localhost");
-        const afterId = parsedUrl.searchParams.get("afterId");
-        const limit = parsedUrl.searchParams.get("limit");
+        const rawAfterId = parsedUrl.searchParams.get("afterId");
+        const rawLimit = parsedUrl.searchParams.get("limit");
+        const afterIdValue = rawAfterId === null ? null : Number(rawAfterId);
+        const limitValue = rawLimit === null ? null : Number(rawLimit);
+        if (
+          (afterIdValue !== null &&
+            (!Number.isSafeInteger(afterIdValue) || afterIdValue < 0)) ||
+          (limitValue !== null &&
+            (!Number.isSafeInteger(limitValue) || limitValue < 1))
+        ) {
+          json(res, HTTP_STATUS.BAD_REQUEST, {
+            error:
+              "afterId must be a non-negative integer and limit must be a positive integer",
+          });
+          return;
+        }
         const events = store.getTaskEvents(taskId, {
           excludeThinking:
             parsedUrl.searchParams.get("excludeThinking") === "1",
-          afterId: afterId ? Number(afterId) : undefined,
-          limit: limit ? Number(limit) : undefined,
+          afterId: afterIdValue ?? undefined,
+          limit: limitValue ?? undefined,
         });
         json(res, HTTP_STATUS.OK, {
           task: { id: task.id },
@@ -2232,9 +2269,11 @@ export function createRequestHandler(
             HTTP_STATUS.OK,
             {
               id: freshSession.id,
-              cwd: freshSession.cwd,
-              cwdDisplay: abbreviateHomePath(freshSession.cwd),
-              title: freshSession.title,
+              cwd: freshTask?.cwd ?? freshSession.cwd,
+              cwdDisplay: abbreviateHomePath(
+                freshTask?.cwd ?? freshSession.cwd,
+              ),
+              title: freshTask?.title ?? freshSession.title,
               source: freshSession.source,
               task_id: freshSession.task_id,
               model: freshTask?.model ?? freshSession.model,
@@ -2311,15 +2350,19 @@ export function createRequestHandler(
             source,
           );
           const session = store.getSession(sessionId);
+          const sessionTask = session?.task_id
+            ? store.getTask(session.task_id)
+            : undefined;
+          const effectiveCwd = sessionTask?.cwd ?? session?.cwd;
           const sessionCreatedEvent = {
             type: "session_created",
             sessionId,
             task_id: session?.task_id,
-            cwd: session?.cwd,
-            cwdDisplay: session?.cwd
-              ? abbreviateHomePath(session.cwd)
+            cwd: effectiveCwd,
+            cwdDisplay: effectiveCwd
+              ? abbreviateHomePath(effectiveCwd)
               : undefined,
-            title: session?.title,
+            title: sessionTask?.title ?? session?.title,
             configOptions,
             agentCommands: sessions.getAgentCommands(sessionId),
             clientOpId: clientOpId ?? undefined,
@@ -2334,14 +2377,15 @@ export function createRequestHandler(
               configOptions,
             });
           }
+          const responseCwd = sessionTask?.cwd ?? session?.cwd ?? body.cwd;
           json(res, HTTP_STATUS.CREATED, {
             id: sessionId,
             task_id: session?.task_id ?? null,
-            cwd: session?.cwd ?? body.cwd,
-            cwdDisplay: session?.cwd
-              ? abbreviateHomePath(session.cwd)
+            cwd: responseCwd,
+            cwdDisplay: responseCwd
+              ? abbreviateHomePath(responseCwd)
               : undefined,
-            title: session?.title ?? null,
+            title: sessionTask?.title ?? session?.title ?? null,
             source: session?.source ?? source,
             configOptions,
             agentCommands: sessions.getAgentCommands(sessionId),
@@ -2984,16 +3028,20 @@ export function createRequestHandler(
         );
         const streamUrl = `/api/v1/sessions/${sessionId}/events/stream`;
         const session = store.getSession(sessionId);
+        const sessionTask = session?.task_id
+          ? store.getTask(session.task_id)
+          : undefined;
 
+        const effectiveCwd = sessionTask?.cwd ?? session?.cwd;
         sseManager.broadcast({
           type: "session_created",
           sessionId,
           task_id: session?.task_id,
-          cwd: session?.cwd,
-          cwdDisplay: session?.cwd
-            ? abbreviateHomePath(session.cwd)
+          cwd: effectiveCwd,
+          cwdDisplay: effectiveCwd
+            ? abbreviateHomePath(effectiveCwd)
             : undefined,
-          title: session?.title,
+          title: sessionTask?.title ?? session?.title,
           configOptions,
           agentCommands: sessions.getAgentCommands(sessionId),
         });
