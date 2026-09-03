@@ -1842,6 +1842,72 @@ export function createRequestHandler(
         return;
       }
 
+      // POST /api/v1/sessions/:id/clear — rotate the ACP execution while
+      // preserving the stable WebAgent session identity and its records.
+      const clearSessionMatch = url.match(
+        /^\/api\/v1\/sessions\/([^/?]+)\/clear\/?$/,
+      );
+      if (clearSessionMatch && req.method === "POST") {
+        const sessionId = decodeURIComponent(clearSessionMatch[1]);
+        const session = store.getSession(sessionId);
+        if (!session) {
+          json(res, HTTP_STATUS.NOT_FOUND, { error: "Session not found" });
+          return;
+        }
+        const bridge = getBridge?.();
+        if (!bridge || !sessions) {
+          json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
+            error: "Agent not ready yet",
+          });
+          return;
+        }
+        if (sessions.getBusyKind(sessionId) !== null) {
+          json(res, HTTP_STATUS.CONFLICT, {
+            error: "Cancel active work before clearing the session",
+          });
+          return;
+        }
+        let body: { cwd?: string } = {};
+        try {
+          const raw = await readBody(req);
+          if (raw) body = JSON.parse(raw) as { cwd?: string };
+        } catch {
+          json(res, HTTP_STATUS.BAD_REQUEST, { error: "Invalid JSON" });
+          return;
+        }
+        try {
+          const result = await sessions.clearSession(
+            bridge,
+            sessionId,
+            body.cwd,
+          );
+          const fresh = store.getSession(sessionId)!;
+          const event = {
+            type: "session_created",
+            sessionId,
+            cwd: fresh.cwd,
+            cwdDisplay: abbreviateHomePath(fresh.cwd),
+            title: fresh.title,
+            configOptions: result.configOptions,
+            agentCommands: sessions.getAgentCommands(sessionId),
+          } satisfies AgentEvent;
+          sseManager.broadcast(event);
+          json(res, HTTP_STATUS.OK, {
+            id: sessionId,
+            cwd: fresh.cwd,
+            cwdDisplay: abbreviateHomePath(fresh.cwd),
+            title: fresh.title,
+            source: fresh.source,
+            configOptions: result.configOptions,
+          });
+        } catch (err) {
+          json(res, HTTP_STATUS.BAD_REQUEST, {
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+        return;
+      }
+
       // --- Session CRUD: /api/v1/sessions/:id ---
       const sessionIdMatch = url.match(
         /^\/api\/v1\/sessions\/([^/?]+)\/?(\?.*)?$/,

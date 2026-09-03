@@ -526,6 +526,28 @@ describe("Session REST API", () => {
     });
   });
 
+  // --- POST /api/v1/sessions/:id/clear ---
+
+  describe("POST /api/v1/sessions/:id/clear", () => {
+    it("keeps the WebAgent session id while rotating its ACP execution", async () => {
+      store.createSession("s1", tmpDir, "auto", "agent-old");
+
+      const res = await makeRequest(
+        port,
+        "POST",
+        "/api/v1/sessions/s1/clear",
+        "{}",
+      );
+
+      assert.equal(res.status, 200);
+      const body = JSON.parse(res.body);
+      assert.equal(body.id, "s1");
+      assert.equal(store.listSessions().length, 1);
+      assert.equal(store.getAgentSessionId("s1"), "mock-session-1");
+      assert.equal(store.getWebSessionId("agent-old"), undefined);
+    });
+  });
+
   // --- GET /api/v1/sessions/:id ---
 
   describe("GET /api/v1/sessions/:id", () => {
