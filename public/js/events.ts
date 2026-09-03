@@ -80,7 +80,21 @@ import type {
 import "./plan-panel.ts";
 import { OrphanToolUpdateCache } from "./orphan-tool-updates.ts";
 
-const orphanToolUpdates = new OrphanToolUpdateCache();
+const orphanToolUpdates = new OrphanToolUpdateCache({
+  // An entry expiring without its host ever appearing is the one genuinely
+  // abnormal outcome worth surfacing; routine buffering during replay or
+  // DOM-rebuild windows is expected and silent.
+  onExpire: (id, update) => {
+    log.warn(
+      "tool update buffered but never recovered: host missing for the whole TTL",
+      {
+        id,
+        status: update.status,
+        sessionId: update.sessionId,
+      },
+    );
+  },
+});
 
 setNavigationLoadInvalidator(() => {
   historyLoadToken++;
@@ -1974,6 +1988,27 @@ export function handleEvent(msg: AgentEvent) {
       break;
     }
 
+    case "assistant_message": {
+      // Server-generated compact summaries are persisted as assistant messages
+      // and broadcast only after the silent summary prompt has completed.
+      if (msg.seq != null && msg.seq <= state.lastEventSeq) break;
+      hideWaiting();
+      finishThinking();
+      finishAssistant();
+      const el = renderContentEvent("assistant_message", msg, liveHooks());
+      if (el) {
+        appendMessageElement(el);
+        if (msg.seq != null) {
+          el.dataset.firstEventSeq = String(msg.seq);
+          el.dataset.lastEventSeq = String(msg.seq);
+          state.lastEventSeq = Math.max(state.lastEventSeq, msg.seq);
+          setSyncBoundary();
+        }
+      }
+      scrollToBottom();
+      break;
+    }
+
     case "message_chunk":
       // ACP background work may trigger a new Main-agent message while the
       // foreground prompt remains ended/idle. Render that unsolicited stream
@@ -2030,11 +2065,16 @@ export function handleEvent(msg: AgentEvent) {
     case "tool_call_update": {
       const hooks = liveHooks();
       if (!hooks.findToolCallEl(msg.id)) {
+        // Dedup: log only the first buffering per tool-call id, so a burst of
+        // cumulative snapshots for one missing host stays a single line.
+        const firstSighting = !orphanToolUpdates.has(msg.id);
         orphanToolUpdates.put(msg);
-        log.debug("buffering tool update without host", {
-          id: msg.id,
-          status: msg.status,
-        });
+        if (firstSighting) {
+          log.debug("buffering tool update without host", {
+            id: msg.id,
+            status: msg.status,
+          });
+        }
       }
       // Preserve the original lifecycle effects immediately even when the DOM
       // host is absent. Replaying them after host creation is idempotent.

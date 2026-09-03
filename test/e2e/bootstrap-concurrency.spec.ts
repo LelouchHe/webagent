@@ -1,6 +1,7 @@
 import { test, expect } from "playwright/test";
+import { currentSessionId, expectConnectionStatus } from "./helpers.ts";
 
-test("concurrent clients bootstrap one shared session", async ({
+test("concurrent clients converge on the shared Root session without creating one", async ({
   context,
   request,
 }) => {
@@ -19,6 +20,7 @@ test("concurrent clients bootstrap one shared session", async ({
     id: string;
   }>;
   for (const session of existing) {
+    if (session.id === "root") continue;
     const response = await request.delete(`/api/v1/sessions/${session.id}`);
     expect(response.ok()).toBe(true);
   }
@@ -27,26 +29,26 @@ test("concurrent clients bootstrap one shared session", async ({
     Array.from({ length: 5 }, () => context.newPage()),
   );
   await Promise.all(pages.map((page) => page.goto("/")));
+  // Root carries no URL hash (canonical clean URL), so readiness is signaled by
+  // the SSE connection and enabled input, not by a hash.
   await Promise.all(
-    pages.map((page) =>
-      expect
-        .poll(() => page.evaluate(() => location.hash.slice(1)))
-        .not.toBe(""),
-    ),
+    pages.map((page) => expectConnectionStatus(page, "connected")),
+  );
+  await Promise.all(
+    pages.map((page) => expect(page.locator("#input")).toBeEnabled()),
   );
 
   const sessionIds = await Promise.all(
-    pages.map((page) => page.evaluate(() => location.hash.slice(1))),
+    pages.map((page) => currentSessionId(page)),
   );
-  expect(
-    new Set(sessionIds).size,
-    `session POSTs: ${sessionPosts.join(", ")}`,
-  ).toBe(1);
+  expect(new Set(sessionIds).size).toBe(1);
+  expect(sessionIds[0]).toBe("root");
+  expect(sessionPosts).toEqual([]);
 
   const sessions = (await (
     await request.get("/api/v1/sessions")
   ).json()) as Array<{
     id: string;
   }>;
-  expect(sessions.map((session) => session.id)).toEqual([sessionIds[0]]);
+  expect(sessions.map((session) => session.id)).toEqual(["root"]);
 });

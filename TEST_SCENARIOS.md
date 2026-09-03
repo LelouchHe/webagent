@@ -398,7 +398,12 @@ spot gaps, and decide what still needs to be added without reading every spec.
 ### Basic session and messaging flow
 
 - `session-bootstrap.spec.ts`
-  - app connects and creates / resumes a usable session
+  - app boots into the canonical Root session (clean URL, no hash) and is
+    ready for input
+
+- `bootstrap-concurrency.spec.ts`
+  - concurrent clients on the root path all converge on the reserved Root
+    session without posting a new session
 
 - `session-send-message.spec.ts`
   - normal prompt / assistant reply round-trip
@@ -471,17 +476,36 @@ spot gaps, and decide what still needs to be added without reading every spec.
 
 - `session-delete-broadcast.spec.ts`
   - deleting the current session disables peer clients correctly
+  - other tabs auto-switch away from the deleted session to a remaining one
 
 - `session-delete-command.spec.ts`
   - `/exit` deletes current session and switches to previous
 
+- REST delete (`test/sessions.test.ts`, `test/store.test.ts`)
+  - deleting a session cascades to every descendant, retires each affected
+    ACP execution, and broadcasts one `session_deleted` per removed session
+  - a share-tombstoned descendant survives and is re-parented under Root
+  - creating a session under an unknown parent is rejected with `400`
+  - `DELETE /api/v1/sessions/root` is rejected
+
 - `session-prune-command.spec.ts`
   - `/prune` removes all non-current sessions
+
+- `session-clear-command.spec.ts`
+  - `/clear` keeps the stable WebAgent session id, history, and cwd; only the
+    ACP execution rotates and the session stays available through the API
+
+- `/compact`
+  - compact summary is visible as an assistant message, but is deferred until
+    the next real user prompt; the new ACP execution stays idle meanwhile
+  - the real prompt stores only the user's original text and consumes the
+    one-shot handoff
 
 ### Resume / reconnect / restart recovery
 
 - `auto-resume-last-session.spec.ts`
-  - root page resumes the most recently active session
+  - the root path opens the canonical Root session instead of the most recent
+    session; existing sessions stay reachable through their stable hash
 
 - `sse-reconnect-recovery.spec.ts`
   - SSE reconnect restores the active session without duplicate replay

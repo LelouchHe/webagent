@@ -47,6 +47,62 @@ describe("OrphanToolUpdateCache", () => {
     );
   });
 
+  it("reports buffered ids via has() until recovered, merged, or cleared", () => {
+    let now = 0;
+    const cache = new OrphanToolUpdateCache({ now: () => now });
+
+    assert.equal(cache.has("tc-1"), false);
+    cache.put(update("tc-1", "first"));
+    assert.equal(cache.has("tc-1"), true);
+    cache.put(update("tc-1", "second")); // merge keeps it buffered
+    assert.equal(cache.has("tc-1"), true);
+    assert.ok(cache.take("tc-1"));
+    assert.equal(cache.has("tc-1"), false);
+
+    cache.put(update("tc-2", "lost"));
+    assert.equal(cache.has("tc-2"), true);
+    now = 70_000; // past TTL
+    assert.equal(cache.has("tc-2"), false); // pruned
+  });
+
+  it("warns on expiration only, once per id, never on take/merge/clear", () => {
+    let now = 0;
+    const expired: string[] = [];
+    const cache = new OrphanToolUpdateCache({
+      ttlMs: 60_000,
+      now: () => now,
+      onExpire: (id) => expired.push(id),
+    });
+
+    cache.put(update("tc-1", "first"));
+    cache.put(update("tc-1", "second")); // merge: same episode, no expire
+    now = 30_000;
+    assert.ok(cache.take("tc-1")); // recovered: no expire
+    assert.deepEqual(expired, []);
+
+    cache.put(update("tc-2", "lost"));
+    cache.clear(); // programmatic reset: no expire
+    assert.deepEqual(expired, []);
+
+    cache.put(update("tc-3", "pending"));
+    now = 120_000; // past the 60s TTL with no host in between
+    cache.put(update("tc-4", "unrelated")); // prune runs here
+    assert.deepEqual(expired, ["tc-3"]);
+
+    // tc-4 is put at 120s (expires 180s): recovered just under the TTL → no warn.
+    now = 179_999;
+    assert.ok(cache.take("tc-4"));
+    assert.deepEqual(expired, ["tc-3"]);
+
+    // A fresh episode for the same id that also never recovers expires again.
+    now = 180_000;
+    cache.put(update("tc-3", "pending again")); // prunes nothing (tc-4 consumed)
+    assert.deepEqual(expired, ["tc-3"]);
+    now = 240_000;
+    cache.put(update("tc-5", "unrelated")); // prunes tc-3's second episode
+    assert.deepEqual(expired, ["tc-3", "tc-3"]);
+  });
+
   it("does not let an older replay patch overwrite a newer terminal", () => {
     const cache = new OrphanToolUpdateCache();
     cache.put(

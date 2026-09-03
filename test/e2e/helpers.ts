@@ -21,7 +21,9 @@ export async function gotoConnected(page: Page, path = "/"): Promise<void> {
 }
 
 export async function currentSessionId(page: Page): Promise<string> {
-  return page.evaluate(() => location.hash.slice(1));
+  // Root is the canonical clean URL and intentionally carries no hash; resolve
+  // the empty hash to the reserved "root" id so callers see a stable identity.
+  return page.evaluate(() => location.hash.slice(1) || "root");
 }
 
 export async function createNewSession(page: Page): Promise<string> {

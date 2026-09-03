@@ -267,7 +267,7 @@ describe("connection", () => {
     assert.equal(state.busy, true);
   });
 
-  it("resumes the most recent session when there is no hash", async () => {
+  it("resumes the most recent session when there is no hash and no Root", async () => {
     setFetch(async (url: string) => {
       if (url.includes("/visibility")) return mockResponse({});
       if (url === "/api/v1/sessions")
@@ -286,6 +286,30 @@ describe("connection", () => {
     assert.ok(urls.some((u) => u === "/api/v1/sessions"));
     assert.ok(urls.some((u) => u === "/api/v1/sessions/recent-session"));
     assert.equal(state.sessionId, "recent-session");
+  });
+
+  it("prefers Root when there is no hash", async () => {
+    setFetch(async (url: string) => {
+      if (url.includes("/visibility")) return mockResponse({});
+      if (url === "/api/v1/sessions")
+        return mockResponse([{ id: "recent-session" }, { id: "root" }]);
+      if (url === "/api/v1/sessions/root")
+        return mockResponse(sessionResponse("root"));
+      if (url.startsWith("/api/v1/sessions/root/events"))
+        return mockResponse([]);
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+
+    connection.connect();
+    await flush(30);
+
+    assert.equal(state.sessionId, "root");
+    assert.equal(location.hash, "");
+    assert.ok(fetchCalls.some((call) => call.url === "/api/v1/sessions/root"));
+    assert.equal(
+      fetchCalls.some((call) => call.url === "/api/v1/sessions/recent-session"),
+      false,
+    );
   });
 
   it("falls back to next existing session when hash session is expired", async () => {

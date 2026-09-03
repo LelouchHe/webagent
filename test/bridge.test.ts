@@ -147,6 +147,107 @@ describe("AgentBridge", () => {
     ]);
   });
 
+  it("drops ACP updates after their WebAgent binding is retired", async () => {
+    const bindings = new Map<string, string>([["agent-old", "web-1"]]);
+    const bridge = new AgentBridge("fake-agent", {
+      getAgentSessionId: (webSessionId) =>
+        [...bindings].find(([, webId]) => webId === webSessionId)?.[0],
+      getWebSessionId: (agentSessionId) => bindings.get(agentSessionId),
+    });
+    const events: unknown[] = [];
+    bridge.on("event", (event) => events.push(event));
+
+    await (bridge as any).handleSessionUpdate({
+      sessionId: "agent-old",
+      update: {
+        sessionUpdate: "agent_message_chunk",
+        content: { type: "text", text: "before clear" },
+      },
+    });
+    bindings.delete("agent-old");
+    bindings.set("agent-new", "web-1");
+    await (bridge as any).handleSessionUpdate({
+      sessionId: "agent-old",
+      update: {
+        sessionUpdate: "agent_message_chunk",
+        content: { type: "text", text: "after clear" },
+      },
+    });
+
+    assert.deepEqual(events, [
+      { type: "message_chunk", sessionId: "web-1", text: "before clear" },
+    ]);
+  });
+
+  describe("retireExecution", () => {
+    it("prefers session/delete when the agent advertises it", async () => {
+      const bridge = new AgentBridge("fake-agent", mappedSessions);
+      const calls: string[] = [];
+      (bridge as any).conn = {
+        deleteSession: async (p: { sessionId: string }) => {
+          calls.push(`delete:${p.sessionId}`);
+        },
+        closeSession: async (p: { sessionId: string }) => {
+          calls.push(`close:${p.sessionId}`);
+        },
+      };
+      (bridge as any).sessionCapabilities = {
+        delete: {},
+        close: {},
+      };
+
+      await bridge.retireExecution("agent-old");
+
+      assert.deepEqual(calls, ["delete:agent-old"]);
+    });
+
+    it("falls back to session/close when delete is not advertised", async () => {
+      const bridge = new AgentBridge("fake-agent", mappedSessions);
+      const calls: string[] = [];
+      (bridge as any).conn = {
+        closeSession: async (p: { sessionId: string }) => {
+          calls.push(`close:${p.sessionId}`);
+        },
+      };
+      (bridge as any).sessionCapabilities = { close: {} };
+
+      await bridge.retireExecution("agent-old");
+
+      assert.deepEqual(calls, ["close:agent-old"]);
+    });
+
+    it("skips silently when the agent advertises neither capability", async () => {
+      const bridge = new AgentBridge("fake-agent", mappedSessions);
+      let called = false;
+      (bridge as any).conn = {
+        deleteSession: async () => {
+          called = true;
+        },
+        closeSession: async () => {
+          called = true;
+        },
+      };
+      (bridge as any).sessionCapabilities = null;
+
+      await bridge.retireExecution("agent-old");
+
+      assert.equal(called, false);
+    });
+
+    it("swallows agent failures so rotation is never rolled back", async () => {
+      const bridge = new AgentBridge("fake-agent", mappedSessions);
+      (bridge as any).conn = {
+        deleteSession: async () => {
+          throw new Error("agent disagrees");
+        },
+      };
+      (bridge as any).sessionCapabilities = { delete: {} };
+
+      // Must resolve, not reject.
+      await bridge.retireExecution("agent-old");
+    });
+  });
+
   it("maps WebAgent IDs for load, config, and cancel calls", async () => {
     const bridge = new AgentBridge("fake-agent", mappedSessions);
     const calls: Array<{ method: string; payload: unknown }> = [];

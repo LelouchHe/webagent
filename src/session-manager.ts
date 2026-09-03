@@ -4,7 +4,13 @@ import { randomUUID } from "node:crypto";
 import { rm } from "node:fs/promises";
 import { stat } from "node:fs/promises";
 import { join } from "node:path";
-import { MessageNotFoundError, type Store } from "./store.ts";
+import {
+  MessageNotFoundError,
+  ROOT_SESSION_ID,
+  type SessionDelete,
+  type SessionRow,
+  type Store,
+} from "./store.ts";
 import type { AgentBridge } from "./bridge.ts";
 import { buildMcpServerEntry } from "./mcp/server.ts";
 import type { CapabilityStore } from "./mcp/capability.ts";
@@ -51,7 +57,12 @@ type SessionBridge = Pick<
   AgentBridge,
   "newSession" | "setConfigOption" | "loadSession"
 > &
-  Partial<Pick<AgentBridge, "sessionMapped" | "discardUnboundSession">>;
+  Partial<
+    Pick<
+      AgentBridge,
+      "sessionMapped" | "discardUnboundSession" | "retireExecution"
+    >
+  >;
 
 /** Minimum age (seconds) before an empty session is eligible for cleanup. */
 const EMPTY_SESSION_MIN_AGE_S = 60;
@@ -81,6 +92,10 @@ export class SessionManager {
   readonly assistantBuffers = new Map<string, string>();
   readonly thinkingBuffers = new Map<string, string>();
   readonly activePrompts = new Set<string>();
+  /** Sessions undergoing compact summary generation or ACP rotation. */
+  readonly compactingSessions = new Set<string>();
+  /** Barrier covering the asynchronous ACP replacement itself. */
+  readonly rotatingSessions = new Set<string>();
   readonly pendingPromptSubmissions = new Map<string, number>();
   readonly cancelledPromptSubmissions = new Set<number>();
   readonly runningBashProcs = new Map<string, ChildProcess>();
@@ -161,14 +176,22 @@ export class SessionManager {
    * configured with a capability store + base URL, keeping sessions
    * without MCP on the previous empty-mcpServers path.
    */
-  private buildMcpServers(webSessionId: string): AcpMcpServer[] | undefined {
+  private buildMcpServerForExecution(
+    webSessionId: string,
+    preserveExisting: boolean,
+  ): { servers: AcpMcpServer[]; token: string } | undefined {
     if (!this.capabilities || !this.mcpBaseUrl) return undefined;
-    return [
-      buildMcpServerEntry(
-        this.capabilities.mint(webSessionId),
-        this.mcpBaseUrl,
-      ),
-    ];
+    const token = preserveExisting
+      ? this.capabilities.mintAdditional(webSessionId)
+      : this.capabilities.mint(webSessionId);
+    return {
+      token,
+      servers: [buildMcpServerEntry(token, this.mcpBaseUrl)],
+    };
+  }
+
+  private buildMcpServers(webSessionId: string): AcpMcpServer[] | undefined {
+    return this.buildMcpServerForExecution(webSessionId, false)?.servers;
   }
 
   /**
@@ -196,12 +219,15 @@ export class SessionManager {
   /**
    * Drop live state for sessions that the store cleaned as empty.
    */
-  private cleanupEmptySessions(): void {
+  private cleanupEmptySessions(bridge?: SessionBridge): void {
     const cleaned = this.store.deleteEmptySessions(EMPTY_SESSION_MIN_AGE_S);
-    for (const id of cleaned) {
-      this.liveSessions.delete(id);
-      this.capabilities?.revokeBySession(id);
-      this.agentCommandSnapshots.delete(id);
+    for (const entry of cleaned) {
+      if (entry.agentSessionId) {
+        void bridge?.retireExecution?.(entry.agentSessionId);
+      }
+      this.liveSessions.delete(entry.id);
+      this.capabilities?.revokeBySession(entry.id);
+      this.agentCommandSnapshots.delete(entry.id);
     }
     if (cleaned.length > 0)
       slog.info("cleaned empty session(s)", { count: cleaned.length });
@@ -217,15 +243,29 @@ export class SessionManager {
     webSessionId: string,
     cwd: string,
     options: { silent?: boolean; mcpServers?: AcpMcpServer[] },
+    capabilityToken?: string,
   ): Promise<{ sessionId: string; configOptions: ConfigOption[] }> {
     this.creatingSessions.add(webSessionId);
     try {
       return await bridge.newSession(cwd, options);
     } catch (error) {
       this.creatingSessions.delete(webSessionId);
-      this.capabilities?.revokeBySession(webSessionId);
+      if (capabilityToken) this.capabilities?.revoke(capabilityToken);
+      else this.capabilities?.revokeBySession(webSessionId);
       throw error;
     }
+  }
+
+  /** Default new WebAgent sessions to the reserved Root when it exists. */
+  private resolveParentSessionId(
+    parentSessionId?: string | null,
+  ): string | null {
+    return (
+      parentSessionId ??
+      (this.store.getSessionIncludingDeleted(ROOT_SESSION_ID)
+        ? ROOT_SESSION_ID
+        : null)
+    );
   }
 
   /** Create a new session in both bridge and store, inheriting the source session's config. */
@@ -234,7 +274,7 @@ export class SessionManager {
     cwd?: string,
     inheritFromSessionId?: string,
     source: string = "auto",
-    opts?: { silent?: boolean },
+    opts?: { silent?: boolean; parentSessionId?: string | null },
   ): Promise<{ sessionId: string; configOptions: ConfigOption[] }> {
     const sessionCwd = expandHomePath(cwd ?? this.defaultCwd);
     try {
@@ -245,7 +285,7 @@ export class SessionManager {
     }
 
     // Clean up empty sessions (no events) older than the threshold
-    this.cleanupEmptySessions();
+    this.cleanupEmptySessions(bridge);
 
     const sourceSession = inheritFromSessionId
       ? this.store.getSession(inheritFromSessionId)
@@ -270,6 +310,7 @@ export class SessionManager {
         sessionCwd,
         source,
         agentSessionId,
+        this.resolveParentSessionId(opts?.parentSessionId),
       );
     } catch (err) {
       slog.warn("ACP session created but local persistence failed", {
@@ -329,6 +370,196 @@ export class SessionManager {
         ? this.applyStoredConfig(configOptions, session)
         : [],
     };
+  }
+
+  /**
+   * Rotate only the ACP execution for a stable WebAgent session.
+   * The old execution remains persisted as historical binding provenance.
+   */
+  async clearSession(
+    bridge: SessionBridge,
+    sessionId: string,
+    cwd?: string,
+    opts: {
+      preservePendingCompactSummary?: boolean;
+      preserveRuntimeState?: boolean;
+    } = {},
+  ): Promise<{ sessionId: string; configOptions: ConfigOption[] }> {
+    if (this.rotatingSessions.has(sessionId)) {
+      throw new Error(`Session is already being rotated: ${sessionId}`);
+    }
+    this.rotatingSessions.add(sessionId);
+    // Other clients watching this session see busy for the whole rotation
+    // window instead of racing into a 409.
+    this.syncBusy(sessionId);
+    try {
+      const result = await this.clearSessionImpl(
+        bridge,
+        sessionId,
+        cwd,
+        opts.preserveRuntimeState,
+      );
+      if (!opts.preservePendingCompactSummary) {
+        this.store.clearPendingCompactSummary(sessionId);
+      }
+      return result;
+    } finally {
+      this.rotatingSessions.delete(sessionId);
+      // Skip the idle sync when the session was hard-deleted mid-rotation
+      // (parent cascade): syncBusy would lazily re-create a stale runtime
+      // state row that releaseSessionRuntime had already dropped.
+      if (this.store.getSessionIncludingDeleted(sessionId)) {
+        this.syncBusy(sessionId);
+      }
+    }
+  }
+
+  private async clearSessionImpl(
+    bridge: SessionBridge,
+    sessionId: string,
+    cwd?: string,
+    preserveRuntimeState = false,
+  ): Promise<{ sessionId: string; configOptions: ConfigOption[] }> {
+    const session = this.store.getSession(sessionId);
+    if (!session) throw new Error(`Session not found: ${sessionId}`);
+    const sessionCwd = expandHomePath(cwd ?? session.cwd);
+    try {
+      const info = await stat(sessionCwd);
+      if (!info.isDirectory()) throw new Error("not a directory");
+    } catch {
+      throw new InvalidSessionDirectoryError(sessionCwd);
+    }
+
+    const execution = this.buildMcpServerForExecution(sessionId, true);
+    const created = await this.createAgentSession(
+      bridge,
+      sessionId,
+      sessionCwd,
+      this.buildNewSessionOptions(undefined, execution?.servers),
+      execution?.token,
+    );
+
+    const retiredAgentSessionId = this.store.getAgentSessionId(sessionId);
+    try {
+      this.store.rotateAgentSession(sessionId, created.sessionId, sessionCwd);
+    } catch (error) {
+      bridge.discardUnboundSession?.(created.sessionId);
+      this.creatingSessions.delete(sessionId);
+      if (execution?.token) this.capabilities?.revoke(execution.token);
+      throw error;
+    }
+
+    this.liveSessions.add(sessionId);
+    this.creatingSessions.delete(sessionId);
+    if (execution?.token) {
+      this.capabilities?.revokeOtherTokens(sessionId, execution.token);
+    }
+    bridge.sessionMapped?.(created.sessionId);
+    // The old ACP execution is explicitly retired now that the new binding
+    // is authoritative; best-effort, never rolls back the rotation. Only
+    // retire when the binding actually moved: an agent that returns the
+    // current execution id makes rotate a no-op, and retiring it would kill
+    // the still-live execution.
+    if (retiredAgentSessionId && retiredAgentSessionId !== created.sessionId) {
+      void bridge.retireExecution?.(retiredAgentSessionId);
+    }
+    this.resetSessionRuntime(sessionId, preserveRuntimeState);
+
+    const configOptions = await this.restoreSessionConfig(
+      bridge,
+      sessionId,
+      created.configOptions,
+      session,
+    );
+    return {
+      sessionId,
+      configOptions: this.applyStoredConfig(configOptions, session),
+    };
+  }
+
+  /** Reset runtime-only state after replacing a Session's ACP execution. */
+  private resetSessionRuntime(
+    sessionId: string,
+    preserveRuntimeState = false,
+  ): void {
+    this.assistantBuffers.delete(sessionId);
+    this.thinkingBuffers.delete(sessionId);
+    this.activePrompts.delete(sessionId);
+    const pendingSubmission = this.pendingPromptSubmissions.get(sessionId);
+    this.pendingPromptSubmissions.delete(sessionId);
+    if (pendingSubmission !== undefined) {
+      this.cancelledPromptSubmissions.delete(pendingSubmission);
+    }
+    this.runningBashProcs.delete(sessionId);
+    this.agentCommandSnapshots.delete(sessionId);
+    for (const [requestId, permission] of this.pendingPermissions) {
+      if (permission.sessionId === sessionId) {
+        this.pendingPermissions.delete(requestId);
+      }
+    }
+    if (!preserveRuntimeState) this.state.delete(sessionId);
+  }
+
+  /** Bind an ACP execution to the reserved Root record after bridge startup. */
+  async ensureRootSession(bridge: SessionBridge): Promise<void> {
+    const root = this.store.getSessionIncludingDeleted(ROOT_SESSION_ID);
+    if (!root || this.store.getAgentSessionId(ROOT_SESSION_ID)) return;
+
+    const execution = this.buildMcpServerForExecution(ROOT_SESSION_ID, false);
+    const created = await this.createAgentSession(
+      bridge,
+      ROOT_SESSION_ID,
+      root.cwd,
+      this.buildNewSessionOptions(undefined, execution?.servers),
+      execution?.token,
+    );
+    try {
+      this.store.bindAgentSession(ROOT_SESSION_ID, created.sessionId);
+    } catch (error) {
+      bridge.discardUnboundSession?.(created.sessionId);
+      this.creatingSessions.delete(ROOT_SESSION_ID);
+      if (execution?.token) this.capabilities?.revoke(execution.token);
+      throw error;
+    }
+    this.liveSessions.add(ROOT_SESSION_ID);
+    this.creatingSessions.delete(ROOT_SESSION_ID);
+    this.recordConfigOptions(ROOT_SESSION_ID, created.configOptions);
+    bridge.sessionMapped?.(created.sessionId);
+  }
+
+  /** Reapply the stable Session config to a newly created ACP execution. */
+  private async restoreSessionConfig(
+    bridge: SessionBridge,
+    sessionId: string,
+    configOptions: ConfigOption[],
+    session: Pick<SessionRow, "mode" | "reasoning_effort" | "model">,
+  ): Promise<ConfigOption[]> {
+    const thinkingId =
+      configOptions.find(
+        (option) =>
+          option.id === "reasoning_effort" ||
+          option.id === "thought_level" ||
+          option.category === "thought_level",
+      )?.id ?? "reasoning_effort";
+    const values: Array<{ id: string; value: string | null }> = [
+      { id: "mode", value: session.mode },
+      { id: thinkingId, value: session.reasoning_effort },
+      { id: "model", value: session.model },
+    ];
+    let updated = configOptions;
+    for (const { id, value } of values) {
+      if (!value) continue;
+      try {
+        const next = await bridge.setConfigOption(sessionId, id, value);
+        if (next.length > 0) {
+          updated = next;
+          this.cachedConfigOptions = next;
+        }
+      } catch {
+        // An option may no longer be supported by the current agent.
+      }
+    }
+    return updated;
   }
 
   /** Cache the ACP config schema and persist this session's current values. */
@@ -398,11 +629,11 @@ export class SessionManager {
     try {
       const result = this.store.consumeMessageTx(messageId, sessionId);
       if (result.alreadyConsumed) {
-        this.deleteSession(sessionId);
+        this.deleteSession(bridge, sessionId);
       }
       return result;
     } catch (err) {
-      this.deleteSession(sessionId);
+      this.deleteSession(bridge, sessionId);
       if (err instanceof MessageNotFoundError) {
         const consumedSessionId =
           this.store.findConsumedMessageSession(messageId);
@@ -658,33 +889,53 @@ export class SessionManager {
     return cleared;
   }
 
-  /** Delete a session from store and clean up all state (including images). */
-  deleteSession(sessionId: string): void {
-    const mode = this.store.deleteSession(sessionId);
-    this.capabilities?.revokeBySession(sessionId);
-    this.liveSessions.delete(sessionId);
-    this.sessionHasTitle.delete(sessionId);
-    this.assistantBuffers.delete(sessionId);
-    this.thinkingBuffers.delete(sessionId);
-    this.activePrompts.delete(sessionId);
-    const pendingSubmission = this.pendingPromptSubmissions.get(sessionId);
-    this.pendingPromptSubmissions.delete(sessionId);
+  /** Delete a session from store and clean up all state (including images).
+   *  Descendant sessions are deleted too (direct cascade, no confirmation yet
+   *  — a tree UI will add one). Every affected session's ACP execution is
+   *  retired explicitly and hard-deleted image directories are removed.
+   *  Returns the store's affected list so callers can broadcast
+   *  `session_deleted` for each removed session. */
+  deleteSession(
+    bridge: SessionBridge | undefined,
+    sessionId: string,
+  ): { mode: "hard" | "soft"; affected: SessionDelete[] } {
+    const result = this.store.deleteSession(sessionId);
+    for (const entry of result.affected) {
+      if (entry.agentSessionId)
+        void bridge?.retireExecution?.(entry.agentSessionId);
+      this.releaseSessionRuntime(entry.id, entry.mode);
+    }
+    return result;
+  }
+
+  /** Drop in-memory state owned by a session that no longer exists. */
+  private releaseSessionRuntime(id: string, mode: "hard" | "soft"): void {
+    this.capabilities?.revokeBySession(id);
+    this.liveSessions.delete(id);
+    this.sessionHasTitle.delete(id);
+    this.assistantBuffers.delete(id);
+    this.thinkingBuffers.delete(id);
+    this.activePrompts.delete(id);
+    this.compactingSessions.delete(id);
+    this.rotatingSessions.delete(id);
+    const pendingSubmission = this.pendingPromptSubmissions.get(id);
+    this.pendingPromptSubmissions.delete(id);
     if (pendingSubmission !== undefined) {
       this.cancelledPromptSubmissions.delete(pendingSubmission);
     }
-    this.runningBashProcs.delete(sessionId);
-    this.attachmentLabelCache.delete(sessionId);
-    this.agentCommandSnapshots.delete(sessionId);
+    this.runningBashProcs.delete(id);
+    this.attachmentLabelCache.delete(id);
+    this.agentCommandSnapshots.delete(id);
     // Clean pending permissions for this session
     for (const [reqId, perm] of this.pendingPermissions) {
-      if (perm.sessionId === sessionId) this.pendingPermissions.delete(reqId);
+      if (perm.sessionId === id) this.pendingPermissions.delete(reqId);
     }
-    this.state.delete(sessionId);
+    this.state.delete(id);
     if (mode === "hard") {
       // Tombstoned sessions keep their attachments alive for the share viewer
       // (shared files still resolve via /s/:token/attachments/...). The reap
       // path in share/routes.ts removes them once the last share is gone.
-      rm(join(this.dataDir, "sessions", sessionId), {
+      rm(join(this.dataDir, "sessions", id), {
         recursive: true,
         force: true,
       }).catch(() => {});
@@ -745,6 +996,8 @@ export class SessionManager {
   getBusyKind(sessionId: string): "agent" | "bash" | null {
     if (this.pendingPromptSubmissions.has(sessionId)) return "agent";
     if (this.activePrompts.has(sessionId)) return "agent";
+    if (this.compactingSessions.has(sessionId)) return "agent";
+    if (this.rotatingSessions.has(sessionId)) return "agent";
     if (this.runningBashProcs.has(sessionId)) return "bash";
     return null;
   }

@@ -258,7 +258,7 @@ describe("SessionManager", () => {
         { name: "context", description: "Show context usage" },
       ]);
 
-      sm.deleteSession("s1");
+      sm.deleteSession(undefined, "s1");
 
       assert.ok(!sm.liveSessions.has("s1"));
       assert.ok(!sm.sessionHasTitle.has("s1"));
@@ -271,6 +271,51 @@ describe("SessionManager", () => {
         revision: 0,
         commands: [],
       });
+      assert.equal(store.getSession("s1"), undefined);
+    });
+
+    it("cascades to descendants, cleaning their runtime state and retiring executions", () => {
+      store.createSession("parent", "/a", "auto", "agent-parent");
+      store.createSession("child", "/b", "auto", "agent-child", "parent");
+      sm.liveSessions.add("parent");
+      sm.liveSessions.add("child");
+      sm.assistantBuffers.set("child", "partial answer");
+      sm.pendingPromptSubmissions.set("child", 7);
+      const retired: string[] = [];
+      const bridge = {
+        async newSession() {
+          return { sessionId: "ignored", configOptions: [] };
+        },
+        async setConfigOption() {
+          return [];
+        },
+        async loadSession() {
+          throw new Error("unused");
+        },
+        async retireExecution(agentSessionId: string) {
+          retired.push(agentSessionId);
+        },
+      };
+
+      const result = sm.deleteSession(bridge, "parent");
+
+      assert.deepEqual(result.affected.map((entry) => entry.id).sort(), [
+        "child",
+        "parent",
+      ]);
+      assert.deepEqual(retired.sort(), ["agent-child", "agent-parent"]);
+      assert.ok(!sm.liveSessions.has("parent"));
+      assert.ok(!sm.liveSessions.has("child"));
+      assert.ok(!sm.assistantBuffers.has("child"));
+      assert.ok(!sm.pendingPromptSubmissions.has("child"));
+    });
+
+    it("skips retirement when no bridge is available", () => {
+      store.createSession("s1", "/x", "auto", "agent-s1");
+
+      const result = sm.deleteSession(undefined, "s1");
+
+      assert.equal(result.mode, "hard");
       assert.equal(store.getSession("s1"), undefined);
     });
   });
@@ -517,6 +562,28 @@ describe("SessionManager", () => {
       assert.equal(store.getAgentSessionId(created.sessionId), "s2");
     });
 
+    it("creates new sessions as Root children when Root exists", async () => {
+      store.ensureRootSession(tmpDir);
+      const bridge = {
+        async newSession() {
+          return { sessionId: "agent-child", configOptions: [] };
+        },
+        async setConfigOption() {
+          return [];
+        },
+        async loadSession() {
+          throw new Error("loadSession should not be called");
+        },
+      };
+
+      const created = await sm.createSession(bridge);
+
+      assert.equal(
+        store.getSession(created.sessionId)?.parent_session_id,
+        "root",
+      );
+    });
+
     it("expands home shorthand before creating a session", async () => {
       let agentCwd = "";
       const bridge = {
@@ -622,6 +689,236 @@ describe("SessionManager", () => {
       // fresh-empty should still exist (too young to clean)
       assert.ok(store.getSession("fresh-empty"));
       assert.ok(sm.liveSessions.has("fresh-empty"));
+    });
+  });
+
+  describe("clearSession", () => {
+    it("rotates the ACP execution while preserving the WebAgent session", async () => {
+      store.createSession("web-1", tmpDir, "auto", "agent-old");
+      store.updateSessionConfig("web-1", "model", "model-old");
+      store.updateSessionConfig("web-1", "mode", "plan");
+      sm.liveSessions.add("web-1");
+      const configCalls: Array<{ id: string; value: string }> = [];
+      const retired: string[] = [];
+
+      const bridge = {
+        async newSession() {
+          return { sessionId: "agent-new", configOptions: [] };
+        },
+        async setConfigOption(_sessionId: string, id: string, value: string) {
+          configCalls.push({ id, value });
+          return [];
+        },
+        async retireExecution(agentSessionId: string) {
+          retired.push(agentSessionId);
+        },
+        async loadSession() {
+          throw new Error("loadSession should not be called");
+        },
+      };
+
+      const result = await sm.clearSession(bridge, "web-1");
+
+      assert.equal(result.sessionId, "web-1");
+      assert.deepEqual(
+        store.listSessions().map((session) => session.id),
+        ["web-1"],
+      );
+      assert.equal(store.getAgentSessionId("web-1"), "agent-new");
+      assert.equal(store.getWebSessionId("agent-old"), undefined);
+      // The retired execution is explicitly removed, not just unbound.
+      assert.deepEqual(retired, ["agent-old"]);
+      assert.deepEqual(configCalls, [
+        { id: "mode", value: "plan" },
+        { id: "model", value: "model-old" },
+      ]);
+    });
+
+    it("never retires the current execution when the agent returns the same id", async () => {
+      store.createSession("web-1", tmpDir, "auto", "agent-same");
+      sm.liveSessions.add("web-1");
+      const retired: string[] = [];
+      const bridge = {
+        async newSession() {
+          return { sessionId: "agent-same", configOptions: [] };
+        },
+        async setConfigOption() {
+          return [];
+        },
+        async loadSession() {
+          throw new Error("loadSession should not be called");
+        },
+        async retireExecution(agentSessionId: string) {
+          retired.push(agentSessionId);
+        },
+      };
+
+      await sm.clearSession(bridge, "web-1");
+
+      // rotateAgentSession is a no-op, so the still-authoritative execution
+      // must not be retired; retiring it would kill the live binding.
+      assert.equal(store.getAgentSessionId("web-1"), "agent-same");
+      assert.deepEqual(retired, []);
+    });
+
+    it("restores thinking through the replacement execution's thought_level option", async () => {
+      store.createSession("web-1", tmpDir, "auto", "agent-old");
+      store.updateSessionConfig("web-1", "reasoning_effort", "high");
+      sm.liveSessions.add("web-1");
+      const configCalls: Array<{ id: string; value: string }> = [];
+      const configOptions: ConfigOption[] = [
+        {
+          type: "select",
+          id: "thought_level",
+          category: "thought_level",
+          name: "Thinking",
+          currentValue: "medium",
+          options: [{ value: "high", name: "High" }],
+        },
+      ];
+      const bridge = {
+        async newSession() {
+          return { sessionId: "agent-new", configOptions };
+        },
+        async setConfigOption(_sessionId: string, id: string, value: string) {
+          configCalls.push({ id, value });
+          return [];
+        },
+        async loadSession() {
+          throw new Error("loadSession should not be called");
+        },
+      };
+
+      await sm.clearSession(bridge, "web-1");
+
+      assert.deepEqual(configCalls, [{ id: "thought_level", value: "high" }]);
+    });
+
+    it("clears runtime buffers and command snapshots for the replacement execution", async () => {
+      store.createSession("web-1", tmpDir, "auto", "agent-old");
+      sm.liveSessions.add("web-1");
+      sm.assistantBuffers.set("web-1", "partial answer");
+      sm.thinkingBuffers.set("web-1", "partial thought");
+      sm.activePrompts.add("web-1");
+      sm.updateAgentCommands("web-1", [
+        { name: "old-command", description: "old" },
+      ]);
+
+      const bridge = {
+        async newSession() {
+          return { sessionId: "agent-new", configOptions: [] };
+        },
+        async setConfigOption() {
+          return [];
+        },
+        async loadSession() {
+          throw new Error("loadSession should not be called");
+        },
+      };
+
+      await sm.clearSession(bridge, "web-1");
+
+      assert.equal(sm.assistantBuffers.has("web-1"), false);
+      assert.equal(sm.thinkingBuffers.has("web-1"), false);
+      assert.equal(sm.activePrompts.has("web-1"), false);
+      assert.deepEqual(sm.getAgentCommands("web-1").commands, []);
+      assert.equal(sm.state.getState("web-1").runtime.busy, null);
+    });
+
+    it("rotates MCP capability only after the replacement execution succeeds", async () => {
+      store.createSession("web-1", tmpDir, "auto", "agent-old");
+      sm.liveSessions.add("web-1");
+      const capabilities = new CapabilityStore();
+      const oldToken = capabilities.mint("web-1");
+      let newToken: string | undefined;
+      const manager = new SessionManager(
+        store,
+        tmpDir,
+        tmpDir,
+        capabilities,
+        "http://127.0.0.1:6800",
+      );
+
+      const bridge = {
+        async newSession(_cwd: string, options?: { mcpServers?: any[] }) {
+          const authorization = options?.mcpServers?.[0]?.headers[0]?.value;
+          newToken = authorization?.replace(/^Bearer\s+/, "");
+          return { sessionId: "agent-new", configOptions: [] };
+        },
+        async setConfigOption() {
+          return [];
+        },
+        async loadSession() {
+          throw new Error("loadSession should not be called");
+        },
+      };
+
+      await manager.clearSession(bridge, "web-1");
+
+      assert.equal(capabilities.resolve(oldToken), null);
+      assert.equal(newToken && capabilities.resolve(newToken), "web-1");
+    });
+
+    it("keeps the current MCP capability when replacement creation fails", async () => {
+      store.createSession("web-1", tmpDir, "auto", "agent-old");
+      sm.liveSessions.add("web-1");
+      const capabilities = new CapabilityStore();
+      const oldToken = capabilities.mint("web-1");
+      const manager = new SessionManager(
+        store,
+        tmpDir,
+        tmpDir,
+        capabilities,
+        "http://127.0.0.1:6800",
+      );
+
+      const bridge = {
+        async newSession() {
+          throw new Error("replacement failed");
+        },
+        async setConfigOption() {
+          return [];
+        },
+        async loadSession() {
+          throw new Error("loadSession should not be called");
+        },
+      };
+
+      await assert.rejects(
+        () => manager.clearSession(bridge, "web-1"),
+        /replacement failed/,
+      );
+      assert.equal(capabilities.resolve(oldToken), "web-1");
+      assert.equal(store.getAgentSessionId("web-1"), "agent-old");
+    });
+  });
+
+  describe("Root execution", () => {
+    it("binds one ACP execution to the existing Root session", async () => {
+      store.ensureRootSession(tmpDir);
+      let newSessionCalls = 0;
+      const bridge = {
+        async newSession() {
+          newSessionCalls++;
+          return { sessionId: "agent-root", configOptions: [] };
+        },
+        async setConfigOption() {
+          return [];
+        },
+        async loadSession() {
+          throw new Error("loadSession should not be called");
+        },
+      };
+
+      await sm.ensureRootSession(bridge);
+      await sm.ensureRootSession(bridge);
+
+      assert.equal(newSessionCalls, 1);
+      assert.equal(store.getAgentSessionId("root"), "agent-root");
+      assert.deepEqual(
+        store.listSessions().map((session) => session.id),
+        ["root"],
+      );
     });
   });
 
@@ -1347,7 +1644,7 @@ describe("SessionManager", () => {
         realpath: "/r/x.txt",
       });
       sm.getLabelMap("s1"); // populate cache
-      sm.deleteSession("s1");
+      sm.deleteSession(undefined, "s1");
       // Re-create session and request map — must NOT see stale entry.
       store.createSession("s1", "/x");
       const m = sm.getLabelMap("s1");

@@ -32,6 +32,28 @@ const rlog = log.scope("routes");
 const plog = rlog.scope("prompt");
 const slog = rlog.scope("session");
 const mlog = rlog.scope("msg");
+
+const COMPACT_SUMMARY_PROMPT = [
+  "Prepare a concise context handoff for a fresh execution of this WebAgent session.",
+  "Summarize the user's current goal, completed work, current state, key decisions,",
+  "unresolved blockers, and the exact next action. Do not use tools, modify files,",
+  "or continue the task. Output only the handoff summary in plain text or Markdown.",
+].join(" ");
+
+function prependCompactSummary(summary: string, userText: string): string {
+  return [
+    "The following is an agent-generated context handoff from the previous execution.",
+    "It is background context, not a new user request. Use it to understand continuity.",
+    "",
+    "--- previous execution summary ---",
+    summary,
+    "--- end previous execution summary ---",
+    "",
+    "The user's new request is:",
+    userText,
+  ].join("\n");
+}
+
 import type { AuthStore, TokenRecord } from "./auth-store.ts";
 import type { TicketStore } from "./sse-ticket.ts";
 import {
@@ -123,18 +145,22 @@ export interface RequestHandlerDeps {
   sseManager: SseManager;
   clientRegistry?: ClientRegistry;
   titleService?: TitleService;
-  getBridge?: () => Pick<
-    AgentBridge,
-    | "newSession"
-    | "setConfigOption"
-    | "loadSession"
-    | "cancel"
-    | "prompt"
-    | "resolvePermission"
-    | "denyPermission"
-    | "restart"
-    | "reloading"
-  > | null;
+  getBridge?: () =>
+    | (Pick<
+        AgentBridge,
+        | "newSession"
+        | "setConfigOption"
+        | "loadSession"
+        | "cancel"
+        | "prompt"
+        | "resolvePermission"
+        | "denyPermission"
+        | "restart"
+        | "reloading"
+      > &
+        Partial<Pick<AgentBridge, "promptForText">>)
+    | null;
+
   publicDir: string;
   dataDir: string;
   limits: Pick<Config["limits"], "bash_output" | "image_upload"> &
@@ -645,9 +671,16 @@ export function createRequestHandler(
       ) {
         const params = new URLSearchParams(url.split("?")[1] ?? "");
         const source = params.get("source") ?? undefined;
-        res.end(
-          JSON.stringify(store.listSessions(source ? { source } : undefined)),
-        );
+        const publicSessions = store
+          .listSessions(source ? { source } : undefined)
+          .map((session) => {
+            const {
+              pending_compact_summary: _pendingCompactSummary,
+              ...publicSession
+            } = session;
+            return publicSession;
+          });
+        res.end(JSON.stringify(publicSessions));
         return;
       }
 
@@ -1402,6 +1435,11 @@ export function createRequestHandler(
           agentText = resolved.agentText;
         }
 
+        const pendingCompactSummary = store.getPendingCompactSummary(sessionId);
+        if (pendingCompactSummary) {
+          agentText = prependCompactSummary(pendingCompactSummary, agentText);
+        }
+
         // Stored shape mirrors the wire shape PLUS a server-derived `path`
         // for renderers. The path is the unsigned base URL
         // (`/api/v1/sessions/<sid>/attachments/<filename>`); reSign on
@@ -1484,8 +1522,24 @@ export function createRequestHandler(
         const promptId =
           sessions.state.getState(sessionId).runtime.busy?.promptId ??
           undefined;
-        bridge
-          .prompt(sessionId, agentText, attachments, promptId)
+        const promptPromise = bridge.prompt(
+          sessionId,
+          agentText,
+          attachments,
+          promptId,
+        );
+        // Clear the one-shot handoff only after the ACP prompt promise settles
+        // successfully. If the bridge rejects before it reaches ACP, retain
+        // the summary so the next real prompt can retry the handoff.
+        promptPromise
+          .then(() => {
+            if (pendingCompactSummary) {
+              store.clearPendingCompactSummary(
+                sessionId,
+                pendingCompactSummary,
+              );
+            }
+          })
           .catch((err: unknown) => {
             plog.error("error", { sessionId, error: err });
           })
@@ -1842,6 +1896,231 @@ export function createRequestHandler(
         return;
       }
 
+      // POST /api/v1/sessions/:id/compact — generate a visible assistant
+      // handoff, rotate the ACP execution, and defer injecting the handoff
+      // until the next real user prompt.
+      const compactSessionMatch = url.match(
+        /^\/api\/v1\/sessions\/([^/?]+)\/compact\/?$/,
+      );
+      if (compactSessionMatch && req.method === "POST") {
+        const sessionId = decodeURIComponent(compactSessionMatch[1]);
+        const session = store.getSession(sessionId);
+        if (!session) {
+          json(res, HTTP_STATUS.NOT_FOUND, { error: "Session not found" });
+          return;
+        }
+        const bridge = getBridge?.();
+        if (!bridge || !sessions || !bridge.promptForText) {
+          json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
+            error: "Agent not ready yet",
+          });
+          return;
+        }
+        if (sessions.getBusyKind(sessionId) !== null) {
+          json(res, HTTP_STATUS.CONFLICT, {
+            error: "Cancel active work before compacting the session",
+          });
+          return;
+        }
+        if (store.getPendingCompactSummary(sessionId)) {
+          json(res, HTTP_STATUS.CONFLICT, {
+            error: "Session already has a pending compact summary",
+          });
+          return;
+        }
+
+        const submissionId = sessions.reservePromptSubmission(sessionId);
+        if (submissionId === null) {
+          json(res, HTTP_STATUS.CONFLICT, {
+            error: "Session is busy",
+            busyKind: sessions.getBusyKind(sessionId),
+          });
+          return;
+        }
+        try {
+          await sessions.ensureResumed(bridge, sessionId);
+        } catch (err) {
+          sessions.releasePromptSubmission(sessionId, submissionId);
+          json(res, HTTP_STATUS.INTERNAL_SERVER_ERROR, {
+            error: `Failed to resume session: ${errorMessage(err)}`,
+          });
+          return;
+        }
+        const agentSessionId = store.getAgentSessionId(sessionId);
+        if (!agentSessionId) {
+          sessions.releasePromptSubmission(sessionId, submissionId);
+          json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
+            error: "Session is not available for the current agent",
+          });
+          return;
+        }
+        const promptForText = bridge.promptForText;
+
+        sessions.compactingSessions.add(sessionId);
+        sessions.releasePromptSubmission(sessionId, submissionId, false);
+        sessions.activePrompts.add(sessionId);
+        sessions.syncBusy(sessionId);
+        const previousAgentSessionId = agentSessionId;
+
+        void (async () => {
+          let summary = "";
+          try {
+            summary = (
+              await promptForText.call(
+                bridge,
+                agentSessionId,
+                COMPACT_SUMMARY_PROMPT,
+              )
+            ).trim();
+            if (!summary) throw new Error("Agent returned an empty summary");
+
+            const summaryEvent = store.saveCompactSummary(sessionId, summary);
+            sseManager.broadcast({
+              type: "assistant_message",
+              sessionId,
+              text: summary,
+              seq: summaryEvent.seq,
+            });
+
+            const clearResult = await sessions.clearSession(
+              bridge,
+              sessionId,
+              undefined,
+              {
+                preservePendingCompactSummary: true,
+                preserveRuntimeState: true,
+              },
+            );
+            sessions.state.patch(sessionId, {
+              runtime: {
+                busy: null,
+                streaming: { assistant: false, thinking: false },
+                pendingPermissions: [],
+                plan: null,
+                contextUsage: null,
+              },
+            });
+
+            const fresh = store.getSession(sessionId);
+            if (!fresh)
+              throw new Error("Session disappeared during compaction");
+            sseManager.broadcast({
+              type: "session_created",
+              sessionId,
+              cwd: fresh.cwd,
+              cwdDisplay: abbreviateHomePath(fresh.cwd),
+              title: fresh.title,
+              configOptions: clearResult.configOptions,
+              agentCommands: sessions.getAgentCommands(sessionId),
+            } satisfies AgentEvent);
+          } catch (err) {
+            // If rotation did not move the binding, the old ACP execution is
+            // still current and must not receive this handoff on its next turn.
+            if (
+              summary &&
+              store.getAgentSessionId(sessionId) === previousAgentSessionId
+            ) {
+              store.clearPendingCompactSummary(sessionId, summary);
+            }
+            const message = `Compact failed: ${errorMessage(err)}`;
+            // The session may have been deleted mid-compaction (cascade); the
+            // FK rejects writes to a removed row, so make the error event
+            // optional and keep the SSE broadcast authoritative.
+            try {
+              store.saveEvent(
+                sessionId,
+                "error",
+                { message },
+                {
+                  from_ref: "system",
+                },
+              );
+            } catch {
+              // Session is gone; nothing durable to write.
+            }
+            sseManager.broadcast({
+              type: "error",
+              sessionId,
+              message,
+            });
+          } finally {
+            sessions.activePrompts.delete(sessionId);
+            sessions.compactingSessions.delete(sessionId);
+            sessions.syncBusy(sessionId);
+          }
+        })();
+
+        json(res, HTTP_STATUS.ACCEPTED, { status: "accepted" });
+        return;
+      }
+
+      // POST /api/v1/sessions/:id/clear — rotate the ACP execution while
+      // preserving the stable WebAgent session identity and its records.
+      const clearSessionMatch = url.match(
+        /^\/api\/v1\/sessions\/([^/?]+)\/clear\/?$/,
+      );
+      if (clearSessionMatch && req.method === "POST") {
+        const sessionId = decodeURIComponent(clearSessionMatch[1]);
+        const session = store.getSession(sessionId);
+        if (!session) {
+          json(res, HTTP_STATUS.NOT_FOUND, { error: "Session not found" });
+          return;
+        }
+        const bridge = getBridge?.();
+        if (!bridge || !sessions) {
+          json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
+            error: "Agent not ready yet",
+          });
+          return;
+        }
+        if (sessions.getBusyKind(sessionId) !== null) {
+          json(res, HTTP_STATUS.CONFLICT, {
+            error: "Cancel active work before clearing the session",
+          });
+          return;
+        }
+        let body: { cwd?: string } = {};
+        try {
+          const raw = await readBody(req);
+          if (raw) body = JSON.parse(raw) as { cwd?: string };
+        } catch {
+          json(res, HTTP_STATUS.BAD_REQUEST, { error: "Invalid JSON" });
+          return;
+        }
+        try {
+          const result = await sessions.clearSession(
+            bridge,
+            sessionId,
+            body.cwd,
+          );
+          const fresh = store.getSession(sessionId)!;
+          const event = {
+            type: "session_created",
+            sessionId,
+            cwd: fresh.cwd,
+            cwdDisplay: abbreviateHomePath(fresh.cwd),
+            title: fresh.title,
+            configOptions: result.configOptions,
+            agentCommands: sessions.getAgentCommands(sessionId),
+          } satisfies AgentEvent;
+          sseManager.broadcast(event);
+          json(res, HTTP_STATUS.OK, {
+            id: sessionId,
+            cwd: fresh.cwd,
+            cwdDisplay: abbreviateHomePath(fresh.cwd),
+            title: fresh.title,
+            source: fresh.source,
+            configOptions: result.configOptions,
+            agentCommands: sessions.getAgentCommands(sessionId),
+          });
+        } catch (err) {
+          json(res, HTTP_STATUS.BAD_REQUEST, {
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+        return;
+      }
+
       // --- Session CRUD: /api/v1/sessions/:id ---
       const sessionIdMatch = url.match(
         /^\/api\/v1\/sessions\/([^/?]+)\/?(\?.*)?$/,
@@ -1949,6 +2228,7 @@ export function createRequestHandler(
               source: freshSession.source,
               model: freshSession.model,
               mode: freshSession.mode,
+              parentSessionId: freshSession.parent_session_id,
               configOptions,
             },
             req,
@@ -1969,12 +2249,51 @@ export function createRequestHandler(
             });
             return;
           }
+          // The cascade removes descendants too; gate on their busy state as
+          // well so deleting an idle parent cannot silently abort an
+          // in-flight prompt or bash run in a child.
           if (sessions) {
-            sessions.deleteSession(sessionId);
-          } else {
-            store.deleteSession(sessionId);
+            const busyDescendant = store
+              .getDescendantSessionIds(sessionId)
+              .find(
+                (descendantId) => sessions.getBusyKind(descendantId) !== null,
+              );
+            if (busyDescendant) {
+              json(res, HTTP_STATUS.CONFLICT, {
+                error: "Cancel active work before deleting the session",
+              });
+              return;
+            }
           }
-          sseManager.broadcast({ type: "session_deleted", sessionId });
+          try {
+            let affectedStore: {
+              mode: "hard" | "soft";
+              affected: Array<{
+                id: string;
+                mode: "hard" | "soft";
+                agentSessionId: string | null;
+              }>;
+            };
+            if (sessions) {
+              affectedStore = sessions.deleteSession(
+                getBridge?.() ?? undefined,
+                sessionId,
+              );
+            } else {
+              affectedStore = store.deleteSession(sessionId);
+            }
+            for (const entry of affectedStore.affected) {
+              sseManager.broadcast({
+                type: "session_deleted",
+                sessionId: entry.id,
+              });
+            }
+          } catch (err) {
+            json(res, HTTP_STATUS.BAD_REQUEST, {
+              error: err instanceof Error ? err.message : String(err),
+            });
+            return;
+          }
           res.writeHead(HTTP_STATUS.NO_CONTENT);
           res.end();
           return;
@@ -2001,24 +2320,39 @@ export function createRequestHandler(
           cwd?: string;
           inheritFromSessionId?: string;
           source?: string;
+          parentSessionId?: string;
         };
         try {
           body = JSON.parse(await readBody(req)) as {
             cwd?: string;
             inheritFromSessionId?: string;
             source?: string;
+            parentSessionId?: string;
           };
         } catch {
           json(res, HTTP_STATUS.BAD_REQUEST, { error: "Invalid JSON" });
           return;
         }
         const source = body.source ?? "auto";
+        // The parent must exist and be live (not tombstoned); the FK would
+        // reject a dangling reference with a raw database error otherwise.
+        // A live parent row is enough — it need not have an ACP binding yet.
+        if (body.parentSessionId) {
+          const parent = store.getSessionIncludingDeleted(body.parentSessionId);
+          if (parent?.deleted_at !== null) {
+            json(res, HTTP_STATUS.BAD_REQUEST, {
+              error: "Parent session not found",
+            });
+            return;
+          }
+        }
         try {
           const { sessionId, configOptions } = await sessions.createSession(
             bridge,
             body.cwd,
             body.inheritFromSessionId,
             source,
+            { parentSessionId: body.parentSessionId },
           );
           const session = store.getSession(sessionId);
           const sessionCreatedEvent = {
@@ -2051,6 +2385,7 @@ export function createRequestHandler(
               : undefined,
             title: session?.title ?? null,
             source: session?.source ?? source,
+            parentSessionId: session?.parent_session_id ?? null,
             configOptions,
             agentCommands: sessions.getAgentCommands(sessionId),
             clientOpId: clientOpId ?? undefined,

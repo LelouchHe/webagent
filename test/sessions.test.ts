@@ -42,6 +42,7 @@ function makeRequest(
 /** Minimal mock bridge that returns a predictable session ID. */
 function createMockBridge(nextId = "mock-session-1") {
   let idCounter = 0;
+  const retireCalls: string[] = [];
   const configOptions: ConfigOption[] = [
     {
       type: "select",
@@ -65,7 +66,12 @@ function createMockBridge(nextId = "mock-session-1") {
     },
   ];
   return {
+    retireCalls,
+    retireExecution: async (agentSessionId: string) => {
+      retireCalls.push(agentSessionId);
+    },
     ...mockBridgeStubs(),
+    promptForText: async () => "summary of the current work",
     newSession: async (_cwd: string) => {
       idCounter++;
       return {
@@ -423,6 +429,35 @@ describe("Session REST API", () => {
       });
     });
 
+    it("creates a child session under an existing Root", async () => {
+      store.ensureRootSession(tmpDir);
+
+      const res = await makeRequest(
+        port,
+        "POST",
+        "/api/v1/sessions",
+        JSON.stringify({ parentSessionId: "root" }),
+      );
+
+      assert.equal(res.status, 201);
+      const body = JSON.parse(res.body);
+      assert.equal(store.getSession(body.id)?.parent_session_id, "root");
+      assert.equal(body.parentSessionId, "root");
+    });
+
+    it("rejects an unknown parent session with 400", async () => {
+      const res = await makeRequest(
+        port,
+        "POST",
+        "/api/v1/sessions",
+        JSON.stringify({ parentSessionId: "no-such-session" }),
+      );
+
+      assert.equal(res.status, 400);
+      assert.match(res.body, /Parent session not found/);
+      assert.equal(store.listSessions().length, 0);
+    });
+
     it("creates a session with custom cwd", async () => {
       const res = await makeRequest(
         port,
@@ -526,6 +561,108 @@ describe("Session REST API", () => {
     });
   });
 
+  // --- POST /api/v1/sessions/:id/clear ---
+
+  describe("POST /api/v1/sessions/:id/clear", () => {
+    it("keeps the WebAgent session id while rotating its ACP execution", async () => {
+      store.createSession("s1", tmpDir, "auto", "agent-old");
+      store.saveCompactSummary("s1", "old context");
+
+      const res = await makeRequest(
+        port,
+        "POST",
+        "/api/v1/sessions/s1/clear",
+        "{}",
+      );
+
+      assert.equal(res.status, 200);
+      const body = JSON.parse(res.body);
+      assert.equal(body.id, "s1");
+      assert.equal(store.listSessions().length, 1);
+      assert.equal(store.getAgentSessionId("s1"), "mock-session-1");
+      assert.equal(store.getWebSessionId("agent-old"), undefined);
+      assert.equal(store.getPendingCompactSummary("s1"), null);
+      assert.deepEqual(mockBridge.retireCalls, ["agent-old"]);
+    });
+
+    it("persists a clear request's replacement cwd on the stable session", async () => {
+      store.createSession("s1", tmpDir, "auto", "agent-old");
+
+      const res = await makeRequest(
+        port,
+        "POST",
+        "/api/v1/sessions/s1/clear",
+        JSON.stringify({ cwd: publicDir }),
+      );
+
+      assert.equal(res.status, 200);
+      assert.equal(JSON.parse(res.body).cwd, publicDir);
+      assert.equal(store.getSession("s1")?.cwd, publicDir);
+    });
+
+    it("compacts into a fresh ACP execution and defers the summary to the next prompt", async () => {
+      store.createSession("s1", tmpDir, "auto", "agent-old");
+      sessions.liveSessions.add("s1");
+      let promptedText = "";
+      mockBridge.prompt = async (_sessionId: string, text: string) => {
+        promptedText = text;
+      };
+
+      const compactRes = await makeRequest(
+        port,
+        "POST",
+        "/api/v1/sessions/s1/compact",
+        "{}",
+      );
+      assert.equal(compactRes.status, 202);
+      // Compaction runs as a background task; wait for the rotation itself
+      // (bounded deadline, not event-loop turns) so slow CI runners never
+      // observe the pre-rotation state.
+      const deadline = Date.now() + 5000;
+      while (
+        store.getAgentSessionId("s1") !== "mock-session-1" &&
+        Date.now() < deadline
+      ) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+
+      assert.equal(
+        store.getPendingCompactSummary("s1"),
+        "summary of the current work",
+      );
+      const publicList = JSON.parse(
+        (await makeRequest(port, "GET", "/api/v1/sessions")).body,
+      ) as Array<Record<string, unknown>>;
+      assert.equal("pending_compact_summary" in publicList[0], false);
+      assert.equal(store.getAgentSessionId("s1"), "mock-session-1");
+      assert.ok(
+        broadcastEvents.some(
+          (event) =>
+            event.type === "assistant_message" &&
+            event.sessionId === "s1" &&
+            event.text === "summary of the current work",
+        ),
+      );
+      assert.equal(sessions.getBusyKind("s1"), null);
+
+      const promptRes = await makeRequest(
+        port,
+        "POST",
+        "/api/v1/sessions/s1/prompt",
+        JSON.stringify({ text: "continue the work" }),
+      );
+      assert.equal(promptRes.status, 202);
+      assert.match(promptedText, /previous execution summary/);
+      assert.match(promptedText, /summary of the current work/);
+      assert.match(promptedText, /continue the work/);
+      assert.equal(store.getPendingCompactSummary("s1"), null);
+      const userEvent = [...store.getEvents("s1")]
+        .reverse()
+        .find((event) => event.type === "user_message");
+      assert.equal(JSON.parse(userEvent!.data).text, "continue the work");
+    });
+  });
+
   // --- GET /api/v1/sessions/:id ---
 
   describe("GET /api/v1/sessions/:id", () => {
@@ -553,6 +690,16 @@ describe("Session REST API", () => {
         "/api/v1/sessions/nonexistent",
       );
       assert.equal(res.status, 404);
+    });
+
+    it("returns a session's parent relationship", async () => {
+      store.createSession("root", tmpDir, "root", "agent-root");
+      store.createSession("child", tmpDir, "auto", "agent-child", "root");
+
+      const res = await makeRequest(port, "GET", "/api/v1/sessions/child");
+
+      assert.equal(res.status, 200);
+      assert.equal(JSON.parse(res.body).parentSessionId, "root");
     });
 
     it("auto-resumes a non-live session", async () => {
@@ -678,6 +825,55 @@ describe("Session REST API", () => {
         "/api/v1/sessions/nonexistent",
       );
       assert.equal(res.status, 404);
+    });
+
+    it("protects the Root session from deletion", async () => {
+      store.ensureRootSession(tmpDir);
+      store.bindAgentSession("root", "agent-root");
+
+      const res = await makeRequest(port, "DELETE", "/api/v1/sessions/root");
+
+      assert.equal(res.status, 400);
+      assert.match(res.body, /Root session cannot be deleted/);
+      assert.equal(store.getSession("root")?.id, "root");
+    });
+
+    it("cascades to descendant sessions and broadcasts session_deleted per id", async () => {
+      store.createSession("parent", tmpDir, "auto", "agent-parent");
+      store.createSession("child", tmpDir, "auto", "agent-child", "parent");
+      sessions.liveSessions.add("parent");
+      sessions.liveSessions.add("child");
+
+      const res = await makeRequest(port, "DELETE", "/api/v1/sessions/parent");
+
+      assert.equal(res.status, 204);
+      assert.equal(store.getSessionIncludingDeleted("parent"), undefined);
+      assert.equal(store.getSessionIncludingDeleted("child"), undefined);
+      const deletedEvents = broadcastEvents.filter(
+        (event) => event.type === "session_deleted",
+      );
+      assert.deepEqual(deletedEvents.map((event) => event.sessionId).sort(), [
+        "child",
+        "parent",
+      ]);
+      assert.deepEqual(mockBridge.retireCalls.sort(), [
+        "agent-child",
+        "agent-parent",
+      ]);
+      assert.ok(!sessions.liveSessions.has("child"));
+    });
+
+    it("rejects deletion when a descendant has active work", async () => {
+      store.createSession("parent", tmpDir, "auto", "agent-parent");
+      store.createSession("child", tmpDir, "auto", "agent-child", "parent");
+      sessions.activePrompts.add("child");
+      sessions.syncBusy("child");
+
+      const res = await makeRequest(port, "DELETE", "/api/v1/sessions/parent");
+
+      assert.equal(res.status, 409);
+      assert.equal(store.getSession("parent")?.id, "parent");
+      assert.equal(store.getSession("child")?.id, "child");
     });
 
     it("rejects deletion while prompt work is active", async () => {

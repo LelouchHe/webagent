@@ -81,6 +81,7 @@ Commands with submenus (`/model`, `/mode`, `/think`, `/notify`, `/switch`, `/new
 | `/plan [show\|hide]`  | Toggle, show, or hide the current pinned plan panel                                                                           |
 | `/cancel`             | Cancel current response                                                                                                       |
 | `/clear [cwd]`        | Clear current session and start fresh, optionally in another cwd (model/think inherited)                                      |
+| `/compact`            | Summarize the current conversation; the visible history stays and the next message continues with a compacted context         |
 | `/reset`              | Reset local frontend state for this device (keeps login token)                                                                |
 | `/switch <title\|id>` | Switch session (match by title or ID prefix)                                                                                  |
 | `/rename <new title>` | Rename session                                                                                                                |

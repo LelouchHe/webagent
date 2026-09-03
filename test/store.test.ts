@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import Database from "better-sqlite3";
 import { Store } from "../src/store.ts";
+import { generateShareToken } from "../src/tokens.ts";
 
 describe("Store", () => {
   let store: Store;
@@ -26,6 +27,34 @@ describe("Store", () => {
 
       assert.equal(store.getAgentSessionId("web-1"), "agent-1");
       assert.equal(store.getWebSessionId("agent-1"), "web-1");
+    });
+
+    it("rotates the ACP binding without changing the WebAgent session", () => {
+      store.createSession("web-1", "/tmp/cwd", "auto", "agent-1");
+
+      store.rotateAgentSession("web-1", "agent-2");
+
+      assert.equal(store.getAgentSessionId("web-1"), "agent-2");
+      // The retired binding row is removed; its execution is explicitly
+      // retired by the caller and never accepts WebAgent events again.
+      assert.equal(store.getWebSessionId("agent-1"), undefined);
+      assert.equal(store.getWebSessionId("agent-2"), "web-1");
+      assert.equal(store.getSession("web-1")?.id, "web-1");
+      const row = store["db"]
+        .prepare(
+          "SELECT COUNT(*) AS count FROM agent_sessions WHERE agent_key = ?",
+        )
+        .get("test-agent") as { count: number };
+      assert.equal(row.count, 1);
+    });
+
+    it("persists a requested cwd even when rotation is a no-op (same agent id)", () => {
+      store.createSession("web-1", "/a", "auto", "agent-1");
+
+      store.rotateAgentSession("web-1", "agent-1", "/b");
+
+      assert.equal(store.getSession("web-1")?.cwd, "/b");
+      assert.equal(store.getAgentSessionId("web-1"), "agent-1");
     });
 
     it("keeps internal ACP sessions out of the user session list", () => {
@@ -61,6 +90,112 @@ describe("Store", () => {
       assert.equal(session.id, "sess-1");
       assert.equal(session.cwd, "/tmp/cwd");
       assert.equal(session.title, null);
+    });
+
+    it("stores an optional parent WebAgent session", () => {
+      store.createSession("root", "/tmp/root", "root", "agent-root");
+      const child = store.createSession(
+        "child",
+        "/tmp/child",
+        "auto",
+        "agent-child",
+        "root",
+      );
+
+      assert.equal(child.parent_session_id, "root");
+      assert.equal(store.getSession("child")?.parent_session_id, "root");
+    });
+
+    it("creates a non-destructive Root and adopts existing top-level sessions", () => {
+      store.createSession("old-1", "/tmp/one", "auto", "agent-one");
+      store.createSession("old-2", "/tmp/two", "auto", "agent-two");
+
+      const root = store.ensureRootSession("/tmp/root");
+
+      assert.equal(root.id, "root");
+      assert.equal(root.parent_session_id, null);
+      assert.equal(root.title, "root");
+      assert.equal(
+        store.getSessionIncludingDeleted("old-1")?.parent_session_id,
+        "root",
+      );
+      assert.equal(
+        store.getSessionIncludingDeleted("old-2")?.parent_session_id,
+        "root",
+      );
+      assert.deepEqual(
+        store
+          .listSessions()
+          .map((session) => session.id)
+          .sort(),
+        ["old-1", "old-2"],
+      );
+
+      assert.equal(store.ensureRootSession("/tmp/other").cwd, "/tmp/root");
+      assert.equal(store.ensureRootSession("/tmp/other").title, "root");
+    });
+
+    it("keeps a user-renamed Root title across restarts", () => {
+      store.ensureRootSession("/tmp/root");
+      store.updateSessionTitle("root", "工作台");
+
+      assert.equal(store.ensureRootSession("/tmp/root").title, "工作台");
+    });
+
+    it("persists and clears one pending compact summary with its assistant event", () => {
+      store.createSession("web-1", "/tmp/root", "auto", "agent-1");
+
+      store.saveCompactSummary("web-1", "Current goal and next action");
+
+      assert.equal(
+        store.getPendingCompactSummary("web-1"),
+        "Current goal and next action",
+      );
+      const summary = store
+        .getEvents("web-1")
+        .find((event) => event.type === "assistant_message");
+      assert.equal(
+        JSON.parse(summary!.data).text,
+        "Current goal and next action",
+      );
+      assert.equal(
+        store.clearPendingCompactSummary("web-1", "wrong summary"),
+        false,
+      );
+      assert.equal(
+        store.clearPendingCompactSummary(
+          "web-1",
+          "Current goal and next action",
+        ),
+        true,
+      );
+      assert.equal(store.getPendingCompactSummary("web-1"), null);
+    });
+
+    it("binds an ACP execution to an existing Root record", () => {
+      store.ensureRootSession("/tmp/root");
+
+      store.bindAgentSession("root", "agent-root");
+
+      assert.equal(store.getAgentSessionId("root"), "agent-root");
+      assert.equal(store.getSession("root")?.id, "root");
+    });
+
+    it("protects the Root session from deletion", () => {
+      store.ensureRootSession("/tmp/root");
+
+      assert.throws(
+        () => store.deleteSession("root"),
+        /Root session cannot be deleted/,
+      );
+    });
+
+    it("does not garbage-collect the Root session when it is empty", () => {
+      store.ensureRootSession("/tmp/root");
+      store.bindAgentSession("root", "agent-root");
+
+      assert.deepEqual(store.deleteEmptySessions(0), []);
+      assert.equal(store.getSession("root")?.id, "root");
     });
 
     it("lists sessions ordered by last_active_at desc", () => {
@@ -129,6 +264,152 @@ describe("Store", () => {
       assert.equal(store.getSession("s1"), undefined);
       assert.deepEqual(store.getEvents("s1"), []);
       assert.equal(store.getWebSessionId("agent-s1"), undefined);
+    });
+  });
+
+  describe("cascade deletion", () => {
+    it("lists all transitive descendants", () => {
+      store.createSession("parent", "/a", "auto", "agent-parent");
+      store.createSession("child", "/b", "auto", "agent-child", "parent");
+      store.createSession(
+        "grandchild",
+        "/c",
+        "auto",
+        "agent-grandchild",
+        "child",
+      );
+      store.createSession("sibling", "/d", "auto", "agent-sibling", "parent");
+
+      assert.deepEqual(store.getDescendantSessionIds("parent").sort(), [
+        "child",
+        "grandchild",
+        "sibling",
+      ]);
+      assert.deepEqual(store.getDescendantSessionIds("child"), ["grandchild"]);
+      assert.deepEqual(store.getDescendantSessionIds("leaf"), []);
+    });
+
+    it("hard-deletes a parent together with its live descendants", () => {
+      store.createSession("parent", "/a", "auto", "agent-parent");
+      store.createSession("child", "/b", "auto", "agent-child", "parent");
+      store.createSession(
+        "grandchild",
+        "/c",
+        "auto",
+        "agent-grandchild",
+        "child",
+      );
+
+      const result = store.deleteSession("parent");
+
+      assert.equal(result.mode, "hard");
+      assert.deepEqual(result.affected.map((entry) => entry.id).sort(), [
+        "child",
+        "grandchild",
+        "parent",
+      ]);
+      for (const id of ["parent", "child", "grandchild"]) {
+        assert.equal(store.getSessionIncludingDeleted(id), undefined);
+        assert.equal(store.getAgentSessionId(id), undefined);
+      }
+      const count = store["db"]
+        .prepare("SELECT COUNT(*) AS n FROM agent_sessions WHERE agent_key = ?")
+        .get("test-agent") as { n: number };
+      assert.equal(count.n, 0);
+    });
+
+    it("tombstones a share-backed child and re-parents it under Root", () => {
+      store.ensureRootSession("/root");
+      store.bindAgentSession("root", "agent-root");
+      store.createSession("parent", "/a", "auto", "agent-parent");
+      store.createSession("child", "/b", "auto", "agent-child", "parent");
+      const token = generateShareToken();
+      store.insertSharePreview({ token, sessionId: "child", snapshotSeq: 1 });
+      store.activateShare(token);
+
+      const result = store.deleteSession("parent");
+
+      assert.equal(result.mode, "hard");
+      const child = store.getSessionIncludingDeleted("child")!;
+      assert.notEqual(child.deleted_at, null); // kept for the share viewer
+      assert.equal(child.parent_session_id, "root"); // no dangling FK
+      assert.equal(store.getSession("parent"), undefined);
+      assert.equal(
+        result.affected.find((entry) => entry.id === "child")?.agentSessionId,
+        "agent-child",
+      );
+    });
+
+    it("re-parents tombstoned descendants under Root when reaping a tombstone", () => {
+      store.ensureRootSession("/root");
+      store.bindAgentSession("root", "agent-root");
+      store.createSession("parent", "/a", "auto", "agent-parent");
+      store.createSession("child", "/b", "auto", "agent-child", "parent");
+      const parentToken = generateShareToken();
+      store.insertSharePreview({
+        token: parentToken,
+        sessionId: "parent",
+        snapshotSeq: 1,
+      });
+      store.activateShare(parentToken);
+      const childToken = generateShareToken();
+      store.insertSharePreview({
+        token: childToken,
+        sessionId: "child",
+        snapshotSeq: 1,
+      });
+      store.activateShare(childToken);
+
+      // Both sessions are tombstoned (kept alive by their shares).
+      const soft = store.deleteSession("parent");
+      assert.equal(soft.mode, "soft");
+      assert.equal(
+        store.getSessionIncludingDeleted("child")!.deleted_at !== null,
+        true,
+      );
+
+      // Reap the parent once its last share is revoked.
+      assert.equal(store.revokeShare(parentToken), true);
+      assert.equal(store.reapTombstoneIfOrphaned("parent"), true);
+
+      // The child's tombstone survives and holds no dangling reference.
+      const child = store.getSessionIncludingDeleted("child")!;
+      assert.equal(child.parent_session_id, "root");
+      assert.notEqual(child.deleted_at, null);
+    });
+
+    it("unbinds the ACP binding when a session is tombstoned", () => {
+      store.createSession("s1", "/a", "auto", "agent-s1");
+      const token = generateShareToken();
+      store.insertSharePreview({ token, sessionId: "s1", snapshotSeq: 1 });
+      store.activateShare(token);
+
+      const result = store.deleteSession("s1");
+
+      assert.equal(result.affected[0].mode, "soft");
+      assert.equal(result.affected[0].agentSessionId, "agent-s1");
+      assert.equal(store.getAgentSessionId("s1"), undefined);
+      assert.equal(store.getWebSessionId("agent-s1"), undefined);
+    });
+
+    it("re-parents an empty GC'd session's children under Root", () => {
+      store.ensureRootSession("/root");
+      store.bindAgentSession("root", "agent-root");
+      store.createSession("junk-parent", "/a", "auto", "agent-parent");
+      store.createSession("child", "/b", "auto", "agent-child", "junk-parent");
+      // Child has events, so it is not itself GC'd.
+      store.saveEvent(
+        "child",
+        "user_message",
+        { text: "hi" },
+        { from_ref: "user" },
+      );
+
+      const removed = store.deleteEmptySessions(0);
+
+      assert.ok(removed.some((entry) => entry.id === "junk-parent"));
+      assert.equal(store.getSessionIncludingDeleted("junk-parent"), undefined);
+      assert.equal(store.getSession("child")!.parent_session_id, "root");
     });
   });
 
@@ -258,7 +539,9 @@ describe("Store", () => {
 
       // With minAgeS=0, all empty sessions are eligible
       const deleted = store.deleteEmptySessions(0);
-      assert.deepEqual(deleted, ["empty-old"]);
+      assert.deepEqual(deleted, [
+        { id: "empty-old", agentSessionId: "empty-old" },
+      ]);
       assert.equal(store.getSession("empty-old"), undefined);
       assert.ok(store.getSession("has-events")); // preserved
     });
@@ -300,8 +583,8 @@ describe("Store", () => {
 
       const deleted = store.deleteEmptySessions(0);
       assert.equal(deleted.length, 2);
-      assert.ok(deleted.includes("e1"));
-      assert.ok(deleted.includes("e3"));
+      assert.ok(deleted.some((entry) => entry.id === "e1"));
+      assert.ok(deleted.some((entry) => entry.id === "e3"));
       assert.equal(store.getSession("e1"), undefined);
       assert.equal(store.getSession("e3"), undefined);
       assert.ok(store.getSession("e2")); // has events, kept

@@ -2,6 +2,17 @@ import Database from "better-sqlite3";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 
+export const ROOT_SESSION_ID = "root";
+
+/** One session removed by a delete (the requested id or a cascaded descendant). */
+export interface SessionDelete {
+  id: string;
+  /** How this session itself was removed: hard (row gone) or soft (tombstoned). */
+  mode: "hard" | "soft";
+  /** The ACP execution bound at deletion time, for explicit retirement. */
+  agentSessionId: string | null;
+}
+
 export interface SessionRow {
   id: string;
   cwd: string;
@@ -14,6 +25,10 @@ export interface SessionRow {
   last_active_at: string;
   /** epoch ms; NULL = live; non-NULL = soft-deleted (kept alive for active shares). */
   deleted_at: number | null;
+  /** Optional parent WebAgent session; the reserved Root has NULL. */
+  parent_session_id: string | null;
+  /** Agent-generated context handoff waiting for the next real prompt. */
+  pending_compact_summary: string | null;
 }
 
 export interface AgentSessionRow {
@@ -153,6 +168,8 @@ export class Store {
         id TEXT PRIMARY KEY,
         cwd TEXT NOT NULL,
         title TEXT,
+        parent_session_id TEXT REFERENCES sessions(id),
+        pending_compact_summary TEXT,
         created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now')),
         last_active_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now'))
       );
@@ -215,6 +232,16 @@ export class Store {
     }
     if (!colNames.has("deleted_at")) {
       this.db.exec("ALTER TABLE sessions ADD COLUMN deleted_at INTEGER");
+    }
+    if (!colNames.has("parent_session_id")) {
+      this.db.exec(
+        "ALTER TABLE sessions ADD COLUMN parent_session_id TEXT REFERENCES sessions(id)",
+      );
+    }
+    if (!colNames.has("pending_compact_summary")) {
+      this.db.exec(
+        "ALTER TABLE sessions ADD COLUMN pending_compact_summary TEXT",
+      );
     }
 
     // One-time dual-ID migration. Existing WebAgent session IDs were also the
@@ -428,16 +455,58 @@ export class Store {
     `);
   }
 
+  /**
+   * Ensure the reserved Root record exists and attach existing live sessions
+   * that do not have a parent. This is additive and keeps every old session,
+   * event, attachment, and share intact; the Root's ACP binding is created by
+   * SessionManager after the bridge is ready.
+   *
+   * The default title is the literal "root": it is only applied while the
+   * title is still NULL, so a user rename survives restarts. The non-null
+   * title also keeps title generation from ever overwriting Root.
+   */
+  ensureRootSession(cwd: string): SessionRow {
+    return this.db.transaction(() => {
+      this.db
+        .prepare(
+          "INSERT OR IGNORE INTO sessions (id, cwd, source, parent_session_id, title) VALUES (?, ?, 'root', NULL, 'root')",
+        )
+        .run("root", cwd);
+      this.db
+        .prepare("UPDATE sessions SET parent_session_id = NULL WHERE id = ?")
+        .run("root");
+      // Default title only while NULL so a user rename survives restarts.
+      this.db
+        .prepare(
+          "UPDATE sessions SET title = 'root' WHERE id = ? AND title IS NULL",
+        )
+        .run("root");
+      this.db
+        .prepare(
+          `UPDATE sessions
+           SET parent_session_id = ?
+           WHERE id != ? AND parent_session_id IS NULL AND deleted_at IS NULL`,
+        )
+        .run("root", "root");
+      return this.db
+        .prepare("SELECT * FROM sessions WHERE id = ?")
+        .get("root") as SessionRow;
+    })();
+  }
+
   createSession(
     id: string,
     cwd: string,
     source: string = "auto",
     agentSessionId: string = id,
+    parentSessionId: string | null = null,
   ): SessionRow {
     return this.db.transaction(() => {
       this.db
-        .prepare("INSERT INTO sessions (id, cwd, source) VALUES (?, ?, ?)")
-        .run(id, cwd, source);
+        .prepare(
+          "INSERT INTO sessions (id, cwd, source, parent_session_id) VALUES (?, ?, ?, ?)",
+        )
+        .run(id, cwd, source, parentSessionId);
       this.db
         .prepare(
           "INSERT INTO agent_sessions (agent_key, agent_session_id, web_session_id) VALUES (?, ?, ?)",
@@ -530,6 +599,67 @@ export class Store {
       .get(this.agentKey, webSessionId) as AgentSessionRow | undefined;
   }
 
+  /**
+   * Replace the current ACP execution for a stable WebAgent session.
+   * The previous binding row is removed: its execution is explicitly
+   * retired by the caller and must never accept WebAgent events again.
+   */
+  rotateAgentSession(
+    webSessionId: string,
+    agentSessionId: string,
+    cwd?: string,
+  ): AgentSessionRow {
+    return this.db.transaction(() => {
+      const current = this.getAgentSessionBinding(webSessionId);
+      if (!current) throw new Error(`Session not found: ${webSessionId}`);
+      // Persist a requested cwd even when the agent returns the same
+      // execution id (no-op rotation); the caller decides whether to retire
+      // based on whether the binding actually moved.
+      if (cwd !== undefined) {
+        this.db
+          .prepare("UPDATE sessions SET cwd = ? WHERE id = ?")
+          .run(cwd, webSessionId);
+      }
+      if (current.agent_session_id === agentSessionId) return current;
+
+      this.db
+        .prepare(
+          "DELETE FROM agent_sessions WHERE agent_key = ? AND web_session_id = ?",
+        )
+        .run(this.agentKey, webSessionId);
+      this.db
+        .prepare(
+          "INSERT INTO agent_sessions (agent_key, agent_session_id, web_session_id) VALUES (?, ?, ?)",
+        )
+        .run(this.agentKey, agentSessionId, webSessionId);
+
+      return this.getAgentSessionBinding(webSessionId)!;
+    })();
+  }
+
+  /** Bind an ACP execution to an existing WebAgent session without creating a row. */
+  bindAgentSession(
+    webSessionId: string,
+    agentSessionId: string,
+  ): AgentSessionRow {
+    return this.db.transaction(() => {
+      if (!this.getSessionIncludingDeleted(webSessionId)) {
+        throw new Error(`Session not found: ${webSessionId}`);
+      }
+      const current = this.getAgentSessionBinding(webSessionId);
+      if (current) {
+        if (current.agent_session_id === agentSessionId) return current;
+        throw new Error(`Session already has an ACP binding: ${webSessionId}`);
+      }
+      this.db
+        .prepare(
+          "INSERT INTO agent_sessions (agent_key, agent_session_id, web_session_id) VALUES (?, ?, ?)",
+        )
+        .run(this.agentKey, agentSessionId, webSessionId);
+      return this.getAgentSessionBinding(webSessionId)!;
+    })();
+  }
+
   ownsSession(webSessionId: string): boolean {
     return this.getAgentSessionBinding(webSessionId) !== undefined;
   }
@@ -545,18 +675,72 @@ export class Store {
       | undefined;
   }
 
+  /** Re-parent surviving children of a hard-deleted session under Root so the
+   *  FK on parent_session_id stays valid. Root is guaranteed to exist post-boot
+   *  (ensureRootSession runs before listen). No-op when there are no children. */
+  private reparentChildrenToRoot(parentId: string): void {
+    this.db
+      .prepare(
+        "UPDATE sessions SET parent_session_id = ? WHERE parent_session_id = ? AND id != ? AND id != ?",
+      )
+      .run(ROOT_SESSION_ID, parentId, parentId, ROOT_SESSION_ID);
+  }
+
+  /** Direct child ids of a session (excluding itself and Root), in any order. */
+  private listChildren(parentId: string): string[] {
+    return (
+      this.db
+        .prepare(
+          "SELECT id FROM sessions WHERE parent_session_id = ? AND id != ? AND id != ?",
+        )
+        .all(parentId, parentId, ROOT_SESSION_ID) as Array<{ id: string }>
+    ).map((row) => row.id);
+  }
+
   /**
-   * Delete a session. If any active (published) shares reference it, the
-   * session row + events are kept (soft-delete via deleted_at) so the
-   * shared snapshot remains viewable. Otherwise everything is hard-
-   * deleted. Preview shares (shared_at IS NULL) are always cleared:
-   * unpublished drafts share the session's lifecycle.
-   *
-   * Returns "hard" if the row + events were physically removed, "soft"
-   * if the row was tombstoned because shares still reference it. Callers
-   * use this to decide whether to clean up filesystem artefacts (images).
+   * Every descendant of a session, transitively (used to gate destructive
+   * operations such as the DELETE busy check against in-flight children).
    */
-  deleteSession(id: string): "hard" | "soft" {
+  getDescendantSessionIds(rootId: string): string[] {
+    const out: string[] = [];
+    const queue = [rootId];
+    while (queue.length > 0) {
+      for (const child of this.listChildren(queue.pop()!)) {
+        queue.push(child);
+        out.push(child);
+      }
+    }
+    return out;
+  }
+
+  /**
+   * Delete a session and every descendant session recursively. The
+   * parent/child hierarchy is a hard ownership link, so the deletion is
+   * immediate and needs no confirmation (a confirmation step is deferred
+   * until a tree UI exists). Each affected session follows its own share
+   * rules: a session with active shares is tombstoned (kept so share
+   * viewers still resolve) and its binding removed; a share-tombstoned
+   * descendant of a hard-deleted parent is re-parented under Root.
+   *
+   * Returns every affected session with its deletion mode and the ACP
+   * execution bound at deletion time, so callers can retire executions,
+   * clean up in-memory state, and broadcast `session_deleted` per id.
+   */
+  deleteSession(id: string): {
+    mode: "hard" | "soft";
+    affected: SessionDelete[];
+  } {
+    if (id === ROOT_SESSION_ID) {
+      throw new Error("Root session cannot be deleted");
+    }
+    const affected: SessionDelete[] = [];
+    // Delete descendants first (children before parents) so the FK on
+    // parent_session_id can never block the parent's own row removal.
+    const children = this.listChildren(id);
+    for (const childId of children) {
+      affected.push(...this.deleteSession(childId).affected);
+    }
+    const binding = this.getAgentSessionBinding(id);
     // Drop preview shares regardless — they are owner-only drafts and
     // share the session's lifecycle by design.
     this.db
@@ -572,16 +756,37 @@ export class Store {
     this.db.prepare("DELETE FROM client_ops WHERE session_id = ?").run(id);
     if (activeShareCount > 0) {
       // Soft-delete: keep events + sessions row so public share viewers
-      // can still resolve. revokeShare() / reapTombstoneIfOrphaned()
-      // finishes the job once the last share is gone.
+      // can still resolve. The owner-side binding is retired like a hard
+      // delete; revokeShare() / reapTombstoneIfOrphaned() finishes the job
+      // once the last share is gone.
       this.db
         .prepare("UPDATE sessions SET deleted_at = ? WHERE id = ?")
         .run(Date.now(), id);
-      return "soft";
+      if (binding) {
+        this.db
+          .prepare(
+            "DELETE FROM agent_sessions WHERE agent_key = ? AND agent_session_id = ?",
+          )
+          .run(this.agentKey, binding.agent_session_id);
+      }
+      affected.unshift({
+        id,
+        mode: "soft",
+        agentSessionId: binding?.agent_session_id ?? null,
+      });
+      return { mode: "soft", affected };
     }
+    // Hard delete: re-parent any survivor (share-tombstoned descendants)
+    // under Root, then drop events and the row (agent_sessions cascades).
+    this.reparentChildrenToRoot(id);
     this.db.prepare("DELETE FROM events WHERE session_id = ?").run(id);
     this.db.prepare("DELETE FROM sessions WHERE id = ?").run(id);
-    return "hard";
+    affected.unshift({
+      id,
+      mode: "hard",
+      agentSessionId: binding?.agent_session_id ?? null,
+    });
+    return { mode: "hard", affected };
   }
 
   /**
@@ -603,30 +808,48 @@ export class Store {
         .get(sessionId) as { n: number }
     ).n;
     if (remaining > 0) return false;
+    // Its live children were deleted when it was tombstoned; any survivor
+    // (a share-tombstoned descendant of this tombstone) still references it
+    // and must be re-parented under Root before the row goes away.
+    this.reparentChildrenToRoot(sessionId);
     this.db.prepare("DELETE FROM events WHERE session_id = ?").run(sessionId);
     this.db.prepare("DELETE FROM sessions WHERE id = ?").run(sessionId);
     return true;
   }
 
   /** Delete sessions that have zero events and are older than minAgeS seconds. Returns IDs deleted. */
-  deleteEmptySessions(minAgeS: number): string[] {
+  deleteEmptySessions(minAgeS: number): Array<{
+    id: string;
+    agentSessionId: string | null;
+  }> {
     const empties = this.db
       .prepare(
         `
-      SELECT s.id FROM sessions s
+      SELECT s.id, a.agent_session_id FROM sessions s
       JOIN agent_sessions a ON a.web_session_id = s.id
       LEFT JOIN events e ON e.session_id = s.id
       WHERE e.id IS NULL
+        AND s.id != ?
         AND a.agent_key = ?
         AND s.deleted_at IS NULL
         AND strftime('%s', 'now') - strftime('%s', s.created_at) >= ?
     `,
       )
-      .all(this.agentKey, minAgeS) as Array<{ id: string }>;
+      .all(ROOT_SESSION_ID, this.agentKey, minAgeS) as Array<{
+      id: string;
+      agent_session_id: string;
+    }>;
     if (empties.length === 0) return [];
     const del = this.db.prepare("DELETE FROM sessions WHERE id = ?");
-    for (const r of empties) del.run(r.id);
-    return empties.map((r) => r.id);
+    const removed: Array<{ id: string; agentSessionId: string | null }> = [];
+    for (const r of empties) {
+      // A junk session may still be someone's parent; keep the children by
+      // re-parenting them under Root instead of deleting them.
+      this.reparentChildrenToRoot(r.id);
+      del.run(r.id);
+      removed.push({ id: r.id, agentSessionId: r.agent_session_id });
+    }
+    return removed;
   }
 
   updateSessionTitle(id: string, title: string): void {
@@ -641,6 +864,64 @@ export class Store {
         "UPDATE sessions SET last_active_at = strftime('%Y-%m-%d %H:%M:%f', 'now') WHERE id = ?",
       )
       .run(id);
+  }
+
+  /** Return the hidden summary waiting to be prepended to the next prompt. */
+  getPendingCompactSummary(id: string): string | null {
+    const row = this.db
+      .prepare("SELECT pending_compact_summary FROM sessions WHERE id = ?")
+      .get(id) as { pending_compact_summary: string | null } | undefined;
+    return row?.pending_compact_summary ?? null;
+  }
+
+  /**
+   * Persist the visible assistant summary and its hidden pending copy together.
+   * The latter is consumed only when the next real prompt is accepted.
+   */
+  saveCompactSummary(sessionId: string, summary: string): EventRow {
+    return this.db.transaction(() => {
+      const seq = (
+        this.db
+          .prepare(
+            "SELECT COALESCE(MAX(seq), 0) + 1 AS next FROM events WHERE session_id = ?",
+          )
+          .get(sessionId) as { next: number }
+      ).next;
+      this.db
+        .prepare(
+          "INSERT INTO events (session_id, seq, type, data, from_ref) VALUES (?, ?, ?, ?, ?)",
+        )
+        .run(
+          sessionId,
+          seq,
+          "assistant_message",
+          JSON.stringify({ text: summary }),
+          "agent",
+        );
+      this.db
+        .prepare("UPDATE sessions SET pending_compact_summary = ? WHERE id = ?")
+        .run(summary, sessionId);
+      return this.db
+        .prepare("SELECT * FROM events WHERE session_id = ? AND seq = ?")
+        .get(sessionId, seq) as EventRow;
+    })();
+  }
+
+  /** Clear a pending summary, optionally only when it is still the expected value. */
+  clearPendingCompactSummary(id: string, expected?: string): boolean {
+    const result =
+      expected === undefined
+        ? this.db
+            .prepare(
+              "UPDATE sessions SET pending_compact_summary = NULL WHERE id = ?",
+            )
+            .run(id)
+        : this.db
+            .prepare(
+              "UPDATE sessions SET pending_compact_summary = NULL WHERE id = ? AND pending_compact_summary = ?",
+            )
+            .run(id, expected);
+    return result.changes > 0;
   }
 
   /** Update a config option value (model, mode, reasoning_effort) for a session. */

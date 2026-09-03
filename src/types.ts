@@ -83,6 +83,7 @@ export interface SessionSummary {
   source: string;
   created_at: string;
   last_active_at: string;
+  parent_session_id: string | null;
 }
 
 /** Detailed session record returned by GET /api/v1/sessions/:id. */
@@ -94,6 +95,7 @@ export interface SessionDetail {
   source: string;
   model: string | null;
   mode: string | null;
+  parentSessionId: string | null;
   configOptions: ConfigOption[];
 }
 
@@ -284,8 +286,15 @@ export type AgentEvent =
   | { type: "message_consumed"; messageId: string; sessionId: string }
   | { type: "message_acked"; messageId: string }
   | { type: "inbox_count_changed"; pendingCount: number }
+  // Persisted assistant content; compact summaries may also be sent live.
+  | {
+      type: "assistant_message";
+      sessionId?: string;
+      text: string;
+      /** Present on live server-generated assistant messages. */
+      seq?: number;
+    }
   // Replay-only events (stored in DB, not sent live)
-  | { type: "assistant_message"; sessionId?: string; text: string }
   | { type: "thinking"; sessionId?: string; text: string }
   | {
       type: "bash_result";

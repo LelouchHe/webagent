@@ -63,6 +63,24 @@ describe("events", () => {
   });
 
   describe("handleEvent", () => {
+    it("renders a sequenced live assistant summary only once", () => {
+      state.sessionId = "s1";
+      state.lastEventSeq = 10;
+      const summary = {
+        type: "assistant_message" as const,
+        sessionId: "s1",
+        text: "handoff summary",
+        seq: 11,
+      };
+
+      events.handleEvent(summary);
+      events.handleEvent(summary);
+
+      assert.equal(dom.messages.querySelectorAll(".msg.assistant").length, 1);
+      assert.equal(dom.messages.textContent, "handoff summary");
+      assert.equal(state.lastEventSeq, 11);
+    });
+
     describe("session_created", () => {
       it("lets a new-session request supersede a pending navigation", () => {
         state.pendingNavigationSessionId = "old-target";

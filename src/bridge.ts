@@ -46,6 +46,8 @@ export class AgentBridge extends EventEmitter {
   >();
   private readonly pendingAborts = new Map<string, (e: Error) => void>();
   private deadReason: string | null = null;
+  /** Capabilities advertised by the agent at initialize; gates retire calls. */
+  private sessionCapabilities: acp.SessionCapabilities | null = null;
   private stderrTail = "";
   private readonly closedProcesses = new WeakSet<ChildProcess>();
   readonly agentCmd: string;
@@ -139,9 +141,16 @@ export class AgentBridge extends EventEmitter {
         fs: { readTextFile: false, writeTextFile: false },
         terminal: true,
       },
-    })) as { agentInfo?: { name?: string; version?: string } };
+    })) as {
+      agentInfo?: {
+        name?: string;
+        version?: string;
+        sessionCapabilities?: acp.SessionCapabilities;
+      };
+    };
 
     const agentInfo = init.agentInfo;
+    this.sessionCapabilities = agentInfo?.sessionCapabilities ?? null;
     this.emit("event", {
       type: "connected",
       agent: {
@@ -199,6 +208,30 @@ export class AgentBridge extends EventEmitter {
   discardUnboundSession(agentSessionId: string): void {
     this.unboundNewSessionIds.delete(agentSessionId);
     this.pendingSessionUpdates.delete(agentSessionId);
+  }
+
+  /**
+   * Explicitly retire an ACP execution whose WebAgent binding has been
+   * rotated away or deleted. Best-effort: prefers `session/delete` when the
+   * agent advertises it, falls back to `session/close`, and skips silently
+   * when the agent supports neither. Failures are logged but never thrown,
+   * so retirement can never roll back an already-successful rotation.
+   */
+  async retireExecution(agentSessionId: string): Promise<void> {
+    if (!this.conn) return;
+    const params = { sessionId: agentSessionId } as const;
+    try {
+      if (this.sessionCapabilities?.delete) {
+        await this.conn.deleteSession(params);
+      } else if (this.sessionCapabilities?.close) {
+        await this.conn.closeSession(params);
+      }
+    } catch (err) {
+      blog.warn("failed to retire retired ACP session", {
+        agentSessionId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
   }
 
   async loadSession(

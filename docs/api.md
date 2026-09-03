@@ -151,6 +151,7 @@ Create a new session. Optionally inherits model and reasoning_effort from anothe
 | `cwd`                  | string | No       | Working directory. Defaults to server's `default_cwd` config. Must exist on disk. |
 | `inheritFromSessionId` | string | No       | Copy model + reasoning_effort from this session                                   |
 | `source`               | string | No       | Tag for the session origin. Default: `"auto"`                                     |
+| `parentSessionId`      | string | No       | Parent WebAgent Session. Defaults to the reserved Root when it exists.              |
 
 **Response** `201`:
 
@@ -160,6 +161,7 @@ Create a new session. Optionally inherits model and reasoning_effort from anothe
   "cwd": "/home/user/project",
   "title": null,
   "source": "auto",
+  "parentSessionId": "root",
   "configOptions": [...]
 }
 ```
@@ -199,6 +201,74 @@ WebAgent session ID.
 
 ---
 
+#### `POST /api/v1/sessions/:id/compact`
+
+Generate an agent-authored context handoff for a fresh ACP execution while
+preserving the stable WebAgent session, its visible history, attachments, and
+title. The summary is broadcast and rendered as an assistant message, then
+stored as a one-shot pending handoff. It is not sent to the fresh ACP
+execution until the user submits the next real prompt.
+
+The endpoint returns after the compact operation is accepted. The session is
+busy while the summary is generated and the ACP binding is rotated; cancel
+active work first.
+
+**Response** `202`:
+
+```json
+{ "status": "accepted" }
+```
+
+On the next real prompt, WebAgent prepends the pending summary to the ACP
+prompt while storing and displaying only the user's original text. The pending
+summary is cleared once the prompt settles successfully (typically when the
+ACP turn ends); if the prompt is rejected before the agent accepts it, the
+summary is retained so the next real prompt can retry with it. If compact
+fails before rotation, the pending handoff is removed and the original
+execution remains authoritative.
+
+**Immediate errors:** `404` (session not found), `409` (session is busy or
+already has a pending compact summary), `500` (session resume failed), `503`
+(agent not ready or unable to generate a summary). Summary-generation or ACP
+rotation failures after acceptance are broadcast as an `error` SSE event.
+
+---
+
+#### `POST /api/v1/sessions/:id/clear`
+
+Replace the session's current ACP execution while preserving the stable
+WebAgent session ID, history, attachments, title, and configuration. An
+optional `cwd` changes the working directory for the replacement execution.
+The request is rejected with `409` while the session has active prompt or bash
+work; cancel it first.
+
+**Request body (optional):**
+
+```json
+{ "cwd": "/path/to/project" }
+```
+
+**Response** `200`:
+
+```json
+{
+  "id": "abc-123",
+  "cwd": "/path/to/project",
+  "title": null,
+  "source": "auto",
+  "configOptions": []
+}
+```
+
+The old ACP binding is no longer used for incoming events. The existing
+`session_created` SSE shape is broadcast so connected clients refresh the
+session's runtime metadata.
+
+**Errors:** `400` (invalid cwd or replacement failure), `404` (session not
+found), `409` (session is busy), `503` (agent not ready)
+
+---
+
 #### `GET /api/v1/sessions/:id`
 
 Get session details. **Auto-resumes** the session in the ACP agent if it's not already live (e.g., after server restart). Interrupted turns are restored without being continued automatically; the user decides whether to continue.
@@ -213,6 +283,7 @@ Get session details. **Auto-resumes** the session in the ACP agent if it's not a
   "source": "auto",
   "model": "claude-sonnet-4-20250514",
   "mode": "agent",
+  "parentSessionId": "root",
   "configOptions": [...],
   "busy": false,
   "busyKind": null
@@ -222,6 +293,7 @@ Get session details. **Auto-resumes** the session in the ACP agent if it's not a
 | Field           | Type                        | Description                                                                   |
 | --------------- | --------------------------- | ----------------------------------------------------------------------------- |
 | `configOptions` | `ConfigOption[]`            | Current config with stored overrides applied (type defined in `src/types.ts`) |
+| `parentSessionId` | `string \| null`         | Parent WebAgent Session; `null` only for the reserved Root Session              |
 | `busy`          | boolean                     | Whether the session has an active agent prompt or bash process                |
 | `busyKind`      | `"agent" \| "bash" \| null` | What kind of work is in progress                                              |
 
@@ -231,11 +303,21 @@ Get session details. **Auto-resumes** the session in the ACP agent if it's not a
 
 #### `DELETE /api/v1/sessions/:id`
 
-Delete a session and all its events, attachments, and in-memory state.
+Delete a session and all its events, attachments, and in-memory state. The
+parent/child hierarchy is a hard ownership link, so every descendant session
+is deleted too — immediately, with no confirmation step (a confirmation for
+child deletion is deferred until the tree UI exists). Sessions kept alive only
+for active public shares are tombstoned instead; a tombstoned descendant of a
+hard-deleted parent is re-parented under the reserved Root Session so the
+hierarchy FK stays valid.
+
+The reserved Root Session (`id = "root"`) cannot be deleted.
 
 **Response** `204` (no body)
 
-**Side effects:** Broadcasts `session_deleted` to all SSE clients.
+**Side effects:** Broadcasts `session_deleted` to all SSE clients, once per
+deleted session. Each affected session's ACP execution is retired explicitly
+(`session/delete` or `session/close` when the agent advertises support).
 
 ---
 

@@ -138,6 +138,19 @@ export function bootstrapSession(
   });
 }
 
+export function clearSession(
+  id: string,
+  opts?: { cwd?: string },
+): Promise<Record<string, unknown>> {
+  const body: Record<string, unknown> = {};
+  if (opts?.cwd) body.cwd = opts.cwd;
+  return post("/api/v1/sessions/" + id + "/clear", body);
+}
+
+export function compactSession(id: string): Promise<Record<string, unknown>> {
+  return post("/api/v1/sessions/" + id + "/compact", {});
+}
+
 export function deleteSession(id: string): Promise<void> {
   return request("/api/v1/sessions/" + id, { method: "DELETE" });
 }

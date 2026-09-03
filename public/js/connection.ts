@@ -301,8 +301,10 @@ async function initSession() {
     const sessions = (await api.listSessions()) as Array<{ id: string }>;
     if (gen !== state.sessionSwitchGen) return;
     if (sessions.length > 0) {
+      const initialSession =
+        sessions.find((session) => session.id === "root") ?? sessions[0];
       resetSessionUI();
-      await resumeAndLoad(sessions[0].id, false, gen);
+      await resumeAndLoad(initialSession.id, false, gen);
       if (gen !== state.sessionSwitchGen) return;
       scrollToBottom(true);
       return;

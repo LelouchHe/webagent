@@ -6,14 +6,14 @@ import {
   sendPrompt,
 } from "./helpers.ts";
 
-test("/clear deletes current session and opens a fresh one in the same cwd", async ({
+test("/clear keeps the WebAgent session and its history in the same cwd", async ({
   page,
 }) => {
   await gotoConnected(page);
   const oldSessionId = await createNewSession(page);
-  await sendPrompt(page, "stale content to be wiped");
+  await sendPrompt(page, "content retained across clear");
   await expect(page.locator("#messages")).toContainText(
-    "stale content to be wiped",
+    "content retained across clear",
   );
 
   // Read old cwd via REST
@@ -25,10 +25,9 @@ test("/clear deletes current session and opens a fresh one in the same cwd", asy
 
   await sendPrompt(page, "/clear");
 
-  // New session id, distinct from the one just cleared
-  await expect.poll(() => currentSessionId(page)).not.toBe(oldSessionId);
+  // The WebAgent session id remains stable while its ACP execution rotates.
+  await expect.poll(() => currentSessionId(page)).toBe(oldSessionId);
   const newId = await currentSessionId(page);
-  expect(newId).not.toBe("");
 
   // cwd preserved
   const newCwd = await page.evaluate(async (id) => {
@@ -38,14 +37,15 @@ test("/clear deletes current session and opens a fresh one in the same cwd", asy
   }, newId);
   expect(newCwd).toBe(oldCwd);
 
-  // Old content gone from view
-  await expect(page.locator("#messages")).not.toContainText(
-    "stale content to be wiped",
+  // History remains owned by the stable WebAgent session.
+  await expect(page.locator("#messages")).toContainText(
+    "content retained across clear",
   );
 
-  // Deleted session should not appear in switch menu
-  await page.locator("#input").fill("/switch ");
-  await expect(page.locator("#slash-menu.active")).not.toContainText(
-    oldSessionId.slice(0, 8),
-  );
+  // The stable session remains available through the existing Session API.
+  const sessionStatus = await page.evaluate(async (id) => {
+    const res = await fetch(`/api/v1/sessions/${id}`);
+    return res.status;
+  }, oldSessionId);
+  expect(sessionStatus).toBe(200);
 });
