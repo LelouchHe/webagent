@@ -37,14 +37,12 @@ describe("Store", () => {
       assert.equal(store.getWebSessionId("agent-1"), undefined);
       assert.equal(store.getWebSessionId("agent-2"), "web-1");
       assert.equal(store.getSession("web-1")?.id, "web-1");
-      assert.equal(
-        store["db"]
-          .prepare(
-            "SELECT COUNT(*) AS count FROM agent_sessions WHERE agent_key = ?",
-          )
-          .get("test-agent").count,
-        2,
-      );
+      const row = store["db"]
+        .prepare(
+          "SELECT COUNT(*) AS count FROM agent_sessions WHERE agent_key = ?",
+        )
+        .get("test-agent") as { count: number };
+      assert.equal(row.count, 2);
     });
 
     it("keeps internal ACP sessions out of the user session list", () => {
