@@ -825,6 +825,53 @@ describe("SessionManager", () => {
       assert.equal(sm.state.getState("web-1").runtime.busy, null);
     });
 
+    it("keeps the runtime state seq monotonic across rotation", async () => {
+      // A session with history has applied patches (seq > 0). The client
+      // validates incremental state_patch events and snapshots against its
+      // own lastStateSeq; if rotation restarted the server seq at 0, every
+      // post-clear snapshot would look "superseded" and be dropped, leaving
+      // the client permanently desynced (stuck busy).
+      store.createSession("web-1", tmpDir, "auto", "agent-old");
+      sm.liveSessions.add("web-1");
+      sm.state.patch("web-1", {
+        runtime: {
+          busy: { kind: "agent", since: "t0", promptId: "prompt-1" },
+          pendingPermissions: [
+            {
+              requestId: "r1",
+              toolName: "shell",
+              title: "Run ls",
+              options: [{ optionId: "allow", label: "Allow" }],
+            },
+          ],
+        },
+      });
+      const seqBefore = sm.state.getState("web-1").seq;
+      assert.ok(seqBefore > 0);
+
+      const bridge = {
+        async newSession() {
+          return { sessionId: "agent-new", configOptions: [] };
+        },
+        async setConfigOption() {
+          return [];
+        },
+        async loadSession() {
+          throw new Error("loadSession should not be called");
+        },
+      };
+
+      await sm.clearSession(bridge, "web-1");
+
+      const after = sm.state.getState("web-1");
+      assert.equal(after.runtime.busy, null);
+      assert.equal(after.runtime.pendingPermissions.length, 0);
+      assert.ok(
+        after.seq > seqBefore,
+        `seq must continue from ${seqBefore}, not restart at 0 (got ${after.seq})`,
+      );
+    });
+
     it("rotates MCP capability only after the replacement execution succeeds", async () => {
       store.createSession("web-1", tmpDir, "auto", "agent-old");
       sm.liveSessions.add("web-1");
@@ -857,6 +904,36 @@ describe("SessionManager", () => {
 
       assert.equal(capabilities.resolve(oldToken), null);
       assert.equal(newToken && capabilities.resolve(newToken), "web-1");
+    });
+
+    it("does not reset the state ledger when replacement creation fails", async () => {
+      store.createSession("web-1", tmpDir, "auto", "agent-old");
+      sm.liveSessions.add("web-1");
+      sm.state.patch("web-1", {
+        runtime: { busy: { kind: "agent", since: "t0", promptId: "prompt-1" } },
+      });
+      const seqBefore = sm.state.getState("web-1").seq;
+
+      const bridge = {
+        async newSession() {
+          throw new Error("replacement failed");
+        },
+        async setConfigOption() {
+          return [];
+        },
+        async loadSession() {
+          throw new Error("loadSession should not be called");
+        },
+      };
+
+      await assert.rejects(
+        () => sm.clearSession(bridge, "web-1"),
+        /replacement failed/,
+      );
+      // The rotation barrier patch (busy=true) bumps seq even on failure; the
+      // ledger itself must survive an aborted rotation so clients can still
+      // reconcile after the error.
+      assert.ok(sm.state.getState("web-1").seq > seqBefore);
     });
 
     it("keeps the current MCP capability when replacement creation fails", async () => {

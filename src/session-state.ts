@@ -268,6 +268,30 @@ export class SessionStateManager {
     }
   }
 
+  /**
+   * Reset a live session's runtime state to defaults without restarting the
+   * seq ledger. Used when rotating a session's ACP execution in place (clear):
+   * the WebAgent session identity survives, so clients that validate
+   * incremental `state_patch` events against their own lastStateSeq must keep
+   * seeing a monotonic seq. Hard-deleting the entry here would restart the
+   * server seq at 0; every post-rotation snapshot would then look
+   * "superseded" to the client and be dropped, leaving it permanently
+   * desynced (stuck busy). Broadcasts one patch when anything actually
+   * changed, mirroring the explicit reset patch used by the compaction path.
+   */
+  reset(sessionId: string): void {
+    this.clearCancelSafety(sessionId);
+    this.patch(sessionId, {
+      runtime: {
+        busy: null,
+        pendingPermissions: [],
+        streaming: { assistant: false, thinking: false },
+        plan: null,
+        contextUsage: null,
+      },
+    });
+  }
+
   /** Clear current plans for every known session (used on bridge reload). */
   clearPlans(): void {
     for (const [sessionId, state] of this.states) {

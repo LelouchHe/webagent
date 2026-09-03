@@ -477,7 +477,12 @@ export class SessionManager {
     };
   }
 
-  /** Reset runtime-only state after replacing a Session's ACP execution. */
+  /**
+   * Reset runtime-only state after replacing a Session's ACP execution.
+   * The runtime state ledger is reset to defaults but keeps its seq counter
+   * (never hard-deleted): the WebAgent session survives rotation, and clients
+   * validate incremental state_patch events against a monotonic server seq.
+   */
   private resetSessionRuntime(
     sessionId: string,
     preserveRuntimeState = false,
@@ -497,7 +502,7 @@ export class SessionManager {
         this.pendingPermissions.delete(requestId);
       }
     }
-    if (!preserveRuntimeState) this.state.delete(sessionId);
+    if (!preserveRuntimeState) this.state.reset(sessionId);
   }
 
   /** Bind an ACP execution to the reserved Root record after bridge startup. */

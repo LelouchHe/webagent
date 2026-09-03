@@ -121,6 +121,92 @@ describe("SessionStateManager", () => {
     });
   });
 
+  describe("reset", () => {
+    it("restores defaults without restarting the seq ledger", () => {
+      sm.patch("s1", {
+        runtime: {
+          busy: { kind: "agent", since: "t0", promptId: "p1" },
+          pendingPermissions: [
+            {
+              requestId: "r1",
+              toolName: "shell",
+              title: "Run ls",
+              options: [{ optionId: "allow", label: "Allow" }],
+            },
+          ],
+          plan: [{ status: "in_progress", content: "plan" }],
+          contextUsage: { used: 1, size: 2 },
+        },
+      });
+      sm.patch("s1", {
+        runtime: { streaming: { assistant: true, thinking: true } },
+      });
+      const seqBefore = sm.getState("s1").seq;
+
+      sm.reset("s1");
+
+      const after = sm.getState("s1");
+      assert.equal(after.runtime.busy, null);
+      assert.deepEqual(after.runtime.pendingPermissions, []);
+      assert.deepEqual(after.runtime.streaming, {
+        assistant: false,
+        thinking: false,
+      });
+      assert.equal(after.runtime.plan, null);
+      assert.equal(after.runtime.contextUsage, null);
+      assert.ok(
+        after.seq > seqBefore,
+        `seq must continue (${seqBefore} -> ${after.seq}), not restart at 0`,
+      );
+    });
+
+    it("broadcasts a single patch with the reset payload", () => {
+      const events: StatePatchEvent[] = [];
+      sm.onPatch((e) => events.push(e));
+      sm.patch("s1", {
+        runtime: { busy: { kind: "bash", since: "t0", promptId: null } },
+      });
+
+      sm.reset("s1");
+
+      // setup patch + reset patch
+      assert.equal(events.length, 2);
+      assert.equal(events[1].type, "state_patch");
+      assert.equal(events[1].sessionId, "s1");
+      assert.deepEqual(events[1].patch.runtime!.busy, null);
+      assert.deepEqual(events[1].patch.runtime!.pendingPermissions, []);
+    });
+
+    it("clears the cancel safety net", () => {
+      mock.timers.enable({ apis: ["setTimeout"] });
+      try {
+        sm.patch("s1", {
+          runtime: {
+            busy: {
+              kind: "agent",
+              since: "t0",
+              promptId: "p1",
+              cancelStatus: "requested",
+            },
+          },
+        });
+        sm.armCancelSafety("s1", 30);
+
+        sm.reset("s1");
+        const seqAfterReset = sm.getState("s1").seq;
+        mock.timers.tick(50);
+
+        assert.equal(
+          sm.getState("s1").seq,
+          seqAfterReset,
+          "safety net must not fire after reset",
+        );
+      } finally {
+        mock.timers.reset();
+      }
+    });
+  });
+
   describe("cancel safety net", () => {
     beforeEach(() => {
       mock.timers.enable({ apis: ["setTimeout"] });
