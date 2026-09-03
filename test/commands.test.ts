@@ -408,8 +408,6 @@ describe("commands", () => {
         };
         if (url === "/api/v1/sessions/old-1/clear" && init?.method === "POST")
           return body({ id: "old-1", cwd: "/home/project", configOptions: [] });
-        if (url === "/api/v1/sessions/old-1")
-          return body({ id: "old-1", cwd: "/home/project", configOptions: [] });
         if (url.includes("/snapshot"))
           return body({
             seq: 0,
@@ -423,7 +421,6 @@ describe("commands", () => {
             runtime: { busy: null, plan: null, contextUsage: null },
             agentCommands: { epoch: "", revision: 0, commands: [] },
           });
-        if (url.includes("/events")) return body([]);
         return body({});
       });
 
@@ -446,6 +443,17 @@ describe("commands", () => {
         ),
         false,
       );
+      // In-place clear must not re-fetch history or the session detail.
+      assert.equal(
+        fetchCalls.some((c) => c.url.includes("/events")),
+        false,
+      );
+      assert.equal(
+        fetchCalls.some(
+          (c) => c.url === "/api/v1/sessions/old-1" && c.init?.method === "GET",
+        ),
+        false,
+      );
       assert.equal(state.awaitingNewSession, false);
       assert.equal(state.sessionId, "old-1");
       assert.ok(messageLines().includes("Clearing session…"));
@@ -464,6 +472,11 @@ describe("commands", () => {
 
       assert.equal(await commands.handleSlashCommand("/clear"), true);
       assert.equal(state.sessionId, "old-1");
+      // No snapshot/hydration attempt happens after a failed clear.
+      assert.equal(
+        fetchCalls.some((c) => c.url.includes("/snapshot")),
+        false,
+      );
       assert.ok(
         messageLines().some((line: string) =>
           line.includes("Failed to clear session"),
@@ -487,8 +500,6 @@ describe("commands", () => {
         };
         if (url === "/api/v1/sessions/old-1/clear" && init?.method === "POST")
           return body({ id: "old-1", cwd: "/tmp/other", configOptions: [] });
-        if (url === "/api/v1/sessions/old-1")
-          return body({ id: "old-1", cwd: "/tmp/other", configOptions: [] });
         if (url.includes("/snapshot"))
           return body({
             seq: 0,
@@ -502,7 +513,6 @@ describe("commands", () => {
             runtime: { busy: null, plan: null, contextUsage: null },
             agentCommands: { epoch: "", revision: 0, commands: [] },
           });
-        if (url.includes("/events")) return body([]);
         return body({});
       });
 
@@ -544,13 +554,6 @@ describe("commands", () => {
             resolveClear = resolve;
           });
         }
-        if (url === "/api/v1/sessions/old")
-          return body({ id: "old", cwd: "/p", title: null, configOptions: [] });
-        if (url.includes("/events"))
-          return body({
-            events: [],
-            streaming: { assistant: false, thinking: false },
-          });
         if (url.includes("/snapshot"))
           return body({
             version: 1,
@@ -589,6 +592,17 @@ describe("commands", () => {
       assert.equal(await pending, true);
       assert.equal(state.sessionId, "old");
       assert.equal(state.awaitingNewSession, false);
+      // No history reload: /events and GET /sessions/old are never fetched.
+      assert.equal(
+        fetchCalls.some((c) => c.url.includes("/events")),
+        false,
+      );
+      assert.equal(
+        fetchCalls.some(
+          (c) => c.url === "/api/v1/sessions/old" && c.init?.method === "GET",
+        ),
+        false,
+      );
     });
 
     it("clear without active session warns and does nothing", async () => {

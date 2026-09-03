@@ -1899,6 +1899,7 @@ export function createRequestHandler(
             title: fresh.title,
             source: fresh.source,
             configOptions: result.configOptions,
+            agentCommands: sessions.getAgentCommands(sessionId),
           });
         } catch (err) {
           json(res, HTTP_STATUS.BAD_REQUEST, {
