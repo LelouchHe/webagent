@@ -87,6 +87,12 @@ export class OrphanToolUpdateCache {
     return entry.update;
   }
 
+  /** True when an unrecovered update for this id is currently buffered. */
+  has(id: string): boolean {
+    this.prune(this.now());
+    return this.entries.has(id);
+  }
+
   clear(): void {
     this.entries.clear();
     this.totalBytes = 0;

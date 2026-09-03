@@ -2065,7 +2065,16 @@ export function handleEvent(msg: AgentEvent) {
     case "tool_call_update": {
       const hooks = liveHooks();
       if (!hooks.findToolCallEl(msg.id)) {
+        // Dedup: log only the first buffering per tool-call id, so a burst of
+        // cumulative snapshots for one missing host stays a single line.
+        const firstSighting = !orphanToolUpdates.has(msg.id);
         orphanToolUpdates.put(msg);
+        if (firstSighting) {
+          log.debug("buffering tool update without host", {
+            id: msg.id,
+            status: msg.status,
+          });
+        }
       }
       // Preserve the original lifecycle effects immediately even when the DOM
       // host is absent. Replaying them after host creation is idempotent.

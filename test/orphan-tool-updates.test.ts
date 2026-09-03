@@ -47,6 +47,24 @@ describe("OrphanToolUpdateCache", () => {
     );
   });
 
+  it("reports buffered ids via has() until recovered, merged, or cleared", () => {
+    let now = 0;
+    const cache = new OrphanToolUpdateCache({ now: () => now });
+
+    assert.equal(cache.has("tc-1"), false);
+    cache.put(update("tc-1", "first"));
+    assert.equal(cache.has("tc-1"), true);
+    cache.put(update("tc-1", "second")); // merge keeps it buffered
+    assert.equal(cache.has("tc-1"), true);
+    assert.ok(cache.take("tc-1"));
+    assert.equal(cache.has("tc-1"), false);
+
+    cache.put(update("tc-2", "lost"));
+    assert.equal(cache.has("tc-2"), true);
+    now = 70_000; // past TTL
+    assert.equal(cache.has("tc-2"), false); // pruned
+  });
+
   it("warns on expiration only, once per id, never on take/merge/clear", () => {
     let now = 0;
     const expired: string[] = [];
