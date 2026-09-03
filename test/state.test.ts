@@ -589,6 +589,22 @@ describe("state", () => {
       assert.equal(mod.getHashSessionId(), "abc123");
     });
 
+    it("setHashSessionId omits the hash for Root", () => {
+      history.replaceState(null, "", "/?view=chat#old-session");
+
+      mod.setHashSessionId("root");
+
+      assert.equal(location.pathname, "/");
+      assert.equal(location.search, "?view=chat");
+      assert.equal(location.hash, "");
+    });
+
+    it("setHashSessionId keeps a hash for child sessions", () => {
+      mod.setHashSessionId("child-session");
+
+      assert.equal(location.hash, "#child-session");
+    });
+
     it("updateSessionInfo sets text and title", () => {
       mod.updateSessionInfo("abc12345-full-id", "My Session");
       assert.equal(mod.dom.sessionInfo.textContent, "My Session");

@@ -914,6 +914,12 @@ export function getHashSessionId(): string | null {
 }
 
 export function setHashSessionId(id: string) {
+  if (id === "root") {
+    const url = new URL(location.href);
+    url.hash = "";
+    history.replaceState(null, "", `${url.pathname}${url.search}`);
+    return;
+  }
   history.replaceState(null, "", `#${id}`);
 }
 

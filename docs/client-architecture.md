@@ -167,7 +167,7 @@ initSession()
   ├── Hash has session ID? ──→ resumeAndLoad(id, incremental?)
   │     ├── Same as current session ──→ incremental=true  (reconnect)
   │     └── Different session ──→ incremental=false (full load)
-  ├── No hash? ──→ listSessions() → resumeAndLoad(most recent)
+  ├── No hash? ──→ listSessions() → prefer Root, otherwise resume most recent
   └── No sessions? ──→ POST /sessions/bootstrap
 ```
 
@@ -378,7 +378,8 @@ Promise.all([api.getSession(targetId), loadHistory(targetId)]).then(
 
 ### Hash Routing
 
-Sessions are identified by URL hash: `/#session-id`. This enables:
+Child Sessions are identified by URL hash: `/#session-id`. Root is the
+canonical default and omits the hash, so `/` opens Root. This enables:
 
 - Bookmarking sessions
 - Push notification click → navigate to session
