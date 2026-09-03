@@ -14,6 +14,8 @@ export interface SessionRow {
   last_active_at: string;
   /** epoch ms; NULL = live; non-NULL = soft-deleted (kept alive for active shares). */
   deleted_at: number | null;
+  /** Optional parent WebAgent session; the reserved Root has NULL. */
+  parent_session_id: string | null;
 }
 
 export interface AgentSessionRow {
@@ -153,6 +155,7 @@ export class Store {
         id TEXT PRIMARY KEY,
         cwd TEXT NOT NULL,
         title TEXT,
+        parent_session_id TEXT REFERENCES sessions(id),
         created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now')),
         last_active_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now'))
       );
@@ -215,6 +218,11 @@ export class Store {
     }
     if (!colNames.has("deleted_at")) {
       this.db.exec("ALTER TABLE sessions ADD COLUMN deleted_at INTEGER");
+    }
+    if (!colNames.has("parent_session_id")) {
+      this.db.exec(
+        "ALTER TABLE sessions ADD COLUMN parent_session_id TEXT REFERENCES sessions(id)",
+      );
     }
 
     // One-time dual-ID migration. Existing WebAgent session IDs were also the
@@ -428,16 +436,48 @@ export class Store {
     `);
   }
 
+  /**
+   * Ensure the reserved Root record exists and attach existing live sessions
+   * that do not have a parent. This is additive and keeps every old session,
+   * event, attachment, and share intact; the Root's ACP binding is created by
+   * SessionManager after the bridge is ready.
+   */
+  ensureRootSession(cwd: string): SessionRow {
+    return this.db.transaction(() => {
+      this.db
+        .prepare(
+          "INSERT OR IGNORE INTO sessions (id, cwd, source, parent_session_id) VALUES (?, ?, 'root', NULL)",
+        )
+        .run("root", cwd);
+      this.db
+        .prepare("UPDATE sessions SET parent_session_id = NULL WHERE id = ?")
+        .run("root");
+      this.db
+        .prepare(
+          `UPDATE sessions
+           SET parent_session_id = ?
+           WHERE id != ? AND parent_session_id IS NULL AND deleted_at IS NULL`,
+        )
+        .run("root", "root");
+      return this.db
+        .prepare("SELECT * FROM sessions WHERE id = ?")
+        .get("root") as SessionRow;
+    })();
+  }
+
   createSession(
     id: string,
     cwd: string,
     source: string = "auto",
     agentSessionId: string = id,
+    parentSessionId: string | null = null,
   ): SessionRow {
     return this.db.transaction(() => {
       this.db
-        .prepare("INSERT INTO sessions (id, cwd, source) VALUES (?, ?, ?)")
-        .run(id, cwd, source);
+        .prepare(
+          "INSERT INTO sessions (id, cwd, source, parent_session_id) VALUES (?, ?, ?, ?)",
+        )
+        .run(id, cwd, source, parentSessionId);
       this.db
         .prepare(
           "INSERT INTO agent_sessions (agent_key, agent_session_id, web_session_id) VALUES (?, ?, ?)",
@@ -555,6 +595,29 @@ export class Store {
         )
         .run(this.agentKey, agentSessionId, webSessionId);
 
+      return this.getAgentSessionBinding(webSessionId)!;
+    })();
+  }
+
+  /** Bind an ACP execution to an existing WebAgent session without creating a row. */
+  bindAgentSession(
+    webSessionId: string,
+    agentSessionId: string,
+  ): AgentSessionRow {
+    return this.db.transaction(() => {
+      if (!this.getSessionIncludingDeleted(webSessionId)) {
+        throw new Error(`Session not found: ${webSessionId}`);
+      }
+      const current = this.getAgentSessionBinding(webSessionId);
+      if (current) {
+        if (current.agent_session_id === agentSessionId) return current;
+        throw new Error(`Session already has an ACP binding: ${webSessionId}`);
+      }
+      this.db
+        .prepare(
+          "INSERT INTO agent_sessions (agent_key, agent_session_id, web_session_id) VALUES (?, ?, ?)",
+        )
+        .run(this.agentKey, agentSessionId, webSessionId);
       return this.getAgentSessionBinding(webSessionId)!;
     })();
   }

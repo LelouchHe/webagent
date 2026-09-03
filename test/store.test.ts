@@ -80,6 +80,56 @@ describe("Store", () => {
       assert.equal(session.title, null);
     });
 
+    it("stores an optional parent WebAgent session", () => {
+      store.createSession("root", "/tmp/root", "root", "agent-root");
+      const child = store.createSession(
+        "child",
+        "/tmp/child",
+        "auto",
+        "agent-child",
+        "root",
+      );
+
+      assert.equal(child.parent_session_id, "root");
+      assert.equal(store.getSession("child")?.parent_session_id, "root");
+    });
+
+    it("creates a non-destructive Root and adopts existing top-level sessions", () => {
+      store.createSession("old-1", "/tmp/one", "auto", "agent-one");
+      store.createSession("old-2", "/tmp/two", "auto", "agent-two");
+
+      const root = store.ensureRootSession("/tmp/root");
+
+      assert.equal(root.id, "root");
+      assert.equal(root.parent_session_id, null);
+      assert.equal(
+        store.getSessionIncludingDeleted("old-1")?.parent_session_id,
+        "root",
+      );
+      assert.equal(
+        store.getSessionIncludingDeleted("old-2")?.parent_session_id,
+        "root",
+      );
+      assert.deepEqual(
+        store
+          .listSessions()
+          .map((session) => session.id)
+          .sort(),
+        ["old-1", "old-2"],
+      );
+
+      assert.equal(store.ensureRootSession("/tmp/other").cwd, "/tmp/root");
+    });
+
+    it("binds an ACP execution to an existing Root record", () => {
+      store.ensureRootSession("/tmp/root");
+
+      store.bindAgentSession("root", "agent-root");
+
+      assert.equal(store.getAgentSessionId("root"), "agent-root");
+      assert.equal(store.getSession("root")?.id, "root");
+    });
+
     it("lists sessions ordered by last_active_at desc", () => {
       store.createSession("old", "/a");
       store.createSession("new", "/b");
