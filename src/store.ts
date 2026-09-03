@@ -580,11 +580,17 @@ export class Store {
   rotateAgentSession(
     webSessionId: string,
     agentSessionId: string,
+    cwd?: string,
   ): AgentSessionRow {
     return this.db.transaction(() => {
       const current = this.getAgentSessionBinding(webSessionId);
       if (!current) throw new Error(`Session not found: ${webSessionId}`);
       if (current.agent_session_id === agentSessionId) return current;
+      if (cwd !== undefined) {
+        this.db
+          .prepare("UPDATE sessions SET cwd = ? WHERE id = ?")
+          .run(cwd, webSessionId);
+      }
 
       this.db
         .prepare(

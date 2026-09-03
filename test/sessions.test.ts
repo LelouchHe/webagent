@@ -562,6 +562,21 @@ describe("Session REST API", () => {
       assert.equal(store.getAgentSessionId("s1"), "mock-session-1");
       assert.equal(store.getWebSessionId("agent-old"), undefined);
     });
+
+    it("persists a clear request's replacement cwd on the stable session", async () => {
+      store.createSession("s1", tmpDir, "auto", "agent-old");
+
+      const res = await makeRequest(
+        port,
+        "POST",
+        "/api/v1/sessions/s1/clear",
+        JSON.stringify({ cwd: publicDir }),
+      );
+
+      assert.equal(res.status, 200);
+      assert.equal(JSON.parse(res.body).cwd, publicDir);
+      assert.equal(store.getSession("s1")?.cwd, publicDir);
+    });
   });
 
   // --- GET /api/v1/sessions/:id ---

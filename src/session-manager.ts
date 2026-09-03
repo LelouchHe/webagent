@@ -388,7 +388,7 @@ export class SessionManager {
     );
 
     try {
-      this.store.rotateAgentSession(sessionId, created.sessionId);
+      this.store.rotateAgentSession(sessionId, created.sessionId, sessionCwd);
     } catch (error) {
       bridge.discardUnboundSession?.(created.sessionId);
       this.creatingSessions.delete(sessionId);
