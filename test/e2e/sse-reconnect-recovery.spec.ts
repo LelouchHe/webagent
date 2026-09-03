@@ -1,6 +1,6 @@
 import { test, expect } from "playwright/test";
 import {
-  createNewSession,
+  createNewTask,
   currentTaskId,
   expectConnectionStatus,
   gotoConnected,
@@ -22,7 +22,7 @@ test("SSE reconnect keeps the same task without duplicating history", async ({
   });
 
   await gotoConnected(page);
-  await createNewSession(page);
+  await createNewTask(page);
 
   await sendPrompt(page, "survive a reconnect");
   await expect(page.locator(".msg.assistant").last()).toContainText(
@@ -65,7 +65,7 @@ test("SSE reconnect recovers a reply completed while the stream was down", async
   });
 
   await gotoConnected(page);
-  await createNewSession(page);
+  await createNewTask(page);
 
   await sendPrompt(page, "completed during reconnect");
   await page.evaluate(() => {

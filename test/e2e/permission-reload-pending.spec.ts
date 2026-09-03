@@ -1,6 +1,6 @@
 import { test, expect } from "playwright/test";
 import {
-  createNewSession,
+  createNewTask,
   currentTaskId,
   gotoConnected,
   sendPrompt,
@@ -10,7 +10,7 @@ test("an unresolved permission request stays actionable after reload", async ({
   page,
 }) => {
   await gotoConnected(page);
-  await createNewSession(page);
+  await createNewTask(page);
 
   await sendPrompt(page, "E2E_PERMISSION keep this pending across reload");
   const taskId = await currentTaskId(page);

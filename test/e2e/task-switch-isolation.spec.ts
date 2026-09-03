@@ -1,6 +1,6 @@
 import { test, expect } from "playwright/test";
 import {
-  createNewSession,
+  createNewTask,
   currentTaskId,
   gotoConnected,
   sendPrompt,
@@ -10,14 +10,14 @@ test("switching tasks reloads the target history without mixing messages", async
   page,
 }) => {
   await gotoConnected(page);
-  const taskOneId = await createNewSession(page);
+  const taskOneId = await createNewTask(page);
 
   await sendPrompt(page, "message from task one");
   await expect(page.locator(".msg.assistant").last()).toContainText(
     "Echo: message from task one",
   );
 
-  const taskTwoId = await createNewSession(page);
+  const taskTwoId = await createNewTask(page);
   await expect.poll(() => currentTaskId(page)).toBe(taskTwoId);
 
   await sendPrompt(page, "message from task two");

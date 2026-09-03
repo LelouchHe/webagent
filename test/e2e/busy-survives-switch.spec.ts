@@ -1,6 +1,6 @@
 import { test, expect } from "playwright/test";
 import {
-  createNewSession,
+  createNewTask,
   currentTaskId,
   gotoConnected,
   sendPrompt,
@@ -20,12 +20,12 @@ test("busy state survives switching to another task and back", async ({
 }) => {
   await gotoConnected(page);
 
-  const slowTaskId = await createNewSession(page);
+  const slowTaskId = await createNewTask(page);
   await sendPrompt(page, "E2E_SLOW pending forever");
   await expect(page.locator("#send-btn")).toHaveText("^C");
 
   // Switch away to a new idle task.
-  const idleTaskId = await createNewSession(page);
+  const idleTaskId = await createNewTask(page);
   await expect.poll(() => currentTaskId(page)).toBe(idleTaskId);
   await expect(page.locator("#send-btn")).toHaveText("↵");
 

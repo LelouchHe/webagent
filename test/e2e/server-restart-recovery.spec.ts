@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { spawn, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
-  createNewSession,
+  createNewTask,
   currentTaskId,
   expectConnectionStatus,
   sendPrompt,
@@ -136,7 +136,7 @@ test("server restart restores the same task without duplicating history", async 
     );
     await gotoConnected(page, `${RESTART_ORIGIN}/`);
 
-    await createNewSession(page);
+    await createNewTask(page);
     await sendPrompt(page, "survive a restart");
     await expect(page.locator(".msg.assistant").last()).toContainText(
       "Echo: survive a restart",

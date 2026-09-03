@@ -1,6 +1,6 @@
 import { test, expect } from "playwright/test";
 import {
-  createNewSession,
+  createNewTask,
   currentTaskId,
   gotoConnected,
   sendPrompt,
@@ -10,7 +10,7 @@ test("reloading keeps the selected reasoning effort for the current task", async
   page,
 }) => {
   await gotoConnected(page);
-  const taskId = await createNewSession(page);
+  const taskId = await createNewTask(page);
 
   await sendPrompt(page, "/think high");
   await expect(page.locator("#messages")).toContainText("Reasoning → High");

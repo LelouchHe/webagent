@@ -1,6 +1,6 @@
 import { test, expect } from "playwright/test";
 import {
-  createNewSession,
+  createNewTask,
   currentTaskId,
   gotoConnected,
   sendPrompt,
@@ -10,13 +10,13 @@ test("slash-menu /switch selection changes tasks via keyboard", async ({
   page,
 }) => {
   await gotoConnected(page);
-  const taskOneId = await createNewSession(page);
+  const taskOneId = await createNewTask(page);
   await sendPrompt(page, "message from slash target");
   await expect(page.locator(".msg.assistant").last()).toContainText(
     "Echo: message from slash target",
   );
 
-  const taskTwoId = await createNewSession(page);
+  const taskTwoId = await createNewTask(page);
   await expect.poll(() => currentTaskId(page)).toBe(taskTwoId);
   await sendPrompt(page, "message from current task");
   await expect(page.locator(".msg.assistant").last()).toContainText(

@@ -1,5 +1,5 @@
 import { test, expect } from "playwright/test";
-import { createNewSession, currentTaskId, gotoConnected } from "./helpers.ts";
+import { createNewTask, currentTaskId, gotoConnected } from "./helpers.ts";
 
 const TEXT_BODY = Buffer.from("hello attachment world\n", "utf8");
 
@@ -7,7 +7,7 @@ test("uploaded files render as <a class=user-file>, download with original name,
   page,
 }) => {
   await gotoConnected(page);
-  await createNewSession(page);
+  await createNewTask(page);
 
   // Non-image upload → server stores as kind=file (text/plain is excluded
   // from the inline-MIME whitelist, so Content-Disposition must be

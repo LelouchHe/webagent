@@ -1,6 +1,6 @@
 import { test, expect } from "playwright/test";
 import {
-  createNewSession,
+  createNewTask,
   currentTaskId,
   gotoConnected,
   sendPrompt,
@@ -10,7 +10,7 @@ test("/clear keeps the WebAgent task and its history in the same cwd", async ({
   page,
 }) => {
   await gotoConnected(page);
-  const oldTaskId = await createNewSession(page);
+  const oldTaskId = await createNewTask(page);
   await sendPrompt(page, "content retained across clear");
   await expect(page.locator("#messages")).toContainText(
     "content retained across clear",

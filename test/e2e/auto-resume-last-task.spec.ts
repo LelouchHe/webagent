@@ -1,6 +1,6 @@
 import { test, expect } from "playwright/test";
 import {
-  createNewSession,
+  createNewTask,
   currentTaskId,
   gotoConnected,
   sendPrompt,
@@ -13,13 +13,13 @@ test("opening the root path opens the canonical Root task", async ({
   await gotoConnected(pageA);
 
   // Two recent tasks with real content, adopted under Root.
-  const taskOneId = await createNewSession(pageA);
+  const taskOneId = await createNewTask(pageA);
   await sendPrompt(pageA, "message from the older task");
   await expect(pageA.locator(".msg.assistant").last()).toContainText(
     "Echo: message from the older task",
   );
 
-  const taskTwoId = await createNewSession(pageA);
+  const taskTwoId = await createNewTask(pageA);
   await sendPrompt(pageA, "message from the latest task");
   await expect(pageA.locator(".msg.assistant").last()).toContainText(
     "Echo: message from the latest task",

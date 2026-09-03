@@ -74,7 +74,7 @@ configured agent.
 | Column | Type | Notes |
 |---|---|---|
 | `agent_key` | TEXT NOT NULL | Resolved `agent_cmd` executable path; identifies one stable agent/profile |
-| `agent_session_id` | TEXT NOT NULL | Opaque ACP task ID |
+| `agent_session_id` | TEXT NOT NULL | Opaque ACP session ID |
 | `task_id` | TEXT REFERENCES `tasks(id)` ON DELETE CASCADE | Current WebAgent Task ID; `NULL` for internal tasks such as title generation. Retired ACP executions (rotated or deleted) have their binding row removed and are explicitly retired via `task/delete`/`task/close` when the agent advertises support |
 | `created_at` | TEXT NOT NULL DEFAULT now | ISO-ish `%Y-%m-%d %H:%M:%f` |
 

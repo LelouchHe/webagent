@@ -26,7 +26,7 @@ export async function currentTaskId(page: Page): Promise<string> {
   return page.evaluate(() => location.hash.slice(1) || "root");
 }
 
-export async function createNewSession(page: Page): Promise<string> {
+export async function createNewTask(page: Page): Promise<string> {
   const previousId = await currentTaskId(page);
   await page.locator("#input").fill("/new");
   await page.locator("#input").press("Enter");

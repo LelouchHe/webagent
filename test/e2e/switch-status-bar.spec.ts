@@ -1,6 +1,6 @@
 import { test, expect } from "playwright/test";
 import {
-  createNewSession,
+  createNewTask,
   currentTaskId,
   gotoConnected,
   sendPrompt,
@@ -10,7 +10,7 @@ test("status bar shows model and cwd after switching tasks", async ({
   page,
 }) => {
   await gotoConnected(page);
-  const taskOneId = await createNewSession(page);
+  const taskOneId = await createNewTask(page);
 
   // Verify status bar has content on initial task
   const statusBar = page.locator("#status-bar");
@@ -18,7 +18,7 @@ test("status bar shows model and cwd after switching tasks", async ({
   const initialText = await statusBar.textContent();
 
   // Create second task and switch back to first
-  await createNewSession(page);
+  await createNewTask(page);
   await sendPrompt(page, `/switch ${taskOneId.slice(0, 8)}`);
   await expect.poll(() => currentTaskId(page)).toBe(taskOneId);
 

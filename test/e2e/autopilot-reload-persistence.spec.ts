@@ -1,6 +1,6 @@
 import { test, expect } from "playwright/test";
 import {
-  createNewSession,
+  createNewTask,
   currentTaskId,
   gotoConnected,
   sendPrompt,
@@ -10,7 +10,7 @@ test("reloading keeps autopilot mode active and auto-approval still works", asyn
   page,
 }) => {
   await gotoConnected(page);
-  const taskId = await createNewSession(page);
+  const taskId = await createNewTask(page);
 
   await sendPrompt(page, "/mode autopilot");
   await expect(page.locator("#input-area")).toHaveClass(/autopilot-mode/);

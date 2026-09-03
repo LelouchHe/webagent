@@ -1,5 +1,5 @@
 import { test, expect } from "playwright/test";
-import { createNewSession, gotoConnected, sendPrompt } from "./helpers.ts";
+import { createNewTask, gotoConnected, sendPrompt } from "./helpers.ts";
 
 // Regression test for: PWA backgrounded mid-prompt → returned to foreground
 // → busy state should restore (send button stays as ^C, not ↵).
@@ -14,7 +14,7 @@ import { createNewSession, gotoConnected, sendPrompt } from "./helpers.ts";
 
 test("busy state survives page reload mid-prompt", async ({ page }) => {
   await gotoConnected(page);
-  await createNewSession(page);
+  await createNewTask(page);
 
   // E2E_SLOW = mock agent never resolves the prompt → server stays busy
   await sendPrompt(page, "E2E_SLOW reload during busy");

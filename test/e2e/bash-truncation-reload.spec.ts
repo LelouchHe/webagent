@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
-import { createNewSession, currentTaskId, sendPrompt } from "./helpers.ts";
+import { createNewTask, currentTaskId, sendPrompt } from "./helpers.ts";
 
 const TRUNC_PORT = 6804;
 const TRUNC_ORIGIN = `http://127.0.0.1:${TRUNC_PORT}`;
@@ -141,7 +141,7 @@ test("reloaded bash history uses the truncated stored tail when output exceeds t
     );
     await gotoConnected(page, `${TRUNC_ORIGIN}/`);
 
-    await createNewSession(page);
+    await createNewTask(page);
     await sendPrompt(page, "!node -e \"console.log('A'.repeat(200))\"");
     await expect(page.locator("#send-btn")).toHaveText("↵");
 

@@ -1,6 +1,6 @@
 import { test, expect } from "playwright/test";
 import {
-  createNewSession,
+  createNewTask,
   currentTaskId,
   gotoConnected,
   sendPrompt,
@@ -10,7 +10,7 @@ test("reloading after a resolved permission shows collapsed history without butt
   page,
 }) => {
   await gotoConnected(page);
-  await createNewSession(page);
+  await createNewTask(page);
 
   await sendPrompt(page, "E2E_PERMISSION resolve this before reload");
   const permission = page.locator(".permission").last();

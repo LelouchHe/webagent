@@ -1,6 +1,6 @@
 import { test, expect } from "playwright/test";
 import {
-  createNewSession,
+  createNewTask,
   currentTaskId,
   gotoConnected,
   sendPrompt,
@@ -13,7 +13,7 @@ test("model changes sync across two clients in the same task", async ({
   const pageB = await browser.newPage();
 
   await gotoConnected(pageA);
-  const taskId = await createNewSession(pageA);
+  const taskId = await createNewTask(pageA);
 
   await gotoConnected(pageB, `/#${taskId}`);
   await expect.poll(() => currentTaskId(pageB)).toBe(taskId);

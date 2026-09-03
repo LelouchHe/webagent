@@ -1,5 +1,5 @@
 import { test, expect } from "playwright/test";
-import { createNewSession, gotoConnected, sendPrompt } from "./helpers.ts";
+import { createNewTask, gotoConnected, sendPrompt } from "./helpers.ts";
 
 // Share preview → publish → public viewer happy path.
 // Uses the real backend + mock ACP agent; frontend sends /share, /share publish
@@ -16,7 +16,7 @@ test("share: create preview, publish, public viewer renders without CSP violatio
   });
 
   await gotoConnected(page);
-  const taskId = await createNewSession(page);
+  const taskId = await createNewTask(page);
 
   // Send one prompt so the task has real events.
   await sendPrompt(page, "hello share");

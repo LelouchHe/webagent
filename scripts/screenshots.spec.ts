@@ -6,7 +6,7 @@
 import { test, expect } from "playwright/test";
 import {
   gotoConnected,
-  createNewSession,
+  createNewTask,
   sendPrompt,
 } from "../test/e2e/helpers.ts";
 
@@ -33,7 +33,7 @@ test("capture desktop chat screenshot", async ({ browser }) => {
   const page = await ctx.newPage();
   await gotoConnected(page);
   await setLightTheme(page);
-  await createNewSession(page);
+  await createNewTask(page);
 
   await sendAndWait(page, "E2E_TOOL_EDIT");
   await sendAndWait(page, "E2E_TOOL_CREATE");
@@ -50,7 +50,7 @@ test("capture slash menu screenshot", async ({ browser }) => {
   const page = await ctx.newPage();
   await gotoConnected(page);
   await setLightTheme(page);
-  await createNewSession(page);
+  await createNewTask(page);
 
   await page.locator("#input").fill("/");
   await expect(page.locator("#slash-menu.active")).toBeVisible();
@@ -64,7 +64,7 @@ test("capture permission screenshot", async ({ browser }) => {
   const page = await ctx.newPage();
   await gotoConnected(page);
   await setLightTheme(page);
-  await createNewSession(page);
+  await createNewTask(page);
 
   await sendPrompt(page, "E2E_PERMISSION");
   const permission = page.locator(".permission").last();
@@ -81,7 +81,7 @@ test("capture mobile screenshot", async ({ browser }) => {
   const page = await ctx.newPage();
   await gotoConnected(page);
   await setLightTheme(page);
-  await createNewSession(page);
+  await createNewTask(page);
 
   await sendAndWait(page, "E2E_TOOL_EDIT");
 

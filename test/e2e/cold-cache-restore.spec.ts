@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { spawn, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
-  createNewSession,
+  createNewTask,
   expectConnectionStatus,
   sendPrompt,
 } from "./helpers.ts";
@@ -147,7 +147,7 @@ test("cold server restart still populates model + slash autocomplete", async ({
     );
     await gotoConnected(page, `${RESTART_ORIGIN}/`);
 
-    await createNewSession(page);
+    await createNewTask(page);
     // Pin model so we can check it round-trips through the cold cache.
     await sendPrompt(page, "/model mock model 2");
     await expect(page.locator("#messages")).toContainText(

@@ -1,6 +1,6 @@
 import { test, expect } from "playwright/test";
 import {
-  createNewSession,
+  createNewTask,
   currentTaskId,
   gotoConnected,
   sendPrompt,
@@ -10,10 +10,10 @@ test("/exit deletes current task and switches to previous", async ({
   page,
 }) => {
   await gotoConnected(page);
-  const firstTaskId = await createNewSession(page);
+  const firstTaskId = await createNewTask(page);
   await sendPrompt(page, "first task content");
 
-  const secondTaskId = await createNewSession(page);
+  const secondTaskId = await createNewTask(page);
   await expect.poll(() => currentTaskId(page)).toBe(secondTaskId);
 
   await sendPrompt(page, "/exit");

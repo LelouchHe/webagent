@@ -1,6 +1,6 @@
 import { test, expect } from "playwright/test";
 import {
-  createNewSession,
+  createNewTask,
   currentTaskId,
   gotoConnected,
   sendPrompt,
@@ -13,12 +13,12 @@ test("creating a new task in one tab does not switch another tab away", async ({
   const pageB = await browser.newPage();
 
   await gotoConnected(pageA);
-  const originalTaskId = await createNewSession(pageA);
+  const originalTaskId = await createNewTask(pageA);
 
   await gotoConnected(pageB, `/#${originalTaskId}`);
   await expect.poll(() => currentTaskId(pageB)).toBe(originalTaskId);
 
-  await createNewSession(pageA);
+  await createNewTask(pageA);
 
   await expect.poll(() => currentTaskId(pageB)).toBe(originalTaskId);
   await sendPrompt(pageB, "still on the original task");

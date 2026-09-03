@@ -1,6 +1,6 @@
 import { test, expect } from "playwright/test";
 import {
-  createNewSession,
+  createNewTask,
   currentTaskId,
   gotoConnected,
   sendPrompt,
@@ -10,7 +10,7 @@ test("reloading keeps plan mode active for the current task", async ({
   page,
 }) => {
   await gotoConnected(page);
-  const taskId = await createNewSession(page);
+  const taskId = await createNewTask(page);
 
   await sendPrompt(page, "/mode plan");
   await expect(page.locator("#input-area")).toHaveClass(/plan-mode/);

@@ -1,6 +1,6 @@
 import { test, expect } from "playwright/test";
 import {
-  createNewSession,
+  createNewTask,
   currentTaskId,
   expectConnectionStatus,
   gotoConnected,
@@ -11,7 +11,7 @@ test("reloading preserves the current task and replays message history", async (
   page,
 }) => {
   await gotoConnected(page);
-  await createNewSession(page);
+  await createNewTask(page);
 
   await sendPrompt(page, "persist this conversation");
   await expect(page.locator(".msg.assistant").last()).toContainText(

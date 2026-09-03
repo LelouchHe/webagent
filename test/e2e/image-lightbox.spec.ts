@@ -1,5 +1,5 @@
 import { test, expect } from "playwright/test";
-import { createNewSession, gotoConnected } from "./helpers.ts";
+import { createNewTask, gotoConnected } from "./helpers.ts";
 
 const PNG_1X1 = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wn3mXQAAAAASUVORK5CYII=",
@@ -9,7 +9,7 @@ const PNG_1X1 = Buffer.from(
 test.describe("image lightbox", () => {
   test.beforeEach(async ({ page }) => {
     await gotoConnected(page);
-    await createNewSession(page);
+    await createNewTask(page);
 
     // Upload an image and send a message
     await page.locator("#file-input").setInputFiles({

@@ -1,6 +1,6 @@
 import { test, expect } from "playwright/test";
 import {
-  createNewSession,
+  createNewTask,
   currentTaskId,
   gotoConnected,
   sendPrompt,
@@ -8,12 +8,12 @@ import {
 
 test("creating a new task inherits the selected model", async ({ page }) => {
   await gotoConnected(page);
-  const firstTaskId = await createNewSession(page);
+  const firstTaskId = await createNewTask(page);
 
   await sendPrompt(page, "/model mock model 2");
   await expect(page.locator("#messages")).toContainText("Model → Mock Model 2");
 
-  const secondTaskId = await createNewSession(page);
+  const secondTaskId = await createNewTask(page);
   expect(secondTaskId).not.toBe(firstTaskId);
   await expect.poll(() => currentTaskId(page)).toBe(secondTaskId);
 

@@ -1,6 +1,6 @@
 import { test, expect } from "playwright/test";
 import {
-  createNewSession,
+  createNewTask,
   currentTaskId,
   gotoConnected,
   sendPrompt,
@@ -11,7 +11,7 @@ for (const ordering of ["CHUNK_FIRST", "WRAPPER_FIRST"]) {
     page,
   }) => {
     await gotoConnected(page);
-    await createNewSession(page);
+    await createNewTask(page);
     await page.evaluate(() => {
       const observed = { leaked: false, active: true };
       Object.assign(window, { __finalAnswerFrameObservation: observed });
@@ -58,7 +58,7 @@ for (const ordering of ["CHUNK_FIRST", "WRAPPER_FIRST"]) {
 
 test("folds an exact echo after a nested tool chain", async ({ page }) => {
   await gotoConnected(page);
-  await createNewSession(page);
+  await createNewTask(page);
   await sendPrompt(page, "E2E_FINAL_ANSWER_STREAM_NESTED_WRAPPER_FIRST_EXACT");
 
   const assistant = page.locator(".msg.assistant").last();
@@ -73,7 +73,7 @@ test("share viewer coalesces persisted final-answer fragments", async ({
   page,
 }) => {
   await gotoConnected(page);
-  await createNewSession(page);
+  await createNewTask(page);
   await sendPrompt(page, "E2E_FINAL_ANSWER_STREAM_WRAPPER_FIRST");
 
   const assistant = page.locator(".msg.assistant").last();

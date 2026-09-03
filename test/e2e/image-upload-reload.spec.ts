@@ -1,5 +1,5 @@
 import { test, expect } from "playwright/test";
-import { createNewSession, currentTaskId, gotoConnected } from "./helpers.ts";
+import { createNewTask, currentTaskId, gotoConnected } from "./helpers.ts";
 
 const PNG_1X1 = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wn3mXQAAAAASUVORK5CYII=",
@@ -10,7 +10,7 @@ test("uploaded images are sent and restored in reloaded history", async ({
   page,
 }) => {
   await gotoConnected(page);
-  await createNewSession(page);
+  await createNewTask(page);
 
   await page.locator("#file-input").setInputFiles({
     name: "tiny.png",

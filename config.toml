@@ -15,7 +15,7 @@ host = "127.0.0.1"
 # SQLite + uploads directory (default: "data")
 data_dir = "data"
 
-# Default working directory for new sessions (default: process.cwd()).
+# Default working directory for new tasks (default: process.cwd()).
 # Leave this commented out to use the process working directory.
 # default_cwd = "/path/to/your/workspace"
 
@@ -54,14 +54,14 @@ recent_paths_ttl = 30
 [push]
 vapid_subject = "mailto:noreply@example.com"
 # Kill switch for cross-device global visibility suppression. When true,
-# if any client is actively viewing session X, push for session X is
+# if any client is actively viewing task X, push for task X is
 # suppressed for every device. Flip to false to rollback the feature
 # without a code change.
 global_visibility_suppression = true
 
 [title]
 # Models matched (by case-insensitive substring) against the agent's
-# reported availableModels for the title-generation sub-session. The first
+# reported availableModels for the title-generation internal agent session. The first
 # pattern that matches any model id wins; that model is set via
 # setConfigOption. No match → skip the call and inherit the agent's
 # default model (currentModelId).
@@ -88,16 +88,16 @@ level = "off"
 
 [messages]
 # Days before an unprocessed unbound inbox message is auto-cleaned
-# (default 30). 0 = keep forever. Bound messages (to:"session:<id>")
-# are stored on the owning session and are not subject to this TTL.
+# (default 30). 0 = keep forever. Bound messages (to:"task:<id>")
+# are stored on the owning task and are not subject to this TTL.
 unprocessed_ttl_days = 30
 
 [share]
-# Public read-only session share links. Default off. Dogfood manually
+# Public read-only task share links. Default off. Dogfood manually
 # flips `enabled = true` after CF Access bypass + Rate Limiting are
 # configured. See docs/share.md.
 
-# Master kill switch. When false, all /api/v1/sessions/*/share* and
+# Master kill switch. When false, all /api/v1/tasks/*/share* and
 # /s/* routes return 410, and /share slash commands are hidden.
 enabled = false
 

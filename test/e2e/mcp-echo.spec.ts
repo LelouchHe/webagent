@@ -1,5 +1,5 @@
 import { test, expect } from "playwright/test";
-import { createNewSession, gotoConnected, sendPrompt } from "./helpers.ts";
+import { createNewTask, gotoConnected, sendPrompt } from "./helpers.ts";
 
 // P0b transport proof: the WebAgent attaches its MCP server to every ACP
 // task via `mcpServers` with a per-task capability. The mock agent
@@ -10,7 +10,7 @@ test("mock agent reaches the MCP server and calls the echo tool", async ({
   page,
 }) => {
   await gotoConnected(page);
-  await createNewSession(page);
+  await createNewTask(page);
 
   await sendPrompt(page, "E2E_MCP_ECHO hello-from-e2e");
 

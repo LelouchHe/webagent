@@ -1,6 +1,6 @@
 import { test, expect } from "playwright/test";
 import {
-  createNewSession,
+  createNewTask,
   currentTaskId,
   gotoConnected,
   sendPrompt,
@@ -14,7 +14,7 @@ test("/exit broadcasts task_deleted — other tab auto-switches to next task", a
 
   await gotoConnected(pageA);
   // Create a watched task; there is a fallback target (Root at minimum)
-  const watchedTaskId = await createNewSession(pageA);
+  const watchedTaskId = await createNewTask(pageA);
 
   // pageB opens the watched task
   await gotoConnected(pageB, `/#${watchedTaskId}`);

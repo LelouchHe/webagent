@@ -1,5 +1,5 @@
 import { test, expect } from "playwright/test";
-import { createNewSession, gotoConnected } from "./helpers.ts";
+import { createNewTask, gotoConnected } from "./helpers.ts";
 
 const FILE_BODY = Buffer.from("hello report contents\n", "utf8");
 
@@ -17,7 +17,7 @@ test("tool_call titles render attachment label, not uuid path", async ({
   page,
 }) => {
   await gotoConnected(page);
-  await createNewSession(page);
+  await createNewTask(page);
 
   await page.locator("#file-input").setInputFiles({
     name: "report.pdf",

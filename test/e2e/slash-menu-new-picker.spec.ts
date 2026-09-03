@@ -1,5 +1,5 @@
 import { test, expect } from "playwright/test";
-import { createNewSession, currentTaskId, gotoConnected } from "./helpers.ts";
+import { createNewTask, currentTaskId, gotoConnected } from "./helpers.ts";
 
 async function readStatusBarCwd(
   page: import("playwright/test").Page,
@@ -12,7 +12,7 @@ test("slash-menu /new picker can create a task from a previously used cwd", asyn
   page,
 }) => {
   await gotoConnected(page);
-  const currentTask = await createNewSession(page);
+  const currentTask = await createNewTask(page);
 
   const currentCwd = await readStatusBarCwd(page);
   expect(currentCwd).not.toBe("");

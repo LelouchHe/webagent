@@ -1,11 +1,11 @@
 import { test, expect } from "playwright/test";
-import { createNewSession, gotoConnected } from "./helpers.ts";
+import { createNewTask, gotoConnected } from "./helpers.ts";
 
 test("slash-menu /think picker can switch reasoning effort", async ({
   page,
 }) => {
   await gotoConnected(page);
-  await createNewSession(page);
+  await createNewTask(page);
 
   await page.locator("#input").fill("/think ");
   await expect(page.locator("#slash-menu.active .slash-item")).toHaveCount(3);

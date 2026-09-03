@@ -1,11 +1,11 @@
 import { test, expect } from "playwright/test";
-import { createNewSession, gotoConnected, sendPrompt } from "./helpers.ts";
+import { createNewTask, gotoConnected, sendPrompt } from "./helpers.ts";
 
 test("sending a prompt shows the user message and streamed assistant reply", async ({
   page,
 }) => {
   await gotoConnected(page);
-  await createNewSession(page);
+  await createNewTask(page);
 
   await sendPrompt(page, "hello from e2e");
 

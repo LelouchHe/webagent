@@ -1,6 +1,6 @@
 import { test, expect } from "playwright/test";
 import {
-  createNewSession,
+  createNewTask,
   currentTaskId,
   gotoConnected,
   sendPrompt,
@@ -10,12 +10,12 @@ test("creating a new task inherits the selected reasoning effort", async ({
   page,
 }) => {
   await gotoConnected(page);
-  const firstTaskId = await createNewSession(page);
+  const firstTaskId = await createNewTask(page);
 
   await sendPrompt(page, "/think high");
   await expect(page.locator("#messages")).toContainText("Reasoning → High");
 
-  const secondTaskId = await createNewSession(page);
+  const secondTaskId = await createNewTask(page);
   expect(secondTaskId).not.toBe(firstTaskId);
   await expect.poll(() => currentTaskId(page)).toBe(secondTaskId);
 
