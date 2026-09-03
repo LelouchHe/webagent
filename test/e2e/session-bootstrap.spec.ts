@@ -5,9 +5,10 @@ test("app boots into a connected usable session", async ({ page }) => {
   await gotoConnected(page);
 
   // Root is the canonical landing and carries no URL hash; currentSessionId
-  // resolves the empty hash to "root".
+  // resolves the empty hash to "root". Its title defaults to the literal
+  // "root" (renameable /rename).
   await expect.poll(() => currentSessionId(page)).toBe("root");
-  await expect(page.locator("#session-info")).not.toHaveText("");
+  await expect(page.locator("#session-info")).toHaveText("root");
   await expect(page.locator("#input")).toBeEnabled();
 });
 

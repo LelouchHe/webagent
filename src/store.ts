@@ -443,16 +443,26 @@ export class Store {
    * that do not have a parent. This is additive and keeps every old session,
    * event, attachment, and share intact; the Root's ACP binding is created by
    * SessionManager after the bridge is ready.
+   *
+   * The default title is the literal "root": it is only applied while the
+   * title is still NULL, so a user rename survives restarts. The non-null
+   * title also keeps title generation from ever overwriting Root.
    */
   ensureRootSession(cwd: string): SessionRow {
     return this.db.transaction(() => {
       this.db
         .prepare(
-          "INSERT OR IGNORE INTO sessions (id, cwd, source, parent_session_id) VALUES (?, ?, 'root', NULL)",
+          "INSERT OR IGNORE INTO sessions (id, cwd, source, parent_session_id, title) VALUES (?, ?, 'root', NULL, 'root')",
         )
         .run("root", cwd);
       this.db
         .prepare("UPDATE sessions SET parent_session_id = NULL WHERE id = ?")
+        .run("root");
+      // Default title only while NULL so a user rename survives restarts.
+      this.db
+        .prepare(
+          "UPDATE sessions SET title = 'root' WHERE id = ? AND title IS NULL",
+        )
         .run("root");
       this.db
         .prepare(

@@ -102,6 +102,7 @@ describe("Store", () => {
 
       assert.equal(root.id, "root");
       assert.equal(root.parent_session_id, null);
+      assert.equal(root.title, "root");
       assert.equal(
         store.getSessionIncludingDeleted("old-1")?.parent_session_id,
         "root",
@@ -119,6 +120,14 @@ describe("Store", () => {
       );
 
       assert.equal(store.ensureRootSession("/tmp/other").cwd, "/tmp/root");
+      assert.equal(store.ensureRootSession("/tmp/other").title, "root");
+    });
+
+    it("keeps a user-renamed Root title across restarts", () => {
+      store.ensureRootSession("/tmp/root");
+      store.updateSessionTitle("root", "工作台");
+
+      assert.equal(store.ensureRootSession("/tmp/root").title, "工作台");
     });
 
     it("binds an ACP execution to an existing Root record", () => {
