@@ -258,7 +258,7 @@ describe("SessionManager", () => {
         { name: "context", description: "Show context usage" },
       ]);
 
-      sm.deleteSession("s1");
+      sm.deleteSession(undefined, "s1");
 
       assert.ok(!sm.liveSessions.has("s1"));
       assert.ok(!sm.sessionHasTitle.has("s1"));
@@ -271,6 +271,51 @@ describe("SessionManager", () => {
         revision: 0,
         commands: [],
       });
+      assert.equal(store.getSession("s1"), undefined);
+    });
+
+    it("cascades to descendants, cleaning their runtime state and retiring executions", () => {
+      store.createSession("parent", "/a", "auto", "agent-parent");
+      store.createSession("child", "/b", "auto", "agent-child", "parent");
+      sm.liveSessions.add("parent");
+      sm.liveSessions.add("child");
+      sm.assistantBuffers.set("child", "partial answer");
+      sm.pendingPromptSubmissions.set("child", 7);
+      const retired: string[] = [];
+      const bridge = {
+        async newSession() {
+          return { sessionId: "ignored", configOptions: [] };
+        },
+        async setConfigOption() {
+          return [];
+        },
+        async loadSession() {
+          throw new Error("unused");
+        },
+        async retireExecution(agentSessionId: string) {
+          retired.push(agentSessionId);
+        },
+      };
+
+      const result = sm.deleteSession(bridge, "parent");
+
+      assert.deepEqual(result.affected.map((entry) => entry.id).sort(), [
+        "child",
+        "parent",
+      ]);
+      assert.deepEqual(retired.sort(), ["agent-child", "agent-parent"]);
+      assert.ok(!sm.liveSessions.has("parent"));
+      assert.ok(!sm.liveSessions.has("child"));
+      assert.ok(!sm.assistantBuffers.has("child"));
+      assert.ok(!sm.pendingPromptSubmissions.has("child"));
+    });
+
+    it("skips retirement when no bridge is available", () => {
+      store.createSession("s1", "/x", "auto", "agent-s1");
+
+      const result = sm.deleteSession(undefined, "s1");
+
+      assert.equal(result.mode, "hard");
       assert.equal(store.getSession("s1"), undefined);
     });
   });
@@ -654,6 +699,7 @@ describe("SessionManager", () => {
       store.updateSessionConfig("web-1", "mode", "plan");
       sm.liveSessions.add("web-1");
       const configCalls: Array<{ id: string; value: string }> = [];
+      const retired: string[] = [];
 
       const bridge = {
         async newSession() {
@@ -662,6 +708,9 @@ describe("SessionManager", () => {
         async setConfigOption(_sessionId: string, id: string, value: string) {
           configCalls.push({ id, value });
           return [];
+        },
+        async retireExecution(agentSessionId: string) {
+          retired.push(agentSessionId);
         },
         async loadSession() {
           throw new Error("loadSession should not be called");
@@ -677,6 +726,8 @@ describe("SessionManager", () => {
       );
       assert.equal(store.getAgentSessionId("web-1"), "agent-new");
       assert.equal(store.getWebSessionId("agent-old"), undefined);
+      // The retired execution is explicitly removed, not just unbound.
+      assert.deepEqual(retired, ["agent-old"]);
       assert.deepEqual(configCalls, [
         { id: "mode", value: "plan" },
         { id: "model", value: "model-old" },
@@ -1566,7 +1617,7 @@ describe("SessionManager", () => {
         realpath: "/r/x.txt",
       });
       sm.getLabelMap("s1"); // populate cache
-      sm.deleteSession("s1");
+      sm.deleteSession(undefined, "s1");
       // Re-create session and request map — must NOT see stale entry.
       store.createSession("s1", "/x");
       const m = sm.getLabelMap("s1");

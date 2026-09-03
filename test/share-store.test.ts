@@ -194,7 +194,7 @@ describe("shares store", () => {
         { text: "hi" },
         { from_ref: "user" },
       );
-      assert.equal(store.deleteSession(sessionId), "hard");
+      assert.equal(store.deleteSession(sessionId).mode, "hard");
       assert.equal(store.getSession(sessionId), undefined);
       assert.equal(store.getSessionIncludingDeleted(sessionId), undefined);
       assert.equal(store.getEvents(sessionId).length, 0);
@@ -212,7 +212,7 @@ describe("shares store", () => {
       store.insertSharePreview({ token: tok, sessionId, snapshotSeq: 1 });
       store.activateShare(tok);
 
-      assert.equal(store.deleteSession(sessionId), "soft");
+      assert.equal(store.deleteSession(sessionId).mode, "soft");
       // Owner-facing lookup hides tombstone:
       assert.equal(store.getSession(sessionId), undefined);
       assert.equal(store.listSessions().length, 0);
@@ -221,10 +221,8 @@ describe("shares store", () => {
       assert.notEqual(tomb, undefined);
       assert.notEqual(tomb.deleted_at, null);
       assert.equal(store.getEvents(sessionId).length, 1);
-      assert.equal(
-        store.getAgentSessionBinding(sessionId)?.web_session_id,
-        sessionId,
-      );
+      // The owner-side binding is retired and removed alongside the tombstone.
+      assert.equal(store.getAgentSessionBinding(sessionId), undefined);
       // Share row still live:
       assert.notEqual(store.getShareByToken(tok), undefined);
     });
@@ -236,7 +234,7 @@ describe("shares store", () => {
       store.activateShare(tPub);
       store.insertSharePreview({ token: tPrev, sessionId, snapshotSeq: 2 });
 
-      assert.equal(store.deleteSession(sessionId), "soft");
+      assert.equal(store.deleteSession(sessionId).mode, "soft");
       assert.equal(store.getShareByToken(tPrev), undefined);
       assert.notEqual(store.getShareByToken(tPub), undefined);
     });

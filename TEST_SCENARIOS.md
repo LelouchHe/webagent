@@ -481,6 +481,13 @@ spot gaps, and decide what still needs to be added without reading every spec.
 - `session-delete-command.spec.ts`
   - `/exit` deletes current session and switches to previous
 
+- REST delete (`test/sessions.test.ts`, `test/store.test.ts`)
+  - deleting a session cascades to every descendant, retires each affected
+    ACP execution, and broadcasts one `session_deleted` per removed session
+  - a share-tombstoned descendant survives and is re-parented under Root
+  - creating a session under an unknown parent is rejected with `400`
+  - `DELETE /api/v1/sessions/root` is rejected
+
 - `session-prune-command.spec.ts`
   - `/prune` removes all non-current sessions
 

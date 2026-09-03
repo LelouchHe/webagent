@@ -42,6 +42,7 @@ function makeRequest(
 /** Minimal mock bridge that returns a predictable session ID. */
 function createMockBridge(nextId = "mock-session-1") {
   let idCounter = 0;
+  const retireCalls: string[] = [];
   const configOptions: ConfigOption[] = [
     {
       type: "select",
@@ -65,6 +66,10 @@ function createMockBridge(nextId = "mock-session-1") {
     },
   ];
   return {
+    retireCalls,
+    retireExecution: async (agentSessionId: string) => {
+      retireCalls.push(agentSessionId);
+    },
     ...mockBridgeStubs(),
     promptForText: async () => "summary of the current work",
     newSession: async (_cwd: string) => {
@@ -440,6 +445,19 @@ describe("Session REST API", () => {
       assert.equal(body.parentSessionId, "root");
     });
 
+    it("rejects an unknown parent session with 400", async () => {
+      const res = await makeRequest(
+        port,
+        "POST",
+        "/api/v1/sessions",
+        JSON.stringify({ parentSessionId: "no-such-session" }),
+      );
+
+      assert.equal(res.status, 400);
+      assert.match(res.body, /Parent session not found/);
+      assert.equal(store.listSessions().length, 0);
+    });
+
     it("creates a session with custom cwd", async () => {
       const res = await makeRequest(
         port,
@@ -564,6 +582,7 @@ describe("Session REST API", () => {
       assert.equal(store.getAgentSessionId("s1"), "mock-session-1");
       assert.equal(store.getWebSessionId("agent-old"), undefined);
       assert.equal(store.getPendingCompactSummary("s1"), null);
+      assert.deepEqual(mockBridge.retireCalls, ["agent-old"]);
     });
 
     it("persists a clear request's replacement cwd on the stable session", async () => {
@@ -809,6 +828,31 @@ describe("Session REST API", () => {
       assert.equal(res.status, 400);
       assert.match(res.body, /Root session cannot be deleted/);
       assert.equal(store.getSession("root")?.id, "root");
+    });
+
+    it("cascades to descendant sessions and broadcasts session_deleted per id", async () => {
+      store.createSession("parent", tmpDir, "auto", "agent-parent");
+      store.createSession("child", tmpDir, "auto", "agent-child", "parent");
+      sessions.liveSessions.add("parent");
+      sessions.liveSessions.add("child");
+
+      const res = await makeRequest(port, "DELETE", "/api/v1/sessions/parent");
+
+      assert.equal(res.status, 204);
+      assert.equal(store.getSessionIncludingDeleted("parent"), undefined);
+      assert.equal(store.getSessionIncludingDeleted("child"), undefined);
+      const deletedEvents = broadcastEvents.filter(
+        (event) => event.type === "session_deleted",
+      );
+      assert.deepEqual(deletedEvents.map((event) => event.sessionId).sort(), [
+        "child",
+        "parent",
+      ]);
+      assert.deepEqual(mockBridge.retireCalls.sort(), [
+        "agent-child",
+        "agent-parent",
+      ]);
+      assert.ok(!sessions.liveSessions.has("child"));
     });
 
     it("rejects deletion while prompt work is active", async () => {

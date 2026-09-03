@@ -2023,14 +2023,21 @@ export function createRequestHandler(
               store.clearPendingCompactSummary(sessionId, summary);
             }
             const message = `Compact failed: ${errorMessage(err)}`;
-            store.saveEvent(
-              sessionId,
-              "error",
-              { message },
-              {
-                from_ref: "system",
-              },
-            );
+            // The session may have been deleted mid-compaction (cascade); the
+            // FK rejects writes to a removed row, so make the error event
+            // optional and keep the SSE broadcast authoritative.
+            try {
+              store.saveEvent(
+                sessionId,
+                "error",
+                { message },
+                {
+                  from_ref: "system",
+                },
+              );
+            } catch {
+              // Session is gone; nothing durable to write.
+            }
             sseManager.broadcast({
               type: "error",
               sessionId,
@@ -2243,10 +2250,27 @@ export function createRequestHandler(
             return;
           }
           try {
+            let affectedStore: {
+              mode: "hard" | "soft";
+              affected: Array<{
+                id: string;
+                mode: "hard" | "soft";
+                agentSessionId: string | null;
+              }>;
+            };
             if (sessions) {
-              sessions.deleteSession(sessionId);
+              affectedStore = sessions.deleteSession(
+                getBridge?.() ?? undefined,
+                sessionId,
+              );
             } else {
-              store.deleteSession(sessionId);
+              affectedStore = store.deleteSession(sessionId);
+            }
+            for (const entry of affectedStore.affected) {
+              sseManager.broadcast({
+                type: "session_deleted",
+                sessionId: entry.id,
+              });
             }
           } catch (err) {
             json(res, HTTP_STATUS.BAD_REQUEST, {
@@ -2254,7 +2278,6 @@ export function createRequestHandler(
             });
             return;
           }
-          sseManager.broadcast({ type: "session_deleted", sessionId });
           res.writeHead(HTTP_STATUS.NO_CONTENT);
           res.end();
           return;
@@ -2295,6 +2318,18 @@ export function createRequestHandler(
           return;
         }
         const source = body.source ?? "auto";
+        // The parent must exist and be live (not tombstoned); the FK would
+        // reject a dangling reference with a raw database error otherwise.
+        // A live parent row is enough — it need not have an ACP binding yet.
+        if (body.parentSessionId) {
+          const parent = store.getSessionIncludingDeleted(body.parentSessionId);
+          if (parent?.deleted_at !== null) {
+            json(res, HTTP_STATUS.BAD_REQUEST, {
+              error: "Parent session not found",
+            });
+            return;
+          }
+        }
         try {
           const { sessionId, configOptions } = await sessions.createSession(
             bridge,

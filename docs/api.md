@@ -221,7 +221,9 @@ active work first.
 
 On the next real prompt, WebAgent prepends the pending summary to the ACP
 prompt while storing and displaying only the user's original text. The pending
-summary is cleared after the prompt is handed to the ACP bridge. If compact
+summary is cleared once the prompt settles successfully (typically when the
+ACP turn ends); if the prompt is rejected before the agent accepts it, the
+summary is retained so the next real prompt can retry with it. If compact
 fails before rotation, the pending handoff is removed and the original
 execution remains authoritative.
 
@@ -302,11 +304,20 @@ Get session details. **Auto-resumes** the session in the ACP agent if it's not a
 #### `DELETE /api/v1/sessions/:id`
 
 Delete a session and all its events, attachments, and in-memory state. The
-reserved Root Session (`id = "root"`) cannot be deleted.
+parent/child hierarchy is a hard ownership link, so every descendant session
+is deleted too — immediately, with no confirmation step (a confirmation for
+child deletion is deferred until the tree UI exists). Sessions kept alive only
+for active public shares are tombstoned instead; a tombstoned descendant of a
+hard-deleted parent is re-parented under the reserved Root Session so the
+hierarchy FK stays valid.
+
+The reserved Root Session (`id = "root"`) cannot be deleted.
 
 **Response** `204` (no body)
 
-**Side effects:** Broadcasts `session_deleted` to all SSE clients.
+**Side effects:** Broadcasts `session_deleted` to all SSE clients, once per
+deleted session. Each affected session's ACP execution is retired explicitly
+(`session/delete` or `session/close` when the agent advertises support).
 
 ---
 

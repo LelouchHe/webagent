@@ -7,6 +7,7 @@ import { join } from "node:path";
 import {
   MessageNotFoundError,
   ROOT_SESSION_ID,
+  type SessionDelete,
   type SessionRow,
   type Store,
 } from "./store.ts";
@@ -56,7 +57,12 @@ type SessionBridge = Pick<
   AgentBridge,
   "newSession" | "setConfigOption" | "loadSession"
 > &
-  Partial<Pick<AgentBridge, "sessionMapped" | "discardUnboundSession">>;
+  Partial<
+    Pick<
+      AgentBridge,
+      "sessionMapped" | "discardUnboundSession" | "retireExecution"
+    >
+  >;
 
 /** Minimum age (seconds) before an empty session is eligible for cleanup. */
 const EMPTY_SESSION_MIN_AGE_S = 60;
@@ -213,12 +219,15 @@ export class SessionManager {
   /**
    * Drop live state for sessions that the store cleaned as empty.
    */
-  private cleanupEmptySessions(): void {
+  private cleanupEmptySessions(bridge?: SessionBridge): void {
     const cleaned = this.store.deleteEmptySessions(EMPTY_SESSION_MIN_AGE_S);
-    for (const id of cleaned) {
-      this.liveSessions.delete(id);
-      this.capabilities?.revokeBySession(id);
-      this.agentCommandSnapshots.delete(id);
+    for (const entry of cleaned) {
+      if (entry.agentSessionId) {
+        void bridge?.retireExecution?.(entry.agentSessionId);
+      }
+      this.liveSessions.delete(entry.id);
+      this.capabilities?.revokeBySession(entry.id);
+      this.agentCommandSnapshots.delete(entry.id);
     }
     if (cleaned.length > 0)
       slog.info("cleaned empty session(s)", { count: cleaned.length });
@@ -276,7 +285,7 @@ export class SessionManager {
     }
 
     // Clean up empty sessions (no events) older than the threshold
-    this.cleanupEmptySessions();
+    this.cleanupEmptySessions(bridge);
 
     const sourceSession = inheritFromSessionId
       ? this.store.getSession(inheritFromSessionId)
@@ -380,6 +389,9 @@ export class SessionManager {
       throw new Error(`Session is already being rotated: ${sessionId}`);
     }
     this.rotatingSessions.add(sessionId);
+    // Other clients watching this session see busy for the whole rotation
+    // window instead of racing into a 409.
+    this.syncBusy(sessionId);
     try {
       const result = await this.clearSessionImpl(
         bridge,
@@ -393,6 +405,7 @@ export class SessionManager {
       return result;
     } finally {
       this.rotatingSessions.delete(sessionId);
+      this.syncBusy(sessionId);
     }
   }
 
@@ -421,6 +434,7 @@ export class SessionManager {
       execution?.token,
     );
 
+    const retiredAgentSessionId = this.store.getAgentSessionId(sessionId);
     try {
       this.store.rotateAgentSession(sessionId, created.sessionId, sessionCwd);
     } catch (error) {
@@ -436,6 +450,11 @@ export class SessionManager {
       this.capabilities?.revokeOtherTokens(sessionId, execution.token);
     }
     bridge.sessionMapped?.(created.sessionId);
+    // The old ACP execution is explicitly retired now that the new binding
+    // is authoritative; best-effort, never rolls back the rotation.
+    if (retiredAgentSessionId) {
+      void bridge.retireExecution?.(retiredAgentSessionId);
+    }
     this.resetSessionRuntime(sessionId, preserveRuntimeState);
 
     const configOptions = await this.restoreSessionConfig(
@@ -602,11 +621,11 @@ export class SessionManager {
     try {
       const result = this.store.consumeMessageTx(messageId, sessionId);
       if (result.alreadyConsumed) {
-        this.deleteSession(sessionId);
+        this.deleteSession(bridge, sessionId);
       }
       return result;
     } catch (err) {
-      this.deleteSession(sessionId);
+      this.deleteSession(bridge, sessionId);
       if (err instanceof MessageNotFoundError) {
         const consumedSessionId =
           this.store.findConsumedMessageSession(messageId);
@@ -862,35 +881,53 @@ export class SessionManager {
     return cleared;
   }
 
-  /** Delete a session from store and clean up all state (including images). */
-  deleteSession(sessionId: string): void {
-    const mode = this.store.deleteSession(sessionId);
-    this.capabilities?.revokeBySession(sessionId);
-    this.liveSessions.delete(sessionId);
-    this.sessionHasTitle.delete(sessionId);
-    this.assistantBuffers.delete(sessionId);
-    this.thinkingBuffers.delete(sessionId);
-    this.activePrompts.delete(sessionId);
-    this.compactingSessions.delete(sessionId);
-    this.rotatingSessions.delete(sessionId);
-    const pendingSubmission = this.pendingPromptSubmissions.get(sessionId);
-    this.pendingPromptSubmissions.delete(sessionId);
+  /** Delete a session from store and clean up all state (including images).
+   *  Descendant sessions are deleted too (direct cascade, no confirmation yet
+   *  — a tree UI will add one). Every affected session's ACP execution is
+   *  retired explicitly and hard-deleted image directories are removed.
+   *  Returns the store's affected list so callers can broadcast
+   *  `session_deleted` for each removed session. */
+  deleteSession(
+    bridge: SessionBridge | undefined,
+    sessionId: string,
+  ): { mode: "hard" | "soft"; affected: SessionDelete[] } {
+    const result = this.store.deleteSession(sessionId);
+    for (const entry of result.affected) {
+      if (entry.agentSessionId)
+        void bridge?.retireExecution?.(entry.agentSessionId);
+      this.releaseSessionRuntime(entry.id, entry.mode);
+    }
+    return result;
+  }
+
+  /** Drop in-memory state owned by a session that no longer exists. */
+  private releaseSessionRuntime(id: string, mode: "hard" | "soft"): void {
+    this.capabilities?.revokeBySession(id);
+    this.liveSessions.delete(id);
+    this.sessionHasTitle.delete(id);
+    this.assistantBuffers.delete(id);
+    this.thinkingBuffers.delete(id);
+    this.activePrompts.delete(id);
+    this.compactingSessions.delete(id);
+    this.rotatingSessions.delete(id);
+    const pendingSubmission = this.pendingPromptSubmissions.get(id);
+    this.pendingPromptSubmissions.delete(id);
     if (pendingSubmission !== undefined) {
       this.cancelledPromptSubmissions.delete(pendingSubmission);
     }
-    this.runningBashProcs.delete(sessionId);
-    this.attachmentLabelCache.delete(sessionId);
-    this.agentCommandSnapshots.delete(sessionId);
+    this.runningBashProcs.delete(id);
+    this.attachmentLabelCache.delete(id);
+    this.agentCommandSnapshots.delete(id);
     // Clean pending permissions for this session
     for (const [reqId, perm] of this.pendingPermissions) {
-      if (perm.sessionId === sessionId) this.pendingPermissions.delete(reqId);
+      if (perm.sessionId === id) this.pendingPermissions.delete(reqId);
     }
-    this.state.delete(sessionId);
+    this.state.delete(id);
     if (mode === "hard") {
       // Tombstoned sessions keep their attachments alive for the share viewer
       // (shared files still resolve via /s/:token/attachments/...). The reap
       // path in share/routes.ts removes them once the last share is gone.
-      rm(join(this.dataDir, "sessions", sessionId), {
+      rm(join(this.dataDir, "sessions", id), {
         recursive: true,
         force: true,
       }).catch(() => {});

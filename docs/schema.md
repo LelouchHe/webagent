@@ -62,7 +62,7 @@ reserved Root Session has id `root` and no parent.
 | `reasoning_effort` | TEXT | Last reasoning effort selection (added in migration) |
 | `source` | TEXT NOT NULL DEFAULT `'auto'` | How the session was created (`auto`, `inbox`, …) |
 | `deleted_at` | INTEGER | Unix-millis tombstone marker; `NULL` = live, set = soft-deleted (kept alive only because shares still reference the row) |
-| `parent_session_id` | TEXT REFERENCES `sessions(id)` | Optional parent WebAgent Session; `NULL` for Root and pre-hierarchy rows |
+| `parent_session_id` | TEXT REFERENCES `sessions(id)` | Optional parent WebAgent Session; `NULL` for Root and pre-hierarchy rows. Deleting a session cascades to every descendant; a share-tombstoned descendant is re-parented under Root so the FK stays valid |
 | `pending_compact_summary` | TEXT | One-shot agent-generated handoff waiting for the next real prompt; `NULL` when consumed |
 
 ### `agent_sessions`
@@ -75,7 +75,7 @@ configured agent.
 |---|---|---|
 | `agent_key` | TEXT NOT NULL | Resolved `agent_cmd` executable path; identifies one stable agent/profile |
 | `agent_session_id` | TEXT NOT NULL | Opaque ACP session ID |
-| `web_session_id` | TEXT REFERENCES `sessions(id)` ON DELETE CASCADE | Current WebAgent Session ID; `NULL` for retired ACP executions and internal sessions such as title generation |
+| `web_session_id` | TEXT REFERENCES `sessions(id)` ON DELETE CASCADE | Current WebAgent Session ID; `NULL` for internal sessions such as title generation. Retired ACP executions (rotated or deleted) have their binding row removed and are explicitly retired via `session/delete`/`session/close` when the agent advertises support |
 | `created_at` | TEXT NOT NULL DEFAULT now | ISO-ish `%Y-%m-%d %H:%M:%f` |
 
 PK: `(agent_key, agent_session_id)`. A partial unique index ensures a non-null
@@ -238,7 +238,11 @@ selection, etc.). Single-user model = single owner scope.
 ## Cascade & Lifecycle
 
 Events and shares use `NO ACTION`; mappings and attachments cascade from their
-session. The reserved Root Session has id `root`, no parent, and cannot be
+session. The parent/child hierarchy is a hard ownership link: deleting a
+session deletes every descendant recursively (immediate, no confirmation
+until a tree UI exists), each following its own share rules, and a
+share-tombstoned descendant is re-parented under Root so the FK stays valid.
+The reserved Root Session has id `root`, no parent, and cannot be
 deleted. Three rules govern any code that deletes a session:
 
 1. **Hard delete** (`deleteSession()` → `"hard"`): drop preview shares + client
