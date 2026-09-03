@@ -107,7 +107,7 @@ describe("handleAgentEvent", () => {
     assert.ok(events.some((e) => e.type === "thinking"));
   });
 
-  it("drops late events from a retired execution (S1 fence)", () => {
+  it("drops late events from a retired execution", () => {
     const tid = "fence-task";
     store.createTask({ id: tid, name: "fence", cwd: tmpDir });
     store.createSession("live", tmpDir, "auto", "live", tid);

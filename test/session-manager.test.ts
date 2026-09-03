@@ -332,7 +332,7 @@ describe("SessionManager", () => {
 
   describe("createSession", () => {
     it("inherits config from the source task", async () => {
-      // S1: config lives on the task (no longer inherited from the session row)
+      // Config lives on the task rather than the session row.
       store.createTask({
         id: "source-task",
         name: "src",

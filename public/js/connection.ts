@@ -276,7 +276,7 @@ async function initSession() {
   const gen = state.sessionSwitchGen;
 
   const existingId = getHashSessionId();
-  // S1: the hash anchors the owning Task (URL survives clear). Resolve it to
+  // The hash anchors the owning Task (URL survives clear). Resolve it to
   // the task's live session when it is a task id; legacy session ids fall
   // through as-is.
   let existingSessionId = existingId;

@@ -81,7 +81,7 @@ export interface SessionSummary {
   mode: string | null;
   reasoning_effort: string | null;
   source: string;
-  /** S1: the owning Task (URL anchor target). */
+  /** The owning Task (URL anchor target). */
   task_id: string | null;
   created_at: string;
   last_active_at: string;
@@ -94,7 +94,7 @@ export interface SessionDetail {
   cwdDisplay?: string;
   title: string | null;
   source: string;
-  /** S1: the owning Task (URL anchor target). */
+  /** The owning Task (URL anchor target). */
   task_id: string | null;
   model: string | null;
   mode: string | null;
@@ -145,7 +145,7 @@ export type AgentEvent =
   | {
       type: "session_created";
       sessionId: string;
-      /** S1: the owning Task (URL anchor target). */
+      /** The owning Task (URL anchor target). */
       task_id?: string | null;
       cwd?: string;
       cwdDisplay?: string;

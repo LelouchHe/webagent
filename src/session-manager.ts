@@ -110,7 +110,7 @@ export class SessionManager {
    * DELETE. Lookup is cheap (Map.get); rebuild is one SQLite query.
    */
   private readonly attachmentLabelCache = new Map<string, LabelMap>();
-  /** S1: taskId -> live Session mirror (hot-path cache; the DB is authoritative and rebuildable). */
+  /** taskId -> live Session mirror (hot-path cache; the DB is authoritative and rebuildable). */
   private readonly taskLiveSessions = new Map<string, string>();
   private readonly agentCommandSnapshots = new Map<
     string,
@@ -163,7 +163,7 @@ export class SessionManager {
   }
 
   /**
-   * S1 "current Session" mirror: taskId -> live sessionId. Populated by
+   * "Current Session" mirror: taskId -> live sessionId. Populated by
    * rebuildTaskLiveSessions() at startup (after the switch) and in tests;
    * kept in sync at create/clear write points. The DB (sessions.task_id +
    * deleted_at + partial unique index) is always authoritative.
@@ -188,7 +188,7 @@ export class SessionManager {
   }
 
   /**
-   * Config writes land on the task (S1): callers still pass a sessionId
+   * Config writes land on the task: callers still pass a sessionId
    * (execution-plane APIs unchanged) and the write goes to its task. Legacy
    * rows without a task binding fall back to the session row.
    */
@@ -217,7 +217,7 @@ export class SessionManager {
   }
 
   /**
-   * S1 stale-execution fence: an inbound session must still be its task's
+   * Stale-execution fence: an inbound session must still be its task's
    * live Session (creating/restoring windows pass). Internal silent sessions
    * (no sessions row) and pre-switch legacy rows (no task_id) keep the
    * original behavior (pass).
@@ -378,12 +378,12 @@ export class SessionManager {
     const sourceSession = inheritFromSessionId
       ? this.store.getSession(inheritFromSessionId)
       : null;
-    // S1: config inheritance comes from the source TASK (config has moved up to the task)
+    // Config inheritance comes from the source Task (config lives on the task)
     const sourceTask = sourceSession?.task_id
       ? this.store.getTask(sourceSession.task_id)
       : null;
     const webSessionId = randomUUID();
-    // S1: every session must bind to a task. Without an explicit taskId a
+    // Every session must bind to a task. Without an explicit taskId a
     // child Task is auto-created under Root (legacy "new session" = fresh
     // work). clear retires the old execution via retireSessionId within the
     // same transaction.
@@ -434,7 +434,7 @@ export class SessionManager {
       bridge,
     );
 
-    // Inherit config options from source task (S1: config lives on task)
+    // Inherit config options from source task
     if (sourceTask) {
       configOptions = await this.inheritTaskConfig(
         bridge,
@@ -664,15 +664,18 @@ export class SessionManager {
       // before a restart is gone with the old process, and the session is
       // still live, so it gets an MCP server entry like a new session does.
       const mcpServers = this.buildMcpServers(sessionId);
-      await bridge.loadSession(sessionId, session.cwd, mcpServers);
+      const task = session.task_id ? this.store.getTask(session.task_id) : null;
+      const cwd = task?.cwd ?? session.cwd;
+      const title = task?.title ?? session.title;
+      await bridge.loadSession(sessionId, cwd, mcpServers);
       this.liveSessions.add(sessionId);
-      if (session.title) this.sessionHasTitle.add(sessionId);
+      if (title) this.sessionHasTitle.add(sessionId);
       // Piggyback a cache-warming setConfigOption on the user's own resume
       // when the global cache is empty (typical after bridge.restart). Uses
       // the session's own stored value — idempotent, no side effect. Failure
       // is swallowed: the resume still succeeds and the frontend falls back
       // to snapshot-based mode/model display (see public/js/state.ts).
-      await this.tryWarmCache(bridge, sessionId, session);
+      await this.tryWarmCache(bridge, sessionId);
       const configOptions = this.applyStoredConfig(
         this.cachedConfigOptions,
         session,
@@ -682,9 +685,9 @@ export class SessionManager {
         type: "session_created",
         sessionId,
         task_id: session.task_id,
-        cwd: session.cwd,
-        cwdDisplay: abbreviateHomePath(session.cwd),
-        title: session.title,
+        cwd,
+        cwdDisplay: abbreviateHomePath(cwd),
+        title,
         configOptions,
       };
     } catch (err) {
@@ -712,22 +715,18 @@ export class SessionManager {
   private async tryWarmCache(
     bridge: SessionBridge,
     sessionId: string,
-    session: {
-      model: string | null;
-      mode: string | null;
-      reasoning_effort: string | null;
-    },
   ): Promise<void> {
     if (this.cachedConfigOptions.length > 0) return;
+    const stored = this.store.getSessionEffectiveConfig(sessionId);
     const candidates: Array<{ id: string; value: string }> = [];
-    if (session.mode) candidates.push({ id: "mode", value: session.mode });
-    if (session.reasoning_effort) {
+    if (stored.mode) candidates.push({ id: "mode", value: stored.mode });
+    if (stored.reasoning_effort) {
       candidates.push(
-        { id: "reasoning_effort", value: session.reasoning_effort },
-        { id: "thought_level", value: session.reasoning_effort },
+        { id: "reasoning_effort", value: stored.reasoning_effort },
+        { id: "thought_level", value: stored.reasoning_effort },
       );
     }
-    if (session.model) candidates.push({ id: "model", value: session.model });
+    if (stored.model) candidates.push({ id: "model", value: stored.model });
     if (candidates.length === 0) return;
 
     let lastError: unknown = null;
@@ -795,7 +794,7 @@ export class SessionManager {
 
   /**
    * Override currentValue in configOptions with stored values.
-   * S1: config lives on the task (session rows are only pre-transition remants);
+   * Config lives on the task (session rows are only pre-transition remnants);
    * read from the task first, fall back to the session row.
    */
   private applyStoredConfig(
@@ -962,7 +961,7 @@ export class SessionManager {
   }
 
   /**
-   * S1 clear: swap a Task to a new execution site. The old execution retires
+   * Clear: swap a Task to a new execution site. The old execution retires
    * (records kept) and the new one persists in the same transaction (inside
    * createSession; single-live invariant is met atomically); then the old
    * runtime state is cleaned and its capability revoked. On failure the

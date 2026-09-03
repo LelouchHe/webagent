@@ -160,7 +160,7 @@ export async function handleSlashCommand(text: string): Promise<boolean> {
     }
 
     case "/new": {
-      // S1: /new = create a child Task (fresh work) and move to it.
+      // Create a child Task (fresh work) and move to it.
       // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- empty string should fall through
       const cwd = (arg || state.sessionCwd || undefined)?.replace(/\/+$/, "");
       // The backend derives a unique name from the cwd when none is given;
@@ -207,7 +207,7 @@ export async function handleSlashCommand(text: string): Promise<boolean> {
       return true;
 
     case "/clear": {
-      // S1: /clear = swap the current Task to a fresh execution (records kept).
+      // Swap the current Task to a fresh execution (records kept).
       const taskId = state.taskId;
       if (!taskId) {
         // Task unknown (legacy surface only) — keep the old replace path.
@@ -356,7 +356,7 @@ export async function handleSlashCommand(text: string): Promise<boolean> {
         return true;
       }
       try {
-        // S1: /switch navigates between Tasks (candidates = live tasks).
+        // Navigate between Tasks (candidates = live tasks).
         const tasks = await api.listTasks();
         const query = arg.toLowerCase();
         const match = tasks.find(

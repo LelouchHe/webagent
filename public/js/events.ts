@@ -1907,7 +1907,7 @@ export function handleEvent(msg: AgentEvent) {
       // input area styled as default mode.
       updateModeUI();
       updateStatusBar();
-      // S1: the URL anchors the owning Task when the event carries one;
+      // The URL anchors the owning Task when the event carries one;
       // legacy events (no task_id) keep the session anchor.
       setTaskAnchor(msg.task_id ?? null, state.sessionId);
       // Report which session this client is now viewing (for per-session push suppression)
@@ -2216,7 +2216,7 @@ export function handleEvent(msg: AgentEvent) {
       break;
 
     case "task_deleted":
-      // S1: when the current Task is deleted, land on another execution.
+      // When the current Task is deleted, land on another execution.
       if (msg.taskId === state.taskId) {
         void fallbackToNextSession(
           state.sessionId,

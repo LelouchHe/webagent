@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Store } from "../src/store.ts";
 
-describe("Store tasks (S1)", () => {
+describe("Store tasks", () => {
   let store: Store;
   let tmpDir: string;
 
@@ -74,6 +74,34 @@ describe("Store tasks (S1)", () => {
       const atts = store.getTaskAttachments("tsk");
       assert.equal(atts.length, 1);
       assert.equal(atts[0].task_id, "tsk");
+    });
+
+    it("resolves task-owned attachments from a later execution", () => {
+      store.createTask({ id: "tsk", name: "t", cwd: "/tmp" });
+      store.createSession("old", "/tmp", "auto", "old", "tsk");
+      store.insertAttachment({
+        id: "att-1",
+        sessionId: "old",
+        kind: "file",
+        name: "a.txt",
+        mime: "text/plain",
+        size: 10,
+        realpath: "/tmp/a.txt",
+      });
+      store.retireSession("old");
+      store.createSession("current", "/tmp", "auto", "current", "tsk");
+
+      assert.equal(store.getAttachment("current", "att-1")?.session_id, "old");
+      assert.deepEqual(store.listAttachmentRealpaths("current"), [
+        "/tmp/a.txt",
+      ]);
+      assert.deepEqual(store.listAttachmentLabels("current"), [
+        { id: "att-1", name: "a.txt", realpath: "/tmp/a.txt" },
+      ]);
+      assert.equal(
+        store.getAttachmentByFile("current", "att-1.txt")?.id,
+        "att-1",
+      );
     });
   });
 

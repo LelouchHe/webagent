@@ -40,7 +40,7 @@ function send(
   });
 }
 
-describe("task-plane API (S1)", () => {
+describe("task-plane API", () => {
   let store: Store;
   let tmpDir: string;
   let server: http.Server;

@@ -48,7 +48,7 @@ test("concurrent clients bootstrap one shared session", async ({
   ).json()) as Array<{
     id: string;
   }>;
-  // S1: the hash anchors the Task — resolve its live session for comparison.
+  // The hash anchors the Task; resolve its live session for this runtime assertion.
   const anchor = sessionIds[0];
   const task = (await (
     await request.get(`/api/v1/tasks/${anchor}`)

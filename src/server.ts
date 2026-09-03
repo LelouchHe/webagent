@@ -268,7 +268,7 @@ process.on("SIGHUP", () => {
 
 server.listen(config.port, config.host, () => {
   void (async () => {
-    // S1 one-shot upgrade switch: a Root must exist before any session can
+    // One-shot upgrade switch: a Root must exist before any session can
     // be served. Idempotent: no-op once a Root exists. Fail-closed on error
     // (exit 78): otherwise every boot would retry with unknown legacy state.
     // Unconditional snapshot + carry live in src/migration/task-switch.ts.
@@ -277,7 +277,7 @@ server.listen(config.port, config.host, () => {
         dataDir: config.data_dir,
         defaultCwd: config.default_cwd,
       });
-      // S1 current-session mirror: rebuilt after the switch so the live
+      // Current-session mirror: rebuilt after the switch so the live
       // sessions of Root/child tasks land in memory
       sessions.rebuildTaskLiveSessions();
     } catch (err) {

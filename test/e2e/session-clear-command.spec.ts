@@ -27,7 +27,7 @@ test("/clear swaps the Task to a fresh execution (same task, new session)", asyn
 
   await sendPrompt(page, "/clear");
 
-  // S1: the Task identity is stable across clear; the execution is swapped.
+  // The Task identity is stable across clear; only the execution is swapped.
   await expect.poll(() => currentSessionId(page)).toBe(oldTaskId);
   await expect.poll(() => currentLiveSessionId(page)).not.toBe(oldSessionId);
   const newTaskId = await currentSessionId(page);

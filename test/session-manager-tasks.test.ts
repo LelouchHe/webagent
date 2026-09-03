@@ -30,7 +30,7 @@ function makeBridge() {
   };
 }
 
-describe("SessionManager S1 task lifecycle", () => {
+describe("SessionManager task lifecycle", () => {
   let store: Store;
   let sm: SessionManager;
   let tmpDir: string;

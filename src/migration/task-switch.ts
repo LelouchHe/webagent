@@ -83,6 +83,10 @@ export async function runTaskSwitch(
         model: candidate.model,
         mode: candidate.mode,
         reasoningEffort: candidate.reasoning_effort,
+        ttsPolicy: candidate.tts_policy,
+        voiceMode: candidate.voice_mode,
+        voiceVerbosity: candidate.voice_verbosity,
+        voiceWrapperFallback: candidate.voice_wrapper_fallback,
       });
       store.adoptSession(candidate.id, childId);
       out.carriedSessionId = candidate.id;

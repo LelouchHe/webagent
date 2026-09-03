@@ -21,8 +21,8 @@ export async function gotoConnected(page: Page, path = "/"): Promise<void> {
 }
 
 export async function currentSessionId(page: Page): Promise<string> {
-  // S1: the URL hash anchors the owning Task — the stable conversation
-  // identity. (Session ids are internal machinery now.)
+  // The URL hash anchors the owning Task — the stable conversation identity.
+  // Session ids are internal machinery now.
   return page.evaluate(() => location.hash.slice(1));
 }
 

@@ -150,7 +150,7 @@ export function getSession(id: string): Promise<SessionDetail> {
   return request("/api/v1/sessions/" + id);
 }
 
-// --- Task plane (S1) ---
+// --- Task plane ---
 
 export interface TaskItem {
   id: string;

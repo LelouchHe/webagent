@@ -9,12 +9,16 @@ export interface SessionRow {
   model: string | null;
   mode: string | null;
   reasoning_effort: string | null;
+  tts_policy: string | null;
+  voice_mode: string | null;
+  voice_verbosity: string | null;
+  voice_wrapper_fallback: number;
   source: string;
   created_at: string;
   last_active_at: string;
   /** epoch ms; NULL = live; non-NULL = soft-deleted (kept alive for active shares). */
   deleted_at: number | null;
-  /** S1: birth certificate — the only persistent mapping to a Task. NULL only on pre-switch legacy rows. */
+  /** Birth certificate — the only persistent mapping to a Task. NULL only on pre-switch legacy rows. */
   task_id: string | null;
 }
 
@@ -49,6 +53,10 @@ export interface TaskInput {
   model?: string | null;
   mode?: string | null;
   reasoningEffort?: string | null;
+  ttsPolicy?: string | null;
+  voiceMode?: string | null;
+  voiceVerbosity?: string | null;
+  voiceWrapperFallback?: number;
 }
 
 export interface AgentSessionRow {
@@ -67,7 +75,7 @@ export interface EventRow {
   /** Origin marker: 'user' | 'system' | 'agent' | 'msg:<id>'. NULL only on legacy rows that pre-date the column. */
   from_ref: string | null;
   created_at: string;
-  /** S1: Task ownership; used by the cross-execution query (getTaskEvents). */
+  /** Task ownership; used by the cross-execution query (getTaskEvents). */
   task_id: string | null;
 }
 
@@ -154,7 +162,7 @@ export interface AttachmentRow {
   width: number | null;
   height: number | null;
   created_at: string;
-  /** S1: Task ownership — the basis for attachments surviving clear. */
+  /** Task ownership — the basis for attachments surviving clear. */
   task_id: string | null;
 }
 
@@ -466,8 +474,8 @@ export class Store {
       );
     `);
 
-    // ---- S1: tasks + task ownership (2026-09) ----
-    // S1: tasks + task ownership (2026-09). Task = stable work identity (binary),
+    // ---- tasks + task ownership ----
+    // Task = stable work identity (binary),
     // Session = execution (process). sessions.task_id is the only persistent
     // mapping; "current Session" = the Task's live Session (deleted_at IS NULL),
     // enforced to at most one live row per Task by a partial unique index.
@@ -547,7 +555,7 @@ export class Store {
     cwd: string,
     source: string = "auto",
     agentSessionId: string = id,
-    /** S1: birth certificate — which process/Task this belongs to; required after the switch. */
+    /** Birth certificate — which process/Task this belongs to; required after the switch. */
     taskId?: string | null,
   ): SessionRow {
     return this.db.transaction(() => {
@@ -747,7 +755,7 @@ export class Store {
     return empties.map((r) => r.id);
   }
 
-  // ===== tasks (S1) + session retirement =====
+  // ===== tasks + session retirement =====
 
   /** Expose better-sqlite3's online backup: used for the migration snapshot; safe while running. */
   backup(dest: string): Promise<import("better-sqlite3").BackupMetadata> {
@@ -846,7 +854,7 @@ export class Store {
     );
   }
 
-  /** Effective config for a session (S1): task first, falls back to the session row (legacy). mode/model/reasoning_effort */
+  /** Effective config for a session: task first, falls back to the session row (legacy). mode/model/reasoning_effort */
   getSessionEffectiveConfig(sessionId: string): {
     mode: string | null;
     model: string | null;
@@ -884,8 +892,9 @@ export class Store {
     this.db
       .prepare(
         `INSERT INTO tasks
-           (id, parent_id, name, brief, workflow_status, title, cwd, model, mode, reasoning_effort)
-         VALUES (?, ?, ?, ?, 'running', ?, ?, ?, ?, ?)`,
+           (id, parent_id, name, brief, workflow_status, title, cwd, model, mode,
+            reasoning_effort, tts_policy, voice_mode, voice_verbosity, voice_wrapper_fallback)
+         VALUES (?, ?, ?, ?, 'running', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         input.id,
@@ -897,6 +906,10 @@ export class Store {
         input.model ?? null,
         input.mode ?? null,
         input.reasoningEffort ?? null,
+        input.ttsPolicy ?? null,
+        input.voiceMode ?? null,
+        input.voiceVerbosity ?? null,
+        input.voiceWrapperFallback ?? 0,
       );
     return this.getTask(input.id)!;
   }
@@ -1058,7 +1071,7 @@ export class Store {
 
   /**
    * Delete a Task (including its whole subtree). The Root (parent_id IS NULL)
-   * cannot be deleted. S1 performs no approval-style second confirmation
+   * cannot be deleted. This path performs no approval-style second confirmation
    * (staged simplification; S3 restores the design semantics): the subtree's
    * sessions/events/attachments/shares/bindings are hard-deleted.
    */
@@ -1543,11 +1556,17 @@ export class Store {
       .get(input.id) as AttachmentRow;
   }
 
-  /** Look up an attachment row by (session_id, id). */
+  /** Look up an attachment owned by the session's Task. */
   getAttachment(sessionId: string, id: string): AttachmentRow | undefined {
     return this.db
-      .prepare("SELECT * FROM attachments WHERE session_id = ? AND id = ?")
-      .get(sessionId, id) as AttachmentRow | undefined;
+      .prepare(
+        `SELECT * FROM attachments
+         WHERE id = ?
+           AND (session_id = ? OR (
+             task_id IS NOT NULL AND task_id = (SELECT task_id FROM sessions WHERE id = ?)
+           ))`,
+      )
+      .get(id, sessionId, sessionId) as AttachmentRow | undefined;
   }
 
   /**
@@ -1558,8 +1577,13 @@ export class Store {
    */
   listAttachmentRealpaths(sessionId: string): string[] {
     const rows = this.db
-      .prepare("SELECT realpath FROM attachments WHERE session_id = ?")
-      .all(sessionId) as { realpath: string }[];
+      .prepare(
+        `SELECT realpath FROM attachments
+         WHERE session_id = ? OR (
+           task_id IS NOT NULL AND task_id = (SELECT task_id FROM sessions WHERE id = ?)
+         )`,
+      )
+      .all(sessionId, sessionId) as { realpath: string }[];
     return rows.map((r) => r.realpath);
   }
 
@@ -1576,9 +1600,16 @@ export class Store {
   ): Array<{ id: string; name: string; realpath: string }> {
     const rows = this.db
       .prepare(
-        "SELECT id, name, realpath FROM attachments WHERE session_id = ?",
+        `SELECT id, name, realpath FROM attachments
+         WHERE session_id = ? OR (
+           task_id IS NOT NULL AND task_id = (SELECT task_id FROM sessions WHERE id = ?)
+         )`,
       )
-      .all(sessionId) as Array<{ id: string; name: string; realpath: string }>;
+      .all(sessionId, sessionId) as Array<{
+      id: string;
+      name: string;
+      realpath: string;
+    }>;
     return rows;
   }
 

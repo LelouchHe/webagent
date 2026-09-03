@@ -1116,7 +1116,7 @@ export function createRequestHandler(
         sessions.syncPendingPermissions(sessionId);
         const runtimeState = sessions.state.getState(sessionId);
         const lastEventSeq = store.getLastEventSeq(sessionId);
-        // S1: config lives on the task (session rows are pre-transition only);
+        // Config lives on the task (session rows are pre-transition only);
         // the snapshot reads the effective task value
         const snapTask = session.task_id
           ? store.getTask(session.task_id)
@@ -1790,7 +1790,7 @@ export function createRequestHandler(
 
         // Serialize concurrent bootstraps: the first call creates, the rest
         // re-check the store and reuse. A bare promise + finally-reset leaves
-        // a window where a second request starts its own create (S1 widened
+        // a window where a second request starts its own create (task creation
         // it because createSession now does task work too).
         const runBootstrap = bootstrapLock.then(async () => {
           const existing = store.listSessions().at(0);
@@ -1853,7 +1853,7 @@ export function createRequestHandler(
         return;
       }
 
-      // --- Task plane: /api/v1/tasks/* (S1) ---
+      // --- Task plane: /api/v1/tasks/* ---
       const taskListMatch = url.match(/^\/api\/v1\/tasks\/?$/);
       if (taskListMatch && req.method === "GET") {
         const tasks = store.listTasks().map((t) => ({
@@ -2156,7 +2156,7 @@ export function createRequestHandler(
                 .then(() => {
                   const cur = store.getSession(sessionId);
                   if (!cur || !sessions.cachedConfigOptions.length) return;
-                  // S1: config lives on the task; the warm broadcast reads the effective task value
+                  // Config lives on the task; the warm broadcast reads the effective task value
                   const warmTask = cur.task_id
                     ? store.getTask(cur.task_id)
                     : null;
@@ -2210,7 +2210,7 @@ export function createRequestHandler(
             : null;
           const configOptions = sessions
             ? (() => {
-                // Build configOptions from cached + stored overrides (S1: task)
+                // Build configOptions from cached + stored task overrides
                 const opts = sessions.cachedConfigOptions.map((opt) => {
                   const stored: Record<string, string | null> = {
                     model: freshTask?.model ?? freshSession.model,

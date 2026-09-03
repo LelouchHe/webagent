@@ -55,7 +55,7 @@ export async function switchToSession(
       loadHistory(sessionId),
     ]);
     if (!isCurrentNavigation()) return "ignored";
-    // S1: anchor the URL on the owning Task (stable across clear).
+    // Anchor the URL on the owning Task (stable across clear).
     setTaskAnchor(session.task_id ?? null, session.id);
     const hydrated = await hydrateSessionRuntime(
       sessionId,

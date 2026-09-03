@@ -241,7 +241,7 @@ describe("POST /api/v1/messages/:id/consume + ack + DELETE", () => {
 
   it("reuses new-session config inheritance without inheriting mode", async () => {
     mkMsg("m-inherit");
-    // S1: the source config lives on the task
+    // The source config lives on the task.
     store.createTask({
       id: "src-task",
       name: "src",
