@@ -392,6 +392,7 @@ export class SessionManager {
       this.capabilities?.revokeOtherTokens(sessionId, execution.token);
     }
     bridge.sessionMapped?.(created.sessionId);
+    this.resetSessionRuntime(sessionId);
 
     const configOptions = await this.restoreSessionConfig(
       bridge,
@@ -403,6 +404,26 @@ export class SessionManager {
       sessionId,
       configOptions: this.applyStoredConfig(configOptions, session),
     };
+  }
+
+  /** Reset runtime-only state after replacing a Session's ACP execution. */
+  private resetSessionRuntime(sessionId: string): void {
+    this.assistantBuffers.delete(sessionId);
+    this.thinkingBuffers.delete(sessionId);
+    this.activePrompts.delete(sessionId);
+    const pendingSubmission = this.pendingPromptSubmissions.get(sessionId);
+    this.pendingPromptSubmissions.delete(sessionId);
+    if (pendingSubmission !== undefined) {
+      this.cancelledPromptSubmissions.delete(pendingSubmission);
+    }
+    this.runningBashProcs.delete(sessionId);
+    this.agentCommandSnapshots.delete(sessionId);
+    for (const [requestId, permission] of this.pendingPermissions) {
+      if (permission.sessionId === sessionId) {
+        this.pendingPermissions.delete(requestId);
+      }
+    }
+    this.state.delete(sessionId);
   }
 
   /** Bind an ACP execution to the reserved Root record after bridge startup. */

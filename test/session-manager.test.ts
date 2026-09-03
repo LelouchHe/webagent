@@ -683,6 +683,37 @@ describe("SessionManager", () => {
       ]);
     });
 
+    it("clears runtime buffers and command snapshots for the replacement execution", async () => {
+      store.createSession("web-1", tmpDir, "auto", "agent-old");
+      sm.liveSessions.add("web-1");
+      sm.assistantBuffers.set("web-1", "partial answer");
+      sm.thinkingBuffers.set("web-1", "partial thought");
+      sm.activePrompts.add("web-1");
+      sm.updateAgentCommands("web-1", [
+        { name: "old-command", description: "old" },
+      ]);
+
+      const bridge = {
+        async newSession() {
+          return { sessionId: "agent-new", configOptions: [] };
+        },
+        async setConfigOption() {
+          return [];
+        },
+        async loadSession() {
+          throw new Error("loadSession should not be called");
+        },
+      };
+
+      await sm.clearSession(bridge, "web-1");
+
+      assert.equal(sm.assistantBuffers.has("web-1"), false);
+      assert.equal(sm.thinkingBuffers.has("web-1"), false);
+      assert.equal(sm.activePrompts.has("web-1"), false);
+      assert.deepEqual(sm.getAgentCommands("web-1").commands, []);
+      assert.equal(sm.state.getState("web-1").runtime.busy, null);
+    });
+
     it("rotates MCP capability only after the replacement execution succeeds", async () => {
       store.createSession("web-1", tmpDir, "auto", "agent-old");
       sm.liveSessions.add("web-1");
