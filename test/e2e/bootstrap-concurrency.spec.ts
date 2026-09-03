@@ -19,6 +19,7 @@ test("concurrent clients bootstrap one shared session", async ({
     id: string;
   }>;
   for (const session of existing) {
+    if (session.id === "root") continue;
     const response = await request.delete(`/api/v1/sessions/${session.id}`);
     expect(response.ok()).toBe(true);
   }
@@ -38,10 +39,9 @@ test("concurrent clients bootstrap one shared session", async ({
   const sessionIds = await Promise.all(
     pages.map((page) => page.evaluate(() => location.hash.slice(1))),
   );
-  expect(
-    new Set(sessionIds).size,
-    `session POSTs: ${sessionPosts.join(", ")}`,
-  ).toBe(1);
+  expect(new Set(sessionIds).size).toBe(1);
+  expect(sessionIds[0]).toBe("root");
+  expect(sessionPosts).toEqual([]);
 
   const sessions = (await (
     await request.get("/api/v1/sessions")
