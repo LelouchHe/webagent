@@ -21,7 +21,7 @@ import {
   updateStatusBar,
   resetSessionUI,
   requestBootstrapSession,
-  setHashSessionId,
+  setTaskAnchor,
   updateSessionInfo,
   setConnectionStatus,
   clearCancelTimer,
@@ -94,6 +94,7 @@ setCreatedSessionActivator((session) => {
   handleEvent({
     type: "session_created",
     sessionId: session.id,
+    task_id: typeof session.task_id === "string" ? session.task_id : null,
     cwd: typeof session.cwd === "string" ? session.cwd : undefined,
     cwdDisplay:
       typeof session.cwdDisplay === "string" ? session.cwdDisplay : undefined,
@@ -122,13 +123,13 @@ export async function fallbackToNextSession(
   state.sessionSwitchGen++;
   const gen = state.sessionSwitchGen;
   try {
-    const sessions = (await api.listSessions()) as Array<{ id: string }>;
+    const sessions = await api.listSessions();
     if (gen !== state.sessionSwitchGen) return;
     const next = sessions.find((s) => s.id !== expiredId);
     if (next) {
       resetSessionUI();
       state.sessionId = next.id;
-      setHashSessionId(next.id);
+      setTaskAnchor(next.task_id ?? null, next.id);
       const [session, loaded] = await Promise.all([
         api.getSession(next.id),
         loadHistory(next.id),
@@ -143,6 +144,7 @@ export async function fallbackToNextSession(
       handleEvent({
         type: "session_created",
         sessionId: session.id,
+        task_id: session.task_id ?? null,
         cwd: session.cwd,
         cwdDisplay: session.cwdDisplay,
         title: session.title,
@@ -1905,7 +1907,9 @@ export function handleEvent(msg: AgentEvent) {
       // input area styled as default mode.
       updateModeUI();
       updateStatusBar();
-      setHashSessionId(state.sessionId);
+      // S1: the URL anchors the owning Task when the event carries one;
+      // legacy events (no task_id) keep the session anchor.
+      setTaskAnchor(msg.task_id ?? null, state.sessionId);
       // Report which session this client is now viewing (for per-session push suppression)
       if (state.clientId) {
         api
@@ -2206,6 +2210,16 @@ export function handleEvent(msg: AgentEvent) {
       if (msg.sessionId === state.sessionId) {
         void fallbackToNextSession(
           msg.sessionId,
+          state.sessionCwd ?? undefined,
+        );
+      }
+      break;
+
+    case "task_deleted":
+      // S1: when the current Task is deleted, land on another execution.
+      if (msg.taskId === state.taskId) {
+        void fallbackToNextSession(
+          state.sessionId,
           state.sessionCwd ?? undefined,
         );
       }

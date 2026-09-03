@@ -58,6 +58,7 @@ export function resetState(state: any, dom: any) {
   state.sessionSwitchGen = 0;
   state.messageNavigationGen = 0;
   state.pendingNavigationSessionId = null;
+  state.taskId = null;
   state.sessionCwd = null;
   state.sessionCwdDisplay = null;
   state.sessionTitle = null;

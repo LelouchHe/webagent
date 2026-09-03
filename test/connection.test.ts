@@ -293,6 +293,12 @@ describe("connection", () => {
     setFetch(async (url: string, init?: RequestInit) => {
       if (url.includes("/visibility")) return mockResponse({});
       // The expired session returns 404
+      if (url.startsWith("/api/v1/tasks/expired-session"))
+        return {
+          ok: false,
+          status: 404,
+          json: async () => ({ error: "Task not found" }),
+        };
       if (url === "/api/v1/sessions/expired-session")
         return {
           ok: false,
@@ -317,7 +323,7 @@ describe("connection", () => {
     });
 
     connection.connect();
-    await flush(30);
+    await flush(120);
 
     // Should have switched to the fallback session, not created a new one
     assert.equal(state.sessionId, "fallback-session");
@@ -328,6 +334,12 @@ describe("connection", () => {
     history.replaceState(null, "", "/#expired-session");
     setFetch(async (url: string, init?: RequestInit) => {
       if (url.includes("/visibility")) return mockResponse({});
+      if (url.startsWith("/api/v1/tasks/expired-session"))
+        return {
+          ok: false,
+          status: 404,
+          json: async () => ({ error: "Task not found" }),
+        };
       if (url === "/api/v1/sessions/expired-session")
         return {
           ok: false,
@@ -348,8 +360,7 @@ describe("connection", () => {
     });
 
     connection.connect();
-    await flush(30);
-
+    await flush(120);
     assert.equal(state.awaitingNewSession, false);
     assert.equal(state.sessionId, "new-1");
   });

@@ -17,6 +17,7 @@ test("reloading keeps the selected model for the current session", async ({
 
   await page.reload();
   await gotoConnected(page, `/#${sessionId}`);
+
   await expect.poll(() => currentSessionId(page)).toBe(sessionId);
 
   await sendPrompt(page, "/model");

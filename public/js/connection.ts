@@ -276,21 +276,37 @@ async function initSession() {
   const gen = state.sessionSwitchGen;
 
   const existingId = getHashSessionId();
+  // S1: the hash anchors the owning Task (URL survives clear). Resolve it to
+  // the task's live session when it is a task id; legacy session ids fall
+  // through as-is.
+  let existingSessionId = existingId;
+  if (existingId) {
+    try {
+      const task = await api.getTask(existingId);
+      if (task.liveSessionId) {
+        state.taskId = task.id;
+        existingSessionId = task.liveSessionId;
+      }
+    } catch {
+      // Not a task id — treat as a legacy session id.
+    }
+  }
 
   // Incremental reconnect: same session still in memory — skip DOM wipe
-  if (existingId && existingId === state.sessionId) {
-    await resumeAndLoad(existingId, true, gen);
+  if (existingSessionId && existingSessionId === state.sessionId) {
+    await resumeAndLoad(existingSessionId, true, gen);
     if (gen !== state.sessionSwitchGen) return;
     scrollToBottom(false);
     return;
   }
 
   // Full load: different session in hash, or first connect to a hash
-  if (existingId) {
+  if (existingSessionId) {
     resetSessionUI({
-      preserveNavigationTarget: state.pendingNavigationSessionId === existingId,
+      preserveNavigationTarget:
+        state.pendingNavigationSessionId === existingSessionId,
     });
-    await resumeAndLoad(existingId, false, gen);
+    await resumeAndLoad(existingSessionId, false, gen);
     if (gen !== state.sessionSwitchGen) return;
     scrollToBottom(true);
     return;
@@ -330,6 +346,7 @@ async function resumeAndLoad(
       handleEvent({
         type: "session_created",
         sessionId: session.id,
+        task_id: session.task_id ?? null,
         cwd: session.cwd,
         cwdDisplay: session.cwdDisplay,
         title: session.title,
@@ -387,6 +404,7 @@ async function resumeAndLoad(
     handleEvent({
       type: "session_created",
       sessionId: session.id,
+      task_id: session.task_id ?? null,
       cwd: session.cwd,
       cwdDisplay: session.cwdDisplay,
       title: session.title,

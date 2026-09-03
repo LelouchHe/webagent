@@ -1,5 +1,5 @@
 import { test, expect } from "playwright/test";
-import { gotoConnected, currentSessionId, sendPrompt } from "./helpers.ts";
+import { gotoConnected, currentLiveSessionId, sendPrompt } from "./helpers.ts";
 
 test("events API supports pagination with limit and before params", async ({
   page,
@@ -14,7 +14,7 @@ test("events API supports pagination with limit and before params", async ({
     );
   }
 
-  const sessionId = await currentSessionId(page);
+  const sessionId = await currentLiveSessionId(page);
 
   // Fetch with limit — should return latest N events with pagination metadata
   const res = await page.request.get(
@@ -55,7 +55,7 @@ test("events API without limit returns all events (backward compat)", async ({
     "Echo: compat test",
   );
 
-  const sessionId = await currentSessionId(page);
+  const sessionId = await currentLiveSessionId(page);
   const res = await page.request.get(`/api/v1/sessions/${sessionId}/events`);
   expect(res.ok()).toBe(true);
   const body = await res.json();

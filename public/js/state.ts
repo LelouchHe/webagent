@@ -86,6 +86,8 @@ export const state = {
   pendingNavigationSessionId: null as string | null,
   pendingNavigationEvents: [] as AgentEvent[],
   runtimeHydrationSessionId: null as string | null,
+  /** S1: the Task currently in view (URL anchor targets the task, not the session). */
+  taskId: null as string | null,
   sessionCwd: null as string | null,
   sessionCwdDisplay: null as string | null,
   sessionTitle: null as string | null,
@@ -911,6 +913,15 @@ export function clearCancelTimer() {
 export function getHashSessionId(): string | null {
   const h = location.hash.slice(1);
   return h || null;
+}
+
+/**
+ * S1: anchor the URL on the Task id — the URL survives clear/session swaps.
+ * Falls back to the session id when the task is unknown (transitional).
+ */
+export function setTaskAnchor(taskId: string | null, sessionId: string): void {
+  state.taskId = taskId;
+  history.replaceState(null, "", `#${taskId ?? sessionId}`);
 }
 
 export function setHashSessionId(id: string) {

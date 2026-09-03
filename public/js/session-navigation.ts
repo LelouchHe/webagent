@@ -8,6 +8,7 @@ import {
   requestBootstrapSession,
   resetSessionUI,
   setHashSessionId,
+  setTaskAnchor,
   state,
 } from "./state.ts";
 
@@ -34,6 +35,7 @@ export async function switchToSession(
   state.sessionSwitchGen++;
   const generation = state.sessionSwitchGen;
   const previousSessionId = state.sessionId;
+  const previousTaskId = state.taskId;
   finishNewSessionRequest();
   state.awaitingNewSession = false;
   state.pendingNavigationSessionId = null;
@@ -41,6 +43,7 @@ export async function switchToSession(
   setHashSessionId(sessionId);
   resetSessionUI();
   state.sessionId = null;
+  state.taskId = null;
   state.pendingNavigationSessionId = sessionId;
   const isCurrentNavigation = () =>
     generation === state.sessionSwitchGen &&
@@ -52,6 +55,8 @@ export async function switchToSession(
       loadHistory(sessionId),
     ]);
     if (!isCurrentNavigation()) return "ignored";
+    // S1: anchor the URL on the owning Task (stable across clear).
+    setTaskAnchor(session.task_id ?? null, session.id);
     const hydrated = await hydrateSessionRuntime(
       sessionId,
       isCurrentNavigation,
@@ -64,6 +69,7 @@ export async function switchToSession(
     handleEvent({
       type: "session_created",
       sessionId: session.id,
+      task_id: session.task_id ?? null,
       cwd: session.cwd,
       cwdDisplay: session.cwdDisplay,
       title: session.title,
@@ -76,7 +82,9 @@ export async function switchToSession(
     if (isCurrentNavigation()) {
       resetSessionUI();
       state.sessionId = null;
-      if (previousSessionId) setHashSessionId(previousSessionId);
+      if (previousSessionId) {
+        setTaskAnchor(previousTaskId, previousSessionId);
+      }
     }
     throw error;
   }

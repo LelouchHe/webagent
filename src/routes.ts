@@ -13,7 +13,7 @@ import type { PushService } from "./push-service.ts";
 import type { TitleService } from "./title-service.ts";
 import type { ClientRegistry } from "./client-registry.ts";
 import { errorMessage, MessageIngressSchema } from "./types.ts";
-import type { AgentEvent, ConfigOption } from "./types.ts";
+import type { AgentEvent } from "./types.ts";
 import {
   interruptBashProc,
   InvalidSessionDirectoryError,
@@ -548,15 +548,7 @@ export function createRequestHandler(
   deps: RequestHandlerDeps,
 ): (req: IncomingMessage, res: ServerResponse) => Promise<void> {
   const { store, sessions, getBridge, sseManager, titleService } = deps;
-  let bootstrapSessionPromise: Promise<{
-    id: string;
-    cwd: string;
-    title: string | null;
-    source: string;
-    configOptions: ConfigOption[];
-    agentCommands: ReturnType<SessionManager["getAgentCommands"]>;
-    created: boolean;
-  }> | null = null;
+  let bootstrapLock: Promise<void> = Promise.resolve();
 
   // eslint-disable-next-line complexity -- TODO: refactor main route handler into smaller handlers
   return async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
@@ -1140,6 +1132,7 @@ export function createRequestHandler(
               title: session.title,
               cwd: session.cwd,
               cwdDisplay: abbreviateHomePath(session.cwd),
+              task_id: session.task_id,
               model: snapTask?.model ?? session.model,
               mode: snapTask?.mode ?? session.mode,
               createdAt: session.created_at,
@@ -1795,11 +1788,16 @@ export function createRequestHandler(
         }
         const sessionManager = sessions;
 
-        bootstrapSessionPromise ??= (async () => {
+        // Serialize concurrent bootstraps: the first call creates, the rest
+        // re-check the store and reuse. A bare promise + finally-reset leaves
+        // a window where a second request starts its own create (S1 widened
+        // it because createSession now does task work too).
+        const runBootstrap = bootstrapLock.then(async () => {
           const existing = store.listSessions().at(0);
           if (existing) {
             return {
               id: existing.id,
+              task_id: existing.task_id ?? null,
               cwd: existing.cwd,
               cwdDisplay: abbreviateHomePath(existing.cwd),
               title: existing.title,
@@ -1815,6 +1813,7 @@ export function createRequestHandler(
           const session = store.getSession(sessionId);
           const result = {
             id: sessionId,
+            task_id: session?.task_id ?? null,
             cwd: session?.cwd ?? deps.dataDir,
             cwdDisplay: abbreviateHomePath(session?.cwd ?? deps.dataDir),
             title: session?.title ?? null,
@@ -1826,6 +1825,7 @@ export function createRequestHandler(
           sseManager.broadcast({
             type: "session_created",
             sessionId,
+            task_id: session?.task_id,
             cwd: result.cwd,
             cwdDisplay: result.cwdDisplay,
             title: result.title,
@@ -1833,12 +1833,14 @@ export function createRequestHandler(
             agentCommands: result.agentCommands,
           });
           return result;
-        })().finally(() => {
-          bootstrapSessionPromise = null;
         });
+        bootstrapLock = runBootstrap.then(
+          () => undefined,
+          () => undefined,
+        );
 
         try {
-          const result = await bootstrapSessionPromise;
+          const result = await runBootstrap;
           json(res, HTTP_STATUS.OK, {
             ...result,
             clientOpId: getClientOpId(req) ?? undefined,
@@ -1877,32 +1879,43 @@ export function createRequestHandler(
           });
           return;
         }
-        let body: { name?: string; brief?: string; cwd?: string };
+        let body: {
+          name?: string;
+          brief?: string;
+          cwd?: string;
+          inheritFromSessionId?: string;
+        };
         try {
           body = JSON.parse(await readBody(req)) as {
             name?: string;
             brief?: string;
             cwd?: string;
+            inheritFromSessionId?: string;
           };
         } catch {
           json(res, HTTP_STATUS.BAD_REQUEST, { error: "Invalid JSON" });
           return;
         }
         const name = (body.name ?? "").trim();
-        if (!name) {
-          json(res, HTTP_STATUS.BAD_REQUEST, {
-            error: "Missing required field: name",
-          });
-          return;
-        }
         const rootTask = store.getTask(root);
         const cwd = body.cwd ?? rootTask?.cwd ?? "";
+        // Auto-derived name when the caller sends none: cwd basename, made
+        // unique under the parent (/new repeatedly from the same cwd).
+        // Explicit names stay the caller's pick (duplicates -> 409).
+        const baseName = cwd.split("/").pop();
+        const effectiveName = name
+          ? name
+          : store.uniqueChildName(
+              root,
+              // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- empty-string basename should fall back
+              baseName || "task",
+            );
         const taskId = randomUUID();
         try {
           store.createTask({
             id: taskId,
             parentId: root,
-            name,
+            name: effectiveName,
             brief: body.brief ?? null,
             cwd,
           });
@@ -1913,9 +1926,13 @@ export function createRequestHandler(
           return;
         }
         try {
-          await sessions.createSession(bridge, cwd, undefined, "auto", {
-            taskId,
-          });
+          await sessions.createSession(
+            bridge,
+            cwd,
+            body.inheritFromSessionId,
+            "auto",
+            { taskId },
+          );
         } catch (err) {
           json(res, HTTP_STATUS.INTERNAL_SERVER_ERROR, {
             error: errorMessage(err),
@@ -2219,6 +2236,7 @@ export function createRequestHandler(
               cwdDisplay: abbreviateHomePath(freshSession.cwd),
               title: freshSession.title,
               source: freshSession.source,
+              task_id: freshSession.task_id,
               model: freshTask?.model ?? freshSession.model,
               mode: freshTask?.mode ?? freshSession.mode,
               configOptions,
@@ -2296,6 +2314,7 @@ export function createRequestHandler(
           const sessionCreatedEvent = {
             type: "session_created",
             sessionId,
+            task_id: session?.task_id,
             cwd: session?.cwd,
             cwdDisplay: session?.cwd
               ? abbreviateHomePath(session.cwd)
@@ -2317,6 +2336,7 @@ export function createRequestHandler(
           }
           json(res, HTTP_STATUS.CREATED, {
             id: sessionId,
+            task_id: session?.task_id ?? null,
             cwd: session?.cwd ?? body.cwd,
             cwdDisplay: session?.cwd
               ? abbreviateHomePath(session.cwd)
@@ -2968,6 +2988,7 @@ export function createRequestHandler(
         sseManager.broadcast({
           type: "session_created",
           sessionId,
+          task_id: session?.task_id,
           cwd: session?.cwd,
           cwdDisplay: session?.cwd
             ? abbreviateHomePath(session.cwd)

@@ -48,5 +48,14 @@ test("concurrent clients bootstrap one shared session", async ({
   ).json()) as Array<{
     id: string;
   }>;
-  expect(sessions.map((session) => session.id)).toEqual([sessionIds[0]]);
+  // S1: the hash anchors the Task — resolve its live session for comparison.
+  const anchor = sessionIds[0];
+  const task = (await (
+    await request.get(`/api/v1/tasks/${anchor}`)
+  ).json()) as {
+    task?: { liveSessionId?: string | null };
+  };
+  expect(sessions.map((session) => session.id)).toEqual([
+    task.task?.liveSessionId,
+  ]);
 });

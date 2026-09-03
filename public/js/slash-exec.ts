@@ -9,7 +9,6 @@
 import {
   state,
   resetSessionUI,
-  requestNewSession,
   getSelectConfigOption,
   getThinkingConfigOption,
   updateModeUI,
@@ -161,16 +160,26 @@ export async function handleSlashCommand(text: string): Promise<boolean> {
     }
 
     case "/new": {
+      // S1: /new = create a child Task (fresh work) and move to it.
       // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- empty string should fall through
-      const cwd = arg || state.sessionCwd || undefined;
-      // Capture before reset so model/mode inheritance still works after we
-      // clear sessionId (we clear it so any in-flight state_patch from the
-      // outgoing session is rejected by the per-session guard in handleEvent).
-      const inheritFrom = state.sessionId;
+      const cwd = (arg || state.sessionCwd || undefined)?.replace(/\/+$/, "");
+      // The backend derives a unique name from the cwd when none is given;
+      // only pass an explicit name when the user typed one.
+      const inheritFromSessionId = state.sessionId ?? undefined;
       resetSessionUI();
       state.sessionId = null;
       addSystem("Creating new session…");
-      requestNewSession({ cwd: cwd, inheritFromSessionId: inheritFrom });
+      try {
+        // The backend derives a unique name from the cwd (arg is a cwd here).
+        const task = await api.createTask({ cwd, inheritFromSessionId });
+        if (task.liveSessionId) {
+          await switchToSession(task.liveSessionId);
+        } else {
+          addSystem("err: New task has no live session");
+        }
+      } catch {
+        addSystem("err: Failed to create task");
+      }
       return true;
     }
 
@@ -198,28 +207,52 @@ export async function handleSlashCommand(text: string): Promise<boolean> {
       return true;
 
     case "/clear": {
-      await replaceCurrentSession({
-        cwd: arg || undefined,
-        showCwd: Boolean(arg),
-      });
+      // S1: /clear = swap the current Task to a fresh execution (records kept).
+      const taskId = state.taskId;
+      if (!taskId) {
+        // Task unknown (legacy surface only) — keep the old replace path.
+        await replaceCurrentSession({
+          cwd: arg || undefined,
+          showCwd: Boolean(arg),
+        });
+        return true;
+      }
+      if (state.busy) {
+        addSystem("err: Cancel active work before clearing the task");
+        return true;
+      }
+      try {
+        const { sessionId } = await api.clearTask(taskId);
+        await switchToSession(sessionId);
+      } catch {
+        addSystem("err: Failed to clear task");
+      }
       return true;
     }
 
     case "/exit": {
-      if (!state.sessionId) {
+      if (!state.sessionId && !state.taskId) {
         addSystem("warn: No active session");
         return true;
       }
-      const exitId = state.sessionId;
+      const taskId = state.taskId;
+      const exitSessionId = state.sessionId;
       try {
         if (state.busy) {
-          addSystem("err: Cancel active work before exiting the session");
+          addSystem("err: Cancel active work before exiting");
           return true;
         }
-        await api.deleteSession(exitId);
-        await fallbackToNextSession(exitId, state.sessionCwd ?? undefined);
+        if (taskId) {
+          await api.deleteTask(taskId);
+        } else if (exitSessionId) {
+          await api.deleteSession(exitSessionId);
+        }
+        await fallbackToNextSession(
+          exitSessionId,
+          state.sessionCwd ?? undefined,
+        );
       } catch {
-        addSystem("err: Failed to exit session");
+        addSystem("err: Failed to exit (root tasks cannot be deleted)");
       }
       return true;
     }
@@ -323,22 +356,26 @@ export async function handleSlashCommand(text: string): Promise<boolean> {
         return true;
       }
       try {
-        const res = await fetch("/api/v1/sessions");
-        const sessions = (await res.json()) as Array<{
-          id: string;
-          title?: string | null;
-        }>;
+        // S1: /switch navigates between Tasks (candidates = live tasks).
+        const tasks = await api.listTasks();
         const query = arg.toLowerCase();
-        const match = sessions.find(
-          (s) => s.id.startsWith(arg) || s.title?.toLowerCase().includes(query),
+        const match = tasks.find(
+          (t) =>
+            t.id.startsWith(arg) ||
+            (t.title ?? "").toLowerCase().includes(query) ||
+            t.name.toLowerCase().includes(query),
         );
         if (!match) {
-          addSystem(`err: No session matching "${arg}"`);
+          addSystem(`err: No task matching "${arg}"`);
           return true;
         }
-        await switchToSession(match.id);
+        if (match.liveSessionId) {
+          await switchToSession(match.liveSessionId);
+        } else {
+          addSystem(`err: Task "${match.name}" has no live session`);
+        }
       } catch {
-        addSystem("err: Failed to switch session");
+        addSystem("err: Failed to switch task");
       }
       return true;
     }

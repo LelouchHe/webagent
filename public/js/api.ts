@@ -150,6 +150,53 @@ export function getSession(id: string): Promise<SessionDetail> {
   return request("/api/v1/sessions/" + id);
 }
 
+// --- Task plane (S1) ---
+
+export interface TaskItem {
+  id: string;
+  parent_id: string | null;
+  name: string;
+  brief: string | null;
+  workflow_status: string;
+  title: string | null;
+  cwd: string;
+  model: string | null;
+  mode: string | null;
+  reasoning_effort: string | null;
+  liveSessionId?: string | null;
+}
+
+export function listTasks(): Promise<TaskItem[]> {
+  return request<{ tasks: TaskItem[] }>("/api/v1/tasks").then((r) => r.tasks);
+}
+
+export function createTask(input: {
+  name?: string;
+  brief?: string;
+  cwd?: string;
+  inheritFromSessionId?: string;
+}): Promise<TaskItem> {
+  return request<{ task: TaskItem }>("/api/v1/tasks", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  }).then((r) => r.task);
+}
+
+export function getTask(id: string): Promise<TaskItem> {
+  return request<{ task: TaskItem }>("/api/v1/tasks/" + id).then((r) => r.task);
+}
+
+export function deleteTask(id: string): Promise<void> {
+  return request<void>("/api/v1/tasks/" + id, { method: "DELETE" });
+}
+
+export function clearTask(id: string): Promise<{ sessionId: string }> {
+  return request<{ sessionId: string }>("/api/v1/tasks/" + id + "/clear", {
+    method: "POST",
+  });
+}
+
 // --- File viewer ---
 
 export interface FileInfo {

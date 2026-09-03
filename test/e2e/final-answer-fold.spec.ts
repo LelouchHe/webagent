@@ -1,7 +1,7 @@
 import { test, expect } from "playwright/test";
 import {
   createNewSession,
-  currentSessionId,
+  currentLiveSessionId,
   gotoConnected,
   sendPrompt,
 } from "./helpers.ts";
@@ -78,7 +78,7 @@ test("share viewer coalesces persisted final-answer fragments", async ({
 
   const assistant = page.locator(".msg.assistant").last();
   await expect(assistant.locator(".subagent-result")).toBeVisible();
-  const sessionId = await currentSessionId(page);
+  const sessionId = await currentLiveSessionId(page);
 
   // Force the first streaming fragment into SQLite while the mock agent is
   // paused. prompt_done later flushes the remainder into a consecutive row.

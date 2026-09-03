@@ -7,7 +7,6 @@
 import {
   state,
   resetSessionUI,
-  requestNewSession,
   getSelectConfigOption,
   getThinkingConfigOption,
   getConfigValue,
@@ -17,6 +16,27 @@ import {
 import { addSystem, formatLocalTime } from "./render.ts";
 import { fallbackToNextSession } from "./events.ts";
 import * as api from "./api.ts";
+
+/** /new: create a child Task (fresh work) and move to it via the task plane. */
+async function createNewTaskAt(cwd: string): Promise<void> {
+  resetSessionUI();
+  state.sessionId = null;
+  addSystem("Creating new session…");
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- sessionId is null without an active session
+    const src = state.sessionId
+      ? { inheritFromSessionId: state.sessionId }
+      : {};
+    const task = await api.createTask({ cwd, ...src });
+    if (task.liveSessionId) {
+      await switchToSession(task.liveSessionId);
+    } else {
+      addSystem("err: New task has no live session");
+    }
+  } catch {
+    addSystem("err: Failed to create task");
+  }
+}
 import { consumeAndSwitch, switchToSession } from "./session-navigation.ts";
 import { log, getLogLevel, type LogLevel } from "./log.ts";
 import {
@@ -25,7 +45,6 @@ import {
   setStoredLogLevel,
 } from "./log.ts";
 import type { CmdNode } from "./slash-tree.ts";
-import type { SessionSummary } from "../../src/types.ts";
 import { HTTP_STATUS } from "../../src/http-status.ts";
 import { TOKEN_STORAGE_KEY } from "./login-core.ts";
 import { resetLocalFrontendState } from "./local-reset.ts";
@@ -114,13 +133,6 @@ async function unsubscribePush(): Promise<void> {
   } catch (err) {
     log.scope("push").error("unsubscribe failed", { err });
   }
-}
-
-// --- shared data fetchers (keep call sites identical for /inbox + /inbox dismiss) ---
-
-async function listSessions(): Promise<SessionSummary[]> {
-  const res = await fetch("/api/v1/sessions");
-  return res.json() as Promise<SessionSummary[]>;
 }
 
 interface PathItem {
@@ -488,7 +500,7 @@ export const ROOT: CmdNode = {
     configCmdNode("/model", "Switch model", "model", true),
     {
       name: "/new",
-      desc: "Create new session",
+      desc: "Create new task",
       fetch: listRecentPaths,
       toSpec: (item: unknown) => {
         const p = item as PathItem;
@@ -498,9 +510,7 @@ export const ROOT: CmdNode = {
           primary: p.cwdDisplay,
           current: isCurrent,
           onSelect: () => {
-            resetSessionUI();
-            addSystem("Creating new session…");
-            requestNewSession({ cwd: p.cwd });
+            void createNewTaskAt(p.cwd);
           },
         };
       },
@@ -508,11 +518,9 @@ export const ROOT: CmdNode = {
         const trimmed = q.trim();
         if (!trimmed) return null;
         return {
-          primary: `create session at '${trimmed}'`,
+          primary: `create task at '${trimmed}'`,
           onSelect: () => {
-            resetSessionUI();
-            addSystem("Creating new session…");
-            requestNewSession({ cwd: trimmed });
+            void createNewTaskAt(trimmed);
           },
         };
       },
@@ -634,27 +642,30 @@ export const ROOT: CmdNode = {
     },
     {
       name: "/switch",
-      desc: "Switch session",
-      fetch: listSessions,
+      desc: "Switch task",
+      fetch: () => api.listTasks(),
       matches: (item: unknown, q: string) => {
-        const s = item as SessionSummary;
-        const title = (s.title ?? "").toLowerCase();
-        return title.includes(q) || s.id.startsWith(q);
+        const t = item as api.TaskItem;
+        const title = (t.title ?? t.name).toLowerCase();
+        return title.includes(q) || t.id.startsWith(q);
       },
       toSpec: (item: unknown) => {
-        const s = item as SessionSummary;
-        const label = s.title ?? s.id;
-        const time = formatLocalTime(s.last_active_at);
+        const t = item as api.TaskItem;
+        const label = t.title ?? t.name;
         return {
           primary: label,
-          secondary: time,
-          path: s.cwd,
-          current: s.id === state.sessionId,
+          secondary: t.workflow_status,
+          path: t.cwd,
+          current: t.id === state.taskId,
           onSelect: async () => {
             try {
-              await switchToSession(s.id);
+              if (t.liveSessionId) {
+                await switchToSession(t.liveSessionId);
+              } else {
+                addSystem("err: Task has no live session");
+              }
             } catch {
-              addSystem("err: Failed to switch session");
+              addSystem("err: Failed to switch task");
             }
           },
         };

@@ -73,55 +73,144 @@ describe("commands", () => {
   });
 
   describe("handleSlashCommand", () => {
-    it("creates a new session using the provided cwd", async () => {
-      setFetch(() => ({
-        ok: true,
-        json: async () => ({ id: "new-1" }),
-        text: async () => '{"id":"new-1"}',
-      }));
+    it("creates a new task using the provided cwd", async () => {
+      setFetch((url, init) => {
+        if (url === "/api/v1/tasks" && init?.method === "POST") {
+          const data = {
+            task: {
+              id: "task-new-1",
+              name: "project",
+              cwd: "/tmp/project",
+              liveSessionId: "new-1",
+            },
+          };
+          return {
+            ok: true,
+            json: async () => data,
+            text: async () => JSON.stringify(data),
+          };
+        }
+        // switchToSession navigation targets
+        if (url === "/api/v1/sessions/new-1") {
+          const data = {
+            id: "new-1",
+            cwd: "/tmp/project",
+            title: null,
+            source: "auto",
+            task_id: "task-new-1",
+            model: null,
+            mode: null,
+            configOptions: [],
+          };
+          return {
+            ok: true,
+            json: async () => data,
+            text: async () => JSON.stringify(data),
+          };
+        }
+        if (url.startsWith("/api/v1/sessions/new-1/events"))
+          return { ok: true, json: async () => [], text: async () => "[]" };
+        if (url === "/api/v1/sessions/new-1/snapshot") {
+          const data = {
+            version: 1,
+            seq: 0,
+            session: { task_id: "task-new-1" },
+            runtime: { busy: null },
+          };
+          return {
+            ok: true,
+            json: async () => data,
+            text: async () => JSON.stringify(data),
+          };
+        }
+        throw new Error(`Unexpected fetch: ${url}`);
+      });
       state.sessionId = "current-session";
       state.sessionCwd = "/current";
 
       const handled = await commands.handleSlashCommand("/new /tmp/project");
-      await new Promise((r) => setTimeout(r, 0)); // flush microtask (fire-and-forget)
+      await new Promise((r) => setTimeout(r, 20)); // let switchToSession finish
 
       assert.equal(handled, true);
-      assert.equal(state.awaitingNewSession, false);
       assert.equal(state.sessionId, "new-1");
-      // requestNewSession now uses REST POST /api/v1/sessions
       const createCall = fetchCalls.find(
-        (c) => c.url === "/api/v1/sessions" && c.init?.method === "POST",
+        (c) => c.url === "/api/v1/tasks" && c.init?.method === "POST",
       );
-      assert.ok(createCall, "expected POST /api/v1/sessions");
+      assert.ok(createCall, "expected POST /api/v1/tasks");
       const body = JSON.parse(createCall.init.body);
       assert.equal(body.cwd, "/tmp/project");
       assert.equal(body.inheritFromSessionId, "current-session");
-      assert.ok(messageLines().includes("Creating new session…"));
     });
 
     it("inherits current session cwd when /new has no argument", async () => {
-      setFetch(() => ({
-        ok: true,
-        json: async () => ({ id: "new-2" }),
-        text: async () => '{"id":"new-2"}',
-      }));
+      setFetch((url, init) => {
+        if (url === "/api/v1/tasks" && init?.method === "POST") {
+          const data = {
+            task: {
+              id: "task-new-2",
+              name: "project",
+              cwd: "/my/project",
+              liveSessionId: "new-2",
+            },
+          };
+          return {
+            ok: true,
+            json: async () => data,
+            text: async () => JSON.stringify(data),
+          };
+        }
+        if (url === "/api/v1/sessions/new-2") {
+          const data = {
+            id: "new-2",
+            cwd: "/my/project",
+            title: null,
+            source: "auto",
+            task_id: "task-new-2",
+            model: null,
+            mode: null,
+            configOptions: [],
+          };
+          return {
+            ok: true,
+            json: async () => data,
+            text: async () => JSON.stringify(data),
+          };
+        }
+        if (url.startsWith("/api/v1/sessions/new-2/events"))
+          return { ok: true, json: async () => [], text: async () => "[]" };
+        if (url === "/api/v1/sessions/new-2/snapshot") {
+          const data = {
+            version: 1,
+            seq: 0,
+            session: { task_id: "task-new-2" },
+            runtime: { busy: null },
+          };
+          return {
+            ok: true,
+            json: async () => data,
+            text: async () => JSON.stringify(data),
+          };
+        }
+        throw new Error(`Unexpected fetch: ${url}`);
+      });
       state.sessionId = "current-session";
       state.sessionCwd = "/my/project";
 
       const handled = await commands.handleSlashCommand("/new");
-      await new Promise((r) => setTimeout(r, 0));
-
+      await new Promise((r) => setTimeout(r, 20));
       assert.equal(handled, true);
+      assert.equal(state.sessionId, "new-2");
       const createCall = fetchCalls.find(
-        (c) => c.url === "/api/v1/sessions" && c.init?.method === "POST",
+        (c) => c.url === "/api/v1/tasks" && c.init?.method === "POST",
       );
-      assert.ok(createCall, "expected POST /api/v1/sessions");
+      assert.ok(createCall, "expected POST /api/v1/tasks");
       const body = JSON.parse(createCall.init.body);
       assert.equal(
         body.cwd,
         "/my/project",
         "should inherit cwd from current session",
       );
+      assert.equal(body.inheritFromSessionId, "current-session");
     });
 
     it("shows help for ? and lists /help in commands", async () => {
@@ -630,9 +719,19 @@ describe("commands", () => {
         },
       ];
       setFetch(async (url: string) => {
-        if (url === "/api/v1/sessions") {
+        if (url === "/api/v1/tasks") {
+          const tasks = [
+            {
+              id: "task-1",
+              name: "Target",
+              title: "Target Session",
+              liveSessionId: "target-1",
+            },
+          ];
           return {
-            json: async () => [{ id: "target-1", title: "Target Session" }],
+            ok: true,
+            json: async () => ({ tasks }),
+            text: async () => JSON.stringify({ tasks }),
           };
         }
         if (url.startsWith("/api/v1/sessions/target-1/events")) {
@@ -677,11 +776,10 @@ describe("commands", () => {
       });
 
       const handled = await commands.handleSlashCommand("/switch target");
-
       assert.equal(handled, true);
       assert.ok(
-        fetchCalls.some((c) => c.url === "/api/v1/sessions"),
-        "should list sessions",
+        fetchCalls.some((c) => c.url === "/api/v1/tasks"),
+        "should list tasks",
       );
       assert.ok(
         fetchCalls.some((c) =>

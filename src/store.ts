@@ -1037,6 +1037,26 @@ export class Store {
   }
 
   /**
+   * Pick an unused name under a parent for auto-derived names (/new with no
+   * explicit name): "base", "base 2", "base 3", … Keeps explicit user names
+   * the caller's responsibility (duplicates throw via the unique index).
+   */
+  uniqueChildName(parentId: string, base: string): string {
+    const taken = new Set(
+      (
+        this.db
+          .prepare(
+            "SELECT name FROM tasks WHERE parent_id = ? AND name LIKE ? AND deleted_at IS NULL",
+          )
+          .all(parentId, `${base}%`) as Array<{ name: string }>
+      ).map((r) => r.name),
+    );
+    let candidate = base;
+    for (let n = 2; taken.has(candidate); n++) candidate = `${base} ${n}`;
+    return candidate;
+  }
+
+  /**
    * Delete a Task (including its whole subtree). The Root (parent_id IS NULL)
    * cannot be deleted. S1 performs no approval-style second confirmation
    * (staged simplification; S3 restores the design semantics): the subtree's

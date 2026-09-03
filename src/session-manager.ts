@@ -681,6 +681,7 @@ export class SessionManager {
       return {
         type: "session_created",
         sessionId,
+        task_id: session.task_id,
         cwd: session.cwd,
         cwdDisplay: abbreviateHomePath(session.cwd),
         title: session.title,
