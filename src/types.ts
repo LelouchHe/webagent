@@ -83,6 +83,7 @@ export interface SessionSummary {
   source: string;
   created_at: string;
   last_active_at: string;
+  parent_session_id: string | null;
 }
 
 /** Detailed session record returned by GET /api/v1/sessions/:id. */
@@ -94,6 +95,7 @@ export interface SessionDetail {
   source: string;
   model: string | null;
   mode: string | null;
+  parentSessionId: string | null;
   configOptions: ConfigOption[];
 }
 

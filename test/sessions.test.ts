@@ -608,6 +608,16 @@ describe("Session REST API", () => {
       assert.equal(res.status, 404);
     });
 
+    it("returns a session's parent relationship", async () => {
+      store.createSession("root", tmpDir, "root", "agent-root");
+      store.createSession("child", tmpDir, "auto", "agent-child", "root");
+
+      const res = await makeRequest(port, "GET", "/api/v1/sessions/child");
+
+      assert.equal(res.status, 200);
+      assert.equal(JSON.parse(res.body).parentSessionId, "root");
+    });
+
     it("auto-resumes a non-live session", async () => {
       // Create a session directly in store (not in liveSessions)
       store.createSession("stored-only", tmpDir);

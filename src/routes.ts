@@ -2015,6 +2015,7 @@ export function createRequestHandler(
               source: freshSession.source,
               model: freshSession.model,
               mode: freshSession.mode,
+              parentSessionId: freshSession.parent_session_id,
               configOptions,
             },
             req,

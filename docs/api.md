@@ -250,6 +250,7 @@ Get session details. **Auto-resumes** the session in the ACP agent if it's not a
   "source": "auto",
   "model": "claude-sonnet-4-20250514",
   "mode": "agent",
+  "parentSessionId": "root",
   "configOptions": [...],
   "busy": false,
   "busyKind": null
@@ -259,6 +260,7 @@ Get session details. **Auto-resumes** the session in the ACP agent if it's not a
 | Field           | Type                        | Description                                                                   |
 | --------------- | --------------------------- | ----------------------------------------------------------------------------- |
 | `configOptions` | `ConfigOption[]`            | Current config with stored overrides applied (type defined in `src/types.ts`) |
+| `parentSessionId` | `string \| null`         | Parent WebAgent Session; `null` only for the reserved Root Session              |
 | `busy`          | boolean                     | Whether the session has an active agent prompt or bash process                |
 | `busyKind`      | `"agent" \| "bash" \| null` | What kind of work is in progress                                              |
 
@@ -268,7 +270,8 @@ Get session details. **Auto-resumes** the session in the ACP agent if it's not a
 
 #### `DELETE /api/v1/sessions/:id`
 
-Delete a session and all its events, attachments, and in-memory state.
+Delete a session and all its events, attachments, and in-memory state. The
+reserved Root Session (`id = "root"`) cannot be deleted.
 
 **Response** `204` (no body)
 
