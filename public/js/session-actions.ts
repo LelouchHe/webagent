@@ -25,6 +25,9 @@ export async function replaceCurrentSession({
   state.sessionId = null;
   try {
     await api.clearSession(oldId, { cwd: nextCwd });
+    // The clear response may race the broadcast used to refresh other clients.
+    // Force this client through the normal history/runtime hydration path.
+    state.sessionId = null;
     await switchToSession(oldId);
     addSystem(
       showCwd && nextCwd
