@@ -36,6 +36,24 @@ interface ClearSessionResult {
  * broadcast takes the normal same-session branch (config repaint) instead of
  * the activation path that a null id would trigger.
  */
+export async function compactCurrentSession(): Promise<void> {
+  if (!state.sessionId) {
+    addSystem("warn: No active session");
+    return;
+  }
+  if (state.busy) {
+    addSystem("err: Cancel active work before compacting the session");
+    return;
+  }
+  const sessionId = state.sessionId;
+  addSystem("Compacting context…");
+  try {
+    await api.compactSession(sessionId);
+  } catch (err: unknown) {
+    addSystem(`err: Failed to compact session — ${String(err)}`);
+  }
+}
+
 export async function replaceCurrentSession({
   cwd,
   showCwd = false,

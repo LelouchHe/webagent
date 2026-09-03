@@ -488,6 +488,12 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - `/clear` keeps the stable WebAgent session id, history, and cwd; only the
     ACP execution rotates and the session stays available through the API
 
+- `/compact`
+  - compact summary is visible as an assistant message, but is deferred until
+    the next real user prompt; the new ACP execution stays idle meanwhile
+  - the real prompt stores only the user's original text and consumes the
+    one-shot handoff
+
 ### Resume / reconnect / restart recovery
 
 - `auto-resume-last-session.spec.ts`

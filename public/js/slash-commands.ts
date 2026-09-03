@@ -30,7 +30,10 @@ import { HTTP_STATUS } from "../../src/http-status.ts";
 import { TOKEN_STORAGE_KEY } from "./login-core.ts";
 import { resetLocalFrontendState } from "./local-reset.ts";
 import { requestAuthoritativeCancel } from "./cancel-command.ts";
-import { replaceCurrentSession } from "./session-actions.ts";
+import {
+  compactCurrentSession,
+  replaceCurrentSession,
+} from "./session-actions.ts";
 import {
   createPreview,
   listOwnerShares,
@@ -341,6 +344,13 @@ export const ROOT: CmdNode = {
             void replaceCurrentSession({ cwd: trimmed, showCwd: true });
           },
         };
+      },
+    },
+    {
+      name: "/compact",
+      desc: "Compact context and continue with a fresh execution",
+      onSelect: () => {
+        void compactCurrentSession();
       },
     },
     {

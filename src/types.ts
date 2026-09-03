@@ -286,8 +286,15 @@ export type AgentEvent =
   | { type: "message_consumed"; messageId: string; sessionId: string }
   | { type: "message_acked"; messageId: string }
   | { type: "inbox_count_changed"; pendingCount: number }
+  // Persisted assistant content; compact summaries may also be sent live.
+  | {
+      type: "assistant_message";
+      sessionId?: string;
+      text: string;
+      /** Present on live server-generated assistant messages. */
+      seq?: number;
+    }
   // Replay-only events (stored in DB, not sent live)
-  | { type: "assistant_message"; sessionId?: string; text: string }
   | { type: "thinking"; sessionId?: string; text: string }
   | {
       type: "bash_result";

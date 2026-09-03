@@ -66,6 +66,7 @@ function createMockBridge(nextId = "mock-session-1") {
   ];
   return {
     ...mockBridgeStubs(),
+    promptForText: async () => "summary of the current work",
     newSession: async (_cwd: string) => {
       idCounter++;
       return {
@@ -547,6 +548,7 @@ describe("Session REST API", () => {
   describe("POST /api/v1/sessions/:id/clear", () => {
     it("keeps the WebAgent session id while rotating its ACP execution", async () => {
       store.createSession("s1", tmpDir, "auto", "agent-old");
+      store.saveCompactSummary("s1", "old context");
 
       const res = await makeRequest(
         port,
@@ -561,6 +563,7 @@ describe("Session REST API", () => {
       assert.equal(store.listSessions().length, 1);
       assert.equal(store.getAgentSessionId("s1"), "mock-session-1");
       assert.equal(store.getWebSessionId("agent-old"), undefined);
+      assert.equal(store.getPendingCompactSummary("s1"), null);
     });
 
     it("persists a clear request's replacement cwd on the stable session", async () => {
@@ -576,6 +579,60 @@ describe("Session REST API", () => {
       assert.equal(res.status, 200);
       assert.equal(JSON.parse(res.body).cwd, publicDir);
       assert.equal(store.getSession("s1")?.cwd, publicDir);
+    });
+
+    it("compacts into a fresh ACP execution and defers the summary to the next prompt", async () => {
+      store.createSession("s1", tmpDir, "auto", "agent-old");
+      sessions.liveSessions.add("s1");
+      let promptedText = "";
+      mockBridge.prompt = async (_sessionId: string, text: string) => {
+        promptedText = text;
+      };
+
+      const compactRes = await makeRequest(
+        port,
+        "POST",
+        "/api/v1/sessions/s1/compact",
+        "{}",
+      );
+      assert.equal(compactRes.status, 202);
+      for (let i = 0; i < 10; i++)
+        await new Promise((resolve) => setImmediate(resolve));
+
+      assert.equal(
+        store.getPendingCompactSummary("s1"),
+        "summary of the current work",
+      );
+      const publicList = JSON.parse(
+        (await makeRequest(port, "GET", "/api/v1/sessions")).body,
+      ) as Array<Record<string, unknown>>;
+      assert.equal("pending_compact_summary" in publicList[0], false);
+      assert.equal(store.getAgentSessionId("s1"), "mock-session-1");
+      assert.ok(
+        broadcastEvents.some(
+          (event) =>
+            event.type === "assistant_message" &&
+            event.sessionId === "s1" &&
+            event.text === "summary of the current work",
+        ),
+      );
+      assert.equal(sessions.getBusyKind("s1"), null);
+
+      const promptRes = await makeRequest(
+        port,
+        "POST",
+        "/api/v1/sessions/s1/prompt",
+        JSON.stringify({ text: "continue the work" }),
+      );
+      assert.equal(promptRes.status, 202);
+      assert.match(promptedText, /previous execution summary/);
+      assert.match(promptedText, /summary of the current work/);
+      assert.match(promptedText, /continue the work/);
+      assert.equal(store.getPendingCompactSummary("s1"), null);
+      const userEvent = [...store.getEvents("s1")]
+        .reverse()
+        .find((event) => event.type === "user_message");
+      assert.equal(JSON.parse(userEvent!.data).text, "continue the work");
     });
   });
 

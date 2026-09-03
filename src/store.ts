@@ -18,6 +18,8 @@ export interface SessionRow {
   deleted_at: number | null;
   /** Optional parent WebAgent session; the reserved Root has NULL. */
   parent_session_id: string | null;
+  /** Agent-generated context handoff waiting for the next real prompt. */
+  pending_compact_summary: string | null;
 }
 
 export interface AgentSessionRow {
@@ -158,6 +160,7 @@ export class Store {
         cwd TEXT NOT NULL,
         title TEXT,
         parent_session_id TEXT REFERENCES sessions(id),
+        pending_compact_summary TEXT,
         created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now')),
         last_active_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now'))
       );
@@ -224,6 +227,11 @@ export class Store {
     if (!colNames.has("parent_session_id")) {
       this.db.exec(
         "ALTER TABLE sessions ADD COLUMN parent_session_id TEXT REFERENCES sessions(id)",
+      );
+    }
+    if (!colNames.has("pending_compact_summary")) {
+      this.db.exec(
+        "ALTER TABLE sessions ADD COLUMN pending_compact_summary TEXT",
       );
     }
 
@@ -755,6 +763,64 @@ export class Store {
         "UPDATE sessions SET last_active_at = strftime('%Y-%m-%d %H:%M:%f', 'now') WHERE id = ?",
       )
       .run(id);
+  }
+
+  /** Return the hidden summary waiting to be prepended to the next prompt. */
+  getPendingCompactSummary(id: string): string | null {
+    const row = this.db
+      .prepare("SELECT pending_compact_summary FROM sessions WHERE id = ?")
+      .get(id) as { pending_compact_summary: string | null } | undefined;
+    return row?.pending_compact_summary ?? null;
+  }
+
+  /**
+   * Persist the visible assistant summary and its hidden pending copy together.
+   * The latter is consumed only when the next real prompt is accepted.
+   */
+  saveCompactSummary(sessionId: string, summary: string): EventRow {
+    return this.db.transaction(() => {
+      const seq = (
+        this.db
+          .prepare(
+            "SELECT COALESCE(MAX(seq), 0) + 1 AS next FROM events WHERE session_id = ?",
+          )
+          .get(sessionId) as { next: number }
+      ).next;
+      this.db
+        .prepare(
+          "INSERT INTO events (session_id, seq, type, data, from_ref) VALUES (?, ?, ?, ?, ?)",
+        )
+        .run(
+          sessionId,
+          seq,
+          "assistant_message",
+          JSON.stringify({ text: summary }),
+          "agent",
+        );
+      this.db
+        .prepare("UPDATE sessions SET pending_compact_summary = ? WHERE id = ?")
+        .run(summary, sessionId);
+      return this.db
+        .prepare("SELECT * FROM events WHERE session_id = ? AND seq = ?")
+        .get(sessionId, seq) as EventRow;
+    })();
+  }
+
+  /** Clear a pending summary, optionally only when it is still the expected value. */
+  clearPendingCompactSummary(id: string, expected?: string): boolean {
+    const result =
+      expected === undefined
+        ? this.db
+            .prepare(
+              "UPDATE sessions SET pending_compact_summary = NULL WHERE id = ?",
+            )
+            .run(id)
+        : this.db
+            .prepare(
+              "UPDATE sessions SET pending_compact_summary = NULL WHERE id = ? AND pending_compact_summary = ?",
+            )
+            .run(id, expected);
+    return result.changes > 0;
   }
 
   /** Update a config option value (model, mode, reasoning_effort) for a session. */

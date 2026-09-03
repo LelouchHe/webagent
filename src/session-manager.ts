@@ -86,6 +86,10 @@ export class SessionManager {
   readonly assistantBuffers = new Map<string, string>();
   readonly thinkingBuffers = new Map<string, string>();
   readonly activePrompts = new Set<string>();
+  /** Sessions undergoing compact summary generation or ACP rotation. */
+  readonly compactingSessions = new Set<string>();
+  /** Barrier covering the asynchronous ACP replacement itself. */
+  readonly rotatingSessions = new Set<string>();
   readonly pendingPromptSubmissions = new Map<string, number>();
   readonly cancelledPromptSubmissions = new Set<number>();
   readonly runningBashProcs = new Map<string, ChildProcess>();
@@ -367,6 +371,36 @@ export class SessionManager {
     bridge: SessionBridge,
     sessionId: string,
     cwd?: string,
+    opts: {
+      preservePendingCompactSummary?: boolean;
+      preserveRuntimeState?: boolean;
+    } = {},
+  ): Promise<{ sessionId: string; configOptions: ConfigOption[] }> {
+    if (this.rotatingSessions.has(sessionId)) {
+      throw new Error(`Session is already being rotated: ${sessionId}`);
+    }
+    this.rotatingSessions.add(sessionId);
+    try {
+      const result = await this.clearSessionImpl(
+        bridge,
+        sessionId,
+        cwd,
+        opts.preserveRuntimeState,
+      );
+      if (!opts.preservePendingCompactSummary) {
+        this.store.clearPendingCompactSummary(sessionId);
+      }
+      return result;
+    } finally {
+      this.rotatingSessions.delete(sessionId);
+    }
+  }
+
+  private async clearSessionImpl(
+    bridge: SessionBridge,
+    sessionId: string,
+    cwd?: string,
+    preserveRuntimeState = false,
   ): Promise<{ sessionId: string; configOptions: ConfigOption[] }> {
     const session = this.store.getSession(sessionId);
     if (!session) throw new Error(`Session not found: ${sessionId}`);
@@ -402,7 +436,7 @@ export class SessionManager {
       this.capabilities?.revokeOtherTokens(sessionId, execution.token);
     }
     bridge.sessionMapped?.(created.sessionId);
-    this.resetSessionRuntime(sessionId);
+    this.resetSessionRuntime(sessionId, preserveRuntimeState);
 
     const configOptions = await this.restoreSessionConfig(
       bridge,
@@ -417,7 +451,10 @@ export class SessionManager {
   }
 
   /** Reset runtime-only state after replacing a Session's ACP execution. */
-  private resetSessionRuntime(sessionId: string): void {
+  private resetSessionRuntime(
+    sessionId: string,
+    preserveRuntimeState = false,
+  ): void {
     this.assistantBuffers.delete(sessionId);
     this.thinkingBuffers.delete(sessionId);
     this.activePrompts.delete(sessionId);
@@ -433,7 +470,7 @@ export class SessionManager {
         this.pendingPermissions.delete(requestId);
       }
     }
-    this.state.delete(sessionId);
+    if (!preserveRuntimeState) this.state.delete(sessionId);
   }
 
   /** Bind an ACP execution to the reserved Root record after bridge startup. */
@@ -834,6 +871,8 @@ export class SessionManager {
     this.assistantBuffers.delete(sessionId);
     this.thinkingBuffers.delete(sessionId);
     this.activePrompts.delete(sessionId);
+    this.compactingSessions.delete(sessionId);
+    this.rotatingSessions.delete(sessionId);
     const pendingSubmission = this.pendingPromptSubmissions.get(sessionId);
     this.pendingPromptSubmissions.delete(sessionId);
     if (pendingSubmission !== undefined) {
@@ -912,6 +951,8 @@ export class SessionManager {
   getBusyKind(sessionId: string): "agent" | "bash" | null {
     if (this.pendingPromptSubmissions.has(sessionId)) return "agent";
     if (this.activePrompts.has(sessionId)) return "agent";
+    if (this.compactingSessions.has(sessionId)) return "agent";
+    if (this.rotatingSessions.has(sessionId)) return "agent";
     if (this.runningBashProcs.has(sessionId)) return "bash";
     return null;
   }

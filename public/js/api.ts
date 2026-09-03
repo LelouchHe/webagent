@@ -147,6 +147,10 @@ export function clearSession(
   return post("/api/v1/sessions/" + id + "/clear", body);
 }
 
+export function compactSession(id: string): Promise<Record<string, unknown>> {
+  return post("/api/v1/sessions/" + id + "/compact", {});
+}
+
 export function deleteSession(id: string): Promise<void> {
   return request("/api/v1/sessions/" + id, { method: "DELETE" });
 }

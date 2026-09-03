@@ -30,7 +30,10 @@ import {
   setLocalLogLevel,
   showLogStatus,
 } from "./slash-commands.ts";
-import { replaceCurrentSession } from "./session-actions.ts";
+import {
+  compactCurrentSession,
+  replaceCurrentSession,
+} from "./session-actions.ts";
 import {
   createPreview,
   revokeShare,
@@ -202,6 +205,11 @@ export async function handleSlashCommand(text: string): Promise<boolean> {
         cwd: arg || undefined,
         showCwd: Boolean(arg),
       });
+      return true;
+    }
+
+    case "/compact": {
+      await compactCurrentSession();
       return true;
     }
 

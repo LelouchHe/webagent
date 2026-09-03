@@ -201,6 +201,37 @@ WebAgent session ID.
 
 ---
 
+#### `POST /api/v1/sessions/:id/compact`
+
+Generate an agent-authored context handoff for a fresh ACP execution while
+preserving the stable WebAgent session, its visible history, attachments, and
+title. The summary is broadcast and rendered as an assistant message, then
+stored as a one-shot pending handoff. It is not sent to the fresh ACP
+execution until the user submits the next real prompt.
+
+The endpoint returns after the compact operation is accepted. The session is
+busy while the summary is generated and the ACP binding is rotated; cancel
+active work first.
+
+**Response** `202`:
+
+```json
+{ "status": "accepted" }
+```
+
+On the next real prompt, WebAgent prepends the pending summary to the ACP
+prompt while storing and displaying only the user's original text. The pending
+summary is cleared after the prompt is handed to the ACP bridge. If compact
+fails before rotation, the pending handoff is removed and the original
+execution remains authoritative.
+
+**Immediate errors:** `404` (session not found), `409` (session is busy or
+already has a pending compact summary), `500` (session resume failed), `503`
+(agent not ready or unable to generate a summary). Summary-generation or ACP
+rotation failures after acceptance are broadcast as an `error` SSE event.
+
+---
+
 #### `POST /api/v1/sessions/:id/clear`
 
 Replace the session's current ACP execution while preserving the stable

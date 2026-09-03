@@ -130,6 +130,36 @@ describe("Store", () => {
       assert.equal(store.ensureRootSession("/tmp/root").title, "工作台");
     });
 
+    it("persists and clears one pending compact summary with its assistant event", () => {
+      store.createSession("web-1", "/tmp/root", "auto", "agent-1");
+
+      store.saveCompactSummary("web-1", "Current goal and next action");
+
+      assert.equal(
+        store.getPendingCompactSummary("web-1"),
+        "Current goal and next action",
+      );
+      const summary = store
+        .getEvents("web-1")
+        .find((event) => event.type === "assistant_message");
+      assert.equal(
+        JSON.parse(summary!.data).text,
+        "Current goal and next action",
+      );
+      assert.equal(
+        store.clearPendingCompactSummary("web-1", "wrong summary"),
+        false,
+      );
+      assert.equal(
+        store.clearPendingCompactSummary(
+          "web-1",
+          "Current goal and next action",
+        ),
+        true,
+      );
+      assert.equal(store.getPendingCompactSummary("web-1"), null);
+    });
+
     it("binds an ACP execution to an existing Root record", () => {
       store.ensureRootSession("/tmp/root");
 

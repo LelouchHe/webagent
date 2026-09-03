@@ -1974,6 +1974,27 @@ export function handleEvent(msg: AgentEvent) {
       break;
     }
 
+    case "assistant_message": {
+      // Server-generated compact summaries are persisted as assistant messages
+      // and broadcast only after the silent summary prompt has completed.
+      if (msg.seq != null && msg.seq <= state.lastEventSeq) break;
+      hideWaiting();
+      finishThinking();
+      finishAssistant();
+      const el = renderContentEvent("assistant_message", msg, liveHooks());
+      if (el) {
+        appendMessageElement(el);
+        if (msg.seq != null) {
+          el.dataset.firstEventSeq = String(msg.seq);
+          el.dataset.lastEventSeq = String(msg.seq);
+          state.lastEventSeq = Math.max(state.lastEventSeq, msg.seq);
+          setSyncBoundary();
+        }
+      }
+      scrollToBottom();
+      break;
+    }
+
     case "message_chunk":
       // ACP background work may trigger a new Main-agent message while the
       // foreground prompt remains ended/idle. Render that unsolicited stream

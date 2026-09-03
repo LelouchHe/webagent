@@ -63,6 +63,7 @@ reserved Root Session has id `root` and no parent.
 | `source` | TEXT NOT NULL DEFAULT `'auto'` | How the session was created (`auto`, `inbox`, …) |
 | `deleted_at` | INTEGER | Unix-millis tombstone marker; `NULL` = live, set = soft-deleted (kept alive only because shares still reference the row) |
 | `parent_session_id` | TEXT REFERENCES `sessions(id)` | Optional parent WebAgent Session; `NULL` for Root and pre-hierarchy rows |
+| `pending_compact_summary` | TEXT | One-shot agent-generated handoff waiting for the next real prompt; `NULL` when consumed |
 
 ### `agent_sessions`
 
@@ -276,6 +277,8 @@ PRAGMA table_info(<table>)  →  if column missing  →  ALTER TABLE ADD COLUMN 
 
 Existing migrations:
 
+- `sessions`: added nullable `pending_compact_summary`; compact handoffs survive
+  ACP rotation and server restart until the next real prompt is accepted
 - `sessions`: added nullable `parent_session_id`; the first upgraded server
   creates the reserved `root` record and attaches existing top-level sessions
   without deleting any rows or records
