@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { rm } from "node:fs/promises";
 import { stat } from "node:fs/promises";
 import { join } from "node:path";
-import { MessageNotFoundError, type Store } from "./store.ts";
+import { MessageNotFoundError, type SessionRow, type Store } from "./store.ts";
 import type { AgentBridge } from "./bridge.ts";
 import { buildMcpServerEntry } from "./mcp/server.ts";
 import type { CapabilityStore } from "./mcp/capability.ts";
@@ -161,14 +161,22 @@ export class SessionManager {
    * configured with a capability store + base URL, keeping sessions
    * without MCP on the previous empty-mcpServers path.
    */
-  private buildMcpServers(webSessionId: string): AcpMcpServer[] | undefined {
+  private buildMcpServerForExecution(
+    webSessionId: string,
+    preserveExisting: boolean,
+  ): { servers: AcpMcpServer[]; token: string } | undefined {
     if (!this.capabilities || !this.mcpBaseUrl) return undefined;
-    return [
-      buildMcpServerEntry(
-        this.capabilities.mint(webSessionId),
-        this.mcpBaseUrl,
-      ),
-    ];
+    const token = preserveExisting
+      ? this.capabilities.mintAdditional(webSessionId)
+      : this.capabilities.mint(webSessionId);
+    return {
+      token,
+      servers: [buildMcpServerEntry(token, this.mcpBaseUrl)],
+    };
+  }
+
+  private buildMcpServers(webSessionId: string): AcpMcpServer[] | undefined {
+    return this.buildMcpServerForExecution(webSessionId, false)?.servers;
   }
 
   /**
@@ -217,13 +225,15 @@ export class SessionManager {
     webSessionId: string,
     cwd: string,
     options: { silent?: boolean; mcpServers?: AcpMcpServer[] },
+    capabilityToken?: string,
   ): Promise<{ sessionId: string; configOptions: ConfigOption[] }> {
     this.creatingSessions.add(webSessionId);
     try {
       return await bridge.newSession(cwd, options);
     } catch (error) {
       this.creatingSessions.delete(webSessionId);
-      this.capabilities?.revokeBySession(webSessionId);
+      if (capabilityToken) this.capabilities?.revoke(capabilityToken);
+      else this.capabilities?.revokeBySession(webSessionId);
       throw error;
     }
   }
@@ -329,6 +339,90 @@ export class SessionManager {
         ? this.applyStoredConfig(configOptions, session)
         : [],
     };
+  }
+
+  /**
+   * Rotate only the ACP execution for a stable WebAgent session.
+   * The old execution remains persisted as historical binding provenance.
+   */
+  async clearSession(
+    bridge: SessionBridge,
+    sessionId: string,
+    cwd?: string,
+  ): Promise<{ sessionId: string; configOptions: ConfigOption[] }> {
+    const session = this.store.getSession(sessionId);
+    if (!session) throw new Error(`Session not found: ${sessionId}`);
+    const sessionCwd = expandHomePath(cwd ?? session.cwd);
+    try {
+      const info = await stat(sessionCwd);
+      if (!info.isDirectory()) throw new Error("not a directory");
+    } catch {
+      throw new InvalidSessionDirectoryError(sessionCwd);
+    }
+
+    const execution = this.buildMcpServerForExecution(sessionId, true);
+    const created = await this.createAgentSession(
+      bridge,
+      sessionId,
+      sessionCwd,
+      this.buildNewSessionOptions(undefined, execution?.servers),
+      execution?.token,
+    );
+
+    try {
+      this.store.rotateAgentSession(sessionId, created.sessionId);
+    } catch (error) {
+      bridge.discardUnboundSession?.(created.sessionId);
+      this.creatingSessions.delete(sessionId);
+      if (execution?.token) this.capabilities?.revoke(execution.token);
+      throw error;
+    }
+
+    this.liveSessions.add(sessionId);
+    this.creatingSessions.delete(sessionId);
+    if (execution?.token) {
+      this.capabilities?.revokeOtherTokens(sessionId, execution.token);
+    }
+    bridge.sessionMapped?.(created.sessionId);
+
+    const configOptions = await this.restoreSessionConfig(
+      bridge,
+      sessionId,
+      created.configOptions,
+      session,
+    );
+    return {
+      sessionId,
+      configOptions: this.applyStoredConfig(configOptions, session),
+    };
+  }
+
+  /** Reapply the stable Session config to a newly created ACP execution. */
+  private async restoreSessionConfig(
+    bridge: SessionBridge,
+    sessionId: string,
+    configOptions: ConfigOption[],
+    session: Pick<SessionRow, "mode" | "reasoning_effort" | "model">,
+  ): Promise<ConfigOption[]> {
+    const values: Array<{ id: string; value: string | null }> = [
+      { id: "mode", value: session.mode },
+      { id: "reasoning_effort", value: session.reasoning_effort },
+      { id: "model", value: session.model },
+    ];
+    let updated = configOptions;
+    for (const { id, value } of values) {
+      if (!value) continue;
+      try {
+        const next = await bridge.setConfigOption(sessionId, id, value);
+        if (next.length > 0) {
+          updated = next;
+          this.cachedConfigOptions = next;
+        }
+      } catch {
+        // An option may no longer be supported by the current agent.
+      }
+    }
+    return updated;
   }
 
   /** Cache the ACP config schema and persist this session's current values. */

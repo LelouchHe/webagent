@@ -17,22 +17,50 @@ const CAPABILITY_PREFIX = "mcp_";
  */
 export class CapabilityStore {
   private readonly byToken = new Map<string, string>();
-  private readonly bySession = new Map<string, string>();
+  private readonly bySession = new Map<string, Set<string>>();
+
+  private mintToken(webSessionId: string): string {
+    const token = `${CAPABILITY_PREFIX}${randomBytes(32).toString("base64url")}`;
+    this.byToken.set(token, webSessionId);
+    const tokens = this.bySession.get(webSessionId) ?? new Set<string>();
+    tokens.add(token);
+    this.bySession.set(webSessionId, tokens);
+    return token;
+  }
 
   /** Mint a fresh capability for one session, replacing any prior one. */
   mint(webSessionId: string): string {
     this.revokeBySession(webSessionId);
-    const token = `${CAPABILITY_PREFIX}${randomBytes(32).toString("base64url")}`;
-    this.byToken.set(token, webSessionId);
-    this.bySession.set(webSessionId, token);
-    return token;
+    return this.mintToken(webSessionId);
   }
 
-  /** Revoke the capability minted for a session (no-op when none exists). */
-  revokeBySession(webSessionId: string): void {
-    const token = this.bySession.get(webSessionId);
-    if (!token) return;
+  /** Mint a replacement while keeping the current execution capability valid. */
+  mintAdditional(webSessionId: string): string {
+    return this.mintToken(webSessionId);
+  }
+
+  /** Revoke one capability token (no-op when it is unknown). */
+  revoke(token: string): void {
+    const webSessionId = this.byToken.get(token);
+    if (!webSessionId) return;
     this.byToken.delete(token);
+    const tokens = this.bySession.get(webSessionId);
+    tokens?.delete(token);
+    if (tokens?.size === 0) this.bySession.delete(webSessionId);
+  }
+
+  /** Revoke all capabilities except the one used by a replacement execution. */
+  revokeOtherTokens(webSessionId: string, keepToken: string): void {
+    for (const token of this.bySession.get(webSessionId) ?? []) {
+      if (token !== keepToken) this.revoke(token);
+    }
+  }
+
+  /** Revoke every capability minted for a session (no-op when none exists). */
+  revokeBySession(webSessionId: string): void {
+    for (const token of this.bySession.get(webSessionId) ?? []) {
+      this.byToken.delete(token);
+    }
     this.bySession.delete(webSessionId);
   }
 

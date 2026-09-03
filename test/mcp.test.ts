@@ -24,6 +24,19 @@ describe("CapabilityStore", () => {
     assert.equal(caps.resolve(second), "web-1");
   });
 
+  it("can keep the previous token valid while a replacement execution starts", () => {
+    const caps = new CapabilityStore();
+    const first = caps.mint("web-1");
+    const second = caps.mintAdditional("web-1");
+
+    assert.equal(caps.resolve(first), "web-1");
+    assert.equal(caps.resolve(second), "web-1");
+
+    caps.revokeOtherTokens("web-1", second);
+    assert.equal(caps.resolve(first), null);
+    assert.equal(caps.resolve(second), "web-1");
+  });
+
   it("revokes per session and fails closed for unknown tokens", () => {
     const caps = new CapabilityStore();
     const token = caps.mint("web-1");

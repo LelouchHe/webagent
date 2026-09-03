@@ -625,6 +625,110 @@ describe("SessionManager", () => {
     });
   });
 
+  describe("clearSession", () => {
+    it("rotates the ACP execution while preserving the WebAgent session", async () => {
+      store.createSession("web-1", tmpDir, "auto", "agent-old");
+      store.updateSessionConfig("web-1", "model", "model-old");
+      store.updateSessionConfig("web-1", "mode", "plan");
+      sm.liveSessions.add("web-1");
+      const configCalls: Array<{ id: string; value: string }> = [];
+
+      const bridge = {
+        async newSession() {
+          return { sessionId: "agent-new", configOptions: [] };
+        },
+        async setConfigOption(_sessionId: string, id: string, value: string) {
+          configCalls.push({ id, value });
+          return [];
+        },
+        async loadSession() {
+          throw new Error("loadSession should not be called");
+        },
+      };
+
+      const result = await sm.clearSession(bridge, "web-1");
+
+      assert.equal(result.sessionId, "web-1");
+      assert.deepEqual(
+        store.listSessions().map((session) => session.id),
+        ["web-1"],
+      );
+      assert.equal(store.getAgentSessionId("web-1"), "agent-new");
+      assert.equal(store.getWebSessionId("agent-old"), undefined);
+      assert.deepEqual(configCalls, [
+        { id: "mode", value: "plan" },
+        { id: "model", value: "model-old" },
+      ]);
+    });
+
+    it("rotates MCP capability only after the replacement execution succeeds", async () => {
+      store.createSession("web-1", tmpDir, "auto", "agent-old");
+      sm.liveSessions.add("web-1");
+      const capabilities = new CapabilityStore();
+      const oldToken = capabilities.mint("web-1");
+      let newToken: string | undefined;
+      const manager = new SessionManager(
+        store,
+        tmpDir,
+        tmpDir,
+        capabilities,
+        "http://127.0.0.1:6800",
+      );
+
+      const bridge = {
+        async newSession(_cwd: string, options?: { mcpServers?: any[] }) {
+          const authorization = options?.mcpServers?.[0]?.headers[0]?.value;
+          newToken = authorization?.replace(/^Bearer\s+/, "");
+          return { sessionId: "agent-new", configOptions: [] };
+        },
+        async setConfigOption() {
+          return [];
+        },
+        async loadSession() {
+          throw new Error("loadSession should not be called");
+        },
+      };
+
+      await manager.clearSession(bridge, "web-1");
+
+      assert.equal(capabilities.resolve(oldToken), null);
+      assert.equal(newToken && capabilities.resolve(newToken), "web-1");
+    });
+
+    it("keeps the current MCP capability when replacement creation fails", async () => {
+      store.createSession("web-1", tmpDir, "auto", "agent-old");
+      sm.liveSessions.add("web-1");
+      const capabilities = new CapabilityStore();
+      const oldToken = capabilities.mint("web-1");
+      const manager = new SessionManager(
+        store,
+        tmpDir,
+        tmpDir,
+        capabilities,
+        "http://127.0.0.1:6800",
+      );
+
+      const bridge = {
+        async newSession() {
+          throw new Error("replacement failed");
+        },
+        async setConfigOption() {
+          return [];
+        },
+        async loadSession() {
+          throw new Error("loadSession should not be called");
+        },
+      };
+
+      await assert.rejects(
+        () => manager.clearSession(bridge, "web-1"),
+        /replacement failed/,
+      );
+      assert.equal(capabilities.resolve(oldToken), "web-1");
+      assert.equal(store.getAgentSessionId("web-1"), "agent-old");
+    });
+  });
+
   describe("buffer management", () => {
     it("appends and flushes assistant buffer", () => {
       store.createSession("s1", "/x");
