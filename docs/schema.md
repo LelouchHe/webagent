@@ -46,7 +46,9 @@ deletion contract.
 
 ### `sessions`
 
-Chat sessions. One row per session created via `POST /api/v1/sessions`.
+WebAgent Sessions. Each row is a stable user-visible work thread created
+via `POST /api/v1/sessions`; its ACP execution can be rotated by clear. The
+reserved Root Session has id `root` and no parent.
 
 | Column | Type | Notes |
 |---|---|---|
@@ -60,6 +62,7 @@ Chat sessions. One row per session created via `POST /api/v1/sessions`.
 | `reasoning_effort` | TEXT | Last reasoning effort selection (added in migration) |
 | `source` | TEXT NOT NULL DEFAULT `'auto'` | How the session was created (`auto`, `inbox`, …) |
 | `deleted_at` | INTEGER | Unix-millis tombstone marker; `NULL` = live, set = soft-deleted (kept alive only because shares still reference the row) |
+| `parent_session_id` | TEXT REFERENCES `sessions(id)` | Optional parent WebAgent Session; `NULL` for Root and pre-hierarchy rows |
 
 ### `agent_sessions`
 
@@ -71,7 +74,7 @@ configured agent.
 |---|---|---|
 | `agent_key` | TEXT NOT NULL | Resolved `agent_cmd` executable path; identifies one stable agent/profile |
 | `agent_session_id` | TEXT NOT NULL | Opaque ACP session ID |
-| `web_session_id` | TEXT REFERENCES `sessions(id)` ON DELETE CASCADE | Stable WebAgent ID; `NULL` for internal sessions such as title generation |
+| `web_session_id` | TEXT REFERENCES `sessions(id)` ON DELETE CASCADE | Current WebAgent Session ID; `NULL` for retired ACP executions and internal sessions such as title generation |
 | `created_at` | TEXT NOT NULL DEFAULT now | ISO-ish `%Y-%m-%d %H:%M:%f` |
 
 PK: `(agent_key, agent_session_id)`. A partial unique index ensures a non-null
@@ -226,14 +229,16 @@ selection, etc.). Single-user model = single owner scope.
 | `idx_shares_session` | `shares` | `(session_id, created_at DESC)` | Owner share-list view |
 | `shares_one_active_preview` | `shares` | `(session_id) WHERE shared_at IS NULL` | At most one preview per session (partial UNIQUE) |
 | `idx_attachments_session` | `attachments` | `(session_id)` | Per-session listing + GC sweep |
-| `idx_agent_sessions_web` | `agent_sessions` | `(web_session_id) WHERE web_session_id IS NOT NULL` | One ACP binding per visible WebAgent session (partial UNIQUE) |
+| `idx_agent_sessions_web` | `agent_sessions` | `(web_session_id) WHERE web_session_id IS NOT NULL` | One current ACP binding per visible WebAgent Session (partial UNIQUE) |
+| `idx_sessions_parent` | `sessions` | `(parent_session_id)` | Root/child Session relationship and future family queries |
 
 ---
 
 ## Cascade & Lifecycle
 
 Events and shares use `NO ACTION`; mappings and attachments cascade from their
-session. Three rules govern any code that deletes a session:
+session. The reserved Root Session has id `root`, no parent, and cannot be
+deleted. Three rules govern any code that deletes a session:
 
 1. **Hard delete** (`deleteSession()` → `"hard"`): drop preview shares + client
    ops, then `DELETE FROM events` then `DELETE FROM sessions`. The final delete
@@ -271,6 +276,9 @@ PRAGMA table_info(<table>)  →  if column missing  →  ALTER TABLE ADD COLUMN 
 
 Existing migrations:
 
+- `sessions`: added nullable `parent_session_id`; the first upgraded server
+  creates the reserved `root` record and attaches existing top-level sessions
+  without deleting any rows or records
 - `sessions`: added `title`, `last_active_at`, `model`, `mode`,
   `reasoning_effort`, `source`, `deleted_at` (in roughly that order over the
   project's history)

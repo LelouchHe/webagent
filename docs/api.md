@@ -151,6 +151,7 @@ Create a new session. Optionally inherits model and reasoning_effort from anothe
 | `cwd`                  | string | No       | Working directory. Defaults to server's `default_cwd` config. Must exist on disk. |
 | `inheritFromSessionId` | string | No       | Copy model + reasoning_effort from this session                                   |
 | `source`               | string | No       | Tag for the session origin. Default: `"auto"`                                     |
+| `parentSessionId`      | string | No       | Parent WebAgent Session. Defaults to the reserved Root when it exists.              |
 
 **Response** `201`:
 
@@ -160,6 +161,7 @@ Create a new session. Optionally inherits model and reasoning_effort from anothe
   "cwd": "/home/user/project",
   "title": null,
   "source": "auto",
+  "parentSessionId": "root",
   "configOptions": [...]
 }
 ```
@@ -196,6 +198,41 @@ WebAgent session ID.
 
 `created` is `false` when an existing session is returned. Explicit
 `POST /api/v1/sessions` requests are never deduplicated.
+
+---
+
+#### `POST /api/v1/sessions/:id/clear`
+
+Replace the session's current ACP execution while preserving the stable
+WebAgent session ID, history, attachments, title, and configuration. An
+optional `cwd` changes the working directory for the replacement execution.
+The request is rejected with `409` while the session has active prompt or bash
+work; cancel it first.
+
+**Request body (optional):**
+
+```json
+{ "cwd": "/path/to/project" }
+```
+
+**Response** `200`:
+
+```json
+{
+  "id": "abc-123",
+  "cwd": "/path/to/project",
+  "title": null,
+  "source": "auto",
+  "configOptions": []
+}
+```
+
+The old ACP binding is no longer used for incoming events. The existing
+`session_created` SSE shape is broadcast so connected clients refresh the
+session's runtime metadata.
+
+**Errors:** `400` (invalid cwd or replacement failure), `404` (session not
+found), `409` (session is busy), `503` (agent not ready)
 
 ---
 
