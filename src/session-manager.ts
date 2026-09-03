@@ -470,9 +470,16 @@ export class SessionManager {
     configOptions: ConfigOption[],
     session: Pick<SessionRow, "mode" | "reasoning_effort" | "model">,
   ): Promise<ConfigOption[]> {
+    const thinkingId =
+      configOptions.find(
+        (option) =>
+          option.id === "reasoning_effort" ||
+          option.id === "thought_level" ||
+          option.category === "thought_level",
+      )?.id ?? "reasoning_effort";
     const values: Array<{ id: string; value: string | null }> = [
       { id: "mode", value: session.mode },
-      { id: "reasoning_effort", value: session.reasoning_effort },
+      { id: thinkingId, value: session.reasoning_effort },
       { id: "model", value: session.model },
     ];
     let updated = configOptions;

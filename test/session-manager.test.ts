@@ -683,6 +683,39 @@ describe("SessionManager", () => {
       ]);
     });
 
+    it("restores thinking through the replacement execution's thought_level option", async () => {
+      store.createSession("web-1", tmpDir, "auto", "agent-old");
+      store.updateSessionConfig("web-1", "reasoning_effort", "high");
+      sm.liveSessions.add("web-1");
+      const configCalls: Array<{ id: string; value: string }> = [];
+      const configOptions: ConfigOption[] = [
+        {
+          type: "select",
+          id: "thought_level",
+          category: "thought_level",
+          name: "Thinking",
+          currentValue: "medium",
+          options: [{ value: "high", name: "High" }],
+        },
+      ];
+      const bridge = {
+        async newSession() {
+          return { sessionId: "agent-new", configOptions };
+        },
+        async setConfigOption(_sessionId: string, id: string, value: string) {
+          configCalls.push({ id, value });
+          return [];
+        },
+        async loadSession() {
+          throw new Error("loadSession should not be called");
+        },
+      };
+
+      await sm.clearSession(bridge, "web-1");
+
+      assert.deepEqual(configCalls, [{ id: "thought_level", value: "high" }]);
+    });
+
     it("clears runtime buffers and command snapshots for the replacement execution", async () => {
       store.createSession("web-1", tmpDir, "auto", "agent-old");
       sm.liveSessions.add("web-1");
