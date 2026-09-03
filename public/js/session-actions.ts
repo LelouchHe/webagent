@@ -1,5 +1,6 @@
-import { state, createNewSessionRequest, resetSessionUI } from "./state.ts";
+import { state, resetSessionUI } from "./state.ts";
 import { addSystem } from "./render.ts";
+import { switchToSession } from "./session-navigation.ts";
 import * as api from "./api.ts";
 
 export async function replaceCurrentSession({
@@ -21,22 +22,17 @@ export async function replaceCurrentSession({
     return;
   }
   resetSessionUI();
-  addSystem(
-    showCwd && nextCwd
-      ? `Clearing session and starting at ${nextCwd}…`
-      : "Clearing session…",
-  );
-  const created = await createNewSessionRequest({
-    cwd: nextCwd,
-    inheritFromSessionId: oldId,
-  });
-  if (!created) {
-    addSystem("err: Failed to clear session");
-    return;
-  }
+  state.sessionId = null;
   try {
-    await api.deleteSession(oldId);
+    await api.clearSession(oldId, { cwd: nextCwd });
+    await switchToSession(oldId);
+    addSystem(
+      showCwd && nextCwd
+        ? `Clearing session and starting at ${nextCwd}…`
+        : "Clearing session…",
+    );
   } catch (err: unknown) {
-    addSystem(`err: Failed to delete previous session — ${String(err)}`);
+    state.sessionId = oldId;
+    addSystem(`err: Failed to clear session — ${String(err)}`);
   }
 }

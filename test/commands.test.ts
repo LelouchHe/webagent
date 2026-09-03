@@ -392,7 +392,7 @@ describe("commands", () => {
       assert.equal(state.awaitingNewSession, true);
     });
 
-    it("clears current session — creates new session inheriting from old, then deletes old", async () => {
+    it("clears current session in place without deleting its history", async () => {
       state.clientId = "cl-1";
       state.sessionId = "old-1";
       state.sessionCwd = "/home/project";
@@ -406,10 +406,24 @@ describe("commands", () => {
             text: async () => json,
           };
         };
-        if (url === "/api/v1/sessions" && init?.method === "POST")
-          return body({ id: "new-2" });
-        if (url === "/api/v1/sessions/old-1" && init?.method === "DELETE")
-          return body({});
+        if (url === "/api/v1/sessions/old-1/clear" && init?.method === "POST")
+          return body({ id: "old-1", cwd: "/home/project", configOptions: [] });
+        if (url === "/api/v1/sessions/old-1")
+          return body({ id: "old-1", cwd: "/home/project", configOptions: [] });
+        if (url.includes("/snapshot"))
+          return body({
+            seq: 0,
+            session: {
+              id: "old-1",
+              title: null,
+              cwd: "/home/project",
+              model: null,
+              mode: null,
+            },
+            runtime: { busy: null, plan: null, contextUsage: null },
+            agentCommands: { epoch: "", revision: 0, commands: [] },
+          });
+        if (url.includes("/events")) return body([]);
         return body({});
       });
 
@@ -417,73 +431,42 @@ describe("commands", () => {
       await new Promise((r) => setTimeout(r, 0));
 
       assert.equal(handled, true);
-      const createCall = fetchCalls.find(
-        (c) => c.url === "/api/v1/sessions" && c.init?.method === "POST",
-      );
-      assert.ok(createCall, "expected POST /api/v1/sessions");
-      const createBody = JSON.parse(createCall.init.body);
-      assert.equal(createBody.cwd, "/home/project");
-      assert.equal(createBody.inheritFromSessionId, "old-1");
-
-      const deleteCall = fetchCalls.find(
+      const clearCall = fetchCalls.find(
         (c) =>
-          c.url === "/api/v1/sessions/old-1" && c.init?.method === "DELETE",
+          c.url === "/api/v1/sessions/old-1/clear" && c.init?.method === "POST",
       );
-      assert.ok(deleteCall, "expected DELETE for old session");
-
+      assert.ok(clearCall, "expected POST /api/v1/sessions/old-1/clear");
+      assert.deepEqual(JSON.parse(clearCall.init.body), {
+        cwd: "/home/project",
+      });
+      assert.equal(
+        fetchCalls.some(
+          (c) =>
+            c.url === "/api/v1/sessions/old-1" && c.init?.method === "DELETE",
+        ),
+        false,
+      );
       assert.equal(state.awaitingNewSession, false);
-      assert.equal(state.sessionId, "new-2");
+      assert.equal(state.sessionId, "old-1");
       assert.ok(messageLines().includes("Clearing session…"));
     });
 
-    it("clears old session when SSE confirms a create with interrupted response", async () => {
+    it("keeps the current session when clear request fails", async () => {
       state.clientId = "cl-1";
       state.sessionId = "old-1";
       state.sessionCwd = "/home/project";
-      let rejectCreate!: (reason: Error) => void;
       setFetch(async (url: string, init?: RequestInit) => {
-        if (url === "/api/v1/sessions" && init?.method === "POST") {
-          return new Promise((_resolve, reject) => {
-            rejectCreate = reject;
-          });
-        }
-        if (url === "/api/v1/sessions/old-1" && init?.method === "DELETE") {
-          return {
-            ok: true,
-            status: 204,
-            text: async () => "",
-          };
+        if (url === "/api/v1/sessions/old-1/clear" && init?.method === "POST") {
+          throw new Error("response interrupted");
         }
         throw new Error(`Unexpected fetch: ${url}`);
       });
 
-      const pending = commands.handleSlashCommand("/clear");
-      await new Promise((resolve) => setImmediate(resolve));
-      const createCall = fetchCalls.find(
-        (call) =>
-          call.url === "/api/v1/sessions" && call.init?.method === "POST",
-      );
-      assert.ok(createCall);
-      const clientOpId = new Headers(createCall.init.headers).get(
-        "X-Client-Op-Id",
-      );
-      assert.ok(clientOpId);
-      events.handleEvent({
-        type: "session_created",
-        sessionId: "new-2",
-        cwd: "/home/project",
-        configOptions: [],
-        clientOpId,
-      });
-      rejectCreate(new Error("response interrupted"));
-
-      assert.equal(await pending, true);
-      assert.equal(state.sessionId, "new-2");
+      assert.equal(await commands.handleSlashCommand("/clear"), true);
+      assert.equal(state.sessionId, "old-1");
       assert.ok(
-        fetchCalls.some(
-          (call) =>
-            call.url === "/api/v1/sessions/old-1" &&
-            call.init?.method === "DELETE",
+        messageLines().some((line: string) =>
+          line.includes("Failed to clear session"),
         ),
       );
     });
@@ -502,10 +485,24 @@ describe("commands", () => {
             text: async () => json,
           };
         };
-        if (url === "/api/v1/sessions" && init?.method === "POST")
-          return body({ id: "new-2" });
-        if (url === "/api/v1/sessions/old-1" && init?.method === "DELETE")
-          return body({});
+        if (url === "/api/v1/sessions/old-1/clear" && init?.method === "POST")
+          return body({ id: "old-1", cwd: "/tmp/other", configOptions: [] });
+        if (url === "/api/v1/sessions/old-1")
+          return body({ id: "old-1", cwd: "/tmp/other", configOptions: [] });
+        if (url.includes("/snapshot"))
+          return body({
+            seq: 0,
+            session: {
+              id: "old-1",
+              title: null,
+              cwd: "/tmp/other",
+              model: null,
+              mode: null,
+            },
+            runtime: { busy: null, plan: null, contextUsage: null },
+            agentCommands: { epoch: "", revision: 0, commands: [] },
+          });
+        if (url.includes("/events")) return body([]);
         return body({});
       });
 
@@ -513,36 +510,25 @@ describe("commands", () => {
       await new Promise((r) => setTimeout(r, 0));
 
       assert.equal(handled, true);
-      const createCall = fetchCalls.find(
-        (c) => c.url === "/api/v1/sessions" && c.init?.method === "POST",
+      const clearCall = fetchCalls.find(
+        (c) =>
+          c.url === "/api/v1/sessions/old-1/clear" && c.init?.method === "POST",
       );
-      assert.ok(createCall, "expected POST /api/v1/sessions");
-      const createBody = JSON.parse(createCall.init.body);
-      assert.equal(createBody.cwd, "/tmp/other");
-      assert.equal(createBody.inheritFromSessionId, "old-1");
+      assert.ok(clearCall, "expected POST /api/v1/sessions/old-1/clear");
+      const clearBody = JSON.parse(clearCall.init.body);
+      assert.equal(clearBody.cwd, "/tmp/other");
       assert.ok(
         messageLines().includes("Clearing session and starting at /tmp/other…"),
       );
     });
 
-    // Regression: /clear used to fire createSession and deleteSession in parallel, relying
-    // on dispatch order. But the server processes delete (DB row removal) faster than
-    // create (ACP session spinup), so the resulting `session_deleted` SSE arrived first,
-    // triggered fallbackToNextSession(), and landed the user on some unrelated existing
-    // session. The fresh `session_created` was then ignored because awaitingNewSession had
-    // already been consumed.
-    //
-    // The fix is to await createSession before dispatching delete — that guarantees the
-    // server emits session_created before session_deleted on the SSE stream.
-    //
-    // This stub models real server timing: create is async (yields a tick before its
-    // SSE broadcast and HTTP response), delete is synchronous. The decoy in listSessions
-    // is the trap target — without it, fallback might happen to pick "new" and silently
-    // mask the bug.
-    it("/clear lands on the new session despite slow create / fast delete", async () => {
+    // Regression coverage: clearing is an asynchronous ACP replacement, but it
+    // must not trigger session navigation to a different WebAgent Session.
+    it("/clear keeps the stable session when the endpoint is slow", async () => {
       state.clientId = "cl-1";
       state.sessionId = "old";
       state.sessionCwd = "/p";
+      let resolveClear!: (response: any) => void;
       setFetch(async (url: string, init?: any) => {
         const body = (data: any) => {
           const json = JSON.stringify(data);
@@ -553,50 +539,55 @@ describe("commands", () => {
             text: async () => json,
           };
         };
-        if (url === "/api/v1/sessions" && init?.method === "POST") {
-          // Simulate slow create: yield a tick, then broadcast session_created, then return.
-          await new Promise((r) => setTimeout(r, 0));
-          events.handleEvent({
-            type: "session_created",
-            sessionId: "new",
-            cwd: "/p",
-            title: null,
-            configOptions: [],
+        if (url === "/api/v1/sessions/old/clear" && init?.method === "POST") {
+          return new Promise((resolve) => {
+            resolveClear = resolve;
           });
-          return body({ id: "new" });
         }
-        if (url === "/api/v1/sessions/old" && init?.method === "DELETE") {
-          // Simulate fast delete: synchronous broadcast.
-          events.handleEvent({ type: "session_deleted", sessionId: "old" });
-          return body({});
-        }
-        // listSessions: decoy comes before "new" so fallback's find() lands on the wrong
-        // target if the buggy parallel path runs. Without this trap target, fallback
-        // could pick "new" and silently mask the bug.
-        if (
-          url === "/api/v1/sessions" &&
-          (!init?.method || init.method === "GET")
-        ) {
-          return body([{ id: "old" }, { id: "decoy" }, { id: "new" }]);
-        }
-        if (url.startsWith("/api/v1/sessions/") && url.includes("/events"))
-          return body([]);
-        if (url.startsWith("/api/v1/sessions/")) {
-          const id = url.split("/").pop();
-          return body({ id, cwd: "/p", title: null, configOptions: [] });
-        }
+        if (url === "/api/v1/sessions/old")
+          return body({ id: "old", cwd: "/p", title: null, configOptions: [] });
+        if (url.includes("/events"))
+          return body({
+            events: [],
+            streaming: { assistant: false, thinking: false },
+          });
+        if (url.includes("/snapshot"))
+          return body({
+            version: 1,
+            seq: 0,
+            session: {
+              id: "old",
+              title: null,
+              cwd: "/p",
+              model: null,
+              mode: null,
+              createdAt: null,
+              lastEventSeq: 0,
+            },
+            runtime: { busy: null, plan: null, contextUsage: null },
+            agentCommands: { epoch: "", revision: 0, commands: [] },
+          });
         return body({});
       });
 
-      await commands.handleSlashCommand("/clear");
-      // Drain pending microtasks/timers — slow create resolves on a later tick.
-      for (let i = 0; i < 5; i++) await new Promise((r) => setTimeout(r, 0));
-
-      assert.equal(
-        state.sessionId,
-        "new",
-        `expected to land on new session, got ${state.sessionId}`,
+      const pending = commands.handleSlashCommand("/clear");
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.ok(
+        fetchCalls.some(
+          (call) =>
+            call.url === "/api/v1/sessions/old/clear" &&
+            call.init?.method === "POST",
+        ),
       );
+
+      resolveClear({
+        ok: true,
+        status: 200,
+        json: async () => ({ id: "old", cwd: "/p", configOptions: [] }),
+        text: async () => '{"id":"old","cwd":"/p","configOptions":[]}',
+      });
+      assert.equal(await pending, true);
+      assert.equal(state.sessionId, "old");
       assert.equal(state.awaitingNewSession, false);
     });
 
