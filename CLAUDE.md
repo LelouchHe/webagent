@@ -70,6 +70,7 @@ Locate and read only the sections relevant to the task.
 | Frontend lifecycle and reconciliation | [`docs/client-architecture.md`](./docs/client-architecture.md) |
 | ACP surface and agent compatibility | [`docs/acp.md`](./docs/acp.md) |
 | Upload, attachment, and signed-URL lifecycle | [`docs/uploads.md`](./docs/uploads.md) |
+| Vocabulary and naming contract | [`docs/vocabulary.md`](./docs/vocabulary.md) |
 | Security model and CSP invariants | [`docs/security.md`](./docs/security.md) |
 | Streaming render performance | [`docs/performance.md`](./docs/performance.md) |
 | Database schema and migrations | [`docs/schema.md`](./docs/schema.md) |
