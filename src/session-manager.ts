@@ -285,6 +285,9 @@ export class SessionManager {
         sessionCwd,
         source,
         agentSessionId,
+        this.store.getSessionIncludingDeleted(ROOT_SESSION_ID)
+          ? ROOT_SESSION_ID
+          : null,
       );
     } catch (err) {
       slog.warn("ACP session created but local persistence failed", {

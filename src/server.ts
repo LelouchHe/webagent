@@ -74,6 +74,7 @@ const store = new Store(
   config.data_dir,
   agentKeyFromCommand(preflight.agentCmd),
 );
+store.ensureRootSession(config.default_cwd);
 console.log(`[store] using ${config.data_dir}/`);
 
 // Pin <data_dir>/sessions realpath at boot so all later anchor checks
@@ -283,6 +284,7 @@ server.listen(config.port, config.host, () => {
     try {
       await initBridge(agentCmd);
       console.log(`[bridge] ready`);
+      await sessions.ensureRootSession(bridge!);
       sessions.hydrate();
     } catch (err) {
       console.error(`[bridge] failed to start:`, err);

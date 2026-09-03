@@ -517,6 +517,28 @@ describe("SessionManager", () => {
       assert.equal(store.getAgentSessionId(created.sessionId), "s2");
     });
 
+    it("creates new sessions as Root children when Root exists", async () => {
+      store.ensureRootSession(tmpDir);
+      const bridge = {
+        async newSession() {
+          return { sessionId: "agent-child", configOptions: [] };
+        },
+        async setConfigOption() {
+          return [];
+        },
+        async loadSession() {
+          throw new Error("loadSession should not be called");
+        },
+      };
+
+      const created = await sm.createSession(bridge);
+
+      assert.equal(
+        store.getSession(created.sessionId)?.parent_session_id,
+        "root",
+      );
+    });
+
     it("expands home shorthand before creating a session", async () => {
       let agentCwd = "";
       const bridge = {
