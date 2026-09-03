@@ -24,6 +24,7 @@ test("/clear swaps the Task to a fresh execution (same task, new session)", asyn
     const j = (await res.json()) as { task: { cwd: string } };
     return j.task.cwd;
   }, oldTaskId);
+  const cwdName = oldCwd.split("/").pop() || "task";
 
   await sendPrompt(page, "/clear");
 
@@ -48,7 +49,5 @@ test("/clear swaps the Task to a fresh execution (same task, new session)", asyn
 
   // The same Task still appears in the switch menu (records kept, execution swapped)
   await page.locator("#input").fill("/switch ");
-  await expect(page.locator("#slash-menu.active")).toContainText(
-    "task-thread-model",
-  );
+  await expect(page.locator("#slash-menu.active")).toContainText(cwdName);
 });
