@@ -2249,6 +2249,22 @@ export function createRequestHandler(
             });
             return;
           }
+          // The cascade removes descendants too; gate on their busy state as
+          // well so deleting an idle parent cannot silently abort an
+          // in-flight prompt or bash run in a child.
+          if (sessions) {
+            const busyDescendant = store
+              .getDescendantSessionIds(sessionId)
+              .find(
+                (descendantId) => sessions.getBusyKind(descendantId) !== null,
+              );
+            if (busyDescendant) {
+              json(res, HTTP_STATUS.CONFLICT, {
+                error: "Cancel active work before deleting the session",
+              });
+              return;
+            }
+          }
           try {
             let affectedStore: {
               mode: "hard" | "soft";

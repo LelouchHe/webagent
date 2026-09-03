@@ -612,12 +612,15 @@ export class Store {
     return this.db.transaction(() => {
       const current = this.getAgentSessionBinding(webSessionId);
       if (!current) throw new Error(`Session not found: ${webSessionId}`);
-      if (current.agent_session_id === agentSessionId) return current;
+      // Persist a requested cwd even when the agent returns the same
+      // execution id (no-op rotation); the caller decides whether to retire
+      // based on whether the binding actually moved.
       if (cwd !== undefined) {
         this.db
           .prepare("UPDATE sessions SET cwd = ? WHERE id = ?")
           .run(cwd, webSessionId);
       }
+      if (current.agent_session_id === agentSessionId) return current;
 
       this.db
         .prepare(
@@ -683,6 +686,33 @@ export class Store {
       .run(ROOT_SESSION_ID, parentId, parentId, ROOT_SESSION_ID);
   }
 
+  /** Direct child ids of a session (excluding itself and Root), in any order. */
+  private listChildren(parentId: string): string[] {
+    return (
+      this.db
+        .prepare(
+          "SELECT id FROM sessions WHERE parent_session_id = ? AND id != ? AND id != ?",
+        )
+        .all(parentId, parentId, ROOT_SESSION_ID) as Array<{ id: string }>
+    ).map((row) => row.id);
+  }
+
+  /**
+   * Every descendant of a session, transitively (used to gate destructive
+   * operations such as the DELETE busy check against in-flight children).
+   */
+  getDescendantSessionIds(rootId: string): string[] {
+    const out: string[] = [];
+    const queue = [rootId];
+    while (queue.length > 0) {
+      for (const child of this.listChildren(queue.pop()!)) {
+        queue.push(child);
+        out.push(child);
+      }
+    }
+    return out;
+  }
+
   /**
    * Delete a session and every descendant session recursively. The
    * parent/child hierarchy is a hard ownership link, so the deletion is
@@ -706,13 +736,9 @@ export class Store {
     const affected: SessionDelete[] = [];
     // Delete descendants first (children before parents) so the FK on
     // parent_session_id can never block the parent's own row removal.
-    const children = this.db
-      .prepare(
-        "SELECT id FROM sessions WHERE parent_session_id = ? AND id != ? AND id != ?",
-      )
-      .all(id, id, ROOT_SESSION_ID) as Array<{ id: string }>;
-    for (const child of children) {
-      affected.push(...this.deleteSession(child.id).affected);
+    const children = this.listChildren(id);
+    for (const childId of children) {
+      affected.push(...this.deleteSession(childId).affected);
     }
     const binding = this.getAgentSessionBinding(id);
     // Drop preview shares regardless — they are owner-only drafts and

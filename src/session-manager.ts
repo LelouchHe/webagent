@@ -405,7 +405,12 @@ export class SessionManager {
       return result;
     } finally {
       this.rotatingSessions.delete(sessionId);
-      this.syncBusy(sessionId);
+      // Skip the idle sync when the session was hard-deleted mid-rotation
+      // (parent cascade): syncBusy would lazily re-create a stale runtime
+      // state row that releaseSessionRuntime had already dropped.
+      if (this.store.getSessionIncludingDeleted(sessionId)) {
+        this.syncBusy(sessionId);
+      }
     }
   }
 
@@ -451,8 +456,11 @@ export class SessionManager {
     }
     bridge.sessionMapped?.(created.sessionId);
     // The old ACP execution is explicitly retired now that the new binding
-    // is authoritative; best-effort, never rolls back the rotation.
-    if (retiredAgentSessionId) {
+    // is authoritative; best-effort, never rolls back the rotation. Only
+    // retire when the binding actually moved: an agent that returns the
+    // current execution id makes rotate a no-op, and retiring it would kill
+    // the still-live execution.
+    if (retiredAgentSessionId && retiredAgentSessionId !== created.sessionId) {
       void bridge.retireExecution?.(retiredAgentSessionId);
     }
     this.resetSessionRuntime(sessionId, preserveRuntimeState);

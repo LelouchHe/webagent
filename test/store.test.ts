@@ -48,6 +48,15 @@ describe("Store", () => {
       assert.equal(row.count, 1);
     });
 
+    it("persists a requested cwd even when rotation is a no-op (same agent id)", () => {
+      store.createSession("web-1", "/a", "auto", "agent-1");
+
+      store.rotateAgentSession("web-1", "agent-1", "/b");
+
+      assert.equal(store.getSession("web-1")?.cwd, "/b");
+      assert.equal(store.getAgentSessionId("web-1"), "agent-1");
+    });
+
     it("keeps internal ACP sessions out of the user session list", () => {
       store.registerInternalAgentSession("agent-title");
 
@@ -259,6 +268,27 @@ describe("Store", () => {
   });
 
   describe("cascade deletion", () => {
+    it("lists all transitive descendants", () => {
+      store.createSession("parent", "/a", "auto", "agent-parent");
+      store.createSession("child", "/b", "auto", "agent-child", "parent");
+      store.createSession(
+        "grandchild",
+        "/c",
+        "auto",
+        "agent-grandchild",
+        "child",
+      );
+      store.createSession("sibling", "/d", "auto", "agent-sibling", "parent");
+
+      assert.deepEqual(store.getDescendantSessionIds("parent").sort(), [
+        "child",
+        "grandchild",
+        "sibling",
+      ]);
+      assert.deepEqual(store.getDescendantSessionIds("child"), ["grandchild"]);
+      assert.deepEqual(store.getDescendantSessionIds("leaf"), []);
+    });
+
     it("hard-deletes a parent together with its live descendants", () => {
       store.createSession("parent", "/a", "auto", "agent-parent");
       store.createSession("child", "/b", "auto", "agent-child", "parent");

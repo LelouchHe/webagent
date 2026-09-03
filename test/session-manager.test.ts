@@ -734,6 +734,33 @@ describe("SessionManager", () => {
       ]);
     });
 
+    it("never retires the current execution when the agent returns the same id", async () => {
+      store.createSession("web-1", tmpDir, "auto", "agent-same");
+      sm.liveSessions.add("web-1");
+      const retired: string[] = [];
+      const bridge = {
+        async newSession() {
+          return { sessionId: "agent-same", configOptions: [] };
+        },
+        async setConfigOption() {
+          return [];
+        },
+        async loadSession() {
+          throw new Error("loadSession should not be called");
+        },
+        async retireExecution(agentSessionId: string) {
+          retired.push(agentSessionId);
+        },
+      };
+
+      await sm.clearSession(bridge, "web-1");
+
+      // rotateAgentSession is a no-op, so the still-authoritative execution
+      // must not be retired; retiring it would kill the live binding.
+      assert.equal(store.getAgentSessionId("web-1"), "agent-same");
+      assert.deepEqual(retired, []);
+    });
+
     it("restores thinking through the replacement execution's thought_level option", async () => {
       store.createSession("web-1", tmpDir, "auto", "agent-old");
       store.updateSessionConfig("web-1", "reasoning_effort", "high");

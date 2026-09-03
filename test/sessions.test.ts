@@ -863,6 +863,19 @@ describe("Session REST API", () => {
       assert.ok(!sessions.liveSessions.has("child"));
     });
 
+    it("rejects deletion when a descendant has active work", async () => {
+      store.createSession("parent", tmpDir, "auto", "agent-parent");
+      store.createSession("child", tmpDir, "auto", "agent-child", "parent");
+      sessions.activePrompts.add("child");
+      sessions.syncBusy("child");
+
+      const res = await makeRequest(port, "DELETE", "/api/v1/sessions/parent");
+
+      assert.equal(res.status, 409);
+      assert.equal(store.getSession("parent")?.id, "parent");
+      assert.equal(store.getSession("child")?.id, "child");
+    });
+
     it("rejects deletion while prompt work is active", async () => {
       store.createSession("s-active-delete", tmpDir);
       sessions.activePrompts.add("s-active-delete");
