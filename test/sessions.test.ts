@@ -615,8 +615,16 @@ describe("Session REST API", () => {
         "{}",
       );
       assert.equal(compactRes.status, 202);
-      for (let i = 0; i < 10; i++)
-        await new Promise((resolve) => setImmediate(resolve));
+      // Compaction runs as a background task; wait for the rotation itself
+      // (bounded deadline, not event-loop turns) so slow CI runners never
+      // observe the pre-rotation state.
+      const deadline = Date.now() + 5000;
+      while (
+        store.getAgentSessionId("s1") !== "mock-session-1" &&
+        Date.now() < deadline
+      ) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
 
       assert.equal(
         store.getPendingCompactSummary("s1"),
