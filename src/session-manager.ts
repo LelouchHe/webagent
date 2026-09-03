@@ -243,13 +243,25 @@ export class SessionManager {
     }
   }
 
+  /** Default new WebAgent sessions to the reserved Root when it exists. */
+  private resolveParentSessionId(
+    parentSessionId?: string | null,
+  ): string | null {
+    return (
+      parentSessionId ??
+      (this.store.getSessionIncludingDeleted(ROOT_SESSION_ID)
+        ? ROOT_SESSION_ID
+        : null)
+    );
+  }
+
   /** Create a new session in both bridge and store, inheriting the source session's config. */
   async createSession(
     bridge: SessionBridge,
     cwd?: string,
     inheritFromSessionId?: string,
     source: string = "auto",
-    opts?: { silent?: boolean },
+    opts?: { silent?: boolean; parentSessionId?: string | null },
   ): Promise<{ sessionId: string; configOptions: ConfigOption[] }> {
     const sessionCwd = expandHomePath(cwd ?? this.defaultCwd);
     try {
@@ -285,9 +297,7 @@ export class SessionManager {
         sessionCwd,
         source,
         agentSessionId,
-        this.store.getSessionIncludingDeleted(ROOT_SESSION_ID)
-          ? ROOT_SESSION_ID
-          : null,
+        this.resolveParentSessionId(opts?.parentSessionId),
       );
     } catch (err) {
       slog.warn("ACP session created but local persistence failed", {

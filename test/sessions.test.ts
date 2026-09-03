@@ -423,6 +423,22 @@ describe("Session REST API", () => {
       });
     });
 
+    it("creates a child session under an existing Root", async () => {
+      store.ensureRootSession(tmpDir);
+
+      const res = await makeRequest(
+        port,
+        "POST",
+        "/api/v1/sessions",
+        JSON.stringify({ parentSessionId: "root" }),
+      );
+
+      assert.equal(res.status, 201);
+      const body = JSON.parse(res.body);
+      assert.equal(store.getSession(body.id)?.parent_session_id, "root");
+      assert.equal(body.parentSessionId, "root");
+    });
+
     it("creates a session with custom cwd", async () => {
       const res = await makeRequest(
         port,

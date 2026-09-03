@@ -2074,12 +2074,14 @@ export function createRequestHandler(
           cwd?: string;
           inheritFromSessionId?: string;
           source?: string;
+          parentSessionId?: string;
         };
         try {
           body = JSON.parse(await readBody(req)) as {
             cwd?: string;
             inheritFromSessionId?: string;
             source?: string;
+            parentSessionId?: string;
           };
         } catch {
           json(res, HTTP_STATUS.BAD_REQUEST, { error: "Invalid JSON" });
@@ -2092,6 +2094,7 @@ export function createRequestHandler(
             body.cwd,
             body.inheritFromSessionId,
             source,
+            { parentSessionId: body.parentSessionId },
           );
           const session = store.getSession(sessionId);
           const sessionCreatedEvent = {
@@ -2124,6 +2127,7 @@ export function createRequestHandler(
               : undefined,
             title: session?.title ?? null,
             source: session?.source ?? source,
+            parentSessionId: session?.parent_session_id ?? null,
             configOptions,
             agentCommands: sessions.getAgentCommands(sessionId),
             clientOpId: clientOpId ?? undefined,
