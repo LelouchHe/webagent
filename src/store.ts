@@ -530,6 +530,35 @@ export class Store {
       .get(this.agentKey, webSessionId) as AgentSessionRow | undefined;
   }
 
+  /**
+   * Replace the current ACP execution for a stable WebAgent session.
+   * The previous binding remains as historical provenance but no longer
+   * resolves incoming ACP events to the WebAgent session.
+   */
+  rotateAgentSession(
+    webSessionId: string,
+    agentSessionId: string,
+  ): AgentSessionRow {
+    return this.db.transaction(() => {
+      const current = this.getAgentSessionBinding(webSessionId);
+      if (!current) throw new Error(`Session not found: ${webSessionId}`);
+      if (current.agent_session_id === agentSessionId) return current;
+
+      this.db
+        .prepare(
+          "UPDATE agent_sessions SET web_session_id = NULL WHERE agent_key = ? AND web_session_id = ?",
+        )
+        .run(this.agentKey, webSessionId);
+      this.db
+        .prepare(
+          "INSERT INTO agent_sessions (agent_key, agent_session_id, web_session_id) VALUES (?, ?, ?)",
+        )
+        .run(this.agentKey, agentSessionId, webSessionId);
+
+      return this.getAgentSessionBinding(webSessionId)!;
+    })();
+  }
+
   ownsSession(webSessionId: string): boolean {
     return this.getAgentSessionBinding(webSessionId) !== undefined;
   }
