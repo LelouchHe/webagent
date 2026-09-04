@@ -405,21 +405,18 @@ async function executeCreateTask(
     addSystem("err: No active task");
     return;
   }
-
-  if (!brief) {
-    addSystem("err: Task creation requires a brief");
-    return;
-  }
   const title = basename(resolved);
   if (!title || title === "." || title === "..") {
     addSystem("err: Task title cannot be '.', '..', or empty");
     return;
   }
+  // A brief kicks the child off immediately; without one the child is
+  // created as a named idle task (legacy /new semantics).
   const body = {
     parentId: currentTaskId,
     cwd: dirname(resolved),
     title,
-    brief,
+    ...(brief ? { brief } : {}),
     inheritFromTaskId: currentTaskId,
   };
 

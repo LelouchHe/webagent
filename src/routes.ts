@@ -2426,16 +2426,17 @@ export function createRequestHandler(
         const title = hasCollaborationFields
           ? validateCollaborationTitle(body.title)
           : undefined;
+        const hasBrief =
+          typeof body.brief === "string" && body.brief.trim().length > 0;
         if (
           hasCollaborationFields &&
           (title === null ||
-            typeof body.brief !== "string" ||
-            !body.brief.trim() ||
-            !body.parentId)
+            !body.parentId ||
+            (body.brief !== undefined && !hasBrief))
         ) {
           json(res, HTTP_STATUS.BAD_REQUEST, {
             error:
-              "title and non-empty brief are required for collaboration task creation",
+              "a collaboration child needs a title and parent; the brief is optional",
           });
           return;
         }
@@ -2451,8 +2452,8 @@ export function createRequestHandler(
             return;
           }
         }
-        const initialMessageId = title ? randomUUID() : undefined;
-        const initialDeliveryId = title ? randomUUID() : undefined;
+        const initialMessageId = title && hasBrief ? randomUUID() : undefined;
+        const initialDeliveryId = title && hasBrief ? randomUUID() : undefined;
         try {
           const { taskId, configOptions } = await tasks.createTask(
             bridge,
@@ -2462,10 +2463,18 @@ export function createRequestHandler(
             {
               parentId: body.parentId,
               title: title ?? undefined,
-              brief: body.brief,
-              workflowStatus: title ? "running" : undefined,
+              brief: hasBrief ? body.brief : undefined,
+              workflowStatus: title
+                ? hasBrief
+                  ? "running"
+                  : "idle"
+                : undefined,
               initialMessage:
-                title && initialMessageId && initialDeliveryId && body.parentId
+                title &&
+                hasBrief &&
+                initialMessageId &&
+                initialDeliveryId &&
+                body.parentId
                   ? {
                       id: initialMessageId,
                       deliveryId: initialDeliveryId,
@@ -2513,7 +2522,8 @@ export function createRequestHandler(
             agentCommands: tasks.getAgentCommands(taskId),
             clientOpId: clientOpId ?? undefined,
           });
-          if (title) void tasks.drainCollaborationDeliveries(bridge, taskId);
+          if (initialMessageId)
+            void tasks.drainCollaborationDeliveries(bridge, taskId);
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
           if (

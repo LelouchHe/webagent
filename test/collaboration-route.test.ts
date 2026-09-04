@@ -143,6 +143,41 @@ describe("S3 collaboration write routes", () => {
     assert.match(promptCalls[0].text, /检查发布前的改动/);
   });
 
+  it("creates a named child without a brief as an idle task", async () => {
+    const response = await request(port, "/api/v1/tasks", {
+      parentId: "parent",
+      cwd: tmpDir,
+      title: "仅命名",
+    });
+
+    assert.equal(response.status, 201);
+    const taskId = response.body.id as string;
+    const task = store.getTask(taskId);
+    assert.ok(task);
+    assert.equal(task.title, "仅命名");
+    assert.equal(task.brief, "");
+    assert.equal(task.workflow_status, "idle");
+    // No collaboration message is minted, so no initial ids are returned
+    // and no prompt is submitted — the task stays idle until the user acts.
+    assert.equal(response.body.initialMessageId, undefined);
+    assert.equal(response.body.initialDeliveryId, undefined);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.equal(
+      promptCalls.filter((call) => call.taskId === taskId).length,
+      0,
+      "a briefless child must not be prompted",
+    );
+  });
+
+  it("rejects a title-only child without a parent", async () => {
+    const response = await request(port, "/api/v1/tasks", {
+      cwd: tmpDir,
+      title: "无父任务",
+    });
+
+    assert.equal(response.status, 400);
+  });
+
   it("creates a local collaboration delivery without trusting a client LCA", async () => {
     const response = await request(port, "/api/v1/tasks/parent/messages", {
       targetTaskId: "sibling",

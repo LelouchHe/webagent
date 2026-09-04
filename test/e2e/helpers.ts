@@ -28,11 +28,10 @@ export async function currentTaskId(page: Page): Promise<string> {
 
 export async function createNewTask(page: Page): Promise<string> {
   const previousId = await currentTaskId(page);
-  // `+` creates a minimally named child (any non-empty brief) using the
-  // current task's cwd; the resulting task id becomes its default title.
-  await page
-    .locator("#input")
-    .fill("+e2e-child-" + Date.now().toString(36) + " e2e helper task");
+  // `+name` with no brief creates a named idle child (legacy /new
+  // semantics) in the current task's cwd; the resulting task id becomes
+  // its default title.
+  await page.locator("#input").fill("+e2e-child-" + Date.now().toString(36));
   await page.locator("#input").press("Enter");
   await expect.poll(() => currentTaskId(page)).not.toBe(previousId);
   // Hash flips before the FE has finished switching (snapshot fetch +
