@@ -335,7 +335,13 @@ function handlePromptDone(
     if (store.getTask(event.taskId)?.workflow_status === "running") {
       store.updateTaskWorkflowStatus(event.taskId, "idle");
     }
-    void tasks.drainCollaborationDeliveries(bridge, event.taskId);
+    // Defer past the synchronous prompt_done broadcast below: a busy patch
+    // minted by the drain must never race ahead of the finished turn's own
+    // terminator, or clients drop the terminator as a superseded turn and
+    // strand its pending tool/permission UI.
+    void Promise.resolve().then(() =>
+      tasks.drainCollaborationDeliveries(bridge, event.taskId),
+    );
   }
 }
 

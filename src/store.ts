@@ -1585,6 +1585,16 @@ export class Store {
       | undefined;
   }
 
+  /** Read-only queued count; lets a caller skip busy-turn churn entirely. */
+  countQueuedDeliveries(recipientTaskId: string): number {
+    const row = this.db
+      .prepare(
+        "SELECT COUNT(*) AS count FROM deliveries WHERE recipient_task_id = ? AND status = 'queued'",
+      )
+      .get(recipientTaskId) as { count: number };
+    return row.count;
+  }
+
   /** Atomically claim every currently queued Delivery for one target task. */
   claimQueuedDeliveries(recipientTaskId: string): CollaborationDeliveryRow[] {
     const claimedAt = Date.now();

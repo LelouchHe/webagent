@@ -77,6 +77,27 @@ describe("TaskManager collaboration delivery drain", () => {
     assert.equal(store.getTask("target")?.workflow_status, "running");
   });
 
+  it("does not churn the busy turn when nothing is queued", async () => {
+    const busyPatches: Array<string | null> = [];
+    const unsubscribe = tasks.state.onPatch((event) => {
+      const busy = event.patch.runtime?.busy;
+      if (busy !== undefined) busyPatches.push(busy?.promptId ?? null);
+    });
+    try {
+      assert.equal(
+        await tasks.drainCollaborationDeliveries(mockBridgeStubs(), "target"),
+        false,
+      );
+      assert.deepEqual(
+        busyPatches,
+        [],
+        "a drain with nothing queued must not enter a busy turn",
+      );
+    } finally {
+      unsubscribe();
+    }
+  });
+
   it("terminates all outstanding deliveries when clear replaces the execution", async () => {
     store.createCollaborationMessage({
       id: "draining-message",

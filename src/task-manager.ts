@@ -1407,6 +1407,10 @@ export class TaskManager {
     taskId: string,
   ): Promise<boolean> {
     if (this.getBusyKind(taskId) !== null) return false;
+    // Enter a busy turn (which mints a new promptId) only when there is
+    // something to deliver; otherwise the churn advances client turn
+    // identity for nothing and can strand a finishing turn's terminator.
+    if (this.store.countQueuedDeliveries(taskId) === 0) return false;
     this.drainingCollaborationTasks.add(taskId);
     this.syncBusy(taskId);
     try {
