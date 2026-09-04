@@ -77,6 +77,54 @@ describe("TaskManager collaboration delivery drain", () => {
     assert.equal(store.getTask("target")?.workflow_status, "running");
   });
 
+  it("terminates all outstanding deliveries when clear replaces the execution", async () => {
+    store.createCollaborationMessage({
+      id: "draining-message",
+      deliveryId: "draining-delivery",
+      sourceTaskId: "source",
+      directTargetTaskId: "target",
+      sourceActor: "user",
+      body: "也不要重放",
+    });
+    store.claimQueuedDeliveries("target");
+    store.createCollaborationMessage({
+      id: "queued-message",
+      deliveryId: "queued-delivery",
+      sourceTaskId: "source",
+      directTargetTaskId: "target",
+      sourceActor: "user",
+      body: "不要投给新 execution",
+    });
+
+    await tasks.clearTask(
+      {
+        ...mockBridgeStubs(),
+        async newSession() {
+          return { sessionId: "agent-target-replacement", configOptions: [] };
+        },
+      },
+      "target",
+    );
+
+    assert.equal(
+      store.getCollaborationDelivery("queued-delivery")?.status,
+      "failed",
+    );
+    assert.equal(
+      store.getCollaborationDelivery("queued-delivery")?.failure_reason,
+      "cleared_before_delivery",
+    );
+    assert.equal(
+      store.getCollaborationDelivery("draining-delivery")?.status,
+      "failed",
+    );
+    assert.equal(
+      store.getCollaborationDelivery("draining-delivery")?.failure_reason,
+      "cleared_during_delivery",
+    );
+    assert.equal(store.getTask("target")?.workflow_status, "idle");
+  });
+
   it("leaves deliveries queued while the target already has an active prompt", async () => {
     store.createCollaborationMessage({
       id: "m1",
