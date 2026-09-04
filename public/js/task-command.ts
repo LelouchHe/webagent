@@ -217,6 +217,8 @@ interface CreateCandidateArgs {
   primary: string;
   path?: string;
   pathSecondary?: string;
+  /** Short L1 annotation (e.g. the family relation for @ rows). */
+  secondary?: string;
   onSelect: () => void | Promise<void>;
 }
 
@@ -225,6 +227,7 @@ function makeCandidate(args: CreateCandidateArgs): Candidate {
   return {
     spec: {
       primary: args.primary,
+      secondary: args.secondary,
       path: args.path,
       pathSecondary: args.pathSecondary,
       fill,
@@ -453,8 +456,8 @@ async function buildMessageCandidates(parsed: {
         targetPath: reconstructTaskPath(parsed.path, node),
         remainder: parsed.remainder,
         primary: node.title ?? node.id,
+        secondary: relationTo(current, node),
         path: taskDisplayPath(node),
-        pathSecondary: relationTo(current, node),
         onSelect: () => executeMessageToTask(node.id, parsed.remainder),
       }),
     );
