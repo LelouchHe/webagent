@@ -7,6 +7,21 @@ import {
 } from "../src/task-path.ts";
 
 describe("task command path parsing", () => {
+  it("parses a bare marker with an empty target for immediate listing", () => {
+    assert.deepEqual(parseTaskCommand("+"), {
+      marker: "+",
+      target: "",
+      path: { absolute: false, segments: [] },
+      remainder: "",
+    });
+    assert.deepEqual(parseTaskCommand("@ "), {
+      marker: "@",
+      target: "",
+      path: { absolute: false, segments: [] },
+      remainder: " ",
+    });
+  });
+
   it("parses a bare child title and leaves the message source untouched", () => {
     assert.deepEqual(parseTaskCommand("+tts-fix 修复播放中断"), {
       marker: "+",
@@ -84,7 +99,8 @@ describe("task command path parsing", () => {
   });
 
   it("rejects malformed command heads instead of guessing", () => {
-    for (const input of ["", "hello", "+", "@!", '+"unterminated brief']) {
+    // Bare `+` and `@!` are valid now (empty target → default scope listing).
+    for (const input of ["", "hello", '+"unterminated brief']) {
       assert.throws(() => parseTaskCommand(input), TaskPathParseError);
     }
   });

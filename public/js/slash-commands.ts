@@ -129,7 +129,7 @@ interface PathItem {
   cwdDisplay: string;
   time: string;
 }
-async function listRecentPaths(): Promise<PathItem[]> {
+export async function listRecentPaths(): Promise<PathItem[]> {
   const limit = state.recentPathsLimit;
   const url =
     limit > 0 ? `/api/v1/recent-paths?limit=${limit}` : "/api/v1/recent-paths";

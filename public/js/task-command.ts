@@ -20,6 +20,7 @@ import {
   taskDisplayPath,
 } from "./path-display.ts";
 import { state } from "./state.ts";
+import { listRecentPaths } from "./slash-commands.ts";
 import { switchToTask } from "./task-navigation.ts";
 import { isTaskCommand } from "./input-command.ts";
 import { addSystem } from "./render.ts";
@@ -267,6 +268,46 @@ export async function buildTaskCommandCandidates(
   return buildMessageCandidates(parsed);
 }
 
+/** Bare `+` rows: the default cwd (the child's parent path) plus recents. */
+async function buildBareCreateCandidates(): Promise<Candidate[]> {
+  const base = state.taskCwd ?? "";
+  const candidates: Candidate[] = [];
+  const defaultDisplay = state.taskCwdDisplay ?? base;
+  if (base) {
+    candidates.push({
+      spec: {
+        primary: defaultDisplay,
+        secondary: "default",
+        current: true,
+        fill: `+${quoteShellWord(defaultDisplay)} `,
+        continueOnFill: true,
+        onSelect: () => executeCreateTask(defaultDisplay, ""),
+      },
+      prefix: "",
+      kind: "data",
+    });
+  }
+  try {
+    const recents = await listRecentPaths();
+    for (const p of recents) {
+      if (p.cwd.toLowerCase() === base.toLowerCase()) continue;
+      candidates.push({
+        spec: {
+          primary: p.cwdDisplay,
+          fill: `+${quoteShellWord(p.cwdDisplay)} `,
+          continueOnFill: true,
+          onSelect: () => executeCreateTask(p.cwdDisplay, ""),
+        },
+        prefix: "",
+        kind: "data",
+      });
+    }
+  } catch {
+    // Recent paths unavailable; the default row still stands.
+  }
+  return candidates;
+}
+
 async function buildCreateCandidates(parsed: {
   marker: string;
   target: string;
@@ -281,10 +322,18 @@ async function buildCreateCandidates(parsed: {
   // target directory does not exist yet. `~`-typed targets pass through.
   const displayBase = state.taskCwdDisplay ?? base;
   const displayResolved = resolveDisplayTarget(displayBase, target);
+  // Trailing whitespace or a trailing separator means "descend": list the
+  // resolved directory itself without a name filter; otherwise complete the
+  // parent listing against the typed tail.
+  const descend = /\s$/.test(parsed.remainder) || target.endsWith("/");
   const { parent, tail } = parentAndTail(resolved);
-  const dirToList = tail ? resolved : dirname(resolved);
-  const dirDisplay = tail ? displayResolved : dirname(displayResolved);
-  const titlePrefix = tail || basename(resolved);
+  const dirToList = descend ? resolved : dirname(resolved);
+  const dirDisplay = descend ? displayResolved : dirname(displayResolved);
+  const q = descend ? "" : tail.toLowerCase();
+
+  // Bare `+`: immediate scope = the current cwd (the child's parent path,
+  // the default) plus recently used paths, mirroring the legacy /new picker.
+  if (target === "") return buildBareCreateCandidates();
 
   let entries: api.FileListEntry[] = [];
   try {
@@ -294,7 +343,6 @@ async function buildCreateCandidates(parsed: {
     // Directory may not exist; fall through to freeform placeholder.
   }
 
-  const q = titlePrefix.toLowerCase();
   const matched = entries.filter(
     (e) =>
       e.name.toLowerCase().startsWith(q) &&
@@ -304,10 +352,16 @@ async function buildCreateCandidates(parsed: {
 
   const candidates: Candidate[] = [];
 
-  // Freeform row for the literal typed path, rendered in display form.
+  // Freeform row for the literal typed input, rendered in display form.
+  // A name-style target (no separator) becomes the child title; a path-style
+  // target keeps the last segment as the title.
+  const freeformDisplay =
+    target.includes("/") || target === "~"
+      ? `create at '${displayResolved}'`
+      : `create '${target}' at '${displayResolved}'`;
   candidates.push({
     spec: {
-      primary: `create at '${dirDisplay}'`,
+      primary: freeformDisplay,
       fill: `${parsed.marker}${quoteShellWord(target)}${parsed.remainder}`,
       onSelect: () => executeCreateTask(target, parsed.remainder),
     },
@@ -321,17 +375,30 @@ async function buildCreateCandidates(parsed: {
       : parent
         ? parent + "/" + entry.name
         : "/" + entry.name;
-    candidates.push(
-      makeCandidate({
-        marker: parsed.marker,
-        targetPath: quoteShellWord(candidateTarget),
-        remainder: parsed.remainder,
+    // Preserve the user's typed prefix style in the completion fill: a bare
+    // name completes to the bare name, `a/` to `a/<name>`, `~/x/p` stays
+    // home-relative. The execution path resolves it against the cwd.
+    const lastSep = target.lastIndexOf("/");
+    const completedTarget =
+      target.endsWith("/") || target.includes("/")
+        ? lastSep >= 0
+          ? target.slice(0, lastSep + 1) + entry.name
+          : entry.name
+        : entry.name;
+    candidates.push({
+      spec: {
         primary: entry.name,
         path: joinDisplay(dirDisplay, entry.name),
         pathSecondary: "directory",
+        // Trailing space: Tab descends into the completed directory and
+        // keeps the menu open for the next segment.
+        fill: `${parsed.marker}${quoteShellWord(completedTarget)} `,
+        continueOnFill: true,
         onSelect: () => executeCreateTask(candidateTarget, parsed.remainder),
-      }),
-    );
+      },
+      prefix: "",
+      kind: "data",
+    });
   }
 
   return candidates;
@@ -355,20 +422,31 @@ async function buildMessageCandidates(parsed: {
   const current = map.get(state.taskId);
   if (!current) return [];
 
-  // Empty path → list the whole local scope.
-  const segments =
-    parsed.path.segments.length === 0 ? ["."] : parsed.path.segments;
-  const path = { ...parsed.path, segments };
-
-  const resolved = resolveTaskPathNodes(state.taskId, tasks, path);
   const scope = getLocalScope(state.taskId, tasks);
   const scopeIds = new Set(scope.map((n) => n.id));
+  const raw = parsed.path.segments;
+
+  // Bare `@` lists the whole local scope (parent, children, siblings);
+  // relative typed input without `..` navigation filters that scope by its
+  // last segment (the direct-family policy makes deeper targets invalid).
+  // `..` and absolute paths keep the tree-navigation resolution.
+  const scopeFiltered =
+    raw.length === 0 || (!parsed.path.absolute && raw[0] !== "..");
+  const filterSegment = scopeFiltered ? (raw.at(-1) ?? "") : "";
+  const resolved = scopeFiltered
+    ? scope
+    : resolveTaskPathNodes(
+        state.taskId,
+        tasks,
+        raw.length === 0 ? { ...parsed.path, segments: ["."] } : parsed.path,
+      );
 
   const candidates: Candidate[] = [];
 
   for (const node of resolved) {
     if (node.id === state.taskId) continue;
     if (!scopeIds.has(node.id)) continue;
+    if (filterSegment && !matchesSegment(node, filterSegment)) continue;
     candidates.push(
       makeCandidate({
         marker: parsed.marker,
@@ -400,8 +478,11 @@ async function executeCreateTask(
     addSystem("err: No active task");
     return;
   }
-  const title = basename(resolved);
-  if (!title || title === "." || title === "..") {
+  // A bare `+` (empty target) creates at the current cwd with no explicit
+  // title — the task id becomes the title, matching legacy /new semantics.
+  const bare = target === "";
+  const title = bare ? null : basename(resolved);
+  if (title !== null && (!title || title === "." || title === "..")) {
     addSystem("err: Task title cannot be '.', '..', or empty");
     return;
   }
@@ -409,8 +490,8 @@ async function executeCreateTask(
   // created as a named idle task (legacy /new semantics).
   const body = {
     parentId: currentTaskId,
-    cwd: dirname(resolved),
-    title,
+    cwd: bare ? base : dirname(resolved),
+    ...(title ? { title } : {}),
     ...(brief ? { brief } : {}),
     inheritFromTaskId: currentTaskId,
   };

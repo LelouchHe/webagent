@@ -113,7 +113,9 @@ function parseShellWord(source: string, start: number): ParsedShellWord {
  * the receiving resolver can enforce its own root and visibility policy.
  */
 export function parseTaskPath(target: string): TaskPath {
-  if (!target) throw new TaskPathParseError("Task path cannot be empty");
+  // An empty target is a bare `+`/`@`: the caller lists its default scope
+  // instead of resolving a path.
+  if (!target) return { absolute: false, segments: [] };
   const absolute = target.startsWith("/");
   const segments = target.split("/").filter(Boolean);
   return { absolute, segments };
@@ -138,7 +140,16 @@ export function parseTaskCommand(source: string): ParsedTaskCommand {
     throw new TaskPathParseError("Task command must start with +, @, or @!");
   }
 
-  const word = parseShellWord(source, skipWhitespace(source, targetStart));
+  const start = skipWhitespace(source, targetStart);
+  if (start >= source.length) {
+    return {
+      marker,
+      target: "",
+      path: { absolute: false, segments: [] },
+      remainder: source.slice(targetStart),
+    };
+  }
+  const word = parseShellWord(source, start);
   return {
     marker,
     target: word.value,
