@@ -1829,6 +1829,152 @@ describe("events", () => {
         );
       });
 
+      it("deduplicates the HTTP exit navigation and its SSE echo", async () => {
+        state.taskId = "child";
+        let listCalls = 0;
+        const parentTask = {
+          id: "parent-dedupe",
+          cwd: "/tmp",
+          title: "Parent",
+          configOptions: [],
+          busyKind: null,
+        };
+        setFetch(async (url: string, init?: any) => {
+          if (
+            url === "/api/v1/tasks" &&
+            (!init?.method || init.method === "GET")
+          ) {
+            listCalls++;
+            return {
+              ok: true,
+              text: async () => JSON.stringify([{ id: "parent-dedupe" }]),
+            };
+          }
+          if (url === "/api/v1/tasks/parent-dedupe")
+            return { ok: true, text: async () => JSON.stringify(parentTask) };
+          if (url.startsWith("/api/v1/tasks/parent-dedupe/events"))
+            return { ok: true, text: async () => "[]" };
+          if (url === "/api/v1/tasks/parent-dedupe/snapshot")
+            return {
+              ok: true,
+              text: async () =>
+                JSON.stringify({
+                  version: 1,
+                  seq: 0,
+                  task: {},
+                  runtime: { busy: null },
+                }),
+            };
+          return { ok: true, text: async () => "{}" };
+        });
+
+        const httpNavigation = events.fallbackToNextTask(
+          "child",
+          "/tmp",
+          "parent-dedupe",
+          "exit-op-1",
+        );
+        const sseNavigation = events.fallbackToNextTask(
+          "child",
+          "/tmp",
+          "parent-dedupe",
+          "exit-op-1",
+        );
+        await Promise.all([httpNavigation, sseNavigation]);
+
+        assert.equal(listCalls, 1);
+        assert.equal(state.taskId, "parent-dedupe");
+      });
+
+      it("prefers the deleted task's server-provided parent", async () => {
+        state.taskId = "child";
+        const parentTask = {
+          id: "parent",
+          cwd: "/tmp",
+          title: "Parent",
+          configOptions: [],
+          busyKind: null,
+        };
+        setFetch(async (url: string, init?: any) => {
+          if (
+            url === "/api/v1/tasks" &&
+            (!init?.method || init.method === "GET")
+          )
+            return {
+              ok: true,
+              text: async () =>
+                JSON.stringify([{ id: "mru" }, { id: "parent" }]),
+            };
+          if (url === "/api/v1/tasks/parent")
+            return { ok: true, text: async () => JSON.stringify(parentTask) };
+          if (url.startsWith("/api/v1/tasks/parent/events"))
+            return { ok: true, text: async () => "[]" };
+          if (url === "/api/v1/tasks/parent/snapshot")
+            return {
+              ok: true,
+              text: async () =>
+                JSON.stringify({
+                  version: 1,
+                  seq: 0,
+                  task: {},
+                  runtime: { busy: null },
+                }),
+            };
+          return { ok: true, text: async () => "{}" };
+        });
+
+        events.handleEvent({
+          type: "task_deleted",
+          taskId: "child",
+          parentId: "parent",
+        });
+        for (let i = 0; i < 30; i++) await Promise.resolve();
+
+        assert.equal(state.taskId, "parent");
+      });
+
+      it("reloads the preserved Root task after a reset event", async () => {
+        state.taskId = "root";
+        const rootTask = {
+          id: "root",
+          cwd: "/tmp",
+          title: "root",
+          configOptions: [],
+          busyKind: null,
+        };
+        setFetch(async (url: string, init?: any) => {
+          if (
+            url === "/api/v1/tasks" &&
+            (!init?.method || init.method === "GET")
+          )
+            return {
+              ok: true,
+              text: async () => JSON.stringify([{ id: "root" }]),
+            };
+          if (url === "/api/v1/tasks/root")
+            return { ok: true, text: async () => JSON.stringify(rootTask) };
+          if (url.startsWith("/api/v1/tasks/root/events"))
+            return { ok: true, text: async () => "[]" };
+          if (url === "/api/v1/tasks/root/snapshot")
+            return {
+              ok: true,
+              text: async () =>
+                JSON.stringify({
+                  version: 1,
+                  seq: 0,
+                  task: {},
+                  runtime: { busy: null },
+                }),
+            };
+          return { ok: true, text: async () => "{}" };
+        });
+
+        events.handleEvent({ type: "task_reset", taskId: "root" });
+        for (let i = 0; i < 30; i++) await Promise.resolve();
+
+        assert.equal(state.taskId, "root");
+      });
+
       it("creates new task when current is deleted and no others exist", async () => {
         state.taskId = "s1";
         setFetch(async (url: string, init?: any) => {

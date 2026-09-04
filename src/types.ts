@@ -209,7 +209,20 @@ export type AgentEvent =
        *  turn identity existed; consumers must treat that as "unknown". */
       promptId?: string;
     }
-  | { type: "task_deleted"; taskId: string }
+  | {
+      type: "task_deleted";
+      taskId: string;
+      /** Parent of the requested task, when the server can provide it. */
+      parentId?: string | null;
+      /** Correlates the initiating HTTP action with its SSE echo. */
+      clientOpId?: string;
+    }
+  | {
+      type: "task_reset";
+      taskId: string;
+      /** Correlates the initiating HTTP action with its SSE echo. */
+      clientOpId?: string;
+    }
   | { type: "task_title_updated"; taskId: string; title: string }
   | { type: "task_expired"; taskId: string }
   | {

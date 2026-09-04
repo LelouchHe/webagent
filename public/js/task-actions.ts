@@ -14,6 +14,7 @@ import {
 } from "./render.ts";
 import type { AgentCommandSnapshot, ConfigOption } from "../../src/types.ts";
 import * as api from "./api.ts";
+import { fallbackToNextTask } from "./events.ts";
 
 interface ClearTaskResult {
   id: string;
@@ -22,6 +23,29 @@ interface ClearTaskResult {
   title: string | null;
   configOptions: ConfigOption[];
   agentCommands?: AgentCommandSnapshot;
+}
+
+export async function exitCurrentTask(): Promise<void> {
+  if (!state.taskId) {
+    addSystem("warn: No active task");
+    return;
+  }
+  if (state.busy) {
+    addSystem("err: Cancel active work before exiting the task");
+    return;
+  }
+  const exitId = state.taskId;
+  try {
+    const result = await api.deleteTask(exitId);
+    await fallbackToNextTask(
+      result?.reset ? null : exitId,
+      state.taskCwd ?? undefined,
+      result?.reset ? exitId : result?.parentId,
+      result?.clientOpId,
+    );
+  } catch (err) {
+    addSystem(`err: Failed to exit task — ${String(err)}`);
+  }
 }
 
 /**

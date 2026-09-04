@@ -748,25 +748,38 @@ describe("Task REST API", () => {
       const { id } = JSON.parse(createRes.body);
 
       const res = await makeRequest(port, "DELETE", `/api/v1/tasks/${id}`);
-      assert.equal(res.status, 204);
-      assert.equal(res.body, "");
+      assert.equal(res.status, 200);
+      assert.deepEqual(JSON.parse(res.body), {
+        taskId: id,
+        parentId: null,
+        reset: false,
+      });
 
       // Verify deleted from store
       assert.equal(store.getTask(id), undefined);
     });
 
-    it("broadcasts task_deleted event", async () => {
-      const createRes = await makeRequest(port, "POST", "/api/v1/tasks", "{}");
-      const { id } = JSON.parse(createRes.body);
+    it("broadcasts task_deleted with the requested task parent", async () => {
+      store.ensureRootTask(tmpDir);
+      store.bindAgentSession("root", "agent-root");
+      store.createTask("parent", tmpDir, "auto", "agent-parent", "root");
       broadcastEvents.length = 0;
 
-      await makeRequest(port, "DELETE", `/api/v1/tasks/${id}`);
-      const deleted = broadcastEvents.find((e) => e.type === "task_deleted");
+      const res = await makeRequest(port, "DELETE", "/api/v1/tasks/parent");
+      assert.equal(res.status, 200);
+      const deleted = broadcastEvents.find(
+        (e) => e.type === "task_deleted" && e.taskId === "parent",
+      );
       assert.ok(deleted, "should broadcast task_deleted");
       /* eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- narrowing after assert.ok */
-      if (deleted) {
-        assert.equal(deleted.taskId, id);
+      if (deleted?.type === "task_deleted") {
+        assert.equal(deleted.parentId, "root");
       }
+      assert.deepEqual(JSON.parse(res.body), {
+        taskId: "parent",
+        parentId: "root",
+        reset: false,
+      });
     });
 
     it("returns 404 for unknown task", async () => {
@@ -778,15 +791,44 @@ describe("Task REST API", () => {
       assert.equal(res.status, 404);
     });
 
-    it("protects the Root task from deletion", async () => {
+    it("resets Root, deletes its descendants, and keeps Root as the anchor", async () => {
       store.ensureRootTask(tmpDir);
       store.bindAgentSession("root", "agent-root");
+      store.createTask("child", tmpDir, "auto", "agent-child", "root");
+      store.saveEvent(
+        "root",
+        "user_message",
+        { text: "old root" },
+        { from_ref: "user" },
+      );
+      store.saveEvent(
+        "child",
+        "user_message",
+        { text: "child" },
+        { from_ref: "user" },
+      );
+      tasks.liveTasks.add("child");
+      broadcastEvents.length = 0;
 
       const res = await makeRequest(port, "DELETE", "/api/v1/tasks/root");
 
-      assert.equal(res.status, 400);
-      assert.match(res.body, /Root task cannot be deleted/);
+      assert.equal(res.status, 200);
+      assert.deepEqual(JSON.parse(res.body), { taskId: "root", reset: true });
       assert.equal(store.getTask("root")?.id, "root");
+      assert.equal(store.getTaskIncludingDeleted("child"), undefined);
+      assert.deepEqual(store.getEvents("root"), []);
+      assert.ok(
+        broadcastEvents.some(
+          (event) => event.type === "task_deleted" && event.taskId === "child",
+        ),
+      );
+      assert.ok(
+        broadcastEvents.some(
+          (event) => event.type === "task_reset" && event.taskId === "root",
+        ),
+      );
+      assert.ok(mockBridge.retireCalls.includes("agent-root"));
+      assert.ok(mockBridge.retireCalls.includes("agent-child"));
     });
 
     it("cascades to descendant tasks and broadcasts task_deleted per id", async () => {
@@ -797,7 +839,7 @@ describe("Task REST API", () => {
 
       const res = await makeRequest(port, "DELETE", "/api/v1/tasks/parent");
 
-      assert.equal(res.status, 204);
+      assert.equal(res.status, 200);
       assert.equal(store.getTaskIncludingDeleted("parent"), undefined);
       assert.equal(store.getTaskIncludingDeleted("child"), undefined);
       const deletedEvents = broadcastEvents.filter(
@@ -811,6 +853,11 @@ describe("Task REST API", () => {
         "agent-child",
         "agent-parent",
       ]);
+      assert.deepEqual(JSON.parse(res.body), {
+        taskId: "parent",
+        parentId: null,
+        reset: false,
+      });
       assert.ok(!tasks.liveTasks.has("child"));
     });
 

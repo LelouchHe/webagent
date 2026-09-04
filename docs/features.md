@@ -85,7 +85,7 @@ Commands with submenus (`/model`, `/mode`, `/think`, `/notify`, `/switch`, `/new
 | `/reset`              | Reset local frontend state for this device (keeps login token)                                                                |
 | `/switch <title\|id>` | Switch task (match by title or ID prefix)                                                                                  |
 | `/rename <new title>` | Rename task                                                                                                                |
-| `/exit`               | End current task (delete + switch to previous)                                                                             |
+| `/exit`               | End current task and return to its parent; on Root, reset Root and delete its descendant tree                            |
 | `/reload`             | Reload agent subprocess (pick up CLI upgrades, new skills)                                                                    |
 | `/logout`             | Log out — clear local token and return to login page                                                                          |
 | `/token`              | Manage API tokens (list, create, revoke) — see [Auth & Security](security.md)                                                 |

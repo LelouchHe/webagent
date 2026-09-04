@@ -808,6 +808,51 @@ export class Store {
     return out;
   }
 
+  hasActiveShare(taskId: string): boolean {
+    const row = this.db
+      .prepare(
+        "SELECT 1 AS present FROM shares WHERE task_id = ? AND shared_at IS NOT NULL LIMIT 1",
+      )
+      .get(taskId) as { present: number } | undefined;
+    return row !== undefined;
+  }
+
+  /**
+   * Reset Root while preserving its stable anchor row. Every descendant is
+   * deleted using the ordinary task/share lifecycle, then Root's own event
+   * history and attachments are cleared. The caller rotates Root's ACP
+   * execution separately so this method remains a synchronous DB operation.
+   */
+  resetRootTask(): { affected: TaskDelete[] } {
+    const root = this.getTaskIncludingDeleted(ROOT_TASK_ID);
+    if (!root) throw new Error("Root task not found");
+    if (this.hasActiveShare(ROOT_TASK_ID)) {
+      throw new Error("Root task has an active share");
+    }
+
+    const reset = this.db.transaction(() => {
+      const affected: TaskDelete[] = [];
+      for (const childId of this.listChildren(ROOT_TASK_ID)) {
+        affected.push(...this.deleteTask(childId).affected);
+      }
+      this.db
+        .prepare("DELETE FROM shares WHERE task_id = ? AND shared_at IS NULL")
+        .run(ROOT_TASK_ID);
+      this.db.prepare("DELETE FROM events WHERE task_id = ?").run(ROOT_TASK_ID);
+      this.db
+        .prepare("DELETE FROM client_ops WHERE task_id = ?")
+        .run(ROOT_TASK_ID);
+      this.db
+        .prepare("DELETE FROM attachments WHERE task_id = ?")
+        .run(ROOT_TASK_ID);
+      this.db
+        .prepare("UPDATE tasks SET pending_compact_summary = NULL WHERE id = ?")
+        .run(ROOT_TASK_ID);
+      return { affected };
+    })();
+    return reset;
+  }
+
   /**
    * Delete a task and every descendant task recursively. The
    * parent/child hierarchy is a hard ownership link, so the deletion is

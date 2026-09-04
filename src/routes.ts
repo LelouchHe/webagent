@@ -4,7 +4,7 @@ import { join, extname, basename } from "node:path";
 import { gzipSync } from "node:zlib";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import busboy from "busboy";
-import type { Store } from "./store.ts";
+import { ROOT_TASK_ID, type Store } from "./store.ts";
 import type { TaskManager } from "./task-manager.ts";
 import type { SseManager } from "./sse-manager.ts";
 import type { AgentBridge } from "./bridge.ts";
@@ -2204,6 +2204,7 @@ export function createRequestHandler(
 
         // DELETE /api/v1/tasks/:id
         if (req.method === "DELETE") {
+          const clientOpId = getClientOpId(req);
           const task = store.getTask(taskId);
           if (!task) {
             json(res, HTTP_STATUS.NOT_FOUND, { error: "Task not found" });
@@ -2230,36 +2231,58 @@ export function createRequestHandler(
             }
           }
           try {
-            let affectedStore: {
-              mode: "hard" | "soft";
-              affected: Array<{
-                id: string;
-                mode: "hard" | "soft";
-                agentSessionId: string | null;
-              }>;
-            };
-            if (tasks) {
-              affectedStore = tasks.deleteTask(
-                getBridge?.() ?? undefined,
-                taskId,
-              );
-            } else {
-              affectedStore = store.deleteTask(taskId);
+            if (taskId === ROOT_TASK_ID) {
+              const bridge = getBridge?.();
+              if (!tasks || !bridge) {
+                json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
+                  error: "Agent not ready yet",
+                });
+                return;
+              }
+              const result = await tasks.resetRootTask(bridge);
+              for (const entry of result.affected) {
+                sseManager.broadcast({
+                  type: "task_deleted",
+                  taskId: entry.id,
+                  parentId: ROOT_TASK_ID,
+                  ...(clientOpId ? { clientOpId } : {}),
+                });
+              }
+              sseManager.broadcast({
+                type: "task_reset",
+                taskId: ROOT_TASK_ID,
+                ...(clientOpId ? { clientOpId } : {}),
+              });
+              json(res, HTTP_STATUS.OK, {
+                taskId: ROOT_TASK_ID,
+                reset: true,
+                ...(clientOpId ? { clientOpId } : {}),
+              });
+              return;
             }
+
+            const affectedStore = tasks
+              ? tasks.deleteTask(getBridge?.() ?? undefined, taskId)
+              : store.deleteTask(taskId);
             for (const entry of affectedStore.affected) {
               sseManager.broadcast({
                 type: "task_deleted",
                 taskId: entry.id,
+                ...(entry.id === taskId ? { parentId: task.parent_id } : {}),
+                ...(entry.id === taskId && clientOpId ? { clientOpId } : {}),
               });
             }
+            json(res, HTTP_STATUS.OK, {
+              taskId,
+              parentId: task.parent_id,
+              reset: false,
+              ...(clientOpId ? { clientOpId } : {}),
+            });
           } catch (err) {
             json(res, HTTP_STATUS.BAD_REQUEST, {
               error: err instanceof Error ? err.message : String(err),
             });
-            return;
           }
-          res.writeHead(HTTP_STATUS.NO_CONTENT);
-          res.end();
           return;
         }
       }

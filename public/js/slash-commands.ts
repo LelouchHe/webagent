@@ -15,7 +15,6 @@ import {
   updateStatusBar,
 } from "./state.ts";
 import { addSystem, formatLocalTime } from "./render.ts";
-import { fallbackToNextTask } from "./events.ts";
 import * as api from "./api.ts";
 import { consumeAndSwitch, switchToTask } from "./task-navigation.ts";
 import { log, getLogLevel, type LogLevel } from "./log.ts";
@@ -30,7 +29,11 @@ import { HTTP_STATUS } from "../../src/http-status.ts";
 import { TOKEN_STORAGE_KEY } from "./login-core.ts";
 import { resetLocalFrontendState } from "./local-reset.ts";
 import { requestAuthoritativeCancel } from "./cancel-command.ts";
-import { compactCurrentTask, replaceCurrentTask } from "./task-actions.ts";
+import {
+  compactCurrentTask,
+  exitCurrentTask,
+  replaceCurrentTask,
+} from "./task-actions.ts";
 import {
   createPreview,
   listOwnerShares,
@@ -412,22 +415,8 @@ export const ROOT: CmdNode = {
     {
       name: "/exit",
       desc: "End current task",
-      onSelect: async () => {
-        if (!state.taskId) {
-          addSystem("warn: No active task");
-          return;
-        }
-        const exitId = state.taskId;
-        try {
-          if (state.busy) {
-            addSystem("err: Cancel active work before exiting the task");
-            return;
-          }
-          await api.deleteTask(exitId);
-          await fallbackToNextTask(exitId, state.taskCwd ?? undefined);
-        } catch {
-          addSystem("err: Failed to exit task");
-        }
+      onSelect: () => {
+        void exitCurrentTask();
       },
     },
     {

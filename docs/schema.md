@@ -242,8 +242,10 @@ task. The parent/child hierarchy is a hard ownership link: deleting a
 task deletes every descendant recursively (immediate, no confirmation
 until a tree UI exists), each following its own share rules, and a
 share-tombstoned descendant is re-parented under Root so the FK stays valid.
-The reserved Root Task has id `root`, no parent, and cannot be
-deleted. Three rules govern any code that deletes a task:
+The reserved Root Task has id `root`, no parent, and cannot be deleted as a
+row; resetting Root clears its own events/attachments and deletes its entire
+live descendant tree while preserving the Root anchor. Three rules govern any
+code that deletes or resets a task:
 
 1. **Hard delete** (`deleteTask()` → `"hard"`): drop preview shares + client
    ops, then `DELETE FROM events` then `DELETE FROM tasks`. The final delete

@@ -98,6 +98,14 @@ describe("api module", () => {
     await api.deleteTask("s1");
     assert.equal(fetchCalls[0].url, "/api/v1/tasks/s1");
     assert.equal(fetchCalls[0].init!.method, "DELETE");
+    assert.match(
+      String(
+        (fetchCalls[0].init!.headers as Record<string, string>)[
+          "X-Client-Op-Id"
+        ],
+      ),
+      /.+/,
+    );
   });
 
   it("listTasks sends GET /api/v1/tasks", async () => {

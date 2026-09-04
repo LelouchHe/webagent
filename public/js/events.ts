@@ -129,16 +129,50 @@ setCreatedTaskActivator((task) => {
  * next available task. Creates a new task only if no others exist.
  * Shared by resumeAndLoad error recovery, task_deleted handler, and /exit.
  */
-export async function fallbackToNextTask(
+const pendingFallbacks = new Map<string, Promise<void>>();
+const completedFallbacks = new Map<string, number>();
+const FALLBACK_DEDUPE_MS = 30_000;
+
+export function fallbackToNextTask(
   expiredId: string | null,
   _cwd?: string,
+  preferredTaskId?: string | null,
+  clientOpId?: string,
+): Promise<void> {
+  const now = Date.now();
+  for (const [key, expiresAt] of completedFallbacks) {
+    if (expiresAt <= now) completedFallbacks.delete(key);
+  }
+  const key = clientOpId ?? `${expiredId ?? ""}\0${preferredTaskId ?? ""}`;
+  if (clientOpId && completedFallbacks.has(key)) return Promise.resolve();
+
+  const existing = pendingFallbacks.get(key);
+  if (existing) return existing;
+
+  const operation = fallbackToNextTaskImpl(expiredId, preferredTaskId).finally(
+    () => {
+      if (pendingFallbacks.get(key) === operation) pendingFallbacks.delete(key);
+      if (clientOpId)
+        completedFallbacks.set(key, Date.now() + FALLBACK_DEDUPE_MS);
+    },
+  );
+  pendingFallbacks.set(key, operation);
+  return operation;
+}
+
+async function fallbackToNextTaskImpl(
+  expiredId: string | null,
+  preferredTaskId?: string | null,
 ): Promise<void> {
   state.taskSwitchGen++;
   const gen = state.taskSwitchGen;
   try {
     const tasks = (await api.listTasks()) as Array<{ id: string }>;
     if (gen !== state.taskSwitchGen) return;
-    const next = tasks.find((s) => s.id !== expiredId);
+    const next =
+      (preferredTaskId
+        ? tasks.find((s) => s.id === preferredTaskId)
+        : undefined) ?? tasks.find((s) => s.id !== expiredId);
     if (next) {
       resetTaskUI();
       state.taskId = next.id;
@@ -2233,7 +2267,23 @@ export function handleEvent(msg: AgentEvent) {
 
     case "task_deleted":
       if (msg.taskId === state.taskId) {
-        void fallbackToNextTask(msg.taskId, state.taskCwd ?? undefined);
+        void fallbackToNextTask(
+          msg.taskId,
+          state.taskCwd ?? undefined,
+          msg.parentId,
+          msg.clientOpId,
+        );
+      }
+      break;
+
+    case "task_reset":
+      if (msg.taskId === state.taskId) {
+        void fallbackToNextTask(
+          null,
+          state.taskCwd ?? undefined,
+          msg.taskId,
+          msg.clientOpId,
+        );
       }
       break;
 

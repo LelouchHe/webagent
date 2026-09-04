@@ -94,6 +94,8 @@ export class TaskManager {
   readonly activePrompts = new Set<string>();
   /** Tasks undergoing compact summary generation or ACP rotation. */
   readonly compactingTasks = new Set<string>();
+  /** Root reset barrier covering the asynchronous tree replacement. */
+  readonly resettingTasks = new Set<string>();
   /** Barrier covering the asynchronous ACP replacement itself. */
   readonly rotatingTasks = new Set<string>();
   readonly pendingPromptSubmissions = new Map<string, number>();
@@ -877,6 +879,42 @@ export class TaskManager {
     return cleared;
   }
 
+  /** Reset Root's execution and delete its entire descendant tree. Root's
+   * stable row remains as the task-tree anchor; its own history and
+   * attachments are cleared. */
+  async resetRootTask(
+    bridge: SessionBridge,
+  ): Promise<{ affected: TaskDelete[] }> {
+    if (this.resettingTasks.has(ROOT_TASK_ID)) {
+      throw new Error("Root task is already being reset");
+    }
+    if (this.store.hasActiveShare(ROOT_TASK_ID)) {
+      throw new Error("Root task has an active share");
+    }
+    const protectedIds = [
+      ROOT_TASK_ID,
+      ...this.store.getDescendantTaskIds(ROOT_TASK_ID),
+    ];
+    for (const id of protectedIds) this.resettingTasks.add(id);
+    try {
+      await this.clearTask(bridge, ROOT_TASK_ID);
+      const result = this.store.resetRootTask();
+      for (const entry of result.affected) {
+        if (entry.agentSessionId)
+          void bridge.retireExecution?.(entry.agentSessionId);
+        this.releaseTaskRuntime(entry.id, entry.mode);
+      }
+      this.attachmentLabelCache.delete(ROOT_TASK_ID);
+      await rm(join(this.dataDir, "tasks", ROOT_TASK_ID), {
+        recursive: true,
+        force: true,
+      }).catch(() => {});
+      return result;
+    } finally {
+      for (const id of protectedIds) this.resettingTasks.delete(id);
+    }
+  }
+
   /** Delete a task from store and clean up all state (including images).
    *  Descendant tasks are deleted too (direct cascade, no confirmation yet
    *  — a tree UI will add one). Every affected task's ACP execution is
@@ -905,6 +943,7 @@ export class TaskManager {
     this.thinkingBuffers.delete(id);
     this.activePrompts.delete(id);
     this.compactingTasks.delete(id);
+    this.resettingTasks.delete(id);
     this.rotatingTasks.delete(id);
     const pendingSubmission = this.pendingPromptSubmissions.get(id);
     this.pendingPromptSubmissions.delete(id);
@@ -985,6 +1024,7 @@ export class TaskManager {
     if (this.pendingPromptSubmissions.has(taskId)) return "agent";
     if (this.activePrompts.has(taskId)) return "agent";
     if (this.compactingTasks.has(taskId)) return "agent";
+    if (this.resettingTasks.has(taskId)) return "agent";
     if (this.rotatingTasks.has(taskId)) return "agent";
     if (this.runningBashProcs.has(taskId)) return "bash";
     return null;

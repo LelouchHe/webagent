@@ -152,8 +152,27 @@ export function compactTask(id: string): Promise<Record<string, unknown>> {
   return post("/api/v1/tasks/" + id + "/compact", {});
 }
 
-export function deleteTask(id: string): Promise<void> {
-  return request("/api/v1/tasks/" + id, { method: "DELETE" });
+export interface DeleteTaskResult {
+  taskId: string;
+  parentId?: string | null;
+  reset?: boolean;
+  clientOpId?: string;
+}
+
+export async function deleteTask(
+  id: string,
+): Promise<DeleteTaskResult | undefined> {
+  const clientOpId = newOpId();
+  const result = await request<DeleteTaskResult | undefined>(
+    "/api/v1/tasks/" + id,
+    {
+      method: "DELETE",
+      headers: { "X-Client-Op-Id": clientOpId },
+    },
+  );
+  return result
+    ? { ...result, clientOpId: result.clientOpId ?? clientOpId }
+    : result;
 }
 
 export function listTasks(): Promise<TaskSummary[]> {

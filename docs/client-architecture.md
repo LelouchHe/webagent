@@ -562,7 +562,7 @@ Triggered by `/` prefix in input. Handled in `commands.ts`.
 | ------------------- | ----------------------------------------------------------- | ------------------------------------ |
 | `/switch [query]`   | `api.listTasks()` + `api.getTask()` + `loadHistory()` | Switch to another task            |
 | `/new [path]`       | `api.createTask()`                                       | Create new task                   |
-| `/exit`             | `api.deleteTask()` + task switch                      | Close current task, switch to MRU |
+| `/exit`             | `api.deleteTask()` + task navigation                 | Close current task and prefer its server-provided parent; Root resets its tree |
 | `/rename <title>`   | `api.setTitle(taskId, title)`                            | Rename current task               |
 | `/model [name]`     | `api.setConfig(taskId, 'model', value)`                  | Switch model                         |
 | `/mode [name]`      | `api.setConfig(taskId, 'mode', value)`                   | Switch mode                          |

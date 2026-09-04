@@ -283,6 +283,67 @@ describe("commands", () => {
       assert.equal(state.taskId, "mru-456");
     });
 
+    it("exits current task — prefers the server-provided parent over MRU", async () => {
+      state.clientId = "cl-1";
+      state.taskId = "current";
+      state.taskCwd = "/home";
+      const configOptions = [
+        {
+          type: "select",
+          id: "model",
+          name: "Model",
+          currentValue: "gpt-4",
+          options: [],
+        },
+      ];
+      const taskList = [
+        { id: "current", title: "Current Task" },
+        { id: "mru-456", title: "MRU Task" },
+        { id: "parent-123", title: "Parent Task" },
+      ];
+      const parentDetail = {
+        id: "parent-123",
+        cwd: "/home",
+        title: "Parent Task",
+        configOptions,
+        busyKind: null,
+      };
+      setFetch(async (url: string, init?: any) => {
+        const body = (data: any) => {
+          const json = JSON.stringify(data);
+          return {
+            ok: true,
+            status: 200,
+            json: async () => data,
+            text: async () => json,
+          };
+        };
+        if (url === "/api/v1/tasks" && (!init?.method || init.method === "GET"))
+          return body(taskList);
+        if (url === "/api/v1/tasks/current" && init?.method === "DELETE")
+          return body({
+            taskId: "current",
+            parentId: "parent-123",
+            reset: false,
+          });
+        if (url === "/api/v1/tasks/parent-123") return body(parentDetail);
+        if (url.includes("/api/v1/tasks/parent-123/events")) return body([]);
+        if (url === "/api/v1/tasks/parent-123/snapshot") {
+          return body({
+            version: 1,
+            seq: 0,
+            task: {},
+            runtime: { busy: null },
+          });
+        }
+        return body({});
+      });
+
+      await commands.handleSlashCommand("/exit");
+
+      assert.equal(state.taskId, "parent-123");
+    });
+
     it("exits current task — updates URL hash before async load to prevent SSE reconnect race", async () => {
       state.clientId = "cl-1";
       state.taskId = "current";
@@ -351,6 +412,50 @@ describe("commands", () => {
         "#mru-456",
         "URL hash must point to next task before async load, otherwise SSE reconnect loads the deleted task",
       );
+    });
+
+    it("exits Root — reloads the preserved Root task after reset", async () => {
+      state.clientId = "cl-1";
+      state.taskId = "root";
+      state.taskCwd = "/home";
+      const rootDetail = {
+        id: "root",
+        cwd: "/home",
+        title: "root",
+        configOptions: [],
+        busyKind: null,
+      };
+      setFetch(async (url: string, init?: any) => {
+        const body = (data: any) => {
+          const json = JSON.stringify(data);
+          return {
+            ok: true,
+            status: 200,
+            json: async () => data,
+            text: async () => json,
+          };
+        };
+        if (url === "/api/v1/tasks" && (!init?.method || init.method === "GET"))
+          return body([{ id: "root", title: "root" }]);
+        if (url === "/api/v1/tasks/root" && init?.method === "DELETE")
+          return body({ taskId: "root", reset: true });
+        if (url === "/api/v1/tasks/root") return body(rootDetail);
+        if (url.includes("/api/v1/tasks/root/events")) return body([]);
+        if (url === "/api/v1/tasks/root/snapshot") {
+          return body({
+            version: 1,
+            seq: 0,
+            task: {},
+            runtime: { busy: null },
+          });
+        }
+        return body({});
+      });
+
+      await commands.handleSlashCommand("/exit");
+
+      assert.equal(state.taskId, "root");
+      assert.equal(state.awaitingNewTask, false);
     });
 
     it("exits last task — deletes it and creates a new one", async () => {

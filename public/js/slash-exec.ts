@@ -16,7 +16,6 @@ import {
   updateStatusBar,
 } from "./state.ts";
 import { addSystem, formatLocalTime } from "./render.ts";
-import { fallbackToNextTask } from "./events.ts";
 import { switchToTask } from "./task-navigation.ts";
 import * as api from "./api.ts";
 import { log, type LogLevel } from "./log.ts";
@@ -30,7 +29,11 @@ import {
   setLocalLogLevel,
   showLogStatus,
 } from "./slash-commands.ts";
-import { compactCurrentTask, replaceCurrentTask } from "./task-actions.ts";
+import {
+  compactCurrentTask,
+  exitCurrentTask,
+  replaceCurrentTask,
+} from "./task-actions.ts";
 import {
   createPreview,
   revokeShare,
@@ -218,24 +221,9 @@ export async function handleSlashCommand(text: string): Promise<boolean> {
       return true;
     }
 
-    case "/exit": {
-      if (!state.taskId) {
-        addSystem("warn: No active task");
-        return true;
-      }
-      const exitId = state.taskId;
-      try {
-        if (state.busy) {
-          addSystem("err: Cancel active work before exiting the task");
-          return true;
-        }
-        await api.deleteTask(exitId);
-        await fallbackToNextTask(exitId, state.taskCwd ?? undefined);
-      } catch {
-        addSystem("err: Failed to exit task");
-      }
+    case "/exit":
+      await exitCurrentTask();
       return true;
-    }
 
     case "/logout": {
       try {
