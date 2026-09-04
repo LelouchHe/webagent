@@ -3,16 +3,12 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import Database from "better-sqlite3";
 import { Store } from "../src/store.ts";
 
-describe("Store events.from_ref + orphan cleanup + FK", () => {
+describe("Store events.from_ref + FK", () => {
   let tmpDir: string;
-  let dbPath: string;
-
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), "webagent-from-ref-"));
-    dbPath = join(tmpDir, "webagent.db");
   });
 
   afterEach(() => {
@@ -90,89 +86,6 @@ describe("Store events.from_ref + orphan cleanup + FK", () => {
     store.close();
   });
 
-  it("backfills from_ref on legacy rows (column added by ALTER, NULL backfilled by buckets)", () => {
-    // Build a legacy DB without the from_ref column and seed mixed rows.
-    const legacy = new Database(dbPath);
-    legacy.exec(`
-      CREATE TABLE tasks (id TEXT PRIMARY KEY, cwd TEXT NOT NULL,
-        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now')),
-        last_active_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now')));
-      CREATE TABLE events (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        task_id TEXT NOT NULL,
-        seq INTEGER NOT NULL,
-        type TEXT NOT NULL,
-        data TEXT NOT NULL DEFAULT '{}',
-        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now'))
-      );
-      INSERT INTO tasks (id, cwd) VALUES ('s1', '/tmp');
-      INSERT INTO events (task_id, seq, type, data) VALUES
-        ('s1', 1, 'user_message', '{}'),
-        ('s1', 2, 'assistant_message', '{}'),
-        ('s1', 3, 'bash_command', '{}'),
-        ('s1', 4, 'permission_response', '{}'),
-        ('s1', 5, 'plan', '{}');
-    `);
-    legacy.close();
-
-    // Open via Store -- migrate() must add the column and backfill all rows.
-    const store = new Store(tmpDir, "test-agent");
-    const rows = store["db"]
-      .prepare(
-        "SELECT seq, type, from_ref FROM events WHERE task_id = 's1' ORDER BY seq",
-      )
-      .all() as Array<{ seq: number; type: string; from_ref: string }>;
-
-    assert.equal(rows.length, 5);
-    assert.equal(rows[0].from_ref, "user");
-    assert.equal(rows[1].from_ref, "agent");
-    assert.equal(rows[2].from_ref, "system");
-    assert.equal(rows[3].from_ref, "system");
-    assert.equal(rows[4].from_ref, "agent");
-
-    store.close();
-  });
-
-  it("orphan cleanup removes events whose task_id is gone", () => {
-    // Build a legacy DB with FK off so orphan rows can exist.
-    const legacy = new Database(dbPath);
-    legacy.exec(`
-      CREATE TABLE tasks (id TEXT PRIMARY KEY, cwd TEXT NOT NULL,
-        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now')),
-        last_active_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now')));
-      CREATE TABLE events (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        task_id TEXT NOT NULL,
-        seq INTEGER NOT NULL,
-        type TEXT NOT NULL,
-        data TEXT NOT NULL DEFAULT '{}',
-        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now'))
-      );
-      INSERT INTO tasks (id, cwd) VALUES ('alive', '/tmp');
-      INSERT INTO events (task_id, seq, type, data) VALUES
-        ('alive', 1, 'user_message', '{}'),
-        ('orphan', 1, 'user_message', '{}'),
-        ('orphan', 2, 'assistant_message', '{}');
-    `);
-    legacy.close();
-
-    const store = new Store(tmpDir, "test-agent");
-    const orphans = store["db"]
-      .prepare("SELECT COUNT(*) AS n FROM events WHERE task_id = 'orphan'")
-      .get() as { n: number };
-    assert.equal(
-      orphans.n,
-      0,
-      "orphan rows must be cleaned up at migrate time",
-    );
-    const alive = store["db"]
-      .prepare("SELECT COUNT(*) AS n FROM events WHERE task_id = 'alive'")
-      .get() as { n: number };
-    assert.equal(alive.n, 1, "non-orphan rows must survive cleanup");
-
-    store.close();
-  });
-
   it("foreign_keys pragma is on after construction (rejects orphan inserts)", () => {
     const store = new Store(tmpDir, "test-agent");
     const fk = store["db"].pragma("foreign_keys", { simple: true });
@@ -193,7 +106,7 @@ describe("Store events.from_ref + orphan cleanup + FK", () => {
     store.close();
   });
 
-  it("idx_events_type exists after migrate", () => {
+  it("idx_events_type exists in the current schema", () => {
     const store = new Store(tmpDir, "test-agent");
     const idx = store["db"]
       .prepare(

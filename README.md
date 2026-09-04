@@ -116,7 +116,7 @@ Frontend source lives in `public/js/*.ts`, bundled by esbuild into a single cont
 | **[Slash Menu](docs/slash-menu.md)**                    | Walker pipeline, `CmdNode` tree, Tab/Enter/Click contract, how to add commands |
 | **[Messages / Inbox](docs/messages.md)**                | `/inbox` slash command, POST ingress, bound vs unbound messages                |
 | **[Share Links](docs/share.md)**                        | Public read-only task snapshots via `/share` + `/s/<token>`                 |
-| **[Database Schema](docs/schema.md)**                   | SQLite tables, indexes, FK policy, cascade/lifecycle rules, migrations         |
+| **[Database Schema](docs/schema.md)**                   | SQLite tables, indexes, FK policy, cascade/lifecycle rules, reset policy     |
 | **[Development](docs/development.md)**                  | Building from source, dev mode, testing, publishing                            |
 | **[Implementation Invariants](docs/implementation-invariants.md)** | Runtime, security, protocol, frontend, browser, and platform constraints |
 | **[Auto-Start on Boot](docs/autostart.md)**             | launchd, systemd, crontab, Windows Task Scheduler                              |

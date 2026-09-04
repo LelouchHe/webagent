@@ -1,12 +1,6 @@
 import { describe, it, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import {
-  mkdtempSync,
-  mkdirSync,
-  writeFileSync,
-  rmSync,
-  existsSync,
-} from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import Database from "better-sqlite3";
@@ -592,12 +586,34 @@ describe("Store", () => {
     });
   });
 
-  describe("migration", () => {
-    it("is idempotent — opening same DB twice works", () => {
+  describe("schema reset policy", () => {
+    it("rejects a pre-1.0 sessions database and asks for a data reset", () => {
+      store.close();
+      rmSync(join(tmpDir, "webagent.db"), { force: true });
+      const legacy = new Database(join(tmpDir, "webagent.db"));
+      legacy.exec(`
+        CREATE TABLE sessions (
+          id TEXT PRIMARY KEY,
+          cwd TEXT NOT NULL,
+          created_at TEXT NOT NULL
+        );
+      `);
+      legacy.close();
+
+      assert.throws(
+        () => new Store(tmpDir, "test-agent"),
+        /pre-1\.0.*delete.*data/i,
+      );
+
+      rmSync(join(tmpDir, "webagent.db"), { force: true });
+      store = new Store(tmpDir, "test-agent");
+    });
+
+    it("is idempotent — opening the current DB twice works", () => {
       store.createTask("s1", "/x");
       store.close();
 
-      // Re-open same DB (triggers migration again)
+      // Re-open same current-format DB
       const store2 = new Store(tmpDir, "test-agent");
       const task = store2.getTask("s1");
       assert.equal(task!.id, "s1");
@@ -605,76 +621,6 @@ describe("Store", () => {
 
       // Replace store so afterEach doesn't double-close
       store = new Store(tmpDir, "test-agent");
-    });
-
-    it("backfills legacy tasks to the agent active during migration", () => {
-      store.close();
-      rmSync(join(tmpDir, "webagent.db"), { force: true });
-
-      const legacy = new Database(join(tmpDir, "webagent.db"));
-      legacy.exec(`
-        CREATE TABLE tasks (
-          id TEXT PRIMARY KEY,
-          cwd TEXT NOT NULL,
-          title TEXT,
-          created_at TEXT NOT NULL,
-          last_active_at TEXT
-        );
-        INSERT INTO tasks (id, cwd, created_at, last_active_at)
-        VALUES ('legacy-id', '/legacy', '2026-01-01 00:00:00', '2026-01-01 00:00:00');
-      `);
-      legacy.close();
-
-      store = new Store(tmpDir, "/path/to/copilot-acp");
-
-      assert.equal(store.getAgentSessionId("legacy-id"), "legacy-id");
-      assert.deepEqual(store.getAgentSessionBinding("legacy-id"), {
-        agent_key: "/path/to/copilot-acp",
-        agent_session_id: "legacy-id",
-        task_id: "legacy-id",
-        created_at: "2026-01-01 00:00:00",
-      });
-    });
-
-    it("migrates the attachment data dir and rewrites realpaths", () => {
-      store.close();
-      rmSync(join(tmpDir, "webagent.db"), { force: true });
-      // Simulate a pre-rename install: attachment dir under `sessions/` and
-      // a persisted realpath pointing into it.
-      const oldDir = join(tmpDir, "sessions", "t1", "attachments");
-      mkdirSync(oldDir, { recursive: true });
-      writeFileSync(join(oldDir, "a.png"), "x");
-      store = new Store(tmpDir, "test-agent");
-      store.createTask("t1", "/tmp");
-      store.insertAttachment({
-        id: "att-1",
-        taskId: "t1",
-        kind: "image",
-        name: "a.png",
-        mime: "image/png",
-        size: 1,
-        realpath: join(oldDir, "a.png"),
-      });
-      store.close();
-
-      // Re-open: boot migration moves the directory and rewrites realpath.
-      store = new Store(tmpDir, "test-agent");
-      assert.equal(existsSync(join(tmpDir, "sessions")), false);
-      assert.equal(existsSync(join(tmpDir, "tasks")), true);
-      const row = store.getAttachment("t1", "att-1");
-      assert.equal(
-        row?.realpath,
-        join(tmpDir, "tasks", "t1", "attachments", "a.png"),
-      );
-      assert.equal(existsSync(row.realpath), true);
-      store.close();
-
-      // Idempotent: second open is a no-op that keeps paths intact.
-      store = new Store(tmpDir, "test-agent");
-      assert.equal(
-        store.getAttachment("t1", "att-1")!.realpath,
-        join(tmpDir, "tasks", "t1", "attachments", "a.png"),
-      );
     });
   });
 
@@ -881,22 +827,6 @@ describe("Store", () => {
         .run();
       const paths = store.listRecentPaths({ ttlDays: 0 });
       assert.equal(paths.length, 1);
-    });
-
-    it("migration backfills from tasks table on upgrade", () => {
-      // Simulate pre-upgrade: create tasks, then drop recent_paths to mimic old DB
-      store.createTask("s1", "/from-task-a");
-      store.createTask("s2", "/from-task-b");
-      store.createTask("s3", "/from-task-a"); // duplicate cwd
-      (store as any).db.exec("DROP TABLE recent_paths");
-
-      // Re-run migration (simulates upgrade)
-      store.close();
-      store = new Store(tmpDir, "test-agent");
-
-      const paths = store.listRecentPaths();
-      const cwds = paths.map((p) => p.cwd).sort();
-      assert.deepEqual(cwds, ["/from-task-a", "/from-task-b"]);
     });
 
     it("deleteRecentPath removes a single path", () => {

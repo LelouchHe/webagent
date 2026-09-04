@@ -75,12 +75,10 @@ The historical term "WebAgent Session" is **obsolete**; it means `task`.
   (e.g. `rotateAgentSession` rotates an ACP binding). Identifiers whose
   primary subject is the product entity must become `task` (e.g.
   `clearSession` → `clearTask`).
-- The attachment data directory is **`<data_dir>/tasks/<sid>/`** — it
-  follows the rename. A one-time boot migration
-  (`Store.migrateAttachmentsDataDir`) moves a pre-rename
-  `<data_dir>/sessions/` directory to `tasks/` and rewrites persisted
-  `attachments.realpath` rows; it is idempotent and runs before the
-  server starts listening.
+- The attachment data directory is **`<data_dir>/tasks/<sid>/`**. Pre-1.0
+  releases may have used `<data_dir>/sessions/`; releases with this storage
+  contract do not migrate that legacy path. Back up and remove the old data
+  directory before restarting.
 
 ## Prose and UI rules
 
@@ -121,9 +119,9 @@ The historical term "WebAgent Session" is **obsolete**; it means `task`.
 The rename is a mechanical-but-wide refactor (DB → backend → frontend →
 docs → tests). When executing it:
 
-- SQLite renames are non-destructive (`ALTER TABLE … RENAME [COLUMN …]`);
-  the dogfood DB is migrated in place, Root (`root`) keeps its reserved id,
-  and no data is deleted.
+- The S2 storage rename is a pre-1.0 breaking change. Users must back up and
+  remove the old data directory before restarting; a fresh DB creates the
+  current schema and Root (`root`) keeps its reserved id.
 - The REST and SSE rename is a hard break with **no alias** (pre-1.0; the
   frontend and API move together). Route docs are validated by
   `test/doc-coverage.test.ts`, so `docs/api.md` must move in the same

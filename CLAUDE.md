@@ -73,7 +73,7 @@ Locate and read only the sections relevant to the task.
 | Vocabulary and naming contract | [`docs/vocabulary.md`](./docs/vocabulary.md) |
 | Security model and CSP invariants | [`docs/security.md`](./docs/security.md) |
 | Streaming render performance | [`docs/performance.md`](./docs/performance.md) |
-| Database schema and migrations | [`docs/schema.md`](./docs/schema.md) |
+| Database schema and pre-1.0 reset policy | [`docs/schema.md`](./docs/schema.md) |
 | Development, testing, and publishing | [`docs/development.md`](./docs/development.md) |
 
 The full documentation index is in [`README.md`](./README.md).

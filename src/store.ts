@@ -1,6 +1,5 @@
 import Database from "better-sqlite3";
-import { log } from "./log.ts";
-import { existsSync, mkdirSync, renameSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 
 export const ROOT_TASK_ID = "root";
@@ -45,8 +44,8 @@ export interface EventRow {
   seq: number;
   type: string;
   data: string; // JSON
-  /** Origin marker: 'user' | 'system' | 'agent' | 'msg:<id>'. NULL only on legacy rows that pre-date the column. */
-  from_ref: string | null;
+  /** Origin marker: 'user' | 'system' | 'agent' | 'msg:<id>'. */
+  from_ref: string;
   created_at: string;
 }
 
@@ -158,113 +157,113 @@ export class Store {
     this.dataDir = dataDir;
     mkdirSync(dataDir, { recursive: true });
     this.db = new Database(join(dataDir, "webagent.db"));
-    this.db.pragma("journal_mode = WAL");
-    this.migrate();
-    // Enforce foreign keys *after* migrate() so the one-time orphan cleanup
-    // can run without pragma interfering with legacy cleanup queries.
-    this.db.pragma("foreign_keys = ON");
-  }
-
-  /**
-   * One-time vocabulary migration (2026-09-04): the product entity is now
-   * `task`; `session` is reserved for the ACP execution binding. Databases
-   * created before the rename carry the `sessions` table and
-   * `*_session_id`/`web_session_id` columns; rename in place so no data is
-   * lost. Fresh installs never have `sessions` and skip this entirely.
-   *
-   * Runs with foreign_keys ON: `ALTER TABLE ... RENAME TO` only rewrites
-   * REFERENCES clauses in dependent tables while the pragma is enabled
-   * (verified empirically against the live dogfood schema). The pragma is
-   * restored to OFF afterwards, preserving the FK-off window the legacy
-   * orphan cleanup below relies on.
-   */
-  private renameLegacyTables(): void {
-    const rows = this.db
-      .prepare(
-        "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('sessions', 'tasks')",
-      )
-      .all() as Array<{ name: string }>;
-    const names = new Set(rows.map((r) => r.name));
-    if (!names.has("sessions") || names.has("tasks")) return;
-
-    this.db.pragma("foreign_keys = ON");
     try {
-      this.db.exec("ALTER TABLE sessions RENAME TO tasks");
-      const renameCol = (table: string, from: string, to: string) => {
-        const cols = this.db
-          .prepare(`PRAGMA table_info(${table})`)
-          .all() as Array<{ name: string }>;
-        if (cols.some((c) => c.name === from)) {
-          this.db.exec(`ALTER TABLE ${table} RENAME COLUMN ${from} TO ${to}`);
-        }
-      };
-      renameCol("tasks", "parent_session_id", "parent_id");
-      renameCol("events", "session_id", "task_id");
-      renameCol("attachments", "session_id", "task_id");
-      renameCol("shares", "session_id", "task_id");
-      renameCol("client_ops", "session_id", "task_id");
-      renameCol("agent_sessions", "web_session_id", "task_id");
-      this.db.exec(`
-        DROP INDEX IF EXISTS idx_events_session;
-        DROP INDEX IF EXISTS idx_attachments_session;
-        DROP INDEX IF EXISTS idx_shares_session;
-        DROP INDEX IF EXISTS idx_agent_sessions_web;
-      `);
-    } finally {
-      this.db.pragma("foreign_keys = OFF");
+      this.db.pragma("journal_mode = WAL");
+      this.db.pragma("foreign_keys = ON");
+      this.assertSupportedSchema();
+      this.initializeSchema();
+    } catch (error) {
+      this.db.close();
+      throw error;
     }
   }
 
-  /**
-   * Vocabulary migration companion (2026-09-04): the attachment data
-   * directory follows the rename. Pre-rename installs stored files under
-   * `<data_dir>/sessions/<sid>/attachments/` and `attachments.realpath`
-   * rows reference them. On first boot after the rename we move the
-   * directory (nothing is served yet — the server has not started
-   * listening) and rewrite the persisted realpaths so attachment reads,
-   * shares, and cleanup resolve under `<data_dir>/tasks/`.
-   *
-   * Idempotent: skips when `sessions/` is already gone; the realpath
-   * rewrite is a no-op when no row matches. The directory move and the
-   * SQL update are intentionally not cross-atomic (fs vs SQLite); a
-   * partial failure is logged loudly so an operator can finish by hand.
-   */
-  private migrateAttachmentsDataDir(): void {
-    const oldDir = join(this.dataDir, "sessions");
-    const newDir = join(this.dataDir, "tasks");
-    let moved = false;
-    try {
-      if (existsSync(oldDir) && !existsSync(newDir)) {
-        renameSync(oldDir, newDir);
-        moved = true;
-      } else if (existsSync(oldDir) && existsSync(newDir)) {
-        // Both present: prefer the new one and leave the old for the
-        // operator to review; do not delete data silently.
-        moved = false;
-      }
-    } catch (err) {
+  private assertSupportedSchema(): void {
+    const legacy = this.db
+      .prepare(
+        "SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = 'sessions'",
+      )
+      .get() as { present: number } | undefined;
+    const requiredColumns: Record<string, string[]> = {
+      tasks: [
+        "id",
+        "cwd",
+        "title",
+        "parent_id",
+        "pending_compact_summary",
+        "model",
+        "mode",
+        "reasoning_effort",
+        "source",
+        "deleted_at",
+        "created_at",
+        "last_active_at",
+      ],
+      agent_sessions: [
+        "agent_key",
+        "agent_session_id",
+        "task_id",
+        "created_at",
+      ],
+      events: [
+        "id",
+        "task_id",
+        "seq",
+        "type",
+        "data",
+        "created_at",
+        "from_ref",
+      ],
+      shares: [
+        "token",
+        "task_id",
+        "shared_at",
+        "share_snapshot_seq",
+        "ttl_hours",
+        "display_name",
+        "owner_label",
+        "created_at",
+        "last_accessed_at",
+      ],
+      attachments: [
+        "id",
+        "task_id",
+        "kind",
+        "name",
+        "mime",
+        "size",
+        "realpath",
+        "upload_seq",
+        "width",
+        "height",
+        "created_at",
+      ],
+    };
+    const incompatible = legacy
+      ? "legacy sessions table"
+      : Object.entries(requiredColumns).find(([table, columns]) => {
+          const exists = this.db
+            .prepare(
+              "SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = ?",
+            )
+            .get(table) as { present: number } | undefined;
+          if (!exists) return false;
+          const actual = new Set(
+            (
+              this.db.prepare(`PRAGMA table_info(${table})`).all() as Array<{
+                name: string;
+              }>
+            ).map((column) => column.name),
+          );
+          return (
+            columns.some((column) => !actual.has(column)) ||
+            [...actual].some((column) => !columns.includes(column)) ||
+            (table === "events" &&
+              this.db
+                .prepare(
+                  "SELECT 1 AS present FROM events WHERE from_ref IS NULL LIMIT 1",
+                )
+                .get() !== undefined)
+          );
+        })?.[0];
+    if (incompatible) {
       throw new Error(
-        `attachment data dir migration failed (${oldDir} → ${newDir}): ${err instanceof Error ? err.message : String(err)}`,
-        { cause: err },
-      );
-    }
-    const updated = this.db
-      .prepare(
-        "UPDATE attachments SET realpath = REPLACE(realpath, ?, ?) WHERE realpath LIKE ?",
-      )
-      .run("/sessions/", "/tasks/", "%/sessions/%");
-    const changed = updated.changes > 0;
-    if (moved || changed) {
-      log.warn(
-        "migrated attachment data dir",
-        moved ? { oldDir, newDir } : { rewroteRealpaths: updated.changes },
+        `Pre-1.0 data directory detected (${incompatible}). Back up and delete the data directory before restarting: ${this.dataDir}`,
       );
     }
   }
 
-  private migrate(): void {
-    this.renameLegacyTables();
-
+  private initializeSchema(): void {
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS tasks (
         id TEXT PRIMARY KEY,
@@ -272,6 +271,11 @@ export class Store {
         title TEXT,
         parent_id TEXT REFERENCES tasks(id),
         pending_compact_summary TEXT,
+        model TEXT,
+        mode TEXT,
+        reasoning_effort TEXT,
+        source TEXT NOT NULL DEFAULT 'auto',
+        deleted_at INTEGER,
         created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now')),
         last_active_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now'))
       );
@@ -291,7 +295,8 @@ export class Store {
         seq INTEGER NOT NULL,
         type TEXT NOT NULL,
         data TEXT NOT NULL DEFAULT '{}',
-        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now'))
+        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now')),
+        from_ref TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS idx_events_task ON events(task_id, seq);
       CREATE TABLE IF NOT EXISTS push_subscriptions (
@@ -302,65 +307,6 @@ export class Store {
         created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now'))
       );
     `);
-
-    // Migrate existing tables: add columns if missing
-    const cols = this.db.prepare("PRAGMA table_info(tasks)").all() as Array<{
-      name: string;
-    }>;
-    const colNames = new Set(cols.map((c) => c.name));
-    if (!colNames.has("title")) {
-      this.db.exec("ALTER TABLE tasks ADD COLUMN title TEXT");
-    }
-    if (!colNames.has("last_active_at")) {
-      this.db.exec("ALTER TABLE tasks ADD COLUMN last_active_at TEXT");
-      // Backfill from created_at
-      this.db.exec(
-        "UPDATE tasks SET last_active_at = created_at WHERE last_active_at IS NULL",
-      );
-    }
-    if (!colNames.has("model")) {
-      this.db.exec("ALTER TABLE tasks ADD COLUMN model TEXT");
-    }
-    if (!colNames.has("mode")) {
-      this.db.exec("ALTER TABLE tasks ADD COLUMN mode TEXT");
-    }
-    if (!colNames.has("reasoning_effort")) {
-      this.db.exec("ALTER TABLE tasks ADD COLUMN reasoning_effort TEXT");
-    }
-    if (!colNames.has("source")) {
-      this.db.exec(
-        "ALTER TABLE tasks ADD COLUMN source TEXT NOT NULL DEFAULT 'auto'",
-      );
-    }
-    if (!colNames.has("deleted_at")) {
-      this.db.exec("ALTER TABLE tasks ADD COLUMN deleted_at INTEGER");
-    }
-    if (!colNames.has("parent_id")) {
-      this.db.exec(
-        "ALTER TABLE tasks ADD COLUMN parent_id TEXT REFERENCES tasks(id)",
-      );
-    }
-    if (!colNames.has("pending_compact_summary")) {
-      this.db.exec("ALTER TABLE tasks ADD COLUMN pending_compact_summary TEXT");
-    }
-
-    // One-time dual-ID migration. Existing WebAgent task IDs were also the
-    // ACP agent's IDs, so preserve the public IDs and record that identity
-    // mapping under the agent command active during the upgrade.
-    this.db
-      .prepare(
-        `
-        INSERT INTO agent_sessions (
-          agent_key, agent_session_id, task_id, created_at
-        )
-        SELECT ?, s.id, s.id, s.created_at
-        FROM tasks s
-        WHERE NOT EXISTS (
-          SELECT 1 FROM agent_sessions a WHERE a.task_id = s.id
-        )
-      `,
-      )
-      .run(this.agentKey);
 
     // messages — pending unbound notifications. POST /api/v1/messages with
     // `to = "user"` lands here; consumeMessageTx transactionally moves the
@@ -399,64 +345,15 @@ export class Store {
     `);
 
     // recent_paths: LRU path list for /new menu
-    const rpExists = this.db
-      .prepare(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='recent_paths'",
-      )
-      .get();
-    if (!rpExists) {
-      this.db.exec(`
-        CREATE TABLE recent_paths (
-          cwd TEXT PRIMARY KEY,
-          last_used_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now'))
-        );
-      `);
-      // Backfill from existing tasks
-      this.db.exec(`
-        INSERT OR IGNORE INTO recent_paths (cwd, last_used_at)
-        SELECT cwd, MAX(COALESCE(last_active_at, created_at))
-        FROM tasks GROUP BY cwd;
-      `);
-    }
-
-    // events.from_ref — origin marker for every event row.
-    // Values: 'user' | 'system' | 'agent' | 'msg:<id>'. The 'msg:<id>'
-    // form is reserved for events authored by consuming an inbox message
-    // (see C7+). Bucketed backfill runs once for legacy rows.
-    const eventCols = this.db
-      .prepare("PRAGMA table_info(events)")
-      .all() as Array<{ name: string }>;
-    const eventColNames = new Set(eventCols.map((c) => c.name));
-    if (!eventColNames.has("from_ref")) {
-      this.db.exec("ALTER TABLE events ADD COLUMN from_ref TEXT");
-      // Buckets:
-      //   user   — user-authored input
-      //   system — client-originated side-channel actions + host responses
-      //            (permission responses, local bash, system messages)
-      //   agent  — everything else (assistant_message, thinking, tool_call,
-      //            tool_call_update, plan, prompt_done, permission_request,
-      //            etc.)
-      this.db.exec(`
-        UPDATE events SET from_ref = CASE
-          WHEN type = 'user_message' THEN 'user'
-          WHEN type IN ('permission_response', 'bash_command', 'bash_result',
-                        'system_message') THEN 'system'
-          ELSE 'agent'
-        END
-        WHERE from_ref IS NULL
-      `);
-    }
-
-    // One-time orphan cleanup: rows whose task_id no longer exists in
-    // `tasks`. Pre-FK writes could leave these behind (a task DELETE
-    // that didn't cascade because the FK pragma was off). Must run before
-    // enabling FK pragma.
-    this.db.exec(
-      "DELETE FROM events WHERE task_id NOT IN (SELECT id FROM tasks)",
-    );
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS recent_paths (
+        cwd TEXT PRIMARY KEY,
+        last_used_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now'))
+      );
+    `);
 
     // Secondary index for events queried by (task_id, type, created_at)
-    // -- used by upcoming inbox/message consume queries.
+    // -- used by inbox/message consume queries.
     this.db.exec(
       "CREATE INDEX IF NOT EXISTS idx_events_type ON events(task_id, type, created_at)",
     );
@@ -482,21 +379,6 @@ export class Store {
       CREATE INDEX IF NOT EXISTS idx_shares_task ON shares(task_id, created_at DESC);
     `);
 
-    // Migrate: drop revoked_at column from existing tables (v0.5+).
-    // Revocation is now hard-delete; kept rows are always live.
-    const shareCols = this.db
-      .prepare("PRAGMA table_info(shares)")
-      .all() as Array<{ name: string }>;
-    const shareColNames = new Set(shareCols.map((c) => c.name));
-    if (shareColNames.has("revoked_at")) {
-      // Hard-delete any pre-existing revoked rows so the migration
-      // doesn't resurrect them as "live" shares after dropping the column.
-      this.db.exec("DELETE FROM shares WHERE revoked_at IS NOT NULL");
-      // Drop the partial unique index that references revoked_at, then
-      // the column, then recreate the index without the revoked_at clause.
-      this.db.exec("DROP INDEX IF EXISTS shares_one_active_preview");
-      this.db.exec("ALTER TABLE shares DROP COLUMN revoked_at");
-    }
     this.db.exec(`
       CREATE UNIQUE INDEX IF NOT EXISTS shares_one_active_preview
         ON shares(task_id)
@@ -532,16 +414,6 @@ export class Store {
       );
       CREATE INDEX IF NOT EXISTS idx_attachments_task ON attachments(task_id);
     `);
-    const attachmentCols = this.db
-      .prepare("PRAGMA table_info(attachments)")
-      .all() as Array<{ name: string }>;
-    const attachmentColNames = new Set(attachmentCols.map((c) => c.name));
-    if (!attachmentColNames.has("width")) {
-      this.db.exec("ALTER TABLE attachments ADD COLUMN width INTEGER");
-    }
-    if (!attachmentColNames.has("height")) {
-      this.db.exec("ALTER TABLE attachments ADD COLUMN height INTEGER");
-    }
 
     // owner_prefs — key-value store for owner-scoped defaults (display_name,
     // last /by selection, etc). Single-user model = single owner scope.
@@ -553,8 +425,6 @@ export class Store {
         updated_at INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER) * 1000)
       );
     `);
-
-    this.migrateAttachmentsDataDir();
   }
 
   /**

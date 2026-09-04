@@ -78,12 +78,12 @@ ACP `clientCapabilities` (`fs`, `terminal`) and `mcpServers` are **opt-in capabi
 - `mcpServers: []` — client doesn't inject MCP servers. Does **not** disable agent's own MCP config (e.g. GitHub MCP via `~/.copilot/mcp-config.json` still works).
 
 **Extension points**:
-- To inject project-specific MCP servers from the client, populate `mcpServers` in `newTask`/`loadTask`.
+- To inject project-specific MCP servers from the client, populate `mcpServers` in `newSession`/`loadSession`.
 - To re-add fs handlers (for an agent that uses them), restore the `readTextFile` / `writeTextFile` entries in the `client` object in `bridge.ts` and flip the capability flags.
 
 ## ACP Scope and Current Limits
 
-- **Core ACP surface only**: WebAgent currently relies on ACP for task lifecycle (`newTask`, `loadTask`, `prompt`, `cancel`), permission requests, task updates, and model selection.
+- **Core ACP surface only**: WebAgent currently relies on ACP for task lifecycle (`newSession`, `loadSession`, `prompt`, `cancel`), permission requests, task updates, and model selection.
 - **Narrow event mapping**: The UI/store layer only maps a subset of ACP updates today: assistant text, thinking text, tool calls, tool call updates, and plans.
 - **Task cancel, not host-task cancel**: ACP `cancel` only stops the current task prompt/turn. In this repo we extend that to the task's own local bash/permission/title work, but WebAgent still cannot cancel host-level tasks started outside the server's runtime (for example external Copilot CLI tool invocations or subprocesses it owns).
 - **Browser UI, not full CLI parity**: Direct CLI surfaces such as `/plan`, `/fleet`, `/mcp`, `/agent`, `/skills` are not mirrored as first-class WebAgent controls. The app only renders the ACP events it receives. Autopilot mode is supported via server-side auto-approval of permissions.

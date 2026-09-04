@@ -1724,13 +1724,13 @@ When a task's mode includes `#autopilot`, the server auto-approves permission re
 
 ## Database Schema
 
-SQLite database at `{data_dir}/webagent.db`. WAL mode enabled. See `src/store.ts` for schema and migrations.
+SQLite database at `{data_dir}/webagent.db`. WAL mode enabled. See `src/store.ts` for schema initialization and the pre-1.0 reset policy.
 
 ### `tasks`
 
 | Column             | Type    | Description                           |
 | ------------------ | ------- | ------------------------------------- |
-| `id`               | TEXT PK | Task ID (from ACP)                 |
+| `id`               | TEXT PK | Stable WebAgent task ID             |
 | `cwd`              | TEXT    | Working directory                     |
 | `title`            | TEXT    | Generated title (nullable)            |
 | `model`            | TEXT    | Current model override                |

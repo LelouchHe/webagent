@@ -37,7 +37,7 @@ See the [ACP Registry](https://agentclientprotocol.com/get-started/registry) for
 Different agents implement ACP with different conventions. Things that have surprised us in dogfood:
 
 **Codex (`@zed-industries/codex-acp`) — agent's shell tool uses process cwd.**
-Codex runs normally under WebAgent — task listing, file edits, and permission scoping all honor the per-task `cwd` from ACP `newTask`. The only subtle point is **Codex's own internal shell tool** (the `/bin/bash -lc` calls the LLM makes via codex-rs) uses the **process working directory** of `codex-acp` itself, not the per-task cwd:
+Codex runs normally under WebAgent — task listing, file edits, and permission scoping all honor the WebAgent task's `cwd` passed during ACP session creation. The only subtle point is **Codex's own internal shell tool** (the `/bin/bash -lc` calls the LLM makes via codex-rs) uses the **process working directory** of `codex-acp` itself, not the per-task cwd:
 
 - Inside the agent's shell tool, `pwd`, `ls *.md`, `cat a.txt`, `find .` all resolve from the directory where you launched `webagent`, not from the task's chosen cwd.
 - Absolute paths and file-edit tools (which take absolute paths anyway) work correctly per-task, including permission boundary checks against `task.cwd`.
@@ -102,6 +102,14 @@ To use a different ACP-compatible agent backend:
 ```toml
 agent_cmd = "claude-agent-acp"
 ```
+
+## Pre-1.0 storage reset
+
+Storage changes before 1.0 may be breaking. If a release announces a data
+reset, stop WebAgent, back up the configured `data_dir` if needed, remove it,
+and restart. The new release creates a fresh database, Root task, attachment
+directory, and auth token; restore any configuration or credentials that you
+want to keep.
 
 ## Generating a Config
 

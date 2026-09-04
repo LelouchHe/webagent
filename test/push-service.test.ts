@@ -85,7 +85,7 @@ describe("Store — push_subscriptions", () => {
     assert.deepEqual(store.getAllSubscriptions(), []);
   });
 
-  it("push_subscriptions table survives migration re-run", () => {
+  it("push_subscriptions table survives Store re-open", () => {
     store.saveSubscription("https://push.example.com/1", "a", "b");
     store.close();
 
