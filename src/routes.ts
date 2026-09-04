@@ -1199,6 +1199,13 @@ export function createRequestHandler(
           json(res, HTTP_STATUS.NOT_FOUND, { error: "Source task not found" });
           return;
         }
+        const bridge = getBridge?.();
+        if (!bridge || !tasks) {
+          json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
+            error: "Agent not ready yet",
+          });
+          return;
+        }
         const { opId, replayed } = tryReplayClientOp(
           req,
           res,
@@ -1258,6 +1265,7 @@ export function createRequestHandler(
           result,
         );
         json(res, HTTP_STATUS.ACCEPTED, result, req);
+        void tasks.drainCollaborationDeliveries(bridge, targetTask.id);
         return;
       }
 

@@ -66,6 +66,8 @@ type SessionBridge = Pick<
     >
   >;
 
+type DeliveryBridge = SessionBridge & Pick<AgentBridge, "prompt">;
+
 /** Minimum age (seconds) before an empty task is eligible for cleanup. */
 const EMPTY_TASK_MIN_AGE_S = 60;
 
@@ -115,6 +117,8 @@ export class TaskManager {
   readonly assistantBuffers = new Map<string, string>();
   readonly thinkingBuffers = new Map<string, string>();
   readonly activePrompts = new Set<string>();
+  /** Delivery rows currently being claimed/resolved for one target task. */
+  private readonly drainingCollaborationTasks = new Set<string>();
   /** Tasks undergoing compact summary generation or ACP rotation. */
   readonly compactingTasks = new Set<string>();
   /** Root reset barrier covering the asynchronous tree replacement. */
@@ -316,6 +320,7 @@ export class TaskManager {
   private getActiveTaskWorkKind(taskId: string): "agent" | "bash" | null {
     if (this.creatingTasks.has(taskId)) return "agent";
     if (this.pendingPromptSubmissions.has(taskId)) return "agent";
+    if (this.drainingCollaborationTasks.has(taskId)) return "agent";
     if (this.activePrompts.has(taskId)) return "agent";
     if (this.compactingTasks.has(taskId)) return "agent";
     if (this.rotatingTasks.has(taskId)) return "agent";
@@ -1370,6 +1375,80 @@ export class TaskManager {
         },
       },
     });
+  }
+
+  /**
+   * Claim the complete queued Delivery snapshot for an idle target and submit
+   * it as one ACP prompt. The caller never trusts a client for this decision:
+   * Store rows, runtime busy state, and the bridge binding are authoritative.
+   */
+  async drainCollaborationDeliveries(
+    bridge: DeliveryBridge,
+    taskId: string,
+  ): Promise<boolean> {
+    if (this.getBusyKind(taskId) !== null) return false;
+    this.drainingCollaborationTasks.add(taskId);
+    this.syncBusy(taskId);
+    try {
+      await this.ensureResumed(bridge, taskId);
+      const deliveries = this.store.claimQueuedDeliveries(taskId);
+      if (deliveries.length === 0) return false;
+      const entries = deliveries.map((delivery) => {
+        const message = this.store.getCollaborationMessage(delivery.message_id);
+        if (!message) {
+          throw new Error(
+            `Collaboration message missing: ${delivery.message_id}`,
+          );
+        }
+        const source = this.store.getTaskIncludingDeleted(
+          message.source_task_id,
+        );
+        const sourceLabel = source?.title ?? message.source_task_id.slice(0, 8);
+        return `${sourceLabel}: ${message.body}`;
+      });
+      this.store.updateTaskWorkflowStatus(taskId, "running");
+      this.drainingCollaborationTasks.delete(taskId);
+      this.activePrompts.add(taskId);
+      this.syncBusy(taskId);
+      const promptId =
+        this.state.getState(taskId).runtime.busy?.promptId ?? undefined;
+      void bridge
+        .prompt(
+          taskId,
+          ["Collaboration messages for this task:", "", ...entries].join("\n"),
+          undefined,
+          promptId,
+        )
+        .then(
+          () => {
+            this.store.markCollaborationDeliveriesDelivered(
+              deliveries.map((delivery) => delivery.id),
+            );
+          },
+          (error: unknown) => {
+            slog.error("collaboration delivery failed", {
+              taskId: taskId.slice(0, 8),
+              error,
+            });
+            this.store.failCollaborationDeliveries(
+              deliveries.map((delivery) => delivery.id),
+              "prompt_failed",
+            );
+            if (!this.isCurrentPrompt(taskId, promptId)) return;
+            this.activePrompts.delete(taskId);
+            this.syncBusy(taskId);
+          },
+        );
+      return true;
+    } catch (error) {
+      slog.error("collaboration delivery drain failed", {
+        taskId: taskId.slice(0, 8),
+        error,
+      });
+      return false;
+    } finally {
+      if (this.drainingCollaborationTasks.delete(taskId)) this.syncBusy(taskId);
+    }
   }
 
   /**

@@ -293,6 +293,7 @@ function handlePromptDone(
   event: PromptDoneEvent,
   tasks: TaskManager,
   store: Store,
+  bridge: AgentBridge,
 ): void {
   const cancelStatus =
     tasks.state.getState(event.taskId).runtime.busy?.cancelStatus ?? null;
@@ -330,17 +331,25 @@ function handlePromptDone(
     },
     { from_ref: "agent" },
   );
+  if (isCurrent) {
+    if (store.getTask(event.taskId)?.workflow_status === "running") {
+      store.updateTaskWorkflowStatus(event.taskId, "idle");
+    }
+    void tasks.drainCollaborationDeliveries(bridge, event.taskId);
+  }
 }
 
 function handleError(
   event: ErrorEvent,
   tasks: TaskManager,
   store: Store,
+  bridge: AgentBridge,
 ): void {
   if (event.taskId) {
     // Same attribution as a completion: a superseded turn failing late must
     // not end the turn that replaced it. The buffered tail still flushes.
-    if (tasks.isCurrentPrompt(event.taskId, event.promptId)) {
+    const isCurrent = tasks.isCurrentPrompt(event.taskId, event.promptId);
+    if (isCurrent) {
       tasks.activePrompts.delete(event.taskId);
       tasks.syncBusy(event.taskId);
     } else {
@@ -363,6 +372,12 @@ function handleError(
       },
       { from_ref: "agent" },
     );
+    if (isCurrent) {
+      if (store.getTask(event.taskId)?.workflow_status === "running") {
+        store.updateTaskWorkflowStatus(event.taskId, "idle");
+      }
+      void tasks.drainCollaborationDeliveries(bridge, event.taskId);
+    }
   }
 }
 
@@ -421,10 +436,10 @@ function dispatchAgentEvent(
         config,
       );
     case "prompt_done":
-      handlePromptDone(event, tasks, store);
+      handlePromptDone(event, tasks, store, bridge);
       return false;
     case "error":
-      handleError(event, tasks, store);
+      handleError(event, tasks, store, bridge);
       return false;
   }
   return false;

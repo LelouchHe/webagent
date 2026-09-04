@@ -8,7 +8,7 @@ import { Store } from "../src/store.ts";
 import { createRequestHandler } from "../src/routes.ts";
 import { SseManager } from "../src/sse-manager.ts";
 import { TaskManager } from "../src/task-manager.ts";
-import { mockBridgeStubs } from "./fixtures.ts";
+import { mockBridgeStubs, waitFor } from "./fixtures.ts";
 
 function request(
   port: number,
@@ -82,6 +82,7 @@ describe("S3 collaboration write routes", () => {
     store.createTask("sibling", tmpDir, "auto", "agent-sibling", "parent");
     store.updateTaskTitle("parent", "parent");
     store.updateTaskTitle("sibling", "sibling");
+    tasks.liveTasks.add("sibling");
   });
 
   afterEach(async () => {
@@ -127,12 +128,15 @@ describe("S3 collaboration write routes", () => {
       { task_id: "parent", role: "source" },
       { task_id: "sibling", role: "target" },
     ]);
-    const delivery = store.getCollaborationDelivery(
-      response.body.deliveryId as string,
+    const deliveryId = response.body.deliveryId as string;
+    await waitFor(
+      () => store.getCollaborationDelivery(deliveryId)?.status === "delivered",
+      { message: "expected the target delivery to submit" },
     );
+    const delivery = store.getCollaborationDelivery(deliveryId);
     assert.ok(delivery);
     assert.equal(delivery.recipient_task_id, "sibling");
-    assert.equal(delivery.status, "queued");
+    assert.equal(delivery.status, "delivered");
   });
 
   it("rejects a target outside the direct family policy", async () => {

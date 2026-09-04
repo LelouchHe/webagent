@@ -1036,6 +1036,12 @@ export class Store {
     this.db.prepare("UPDATE tasks SET title = ? WHERE id = ?").run(title, id);
   }
 
+  updateTaskWorkflowStatus(id: string, status: WorkflowStatus): void {
+    this.db
+      .prepare("UPDATE tasks SET workflow_status = ? WHERE id = ?")
+      .run(status, id);
+  }
+
   updateTaskLastActive(id: string): void {
     this.db
       .prepare(
@@ -1594,6 +1600,22 @@ export class Store {
     );
     const tx = this.db.transaction(() => {
       for (const id of ids) mark.run(deliveredAt, id);
+    });
+    tx();
+  }
+
+  failCollaborationDeliveries(
+    ids: string[],
+    failureReason: string,
+    failedAt = Date.now(),
+  ): void {
+    const fail = this.db.prepare(
+      `UPDATE deliveries
+       SET status = 'failed', failed_at = ?, failure_reason = ?
+       WHERE id = ? AND status = 'draining'`,
+    );
+    const tx = this.db.transaction(() => {
+      for (const id of ids) fail.run(failedAt, failureReason, id);
     });
     tx();
   }
