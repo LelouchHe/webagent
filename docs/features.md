@@ -66,12 +66,13 @@ Type `/` to trigger an autocomplete menu with arrow keys to navigate, Esc to clo
 | `Enter`   | Send current input            | Send current input |
 | Click/Tap | Fill and send (Tab + Enter)   | —                  |
 
-Commands with submenus (`/model`, `/mode`, `/think`, `/notify`, `/switch`, `/new`, `/clear`, `/view`, `/inbox`, `/log`, `/plan`) show a picker after typing the command and a space. Tab completes the selection into the input so you can review or edit before pressing Enter to send.
+Commands with submenus (`/model`, `/mode`, `/think`, `/notify`, `/switch`, `/clear`, `/view`, `/inbox`, `/log`, `/plan`) show a picker after typing the command and a space. Tab completes the selection into the input so you can review or edit before pressing Enter to send. Task creation and collaboration use `+` / `@` autocomplete.
 
 | Command               | Description                                                                                                                   |
 | --------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
 | `/help` (or `?`)      | Show help                                                                                                                     |
-| `/new [cwd]`          | Create child task under the current task — shows recent paths picker (paths persist across task exits, auto-cleaned by TTL) |
+| `+<cwd>/<title> <brief>` | Create a named child task and immediately deliver its brief; omit `<cwd>/` to inherit the current working directory. Quote a target containing spaces. |
+| `@<task-path> <body>` | Send a graceful collaboration message to a parent, direct child, or sibling task selected through autocomplete. |
 | `/model [name]`       | Switch model (fuzzy match, e.g. `/model opus`)                                                                                |
 | `/mode [name]`        | Switch mode (Agent / Plan / Autopilot)                                                                                        |
 | `/think [level]`      | Set thinking effort (low / medium / high)                                                                                     |

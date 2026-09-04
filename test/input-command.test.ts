@@ -15,10 +15,12 @@ describe("input command classification", () => {
     assert.equal(isLocalCommand("hello"), false);
   });
 
-  it("allows only local commands and bash while the agent is busy", () => {
+  it("allows local, bash, and task commands while the agent is busy", () => {
     assert.equal(canSubmitWhileBusy("/help"), true);
     assert.equal(canSubmitWhileBusy("? help"), true);
     assert.equal(canSubmitWhileBusy("!git status"), true);
+    assert.equal(canSubmitWhileBusy("+child investigate this"), true);
+    assert.equal(canSubmitWhileBusy("@../sibling please review"), true);
     assert.equal(canSubmitWhileBusy("//compact"), false);
     assert.equal(canSubmitWhileBusy("hello"), false);
   });

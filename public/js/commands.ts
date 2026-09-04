@@ -17,6 +17,7 @@ import {
 import { renderItem } from "./slash-render.ts";
 import { ROOT } from "./slash-commands.ts";
 import { handleSlashCommand } from "./slash-exec.ts";
+import { buildTaskCommandCandidates, isTaskCommand } from "./task-command.ts";
 
 export { handleSlashCommand };
 
@@ -55,6 +56,13 @@ function agentRoot(): CmdNode {
 function rootForInput(input: string): CmdNode {
   return input.startsWith("//") ? agentRoot() : ROOT;
 }
+
+// Sentinel node used when the menu is showing `+` / `@` candidates. The
+// controller bypasses the command tree walker for task-target commands.
+const TASK_COMMAND_ROOT: CmdNode = {
+  name: "<task-command-root>",
+  desc: "Task-target command",
+};
 
 function showPlaceholder(primary: string): void {
   currentPath = "";
@@ -96,8 +104,13 @@ export function updateSlashMenu(): void {
     dismissedFor = null;
   }
 
-  if (!text.startsWith("/")) {
+  if (!text.startsWith("/") && !isTaskCommand(text)) {
     hideSlashMenu();
+    return;
+  }
+
+  if (isTaskCommand(text)) {
+    void updateTaskCommandMenu(text);
     return;
   }
 
@@ -194,6 +207,56 @@ function currentTailQueryFromInput(): string {
   const input = currentMenuInput();
   const { tailQuery } = resolvePath(input, rootForInput(input));
   return tailQuery;
+}
+
+async function updateTaskCommandMenu(text: string): Promise<void> {
+  currentPath = text;
+  currentFetchKey = text;
+  fetchGeneration++;
+  const myFetchGeneration = fetchGeneration;
+  currentNode = TASK_COMMAND_ROOT;
+  currentData = undefined;
+
+  candidates = [
+    {
+      spec: { primary: "(loading...)" },
+      prefix: "",
+      kind: "placeholder",
+    },
+  ];
+  selectedIdx = -1;
+  renderMenu("");
+  dom.slashMenu.classList.add("active");
+
+  try {
+    const cands = await buildTaskCommandCandidates(text);
+    if (fetchGeneration !== myFetchGeneration) return;
+    if (cands.length === 0) {
+      hideSlashMenu();
+      return;
+    }
+    candidates = cands;
+    const firstSelectable = cands.findIndex(
+      (c) => c.kind !== "separator" && c.kind !== "placeholder",
+    );
+    selectedIdx = firstSelectable >= 0 ? firstSelectable : 0;
+    renderMenu("");
+    dom.slashMenu.classList.add("active");
+  } catch (err) {
+    if (fetchGeneration !== myFetchGeneration) return;
+    candidates = [
+      {
+        spec: {
+          primary: `(${err instanceof Error ? err.message : "error"})`,
+        },
+        prefix: "",
+        kind: "placeholder",
+      },
+    ];
+    selectedIdx = 0;
+    renderMenu("");
+    dom.slashMenu.classList.add("active");
+  }
 }
 
 function fetchErrorMessage(err: unknown): string {
