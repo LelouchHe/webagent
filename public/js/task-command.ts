@@ -104,12 +104,13 @@ function getLocalScope(
   const map = buildTaskTree(tasks);
   const current = map.get(currentId);
   if (!current) return [];
-  const out: TaskNode[] = [];
+  // Menu ordering: children (the most likely message targets) first, then
+  // the parent, then siblings.
+  const out: TaskNode[] = [...current.children];
   if (current.parentId) {
     const parent = map.get(current.parentId);
     if (parent) out.push(parent);
   }
-  for (const child of current.children) out.push(child);
   if (current.parentId) {
     const parent = map.get(current.parentId);
     if (parent) {
