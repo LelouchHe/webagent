@@ -1,7 +1,6 @@
 import Database from "better-sqlite3";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { migrateS2SyncIfNeeded } from "./migrate-s3-0.ts";
 
 export const ROOT_TASK_ID = "root";
 
@@ -213,10 +212,6 @@ export class Store {
     try {
       this.db.pragma("journal_mode = WAL");
       this.db.pragma("foreign_keys = ON");
-      // One-time S2→S3.0 migration: detection, backup, and transform live
-      // entirely in src/migrate-s3-0.ts (delete both this call and that
-      // module once the migration has shipped everywhere).
-      migrateS2SyncIfNeeded(this.db, this.dataDir);
       this.assertSupportedSchema();
       this.initializeSchema();
     } catch (error) {

@@ -333,21 +333,9 @@ SELECT COUNT(*) FROM events WHERE task_id NOT IN (SELECT id FROM tasks);
 ## Pre-1.0 reset policy
 
 Schema changes before 1.0 are breaking changes. Server startup never performs
-an implicit compatibility migration except for the known S2-to-S3.0
-transition: `migrateS2SyncIfNeeded` in `scripts/migrate-s3-0.ts` is the entire
-Store-side surface — a booting new server is itself a no-concurrent-writer
-state, so the migration runs there (detection, `VACUUM INTO` snapshot before
-any DDL, guarded single-transaction rename + transform, never deletes ACP
-sessions) and a version upgrade needs no separate stop-migrate-start step.
-The module is temporary scaffolding: once the migration has shipped
-everywhere, delete the Store call site and the module.
-
-`scripts/migrate-s3-0.ts` also works as an explicit operator CLI against a
-stopped server: it requires `--execute --server-stopped` and reports unbound
-ACP sessions without deleting them.
-
-Other obsolete pre-1.0 schemas have no compatibility path: operators must back
-up and reset their data directory before restarting.
+an implicit compatibility migration: obsolete pre-1.0 schemas have no
+compatibility path — the strict schema guard rejects them at boot, and
+operators must back up and reset their data directory before restarting.
 
 ---
 
