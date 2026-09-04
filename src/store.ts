@@ -606,13 +606,28 @@ export class Store {
     source: string = "auto",
     agentSessionId: string = id,
     parentId: string | null = null,
+    opts: {
+      title?: string;
+      brief?: string;
+      workflowStatus?: WorkflowStatus;
+    } = {},
   ): TaskRow {
     return this.db.transaction(() => {
       this.db
         .prepare(
-          "INSERT INTO tasks (id, cwd, source, parent_id) VALUES (?, ?, ?, ?)",
+          `INSERT INTO tasks
+           (id, cwd, source, parent_id, title, brief, workflow_status)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
         )
-        .run(id, cwd, source, parentId);
+        .run(
+          id,
+          cwd,
+          source,
+          parentId,
+          opts.title ?? null,
+          opts.brief ?? "",
+          opts.workflowStatus ?? "idle",
+        );
       this.db
         .prepare(
           "INSERT INTO agent_sessions (agent_key, agent_session_id, task_id) VALUES (?, ?, ?)",

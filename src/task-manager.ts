@@ -10,6 +10,7 @@ import {
   type TaskDelete,
   type TaskRow,
   type Store,
+  type WorkflowStatus,
 } from "./store.ts";
 import type { AgentBridge } from "./bridge.ts";
 import { buildMcpServerEntry } from "./mcp/server.ts";
@@ -358,7 +359,13 @@ export class TaskManager {
     cwd?: string,
     inheritFromTaskId?: string,
     source: string = "auto",
-    opts?: { silent?: boolean; parentId?: string | null },
+    opts?: {
+      silent?: boolean;
+      parentId?: string | null;
+      title?: string;
+      brief?: string;
+      workflowStatus?: WorkflowStatus;
+    },
   ): Promise<{ taskId: string; configOptions: ConfigOption[] }> {
     const parentId = this.resolveParentId(opts?.parentId);
     if (parentId) {
@@ -386,6 +393,11 @@ export class TaskManager {
     source: string,
     agentSessionId: string,
     parentId: string | null,
+    metadata: {
+      title?: string;
+      brief?: string;
+      workflowStatus?: WorkflowStatus;
+    },
   ): Promise<void> {
     for (;;) {
       // Never await the Root reset while holding a lineage lock. A reset can
@@ -409,6 +421,7 @@ export class TaskManager {
           source,
           agentSessionId,
           parentId,
+          metadata,
         );
         return;
       } finally {
@@ -460,7 +473,13 @@ export class TaskManager {
     cwd?: string,
     inheritFromTaskId?: string,
     source: string = "auto",
-    opts?: { silent?: boolean; parentId?: string | null },
+    opts?: {
+      silent?: boolean;
+      parentId?: string | null;
+      title?: string;
+      brief?: string;
+      workflowStatus?: WorkflowStatus;
+    },
   ): Promise<{ taskId: string; configOptions: ConfigOption[] }> {
     const taskCwd = expandHomePath(cwd ?? this.defaultCwd);
     try {
@@ -495,6 +514,11 @@ export class TaskManager {
         source,
         agentSessionId,
         parentId,
+        {
+          title: opts?.title,
+          brief: opts?.brief,
+          workflowStatus: opts?.workflowStatus,
+        },
       );
     } catch (err) {
       slog.warn("ACP task created but local persistence failed", {

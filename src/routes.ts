@@ -284,6 +284,26 @@ function saveClientOpResult(
   store.saveClientOp(taskId, opId, { status, body });
 }
 
+function isLocalCollaborationTarget(
+  source: { id: string; parent_id: string | null },
+  target: { id: string; parent_id: string | null },
+): boolean {
+  if (source.id === target.id) return false;
+  return (
+    source.parent_id === target.id ||
+    target.parent_id === source.id ||
+    (source.parent_id !== null && source.parent_id === target.parent_id)
+  );
+}
+
+function validateCollaborationTitle(title: unknown): string | null {
+  if (typeof title !== "string") return null;
+  if (!title.trim() || title.includes("/") || title === "." || title === "..") {
+    return null;
+  }
+  return title;
+}
+
 /** Send a JSON response, gzip-compressed when the client supports it. */
 function json(
   res: ServerResponse,
@@ -1165,6 +1185,79 @@ export function createRequestHandler(
           },
           req,
         );
+        return;
+      }
+
+      // --- POST /api/v1/tasks/:sourceTaskId/messages ---
+      const collaborationMessageMatch = url.match(
+        /^\/api\/v1\/tasks\/([^/]+)\/messages\/?(?:\?.*)?$/,
+      );
+      if (collaborationMessageMatch && req.method === "POST") {
+        const sourceTaskId = decodeURIComponent(collaborationMessageMatch[1]);
+        const sourceTask = store.getTask(sourceTaskId);
+        if (!sourceTask) {
+          json(res, HTTP_STATUS.NOT_FOUND, { error: "Source task not found" });
+          return;
+        }
+        const { opId, replayed } = tryReplayClientOp(
+          req,
+          res,
+          store,
+          sourceTaskId,
+        );
+        if (replayed) return;
+        let body: { targetTaskId?: unknown; body?: unknown };
+        try {
+          body = JSON.parse(await readBody(req)) as typeof body;
+        } catch {
+          json(res, HTTP_STATUS.BAD_REQUEST, { error: "Invalid JSON" });
+          return;
+        }
+        if (
+          typeof body.targetTaskId !== "string" ||
+          typeof body.body !== "string" ||
+          !body.body.trim()
+        ) {
+          json(res, HTTP_STATUS.BAD_REQUEST, {
+            error: "targetTaskId and non-empty body are required",
+          });
+          return;
+        }
+        const targetTask = store.getTask(body.targetTaskId);
+        if (!targetTask) {
+          json(res, HTTP_STATUS.NOT_FOUND, { error: "Target task not found" });
+          return;
+        }
+        if (!isLocalCollaborationTarget(sourceTask, targetTask)) {
+          json(res, HTTP_STATUS.BAD_REQUEST, {
+            error: "Target task is outside the local collaboration scope",
+          });
+          return;
+        }
+        const messageId = randomUUID();
+        const deliveryId = randomUUID();
+        store.createCollaborationMessage({
+          id: messageId,
+          deliveryId,
+          sourceTaskId,
+          directTargetTaskId: targetTask.id,
+          sourceActor: "user",
+          body: body.body,
+        });
+        const result = {
+          messageId,
+          deliveryId,
+          status: "queued",
+          clientOpId: opId ?? undefined,
+        };
+        saveClientOpResult(
+          store,
+          opId,
+          sourceTaskId,
+          HTTP_STATUS.ACCEPTED,
+          result,
+        );
+        json(res, HTTP_STATUS.ACCEPTED, result, req);
         return;
       }
 
@@ -2317,6 +2410,8 @@ export function createRequestHandler(
           inheritFromTaskId?: string;
           source?: string;
           parentId?: string;
+          title?: string;
+          brief?: string;
         };
         try {
           body = JSON.parse(await readBody(req)) as {
@@ -2324,12 +2419,31 @@ export function createRequestHandler(
             inheritFromTaskId?: string;
             source?: string;
             parentId?: string;
+            title?: string;
+            brief?: string;
           };
         } catch {
           json(res, HTTP_STATUS.BAD_REQUEST, { error: "Invalid JSON" });
           return;
         }
         const source = body.source ?? "auto";
+        const hasCollaborationFields =
+          body.title !== undefined || body.brief !== undefined;
+        const title = hasCollaborationFields
+          ? validateCollaborationTitle(body.title)
+          : undefined;
+        if (
+          hasCollaborationFields &&
+          (title === null ||
+            typeof body.brief !== "string" ||
+            !body.brief.trim())
+        ) {
+          json(res, HTTP_STATUS.BAD_REQUEST, {
+            error:
+              "title and non-empty brief are required for collaboration task creation",
+          });
+          return;
+        }
         // The parent must exist and be live (not tombstoned); the FK would
         // reject a dangling reference with a raw database error otherwise.
         // A live parent row is enough — it need not have an ACP binding yet.
@@ -2348,7 +2462,12 @@ export function createRequestHandler(
             body.cwd,
             body.inheritFromTaskId,
             source,
-            { parentId: body.parentId },
+            {
+              parentId: body.parentId,
+              title: title ?? undefined,
+              brief: body.brief,
+              workflowStatus: title ? "running" : undefined,
+            },
           );
           const task = store.getTask(taskId);
           const taskCreatedEvent = {
@@ -2376,6 +2495,8 @@ export function createRequestHandler(
             cwd: task?.cwd ?? body.cwd,
             cwdDisplay: task?.cwd ? abbreviateHomePath(task.cwd) : undefined,
             title: task?.title ?? null,
+            brief: task?.brief ?? "",
+            workflowStatus: task?.workflow_status ?? "idle",
             source: task?.source ?? source,
             parentId: task?.parent_id ?? null,
             configOptions,

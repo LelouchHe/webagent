@@ -151,7 +151,9 @@ Create a new task. Optionally inherits model and reasoning_effort from another t
 | `cwd`                  | string | No       | Working directory. Defaults to server's `default_cwd` config. Must exist on disk. |
 | `inheritFromTaskId` | string | No       | Copy model + reasoning_effort from this task                                   |
 | `source`               | string | No       | Tag for the task origin. Default: `"auto"`                                     |
-| `parentTaskId`      | string | No       | Parent WebAgent Task. Defaults to the reserved Root when it exists.              |
+| `parentId`          | string | No       | Parent WebAgent Task. Defaults to the reserved Root when it exists.              |
+| `title`             | string | No       | Explicit collaboration child title. Must be non-empty, not `.` / `..`, and contain no `/`. Required with `brief`. |
+| `brief`             | string | No       | Initial collaboration child brief. Required with `title`; non-empty. |
 
 **Response** `201`:
 
@@ -159,9 +161,11 @@ Create a new task. Optionally inherits model and reasoning_effort from another t
 {
   "id": "new-task-id",
   "cwd": "/home/user/project",
-  "title": null,
+  "title": "code review",
+  "brief": "Review the release diff.",
+  "workflowStatus": "running",
   "source": "auto",
-  "parentTaskId": "root",
+  "parentId": "root",
   "configOptions": [...]
 }
 ```
@@ -173,6 +177,39 @@ Create a new task. Optionally inherits model and reasoning_effort from another t
 - Broadcasts `task_created` to all SSE clients
 - Broadcasts `config_option_update` if config was inherited
 - Cleans up empty tasks older than 60 seconds
+
+---
+
+#### `POST /api/v1/tasks/:sourceTaskId/messages`
+
+Create one persisted collaboration Message from a source task to an existing
+local-family target. This is the structured write endpoint used after the
+frontend autocomplete has resolved an `@` target; it does not parse task-path
+text and ignores client-supplied routing metadata.
+
+**Request body:**
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `targetTaskId` | string | Yes | Stable target task ID selected by the client |
+| `body` | string | Yes | Non-empty collaboration message body |
+
+The server verifies that target is the source's direct parent, direct child, or
+same-parent sibling; computes the LCA itself; and atomically writes one
+Message, source/target/LCA projections, and a queued Delivery.
+
+**Response** `202`:
+
+```json
+{
+  "messageId": "message-id",
+  "deliveryId": "delivery-id",
+  "status": "queued"
+}
+```
+
+**Errors:** `400` (invalid body or target outside local collaboration scope),
+`404` (source or target task absent).
 
 ---
 
