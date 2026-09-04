@@ -129,6 +129,25 @@ describe("commands", () => {
       );
     });
 
+    it("shows concise one-line help descriptions", async () => {
+      const handled = await commands.handleSlashCommand("?");
+
+      assert.equal(handled, true);
+      const lines = messageLines();
+      assert.ok(lines.includes("/clear — Clear context; history stays."));
+      assert.ok(lines.includes("/compact — Compact context and continue."));
+      assert.ok(
+        lines.includes("/exit — Exit task tree; Root resets the tree."),
+      );
+      assert.ok(lines.includes("/new — New child task under current task."));
+      assert.ok(
+        !lines.some((line: string) => line.includes("current conversation")),
+      );
+      assert.ok(
+        !lines.some((line: string) => line.includes("current task and return")),
+      );
+    });
+
     it("shows help for ? and lists /help in commands", async () => {
       const handled = await commands.handleSlashCommand("?");
 
@@ -138,6 +157,17 @@ describe("commands", () => {
       assert.ok(lines.includes("/help — Show help"));
       assert.ok(lines.includes("!<command> — Run bash command"));
       assert.ok(lines.includes("// — Agent commands (agent-specific)"));
+    });
+
+    it("does not expose the removed /tasks command", async () => {
+      const handled = await commands.handleSlashCommand("/tasks");
+
+      assert.equal(handled, true);
+      assert.ok(
+        messageLines().some((line: string) =>
+          line.includes('Unknown command "/tasks"'),
+        ),
+      );
     });
 
     it("shows version line when versions are available", async () => {

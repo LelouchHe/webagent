@@ -561,17 +561,16 @@ Triggered by `/` prefix in input. Handled in `commands.ts`.
 | Command             | API Call                                                    | Description                          |
 | ------------------- | ----------------------------------------------------------- | ------------------------------------ |
 | `/switch [query]`   | `api.listTasks()` + `api.getTask()` + `loadHistory()` | Switch to another task            |
-| `/new [path]`       | `api.createTask()`                                       | Create new task                   |
-| `/exit`             | `api.deleteTask()` + task navigation                 | Close current task and prefer its server-provided parent; Root resets its tree |
+| `/new [path]`       | `api.createTask()`                                       | Create a child task               |
+| `/exit`             | `api.deleteTask()` + task navigation                 | Exit task tree; prefer parent     |
 | `/rename <title>`   | `api.setTitle(taskId, title)`                            | Rename current task               |
-| `/model [name]`     | `api.setConfig(taskId, 'model', value)`                  | Switch model                         |
-| `/mode [name]`      | `api.setConfig(taskId, 'mode', value)`                   | Switch mode                          |
-| `/think [level]`    | `api.setConfig(taskId, 'reasoning_effort', value)`       | Set reasoning effort                 |
-| `/compact`          | `api.sendMessage(taskId, '/compact')`                    | Send as prompt (agent handles)       |
-| `/notify [on\|off]` | Push API + `/api/beta/push/subscribe`                       | Manage push notifications            |
-| `/clear [path]`     | `api.createTask()` + `api.deleteTask()`               | Clear and start fresh                |
+| `/model [name]`     | `api.setConfig(taskId, 'model', value)`                 | Set model                           |
+| `/mode [name]`      | `api.setConfig(taskId, 'mode', value)`                  | Set mode                            |
+| `/think [level]`    | `api.setConfig(taskId, 'reasoning_effort', value)`      | Set thinking effort                 |
+| `/compact`          | `api.compactTask(taskId)`                                | Compact context                    |
+| `/notify [on\|off]` | Push API + `/api/beta/push/subscribe`                   | Manage push notifications           |
+| `/clear [path]`     | `api.clearTask(taskId, { cwd })`                         | Clear context; keep history         |
 | `/view [path]`      | `api.listFiles()` + `api.getFileInfo()`                     | Browse and view a local file          |
-| `/? [query]`        | —                                                           | Search tasks by title             |
 
 The slash menu provides autocomplete with keyboard navigation (arrow keys, Tab to fill, Enter to send).
 

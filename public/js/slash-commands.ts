@@ -316,12 +316,13 @@ export const ROOT: CmdNode = {
   children: [
     {
       name: "/cancel",
-      desc: "Cancel current response",
+      desc: "Cancel response",
       onSelect: requestAuthoritativeCancel,
     },
     {
       name: "/clear",
-      desc: "Clear current task",
+      desc: "Clear context",
+      help: "Clear context; history stays.",
       fetch: listRecentPaths,
       toSpec: (item: unknown) => {
         const p = item as PathItem;
@@ -348,7 +349,8 @@ export const ROOT: CmdNode = {
     },
     {
       name: "/compact",
-      desc: "Summarize current conversation and continue",
+      desc: "Compact context",
+      help: "Compact context and continue.",
       onSelect: () => {
         void compactCurrentTask();
       },
@@ -386,10 +388,11 @@ export const ROOT: CmdNode = {
       fetch: () => [
         { value: "show", name: "show", desc: "Show plan panel" },
         { value: "hide", name: "hide", desc: "Hide plan panel" },
+        { value: "toggle", name: "toggle", desc: "Toggle plan panel" },
       ],
       toSpec: (item) => {
         const option = item as {
-          value: "show" | "hide";
+          value: "show" | "hide" | "toggle";
           name: string;
           desc: string;
         };
@@ -407,14 +410,15 @@ export const ROOT: CmdNode = {
     },
     {
       name: "/reset",
-      desc: "Reset local state",
+      desc: "Reset app state",
       onSelect: () => {
         void resetLocalState();
       },
     },
     {
       name: "/exit",
-      desc: "End current task",
+      desc: "Exit task tree",
+      help: "Exit task tree; Root resets the tree.",
       onSelect: () => {
         void exitCurrentTask();
       },
@@ -480,11 +484,12 @@ export const ROOT: CmdNode = {
         location.replace("/login");
       },
     },
-    configCmdNode("/mode", "Switch mode", "mode"),
-    configCmdNode("/model", "Switch model", "model", true),
+    configCmdNode("/mode", "Set mode", "mode"),
+    configCmdNode("/model", "Set model", "model", true),
     {
       name: "/new",
-      desc: "Create new task",
+      desc: "New child task",
+      help: "New child task under current task.",
       fetch: listRecentPaths,
       toSpec: (item: unknown) => {
         const p = item as PathItem;
@@ -571,7 +576,7 @@ export const ROOT: CmdNode = {
     },
     {
       name: "/share",
-      desc: "Share a read-only snapshot",
+      desc: "Manage shares",
       // Lists active (published) shares only — preview rows never leak in.
       // Enter on the empty input creates a fresh preview (freeform fallback).
       // Selecting a row opens the share's public URL in a new tab.
@@ -658,7 +663,7 @@ export const ROOT: CmdNode = {
     },
     {
       name: "/view",
-      desc: "View a local file",
+      desc: "View files",
       fetch: fetchViewItems,
       fetchKey: viewFetchKey,
       matches: viewItemMatches,
@@ -673,7 +678,7 @@ export const ROOT: CmdNode = {
     ),
     {
       name: "/token",
-      desc: "Manage API tokens",
+      desc: "Manage tokens",
       fetch: listTokensFn,
       toSpec: (item: unknown) => {
         const t = item as api.TokenSummary;
@@ -777,7 +782,7 @@ function printHelp(): void {
   addSystem("!<command> — Run bash command");
   addSystem("// — Agent commands (agent-specific)");
   for (const c of ROOT.children!) {
-    addSystem(`${c.name} — ${c.desc ?? ""}`);
+    addSystem(`${c.name} — ${c.help ?? c.desc ?? ""}`);
   }
   addSystem("--- Shortcuts ---");
   for (const s of SHORTCUTS) addSystem(`${s.key} — ${s.desc}`);

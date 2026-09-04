@@ -204,10 +204,6 @@ export async function handleSlashCommand(text: string): Promise<boolean> {
       return true;
     }
 
-    case "/tasks":
-      addSystem("Removed. Use /switch to see all tasks.");
-      return true;
-
     case "/clear": {
       await replaceCurrentTask({
         cwd: arg || undefined,
@@ -377,7 +373,7 @@ export async function handleSlashCommand(text: string): Promise<boolean> {
       addSystem("!<command> — Run bash command");
       addSystem("// — Agent commands (agent-specific)");
       for (const c of ROOT.children!) {
-        addSystem(`${c.name} — ${c.desc ?? ""}`);
+        addSystem(`${c.name} — ${c.help ?? c.desc ?? ""}`);
       }
       addSystem("--- Shortcuts ---");
       addSystem("Enter — Send message");

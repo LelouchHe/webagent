@@ -166,6 +166,11 @@ describe("slash menu — Tab vs Click behavior", () => {
           primary: "hide",
           secondary: "Hide plan panel",
         },
+        {
+          prefix: "",
+          primary: "toggle",
+          secondary: "Toggle plan panel",
+        },
       ],
     );
   });
@@ -187,7 +192,7 @@ describe("slash menu — Tab vs Click behavior", () => {
       [...dom.slashMenu.querySelectorAll(".slash-prefix")].map(
         (node) => node.textContent,
       ),
-      ["", ""],
+      ["", "", ""],
     );
   });
 

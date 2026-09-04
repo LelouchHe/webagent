@@ -71,16 +71,16 @@ Commands with submenus (`/model`, `/mode`, `/think`, `/notify`, `/switch`, `/new
 | Command               | Description                                                                                                                   |
 | --------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
 | `/help` (or `?`)      | Show help                                                                                                                     |
-| `/new [cwd]`          | Create new task — shows recent paths picker (paths persist across task exits, auto-cleaned by TTL)                      |
+| `/new [cwd]`          | Create child task under the current task — shows recent paths picker (paths persist across task exits, auto-cleaned by TTL) |
 | `/model [name]`       | Switch model (fuzzy match, e.g. `/model opus`)                                                                                |
 | `/mode [name]`        | Switch mode (Agent / Plan / Autopilot)                                                                                        |
 | `/think [level]`      | Set thinking effort (low / medium / high)                                                                                     |
 | `/notify [on\|off]`   | Toggle push notifications                                                                                                     |
 | `/inbox`              | Manage inbox — pick a pending message to consume (opens a new task), or use `/inbox dismiss` to ack it. See [Messages / Inbox](messages.md). |
 | `/log [level]`        | Set local log level (`off`, `debug`, `info`, `warn`, `error`, `reset`). Log records render inline as system messages.         |
-| `/plan [show\|hide]`  | Toggle, show, or hide the current pinned plan panel                                                                           |
+| `/plan [show\|hide\|toggle]`  | Toggle, show, or hide the current pinned plan panel                                                                           |
 | `/cancel`             | Cancel current response                                                                                                       |
-| `/clear [cwd]`        | Clear current task and start fresh, optionally in another cwd (model/think inherited)                                      |
+| `/clear [cwd]`        | Clear current context while keeping task history, optionally in another cwd (model/think inherited)                 |
 | `/compact`            | Summarize the current conversation; the visible history stays and the next message continues with a compacted context         |
 | `/reset`              | Reset local frontend state for this device (keeps login token)                                                                |
 | `/switch <title\|id>` | Switch task (match by title or ID prefix)                                                                                  |

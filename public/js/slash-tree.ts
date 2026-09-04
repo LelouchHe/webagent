@@ -8,8 +8,10 @@ import type { SlashItemSpec, SlashPrefix } from "./slash-render.ts";
 export interface CmdNode {
   /** Command segment without leading slash for children, with slash for ROOT-level. */
   name: string;
-  /** Description shown as `secondary` when listed in the parent menu. */
+  /** Short description shown as `secondary` in the parent menu. */
   desc?: string;
+  /** Optional fuller one-line description shown by `/help`. */
+  help?: string;
   /** Subcommands (walker renders with `›` prefix). */
   children?: CmdNode[];
   /** Fetch this layer's data items. Receives the current tail query; existing
