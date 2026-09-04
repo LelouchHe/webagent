@@ -92,12 +92,12 @@ test("+ completes directory prefixes from the parent listing", async ({
   const menu = page.locator("#slash-menu.active");
   await expect(menu).toContainText("public");
 
-  // Tab fills the completed path and keeps the menu open for deeper
-  // completion (hierarchical, like every other data row). The freeform row
-  // is highlighted first, so step down to the directory row before Tab.
+  // Tab fills the completed path with a trailing separator (/view descent
+  // semantics) and keeps the menu open for the next segment. The freeform
+  // row is highlighted first, so step down to the directory row before Tab.
   await page.keyboard.press("ArrowDown");
   await page.keyboard.press("Tab");
-  await expect(page.locator("#input")).toHaveValue("+public ");
+  await expect(page.locator("#input")).toHaveValue("+public/");
   await expect(page.locator("#slash-menu.active")).toContainText("js");
   await expect(page.locator("#slash-menu.active")).toContainText("~/");
 });
