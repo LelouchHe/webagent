@@ -25,9 +25,9 @@ describe("message event rendering", () => {
   });
   beforeEach(() => {
     resetState(state, dom);
-    // Message events carry sessionId; handleEvent drops any whose sessionId
-    // doesn't match state.sessionId. Align them.
-    (state as { sessionId: string }).sessionId = "s1";
+    // Message events carry taskId; handleEvent drops any whose taskId
+    // doesn't match state.taskId. Align them.
+    (state as { taskId: string }).taskId = "s1";
   });
 
   function makeMessageEvent(
@@ -35,7 +35,7 @@ describe("message event rendering", () => {
   ) {
     return {
       type: "message",
-      sessionId: "s1",
+      taskId: "s1",
       message_id: "m-abc",
       from_ref: "cron:disk-check",
       from_label: null,

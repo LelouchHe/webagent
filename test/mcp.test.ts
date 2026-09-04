@@ -8,14 +8,14 @@ import { buildMcpServerEntry, createMcpEndpoint } from "../src/mcp/server.ts";
 // --- CapabilityStore ---
 
 describe("CapabilityStore", () => {
-  it("mints capability tokens with a mcp_ prefix that resolve back to the session", () => {
+  it("mints capability tokens with a mcp_ prefix that resolve back to the task", () => {
     const caps = new CapabilityStore();
     const token = caps.mint("web-1");
     assert.match(token, /^mcp_/);
     assert.equal(caps.resolve(token), "web-1");
   });
 
-  it("minting again for the same session invalidates the previous token", () => {
+  it("minting again for the same task invalidates the previous token", () => {
     const caps = new CapabilityStore();
     const first = caps.mint("web-1");
     const second = caps.mint("web-1");
@@ -37,20 +37,20 @@ describe("CapabilityStore", () => {
     assert.equal(caps.resolve(second), "web-1");
   });
 
-  it("revokes per session and fails closed for unknown tokens", () => {
+  it("revokes per task and fails closed for unknown tokens", () => {
     const caps = new CapabilityStore();
     const token = caps.mint("web-1");
-    caps.revokeBySession("web-1");
+    caps.revokeByTask("web-1");
     assert.equal(caps.resolve(token), null);
     assert.equal(caps.resolve("mcp_nope"), null);
     assert.equal(caps.resolve(""), null);
   });
 
-  it("revoking an unknown session is a no-op", () => {
+  it("revoking an unknown task is a no-op", () => {
     const caps = new CapabilityStore();
-    caps.revokeBySession("never-minted");
+    caps.revokeByTask("never-minted");
     assert.doesNotThrow(() => {
-      caps.revokeBySession("never-minted");
+      caps.revokeByTask("never-minted");
     });
   });
 
@@ -90,7 +90,7 @@ describe("createMcpEndpoint", () => {
   before(async () => {
     const handler = createMcpEndpoint({
       capabilities: caps,
-      isSessionActive: (id) => live.has(id),
+      isTaskActive: (id) => live.has(id),
     });
     server = http.createServer((req, res) => {
       void handler(req, res).then((handled) => {
@@ -137,7 +137,7 @@ describe("createMcpEndpoint", () => {
   it("leaves non-mcp paths for the router (returns false)", async () => {
     const handler = createMcpEndpoint({
       capabilities: caps,
-      isSessionActive: (id) => live.has(id),
+      isTaskActive: (id) => live.has(id),
     });
     const req = new http.IncomingMessage(null as never);
     const res = new http.ServerResponse(req);
@@ -167,12 +167,12 @@ describe("createMcpEndpoint", () => {
     assert.equal(unknown.status, 401);
 
     const token = caps.mint("web-1");
-    caps.revokeBySession("web-1");
+    caps.revokeByTask("web-1");
     const revoked = await mcpPost("/mcp", {}, auth(token));
     assert.equal(revoked.status, 401);
   });
 
-  it("rejects a valid capability for a session that is not live with 401", async () => {
+  it("rejects a valid capability for a task that is not live with 401", async () => {
     const token = caps.mint("web-ghost");
     const res = await mcpPost("/mcp", {}, auth(token));
     assert.equal(res.status, 401);
@@ -244,7 +244,7 @@ describe("createMcpEndpoint", () => {
       result?: { content?: Array<{ type: string; text: string }> };
     };
     const text = (callBody.result?.content ?? []).map((c) => c.text).join("");
-    assert.equal(text, "echo: hi (session web-1)");
+    assert.equal(text, "echo: hi (task web-1)");
 
     live.delete("web-1");
   });

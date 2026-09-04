@@ -133,7 +133,7 @@ export function enrichStoredEventDataForDisplay(
     return data;
   }
   // Synthesize a minimal event shape so we can reuse the object-level
-  // enricher. `sessionId` etc. don't matter to enrich logic.
+  // enricher. `taskId` etc. don't matter to enrich logic.
   const ev = { type, ...parsed } as unknown as AgentEvent;
   const out = enrichEventForDisplay(ev, map);
   if (out === ev) return data;

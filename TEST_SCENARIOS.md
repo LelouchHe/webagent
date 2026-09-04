@@ -11,14 +11,14 @@ spot gaps, and decide what still needs to be added without reading every spec.
 - Unit / integration tests: `test/*.test.ts`
 - Browser E2E tests: `test/e2e/*.spec.ts`
 - Current focus of the suite:
-  - session lifecycle and restore behavior
+  - task lifecycle and restore behavior
   - cross-client synchronization
   - permission and cancel lifecycles
   - config persistence / inheritance / sync
   - bash execution lifecycle
   - slash command and picker UX
   - ACP Agent Slash discovery, forwarding, snapshot hydration, and busy gating
-  - REST API surface (sessions, prompt, bash, permissions, ops, SSE, push)
+  - REST API surface (tasks, prompt, bash, permissions, ops, SSE, push)
   - Share links (token issue, owner auth, sanitizer, viewer routes, attachment proxy, build prune)
   - Attachment upload pipeline (image + file, send-time upload, atomic disk writes)
   - Local file viewer (arbitrary paths, signed bytes, slash picker, responsive viewer)
@@ -33,25 +33,25 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - permission request resolution ordering
   - targeted cancellation of pending permission requests
   - config-option update return path
-  - ACP session update event translation, including live-only rawOutput forwarding
+  - ACP task update event translation, including live-only rawOutput forwarding
   - available_commands_update translation
   - ACP text file read/write callbacks
 
 - `test/server-event-handler.test.ts`
-  - event routing: message_chunk, thought_chunk, tool_call, prompt_done, session_created, error
+  - event routing: message_chunk, thought_chunk, tool_call, prompt_done, task_created, error
   - thinking↔assistant buffer flush transitions
-  - restoring-session event suppression
-  - per-session Agent command snapshot replacement and revision broadcast
+  - restoring-task event suppression
+  - per-task Agent command snapshot replacement and revision broadcast
   - autopilot auto-approval with allow_once
   - autopilot fallback when no allow_once option exists
   - normal permission_request broadcast in non-autopilot mode
 
-- `test/session-manager.test.ts`
-  - session title hydration
-  - session deletion cleanup
-  - inherited config application for new sessions
+- `test/task-manager.test.ts`
+  - task title hydration
+  - task deletion cleanup
+  - inherited config application for new tasks
   - non-inherited mode reset behavior
-  - returned config options for inherited sessions
+  - returned config options for inherited tasks
   - assistant / thinking buffer flush behavior
   - busy-kind reporting
   - cwd lookup fallback
@@ -61,21 +61,21 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - authoritative snapshot waits for command discovery during warm-cache restore
 
 - `test/store.test.ts`
-  - session creation / deletion / updates
+  - task creation / deletion / updates
   - config persistence
   - title persistence
   - fractional-second `last_active_at` precision for stable ordering
-  - deleteEmptySessions age gating
+  - deleteEmptyTasks age gating
   - hasInterruptedTurn detection
   - migration idempotency
 
 - `test/title-service.test.ts`
-  - silent title-session creation
+  - silent title-task creation
   - title cleanup / truncation
-  - title-session reuse
+  - title-task reuse
   - setup failure handling
   - callback emission only when a title is produced
-  - cancellation of in-flight title generation for the matching source session
+  - cancellation of in-flight title generation for the matching source task
   - in-flight title-generation deduplication and retry after cancellation
   - user-set title wins over in-flight generation
 
@@ -87,13 +87,13 @@ spot gaps, and decide what still needs to be added without reading every spec.
 
 ### REST API layer
 
-- `test/sessions.test.ts`
-  - session CRUD (create / get / delete / list)
+- `test/tasks.test.ts`
+  - task CRUD (create / get / delete / list)
   - config update (model, mode) and broadcast
-  - source filter on session list
+  - source filter on task list
   - gzip compression for events endpoint
   - streaming buffer flush on events endpoint
-  - auto-resume of non-live sessions
+  - auto-resume of non-live tasks
   - input validation and bridge-not-ready errors
 
 - `test/file-viewer-routes.test.ts`
@@ -111,7 +111,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - last_active_at update and active-prompt tracking
   - busy-state conflict (409) for agent and bash
   - events endpoint: listing, thinking filter, after pagination
-  - title generation trigger for untitled sessions
+  - title generation trigger for untitled tasks
   - image support in prompts
   - input validation and bridge-not-ready errors
   - raw `//` storage/broadcast with canonical `/command` Agent forwarding
@@ -124,16 +124,16 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - busy-state reporting during bash
   - conflict (409) for concurrent bash
   - non-zero exit code handling
-  - input validation and unknown-session errors
+  - input validation and unknown-task errors
 
 - `test/permissions.test.ts`
-  - pending permission listing and session scoping
+  - pending permission listing and task scoping
   - permission approval / denial with event storage and broadcast
   - idempotent resolution for already-resolved permissions
   - input validation and bridge-not-ready errors
 
 - `test/ops.test.ts`
-  - cancel: active prompt, running bash, idempotent idle session
+  - cancel: active prompt, running bash, idempotent idle task
   - repeated bash cancel escalation (`SIGINT` → `SIGKILL`)
   - local bash cancellation still runs when the agent bridge is unavailable
   - status: idle / busy-agent / busy-bash
@@ -142,35 +142,35 @@ spot gaps, and decide what still needs to be added without reading every spec.
 
 - `test/sse.test.ts`
   - SSE client ID generation and tracking
-  - global SSE stream (connected event, broadcast from all sessions)
-  - per-session SSE stream (session filtering, Last-Event-ID replay)
-  - `POST /api/beta/clients/:clientId/visibility` (update, sessionId, validation)
+  - global SSE stream (connected event, broadcast from all tasks)
+  - per-task SSE stream (task filtering, Last-Event-ID replay)
+  - `POST /api/beta/clients/:clientId/visibility` (update, taskId, validation)
   - heartbeat delivery
 
 - `test/quick-prompt.test.ts`
-  - session creation and prompt forwarding
+  - task creation and prompt forwarding
   - custom cwd and source=auto marking
   - input validation and bridge-not-ready errors
 
 - `test/messages-route-actions.test.ts`, `test/messages-schema.test.ts`
-  - Inbox consume creates a live ACP-backed session and never reloads it
-  - Inbox-created sessions reuse `/new` model/reasoning inheritance while resetting mode
+  - Inbox consume creates a live ACP-backed task and never reloads it
+  - Inbox-created tasks reuse `/new` model/reasoning inheritance while resetting mode
   - message cwd inheritance and configured-default fallback
   - sequential idempotency and concurrent consume deduplication
   - ACP creation and local transaction failure preserve the pending message
-  - existing-session message move is atomic at the SQLite boundary
+  - existing-task message move is atomic at the SQLite boundary
   - ack / delete aliases and corresponding SSE broadcasts
   - authoritative pending-count broadcasts after create, dedup supersede, consume, and dismiss
 
 - `test/message-cleanup.test.ts`, `test/sse.test.ts`
   - TTL cleanup broadcasts the post-sweep pending count only when rows change
   - SSE handshakes initialize the count without fetching message bodies
-  - global inbox-count events reach session-scoped SSE clients
+  - global inbox-count events reach task-scoped SSE clients
 
-- `test/session-navigation.test.ts`, `test/service-worker-click.test.ts`
-  - Inbox notification consume reuses the current session as inheritance source
-  - direct session targets take priority over unresolved message targets
-  - session switches require successful busy snapshot hydration
+- `test/task-navigation.test.ts`, `test/service-worker-click.test.ts`
+  - Inbox notification consume reuses the current task as inheritance source
+  - direct task targets take priority over unresolved message targets
+  - task switches require successful busy snapshot hydration
   - explicit switches, `/new`, and competing notification consumes use ordered navigation ownership
   - existing-window and cold-start service-worker routing
   - terminal startup intents are cleared; retryable intents survive refresh without in-page duplication
@@ -193,10 +193,10 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - config helpers
   - busy-state button / prompt UI
   - mode-class updates
-  - new-session request payloads (with custom cwd)
-  - reset-session cleanup (messages, input, title, metadata)
-  - global session cancel payloads, including forced cancel when frontend busy state is stale
-  - hash routing and session info updates
+  - new-task request payloads (with custom cwd)
+  - reset-task cleanup (messages, input, title, metadata)
+  - global task cancel payloads, including forced cancel when frontend busy state is stale
+  - hash routing and task info updates
 
 - `test/input.test.ts`
   - normal prompt send flow
@@ -220,7 +220,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - a keyboard that reopens between pointerdown and pointerup is not blurred
 
 - `test/events.test.ts`
-  - session creation / busy-state restoration
+  - task creation / busy-state restoration
   - user / assistant / thinking rendering
   - unsolicited Main-agent text and tool calls render while the foreground turn
     stays idle without reopening busy state
@@ -244,8 +244,8 @@ spot gaps, and decide what still needs to be added without reading every spec.
     taking foreground pending/busy ownership
   - cancel acknowledgement timeout transitions to unconfirmed while busy
   - config update application
-  - session deletion and title update handling
-  - cross-session event filtering
+  - task deletion and title update handling
+  - cross-task event filtering
   - Agent command update revision ordering
   - history replay for all major stored event types (incl. task_complete with
     visible summary)
@@ -268,13 +268,13 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - version display in `?` / help command
 
 - `test/connection.test.ts`
-  - hash-based session resume
-  - last-session auto-resume
-  - new-session creation when no previous session exists
+  - hash-based task resume
+  - last-task auto-resume
+  - new-task creation when no previous task exists
   - reconnect behavior without duplicate history replay
-  - incremental sync on reconnect when session matches
+  - incremental sync on reconnect when task matches
   - visibility-change sync (hidden→visible)
-  - session-switch abort on generation change
+  - task-switch abort on generation change
   - no-op sync when no new events
 
 ### Supporting frontend / backend modules
@@ -282,7 +282,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
 - `test/routes.test.ts`
   - static file / API route basics
   - events endpoint: limit/before pagination, backward-compat without limit
-  - attachment upload (`POST /api/v1/sessions/:sid/attachments`): valid PNG, file (non-image) accepted, size limit enforcement, invalid session, JPEG normalization, UTF-8 filename round-trip (busboy `defParamCharset: utf8`), Content-Disposition emitted on download
+  - attachment upload (`POST /api/v1/tasks/:sid/attachments`): valid PNG, file (non-image) accepted, size limit enforcement, invalid task, JPEG normalization, UTF-8 filename round-trip (busboy `defParamCharset: utf8`), Content-Disposition emitted on download
   - push API routes (`/api/beta/push/*`): VAPID key, subscribe, unsubscribe, validation, no-push-service fallback
 
 - `test/render.test.ts`
@@ -302,7 +302,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - send-time upload + AbortController cancel; file chip swap to anchor on success
 
 - `test/api-module.test.ts`
-  - frontend API client: all REST endpoints (sessions, prompt, cancel, permissions, bash, files, config, visibility, status)
+  - frontend API client: all REST endpoints (tasks, prompt, cancel, permissions, bash, files, config, visibility, status)
   - error handling (ApiError, non-JSON responses)
 
 - `test/file-browser.test.ts`, `test/view-command.test.ts`, `test/file-viewer-frontend.test.ts`
@@ -324,9 +324,9 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - push_subscriptions store: save, upsert, remove, migration
   - VAPID key generation, loading, and permissions
   - notification formatting (permission_request, prompt_done, bash_done, fallback title)
-  - visibility tracking: client registration, per-subscription, global session suppression
+  - visibility tracking: client registration, per-subscription, global task suppression
   - maybeNotify event-type filtering
-  - sendToAll: consecutive failure cleanup, 410 Gone removal, session-based suppression
+  - sendToAll: consecutive failure cleanup, 410 Gone removal, task-based suppression
 
 - `test/doc-coverage.test.ts`
   - staleness guard: asserts all endpoints in routes.ts are documented in docs/api.md
@@ -363,7 +363,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
 
 - `test/share-routes-preview.test.ts` / `test/share-routes-publish-viewer.test.ts`
   - preview create / read / staleness flag
-  - publish freezes snapshot; viewer JSON strips `session_id`
+  - publish freezes snapshot; viewer JSON strips `task_id`
   - 410 when share row is missing or `enabled=false`
   - viewer attachment proxy: serves correct `Content-Type` from `attachments.mime` and emits RFC 5987 `Content-Disposition` with original filename for non-image attachments (regression: iOS Safari `.bin` suffix)
 
@@ -385,7 +385,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - CI gate: viewer source must not contain `innerHTML` / `eval` / inline event handlers
 
 - `test/share-viewer-attachment-rewriter.test.ts`
-  - viewer rewrites `/api/v1/sessions/<id>/attachments/<file>` → `/s/<token>/attachments/<file>`
+  - viewer rewrites `/api/v1/tasks/<id>/attachments/<file>` → `/s/<token>/attachments/<file>`
   - rewriter accepts a query-string tail (signed attachment URLs from owner side)
 
 - `test/build-split.test.ts`
@@ -395,17 +395,17 @@ spot gaps, and decide what still needs to be added without reading every spec.
 
 ## Playwright E2E Scenarios
 
-### Basic session and messaging flow
+### Basic task and messaging flow
 
-- `session-bootstrap.spec.ts`
-  - app boots into the canonical Root session (clean URL, no hash) and is
+- `task-bootstrap.spec.ts`
+  - app boots into the canonical Root task (clean URL, no hash) and is
     ready for input
 
 - `bootstrap-concurrency.spec.ts`
   - concurrent clients on the root path all converge on the reserved Root
-    session without posting a new session
+    task without posting a new task
 
-- `session-send-message.spec.ts`
+- `task-send-message.spec.ts`
   - normal prompt / assistant reply round-trip
 
 - `final-answer-fold.spec.ts`
@@ -416,8 +416,8 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - an exact echo after nested tool calls still folds with no continuation
   - share viewer coalesces consecutive persisted assistant fragments into one fold
 
-- `session-reload-history.spec.ts`
-  - reload restores the same session and replays chat history
+- `task-reload-history.spec.ts`
+  - reload restores the same task and replays chat history
 
 ### Bash lifecycle
 
@@ -456,44 +456,44 @@ spot gaps, and decide what still needs to be added without reading every spec.
 - `cancel-after-tool-call.spec.ts`
   - cancellation after a tool call has already started
 
-### Session isolation and cleanup
+### Task isolation and cleanup
 
-- `new-session-isolation.spec.ts`
-  - creating a new session in one tab does not switch the other tab
+- `new-task-isolation.spec.ts`
+  - creating a new task in one tab does not switch the other tab
 
-- `cross-session-isolation.spec.ts`
-  - events from one session do not leak into another
+- `cross-task-isolation.spec.ts`
+  - events from one task do not leak into another
 
-- `session-switch-isolation.spec.ts`
-  - switching sessions reloads the right history without message mixing
+- `task-switch-isolation.spec.ts`
+  - switching tasks reloads the right history without message mixing
 
 - `message-notification-cold-start.spec.ts`
-  - cold Inbox notification consumes after startup, switches to the new session, cleans the URL, and inherits model configuration
+  - cold Inbox notification consumes after startup, switches to the new task, cleans the URL, and inherits model configuration
 
 - `inbox-indicator.spec.ts`
   - pending messages update the header count through SSE without adding conversation rows
   - the logo button opens the live Inbox picker and dismissing the message hides the count
 
-- `session-delete-broadcast.spec.ts`
-  - deleting the current session disables peer clients correctly
-  - other tabs auto-switch away from the deleted session to a remaining one
+- `task-delete-broadcast.spec.ts`
+  - deleting the current task disables peer clients correctly
+  - other tabs auto-switch away from the deleted task to a remaining one
 
-- `session-delete-command.spec.ts`
-  - `/exit` deletes current session and switches to previous
+- `task-delete-command.spec.ts`
+  - `/exit` deletes current task and switches to previous
 
-- REST delete (`test/sessions.test.ts`, `test/store.test.ts`)
-  - deleting a session cascades to every descendant, retires each affected
-    ACP execution, and broadcasts one `session_deleted` per removed session
+- REST delete (`test/tasks.test.ts`, `test/store.test.ts`)
+  - deleting a task cascades to every descendant, retires each affected
+    ACP execution, and broadcasts one `task_deleted` per removed task
   - a share-tombstoned descendant survives and is re-parented under Root
-  - creating a session under an unknown parent is rejected with `400`
-  - `DELETE /api/v1/sessions/root` is rejected
+  - creating a task under an unknown parent is rejected with `400`
+  - `DELETE /api/v1/tasks/root` is rejected
 
-- `session-prune-command.spec.ts`
-  - `/prune` removes all non-current sessions
+- `task-prune-command.spec.ts`
+  - `/prune` removes all non-current tasks
 
-- `session-clear-command.spec.ts`
-  - `/clear` keeps the stable WebAgent session id, history, and cwd; only the
-    ACP execution rotates and the session stays available through the API
+- `task-clear-command.spec.ts`
+  - `/clear` keeps the stable WebAgent task id, history, and cwd; only the
+    ACP execution rotates and the task stays available through the API
 
 - `/compact`
   - compact summary is visible as an assistant message, but is deferred until
@@ -503,18 +503,18 @@ spot gaps, and decide what still needs to be added without reading every spec.
 
 ### Resume / reconnect / restart recovery
 
-- `auto-resume-last-session.spec.ts`
-  - the root path opens the canonical Root session instead of the most recent
-    session; existing sessions stay reachable through their stable hash
+- `auto-resume-last-task.spec.ts`
+  - the root path opens the canonical Root task instead of the most recent
+    task; existing tasks stay reachable through their stable hash
 
 - `sse-reconnect-recovery.spec.ts`
-  - SSE reconnect restores the active session without duplicate replay
+  - SSE reconnect restores the active task without duplicate replay
 
 - `server-restart-recovery.spec.ts`
-  - full server restart restores session context and history
+  - full server restart restores task context and history
 
-- `expired-session-recovery.spec.ts`
-  - expired hash session falls back to a new session with a warning
+- `expired-task-recovery.spec.ts`
+  - expired hash task falls back to a new task with a warning
 
 ### Attachment handling
 
@@ -536,10 +536,10 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - Escape dismisses the slash menu
 
 - `slash-menu-switch.spec.ts`
-  - slash-menu session switch works from keyboard navigation
+  - slash-menu task switch works from keyboard navigation
 
 - `slash-menu-new-picker.spec.ts`
-  - `/new` path picker creates a session from a selected cwd
+  - `/new` path picker creates a task from a selected cwd
 
 - `model-picker.spec.ts`
   - `/model` picker changes the selected model
@@ -557,8 +557,8 @@ spot gaps, and decide what still needs to be added without reading every spec.
 - `mode-cycle-shortcut.spec.ts`
   - `Ctrl+M` cycles Agent → Plan → Autopilot
 
-- `new-session-mode-reset.spec.ts`
-  - new sessions do not inherit autopilot mode
+- `new-task-mode-reset.spec.ts`
+  - new tasks do not inherit autopilot mode
 
 - `plan-reload-persistence.spec.ts`
   - plan mode survives reload
@@ -582,14 +582,14 @@ spot gaps, and decide what still needs to be added without reading every spec.
 - `model-reload-persistence.spec.ts`
   - selected model survives reload
 
-- `new-session-model-inherit.spec.ts`
-  - new sessions inherit selected model
+- `new-task-model-inherit.spec.ts`
+  - new tasks inherit selected model
 
 - `think-reload-persistence.spec.ts`
   - selected reasoning effort survives reload
 
-- `new-session-think-inherit.spec.ts`
-  - new sessions inherit selected reasoning effort
+- `new-task-think-inherit.spec.ts`
+  - new tasks inherit selected reasoning effort
 
 ### Multi-client synchronization
 
@@ -617,17 +617,17 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - events API supports limit/before pagination
   - backward-compat: no limit returns all events
 
-### Session status bar
+### Task status bar
 
 - `switch-status-bar.spec.ts`
-  - status bar shows model and cwd after switching sessions
+  - status bar shows model and cwd after switching tasks
 
 ### Share links
 
 - `share-publish.spec.ts`
   - `/share` creates a preview; input enters preview mode (textarea disabled, ^P/^C buttons)
   - `^P` button publishes; viewer page (`/s/<token>`) loads under strict CSP with no violations and renders the sanitized event stream
-  - public JSON (`/api/v1/shared/<token>/events`) does not leak `session_id`
+  - public JSON (`/api/v1/shared/<token>/events`) does not leak `task_id`
   - unknown token → HTTP 410
 
 ### Screenshots (separate script, not in E2E suite)

@@ -5,7 +5,7 @@ import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Store } from "../src/store.ts";
-import { SessionManager } from "../src/session-manager.ts";
+import { TaskManager } from "../src/task-manager.ts";
 import { createRequestHandler } from "../src/routes.ts";
 import type { ConfigOption, AgentEvent } from "../src/types.ts";
 import { mockBridgeStubs } from "./fixtures.ts";
@@ -39,8 +39,8 @@ function makeRequest(
   });
 }
 
-/** Minimal mock bridge that returns a predictable session ID. */
-function createMockBridge(nextId = "mock-session-1") {
+/** Minimal mock bridge that returns a predictable task ID. */
+function createMockBridge(nextId = "mock-task-1") {
   let idCounter = 0;
   const retireCalls: string[] = [];
   const configOptions: ConfigOption[] = [
@@ -75,16 +75,16 @@ function createMockBridge(nextId = "mock-session-1") {
     newSession: async (_cwd: string) => {
       idCounter++;
       return {
-        sessionId: idCounter === 1 ? nextId : `mock-session-${idCounter}`,
+        sessionId: idCounter === 1 ? nextId : `mock-task-${idCounter}`,
         configOptions: [],
       };
     },
-    loadSession: async (_sessionId: string, _cwd: string) => ({
-      sessionId: _sessionId,
+    loadSession: async (_taskId: string, _cwd: string) => ({
+      taskId: _taskId,
       configOptions,
     }),
     setConfigOption: async (
-      _sessionId: string,
+      _taskId: string,
       configId: string,
       value: string | boolean,
     ) => {
@@ -102,9 +102,9 @@ function createMockBridge(nextId = "mock-session-1") {
   };
 }
 
-describe("Session REST API", () => {
+describe("Task REST API", () => {
   let store: Store;
-  let sessions: SessionManager;
+  let tasks: TaskManager;
   let tmpDir: string;
   let publicDir: string;
   let server: http.Server;
@@ -119,13 +119,13 @@ describe("Session REST API", () => {
     writeFileSync(join(publicDir, "index.html"), "<h1>Test</h1>");
 
     store = new Store(tmpDir, "test-agent");
-    sessions = new SessionManager(store, tmpDir, tmpDir);
+    tasks = new TaskManager(store, tmpDir, tmpDir);
     mockBridge = createMockBridge();
     broadcastEvents = [];
 
     const handler = createRequestHandler({
       store,
-      sessions,
+      tasks,
       getBridge: () => mockBridge,
       publicDir,
       dataDir: tmpDir,
@@ -157,91 +157,77 @@ describe("Session REST API", () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  // --- POST /api/v1/sessions ---
+  // --- POST /api/v1/tasks ---
 
-  describe("POST /api/v1/sessions", () => {
-    it("creates a session with default cwd", async () => {
-      const res = await makeRequest(port, "POST", "/api/v1/sessions", "{}");
+  describe("POST /api/v1/tasks", () => {
+    it("creates a task with default cwd", async () => {
+      const res = await makeRequest(port, "POST", "/api/v1/tasks", "{}");
       assert.equal(res.status, 201);
       const body = JSON.parse(res.body);
       assert.match(body.id, /^[0-9a-f-]{36}$/);
-      assert.equal(store.getAgentSessionId(body.id), "mock-session-1");
+      assert.equal(store.getAgentSessionId(body.id), "mock-task-1");
       assert.equal(body.cwd, tmpDir);
       assert.equal(body.title, null);
       assert.ok(Array.isArray(body.configOptions));
     });
 
-    it("coalesces concurrent bootstrap requests into one session", async () => {
+    it("coalesces concurrent bootstrap requests into one task", async () => {
       const responses = await Promise.all(
         Array.from({ length: 5 }, () =>
-          makeRequest(port, "POST", "/api/v1/sessions/bootstrap"),
+          makeRequest(port, "POST", "/api/v1/tasks/bootstrap"),
         ),
       );
 
       assert.ok(responses.every((response) => response.status === 200));
       const bodies = responses.map((response) => JSON.parse(response.body));
       assert.equal(new Set(bodies.map((body) => body.id)).size, 1);
-      assert.equal(store.listSessions().length, 1);
+      assert.equal(store.listTasks().length, 1);
       assert.equal(
-        broadcastEvents.filter((event) => event.type === "session_created")
-          .length,
+        broadcastEvents.filter((event) => event.type === "task_created").length,
         1,
       );
       assert.equal(
-        broadcastEvents.find((event) => event.type === "session_created")
+        broadcastEvents.find((event) => event.type === "task_created")
           ?.clientOpId,
         undefined,
       );
     });
 
-    it("bootstrap reuses the current-agent session while explicit create does not", async () => {
-      const first = await makeRequest(
-        port,
-        "POST",
-        "/api/v1/sessions/bootstrap",
-      );
+    it("bootstrap reuses the current-agent task while explicit create does not", async () => {
+      const first = await makeRequest(port, "POST", "/api/v1/tasks/bootstrap");
       const bootstrapId = JSON.parse(first.body).id;
 
-      const second = await makeRequest(
-        port,
-        "POST",
-        "/api/v1/sessions/bootstrap",
-      );
+      const second = await makeRequest(port, "POST", "/api/v1/tasks/bootstrap");
       assert.equal(JSON.parse(second.body).id, bootstrapId);
 
-      const explicit = await makeRequest(
-        port,
-        "POST",
-        "/api/v1/sessions",
-        "{}",
-      );
+      const explicit = await makeRequest(port, "POST", "/api/v1/tasks", "{}");
       assert.notEqual(JSON.parse(explicit.body).id, bootstrapId);
-      assert.equal(store.listSessions().length, 2);
+      assert.equal(store.listTasks().length, 2);
     });
 
-    it("bootstrap ignores sessions owned by another agent", async () => {
+    it("bootstrap ignores tasks owned by another agent", async () => {
       const other = new Store(tmpDir, "other-agent");
-      other.createSession("other-web", tmpDir, "auto", "other-agent-session");
+      other.createTask("other-web", tmpDir, "auto", "other-agent-task");
       other.close();
 
       const response = await makeRequest(
         port,
         "POST",
-        "/api/v1/sessions/bootstrap",
+        "/api/v1/tasks/bootstrap",
       );
       const body = JSON.parse(response.body);
 
       assert.equal(response.status, 200);
       assert.notEqual(body.id, "other-web");
-      assert.equal(store.listSessions().length, 1);
-      assert.equal(store.getSession("other-web"), undefined);
+      assert.equal(store.listTasks().length, 1);
+      assert.equal(store.getTask("other-web"), undefined);
     });
 
-    describe("POST /api/v1/sessions/:id/cancel", () => {
+    describe("POST /api/v1/tasks/:id/cancel", () => {
       it("resends cancel while the agent prompt remains active", async () => {
-        store.createSession("s-cancel", tmpDir);
-        sessions.activePrompts.add("s-cancel");
-        sessions.syncBusy("s-cancel", "p1");
+        store.createTask("s-cancel", tmpDir);
+        tasks.activePrompts.add("s-cancel");
+        tasks.syncBusy("s-cancel", "p1");
         let cancelCalls = 0;
         mockBridge.cancel = async () => {
           cancelCalls++;
@@ -250,44 +236,44 @@ describe("Session REST API", () => {
         const first = await makeRequest(
           port,
           "POST",
-          "/api/v1/sessions/s-cancel/cancel",
+          "/api/v1/tasks/s-cancel/cancel",
           "{}",
         );
         const second = await makeRequest(
           port,
           "POST",
-          "/api/v1/sessions/s-cancel/cancel",
+          "/api/v1/tasks/s-cancel/cancel",
           "{}",
         );
 
         assert.equal(first.status, 202);
         assert.equal(second.status, 202);
         assert.equal(cancelCalls, 2);
-        assert.equal(sessions.activePrompts.has("s-cancel"), true);
+        assert.equal(tasks.activePrompts.has("s-cancel"), true);
         assert.equal(
-          sessions.state.getState("s-cancel").runtime.busy?.cancelStatus,
+          tasks.state.getState("s-cancel").runtime.busy?.cancelStatus,
           "requested",
         );
 
-        sessions.runningBashProcs.set("s-cancel", {} as any);
-        sessions.syncBusy("s-cancel");
+        tasks.runningBashProcs.set("s-cancel", {} as any);
+        tasks.syncBusy("s-cancel");
         assert.equal(
-          sessions.state.getState("s-cancel").runtime.busy?.kind,
+          tasks.state.getState("s-cancel").runtime.busy?.kind,
           "agent",
         );
         assert.equal(
-          sessions.state.getState("s-cancel").runtime.busy?.cancelStatus,
+          tasks.state.getState("s-cancel").runtime.busy?.cancelStatus,
           "requested",
         );
       });
 
       it("returns idempotent idle status when no work is active", async () => {
-        store.createSession("s-idle", tmpDir);
+        store.createTask("s-idle", tmpDir);
 
         const res = await makeRequest(
           port,
           "POST",
-          "/api/v1/sessions/s-idle/cancel",
+          "/api/v1/tasks/s-idle/cancel",
           "{}",
         );
 
@@ -299,11 +285,11 @@ describe("Session REST API", () => {
       });
 
       it("does not attach a stale cancel to a replacement prompt", async () => {
-        store.createSession("s-race", tmpDir);
-        sessions.activePrompts.add("s-race");
-        sessions.syncBusy("s-race");
+        store.createTask("s-race", tmpDir);
+        tasks.activePrompts.add("s-race");
+        tasks.syncBusy("s-race");
         const oldPromptId =
-          sessions.state.getState("s-race").runtime.busy?.promptId;
+          tasks.state.getState("s-race").runtime.busy?.promptId;
         let releaseCancel: (() => void) | undefined;
         mockBridge.cancel = () =>
           new Promise<void>((resolve) => {
@@ -313,19 +299,19 @@ describe("Session REST API", () => {
         const cancelRequest = makeRequest(
           port,
           "POST",
-          "/api/v1/sessions/s-race/cancel",
+          "/api/v1/tasks/s-race/cancel",
           "{}",
         );
         for (let i = 0; i < 10 && !releaseCancel; i++) {
           await new Promise((resolve) => setImmediate(resolve));
         }
         assert.ok(releaseCancel);
-        sessions.activePrompts.delete("s-race");
-        sessions.syncBusy("s-race");
-        sessions.activePrompts.add("s-race");
-        sessions.syncBusy("s-race");
+        tasks.activePrompts.delete("s-race");
+        tasks.syncBusy("s-race");
+        tasks.activePrompts.add("s-race");
+        tasks.syncBusy("s-race");
         const newPromptId =
-          sessions.state.getState("s-race").runtime.busy?.promptId;
+          tasks.state.getState("s-race").runtime.busy?.promptId;
         assert.notEqual(newPromptId, oldPromptId);
 
         releaseCancel();
@@ -334,19 +320,19 @@ describe("Session REST API", () => {
         assert.equal(res.status, 202);
         assert.equal(JSON.parse(res.body).status, "superseded");
         assert.equal(
-          sessions.state.getState("s-race").runtime.busy?.cancelStatus ?? null,
+          tasks.state.getState("s-race").runtime.busy?.cancelStatus ?? null,
           null,
         );
         assert.equal(
-          sessions.state.getState("s-race").runtime.busy?.promptId,
+          tasks.state.getState("s-race").runtime.busy?.promptId,
           newPromptId,
         );
       });
 
       it("reports superseded when a replacement prompt is still reserved", async () => {
-        store.createSession("s-reserved-race", tmpDir);
-        sessions.activePrompts.add("s-reserved-race");
-        sessions.syncBusy("s-reserved-race");
+        store.createTask("s-reserved-race", tmpDir);
+        tasks.activePrompts.add("s-reserved-race");
+        tasks.syncBusy("s-reserved-race");
         let releaseCancel: (() => void) | undefined;
         mockBridge.cancel = () =>
           new Promise<void>((resolve) => {
@@ -356,17 +342,17 @@ describe("Session REST API", () => {
         const cancelRequest = makeRequest(
           port,
           "POST",
-          "/api/v1/sessions/s-reserved-race/cancel",
+          "/api/v1/tasks/s-reserved-race/cancel",
           "{}",
         );
         for (let i = 0; i < 10 && !releaseCancel; i++) {
           await new Promise((resolve) => setImmediate(resolve));
         }
         assert.ok(releaseCancel);
-        sessions.activePrompts.delete("s-reserved-race");
-        sessions.syncBusy("s-reserved-race");
+        tasks.activePrompts.delete("s-reserved-race");
+        tasks.syncBusy("s-reserved-race");
         const replacementSubmission =
-          sessions.reservePromptSubmission("s-reserved-race");
+          tasks.reservePromptSubmission("s-reserved-race");
         assert.ok(replacementSubmission);
 
         releaseCancel();
@@ -375,23 +361,20 @@ describe("Session REST API", () => {
         assert.equal(res.status, 202);
         assert.equal(JSON.parse(res.body).status, "superseded");
         assert.equal(
-          sessions.pendingPromptSubmissions.has("s-reserved-race"),
+          tasks.pendingPromptSubmissions.has("s-reserved-race"),
           true,
         );
-        sessions.releasePromptSubmission(
-          "s-reserved-race",
-          replacementSubmission,
-        );
+        tasks.releasePromptSubmission("s-reserved-race", replacementSubmission);
       });
 
-      it("cancels a prompt submission while session resume is pending", async () => {
-        store.createSession("s-pending", tmpDir);
+      it("cancels a prompt submission while task resume is pending", async () => {
+        store.createTask("s-pending", tmpDir);
         let releaseResume!: () => void;
         let promptCalls = 0;
         mockBridge.loadSession = () =>
           new Promise((resolve) => {
             releaseResume = () => {
-              resolve({ sessionId: "s-pending", configOptions: [] });
+              resolve({ taskId: "s-pending", configOptions: [] });
             };
           });
         mockBridge.prompt = async () => {
@@ -401,22 +384,22 @@ describe("Session REST API", () => {
         const promptRequest = makeRequest(
           port,
           "POST",
-          "/api/v1/sessions/s-pending/prompt",
+          "/api/v1/tasks/s-pending/prompt",
           JSON.stringify({ text: "do not run" }),
         );
         for (
           let i = 0;
-          i < 10 && !sessions.pendingPromptSubmissions.has("s-pending");
+          i < 10 && !tasks.pendingPromptSubmissions.has("s-pending");
           i++
         ) {
           await new Promise((resolve) => setImmediate(resolve));
         }
-        assert.equal(sessions.pendingPromptSubmissions.has("s-pending"), true);
+        assert.equal(tasks.pendingPromptSubmissions.has("s-pending"), true);
 
         const cancelRes = await makeRequest(
           port,
           "POST",
-          "/api/v1/sessions/s-pending/cancel",
+          "/api/v1/tasks/s-pending/cancel",
           "{}",
         );
         assert.equal(cancelRes.status, 200);
@@ -429,40 +412,40 @@ describe("Session REST API", () => {
       });
     });
 
-    it("creates a child session under an existing Root", async () => {
-      store.ensureRootSession(tmpDir);
+    it("creates a child task under an existing Root", async () => {
+      store.ensureRootTask(tmpDir);
 
       const res = await makeRequest(
         port,
         "POST",
-        "/api/v1/sessions",
-        JSON.stringify({ parentSessionId: "root" }),
+        "/api/v1/tasks",
+        JSON.stringify({ parentId: "root" }),
       );
 
       assert.equal(res.status, 201);
       const body = JSON.parse(res.body);
-      assert.equal(store.getSession(body.id)?.parent_session_id, "root");
-      assert.equal(body.parentSessionId, "root");
+      assert.equal(store.getTask(body.id)?.parent_id, "root");
+      assert.equal(body.parentId, "root");
     });
 
-    it("rejects an unknown parent session with 400", async () => {
+    it("rejects an unknown parent task with 400", async () => {
       const res = await makeRequest(
         port,
         "POST",
-        "/api/v1/sessions",
-        JSON.stringify({ parentSessionId: "no-such-session" }),
+        "/api/v1/tasks",
+        JSON.stringify({ parentId: "no-such-task" }),
       );
 
       assert.equal(res.status, 400);
-      assert.match(res.body, /Parent session not found/);
-      assert.equal(store.listSessions().length, 0);
+      assert.match(res.body, /Parent task not found/);
+      assert.equal(store.listTasks().length, 0);
     });
 
-    it("creates a session with custom cwd", async () => {
+    it("creates a task with custom cwd", async () => {
       const res = await makeRequest(
         port,
         "POST",
-        "/api/v1/sessions",
+        "/api/v1/tasks",
         JSON.stringify({ cwd: tmpDir }),
       );
       assert.equal(res.status, 201);
@@ -470,27 +453,27 @@ describe("Session REST API", () => {
       assert.equal(body.cwd, tmpDir);
     });
 
-    it("creates a session inheriting from another", async () => {
-      // Create first session to inherit from
-      const res1 = await makeRequest(port, "POST", "/api/v1/sessions", "{}");
+    it("creates a task inheriting from another", async () => {
+      // Create first task to inherit from
+      const res1 = await makeRequest(port, "POST", "/api/v1/tasks", "{}");
       const s1 = JSON.parse(res1.body);
 
       const res2 = await makeRequest(
         port,
         "POST",
-        "/api/v1/sessions",
-        JSON.stringify({ inheritFromSessionId: s1.id }),
+        "/api/v1/tasks",
+        JSON.stringify({ inheritFromTaskId: s1.id }),
       );
       assert.equal(res2.status, 201);
       const s2 = JSON.parse(res2.body);
       assert.notEqual(s2.id, s1.id);
     });
 
-    it("creates a session with source field", async () => {
+    it("creates a task with source field", async () => {
       const res = await makeRequest(
         port,
         "POST",
-        "/api/v1/sessions",
+        "/api/v1/tasks",
         JSON.stringify({ source: "user" }),
       );
       assert.equal(res.status, 201);
@@ -499,25 +482,20 @@ describe("Session REST API", () => {
     });
 
     it("defaults source to auto", async () => {
-      const res = await makeRequest(port, "POST", "/api/v1/sessions", "{}");
+      const res = await makeRequest(port, "POST", "/api/v1/tasks", "{}");
       assert.equal(res.status, 201);
       const body = JSON.parse(res.body);
       assert.equal(body.source, "auto");
     });
 
-    it("broadcasts session_created event", async () => {
-      await makeRequest(port, "POST", "/api/v1/sessions", "{}");
-      const created = broadcastEvents.find((e) => e.type === "session_created");
-      assert.ok(created, "should broadcast session_created");
+    it("broadcasts task_created event", async () => {
+      await makeRequest(port, "POST", "/api/v1/tasks", "{}");
+      const created = broadcastEvents.find((e) => e.type === "task_created");
+      assert.ok(created, "should broadcast task_created");
     });
 
     it("returns 400 for invalid JSON", async () => {
-      const res = await makeRequest(
-        port,
-        "POST",
-        "/api/v1/sessions",
-        "not-json",
-      );
+      const res = await makeRequest(port, "POST", "/api/v1/tasks", "not-json");
       assert.equal(res.status, 400);
     });
 
@@ -525,7 +503,7 @@ describe("Session REST API", () => {
       const res = await makeRequest(
         port,
         "POST",
-        "/api/v1/sessions",
+        "/api/v1/tasks",
         JSON.stringify({ cwd: "/nonexistent/path/12345" }),
       );
       assert.equal(res.status, 400);
@@ -535,7 +513,7 @@ describe("Session REST API", () => {
       // Create handler with no bridge
       const handler = createRequestHandler({
         store,
-        sessions,
+        tasks,
         getBridge: () => null,
         publicDir,
         dataDir: tmpDir,
@@ -550,7 +528,7 @@ describe("Session REST API", () => {
       await new Promise<void>((resolve) => s2.listen(0, "127.0.0.1", resolve));
       const p2 = (s2.address() as { port: number }).port;
 
-      const res = await makeRequest(p2, "POST", "/api/v1/sessions", "{}");
+      const res = await makeRequest(p2, "POST", "/api/v1/tasks", "{}");
       assert.equal(res.status, 503);
 
       await new Promise<void>((resolve) =>
@@ -561,57 +539,57 @@ describe("Session REST API", () => {
     });
   });
 
-  // --- POST /api/v1/sessions/:id/clear ---
+  // --- POST /api/v1/tasks/:id/clear ---
 
-  describe("POST /api/v1/sessions/:id/clear", () => {
-    it("keeps the WebAgent session id while rotating its ACP execution", async () => {
-      store.createSession("s1", tmpDir, "auto", "agent-old");
+  describe("POST /api/v1/tasks/:id/clear", () => {
+    it("keeps the WebAgent task id while rotating its ACP execution", async () => {
+      store.createTask("s1", tmpDir, "auto", "agent-old");
       store.saveCompactSummary("s1", "old context");
 
       const res = await makeRequest(
         port,
         "POST",
-        "/api/v1/sessions/s1/clear",
+        "/api/v1/tasks/s1/clear",
         "{}",
       );
 
       assert.equal(res.status, 200);
       const body = JSON.parse(res.body);
       assert.equal(body.id, "s1");
-      assert.equal(store.listSessions().length, 1);
-      assert.equal(store.getAgentSessionId("s1"), "mock-session-1");
-      assert.equal(store.getWebSessionId("agent-old"), undefined);
+      assert.equal(store.listTasks().length, 1);
+      assert.equal(store.getAgentSessionId("s1"), "mock-task-1");
+      assert.equal(store.getTaskId("agent-old"), undefined);
       assert.equal(store.getPendingCompactSummary("s1"), null);
       assert.deepEqual(mockBridge.retireCalls, ["agent-old"]);
     });
 
-    it("persists a clear request's replacement cwd on the stable session", async () => {
-      store.createSession("s1", tmpDir, "auto", "agent-old");
+    it("persists a clear request's replacement cwd on the stable task", async () => {
+      store.createTask("s1", tmpDir, "auto", "agent-old");
 
       const res = await makeRequest(
         port,
         "POST",
-        "/api/v1/sessions/s1/clear",
+        "/api/v1/tasks/s1/clear",
         JSON.stringify({ cwd: publicDir }),
       );
 
       assert.equal(res.status, 200);
       assert.equal(JSON.parse(res.body).cwd, publicDir);
-      assert.equal(store.getSession("s1")?.cwd, publicDir);
+      assert.equal(store.getTask("s1")?.cwd, publicDir);
     });
 
     it("compacts into a fresh ACP execution and defers the summary to the next prompt", async () => {
-      store.createSession("s1", tmpDir, "auto", "agent-old");
-      sessions.liveSessions.add("s1");
+      store.createTask("s1", tmpDir, "auto", "agent-old");
+      tasks.liveTasks.add("s1");
       let promptedText = "";
-      mockBridge.prompt = async (_sessionId: string, text: string) => {
+      mockBridge.prompt = async (_taskId: string, text: string) => {
         promptedText = text;
       };
 
       const compactRes = await makeRequest(
         port,
         "POST",
-        "/api/v1/sessions/s1/compact",
+        "/api/v1/tasks/s1/compact",
         "{}",
       );
       assert.equal(compactRes.status, 202);
@@ -620,7 +598,7 @@ describe("Session REST API", () => {
       // observe the pre-rotation state.
       const deadline = Date.now() + 5000;
       while (
-        store.getAgentSessionId("s1") !== "mock-session-1" &&
+        store.getAgentSessionId("s1") !== "mock-task-1" &&
         Date.now() < deadline
       ) {
         await new Promise((resolve) => setTimeout(resolve, 10));
@@ -631,24 +609,24 @@ describe("Session REST API", () => {
         "summary of the current work",
       );
       const publicList = JSON.parse(
-        (await makeRequest(port, "GET", "/api/v1/sessions")).body,
+        (await makeRequest(port, "GET", "/api/v1/tasks")).body,
       ) as Array<Record<string, unknown>>;
       assert.equal("pending_compact_summary" in publicList[0], false);
-      assert.equal(store.getAgentSessionId("s1"), "mock-session-1");
+      assert.equal(store.getAgentSessionId("s1"), "mock-task-1");
       assert.ok(
         broadcastEvents.some(
           (event) =>
             event.type === "assistant_message" &&
-            event.sessionId === "s1" &&
+            event.taskId === "s1" &&
             event.text === "summary of the current work",
         ),
       );
-      assert.equal(sessions.getBusyKind("s1"), null);
+      assert.equal(tasks.getBusyKind("s1"), null);
 
       const promptRes = await makeRequest(
         port,
         "POST",
-        "/api/v1/sessions/s1/prompt",
+        "/api/v1/tasks/s1/prompt",
         JSON.stringify({ text: "continue the work" }),
       );
       assert.equal(promptRes.status, 202);
@@ -663,19 +641,14 @@ describe("Session REST API", () => {
     });
   });
 
-  // --- GET /api/v1/sessions/:id ---
+  // --- GET /api/v1/tasks/:id ---
 
-  describe("GET /api/v1/sessions/:id", () => {
-    it("returns session detail for existing session", async () => {
-      const createRes = await makeRequest(
-        port,
-        "POST",
-        "/api/v1/sessions",
-        "{}",
-      );
+  describe("GET /api/v1/tasks/:id", () => {
+    it("returns task detail for existing task", async () => {
+      const createRes = await makeRequest(port, "POST", "/api/v1/tasks", "{}");
       const { id } = JSON.parse(createRes.body);
 
-      const res = await makeRequest(port, "GET", `/api/v1/sessions/${id}`);
+      const res = await makeRequest(port, "GET", `/api/v1/tasks/${id}`);
       assert.equal(res.status, 200);
       const body = JSON.parse(res.body);
       assert.equal(body.id, id);
@@ -683,43 +656,35 @@ describe("Session REST API", () => {
       assert.ok(Array.isArray(body.configOptions));
     });
 
-    it("returns 404 for unknown session", async () => {
-      const res = await makeRequest(
-        port,
-        "GET",
-        "/api/v1/sessions/nonexistent",
-      );
+    it("returns 404 for unknown task", async () => {
+      const res = await makeRequest(port, "GET", "/api/v1/tasks/nonexistent");
       assert.equal(res.status, 404);
     });
 
-    it("returns a session's parent relationship", async () => {
-      store.createSession("root", tmpDir, "root", "agent-root");
-      store.createSession("child", tmpDir, "auto", "agent-child", "root");
+    it("returns a task's parent relationship", async () => {
+      store.createTask("root", tmpDir, "root", "agent-root");
+      store.createTask("child", tmpDir, "auto", "agent-child", "root");
 
-      const res = await makeRequest(port, "GET", "/api/v1/sessions/child");
+      const res = await makeRequest(port, "GET", "/api/v1/tasks/child");
 
       assert.equal(res.status, 200);
-      assert.equal(JSON.parse(res.body).parentSessionId, "root");
+      assert.equal(JSON.parse(res.body).parentId, "root");
     });
 
-    it("auto-resumes a non-live session", async () => {
-      // Create a session directly in store (not in liveSessions)
-      store.createSession("stored-only", tmpDir);
+    it("auto-resumes a non-live task", async () => {
+      // Create a task directly in store (not in liveTasks)
+      store.createTask("stored-only", tmpDir);
 
-      const res = await makeRequest(
-        port,
-        "GET",
-        "/api/v1/sessions/stored-only",
-      );
+      const res = await makeRequest(port, "GET", "/api/v1/tasks/stored-only");
       assert.equal(res.status, 200);
       const body = JSON.parse(res.body);
       assert.equal(body.id, "stored-only");
       // Should now be live
-      assert.ok(sessions.liveSessions.has("stored-only"));
+      assert.ok(tasks.liveTasks.has("stored-only"));
     });
 
     it("does not continue an interrupted turn while restoring", async () => {
-      store.createSession("interrupted", tmpDir);
+      store.createTask("interrupted", tmpDir);
       store.saveEvent(
         "interrupted",
         "user_message",
@@ -731,46 +696,42 @@ describe("Session REST API", () => {
         promptCalls++;
       };
 
-      const res = await makeRequest(
-        port,
-        "GET",
-        "/api/v1/sessions/interrupted",
-      );
+      const res = await makeRequest(port, "GET", "/api/v1/tasks/interrupted");
       assert.equal(res.status, 200);
       await new Promise((resolve) => setTimeout(resolve, 0));
 
-      assert.ok(sessions.liveSessions.has("interrupted"));
+      assert.ok(tasks.liveTasks.has("interrupted"));
       assert.equal(promptCalls, 0);
-      assert.equal(sessions.getBusyKind("interrupted"), null);
+      assert.equal(tasks.getBusyKind("interrupted"), null);
     });
 
     it("snapshot waits for command discovery during a warm-cache resume", async () => {
-      store.createSession("stored-only", tmpDir);
-      sessions.cachedConfigOptions.push({
+      store.createTask("stored-only", tmpDir);
+      tasks.cachedConfigOptions.push({
         type: "select",
         id: "model",
         name: "Model",
         currentValue: "claude-sonnet",
         options: [{ value: "claude-sonnet", name: "Sonnet" }],
       });
-      mockBridge.loadSession = async (sessionId: string) => {
+      mockBridge.loadSession = async (taskId: string) => {
         await new Promise((resolve) => setTimeout(resolve, 20));
-        sessions.updateAgentCommands(sessionId, [
+        tasks.updateAgentCommands(taskId, [
           { name: "context", description: "Show context usage" },
         ]);
-        return { sessionId, configOptions: [] };
+        return { taskId, configOptions: [] };
       };
 
       const detail = await makeRequest(
         port,
         "GET",
-        "/api/v1/sessions/stored-only",
+        "/api/v1/tasks/stored-only",
       );
       assert.equal(detail.status, 200);
       const snapshot = await makeRequest(
         port,
         "GET",
-        "/api/v1/sessions/stored-only/snapshot",
+        "/api/v1/tasks/stored-only/snapshot",
       );
 
       assert.deepEqual(JSON.parse(snapshot.body).agentCommands.commands, [
@@ -779,80 +740,112 @@ describe("Session REST API", () => {
     });
   });
 
-  // --- DELETE /api/v1/sessions/:id ---
+  // --- DELETE /api/v1/tasks/:id ---
 
-  describe("DELETE /api/v1/sessions/:id", () => {
-    it("deletes an existing session", async () => {
-      const createRes = await makeRequest(
-        port,
-        "POST",
-        "/api/v1/sessions",
-        "{}",
-      );
+  describe("DELETE /api/v1/tasks/:id", () => {
+    it("deletes an existing task", async () => {
+      const createRes = await makeRequest(port, "POST", "/api/v1/tasks", "{}");
       const { id } = JSON.parse(createRes.body);
 
-      const res = await makeRequest(port, "DELETE", `/api/v1/sessions/${id}`);
-      assert.equal(res.status, 204);
-      assert.equal(res.body, "");
+      const res = await makeRequest(port, "DELETE", `/api/v1/tasks/${id}`);
+      assert.equal(res.status, 200);
+      assert.deepEqual(JSON.parse(res.body), {
+        taskId: id,
+        parentId: null,
+        reset: false,
+      });
 
       // Verify deleted from store
-      assert.equal(store.getSession(id), undefined);
+      assert.equal(store.getTask(id), undefined);
     });
 
-    it("broadcasts session_deleted event", async () => {
-      const createRes = await makeRequest(
-        port,
-        "POST",
-        "/api/v1/sessions",
-        "{}",
-      );
-      const { id } = JSON.parse(createRes.body);
+    it("broadcasts task_deleted with the requested task parent", async () => {
+      store.ensureRootTask(tmpDir);
+      store.bindAgentSession("root", "agent-root");
+      store.createTask("parent", tmpDir, "auto", "agent-parent", "root");
       broadcastEvents.length = 0;
 
-      await makeRequest(port, "DELETE", `/api/v1/sessions/${id}`);
-      const deleted = broadcastEvents.find((e) => e.type === "session_deleted");
-      assert.ok(deleted, "should broadcast session_deleted");
+      const res = await makeRequest(port, "DELETE", "/api/v1/tasks/parent");
+      assert.equal(res.status, 200);
+      const deleted = broadcastEvents.find(
+        (e) => e.type === "task_deleted" && e.taskId === "parent",
+      );
+      assert.ok(deleted, "should broadcast task_deleted");
       /* eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- narrowing after assert.ok */
-      if (deleted) {
-        assert.equal(deleted.sessionId, id);
+      if (deleted?.type === "task_deleted") {
+        assert.equal(deleted.parentId, "root");
       }
+      assert.deepEqual(JSON.parse(res.body), {
+        taskId: "parent",
+        parentId: "root",
+        reset: false,
+      });
     });
 
-    it("returns 404 for unknown session", async () => {
+    it("returns 404 for unknown task", async () => {
       const res = await makeRequest(
         port,
         "DELETE",
-        "/api/v1/sessions/nonexistent",
+        "/api/v1/tasks/nonexistent",
       );
       assert.equal(res.status, 404);
     });
 
-    it("protects the Root session from deletion", async () => {
-      store.ensureRootSession(tmpDir);
+    it("resets Root, deletes its descendants, and keeps Root as the anchor", async () => {
+      store.ensureRootTask(tmpDir);
       store.bindAgentSession("root", "agent-root");
+      store.createTask("child", tmpDir, "auto", "agent-child", "root");
+      store.saveEvent(
+        "root",
+        "user_message",
+        { text: "old root" },
+        { from_ref: "user" },
+      );
+      store.saveEvent(
+        "child",
+        "user_message",
+        { text: "child" },
+        { from_ref: "user" },
+      );
+      tasks.liveTasks.add("child");
+      broadcastEvents.length = 0;
 
-      const res = await makeRequest(port, "DELETE", "/api/v1/sessions/root");
+      const res = await makeRequest(port, "DELETE", "/api/v1/tasks/root");
 
-      assert.equal(res.status, 400);
-      assert.match(res.body, /Root session cannot be deleted/);
-      assert.equal(store.getSession("root")?.id, "root");
+      assert.equal(res.status, 200);
+      assert.deepEqual(JSON.parse(res.body), { taskId: "root", reset: true });
+      assert.equal(store.getTask("root")?.id, "root");
+      assert.equal(store.getTaskIncludingDeleted("child"), undefined);
+      assert.deepEqual(store.getEvents("root"), []);
+      assert.ok(
+        broadcastEvents.some(
+          (event) => event.type === "task_deleted" && event.taskId === "child",
+        ),
+      );
+      assert.ok(
+        broadcastEvents.some(
+          (event) => event.type === "task_reset" && event.taskId === "root",
+        ),
+      );
+      assert.ok(mockBridge.retireCalls.includes("agent-root"));
+      assert.ok(mockBridge.retireCalls.includes("agent-child"));
     });
 
-    it("cascades to descendant sessions and broadcasts session_deleted per id", async () => {
-      store.createSession("parent", tmpDir, "auto", "agent-parent");
-      store.createSession("child", tmpDir, "auto", "agent-child", "parent");
-      sessions.liveSessions.add("parent");
-      sessions.liveSessions.add("child");
+    it("cascades to descendant tasks and broadcasts task_deleted per id", async () => {
+      store.createTask("parent", tmpDir, "auto", "agent-parent");
+      store.createTask("child", tmpDir, "auto", "agent-child", "parent");
+      tasks.liveTasks.add("parent");
+      tasks.liveTasks.add("child");
 
-      const res = await makeRequest(port, "DELETE", "/api/v1/sessions/parent");
+      const res = await makeRequest(port, "DELETE", "/api/v1/tasks/parent");
 
-      assert.equal(res.status, 204);
-      assert.equal(store.getSessionIncludingDeleted("parent"), undefined);
-      assert.equal(store.getSessionIncludingDeleted("child"), undefined);
+      assert.equal(res.status, 200);
+      assert.equal(store.getTaskIncludingDeleted("parent"), undefined);
+      assert.equal(store.getTaskIncludingDeleted("child"), undefined);
       const deletedEvents = broadcastEvents.filter(
-        (event) => event.type === "session_deleted",
+        (event) => event.type === "task_deleted",
       );
-      assert.deepEqual(deletedEvents.map((event) => event.sessionId).sort(), [
+      assert.deepEqual(deletedEvents.map((event) => event.taskId).sort(), [
         "child",
         "parent",
       ]);
@@ -860,74 +853,68 @@ describe("Session REST API", () => {
         "agent-child",
         "agent-parent",
       ]);
-      assert.ok(!sessions.liveSessions.has("child"));
+      assert.deepEqual(JSON.parse(res.body), {
+        taskId: "parent",
+        parentId: null,
+        reset: false,
+      });
+      assert.ok(!tasks.liveTasks.has("child"));
     });
 
     it("rejects deletion when a descendant has active work", async () => {
-      store.createSession("parent", tmpDir, "auto", "agent-parent");
-      store.createSession("child", tmpDir, "auto", "agent-child", "parent");
-      sessions.activePrompts.add("child");
-      sessions.syncBusy("child");
+      store.createTask("parent", tmpDir, "auto", "agent-parent");
+      store.createTask("child", tmpDir, "auto", "agent-child", "parent");
+      tasks.activePrompts.add("child");
+      tasks.syncBusy("child");
 
-      const res = await makeRequest(port, "DELETE", "/api/v1/sessions/parent");
+      const res = await makeRequest(port, "DELETE", "/api/v1/tasks/parent");
 
       assert.equal(res.status, 409);
-      assert.equal(store.getSession("parent")?.id, "parent");
-      assert.equal(store.getSession("child")?.id, "child");
+      assert.equal(store.getTask("parent")?.id, "parent");
+      assert.equal(store.getTask("child")?.id, "child");
     });
 
     it("rejects deletion while prompt work is active", async () => {
-      store.createSession("s-active-delete", tmpDir);
-      sessions.activePrompts.add("s-active-delete");
-      sessions.syncBusy("s-active-delete");
+      store.createTask("s-active-delete", tmpDir);
+      tasks.activePrompts.add("s-active-delete");
+      tasks.syncBusy("s-active-delete");
 
       const res = await makeRequest(
         port,
         "DELETE",
-        "/api/v1/sessions/s-active-delete",
+        "/api/v1/tasks/s-active-delete",
       );
 
       assert.equal(res.status, 409);
-      assert.equal(store.getSession("s-active-delete")?.id, "s-active-delete");
+      assert.equal(store.getTask("s-active-delete")?.id, "s-active-delete");
     });
 
     it("rejects deletion while prompt submission is pending", async () => {
-      store.createSession("s-pending-delete", tmpDir);
-      assert.notEqual(
-        sessions.reservePromptSubmission("s-pending-delete"),
-        null,
-      );
+      store.createTask("s-pending-delete", tmpDir);
+      assert.notEqual(tasks.reservePromptSubmission("s-pending-delete"), null);
 
       const res = await makeRequest(
         port,
         "DELETE",
-        "/api/v1/sessions/s-pending-delete",
+        "/api/v1/tasks/s-pending-delete",
       );
 
       assert.equal(res.status, 409);
-      assert.equal(
-        store.getSession("s-pending-delete")?.id,
-        "s-pending-delete",
-      );
+      assert.equal(store.getTask("s-pending-delete")?.id, "s-pending-delete");
     });
   });
 
-  // --- PUT /api/v1/sessions/:id/:configId ---
+  // --- PUT /api/v1/tasks/:id/:configId ---
 
-  describe("PUT /api/v1/sessions/:id/:configId", () => {
+  describe("PUT /api/v1/tasks/:id/:configId", () => {
     it("updates model config", async () => {
-      const createRes = await makeRequest(
-        port,
-        "POST",
-        "/api/v1/sessions",
-        "{}",
-      );
+      const createRes = await makeRequest(port, "POST", "/api/v1/tasks", "{}");
       const { id } = JSON.parse(createRes.body);
 
       const res = await makeRequest(
         port,
         "PUT",
-        `/api/v1/sessions/${id}/model`,
+        `/api/v1/tasks/${id}/model`,
         JSON.stringify({ value: "claude-haiku" }),
       );
       assert.equal(res.status, 200);
@@ -936,36 +923,26 @@ describe("Session REST API", () => {
     });
 
     it("updates mode config", async () => {
-      const createRes = await makeRequest(
-        port,
-        "POST",
-        "/api/v1/sessions",
-        "{}",
-      );
+      const createRes = await makeRequest(port, "POST", "/api/v1/tasks", "{}");
       const { id } = JSON.parse(createRes.body);
 
       const res = await makeRequest(
         port,
         "PUT",
-        `/api/v1/sessions/${id}/mode`,
+        `/api/v1/tasks/${id}/mode`,
         JSON.stringify({ value: "agent#autopilot" }),
       );
       assert.equal(res.status, 200);
     });
 
     it("updates arbitrary boolean config via /config/:configId", async () => {
-      const createRes = await makeRequest(
-        port,
-        "POST",
-        "/api/v1/sessions",
-        "{}",
-      );
+      const createRes = await makeRequest(port, "POST", "/api/v1/tasks", "{}");
       const { id } = JSON.parse(createRes.body);
 
       const res = await makeRequest(
         port,
         "PUT",
-        `/api/v1/sessions/${id}/config/allow-all`,
+        `/api/v1/tasks/${id}/config/allow-all`,
         JSON.stringify({ value: true }),
       );
 
@@ -983,19 +960,14 @@ describe("Session REST API", () => {
     });
 
     it("broadcasts config_option_update", async () => {
-      const createRes = await makeRequest(
-        port,
-        "POST",
-        "/api/v1/sessions",
-        "{}",
-      );
+      const createRes = await makeRequest(port, "POST", "/api/v1/tasks", "{}");
       const { id } = JSON.parse(createRes.body);
       broadcastEvents.length = 0;
 
       await makeRequest(
         port,
         "PUT",
-        `/api/v1/sessions/${id}/model`,
+        `/api/v1/tasks/${id}/model`,
         JSON.stringify({ value: "claude-haiku" }),
       );
       const update = broadcastEvents.find(
@@ -1004,57 +976,47 @@ describe("Session REST API", () => {
       assert.ok(update, "should broadcast config_option_update");
     });
 
-    it("returns 404 for unknown session", async () => {
+    it("returns 404 for unknown task", async () => {
       const res = await makeRequest(
         port,
         "PUT",
-        "/api/v1/sessions/nonexistent/model",
+        "/api/v1/tasks/nonexistent/model",
         JSON.stringify({ value: "x" }),
       );
       assert.equal(res.status, 404);
     });
 
     it("returns 400 for empty body", async () => {
-      const createRes = await makeRequest(
-        port,
-        "POST",
-        "/api/v1/sessions",
-        "{}",
-      );
+      const createRes = await makeRequest(port, "POST", "/api/v1/tasks", "{}");
       const { id } = JSON.parse(createRes.body);
 
       const res = await makeRequest(
         port,
         "PUT",
-        `/api/v1/sessions/${id}/model`,
+        `/api/v1/tasks/${id}/model`,
         "{}",
       );
       assert.equal(res.status, 400);
     });
 
     it("returns 400 for invalid JSON", async () => {
-      const createRes = await makeRequest(
-        port,
-        "POST",
-        "/api/v1/sessions",
-        "{}",
-      );
+      const createRes = await makeRequest(port, "POST", "/api/v1/tasks", "{}");
       const { id } = JSON.parse(createRes.body);
 
       const res = await makeRequest(
         port,
         "PUT",
-        `/api/v1/sessions/${id}/model`,
+        `/api/v1/tasks/${id}/model`,
         "not-json",
       );
       assert.equal(res.status, 400);
     });
 
     it("returns 503 when bridge is not ready", async () => {
-      store.createSession("no-bridge", tmpDir);
+      store.createTask("no-bridge", tmpDir);
       const handler = createRequestHandler({
         store,
-        sessions,
+        tasks,
         getBridge: () => null,
         publicDir,
         dataDir: tmpDir,
@@ -1072,7 +1034,7 @@ describe("Session REST API", () => {
       const res = await makeRequest(
         p2,
         "PUT",
-        "/api/v1/sessions/no-bridge/model",
+        "/api/v1/tasks/no-bridge/model",
         JSON.stringify({ value: "x" }),
       );
       assert.equal(res.status, 503);
@@ -1085,55 +1047,55 @@ describe("Session REST API", () => {
     });
   });
 
-  // --- GET /api/v1/sessions with source filter ---
+  // --- GET /api/v1/tasks with source filter ---
 
-  describe("GET /api/v1/sessions?source=", () => {
-    it("filters sessions by source", async () => {
+  describe("GET /api/v1/tasks?source=", () => {
+    it("filters tasks by source", async () => {
       await makeRequest(
         port,
         "POST",
-        "/api/v1/sessions",
+        "/api/v1/tasks",
         JSON.stringify({ source: "user" }),
       );
       await makeRequest(
         port,
         "POST",
-        "/api/v1/sessions",
+        "/api/v1/tasks",
         JSON.stringify({ source: "auto" }),
       );
 
-      const allRes = await makeRequest(port, "GET", "/api/v1/sessions");
+      const allRes = await makeRequest(port, "GET", "/api/v1/tasks");
       assert.equal(JSON.parse(allRes.body).length, 2);
 
       const userRes = await makeRequest(
         port,
         "GET",
-        "/api/v1/sessions?source=user",
+        "/api/v1/tasks?source=user",
       );
-      const userSessions = JSON.parse(userRes.body);
-      assert.equal(userSessions.length, 1);
-      assert.equal(userSessions[0].source, "user");
+      const userTasks = JSON.parse(userRes.body);
+      assert.equal(userTasks.length, 1);
+      assert.equal(userTasks[0].source, "user");
 
       const autoRes = await makeRequest(
         port,
         "GET",
-        "/api/v1/sessions?source=auto",
+        "/api/v1/tasks?source=auto",
       );
-      const autoSessions = JSON.parse(autoRes.body);
-      assert.equal(autoSessions.length, 1);
-      assert.equal(autoSessions[0].source, "auto");
+      const autoTasks = JSON.parse(autoRes.body);
+      assert.equal(autoTasks.length, 1);
+      assert.equal(autoTasks[0].source, "auto");
     });
 
-    it("returns all sessions without source filter", async () => {
+    it("returns all tasks without source filter", async () => {
       await makeRequest(
         port,
         "POST",
-        "/api/v1/sessions",
+        "/api/v1/tasks",
         JSON.stringify({ source: "user" }),
       );
-      await makeRequest(port, "POST", "/api/v1/sessions", "{}");
+      await makeRequest(port, "POST", "/api/v1/tasks", "{}");
 
-      const res = await makeRequest(port, "GET", "/api/v1/sessions");
+      const res = await makeRequest(port, "GET", "/api/v1/tasks");
       assert.equal(JSON.parse(res.body).length, 2);
     });
   });
@@ -1176,17 +1138,12 @@ describe("Session REST API", () => {
     }
 
     it("returns gzip-compressed events when Accept-Encoding includes gzip", async () => {
-      // Create session and add enough events to exceed 1KB threshold
-      const createRes = await makeRequest(
-        port,
-        "POST",
-        "/api/v1/sessions",
-        "{}",
-      );
-      const sessionId = JSON.parse(createRes.body).id;
+      // Create task and add enough events to exceed 1KB threshold
+      const createRes = await makeRequest(port, "POST", "/api/v1/tasks", "{}");
+      const taskId = JSON.parse(createRes.body).id;
       const longText = "A".repeat(2000);
       store.saveEvent(
-        sessionId,
+        taskId,
         "assistant_message",
         { text: longText },
         { from_ref: "agent" },
@@ -1195,7 +1152,7 @@ describe("Session REST API", () => {
       const res = await makeRawRequest(
         port,
         "GET",
-        `/api/v1/sessions/${sessionId}/events`,
+        `/api/v1/tasks/${taskId}/events`,
         {
           "Accept-Encoding": "gzip",
         },
@@ -1207,7 +1164,7 @@ describe("Session REST API", () => {
       const uncompressed = await makeRawRequest(
         port,
         "GET",
-        `/api/v1/sessions/${sessionId}/events`,
+        `/api/v1/tasks/${taskId}/events`,
       );
       assert.ok(
         res.rawBody.length < uncompressed.rawBody.length,
@@ -1223,15 +1180,10 @@ describe("Session REST API", () => {
     });
 
     it("returns uncompressed when Accept-Encoding is absent", async () => {
-      const createRes = await makeRequest(
-        port,
-        "POST",
-        "/api/v1/sessions",
-        "{}",
-      );
-      const sessionId = JSON.parse(createRes.body).id;
+      const createRes = await makeRequest(port, "POST", "/api/v1/tasks", "{}");
+      const taskId = JSON.parse(createRes.body).id;
       store.saveEvent(
-        sessionId,
+        taskId,
         "assistant_message",
         { text: "B".repeat(2000) },
         { from_ref: "agent" },
@@ -1240,7 +1192,7 @@ describe("Session REST API", () => {
       const res = await makeRawRequest(
         port,
         "GET",
-        `/api/v1/sessions/${sessionId}/events`,
+        `/api/v1/tasks/${taskId}/events`,
       );
 
       assert.equal(res.status, 200);
@@ -1250,15 +1202,10 @@ describe("Session REST API", () => {
     });
 
     it("skips gzip for small responses under 1KB", async () => {
-      const createRes = await makeRequest(
-        port,
-        "POST",
-        "/api/v1/sessions",
-        "{}",
-      );
-      const sessionId = JSON.parse(createRes.body).id;
+      const createRes = await makeRequest(port, "POST", "/api/v1/tasks", "{}");
+      const taskId = JSON.parse(createRes.body).id;
       store.saveEvent(
-        sessionId,
+        taskId,
         "assistant_message",
         { text: "tiny" },
         { from_ref: "agent" },
@@ -1267,7 +1214,7 @@ describe("Session REST API", () => {
       const res = await makeRawRequest(
         port,
         "GET",
-        `/api/v1/sessions/${sessionId}/events`,
+        `/api/v1/tasks/${taskId}/events`,
         {
           "Accept-Encoding": "gzip",
         },
@@ -1284,20 +1231,15 @@ describe("Session REST API", () => {
 
   describe("streaming buffer flush on events endpoint", () => {
     it("flushes pending thinking buffer and signals streaming", async () => {
-      const createRes = await makeRequest(
-        port,
-        "POST",
-        "/api/v1/sessions",
-        "{}",
-      );
-      const sessionId = JSON.parse(createRes.body).id;
+      const createRes = await makeRequest(port, "POST", "/api/v1/tasks", "{}");
+      const taskId = JSON.parse(createRes.body).id;
       // Simulate agent mid-thinking: buffer has unflushed content
-      sessions.appendThinking(sessionId, "partial thought");
+      tasks.appendThinking(taskId, "partial thought");
 
       const res = await makeRequest(
         port,
         "GET",
-        `/api/v1/sessions/${sessionId}/events`,
+        `/api/v1/tasks/${taskId}/events`,
       );
       const body = JSON.parse(res.body);
       assert.equal(body.streaming.thinking, true);
@@ -1310,23 +1252,18 @@ describe("Session REST API", () => {
       const data = JSON.parse(thinkingEvt.data);
       assert.equal(data.text, "partial thought");
       // Buffer should be empty after flush
-      assert.equal(sessions.thinkingBuffers.has(sessionId), false);
+      assert.equal(tasks.thinkingBuffers.has(taskId), false);
     });
 
     it("flushes pending assistant buffer and signals streaming", async () => {
-      const createRes = await makeRequest(
-        port,
-        "POST",
-        "/api/v1/sessions",
-        "{}",
-      );
-      const sessionId = JSON.parse(createRes.body).id;
-      sessions.appendAssistant(sessionId, "partial reply");
+      const createRes = await makeRequest(port, "POST", "/api/v1/tasks", "{}");
+      const taskId = JSON.parse(createRes.body).id;
+      tasks.appendAssistant(taskId, "partial reply");
 
       const res = await makeRequest(
         port,
         "GET",
-        `/api/v1/sessions/${sessionId}/events`,
+        `/api/v1/tasks/${taskId}/events`,
       );
       const body = JSON.parse(res.body);
       assert.equal(body.streaming.thinking, false);
@@ -1335,19 +1272,14 @@ describe("Session REST API", () => {
         (e: { type: string }) => e.type === "assistant_message",
       );
       assert.ok(msgEvt, "should include flushed assistant_message event");
-      assert.equal(sessions.assistantBuffers.has(sessionId), false);
+      assert.equal(tasks.assistantBuffers.has(taskId), false);
     });
 
     it("returns streaming false when no buffers are pending", async () => {
-      const createRes = await makeRequest(
-        port,
-        "POST",
-        "/api/v1/sessions",
-        "{}",
-      );
-      const sessionId = JSON.parse(createRes.body).id;
+      const createRes = await makeRequest(port, "POST", "/api/v1/tasks", "{}");
+      const taskId = JSON.parse(createRes.body).id;
       store.saveEvent(
-        sessionId,
+        taskId,
         "user_message",
         { text: "hi" },
         { from_ref: "user" },
@@ -1356,7 +1288,7 @@ describe("Session REST API", () => {
       const res = await makeRequest(
         port,
         "GET",
-        `/api/v1/sessions/${sessionId}/events`,
+        `/api/v1/tasks/${taskId}/events`,
       );
       const body = JSON.parse(res.body);
       assert.equal(body.streaming.thinking, false);
@@ -1364,20 +1296,15 @@ describe("Session REST API", () => {
     });
 
     it("does not signal streaming for empty buffers", async () => {
-      const createRes = await makeRequest(
-        port,
-        "POST",
-        "/api/v1/sessions",
-        "{}",
-      );
-      const sessionId = JSON.parse(createRes.body).id;
-      sessions.assistantBuffers.set(sessionId, "");
-      sessions.thinkingBuffers.set(sessionId, "");
+      const createRes = await makeRequest(port, "POST", "/api/v1/tasks", "{}");
+      const taskId = JSON.parse(createRes.body).id;
+      tasks.assistantBuffers.set(taskId, "");
+      tasks.thinkingBuffers.set(taskId, "");
 
       const res = await makeRequest(
         port,
         "GET",
-        `/api/v1/sessions/${sessionId}/events`,
+        `/api/v1/tasks/${taskId}/events`,
       );
       const body = JSON.parse(res.body);
 
@@ -1385,32 +1312,27 @@ describe("Session REST API", () => {
         thinking: false,
         assistant: false,
       });
-      assert.equal(sessions.assistantBuffers.has(sessionId), false);
-      assert.equal(sessions.thinkingBuffers.has(sessionId), false);
+      assert.equal(tasks.assistantBuffers.has(taskId), false);
+      assert.equal(tasks.thinkingBuffers.has(taskId), false);
     });
 
     it("keeps an active stream open when its pending buffer is empty", async () => {
-      const createRes = await makeRequest(
-        port,
-        "POST",
-        "/api/v1/sessions",
-        "{}",
-      );
-      const sessionId = JSON.parse(createRes.body).id;
+      const createRes = await makeRequest(port, "POST", "/api/v1/tasks", "{}");
+      const taskId = JSON.parse(createRes.body).id;
       store.saveEvent(
-        sessionId,
+        taskId,
         "user_message",
         { text: "question" },
         { from_ref: "user" },
       );
       store.saveEvent(
-        sessionId,
+        taskId,
         "assistant_message",
         { text: "partial reply" },
         { from_ref: "agent" },
       );
-      sessions.assistantBuffers.set(sessionId, "");
-      sessions.state.patch(sessionId, {
+      tasks.assistantBuffers.set(taskId, "");
+      tasks.state.patch(taskId, {
         runtime: {
           streaming: { thinking: false, assistant: true },
         },
@@ -1419,7 +1341,7 @@ describe("Session REST API", () => {
       const res = await makeRequest(
         port,
         "GET",
-        `/api/v1/sessions/${sessionId}/events`,
+        `/api/v1/tasks/${taskId}/events`,
       );
       const body = JSON.parse(res.body);
 
@@ -1427,7 +1349,7 @@ describe("Session REST API", () => {
         thinking: false,
         assistant: true,
       });
-      assert.equal(sessions.assistantBuffers.has(sessionId), false);
+      assert.equal(tasks.assistantBuffers.has(taskId), false);
     });
   });
 });

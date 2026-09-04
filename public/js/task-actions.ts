@@ -1,10 +1,10 @@
 import {
   applyAgentCommandSnapshot,
   clearCancelTimer,
-  hydrateSessionRuntime,
+  hydrateTaskRuntime,
   state,
   updateConfigOptions,
-  updateSessionInfo,
+  updateTaskInfo,
 } from "./state.ts";
 import {
   addSystem,
@@ -14,8 +14,9 @@ import {
 } from "./render.ts";
 import type { AgentCommandSnapshot, ConfigOption } from "../../src/types.ts";
 import * as api from "./api.ts";
+import { fallbackToNextTask } from "./events.ts";
 
-interface ClearSessionResult {
+interface ClearTaskResult {
   id: string;
   cwd: string;
   cwdDisplay?: string;
@@ -24,69 +25,92 @@ interface ClearSessionResult {
   agentCommands?: AgentCommandSnapshot;
 }
 
+export async function exitCurrentTask(): Promise<void> {
+  if (!state.taskId) {
+    addSystem("warn: No active task");
+    return;
+  }
+  if (state.busy) {
+    addSystem("err: Cancel active work before exiting the task");
+    return;
+  }
+  const exitId = state.taskId;
+  try {
+    const result = await api.deleteTask(exitId);
+    await fallbackToNextTask(
+      result?.reset ? null : exitId,
+      state.taskCwd ?? undefined,
+      result?.reset ? exitId : result?.parentId,
+      result?.clientOpId,
+    );
+  } catch (err) {
+    addSystem(`err: Failed to exit task — ${String(err)}`);
+  }
+}
+
 /**
- * Rotate the session's ACP execution in place. The stable WebAgent session
+ * Rotate the task's ACP execution in place. The stable WebAgent task
  * identity and its history are unchanged by clear, so the message DOM and the
  * SSE cursors stay intact; only the runtime state that belonged to the retired
  * execution is reset, and busy/plan/commands/config are repainted from the
  * post-rotation snapshot.
  *
- * state.sessionId deliberately stays set during the request: the server
- * broadcasts session_created before responding, and with the id set that
- * broadcast takes the normal same-session branch (config repaint) instead of
+ * state.taskId deliberately stays set during the request: the server
+ * broadcasts task_created before responding, and with the id set that
+ * broadcast takes the normal same-task branch (config repaint) instead of
  * the activation path that a null id would trigger.
  */
-export async function compactCurrentSession(): Promise<void> {
-  if (!state.sessionId) {
-    addSystem("warn: No active session");
+export async function compactCurrentTask(): Promise<void> {
+  if (!state.taskId) {
+    addSystem("warn: No active task");
     return;
   }
   if (state.busy) {
-    addSystem("err: Cancel active work before compacting the session");
+    addSystem("err: Cancel active work before compacting the task");
     return;
   }
-  const sessionId = state.sessionId;
+  const taskId = state.taskId;
   addSystem("Compacting context…");
   try {
-    await api.compactSession(sessionId);
+    await api.compactTask(taskId);
   } catch (err: unknown) {
-    addSystem(`err: Failed to compact session — ${String(err)}`);
+    addSystem(`err: Failed to compact task — ${String(err)}`);
   }
 }
 
-export async function replaceCurrentSession({
+export async function replaceCurrentTask({
   cwd,
   showCwd = false,
 }: {
   cwd?: string;
   showCwd?: boolean;
 } = {}): Promise<void> {
-  if (!state.sessionId) {
-    addSystem("warn: No active session");
+  if (!state.taskId) {
+    addSystem("warn: No active task");
     return;
   }
-  const oldId = state.sessionId;
-  const nextCwd = cwd ?? state.sessionCwd ?? undefined;
+  const oldId = state.taskId;
+  const nextCwd = cwd ?? state.taskCwd ?? undefined;
   if (state.busy) {
-    addSystem("err: Cancel active work before clearing the session");
+    addSystem("err: Cancel active work before clearing the task");
     return;
   }
   addSystem(
     showCwd && nextCwd
-      ? `Clearing session and starting at ${nextCwd}…`
-      : "Clearing session…",
+      ? `Clearing task and starting at ${nextCwd}…`
+      : "Clearing task…",
   );
   try {
-    const result = (await api.clearSession(oldId, {
+    const result = (await api.clearTask(oldId, {
       cwd: nextCwd,
-    })) as unknown as ClearSessionResult;
+    })) as unknown as ClearTaskResult;
     resetClearedExecution();
-    // Snapshot refresh is idempotent with the session_created broadcast, so
+    // Snapshot refresh is idempotent with the task_created broadcast, so
     // the client settles deterministically regardless of which arrives first.
-    await hydrateSessionRuntime(oldId);
+    await hydrateTaskRuntime(oldId);
     applyClearResult(oldId, result);
   } catch (err: unknown) {
-    addSystem(`err: Failed to clear session — ${String(err)}`);
+    addSystem(`err: Failed to clear task — ${String(err)}`);
   }
 }
 
@@ -115,11 +139,11 @@ function resetClearedExecution(): void {
 
 /** Apply the clear response deterministically (no-op when the broadcast or
  * snapshot already applied the same values). */
-function applyClearResult(sessionId: string, result: ClearSessionResult): void {
+function applyClearResult(taskId: string, result: ClearTaskResult): void {
   updateConfigOptions(result.configOptions);
   if (result.agentCommands) applyAgentCommandSnapshot(result.agentCommands);
-  state.sessionCwd = result.cwd;
-  state.sessionCwdDisplay = result.cwdDisplay ?? result.cwd;
-  state.sessionTitle = result.title;
-  updateSessionInfo(sessionId, state.sessionTitle);
+  state.taskCwd = result.cwd;
+  state.taskCwdDisplay = result.cwdDisplay ?? result.cwd;
+  state.taskTitle = result.title;
+  updateTaskInfo(taskId, state.taskTitle);
 }

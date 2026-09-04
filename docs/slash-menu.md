@@ -27,7 +27,7 @@ Three modules, each with a frozen contract:
 
 The thin driver [`commands.ts`](../public/js/commands.ts) glues them: input → `resolvePath` → maybe-fetch → `buildCandidates` → `renderItem` per row.
 
-[`slash-exec.ts`](../public/js/slash-exec.ts) is the **Enter-key executor**: it parses the raw text imperatively, independent of the menu state. The menu is for discovery and one-click execution; Enter is for power users typing the full command. Both paths converge on the same outcomes (e.g. `POST /api/v1/sessions/:id/config-option`) but neither depends on the other.
+[`slash-exec.ts`](../public/js/slash-exec.ts) is the **Enter-key executor**: it parses the raw text imperatively, independent of the menu state. The menu is for discovery and one-click execution; Enter is for power users typing the full command. Both paths converge on the same outcomes (e.g. `POST /api/v1/tasks/:id/config-option`) but neither depends on the other.
 
 ## CmdNode
 

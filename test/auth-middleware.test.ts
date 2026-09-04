@@ -31,9 +31,9 @@ describe("auth-middleware", () => {
     });
 
     it("blocks all /api/** by default", () => {
-      assert.equal(isWhitelistedPath("GET", "/api/v1/sessions"), false);
+      assert.equal(isWhitelistedPath("GET", "/api/v1/tasks"), false);
       assert.equal(
-        isWhitelistedPath("POST", "/api/v1/sessions/x/messages"),
+        isWhitelistedPath("POST", "/api/v1/tasks/x/messages"),
         false,
       );
       assert.equal(isWhitelistedPath("DELETE", "/api/v1/tokens/laptop"), false);
@@ -47,10 +47,7 @@ describe("auth-middleware", () => {
     });
 
     it("does not allow path traversal tricks", () => {
-      assert.equal(
-        isWhitelistedPath("GET", "/api/v1/version/../sessions"),
-        false,
-      );
+      assert.equal(isWhitelistedPath("GET", "/api/v1/version/../tasks"), false);
       assert.equal(isWhitelistedPath("GET", "/icons/../auth.json"), false);
     });
   });

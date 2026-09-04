@@ -5,7 +5,7 @@ import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Store } from "../src/store.ts";
-import { SessionManager } from "../src/session-manager.ts";
+import { TaskManager } from "../src/task-manager.ts";
 import { SseManager } from "../src/sse-manager.ts";
 import { createRequestHandler } from "../src/routes.ts";
 import type { ConfigOption } from "../src/types.ts";
@@ -59,18 +59,18 @@ function createMockBridge() {
     },
   ];
   let idCounter = 0;
-  const promptCalls: Array<{ sessionId: string; text: string }> = [];
+  const promptCalls: Array<{ taskId: string; text: string }> = [];
   return {
     ...mockBridgeStubs(),
     newSession: async () => {
       idCounter++;
-      return { sessionId: `mock-session-${idCounter}`, configOptions: [] };
+      return { sessionId: `mock-task-${idCounter}`, configOptions: [] };
     },
-    loadSession: async () => ({ sessionId: "", configOptions }),
+    loadSession: async () => ({ taskId: "", configOptions }),
     setConfigOption: async () => configOptions,
     cancel: async () => {},
-    prompt: async (sessionId: string, text: string) => {
-      promptCalls.push({ sessionId, text });
+    prompt: async (taskId: string, text: string) => {
+      promptCalls.push({ taskId, text });
     },
     resolvePermission: async () => {},
     denyPermission: async () => {},
@@ -80,7 +80,7 @@ function createMockBridge() {
 
 describe("Quick Prompt REST API", () => {
   let store: Store;
-  let sessions: SessionManager;
+  let tasks: TaskManager;
   let sseManager: SseManager;
   let tmpDir: string;
   let publicDir: string;
@@ -95,13 +95,13 @@ describe("Quick Prompt REST API", () => {
     writeFileSync(join(publicDir, "index.html"), "<h1>Test</h1>");
 
     store = new Store(join(tmpDir, "test.db"), "test-agent");
-    sessions = new SessionManager(store, tmpDir, tmpDir);
+    tasks = new TaskManager(store, tmpDir, tmpDir);
     sseManager = new SseManager();
     mockBridge = createMockBridge();
 
     const handler = createRequestHandler({
       store,
-      sessions,
+      tasks,
       getBridge: () => mockBridge,
       publicDir,
       dataDir: tmpDir,
@@ -125,7 +125,7 @@ describe("Quick Prompt REST API", () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("creates a session and returns 202 with sessionId and streamUrl", async () => {
+  it("creates a task and returns 202 with taskId and streamUrl", async () => {
     const res = await makeRequest(
       port,
       "POST",
@@ -134,11 +134,8 @@ describe("Quick Prompt REST API", () => {
     );
     assert.equal(res.status, 202);
     const body = JSON.parse(res.body);
-    assert.ok(body.sessionId);
-    assert.equal(
-      body.streamUrl,
-      `/api/v1/sessions/${body.sessionId}/events/stream`,
-    );
+    assert.ok(body.taskId);
+    assert.equal(body.streamUrl, `/api/v1/tasks/${body.taskId}/events/stream`);
   });
 
   it("sends the prompt to the bridge", async () => {
@@ -153,11 +150,11 @@ describe("Quick Prompt REST API", () => {
     // Wait a tick for the async prompt call
     await new Promise((r) => setTimeout(r, 50));
     assert.equal(mockBridge.promptCalls.length, 1);
-    assert.equal(mockBridge.promptCalls[0].sessionId, body.sessionId);
+    assert.equal(mockBridge.promptCalls[0].taskId, body.taskId);
     assert.equal(mockBridge.promptCalls[0].text, "do something");
   });
 
-  it("uses provided cwd for the session", async () => {
+  it("uses provided cwd for the task", async () => {
     const customCwd = tmpDir;
     const res = await makeRequest(
       port,
@@ -166,11 +163,11 @@ describe("Quick Prompt REST API", () => {
       JSON.stringify({ text: "test", cwd: customCwd }),
     );
     const body = JSON.parse(res.body);
-    const session = store.getSession(body.sessionId);
-    assert.equal(session!.cwd, customCwd);
+    const task = store.getTask(body.taskId);
+    assert.equal(task!.cwd, customCwd);
   });
 
-  it("marks the session source as auto", async () => {
+  it("marks the task source as auto", async () => {
     const res = await makeRequest(
       port,
       "POST",
@@ -178,8 +175,8 @@ describe("Quick Prompt REST API", () => {
       JSON.stringify({ text: "test" }),
     );
     const body = JSON.parse(res.body);
-    const session = store.getSession(body.sessionId);
-    assert.equal(session!.source, "auto");
+    const task = store.getTask(body.taskId);
+    assert.equal(task!.source, "auto");
   });
 
   it("returns 400 when text is missing", async () => {
@@ -202,7 +199,7 @@ describe("Quick Prompt REST API", () => {
     // Create handler without bridge
     const handler = createRequestHandler({
       store,
-      sessions,
+      tasks,
       getBridge: () => null,
       publicDir,
       dataDir: tmpDir,

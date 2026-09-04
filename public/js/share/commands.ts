@@ -8,10 +8,10 @@
 //     their Ctrl+P / Ctrl+C shortcuts. There is no slash channel into
 //     preview-mode actions — slash text reaches the agent as normal.
 //   • Cancel does NOT call backend — TTL cleans the unused preview row.
-//   • Page refresh / session switch loses previewToken (resetSessionUI
+//   • Page refresh / task switch loses previewToken (resetTaskUI
 //     clears it); the backend preview row TTLs out the same way.
 //
-// All mutating endpoints live under `/api/v1/sessions/:id/share*` and
+// All mutating endpoints live under `/api/v1/tasks/:id/share*` and
 // `/api/v1/shares` — gated by Bearer via the global authFetch monkey-patch.
 // Viewer endpoints (`/s/:token`, `/api/v1/shared/:token/events`) are public
 // and never touched from owner code.
@@ -26,7 +26,7 @@ const slog = log.scope("share");
 
 interface PreviewResponse {
   token: string;
-  session_id: string;
+  task_id: string;
   snapshot_seq: number;
   ttl_hours: number | null;
   display_name: string | null;
@@ -44,8 +44,8 @@ interface PublishResponse {
 
 export interface ShareListRow {
   token: string;
-  session_id: string;
-  session_title: string | null;
+  task_id: string;
+  task_title: string | null;
   shared_at: number | null;
   created_at: number;
   display_name: string | null;
@@ -62,20 +62,20 @@ function publicUrl(rawPath: string, token: string): string {
 }
 
 /**
- * POST /api/v1/sessions/:id/share — create (or reuse) a preview snapshot.
+ * POST /api/v1/tasks/:id/share — create (or reuse) a preview snapshot.
  * On success: sets `state.previewToken` so the slash menu switches to
  * On success: sets `state.previewToken` so the input area enters preview
  * mode (textarea disabled, ^P/^C buttons) and prints an inline summary.
  */
 export async function createPreview(): Promise<void> {
-  if (!state.sessionId) {
-    addSystem("share: no active session");
+  if (!state.taskId) {
+    addSystem("share: no active task");
     return;
   }
-  const sessionId = state.sessionId;
+  const taskId = state.taskId;
   try {
     const res = await fetch(
-      `/api/v1/sessions/${encodeURIComponent(sessionId)}/share`,
+      `/api/v1/tasks/${encodeURIComponent(taskId)}/share`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -87,7 +87,7 @@ export async function createPreview(): Promise<void> {
       const errText = await res.text();
       if (res.status === HTTP_STATUS.CONFLICT) {
         addSystem(
-          "share: session busy (agent streaming) — retry after the response completes",
+          "share: task busy (agent streaming) — retry after the response completes",
         );
       } else if (res.status === HTTP_STATUS.FORBIDDEN) {
         addSystem("share: forbidden (not owner)");
@@ -95,7 +95,7 @@ export async function createPreview(): Promise<void> {
         res.status === HTTP_STATUS.BAD_REQUEST &&
         errText.includes("sanitize")
       ) {
-        addSystem(`share: ✗ sanitize blocked this session — ${errText}`);
+        addSystem(`share: ✗ sanitize blocked this task — ${errText}`);
       } else {
         addSystem(
           `share: create failed ${res.status} — ${errText.slice(0, 200)}`,
@@ -118,23 +118,23 @@ export async function createPreview(): Promise<void> {
 }
 
 /**
- * POST /api/v1/sessions/:id/share/publish — freeze the active preview.
+ * POST /api/v1/tasks/:id/share/publish — freeze the active preview.
  * Failure keeps preview mode active so the user can retry or `/cancel`.
  */
 export async function publishPreview(): Promise<void> {
-  if (!state.sessionId) {
-    addSystem("share: no active session");
+  if (!state.taskId) {
+    addSystem("share: no active task");
     return;
   }
   if (!state.previewToken) {
     addSystem("share: no preview to publish — run /share first");
     return;
   }
-  const sessionId = state.sessionId;
+  const taskId = state.taskId;
   const token = state.previewToken;
   try {
     const res = await fetch(
-      `/api/v1/sessions/${encodeURIComponent(sessionId)}/share/publish`,
+      `/api/v1/tasks/${encodeURIComponent(taskId)}/share/publish`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -206,7 +206,7 @@ export async function listOwnerShares(): Promise<ShareListRow[]> {
 }
 
 /**
- * Revoke a public share. We need the row's session_id so look it up via
+ * Revoke a public share. We need the row's task_id so look it up via
  * the list endpoint first; preview-only rows (shared_at == null) are
  * intentionally not revocable through here — they only TTL out.
  */
@@ -223,7 +223,7 @@ export async function revokeShare(token: string): Promise<void> {
       return;
     }
     const res = await fetch(
-      `/api/v1/sessions/${encodeURIComponent(row.session_id)}/share`,
+      `/api/v1/tasks/${encodeURIComponent(row.task_id)}/share`,
       {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
@@ -250,7 +250,7 @@ export async function revokeShare(token: string): Promise<void> {
 }
 
 // Revoke needs the full list (including any active rows the caller may
-// have for other sessions); listOwnerShares already filters that, so this
+// have for other tasks); listOwnerShares already filters that, so this
 // internal helper hits the raw endpoint.
 async function fetchAllSharesForRevoke(): Promise<ShareListRow[]> {
   const res = await fetch("/api/v1/shares", { credentials: "same-origin" });
@@ -294,7 +294,7 @@ export async function getDefaultDisplayName(): Promise<string | null> {
 /**
  * Set (or clear with `null`) the owner's default display_name. Also patches
  * the active preview (if any) so the change is visible in the current
- * session before /publish. Already-published shares are left untouched —
+ * task before /publish. Already-published shares are left untouched —
  * snapshot semantics.
  */
 export async function setDefaultDisplayName(
@@ -317,20 +317,17 @@ export async function setDefaultDisplayName(
     const data = (await res.json()) as { value: string | null };
 
     // Best-effort: reflect the change on the in-flight preview, if any.
-    if (state.previewToken && state.sessionId) {
+    if (state.previewToken && state.taskId) {
       try {
-        await fetch(
-          `/api/v1/sessions/${encodeURIComponent(state.sessionId)}/share`,
-          {
-            method: "PATCH",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              token: state.previewToken,
-              display_name: data.value ?? "",
-            }),
-            credentials: "same-origin",
-          },
-        );
+        await fetch(`/api/v1/tasks/${encodeURIComponent(state.taskId)}/share`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            token: state.previewToken,
+            display_name: data.value ?? "",
+          }),
+          credentials: "same-origin",
+        });
       } catch (err) {
         slog.warn("by: preview patch failed", { err });
       }

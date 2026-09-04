@@ -7,7 +7,7 @@ import { setLogLevel, log } from "./log.ts";
 import { AgentBridge } from "./bridge.ts";
 import { agentKeyFromCommand } from "./agent-key.ts";
 import { Store } from "./store.ts";
-import { SessionManager } from "./session-manager.ts";
+import { TaskManager } from "./task-manager.ts";
 import { TitleService } from "./title-service.ts";
 import { CapabilityStore } from "./mcp/capability.ts";
 import { createMcpEndpoint } from "./mcp/server.ts";
@@ -25,7 +25,7 @@ import {
 } from "./share/cleanup.ts";
 import { AuthStore } from "./auth-store.ts";
 import { join as pathJoin } from "node:path";
-import { resolveSessionsAnchor } from "./sessions-anchor.ts";
+import { resolveTasksAnchor } from "./tasks-anchor.ts";
 import { runStartupChecks } from "./startup-checks.ts";
 import { AttachmentDispatcher } from "./attachment-dispatch.ts";
 import { buildBridgeEventHandlerConfig as _buildBridgeEventHandlerConfig } from "./bridge-event-config.ts";
@@ -74,14 +74,14 @@ const store = new Store(
   config.data_dir,
   agentKeyFromCommand(preflight.agentCmd),
 );
-store.ensureRootSession(config.default_cwd);
+store.ensureRootTask(config.default_cwd);
 console.log(`[store] using ${config.data_dir}/`);
 
-// Pin <data_dir>/sessions realpath at boot so all later anchor checks
+// Pin <data_dir>/tasks realpath at boot so all later anchor checks
 // (file:// URI construction, permission interceptor) compare against the
 // same canonical path. Defends against macOS /var → /private/var.
-const sessionsAnchor = resolveSessionsAnchor(config.data_dir);
-const attachmentDispatcher = new AttachmentDispatcher(store, sessionsAnchor, {
+const tasksAnchor = resolveTasksAnchor(config.data_dir);
+const attachmentDispatcher = new AttachmentDispatcher(store, tasksAnchor, {
   warn: (msg) => {
     console.warn(msg);
   },
@@ -100,14 +100,14 @@ setInterval(() => {
     .info("counters", { ...attachmentInterceptorCounters });
 }, ATTACHMENT_INTERCEPTOR_DUMP_MS).unref();
 
-// Per-session MCP capability store; minted/revoked by SessionManager. The
+// Per-task MCP capability store; minted/revoked by TaskManager. The
 // MCP endpoint authenticates against it. Tokens are in-memory
 // only, so a restart invalidates every outstanding capability.
 const capabilities = new CapabilityStore();
 // Agent subprocesses run on the same host as WebAgent, so the MCP server
 // URL is always loopback even when the HTTP listener binds elsewhere.
 const mcpBaseUrl = `http://127.0.0.1:${config.port}`;
-const sessions = new SessionManager(
+const tasks = new TaskManager(
   store,
   config.default_cwd,
   config.data_dir,
@@ -116,7 +116,7 @@ const sessions = new SessionManager(
 );
 const titleService = new TitleService(
   store,
-  sessions,
+  tasks,
   config.default_cwd,
   config.title.models,
 );
@@ -150,10 +150,10 @@ sseManager.setRevocationCheck(
   (tokenName) => !authStore.hasTokenName(tokenName),
 );
 sseManager.setAttachmentSecret(attachmentSecret);
-sseManager.setLabelMapProvider((sessionId) => sessions.getLabelMap(sessionId));
+sseManager.setLabelMapProvider((taskId) => tasks.getLabelMap(taskId));
 
-// Broadcast runtime state patches to all SSE clients interested in the session.
-sessions.state.onPatch((event) => {
+// Broadcast runtime state patches to all SSE clients interested in the task.
+tasks.state.onPatch((event) => {
   sseManager.broadcast(event);
 });
 
@@ -171,7 +171,7 @@ let sharePreviewCleanup: SharePreviewCleanupHandle | null = null;
 
 const requestHandler = createRequestHandler({
   store,
-  sessions,
+  tasks,
   sseManager,
   clientRegistry,
   titleService,
@@ -188,7 +188,7 @@ const requestHandler = createRequestHandler({
   shareConfig: config.share,
   mcpEndpoint: createMcpEndpoint({
     capabilities,
-    isSessionActive: (sessionId) => sessions.isMcpSessionActive(sessionId),
+    isTaskActive: (taskId) => tasks.isMcpSessionActive(taskId),
   }),
 });
 
@@ -215,7 +215,7 @@ async function initBridge(agentCmd: string): Promise<AgentBridge> {
   b.on("event", (event: AgentEvent) => {
     handleAgentEvent(
       event,
-      sessions,
+      tasks,
       store,
       b,
       eventHandlerConfig,
@@ -237,7 +237,7 @@ async function shutdown() {
   sseManager.stopHeartbeat();
   messageCleanup.stop();
   sharePreviewCleanup?.stop();
-  sessions.killAllBashProcs();
+  tasks.killAllBashProcs();
   await bridge?.shutdown();
   await authStore.close();
   store.close();
@@ -284,8 +284,8 @@ server.listen(config.port, config.host, () => {
     try {
       await initBridge(agentCmd);
       console.log(`[bridge] ready`);
-      await sessions.ensureRootSession(bridge!);
-      sessions.hydrate();
+      await tasks.ensureRootTask(bridge!);
+      tasks.hydrate();
     } catch (err) {
       console.error(`[bridge] failed to start:`, err);
     }

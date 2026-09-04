@@ -218,7 +218,7 @@ function rebuild(tailQuery: string, pathPrefix: string): void {
 
   // Auto-select first selectable candidate. We deliberately do NOT auto-select
   // the `current` item — its `*` marker is already a strong visual cue, and
-  // auto-selecting it (e.g. the active session in /switch) is awkward when the
+  // auto-selecting it (e.g. the active task in /switch) is awkward when the
   // user opens the menu intending to switch *away* from it.
   const firstSelectable = cands.findIndex(
     (c) => c.kind !== "separator" && c.kind !== "placeholder",

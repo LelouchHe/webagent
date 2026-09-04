@@ -157,7 +157,7 @@ body {
     opacity: 1;
   }
 }
-#session-info {
+#task-info {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -191,7 +191,7 @@ body {
   .header-right {
     margin-left: auto;
   }
-  #session-info {
+  #task-info {
     flex: 1 1 auto;
     text-align: left;
   }

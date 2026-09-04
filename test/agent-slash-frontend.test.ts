@@ -39,7 +39,7 @@ describe("agent slash frontend", () => {
       } as Response;
     }) as typeof fetch;
     state.clientId = "client-1";
-    state.sessionId = "session-1";
+    state.taskId = "task-1";
   });
 
   function setCommands(
@@ -64,7 +64,7 @@ describe("agent slash frontend", () => {
     return [...dom.messages.children].map((element) => element.textContent);
   }
 
-  it("shows only current-session agent commands for // with description and input hint", () => {
+  it("shows only current-task agent commands for // with description and input hint", () => {
     setCommands(1, [
       {
         name: "context",
@@ -124,7 +124,7 @@ describe("agent slash frontend", () => {
 
     const promptCall = fetchCalls.find(
       (call) =>
-        call.url === "/api/v1/sessions/session-1/prompt" &&
+        call.url === "/api/v1/tasks/task-1/prompt" &&
         call.init?.method === "POST",
     );
     assert.ok(promptCall);
@@ -208,7 +208,7 @@ describe("agent slash frontend", () => {
   it("keeps the newest command revision across SSE and snapshot races", () => {
     events.handleEvent({
       type: "available_commands_update",
-      sessionId: "session-1",
+      taskId: "task-1",
       epoch: "server-a",
       revision: 2,
       commands: [{ name: "context", description: "New" }],
@@ -216,8 +216,8 @@ describe("agent slash frontend", () => {
     stateMod.applySnapshot({
       version: 1,
       seq: 0,
-      session: {
-        id: "session-1",
+      task: {
+        id: "task-1",
         title: null,
         cwd: "/tmp",
         model: null,

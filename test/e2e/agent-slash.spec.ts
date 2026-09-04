@@ -1,9 +1,9 @@
 import { test, expect } from "playwright/test";
-import { createNewSession, gotoConnected } from "./helpers.ts";
+import { createNewTask, gotoConnected } from "./helpers.ts";
 
 test("discovers and sends ACP agent slash commands", async ({ page }) => {
   await gotoConnected(page);
-  await createNewSession(page);
+  await createNewTask(page);
 
   const input = page.locator("#input");
   await input.fill("//");
@@ -21,11 +21,9 @@ test("discovers and sends ACP agent slash commands", async ({ page }) => {
   );
 });
 
-test("blocks agent slash commands while the session is busy", async ({
-  page,
-}) => {
+test("blocks agent slash commands while the task is busy", async ({ page }) => {
   await gotoConnected(page);
-  await createNewSession(page);
+  await createNewTask(page);
 
   const input = page.locator("#input");
   await input.fill("E2E_SLOW");

@@ -18,10 +18,10 @@ WebAgent is a terminal-style web UI for ACP-compatible agents. This document des
   - [Receiving Events](#receiving-events)
   - [History Replay](#history-replay)
   - [Incremental Sync](#incremental-sync)
-- [Session Management](#session-management)
-  - [Session Switching](#session-switching)
+- [Task Management](#task-management)
+  - [Task Switching](#task-switching)
   - [Hash Routing](#hash-routing)
-  - [New Session Creation](#new-session-creation)
+  - [New Task Creation](#new-task-creation)
 - [API Client (`api.ts`)](#api-client-apits)
 - [Event Handling](#event-handling)
   - [Live Events vs Replay Events](#live-events-vs-replay-events)
@@ -66,9 +66,9 @@ WebAgent is a terminal-style web UI for ACP-compatible agents. This document des
 │  └─────────────────────────────────────────┘  │
 │  ┌─────────────────────────────────────────┐  │
 │  │            fetch (REST)                 │  │
-│  │  POST /api/v1/sessions/:id/prompt       │  │
-│  │  GET /api/v1/sessions/:id/events       │  │
-│  │  PUT /api/v1/sessions/:id/model        │  │
+│  │  POST /api/v1/tasks/:id/prompt       │  │
+│  │  GET /api/v1/tasks/:id/events       │  │
+│  │  PUT /api/v1/tasks/:id/model        │  │
 │  │  ...                                    │  │
 │  └─────────────────────────────────────────┘  │
 └──────────────────────────────────────────────┘
@@ -85,7 +85,7 @@ All frontend source lives in `public/js/*.ts`. esbuild bundles it into a content
 | Module                     | Responsibility                                                                                      | Key exports                                                                                     |
 | -------------------------- | --------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
 | **`app.ts`**               | Boot entry point. Imports all modules, calls `connect()`, registers service worker                  | —                                                                                               |
-| **`state.ts`**             | Shared state singleton, DOM refs (`dom`), config helpers, routing, cancel logic                     | `state`, `dom`, `setBusy()`, `requestNewSession()`, `resetSessionUI()`, `setConnectionStatus()` |
+| **`state.ts`**             | Shared state singleton, DOM refs (`dom`), config helpers, routing, cancel logic                     | `state`, `dom`, `setBusy()`, `requestNewTask()`, `resetTaskUI()`, `setConnectionStatus()` |
 | **`connection.ts`**        | SSE + REST connection lifecycle, parallel init, visibility sync                                     | `connect()`                                                                                     |
 | **`events.ts`**            | Event dispatch (live + replay), history loading, permission responses                               | `handleEvent()`, `loadHistory()`, `loadNewEvents()`                                             |
 | **`event-interpreter.ts`** | Pure data transformation for ACP events — zero DOM dependency                                       | `interpretToolCall()`, `classifyPermissionOption()`, `parseDiff()`, etc.                        |
@@ -94,7 +94,7 @@ All frontend source lives in `public/js/*.ts`. esbuild bundles it into a content
 | **`commands.ts`**          | Slash command parsing, menu UI, `/switch`, `/new`, `/exit`, `/rename`, `/model`, `/mode`, `/notify` | `handleSlashCommand()`, `hideSlashMenu()`                                                       |
 | **`attachments.ts`**       | Attach (click/drag/paste) for images and files, preview, upload to server                          | `renderAttachPreview()`                                                                         |
 | **`render.ts`**            | DOM helpers: add messages, streaming markdown render, theme, scroll, diff HTML generation           | `addMessage()`, `addSystem()`, `scrollToBottom()`, `updateMarkdownStream()`, `resetMarkdownStream()` |
-| **`api.ts`**               | REST client — typed `fetch` wrappers for every server endpoint                                      | `createSession()`, `sendMessage()`, `cancelSession()`, etc.                                     |
+| **`api.ts`**               | REST client — typed `fetch` wrappers for every server endpoint                                      | `createTask()`, `sendMessage()`, `cancelTask()`, etc.                                     |
 
 **Dependency graph** (arrows = imports):
 
@@ -129,7 +129,7 @@ connect();
 // Register service worker for push notifications + offline shell
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('/sw.js');
-  // Handle push notification click → navigate to session
+  // Handle push notification click → navigate to task
   navigator.serviceWorker.addEventListener('message', ...);
 }
 ```
@@ -147,10 +147,10 @@ The module imports trigger side effects (event listeners, theme initialization).
 ```
 connect()
   ├── new EventSource('/api/v1/events/stream')   // background
-  └── initSession()                            // parallel REST calls
+  └── initTask()                            // parallel REST calls
 ```
 
-The SSE stream is **not** a prerequisite for page load. It runs in the background while REST calls fetch session data.
+The SSE stream is **not** a prerequisite for page load. It runs in the background while REST calls fetch task data.
 
 **SSE message handling:**
 
@@ -160,44 +160,44 @@ The SSE stream is **not** a prerequisite for page load. It runs in the backgroun
 
 ### REST Initialization (Parallel)
 
-`initSession()` determines which session to load:
+`initTask()` determines which task to load:
 
 ```
-initSession()
-  ├── Hash has session ID? ──→ resumeAndLoad(id, incremental?)
-  │     ├── Same as current session ──→ incremental=true  (reconnect)
-  │     └── Different session ──→ incremental=false (full load)
-  ├── No hash? ──→ listSessions() → prefer Root, otherwise resume most recent
-  └── No sessions? ──→ POST /sessions/bootstrap
+initTask()
+  ├── Hash has task ID? ──→ resumeAndLoad(id, incremental?)
+  │     ├── Same as current task ──→ incremental=true  (reconnect)
+  │     └── Different task ──→ incremental=false (full load)
+  ├── No hash? ──→ listTasks() → prefer Root, otherwise resume most recent
+  └── No tasks? ──→ POST /tasks/bootstrap
 ```
 
 Bootstrap is a backend-serialized get-or-create operation. This prevents
-multiple browser tabs or installed PWAs from each creating an empty session
+multiple browser tabs or installed PWAs from each creating an empty task
 when they simultaneously discover that an agent switch has hidden the previous
-agent's sessions. User-initiated `/new` and `/clear` continue to use ordinary
-session creation and always create a distinct session.
+agent's tasks. User-initiated `/new` and `/clear` continue to use ordinary
+task creation and always create a distinct task.
 
-**`resumeAndLoad(sessionId, incremental)`:**
+**`resumeAndLoad(taskId, incremental)`:**
 
-For **full loads** (new session or first visit):
+For **full loads** (new task or first visit):
 
 ```
 Promise.all([
-  api.getSession(sessionId),    // auto-resumes in ACP if needed
-  loadHistory(sessionId),        // GET /api/v1/sessions/:id/events
+  api.getTask(taskId),    // auto-resumes in ACP if needed
+  loadHistory(taskId),        // GET /api/v1/tasks/:id/events
 ])
-→ handleEvent({ type: 'session_created', ... })
+→ handleEvent({ type: 'task_created', ... })
 ```
 
-For **incremental reconnects** (same session, SSE dropped):
+For **incremental reconnects** (same task, SSE dropped):
 
 ```
-api.getSession(sessionId)        // get config/title/busy state
-→ handleEvent({ type: 'session_created', ... })
-→ loadNewEvents(sessionId)       // GET /events?after=N
+api.getTask(taskId)        // get config/title/busy state
+→ handleEvent({ type: 'task_created', ... })
+→ loadNewEvents(taskId)       // GET /events?after=N
 ```
 
-This parallel loading means history rendering starts as soon as the event data arrives, without waiting for session resume.
+This parallel loading means history rendering starts as soon as the event data arrives, without waiting for task resume.
 
 ### Reconnection
 
@@ -205,14 +205,14 @@ When SSE disconnects:
 
 1. `cleanup()` — reset connection state, finalize streaming elements
 2. `setTimeout(connect, 3000)` — retry after 3 seconds
-3. On reconnect, `initSession()` detects the same session in the hash → **incremental** path
+3. On reconnect, `initTask()` detects the same task in the hash → **incremental** path
 4. Only fetches events after `state.lastEventSeq` — no full history reload
 
 ### Visibility Sync & Push Suppression
 
-Push notifications are filtered by a **global, session-scoped visibility rule**: if any client is actively viewing session X, push for session X is suppressed on **all** endpoints (e.g. laptop looking at A → phone also doesn't buzz for A). But session B completing in the background still pushes to all devices. Controlled by `push.global_visibility_suppression` (default `true`).
+Push notifications are filtered by a **global, task-scoped visibility rule**: if any client is actively viewing task X, push for task X is suppressed on **all** endpoints (e.g. laptop looking at A → phone also doesn't buzz for A). But task B completing in the background still pushes to all devices. Controlled by `push.global_visibility_suppression` (default `true`).
 
-**Server-side split (single-writer pattern):** `ClientRegistry` (`src/client-registry.ts`) is the sole writer for client identity + visibility state (one entry per `clientId` with `visible`, `active` session, `visibleSince` timestamp). `PushService` (`src/push-service.ts`) owns push endpoints (VAPID subscription, consecutive-failure counter) and delegates **all** visibility reads to the registry (`isSessionVisibleToAnyClient`, `hasVisibleClient`, `isEndpointVisible`). Splitting the writer prevents the two pieces of state from drifting; previously they were both updated from `PushService.updateClient` and a buggy code path could leave them inconsistent.
+**Server-side split (single-writer pattern):** `ClientRegistry` (`src/client-registry.ts`) is the sole writer for client identity + visibility state (one entry per `clientId` with `visible`, `active` task, `visibleSince` timestamp). `PushService` (`src/push-service.ts`) owns push endpoints (VAPID subscription, consecutive-failure counter) and delegates **all** visibility reads to the registry (`isTaskVisibleToAnyClient`, `hasVisibleClient`, `isEndpointVisible`). Splitting the writer prevents the two pieces of state from drifting; previously they were both updated from `PushService.updateClient` and a buggy code path could leave them inconsistent.
 
 Accurate visibility state is therefore critical — a stale "visible" record globally blackholes push. The fundamental limitation is that `visibilitychange` only tracks tab-switching, not actual user attention, and on iOS PWA the browser can silently kill the hidden-transition `fetch` mid-flight, leaving a permanent ghost record.
 
@@ -221,16 +221,16 @@ Accurate visibility state is therefore critical — a stale "visible" record glo
 | Layer                                 | Mechanism                                                                                                                                              | File                                              |
 | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------- |
 | 1. Hidden transition survives OS kill | `navigator.sendBeacon` first, `fetch({keepalive:true})` fallback, plus `pagehide` secondary listener                                                   | `connection.ts` → `postHiddenBeacon()`            |
-| 2. Server clock on every record       | Each `/visibility` update stamps `visibleSince`; readers ignore records older than **60s**                                                             | `client-registry.ts` → `isSessionVisibleToAnyClient` (called via `push-service.ts`) |
+| 2. Server clock on every record       | Each `/visibility` update stamps `visibleSince`; readers ignore records older than **60s**                                                             | `client-registry.ts` → `isTaskVisibleToAnyClient` (called via `push-service.ts`) |
 | 3. Continuous refresh while SSE alive | SSE emits a **named** `event: heartbeat` every **15s** (not a comment — `EventSource` discards those); frontend listener POSTs `/visibility` each tick | `sse-manager.ts`, `connection.ts`                 |
 
 SSE liveness is the single authoritative "this client is reachable" signal: connection alive → heartbeat fires → TTL stays fresh; connection dies or process is suspended → heartbeats stop → record expires within 60s and push correctly re-enables globally.
 
 **Edge vs level semantics on `/visibility`:**
 
-- `ClientRegistry.setVisibility` returns `{ becameVisibleFor }`, non-null **only** on the edge (invisible OR different session → visible + session=X). PushService observes that signal (via the `/visibility` handler) to fire close-banner side effects.
+- `ClientRegistry.setVisibility` returns `{ becameVisibleFor }`, non-null **only** on the edge (invisible OR different task → visible + task=X). PushService observes that signal (via the `/visibility` handler) to fire close-banner side effects.
 - `sendClose(sess-${sid}-done)` + permission cleanup fire **only** on that edge, not on every 15s heartbeat refresh — otherwise one focused client would hammer banner recall on every device every 15s
-- Body parsing distinguishes `sessionId` omitted (preserve prior) from explicit `null` (clear) via `"sessionId" in body` on raw JSON before Zod collapses both to `undefined`
+- Body parsing distinguishes `taskId` omitted (preserve prior) from explicit `null` (clear) via `"taskId" in body` on raw JSON before Zod collapses both to `undefined`
 
 **Emergency rollback:** set `push.global_visibility_suppression = false` in the service config and reload — disables cross-device suppression without code change.
 
@@ -260,14 +260,14 @@ User types text + Enter
   input.ts: sendMessage()
         │
         ├── Show user message in DOM (optimistic)
-        ├── Upload images if any: POST /api/v1/sessions/:id/attachments
-        ├── api.sendMessage(): POST /api/v1/sessions/:id/prompt
+        ├── Upload images if any: POST /api/v1/tasks/:id/attachments
+        ├── api.sendMessage(): POST /api/v1/tasks/:id/prompt
         ├── setBusy(true)
         ├── showWaiting()
-        └── state.sentMessageForSession = sessionId  // for echo suppression
+        └── state.sentMessageForTask = taskId  // for echo suppression
 ```
 
-The `POST /api/v1/sessions/:id/prompt` returns `202` immediately. The agent's response arrives as SSE events.
+The `POST /api/v1/tasks/:id/prompt` returns `202` immediately. The agent's response arrives as SSE events.
 
 ### Receiving Events
 
@@ -278,9 +278,9 @@ EventSource.onmessage
   handleEvent(msg)
         │
         ├── replayInProgress? → queue it
-        ├── Wrong session? → ignore
+        ├── Wrong task? → ignore
         └── Switch on msg.type:
-              ├── session_created → update state, UI, hash
+              ├── task_created → update state, UI, hash
               ├── message_chunk  → append to streaming element
               ├── tool_call      → create tool call element
               ├── permission_request → show buttons
@@ -293,7 +293,7 @@ EventSource.onmessage
 `loadHistory()` fetches all stored events and replays them through `replayEvent()`:
 
 ```
-GET /api/v1/sessions/:id/events
+GET /api/v1/tasks/:id/events
         │
         ▼
   for each event:
@@ -337,7 +337,7 @@ During replay, `state.replayInProgress = true` and live SSE events are queued in
 `loadNewEvents()` fetches only events after the last known sequence:
 
 ```
-GET /api/v1/sessions/:id/events?after=42
+GET /api/v1/tasks/:id/events?after=42
         │
         ▼
   1. Remove DOM elements after sync boundary
@@ -350,57 +350,57 @@ The **sync boundary** is a `data-sync-boundary` attribute on the last DOM elemen
 
 ---
 
-## Session Management
+## Task Management
 
-### Session Switching
+### Task Switching
 
-All session switches go through `handleEvent({ type: 'session_created', ... })` to ensure consistent state:
+All task switches go through `handleEvent({ type: 'task_created', ... })` to ensure consistent state:
 
 ```typescript
 // Pattern used in commands.ts /switch, menu click, app.ts SW handler:
-state.sessionId = null; // clear to pass the guard in handleEvent
-resetSessionUI();
-Promise.all([api.getSession(targetId), loadHistory(targetId)]).then(
-  ([session, loaded]) => {
+state.taskId = null; // clear to pass the guard in handleEvent
+resetTaskUI();
+Promise.all([api.getTask(targetId), loadHistory(targetId)]).then(
+  ([task, loaded]) => {
     handleEvent({
-      type: "session_created",
-      sessionId: session.id,
-      cwd: session.cwd,
-      title: session.title,
-      configOptions: session.configOptions,
-      busyKind: session.busyKind,
+      type: "task_created",
+      taskId: task.id,
+      cwd: task.cwd,
+      title: task.title,
+      configOptions: task.configOptions,
+      busyKind: task.busyKind,
     });
   },
 );
 ```
 
-**Why through handleEvent?** The `session_created` handler updates `configOptions`, `statusBar`, `sessionCwd`, `sessionTitle`, hash, connection status, and busy state. Bypassing it (e.g., setting fields manually) leads to inconsistencies (status bar disappearing, mode not updating).
+**Why through handleEvent?** The `task_created` handler updates `configOptions`, `statusBar`, `taskCwd`, `taskTitle`, hash, connection status, and busy state. Bypassing it (e.g., setting fields manually) leads to inconsistencies (status bar disappearing, mode not updating).
 
 ### Hash Routing
 
-Child Sessions are identified by URL hash: `/#session-id`. Root is the
+Child Tasks are identified by URL hash: `/#task-id`. Root is the
 canonical default and omits the hash, so `/` opens Root. This enables:
 
-- Bookmarking sessions
-- Push notification click → navigate to session
+- Bookmarking tasks
+- Push notification click → navigate to task
 - Browser back/forward (hash change)
 
-`state.ts` provides `getHashSessionId()` and `setHashSessionId()`. All session
-switch callers use `session-navigation.ts`; unbound Inbox notifications first
+`state.ts` provides `getHashTaskId()` and `setHashTaskId()`. All task
+switch callers use `task-navigation.ts`; unbound Inbox notifications first
 consume their message ID, then use the same switch path. A cold notification
 click carries the unresolved ID as `/?message=<id>` until startup consumes it.
 
-### New Session Creation
+### New Task Creation
 
 ```typescript
-requestNewSession({ cwd, inheritFromSessionId })
-  → state.awaitingNewSession = true
-  → api.createSession({ cwd, inheritFromSessionId })
-  → server broadcasts session_created
-  → handleEvent checks awaitingNewSession === true → accepts the new session
+requestNewTask({ cwd, inheritFromTaskId })
+  → state.awaitingNewTask = true
+  → api.createTask({ cwd, inheritFromTaskId })
+  → server broadcasts task_created
+  → handleEvent checks awaitingNewTask === true → accepts the new task
 ```
 
-The `awaitingNewSession` flag prevents the client from ignoring its own `session_created` broadcast (normally filtered out if `sessionId` differs from current).
+The `awaitingNewTask` flag prevents the client from ignoring its own `task_created` broadcast (normally filtered out if `taskId` differs from current).
 
 ---
 
@@ -428,20 +428,20 @@ Uses `res.text()` + `JSON.parse()` instead of `res.json()` to handle empty bodie
 
 | Function                                            | Method | Endpoint                                             |
 | --------------------------------------------------- | ------ | ---------------------------------------------------- |
-| `createSession(opts?)`                              | POST   | `/api/v1/sessions`                                   |
-| `deleteSession(id)`                                 | DELETE | `/api/v1/sessions/:id`                               |
-| `listSessions()`                                    | GET    | `/api/v1/sessions`                                   |
-| `getSession(id)`                                    | GET    | `/api/v1/sessions/:id`                               |
-| `sendMessage(sessionId, text, images?)`             | POST   | `/api/v1/sessions/:id/prompt`                        |
-| `cancelSession(sessionId)`                          | POST   | `/api/v1/sessions/:id/cancel`                        |
-| `resolvePermission(sessionId, requestId, optionId)` | POST   | `/api/v1/sessions/:id/permissions/:reqId`            |
-| `denyPermission(sessionId, requestId)`              | POST   | `/api/v1/sessions/:id/permissions/:reqId`            |
-| `setConfig(sessionId, configId, value)`             | PUT    | `/api/v1/sessions/:id/{model,mode,reasoning-effort}` |
-| `setTitle(sessionId, title)`                        | PUT    | `/api/v1/sessions/:id/title`                         |
-| `execBash(sessionId, command)`                      | POST   | `/api/v1/sessions/:id/bash`                          |
-| `cancelBash(sessionId)`                             | POST   | `/api/v1/sessions/:id/bash/cancel`                   |
+| `createTask(opts?)`                              | POST   | `/api/v1/tasks`                                   |
+| `deleteTask(id)`                                 | DELETE | `/api/v1/tasks/:id`                               |
+| `listTasks()`                                    | GET    | `/api/v1/tasks`                                   |
+| `getTask(id)`                                    | GET    | `/api/v1/tasks/:id`                               |
+| `sendMessage(taskId, text, images?)`             | POST   | `/api/v1/tasks/:id/prompt`                        |
+| `cancelTask(taskId)`                          | POST   | `/api/v1/tasks/:id/cancel`                        |
+| `resolvePermission(taskId, requestId, optionId)` | POST   | `/api/v1/tasks/:id/permissions/:reqId`            |
+| `denyPermission(taskId, requestId)`              | POST   | `/api/v1/tasks/:id/permissions/:reqId`            |
+| `setConfig(taskId, configId, value)`             | PUT    | `/api/v1/tasks/:id/{model,mode,reasoning-effort}` |
+| `setTitle(taskId, title)`                        | PUT    | `/api/v1/tasks/:id/title`                         |
+| `execBash(taskId, command)`                      | POST   | `/api/v1/tasks/:id/bash`                          |
+| `cancelBash(taskId)`                             | POST   | `/api/v1/tasks/:id/bash/cancel`                   |
 | `postVisibility(clientId, visible)`                 | POST   | `/api/beta/clients/:clientId/visibility`             |
-| `getStatus(sessionId)`                              | GET    | `/api/v1/sessions/:id/status`                        |
+| `getStatus(taskId)`                              | GET    | `/api/v1/tasks/:id/status`                        |
 
 ---
 
@@ -486,14 +486,14 @@ This prevents tool calls and permissions from appearing twice when SSE delivers 
 SSE broadcasts to **all** clients, including the sender. When sending a message:
 
 ```typescript
-state.sentMessageForSession = state.sessionId; // before send
+state.sentMessageForTask = state.taskId; // before send
 ```
 
 When `user_message` arrives via SSE:
 
 ```typescript
-if (state.sentMessageForSession === msg.sessionId) {
-  state.sentMessageForSession = null;
+if (state.sentMessageForTask === msg.taskId) {
+  state.sentMessageForTask = null;
   break; // skip — already rendered optimistically
 }
 ```
@@ -542,7 +542,7 @@ Note: `classifyPermissionOption` returns two independent classifications — `cs
    a. api.resolvePermission(requestId, optionId)  // or denyPermission
    b. Update DOM optimistically (collapse card)
    c. Track in state.unconfirmedPermissions
-5. Server: POST /api/v1/sessions/:id/permissions/:reqId
+5. Server: POST /api/v1/tasks/:id/permissions/:reqId
    a. bridge.resolvePermission() or bridge.denyPermission()
    b. Broadcast permission_response
 6. Client receives permission_response
@@ -560,18 +560,17 @@ Triggered by `/` prefix in input. Handled in `commands.ts`.
 
 | Command             | API Call                                                    | Description                          |
 | ------------------- | ----------------------------------------------------------- | ------------------------------------ |
-| `/switch [query]`   | `api.listSessions()` + `api.getSession()` + `loadHistory()` | Switch to another session            |
-| `/new [path]`       | `api.createSession()`                                       | Create new session                   |
-| `/exit`             | `api.deleteSession()` + session switch                      | Close current session, switch to MRU |
-| `/rename <title>`   | `api.setTitle(sessionId, title)`                            | Rename current session               |
-| `/model [name]`     | `api.setConfig(sessionId, 'model', value)`                  | Switch model                         |
-| `/mode [name]`      | `api.setConfig(sessionId, 'mode', value)`                   | Switch mode                          |
-| `/think [level]`    | `api.setConfig(sessionId, 'reasoning_effort', value)`       | Set reasoning effort                 |
-| `/compact`          | `api.sendMessage(sessionId, '/compact')`                    | Send as prompt (agent handles)       |
-| `/notify [on\|off]` | Push API + `/api/beta/push/subscribe`                       | Manage push notifications            |
-| `/clear [path]`     | `api.createSession()` + `api.deleteSession()`               | Clear and start fresh                |
+| `/switch [query]`   | `api.listTasks()` + `api.getTask()` + `loadHistory()` | Switch to another task            |
+| `/new [path]`       | `api.createTask()`                                       | Create a child task               |
+| `/exit`             | `api.deleteTask()` + task navigation                 | Exit task tree; prefer parent     |
+| `/rename <title>`   | `api.setTitle(taskId, title)`                            | Rename current task               |
+| `/model [name]`     | `api.setConfig(taskId, 'model', value)`                 | Set model                           |
+| `/mode [name]`      | `api.setConfig(taskId, 'mode', value)`                  | Set mode                            |
+| `/think [level]`    | `api.setConfig(taskId, 'reasoning_effort', value)`      | Set thinking effort                 |
+| `/compact`          | `api.compactTask(taskId)`                                | Compact context                    |
+| `/notify [on\|off]` | Push API + `/api/beta/push/subscribe`                   | Manage push notifications           |
+| `/clear [path]`     | `api.clearTask(taskId, { cwd })`                         | Clear context; keep history         |
 | `/view [path]`      | `api.listFiles()` + `api.getFileInfo()`                     | Browse and view a local file          |
-| `/? [query]`        | —                                                           | Search sessions by title             |
 
 The slash menu provides autocomplete with keyboard navigation (arrow keys, Tab to fill, Enter to send).
 
@@ -587,8 +586,8 @@ retain the normal fill-and-close behavior.
 
 ### File viewer
 
-`/view` starts at `state.sessionCwd`. Relative input is made absolute in the
-client; `/` and `~` paths pass through to the sessionless file API. The final
+`/view` starts at `state.taskCwd`. Relative input is made absolute in the
+client; `/` and `~` paths pass through to the taskless file API. The final
 path segment filters the current directory. Clicking a directory (including the
 synthetic `..` row) replaces the input with that directory and fetches exactly
 one level. Clicking a file calls `getFileInfo`, then opens `file-viewer.ts`.
@@ -629,7 +628,7 @@ User types: !ls -la
         ▼
   input.ts: sendMessage()
         ├── addBashBlock(command, isUser=true)
-        ├── api.execBash(sessionId, command)
+        ├── api.execBash(taskId, command)
         └── setBusy(true)
 
   SSE events:
@@ -651,8 +650,8 @@ All state lives in `state.ts` as a single mutable object. No state management li
 | ------------------------ | -------------- | -------------------------------------------- |
 | `eventSource`            | EventSource    | Active SSE connection                        |
 | `clientId`               | string         | Assigned by server on SSE connect            |
-| `sessionId`              | string         | Current session                              |
-| `sessionCwd`             | string         | Working directory                            |
+| `taskId`              | string         | Current task                              |
+| `taskCwd`             | string         | Working directory                            |
 | `configOptions`          | ConfigOption[] | Model, mode, reasoning_effort options        |
 | `busy`                   | boolean        | Agent or bash is running                     |
 | `plan`                   | PlanEntry[]     | Current server-memory plan from runtime state |
@@ -661,7 +660,7 @@ All state lives in `state.ts` as a single mutable object. No state management li
 | `lastEventSeq`           | number         | Last event seq from history/incremental load |
 | `replayInProgress`       | boolean        | True during history replay                   |
 | `replayQueue`            | AgentEvent[]   | SSE events queued during replay              |
-| `sentMessageForSession`  | string         | For self-echo suppression                    |
+| `sentMessageForTask`  | string         | For self-echo suppression                    |
 | `unconfirmedPermissions` | Map            | Permissions sent but not confirmed           |
 
 ---
@@ -700,7 +699,7 @@ A `<div id="status-bar">` below the input area shows: `model · cwd`
 Updated by `updateStatusBar()` in `state.ts`, called from:
 
 - `updateConfigOptions()` (on any config change)
-- `handleEvent(session_created)` (on session load/switch)
+- `handleEvent(task_created)` (on task load/switch)
 
 ### Busy State
 
@@ -750,12 +749,12 @@ Content-hashed filenames mean `npm run build` is sufficient for frontend-only ch
 
 ### Parallel Page Load
 
-Session data and history are fetched in parallel, independent of the SSE connection:
+Task data and history are fetched in parallel, independent of the SSE connection:
 
 ```
 Time →
 SSE connect:  ████████████████████  (background, non-blocking)
-getSession:   ████                  (parallel)
+getTask:   ████                  (parallel)
 loadHistory:  ████████              (parallel)
               ↑                     ↑
               page starts rendering history is visible
@@ -765,11 +764,11 @@ This eliminates the serial dependency chain that existed with WebSocket-only arc
 
 ### Global SSE Stream
 
-The client connects to `/api/v1/events/stream` (global), not per-session. This means:
+The client connects to `/api/v1/events/stream` (global), not per-task. This means:
 
-- No reconnect needed on session switch
-- Multi-client broadcast works naturally (see other clients' session changes)
-- One connection per browser tab, regardless of session switches
+- No reconnect needed on task switch
+- Multi-client broadcast works naturally (see other clients' task changes)
+- One connection per browser tab, regardless of task switches
 
 ### Optimistic UI + Retry
 

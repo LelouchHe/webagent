@@ -1,7 +1,7 @@
 import { test, expect } from "playwright/test";
 import {
-  createNewSession,
-  currentSessionId,
+  createNewTask,
+  currentTaskId,
   gotoConnected,
   sendPrompt,
 } from "./helpers.ts";
@@ -11,7 +11,7 @@ for (const ordering of ["CHUNK_FIRST", "WRAPPER_FIRST"]) {
     page,
   }) => {
     await gotoConnected(page);
-    await createNewSession(page);
+    await createNewTask(page);
     await page.evaluate(() => {
       const observed = { leaked: false, active: true };
       Object.assign(window, { __finalAnswerFrameObservation: observed });
@@ -58,7 +58,7 @@ for (const ordering of ["CHUNK_FIRST", "WRAPPER_FIRST"]) {
 
 test("folds an exact echo after a nested tool chain", async ({ page }) => {
   await gotoConnected(page);
-  await createNewSession(page);
+  await createNewTask(page);
   await sendPrompt(page, "E2E_FINAL_ANSWER_STREAM_NESTED_WRAPPER_FIRST_EXACT");
 
   const assistant = page.locator(".msg.assistant").last();
@@ -73,31 +73,30 @@ test("share viewer coalesces persisted final-answer fragments", async ({
   page,
 }) => {
   await gotoConnected(page);
-  await createNewSession(page);
+  await createNewTask(page);
   await sendPrompt(page, "E2E_FINAL_ANSWER_STREAM_WRAPPER_FIRST");
 
   const assistant = page.locator(".msg.assistant").last();
   await expect(assistant.locator(".subagent-result")).toBeVisible();
-  const sessionId = await currentSessionId(page);
+  const taskId = await currentTaskId(page);
 
   // Force the first streaming fragment into SQLite while the mock agent is
   // paused. prompt_done later flushes the remainder into a consecutive row.
   const flush = await page.request.get(
-    `/api/v1/sessions/${sessionId}/events?limit=200`,
+    `/api/v1/tasks/${taskId}/events?limit=200`,
   );
   expect(flush.ok()).toBe(true);
   await expect(assistant.locator(".assistant-continuation")).toHaveText(
     "Parent narration remains visible.",
   );
 
-  const preview = await page.request.post(
-    `/api/v1/sessions/${sessionId}/share`,
-    { data: {} },
-  );
+  const preview = await page.request.post(`/api/v1/tasks/${taskId}/share`, {
+    data: {},
+  });
   expect(preview.status()).toBe(201);
   const { token } = (await preview.json()) as { token: string };
   const publish = await page.request.post(
-    `/api/v1/sessions/${sessionId}/share/publish`,
+    `/api/v1/tasks/${taskId}/share/publish`,
     { data: { token } },
   );
   expect(publish.ok()).toBe(true);

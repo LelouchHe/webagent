@@ -240,7 +240,7 @@ describe("sanitize — API", () => {
       events: [
         {
           id: 1,
-          session_id: "s",
+          task_id: "s",
           seq: 1,
           type: "assistant_message",
           data: JSON.stringify({ text: `home: ${HOME}` }),
@@ -259,7 +259,7 @@ describe("sanitize — API", () => {
       events: [
         {
           id: 1,
-          session_id: "s",
+          task_id: "s",
           seq: 1,
           type: "assistant_message",
           data: "{not-valid-json",

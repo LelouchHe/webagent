@@ -116,7 +116,7 @@ describe("input", () => {
       json: async () => ({ status: "accepted" }),
       text: async () => '{"status":"accepted"}',
     }));
-    state.sessionId = "s1";
+    state.taskId = "s1";
     state.clientId = "cl-1";
     dom.input.value = "hello";
 
@@ -124,7 +124,7 @@ describe("input", () => {
 
     const call = fetchCalls.find((c) => c.url.includes("/prompt"));
     assert.ok(call, "expected a prompt fetch call");
-    assert.equal(call.url, "/api/v1/sessions/s1/prompt");
+    assert.equal(call.url, "/api/v1/tasks/s1/prompt");
     assert.equal(call.init?.method, "POST");
     assert.deepEqual(JSON.parse(call.init?.body), { text: "hello" });
     assert.equal(state.busy, true);
@@ -138,7 +138,7 @@ describe("input", () => {
       json: async () => ({}),
       text: async () => "{}",
     }));
-    state.sessionId = "s1";
+    state.taskId = "s1";
     state.clientId = "cl-1";
     state.turnEnded = true;
     dom.input.value = "next question";
@@ -155,7 +155,7 @@ describe("input", () => {
       json: async () => ({ status: "accepted" }),
       text: async () => '{"status":"accepted"}',
     }));
-    state.sessionId = "s1";
+    state.taskId = "s1";
     state.clientId = "cl-1";
     const oldAssistant = document.createElement("div");
     oldAssistant.className = "msg assistant";
@@ -168,7 +168,7 @@ describe("input", () => {
     clickSend();
     eventsModule.handleEvent({
       type: "message_chunk",
-      sessionId: "s1",
+      taskId: "s1",
       text: "new response",
     });
 
@@ -187,14 +187,14 @@ describe("input", () => {
       json: async () => ({ status: "accepted" }),
       text: async () => '{"status":"accepted"}',
     }));
-    state.sessionId = "s1";
+    state.taskId = "s1";
     state.clientId = "cl-1";
     dom.input.value = "next question";
 
     clickSend();
     eventsModule.handleEvent({
       type: "prompt_done",
-      sessionId: "s1",
+      taskId: "s1",
       stopReason: "end_turn",
     });
     assert.equal(state.busy, true);
@@ -202,13 +202,13 @@ describe("input", () => {
 
     eventsModule.handleEvent({
       type: "user_message",
-      sessionId: "s1",
+      taskId: "s1",
       text: "next question",
       clientOpId: state.sentMessageOpId,
     });
     eventsModule.handleEvent({
       type: "message_chunk",
-      sessionId: "s1",
+      taskId: "s1",
       text: "new response",
     });
     await eventsModule.waitForTerminalReconciliation();
@@ -223,14 +223,14 @@ describe("input", () => {
       json: async () => ({ status: "accepted" }),
       text: async () => '{"status":"accepted"}',
     }));
-    state.sessionId = "s1";
+    state.taskId = "s1";
     state.clientId = "cl-1";
     dom.input.value = "next question";
 
     clickSend();
     eventsModule.handleEvent({
       type: "error",
-      sessionId: "s1",
+      taskId: "s1",
       message: "old prompt failed",
     });
 
@@ -244,7 +244,7 @@ describe("input", () => {
     // and the server's echo for it is suppressed as this client's own. The tag
     // is what lets an incremental catch-up carry it across a DOM rebuild.
     setFetch(() => ({ ok: true, status: 202, json: async () => ({}) }));
-    state.sessionId = "s1";
+    state.taskId = "s1";
     state.clientId = "cl-1";
     dom.input.value = "carry me";
 
@@ -263,7 +263,7 @@ describe("input", () => {
       status: 500,
       json: async () => ({ error: "Agent not ready" }),
     }));
-    state.sessionId = "s1";
+    state.taskId = "s1";
     state.clientId = "cl-1";
     dom.input.value = "next question";
 
@@ -284,7 +284,7 @@ describe("input", () => {
       json: async () => ({}),
       text: async () => "{}",
     }));
-    state.sessionId = "s1";
+    state.taskId = "s1";
     state.clientId = "cl-1";
     dom.input.value = "!echo hello";
 
@@ -292,7 +292,7 @@ describe("input", () => {
 
     const call = fetchCalls.find((c) => c.url.includes("/bash"));
     assert.ok(call, "expected a bash fetch call");
-    assert.equal(call.url, "/api/v1/sessions/s1/bash");
+    assert.equal(call.url, "/api/v1/tasks/s1/bash");
     assert.equal(call.init?.method, "POST");
     assert.deepEqual(JSON.parse(call.init?.body), { command: "echo hello" });
     assert.equal(state.busy, true);
@@ -300,7 +300,7 @@ describe("input", () => {
   });
 
   it("allows slash commands while busy", () => {
-    state.sessionId = "s1";
+    state.taskId = "s1";
     state.clientId = "cl-1";
     state.busy = true;
     dom.input.value = "/help";
@@ -312,7 +312,7 @@ describe("input", () => {
   });
 
   it("blocks regular messages while busy", () => {
-    state.sessionId = "s1";
+    state.taskId = "s1";
     state.clientId = "cl-1";
     state.busy = true;
     dom.input.value = "hello";
@@ -422,8 +422,8 @@ describe("input", () => {
   });
 
   it("send button executes command instead of cancel while busy", () => {
-    state.sessionId = "s1";
-    state.sessionCwd = "/test";
+    state.taskId = "s1";
+    state.taskCwd = "/test";
     state.clientId = "cl-1";
     state.busy = true;
     setBusy(true);
@@ -435,18 +435,18 @@ describe("input", () => {
     assert.equal(dom.input.value, "");
   });
 
-  it("warns instead of sending when the session is not ready", () => {
+  it("warns instead of sending when the task is not ready", () => {
     state.clientId = "cl-1";
     dom.input.value = "hello";
 
     clickSend();
 
     assert.equal(fetchCalls.length, 0);
-    assert.ok(dom.messages.textContent.includes("warn: Session not ready yet"));
+    assert.ok(dom.messages.textContent.includes("warn: Task not ready yet"));
   });
 
   it("uploads pending images before sending the prompt", async () => {
-    state.sessionId = "s1";
+    state.taskId = "s1";
     state.clientId = "cl-1";
     state.pendingAttachments.push({
       kind: "image",
@@ -458,14 +458,14 @@ describe("input", () => {
       }),
     });
     setFetch(async (url: string) => {
-      if (url.includes("/api/v1/sessions/") && url.includes("/attachments")) {
+      if (url.includes("/api/v1/tasks/") && url.includes("/attachments")) {
         const payload = {
           attachmentId: "att-1",
           displayName: "image.png",
           mimeType: "image/png",
           kind: "image",
-          path: "sessions/s1/attachments/att-1.png",
-          url: "/api/v1/sessions/s1/attachments/att-1.png",
+          path: "tasks/s1/attachments/att-1.png",
+          url: "/api/v1/tasks/s1/attachments/att-1.png",
         };
         return {
           ok: true,
@@ -481,8 +481,7 @@ describe("input", () => {
     await new Promise((resolve) => setImmediate(resolve));
 
     const imageCall = fetchCalls.find(
-      (c) =>
-        c.url.includes("/api/v1/sessions/") && c.url.includes("/attachments"),
+      (c) => c.url.includes("/api/v1/tasks/") && c.url.includes("/attachments"),
     );
     assert.ok(imageCall, "expected an image upload call");
     const msgCall = fetchCalls.find((c) => c.url.includes("/prompt"));
@@ -501,7 +500,7 @@ describe("input", () => {
 
   it("sends cancel on global Ctrl+C while busy and no selection", async () => {
     setFetch(() => ({ ok: true, json: async () => ({}) }));
-    state.sessionId = "s1";
+    state.taskId = "s1";
     state.busy = true;
 
     const event = docKeydown("c", { ctrlKey: true });
@@ -509,7 +508,7 @@ describe("input", () => {
     assert.equal(event.defaultPrevented, true);
     const cancelCall = fetchCalls.find((c) => c.url.includes("/cancel"));
     assert.ok(cancelCall, "expected a cancel fetch call");
-    assert.equal(cancelCall.url, "/api/v1/sessions/s1/cancel");
+    assert.equal(cancelCall.url, "/api/v1/tasks/s1/cancel");
     assert.equal(cancelCall.init?.method, "POST");
     assert.ok(dom.messages.textContent.includes("^C cancelling"));
     assert.equal(state.cancelStatus, "requested");
@@ -521,7 +520,7 @@ describe("input", () => {
       ok: false,
       json: async () => ({ error: "Agent not ready" }),
     }));
-    state.sessionId = "s1";
+    state.taskId = "s1";
     state.busy = true;
 
     docKeydown("c", { ctrlKey: true });
@@ -536,7 +535,7 @@ describe("input", () => {
       ok: true,
       text: async () => JSON.stringify({ ok: true, status: "idle" }),
     }));
-    state.sessionId = "s1";
+    state.taskId = "s1";
     state.busy = true;
 
     docKeydown("c", { ctrlKey: true });
@@ -599,7 +598,7 @@ describe("input", () => {
       json: async () => ({}),
       text: async () => "{}",
     }));
-    state.sessionId = "s1";
+    state.taskId = "s1";
     state.clientId = "cl-1";
     state.configOptions = [
       {
@@ -619,7 +618,7 @@ describe("input", () => {
     assert.equal(event.defaultPrevented, true);
     const call = fetchCalls.find(
       (c) =>
-        c.url.includes("/api/v1/sessions/s1/mode") && c.init?.method === "PUT",
+        c.url.includes("/api/v1/tasks/s1/mode") && c.init?.method === "PUT",
     );
     assert.ok(call, "expected a PUT config call");
     const body = JSON.parse(call.init?.body);
@@ -628,7 +627,7 @@ describe("input", () => {
   });
 
   it("does not send prompt when not connected and shows warning", () => {
-    state.sessionId = "s1";
+    state.taskId = "s1";
     // clientId is null → not connected
     dom.input.value = "hello";
 
@@ -643,7 +642,7 @@ describe("input", () => {
   });
 
   it("does not send bash command when not connected", () => {
-    state.sessionId = "s1";
+    state.taskId = "s1";
     // clientId is null → not connected
     dom.input.value = "!echo hi";
 
@@ -662,7 +661,7 @@ describe("input", () => {
   });
 
   it("does not send prompt with images when not connected", async () => {
-    state.sessionId = "s1";
+    state.taskId = "s1";
     // clientId is null → not connected
     state.pendingAttachments.push({
       kind: "image",
@@ -675,8 +674,8 @@ describe("input", () => {
     });
     setFetch(async () => ({
       ok: true,
-      json: async () => ({ url: "/api/v1/sessions/s1/attachments/image.png" }),
-      text: async () => '{"url":"/api/v1/sessions/s1/attachments/image.png"}',
+      json: async () => ({ url: "/api/v1/tasks/s1/attachments/image.png" }),
+      text: async () => '{"url":"/api/v1/tasks/s1/attachments/image.png"}',
     }));
 
     clickSend();

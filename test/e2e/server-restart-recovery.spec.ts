@@ -6,8 +6,8 @@ import { join } from "node:path";
 import { spawn, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
-  createNewSession,
-  currentSessionId,
+  createNewTask,
+  currentTaskId,
   expectConnectionStatus,
   sendPrompt,
 } from "./helpers.ts";
@@ -97,7 +97,7 @@ async function gotoConnected(page: Page, url: string): Promise<void> {
   await expect(page.locator("#input")).toBeEnabled();
 }
 
-test("server restart restores the same session without duplicating history", async ({
+test("server restart restores the same task without duplicating history", async ({
   page,
 }) => {
   const root = await mkdtemp(join(tmpdir(), "webagent-restart-e2e-"));
@@ -136,13 +136,13 @@ test("server restart restores the same session without duplicating history", asy
     );
     await gotoConnected(page, `${RESTART_ORIGIN}/`);
 
-    await createNewSession(page);
+    await createNewTask(page);
     await sendPrompt(page, "survive a restart");
     await expect(page.locator(".msg.assistant").last()).toContainText(
       "Echo: survive a restart",
     );
 
-    const sessionId = await currentSessionId(page);
+    const taskId = await currentTaskId(page);
     await stopServer(server);
     server = null;
 
@@ -151,7 +151,7 @@ test("server restart restores the same session without duplicating history", asy
     server = await startServer(configPath);
 
     await expectConnectionStatus(page, "connected", { timeout: 15_000 });
-    await expect.poll(() => currentSessionId(page)).toBe(sessionId);
+    await expect.poll(() => currentTaskId(page)).toBe(taskId);
     await expect(page.locator(".msg.user")).toHaveCount(1);
     await expect(page.locator(".msg.assistant")).toHaveCount(1);
     await expect(page.locator(".msg.user").last()).toHaveText(

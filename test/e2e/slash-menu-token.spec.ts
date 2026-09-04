@@ -50,7 +50,7 @@ test("/token revoke subcommand menu lists revocable tokens", async ({
   await expect(page.locator("#messages")).toContainText("clickrev");
 
   // Open `/token revoke ` submenu — should list non-self tokens (clickrev),
-  // not e2e (which is the active session token).
+  // not e2e (which is the active task token).
   await page.locator("#input").fill("/token revoke ");
   await expect(page.locator("#slash-menu.active")).toBeVisible();
   await expect(page.locator("#slash-menu")).toContainText("clickrev");

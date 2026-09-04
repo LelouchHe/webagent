@@ -27,7 +27,7 @@ describe("events", () => {
     stateMod.applySnapshot({
       version: 1,
       seq,
-      session: {
+      task: {
         id: "s1",
         title: null,
         cwd: "/tmp",
@@ -52,7 +52,7 @@ describe("events", () => {
     teardownDOM();
   });
   beforeEach(() => {
-    stateMod.resetSessionUI();
+    stateMod.resetTaskUI();
     resetState(state, dom);
     fetchCalls = [];
     setFetch(() => ({
@@ -64,11 +64,11 @@ describe("events", () => {
 
   describe("handleEvent", () => {
     it("renders a sequenced live assistant summary only once", () => {
-      state.sessionId = "s1";
+      state.taskId = "s1";
       state.lastEventSeq = 10;
       const summary = {
         type: "assistant_message" as const,
-        sessionId: "s1",
+        taskId: "s1",
         text: "handoff summary",
         seq: 11,
       };
@@ -81,38 +81,38 @@ describe("events", () => {
       assert.equal(state.lastEventSeq, 11);
     });
 
-    describe("session_created", () => {
-      it("lets a new-session request supersede a pending navigation", () => {
-        state.pendingNavigationSessionId = "old-target";
-        state.awaitingNewSession = true;
-        stateMod.resetSessionUI();
+    describe("task_created", () => {
+      it("lets a new-task request supersede a pending navigation", () => {
+        state.pendingNavigationTaskId = "old-target";
+        state.awaitingNewTask = true;
+        stateMod.resetTaskUI();
 
         events.handleEvent({
-          type: "session_created",
-          sessionId: "new-session",
+          type: "task_created",
+          taskId: "new-task",
           cwd: "/tmp",
           configOptions: [],
         });
 
-        assert.equal(state.pendingNavigationSessionId, null);
-        assert.equal(state.sessionId, "new-session");
+        assert.equal(state.pendingNavigationTaskId, null);
+        assert.equal(state.taskId, "new-task");
       });
 
-      it("sets session state when awaiting", () => {
-        state.awaitingNewSession = true;
+      it("sets task state when awaiting", () => {
+        state.awaitingNewTask = true;
         events.handleEvent({
-          type: "session_created",
-          sessionId: "s1",
+          type: "task_created",
+          taskId: "s1",
           cwd: "/home",
-          title: "Test Session",
+          title: "Test Task",
           configOptions: [
             { id: "model", name: "Model", currentValue: "x", options: [] },
           ],
         });
-        assert.equal(state.sessionId, "s1");
-        assert.equal(state.sessionCwd, "/home");
-        assert.equal(state.sessionTitle, "Test Session");
-        assert.equal(state.awaitingNewSession, false);
+        assert.equal(state.taskId, "s1");
+        assert.equal(state.taskCwd, "/home");
+        assert.equal(state.taskTitle, "Test Task");
+        assert.equal(state.awaitingNewTask, false);
         assert.equal(dom.status.dataset.state, "connected");
         assert.equal(dom.status.getAttribute("aria-label"), "connected");
       });
@@ -127,11 +127,11 @@ describe("events", () => {
           });
         });
 
-        stateMod.requestNewSession();
+        stateMod.requestNewTask();
         assert.ok(clientOpId);
         events.handleEvent({
-          type: "session_created",
-          sessionId: "committed-session",
+          type: "task_created",
+          taskId: "committed-task",
           cwd: "/committed",
           configOptions: [],
           clientOpId,
@@ -139,9 +139,9 @@ describe("events", () => {
         rejectCreate(new Error("response interrupted"));
         await new Promise((resolve) => setImmediate(resolve));
 
-        assert.equal(state.sessionId, "committed-session");
-        assert.equal(state.awaitingNewSession, false);
-        assert.equal(state.pendingNewSessionOpId, null);
+        assert.equal(state.taskId, "committed-task");
+        assert.equal(state.awaitingNewTask, false);
+        assert.equal(state.pendingNewTaskOpId, null);
       });
 
       it("rejects unrelated creates during interrupted-response recovery", async () => {
@@ -154,30 +154,30 @@ describe("events", () => {
           });
         });
 
-        stateMod.requestNewSession();
+        stateMod.requestNewTask();
         rejectCreate(new Error("response interrupted"));
         await new Promise((resolve) => setImmediate(resolve));
         events.handleEvent({
-          type: "session_created",
-          sessionId: "unrelated-session",
+          type: "task_created",
+          taskId: "unrelated-task",
           cwd: "/other",
           configOptions: [],
           clientOpId: "other-op",
         });
-        assert.equal(state.sessionId, null);
+        assert.equal(state.taskId, null);
 
         events.handleEvent({
-          type: "session_created",
-          sessionId: "committed-session",
+          type: "task_created",
+          taskId: "committed-task",
           cwd: "/committed",
           configOptions: [],
           clientOpId,
         });
-        assert.equal(state.sessionId, "committed-session");
-        assert.equal(state.pendingNewSessionOpId, null);
+        assert.equal(state.taskId, "committed-task");
+        assert.equal(state.pendingNewTaskOpId, null);
       });
 
-      it("rearms visible history sentinel after session activation", async () => {
+      it("rearms visible history sentinel after task activation", async () => {
         const observers: Array<{
           callback: (entries: Array<{ isIntersecting: boolean }>) => void;
         }> = [];
@@ -218,17 +218,17 @@ describe("events", () => {
 
         try {
           await events.loadHistory("s1");
-          assert.equal(state.sessionId, null);
+          assert.equal(state.taskId, null);
           assert.equal(observers.length, 1);
 
           observers[0].callback([{ isIntersecting: true }]);
           await Promise.resolve();
           assert.equal(fetchCalls.length, 1);
 
-          state.pendingNavigationSessionId = "s1";
+          state.pendingNavigationTaskId = "s1";
           events.handleEvent({
-            type: "session_created",
-            sessionId: "s1",
+            type: "task_created",
+            taskId: "s1",
             configOptions: [],
           });
 
@@ -244,8 +244,8 @@ describe("events", () => {
         }
       });
 
-      it("does not rearm history sentinel for an active-session reconnect", async () => {
-        state.sessionId = "s1";
+      it("does not rearm history sentinel for an active-task reconnect", async () => {
+        state.taskId = "s1";
         state.oldestLoadedSeq = 5;
         state.hasMoreHistory = true;
         const sentinel = document.createElement("div");
@@ -276,8 +276,8 @@ describe("events", () => {
           assert.equal(observers.length, 1);
 
           events.handleEvent({
-            type: "session_created",
-            sessionId: "s1",
+            type: "task_created",
+            taskId: "s1",
             configOptions: [],
           });
 
@@ -288,35 +288,35 @@ describe("events", () => {
         }
       });
 
-      it("ignores session_created from other clients when not awaiting", () => {
-        state.sessionId = "existing";
-        state.awaitingNewSession = false;
+      it("ignores task_created from other clients when not awaiting", () => {
+        state.taskId = "existing";
+        state.awaitingNewTask = false;
         events.handleEvent({
-          type: "session_created",
-          sessionId: "other",
+          type: "task_created",
+          taskId: "other",
         });
-        assert.equal(state.sessionId, "existing");
+        assert.equal(state.taskId, "existing");
       });
 
       it("adds system message when messages area is empty", () => {
-        state.awaitingNewSession = true;
+        state.awaitingNewTask = true;
         events.handleEvent({
-          type: "session_created",
-          sessionId: "s1",
-          title: "New Session",
+          type: "task_created",
+          taskId: "s1",
+          title: "New Task",
         });
         assert.equal(dom.messages.children.length, 1);
         assert.ok(
-          dom.messages.children[0].textContent.includes("Session created"),
+          dom.messages.children[0].textContent.includes("Task created"),
         );
       });
 
       it("reattaches a running bash block after replay", () => {
         events.replayEvent("bash_command", { command: "ls" }, [], 0);
-        state.awaitingNewSession = true;
+        state.awaitingNewTask = true;
         events.handleEvent({
-          type: "session_created",
-          sessionId: "s1",
+          type: "task_created",
+          taskId: "s1",
           configOptions: [],
         });
         assert.ok(state.currentBashEl);
@@ -328,15 +328,15 @@ describe("events", () => {
       });
 
       it("applies plan-mode class from snapshot fallback when configOptions is empty", () => {
-        // Simulate: snapshot arrived first and set sessionMode; then session_created
+        // Simulate: snapshot arrived first and set taskMode; then task_created
         // arrived with empty configOptions (typical after `svc webagent reload`).
         stateMod.setFallbackFromSnapshot({
-          session: { mode: "#plan", model: "gpt-5.4" },
+          task: { mode: "#plan", model: "gpt-5.4" },
         });
-        state.awaitingNewSession = true;
+        state.awaitingNewTask = true;
         events.handleEvent({
-          type: "session_created",
-          sessionId: "s1",
+          type: "task_created",
+          taskId: "s1",
           cwd: "/home",
           configOptions: [],
         });
@@ -348,12 +348,12 @@ describe("events", () => {
 
       it("clears fallback and uses configOptions when they arrive non-empty", () => {
         stateMod.setFallbackFromSnapshot({
-          session: { mode: "#plan", model: "gpt-5.4" },
+          task: { mode: "#plan", model: "gpt-5.4" },
         });
-        state.awaitingNewSession = true;
+        state.awaitingNewTask = true;
         events.handleEvent({
-          type: "session_created",
-          sessionId: "s1",
+          type: "task_created",
+          taskId: "s1",
           configOptions: [
             {
               id: "mode",
@@ -372,21 +372,21 @@ describe("events", () => {
 
     describe("user_message", () => {
       it("adds user message from broadcast", () => {
-        state.sessionId = "s1";
+        state.taskId = "s1";
         events.handleEvent({
           type: "user_message",
-          sessionId: "s1",
+          taskId: "s1",
           text: "hello",
         });
         assert.equal(dom.messages.children.length, 1);
         assert.ok(dom.messages.children[0].classList.contains("user"));
       });
 
-      it("ignores messages from other sessions", () => {
-        state.sessionId = "s1";
+      it("ignores messages from other tasks", () => {
+        state.taskId = "s1";
         events.handleEvent({
           type: "user_message",
-          sessionId: "s2",
+          taskId: "s2",
           text: "hello",
         });
         assert.equal(dom.messages.children.length, 0);
@@ -430,20 +430,20 @@ describe("events", () => {
       });
 
       it("folds a completed-wrapper echo before releasing its parent suffix", () => {
-        state.sessionId = "s1";
+        state.taskId = "s1";
         const toolText =
           "<final_answer>\nCommands run:\n- `git status --short`\nResult: clean";
         const parentText = "状态符合 push gate；现在推送 feature branch。";
         events.handleEvent({
           type: "tool_call",
-          sessionId: "s1",
+          taskId: "s1",
           id: "call_wrapper",
           kind: "other",
           title: "Verify branch before push",
         });
         events.handleEvent({
           type: "tool_call_update",
-          sessionId: "s1",
+          taskId: "s1",
           id: "call_wrapper",
           status: "completed",
           content: [
@@ -455,7 +455,7 @@ describe("events", () => {
         });
         events.handleEvent({
           type: "message_chunk",
-          sessionId: "s1",
+          taskId: "s1",
           text: toolText.slice(0, 24),
         });
         render.flushStreamingRender();
@@ -472,7 +472,7 @@ describe("events", () => {
 
         events.handleEvent({
           type: "message_chunk",
-          sessionId: "s1",
+          taskId: "s1",
           text: `${toolText.slice(24)}${parentText}`,
         });
         render.flushStreamingRender();
@@ -485,12 +485,12 @@ describe("events", () => {
       });
 
       it("folds the latest chunks when prompt_done wins the animation-frame race", () => {
-        state.sessionId = "s1";
+        state.taskId = "s1";
         const toolText =
           "<final_answer>\nCommands run:\n- `npm test`\nResult: passed";
         events.handleEvent({
           type: "tool_call_update",
-          sessionId: "s1",
+          taskId: "s1",
           id: "call_wrapper",
           status: "completed",
           content: [
@@ -502,12 +502,12 @@ describe("events", () => {
         });
         events.handleEvent({
           type: "message_chunk",
-          sessionId: "s1",
+          taskId: "s1",
           text: toolText,
         });
         events.handleEvent({
           type: "prompt_done",
-          sessionId: "s1",
+          taskId: "s1",
           stopReason: "end_turn",
         });
 
@@ -521,11 +521,11 @@ describe("events", () => {
       });
 
       it("restores the full stream when it diverges before the verified boundary", () => {
-        state.sessionId = "s1";
+        state.taskId = "s1";
         const toolText = "<final_answer>\nExpected sub-agent result";
         events.handleEvent({
           type: "tool_call_update",
-          sessionId: "s1",
+          taskId: "s1",
           id: "call_wrapper",
           status: "completed",
           content: [
@@ -537,7 +537,7 @@ describe("events", () => {
         });
         events.handleEvent({
           type: "message_chunk",
-          sessionId: "s1",
+          taskId: "s1",
           text: "<final_answer>\nExp",
         });
         render.flushStreamingRender();
@@ -546,7 +546,7 @@ describe("events", () => {
 
         events.handleEvent({
           type: "message_chunk",
-          sessionId: "s1",
+          taskId: "s1",
           text: "X",
         });
         render.flushStreamingRender();
@@ -561,13 +561,13 @@ describe("events", () => {
       });
 
       it("folds provisionally when tagged chunks arrive before wrapper completion", () => {
-        state.sessionId = "s1";
+        state.taskId = "s1";
         const toolText =
           "<final_answer>\nCommands run:\n- `npm test`\nResult: passed";
         const split = 24;
         events.handleEvent({
           type: "message_chunk",
-          sessionId: "s1",
+          taskId: "s1",
           text: toolText.slice(0, split),
         });
         render.flushStreamingRender();
@@ -576,7 +576,7 @@ describe("events", () => {
 
         events.handleEvent({
           type: "tool_call_update",
-          sessionId: "s1",
+          taskId: "s1",
           id: "call_wrapper",
           status: "completed",
           content: [
@@ -588,7 +588,7 @@ describe("events", () => {
         });
         events.handleEvent({
           type: "message_chunk",
-          sessionId: "s1",
+          taskId: "s1",
           text: `${toolText.slice(split)}Parent narration.`,
         });
         render.flushStreamingRender();
@@ -600,11 +600,11 @@ describe("events", () => {
       });
 
       it("restores an unverified provisional fold when the turn ends", () => {
-        state.sessionId = "s1";
+        state.taskId = "s1";
         const text = "<final_answer>\nStandalone parent response";
         events.handleEvent({
           type: "message_chunk",
-          sessionId: "s1",
+          taskId: "s1",
           text,
         });
         render.flushStreamingRender();
@@ -613,7 +613,7 @@ describe("events", () => {
 
         events.handleEvent({
           type: "prompt_done",
-          sessionId: "s1",
+          taskId: "s1",
           stopReason: "end_turn",
         });
 
@@ -822,10 +822,10 @@ describe("events", () => {
         );
       });
 
-      it("clears orphan updates on session reset", () => {
+      it("clears orphan updates on task reset", () => {
         events.handleEvent({
           type: "tool_call_update",
-          id: "tc-old-session",
+          id: "tc-old-task",
           status: "completed",
           content: [
             {
@@ -836,13 +836,13 @@ describe("events", () => {
             },
           ],
         });
-        stateMod.resetSessionUI();
+        stateMod.resetTaskUI();
 
         events.handleEvent({
           type: "tool_call",
-          id: "tc-old-session",
+          id: "tc-old-task",
           kind: "edit",
-          title: "New session tool",
+          title: "New task tool",
           rawInput: {},
         });
 
@@ -928,10 +928,10 @@ describe("events", () => {
       function patchPlan(
         entries: Array<{ content: string; status: string }> | null,
       ) {
-        state.sessionId = "s1";
+        state.taskId = "s1";
         events.handleEvent({
           type: "state_patch",
-          sessionId: "s1",
+          taskId: "s1",
           seq: state.lastStateSeq + 1,
           patch: { runtime: { plan: entries } },
         });
@@ -1072,7 +1072,7 @@ describe("events", () => {
       });
 
       it("sends permission response on button click", () => {
-        state.sessionId = "s1";
+        state.taskId = "s1";
         events.handleEvent({
           type: "permission_request",
           requestId: "perm2",
@@ -1083,19 +1083,19 @@ describe("events", () => {
         btn.click();
         const call = fetchCalls.find(
           (c) =>
-            c.url.includes("/api/v1/sessions/s1/permissions/perm2") &&
+            c.url.includes("/api/v1/tasks/s1/permissions/perm2") &&
             c.init?.method === "POST",
         );
         assert.ok(
           call,
-          "expected a POST to /api/v1/sessions/s1/permissions/perm2",
+          "expected a POST to /api/v1/tasks/s1/permissions/perm2",
         );
         const body = JSON.parse(call.init.body);
         assert.equal(body.optionId, "allow");
       });
 
       it("clears local pending permission state after the user responds", () => {
-        state.sessionId = "s1";
+        state.taskId = "s1";
         state.busy = true;
         events.handleEvent({
           type: "permission_request",
@@ -1140,7 +1140,7 @@ describe("events", () => {
       });
 
       it("skips duplicate permission_request even if already resolved", () => {
-        state.sessionId = "s1";
+        state.taskId = "s1";
         events.handleEvent({
           type: "permission_request",
           requestId: "perm-dup2",
@@ -1172,7 +1172,7 @@ describe("events", () => {
       });
 
       it("preserves title after user clicks a permission button", () => {
-        state.sessionId = "s1";
+        state.taskId = "s1";
         events.handleEvent({
           type: "permission_request",
           requestId: "perm-click",
@@ -1190,7 +1190,7 @@ describe("events", () => {
 
     describe("permission_response (live)", () => {
       it("dismisses permission buttons from another client", () => {
-        state.sessionId = "s1";
+        state.taskId = "s1";
         events.handleEvent({
           type: "permission_request",
           requestId: "perm3",
@@ -1199,7 +1199,7 @@ describe("events", () => {
         });
         events.handleEvent({
           type: "permission_response",
-          sessionId: "s1",
+          taskId: "s1",
           requestId: "perm3",
           optionName: "Allow",
           denied: false,
@@ -1210,7 +1210,7 @@ describe("events", () => {
       });
 
       it("preserves original title after permission_response", () => {
-        state.sessionId = "s1";
+        state.taskId = "s1";
         events.handleEvent({
           type: "permission_request",
           requestId: "perm-title",
@@ -1221,7 +1221,7 @@ describe("events", () => {
         });
         events.handleEvent({
           type: "permission_response",
-          sessionId: "s1",
+          taskId: "s1",
           requestId: "perm-title",
           optionName: "Allow once",
           denied: false,
@@ -1234,10 +1234,10 @@ describe("events", () => {
 
     describe("bash events", () => {
       it("handles bash_command from another client", () => {
-        state.sessionId = "s1";
+        state.taskId = "s1";
         events.handleEvent({
           type: "bash_command",
-          sessionId: "s1",
+          taskId: "s1",
           command: "ls",
         });
         assert.ok(state.currentBashEl);
@@ -1245,15 +1245,15 @@ describe("events", () => {
       });
 
       it("handles bash_output", () => {
-        state.sessionId = "s1";
+        state.taskId = "s1";
         events.handleEvent({
           type: "bash_command",
-          sessionId: "s1",
+          taskId: "s1",
           command: "ls",
         });
         events.handleEvent({
           type: "bash_output",
-          sessionId: "s1",
+          taskId: "s1",
           text: "file.txt\n",
           stream: "stdout",
         });
@@ -1262,15 +1262,15 @@ describe("events", () => {
       });
 
       it("handles bash_output stderr", () => {
-        state.sessionId = "s1";
+        state.taskId = "s1";
         events.handleEvent({
           type: "bash_command",
-          sessionId: "s1",
+          taskId: "s1",
           command: "fail",
         });
         events.handleEvent({
           type: "bash_output",
-          sessionId: "s1",
+          taskId: "s1",
           text: "error!",
           stream: "stderr",
         });
@@ -1282,13 +1282,13 @@ describe("events", () => {
       });
 
       it("handles bash_done", () => {
-        state.sessionId = "s1";
+        state.taskId = "s1";
         events.handleEvent({
           type: "bash_command",
-          sessionId: "s1",
+          taskId: "s1",
           command: "ls",
         });
-        events.handleEvent({ type: "bash_done", sessionId: "s1", code: 0 });
+        events.handleEvent({ type: "bash_done", taskId: "s1", code: 0 });
         assert.equal(state.currentBashEl, null);
         assert.equal(state.busy, false);
       });
@@ -1298,7 +1298,7 @@ describe("events", () => {
         state.busyKind = "agent";
         events.handleEvent({
           type: "bash_done",
-          sessionId: "s1",
+          taskId: "s1",
           code: 0,
           signal: null,
         });
@@ -1318,14 +1318,14 @@ describe("events", () => {
       });
 
       it("keeps the pinned plan across prompt_done for cross-turn work", () => {
-        state.sessionId = "s1";
+        state.taskId = "s1";
         events.handleEvent({
           type: "plan",
           entries: [{ content: "Still shown", status: "in_progress" }],
         });
         events.handleEvent({
           type: "state_patch",
-          sessionId: "s1",
+          taskId: "s1",
           seq: 1,
           patch: {
             runtime: {
@@ -1388,7 +1388,7 @@ describe("events", () => {
       });
 
       it("clears pending permissions when the prompt is cancelled", () => {
-        state.sessionId = "s1";
+        state.taskId = "s1";
         state.busy = true;
         events.handleEvent({
           type: "permission_request",
@@ -1479,7 +1479,7 @@ describe("events", () => {
       });
 
       it("renders an unsolicited tool call after prompt_done without reopening busy", () => {
-        state.sessionId = "s1";
+        state.taskId = "s1";
         state.busy = true;
         events.handleEvent({ type: "prompt_done", stopReason: "end_turn" });
         assert.equal(state.busy, false);
@@ -1520,7 +1520,7 @@ describe("events", () => {
       });
 
       it("ignores permission_request arriving after prompt_done", () => {
-        state.sessionId = "s1";
+        state.taskId = "s1";
         state.busy = true;
 
         events.handleEvent({ type: "prompt_done", stopReason: "cancelled" });
@@ -1545,10 +1545,10 @@ describe("events", () => {
         assert.equal(state.busy, false);
 
         // New turn starts
-        state.sessionId = "s1";
+        state.taskId = "s1";
         events.handleEvent({
           type: "user_message",
-          sessionId: "s1",
+          taskId: "s1",
           text: "hello",
         });
 
@@ -1583,7 +1583,7 @@ describe("events", () => {
 
       it("does not drop new-turn events when sender never receives user_message echo", () => {
         // Simulate: turn 1 ends normally
-        state.sessionId = "s1";
+        state.taskId = "s1";
         state.busy = true;
         events.handleEvent({ type: "prompt_done", stopReason: "end_turn" });
         assert.equal(state.turnEnded, true);
@@ -1633,11 +1633,11 @@ describe("events", () => {
 
     describe("state_patch", () => {
       it("applies an in-order patch from SSE", () => {
-        state.sessionId = "s1";
+        state.taskId = "s1";
         state.lastStateSeq = 0;
         events.handleEvent({
           type: "state_patch",
-          sessionId: "s1",
+          taskId: "s1",
           seq: 1,
           patch: {
             runtime: { busy: { kind: "agent", since: "", promptId: null } },
@@ -1648,7 +1648,7 @@ describe("events", () => {
       });
 
       it("drops out-of-order patches (seq gap) and triggers snapshot reload", async () => {
-        state.sessionId = "s1";
+        state.taskId = "s1";
         state.lastStateSeq = 0;
         let snapshotFetched = false;
         (globalThis as any).fetch = async (url: string) => {
@@ -1657,7 +1657,7 @@ describe("events", () => {
             const body = JSON.stringify({
               version: 1,
               seq: 5,
-              session: {
+              task: {
                 id: "s1",
                 title: null,
                 cwd: "/",
@@ -1679,7 +1679,7 @@ describe("events", () => {
         };
         events.handleEvent({
           type: "state_patch",
-          sessionId: "s1",
+          taskId: "s1",
           seq: 3,
           patch: {
             runtime: { busy: { kind: "agent", since: "", promptId: null } },
@@ -1690,8 +1690,8 @@ describe("events", () => {
         assert.ok(snapshotFetched, "expected snapshot reload on seq gap");
       });
 
-      it("drops a seq-gap snapshot after abandoning its session", async () => {
-        state.sessionId = "s1";
+      it("drops a seq-gap snapshot after abandoning its task", async () => {
+        state.taskId = "s1";
         state.lastStateSeq = 0;
         let releaseSnapshot!: () => void;
         const snapshotReady = new Promise<void>((resolve) => {
@@ -1703,7 +1703,7 @@ describe("events", () => {
             const body = JSON.stringify({
               version: 1,
               seq: 3,
-              session: {
+              task: {
                 id: "s1",
                 title: null,
                 cwd: "/",
@@ -1728,11 +1728,11 @@ describe("events", () => {
 
         events.handleEvent({
           type: "state_patch",
-          sessionId: "s1",
+          taskId: "s1",
           seq: 3,
           patch: { runtime: { plan: null } },
         });
-        state.sessionId = null;
+        state.taskId = null;
         releaseSnapshot();
         for (let i = 0; i < 10; i++) await Promise.resolve();
 
@@ -1741,14 +1741,14 @@ describe("events", () => {
       });
 
       it("shows recovery guidance when cancel is unconfirmed", () => {
-        state.sessionId = "s1";
+        state.taskId = "s1";
         state.lastStateSeq = 0;
         state.busy = true;
         state.cancelStatus = "requested";
 
         events.handleEvent({
           type: "state_patch",
-          sessionId: "s1",
+          taskId: "s1",
           seq: 1,
           patch: {
             runtime: {
@@ -1766,10 +1766,10 @@ describe("events", () => {
       });
     });
 
-    describe("session_deleted", () => {
-      it("auto-switches to next session when current is deleted", async () => {
-        state.sessionId = "s1";
-        const nextSession = {
+    describe("task_deleted", () => {
+      it("auto-switches to next task when current is deleted", async () => {
+        state.taskId = "s1";
+        const nextTask = {
           id: "s2",
           cwd: "/tmp",
           title: "Next",
@@ -1778,25 +1778,25 @@ describe("events", () => {
         };
         setFetch(async (url: string, init?: any) => {
           if (
-            url === "/api/v1/sessions" &&
+            url === "/api/v1/tasks" &&
             (!init?.method || init.method === "GET")
           )
             return {
               ok: true,
               text: async () => JSON.stringify([{ id: "s2" }]),
             };
-          if (url === "/api/v1/sessions/s2")
-            return { ok: true, text: async () => JSON.stringify(nextSession) };
-          if (url.startsWith("/api/v1/sessions/s2/events"))
+          if (url === "/api/v1/tasks/s2")
+            return { ok: true, text: async () => JSON.stringify(nextTask) };
+          if (url.startsWith("/api/v1/tasks/s2/events"))
             return { ok: true, text: async () => "[]" };
-          if (url === "/api/v1/sessions/s2/snapshot")
+          if (url === "/api/v1/tasks/s2/snapshot")
             return {
               ok: true,
               text: async () =>
                 JSON.stringify({
                   version: 1,
                   seq: 1,
-                  session: {
+                  task: {
                     id: "s2",
                     title: null,
                     cwd: "/next",
@@ -1819,9 +1819,9 @@ describe("events", () => {
           return { ok: true, text: async () => "{}" };
         });
 
-        events.handleEvent({ type: "session_deleted", sessionId: "s1" });
+        events.handleEvent({ type: "task_deleted", taskId: "s1" });
         for (let i = 0; i < 30; i++) await Promise.resolve();
-        assert.equal(state.sessionId, "s2");
+        assert.equal(state.taskId, "s2");
         assert.equal(dom.input.disabled, false);
         assert.equal(
           dom.planPanel.querySelector(".plan-entry")?.textContent,
@@ -1829,15 +1829,161 @@ describe("events", () => {
         );
       });
 
-      it("creates new session when current is deleted and no others exist", async () => {
-        state.sessionId = "s1";
+      it("deduplicates the HTTP exit navigation and its SSE echo", async () => {
+        state.taskId = "child";
+        let listCalls = 0;
+        const parentTask = {
+          id: "parent-dedupe",
+          cwd: "/tmp",
+          title: "Parent",
+          configOptions: [],
+          busyKind: null,
+        };
         setFetch(async (url: string, init?: any) => {
           if (
-            url === "/api/v1/sessions" &&
+            url === "/api/v1/tasks" &&
+            (!init?.method || init.method === "GET")
+          ) {
+            listCalls++;
+            return {
+              ok: true,
+              text: async () => JSON.stringify([{ id: "parent-dedupe" }]),
+            };
+          }
+          if (url === "/api/v1/tasks/parent-dedupe")
+            return { ok: true, text: async () => JSON.stringify(parentTask) };
+          if (url.startsWith("/api/v1/tasks/parent-dedupe/events"))
+            return { ok: true, text: async () => "[]" };
+          if (url === "/api/v1/tasks/parent-dedupe/snapshot")
+            return {
+              ok: true,
+              text: async () =>
+                JSON.stringify({
+                  version: 1,
+                  seq: 0,
+                  task: {},
+                  runtime: { busy: null },
+                }),
+            };
+          return { ok: true, text: async () => "{}" };
+        });
+
+        const httpNavigation = events.fallbackToNextTask(
+          "child",
+          "/tmp",
+          "parent-dedupe",
+          "exit-op-1",
+        );
+        const sseNavigation = events.fallbackToNextTask(
+          "child",
+          "/tmp",
+          "parent-dedupe",
+          "exit-op-1",
+        );
+        await Promise.all([httpNavigation, sseNavigation]);
+
+        assert.equal(listCalls, 1);
+        assert.equal(state.taskId, "parent-dedupe");
+      });
+
+      it("prefers the deleted task's server-provided parent", async () => {
+        state.taskId = "child";
+        const parentTask = {
+          id: "parent",
+          cwd: "/tmp",
+          title: "Parent",
+          configOptions: [],
+          busyKind: null,
+        };
+        setFetch(async (url: string, init?: any) => {
+          if (
+            url === "/api/v1/tasks" &&
+            (!init?.method || init.method === "GET")
+          )
+            return {
+              ok: true,
+              text: async () =>
+                JSON.stringify([{ id: "mru" }, { id: "parent" }]),
+            };
+          if (url === "/api/v1/tasks/parent")
+            return { ok: true, text: async () => JSON.stringify(parentTask) };
+          if (url.startsWith("/api/v1/tasks/parent/events"))
+            return { ok: true, text: async () => "[]" };
+          if (url === "/api/v1/tasks/parent/snapshot")
+            return {
+              ok: true,
+              text: async () =>
+                JSON.stringify({
+                  version: 1,
+                  seq: 0,
+                  task: {},
+                  runtime: { busy: null },
+                }),
+            };
+          return { ok: true, text: async () => "{}" };
+        });
+
+        events.handleEvent({
+          type: "task_deleted",
+          taskId: "child",
+          parentId: "parent",
+        });
+        for (let i = 0; i < 30; i++) await Promise.resolve();
+
+        assert.equal(state.taskId, "parent");
+      });
+
+      it("reloads the preserved Root task after a reset event", async () => {
+        state.taskId = "root";
+        const rootTask = {
+          id: "root",
+          cwd: "/tmp",
+          title: "root",
+          configOptions: [],
+          busyKind: null,
+        };
+        setFetch(async (url: string, init?: any) => {
+          if (
+            url === "/api/v1/tasks" &&
+            (!init?.method || init.method === "GET")
+          )
+            return {
+              ok: true,
+              text: async () => JSON.stringify([{ id: "root" }]),
+            };
+          if (url === "/api/v1/tasks/root")
+            return { ok: true, text: async () => JSON.stringify(rootTask) };
+          if (url.startsWith("/api/v1/tasks/root/events"))
+            return { ok: true, text: async () => "[]" };
+          if (url === "/api/v1/tasks/root/snapshot")
+            return {
+              ok: true,
+              text: async () =>
+                JSON.stringify({
+                  version: 1,
+                  seq: 0,
+                  task: {},
+                  runtime: { busy: null },
+                }),
+            };
+          return { ok: true, text: async () => "{}" };
+        });
+
+        events.handleEvent({ type: "task_reset", taskId: "root" });
+        for (let i = 0; i < 30; i++) await Promise.resolve();
+
+        assert.equal(state.taskId, "root");
+      });
+
+      it("creates new task when current is deleted and no others exist", async () => {
+        state.taskId = "s1";
+        setFetch(async (url: string, init?: any) => {
+          if (
+            url === "/api/v1/tasks" &&
             (!init?.method || init.method === "GET")
           )
             return { ok: true, text: async () => "[]" };
-          if (url === "/api/v1/sessions/bootstrap" && init?.method === "POST")
+          if (url === "/api/v1/tasks/bootstrap" && init?.method === "POST")
             return {
               ok: true,
               text: async () =>
@@ -1851,15 +1997,15 @@ describe("events", () => {
           return { ok: true, text: async () => "{}" };
         });
 
-        events.handleEvent({ type: "session_deleted", sessionId: "s1" });
+        events.handleEvent({ type: "task_deleted", taskId: "s1" });
         for (let i = 0; i < 30; i++) await Promise.resolve();
-        assert.equal(state.awaitingNewSession, false);
-        assert.equal(state.sessionId, "new-1");
+        assert.equal(state.awaitingNewTask, false);
+        assert.equal(state.taskId, "new-1");
       });
 
-      it("keeps a newer target-session patch over an in-flight fallback snapshot", async () => {
-        state.sessionId = "s1";
-        const nextSession = {
+      it("keeps a newer target-task patch over an in-flight fallback snapshot", async () => {
+        state.taskId = "s1";
+        const nextTask = {
           id: "s2",
           cwd: "/next",
           title: null,
@@ -1873,18 +2019,18 @@ describe("events", () => {
         });
         setFetch(async (url: string, init?: any) => {
           if (
-            url === "/api/v1/sessions" &&
+            url === "/api/v1/tasks" &&
             (!init?.method || init.method === "GET")
           )
             return {
               ok: true,
               text: async () => JSON.stringify([{ id: "s2" }]),
             };
-          if (url === "/api/v1/sessions/s2")
-            return { ok: true, text: async () => JSON.stringify(nextSession) };
-          if (url.startsWith("/api/v1/sessions/s2/events"))
+          if (url === "/api/v1/tasks/s2")
+            return { ok: true, text: async () => JSON.stringify(nextTask) };
+          if (url.startsWith("/api/v1/tasks/s2/events"))
             return { ok: true, text: async () => "[]" };
-          if (url === "/api/v1/sessions/s2/snapshot") {
+          if (url === "/api/v1/tasks/s2/snapshot") {
             snapshotCalls++;
             await snapshotReady;
             return {
@@ -1893,7 +2039,7 @@ describe("events", () => {
                 JSON.stringify({
                   version: 1,
                   seq: snapshotCalls === 1 ? 0 : 1,
-                  session: {
+                  task: {
                     id: "s2",
                     title: null,
                     cwd: "/next",
@@ -1918,12 +2064,12 @@ describe("events", () => {
           return { ok: true, text: async () => "{}" };
         });
 
-        const fallback = events.fallbackToNextSession("s1");
+        const fallback = events.fallbackToNextTask("s1");
         for (let i = 0; i < 20; i++) await Promise.resolve();
-        assert.equal(state.sessionId, "s2");
+        assert.equal(state.taskId, "s2");
         events.handleEvent({
           type: "state_patch",
-          sessionId: "s2",
+          taskId: "s2",
           seq: 1,
           patch: {
             runtime: {
@@ -1940,9 +2086,9 @@ describe("events", () => {
         );
       });
 
-      it("ignores deletion of other sessions", () => {
-        state.sessionId = "s1";
-        events.handleEvent({ type: "session_deleted", sessionId: "s2" });
+      it("ignores deletion of other tasks", () => {
+        state.taskId = "s1";
+        events.handleEvent({ type: "task_deleted", taskId: "s2" });
         assert.equal(dom.input.disabled, false);
       });
     });
@@ -1971,27 +2117,27 @@ describe("events", () => {
       });
     });
 
-    describe("session_title_updated", () => {
-      it("updates title for current session", () => {
-        state.sessionId = "s1";
+    describe("task_title_updated", () => {
+      it("updates title for current task", () => {
+        state.taskId = "s1";
         events.handleEvent({
-          type: "session_title_updated",
-          sessionId: "s1",
+          type: "task_title_updated",
+          taskId: "s1",
           title: "New Title",
         });
-        assert.equal(state.sessionTitle, "New Title");
-        assert.equal(dom.sessionInfo.textContent, "New Title");
+        assert.equal(state.taskTitle, "New Title");
+        assert.equal(dom.taskInfo.textContent, "New Title");
       });
 
-      it("ignores title update for other sessions", () => {
-        state.sessionId = "s1";
-        state.sessionTitle = "Old";
+      it("ignores title update for other tasks", () => {
+        state.taskId = "s1";
+        state.taskTitle = "Old";
         events.handleEvent({
-          type: "session_title_updated",
-          sessionId: "s2",
+          type: "task_title_updated",
+          taskId: "s2",
           title: "Other",
         });
-        assert.equal(state.sessionTitle, "Old");
+        assert.equal(state.taskTitle, "Old");
       });
     });
 
@@ -2007,13 +2153,13 @@ describe("events", () => {
         );
       });
 
-      it("clears awaitingNewSession so the UI is not stuck", () => {
-        state.awaitingNewSession = true;
+      it("clears awaitingNewTask so the UI is not stuck", () => {
+        state.awaitingNewTask = true;
         events.handleEvent({
           type: "error",
           message: "Directory does not exist: /bad",
         });
-        assert.equal(state.awaitingNewSession, false);
+        assert.equal(state.awaitingNewTask, false);
       });
 
       it("keeps busy when an agent error arrives during local bash", () => {
@@ -2033,7 +2179,7 @@ describe("events", () => {
       // which can hang happy-dom's event loop.
 
       it("user_message finalises in-progress assistant streaming (message ordering)", () => {
-        state.sessionId = "s1";
+        state.taskId = "s1";
 
         // Old prompt is streaming assistant text
         events.handleEvent({ type: "message_chunk", text: "old response " });
@@ -2045,7 +2191,7 @@ describe("events", () => {
         // Another client sends a new message (broadcast arrives)
         events.handleEvent({
           type: "user_message",
-          sessionId: "s1",
+          taskId: "s1",
           text: "new question",
         });
 
@@ -2081,7 +2227,7 @@ describe("events", () => {
       });
 
       it("user_message finalises in-progress thinking element", () => {
-        state.sessionId = "s1";
+        state.taskId = "s1";
 
         // Old prompt is streaming thinking
         events.handleEvent({ type: "thought_chunk", text: "thinking..." });
@@ -2093,7 +2239,7 @@ describe("events", () => {
         // Another client sends a new message
         events.handleEvent({
           type: "user_message",
-          sessionId: "s1",
+          taskId: "s1",
           text: "new question",
         });
 
@@ -2110,12 +2256,12 @@ describe("events", () => {
       });
 
       it("stale prompt_done(cancelled) does not clobber new turn state (stuck busy)", () => {
-        state.sessionId = "s1";
+        state.taskId = "s1";
 
         // New turn starts: another client sent a message
         events.handleEvent({
           type: "user_message",
-          sessionId: "s1",
+          taskId: "s1",
           text: "new question",
         });
         assert.equal(state.turnEnded, false);
@@ -2150,12 +2296,12 @@ describe("events", () => {
       });
 
       it("stale prompt_done(cancelled) does not prevent new prompt_done from clearing busy", () => {
-        state.sessionId = "s1";
+        state.taskId = "s1";
 
         // New turn starts
         events.handleEvent({
           type: "user_message",
-          sessionId: "s1",
+          taskId: "s1",
           text: "question",
         });
         events.handleEvent({
@@ -2189,7 +2335,7 @@ describe("events", () => {
       });
 
       it("reconciles DB-only terminal output after the optimistic user echo", async () => {
-        state.sessionId = "s1";
+        state.taskId = "s1";
         state.lastEventSeq = 1;
         const baselineEvents = [
           {
@@ -2207,7 +2353,7 @@ describe("events", () => {
         const boundary = dom.messages.lastElementChild as HTMLElement;
         boundary.dataset.syncBoundary = "";
         state.awaitingOwnUserEcho = true;
-        state.sentMessageForSession = "s1";
+        state.sentMessageForTask = "s1";
         state.sentMessageOpId = "op-new";
         const optimistic = render.addMessage("user", "new question");
         optimistic.dataset.clientOpId = "op-new";
@@ -2223,7 +2369,7 @@ describe("events", () => {
                   {
                     seq: 2,
                     type: "user_message",
-                    session_id: "s1",
+                    task_id: "s1",
                     data: JSON.stringify({
                       text: "new question",
                       clientOpId: "op-new",
@@ -2232,13 +2378,13 @@ describe("events", () => {
                   {
                     seq: 3,
                     type: "assistant_message",
-                    session_id: "s1",
+                    task_id: "s1",
                     data: JSON.stringify({ text: "late terminal output" }),
                   },
                   {
                     seq: 4,
                     type: "prompt_done",
-                    session_id: "s1",
+                    task_id: "s1",
                     data: JSON.stringify({ stopReason: "cancelled" }),
                   },
                 ],
@@ -2249,14 +2395,14 @@ describe("events", () => {
 
         events.handleEvent({
           type: "prompt_done",
-          sessionId: "s1",
+          taskId: "s1",
           stopReason: "cancelled",
         });
         assert.equal(fetches, 0, "wait for the own echo to reach SQLite");
 
         events.handleEvent({
           type: "user_message",
-          sessionId: "s1",
+          taskId: "s1",
           text: "new question",
           clientOpId: "op-new",
         });
@@ -2271,11 +2417,11 @@ describe("events", () => {
         assert.match(dom.messages.textContent ?? "", /late terminal output/);
       });
 
-      it("reconciles a fresh session whose persisted frontier is zero", async () => {
-        state.sessionId = "s1";
+      it("reconciles a fresh task whose persisted frontier is zero", async () => {
+        state.taskId = "s1";
         state.lastEventSeq = 0;
         state.awaitingOwnUserEcho = true;
-        state.sentMessageForSession = "s1";
+        state.sentMessageForTask = "s1";
         state.sentMessageOpId = "op-fresh";
         const optimistic = render.addMessage("user", "first question");
         optimistic.dataset.clientOpId = "op-fresh";
@@ -2289,7 +2435,7 @@ describe("events", () => {
                   {
                     seq: 1,
                     type: "user_message",
-                    session_id: "s1",
+                    task_id: "s1",
                     data: JSON.stringify({
                       text: "first question",
                       clientOpId: "op-fresh",
@@ -2298,7 +2444,7 @@ describe("events", () => {
                   {
                     seq: 2,
                     type: "assistant_message",
-                    session_id: "s1",
+                    task_id: "s1",
                     data: JSON.stringify({ text: "late first output" }),
                   },
                 ],
@@ -2308,12 +2454,12 @@ describe("events", () => {
 
         events.handleEvent({
           type: "prompt_done",
-          sessionId: "s1",
+          taskId: "s1",
           stopReason: "cancelled",
         });
         events.handleEvent({
           type: "user_message",
-          sessionId: "s1",
+          taskId: "s1",
           text: "first question",
           clientOpId: "op-fresh",
         });
@@ -2329,7 +2475,7 @@ describe("events", () => {
       });
 
       it("valid cancel on current turn still works normally", () => {
-        state.sessionId = "s1";
+        state.taskId = "s1";
 
         // Turn starts locally: sendPrompt sets busy before sending, and the
         // sender does not receive its own user_message event.
@@ -2372,7 +2518,7 @@ describe("events", () => {
         state.replayInProgress = true;
 
         events.handleEvent({ type: "inbox_count_changed", pendingCount: 4 });
-        stateMod.resetSessionUI();
+        stateMod.resetTaskUI();
 
         assert.equal(state.inboxCount, 4);
         assert.equal(dom.inboxCount.textContent, "(4)");
@@ -2380,76 +2526,76 @@ describe("events", () => {
       });
 
       it("does not add conversation rows for inbox lifecycle events", () => {
-        state.sessionId = "s1";
+        state.taskId = "s1";
         events.handleEvent({ type: "message_created", messageId: "m1" });
         events.handleEvent({
           type: "message_consumed",
           messageId: "m1",
-          sessionId: "s1",
+          taskId: "s1",
         });
         events.handleEvent({ type: "message_acked", messageId: "m2" });
         assert.equal(dom.messages.children.length, 0);
       });
 
-      it("ignores events from other sessions", () => {
-        state.sessionId = "s1";
+      it("ignores events from other tasks", () => {
+        state.taskId = "s1";
         events.handleEvent({
           type: "message_chunk",
-          sessionId: "s2",
+          taskId: "s2",
           text: "hello",
         });
         assert.equal(state.currentAssistantEl, null);
         assert.equal(dom.messages.children.length, 0);
       });
 
-      it("processes events matching current session", () => {
-        state.sessionId = "s1";
+      it("processes events matching current task", () => {
+        state.taskId = "s1";
         events.handleEvent({
           type: "message_chunk",
-          sessionId: "s1",
+          taskId: "s1",
           text: "hello",
         });
         assert.ok(state.currentAssistantEl);
       });
 
-      it("always processes session_created regardless of session filter", () => {
-        state.sessionId = "s1";
-        state.awaitingNewSession = true;
-        events.handleEvent({ type: "session_created", sessionId: "s2" });
-        assert.equal(state.sessionId, "s2");
+      it("always processes task_created regardless of task filter", () => {
+        state.taskId = "s1";
+        state.awaitingNewTask = true;
+        events.handleEvent({ type: "task_created", taskId: "s2" });
+        assert.equal(state.taskId, "s2");
       });
 
-      it("drops non-lifecycle events when sessionId is null (mid-switch)", () => {
-        state.sessionId = null;
+      it("drops non-lifecycle events when taskId is null (mid-switch)", () => {
+        state.taskId = null;
         events.handleEvent({
           type: "user_message",
-          sessionId: "s1",
+          taskId: "s1",
           text: "leaked",
         });
         events.handleEvent({
           type: "message_chunk",
-          sessionId: "s1",
+          taskId: "s1",
           text: "leaked",
         });
         assert.equal(dom.messages.children.length, 0);
         assert.equal(state.currentAssistantEl, null);
       });
 
-      it("allows session_created when sessionId is null (mid-switch)", () => {
-        state.sessionId = null;
-        state.awaitingNewSession = true;
-        events.handleEvent({ type: "session_created", sessionId: "new-s" });
-        assert.equal(state.sessionId, "new-s");
+      it("allows task_created when taskId is null (mid-switch)", () => {
+        state.taskId = null;
+        state.awaitingNewTask = true;
+        events.handleEvent({ type: "task_created", taskId: "new-s" });
+        assert.equal(state.taskId, "new-s");
       });
     });
   });
 
   describe("status_bar", () => {
-    it("shows model and cwd after session_created", () => {
-      state.awaitingNewSession = true;
+    it("shows model and cwd after task_created", () => {
+      state.awaitingNewTask = true;
       events.handleEvent({
-        type: "session_created",
-        sessionId: "s1",
+        type: "task_created",
+        taskId: "s1",
         cwd: "/home/user/project",
         configOptions: [
           {
@@ -2466,10 +2612,10 @@ describe("events", () => {
     });
 
     it("renders full cwd in a dedicated span with CSS truncation class", () => {
-      state.awaitingNewSession = true;
+      state.awaitingNewTask = true;
       events.handleEvent({
-        type: "session_created",
-        sessionId: "s1",
+        type: "task_created",
+        taskId: "s1",
         cwd: "/Users/lelouch/mine/code/webagent",
         configOptions: [],
       });
@@ -2479,17 +2625,17 @@ describe("events", () => {
     });
 
     it("shows cwdDisplay without replacing the canonical cwd", () => {
-      state.awaitingNewSession = true;
+      state.awaitingNewTask = true;
       events.handleEvent({
-        type: "session_created",
-        sessionId: "s1",
+        type: "task_created",
+        taskId: "s1",
         cwd: "/Users/lelouch/mine/code/webagent",
         cwdDisplay: "~/mine/code/webagent",
         configOptions: [],
       });
 
-      assert.equal(state.sessionCwd, "/Users/lelouch/mine/code/webagent");
-      assert.equal(state.sessionCwdDisplay, "~/mine/code/webagent");
+      assert.equal(state.taskCwd, "/Users/lelouch/mine/code/webagent");
+      assert.equal(state.taskCwdDisplay, "~/mine/code/webagent");
       assert.equal(
         dom.statusBar.querySelector(".status-cwd")?.textContent,
         "~/mine/code/webagent",
@@ -2497,10 +2643,10 @@ describe("events", () => {
     });
 
     it("shows short cwd without truncation", () => {
-      state.awaitingNewSession = true;
+      state.awaitingNewTask = true;
       events.handleEvent({
-        type: "session_created",
-        sessionId: "s1",
+        type: "task_created",
+        taskId: "s1",
         cwd: "/home/user",
         configOptions: [],
       });
@@ -2508,7 +2654,7 @@ describe("events", () => {
     });
 
     it("updates when config_set changes model", () => {
-      state.sessionId = "s1";
+      state.taskId = "s1";
       state.configOptions = [
         {
           id: "model",
@@ -2526,7 +2672,7 @@ describe("events", () => {
     });
 
     it("updates on config_option_update", () => {
-      state.sessionId = "s1";
+      state.taskId = "s1";
       events.handleEvent({
         type: "config_option_update",
         configOptions: [
@@ -2541,11 +2687,11 @@ describe("events", () => {
       assert.ok(dom.statusBar.textContent.includes("new-model"));
     });
 
-    it("cleared by resetSessionUI", () => {
-      state.awaitingNewSession = true;
+    it("cleared by resetTaskUI", () => {
+      state.awaitingNewTask = true;
       events.handleEvent({
-        type: "session_created",
-        sessionId: "s1",
+        type: "task_created",
+        taskId: "s1",
         cwd: "/home",
         configOptions: [
           { id: "model", name: "Model", currentValue: "test", options: [] },
@@ -2555,7 +2701,7 @@ describe("events", () => {
         dom.statusBar.textContent.length > 0,
         "precondition: not empty",
       );
-      stateMod.resetSessionUI();
+      stateMod.resetTaskUI();
       assert.equal(dom.statusBar.textContent, "");
     });
   });
@@ -2569,13 +2715,13 @@ describe("events", () => {
 
     it("reconciles an optimistic user echo from replay", () => {
       state.awaitingOwnUserEcho = true;
-      state.sessionId = "s1";
-      state.sentMessageForSession = "s1";
+      state.taskId = "s1";
+      state.sentMessageForTask = "s1";
       state.sentMessageOpId = "op-1";
       const storedEvents = [
         {
           seq: 1,
-          session_id: "s1",
+          task_id: "s1",
           type: "user_message",
           data: JSON.stringify({ text: "hello" }),
         },
@@ -2590,12 +2736,12 @@ describe("events", () => {
 
       assert.equal(state.awaitingOwnUserEcho, true);
       assert.equal(state.replayedOwnUserEcho, true);
-      assert.equal(state.sentMessageForSession, "s1");
+      assert.equal(state.sentMessageForTask, "s1");
       assert.equal(state.sentMessageOpId, "op-1");
 
       events.handleEvent({
         type: "user_message",
-        sessionId: "s1",
+        taskId: "s1",
         text: "hello",
         clientOpId: "op-1",
       });
@@ -2606,12 +2752,12 @@ describe("events", () => {
 
     it("does not reconcile an optimistic echo from another operation", () => {
       state.awaitingOwnUserEcho = true;
-      state.sentMessageForSession = "s1";
+      state.sentMessageForTask = "s1";
       state.sentMessageOpId = "op-new";
       const storedEvents = [
         {
           seq: 5,
-          session_id: "s1",
+          task_id: "s1",
           type: "user_message",
           data: JSON.stringify({ text: "old" }),
         },
@@ -2638,7 +2784,7 @@ describe("events", () => {
         [
           {
             seq: 10,
-            session_id: "s1",
+            task_id: "s1",
             type: "prompt_done",
             data: JSON.stringify({ stopReason: "end_turn" }),
           },
@@ -2681,18 +2827,18 @@ describe("events", () => {
     it("ignores replayed prior prompt_done until the own user echo", () => {
       state.busy = true;
       state.awaitingOwnUserEcho = true;
-      state.sentMessageForSession = "s1";
+      state.sentMessageForTask = "s1";
       state.sentMessageOpId = "op-new";
       const storedEvents = [
         {
           seq: 10,
-          session_id: "s1",
+          task_id: "s1",
           type: "prompt_done",
           data: JSON.stringify({ stopReason: "end_turn" }),
         },
         {
           seq: 11,
-          session_id: "s1",
+          task_id: "s1",
           type: "user_message",
           data: JSON.stringify({ text: "new" }),
         },
@@ -3105,7 +3251,7 @@ describe("events", () => {
   });
 
   describe("loadHistory", () => {
-    it("does not commit after the session UI is reset", async () => {
+    it("does not commit after the task UI is reset", async () => {
       let resolveResponse!: (value: Response) => void;
       globalThis.fetch = () =>
         new Promise<Response>((resolve) => {
@@ -3113,7 +3259,7 @@ describe("events", () => {
         });
 
       const pending = events.loadHistory("failed");
-      stateMod.resetSessionUI();
+      stateMod.resetTaskUI();
       resolveResponse({
         ok: true,
         async json() {
@@ -3148,7 +3294,7 @@ describe("events", () => {
               {
                 seq: 2,
                 type: "user_message",
-                data: JSON.stringify({ text: "new session" }),
+                data: JSON.stringify({ text: "new task" }),
               },
             ];
           },
@@ -3165,7 +3311,7 @@ describe("events", () => {
             {
               seq: 1,
               type: "user_message",
-              data: JSON.stringify({ text: "old session" }),
+              data: JSON.stringify({ text: "old task" }),
             },
           ];
         },
@@ -3173,7 +3319,7 @@ describe("events", () => {
       const staleResult = await staleLoad;
 
       assert.equal(staleResult, false);
-      assert.equal(dom.messages.textContent, "new session");
+      assert.equal(dom.messages.textContent, "new task");
       assert.equal(state.lastEventSeq, 2);
     });
 
@@ -3305,7 +3451,7 @@ describe("events", () => {
         type: "plan",
         entries: [{ content: "New live work", status: "in_progress" }],
       });
-      state.sessionId = "s1";
+      state.taskId = "s1";
 
       assert.equal(
         dom.planPanel.querySelector(".plan-entry")?.textContent,
@@ -3314,7 +3460,7 @@ describe("events", () => {
 
       events.handleEvent({
         type: "state_patch",
-        sessionId: "s1",
+        taskId: "s1",
         seq: 2,
         patch: {
           runtime: {
@@ -3328,14 +3474,14 @@ describe("events", () => {
       );
     });
 
-    it("does not let another session's state patch clear this panel", () => {
-      state.sessionId = "current";
+    it("does not let another task's state patch clear this panel", () => {
+      state.taskId = "current";
       applyPlanSnapshot([{ content: "Current work", status: "in_progress" }]);
-      state.sessionId = "current";
+      state.taskId = "current";
 
       events.handleEvent({
         type: "state_patch",
-        sessionId: "stale",
+        taskId: "stale",
         seq: 2,
         patch: { runtime: { plan: null } },
       });
@@ -3421,7 +3567,7 @@ describe("events", () => {
 
   describe("loadOlderEvents", () => {
     it("reconciles a newer terminal update after an older page creates its tool host", async () => {
-      state.sessionId = "s1";
+      state.taskId = "s1";
       let request = 0;
       setFetch(() => {
         request++;
@@ -3432,7 +3578,7 @@ describe("events", () => {
               events: [
                 {
                   seq: 301,
-                  session_id: "s1",
+                  task_id: "s1",
                   type: "tool_call_update",
                   data: JSON.stringify({
                     id: "tc-cross-page",
@@ -3457,7 +3603,7 @@ describe("events", () => {
             events: [
               {
                 seq: 100,
-                session_id: "s1",
+                task_id: "s1",
                 type: "tool_call",
                 data: JSON.stringify({
                   id: "tc-cross-page",
@@ -3468,7 +3614,7 @@ describe("events", () => {
               },
               {
                 seq: 200,
-                session_id: "s1",
+                task_id: "s1",
                 type: "tool_call_update",
                 data: JSON.stringify({
                   id: "tc-cross-page",
@@ -3510,7 +3656,7 @@ describe("events", () => {
       // Set up initial state as if loadHistory loaded events 5-6
       state.oldestLoadedSeq = 5;
       state.hasMoreHistory = true;
-      state.sessionId = "s1";
+      state.taskId = "s1";
       events.replayEvent("user_message", { text: "msg-5" }, [], 0);
       events.replayEvent("assistant_message", { text: "msg-6" }, [], 0);
 
@@ -3552,7 +3698,7 @@ describe("events", () => {
     it("does not make historical tool calls foreground-pending", async () => {
       state.oldestLoadedSeq = 5;
       state.hasMoreHistory = true;
-      state.sessionId = "s1";
+      state.taskId = "s1";
       events.replayEvent("user_message", { text: "current" }, [], 0);
 
       globalThis.fetch = (() =>
@@ -3584,7 +3730,7 @@ describe("events", () => {
     it("merges adjacent assistant fragments across older-history pagination", async () => {
       state.oldestLoadedSeq = 201;
       state.hasMoreHistory = true;
-      state.sessionId = "s1";
+      state.taskId = "s1";
       const currentEvents = [
         {
           seq: 201,
@@ -3632,7 +3778,7 @@ describe("events", () => {
     it("preserves a final-answer boundary across older-history pagination", async () => {
       state.oldestLoadedSeq = 203;
       state.hasMoreHistory = true;
-      state.sessionId = "s1";
+      state.taskId = "s1";
       const toolText = "<final_answer>\nResult body";
       const currentEvents = [
         {
@@ -3699,7 +3845,7 @@ describe("events", () => {
     it("preserves scroll position when the sole child merges with older history", async () => {
       state.oldestLoadedSeq = 201;
       state.hasMoreHistory = true;
-      state.sessionId = "s1";
+      state.taskId = "s1";
       const currentEvents = [
         {
           seq: 201,
@@ -3767,7 +3913,7 @@ describe("events", () => {
     it("does not merge older replay into an active assistant stream", async () => {
       state.oldestLoadedSeq = 201;
       state.hasMoreHistory = true;
-      state.sessionId = "s1";
+      state.taskId = "s1";
       const currentEvents = [
         {
           seq: 201,
@@ -3820,7 +3966,7 @@ describe("events", () => {
       applyPlanSnapshot([{ content: "Current work", status: "in_progress" }]);
       state.oldestLoadedSeq = 5;
       state.hasMoreHistory = true;
-      state.sessionId = "s1";
+      state.taskId = "s1";
       globalThis.fetch = (() =>
         Promise.resolve({
           ok: true,
@@ -3849,7 +3995,7 @@ describe("events", () => {
     it("preserves the current visual anchor when prepending older events", async () => {
       state.oldestLoadedSeq = 5;
       state.hasMoreHistory = true;
-      state.sessionId = "s1";
+      state.taskId = "s1";
       events.replayEvent("user_message", { text: "msg-5" }, [], 0);
       events.replayEvent("assistant_message", { text: "msg-6" }, [], 0);
       await new Promise((resolve) =>
@@ -3913,7 +4059,7 @@ describe("events", () => {
     it("does not fight user-sized scroll movement during anchor stabilization", async () => {
       state.oldestLoadedSeq = 5;
       state.hasMoreHistory = true;
-      state.sessionId = "s1";
+      state.taskId = "s1";
       events.replayEvent("user_message", { text: "msg-5" }, [], 0);
       await new Promise((resolve) => {
         requestAnimationFrame(() => {
@@ -3968,7 +4114,7 @@ describe("events", () => {
     it("waits for iOS top rubber-band before prepending older events", async () => {
       state.oldestLoadedSeq = 5;
       state.hasMoreHistory = true;
-      state.sessionId = "s1";
+      state.taskId = "s1";
       events.replayEvent("user_message", { text: "msg-5" }, [], 0);
       await new Promise((resolve) =>
         requestAnimationFrame(() => {
@@ -4034,7 +4180,7 @@ describe("events", () => {
     it("removes sentinel and sets hasMoreHistory=false when no more events", async () => {
       state.oldestLoadedSeq = 3;
       state.hasMoreHistory = true;
-      state.sessionId = "s1";
+      state.taskId = "s1";
       events.replayEvent("user_message", { text: "existing" }, [], 0);
 
       globalThis.fetch = (() =>
@@ -4062,7 +4208,7 @@ describe("events", () => {
     it("does not immediately retry a failed older-history load while sentinel remains visible", async () => {
       state.oldestLoadedSeq = 5;
       state.hasMoreHistory = true;
-      state.sessionId = "s1";
+      state.taskId = "s1";
       const sentinel = document.createElement("div");
       sentinel.id = "history-sentinel";
       dom.messages.prepend(sentinel);
@@ -4113,7 +4259,7 @@ describe("events", () => {
     it("preserves the current visual anchor when failed load shows and hides loading row", async () => {
       state.oldestLoadedSeq = 5;
       state.hasMoreHistory = true;
-      state.sessionId = "s1";
+      state.taskId = "s1";
       events.replayEvent("user_message", { text: "msg-5" }, [], 0);
       await new Promise((resolve) => {
         requestAnimationFrame(() => {
@@ -4152,7 +4298,7 @@ describe("events", () => {
       assert.equal(document.getElementById("history-loading"), null);
     });
 
-    it("ignores stale older-history cleanup after switching sessions", async () => {
+    it("ignores stale older-history cleanup after switching tasks", async () => {
       const responses: Array<(res: { ok: boolean; status?: number }) => void> =
         [];
       setFetch(
@@ -4164,7 +4310,7 @@ describe("events", () => {
 
       state.oldestLoadedSeq = 5;
       state.hasMoreHistory = true;
-      state.sessionId = "s1";
+      state.taskId = "s1";
       events.replayEvent("user_message", { text: "old" }, [], 0);
       await new Promise((resolve) => {
         requestAnimationFrame(() => {
@@ -4176,7 +4322,7 @@ describe("events", () => {
       assert.equal(document.getElementById("history-loading") != null, true);
 
       dom.messages.innerHTML = "";
-      state.sessionId = "s2";
+      state.taskId = "s2";
       state.oldestLoadedSeq = 10;
       state.hasMoreHistory = true;
       state.loadingOlderEvents = false;
@@ -4203,7 +4349,7 @@ describe("events", () => {
       assert.equal(document.getElementById("history-loading"), null);
     });
 
-    it("ignores stale same-session older-history response after session reset", async () => {
+    it("ignores stale same-task older-history response after task reset", async () => {
       const responses: Array<
         (res: { ok: boolean; json: () => unknown }) => void
       > = [];
@@ -4216,7 +4362,7 @@ describe("events", () => {
 
       state.oldestLoadedSeq = 5;
       state.hasMoreHistory = true;
-      state.sessionId = "s1";
+      state.taskId = "s1";
       events.replayEvent("user_message", { text: "old-visible" }, [], 0);
       await new Promise((resolve) => {
         requestAnimationFrame(() => {
@@ -4226,8 +4372,8 @@ describe("events", () => {
 
       const oldLoad = events.loadOlderEvents("s1");
 
-      stateMod.resetSessionUI();
-      state.sessionId = "s1";
+      stateMod.resetTaskUI();
+      state.taskId = "s1";
       state.oldestLoadedSeq = 50;
       state.hasMoreHistory = true;
       events.replayEvent("user_message", { text: "fresh-visible" }, [], 0);
@@ -4271,7 +4417,7 @@ describe("events", () => {
   });
 
   describe("loadNewEvents", () => {
-    it("cannot overwrite a newer full-history load during a session switch", async () => {
+    it("cannot overwrite a newer full-history load during a task switch", async () => {
       let resolveIncremental!: (value: Response) => void;
       const incrementalResponse = new Promise<Response>((resolve) => {
         resolveIncremental = resolve;
@@ -4291,16 +4437,16 @@ describe("events", () => {
               {
                 seq: 2,
                 type: "user_message",
-                data: JSON.stringify({ text: "new session" }),
+                data: JSON.stringify({ text: "new task" }),
               },
             ];
           },
         } as Response;
       };
-      state.sessionId = "old";
+      state.taskId = "old";
 
       const staleLoad = events.loadNewEvents("old");
-      state.sessionId = null;
+      state.taskId = null;
       const currentLoad = events.loadHistory("new");
       await currentLoad;
       resolveIncremental({
@@ -4318,7 +4464,7 @@ describe("events", () => {
       const staleResult = await staleLoad;
 
       assert.equal(staleResult, false);
-      assert.equal(dom.messages.textContent, "new session");
+      assert.equal(dom.messages.textContent, "new task");
       assert.equal(state.lastEventSeq, 2);
       assert.equal(state.replayInProgress, false);
     });
@@ -4358,20 +4504,20 @@ describe("events", () => {
     });
 
     it("keeps live DOM when a frontier-zero catch-up returns no events", async () => {
-      // A /new session sits at frontier 0 with no [data-sync-boundary], so the
+      // A /new task sits at frontier 0 with no [data-sync-boundary], so the
       // catch-up takes the `replaceChildren()` branch that wipes the whole
       // pane. That wipe must not happen when the server has nothing to replace
       // the content with: the pane holds client-only rows (addSystem banners,
       // slash-command output) that are never persisted, plus any optimistic
       // user bubble whose POST has not been flushed to the DB yet.
-      state.sessionId = "s1";
+      state.taskId = "s1";
       state.lastEventSeq = 0;
-      render.addSystem("Session created: fresh");
+      render.addSystem("Task created: fresh");
       render.addMessage("user", "optimistic, not yet persisted");
       assert.equal(
         dom.messages.querySelector("[data-sync-boundary]"),
         null,
-        "precondition: no sync boundary on a never-replayed session",
+        "precondition: no sync boundary on a never-replayed task",
       );
       const liveContent = dom.messages.textContent;
       assert.ok(liveContent.includes("optimistic, not yet persisted"));
@@ -4393,9 +4539,9 @@ describe("events", () => {
     it("still replaces live DOM when a frontier-zero catch-up returns events", async () => {
       // Control for the test above: proves the wipe is still reachable, so the
       // preservation assertion is not vacuously true.
-      state.sessionId = "s1";
+      state.taskId = "s1";
       state.lastEventSeq = 0;
-      render.addSystem("Session created: fresh");
+      render.addSystem("Task created: fresh");
       render.addMessage("user", "optimistic, not yet persisted");
 
       globalThis.fetch = (() =>
@@ -4414,7 +4560,7 @@ describe("events", () => {
       assert.equal(await events.loadNewEvents("s1"), true);
       assert.ok(dom.messages.textContent.includes("authoritative copy"));
       assert.ok(
-        !dom.messages.textContent.includes("Session created: fresh"),
+        !dom.messages.textContent.includes("Task created: fresh"),
         "authoritative transcript replaces the live pane",
       );
       assert.equal(state.lastEventSeq, 1);
@@ -4426,7 +4572,7 @@ describe("events", () => {
       // server's eventual user_message broadcast is suppressed as this
       // client's own echo. Wiping it would make the message unrecoverable
       // without a manual reload.
-      state.sessionId = "s1";
+      state.taskId = "s1";
       state.lastEventSeq = 0;
       render.addMessage("assistant", "earlier reply");
       const optimistic = render.addMessage("user", "still uploading");
@@ -4471,7 +4617,7 @@ describe("events", () => {
       // Control: once the POST is confirmed the bubble is redundant with the
       // persisted copy, so the wipe must still remove it. Without this the
       // preservation above could be keeping stale duplicates alive forever.
-      state.sessionId = "s1";
+      state.taskId = "s1";
       state.lastEventSeq = 0;
       const stale = render.addMessage("user", "already persisted");
       stale.dataset.optimisticOpId = "op-41";
@@ -4507,7 +4653,7 @@ describe("events", () => {
       // stream). The fetched transcript then carries the authoritative copy,
       // so re-attaching the optimistic node would duplicate the message —
       // and place the copy below the reply that answered it.
-      state.sessionId = "s1";
+      state.taskId = "s1";
       state.lastEventSeq = 0;
       const optimistic = render.addMessage("user", "carry me");
       optimistic.dataset.optimisticOpId = "op-42";
@@ -4546,7 +4692,7 @@ describe("events", () => {
       // With no boundary and an empty response nothing removes the bubble, so
       // re-appending would move it past siblings mounted after it (the waiting
       // cursor) and show the reply spinner above the message it belongs to.
-      state.sessionId = "s1";
+      state.taskId = "s1";
       state.lastEventSeq = 0;
       const optimistic = render.addMessage("user", "still uploading");
       optimistic.dataset.optimisticOpId = "op-42";
@@ -4629,13 +4775,13 @@ describe("events", () => {
       // cleared the own-echo shield. Applying it to the live turn sets
       // turnEnded, which silently gates message_chunk / thought_chunk /
       // tool_call / permission_request until the *next* user message.
-      state.sessionId = "s1";
+      state.taskId = "s1";
       state.currentPromptId = "prompt-2"; // the turn the user just started
       state.turnEnded = false;
 
       events.handleEvent({
         type: "prompt_done",
-        sessionId: "s1",
+        taskId: "s1",
         stopReason: "end_turn",
         promptId: "prompt-1", // the superseded turn
       });
@@ -4648,7 +4794,7 @@ describe("events", () => {
 
       events.handleEvent({
         type: "message_chunk",
-        sessionId: "s1",
+        taskId: "s1",
         text: "reply to the new message",
       });
       assert.equal(
@@ -4663,8 +4809,8 @@ describe("events", () => {
       // keeps the live turn busy for a superseded one. Without the same
       // judgement here the two sides disagree: the client would go idle while
       // the server stays busy, and nothing re-syncs — the error carries no
-      // busy patch, so the next send is rejected as "Session is busy".
-      state.sessionId = "s1";
+      // busy patch, so the next send is rejected as "Task is busy".
+      state.taskId = "s1";
       state.currentPromptId = "prompt-2";
       state.pendingToolCallIds.add("tc-live");
       state.busy = true;
@@ -4672,7 +4818,7 @@ describe("events", () => {
 
       events.handleEvent({
         type: "error",
-        sessionId: "s1",
+        taskId: "s1",
         message: "superseded turn blew up",
         promptId: "prompt-1",
       });
@@ -4687,7 +4833,7 @@ describe("events", () => {
 
     it("clears the turn when its own error arrives", async () => {
       // Control: the live turn's own failure must still end it.
-      state.sessionId = "s1";
+      state.taskId = "s1";
       state.currentPromptId = "prompt-2";
       state.pendingToolCallIds.add("tc-live");
       state.busy = true;
@@ -4695,7 +4841,7 @@ describe("events", () => {
 
       events.handleEvent({
         type: "error",
-        sessionId: "s1",
+        taskId: "s1",
         message: "live turn blew up",
         promptId: "prompt-2",
       });
@@ -4704,13 +4850,13 @@ describe("events", () => {
       assert.equal(state.busy, false);
     });
 
-    it("forgets turn identity when the session is reset", async () => {
+    it("forgets turn identity when the task is reset", async () => {
       // Ids come from one per-process counter, so an id left over from another
-      // session can never match the new one's — every terminator would be
+      // task can never match the new one's — every terminator would be
       // dropped and its spinners stranded.
       state.currentPromptId = "prompt-5";
 
-      stateMod.resetSessionUI();
+      stateMod.resetTaskUI();
 
       assert.equal(state.currentPromptId, null);
     });
@@ -4718,13 +4864,13 @@ describe("events", () => {
     it("still ends the turn its own completion belongs to", async () => {
       // Control: the guard must not swallow the live turn's real terminator,
       // or the spinner would never stop.
-      state.sessionId = "s1";
+      state.taskId = "s1";
       state.currentPromptId = "prompt-2";
       state.turnEnded = false;
 
       events.handleEvent({
         type: "prompt_done",
-        sessionId: "s1",
+        taskId: "s1",
         stopReason: "end_turn",
         promptId: "prompt-2",
       });
@@ -4844,7 +4990,7 @@ describe("events", () => {
     });
 
     it("does not duplicate a live tail when its persisted fragment is reconciled", async () => {
-      state.sessionId = "s1";
+      state.taskId = "s1";
       const historyEvents = [
         {
           seq: 1,
@@ -5094,7 +5240,7 @@ describe("events", () => {
     });
 
     it("preserves the verified final-answer boundary while a replayed stream resumes", async () => {
-      state.sessionId = "s1";
+      state.taskId = "s1";
       const toolText = "<final_answer>\nResult body";
       const response = {
         events: [
@@ -5138,7 +5284,7 @@ describe("events", () => {
       await events.loadHistory("s1");
       events.handleEvent({
         type: "message_chunk",
-        sessionId: "s1",
+        taskId: "s1",
         text: " bodyParent continuation",
       });
       render.flushStreamingRender();
@@ -5498,7 +5644,7 @@ describe("events", () => {
       assert.equal(dom.messages.querySelectorAll(".msg.assistant").length, 1);
     });
 
-    it("per-session coalesce returns same promise for concurrent calls", async () => {
+    it("per-task coalesce returns same promise for concurrent calls", async () => {
       events.replayEvent("user_message", { text: "msg" }, [], 0);
       state.lastEventSeq = 1;
       dom.messages.lastElementChild.setAttribute("data-sync-boundary", "");
@@ -5512,12 +5658,12 @@ describe("events", () => {
         });
       }) as any;
 
-      // Two concurrent calls for same session
+      // Two concurrent calls for same task
       const p1 = events.loadNewEvents("s1");
       const p2 = events.loadNewEvents("s1");
 
       // Should be the same promise (coalesced)
-      assert.equal(p1, p2, "concurrent calls for same session should coalesce");
+      assert.equal(p1, p2, "concurrent calls for same task should coalesce");
       assert.equal(fetchCount, 1, "should only fetch once");
 
       resolveFirst!({ ok: true, json: () => Promise.resolve([]) });
@@ -5525,7 +5671,7 @@ describe("events", () => {
     });
 
     it("upgrades an in-flight empty replay to preserve optimistic DOM", async () => {
-      state.sessionId = "s1";
+      state.taskId = "s1";
       state.lastEventSeq = 1;
       events.replayEvent("assistant_message", { text: "baseline" }, [], 0);
       (dom.messages.lastElementChild as HTMLElement).dataset.syncBoundary = "";
@@ -5556,7 +5702,7 @@ describe("events", () => {
     });
 
     it("preserves the latest pending assistant frame on an empty replay", async () => {
-      state.sessionId = "s1";
+      state.taskId = "s1";
       state.lastEventSeq = 1;
       events.replayEvent("assistant_message", { text: "baseline " }, [], 0);
       const assistant = dom.messages.lastElementChild as HTMLElement;
@@ -5582,8 +5728,8 @@ describe("events", () => {
       assert.equal(state.assistantRafToken, null);
     });
 
-    it("does not let stale cleanup remove a newer same-session load", async () => {
-      state.sessionId = "s1";
+    it("does not let stale cleanup remove a newer same-task load", async () => {
+      state.taskId = "s1";
       state.lastEventSeq = 1;
       let resolveFirst!: (response: unknown) => void;
       let resolveSecond!: (response: unknown) => void;
@@ -5597,8 +5743,8 @@ describe("events", () => {
       }) as any;
 
       const first = events.loadNewEvents("s1");
-      stateMod.resetSessionUI();
-      state.sessionId = "s1";
+      stateMod.resetTaskUI();
+      state.taskId = "s1";
       state.lastEventSeq = 1;
       const second = events.loadNewEvents("s1");
       resolveFirst({
@@ -5617,7 +5763,7 @@ describe("events", () => {
       await second;
     });
 
-    it("per-session coalesce allows independent sessions", async () => {
+    it("per-task coalesce allows independent tasks", async () => {
       events.replayEvent("user_message", { text: "msg" }, [], 0);
       state.lastEventSeq = 1;
       dom.messages.lastElementChild.setAttribute("data-sync-boundary", "");
@@ -5628,12 +5774,12 @@ describe("events", () => {
         return Promise.resolve({ ok: true, json: () => Promise.resolve([]) });
       }) as any;
 
-      // Calls for different sessions should NOT coalesce
+      // Calls for different tasks should NOT coalesce
       const p1 = events.loadNewEvents("s1");
       const p2 = events.loadNewEvents("s2");
 
-      assert.notEqual(p1, p2, "different sessions should not coalesce");
-      assert.equal(fetchCount, 2, "should fetch for each session");
+      assert.notEqual(p1, p2, "different tasks should not coalesce");
+      assert.equal(fetchCount, 2, "should fetch for each task");
 
       await Promise.all([p1, p2]);
     });
@@ -5689,7 +5835,7 @@ describe("events", () => {
           ok: true,
           json: () => Promise.resolve(newEvents),
         })) as any;
-      state.sessionId = "s1";
+      state.taskId = "s1";
       await events.loadNewEvents("s1");
 
       // Both primed elements should have been reverted to DB content
@@ -5707,10 +5853,10 @@ describe("events", () => {
       assert.ok(assistants[0].textContent.includes("extended"));
     });
 
-    it("loadNewEvents discards results when session switched during fetch", async () => {
+    it("loadNewEvents discards results when task switched during fetch", async () => {
       events.replayEvent("user_message", { text: "msg" }, [], 0);
       state.lastEventSeq = 1;
-      state.sessionId = "s1";
+      state.taskId = "s1";
       dom.messages.lastElementChild.setAttribute("data-sync-boundary", "");
 
       let resolveFetch: Function;
@@ -5721,8 +5867,8 @@ describe("events", () => {
 
       const promise = events.loadNewEvents("s1");
 
-      // Session switches while fetch is in-flight
-      state.sessionId = "s2";
+      // Task switches while fetch is in-flight
+      state.taskId = "s2";
 
       resolveFetch!({
         ok: true,
@@ -5737,7 +5883,7 @@ describe("events", () => {
       });
 
       const result = await promise;
-      assert.equal(result, false, "should return false when session switched");
+      assert.equal(result, false, "should return false when task switched");
       // DOM should not have the stale event
       assert.equal(dom.messages.querySelectorAll(".msg.assistant").length, 0);
     });
@@ -5747,7 +5893,7 @@ describe("events", () => {
     it("restores pending ownership so prompt_done completes a replayed tool", async () => {
       events.replayEvent("user_message", { text: "hi" }, [], 0);
       state.lastEventSeq = 1;
-      state.sessionId = "s1";
+      state.taskId = "s1";
       state.busy = true;
       state.busyKind = "agent";
       dom.messages.lastElementChild?.setAttribute("data-sync-boundary", "");
@@ -5784,7 +5930,7 @@ describe("events", () => {
     it("defers replayed pending-tool completion to authoritative runtime state", async () => {
       events.replayEvent("user_message", { text: "old" }, [], 0);
       state.lastEventSeq = 1;
-      state.sessionId = "s1";
+      state.taskId = "s1";
       state.busy = true;
       state.busyKind = "agent";
       dom.messages.lastElementChild?.setAttribute("data-sync-boundary", "");
@@ -5837,13 +5983,13 @@ describe("events", () => {
     });
 
     it("clears pendingToolCallIds for tool_call_updates replayed from DB", async () => {
-      // Simulate: live session had a tool_call that was added to pendingToolCallIds
+      // Simulate: live task had a tool_call that was added to pendingToolCallIds
       events.replayEvent("user_message", { text: "hi" }, [], 0);
       state.lastEventSeq = 1;
       dom.messages.lastElementChild.setAttribute("data-sync-boundary", "");
 
       // Simulate a tool_call received via live WS before disconnect
-      state.sessionId = "s1";
+      state.taskId = "s1";
       state.pendingToolCallIds.add("tc-live");
       const tcEl = globalThis.document.createElement("div");
       tcEl.className = "tool-call";
@@ -5881,7 +6027,7 @@ describe("events", () => {
 
   describe("replay queue (dedup on reconnect)", () => {
     it("reruns reconciliation when terminal output flushes during replay", async () => {
-      state.sessionId = "s1";
+      state.taskId = "s1";
       state.lastEventSeq = 1;
       const baselineEvents = [
         {
@@ -5898,7 +6044,7 @@ describe("events", () => {
       );
       (dom.messages.lastElementChild as HTMLElement).dataset.syncBoundary = "";
       state.awaitingOwnUserEcho = true;
-      state.sentMessageForSession = "s1";
+      state.sentMessageForTask = "s1";
       state.sentMessageOpId = "op-race";
       state.reconcileAfterOwnUserEcho = true;
 
@@ -5930,7 +6076,7 @@ describe("events", () => {
       const firstLoad = events.loadNewEvents("s1");
       events.handleEvent({
         type: "prompt_done",
-        sessionId: "s1",
+        taskId: "s1",
         stopReason: "cancelled",
       });
       resolveFirst({
@@ -5941,7 +6087,7 @@ describe("events", () => {
               {
                 seq: 2,
                 type: "user_message",
-                session_id: "s1",
+                task_id: "s1",
                 data: JSON.stringify({
                   text: "new",
                   clientOpId: "op-race",
@@ -5969,14 +6115,14 @@ describe("events", () => {
           resolveFetch = r;
         })) as any;
 
-      state.sessionId = "s1";
+      state.taskId = "s1";
       const historyPromise = events.loadHistory("s1");
 
       // While fetch is in-flight, simulate a WS event arriving
       assert.equal(state.replayInProgress, true);
       events.handleEvent({
         type: "message_chunk",
-        sessionId: "s1",
+        taskId: "s1",
         text: "hello",
       });
       assert.equal(state.replayQueue.length, 1);
@@ -5999,7 +6145,7 @@ describe("events", () => {
       const fakeEvents = [
         {
           seq: 11,
-          session_id: "s1",
+          task_id: "s1",
           type: "user_message",
           data: JSON.stringify({
             text: "new",
@@ -6012,16 +6158,16 @@ describe("events", () => {
         new Promise((resolve) => {
           resolveFetch = resolve;
         })) as any;
-      state.sessionId = "s1";
+      state.taskId = "s1";
       state.busy = true;
       state.awaitingOwnUserEcho = true;
-      state.sentMessageForSession = "s1";
+      state.sentMessageForTask = "s1";
       state.sentMessageOpId = "op-new";
 
       const historyPromise = events.loadHistory("s1");
       events.handleEvent({
         type: "prompt_done",
-        sessionId: "s1",
+        taskId: "s1",
         stopReason: "end_turn",
       });
       resolveFetch!({ ok: true, json: () => Promise.resolve(fakeEvents) });
@@ -6052,13 +6198,13 @@ describe("events", () => {
           resolveFetch = r;
         })) as any;
 
-      state.sessionId = "s1";
+      state.taskId = "s1";
       const historyPromise = events.loadHistory("s1");
 
       // Simulate the same tool_call arriving via WS while replay is in-flight
       events.handleEvent({
         type: "tool_call",
-        sessionId: "s1",
+        taskId: "s1",
         id: "tc1",
         title: "Read file",
         kind: "read",
@@ -6078,7 +6224,7 @@ describe("events", () => {
       const fakeEvents = [
         {
           seq: 1,
-          session_id: "s1",
+          task_id: "s1",
           type: "user_message",
           data: JSON.stringify({
             text: "new question",
@@ -6087,7 +6233,7 @@ describe("events", () => {
         },
         {
           seq: 2,
-          session_id: "s1",
+          task_id: "s1",
           type: "assistant_message",
           data: JSON.stringify({ text: "new answer" }),
         },
@@ -6099,12 +6245,12 @@ describe("events", () => {
           resolveFetch = resolve;
         })) as any;
 
-      state.sessionId = "s1";
+      state.taskId = "s1";
       const historyPromise = events.loadHistory("s1");
 
       events.handleEvent({
         type: "user_message",
-        sessionId: "s1",
+        taskId: "s1",
         text: "new question",
         clientOpId: "op-foreign",
       });
@@ -6124,7 +6270,7 @@ describe("events", () => {
       const fakeEvents = [
         {
           seq: 1,
-          session_id: "s1",
+          task_id: "s1",
           type: "user_message",
           data: JSON.stringify({
             text: "new question",
@@ -6139,19 +6285,19 @@ describe("events", () => {
           resolveFetch = resolve;
         })) as any;
 
-      state.sessionId = "s1";
+      state.taskId = "s1";
       state.turnEnded = true;
       const historyPromise = events.loadHistory("s1");
 
       events.handleEvent({
         type: "user_message",
-        sessionId: "s1",
+        taskId: "s1",
         text: "new question",
         clientOpId: "op-foreign",
       });
       events.handleEvent({
         type: "message_chunk",
-        sessionId: "s1",
+        taskId: "s1",
         text: "new answer",
       });
 
@@ -6168,11 +6314,11 @@ describe("events", () => {
       assert.equal(state.newTurnStarted, true);
     });
 
-    it("does not deduplicate another session by client operation id", async () => {
+    it("does not deduplicate another task by client operation id", async () => {
       const fakeEvents = [
         {
           seq: 1,
-          session_id: "s1",
+          task_id: "s1",
           type: "user_message",
           data: JSON.stringify({
             text: "active question",
@@ -6187,13 +6333,13 @@ describe("events", () => {
           resolveFetch = resolve;
         })) as any;
 
-      state.sessionId = "s1";
+      state.taskId = "s1";
       state.turnEnded = true;
       const historyPromise = events.loadHistory("s1");
 
       events.handleEvent({
         type: "user_message",
-        sessionId: "s2",
+        taskId: "s2",
         text: "other question",
         clientOpId: "op-shared",
       });
@@ -6210,7 +6356,7 @@ describe("events", () => {
       const fakeEvents = [
         {
           seq: 1,
-          session_id: "s1",
+          task_id: "s1",
           type: "user_message",
           data: JSON.stringify({
             text: "new question",
@@ -6225,28 +6371,28 @@ describe("events", () => {
           resolveFetch = resolve;
         })) as any;
 
-      state.sessionId = null;
-      state.pendingNavigationSessionId = "s1";
+      state.taskId = null;
+      state.pendingNavigationTaskId = "s1";
       state.turnEnded = true;
       const historyPromise = events.loadHistory("s1");
 
       events.handleEvent({
         type: "user_message",
-        sessionId: "s1",
+        taskId: "s1",
         text: "new question",
         clientOpId: "op-foreign",
       });
       events.handleEvent({
         type: "prompt_done",
-        sessionId: "s1",
+        taskId: "s1",
         stopReason: "cancelled",
       });
 
       resolveFetch!({ ok: true, json: () => Promise.resolve(fakeEvents) });
       await historyPromise;
       events.handleEvent({
-        type: "session_created",
-        sessionId: "s1",
+        type: "task_created",
+        taskId: "s1",
         configOptions: [],
       });
       events.drainNavigationEvents("s1");
@@ -6255,11 +6401,11 @@ describe("events", () => {
       assert.equal(state.newTurnStarted, false);
     });
 
-    it("preserves a replayed turn boundary when refreshing the active session", async () => {
+    it("preserves a replayed turn boundary when refreshing the active task", async () => {
       const fakeEvents = [
         {
           seq: 1,
-          session_id: "s1",
+          task_id: "s1",
           type: "user_message",
           data: JSON.stringify({
             text: "new question",
@@ -6274,12 +6420,12 @@ describe("events", () => {
           resolveFetch = resolve;
         })) as any;
 
-      state.sessionId = "s1";
+      state.taskId = "s1";
       state.turnEnded = true;
       const historyPromise = events.loadHistory("s1");
       events.handleEvent({
         type: "user_message",
-        sessionId: "s1",
+        taskId: "s1",
         text: "new question",
         clientOpId: "op-foreign",
       });
@@ -6287,13 +6433,13 @@ describe("events", () => {
       resolveFetch!({ ok: true, json: () => Promise.resolve(fakeEvents) });
       await historyPromise;
       events.handleEvent({
-        type: "session_created",
-        sessionId: "s1",
+        type: "task_created",
+        taskId: "s1",
         configOptions: [],
       });
       events.handleEvent({
         type: "prompt_done",
-        sessionId: "s1",
+        taskId: "s1",
         stopReason: "cancelled",
       });
 
@@ -6329,13 +6475,13 @@ describe("events", () => {
           resolveFetch = r;
         })) as any;
 
-      state.sessionId = "s1";
+      state.taskId = "s1";
       const historyPromise = events.loadHistory("s1");
 
       // Same permission_request arrives via WS
       events.handleEvent({
         type: "permission_request",
-        sessionId: "s1",
+        taskId: "s1",
         requestId: "perm1",
         title: "Run command",
         options: [{ optionId: "o1", name: "Allow", kind: "allow_once" }],
@@ -6361,13 +6507,13 @@ describe("events", () => {
           resolveFetch = r;
         })) as any;
 
-      state.sessionId = "s1";
+      state.taskId = "s1";
       const historyPromise = events.loadHistory("s1");
 
       // A tool_call for a NEW id that isn't in the history
       events.handleEvent({
         type: "tool_call",
-        sessionId: "s1",
+        taskId: "s1",
         id: "tc-new",
         title: "New tool",
         kind: "execute",
@@ -6407,13 +6553,13 @@ describe("events", () => {
           resolveFetch = r;
         })) as any;
 
-      state.sessionId = "s1";
+      state.taskId = "s1";
       const promise = events.loadNewEvents("s1");
 
       // Duplicate tool_call arrives via WS
       events.handleEvent({
         type: "tool_call",
-        sessionId: "s1",
+        taskId: "s1",
         id: "tc2",
         title: "Edit",
         kind: "edit",
@@ -6449,13 +6595,13 @@ describe("events", () => {
           resolveFetch = r;
         })) as any;
 
-      state.sessionId = "s1";
+      state.taskId = "s1";
       const historyPromise = events.loadHistory("s1");
 
       // thought_chunk arrives via SSE while replay is in-flight (duplicate content)
       events.handleEvent({
         type: "thought_chunk",
-        sessionId: "s1",
+        taskId: "s1",
         text: "partial thought",
       });
       assert.equal(state.replayQueue.length, 1);
@@ -6491,12 +6637,12 @@ describe("events", () => {
           resolveFetch = r;
         })) as any;
 
-      state.sessionId = "s1";
+      state.taskId = "s1";
       const historyPromise = events.loadHistory("s1");
 
       events.handleEvent({
         type: "message_chunk",
-        sessionId: "s1",
+        taskId: "s1",
         text: "hello",
       });
 
@@ -6532,7 +6678,7 @@ describe("events", () => {
         events: fakeEvents,
         streaming: { thinking: false, assistant: true },
       };
-      state.sessionId = "s1";
+      state.taskId = "s1";
       globalThis.fetch = (() =>
         Promise.resolve({
           ok: true,
@@ -6542,7 +6688,7 @@ describe("events", () => {
       await events.loadHistory("s1");
       events.handleEvent({
         type: "message_chunk",
-        sessionId: "s1",
+        taskId: "s1",
         text: "new answer",
       });
       render.finishAssistant();
@@ -6568,12 +6714,12 @@ describe("events", () => {
           resolveFetch = r;
         })) as any;
 
-      state.sessionId = "s1";
+      state.taskId = "s1";
       const historyPromise = events.loadHistory("s1");
 
       events.handleEvent({
         type: "thought_chunk",
-        sessionId: "s1",
+        taskId: "s1",
         text: "new thought",
       });
 
@@ -6590,7 +6736,7 @@ describe("events", () => {
 
   describe("agent reload events", () => {
     it("agent_reloading sets busy and shows system message", () => {
-      state.sessionId = "s1";
+      state.taskId = "s1";
       events.handleEvent({ type: "agent_reloading" });
 
       assert.equal(state.busy, true);
@@ -6600,7 +6746,7 @@ describe("events", () => {
     });
 
     it("connected after agent_reloading shows reloaded message and clears busy", () => {
-      state.sessionId = "s1";
+      state.taskId = "s1";
       state.agentReloading = true;
       state.busy = true;
 
@@ -6617,7 +6763,7 @@ describe("events", () => {
     });
 
     it("agent_reloading_failed shows error and clears busy", () => {
-      state.sessionId = "s1";
+      state.taskId = "s1";
       state.agentReloading = true;
       state.busy = true;
 

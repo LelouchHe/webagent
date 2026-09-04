@@ -1,9 +1,5 @@
 import { test, expect } from "playwright/test";
-import {
-  createNewSession,
-  currentSessionId,
-  gotoConnected,
-} from "./helpers.ts";
+import { createNewTask, currentTaskId, gotoConnected } from "./helpers.ts";
 
 const TEXT_BODY = Buffer.from("hello attachment world\n", "utf8");
 
@@ -11,7 +7,7 @@ test("uploaded files render as <a class=user-file>, download with original name,
   page,
 }) => {
   await gotoConnected(page);
-  await createNewSession(page);
+  await createNewTask(page);
 
   // Non-image upload → server stores as kind=file (text/plain is excluded
   // from the inline-MIME whitelist, so Content-Disposition must be
@@ -30,7 +26,7 @@ test("uploaded files render as <a class=user-file>, download with original name,
   // [file: name] placeholder chip for the real <a class=user-file>
   // anchor — without this the sender would be stuck on the chip
   // until a reload (because the sender's own SSE echo is suppressed
-  // by sentMessageForSession). This assertion fails the moment that
+  // by sentMessageForTask). This assertion fails the moment that
   // swap regresses; the post-reload assertions below catch the
   // separate SSE-replay path.
   const liveLink = page.locator(".msg.user a.user-file").last();
@@ -39,16 +35,16 @@ test("uploaded files render as <a class=user-file>, download with original name,
   await expect(liveLink).toHaveAttribute("download", "notes.txt");
   await expect(liveLink).toHaveAttribute(
     "href",
-    /\/api\/v1\/sessions\/[^/]+\/attachments\/[^/?]+\?[^"]*sig=/,
+    /\/api\/v1\/tasks\/[^/]+\/attachments\/[^/?]+\?[^"]*sig=/,
   );
 
   await expect(page.locator(".msg.assistant").last()).toContainText(
     "Echo: look at this file",
   );
 
-  const sessionId = await currentSessionId(page);
+  const taskId = await currentTaskId(page);
   await page.reload();
-  await expect.poll(() => currentSessionId(page)).toBe(sessionId);
+  await expect.poll(() => currentTaskId(page)).toBe(taskId);
 
   // After reload, SSE replay re-renders the anchor independently. This
   // is the click-to-download surface.
@@ -59,7 +55,7 @@ test("uploaded files render as <a class=user-file>, download with original name,
   await expect(link).toHaveAttribute("target", "_blank");
   await expect(link).toHaveAttribute(
     "href",
-    /\/api\/v1\/sessions\/[^/]+\/attachments\/[^/?]+\?[^"]*sig=/,
+    /\/api\/v1\/tasks\/[^/]+\/attachments\/[^/?]+\?[^"]*sig=/,
   );
 
   // Pin the click-to-download contract: clicking the link triggers a

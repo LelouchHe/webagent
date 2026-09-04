@@ -5,7 +5,7 @@ import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Store } from "../src/store.ts";
-import { SessionManager } from "../src/session-manager.ts";
+import { TaskManager } from "../src/task-manager.ts";
 import { SseManager } from "../src/sse-manager.ts";
 import { createRequestHandler } from "../src/routes.ts";
 import type { ConfigOption } from "../src/types.ts";
@@ -120,9 +120,9 @@ function createMockBridge() {
   return {
     newSession: async () => {
       idCounter++;
-      return { sessionId: `mock-session-${idCounter}`, configOptions: [] };
+      return { sessionId: `mock-task-${idCounter}`, configOptions: [] };
     },
-    loadSession: async (sessionId: string) => ({ sessionId, configOptions }),
+    loadSession: async (_taskId: string) => ({ taskId: "", configOptions }),
     setConfigOption: async () => configOptions,
     cancel: async () => {},
     prompt: async () => {},
@@ -147,7 +147,7 @@ async function waitFor(
 
 describe("SSE REST API", () => {
   let store: Store;
-  let sessions: SessionManager;
+  let tasks: TaskManager;
   let sseManager: SseManager;
   let tmpDir: string;
   let publicDir: string;
@@ -163,13 +163,13 @@ describe("SSE REST API", () => {
     writeFileSync(join(publicDir, "index.html"), "<h1>Test</h1>");
 
     store = new Store(join(tmpDir, "test.db"), "test-agent");
-    sessions = new SessionManager(store, tmpDir, tmpDir);
+    tasks = new TaskManager(store, tmpDir, tmpDir);
     sseManager = new SseManager();
     mockBridge = createMockBridge();
 
     const handler = createRequestHandler({
       store,
-      sessions,
+      tasks,
       getBridge: () => mockBridge,
       publicDir,
       dataDir: tmpDir,
@@ -195,11 +195,11 @@ describe("SSE REST API", () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  async function createSession(): Promise<string> {
+  async function createTask(): Promise<string> {
     const res = await makeRequest(
       port,
       "POST",
-      "/api/v1/sessions",
+      "/api/v1/tasks",
       JSON.stringify({ cwd: tmpDir }),
     );
     return JSON.parse(res.body).id;
@@ -277,78 +277,78 @@ describe("SSE REST API", () => {
       assert.ok(connected.clientId.startsWith("cl-"));
     });
 
-    it("receives broadcast events from all sessions", async () => {
-      const id1 = await createSession();
-      const id2 = await createSession();
+    it("receives broadcast events from all tasks", async () => {
+      const id1 = await createTask();
+      const id2 = await createTask();
 
       const sse = openSse(port, "/api/v1/events/stream");
       sseCleanups.push(sse.close);
       await sse.response;
       await waitFor(() => sse.events.length >= 1); // connected event
 
-      // Broadcast events from different sessions
+      // Broadcast events from different tasks
       sseManager.broadcast({
         type: "message_chunk",
-        sessionId: id1,
+        taskId: id1,
         text: "hello",
       });
       sseManager.broadcast({
         type: "message_chunk",
-        sessionId: id2,
+        taskId: id2,
         text: "world",
       });
 
       await waitFor(() => sse.events.length >= 3);
       const events = sse.events.slice(1).map((e) => JSON.parse(e));
-      assert.equal(events[0].sessionId, id1);
-      assert.equal(events[1].sessionId, id2);
+      assert.equal(events[0].taskId, id1);
+      assert.equal(events[1].taskId, id2);
     });
   });
 
-  describe("GET /api/v1/sessions/:id/events/stream (per-session)", () => {
-    it("only receives events for its session", async () => {
-      const id1 = await createSession();
-      const id2 = await createSession();
+  describe("GET /api/v1/tasks/:id/events/stream (per-task)", () => {
+    it("only receives events for its task", async () => {
+      const id1 = await createTask();
+      const id2 = await createTask();
 
-      const sse = openSse(port, `/api/v1/sessions/${id1}/events/stream`);
+      const sse = openSse(port, `/api/v1/tasks/${id1}/events/stream`);
       sseCleanups.push(sse.close);
       await sse.response;
       await waitFor(() => sse.events.length >= 1);
 
-      // Broadcast events from both sessions
+      // Broadcast events from both tasks
       sseManager.broadcast({
         type: "message_chunk",
-        sessionId: id1,
+        taskId: id1,
         text: "mine",
       });
       sseManager.broadcast({
         type: "message_chunk",
-        sessionId: id2,
+        taskId: id2,
         text: "other",
       });
 
-      // Short wait to let any *erroneous* cross-session events leak through.
+      // Short wait to let any *erroneous* cross-task events leak through.
       // Both broadcasts are synchronous; a bug leaking id2 to id1 would be
       // observable within a tick. Keep short to avoid slowing the suite.
       await new Promise((r) => setTimeout(r, 20));
       // Should only have connected + the event for id1
       const dataEvents = sse.events.slice(1).map((e) => JSON.parse(e));
       assert.equal(dataEvents.length, 1);
-      assert.equal(dataEvents[0].sessionId, id1);
+      assert.equal(dataEvents[0].taskId, id1);
       assert.equal(dataEvents[0].text, "mine");
     });
 
-    it("returns 404 for unknown session", async () => {
+    it("returns 404 for unknown task", async () => {
       const res = await makeRequest(
         port,
         "GET",
-        "/api/v1/sessions/nonexistent/events/stream",
+        "/api/v1/tasks/nonexistent/events/stream",
       );
       assert.equal(res.status, 404);
     });
 
     it("replays events from Last-Event-ID", async () => {
-      const id = await createSession();
+      const id = await createTask();
 
       // Store some events
       store.saveEvent(
@@ -371,7 +371,7 @@ describe("SSE REST API", () => {
       );
 
       // Connect with Last-Event-ID pointing to evt2's seq
-      const sse = openSse(port, `/api/v1/sessions/${id}/events/stream`, {
+      const sse = openSse(port, `/api/v1/tasks/${id}/events/stream`, {
         lastEventId: String(evt2.seq),
       });
       sseCleanups.push(sse.close);
@@ -388,7 +388,7 @@ describe("SSE REST API", () => {
     });
 
     it("replays events with seq as SSE id", async () => {
-      const id = await createSession();
+      const id = await createTask();
       const evt1 = store.saveEvent(
         id,
         "user_message",
@@ -397,7 +397,7 @@ describe("SSE REST API", () => {
       );
 
       // Use Last-Event-ID=0 to get all events replayed with id: field
-      const sse = openSse(port, `/api/v1/sessions/${id}/events/stream`, {
+      const sse = openSse(port, `/api/v1/tasks/${id}/events/stream`, {
         lastEventId: "0",
       });
       sseCleanups.push(sse.close);
@@ -475,7 +475,7 @@ describe("SSE REST API", () => {
       assert.equal(res.status, 400);
     });
 
-    it("accepts optional sessionId in visibility update", async () => {
+    it("accepts optional taskId in visibility update", async () => {
       const sse = openSse(port, "/api/v1/events/stream");
       sseCleanups.push(sse.close);
       await sse.response;
@@ -486,7 +486,7 @@ describe("SSE REST API", () => {
         port,
         "POST",
         `/api/beta/clients/${clientId}/visibility`,
-        JSON.stringify({ visible: true, sessionId: "session-123" }),
+        JSON.stringify({ visible: true, taskId: "task-123" }),
       );
       assert.equal(res.status, 200);
       assert.deepEqual(JSON.parse(res.body), { ok: true });
@@ -528,7 +528,7 @@ describe("SSE REST API", () => {
     });
 
     describe("global broadcasts", () => {
-      it("delivers inbox count changes to session-scoped clients", () => {
+      it("delivers inbox count changes to task-scoped clients", () => {
         const sse = new SseManager();
         const chunks: string[] = [];
         const fakeRes = {
@@ -539,7 +539,7 @@ describe("SSE REST API", () => {
           },
           on() {},
         } as any;
-        sse.add({ id: "session-client", res: fakeRes, sessionId: "s1" });
+        sse.add({ id: "task-client", res: fakeRes, taskId: "s1" });
 
         sse.broadcastGlobal({
           type: "inbox_count_changed",

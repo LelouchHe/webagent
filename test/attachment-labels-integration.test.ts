@@ -5,15 +5,15 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 import { Store } from "../src/store.ts";
-import { SessionManager } from "../src/session-manager.ts";
+import { TaskManager } from "../src/task-manager.ts";
 import {
   enrichStoredEventsForDisplay,
   enrichEventForDisplay,
 } from "../src/attachment-labels.ts";
 
 /**
- * Integration test: the per-session label map from
- * SessionManager.getLabelMap, fed into the egress helpers, produces
+ * Integration test: the per-task label map from
+ * TaskManager.getLabelMap, fed into the egress helpers, produces
  * end-to-end enrichment for the replay path. Also covers the
  * F2-safety invariant (permission_request.rawInput stays raw).
  *
@@ -22,17 +22,17 @@ import {
  */
 describe("attachment-labels integration (replay egress)", () => {
   let store: Store;
-  let sm: SessionManager;
+  let sm: TaskManager;
   let tmpDir: string;
 
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), "webagent-att-int-"));
     store = new Store(tmpDir, "test-agent");
-    sm = new SessionManager(store, tmpDir, tmpDir);
-    store.createSession("s1", "/x");
+    sm = new TaskManager(store, tmpDir, tmpDir);
+    store.createTask("s1", "/x");
     store.insertAttachment({
       id: "abcd1234",
-      sessionId: "s1",
+      taskId: "s1",
       kind: "file",
       name: "report.pdf",
       mime: "application/pdf",
@@ -51,7 +51,7 @@ describe("attachment-labels integration (replay egress)", () => {
       "s1",
       "tool_call",
       {
-        sessionId: "s1",
+        taskId: "s1",
         id: "t1",
         title: "Read /data/uploads/s1/abcd1234.pdf",
         kind: "read",
@@ -74,7 +74,7 @@ describe("attachment-labels integration (replay egress)", () => {
       "s1",
       "tool_call",
       {
-        sessionId: "s1",
+        taskId: "s1",
         id: "t1",
         title: "Read /data/uploads/s1/abcd1234.pdf",
         kind: "read",
@@ -102,7 +102,7 @@ describe("attachment-labels integration (replay egress)", () => {
       "permission_request",
       {
         requestId: "r1",
-        sessionId: "s1",
+        taskId: "s1",
         title: "Allow read /data/uploads/s1/abcd1234.pdf",
         options: [],
         rawInput: { path: "/data/uploads/s1/abcd1234.pdf" },
@@ -135,7 +135,7 @@ describe("attachment-labels integration (replay egress)", () => {
       "s1",
       "user_message",
       {
-        sessionId: "s1",
+        taskId: "s1",
         text: "see /data/uploads/s1/abcd1234.pdf",
         attachments: [
           {
@@ -163,7 +163,7 @@ describe("attachment-labels integration (replay egress)", () => {
       "s1",
       "tool_call",
       {
-        sessionId: "s1",
+        taskId: "s1",
         id: "t1",
         title: "Read /Users/me/project/src/main.ts",
         kind: "read",
@@ -186,7 +186,7 @@ describe("attachment-labels integration (replay egress)", () => {
     // Insert a new attachment WITHOUT invalidating.
     store.insertAttachment({
       id: "ffff5678",
-      sessionId: "s1",
+      taskId: "s1",
       kind: "file",
       name: "newfile.txt",
       mime: "text/plain",
@@ -197,7 +197,7 @@ describe("attachment-labels integration (replay egress)", () => {
     const ev1 = enrichEventForDisplay(
       {
         type: "tool_call",
-        sessionId: "s1",
+        taskId: "s1",
         id: "t1",
         title: "Read /data/uploads/s1/ffff5678.txt",
         kind: "read",
@@ -212,7 +212,7 @@ describe("attachment-labels integration (replay egress)", () => {
     const ev2 = enrichEventForDisplay(
       {
         type: "tool_call",
-        sessionId: "s1",
+        taskId: "s1",
         id: "t1",
         title: "Read /data/uploads/s1/ffff5678.txt",
         kind: "read",

@@ -79,7 +79,7 @@ A burst of `message_chunk` events (common during fast token streaming) arrives f
 
 Turn boundaries (`tool_call`, `plan`, `prompt_done`, `finishAssistant`) **synchronously flush** any pending rAF so the rendered DOM is consistent before the next event is appended below it.
 
-Reset hooks (`resetSessionUI`, `_loadNewEventsImpl`, reconnect) cancel pending rAF so stale callbacks can't fire against a wiped DOM.
+Reset hooks (`resetTaskUI`, `_loadNewEventsImpl`, reconnect) cancel pending rAF so stale callbacks can't fire against a wiped DOM.
 
 ## Layer 2 — Incremental Lex
 
@@ -110,7 +110,7 @@ For each block from Layer 2:
 - **Cache miss**: render this block fresh via Layer 4, replace the corresponding DOM node, store `{raw, html}` in the per-message memo.
 - **Trailing blocks** (the agent's still-writing tail): always a miss until they stabilize. The "no-longer-tail" blocks become hits on the very next chunk.
 
-The memo is a `WeakMap<HTMLElement, BlockState[]>` keyed by the streaming message element, so it's GC'd automatically when the message DOM is removed (session switch, history prune).
+The memo is a `WeakMap<HTMLElement, BlockState[]>` keyed by the streaming message element, so it's GC'd automatically when the message DOM is removed (task switch, history prune).
 
 **Correctness invariant**: byte-equal output vs the legacy full-rerender `renderMd()`. Locked down by `test/markdown-stream-equivalence.test.ts` — 9 corpora including math fences, code fences, tables, nested lists, reference links.
 
@@ -221,7 +221,7 @@ DEBUG md-render slow   {                      // 8 < ms ≤ 16 → log.debug (pr
 - *Is prefix lex actually working?* — `lex.prefixLen / (lex.prefixLen + lex.tailLen)`. Steady-state should be ≥ 0.9. If you see `prefixBlocks: 0, tailLen ≈ len` mid-stream, the cache invariant broke (some earlier chunk mutated a stable block's raw).
 - *Is opt #2 fastpath firing?* — `fastPath / misses`. Steady-state for plain paragraphs should be ~1.0. If it's 0 while `misses > 0`, every miss block is going through `marked.parse(raw)` (double-lex) — check whether token-merging is over-triggering.
 - *Did mergeUnclosedBlocks combine anything?* — `tailRawBlocks - tailBlocks`. Should be 0 in healthy streams; > 0 means a fence or HTML element is straddling the chunk boundary.
-- *Did E2 reflink memo grow?* — `defsAbsorbed > 0` on a frame whose tail introduced a new `[label]: url` def. `linkMemoSize` only grows; check it resets to 0 on a fresh session.
+- *Did E2 reflink memo grow?* — `defsAbsorbed > 0` on a frame whose tail introduced a new `[label]: url` def. `linkMemoSize` only grows; check it resets to 0 on a fresh task.
 - *Cold start vs steady state?* — `seq < 5` is cold (first few chunks of a turn); higher seq numbers reflect steady state.
 
 **`missDetails[].path`** — which code path handled this miss block. Diagnostic for verifying dispatch routing (this field exists because we once misread "subHits=0, subMisses=0 on a list miss" as "sub-memo broken", when in fact the block had been block-cache-hit and never entered `renderMissBlock` at all):
@@ -253,7 +253,7 @@ A possible future optimization is "sealed-block incremental highlight" — call 
 - Mid-stream visual jump from plain → colored may be more distracting than a single transition at the turn boundary.
 - The win only materializes in "agent writes multiple code blocks interleaved with long prose" patterns. For "write code, stop" turns, the existing behavior already feels instant.
 
-If you do implement this, gate it behind a runtime flag and A/B against the current behavior on a representative session corpus.
+If you do implement this, gate it behind a runtime flag and A/B against the current behavior on a representative task corpus.
 
 ## What This Does Not Cover
 
@@ -297,7 +297,7 @@ This is deliberately not done because the path to fix it has poor ROI:
 | Signal | Meaning | Action |
 |---|---|---|
 | `lex.tail > 16ms` occasional | Already at 60Hz edge; guaranteed drop on 120Hz | Evaluate sub-block incremental lex / tree-sitter ROI |
-| `lex.tail > 16ms` steady-state in normal sessions (not stress) | Real users can perceive | Ship sub-block solution |
+| `lex.tail > 16ms` steady-state in normal tasks (not stress) | Real users can perceive | Ship sub-block solution |
 | `subList.hits + subList.misses !== items` (or `subTable.*` for tables) | Sub-memo invariant broken | Fix dispatch / cache key |
 | `path: "slowFallback"` frequent | Container build fell back | Fix `renderListBlock` / `renderTableBlock` |
 
@@ -315,7 +315,7 @@ Other known minor inefficiencies, kept as-is:
 | rAF coalescing, slow log             | `public/js/events.ts`                    | `scheduleAssistantRender`, `doAssistantRender`                               |
 | Per-message memo, lex cache, layers 2-6 | `public/js/markdown-stream.ts`         | `updateMarkdownStream`, `incrementalLex`, `mergeUnclosedBlocks`, `renderMissBlock`, `renderListBlock`, `renderTableBlock`, `listItemKey`, `sanitizeToFragment`, `MarkdownStreamTiming` |
 | Turn-boundary flush                  | `public/js/render.ts`                    | `finishAssistant`, `flushStreamingRender`                                    |
-| Memo reset hooks                     | `public/js/events.ts`, `connection.ts`   | `resetSessionUI`, reconnect handlers                                         |
+| Memo reset hooks                     | `public/js/events.ts`, `connection.ts`   | `resetTaskUI`, reconnect handlers                                         |
 | Byte-equal correctness lock          | `test/markdown-stream-equivalence.test.ts` | 9-corpus + opt-#2 fast-path equivalence vs full `marked.parse` + DOMPurify   |
 | Cache-hit regression lock            | `test/markdown-stream-cache.test.ts`     | Counter-based assertions: prefix-skip, block-memo hit rate, list/table sub-memo bounds, loose-flip rebuild |
 | Sync-contract guard                  | `test/markdown-stream.test.ts`           | All four layers must be synchronous; no microtask gaps in render path        |

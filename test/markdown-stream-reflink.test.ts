@@ -136,7 +136,7 @@ describe("updateMarkdownStream — reference-link memo across chunks", () => {
   });
 
   it("resetMarkdownStream clears link memo", () => {
-    // After reset, a reflink whose def was in the prior session must NOT
+    // After reset, a reflink whose def was in the prior task must NOT
     // resolve — otherwise the memo leaks across turns.
     const host = document.createElement("div");
     mod.updateMarkdownStream(host, "[1]: https://example.com\n");

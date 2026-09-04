@@ -141,11 +141,11 @@ describe("POST /api/v1/messages — ingress", () => {
     assert.equal(r.status, 400);
   });
 
-  it("400 when from_ref uses 'session:<id>' (reserved for auth)", async () => {
+  it("400 when from_ref uses 'task:<id>' (reserved for auth)", async () => {
     const r = await post(
       port,
       "/api/v1/messages",
-      baseBody({ from_ref: "session:abc" }),
+      baseBody({ from_ref: "task:abc" }),
     );
     assert.equal(r.status, 400);
   });
@@ -179,31 +179,31 @@ describe("POST /api/v1/messages — ingress", () => {
     });
   });
 
-  it("bound to=session:<id> with unknown session returns 400 session_not_found (no fallback to inbox)", async () => {
+  it("bound to=task:<id> with unknown task returns 400 task_not_found (no fallback to inbox)", async () => {
     const r = await post(
       port,
       "/api/v1/messages",
-      baseBody({ to: "session:no-such-sid" }),
+      baseBody({ to: "task:no-such-sid" }),
     );
     assert.equal(r.status, 400);
     const body = JSON.parse(r.body);
-    assert.equal(body.error, "session_not_found");
+    assert.equal(body.error, "task_not_found");
     // Must not leak into messages table
     assert.equal(store.listUnprocessed().length, 0);
   });
 
-  it("bound to=session:<existing> appends a message event to that session", async () => {
+  it("bound to=task:<existing> appends a message event to that task", async () => {
     const sid = "sess-target";
-    store.createSession(sid, "/tmp", "test");
+    store.createTask(sid, "/tmp", "test");
     const r = await post(
       port,
       "/api/v1/messages",
-      baseBody({ to: `session:${sid}` }),
+      baseBody({ to: `task:${sid}` }),
     );
     assert.equal(r.status, 200);
     const body = JSON.parse(r.body);
     assert.ok(body.id);
-    assert.equal(body.delivered, "session");
+    assert.equal(body.delivered, "task");
 
     // Bound never touches messages table
     assert.equal(store.getMessage(body.id), undefined);
@@ -211,7 +211,7 @@ describe("POST /api/v1/messages — ingress", () => {
     // An event was appended
     const events = store.getEvents(sid);
     const msgEvent = events.find((e) => e.type === "message");
-    assert.ok(msgEvent, "message event persisted in target session");
+    assert.ok(msgEvent, "message event persisted in target task");
     const parsedData = JSON.parse(msgEvent.data) as Record<string, unknown>;
     assert.equal(parsedData.message_id, body.id);
     assert.equal(parsedData.from_ref, "cron:nightly");

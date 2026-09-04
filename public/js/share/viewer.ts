@@ -1,11 +1,11 @@
-// Share viewer — read-only public viewer for a session snapshot.
+// Share viewer — read-only public viewer for a task snapshot.
 //
 // Renders content events through the SAME `renderContentEvent` module the
 // main app uses (public/js/render-event.ts), so the DOM produced here
 // matches the main UI exactly — same class names, same structure, same
 // styles.css selectors apply. The only differences are:
 //
-//  1. Image src: rewritten from `/api/v1/sessions/.../attachments/X` to
+//  1. Image src: rewritten from `/api/v1/tasks/.../attachments/X` to
 //     `/s/<token>/attachments/X` so unauthenticated viewers can fetch them.
 //  2. Permission buttons: rendered (so the conversation looks complete)
 //     but not wired to any onclick handler. Public viewers cannot act.
@@ -30,7 +30,7 @@ interface SharePayload {
   schema_version: string;
   share: {
     token: string;
-    session_title: string | null;
+    task_title: string | null;
     snapshot_seq: number;
     shared_at: string | null;
     display_name: string | null;
@@ -167,7 +167,7 @@ async function main(): Promise<void> {
   }
   const token = m[1];
 
-  const infoEl = document.getElementById("session-info");
+  const infoEl = document.getElementById("task-info");
   const messagesEl = document.getElementById("messages");
   const footerAuthorEl = document.querySelector(".share-footer-author");
   const footerMetaEl = document.querySelector(".share-footer-meta");
@@ -197,9 +197,9 @@ async function main(): Promise<void> {
     return;
   }
 
-  document.title = payload.share.session_title
-    ? `${payload.share.session_title} — shared`
-    : "shared session";
+  document.title = payload.share.task_title
+    ? `${payload.share.task_title} — shared`
+    : "shared task";
 
   if (infoEl) {
     // Header shows ONLY the title (already truncated on mobile).
@@ -207,7 +207,7 @@ async function main(): Promise<void> {
     // gets its own line on narrow screens via flex-wrap. The header
     // [shared] badge already conveys "this is a shared snapshot",
     // so the footer line is just `by <name>` (no repeated "shared").
-    infoEl.textContent = payload.share.session_title ?? "(untitled)";
+    infoEl.textContent = payload.share.task_title ?? "(untitled)";
   }
 
   if (footerAuthorEl) {

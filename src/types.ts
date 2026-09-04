@@ -1,7 +1,7 @@
 import type * as acp from "@agentclientprotocol/sdk";
 import { z } from "zod";
 
-// --- Config option (subset of ACP SessionConfigOption we care about) ---
+// --- Config option (subset of ACP TaskConfigOption we care about) ---
 
 export type ConfigValue = string | boolean;
 
@@ -32,10 +32,10 @@ export interface LogRecord {
   ts: number; // epoch ms
   level: "debug" | "info" | "warn" | "error";
   source: "client" | "server"; // v1 always 'client' (server-side bridge is future work)
-  scope?: string; // e.g. "push" or "session.event"
+  scope?: string; // e.g. "push" or "task.event"
   msg: string;
   args: string[]; // fields after safeStringify (cycle-safe, capped)
-  sessionId?: string;
+  taskId?: string;
 }
 
 /** Logger interface shared by frontend (and a future backend implementation). */
@@ -72,8 +72,8 @@ export type RawInput =
       file_text?: string | null;
     };
 
-/** Session summary returned by GET /api/v1/sessions. */
-export interface SessionSummary {
+/** Task summary returned by GET /api/v1/tasks. */
+export interface TaskSummary {
   id: string;
   cwd: string;
   title: string | null;
@@ -83,11 +83,11 @@ export interface SessionSummary {
   source: string;
   created_at: string;
   last_active_at: string;
-  parent_session_id: string | null;
+  parent_id: string | null;
 }
 
-/** Detailed session record returned by GET /api/v1/sessions/:id. */
-export interface SessionDetail {
+/** Detailed task record returned by GET /api/v1/tasks/:id. */
+export interface TaskDetail {
   id: string;
   cwd: string;
   cwdDisplay?: string;
@@ -95,14 +95,14 @@ export interface SessionDetail {
   source: string;
   model: string | null;
   mode: string | null;
-  parentSessionId: string | null;
+  parentId: string | null;
   configOptions: ConfigOption[];
 }
 
-/** Stored event row returned by GET /api/v1/sessions/:id/events. */
+/** Stored event row returned by GET /api/v1/tasks/:id/events. */
 export interface StoredEvent {
   id: number;
-  session_id: string;
+  task_id: string;
   seq: number;
   type: string;
   data: string;
@@ -112,7 +112,7 @@ export interface StoredEvent {
 /** Pending permission request tracked in memory. */
 export interface PendingPermission {
   requestId: string;
-  sessionId: string;
+  taskId: string;
   title: string;
   options: Array<{ optionId: string; label: string }>;
 }
@@ -141,8 +141,8 @@ export type AgentEvent =
       debugLevel?: string;
     }
   | {
-      type: "session_created";
-      sessionId: string;
+      type: "task_created";
+      taskId: string;
       cwd?: string;
       cwdDisplay?: string;
       title?: string | null;
@@ -152,21 +152,21 @@ export type AgentEvent =
     }
   | {
       type: "config_option_update";
-      sessionId: string;
+      taskId: string;
       configOptions: ConfigOption[];
     }
   | {
       type: "available_commands_update";
-      sessionId: string;
+      taskId: string;
       commands: AgentCommand[];
       epoch?: string;
       revision?: number;
     }
-  | { type: "message_chunk"; sessionId: string; text: string }
-  | { type: "thought_chunk"; sessionId: string; text: string }
+  | { type: "message_chunk"; taskId: string; text: string }
+  | { type: "thought_chunk"; taskId: string; text: string }
   | {
       type: "tool_call";
-      sessionId: string;
+      taskId: string;
       id: string;
       title: string;
       kind: string;
@@ -174,7 +174,7 @@ export type AgentEvent =
     }
   | {
       type: "tool_call_update";
-      sessionId: string;
+      taskId: string;
       id: string;
       status: string;
       content?: ToolContentItem[];
@@ -184,12 +184,12 @@ export type AgentEvent =
       rawOutput?: unknown;
       locations?: { path: string; line?: number | null }[];
     }
-  | { type: "plan"; sessionId: string; entries: PlanEntry[] }
-  | ({ type: "usage_update"; sessionId: string } & ContextUsage)
+  | { type: "plan"; taskId: string; entries: PlanEntry[] }
+  | ({ type: "usage_update"; taskId: string } & ContextUsage)
   | {
       type: "permission_request";
       requestId: string;
-      sessionId: string;
+      taskId: string;
       title: string;
       toolCallId?: string | null;
       options: acp.PermissionOption[];
@@ -203,26 +203,39 @@ export type AgentEvent =
     }
   | {
       type: "prompt_done";
-      sessionId: string;
+      taskId: string;
       stopReason: string;
       /** Turn this completion belongs to. Absent on events stored before
        *  turn identity existed; consumers must treat that as "unknown". */
       promptId?: string;
     }
-  | { type: "session_deleted"; sessionId: string }
-  | { type: "session_title_updated"; sessionId: string; title: string }
-  | { type: "session_expired"; sessionId: string }
+  | {
+      type: "task_deleted";
+      taskId: string;
+      /** Parent of the requested task, when the server can provide it. */
+      parentId?: string | null;
+      /** Correlates the initiating HTTP action with its SSE echo. */
+      clientOpId?: string;
+    }
+  | {
+      type: "task_reset";
+      taskId: string;
+      /** Correlates the initiating HTTP action with its SSE echo. */
+      clientOpId?: string;
+    }
+  | { type: "task_title_updated"; taskId: string; title: string }
+  | { type: "task_expired"; taskId: string }
   | {
       type: "error";
       message: string;
-      sessionId?: string;
+      taskId?: string;
       /** Turn this failure ends, when it came from a prompt. */
       promptId?: string;
     }
   // Events generated by the server (not the ACP agent)
   | {
       type: "user_message";
-      sessionId: string;
+      taskId: string;
       text: string;
       /** Request operation ID, generated by the server when the client omits it. */
       clientOpId?: string;
@@ -231,7 +244,7 @@ export type AgentEvent =
         attachmentId: string;
         displayName: string;
         mimeType: string;
-        // Owner-side base URL `/api/v1/sessions/<sid>/attachments/<file>`.
+        // Owner-side base URL `/api/v1/tasks/<sid>/attachments/<file>`.
         // Server-emitted only — clients posting /prompt must NOT include
         // this field; routes.ts strict-rejects uri/data/path on ingress.
         // reSignAttachmentUrlsInJson at egress appends ?sig=&exp= so the
@@ -245,36 +258,36 @@ export type AgentEvent =
     }
   | {
       type: "permission_response";
-      sessionId?: string;
+      taskId?: string;
       requestId: string;
       optionName: string;
       denied: boolean;
     }
   | { type: "config_set"; configId: string; value: ConfigValue }
-  | { type: "bash_command"; sessionId: string; command: string }
-  | { type: "bash_output"; sessionId: string; text: string; stream: string }
+  | { type: "bash_command"; taskId: string; command: string }
+  | { type: "bash_output"; taskId: string; text: string; stream: string }
   | {
       type: "bash_done";
-      sessionId: string;
+      taskId: string;
       code: number | null;
       signal: string | null;
       error?: string;
     }
-  // Server lifecycle events (no sessionId)
+  // Server lifecycle events (no taskId)
   | { type: "agent_reloading" }
   | { type: "agent_reloading_failed"; error: string }
   | { type: "agent_disconnected" }
-  // Per-session runtime state delta (broadcast to subscribed SSE clients)
+  // Per-task runtime state delta (broadcast to subscribed SSE clients)
   | {
       type: "state_patch";
-      sessionId: string;
+      taskId: string;
       seq: number;
-      patch: import("./session-state.ts").StatePatch;
+      patch: import("./task-state.ts").StatePatch;
     }
   // Inbox messages (Stage B primitive)
   | {
       type: "message";
-      sessionId: string;
+      taskId: string;
       message_id: string;
       from_ref: string;
       from_label: string | null;
@@ -283,22 +296,22 @@ export type AgentEvent =
       cwd: string | null;
     }
   | { type: "message_created"; messageId: string }
-  | { type: "message_consumed"; messageId: string; sessionId: string }
+  | { type: "message_consumed"; messageId: string; taskId: string }
   | { type: "message_acked"; messageId: string }
   | { type: "inbox_count_changed"; pendingCount: number }
   // Persisted assistant content; compact summaries may also be sent live.
   | {
       type: "assistant_message";
-      sessionId?: string;
+      taskId?: string;
       text: string;
       /** Present on live server-generated assistant messages. */
       seq?: number;
     }
   // Replay-only events (stored in DB, not sent live)
-  | { type: "thinking"; sessionId?: string; text: string }
+  | { type: "thinking"; taskId?: string; text: string }
   | {
       type: "bash_result";
-      sessionId?: string;
+      taskId?: string;
       output: string;
       code: number | null;
       signal: string | null;
@@ -366,10 +379,10 @@ const FROM_REF_ALLOWED = /^(cron|external):[A-Za-z0-9._\-+/]{1,120}$/;
 export const MessageIngressSchema = z.object({
   from_ref: z.string().min(1).max(128).regex(FROM_REF_ALLOWED, {
     message:
-      "from_ref must start with 'cron:' or 'external:' (reserved values and 'session:<id>' rejected in MVP)",
+      "from_ref must start with 'cron:' or 'external:' (reserved values and 'task:<id>' rejected in MVP)",
   }),
   from_label: z.string().max(64).optional(),
-  to: z.union([z.literal("user"), z.string().regex(/^session:[^\s]+$/)]),
+  to: z.union([z.literal("user"), z.string().regex(/^task:[^\s]+$/)]),
   deliver: z.enum(["silent", "inapp", "push"]).default("push"),
   dedup_key: z.string().max(128).optional(),
   title: z.string().min(1).max(256),

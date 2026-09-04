@@ -72,7 +72,7 @@ describe("enrichEventForDisplay", () => {
     it("rewrites title containing full realpath", () => {
       const ev: AgentEvent = {
         type: "tool_call",
-        sessionId: "s1",
+        taskId: "s1",
         id: "t1",
         title: "Read /data/uploads/s1/abc12345-1111.pdf",
         kind: "read",
@@ -85,7 +85,7 @@ describe("enrichEventForDisplay", () => {
     it("rewrites title containing basename only", () => {
       const ev: AgentEvent = {
         type: "tool_call",
-        sessionId: "s1",
+        taskId: "s1",
         id: "t1",
         title: "View abc12345-1111.pdf",
         kind: "read",
@@ -98,7 +98,7 @@ describe("enrichEventForDisplay", () => {
     it("title with multiple attachments rewrites all, longer key first", () => {
       const ev: AgentEvent = {
         type: "tool_call",
-        sessionId: "s1",
+        taskId: "s1",
         id: "t1",
         // basename "abc12345-1111.pdf" is a substring of the full
         // realpath; longer-first must replace path first so basename
@@ -118,7 +118,7 @@ describe("enrichEventForDisplay", () => {
     it("replaces rawInput.path on exact match", () => {
       const ev: AgentEvent = {
         type: "tool_call",
-        sessionId: "s1",
+        taskId: "s1",
         id: "t1",
         title: "Read x",
         kind: "read",
@@ -134,7 +134,7 @@ describe("enrichEventForDisplay", () => {
     it("leaves rawInput.path unchanged when not in map", () => {
       const ev: AgentEvent = {
         type: "tool_call",
-        sessionId: "s1",
+        taskId: "s1",
         id: "t1",
         title: "Read x",
         kind: "read",
@@ -149,7 +149,7 @@ describe("enrichEventForDisplay", () => {
     it("rawInput as string passes through (legacy schema)", () => {
       const ev: AgentEvent = {
         type: "tool_call",
-        sessionId: "s1",
+        taskId: "s1",
         id: "t1",
         title: "Run abc12345-1111.pdf",
         kind: "execute",
@@ -165,7 +165,7 @@ describe("enrichEventForDisplay", () => {
     it("missing rawInput passes through", () => {
       const ev: AgentEvent = {
         type: "tool_call",
-        sessionId: "s1",
+        taskId: "s1",
         id: "t1",
         title: "Plain title with no path",
         kind: "read",
@@ -178,7 +178,7 @@ describe("enrichEventForDisplay", () => {
     it("returns same reference when nothing matches", () => {
       const ev: AgentEvent = {
         type: "tool_call",
-        sessionId: "s1",
+        taskId: "s1",
         id: "t1",
         title: "ls /tmp",
         kind: "execute",
@@ -194,7 +194,7 @@ describe("enrichEventForDisplay", () => {
       const ev: AgentEvent = {
         type: "permission_request",
         requestId: "r1",
-        sessionId: "s1",
+        taskId: "s1",
         title: "Allow read of /data/uploads/s1/abc12345-1111.pdf",
         options: [],
         rawInput: { path: "/data/uploads/s1/abc12345-1111.pdf" },
@@ -209,7 +209,7 @@ describe("enrichEventForDisplay", () => {
       const ev: AgentEvent = {
         type: "permission_request",
         requestId: "r1",
-        sessionId: "s1",
+        taskId: "s1",
         title: "Allow read of /data/uploads/s1/abc12345-1111.pdf",
         options: [],
         rawInput: original,
@@ -234,7 +234,7 @@ describe("enrichEventForDisplay", () => {
       const ev: AgentEvent = {
         type: "permission_request",
         requestId: "r1",
-        sessionId: "s1",
+        taskId: "s1",
         title: "x",
         options: [],
         locations,
@@ -248,7 +248,7 @@ describe("enrichEventForDisplay", () => {
       const ev: AgentEvent = {
         type: "permission_request",
         requestId: "r1",
-        sessionId: "s1",
+        taskId: "s1",
         title: "Allow ls /tmp",
         options: [],
       };
@@ -260,7 +260,7 @@ describe("enrichEventForDisplay", () => {
     it("user_message is not modified even with attachments", () => {
       const ev: AgentEvent = {
         type: "user_message",
-        sessionId: "s1",
+        taskId: "s1",
         text: "see /data/uploads/s1/abc12345-1111.pdf",
         attachments: [
           {
@@ -277,7 +277,7 @@ describe("enrichEventForDisplay", () => {
     it("message_chunk passes through", () => {
       const ev: AgentEvent = {
         type: "message_chunk",
-        sessionId: "s1",
+        taskId: "s1",
         text: "abc12345-1111.pdf",
       };
       assert.equal(enrichEventForDisplay(ev, fixedMap()), ev);
@@ -286,7 +286,7 @@ describe("enrichEventForDisplay", () => {
     it("prompt_done passes through", () => {
       const ev: AgentEvent = {
         type: "prompt_done",
-        sessionId: "s1",
+        taskId: "s1",
         stopReason: "end_turn",
       };
       assert.equal(enrichEventForDisplay(ev, fixedMap()), ev);
@@ -297,7 +297,7 @@ describe("enrichEventForDisplay", () => {
     it("returns same reference for any event", () => {
       const ev: AgentEvent = {
         type: "tool_call",
-        sessionId: "s1",
+        taskId: "s1",
         id: "t1",
         title: "Read /any/path.pdf",
         kind: "read",
@@ -311,7 +311,7 @@ describe("enrichEventForDisplay", () => {
     it("does not mutate the input event", () => {
       const ev: AgentEvent = {
         type: "tool_call",
-        sessionId: "s1",
+        taskId: "s1",
         id: "t1",
         title: "Read /data/uploads/s1/abc12345-1111.pdf",
         kind: "read",
@@ -327,7 +327,7 @@ describe("enrichEventForDisplay", () => {
 describe("enrichStoredEventDataForDisplay", () => {
   it("rewrites tool_call data JSON", () => {
     const data = JSON.stringify({
-      sessionId: "s1",
+      taskId: "s1",
       id: "t1",
       title: "Read /data/uploads/s1/abc12345-1111.pdf",
       kind: "read",
@@ -344,7 +344,7 @@ describe("enrichStoredEventDataForDisplay", () => {
   it("rewrites permission_request title only, not rawInput", () => {
     const data = JSON.stringify({
       requestId: "r1",
-      sessionId: "s1",
+      taskId: "s1",
       title: "Allow read /data/uploads/s1/abc12345-1111.pdf",
       options: [],
       rawInput: { path: "/data/uploads/s1/abc12345-1111.pdf" },
@@ -365,7 +365,7 @@ describe("enrichStoredEventDataForDisplay", () => {
 
   it("returns original string when nothing matches", () => {
     const data = JSON.stringify({
-      sessionId: "s1",
+      taskId: "s1",
       id: "t1",
       title: "ls /tmp",
       kind: "execute",
@@ -390,7 +390,7 @@ describe("enrichStoredEventDataForDisplay", () => {
 
   it("returns input unchanged when map is empty", () => {
     const data = JSON.stringify({
-      sessionId: "s1",
+      taskId: "s1",
       id: "t1",
       title: "Read /data/uploads/s1/abc12345-1111.pdf",
       kind: "read",

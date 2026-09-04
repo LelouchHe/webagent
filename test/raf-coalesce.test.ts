@@ -161,16 +161,16 @@ describe("rAF-coalesced streaming render", () => {
   });
 
   describe("invariant: guards leave token null", () => {
-    it("resetSessionUI cancels pending rAF", async () => {
+    it("resetTaskUI cancels pending rAF", async () => {
       events.handleEvent({ type: "message_chunk", text: "data" });
       events.handleEvent({ type: "message_chunk", text: " more" });
       assert.notEqual(state.assistantRafToken, null);
       const stateMod = await import("../public/js/state.ts");
-      stateMod.resetSessionUI();
+      stateMod.resetTaskUI();
       assert.equal(
         state.assistantRafToken,
         null,
-        "resetSessionUI must clear rAF token",
+        "resetTaskUI must clear rAF token",
       );
     });
 
@@ -206,21 +206,21 @@ describe("rAF-coalesced streaming render", () => {
 
   describe("primeStreamingState invariant guard", () => {
     it("does not crash when streaming state is rebuilt after reset", async () => {
-      events.handleEvent({ type: "message_chunk", text: "old session" });
+      events.handleEvent({ type: "message_chunk", text: "old task" });
       events.handleEvent({ type: "message_chunk", text: " tail" });
       assert.notEqual(state.assistantRafToken, null);
       const stateMod = await import("../public/js/state.ts");
-      stateMod.resetSessionUI();
+      stateMod.resetTaskUI();
       assert.equal(state.assistantRafToken, null);
 
-      // New session: chunks arm rAF and drain cleanly.
-      events.handleEvent({ type: "message_chunk", text: "new session" });
+      // New task: chunks arm rAF and drain cleanly.
+      events.handleEvent({ type: "message_chunk", text: "new task" });
       events.handleEvent({ type: "message_chunk", text: " continued" });
       assert.notEqual(state.assistantRafToken, null);
       await nextFrame();
       const txt = (state.currentAssistantEl as HTMLElement).textContent || "";
-      assert.ok(txt.includes("new session"));
-      assert.ok(!txt.includes("old session"));
+      assert.ok(txt.includes("new task"));
+      assert.ok(!txt.includes("old task"));
     });
   });
 });

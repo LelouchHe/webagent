@@ -1,13 +1,13 @@
 import { test, expect } from "playwright/test";
 import {
-  createNewSession,
-  currentSessionId,
+  createNewTask,
+  currentTaskId,
   expectConnectionStatus,
   gotoConnected,
   sendPrompt,
 } from "./helpers.ts";
 
-test("SSE reconnect keeps the same session without duplicating history", async ({
+test("SSE reconnect keeps the same task without duplicating history", async ({
   page,
 }) => {
   await page.addInitScript(() => {
@@ -22,14 +22,14 @@ test("SSE reconnect keeps the same session without duplicating history", async (
   });
 
   await gotoConnected(page);
-  await createNewSession(page);
+  await createNewTask(page);
 
   await sendPrompt(page, "survive a reconnect");
   await expect(page.locator(".msg.assistant").last()).toContainText(
     "Echo: survive a reconnect",
   );
 
-  const sessionId = await currentSessionId(page);
+  const taskId = await currentTaskId(page);
 
   // Simulate SSE connection drop: trigger the onerror handler which runs cleanup + schedules reconnect
   await page.evaluate(() => {
@@ -39,7 +39,7 @@ test("SSE reconnect keeps the same session without duplicating history", async (
 
   await expectConnectionStatus(page, "disconnected");
   await expectConnectionStatus(page, "connected", { timeout: 15_000 });
-  await expect.poll(() => currentSessionId(page)).toBe(sessionId);
+  await expect.poll(() => currentTaskId(page)).toBe(taskId);
   await expect(page.locator(".msg.user")).toHaveCount(1);
   await expect(page.locator(".msg.assistant")).toHaveCount(1);
   await expect(page.locator(".msg.user").last()).toHaveText(
@@ -65,7 +65,7 @@ test("SSE reconnect recovers a reply completed while the stream was down", async
   });
 
   await gotoConnected(page);
-  await createNewSession(page);
+  await createNewTask(page);
 
   await sendPrompt(page, "completed during reconnect");
   await page.evaluate(() => {

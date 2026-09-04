@@ -44,10 +44,10 @@ export const ConfigSchema = z.object({
       global_visibility_suppression: true,
     }),
 
-  // [title] — title generation sub-session configuration.
+  // [title] — title generation sub-task configuration.
   //
   // `models` is an array of case-insensitive substring patterns. When the
-  // title sub-session is created, we look at the model list the agent
+  // title sub-task is created, we look at the model list the agent
   // reports (ACP `availableModels`) and pick the first model whose id
   // matches any pattern in order. Match → call `setConfigOption` with
   // that model id; no match → skip the call and inherit the agent's
@@ -93,7 +93,7 @@ export const ConfigSchema = z.object({
     })
     .default({ unprocessed_ttl_days: 30 }),
 
-  // [share] — public read-only session share links.
+  // [share] — public read-only task share links.
   // Default: disabled. Dogfood manually flips `enabled = true` after
   // CF Access bypass + Rate Limiting are configured. See docs/share.md.
   //   enabled        — master kill switch; when false, all share routes

@@ -10,10 +10,10 @@ SQLite (`better-sqlite3`), Zod, and esbuild.
 - `server.ts` — HTTP server bootstrap
 - `routes.ts` — static files, REST API, and uploads
 - `event-handler.ts` — ACP event routing and SSE broadcast
-- `session-manager.ts` — live sessions, buffers, bash processes, and model cache
+- `task-manager.ts` — live tasks, buffers, bash processes, and model cache
 - `bridge.ts` — ACP agent subprocess lifecycle
 - `store.ts` — SQLite persistence
-- `title-service.ts` — asynchronous session title generation
+- `title-service.ts` — asynchronous task title generation
 - `push-service.ts` — Web Push delivery and visibility suppression
 - `daemon.ts` — background service management
 - `types.ts` — shared types and validation schemas
@@ -55,7 +55,7 @@ schema and operations guide.
   class.
 - Frontend runtime code uses `public/js/log.ts`; backend runtime code uses
   `src/log.ts`. Keep the documented bootstrap/operator exemptions only.
-- New sessions may inherit the saved model but always start in agent mode.
+- New tasks may inherit the saved model but always start in agent mode.
 - Keep repository instructions and documentation self-contained. Do not depend
   on untracked personal configuration or machine-specific paths.
 
@@ -70,9 +70,10 @@ Locate and read only the sections relevant to the task.
 | Frontend lifecycle and reconciliation | [`docs/client-architecture.md`](./docs/client-architecture.md) |
 | ACP surface and agent compatibility | [`docs/acp.md`](./docs/acp.md) |
 | Upload, attachment, and signed-URL lifecycle | [`docs/uploads.md`](./docs/uploads.md) |
+| Vocabulary and naming contract | [`docs/vocabulary.md`](./docs/vocabulary.md) |
 | Security model and CSP invariants | [`docs/security.md`](./docs/security.md) |
 | Streaming render performance | [`docs/performance.md`](./docs/performance.md) |
-| Database schema and migrations | [`docs/schema.md`](./docs/schema.md) |
+| Database schema and pre-1.0 reset policy | [`docs/schema.md`](./docs/schema.md) |
 | Development, testing, and publishing | [`docs/development.md`](./docs/development.md) |
 
 The full documentation index is in [`README.md`](./README.md).
@@ -94,4 +95,4 @@ Publishing uses the `v*` tag workflow documented in
 
 ## TODO
 
-- Add multi-client integration coverage for session-created broadcast guards.
+- Add multi-client integration coverage for task-created broadcast guards.

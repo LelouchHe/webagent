@@ -19,12 +19,12 @@
 - Paste images from clipboard (non-image clipboard items must use the file picker)
 - Preview before sending + removable, supports multiple files; images get an inline thumbnail and other files render as a name chip
 - Streaming multipart upload — no base64 in the browser
-- Server-side storage under `<data_dir>/sessions/<sid>/attachments/`, classified as `image` or `file` from sniffed MIME (drives size cap and per-prompt auto-approve gating)
+- Server-side storage under `<data_dir>/tasks/<sid>/attachments/`, classified as `image` or `file` from sniffed MIME (drives size cap and per-prompt auto-approve gating)
 - Image attachments are referenced by `attachmentId` in the wire protocol; the browser never sees raw bytes after upload, and the server resolves the on-disk path itself
 
 ## File Viewer
 
-- `/view` opens a live picker rooted at the current session cwd; type a path to
+- `/view` opens a live picker rooted at the current task cwd; type a path to
   filter, tap a folder to enter one level, or use the `..` row to go back
 - Absolute `/...` and `~/...` paths can browse anywhere available to the
   single-operator WebAgent process
@@ -43,18 +43,18 @@
 - Real-time output streaming (stderr in red)
 - Collapsible output with exit code display
 - Cancel running processes
-- Cancel is session-scoped inside WebAgent: it requests cancellation of the current ACP turn and stops WebAgent-owned session work (like local `!` bash), but it cannot stop host-level tasks started outside the WebAgent server/runtime
+- Cancel is task-scoped inside WebAgent: it requests cancellation of the current ACP turn and stops WebAgent-owned task work (like local `!` bash), but it cannot stop host-level tasks started outside the WebAgent server/runtime
 - Agent cancellation remains visibly pending until the agent acknowledges it. If acknowledgement times out, the cancel button stays retryable instead of reporting a false success.
-- An unconfirmed agent cancel can also be recovered with `/reload`, which restarts the shared agent bridge and interrupts in-flight work in every session. On POSIX, repeating cancel for a still-running local bash process escalates from `SIGINT` to `SIGKILL`; Windows uses forced `taskkill` immediately.
+- An unconfirmed agent cancel can also be recovered with `/reload`, which restarts the shared agent bridge and interrupts in-flight work in every task. On POSIX, repeating cancel for a still-running local bash process escalates from `SIGINT` to `SIGKILL`; Windows uses forced `taskkill` immediately.
 
-## Session Management
+## Task Management
 
-- Auto-resumes last session on page open, no manual switching needed
-- After server restart, restores session context via ACP `loadSession` so conversations can continue
+- Auto-resumes last task on page open, no manual switching needed
+- After server restart, restores task context via ACP `loadTask` so conversations can continue
 - Auto-generated titles (async, using a fast model)
-- Session history persisted in SQLite, survives restarts
-- `/switch` lists all sessions (git-branch style, `*` marks current in green)
-- Switching sessions replays full message history
+- Task history persisted in SQLite, survives restarts
+- `/switch` lists all tasks (git-branch style, `*` marks current in green)
+- Switching tasks replays full message history
 
 ## Slash Commands
 
@@ -71,21 +71,21 @@ Commands with submenus (`/model`, `/mode`, `/think`, `/notify`, `/switch`, `/new
 | Command               | Description                                                                                                                   |
 | --------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
 | `/help` (or `?`)      | Show help                                                                                                                     |
-| `/new [cwd]`          | Create new session — shows recent paths picker (paths persist across session exits, auto-cleaned by TTL)                      |
+| `/new [cwd]`          | Create child task under the current task — shows recent paths picker (paths persist across task exits, auto-cleaned by TTL) |
 | `/model [name]`       | Switch model (fuzzy match, e.g. `/model opus`)                                                                                |
 | `/mode [name]`        | Switch mode (Agent / Plan / Autopilot)                                                                                        |
 | `/think [level]`      | Set thinking effort (low / medium / high)                                                                                     |
 | `/notify [on\|off]`   | Toggle push notifications                                                                                                     |
-| `/inbox`              | Manage inbox — pick a pending message to consume (opens a new session), or use `/inbox dismiss` to ack it. See [Messages / Inbox](messages.md). |
+| `/inbox`              | Manage inbox — pick a pending message to consume (opens a new task), or use `/inbox dismiss` to ack it. See [Messages / Inbox](messages.md). |
 | `/log [level]`        | Set local log level (`off`, `debug`, `info`, `warn`, `error`, `reset`). Log records render inline as system messages.         |
-| `/plan [show\|hide]`  | Toggle, show, or hide the current pinned plan panel                                                                           |
+| `/plan [show\|hide\|toggle]`  | Toggle, show, or hide the current pinned plan panel                                                                           |
 | `/cancel`             | Cancel current response                                                                                                       |
-| `/clear [cwd]`        | Clear current session and start fresh, optionally in another cwd (model/think inherited)                                      |
+| `/clear [cwd]`        | Clear current context while keeping task history, optionally in another cwd (model/think inherited)                 |
 | `/compact`            | Summarize the current conversation; the visible history stays and the next message continues with a compacted context         |
 | `/reset`              | Reset local frontend state for this device (keeps login token)                                                                |
-| `/switch <title\|id>` | Switch session (match by title or ID prefix)                                                                                  |
-| `/rename <new title>` | Rename session                                                                                                                |
-| `/exit`               | End current session (delete + switch to previous)                                                                             |
+| `/switch <title\|id>` | Switch task (match by title or ID prefix)                                                                                  |
+| `/rename <new title>` | Rename task                                                                                                                |
+| `/exit`               | End current task and return to its parent; on Root, reset Root and delete its descendant tree                            |
 | `/reload`             | Reload agent subprocess (pick up CLI upgrades, new skills)                                                                    |
 | `/logout`             | Log out — clear local token and return to login page                                                                          |
 | `/token`              | Manage API tokens (list, create, revoke) — see [Auth & Security](security.md)                                                 |
@@ -98,8 +98,8 @@ Type `?` for inline help listing all commands and shortcuts.
 
 Agent commands are agent-specific: they are advertised and implemented by the
 current Agent, not by WebAgent. Type `//` to see the commands available for the
-current session. WebAgent sends the selected command as a normal Agent turn, so
-it cannot run while that session is busy. Command names, arguments, and behavior
+current task. WebAgent sends the selected command as a normal Agent turn, so
+it cannot run while that task is busy. Command names, arguments, and behavior
 may differ between Agent implementations or versions.
 
 WebAgent stores and displays the original `//command` text, then converts it to
@@ -110,9 +110,9 @@ Some commands may conflict with WebAgent's own state or may not work fully when
 they depend on CLI-only UI or behavior that ACP does not expose. WebAgent can
 synchronize a change only when the Agent reports it through ACP. For example,
 model changes normally arrive through a configuration update and appear in the
-status bar. ACP currently has no session working-directory update, so an Agent
+status bar. ACP currently has no task working-directory update, so an Agent
 command that changes cwd can leave the Agent's internal cwd different from
-WebAgent's status bar, local `!` bash cwd, persisted session cwd, and
+WebAgent's status bar, local `!` bash cwd, persisted task cwd, and
 restart/restore cwd. Prefer WebAgent's local command when an equivalent exists;
 otherwise treat the Agent command as an agent-side operation whose effects may
 not be reflected everywhere in WebAgent.

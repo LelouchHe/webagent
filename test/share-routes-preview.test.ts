@@ -7,7 +7,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { Store } from "../src/store.ts";
 import { handleShareRoutes, type ShareRouteDeps } from "../src/share/routes.ts";
 import type { Config } from "../src/config.ts";
-import type { SessionManager } from "../src/session-manager.ts";
+import type { TaskManager } from "../src/task-manager.ts";
 
 interface MockRes {
   res: ServerResponse;
@@ -87,7 +87,7 @@ const enabledCfg: Config["share"] = {
   internal_hosts: [],
 };
 
-function makeSessionsMock(opts?: { busy?: boolean }): Partial<SessionManager> {
+function makeTasksMock(opts?: { busy?: boolean }): Partial<TaskManager> {
   return {
     getBusyKind(_id: string) {
       return opts?.busy ? "agent" : null;
@@ -100,19 +100,19 @@ function makeSessionsMock(opts?: { busy?: boolean }): Partial<SessionManager> {
   };
 }
 
-describe("share preview routes — POST /api/v1/sessions/:id/share", () => {
+describe("share preview routes — POST /api/v1/tasks/:id/share", () => {
   let tmpDir: string;
   let store: Store;
   let deps: ShareRouteDeps;
-  const sessionId = "sess-1";
+  const taskId = "sess-1";
 
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), "wa-share-routes-"));
     store = new Store(tmpDir, "test-agent");
-    store.createSession(sessionId, "/tmp/project");
+    store.createTask(taskId, "/tmp/project");
     deps = {
       store,
-      sessions: makeSessionsMock() as SessionManager,
+      tasks: makeTasksMock() as TaskManager,
       config: enabledCfg,
     };
   });
@@ -122,21 +122,21 @@ describe("share preview routes — POST /api/v1/sessions/:id/share", () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("404 when session does not exist", async () => {
+  it("404 when task does not exist", async () => {
     const m = mockRes();
     await handleShareRoutes(
-      mockReq("/api/v1/sessions/ghost/share", "POST", { body: {} }),
+      mockReq("/api/v1/tasks/ghost/share", "POST", { body: {} }),
       m.res,
       deps,
     );
     assert.equal(m.status(), 404);
   });
 
-  it("409 when session is busy with agent", async () => {
-    deps.sessions = makeSessionsMock({ busy: true }) as SessionManager;
+  it("409 when task is busy with agent", async () => {
+    deps.tasks = makeTasksMock({ busy: true }) as TaskManager;
     const m = mockRes();
     await handleShareRoutes(
-      mockReq(`/api/v1/sessions/${sessionId}/share`, "POST", { body: {} }),
+      mockReq(`/api/v1/tasks/${taskId}/share`, "POST", { body: {} }),
       m.res,
       deps,
     );
@@ -146,7 +146,7 @@ describe("share preview routes — POST /api/v1/sessions/:id/share", () => {
   it("201 on first create; dedupes to 200 on second", async () => {
     // seed an event so snapshot_seq > 0
     store.saveEvent(
-      sessionId,
+      taskId,
       "assistant_message",
       { text: "hello" },
       { from_ref: "agent" },
@@ -154,7 +154,7 @@ describe("share preview routes — POST /api/v1/sessions/:id/share", () => {
 
     const m1 = mockRes();
     await handleShareRoutes(
-      mockReq(`/api/v1/sessions/${sessionId}/share`, "POST", { body: {} }),
+      mockReq(`/api/v1/tasks/${taskId}/share`, "POST", { body: {} }),
       m1.res,
       deps,
     );
@@ -170,7 +170,7 @@ describe("share preview routes — POST /api/v1/sessions/:id/share", () => {
 
     const m2 = mockRes();
     await handleShareRoutes(
-      mockReq(`/api/v1/sessions/${sessionId}/share`, "POST", { body: {} }),
+      mockReq(`/api/v1/tasks/${taskId}/share`, "POST", { body: {} }),
       m2.res,
       deps,
     );
@@ -182,7 +182,7 @@ describe("share preview routes — POST /api/v1/sessions/:id/share", () => {
 
   it("400 when sanitize hard-rejects an event (private key)", async () => {
     store.saveEvent(
-      sessionId,
+      taskId,
       "assistant_message",
       {
         text: "key:\n-----BEGIN OPENSSH PRIVATE KEY-----\nabc\n-----END-----",
@@ -191,7 +191,7 @@ describe("share preview routes — POST /api/v1/sessions/:id/share", () => {
     );
     const m = mockRes();
     await handleShareRoutes(
-      mockReq(`/api/v1/sessions/${sessionId}/share`, "POST", { body: {} }),
+      mockReq(`/api/v1/tasks/${taskId}/share`, "POST", { body: {} }),
       m.res,
       deps,
     );
@@ -200,13 +200,13 @@ describe("share preview routes — POST /api/v1/sessions/:id/share", () => {
     assert.equal(b.rule, "private_key");
     assert.ok(typeof b.event_id === "number");
     // And no preview row created (partial unique index unscarred).
-    assert.equal(store.findActivePreviewBySession(sessionId), undefined);
+    assert.equal(store.findActivePreviewByTask(taskId), undefined);
   });
 
   it("accepts optional body fields (ttl_hours clamping, display_name, owner_label)", async () => {
     const m = mockRes();
     await handleShareRoutes(
-      mockReq(`/api/v1/sessions/${sessionId}/share`, "POST", {
+      mockReq(`/api/v1/tasks/${taskId}/share`, "POST", {
         body: { ttl_hours: 500, display_name: "Alice", owner_label: "demo" },
       }),
       m.res,
@@ -226,7 +226,7 @@ describe("share preview routes — POST /api/v1/sessions/:id/share", () => {
   it("ttl_hours=0 passes through (never expires)", async () => {
     const m = mockRes();
     await handleShareRoutes(
-      mockReq(`/api/v1/sessions/${sessionId}/share`, "POST", {
+      mockReq(`/api/v1/tasks/${taskId}/share`, "POST", {
         body: { ttl_hours: 0 },
       }),
       m.res,
@@ -238,7 +238,7 @@ describe("share preview routes — POST /api/v1/sessions/:id/share", () => {
 
   it("concurrent requests serialize — second sees dedup", async () => {
     store.saveEvent(
-      sessionId,
+      taskId,
       "assistant_message",
       { text: "x" },
       { from_ref: "agent" },
@@ -247,12 +247,12 @@ describe("share preview routes — POST /api/v1/sessions/:id/share", () => {
     const m2 = mockRes();
     await Promise.all([
       handleShareRoutes(
-        mockReq(`/api/v1/sessions/${sessionId}/share`, "POST", { body: {} }),
+        mockReq(`/api/v1/tasks/${taskId}/share`, "POST", { body: {} }),
         m1.res,
         deps,
       ),
       handleShareRoutes(
-        mockReq(`/api/v1/sessions/${sessionId}/share`, "POST", { body: {} }),
+        mockReq(`/api/v1/tasks/${taskId}/share`, "POST", { body: {} }),
         m2.res,
         deps,
       ),
@@ -272,7 +272,7 @@ describe("share preview routes — POST /api/v1/sessions/:id/share", () => {
   it("V3: rejects bidi override in display_name at preview create (not silently dropped)", async () => {
     const m = mockRes();
     await handleShareRoutes(
-      mockReq(`/api/v1/sessions/${sessionId}/share`, "POST", {
+      mockReq(`/api/v1/tasks/${taskId}/share`, "POST", {
         body: { display_name: "evil\u202etxt" },
       }),
       m.res,
@@ -282,13 +282,13 @@ describe("share preview routes — POST /api/v1/sessions/:id/share", () => {
     const b = m.body() as { error: string };
     assert.match(b.error, /bidi override/);
     // And no preview row created.
-    assert.equal(store.findActivePreviewBySession(sessionId), undefined);
+    assert.equal(store.findActivePreviewByTask(taskId), undefined);
   });
 
   it("V3: rejects control char in owner_label at preview create", async () => {
     const m = mockRes();
     await handleShareRoutes(
-      mockReq(`/api/v1/sessions/${sessionId}/share`, "POST", {
+      mockReq(`/api/v1/tasks/${taskId}/share`, "POST", {
         body: { owner_label: "line1\x00line2" },
       }),
       m.res,
@@ -302,7 +302,7 @@ describe("share preview routes — POST /api/v1/sessions/:id/share", () => {
     const m = mockRes();
     // 𝕏 is 4 UTF-8 bytes, × 65 = 260 bytes > 256
     await handleShareRoutes(
-      mockReq(`/api/v1/sessions/${sessionId}/share`, "POST", {
+      mockReq(`/api/v1/tasks/${taskId}/share`, "POST", {
         body: { display_name: "𝕏".repeat(65) },
       }),
       m.res,
@@ -313,20 +313,20 @@ describe("share preview routes — POST /api/v1/sessions/:id/share", () => {
   });
 });
 
-describe("share preview routes — GET /api/v1/sessions/:id/share/preview", () => {
+describe("share preview routes — GET /api/v1/tasks/:id/share/preview", () => {
   let tmpDir: string;
   let store: Store;
   let deps: ShareRouteDeps;
-  const sessionId = "sess-1";
+  const taskId = "sess-1";
 
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), "wa-share-preview-"));
     store = new Store(tmpDir, "test-agent");
-    store.createSession(sessionId, "/tmp/project");
-    store.updateSessionTitle(sessionId, "Test session");
+    store.createTask(taskId, "/tmp/project");
+    store.updateTaskTitle(taskId, "Test task");
     deps = {
       store,
-      sessions: makeSessionsMock() as SessionManager,
+      tasks: makeTasksMock() as TaskManager,
       config: enabledCfg,
     };
   });
@@ -339,7 +339,7 @@ describe("share preview routes — GET /api/v1/sessions/:id/share/preview", () =
   it("400 when X-Share-Token header is missing", async () => {
     const m = mockRes();
     await handleShareRoutes(
-      mockReq(`/api/v1/sessions/${sessionId}/share/preview`, "GET"),
+      mockReq(`/api/v1/tasks/${taskId}/share/preview`, "GET"),
       m.res,
       deps,
     );
@@ -349,7 +349,7 @@ describe("share preview routes — GET /api/v1/sessions/:id/share/preview", () =
   it("404 when token unknown", async () => {
     const m = mockRes();
     await handleShareRoutes(
-      mockReq(`/api/v1/sessions/${sessionId}/share/preview`, "GET", {
+      mockReq(`/api/v1/tasks/${taskId}/share/preview`, "GET", {
         headers: { "x-share-token": "nosuchtoken" },
       }),
       m.res,
@@ -360,7 +360,7 @@ describe("share preview routes — GET /api/v1/sessions/:id/share/preview", () =
 
   it("200 returns sanitized events + staleness metadata", async () => {
     store.saveEvent(
-      sessionId,
+      taskId,
       "assistant_message",
       {
         text: "cd /tmp/project/src",
@@ -370,7 +370,7 @@ describe("share preview routes — GET /api/v1/sessions/:id/share/preview", () =
     // Create preview
     const m0 = mockRes();
     await handleShareRoutes(
-      mockReq(`/api/v1/sessions/${sessionId}/share`, "POST", { body: {} }),
+      mockReq(`/api/v1/tasks/${taskId}/share`, "POST", { body: {} }),
       m0.res,
       deps,
     );
@@ -378,7 +378,7 @@ describe("share preview routes — GET /api/v1/sessions/:id/share/preview", () =
 
     // Add one more event AFTER snapshot
     store.saveEvent(
-      sessionId,
+      taskId,
       "assistant_message",
       { text: "stale event" },
       { from_ref: "agent" },
@@ -386,7 +386,7 @@ describe("share preview routes — GET /api/v1/sessions/:id/share/preview", () =
 
     const m = mockRes();
     await handleShareRoutes(
-      mockReq(`/api/v1/sessions/${sessionId}/share/preview`, "GET", {
+      mockReq(`/api/v1/tasks/${taskId}/share/preview`, "GET", {
         headers: { "x-share-token": token },
       }),
       m.res,
@@ -417,7 +417,7 @@ describe("share preview routes — GET /api/v1/sessions/:id/share/preview", () =
   it("409 when share already active", async () => {
     const m0 = mockRes();
     await handleShareRoutes(
-      mockReq(`/api/v1/sessions/${sessionId}/share`, "POST", { body: {} }),
+      mockReq(`/api/v1/tasks/${taskId}/share`, "POST", { body: {} }),
       m0.res,
       deps,
     );
@@ -425,7 +425,7 @@ describe("share preview routes — GET /api/v1/sessions/:id/share/preview", () =
     store.activateShare(token);
     const m = mockRes();
     await handleShareRoutes(
-      mockReq(`/api/v1/sessions/${sessionId}/share/preview`, "GET", {
+      mockReq(`/api/v1/tasks/${taskId}/share/preview`, "GET", {
         headers: { "x-share-token": token },
       }),
       m.res,
@@ -437,7 +437,7 @@ describe("share preview routes — GET /api/v1/sessions/:id/share/preview", () =
   it("404 when share revoked (hard-deleted)", async () => {
     const m0 = mockRes();
     await handleShareRoutes(
-      mockReq(`/api/v1/sessions/${sessionId}/share`, "POST", { body: {} }),
+      mockReq(`/api/v1/tasks/${taskId}/share`, "POST", { body: {} }),
       m0.res,
       deps,
     );
@@ -445,7 +445,7 @@ describe("share preview routes — GET /api/v1/sessions/:id/share/preview", () =
     store.revokeShare(token);
     const m = mockRes();
     await handleShareRoutes(
-      mockReq(`/api/v1/sessions/${sessionId}/share/preview`, "GET", {
+      mockReq(`/api/v1/tasks/${taskId}/share/preview`, "GET", {
         headers: { "x-share-token": token },
       }),
       m.res,

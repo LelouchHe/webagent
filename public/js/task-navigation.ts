@@ -1,13 +1,13 @@
-import { ApiError, consumeMessage, getSession } from "./api.ts";
+import { ApiError, consumeMessage, getTask } from "./api.ts";
 import { HTTP_STATUS } from "../../src/http-status.ts";
 import { drainNavigationEvents, handleEvent, loadHistory } from "./events.ts";
 import { addSystem, scrollToBottom } from "./render.ts";
 import {
-  hydrateSessionRuntime,
-  finishNewSessionRequest,
-  requestBootstrapSession,
-  resetSessionUI,
-  setHashSessionId,
+  hydrateTaskRuntime,
+  finishNewTaskRequest,
+  requestBootstrapTask,
+  resetTaskUI,
+  setHashTaskId,
   state,
 } from "./state.ts";
 
@@ -19,64 +19,59 @@ export type NavigationResult =
   | "terminal-error";
 
 export interface NotificationTarget {
-  sessionId?: string;
+  taskId?: string;
   messageId?: string;
 }
 
 const MESSAGE_QUERY_KEY = "message";
 let attemptedStartupMessageId: string | null = null;
 
-export async function switchToSession(
-  sessionId: string,
-): Promise<NavigationResult> {
+export async function switchToTask(taskId: string): Promise<NavigationResult> {
   state.messageNavigationGen++;
-  if (state.sessionId === sessionId) return "unchanged";
-  state.sessionSwitchGen++;
-  const generation = state.sessionSwitchGen;
-  const previousSessionId = state.sessionId;
-  finishNewSessionRequest();
-  state.awaitingNewSession = false;
-  state.pendingNavigationSessionId = null;
+  if (state.taskId === taskId) return "unchanged";
+  state.taskSwitchGen++;
+  const generation = state.taskSwitchGen;
+  const previousTaskId = state.taskId;
+  finishNewTaskRequest();
+  state.awaitingNewTask = false;
+  state.pendingNavigationTaskId = null;
   state.pendingNavigationEvents = [];
-  setHashSessionId(sessionId);
-  resetSessionUI();
-  state.sessionId = null;
-  state.pendingNavigationSessionId = sessionId;
+  setHashTaskId(taskId);
+  resetTaskUI();
+  state.taskId = null;
+  state.pendingNavigationTaskId = taskId;
   const isCurrentNavigation = () =>
-    generation === state.sessionSwitchGen &&
-    state.pendingNavigationSessionId === sessionId;
+    generation === state.taskSwitchGen &&
+    state.pendingNavigationTaskId === taskId;
 
   try {
-    const [session, loaded] = await Promise.all([
-      getSession(sessionId),
-      loadHistory(sessionId),
+    const [task, loaded] = await Promise.all([
+      getTask(taskId),
+      loadHistory(taskId),
     ]);
     if (!isCurrentNavigation()) return "ignored";
-    const hydrated = await hydrateSessionRuntime(
-      sessionId,
-      isCurrentNavigation,
-    );
+    const hydrated = await hydrateTaskRuntime(taskId, isCurrentNavigation);
     if (!hydrated) {
       if (!isCurrentNavigation()) return "ignored";
-      throw new Error("Failed to hydrate session snapshot");
+      throw new Error("Failed to hydrate task snapshot");
     }
     if (!isCurrentNavigation()) return "ignored";
     handleEvent({
-      type: "session_created",
-      sessionId: session.id,
-      cwd: session.cwd,
-      cwdDisplay: session.cwdDisplay,
-      title: session.title,
-      configOptions: session.configOptions,
+      type: "task_created",
+      taskId: task.id,
+      cwd: task.cwd,
+      cwdDisplay: task.cwdDisplay,
+      title: task.title,
+      configOptions: task.configOptions,
     });
-    drainNavigationEvents(sessionId);
+    drainNavigationEvents(taskId);
     if (loaded) scrollToBottom(true);
     return "switched";
   } catch (error) {
     if (isCurrentNavigation()) {
-      resetSessionUI();
-      state.sessionId = null;
-      if (previousSessionId) setHashSessionId(previousSessionId);
+      resetTaskUI();
+      state.taskId = null;
+      if (previousTaskId) setHashTaskId(previousTaskId);
     }
     throw error;
   }
@@ -86,20 +81,20 @@ export async function consumeAndSwitch(
   messageId: string,
 ): Promise<NavigationResult> {
   const generation = ++state.messageNavigationGen;
-  const result = await consumeMessage(messageId, state.sessionId);
+  const result = await consumeMessage(messageId, state.taskId);
   if (generation !== state.messageNavigationGen) return "ignored";
   addSystem(
     result.alreadyConsumed
-      ? `inbox: already consumed → switching to ${result.sessionId}`
-      : `inbox: opened as ${result.sessionId}`,
+      ? `inbox: already consumed → switching to ${result.taskId}`
+      : `inbox: opened as ${result.taskId}`,
   );
-  return switchToSession(result.sessionId);
+  return switchToTask(result.taskId);
 }
 
 export async function navigateFromNotification(
   target: NotificationTarget,
 ): Promise<NavigationResult> {
-  if (target.sessionId) return switchToSession(target.sessionId);
+  if (target.taskId) return switchToTask(target.taskId);
   if (target.messageId) return consumeAndSwitch(target.messageId);
   return "ignored";
 }
@@ -131,7 +126,7 @@ export async function processStartupMessageIntent(): Promise<NavigationResult> {
         error.status === HTTP_STATUS.NOT_FOUND);
     if (terminal) {
       clearStartupMessageIntent();
-      if (!state.sessionId) requestBootstrapSession();
+      if (!state.taskId) requestBootstrapTask();
     }
     const message = error instanceof Error ? error.message : String(error);
     addSystem(`err: notification consume failed (${message})`);

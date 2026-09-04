@@ -1,7 +1,7 @@
 // REST API client for all server communication.
 // Replaces WebSocket message sends with typed fetch calls.
 
-import type { SessionDetail, SessionSummary } from "../../src/types.ts";
+import type { TaskDetail, TaskSummary } from "../../src/types.ts";
 
 export class ApiError extends Error {
   name = "ApiError";
@@ -16,7 +16,7 @@ export class ApiError extends Error {
  * Ceiling for a single request. Without one, a stalled connection (mobile
  * handoff, suspended runtime) leaves the promise pending indefinitely — the
  * browser's own network timeout is not guaranteed and can be minutes. Callers
- * downstream latch state on those promises (the replay gate, the per-session
+ * downstream latch state on those promises (the replay gate, the per-task
  * inflight map, the SSE reconnect chain), so a request that never settles is
  * indistinguishable from a hung app.
  */
@@ -111,56 +111,76 @@ export function newOpId(): string {
   );
 }
 
-// --- Session CRUD ---
+// --- Task CRUD ---
 
-export function createSession(
+export function createTask(
   opts?: {
     cwd?: string;
-    inheritFromSessionId?: string | null;
+    inheritFromTaskId?: string | null;
+    parentId?: string | null;
   },
   clientOpId?: string,
 ): Promise<Record<string, unknown>> {
   const body: Record<string, unknown> = {};
   if (opts?.cwd) body.cwd = opts.cwd;
-  if (opts?.inheritFromSessionId)
-    body.inheritFromSessionId = opts.inheritFromSessionId;
-  return post("/api/v1/sessions", body, clientOpId);
+  if (opts?.inheritFromTaskId) body.inheritFromTaskId = opts.inheritFromTaskId;
+  if (opts?.parentId) body.parentId = opts.parentId;
+  return post("/api/v1/tasks", body, clientOpId);
 }
 
-export function bootstrapSession(
+export function bootstrapTask(
   clientOpId?: string,
 ): Promise<Record<string, unknown>> {
   const headers: Record<string, string> = {};
   if (clientOpId) headers["X-Client-Op-Id"] = clientOpId;
-  return request("/api/v1/sessions/bootstrap", {
+  return request("/api/v1/tasks/bootstrap", {
     method: "POST",
     headers,
   });
 }
 
-export function clearSession(
+export function clearTask(
   id: string,
   opts?: { cwd?: string },
 ): Promise<Record<string, unknown>> {
   const body: Record<string, unknown> = {};
   if (opts?.cwd) body.cwd = opts.cwd;
-  return post("/api/v1/sessions/" + id + "/clear", body);
+  return post("/api/v1/tasks/" + id + "/clear", body);
 }
 
-export function compactSession(id: string): Promise<Record<string, unknown>> {
-  return post("/api/v1/sessions/" + id + "/compact", {});
+export function compactTask(id: string): Promise<Record<string, unknown>> {
+  return post("/api/v1/tasks/" + id + "/compact", {});
 }
 
-export function deleteSession(id: string): Promise<void> {
-  return request("/api/v1/sessions/" + id, { method: "DELETE" });
+export interface DeleteTaskResult {
+  taskId: string;
+  parentId?: string | null;
+  reset?: boolean;
+  clientOpId?: string;
 }
 
-export function listSessions(): Promise<SessionSummary[]> {
-  return request("/api/v1/sessions");
+export async function deleteTask(
+  id: string,
+): Promise<DeleteTaskResult | undefined> {
+  const clientOpId = newOpId();
+  const result = await request<DeleteTaskResult | undefined>(
+    "/api/v1/tasks/" + id,
+    {
+      method: "DELETE",
+      headers: { "X-Client-Op-Id": clientOpId },
+    },
+  );
+  return result
+    ? { ...result, clientOpId: result.clientOpId ?? clientOpId }
+    : result;
 }
 
-export function getSession(id: string): Promise<SessionDetail> {
-  return request("/api/v1/sessions/" + id);
+export function listTasks(): Promise<TaskSummary[]> {
+  return request("/api/v1/tasks");
+}
+
+export function getTask(id: string): Promise<TaskDetail> {
+  return request("/api/v1/tasks/" + id);
 }
 
 // --- File viewer ---
@@ -204,7 +224,7 @@ export function listFiles(path: string): Promise<FileListResponse> {
 
 /** client-server-split M1: fetch the current runtime snapshot. */
 export function getSnapshot(id: string): Promise<Record<string, unknown>> {
-  return request("/api/v1/sessions/" + id + "/snapshot");
+  return request("/api/v1/tasks/" + id + "/snapshot");
 }
 
 // --- Prompt ---
@@ -217,14 +237,14 @@ export interface AttachmentRefForSend {
 }
 
 export function sendMessage(
-  sessionId: string,
+  taskId: string,
   text: string,
   attachments?: AttachmentRefForSend[],
   clientOpId = newOpId(),
 ): Promise<unknown> {
   const body: Record<string, unknown> = { text };
   if (attachments?.length) body.attachments = attachments;
-  return post("/api/v1/sessions/" + sessionId + "/prompt", body, clientOpId);
+  return post("/api/v1/tasks/" + taskId + "/prompt", body, clientOpId);
 }
 
 // --- Cancel ---
@@ -234,30 +254,30 @@ export interface CancelResult {
   status: "cancelling" | "cancelled" | "idle" | "superseded";
 }
 
-export function cancelSession(sessionId: string): Promise<CancelResult> {
-  return post("/api/v1/sessions/" + sessionId + "/cancel", {}, newOpId());
+export function cancelTask(taskId: string): Promise<CancelResult> {
+  return post("/api/v1/tasks/" + taskId + "/cancel", {}, newOpId());
 }
 
 // --- Permissions ---
 
 export function resolvePermission(
-  sessionId: string,
+  taskId: string,
   requestId: string,
   optionId: string,
 ): Promise<void> {
   return post(
-    "/api/v1/sessions/" + sessionId + "/permissions/" + requestId,
+    "/api/v1/tasks/" + taskId + "/permissions/" + requestId,
     { optionId },
     newOpId(),
   );
 }
 
 export function denyPermission(
-  sessionId: string,
+  taskId: string,
   requestId: string,
 ): Promise<void> {
   return post(
-    "/api/v1/sessions/" + sessionId + "/permissions/" + requestId,
+    "/api/v1/tasks/" + taskId + "/permissions/" + requestId,
     { denied: true },
     newOpId(),
   );
@@ -266,21 +286,21 @@ export function denyPermission(
 // --- Config ---
 
 export function setConfig(
-  sessionId: string,
+  taskId: string,
   configId: string,
   value: string | boolean,
 ): Promise<void> {
   const urlId = configId.replace(/_/g, "-");
   const path = typeof value === "boolean" ? "config/" + urlId : urlId;
-  return request("/api/v1/sessions/" + sessionId + "/" + path, {
+  return request("/api/v1/tasks/" + taskId + "/" + path, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ value }),
   });
 }
 
-export function setTitle(sessionId: string, title: string): Promise<void> {
-  return request("/api/v1/sessions/" + sessionId + "/title", {
+export function setTitle(taskId: string, title: string): Promise<void> {
+  return request("/api/v1/tasks/" + taskId + "/title", {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ value: title }),
@@ -289,12 +309,12 @@ export function setTitle(sessionId: string, title: string): Promise<void> {
 
 // --- Bash ---
 
-export function execBash(sessionId: string, command: string): Promise<unknown> {
-  return post("/api/v1/sessions/" + sessionId + "/bash", { command });
+export function execBash(taskId: string, command: string): Promise<unknown> {
+  return post("/api/v1/tasks/" + taskId + "/bash", { command });
 }
 
-export function cancelBash(sessionId: string): Promise<void> {
-  return post("/api/v1/sessions/" + sessionId + "/bash/cancel", {});
+export function cancelBash(taskId: string): Promise<void> {
+  return post("/api/v1/tasks/" + taskId + "/bash/cancel", {});
 }
 
 // --- Visibility ---
@@ -302,10 +322,10 @@ export function cancelBash(sessionId: string): Promise<void> {
 export function postVisibility(
   clientId: string,
   visible: boolean,
-  sessionId?: string,
+  taskId?: string,
 ): Promise<void> {
   const body: Record<string, unknown> = { visible };
-  if (sessionId) body.sessionId = sessionId;
+  if (taskId) body.taskId = taskId;
   return post(
     "/api/beta/clients/" + clientId + "/visibility",
     body,
@@ -316,8 +336,8 @@ export function postVisibility(
 
 // --- Status ---
 
-export function getStatus(sessionId: string): Promise<Record<string, unknown>> {
-  return request("/api/v1/sessions/" + sessionId + "/status");
+export function getStatus(taskId: string): Promise<Record<string, unknown>> {
+  return request("/api/v1/tasks/" + taskId + "/status");
 }
 
 // --- Bridge ---
@@ -358,10 +378,10 @@ export function listMessages(): Promise<{ messages: InboxMessage[] }> {
 
 export function consumeMessage(
   id: string,
-  inheritFromSessionId?: string | null,
-): Promise<{ sessionId: string; alreadyConsumed: boolean }> {
+  inheritFromTaskId?: string | null,
+): Promise<{ taskId: string; alreadyConsumed: boolean }> {
   return post(`/api/v1/messages/${encodeURIComponent(id)}/consume`, {
-    ...(inheritFromSessionId ? { inheritFromSessionId } : {}),
+    ...(inheritFromTaskId ? { inheritFromTaskId } : {}),
   });
 }
 

@@ -3,20 +3,20 @@ import assert from "node:assert/strict";
 import { TitleService } from "../src/title-service.ts";
 
 describe("TitleService", () => {
-  it("creates a silent title session, cleans the title, and caches the session", async () => {
-    const titleUpdates: Array<{ sessionId: string; title: string }> = [];
-    const internalSessions: string[] = [];
+  it("creates a silent title task, cleans the title, and caches the task", async () => {
+    const titleUpdates: Array<{ taskId: string; title: string }> = [];
+    const internalTasks: string[] = [];
     const store = {
-      registerInternalAgentSession(sessionId: string) {
-        internalSessions.push(sessionId);
+      registerInternalAgentSession(taskId: string) {
+        internalTasks.push(taskId);
       },
-      updateSessionTitle(sessionId: string, title: string) {
-        titleUpdates.push({ sessionId, title });
+      updateTaskTitle(taskId: string, title: string) {
+        titleUpdates.push({ taskId, title });
       },
     };
-    const sessions = {
-      sessionHasTitle: new Set<string>(),
-      liveSessions: new Set<string>(),
+    const tasks = {
+      taskHasTitle: new Set<string>(),
+      liveTasks: new Set<string>(),
     };
     const bridgeCalls = {
       newSession: [] as any[],
@@ -27,7 +27,7 @@ describe("TitleService", () => {
       async newSession(cwd: string, opts: any) {
         bridgeCalls.newSession.push({ cwd, opts });
         return {
-          sessionId: "title-session",
+          sessionId: "title-task",
           configOptions: [
             {
               type: "select",
@@ -43,57 +43,61 @@ describe("TitleService", () => {
         };
       },
       async setAgentConfigOption(
-        sessionId: string,
+        taskId: string,
         configId: string,
         value: string,
       ) {
-        bridgeCalls.setAgentConfigOption.push({ sessionId, configId, value });
+        bridgeCalls.setAgentConfigOption.push({
+          sessionId: taskId,
+          configId,
+          value,
+        });
       },
-      async promptForText(sessionId: string, prompt: string) {
-        bridgeCalls.promptForText.push({ sessionId, prompt });
+      async promptForText(taskId: string, prompt: string) {
+        bridgeCalls.promptForText.push({ sessionId: taskId, prompt });
         return `"  A very useful title that is definitely too long  "`;
       },
     };
-    const service = new TitleService(store as any, sessions as any, "/repo", [
+    const service = new TitleService(store as any, tasks as any, "/repo", [
       "claude-haiku-4.5",
     ]);
 
     const title = await (service as any)._generate(
       bridge,
       "hello world",
-      "session-1",
+      "task-1",
     );
 
     assert.equal(title, "A very useful title that is de");
     assert.deepEqual(titleUpdates, [
-      { sessionId: "session-1", title: "A very useful title that is de" },
+      { taskId: "task-1", title: "A very useful title that is de" },
     ]);
-    assert.ok(sessions.sessionHasTitle.has("session-1"));
-    assert.deepEqual(internalSessions, ["title-session"]);
-    assert.ok(!sessions.liveSessions.has("title-session"));
+    assert.ok(tasks.taskHasTitle.has("task-1"));
+    assert.deepEqual(internalTasks, ["title-task"]);
+    assert.ok(!tasks.liveTasks.has("title-task"));
     assert.deepEqual(bridgeCalls.newSession, [
       { cwd: "/repo", opts: { silent: true } },
     ]);
     assert.deepEqual(bridgeCalls.setAgentConfigOption, [
       {
-        sessionId: "title-session",
+        sessionId: "title-task",
         configId: "model",
         value: "claude-haiku-4.5",
       },
     ]);
 
-    await (service as any)._generate(bridge, "another message", "session-2");
+    await (service as any)._generate(bridge, "another message", "task-2");
     assert.equal(bridgeCalls.newSession.length, 1);
   });
 
   it("skips setAgentConfigOption when modelPatterns is empty (inherit currentModelId)", async () => {
     const store = {
       registerInternalAgentSession() {},
-      updateSessionTitle() {},
+      updateTaskTitle() {},
     };
-    const sessions = {
-      sessionHasTitle: new Set<string>(),
-      liveSessions: new Set<string>(),
+    const tasks = {
+      taskHasTitle: new Set<string>(),
+      liveTasks: new Set<string>(),
     };
     const bridgeCalls = {
       setAgentConfigOption: [] as Array<{
@@ -104,7 +108,7 @@ describe("TitleService", () => {
     const bridge = {
       async newSession() {
         return {
-          sessionId: "title-session",
+          sessionId: "title-task",
           configOptions: [
             {
               type: "select",
@@ -116,8 +120,8 @@ describe("TitleService", () => {
           ],
         };
       },
-      async setAgentConfigOption(sessionId: string, configId: string) {
-        bridgeCalls.setAgentConfigOption.push({ sessionId, configId });
+      async setAgentConfigOption(taskId: string, configId: string) {
+        bridgeCalls.setAgentConfigOption.push({ sessionId: taskId, configId });
         return [];
       },
       async promptForText() {
@@ -125,14 +129,9 @@ describe("TitleService", () => {
       },
     };
     // Empty patterns = skip setAgentConfigOption (inherit agent's currentModelId).
-    const service = new TitleService(
-      store as any,
-      sessions as any,
-      "/repo",
-      [],
-    );
+    const service = new TitleService(store as any, tasks as any, "/repo", []);
 
-    await (service as any)._generate(bridge, "hello", "session-1");
+    await (service as any)._generate(bridge, "hello", "task-1");
 
     assert.deepEqual(
       bridgeCalls.setAgentConfigOption,
@@ -144,11 +143,11 @@ describe("TitleService", () => {
   it("picks first matching model by case-insensitive substring (cheap-tier preference)", async () => {
     const store = {
       registerInternalAgentSession() {},
-      updateSessionTitle() {},
+      updateTaskTitle() {},
     };
-    const sessions = {
-      sessionHasTitle: new Set<string>(),
-      liveSessions: new Set<string>(),
+    const tasks = {
+      taskHasTitle: new Set<string>(),
+      liveTasks: new Set<string>(),
     };
     const bridgeCalls = {
       setAgentConfigOption: [] as Array<{
@@ -161,7 +160,7 @@ describe("TitleService", () => {
       async newSession() {
         // Codex+litellm style: capitalized id, "Mini" suffix means cheap.
         return {
-          sessionId: "title-session",
+          sessionId: "title-task",
           configOptions: [
             {
               type: "select",
@@ -179,11 +178,15 @@ describe("TitleService", () => {
         };
       },
       async setAgentConfigOption(
-        sessionId: string,
+        taskId: string,
         configId: string,
         value: string,
       ) {
-        bridgeCalls.setAgentConfigOption.push({ sessionId, configId, value });
+        bridgeCalls.setAgentConfigOption.push({
+          sessionId: taskId,
+          configId,
+          value,
+        });
         return [];
       },
       async promptForText() {
@@ -191,7 +194,7 @@ describe("TitleService", () => {
       },
     };
     // Default pattern list (cheap-tier suffixes).
-    const service = new TitleService(store as any, sessions as any, "/repo", [
+    const service = new TitleService(store as any, tasks as any, "/repo", [
       "haiku",
       "flash-lite",
       "nano",
@@ -200,14 +203,14 @@ describe("TitleService", () => {
       "lite",
     ]);
 
-    await (service as any)._generate(bridge, "hello", "session-1");
+    await (service as any)._generate(bridge, "hello", "task-1");
 
     // "mini" matches "GPT-5.4-Mini" (case-insensitive). "haiku"/"flash-lite"/
     // "nano" come earlier in the pattern list but don't match any option, so
     // we walk down to "mini".
     assert.deepEqual(bridgeCalls.setAgentConfigOption, [
       {
-        sessionId: "title-session",
+        sessionId: "title-task",
         configId: "model",
         value: "GPT-5.4-Mini",
       },
@@ -217,11 +220,11 @@ describe("TitleService", () => {
   it("falls back to currentModelId (no setAgentConfigOption) when no pattern matches", async () => {
     const store = {
       registerInternalAgentSession() {},
-      updateSessionTitle() {},
+      updateTaskTitle() {},
     };
-    const sessions = {
-      sessionHasTitle: new Set<string>(),
-      liveSessions: new Set<string>(),
+    const tasks = {
+      taskHasTitle: new Set<string>(),
+      liveTasks: new Set<string>(),
     };
     const bridgeCalls = {
       setAgentConfigOption: [] as any[],
@@ -229,7 +232,7 @@ describe("TitleService", () => {
     const bridge = {
       async newSession() {
         return {
-          sessionId: "title-session",
+          sessionId: "title-task",
           configOptions: [
             {
               type: "select",
@@ -252,27 +255,27 @@ describe("TitleService", () => {
         return `"hi"`;
       },
     };
-    const service = new TitleService(store as any, sessions as any, "/repo", [
+    const service = new TitleService(store as any, tasks as any, "/repo", [
       "haiku",
       "mini",
       "flash",
     ]);
 
-    await (service as any)._generate(bridge, "hello", "session-1");
+    await (service as any)._generate(bridge, "hello", "task-1");
 
     assert.deepEqual(bridgeCalls.setAgentConfigOption, []);
   });
 
-  it("swallows title-session setup failure and returns nothing", async () => {
+  it("swallows title-task setup failure and returns nothing", async () => {
     const store = {
       registerInternalAgentSession() {},
-      updateSessionTitle() {
+      updateTaskTitle() {
         throw new Error("should not be called");
       },
     };
-    const sessions = {
-      sessionHasTitle: new Set<string>(),
-      liveSessions: new Set<string>(),
+    const tasks = {
+      taskHasTitle: new Set<string>(),
+      liveTasks: new Set<string>(),
     };
     const bridge = {
       async newSession() {
@@ -283,44 +286,40 @@ describe("TitleService", () => {
         throw new Error("should not be called");
       },
     };
-    const service = new TitleService(store as any, sessions as any, "/repo", [
+    const service = new TitleService(store as any, tasks as any, "/repo", [
       "claude-haiku-4.5",
     ]);
 
-    const title = await (service as any)._generate(
-      bridge,
-      "hello",
-      "session-1",
-    );
+    const title = await (service as any)._generate(bridge, "hello", "task-1");
 
     assert.equal(title, undefined);
-    assert.equal(sessions.sessionHasTitle.size, 0);
+    assert.equal(tasks.taskHasTitle.size, 0);
   });
 
   it("generate calls the callback only when a title is produced", async () => {
     const store = {
       registerInternalAgentSession() {},
-      updateSessionTitle() {},
+      updateTaskTitle() {},
     };
-    const sessions = {
-      sessionHasTitle: new Set<string>(),
-      liveSessions: new Set<string>(),
+    const tasks = {
+      taskHasTitle: new Set<string>(),
+      liveTasks: new Set<string>(),
     };
     const bridge = {
       async newSession() {
-        return { sessionId: "title-session", configOptions: [] };
+        return { sessionId: "title-task", configOptions: [] };
       },
       async setAgentConfigOption() {},
       async promptForText() {
         return "Generated";
       },
     };
-    const service = new TitleService(store as any, sessions as any, "/repo", [
+    const service = new TitleService(store as any, tasks as any, "/repo", [
       "claude-haiku-4.5",
     ]);
     const titles: string[] = [];
 
-    service.generate(bridge as any, "hello", "session-1", (title) =>
+    service.generate(bridge as any, "hello", "task-1", (title) =>
       titles.push(title),
     );
     await new Promise((resolve) => setImmediate(resolve));
@@ -328,20 +327,20 @@ describe("TitleService", () => {
     assert.deepEqual(titles, ["Generated"]);
   });
 
-  it("cancels title generation only for the matching source session", async () => {
+  it("cancels title generation only for the matching source task", async () => {
     const store = {
       registerInternalAgentSession() {},
-      updateSessionTitle() {},
+      updateTaskTitle() {},
     };
-    const sessions = {
-      sessionHasTitle: new Set<string>(),
-      liveSessions: new Set<string>(),
+    const tasks = {
+      taskHasTitle: new Set<string>(),
+      liveTasks: new Set<string>(),
     };
     const cancelCalls: string[] = [];
     let releasePrompt: ((value: string) => void) | null = null;
     const bridge = {
       async newSession() {
-        return { sessionId: "title-session", configOptions: [] };
+        return { sessionId: "title-task", configOptions: [] };
       },
       async setAgentConfigOption() {},
       async promptForText() {
@@ -349,40 +348,40 @@ describe("TitleService", () => {
           releasePrompt = resolve;
         });
       },
-      async cancelAgentSession(sessionId: string) {
-        cancelCalls.push(sessionId);
+      async cancelAgentSession(taskId: string) {
+        cancelCalls.push(taskId);
         releasePrompt?.("");
       },
     };
-    const service = new TitleService(store as any, sessions as any, "/repo", [
+    const service = new TitleService(store as any, tasks as any, "/repo", [
       "claude-haiku-4.5",
     ]);
 
-    service.generate(bridge as any, "hello", "session-1");
+    service.generate(bridge as any, "hello", "task-1");
     await new Promise((resolve) => setImmediate(resolve));
-    service.cancel("session-2", bridge as any);
-    service.cancel("session-1", bridge as any);
+    service.cancel("task-2", bridge as any);
+    service.cancel("task-1", bridge as any);
     await new Promise((resolve) => setImmediate(resolve));
 
-    assert.deepEqual(cancelCalls, ["title-session"]);
+    assert.deepEqual(cancelCalls, ["title-task"]);
   });
 
   it("deduplicates in-flight title generation and allows retry after cancellation", async () => {
     const store = {
       registerInternalAgentSession() {},
-      updateSessionTitle() {
+      updateTaskTitle() {
         throw new Error("should not be called");
       },
     };
-    const sessions = {
-      sessionHasTitle: new Set<string>(),
-      liveSessions: new Set<string>(),
+    const tasks = {
+      taskHasTitle: new Set<string>(),
+      liveTasks: new Set<string>(),
     };
     const promptCalls: string[] = [];
     let releasePrompt: ((value: string) => void) | null = null;
     const bridge = {
       async newSession() {
-        return { sessionId: "title-session", configOptions: [] };
+        return { sessionId: "title-task", configOptions: [] };
       },
       async setAgentConfigOption() {},
       async promptForText() {
@@ -395,39 +394,39 @@ describe("TitleService", () => {
         releasePrompt?.("");
       },
     };
-    const service = new TitleService(store as any, sessions as any, "/repo", [
+    const service = new TitleService(store as any, tasks as any, "/repo", [
       "claude-haiku-4.5",
     ]);
 
-    service.generate(bridge as any, "hello", "session-1");
+    service.generate(bridge as any, "hello", "task-1");
     await new Promise((resolve) => setImmediate(resolve));
-    service.generate(bridge as any, "hello again", "session-1");
+    service.generate(bridge as any, "hello again", "task-1");
     await new Promise((resolve) => setImmediate(resolve));
-    await service.cancel("session-1", bridge as any);
+    await service.cancel("task-1", bridge as any);
     await new Promise((resolve) => setImmediate(resolve));
-    service.generate(bridge as any, "third try", "session-1");
+    service.generate(bridge as any, "third try", "task-1");
     await new Promise((resolve) => setImmediate(resolve));
 
     assert.deepEqual(promptCalls, ["prompt", "prompt"]);
-    assert.equal(sessions.sessionHasTitle.has("session-1"), false);
+    assert.equal(tasks.taskHasTitle.has("task-1"), false);
   });
 
   it("skips overwriting when user sets title while generation is in flight", async () => {
-    const titleUpdates: Array<{ sessionId: string; title: string }> = [];
+    const titleUpdates: Array<{ taskId: string; title: string }> = [];
     const store = {
       registerInternalAgentSession() {},
-      updateSessionTitle(sessionId: string, title: string) {
-        titleUpdates.push({ sessionId, title });
+      updateTaskTitle(taskId: string, title: string) {
+        titleUpdates.push({ taskId, title });
       },
     };
-    const sessions = {
-      sessionHasTitle: new Set<string>(),
-      liveSessions: new Set<string>(),
+    const tasks = {
+      taskHasTitle: new Set<string>(),
+      liveTasks: new Set<string>(),
     };
     let releasePrompt: ((value: string) => void) | null = null;
     const bridge = {
       async newSession() {
-        return { sessionId: "title-session", configOptions: [] };
+        return { sessionId: "title-task", configOptions: [] };
       },
       async setAgentConfigOption() {},
       async promptForText() {
@@ -436,19 +435,17 @@ describe("TitleService", () => {
         });
       },
     };
-    const service = new TitleService(store as any, sessions as any, "/repo", [
+    const service = new TitleService(store as any, tasks as any, "/repo", [
       "claude-haiku-4.5",
     ]);
 
     // Start generation
     const titles: string[] = [];
-    service.generate(bridge as any, "hello", "session-1", (t) =>
-      titles.push(t),
-    );
+    service.generate(bridge as any, "hello", "task-1", (t) => titles.push(t));
     await new Promise((resolve) => setImmediate(resolve));
 
     // User manually sets title while generation is in flight
-    sessions.sessionHasTitle.add("session-1");
+    tasks.taskHasTitle.add("task-1");
 
     // Now release the prompt with a generated title
     releasePrompt!("Auto Title");
@@ -459,21 +456,21 @@ describe("TitleService", () => {
     assert.deepEqual(titles, []);
   });
 
-  it("invalidate() clears the cached title session so next generate creates a new one", async () => {
+  it("invalidate() clears the cached title task so next generate creates a new one", async () => {
     const store = {
       registerInternalAgentSession() {},
-      updateSessionTitle() {},
+      updateTaskTitle() {},
     };
-    const sessions = {
-      sessionHasTitle: new Set<string>(),
-      liveSessions: new Set<string>(),
+    const tasks = {
+      taskHasTitle: new Set<string>(),
+      liveTasks: new Set<string>(),
     };
-    let newSessionCalls = 0;
+    let newTaskCalls = 0;
     const bridge = {
       async newSession() {
-        newSessionCalls++;
+        newTaskCalls++;
         return {
-          sessionId: `title-session-${newSessionCalls}`,
+          sessionId: `title-task-${newTaskCalls}`,
           configOptions: [],
         };
       },
@@ -482,27 +479,23 @@ describe("TitleService", () => {
         return "Title";
       },
     };
-    const service = new TitleService(store as any, sessions as any, "/repo", [
+    const service = new TitleService(store as any, tasks as any, "/repo", [
       "claude-haiku-4.5",
     ]);
 
-    // First generation creates a title session
-    await (service as any)._generate(bridge, "hello", "session-1");
-    assert.equal(newSessionCalls, 1);
+    // First generation creates a title task
+    await (service as any)._generate(bridge, "hello", "task-1");
+    assert.equal(newTaskCalls, 1);
 
-    // Second generation reuses the cached session
-    sessions.sessionHasTitle.clear(); // allow re-generation
-    await (service as any)._generate(bridge, "hello", "session-2");
-    assert.equal(newSessionCalls, 1, "should reuse cached session");
+    // Second generation reuses the cached task
+    tasks.taskHasTitle.clear(); // allow re-generation
+    await (service as any)._generate(bridge, "hello", "task-2");
+    assert.equal(newTaskCalls, 1, "should reuse cached task");
 
-    // After invalidate(), next generation creates a new session
+    // After invalidate(), next generation creates a new task
     service.invalidate();
-    sessions.sessionHasTitle.clear();
-    await (service as any)._generate(bridge, "hello", "session-3");
-    assert.equal(
-      newSessionCalls,
-      2,
-      "should create new session after invalidate",
-    );
+    tasks.taskHasTitle.clear();
+    await (service as any)._generate(bridge, "hello", "task-3");
+    assert.equal(newTaskCalls, 2, "should create new task after invalidate");
   });
 });

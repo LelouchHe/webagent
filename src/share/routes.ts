@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 import { randomUUID } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Store } from "../store.ts";
-import type { SessionManager } from "../session-manager.ts";
+import type { TaskManager } from "../task-manager.ts";
 import type { Config } from "../config.ts";
 import type { StoredEvent } from "../types.ts";
 import type { ShareRow } from "../store.ts";
@@ -17,7 +17,7 @@ import { HTTP_STATUS } from "../http-status.ts";
 
 const slog = log.scope("share");
 
-// In-flight dedup for concurrent POST /share on the same session.
+// In-flight dedup for concurrent POST /share on the same task.
 // First caller does the work; concurrent callers await the same promise.
 // Idempotent because the body re-checks for an existing preview before
 // inserting.
@@ -28,7 +28,7 @@ const pendingShareCreates = new Map<
 
 export interface ShareRouteDeps {
   store: Store;
-  sessions?: SessionManager;
+  tasks?: TaskManager;
   config: Config["share"];
   dataDir?: string;
   publicDir?: string;
@@ -103,9 +103,9 @@ function json(res: ServerResponse, status: number, body: unknown): void {
  *
  * URL space claimed:
  *   /s, /s/:token                       (viewer — C3)
- *   /api/v1/sessions/:id/share          (preview create — C2 here)
- *   /api/v1/sessions/:id/share/preview  (preview read — C2 here)
- *   /api/v1/sessions/:id/share/publish  (activate — C3)
+ *   /api/v1/tasks/:id/share          (preview create — C2 here)
+ *   /api/v1/tasks/:id/share/preview  (preview read — C2 here)
+ *   /api/v1/tasks/:id/share/publish  (activate — C3)
  *   /api/v1/shares, /api/v1/shares/:t   (owner list/patch — C4)
  *   /api/v1/shared/:token               (public viewer JSON — C3)
  */
@@ -158,9 +158,9 @@ export async function handleShareRoutes(
     return true;
   }
 
-  // POST /api/v1/sessions/:id/share — create preview
+  // POST /api/v1/tasks/:id/share — create preview
   const createMatch = url.match(
-    /^\/api\/v1\/sessions\/([^/?]+)\/share\/?(?:\?.*)?$/,
+    /^\/api\/v1\/tasks\/([^/?]+)\/share\/?(?:\?.*)?$/,
   );
   if (createMatch && method === "POST") {
     await handlePreviewCreate(
@@ -172,9 +172,9 @@ export async function handleShareRoutes(
     return true;
   }
 
-  // GET /api/v1/sessions/:id/share/preview — read preview + staleness
+  // GET /api/v1/tasks/:id/share/preview — read preview + staleness
   const previewMatch = url.match(
-    /^\/api\/v1\/sessions\/([^/?]+)\/share\/preview\/?(?:\?.*)?$/,
+    /^\/api\/v1\/tasks\/([^/?]+)\/share\/preview\/?(?:\?.*)?$/,
   );
   if (previewMatch && method === "GET") {
     await handlePreviewRead(
@@ -186,9 +186,9 @@ export async function handleShareRoutes(
     return true;
   }
 
-  // POST /api/v1/sessions/:id/share/publish — promote preview to public
+  // POST /api/v1/tasks/:id/share/publish — promote preview to public
   const publishMatch = url.match(
-    /^\/api\/v1\/sessions\/([^/?]+)\/share\/publish\/?(?:\?.*)?$/,
+    /^\/api\/v1\/tasks\/([^/?]+)\/share\/publish\/?(?:\?.*)?$/,
   );
   if (publishMatch && method === "POST") {
     await handlePublish(req, res, deps, decodeURIComponent(publishMatch[1]));
@@ -205,14 +205,14 @@ export async function handleShareRoutes(
   }
 
   const revokeMatch = url.match(
-    /^\/api\/v1\/sessions\/([^/?]+)\/share\/?(?:\?.*)?$/,
+    /^\/api\/v1\/tasks\/([^/?]+)\/share\/?(?:\?.*)?$/,
   );
-  // DELETE /api/v1/sessions/:id/share — hard-delete share row
+  // DELETE /api/v1/tasks/:id/share — hard-delete share row
   if (revokeMatch && method === "DELETE") {
     await handleRevoke(req, res, deps, decodeURIComponent(revokeMatch[1]));
     return true;
   }
-  // PATCH /api/v1/sessions/:id/share — update display_name / owner_label
+  // PATCH /api/v1/tasks/:id/share — update display_name / owner_label
   if (revokeMatch && method === "PATCH") {
     await handlePatchLabel(req, res, deps, decodeURIComponent(revokeMatch[1]));
     return true;
@@ -240,7 +240,7 @@ export async function handleShareRoutes(
 
   // Any other /api/v1/shares[/...] or /api/v1/shared/... miss → 404.
   if (
-    /^\/api\/v1\/sessions\/[^/]+\/share(?:\/|$|\?)/.test(url) ||
+    /^\/api\/v1\/tasks\/[^/]+\/share(?:\/|$|\?)/.test(url) ||
     url === "/api/v1/shares" ||
     url.startsWith("/api/v1/shares/") ||
     url.startsWith("/api/v1/shared/") ||
@@ -268,9 +268,9 @@ function resolveDisplayName(
 }
 
 /**
- * POST /api/v1/sessions/:id/share — create (or return existing) preview.
+ * POST /api/v1/tasks/:id/share — create (or return existing) preview.
  *
- * share-plan §4.2 R1-c1: same-session dedup — if an un-activated preview
+ * share-plan §4.2 R1-c1: same-task dedup — if an un-activated preview
  * already exists, return it verbatim. Only create new on miss.
  *
  * Body (all optional):
@@ -283,19 +283,19 @@ async function handlePreviewCreate(
   req: IncomingMessage,
   res: ServerResponse,
   deps: ShareRouteDeps,
-  sessionId: string,
+  taskId: string,
 ): Promise<void> {
-  const session = deps.store.getSession(sessionId);
-  if (!session) {
-    json(res, HTTP_STATUS.NOT_FOUND, { error: "session not found" });
+  const task = deps.store.getTask(taskId);
+  if (!task) {
+    json(res, HTTP_STATUS.NOT_FOUND, { error: "task not found" });
     return;
   }
 
-  // 409 guard: block while the agent is actively streaming into this session.
-  if (deps.sessions?.getBusyKind(sessionId) === "agent") {
+  // 409 guard: block while the agent is actively streaming into this task.
+  if (deps.tasks?.getBusyKind(taskId) === "agent") {
     json(res, HTTP_STATUS.CONFLICT, {
-      error: "session busy",
-      detail: "此 session 正在接收 agent 输出,请等 agent 输出结束后再分享",
+      error: "task busy",
+      detail: "此 task 正在接收 agent 输出,请等 agent 输出结束后再分享",
     });
     return;
   }
@@ -344,29 +344,29 @@ async function handlePreviewCreate(
   const ownerLabel = olResult.value === "" ? null : olResult.value;
 
   try {
-    const existingInflight = pendingShareCreates.get(sessionId);
+    const existingInflight = pendingShareCreates.get(taskId);
     const inflight =
       existingInflight ??
       (async () => {
         // Dedup first — existing preview short-circuits the gate.
-        const existing = deps.store.findActivePreviewBySession(sessionId);
+        const existing = deps.store.findActivePreviewByTask(taskId);
         if (existing) return { row: existing, reused: true };
 
         // Flush buffered chunks so snapshot_seq includes the streaming tail.
-        deps.sessions?.flushBuffers(sessionId);
+        deps.tasks?.flushBuffers(taskId);
 
-        const allEvents = deps.store.getEvents(sessionId);
+        const allEvents = deps.store.getEvents(taskId);
         const snapshotSeq =
           allEvents.length > 0 ? Math.max(...allEvents.map((e) => e.seq)) : 0;
 
         // Gate: run the sanitizer on-write. Hard-rejects throw here so we
-        // never create a preview row for a session with leaked secrets.
-        runSanitizeGate(allEvents, session.cwd, deps.config.internal_hosts);
+        // never create a preview row for a task with leaked secrets.
+        runSanitizeGate(allEvents, task.cwd, deps.config.internal_hosts);
 
         const token = generateShareToken();
         const row = deps.store.insertSharePreview({
           token,
-          sessionId,
+          taskId,
           snapshotSeq,
           ttlHours,
           displayName,
@@ -374,14 +374,14 @@ async function handlePreviewCreate(
         });
         return { row, reused: false };
       })().finally(() => {
-        pendingShareCreates.delete(sessionId);
+        pendingShareCreates.delete(taskId);
       });
-    if (!existingInflight) pendingShareCreates.set(sessionId, inflight);
+    if (!existingInflight) pendingShareCreates.set(taskId, inflight);
     const result = await inflight;
 
     json(res, result.reused ? HTTP_STATUS.OK : HTTP_STATUS.CREATED, {
       token: result.row.token,
-      session_id: sessionId,
+      task_id: taskId,
       snapshot_seq: result.row.share_snapshot_seq,
       ttl_hours: result.row.ttl_hours,
       display_name: result.row.display_name,
@@ -423,7 +423,7 @@ function runSanitizeGate(
 }
 
 /**
- * GET /api/v1/sessions/:id/share/preview — read sanitized preview.
+ * GET /api/v1/tasks/:id/share/preview — read sanitized preview.
  *
  * Auth: owner + X-Share-Token header (token never in URL, never in logs).
  * Returns a `{schema_version, events, share}` bundle matching the public
@@ -434,7 +434,7 @@ async function handlePreviewRead(
   req: IncomingMessage,
   res: ServerResponse,
   deps: ShareRouteDeps,
-  sessionId: string,
+  taskId: string,
 ): Promise<void> {
   const tokenHeader = req.headers["x-share-token"];
   const token = Array.isArray(tokenHeader) ? tokenHeader[0] : tokenHeader;
@@ -450,7 +450,7 @@ async function handlePreviewRead(
     json(res, HTTP_STATUS.NOT_FOUND, { error: "share not found" });
     return;
   }
-  if (row.session_id !== sessionId) {
+  if (row.task_id !== taskId) {
     json(res, HTTP_STATUS.NOT_FOUND, { error: "share not found" });
     return;
   }
@@ -461,29 +461,26 @@ async function handlePreviewRead(
     return;
   }
 
-  const session = deps.store.getSession(sessionId);
-  if (!session) {
-    json(res, HTTP_STATUS.NOT_FOUND, { error: "session not found" });
+  const task = deps.store.getTask(taskId);
+  if (!task) {
+    json(res, HTTP_STATUS.NOT_FOUND, { error: "task not found" });
     return;
   }
 
   const allEvents = deps.store
-    .getEvents(sessionId)
+    .getEvents(taskId)
     .filter((e) => e.seq <= row.share_snapshot_seq);
-  if (deps.sessions) {
-    enrichStoredEventsForDisplay(
-      allEvents,
-      deps.sessions.getLabelMap(sessionId),
-    );
+  if (deps.tasks) {
+    enrichStoredEventsForDisplay(allEvents, deps.tasks.getLabelMap(taskId));
   }
   const currentLastSeq = deps.store
-    .getEvents(sessionId)
+    .getEvents(taskId)
     .reduce((m, e) => Math.max(m, e.seq), 0);
 
   try {
     const { events } = sanitizeEventsForShare({
       events: allEvents,
-      cwd: session.cwd,
+      cwd: task.cwd,
       homeDir: homedir(),
       internalHosts: deps.config.internal_hosts,
     });
@@ -498,8 +495,8 @@ async function handlePreviewRead(
       schema_version: "1.0",
       share: {
         token: row.token,
-        session_id: sessionId,
-        session_title: session.title,
+        task_id: taskId,
+        task_title: task.title,
         shared_at: null,
         snapshot_seq: row.share_snapshot_seq,
         current_last_seq: currentLastSeq,
@@ -530,15 +527,15 @@ async function handlePreviewRead(
 }
 
 /**
- * POST /api/v1/sessions/:id/share/publish — activate an existing preview.
+ * POST /api/v1/tasks/:id/share/publish — activate an existing preview.
  *
  * Body: { token, display_name?, owner_label? }
- * - token MUST match a preview row for this session that has not been
+ * - token MUST match a preview row for this task that has not been
  *   activated or revoked.
  * - display_name / owner_label, if present, overwrite the preview row and
  *   are persisted into owner_prefs so the next /share defaults to them.
  *
- * Response: { token, session_id, shared_at, display_name, owner_label,
+ * Response: { token, task_id, shared_at, display_name, owner_label,
  *             public_url } on 200; 404/409/410 on state errors.
  */
 // eslint-disable-next-line complexity -- TODO: split validation / state-update / response phases
@@ -546,7 +543,7 @@ async function handlePublish(
   req: IncomingMessage,
   res: ServerResponse,
   deps: ShareRouteDeps,
-  sessionId: string,
+  taskId: string,
 ): Promise<void> {
   let body: {
     token?: string;
@@ -566,7 +563,7 @@ async function handlePublish(
     json(res, HTTP_STATUS.BAD_REQUEST, { error: "token required" });
     return;
   }
-  if (!deps.store.ownsSession(sessionId)) {
+  if (!deps.store.ownsTask(taskId)) {
     json(res, HTTP_STATUS.NOT_FOUND, { error: "share not found" });
     return;
   }
@@ -576,7 +573,7 @@ async function handlePublish(
     json(res, HTTP_STATUS.NOT_FOUND, { error: "share not found" });
     return;
   }
-  if (row.session_id !== sessionId) {
+  if (row.task_id !== taskId) {
     json(res, HTTP_STATUS.NOT_FOUND, { error: "share not found" });
     return;
   }
@@ -654,7 +651,7 @@ async function handlePublish(
       : "";
   json(res, HTTP_STATUS.OK, {
     token: after.token,
-    session_id: sessionId,
+    task_id: taskId,
     shared_at: after.shared_at,
     display_name: after.display_name,
     owner_label: after.owner_label,
@@ -755,33 +752,33 @@ async function handleSharedEvents(
   }
 
   // Public viewer must keep working after the owner deletes the source
-  // session — events stay alive as long as any active share references
-  // them (Store.deleteSession soft-deletes when shares exist).
-  const session = deps.store.getSessionIncludingDeleted(row.session_id);
-  if (!session) {
-    json(res, HTTP_STATUS.INTERNAL_SERVER_ERROR, { error: "session vanished" });
+  // task — events stay alive as long as any active share references
+  // them (Store.deleteTask soft-deletes when shares exist).
+  const task = deps.store.getTaskIncludingDeleted(row.task_id);
+  if (!task) {
+    json(res, HTTP_STATUS.INTERNAL_SERVER_ERROR, { error: "task vanished" });
     return;
   }
 
   const allEvents = deps.store
-    .getEvents(row.session_id)
+    .getEvents(row.task_id)
     .filter((e) => e.seq <= row.share_snapshot_seq);
-  if (deps.sessions) {
+  if (deps.tasks) {
     enrichStoredEventsForDisplay(
       allEvents,
-      deps.sessions.getLabelMap(row.session_id),
+      deps.tasks.getLabelMap(row.task_id),
     );
   }
 
   try {
     const { events } = sanitizeEventsForShare({
       events: allEvents,
-      cwd: session.cwd,
+      cwd: task.cwd,
       homeDir: homedir(),
       internalHosts: deps.config.internal_hosts,
     });
 
-    // Public response: DOES NOT expose session_id. Only title + display_name + meta.
+    // Public response: DOES NOT expose task_id. Only title + display_name + meta.
     res.writeHead(HTTP_STATUS.OK, {
       "Content-Type": "application/json",
       "Cache-Control": "no-store",
@@ -792,7 +789,7 @@ async function handleSharedEvents(
         schema_version: "1.0",
         share: {
           token: row.token,
-          session_title: session.title,
+          task_title: task.title,
           shared_at: row.shared_at,
           snapshot_seq: row.share_snapshot_seq,
           display_name: row.display_name,
@@ -804,7 +801,7 @@ async function handleSharedEvents(
     );
   } catch (err: unknown) {
     if (err instanceof SanitizeError) {
-      // Hard-reject on a LIVE active share — owner's session gained a
+      // Hard-reject on a LIVE active share — owner's task gained a
       // post-publish leak. Return 410 publicly; owner sees root cause via
       // preview re-gate.
       slog.error("shared_events hard-reject", {
@@ -888,8 +885,8 @@ async function handleViewerAsset(
 
 /**
  * GET /s/:token/attachments/:file — token-scoped image proxy. Resolves the token
- * to a session_id on-demand; directly serving /api/v1/sessions/:id/images
- * would leak session_id.
+ * to a task_id on-demand; directly serving /api/v1/tasks/:id/images
+ * would leak task_id.
  */
 async function handleViewerImage(
   res: ServerResponse,
@@ -920,15 +917,10 @@ async function handleViewerImage(
     return;
   }
 
-  const sessionRoot = join(
-    deps.dataDir,
-    "sessions",
-    row.session_id,
-    "attachments",
-  );
-  const filePath = join(sessionRoot, file);
-  // Final realpath-style guard: must stay under <dataDir>/sessions/<sid>/attachments.
-  if (!filePath.startsWith(sessionRoot + "/") && filePath !== sessionRoot) {
+  const taskRoot = join(deps.dataDir, "tasks", row.task_id, "attachments");
+  const filePath = join(taskRoot, file);
+  // Final realpath-style guard: must stay under <dataDir>/tasks/<sid>/attachments.
+  if (!filePath.startsWith(taskRoot + "/") && filePath !== taskRoot) {
     res.writeHead(HTTP_STATUS.FORBIDDEN);
     res.end("Forbidden");
     return;
@@ -941,7 +933,7 @@ async function handleViewerImage(
     // appends ".bin" to the <a download> name (e.g. zhihu.user.js →
     // zhihu.user.js.bin). The owner-side route at routes.ts does the
     // same lookup; share viewer needs parity for non-image attachments.
-    const att = deps.store.getAttachmentByFile(row.session_id, file);
+    const att = deps.store.getAttachmentByFile(row.task_id, file);
     const ext = extname(filePath).toLowerCase();
     let mime = att?.mime;
     mime ??= IMAGE_MIME[ext];
@@ -1019,7 +1011,7 @@ export function validateLabel(
 }
 
 /**
- * DELETE /api/v1/sessions/:id/share — revoke an active or preview share.
+ * DELETE /api/v1/tasks/:id/share — revoke an active or preview share.
  * Body: { token }.
  * Idempotent: already-revoked tokens return 200 with revoked=false.
  * Returns { ok, token, revoked, purge_status }. purge_status is always
@@ -1029,7 +1021,7 @@ async function handleRevoke(
   req: IncomingMessage,
   res: ServerResponse,
   deps: ShareRouteDeps,
-  sessionId: string,
+  taskId: string,
 ): Promise<void> {
   let body: { token?: string };
   try {
@@ -1045,7 +1037,7 @@ async function handleRevoke(
     json(res, HTTP_STATUS.BAD_REQUEST, { error: "token required" });
     return;
   }
-  if (!deps.store.ownsSession(sessionId)) {
+  if (!deps.store.ownsTask(taskId)) {
     json(res, HTTP_STATUS.NOT_FOUND, { error: "share not found" });
     return;
   }
@@ -1053,7 +1045,7 @@ async function handleRevoke(
   const row = deps.store.getShareByToken(body.token);
   if (!row) {
     // Idempotent DELETE: row already gone (revoked or never existed).
-    // We can't verify session ownership without a row, but the token
+    // We can't verify task ownership without a row, but the token
     // is opaque/random so leaking "revoked or never existed" is fine.
     json(res, HTTP_STATUS.OK, {
       ok: true,
@@ -1063,19 +1055,19 @@ async function handleRevoke(
     });
     return;
   }
-  if (row.session_id !== sessionId) {
+  if (row.task_id !== taskId) {
     json(res, HTTP_STATUS.NOT_FOUND, { error: "share not found" });
     return;
   }
 
   const revoked = deps.store.revokeShare(body.token);
-  // If this was the last share on a soft-deleted session, finish the
-  // hard-delete (events + sessions row) so we don't leak orphans.
+  // If this was the last share on a soft-deleted task, finish the
+  // hard-delete (events + tasks row) so we don't leak orphans.
   if (revoked) {
-    const reaped = deps.store.reapTombstoneIfOrphaned(row.session_id);
+    const reaped = deps.store.reapTombstoneIfOrphaned(row.task_id);
     if (reaped && deps.dataDir) {
-      // Tombstoned session is fully gone; sweep its attachments directory too.
-      rm(join(deps.dataDir, "sessions", row.session_id), {
+      // Tombstoned task is fully gone; sweep its attachments directory too.
+      rm(join(deps.dataDir, "tasks", row.task_id), {
         recursive: true,
         force: true,
       }).catch(() => {});
@@ -1090,7 +1082,7 @@ async function handleRevoke(
 }
 
 /**
- * PATCH /api/v1/sessions/:id/share — update owner_label / display_name on
+ * PATCH /api/v1/tasks/:id/share — update owner_label / display_name on
  * a live (non-revoked) share. Body: { token, owner_label?, display_name? }.
  *
  * Full validation: UTF-8 ≤1024B, no C0 controls (except TAB), no DEL, no
@@ -1101,7 +1093,7 @@ async function handlePatchLabel(
   req: IncomingMessage,
   res: ServerResponse,
   deps: ShareRouteDeps,
-  sessionId: string,
+  taskId: string,
 ): Promise<void> {
   let body: { token?: string; owner_label?: unknown; display_name?: unknown };
   try {
@@ -1117,7 +1109,7 @@ async function handlePatchLabel(
     json(res, HTTP_STATUS.BAD_REQUEST, { error: "token required" });
     return;
   }
-  if (!deps.store.ownsSession(sessionId)) {
+  if (!deps.store.ownsTask(taskId)) {
     json(res, HTTP_STATUS.NOT_FOUND, { error: "share not found" });
     return;
   }
@@ -1127,7 +1119,7 @@ async function handlePatchLabel(
     json(res, HTTP_STATUS.NOT_FOUND, { error: "share not found" });
     return;
   }
-  if (row.session_id !== sessionId) {
+  if (row.task_id !== taskId) {
     json(res, HTTP_STATUS.NOT_FOUND, { error: "share not found" });
     return;
   }
@@ -1166,7 +1158,7 @@ async function handlePatchLabel(
   }
   json(res, HTTP_STATUS.OK, {
     token: after.token,
-    session_id: sessionId,
+    task_id: taskId,
     owner_label: after.owner_label,
     display_name: after.display_name,
   });

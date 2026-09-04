@@ -10,7 +10,7 @@ import { Store } from "../src/store.ts";
  *
  * A MessageRow represents a notification POSTed via /api/v1/messages with
  * `to = "user"` (unbound). On consume it's transactionally turned into an
- * ACP session + `message` event, then the row is deleted. Bound messages
+ * ACP task + `message` event, then the row is deleted. Bound messages
  * skip this table entirely — they go straight into `events`.
  */
 describe("Store — messages table", () => {
@@ -224,7 +224,7 @@ describe("Store — messages table", () => {
   });
 
   describe("consumeMessageTx — atomic consume", () => {
-    it("appends to an existing session and deletes the row in one transaction", () => {
+    it("appends to an existing task and deletes the row in one transaction", () => {
       store.createMessage({
         id: "m1",
         from_ref: "cron:backup",
@@ -237,9 +237,9 @@ describe("Store — messages table", () => {
         cwd: "/b",
         created_at: 1,
       });
-      store.createSession("sess-new", "/b", "message");
-      const { sessionId } = store.consumeMessageTx("m1", "sess-new");
-      assert.equal(sessionId, "sess-new");
+      store.createTask("sess-new", "/b", "message");
+      const { taskId } = store.consumeMessageTx("m1", "sess-new");
+      assert.equal(taskId, "sess-new");
       // Row deleted
       assert.equal(store.getMessage("m1"), undefined);
       // Event appended with message_id
@@ -255,7 +255,7 @@ describe("Store — messages table", () => {
       assert.equal(data.title, "Done");
     });
 
-    it("requires the destination session to exist", () => {
+    it("requires the destination task to exist", () => {
       store.createMessage({
         id: "m1",
         from_ref: "cron:a",
@@ -269,11 +269,11 @@ describe("Store — messages table", () => {
         created_at: 1,
       });
 
-      assert.throws(() => store.consumeMessageTx("m1", "missing-session"));
+      assert.throws(() => store.consumeMessageTx("m1", "missing-task"));
       assert.ok(store.getMessage("m1"));
     });
 
-    it("returns the prior sessionId if the message was already consumed", () => {
+    it("returns the prior taskId if the message was already consumed", () => {
       store.createMessage({
         id: "m1",
         from_ref: "cron:a",
@@ -286,12 +286,12 @@ describe("Store — messages table", () => {
         cwd: null,
         created_at: 1,
       });
-      store.createSession("sess-a", "/x", "message");
+      store.createTask("sess-a", "/x", "message");
       const first = store.consumeMessageTx("m1", "sess-a");
       // Second attempt — row is gone, but we want idempotent resolution.
-      store.createSession("sess-b", "/x", "message");
+      store.createTask("sess-b", "/x", "message");
       const second = store.consumeMessageTx("m1", "sess-b");
-      assert.equal(second.sessionId, first.sessionId);
+      assert.equal(second.taskId, first.taskId);
       assert.equal(second.alreadyConsumed, true);
       assert.equal(store.getEvents("sess-b").length, 0);
     });

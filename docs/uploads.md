@@ -9,11 +9,11 @@ observability.
 ## Trust boundary — the wire shape
 
 The browser never sends a path, URI, or raw bytes back to the server after
-the initial upload. After `POST /api/v1/sessions/:id/attachments` returns
+the initial upload. After `POST /api/v1/tasks/:id/attachments` returns
 an `attachmentId`, every subsequent reference uses just the ID:
 
 ```jsonc
-// POST /api/v1/sessions/:id/prompt body
+// POST /api/v1/tasks/:id/prompt body
 {
   "text": "What's in this PDF?",
   "attachments": [
@@ -27,8 +27,8 @@ an `attachmentId`, every subsequent reference uses just the ID:
 }
 ```
 
-The server resolves the on-disk path itself by joining the per-session
-attachments directory with the row keyed by `(sessionId, attachmentId)`.
+The server resolves the on-disk path itself by joining the per-task
+attachments directory with the row keyed by `(taskId, attachmentId)`.
 For images, dimensions are also server-derived from the uploaded file and
 stored on the attachment row. **Strict validation** in `src/routes.ts`
 rejects any prompt body whose `attachments[]` entries carry `uri`, `data`,
@@ -40,8 +40,8 @@ or lie about layout metadata.
 
 ```
 <data_dir>/
-  sessions/
-    <sessionId>/
+  tasks/
+    <taskId>/
       attachments/
         <attachmentId>.<ext>     # final, immutable
         <attachmentId>.<ext>.tmp # in-flight upload (cleaned on abort/crash)
@@ -52,8 +52,8 @@ sniffed MIME, never the user-supplied filename. The original filename is
 stored as `display_name` in the `attachments` DB row and is what the user
 sees in the chat bubble + permission dialog; on-disk it is irrelevant.
 
-The pin happens at boot (`resolveSessionsAnchor` in
-`src/sessions-anchor.ts`) using `realpathSync` on `<data_dir>/sessions`,
+The pin happens at boot (`resolveTasksAnchor` in
+`src/tasks-anchor.ts`) using `realpathSync` on `<data_dir>/tasks`,
 which defends against the macOS `/var → /private/var` symlink. Every
 later check (file:// URI construction in the bridge dispatcher, the
 permission interceptor's allowlist) compares realpaths against this same
@@ -73,7 +73,7 @@ canonical anchor.
 5. After all uploads resolve, the browser fires `POST /prompt` with the
    `attachments[]` array of refs.
 6. Server's `AttachmentDispatcher` resolves each ref to a file:// URI
-   under `sessionsAnchor` and turns it into an ACP block. Any failure
+   under `tasksAnchor` and turns it into an ACP block. Any failure
    (DB row missing, file missing, realpath outside anchor) falls back
    to an ACP `text` block reading `[attachment removed: <displayName>]`
    — the prompt still goes through, just without that file.
@@ -95,7 +95,7 @@ Defenses (numbering matches the plan):
 | -- | -------------------------------------------------------------------------------------- |
 | F1 | Tool kind is exactly `read`                                                            |
 | F2 | Tool name (when present) is in `{view, read_file}` — conditional, not required        |
-| F3 | Every `locations[].path` realpaths into the per-session attachment realpath set       |
+| F3 | Every `locations[].path` realpaths into the per-task attachment realpath set       |
 | F4 | If `rawInput` carries `path` / `filePath` / `file`, those must also realpath in       |
 | F5 | If neither locations nor rawInput surface a path, fall through (don't auto-approve)   |
 | F6 | Any realpath / DB error → fall through (let the user prompt show)                     |
@@ -108,27 +108,31 @@ shows in the meantime — the agent is never silently denied.
 
 ## Lifecycle
 
-### Session delete
+### Task delete
 
-`DELETE /api/v1/sessions/:id` cascades:
+`DELETE /api/v1/tasks/:id` cascades:
 
 - DB rows: `attachments` rows go via SQLite `ON DELETE CASCADE` from
-  `sessions.id` (covered by `test/store-attachments.test.ts`).
-- Disk: the session directory `<data_dir>/sessions/<sid>/` is removed
+  `tasks.id` (covered by `test/store-attachments.test.ts`).
+- Disk: the task directory `<data_dir>/tasks/<sid>/` is removed
   recursively, which takes the `attachments/` subdir with it.
+
+When `:id` is Root, the Root row remains as the tree anchor. Its events and
+attachment rows are cleared, its attachment directory is removed, and the
+same descendant deletion rules apply to the rest of the tree.
 
 ### Orphaned `.tmp` files
 
 Atomic `rename()` after the upload finishes means a crashed upload
 leaves a `<uuid>.<ext>.tmp` file but no DB row. There is currently
-**no automatic sweeper** — these accumulate until the session is
+**no automatic sweeper** — these accumulate until the task is
 deleted. The plan calls this out as a deferred GC task; in practice
-the count is bounded by aborted uploads per session, which is small.
+the count is bounded by aborted uploads per task, which is small.
 
 ### Unreferenced attachments
 
 If an attachment is uploaded but no prompt is ever sent (user picks a
-file then types `/exit`), the row + file persist until the session is
+file then types `/exit`), the row + file persist until the task is
 deleted. Same deferred GC story as `.tmp` files.
 
 ## Observability
@@ -155,7 +159,7 @@ schemaDrift line, grep `src/attachment-interceptor.ts`'s
 
 `fellThrough` going up is normal whenever the agent asks to read a
 non-attachment file; a sudden jump in `realpathErrors` is the
-interesting signal — it usually means a session was renamed or the
+interesting signal — it usually means a task was renamed or the
 data dir moved out from under a live process.
 
 ## Limits
@@ -198,7 +202,7 @@ Attachment URLs are HMAC-signed; only the server has the secret
 (`data/attachment-secret.bin`, regenerated if missing).
 
 ```
-/api/v1/sessions/<sid>/attachments/<uuid>.<ext>?sig=<hmac>&exp=<unix-ts>
+/api/v1/tasks/<sid>/attachments/<uuid>.<ext>?sig=<hmac>&exp=<unix-ts>
 ```
 
 Three primitives in `src/auth.ts`:
@@ -210,7 +214,7 @@ Three primitives in `src/auth.ts`:
 | `reSignAttachmentUrlsInJson`   | Stored events on the way out — refreshes every URL     |
 
 Stored event JSON in SQLite carries the **unsigned base path**
-(`/api/v1/sessions/<sid>/attachments/<file>`); re-sign happens at
+(`/api/v1/tasks/<sid>/attachments/<file>`); re-sign happens at
 egress. Two consequences:
 
 - DB rows don't expire — moving the data dir, restoring a backup, or
@@ -221,7 +225,7 @@ egress. Two consequences:
   the page reloads.
 
 TTL is 1 hour. Long enough for the browser's `<img>` cache to keep the
-rendered image alive across a typical session, short enough that a
+rendered image alive across a typical task, short enough that a
 leaked URL (screenshot, accidental link share) expires within a day.
 
 ## Rendering — `user_message` egress
@@ -266,7 +270,7 @@ the two render paths agree on classes:
 | Reload (`render-event.ts`) | `<img class=user-image src={signed URL}>` | `<a class=user-file href={signed URL}>` |
 
 The sender's own SSE-broadcast `user_message` echo is suppressed
-(`sentMessageForSession` in `events.ts`) so the optimistic bubble is
+(`sentMessageForTask` in `events.ts`) so the optimistic bubble is
 never replaced live. To stop the file branch from being stuck on the
 text chip until the user reloads, `input.ts` actively swaps each chip
 for a real `<a>` the moment the upload promise resolves — using the
@@ -280,7 +284,7 @@ shapes.
 | ------------ | ----------------------------------------------- | ------------------------------------------------------------------------------- |
 | Server unit  | `test/attachments.test.ts`                      | `mimeToExt`, `isInlineMime`, `classifyKind`, `normalizeDisplayName`             |
 | Server unit  | `test/store-attachments.test.ts`                | DB row insert / lookup / `ON DELETE CASCADE`                                     |
-| Server unit  | `test/attachment-dispatch.test.ts`              | ref → ACP block conversion, fallback paths, anchor check, cross-session reject |
+| Server unit  | `test/attachment-dispatch.test.ts`              | ref → ACP block conversion, fallback paths, anchor check, cross-task reject |
 | Server unit  | `test/attachment-interceptor.test.ts`           | F1–F7 auto-approve defenses                                                     |
 | Frontend unit| `test/attachments.test.ts` (frontend twin)      | `renderAttachPreview` — preview thumbs + remove button                          |
 | Frontend unit| `test/render-event.test.ts`                     | `<img.user-image>` and `<a.user-file>` shape per `kind` / missing-path fallback |

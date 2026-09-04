@@ -86,9 +86,9 @@ export function setLogRenderer(fn: AddSystemFn): void {
   addSystemImpl = fn;
 }
 
-export function setLogContextProvider(_fn: () => { sessionId?: string }): void {
+export function setLogContextProvider(_fn: () => { taskId?: string }): void {
   // No-op in inline mode; kept for API compatibility with callers that may
-  // set a session-context provider ahead of a future server-log bridge.
+  // set a task-context provider ahead of a future server-log bridge.
 }
 
 /**
@@ -160,9 +160,9 @@ export function resetLogLevelOverride(): LogLevelResolution {
 }
 
 // Backward-compat no-op retained so callers wired before the level refactor
-// (e.g. tests that clear per-session DOM) don't break.
-export function resetForSession(): void {
-  // intentionally empty — inline messages live in #messages and are cleared by resetSessionUI.
+// (e.g. tests that clear per-task DOM) don't break.
+export function resetForTask(): void {
+  // intentionally empty — inline messages live in #messages and are cleared by resetTaskUI.
 }
 
 // ============================================================

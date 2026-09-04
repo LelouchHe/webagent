@@ -49,7 +49,7 @@ describe("buildBridgeEventHandlerConfig — structural wiring", () => {
     const cfg = buildBridgeEventHandlerConfig(
       makeDeps({ shouldLogSchemaDrift: () => allow }),
     );
-    const ctx = { sessionId: "s", toolCallId: "t", rawInputKeys: ["a"] };
+    const ctx = { taskId: "s", toolCallId: "t", rawInputKeys: ["a"] };
     cfg.attachmentInterceptor!.onSchemaDrift!(ctx);
     allow = true;
     cfg.attachmentInterceptor!.onSchemaDrift!(ctx);

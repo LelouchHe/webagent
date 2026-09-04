@@ -27,7 +27,7 @@ describe("state", () => {
       assert.ok(mod.dom.sendBtn);
       assert.ok(mod.dom.prompt);
       assert.ok(mod.dom.status);
-      assert.ok(mod.dom.sessionInfo);
+      assert.ok(mod.dom.taskInfo);
       assert.ok(mod.dom.inboxBtn);
       assert.ok(mod.dom.inboxCount);
       assert.ok(mod.dom.themeBtn);
@@ -122,7 +122,7 @@ describe("state", () => {
         },
       ];
       mod.state.contextUsage = { used: 204_481, size: 1_050_000 };
-      mod.state.sessionCwd = "/Users/lelouch/mine/code/webagent/main";
+      mod.state.taskCwd = "/Users/lelouch/mine/code/webagent/main";
 
       mod.updateStatusBar();
 
@@ -154,7 +154,7 @@ describe("state", () => {
           options: [],
         },
       ];
-      mod.state.sessionCwd = "/tmp/project";
+      mod.state.taskCwd = "/tmp/project";
 
       mod.updateStatusBar();
 
@@ -304,57 +304,57 @@ describe("state", () => {
     });
   });
 
-  describe("requestNewSession", () => {
-    it("creates a session via REST with inherited sessionId", async () => {
+  describe("requestNewTask", () => {
+    it("creates a task via REST with inherited taskId", async () => {
       const calls: Array<{ url: string; init?: RequestInit }> = [];
       globalThis.fetch = (async (url: string, init?: RequestInit) => {
         calls.push({ url, init });
         return { ok: true, text: async () => "{}", json: async () => ({}) };
       }) as any;
 
-      mod.state.sessionId = "existing-id";
-      mod.state.pendingNavigationSessionId = "old-target";
-      const previousGeneration = mod.state.sessionSwitchGen;
-      mod.requestNewSession();
-      assert.equal(mod.state.awaitingNewSession, true);
-      assert.equal(mod.state.pendingNavigationSessionId, null);
-      assert.equal(mod.state.sessionSwitchGen, previousGeneration + 1);
+      mod.state.taskId = "existing-id";
+      mod.state.pendingNavigationTaskId = "old-target";
+      const previousGeneration = mod.state.taskSwitchGen;
+      mod.requestNewTask();
+      assert.equal(mod.state.awaitingNewTask, true);
+      assert.equal(mod.state.pendingNavigationTaskId, null);
+      assert.equal(mod.state.taskSwitchGen, previousGeneration + 1);
       await new Promise((r) => setTimeout(r, 0));
 
       assert.equal(calls.length, 1);
-      assert.equal(calls[0].url, "/api/v1/sessions");
+      assert.equal(calls[0].url, "/api/v1/tasks");
       assert.equal(calls[0].init!.method, "POST");
       const body = JSON.parse(calls[0].init!.body as string);
-      assert.equal(body.inheritFromSessionId, "existing-id");
+      assert.equal(body.inheritFromTaskId, "existing-id");
     });
 
-    it("creates a session with custom cwd", async () => {
+    it("creates a task with custom cwd", async () => {
       const calls: Array<{ url: string; init?: RequestInit }> = [];
       globalThis.fetch = (async (url: string, init?: RequestInit) => {
         calls.push({ url, init });
         return { ok: true, text: async () => "{}", json: async () => ({}) };
       }) as any;
 
-      mod.requestNewSession({ cwd: "/tmp" });
+      mod.requestNewTask({ cwd: "/tmp" });
       await new Promise((r) => setTimeout(r, 0));
 
       const body = JSON.parse(calls[0].init?.body as string);
       assert.equal(body.cwd, "/tmp");
     });
 
-    it("releases new-session ownership when creation fails", async () => {
+    it("releases new-task ownership when creation fails", async () => {
       mock.timers.enable({ apis: ["setTimeout"] });
       try {
         globalThis.fetch = async () => {
           throw new Error("network");
         };
 
-        mod.requestNewSession();
+        mod.requestNewTask();
         await new Promise((resolve) => setImmediate(resolve));
-        assert.equal(mod.state.awaitingNewSession, true);
+        assert.equal(mod.state.awaitingNewTask, true);
 
         mock.timers.tick(3000);
-        assert.equal(mod.state.awaitingNewSession, false);
+        assert.equal(mod.state.awaitingNewTask, false);
       } finally {
         mock.timers.reset();
       }
@@ -367,35 +367,35 @@ describe("state", () => {
           throw new Error("network");
         };
 
-        mod.requestNewSession();
+        mod.requestNewTask();
         await new Promise((resolve) => setImmediate(resolve));
-        assert.ok(mod.state.pendingNewSessionOpId);
-        mod.state.sessionSwitchGen++;
+        assert.ok(mod.state.pendingNewTaskOpId);
+        mod.state.taskSwitchGen++;
 
         mock.timers.tick(3000);
-        assert.equal(mod.state.pendingNewSessionOpId, null);
+        assert.equal(mod.state.pendingNewTaskOpId, null);
       } finally {
         mock.timers.reset();
       }
     });
 
-    it("serializes rapid new-session requests", async () => {
+    it("serializes rapid new-task requests", async () => {
       let createCalls = 0;
       globalThis.fetch = () =>
         new Promise<Response>(() => {
           createCalls++;
         });
 
-      mod.requestNewSession();
-      mod.requestNewSession();
+      mod.requestNewTask();
+      mod.requestNewTask();
       await new Promise((resolve) => setImmediate(resolve));
 
       assert.equal(createCalls, 1);
-      assert.equal(mod.state.awaitingNewSession, true);
+      assert.equal(mod.state.awaitingNewTask, true);
     });
   });
 
-  describe("resetSessionUI", () => {
+  describe("resetTaskUI", () => {
     it("clears messages and resets state", () => {
       mod.dom.messages.innerHTML = "<div>test</div>";
       mod.state.currentAssistantEl = {};
@@ -409,7 +409,7 @@ describe("state", () => {
       mod.state.followMessages = false;
       mod.setBusy(true);
 
-      mod.resetSessionUI();
+      mod.resetTaskUI();
 
       assert.equal(mod.dom.messages.innerHTML, "");
       assert.equal(mod.state.currentAssistantEl, null);
@@ -419,35 +419,35 @@ describe("state", () => {
       assert.equal(mod.state.busy, false);
     });
 
-    it("re-enables input and send button after session deletion", () => {
+    it("re-enables input and send button after task deletion", () => {
       mod.dom.input.disabled = true;
       mod.dom.sendBtn.disabled = true;
-      mod.dom.input.placeholder = "Session deleted";
+      mod.dom.input.placeholder = "Task deleted";
 
-      mod.resetSessionUI();
+      mod.resetTaskUI();
 
       assert.equal(mod.dom.input.disabled, false);
       assert.equal(mod.dom.sendBtn.disabled, false);
-      assert.notEqual(mod.dom.input.placeholder, "Session deleted");
+      assert.notEqual(mod.dom.input.placeholder, "Task deleted");
     });
 
-    it("clears session title and metadata", () => {
-      mod.state.sessionTitle = "Old Title";
-      mod.state.sessionCwd = "/old/path";
-      mod.state.sessionCwdDisplay = "~/old/path";
+    it("clears task title and metadata", () => {
+      mod.state.taskTitle = "Old Title";
+      mod.state.taskCwd = "/old/path";
+      mod.state.taskCwdDisplay = "~/old/path";
       mod.state.configOptions = [
         { id: "model", name: "Model", currentValue: "x", options: [] },
       ];
-      mod.dom.sessionInfo.textContent = "Old Title";
+      mod.dom.taskInfo.textContent = "Old Title";
       document.title = "Old Title";
 
-      mod.resetSessionUI();
+      mod.resetTaskUI();
 
-      assert.equal(mod.state.sessionTitle, null);
-      assert.equal(mod.state.sessionCwd, null);
-      assert.equal(mod.state.sessionCwdDisplay, null);
+      assert.equal(mod.state.taskTitle, null);
+      assert.equal(mod.state.taskCwd, null);
+      assert.equal(mod.state.taskCwdDisplay, null);
       assert.deepEqual(mod.state.configOptions, []);
-      assert.equal(mod.dom.sessionInfo.textContent, "");
+      assert.equal(mod.dom.taskInfo.textContent, "");
       assert.equal(document.title, ">_");
     });
   });
@@ -464,13 +464,13 @@ describe("state", () => {
       }) as any;
 
       mod.state.busy = true;
-      mod.state.sessionId = "s1";
+      mod.state.taskId = "s1";
       mod.state.currentBashEl = null;
 
       assert.equal((await mod.sendCancel())?.status, "cancelling");
 
       assert.equal(calls.length, 1);
-      assert.equal(calls[0].url, "/api/v1/sessions/s1/cancel");
+      assert.equal(calls[0].url, "/api/v1/tasks/s1/cancel");
       assert.equal(calls[0].init?.method, "POST");
     });
 
@@ -485,16 +485,16 @@ describe("state", () => {
       }) as any;
 
       mod.state.busy = true;
-      mod.state.sessionId = "s1";
+      mod.state.taskId = "s1";
       mod.state.currentBashEl = {};
 
       assert.equal((await mod.sendCancel())?.status, "cancelling");
 
-      assert.equal(calls[0].url, "/api/v1/sessions/s1/cancel");
+      assert.equal(calls[0].url, "/api/v1/tasks/s1/cancel");
     });
 
     it("returns false when not busy", async () => {
-      mod.state.sessionId = "s1";
+      mod.state.taskId = "s1";
       mod.state.busy = false;
       assert.equal(await mod.sendCancel(), null);
     });
@@ -508,7 +508,7 @@ describe("state", () => {
           text: async () => JSON.stringify({ ok: true, status: "cancelling" }),
         };
       }) as any;
-      mod.state.sessionId = "s1";
+      mod.state.taskId = "s1";
       mod.state.busy = false;
 
       assert.equal(
@@ -516,7 +516,7 @@ describe("state", () => {
         "cancelling",
       );
       assert.equal(calls.length, 1);
-      assert.equal(calls[0].url, "/api/v1/sessions/s1/cancel");
+      assert.equal(calls[0].url, "/api/v1/tasks/s1/cancel");
       assert.equal(calls[0].init?.method, "POST");
     });
 
@@ -526,7 +526,7 @@ describe("state", () => {
         json: async () => ({ error: "Agent not ready" }),
       })) as any;
       mod.state.busy = true;
-      mod.state.sessionId = "s1";
+      mod.state.taskId = "s1";
 
       await assert.rejects(mod.sendCancel(), /Agent not ready/);
     });
@@ -538,7 +538,7 @@ describe("state", () => {
           resolveCancel = resolve;
         });
       mod.state.busy = true;
-      mod.state.sessionId = "s1";
+      mod.state.taskId = "s1";
       mod.state.lastStateSeq = 3;
 
       const pending = mod.sendCancel();
@@ -570,7 +570,7 @@ describe("state", () => {
         text: async () => JSON.stringify({ ok: true, status: "superseded" }),
       })) as any;
       mod.state.busy = true;
-      mod.state.sessionId = "s1";
+      mod.state.taskId = "s1";
 
       assert.equal((await mod.sendCancel())?.status, "superseded");
       assert.equal(mod.state.busy, true);
@@ -579,41 +579,41 @@ describe("state", () => {
   });
 
   describe("hash routing", () => {
-    it("getHashSessionId returns null for empty hash", () => {
+    it("getHashTaskId returns null for empty hash", () => {
       globalThis.location.hash = "";
-      assert.equal(mod.getHashSessionId(), null);
+      assert.equal(mod.getHashTaskId(), null);
     });
 
-    it("getHashSessionId returns id from hash", () => {
+    it("getHashTaskId returns id from hash", () => {
       globalThis.location.hash = "#abc123";
-      assert.equal(mod.getHashSessionId(), "abc123");
+      assert.equal(mod.getHashTaskId(), "abc123");
     });
 
-    it("setHashSessionId omits the hash for Root", () => {
-      history.replaceState(null, "", "/?view=chat#old-session");
+    it("setHashTaskId omits the hash for Root", () => {
+      history.replaceState(null, "", "/?view=chat#old-task");
 
-      mod.setHashSessionId("root");
+      mod.setHashTaskId("root");
 
       assert.equal(location.pathname, "/");
       assert.equal(location.search, "?view=chat");
       assert.equal(location.hash, "");
     });
 
-    it("setHashSessionId keeps a hash for child sessions", () => {
-      mod.setHashSessionId("child-session");
+    it("setHashTaskId keeps a hash for child tasks", () => {
+      mod.setHashTaskId("child-task");
 
-      assert.equal(location.hash, "#child-session");
+      assert.equal(location.hash, "#child-task");
     });
 
-    it("updateSessionInfo sets text and title", () => {
-      mod.updateSessionInfo("abc12345-full-id", "My Session");
-      assert.equal(mod.dom.sessionInfo.textContent, "My Session");
-      assert.equal(globalThis.document.title, "My Session");
+    it("updateTaskInfo sets text and title", () => {
+      mod.updateTaskInfo("abc12345-full-id", "My Task");
+      assert.equal(mod.dom.taskInfo.textContent, "My Task");
+      assert.equal(globalThis.document.title, "My Task");
     });
 
-    it("updateSessionInfo truncates id when no title", () => {
-      mod.updateSessionInfo("abc12345-full-id", null);
-      assert.equal(mod.dom.sessionInfo.textContent, "abc12345…");
+    it("updateTaskInfo truncates id when no title", () => {
+      mod.updateTaskInfo("abc12345-full-id", null);
+      assert.equal(mod.dom.taskInfo.textContent, "abc12345…");
       assert.equal(globalThis.document.title, ">_");
     });
   });
@@ -622,12 +622,12 @@ describe("state", () => {
     function snap(
       seq: number,
       busy: any,
-      sessionExtras: Record<string, any> = {},
+      taskExtras: Record<string, any> = {},
     ): any {
       return {
         version: 1,
         seq,
-        session: {
+        task: {
           id: "s",
           title: null,
           cwd: "/",
@@ -635,7 +635,7 @@ describe("state", () => {
           mode: null,
           createdAt: null,
           lastEventSeq: 0,
-          ...sessionExtras,
+          ...taskExtras,
         },
         runtime: { busy },
       };
@@ -682,7 +682,7 @@ describe("state", () => {
     it("applySnapshot installs display cwd", () => {
       mod.applySnapshot(snap(4, null, { cwdDisplay: "~/project" }));
 
-      assert.equal(mod.state.sessionCwdDisplay, "~/project");
+      assert.equal(mod.state.taskCwdDisplay, "~/project");
     });
 
     it("applySnapshot installs context usage", () => {
@@ -836,9 +836,9 @@ describe("state", () => {
 
     // Regression: A→B rapid switch. Slow A resolves after fast B; without a
     // guard A's snapshot would clobber B's applied state. The guard is a
-    // sessionSwitchGen capture at reloadSnapshot entry, re-checked before
+    // taskSwitchGen capture at reloadSnapshot entry, re-checked before
     // applySnapshot runs.
-    it("reloadSnapshot drops stale result if sessionSwitchGen bumped during fetch", async () => {
+    it("reloadSnapshot drops stale result if taskSwitchGen bumped during fetch", async () => {
       mod.state.lastStateSeq = 100;
       mod.setBusy(false);
 
@@ -859,7 +859,7 @@ describe("state", () => {
       const pA = mod.reloadSnapshot("A");
 
       // Simulate another switch starting mid-fetch
-      mod.state.sessionSwitchGen++;
+      mod.state.taskSwitchGen++;
 
       // Now unblock A. It should NOT apply because the gen moved on.
       resolveA({});
@@ -919,7 +919,7 @@ describe("state", () => {
     it("reloadSnapshot still applies when no switch happened during fetch", async () => {
       mod.state.lastStateSeq = 0;
       mod.setBusy(false);
-      const startGen = mod.state.sessionSwitchGen;
+      const startGen = mod.state.taskSwitchGen;
 
       const body = JSON.stringify(
         snap(9, { kind: "agent", since: "", promptId: null }),
@@ -932,12 +932,12 @@ describe("state", () => {
 
       const result = await mod.reloadSnapshot("A");
       assert.ok(result);
-      assert.equal(mod.state.sessionSwitchGen, startGen);
+      assert.equal(mod.state.taskSwitchGen, startGen);
       assert.equal(mod.state.lastStateSeq, 9);
       assert.equal(mod.state.busy, true);
     });
 
-    it("hydrateSessionRuntime treats a newer state patch as authoritative", async () => {
+    it("hydrateTaskRuntime treats a newer state patch as authoritative", async () => {
       mod.state.lastStateSeq = 5;
       let resolveSnapshot!: (value: unknown) => void;
       const pendingSnapshot = new Promise((resolve) => {
@@ -949,7 +949,7 @@ describe("state", () => {
         text: async () => JSON.stringify(await pendingSnapshot),
       })) as any;
 
-      const hydration = mod.hydrateSessionRuntime("s1");
+      const hydration = mod.hydrateTaskRuntime("s1");
       assert.equal(
         mod.applyStatePatch({
           seq: 6,
@@ -972,7 +972,7 @@ describe("state", () => {
       assert.equal(mod.state.busy, true);
     });
 
-    it("hydrateSessionRuntime applies a full baseline before buffered patches", async () => {
+    it("hydrateTaskRuntime applies a full baseline before buffered patches", async () => {
       const oldPlan = [{ status: "in_progress", content: "Old plan" }];
       mod.state.plan = oldPlan;
       mod.state.lastStateSeq = 0;
@@ -986,10 +986,10 @@ describe("state", () => {
         text: async () => JSON.stringify(await pendingSnapshot),
       })) as any;
 
-      const hydration = mod.hydrateSessionRuntime("s1");
+      const hydration = mod.hydrateTaskRuntime("s1");
       mod.state.pendingNavigationEvents.push({
         type: "state_patch",
-        sessionId: "s1",
+        taskId: "s1",
         seq: 1,
         patch: {
           runtime: {
@@ -1017,38 +1017,38 @@ describe("state", () => {
             }),
           ),
       })) as any;
-      const generation = mod.state.sessionSwitchGen;
+      const generation = mod.state.taskSwitchGen;
 
-      const first = mod.hydrateSessionRuntime(
+      const first = mod.hydrateTaskRuntime(
         "A",
-        () => generation === mod.state.sessionSwitchGen,
+        () => generation === mod.state.taskSwitchGen,
       );
-      const second = mod.hydrateSessionRuntime("B");
+      const second = mod.hydrateTaskRuntime("B");
       for (
         let i = 0;
         i < 10 &&
-        (!snapshots.has("/api/v1/sessions/A/snapshot") ||
-          !snapshots.has("/api/v1/sessions/B/snapshot"));
+        (!snapshots.has("/api/v1/tasks/A/snapshot") ||
+          !snapshots.has("/api/v1/tasks/B/snapshot"));
         i++
       ) {
         await new Promise((resolve) => setImmediate(resolve));
       }
-      const resolveA = snapshots.get("/api/v1/sessions/A/snapshot");
-      const resolveB = snapshots.get("/api/v1/sessions/B/snapshot");
+      const resolveA = snapshots.get("/api/v1/tasks/A/snapshot");
+      const resolveB = snapshots.get("/api/v1/tasks/B/snapshot");
       assert.ok(resolveA);
       assert.ok(resolveB);
-      mod.state.sessionSwitchGen++;
+      mod.state.taskSwitchGen++;
       resolveA(snap(0, null));
       assert.equal(await first, false);
-      assert.equal(mod.state.runtimeHydrationSessionId, "B");
+      assert.equal(mod.state.runtimeHydrationTaskId, "B");
 
-      mod.state.sessionSwitchGen = generation;
+      mod.state.taskSwitchGen = generation;
       resolveB(snap(0, null));
       assert.equal(await second, true);
-      assert.equal(mod.state.runtimeHydrationSessionId, null);
+      assert.equal(mod.state.runtimeHydrationTaskId, null);
     });
 
-    it("newest same-session hydration applies patches buffered after supersession", async () => {
+    it("newest same-task hydration applies patches buffered after supertask", async () => {
       const snapshots: Array<(value: unknown) => void> = [];
       globalThis.fetch = (async () => ({
         ok: true,
@@ -1061,8 +1061,8 @@ describe("state", () => {
           ),
       })) as any;
 
-      const older = mod.hydrateSessionRuntime("A");
-      const newer = mod.hydrateSessionRuntime("A");
+      const older = mod.hydrateTaskRuntime("A");
+      const newer = mod.hydrateTaskRuntime("A");
       for (let i = 0; i < 10 && snapshots.length < 2; i++) {
         await new Promise((resolve) => setImmediate(resolve));
       }
@@ -1072,7 +1072,7 @@ describe("state", () => {
       assert.equal(await older, true);
       mod.state.pendingNavigationEvents.push({
         type: "state_patch",
-        sessionId: "A",
+        taskId: "A",
         seq: 2,
         patch: {
           runtime: {
@@ -1115,7 +1115,7 @@ describe("state", () => {
 
     it("updateConfigOptions clears fallback when populated non-empty", () => {
       mod.setFallbackFromSnapshot({
-        session: { mode: "#plan", model: "gpt-5.4" },
+        task: { mode: "#plan", model: "gpt-5.4" },
       });
       assert.equal(mod.getFallback("mode"), "#plan");
       mod.updateConfigOptions([

@@ -51,7 +51,7 @@ function makeRoot(): CmdNode {
       },
       {
         name: "/rename",
-        desc: "Rename session",
+        desc: "Rename task",
         freeform: (q) =>
           q.trim()
             ? { primary: `rename to '${q.trim()}'`, onSelect: async () => {} }
@@ -62,6 +62,24 @@ function makeRoot(): CmdNode {
 }
 
 describe("slash-tree — resolvePath", () => {
+  it("uses the short description in the menu and keeps help text separate", () => {
+    const root: CmdNode = {
+      name: "<root>",
+      children: [
+        {
+          name: "/compact",
+          desc: "Compact context",
+          help: "Compact context and continue; history stays.",
+          onSelect: async () => {},
+        },
+      ],
+    };
+
+    const candidates = buildCandidates(root, "");
+
+    assert.equal(candidates[0]?.spec.secondary, "Compact context");
+  });
+
   it("empty input → root", () => {
     const root = makeRoot();
     const r = resolvePath("", root);

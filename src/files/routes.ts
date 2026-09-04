@@ -2,7 +2,7 @@
  * File viewer HTTP routes — read-only access to arbitrary local files.
  *
  * URL space claimed: `/api/v1/files/{info,list,content}`.
- * Sessionless by design (confirmed): the caller passes an absolute or
+ * Task-less by design (confirmed): the caller passes an absolute or
  * `~`-prefixed path; the server own `~` expansion + realpath canonicalization.
  * Relative paths are rejected. Bearer auth is enforced by the shared
  * `/api/**` gate in routes.ts — these paths are deliberately NOT in the

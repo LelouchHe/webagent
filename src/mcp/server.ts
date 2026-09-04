@@ -17,7 +17,7 @@ import { HTTP_STATUS } from "../http-status.ts";
  *
  * The endpoint lives outside `/api/**`, so the shared Bearer auth gate does
  * not apply to it (mirroring the share viewer's `/s/*` pattern): identity is
- * the per-session capability, distinct from operator UI tokens.
+ * the per-task capability, distinct from operator UI tokens.
  */
 
 /** Uniquely-named WebAgent MCP server appended to an ACP session's mcpServers. */
@@ -49,14 +49,14 @@ export function buildMcpServerEntry(
 }
 
 export interface McpEndpointOptions {
-  /** Per-session capability store. */
+  /** Per-task capability store (keyed by task id). */
   capabilities: CapabilityStore;
   /**
-   * Confirms a resolved session is active. Creating/restoring sessions are
+   * Confirms a resolved task's execution is active. Creating/restoring tasks are
    * included because the ACP agent may auto-connect before the bridge call
-   * returns and SessionManager promotes the session to live.
+   * returns and TaskManager promotes the task to live.
    */
-  isSessionActive: (webSessionId: string) => boolean;
+  isTaskActive: (taskId: string) => boolean;
   /** Mount path; the response `true` claims that path. */
   path?: string;
 }
@@ -77,7 +77,7 @@ export function createMcpEndpoint(
   options: McpEndpointOptions,
 ): (req: IncomingMessage, res: ServerResponse) => Promise<boolean> {
   const path = options.path ?? DEFAULT_PATH;
-  const { capabilities, isSessionActive } = options;
+  const { capabilities, isTaskActive } = options;
 
   return async (
     req: IncomingMessage,
@@ -108,8 +108,8 @@ export function createMcpEndpoint(
 
     // --- Capability gate (fail closed) ---
     const capability = capabilityFromRequest(req);
-    const webSessionId = capability ? capabilities.resolve(capability) : null;
-    if (!webSessionId || !isSessionActive(webSessionId)) {
+    const taskId = capability ? capabilities.resolve(capability) : null;
+    if (!taskId || !isTaskActive(taskId)) {
       res.writeHead(HTTP_STATUS.UNAUTHORIZED, {
         "Content-Type": "application/json",
         "WWW-Authenticate": "Bearer",
@@ -129,7 +129,7 @@ export function createMcpEndpoint(
       { name: MCP_SERVER_NAME, version: "0.1.0" },
       {},
     );
-    registerMcpTools(server, webSessionId);
+    registerMcpTools(server, taskId);
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: undefined,
       // JSON responses for POST round trips (no SSE streaming needed for the

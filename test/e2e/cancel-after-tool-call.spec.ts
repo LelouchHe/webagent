@@ -1,9 +1,9 @@
 import { test, expect } from "playwright/test";
-import { createNewSession, gotoConnected, sendPrompt } from "./helpers.ts";
+import { createNewTask, gotoConnected, sendPrompt } from "./helpers.ts";
 
 test("cancelling after a tool call clears busy state", async ({ page }) => {
   await gotoConnected(page);
-  await createNewSession(page);
+  await createNewTask(page);
 
   await sendPrompt(page, "E2E_SLOW_TOOL cancel after tool call");
 

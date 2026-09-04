@@ -1,9 +1,5 @@
 import { test, expect } from "playwright/test";
-import {
-  createNewSession,
-  currentSessionId,
-  gotoConnected,
-} from "./helpers.ts";
+import { createNewTask, currentTaskId, gotoConnected } from "./helpers.ts";
 
 async function readStatusBarCwd(
   page: import("playwright/test").Page,
@@ -12,11 +8,11 @@ async function readStatusBarCwd(
   return (text ?? "").trim();
 }
 
-test("slash-menu /new picker can create a session from a previously used cwd", async ({
+test("slash-menu /new picker can create a task from a previously used cwd", async ({
   page,
 }) => {
   await gotoConnected(page);
-  const currentSession = await createNewSession(page);
+  const currentTask = await createNewTask(page);
 
   const currentCwd = await readStatusBarCwd(page);
   expect(currentCwd).not.toBe("");
@@ -26,9 +22,7 @@ test("slash-menu /new picker can create a session from a previously used cwd", a
   await page.locator("#input").press("Tab");
   await page.locator("#input").press("Enter");
 
-  await expect(page.locator("#messages")).toContainText(
-    "Creating new session…",
-  );
-  await expect.poll(() => currentSessionId(page)).not.toBe(currentSession);
+  await expect(page.locator("#messages")).toContainText("Creating new task…");
+  await expect.poll(() => currentTaskId(page)).not.toBe(currentTask);
   await expect.poll(() => readStatusBarCwd(page)).toBe(currentCwd);
 });

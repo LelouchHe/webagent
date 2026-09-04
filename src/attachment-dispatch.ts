@@ -1,6 +1,6 @@
 import { readFile, realpath } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
-import { isInsideSessionAttachments } from "./sessions-anchor.ts";
+import { isInsideTaskAttachments } from "./tasks-anchor.ts";
 import type { Store } from "./store.ts";
 
 /**
@@ -40,7 +40,7 @@ const NOOP_LOGGER: DispatchLogger = { warn: () => {} };
 /**
  * Builds the ACP prompt block for one client-supplied attachment. Returns
  * a fallback text block on any failure (DB miss, disk miss, anchor breach,
- * cross-session reference) so the prompt turn never gets stuck in a retry
+ * cross-task reference) so the prompt turn never gets stuck in a retry
  * loop just because one image vanished.
  *
  * Trust boundary (decision 10 in uploads-plan v2.6): client only supplies
@@ -49,23 +49,23 @@ const NOOP_LOGGER: DispatchLogger = { warn: () => {} };
  */
 export class AttachmentDispatcher {
   private readonly store: Store;
-  private readonly sessionsAnchor: string;
+  private readonly tasksAnchor: string;
   private readonly logger: DispatchLogger;
 
   constructor(
     store: Store,
-    sessionsAnchor: string,
+    tasksAnchor: string,
     logger: DispatchLogger = NOOP_LOGGER,
   ) {
     this.store = store;
-    this.sessionsAnchor = sessionsAnchor;
+    this.tasksAnchor = tasksAnchor;
     this.logger = logger;
   }
 
-  async dispatch(sessionId: string, ref: AttachmentRef): Promise<PromptBlock> {
+  async dispatch(taskId: string, ref: AttachmentRef): Promise<PromptBlock> {
     const fallback = (reason: string): PromptBlock => {
       this.logger.warn(
-        `[attachments] dispatch fallback (${reason}) for ${sessionId}/${ref.attachmentId}`,
+        `[attachments] dispatch fallback (${reason}) for ${taskId}/${ref.attachmentId}`,
       );
       return {
         type: "text",
@@ -85,19 +85,19 @@ export class AttachmentDispatcher {
       return fallback("client_supplied_external_field");
     }
 
-    const row = this.store.getAttachment(sessionId, ref.attachmentId);
+    const row = this.store.getAttachment(taskId, ref.attachmentId);
     if (!row) return fallback("row_not_found");
 
-    // Cross-session reference — the row exists but for a DIFFERENT session.
-    // store.getAttachment scopes by session_id so this should already be
+    // Cross-task reference — the row exists but for a DIFFERENT task.
+    // store.getAttachment scopes by task_id so this should already be
     // caught by row_not_found, but assert defensively.
-    if (row.session_id !== sessionId) {
-      return fallback("cross_session");
+    if (row.task_id !== taskId) {
+      return fallback("cross_task");
     }
 
     // Anchor check on the stored realpath. If the file was moved out from
     // under us, or a future bug let an attacker inject a row with a path
-    // outside SESSIONS_ANCHOR/<sid>/attachments/, we MUST refuse to dispatch
+    // outside TASKS_ANCHOR/<sid>/attachments/, we MUST refuse to dispatch
     // it as a `file://` URI — the agent would happily read it.
     let resolvedPath: string;
     try {
@@ -105,9 +105,7 @@ export class AttachmentDispatcher {
     } catch {
       return fallback("realpath_failed");
     }
-    if (
-      !isInsideSessionAttachments(this.sessionsAnchor, sessionId, resolvedPath)
-    ) {
+    if (!isInsideTaskAttachments(this.tasksAnchor, taskId, resolvedPath)) {
       return fallback("path_outside_anchor");
     }
 

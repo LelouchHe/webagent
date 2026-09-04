@@ -38,7 +38,7 @@ function apiPathname(url: string): string | null {
 function usesUrlCapability(pathname: string): boolean {
   return (
     pathname === "/api/v1/files/content" ||
-    /^\/api\/v1\/sessions\/[A-Za-z0-9_-]+\/attachments\/[^/]+$/.test(pathname)
+    /^\/api\/v1\/tasks\/[A-Za-z0-9_-]+\/attachments\/[^/]+$/.test(pathname)
   );
 }
 

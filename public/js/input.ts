@@ -60,8 +60,8 @@ function sendMessage() {
   if (text.startsWith("!") && state.pendingAttachments.length === 0) {
     const command = text.slice(1).trim();
     if (!command) return;
-    if (!state.sessionId) {
-      addSystem("warn: Session not ready yet, please wait…");
+    if (!state.taskId) {
+      addSystem("warn: Task not ready yet, please wait…");
       return;
     }
     if (!isConnected()) {
@@ -72,8 +72,8 @@ function sendMessage() {
     dom.input.style.height = "auto";
     dom.inputArea.classList.remove("bash-mode");
     addBashBlock(command, true);
-    state.sentBashForSession = state.sessionId;
-    api.execBash(state.sessionId, command).catch(() => {});
+    state.sentBashForTask = state.taskId;
+    api.execBash(state.taskId, command).catch(() => {});
     setBusy(true);
     return;
   }
@@ -93,8 +93,8 @@ function sendMessage() {
   dom.input.style.height = "auto";
   dom.inputArea.classList.remove("bash-mode");
 
-  if (!state.sessionId) {
-    addSystem("warn: Session not ready yet, please wait…");
+  if (!state.taskId) {
+    addSystem("warn: Task not ready yet, please wait…");
     return;
   }
 
@@ -121,7 +121,7 @@ function sendMessage() {
   // <a class=user-file> the moment the upload resolves and we have the
   // signed URL — without this swap the sender would be stuck on the text
   // chip until reload (sender's own SSE echo is suppressed below via
-  // sentMessageForSession). See test/e2e/file-attachment-download.spec.ts.
+  // sentMessageForTask). See test/e2e/file-attachment-download.spec.ts.
   const msgEl = addMessage("user", text || "(attachment)");
   msgEl.dataset.optimisticOpId = promptOpId;
   const fileChips: (HTMLElement | null)[] = [];
@@ -161,7 +161,7 @@ function sendMessage() {
       attachments.map((att) => {
         const fd = new FormData();
         fd.append("file", att.file, att.name);
-        return fetch(`/api/v1/sessions/${state.sessionId}/attachments`, {
+        return fetch(`/api/v1/tasks/${state.taskId}/attachments`, {
           method: "POST",
           body: fd,
         })
@@ -195,7 +195,7 @@ function sendMessage() {
       // Swap each file chip for a real <a class=user-file> using the
       // signed URL the server just returned. After this the on-send
       // bubble matches the post-reload SSE-replay bubble exactly, so
-      // the user sees a real link without having to switch sessions.
+      // the user sees a real link without having to switch tasks.
       for (let i = 0; i < uploaded.length; i++) {
         const chip = fileChips[i];
         if (!chip) continue;
@@ -222,7 +222,7 @@ function sendMessage() {
       );
       api
         .sendMessage(
-          state.sessionId!,
+          state.taskId!,
           text || "What is in this attachment?",
           refs,
           promptOpId,
@@ -231,11 +231,11 @@ function sendMessage() {
     });
   } else {
     api
-      .sendMessage(state.sessionId, text, undefined, promptOpId)
+      .sendMessage(state.taskId, text, undefined, promptOpId)
       .catch(onSendError);
   }
   state.turnEnded = false;
-  state.sentMessageForSession = state.sessionId;
+  state.sentMessageForTask = state.taskId;
   setBusy(true);
   showWaiting();
 }
@@ -253,7 +253,7 @@ function handleSendError(
   state.sentMessageOpId = null;
   // Without this, a fire-and-forget POST that returns non-2xx (e.g. 500
   // when ensureResumed fails because the agent doesn't recognize the
-  // session) leaves the UI stuck in busy state with no visible reason.
+  // task) leaves the UI stuck in busy state with no visible reason.
   setBusy(false);
   hideWaiting();
   if (
@@ -262,7 +262,7 @@ function handleSendError(
     err.status === HTTP_STATUS.UNPROCESSABLE_CONTENT
   ) {
     context.messageEl.remove();
-    state.sentMessageForSession = null;
+    state.sentMessageForTask = null;
     setInputValue(context.text);
     state.pendingAttachments.push(...context.attachments);
     renderAttachPreview();
@@ -277,7 +277,7 @@ function handleSendError(
 }
 
 function doCancel() {
-  if (!state.busy || !state.sessionId) return;
+  if (!state.busy || !state.taskId) return;
   const retry = state.cancelStatus !== null;
   addSystem(retry ? "^C retrying cancel…" : "^C cancelling…");
   void sendCancel()
@@ -361,7 +361,7 @@ function cycleMode() {
   if (!opt?.options.length) {
     if (Date.now() - lastModeUnavailableWarnTs > 3000) {
       addSystem(
-        "Mode switcher temporarily unavailable. Try `/new` to start a fresh session.",
+        "Mode switcher temporarily unavailable. Try `/new` to start a fresh task.",
       );
       lastModeUnavailableWarnTs = Date.now();
     }
@@ -370,7 +370,7 @@ function cycleMode() {
   const idx = opt.options.findIndex((o) => o.value === opt.currentValue);
   const next = opt.options[(idx + 1) % opt.options.length];
   opt.currentValue = next.value;
-  api.setConfig(state.sessionId!, "mode", next.value).catch(() => {});
+  api.setConfig(state.taskId!, "mode", next.value).catch(() => {});
   addSystem(`Mode → ${next.name}`);
   updateModeUI();
 }

@@ -92,7 +92,7 @@ describe("PushService — PushNotification payload shape", () => {
     push.registerClient("c1", "https://push.example.com/1");
     visBoth(push, registry, "c1", { visible: true });
     visBoth(push, registry, "c1", { active: "sess-abc" });
-    // A notify tied to this session would be suppressed; close must NOT be.
+    // A notify tied to this task would be suppressed; close must NOT be.
     await push.sendClose("sess-sess-abc-done");
     assert.equal(push.sent.length, 1);
   });
@@ -122,14 +122,14 @@ describe("PushService — PushNotification payload shape", () => {
     store.saveSubscription("https://push.example.com/1", "auth1", "p256dh1");
     await push.sendForMessage({
       id: "msg-a",
-      to: "session:abc",
+      to: "task:abc",
       body: "first",
       deliver: "push",
       dedup_key: "disk-full",
     });
     await push.sendForMessage({
       id: "msg-b",
-      to: "session:abc",
+      to: "task:abc",
       body: "second",
       deliver: "push",
       dedup_key: "disk-full",
@@ -191,32 +191,32 @@ describe("PushService — PushNotification payload shape", () => {
     // Messages with different `to` must NOT collapse with each other.
     await push.sendForMessage({
       id: "msg-third",
-      to: "session:abc",
+      to: "task:abc",
       body: "third",
       deliver: "push",
       dedup_key: "disk-full",
     });
     const p3 = JSON.parse(push.sent[2].payload);
     assert.notEqual(p3.tag, p1.tag);
-    assert.equal(p3.tag, "dedup-session:abc-disk-full");
+    assert.equal(p3.tag, "dedup-task:abc-disk-full");
   });
 
-  it("sendForMessage to=session:<sid> puts sessionId in data for click routing", async () => {
-    // Without sessionId in the push data, notificationclick in sw.js falls
-    // back to "/" which lands on the current session, not the target one.
+  it("sendForMessage to=task:<sid> puts taskId in data for click routing", async () => {
+    // Without taskId in the push data, notificationclick in sw.js falls
+    // back to "/" which lands on the current task, not the target one.
     store.saveSubscription("https://push.example.com/1", "auth1", "p256dh1");
     await push.sendForMessage({
       id: "msg-m1",
-      to: "session:abcd1234",
+      to: "task:abcd1234",
       body: "jump here",
       deliver: "push",
     });
     const payload = JSON.parse(push.sent[0].payload);
-    assert.equal(payload.data.sessionId, "abcd1234");
+    assert.equal(payload.data.taskId, "abcd1234");
     assert.equal(payload.data.messageId, "msg-m1");
   });
 
-  it("sendForMessage to non-session target omits sessionId", async () => {
+  it("sendForMessage to non-task target omits taskId", async () => {
     store.saveSubscription("https://push.example.com/1", "auth1", "p256dh1");
     await push.sendForMessage({
       id: "msg-m2",
@@ -225,7 +225,7 @@ describe("PushService — PushNotification payload shape", () => {
       deliver: "push",
     });
     const payload = JSON.parse(push.sent[0].payload);
-    assert.equal(payload.data.sessionId, undefined);
+    assert.equal(payload.data.taskId, undefined);
   });
 
   it("sendForMessage with deliver='silent' does NOT push", async () => {
@@ -241,35 +241,35 @@ describe("PushService — PushNotification payload shape", () => {
 
   it("sendForEvent uses sess-<sid>-done tag for prompt_done", async () => {
     store.saveSubscription("https://push.example.com/1", "auth1", "p256dh1");
-    const sessionId = "abcd1234-aaaa-bbbb-cccc-dddddddddddd";
-    store.createSession(sessionId, "/tmp");
-    store.updateSessionTitle(sessionId, "My work");
-    await push.sendForEvent(sessionId, { type: "prompt_done" });
+    const taskId = "abcd1234-aaaa-bbbb-cccc-dddddddddddd";
+    store.createTask(taskId, "/tmp");
+    store.updateTaskTitle(taskId, "My work");
+    await push.sendForEvent(taskId, { type: "prompt_done" });
     assert.equal(push.sent.length, 1);
     const payload = JSON.parse(push.sent[0].payload);
     assert.equal(payload.kind, "notify");
-    assert.equal(payload.tag, `sess-${sessionId}-done`);
+    assert.equal(payload.tag, `sess-${taskId}-done`);
   });
 
   it("sendForEvent uses sess-<sid>-perm-<eid> for permission_request", async () => {
     store.saveSubscription("https://push.example.com/1", "auth1", "p256dh1");
-    const sessionId = "abcd1234-aaaa-bbbb-cccc-dddddddddddd";
-    store.createSession(sessionId, "/tmp");
-    await push.sendForEvent(sessionId, {
+    const taskId = "abcd1234-aaaa-bbbb-cccc-dddddddddddd";
+    store.createTask(taskId, "/tmp");
+    await push.sendForEvent(taskId, {
       type: "permission_request",
       title: "Run ls?",
       eventId: 17,
     });
     assert.equal(push.sent.length, 1);
     const payload = JSON.parse(push.sent[0].payload);
-    assert.equal(payload.tag, `sess-${sessionId}-perm-17`);
+    assert.equal(payload.tag, `sess-${taskId}-perm-17`);
   });
 
   it("sendForEvent uses sess-<sid>-bash-<eid> for bash_done", async () => {
     store.saveSubscription("https://push.example.com/1", "auth1", "p256dh1");
-    const sessionId = "abcd1234-aaaa-bbbb-cccc-dddddddddddd";
-    store.createSession(sessionId, "/tmp");
-    await push.sendForEvent(sessionId, {
+    const taskId = "abcd1234-aaaa-bbbb-cccc-dddddddddddd";
+    store.createTask(taskId, "/tmp");
+    await push.sendForEvent(taskId, {
       type: "bash_done",
       command: "ls",
       exitCode: 0,
@@ -277,25 +277,25 @@ describe("PushService — PushNotification payload shape", () => {
     });
     assert.equal(push.sent.length, 1);
     const payload = JSON.parse(push.sent[0].payload);
-    assert.equal(payload.tag, `sess-${sessionId}-bash-42`);
+    assert.equal(payload.tag, `sess-${taskId}-bash-42`);
   });
 
-  it("sendForEvent suppresses push when the target session is visible", async () => {
+  it("sendForEvent suppresses push when the target task is visible", async () => {
     store.saveSubscription("https://push.example.com/1", "auth1", "p256dh1");
-    const sessionId = "abcd1234-aaaa-bbbb-cccc-dddddddddddd";
-    store.createSession(sessionId, "/tmp");
+    const taskId = "abcd1234-aaaa-bbbb-cccc-dddddddddddd";
+    store.createTask(taskId, "/tmp");
     push.registerClient("c1", "https://push.example.com/1");
     visBoth(push, registry, "c1", { visible: true });
-    visBoth(push, registry, "c1", { active: sessionId });
-    await push.sendForEvent(sessionId, { type: "prompt_done" });
+    visBoth(push, registry, "c1", { active: taskId });
+    await push.sendForEvent(taskId, { type: "prompt_done" });
     assert.equal(push.sent.length, 0);
   });
 
   it("sendForEvent returns false for non-notifiable event types", async () => {
     store.saveSubscription("https://push.example.com/1", "auth1", "p256dh1");
-    const sessionId = "abcd1234-aaaa-bbbb-cccc-dddddddddddd";
-    store.createSession(sessionId, "/tmp");
-    const sent = await push.sendForEvent(sessionId, {
+    const taskId = "abcd1234-aaaa-bbbb-cccc-dddddddddddd";
+    store.createTask(taskId, "/tmp");
+    const sent = await push.sendForEvent(taskId, {
       type: "assistant_message",
     });
     assert.equal(sent, false);

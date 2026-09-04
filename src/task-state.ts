@@ -1,6 +1,6 @@
 /**
- * Per-session runtime state: single source of truth for "what state is this
- * session in right now" (busy / streaming / pending permissions / plan).
+ * Per-task runtime state: single source of truth for "what state is this
+ * task in right now" (busy / streaming / pending permissions / plan).
  *
  * The frontend fetches a full snapshot on connect / reconnect / after long
  * backgrounding, then applies incremental `state_patch` SSE events. This
@@ -55,21 +55,21 @@ export interface StatePatch {
   runtime?: RuntimePatch;
 }
 
-export interface SessionRuntimeState {
+export interface TaskRuntimeState {
   seq: number;
   runtime: Runtime;
 }
 
 export interface StatePatchEvent {
   type: "state_patch";
-  sessionId: string;
+  taskId: string;
   seq: number;
   patch: StatePatch;
 }
 
 type Listener = (event: StatePatchEvent) => void;
 
-function defaultState(): SessionRuntimeState {
+function defaultState(): TaskRuntimeState {
   return {
     seq: 0,
     runtime: {
@@ -172,8 +172,8 @@ function hasRuntimeChanges(
   return false;
 }
 
-export class SessionStateManager {
-  private readonly states = new Map<string, SessionRuntimeState>();
+export class TaskStateManager {
+  private readonly states = new Map<string, TaskRuntimeState>();
   private readonly listeners = new Set<Listener>();
   private readonly cancelTimers = new Map<
     string,
@@ -181,28 +181,28 @@ export class SessionStateManager {
   >();
 
   /** Get current state (creates default entry on first access). */
-  getState(sessionId: string): SessionRuntimeState {
-    let s = this.states.get(sessionId);
+  getState(taskId: string): TaskRuntimeState {
+    let s = this.states.get(taskId);
     if (!s) {
       s = defaultState();
-      this.states.set(sessionId, s);
+      this.states.set(taskId, s);
     }
     return s;
   }
 
-  /** Read streaming state without creating runtime state for an unseen session. */
-  peekStreaming(sessionId: string): StreamingState {
-    const streaming = this.states.get(sessionId)?.runtime.streaming;
+  /** Read streaming state without creating runtime state for an unseen task. */
+  peekStreaming(taskId: string): StreamingState {
+    const streaming = this.states.get(taskId)?.runtime.streaming;
     return streaming ? { ...streaming } : { assistant: false, thinking: false };
   }
 
   /**
-   * Merge a patch into the session's runtime state. Bumps seq and notifies
+   * Merge a patch into the task's runtime state. Bumps seq and notifies
    * listeners only when the patch actually changes something (no-op patches
    * are dropped silently).
    */
-  patch(sessionId: string, patch: StatePatch): void {
-    const state = this.getState(sessionId);
+  patch(taskId: string, patch: StatePatch): void {
+    const state = this.getState(taskId);
     const runtimeChanged = hasRuntimeChanges(state.runtime, patch.runtime);
     if (!runtimeChanged) return;
 
@@ -243,7 +243,7 @@ export class SessionStateManager {
 
     const event: StatePatchEvent = {
       type: "state_patch",
-      sessionId,
+      taskId,
       seq: state.seq,
       patch,
     };
@@ -258,20 +258,20 @@ export class SessionStateManager {
     };
   }
 
-  /** Clear all state for a session (call from SessionManager.deleteSession). */
-  delete(sessionId: string): void {
-    this.states.delete(sessionId);
-    const t = this.cancelTimers.get(sessionId);
+  /** Clear all state for a task (call from TaskManager.deleteTask). */
+  delete(taskId: string): void {
+    this.states.delete(taskId);
+    const t = this.cancelTimers.get(taskId);
     if (t) {
       clearTimeout(t);
-      this.cancelTimers.delete(sessionId);
+      this.cancelTimers.delete(taskId);
     }
   }
 
   /**
-   * Reset a live session's runtime state to defaults without restarting the
-   * seq ledger. Used when rotating a session's ACP execution in place (clear):
-   * the WebAgent session identity survives, so clients that validate
+   * Reset a live task's runtime state to defaults without restarting the
+   * seq ledger. Used when rotating a task's ACP execution in place (clear):
+   * the WebAgent task identity survives, so clients that validate
    * incremental `state_patch` events against their own lastStateSeq must keep
    * seeing a monotonic seq. Hard-deleting the entry here would restart the
    * server seq at 0; every post-rotation snapshot would then look
@@ -279,9 +279,9 @@ export class SessionStateManager {
    * desynced (stuck busy). Broadcasts one patch when anything actually
    * changed, mirroring the explicit reset patch used by the compaction path.
    */
-  reset(sessionId: string): void {
-    this.clearCancelSafety(sessionId);
-    this.patch(sessionId, {
+  reset(taskId: string): void {
+    this.clearCancelSafety(taskId);
+    this.patch(taskId, {
       runtime: {
         busy: null,
         pendingPermissions: [],
@@ -292,32 +292,32 @@ export class SessionStateManager {
     });
   }
 
-  /** Clear current plans for every known session (used on bridge reload). */
+  /** Clear current plans for every known task (used on bridge reload). */
   clearPlans(): void {
-    for (const [sessionId, state] of this.states) {
+    for (const [taskId, state] of this.states) {
       if (state.runtime.plan !== null) {
-        this.patch(sessionId, { runtime: { plan: null } });
+        this.patch(taskId, { runtime: { plan: null } });
       }
     }
   }
 
-  /** Clear context usage for every known session on bridge teardown. */
+  /** Clear context usage for every known task on bridge teardown. */
   clearContextUsage(): void {
-    for (const [sessionId, state] of this.states) {
+    for (const [taskId, state] of this.states) {
       if (state.runtime.contextUsage !== null) {
-        this.patch(sessionId, { runtime: { contextUsage: null } });
+        this.patch(taskId, { runtime: { contextUsage: null } });
       }
     }
   }
 
-  /** Clear active stream markers for every known session on bridge teardown. */
+  /** Clear active stream markers for every known task on bridge teardown. */
   clearStreaming(): void {
-    for (const [sessionId, state] of this.states) {
+    for (const [taskId, state] of this.states) {
       if (
         state.runtime.streaming.assistant ||
         state.runtime.streaming.thinking
       ) {
-        this.patch(sessionId, {
+        this.patch(taskId, {
           runtime: {
             streaming: { assistant: false, thinking: false },
           },
@@ -329,21 +329,21 @@ export class SessionStateManager {
   /**
    * Backend acknowledgement timer for cancel: if the same agent prompt is
    * still pending after `timeoutMs`, mark the request unconfirmed.
-   * A second arm on the same session replaces the existing timer.
+   * A second arm on the same task replaces the existing timer.
    */
-  armCancelSafety(sessionId: string, timeoutMs: number): void {
+  armCancelSafety(taskId: string, timeoutMs: number): void {
     if (timeoutMs <= 0) return;
-    const existing = this.cancelTimers.get(sessionId);
+    const existing = this.cancelTimers.get(taskId);
     if (existing) clearTimeout(existing);
     const t = setTimeout(() => {
-      this.cancelTimers.delete(sessionId);
-      const busy = this.getState(sessionId).runtime.busy;
+      this.cancelTimers.delete(taskId);
+      const busy = this.getState(taskId).runtime.busy;
       if (busy?.kind === "agent" && busy.cancelStatus === "requested") {
         clog.warn("agent did not acknowledge", {
-          sessionId: sessionId.slice(0, 8),
+          taskId: taskId.slice(0, 8),
           promptId: busy.promptId,
         });
-        this.patch(sessionId, {
+        this.patch(taskId, {
           runtime: {
             busy: { ...busy, cancelStatus: "unconfirmed" },
           },
@@ -352,24 +352,24 @@ export class SessionStateManager {
     }, timeoutMs);
     if (typeof t === "object" && "unref" in t)
       (t as { unref: () => void }).unref();
-    this.cancelTimers.set(sessionId, t);
+    this.cancelTimers.set(taskId, t);
   }
 
   /** Mark that a cancel notification was sent for the active agent prompt. */
-  markCancelRequested(sessionId: string): void {
-    const busy = this.getState(sessionId).runtime.busy;
+  markCancelRequested(taskId: string): void {
+    const busy = this.getState(taskId).runtime.busy;
     if (busy?.kind !== "agent") return;
-    this.patch(sessionId, {
+    this.patch(taskId, {
       runtime: { busy: { ...busy, cancelStatus: "requested" } },
     });
   }
 
   /** Cancel the safety net timer (e.g. when prompt_done arrives naturally). */
-  clearCancelSafety(sessionId: string): void {
-    const t = this.cancelTimers.get(sessionId);
+  clearCancelSafety(taskId: string): void {
+    const t = this.cancelTimers.get(taskId);
     if (t) {
       clearTimeout(t);
-      this.cancelTimers.delete(sessionId);
+      this.cancelTimers.delete(taskId);
     }
   }
 }

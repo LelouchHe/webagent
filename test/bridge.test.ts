@@ -3,12 +3,12 @@ import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { AgentBridge } from "../src/bridge.ts";
 
-const mappedSessions = {
-  getAgentSessionId(sessionId: string) {
-    return sessionId === "web-1" ? "agent-1" : sessionId;
+const mappedTasks = {
+  getAgentSessionId(taskId: string) {
+    return taskId === "web-1" ? "agent-1" : taskId;
   },
-  getWebSessionId(sessionId: string) {
-    return sessionId === "agent-1" ? "web-1" : sessionId;
+  getTaskId(taskId: string) {
+    return taskId === "agent-1" ? "web-1" : taskId;
   },
 };
 
@@ -18,7 +18,7 @@ describe("AgentBridge", () => {
   });
 
   it("emits prompt_done after a successful prompt with attachments", async () => {
-    const bridge = new AgentBridge("fake-agent", mappedSessions);
+    const bridge = new AgentBridge("fake-agent", mappedTasks);
     const promptCalls: any[] = [];
     const events: any[] = [];
     bridge.on("event", (event) => events.push(event));
@@ -61,14 +61,14 @@ describe("AgentBridge", () => {
     assert.deepEqual(events, [
       {
         type: "prompt_done",
-        sessionId: "s1",
+        taskId: "s1",
         stopReason: "end_turn",
       },
     ]);
   });
 
-  it("uses ACP session IDs on outgoing calls and WebAgent IDs on events", async () => {
-    const bridge = new AgentBridge("fake-agent", mappedSessions);
+  it("uses ACP task IDs on outgoing calls and WebAgent IDs on events", async () => {
+    const bridge = new AgentBridge("fake-agent", mappedTasks);
     const calls: unknown[] = [];
     const events: unknown[] = [];
     bridge.on("event", (event) => events.push(event));
@@ -90,14 +90,14 @@ describe("AgentBridge", () => {
     assert.deepEqual(events, [
       {
         type: "prompt_done",
-        sessionId: "web-1",
+        taskId: "web-1",
         stopReason: "end_turn",
       },
     ]);
   });
 
-  it("maps incoming ACP session IDs before emitting events", async () => {
-    const bridge = new AgentBridge("fake-agent", mappedSessions);
+  it("maps incoming ACP task IDs before emitting events", async () => {
+    const bridge = new AgentBridge("fake-agent", mappedTasks);
     const events: unknown[] = [];
     bridge.on("event", (event) => events.push(event));
 
@@ -110,16 +110,16 @@ describe("AgentBridge", () => {
     });
 
     assert.deepEqual(events, [
-      { type: "message_chunk", sessionId: "web-1", text: "hello" },
+      { type: "message_chunk", taskId: "web-1", text: "hello" },
     ]);
   });
 
-  it("replays ACP updates emitted before a new session is mapped", async () => {
+  it("replays ACP updates emitted before a new task is mapped", async () => {
     const bindings = new Map<string, string>();
     const bridge = new AgentBridge("fake-agent", {
-      getAgentSessionId: (webSessionId) =>
-        [...bindings].find(([, webId]) => webId === webSessionId)?.[0],
-      getWebSessionId: (agentSessionId) => bindings.get(agentSessionId),
+      getAgentSessionId: (webTaskId) =>
+        [...bindings].find(([, webId]) => webId === webTaskId)?.[0],
+      getTaskId: (agentSessionId) => bindings.get(agentSessionId),
     });
     const events: unknown[] = [];
     bridge.on("event", (event) => events.push(event));
@@ -143,16 +143,16 @@ describe("AgentBridge", () => {
     bridge.sessionMapped("agent-new");
 
     assert.deepEqual(events, [
-      { type: "message_chunk", sessionId: "web-new", text: "early" },
+      { type: "message_chunk", taskId: "web-new", text: "early" },
     ]);
   });
 
   it("drops ACP updates after their WebAgent binding is retired", async () => {
     const bindings = new Map<string, string>([["agent-old", "web-1"]]);
     const bridge = new AgentBridge("fake-agent", {
-      getAgentSessionId: (webSessionId) =>
-        [...bindings].find(([, webId]) => webId === webSessionId)?.[0],
-      getWebSessionId: (agentSessionId) => bindings.get(agentSessionId),
+      getAgentSessionId: (webTaskId) =>
+        [...bindings].find(([, webId]) => webId === webTaskId)?.[0],
+      getTaskId: (agentSessionId) => bindings.get(agentSessionId),
     });
     const events: unknown[] = [];
     bridge.on("event", (event) => events.push(event));
@@ -175,13 +175,13 @@ describe("AgentBridge", () => {
     });
 
     assert.deepEqual(events, [
-      { type: "message_chunk", sessionId: "web-1", text: "before clear" },
+      { type: "message_chunk", taskId: "web-1", text: "before clear" },
     ]);
   });
 
   describe("retireExecution", () => {
-    it("prefers session/delete when the agent advertises it", async () => {
-      const bridge = new AgentBridge("fake-agent", mappedSessions);
+    it("prefers task/delete when the agent advertises it", async () => {
+      const bridge = new AgentBridge("fake-agent", mappedTasks);
       const calls: string[] = [];
       (bridge as any).conn = {
         deleteSession: async (p: { sessionId: string }) => {
@@ -201,8 +201,8 @@ describe("AgentBridge", () => {
       assert.deepEqual(calls, ["delete:agent-old"]);
     });
 
-    it("falls back to session/close when delete is not advertised", async () => {
-      const bridge = new AgentBridge("fake-agent", mappedSessions);
+    it("falls back to task/close when delete is not advertised", async () => {
+      const bridge = new AgentBridge("fake-agent", mappedTasks);
       const calls: string[] = [];
       (bridge as any).conn = {
         closeSession: async (p: { sessionId: string }) => {
@@ -217,7 +217,7 @@ describe("AgentBridge", () => {
     });
 
     it("skips silently when the agent advertises neither capability", async () => {
-      const bridge = new AgentBridge("fake-agent", mappedSessions);
+      const bridge = new AgentBridge("fake-agent", mappedTasks);
       let called = false;
       (bridge as any).conn = {
         deleteSession: async () => {
@@ -235,7 +235,7 @@ describe("AgentBridge", () => {
     });
 
     it("swallows agent failures so rotation is never rolled back", async () => {
-      const bridge = new AgentBridge("fake-agent", mappedSessions);
+      const bridge = new AgentBridge("fake-agent", mappedTasks);
       (bridge as any).conn = {
         deleteSession: async () => {
           throw new Error("agent disagrees");
@@ -249,7 +249,7 @@ describe("AgentBridge", () => {
   });
 
   it("maps WebAgent IDs for load, config, and cancel calls", async () => {
-    const bridge = new AgentBridge("fake-agent", mappedSessions);
+    const bridge = new AgentBridge("fake-agent", mappedTasks);
     const calls: Array<{ method: string; payload: unknown }> = [];
     (bridge as any).conn = {
       loadSession: async (payload: unknown) => {
@@ -291,7 +291,7 @@ describe("AgentBridge", () => {
   });
 
   it("forwards mcpServers to newSession and loadSession when provided", async () => {
-    const bridge = new AgentBridge("fake-agent", mappedSessions);
+    const bridge = new AgentBridge("fake-agent", mappedTasks);
     const calls: Array<{ method: string; payload: unknown }> = [];
     (bridge as any).conn = {
       newSession: async (payload: unknown) => {
@@ -336,7 +336,7 @@ describe("AgentBridge", () => {
   });
 
   it("emits prompt_done when a prompt is cancelled", async () => {
-    const bridge = new AgentBridge("fake-agent", mappedSessions);
+    const bridge = new AgentBridge("fake-agent", mappedTasks);
     const events: any[] = [];
     bridge.on("event", (event) => events.push(event));
 
@@ -351,14 +351,14 @@ describe("AgentBridge", () => {
     assert.deepEqual(events, [
       {
         type: "prompt_done",
-        sessionId: "s1",
+        taskId: "s1",
         stopReason: "cancelled",
       },
     ]);
   });
 
   it("emits error events for non-cancellation prompt failures", async () => {
-    const bridge = new AgentBridge("fake-agent", mappedSessions);
+    const bridge = new AgentBridge("fake-agent", mappedTasks);
     const events: any[] = [];
     bridge.on("event", (event) => events.push(event));
 
@@ -373,14 +373,14 @@ describe("AgentBridge", () => {
     assert.deepEqual(events, [
       {
         type: "error",
-        sessionId: "s1",
+        taskId: "s1",
         message: "boom",
       },
     ]);
   });
 
   it("buffers silent prompt text in promptForText without emitting events", async () => {
-    const bridge = new AgentBridge("fake-agent", mappedSessions);
+    const bridge = new AgentBridge("fake-agent", mappedTasks);
     const events: any[] = [];
     bridge.on("event", (event) => events.push(event));
 
@@ -411,7 +411,7 @@ describe("AgentBridge", () => {
   });
 
   it("resolves and denies permission requests", async () => {
-    const bridge = new AgentBridge("fake-agent", mappedSessions);
+    const bridge = new AgentBridge("fake-agent", mappedTasks);
 
     const permissionPromise = (bridge as any).handlePermission({
       sessionId: "s1",
@@ -427,7 +427,7 @@ describe("AgentBridge", () => {
     });
 
     const deniedPromise = (bridge as any).handlePermission({
-      sessionId: "s2",
+      taskId: "s2",
       toolCall: { title: "Delete file", toolCallId: "tc-2" },
       options: [{ optionId: "deny", kind: "reject", name: "Deny" }],
     });
@@ -439,7 +439,7 @@ describe("AgentBridge", () => {
   });
 
   it("registers the permission resolver before emitting the request event", async () => {
-    const bridge = new AgentBridge("fake-agent", mappedSessions);
+    const bridge = new AgentBridge("fake-agent", mappedTasks);
 
     bridge.on("event", (event) => {
       if (event.type === "permission_request") {
@@ -458,8 +458,8 @@ describe("AgentBridge", () => {
     });
   });
 
-  it("cancels pending permission requests for the targeted session", async () => {
-    const bridge = new AgentBridge("fake-agent", mappedSessions);
+  it("cancels pending permission requests for the targeted task", async () => {
+    const bridge = new AgentBridge("fake-agent", mappedTasks);
     const cancelCalls: any[] = [];
 
     (bridge as any).conn = {
@@ -474,7 +474,7 @@ describe("AgentBridge", () => {
       options: [{ optionId: "allow", kind: "allow_once", name: "Allow" }],
     });
     const s2Permission = (bridge as any).handlePermission({
-      sessionId: "s2",
+      taskId: "s2",
       toolCall: { title: "Delete file", toolCallId: "tc-2" },
       options: [{ optionId: "deny", kind: "reject", name: "Deny" }],
     });
@@ -491,8 +491,8 @@ describe("AgentBridge", () => {
     assert.deepEqual(await s2Permission, { outcome: { outcome: "cancelled" } });
   });
 
-  it("translates ACP session updates into emitted events", async () => {
-    const bridge = new AgentBridge("fake-agent", mappedSessions);
+  it("translates ACP task updates into emitted events", async () => {
+    const bridge = new AgentBridge("fake-agent", mappedTasks);
     const events: any[] = [];
     bridge.on("event", (event) => events.push(event));
 
@@ -581,11 +581,11 @@ describe("AgentBridge", () => {
     });
 
     assert.deepEqual(events, [
-      { type: "message_chunk", sessionId: "s1", text: "hello" },
-      { type: "thought_chunk", sessionId: "s1", text: "thinking" },
+      { type: "message_chunk", taskId: "s1", text: "hello" },
+      { type: "thought_chunk", taskId: "s1", text: "thinking" },
       {
         type: "tool_call",
-        sessionId: "s1",
+        taskId: "s1",
         id: "tc1",
         title: "Run test",
         kind: "execute",
@@ -593,7 +593,7 @@ describe("AgentBridge", () => {
       },
       {
         type: "tool_call_update",
-        sessionId: "s1",
+        taskId: "s1",
         id: "tc1",
         status: "completed",
         title: "npm test",
@@ -608,26 +608,26 @@ describe("AgentBridge", () => {
       },
       {
         type: "plan",
-        sessionId: "s1",
+        taskId: "s1",
         entries: [{ content: "Step 1", status: "pending" }],
       },
       {
         type: "usage_update",
-        sessionId: "s1",
+        taskId: "s1",
         used: 61_234,
         size: 272_000,
         cost: { amount: 0.45, currency: "USD" },
       },
       {
         type: "config_option_update",
-        sessionId: "s1",
+        taskId: "s1",
         configOptions: [
           { id: "model", name: "Model", currentValue: "x", options: [] },
         ],
       },
       {
         type: "available_commands_update",
-        sessionId: "s1",
+        taskId: "s1",
         commands: [
           {
             name: "context",
@@ -644,7 +644,7 @@ describe("AgentBridge", () => {
   });
 
   it("returns updated config options from setConfigOption", async () => {
-    const bridge = new AgentBridge("fake-agent", mappedSessions);
+    const bridge = new AgentBridge("fake-agent", mappedTasks);
 
     (bridge as any).conn = {
       setSessionConfigOption: async () => ({
@@ -667,7 +667,7 @@ describe("AgentBridge", () => {
   });
 
   it("sends boolean config options using the ACP boolean payload shape", async () => {
-    const bridge = new AgentBridge("fake-agent", mappedSessions);
+    const bridge = new AgentBridge("fake-agent", mappedTasks);
     let sent: unknown = null;
 
     (bridge as any).conn = {
@@ -706,7 +706,7 @@ describe("AgentBridge", () => {
 
   describe("subprocess death", () => {
     it("rejects in-flight prompts and emits error event when agent dies", async () => {
-      const bridge = new AgentBridge("fake-agent", mappedSessions);
+      const bridge = new AgentBridge("fake-agent", mappedTasks);
       const events: any[] = [];
       bridge.on("event", (e: any) => events.push(e));
 
@@ -731,7 +731,7 @@ describe("AgentBridge", () => {
 
       const err = events.find((e: any) => e.type === "error");
       assert.ok(err, "expected error event");
-      assert.equal(err.sessionId, "s1");
+      assert.equal(err.taskId, "s1");
       assert.match(err.message, /exited unexpectedly/);
       assert.match(err.message, /auth failed/);
       assert.ok(
@@ -746,7 +746,7 @@ describe("AgentBridge", () => {
     });
 
     it("fails fast on new prompt after agent died", async () => {
-      const bridge = new AgentBridge("fake-agent", mappedSessions);
+      const bridge = new AgentBridge("fake-agent", mappedTasks);
       const events: any[] = [];
       bridge.on("event", (e: any) => events.push(e));
 
@@ -756,12 +756,12 @@ describe("AgentBridge", () => {
 
       const err = events.find((e: any) => e.type === "error");
       assert.ok(err, "expected error event");
-      assert.equal(err.sessionId, "s2");
+      assert.equal(err.taskId, "s2");
       assert.match(err.message, /exited unexpectedly/);
     });
 
     it("clears dead state after successful start()", async () => {
-      const bridge = new AgentBridge("fake-agent", mappedSessions);
+      const bridge = new AgentBridge("fake-agent", mappedTasks);
       (bridge as any).markAgentDead("died");
       assert.equal((bridge as any).deadReason, "died");
 
@@ -778,7 +778,7 @@ describe("AgentBridge", () => {
     });
 
     it("loadSession rethrows resource-not-found with friendly message", async () => {
-      const bridge = new AgentBridge("fake-agent", mappedSessions);
+      const bridge = new AgentBridge("fake-agent", mappedTasks);
       class FakeReqErr extends Error {
         code = -32002;
         constructor(uri: string) {
@@ -807,7 +807,7 @@ describe("AgentBridge", () => {
   });
 
   it("waits for child stdio to close before shutdown resolves", async () => {
-    const bridge = new AgentBridge("fake-agent", mappedSessions);
+    const bridge = new AgentBridge("fake-agent", mappedTasks);
     const proc = new EventEmitter() as EventEmitter & {
       exitCode: number | null;
       kill: () => boolean;
@@ -830,7 +830,7 @@ describe("AgentBridge", () => {
   });
 
   it("does not wait again after child stdio has already closed", async () => {
-    const bridge = new AgentBridge("fake-agent", mappedSessions);
+    const bridge = new AgentBridge("fake-agent", mappedTasks);
     let killCount = 0;
     const proc = new EventEmitter() as EventEmitter & {
       exitCode: number | null;
@@ -850,12 +850,12 @@ describe("AgentBridge", () => {
   });
 
   describe("restart()", () => {
-    function createMockSessions() {
+    function createMockTasks() {
       let plansCleared = false;
       let streamingClearCount = 0;
       return {
-        liveSessions: new Set(["s1", "s2"]),
-        restoringSessions: new Set<string>(),
+        liveTasks: new Set(["s1", "s2"]),
+        restoringTasks: new Set<string>(),
         activePrompts: new Set(["s1"]),
         pendingPromptSubmissions: new Map([["s2", 22]]),
         cancelledPromptSubmissions: new Set([22]),
@@ -863,16 +863,16 @@ describe("AgentBridge", () => {
         pendingPermissions: new Map([
           [
             "req1",
-            { requestId: "req1", sessionId: "s1", title: "test", options: [] },
+            { requestId: "req1", taskId: "s1", title: "test", options: [] },
           ],
         ]),
         assistantBuffers: new Map([["s1", "partial text"]]),
         thinkingBuffers: new Map([["s1", "partial thought"]]),
-        flushBuffers(sessionId: string) {
-          this.assistantBuffers.delete(sessionId);
-          this.thinkingBuffers.delete(sessionId);
+        flushBuffers(taskId: string) {
+          this.assistantBuffers.delete(taskId);
+          this.thinkingBuffers.delete(taskId);
         },
-        sessionHasTitle: new Set<string>(),
+        taskHasTitle: new Set<string>(),
         cachedConfigOptions: [],
         agentInfo: null as any,
         state: {
@@ -908,7 +908,7 @@ describe("AgentBridge", () => {
     }
 
     it("emits agent_reloading, cleans state, and reconnects", async () => {
-      const bridge = new AgentBridge("fake-agent", mappedSessions);
+      const bridge = new AgentBridge("fake-agent", mappedTasks);
       const events: any[] = [];
       bridge.on("event", (e: any) => events.push(e));
 
@@ -920,7 +920,7 @@ describe("AgentBridge", () => {
         },
       };
 
-      const sessions = createMockSessions();
+      const tasks = createMockTasks();
       const titleService = createMockTitleService();
 
       // Stub start() to simulate successful restart
@@ -935,50 +935,42 @@ describe("AgentBridge", () => {
         });
       };
 
-      await bridge.restart(sessions as any, titleService as any);
+      await bridge.restart(tasks as any, titleService as any);
 
       // Should have emitted agent_reloading first
       assert.equal(events[0].type, "agent_reloading");
 
       // State should be cleaned
+      assert.equal(tasks.liveTasks.size, 0, "liveTasks should be cleared");
       assert.equal(
-        sessions.liveSessions.size,
-        0,
-        "liveSessions should be cleared",
-      );
-      assert.equal(
-        sessions.activePrompts.size,
+        tasks.activePrompts.size,
         0,
         "activePrompts should be cleared",
       );
       assert.equal(
-        sessions.pendingPromptSubmissions.size,
+        tasks.pendingPromptSubmissions.size,
         0,
         "pendingPromptSubmissions should be cleared",
       );
       assert.equal(
-        sessions.cancelledPromptSubmissions.size,
+        tasks.cancelledPromptSubmissions.size,
         1,
         "pending submissions should remain cancellation tombstones",
       );
-      assert.equal(sessions.cancelledPromptSubmissions.has(22), true);
+      assert.equal(tasks.cancelledPromptSubmissions.has(22), true);
       assert.equal(
-        sessions.pendingPermissions.size,
+        tasks.pendingPermissions.size,
         0,
         "pendingPermissions should be cleared",
       );
+      assert.equal(tasks.plansCleared, true, "runtime plans should be cleared");
       assert.equal(
-        sessions.plansCleared,
-        true,
-        "runtime plans should be cleared",
-      );
-      assert.equal(
-        sessions.assistantBuffers.size,
+        tasks.assistantBuffers.size,
         0,
         "assistantBuffers should be flushed",
       );
       assert.equal(
-        sessions.thinkingBuffers.size,
+        tasks.thinkingBuffers.size,
         0,
         "thinkingBuffers should be flushed",
       );
@@ -997,29 +989,29 @@ describe("AgentBridge", () => {
     });
 
     it("flushes late chunks after the old process shuts down", async () => {
-      const bridge = new AgentBridge("fake-agent", mappedSessions);
+      const bridge = new AgentBridge("fake-agent", mappedTasks);
       (bridge as any).conn = { cancel: async () => {} };
-      const sessions = createMockSessions();
+      const tasks = createMockTasks();
       const titleService = createMockTitleService();
 
       (bridge as any).shutdown = async () => {
-        sessions.assistantBuffers.set("s1", "late chunk");
+        tasks.assistantBuffers.set("s1", "late chunk");
       };
       (bridge as any).start = async () => {
         (bridge as any).conn = {};
       };
 
-      await bridge.restart(sessions as any, titleService as any);
+      await bridge.restart(tasks as any, titleService as any);
 
-      assert.equal(sessions.assistantBuffers.has("s1"), false);
-      assert.equal(sessions.streamingClearCount, 1);
+      assert.equal(tasks.assistantBuffers.has("s1"), false);
+      assert.equal(tasks.streamingClearCount, 1);
     });
 
     it("rejects concurrent restart calls", async () => {
-      const bridge = new AgentBridge("fake-agent", mappedSessions);
+      const bridge = new AgentBridge("fake-agent", mappedTasks);
       (bridge as any).conn = { cancel: async () => {} };
 
-      const sessions = createMockSessions();
+      const tasks = createMockTasks();
       const titleService = createMockTitleService();
 
       (bridge as any).start = async () => {
@@ -1038,10 +1030,10 @@ describe("AgentBridge", () => {
           resolveStart = r;
         });
 
-      const p1 = bridge.restart(sessions as any, titleService as any);
+      const p1 = bridge.restart(tasks as any, titleService as any);
 
       await assert.rejects(
-        () => bridge.restart(sessions as any, titleService as any),
+        () => bridge.restart(tasks as any, titleService as any),
         /Already reloading/,
       );
 
@@ -1054,13 +1046,13 @@ describe("AgentBridge", () => {
     it("retries start() on failure with backoff", async () => {
       mock.timers.enable({ apis: ["setTimeout"] });
       try {
-        const bridge = new AgentBridge("fake-agent", mappedSessions);
+        const bridge = new AgentBridge("fake-agent", mappedTasks);
         const events: any[] = [];
         bridge.on("event", (e: any) => events.push(e));
 
         (bridge as any).conn = { cancel: async () => {} };
 
-        const sessions = createMockSessions();
+        const tasks = createMockTasks();
         const titleService = createMockTitleService();
 
         let attempt = 0;
@@ -1075,7 +1067,7 @@ describe("AgentBridge", () => {
           });
         };
 
-        const p = bridge.restart(sessions as any, titleService as any);
+        const p = bridge.restart(tasks as any, titleService as any);
         for (let i = 0; i < 5; i++) {
           mock.timers.tick(5000);
           await new Promise((r) => setImmediate(r));
@@ -1092,20 +1084,20 @@ describe("AgentBridge", () => {
     it("emits agent_reloading_failed when all start attempts fail", async () => {
       mock.timers.enable({ apis: ["setTimeout"] });
       try {
-        const bridge = new AgentBridge("fake-agent", mappedSessions);
+        const bridge = new AgentBridge("fake-agent", mappedTasks);
         const events: any[] = [];
         bridge.on("event", (e: any) => events.push(e));
 
         (bridge as any).conn = { cancel: async () => {} };
 
-        const sessions = createMockSessions();
+        const tasks = createMockTasks();
         const titleService = createMockTitleService();
 
         (bridge as any).start = async () => {
           throw new Error("broken");
         };
 
-        const p = bridge.restart(sessions as any, titleService as any);
+        const p = bridge.restart(tasks as any, titleService as any);
         const rejection = assert.rejects(() => p);
         for (let i = 0; i < 5; i++) {
           mock.timers.tick(5000);

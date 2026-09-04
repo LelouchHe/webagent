@@ -73,7 +73,7 @@ export function mockBridgeStubs(): MockBridge {
   return {
     reloading: false,
     newSession: async () => ({ sessionId: "", configOptions: [] }),
-    loadSession: async () => ({ sessionId: "", configOptions: [] }),
+    loadSession: async () => ({ taskId: "", configOptions: [] }),
     setConfigOption: async () => [],
     prompt: async () => {},
     cancel: async () => {},

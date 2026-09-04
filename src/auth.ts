@@ -87,13 +87,13 @@ export function verifyAttachmentSig(
 }
 
 /**
- * Rewrite every `/api/v1/sessions/:id/attachments/:file` URL inside a JSON-serialized
+ * Rewrite every `/api/v1/tasks/:id/attachments/:file` URL inside a JSON-serialized
  * payload to carry a fresh `?exp=&sig=`. Applied at egress (history GET, SSE
  * push) so a 1h-old stored URL is re-signed on the way out — the user can
  * reload history days later and images still resolve.
  */
 const ATTACHMENT_URL_RE =
-  /\/api\/v1\/sessions\/[A-Za-z0-9_-]+\/attachments\/[A-Za-z0-9._-]+(?:\?(?:exp=\d+&sig=[a-f0-9]+|sig=[a-f0-9]+&exp=\d+))?/g;
+  /\/api\/v1\/tasks\/[A-Za-z0-9_-]+\/attachments\/[A-Za-z0-9._-]+(?:\?(?:exp=\d+&sig=[a-f0-9]+|sig=[a-f0-9]+&exp=\d+))?/g;
 
 export function reSignAttachmentUrlsInJson(
   json: string,

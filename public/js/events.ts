@@ -19,20 +19,20 @@ import {
   updateConfigOptions,
   updateModeUI,
   updateStatusBar,
-  resetSessionUI,
-  requestBootstrapSession,
-  setHashSessionId,
-  updateSessionInfo,
+  resetTaskUI,
+  requestBootstrapTask,
+  setHashTaskId,
+  updateTaskInfo,
   setConnectionStatus,
   clearCancelTimer,
-  onSessionReset,
+  onTaskReset,
   applyStatePatch,
   applyAgentCommandSnapshot,
   reloadSnapshot,
-  hydrateSessionRuntime,
+  hydrateTaskRuntime,
   updateInboxCount,
-  setCreatedSessionActivator,
-  finishNewSessionRequest,
+  setCreatedTaskActivator,
+  finishNewTaskRequest,
   setNavigationLoadInvalidator,
   setRuntimeHydrationReconciler,
 } from "./state.ts";
@@ -90,7 +90,7 @@ const orphanToolUpdates = new OrphanToolUpdateCache({
       {
         id,
         status: update.status,
-        sessionId: update.sessionId,
+        taskId: update.taskId,
       },
     );
   },
@@ -103,64 +103,98 @@ setNavigationLoadInvalidator(() => {
   state.replayQueue = [];
 });
 
-setCreatedSessionActivator((session) => {
-  if (typeof session.id !== "string") return;
+setCreatedTaskActivator((task) => {
+  if (typeof task.id !== "string") return;
   handleEvent({
-    type: "session_created",
-    sessionId: session.id,
-    cwd: typeof session.cwd === "string" ? session.cwd : undefined,
+    type: "task_created",
+    taskId: task.id,
+    cwd: typeof task.cwd === "string" ? task.cwd : undefined,
     cwdDisplay:
-      typeof session.cwdDisplay === "string" ? session.cwdDisplay : undefined,
-    title: typeof session.title === "string" ? session.title : null,
-    configOptions: Array.isArray(session.configOptions)
-      ? (session.configOptions as ConfigOption[])
+      typeof task.cwdDisplay === "string" ? task.cwdDisplay : undefined,
+    title: typeof task.title === "string" ? task.title : null,
+    configOptions: Array.isArray(task.configOptions)
+      ? (task.configOptions as ConfigOption[])
       : [],
     agentCommands:
-      session.agentCommands && typeof session.agentCommands === "object"
-        ? (session.agentCommands as AgentCommandSnapshot)
+      task.agentCommands && typeof task.agentCommands === "object"
+        ? (task.agentCommands as AgentCommandSnapshot)
         : undefined,
     clientOpId:
-      typeof session.clientOpId === "string" ? session.clientOpId : undefined,
+      typeof task.clientOpId === "string" ? task.clientOpId : undefined,
   });
 });
 
 /**
- * When the current session is gone (expired, deleted), try to switch to the
- * next available session. Creates a new session only if no others exist.
- * Shared by resumeAndLoad error recovery, session_deleted handler, and /exit.
+ * When the current task is gone (expired, deleted), try to switch to the
+ * next available task. Creates a new task only if no others exist.
+ * Shared by resumeAndLoad error recovery, task_deleted handler, and /exit.
  */
-export async function fallbackToNextSession(
+const pendingFallbacks = new Map<string, Promise<void>>();
+const completedFallbacks = new Map<string, number>();
+const FALLBACK_DEDUPE_MS = 30_000;
+
+export function fallbackToNextTask(
   expiredId: string | null,
   _cwd?: string,
+  preferredTaskId?: string | null,
+  clientOpId?: string,
 ): Promise<void> {
-  state.sessionSwitchGen++;
-  const gen = state.sessionSwitchGen;
+  const now = Date.now();
+  for (const [key, expiresAt] of completedFallbacks) {
+    if (expiresAt <= now) completedFallbacks.delete(key);
+  }
+  const key = clientOpId ?? `${expiredId ?? ""}\0${preferredTaskId ?? ""}`;
+  if (clientOpId && completedFallbacks.has(key)) return Promise.resolve();
+
+  const existing = pendingFallbacks.get(key);
+  if (existing) return existing;
+
+  const operation = fallbackToNextTaskImpl(expiredId, preferredTaskId).finally(
+    () => {
+      if (pendingFallbacks.get(key) === operation) pendingFallbacks.delete(key);
+      if (clientOpId)
+        completedFallbacks.set(key, Date.now() + FALLBACK_DEDUPE_MS);
+    },
+  );
+  pendingFallbacks.set(key, operation);
+  return operation;
+}
+
+async function fallbackToNextTaskImpl(
+  expiredId: string | null,
+  preferredTaskId?: string | null,
+): Promise<void> {
+  state.taskSwitchGen++;
+  const gen = state.taskSwitchGen;
   try {
-    const sessions = (await api.listSessions()) as Array<{ id: string }>;
-    if (gen !== state.sessionSwitchGen) return;
-    const next = sessions.find((s) => s.id !== expiredId);
+    const tasks = (await api.listTasks()) as Array<{ id: string }>;
+    if (gen !== state.taskSwitchGen) return;
+    const next =
+      (preferredTaskId
+        ? tasks.find((s) => s.id === preferredTaskId)
+        : undefined) ?? tasks.find((s) => s.id !== expiredId);
     if (next) {
-      resetSessionUI();
-      state.sessionId = next.id;
-      setHashSessionId(next.id);
-      const [session, loaded] = await Promise.all([
-        api.getSession(next.id),
+      resetTaskUI();
+      state.taskId = next.id;
+      setHashTaskId(next.id);
+      const [task, loaded] = await Promise.all([
+        api.getTask(next.id),
         loadHistory(next.id),
       ]);
-      if (gen !== state.sessionSwitchGen) return;
-      const hydrated = await hydrateSessionRuntime(
+      if (gen !== state.taskSwitchGen) return;
+      const hydrated = await hydrateTaskRuntime(
         next.id,
-        () => gen === state.sessionSwitchGen,
+        () => gen === state.taskSwitchGen,
       );
-      if (gen !== state.sessionSwitchGen) return;
-      if (!hydrated) throw new Error("Failed to hydrate fallback session");
+      if (gen !== state.taskSwitchGen) return;
+      if (!hydrated) throw new Error("Failed to hydrate fallback task");
       handleEvent({
-        type: "session_created",
-        sessionId: session.id,
-        cwd: session.cwd,
-        cwdDisplay: session.cwdDisplay,
-        title: session.title,
-        configOptions: session.configOptions,
+        type: "task_created",
+        taskId: task.id,
+        cwd: task.cwd,
+        cwdDisplay: task.cwdDisplay,
+        title: task.title,
+        configOptions: task.configOptions,
       });
       if (loaded) scrollToBottom(true);
       return;
@@ -168,10 +202,10 @@ export async function fallbackToNextSession(
   } catch {
     /* fall through to create new */
   }
-  if (gen !== state.sessionSwitchGen) return;
-  resetSessionUI();
-  state.sessionId = null;
-  requestBootstrapSession();
+  if (gen !== state.taskSwitchGen) return;
+  resetTaskUI();
+  state.taskId = null;
+  requestBootstrapTask();
 }
 
 // During replay, elements live in a detached DocumentFragment (no getElementById).
@@ -328,7 +362,7 @@ export async function loadHistory(sid: string): Promise<boolean> {
   try {
     const body = await api.withTimeout(async (signal) => {
       const res = await fetch(
-        `/api/v1/sessions/${sid}/events?limit=${HISTORY_PAGE_SIZE}`,
+        `/api/v1/tasks/${sid}/events?limit=${HISTORY_PAGE_SIZE}`,
         signal ? { signal } : undefined,
       );
       if (!res.ok) return null;
@@ -492,45 +526,45 @@ function restorePendingEcho(el: HTMLElement | null): void {
   if (last) last.setAttribute("data-sync-boundary", "");
 }
 
-/** Per-session coalesce: concurrent loadNewEvents calls for the same session share one promise. */
+/** Per-task coalesce: concurrent loadNewEvents calls for the same task share one promise. */
 interface InflightEventLoad {
   promise: Promise<boolean>;
   preserveLiveOnEmpty: boolean;
 }
 
-const inflightBySession = new Map<string, InflightEventLoad>();
+const inflightByTask = new Map<string, InflightEventLoad>();
 let terminalReconcileRunning = false;
 let terminalReconcileDirty = false;
-let terminalReconcileSessionId: string | null = null;
+let terminalReconcileTaskId: string | null = null;
 let terminalReconcileGeneration = 0;
 let terminalReconcilePromise: Promise<void> = Promise.resolve();
 
-function scheduleTerminalReconciliation(sessionId: string): void {
-  if (state.sessionId !== sessionId) return;
+function scheduleTerminalReconciliation(taskId: string): void {
+  if (state.taskId !== taskId) return;
   if (terminalReconcileRunning) {
     terminalReconcileDirty = true;
-    terminalReconcileSessionId = sessionId;
+    terminalReconcileTaskId = taskId;
     return;
   }
   terminalReconcileRunning = true;
-  terminalReconcileSessionId = sessionId;
+  terminalReconcileTaskId = taskId;
   const generation = terminalReconcileGeneration;
   terminalReconcilePromise = (async () => {
     do {
       terminalReconcileDirty = false;
-      const attachedToExistingLoad = inflightBySession.has(sessionId);
-      await loadNewEvents(sessionId, { preserveLiveOnEmpty: true });
+      const attachedToExistingLoad = inflightByTask.has(taskId);
+      await loadNewEvents(taskId, { preserveLiveOnEmpty: true });
       if (attachedToExistingLoad) terminalReconcileDirty = true;
     } while (
       generation === terminalReconcileGeneration &&
       terminalReconcileDirty &&
-      terminalReconcileSessionId === state.sessionId
+      terminalReconcileTaskId === state.taskId
     );
   })().finally(() => {
     if (generation !== terminalReconcileGeneration) return;
     terminalReconcileRunning = false;
     terminalReconcileDirty = false;
-    terminalReconcileSessionId = null;
+    terminalReconcileTaskId = null;
   });
 }
 
@@ -546,7 +580,7 @@ export function loadNewEvents(
   sid: string,
   options: { preserveLiveOnEmpty?: boolean } = {},
 ): Promise<boolean> {
-  const existing = inflightBySession.get(sid);
+  const existing = inflightByTask.get(sid);
   if (existing) {
     if (options.preserveLiveOnEmpty) existing.preserveLiveOnEmpty = true;
     return existing.promise;
@@ -558,11 +592,11 @@ export function loadNewEvents(
   };
   const promise = _loadNewEventsImpl(sid, entry);
   entry.promise = promise;
-  inflightBySession.set(sid, entry);
+  inflightByTask.set(sid, entry);
   promise
     .finally(() => {
-      if (inflightBySession.get(sid) === entry) {
-        inflightBySession.delete(sid);
+      if (inflightByTask.get(sid) === entry) {
+        inflightByTask.delete(sid);
       }
     })
     .catch(() => {});
@@ -582,7 +616,7 @@ async function _loadNewEventsImpl(
   // reconstruct this tail, so cancelling the rAF without flushing loses it.
   flushStreamingRender();
   try {
-    const url = `/api/v1/sessions/${sid}/events?after=${state.lastEventSeq}`;
+    const url = `/api/v1/tasks/${sid}/events?after=${state.lastEventSeq}`;
     const body = await api.withTimeout(async (signal) => {
       const res = await fetch(url, signal ? { signal } : undefined);
       if (!res.ok) return null;
@@ -591,7 +625,7 @@ async function _loadNewEventsImpl(
     if (!body) return false;
     if (
       replayToken !== replayLoadToken ||
-      (state.sessionId && state.sessionId !== sid)
+      (state.taskId && state.taskId !== sid)
     )
       return false;
     const { events, streaming } = normalizeEventsResponse(body);
@@ -669,7 +703,7 @@ async function _loadNewEventsImpl(
       return true;
     }
 
-    // A never-replayed session (frontier 0) has no boundary to truncate at, so
+    // A never-replayed task (frontier 0) has no boundary to truncate at, so
     // everything in the pane is live-rendered or client-only. Replace it
     // wholesale with the authoritative transcript — but only now that the
     // server has actually returned one. Wiping before the empty-response check
@@ -765,8 +799,8 @@ function invalidateHistoryLoads() {
   historyLoadToken++;
 }
 
-function isCurrentHistoryLoad(sessionId: string, loadToken: number): boolean {
-  return loadToken === historyLoadToken && state.sessionId === sessionId;
+function isCurrentHistoryLoad(taskId: string, loadToken: number): boolean {
+  return loadToken === historyLoadToken && state.taskId === taskId;
 }
 
 function nextFrame(): Promise<void> {
@@ -928,9 +962,9 @@ function observeHistorySentinel() {
         entries[0].isIntersecting &&
         !state.loadingOlderEvents &&
         state.hasMoreHistory &&
-        state.sessionId
+        state.taskId
       ) {
-        void loadOlderEvents(state.sessionId);
+        void loadOlderEvents(state.taskId);
       }
     },
     { root: dom.messages, rootMargin: "200px 0px 0px 0px" },
@@ -978,10 +1012,10 @@ function hideHistoryLoading(container = dom.messages) {
 }
 
 function rearmHistoryObserverAfterLoad(
-  sessionId: string,
+  taskId: string,
   loadedOlderEvents: boolean,
 ) {
-  if (!state.hasMoreHistory || state.sessionId !== sessionId) return;
+  if (!state.hasMoreHistory || state.taskId !== taskId) return;
   if (loadedOlderEvents) {
     observeHistorySentinel();
   } else {
@@ -999,7 +1033,7 @@ function installHistorySentinel() {
   observeHistorySentinel();
 }
 
-function rearmHistoryObserverAfterSessionActivation() {
+function rearmHistoryObserverAfterTaskActivation() {
   if (!state.hasMoreHistory || !document.getElementById("history-sentinel")) {
     return;
   }
@@ -1014,32 +1048,32 @@ function removeHistorySentinel({ invalidateLoads = true } = {}) {
 }
 
 async function fetchOlderEventsPage(
-  sessionId: string,
+  taskId: string,
   loadToken: number,
 ): Promise<{ events: StoredEvent[]; hasMore: boolean | undefined } | null> {
   const body = await api.withTimeout(async (signal) => {
     const res = await fetch(
-      `/api/v1/sessions/${sessionId}/events?limit=${HISTORY_PAGE_SIZE}&before=${state.oldestLoadedSeq}`,
+      `/api/v1/tasks/${taskId}/events?limit=${HISTORY_PAGE_SIZE}&before=${state.oldestLoadedSeq}`,
       signal ? { signal } : undefined,
     );
     if (!res.ok) return null;
     return (await res.json()) as Record<string, unknown>;
   });
-  if (!isCurrentHistoryLoad(sessionId, loadToken)) return null;
+  if (!isCurrentHistoryLoad(taskId, loadToken)) return null;
   if (!body) return null;
   const { events, hasMore } = normalizeEventsResponse(body);
   return { events, hasMore };
 }
 
-// Revoke both pagination and replay ownership across session switches.
-onSessionReset(removeHistorySentinel);
-onSessionReset(() => {
+// Revoke both pagination and replay ownership across task switches.
+onTaskReset(removeHistorySentinel);
+onTaskReset(() => {
   replayLoadToken++;
-  inflightBySession.clear();
+  inflightByTask.clear();
   terminalReconcileGeneration++;
   terminalReconcileRunning = false;
   terminalReconcileDirty = false;
-  terminalReconcileSessionId = null;
+  terminalReconcileTaskId = null;
   terminalReconcilePromise = Promise.resolve();
   orphanToolUpdates.clear();
 });
@@ -1287,11 +1321,9 @@ function bindPermissionButtons(
     btn.onclick = () => {
       const perm = classifyPermissionOption(optKind);
       if (perm.apiAction === "deny") {
-        api.denyPermission(state.sessionId!, reqId).catch(() => {});
+        api.denyPermission(state.taskId!, reqId).catch(() => {});
       } else {
-        api
-          .resolvePermission(state.sessionId!, reqId, optionId)
-          .catch(() => {});
+        api.resolvePermission(state.taskId!, reqId, optionId).catch(() => {});
       }
       el.innerHTML = `<span class="dim">⚿ ${escHtml(title)} — ${escHtml(optName)}</span>`;
       onResolved?.();
@@ -1470,7 +1502,7 @@ function handleReplayContentEvent(
           {
             ...d,
             type: "tool_call_update",
-            sessionId: stored.session_id,
+            taskId: stored.task_id,
           } as ToolCallUpdateEvent,
           stored.seq,
         );
@@ -1514,7 +1546,7 @@ function handleReplayContentEvent(
       if (
         type === "user_message" &&
         state.awaitingOwnUserEcho &&
-        events[idx]?.session_id === state.sentMessageForSession &&
+        events[idx]?.task_id === state.sentMessageForTask &&
         d.clientOpId === state.sentMessageOpId
       ) {
         // Only record that replay observed the echo; do NOT clear the guard or
@@ -1523,8 +1555,8 @@ function handleReplayContentEvent(
         // needs `sentMessageOpId` intact to recognize and suppress it —
         // otherwise the user bubble is rendered twice. `drainReplayQueue()`
         // clears the guard after the queue settles. If no live echo follows,
-        // `sentMessageOpId` / `sentMessageForSession` linger until the next
-        // send or `resetSessionUI()`; that is inert, not a missed cleanup.
+        // `sentMessageOpId` / `sentMessageForTask` linger until the next
+        // send or `resetTaskUI()`; that is inert, not a missed cleanup.
         state.replayedOwnUserEcho = true;
       }
       const el = renderContentEvent(type, d, hooks);
@@ -1539,15 +1571,15 @@ function handleReplayContentEvent(
 }
 
 /** Process queued SSE events, skipping any that duplicate content already in the DOM. */
-function drainReplayQueue(replayedSessionId: string) {
+function drainReplayQueue(replayedTaskId: string) {
   const queue = state.replayQueue;
   state.replayQueue = [];
   for (const msg of queue) {
-    if (isDuplicateOfReplay(msg, replayedSessionId)) {
+    if (isDuplicateOfReplay(msg, replayedTaskId)) {
       if (
         msg.type === "user_message" &&
         !(
-          state.sentMessageForSession === msg.sessionId &&
+          state.sentMessageForTask === msg.taskId &&
           state.sentMessageOpId === msg.clientOpId
         )
       ) {
@@ -1567,17 +1599,14 @@ function drainReplayQueue(replayedSessionId: string) {
     const shouldReconcile = state.reconcileAfterOwnUserEcho;
     state.awaitingOwnUserEcho = false;
     state.reconcileAfterOwnUserEcho = false;
-    if (shouldReconcile) scheduleTerminalReconciliation(replayedSessionId);
+    if (shouldReconcile) scheduleTerminalReconciliation(replayedTaskId);
   }
   state.replayedOwnUserEcho = false;
 }
 
 /** Check whether a queued SSE event duplicates an element already rendered by replay. */
-function isDuplicateOfReplay(
-  msg: AgentEvent,
-  replayedSessionId: string,
-): boolean {
-  if ("sessionId" in msg && msg.sessionId !== replayedSessionId) return false;
+function isDuplicateOfReplay(msg: AgentEvent, replayedTaskId: string): boolean {
+  if ("taskId" in msg && msg.taskId !== replayedTaskId) return false;
   // eslint-disable-next-line @typescript-eslint/switch-exhaustiveness-check -- intentionally partial, default handles the rest
   switch (msg.type) {
     case "tool_call":
@@ -1615,7 +1644,7 @@ function isDuplicateOfReplay(
 // `el.innerHTML = DOMPurify.sanitize(marked.parse(state.currentAssistantText))`
 // on every chunk, producing O(N²) main-thread work as each render
 // reparses ever-growing accumulated text through marked + DOMPurify +
-// temml + hljs. A real dogfood session (~989 events, three 21/34/43KB
+// temml + hljs. A real dogfood task (~989 events, three 21/34/43KB
 // assistant_message blocks) froze the UI for minutes.
 //
 // v6 solution: per-block memo in updateMarkdownStream (see render-event.ts)
@@ -1767,12 +1796,12 @@ function applyLiveToolCallUpdate(
   scrollToBottom();
 }
 
-export function drainNavigationEvents(sessionId: string): void {
+export function drainNavigationEvents(taskId: string): void {
   const matching = state.pendingNavigationEvents.filter(
-    (event) => "sessionId" in event && event.sessionId === sessionId,
+    (event) => "taskId" in event && event.taskId === taskId,
   );
   state.pendingNavigationEvents = state.pendingNavigationEvents.filter(
-    (event) => !("sessionId" in event) || event.sessionId !== sessionId,
+    (event) => !("taskId" in event) || event.taskId !== taskId,
   );
   for (const event of matching) handleEvent(event);
 }
@@ -1790,34 +1819,30 @@ export function handleEvent(msg: AgentEvent) {
     return;
   }
 
-  const navigationSid = "sessionId" in msg ? msg.sessionId : undefined;
+  const navigationSid = "taskId" in msg ? msg.taskId : undefined;
   if (
     msg.type === "state_patch" &&
-    state.runtimeHydrationSessionId === msg.sessionId
+    state.runtimeHydrationTaskId === msg.taskId
   ) {
     state.pendingNavigationEvents.push(msg);
     return;
   }
   if (
     navigationSid &&
-    msg.type !== "session_created" &&
-    state.sessionId === null &&
-    state.pendingNavigationSessionId === navigationSid
+    msg.type !== "task_created" &&
+    state.taskId === null &&
+    state.pendingNavigationTaskId === navigationSid
   ) {
     state.pendingNavigationEvents.push(msg);
     return;
   }
 
-  // Ignore events from other sessions (multi-client broadcast).
-  // When sessionId is null (mid-switch), drop session-specific events
-  // to prevent old-session events from leaking into the new session's DOM.
-  const msgSid = "sessionId" in msg ? msg.sessionId : undefined;
-  if (
-    msgSid &&
-    msg.type !== "session_created" &&
-    msg.type !== "session_deleted"
-  ) {
-    if (!state.sessionId || msgSid !== state.sessionId) {
+  // Ignore events from other tasks (multi-client broadcast).
+  // When taskId is null (mid-switch), drop task-specific events
+  // to prevent old-task events from leaking into the new task's DOM.
+  const msgSid = "taskId" in msg ? msg.taskId : undefined;
+  if (msgSid && msg.type !== "task_created" && msg.type !== "task_deleted") {
+    if (!state.taskId || msgSid !== state.taskId) {
       return;
     }
   }
@@ -1852,10 +1877,10 @@ export function handleEvent(msg: AgentEvent) {
           "Cancel was not acknowledged — retry ^C or use /reload to restart the agent.",
         );
       }
-      if (!applied && state.sessionId === msg.sessionId) {
+      if (!applied && state.taskId === msg.taskId) {
         // seq gap (missed patches) → reload the authoritative snapshot
-        const sessionId = state.sessionId;
-        void reloadSnapshot(sessionId, () => state.sessionId === sessionId);
+        const taskId = state.taskId;
+        void reloadSnapshot(taskId, () => state.taskId === taskId);
       }
       break;
     }
@@ -1874,66 +1899,64 @@ export function handleEvent(msg: AgentEvent) {
       }
       break;
 
-    case "session_created": {
+    case "task_created": {
       const matchesPendingCreate =
-        state.awaitingNewSession &&
-        state.pendingNewSessionOpId === msg.clientOpId;
-      if (state.pendingNewSessionOpId && !matchesPendingCreate) {
+        state.awaitingNewTask && state.pendingNewTaskOpId === msg.clientOpId;
+      if (state.pendingNewTaskOpId && !matchesPendingCreate) {
         break;
       }
 
       if (matchesPendingCreate) {
-        finishNewSessionRequest(msg.clientOpId);
+        finishNewTaskRequest(msg.clientOpId);
       }
       if (
-        state.pendingNavigationSessionId &&
-        msg.sessionId !== state.pendingNavigationSessionId
+        state.pendingNavigationTaskId &&
+        msg.taskId !== state.pendingNavigationTaskId
       ) {
         break;
       }
-      // Only switch to the new session if this client requested it
+      // Only switch to the new task if this client requested it
       if (
-        !state.awaitingNewSession &&
-        state.sessionId &&
-        msg.sessionId !== state.sessionId
+        !state.awaitingNewTask &&
+        state.taskId &&
+        msg.taskId !== state.taskId
       ) {
         break;
       }
-      state.awaitingNewSession = false;
-      state.pendingNavigationSessionId = null;
-      const isSessionActivation = state.sessionId === null;
-      state.sessionId = msg.sessionId;
-      if (isSessionActivation) rearmHistoryObserverAfterSessionActivation();
-      state.sessionCwd = msg.cwd ?? state.sessionCwd;
-      state.sessionCwdDisplay =
-        msg.cwdDisplay ?? msg.cwd ?? state.sessionCwdDisplay;
-      state.sessionTitle = msg.title ?? null;
+      state.awaitingNewTask = false;
+      state.pendingNavigationTaskId = null;
+      const isTaskActivation = state.taskId === null;
+      state.taskId = msg.taskId;
+      if (isTaskActivation) rearmHistoryObserverAfterTaskActivation();
+      state.taskCwd = msg.cwd ?? state.taskCwd;
+      state.taskCwdDisplay = msg.cwdDisplay ?? msg.cwd ?? state.taskCwdDisplay;
+      state.taskTitle = msg.title ?? null;
       if (msg.agentCommands) applyAgentCommandSnapshot(msg.agentCommands);
       // eslint-disable-next-line @typescript-eslint/prefer-optional-chain, @typescript-eslint/no-unnecessary-condition -- runtime safety for legacy events
       if (msg.configOptions && msg.configOptions.length)
         updateConfigOptions(msg.configOptions);
       // Always repaint: when configOptions is empty (typical after reload
       // before the lifecycle probe warms the cache), updateModeUI/
-      // updateStatusBar fall back to state.sessionMode/sessionModel set by
-      // applySnapshot. Without this an empty session_created leaves the
+      // updateStatusBar fall back to state.taskMode/taskModel set by
+      // applySnapshot. Without this an empty task_created leaves the
       // input area styled as default mode.
       updateModeUI();
       updateStatusBar();
-      setHashSessionId(state.sessionId);
-      // Report which session this client is now viewing (for per-session push suppression)
+      setHashTaskId(state.taskId);
+      // Report which task this client is now viewing (for per-task push suppression)
       if (state.clientId) {
         api
-          .postVisibility(state.clientId, !document.hidden, state.sessionId)
+          .postVisibility(state.clientId, !document.hidden, state.taskId)
           .catch(() => {});
       }
-      updateSessionInfo(state.sessionId, state.sessionTitle);
+      updateTaskInfo(state.taskId, state.taskTitle);
       setConnectionStatus("connected", "connected");
       dom.input.disabled = false;
       dom.sendBtn.disabled = false;
       // Placeholder is owned by updateModeUI (called above). No literal here.
       // Do not clear newTurnStarted here. Replay may have opened a foreign
-      // turn whose stale completion has not arrived yet; normal session
-      // switches already reset this state in resetSessionUI().
+      // turn whose stale completion has not arrived yet; normal task
+      // switches already reset this state in resetTaskUI().
       // Adopt any in-flight bash block from history replay (snapshot carries
       // the busy truth; we just need to hook up the DOM element if present).
       {
@@ -1948,7 +1971,7 @@ export function handleEvent(msg: AgentEvent) {
       }
       if (dom.messages.children.length === 0) {
         addSystem(
-          `Session created: ${state.sessionTitle ?? msg.sessionId.slice(0, 8) + "…"}`,
+          `Task created: ${state.taskTitle ?? msg.taskId.slice(0, 8) + "…"}`,
         );
       }
       updateStatusBar();
@@ -1960,15 +1983,15 @@ export function handleEvent(msg: AgentEvent) {
       // excluded the sender). Detect our own echo and skip it — we already
       // rendered the message and set busy in sendPrompt().
       if (
-        state.sentMessageForSession === msg.sessionId &&
+        state.sentMessageForTask === msg.taskId &&
         state.sentMessageOpId === msg.clientOpId
       ) {
         const shouldReconcile = state.reconcileAfterOwnUserEcho;
-        state.sentMessageForSession = null;
+        state.sentMessageForTask = null;
         state.sentMessageOpId = null;
         state.awaitingOwnUserEcho = false;
         state.reconcileAfterOwnUserEcho = false;
-        if (shouldReconcile) scheduleTerminalReconciliation(msg.sessionId);
+        if (shouldReconcile) scheduleTerminalReconciliation(msg.taskId);
         break;
       }
       // A new turn is starting (from another client's broadcast).
@@ -1978,7 +2001,7 @@ export function handleEvent(msg: AgentEvent) {
       finishAssistant();
       state.newTurnStarted = true;
       state.turnEnded = false;
-      if (msg.sessionId === state.sessionId) {
+      if (msg.taskId === state.taskId) {
         // Mirror the sender's optimistic busy transition. The authoritative
         // state patch/snapshot will confirm or correct it.
         if (state.busyKind !== "bash") setBusy(true);
@@ -2119,7 +2142,7 @@ export function handleEvent(msg: AgentEvent) {
 
     case "permission_response": {
       state.pendingPermissionRequestIds.delete(msg.requestId);
-      if (msg.sessionId === state.sessionId) {
+      if (msg.taskId === state.taskId) {
         renderContentEvent("permission_response", msg, liveHooks());
       }
       finishPromptIfIdle();
@@ -2128,11 +2151,11 @@ export function handleEvent(msg: AgentEvent) {
 
     case "bash_command": {
       // Suppress SSE echo of our own bash command (we already rendered it in input.ts)
-      if (state.sentBashForSession === msg.sessionId) {
-        state.sentBashForSession = null;
+      if (state.sentBashForTask === msg.taskId) {
+        state.sentBashForTask = null;
         break;
       }
-      if (msg.sessionId === state.sessionId) {
+      if (msg.taskId === state.taskId) {
         const el = renderContentEvent("bash_command", msg, liveHooks());
         if (el) {
           // Live: command is in flight; the shared renderer produces a "not
@@ -2147,7 +2170,7 @@ export function handleEvent(msg: AgentEvent) {
     }
 
     case "bash_output": {
-      if (msg.sessionId !== state.sessionId) break;
+      if (msg.taskId !== state.taskId) break;
       if (state.currentBashEl) {
         const out = state.currentBashEl.querySelector(".bash-output");
         if (!out) break;
@@ -2167,7 +2190,7 @@ export function handleEvent(msg: AgentEvent) {
     }
 
     case "bash_done": {
-      if (msg.sessionId !== state.sessionId) break;
+      if (msg.taskId !== state.taskId) break;
       finishBash(state.currentBashEl, msg.code, msg.signal);
       if (msg.error) addSystem(`err: ${msg.error}`);
       if (state.busyKind !== "agent") setBusy(false);
@@ -2189,7 +2212,7 @@ export function handleEvent(msg: AgentEvent) {
         msg.promptId !== state.currentPromptId
       ) {
         log.warn("dropping completion from a superseded turn", {
-          sessionId: msg.sessionId,
+          taskId: msg.taskId,
           stopReason: msg.stopReason,
           promptId: msg.promptId,
           currentPromptId: state.currentPromptId,
@@ -2204,7 +2227,7 @@ export function handleEvent(msg: AgentEvent) {
         // through applyStatePatch/applySnapshot, which deliberately bypass this
         // guard, so the server remains authoritative for busy either way.
         log.warn("dropping stale prompt_done during own-echo window", {
-          sessionId: msg.sessionId,
+          taskId: msg.taskId,
           stopReason: msg.stopReason,
         });
         state.reconcileAfterOwnUserEcho = true;
@@ -2242,20 +2265,30 @@ export function handleEvent(msg: AgentEvent) {
       break;
     }
 
-    case "session_deleted":
-      if (msg.sessionId === state.sessionId) {
-        void fallbackToNextSession(
-          msg.sessionId,
-          state.sessionCwd ?? undefined,
+    case "task_deleted":
+      if (msg.taskId === state.taskId) {
+        void fallbackToNextTask(
+          msg.taskId,
+          state.taskCwd ?? undefined,
+          msg.parentId,
+          msg.clientOpId,
         );
       }
       break;
 
-    case "session_expired": {
-      void fallbackToNextSession(
-        state.sessionId,
-        state.sessionCwd ?? undefined,
-      );
+    case "task_reset":
+      if (msg.taskId === state.taskId) {
+        void fallbackToNextTask(
+          null,
+          state.taskCwd ?? undefined,
+          msg.taskId,
+          msg.clientOpId,
+        );
+      }
+      break;
+
+    case "task_expired": {
+      void fallbackToNextTask(state.taskId, state.taskCwd ?? undefined);
       break;
     }
 
@@ -2277,10 +2310,10 @@ export function handleEvent(msg: AgentEvent) {
       if (msg.configOptions.length) updateConfigOptions(msg.configOptions);
       break;
 
-    case "session_title_updated":
-      if (msg.sessionId === state.sessionId) {
-        state.sessionTitle = msg.title;
-        updateSessionInfo(state.sessionId, state.sessionTitle);
+    case "task_title_updated":
+      if (msg.taskId === state.taskId) {
+        state.taskTitle = msg.title;
+        updateTaskInfo(state.taskId, state.taskTitle);
       }
       break;
 
@@ -2306,7 +2339,7 @@ export function handleEvent(msg: AgentEvent) {
         msg.promptId !== state.currentPromptId
       ) {
         log.warn("dropping failure from a superseded turn", {
-          sessionId: msg.sessionId,
+          taskId: msg.taskId,
           message: msg.message,
           promptId: msg.promptId,
           currentPromptId: state.currentPromptId,
@@ -2315,16 +2348,16 @@ export function handleEvent(msg: AgentEvent) {
       }
       if (state.awaitingOwnUserEcho) {
         // Terminal error from the superseded turn. Note this drops errors for
-        // *any* session during the window (this case has no sessionId filter),
+        // *any* task during the window (this case has no taskId filter),
         // so log the payload — it is the only remaining trace.
         log.warn("dropping stale error during own-echo window", {
-          sessionId: msg.sessionId,
+          taskId: msg.taskId,
           message: msg.message,
         });
         state.reconcileAfterOwnUserEcho = true;
         break;
       }
-      state.awaitingNewSession = false;
+      state.awaitingNewTask = false;
       state.pendingToolCallIds.clear();
       state.pendingPermissionRequestIds.clear();
       state.pendingPromptDone = false;
@@ -2347,7 +2380,7 @@ export function handleEvent(msg: AgentEvent) {
       break;
 
     case "message":
-      if (msg.sessionId === state.sessionId) {
+      if (msg.taskId === state.taskId) {
         renderMessageCard(msg);
         scrollToBottom();
       }

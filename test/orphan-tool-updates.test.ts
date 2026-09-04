@@ -7,7 +7,7 @@ type ToolUpdate = Extract<AgentEvent, { type: "tool_call_update" }>;
 
 const update = (id: string, text: string): ToolUpdate => ({
   type: "tool_call_update",
-  sessionId: "s1",
+  taskId: "s1",
   id,
   status: "in_progress",
   content: [{ type: "content", content: { text } }],
@@ -21,7 +21,7 @@ describe("OrphanToolUpdateCache", () => {
     now = 10;
     cache.put({
       type: "tool_call_update",
-      sessionId: "s1",
+      taskId: "s1",
       id: "tc-1",
       status: "completed",
     });
@@ -108,7 +108,7 @@ describe("OrphanToolUpdateCache", () => {
     cache.put(
       {
         type: "tool_call_update",
-        sessionId: "s1",
+        taskId: "s1",
         id: "tc-1",
         status: "completed",
         content: [{ type: "content", content: { text: "final" } }],

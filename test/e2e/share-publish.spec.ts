@@ -1,5 +1,5 @@
 import { test, expect } from "playwright/test";
-import { createNewSession, gotoConnected, sendPrompt } from "./helpers.ts";
+import { createNewTask, gotoConnected, sendPrompt } from "./helpers.ts";
 
 // Share preview → publish → public viewer happy path.
 // Uses the real backend + mock ACP agent; frontend sends /share, /share publish
@@ -16,9 +16,9 @@ test("share: create preview, publish, public viewer renders without CSP violatio
   });
 
   await gotoConnected(page);
-  const sessionId = await createNewSession(page);
+  const taskId = await createNewTask(page);
 
-  // Send one prompt so the session has real events.
+  // Send one prompt so the task has real events.
   await sendPrompt(page, "hello share");
   // Wait for the assistant reply to settle.
   await expect(page.locator("#messages")).toContainText("hello", {
@@ -49,11 +49,11 @@ test("share: create preview, publish, public viewer renders without CSP violatio
   expect(m, `token not found in href: ${href}`).not.toBeNull();
   const token = m![1];
 
-  // Hit the public JSON API first — confirms session_id is NOT leaked.
+  // Hit the public JSON API first — confirms task_id is NOT leaked.
   const jsonRes = await request.get(`/api/v1/shared/${token}/events`);
   expect(jsonRes.status()).toBe(200);
   const body = await jsonRes.json();
-  expect(body.share.session_id).toBeUndefined();
+  expect(body.share.task_id).toBeUndefined();
   expect(body.share.token).toBe(token);
   expect(Array.isArray(body.events)).toBe(true);
 
@@ -92,8 +92,8 @@ test("share: create preview, publish, public viewer renders without CSP violatio
     `unexpected CSP violations on viewer page: ${viewerErrors.join("\n")}`,
   ).toHaveLength(0);
 
-  // URL contract: no session_id leaked in the URL.
-  expect(viewer.url()).not.toContain(sessionId);
+  // URL contract: no task_id leaked in the URL.
+  expect(viewer.url()).not.toContain(taskId);
   expect(viewer.url()).toMatch(/\/s\/[A-Za-z0-9_-]{24}/);
 
   await viewer.close();

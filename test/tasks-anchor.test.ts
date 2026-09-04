@@ -5,9 +5,9 @@ import { realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
 import {
-  resolveSessionsAnchor,
-  isInsideSessionAttachments,
-} from "../src/sessions-anchor.ts";
+  resolveTasksAnchor,
+  isInsideTaskAttachments,
+} from "../src/tasks-anchor.ts";
 
 const tmpDirs: string[] = [];
 
@@ -15,13 +15,13 @@ after(() => {
   for (const d of tmpDirs) rmSync(d, { recursive: true, force: true });
 });
 
-describe("resolveSessionsAnchor", () => {
-  it("creates <dataDir>/sessions/ when missing and returns realpath", () => {
+describe("resolveTasksAnchor", () => {
+  it("creates <dataDir>/tasks/ when missing and returns realpath", () => {
     const data = mkdtempSync(join(tmpdir(), "anchor-"));
     tmpDirs.push(data);
 
-    const anchor = resolveSessionsAnchor(data);
-    assert.equal(anchor, realpathSync(join(data, "sessions")));
+    const anchor = resolveTasksAnchor(data);
+    assert.equal(anchor, realpathSync(join(data, "tasks")));
     assert.ok(!anchor.endsWith(sep), "anchor should not end with separator");
   });
 
@@ -31,10 +31,10 @@ describe("resolveSessionsAnchor", () => {
     const realTarget = mkdtempSync(join(tmpdir(), "anchor-real-"));
     tmpDirs.push(realTarget);
 
-    // Make data/sessions a symlink to a realTarget directory.
-    symlinkSync(realTarget, join(data, "sessions"), "dir");
+    // Make data/tasks a symlink to a realTarget directory.
+    symlinkSync(realTarget, join(data, "tasks"), "dir");
 
-    const anchor = resolveSessionsAnchor(data);
+    const anchor = resolveTasksAnchor(data);
     assert.equal(anchor, realpathSync(realTarget));
   });
 
@@ -42,32 +42,32 @@ describe("resolveSessionsAnchor", () => {
     const data = mkdtempSync(join(tmpdir(), "anchor-idem-"));
     tmpDirs.push(data);
 
-    const a = resolveSessionsAnchor(data);
-    const b = resolveSessionsAnchor(data);
+    const a = resolveTasksAnchor(data);
+    const b = resolveTasksAnchor(data);
     assert.equal(a, b);
   });
 });
 
-describe("isInsideSessionAttachments", () => {
-  const anchor = "/data/sessions";
+describe("isInsideTaskAttachments", () => {
+  const anchor = "/data/tasks";
 
   it("accepts a path strictly under <anchor>/<sid>/attachments/", () => {
     assert.equal(
-      isInsideSessionAttachments(
+      isInsideTaskAttachments(
         anchor,
         "s1",
-        "/data/sessions/s1/attachments/abc.png",
+        "/data/tasks/s1/attachments/abc.png",
       ),
       true,
     );
   });
 
-  it("rejects paths under a different session", () => {
+  it("rejects paths under a different task", () => {
     assert.equal(
-      isInsideSessionAttachments(
+      isInsideTaskAttachments(
         anchor,
         "s1",
-        "/data/sessions/s2/attachments/abc.png",
+        "/data/tasks/s2/attachments/abc.png",
       ),
       false,
     );
@@ -75,22 +75,18 @@ describe("isInsideSessionAttachments", () => {
 
   it("rejects paths outside the attachments subdir", () => {
     assert.equal(
-      isInsideSessionAttachments(
-        anchor,
-        "s1",
-        "/data/sessions/s1/other/abc.png",
-      ),
+      isInsideTaskAttachments(anchor, "s1", "/data/tasks/s1/other/abc.png"),
       false,
     );
   });
 
-  it("rejects sibling sessions whose id is a prefix (s1 vs s10)", () => {
+  it("rejects sibling tasks whose id is a prefix (s1 vs s10)", () => {
     // Without the sep boundary, s10/attachments/* would falsely match s1.
     assert.equal(
-      isInsideSessionAttachments(
+      isInsideTaskAttachments(
         anchor,
         "s1",
-        "/data/sessions/s10/attachments/abc.png",
+        "/data/tasks/s10/attachments/abc.png",
       ),
       false,
     );
@@ -98,16 +94,13 @@ describe("isInsideSessionAttachments", () => {
 
   it("rejects the attachments dir itself (must be strict descendant)", () => {
     assert.equal(
-      isInsideSessionAttachments(anchor, "s1", "/data/sessions/s1/attachments"),
+      isInsideTaskAttachments(anchor, "s1", "/data/tasks/s1/attachments"),
       false,
     );
   });
 
   it("rejects an entirely unrelated path", () => {
-    assert.equal(
-      isInsideSessionAttachments(anchor, "s1", "/etc/passwd"),
-      false,
-    );
+    assert.equal(isInsideTaskAttachments(anchor, "s1", "/etc/passwd"), false);
   });
 });
 

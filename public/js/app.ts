@@ -29,7 +29,7 @@ import { setLogRenderer } from "./log.ts";
 import {
   navigateFromNotification,
   type NotificationTarget,
-} from "./session-navigation.ts";
+} from "./task-navigation.ts";
 import { installInboxIndicator } from "./inbox-indicator.ts";
 
 // Inline debug log — when level != "off", log records render as
@@ -62,7 +62,7 @@ void fetch("/api/v1/version")
 if ("serviceWorker" in navigator) {
   void navigator.serviceWorker.register("/sw.js");
 
-  // Handle push notification click → navigate to session
+  // Handle push notification click → navigate to task
   navigator.serviceWorker.addEventListener("message", (e) => {
     const data = (e.data ?? {}) as NotificationTarget & { type?: string };
     if (data.type !== "navigate") return;

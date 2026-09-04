@@ -71,14 +71,14 @@ describe("push — /notify command", () => {
   }
 
   it("/notify is a recognized command", async () => {
-    state.sessionId = "s1";
+    state.taskId = "s1";
 
     const handled = await commands.handleSlashCommand("/notify");
     assert.equal(handled, true);
   });
 
   it("/notify shows current permission state", async () => {
-    state.sessionId = "s1";
+    state.taskId = "s1";
     (globalThis as any).Notification = { permission: "default" };
 
     await commands.handleSlashCommand("/notify");
@@ -92,7 +92,7 @@ describe("push — /notify command", () => {
   });
 
   it("/notify on triggers permission request when default", async () => {
-    state.sessionId = "s1";
+    state.taskId = "s1";
     let permRequested = false;
     (globalThis as any).Notification = {
       permission: "default",
@@ -107,7 +107,7 @@ describe("push — /notify command", () => {
   });
 
   it("/notify on shows denied message when permission denied", async () => {
-    state.sessionId = "s1";
+    state.taskId = "s1";
     (globalThis as any).Notification = {
       permission: "default",
       requestPermission: async () => {
@@ -125,7 +125,7 @@ describe("push — /notify command", () => {
   });
 
   it("/notify off shows confirmation", async () => {
-    state.sessionId = "s1";
+    state.taskId = "s1";
 
     await commands.handleSlashCommand("/notify off");
     const lines = messageLines();
@@ -136,7 +136,7 @@ describe("push — /notify command", () => {
   });
 
   it("/notify shows off after /notify off even when permission is granted", async () => {
-    state.sessionId = "s1";
+    state.taskId = "s1";
     (globalThis as any).Notification = {
       permission: "granted",
       requestPermission: async () => "granted",
@@ -160,7 +160,7 @@ describe("push — /notify command", () => {
   });
 
   it("/notify on re-subscribes after previous /notify off", async () => {
-    state.sessionId = "s1";
+    state.taskId = "s1";
     (globalThis as any).Notification = {
       permission: "granted",
       requestPermission: async () => "granted",
@@ -211,7 +211,7 @@ describe("push — visibility reporting", () => {
 
   it("sends visibility message when document visibility changes", () => {
     state.clientId = "cl-test";
-    state.sessionId = "sess-abc";
+    state.taskId = "sess-abc";
 
     // Simulate visibilitychange
     Object.defineProperty(document, "hidden", {
@@ -228,9 +228,9 @@ describe("push — visibility reporting", () => {
     const body = JSON.parse(visCall.init?.body);
     assert.equal(body.visible, false);
     assert.equal(
-      body.sessionId,
+      body.taskId,
       "sess-abc",
-      "should include sessionId in visibility report",
+      "should include taskId in visibility report",
     );
 
     // Restore

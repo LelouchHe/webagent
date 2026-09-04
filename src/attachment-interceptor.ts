@@ -2,12 +2,12 @@
 //
 // Plan §1.4 (uploads-plan v2.6, lines 105-183). When an agent requests
 // permission to *read* a path that we know is one of the user-uploaded
-// session attachments, auto-approve with `allow_once`. Any deviation
+// task attachments, auto-approve with `allow_once`. Any deviation
 // from the strict allowlist falls through to the user prompt.
 //
 // Defenses (mirrored from the plan):
 //   F1 kind === "read" only
-//   F2 every locations[].path realpath ∈ session attachment realpaths
+//   F2 every locations[].path realpath ∈ task attachment realpaths
 //   F4 schema gate — locations must exist; if rawInput has known path
 //      keys they must also realpath into the attachment set; if it has
 //      none, allow but bump schemaDrift counter so we notice when the
@@ -36,7 +36,7 @@ export interface InterceptorLogger {
 }
 
 export interface InterceptorEvent {
-  sessionId: string;
+  taskId: string;
   toolKind?: string;
   toolName?: string;
   locations?: { path: string; line?: number | null }[];
@@ -44,7 +44,7 @@ export interface InterceptorEvent {
 }
 
 export interface InterceptorDeps {
-  listAttachmentRealpaths: (sessionId: string) => string[];
+  listAttachmentRealpaths: (taskId: string) => string[];
   counters: InterceptorCounters;
   logger?: InterceptorLogger;
   /** Fired the first time schemaDrift increments per process; the caller
@@ -111,7 +111,7 @@ async function checkRawInputPaths(
 
 /**
  * Returns true iff the request matches the strict
- * "agent reading a known session attachment" pattern.
+ * "agent reading a known task attachment" pattern.
  *
  * Returning false does NOT deny the user prompt — it just declines to
  * auto-approve, so the normal permission UI continues to render.
@@ -127,7 +127,7 @@ export async function shouldAutoApproveAttachmentRead(
     counters.fellThrough++;
     log.debug?.("attachment auto-allow miss", {
       reason,
-      sessionId: ev.sessionId,
+      taskId: ev.taskId,
       toolKind: ev.toolKind,
       toolName: ev.toolName,
     });
@@ -147,10 +147,10 @@ export async function shouldAutoApproveAttachmentRead(
 
   let attachmentRealpaths: Set<string>;
   try {
-    attachmentRealpaths = new Set(deps.listAttachmentRealpaths(ev.sessionId));
+    attachmentRealpaths = new Set(deps.listAttachmentRealpaths(ev.taskId));
   } catch (e) {
     log.warn?.("attachment interceptor db error", {
-      sessionId: ev.sessionId,
+      taskId: ev.taskId,
       error: (e as Error).message,
     });
     return miss("db_error");
@@ -181,7 +181,7 @@ export async function shouldAutoApproveAttachmentRead(
 
   counters.autoAllowed++;
   log.info?.("attachment auto-allowed", {
-    sessionId: ev.sessionId,
+    taskId: ev.taskId,
     toolKind: ev.toolKind,
     toolName: ev.toolName,
     locations: ev.locations.map((l) => l.path),

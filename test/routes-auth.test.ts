@@ -89,28 +89,28 @@ describe("routes auth gate", () => {
   });
 
   describe("API gating", () => {
-    it("401 on /api/v1/sessions without Authorization", async () => {
-      const r = await req(port, "GET", "/api/v1/sessions");
+    it("401 on /api/v1/tasks without Authorization", async () => {
+      const r = await req(port, "GET", "/api/v1/tasks");
       assert.equal(r.status, 401);
       assert.equal(r.headers["www-authenticate"], "Bearer");
     });
 
-    it("401 on /api/v1/sessions with malformed Authorization", async () => {
-      const r = await req(port, "GET", "/api/v1/sessions", {
+    it("401 on /api/v1/tasks with malformed Authorization", async () => {
+      const r = await req(port, "GET", "/api/v1/tasks", {
         Authorization: "Token foo",
       });
       assert.equal(r.status, 401);
     });
 
-    it("401 on /api/v1/sessions with unknown Bearer", async () => {
-      const r = await req(port, "GET", "/api/v1/sessions", {
+    it("401 on /api/v1/tasks with unknown Bearer", async () => {
+      const r = await req(port, "GET", "/api/v1/tasks", {
         Authorization: "Bearer wat_unknown",
       });
       assert.equal(r.status, 401);
     });
 
-    it("200 on /api/v1/sessions with valid Bearer", async () => {
-      const r = await req(port, "GET", "/api/v1/sessions", {
+    it("200 on /api/v1/tasks with valid Bearer", async () => {
+      const r = await req(port, "GET", "/api/v1/tasks", {
         Authorization: `Bearer ${token}`,
       });
       assert.equal(r.status, 200);
@@ -187,9 +187,9 @@ describe("routes auth gate", () => {
   });
 
   describe("Path traversal", () => {
-    it("401 on /api/v1/version/../sessions", async () => {
+    it("401 on /api/v1/version/../tasks", async () => {
       // raw HTTP request preserves the .. segment
-      const r = await req(port, "GET", "/api/v1/version/../sessions");
+      const r = await req(port, "GET", "/api/v1/version/../tasks");
       assert.equal(r.status, 401);
     });
   });

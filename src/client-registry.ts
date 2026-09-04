@@ -18,7 +18,7 @@ export interface ClientEntry {
   capabilities: string[];
   /** True iff the client most-recently reported the page as visible. */
   visible: boolean;
-  /** Session the client is currently viewing (null = no session pane open). */
+  /** Task the client is currently viewing (null = no task pane open). */
   active: string | null;
   /**
    * ms timestamp (from injected `now()`) when `visible` last became true OR
@@ -37,12 +37,12 @@ export interface VisibilityPatch {
 }
 
 /** Edge-trigger flag for setVisibility callers (e.g. /visibility handler
- *  firing sendClose on first visible+session transition only, not on
+ *  firing sendClose on first visible+task transition only, not on
  *  every 15s heartbeat). Mirrors PushService.UpdateClientResult. */
 export interface SetVisibilityResult {
   /**
    * Non-null iff this update transitioned the client into
-   * "visible + active=X" — either invisible→visible, or session-switch
+   * "visible + active=X" — either invisible→visible, or task-switch
    * X→Y while visible. Repeated heartbeats with the same (visible, active)
    * return null.
    */
@@ -97,7 +97,7 @@ export class ClientRegistry {
    *   - Returns `becameVisibleFor=X` only on first transition into
    *     (visible:true, active:X) — heartbeat refreshes return null so
    *     callers can fire edge-triggered side effects exactly once.
-   *   - Session-switch while visible (active X→Y) restarts the TTL clock
+   *   - Task-switch while visible (active X→Y) restarts the TTL clock
    *     even when the patch doesn't carry an explicit visible:true.
    *
    * No-op on unknown client.
@@ -106,7 +106,7 @@ export class ClientRegistry {
     const entry = this.clients.get(id);
     if (!entry) return { becameVisibleFor: null };
 
-    const wasVisibleForSession =
+    const wasVisibleForTask =
       entry.visible && entry.active != null ? entry.active : null;
 
     if (patch.visible !== undefined) {
@@ -120,12 +120,12 @@ export class ClientRegistry {
     const becameVisibleFor =
       entry.visible &&
       entry.active != null &&
-      entry.active !== wasVisibleForSession
+      entry.active !== wasVisibleForTask
         ? entry.active
         : null;
     if (becameVisibleFor) {
       // Any transition into "visible + active=X" restarts TTL — including
-      // session-switches that arrive without an explicit visible:true.
+      // task-switches that arrive without an explicit visible:true.
       entry.visibleSince = this.now();
     }
 
@@ -133,29 +133,29 @@ export class ClientRegistry {
     return { becameVisibleFor };
   }
 
-  /** Is this specific client currently visible & viewing `sessionId` & fresh? */
-  isVisibleForSession(id: string, sessionId: string): boolean {
+  /** Is this specific client currently visible & viewing `taskId` & fresh? */
+  isVisibleForTask(id: string, taskId: string): boolean {
     const entry = this.clients.get(id);
     if (!entry) return false;
     if (!entry.visible) return false;
-    if (entry.active !== sessionId) return false;
+    if (entry.active !== taskId) return false;
     if (this.now() - entry.visibleSince > this.visibilityTtlMs) return false;
     return true;
   }
 
-  /** Is at least one fresh visible client viewing `sessionId`? */
-  isSessionVisibleToAnyClient(sessionId: string): boolean {
+  /** Is at least one fresh visible client viewing `taskId`? */
+  isTaskVisibleToAnyClient(taskId: string): boolean {
     const now = this.now();
     for (const e of this.clients.values()) {
       if (!e.visible) continue;
-      if (e.active !== sessionId) continue;
+      if (e.active !== taskId) continue;
       if (now - e.visibleSince > this.visibilityTtlMs) continue;
       return true;
     }
     return false;
   }
 
-  /** Is this specific client currently fresh-visible (any session)? */
+  /** Is this specific client currently fresh-visible (any task)? */
   isClientVisible(id: string): boolean {
     const entry = this.clients.get(id);
     if (!entry) return false;
@@ -164,7 +164,7 @@ export class ClientRegistry {
     return true;
   }
 
-  /** Is at least one fresh visible client connected (any session)? */
+  /** Is at least one fresh visible client connected (any task)? */
   hasAnyVisibleClient(): boolean {
     const now = this.now();
     for (const e of this.clients.values()) {

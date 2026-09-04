@@ -36,7 +36,7 @@ export function enterViewDirectory(path: string): void {
 
 /** Cache partition for the query-aware slash fetch contract. */
 export function viewFetchKey(query: string): string {
-  const directory = resolveBrowseTarget(query, state.sessionCwd).directory;
+  const directory = resolveBrowseTarget(query, state.taskCwd).directory;
   if (directory === "/") return directory;
   return directory.replace(/\/+$/, "");
 }
@@ -44,7 +44,7 @@ export function viewFetchKey(query: string): string {
 export async function fetchViewItems(
   query: string,
 ): Promise<FileBrowserItem[]> {
-  const target = resolveBrowseTarget(query, state.sessionCwd);
+  const target = resolveBrowseTarget(query, state.taskCwd);
   const result = await api.listFiles(target.directory);
   const items: FileBrowserItem[] = [];
   if (result.parent !== result.path) {
@@ -111,7 +111,7 @@ export function viewItemSpec(item: unknown): SlashItemSpec {
 /** Enter dispatch: directory → drill down; file → responsive viewer. */
 export async function openViewPath(query: string): Promise<void> {
   try {
-    const path = resolveViewPath(query, state.sessionCwd);
+    const path = resolveViewPath(query, state.taskCwd);
     const info = await api.getFileInfo(path);
     if (info.kind === "dir") {
       enterViewDirectory(info.pathDisplay ?? info.path);

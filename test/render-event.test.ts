@@ -60,7 +60,7 @@ describe("render-event", () => {
     it("isContentEventType narrows known types", () => {
       assert.equal(mod.isContentEventType("user_message"), true);
       assert.equal(mod.isContentEventType("message_chunk"), false);
-      assert.equal(mod.isContentEventType("session_created"), false);
+      assert.equal(mod.isContentEventType("task_created"), false);
     });
   });
 
@@ -112,7 +112,7 @@ describe("render-event", () => {
                 attachmentId: "a1",
                 displayName: "a.png",
                 mimeType: "image/png",
-                path: "/api/v1/sessions/s1/attachments/a1.png",
+                path: "/api/v1/tasks/s1/attachments/a1.png",
               },
             ],
           },
@@ -124,7 +124,7 @@ describe("render-event", () => {
       assert.ok(
         img
           .getAttribute("src")!
-          .endsWith("/api/v1/sessions/s1/attachments/a1.png"),
+          .endsWith("/api/v1/tasks/s1/attachments/a1.png"),
       );
       assert.equal(img.getAttribute("alt"), "a.png");
       assert.equal(
@@ -146,7 +146,7 @@ describe("render-event", () => {
                 attachmentId: "a1",
                 displayName: "wide.png",
                 mimeType: "image/png",
-                path: "/api/v1/sessions/s1/attachments/a1.png",
+                path: "/api/v1/tasks/s1/attachments/a1.png",
                 width: 800,
                 height: 200,
               },
@@ -172,7 +172,7 @@ describe("render-event", () => {
                 attachmentId: "a1",
                 displayName: "small.png",
                 mimeType: "image/png",
-                path: "/api/v1/sessions/s1/attachments/a1.png",
+                path: "/api/v1/tasks/s1/attachments/a1.png",
                 width: 80,
                 height: 60,
               },
@@ -207,7 +207,7 @@ describe("render-event", () => {
                   attachmentId: "a1",
                   displayName: "wide.png",
                   mimeType: "image/png",
-                  path: "/api/v1/sessions/s1/attachments/a1.png",
+                  path: "/api/v1/tasks/s1/attachments/a1.png",
                   width: 800,
                   height: 200,
                 },
@@ -239,7 +239,7 @@ describe("render-event", () => {
                 attachmentId: "a2",
                 displayName: "notes.txt",
                 mimeType: "text/plain",
-                path: "/api/v1/sessions/s1/attachments/a2.txt",
+                path: "/api/v1/tasks/s1/attachments/a2.txt",
               },
             ],
           },
@@ -255,7 +255,7 @@ describe("render-event", () => {
       assert.ok(
         link
           .getAttribute("href")!
-          .endsWith("/api/v1/sessions/s1/attachments/a2.txt"),
+          .endsWith("/api/v1/tasks/s1/attachments/a2.txt"),
       );
     });
 
@@ -271,21 +271,21 @@ describe("render-event", () => {
                 attachmentId: "a1",
                 displayName: "a.png",
                 mimeType: "image/png",
-                path: "/api/v1/sessions/s1/attachments/a1.png",
+                path: "/api/v1/tasks/s1/attachments/a1.png",
               },
               {
                 kind: "file",
                 attachmentId: "a2",
                 displayName: "n.txt",
                 mimeType: "text/plain",
-                path: "/api/v1/sessions/s1/attachments/a2.txt",
+                path: "/api/v1/tasks/s1/attachments/a2.txt",
               },
             ],
           },
           makeHooks({
             rewriteAttachmentSrc: (src) =>
               src.replace(
-                /^\/api\/v1\/sessions\/[^/]+\/attachments\//,
+                /^\/api\/v1\/tasks\/[^/]+\/attachments\//,
                 "/s/TKN/attachments/",
               ),
           }),

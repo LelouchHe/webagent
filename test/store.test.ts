@@ -21,25 +21,25 @@ describe("Store", () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  describe("sessions", () => {
-    it("stores WebAgent and ACP session identities separately", () => {
-      store.createSession("web-1", "/tmp/cwd", "auto", "agent-1");
+  describe("tasks", () => {
+    it("stores WebAgent and ACP task identities separately", () => {
+      store.createTask("web-1", "/tmp/cwd", "auto", "agent-1");
 
       assert.equal(store.getAgentSessionId("web-1"), "agent-1");
-      assert.equal(store.getWebSessionId("agent-1"), "web-1");
+      assert.equal(store.getTaskId("agent-1"), "web-1");
     });
 
-    it("rotates the ACP binding without changing the WebAgent session", () => {
-      store.createSession("web-1", "/tmp/cwd", "auto", "agent-1");
+    it("rotates the ACP binding without changing the WebAgent task", () => {
+      store.createTask("web-1", "/tmp/cwd", "auto", "agent-1");
 
       store.rotateAgentSession("web-1", "agent-2");
 
       assert.equal(store.getAgentSessionId("web-1"), "agent-2");
       // The retired binding row is removed; its execution is explicitly
       // retired by the caller and never accepts WebAgent events again.
-      assert.equal(store.getWebSessionId("agent-1"), undefined);
-      assert.equal(store.getWebSessionId("agent-2"), "web-1");
-      assert.equal(store.getSession("web-1")?.id, "web-1");
+      assert.equal(store.getTaskId("agent-1"), undefined);
+      assert.equal(store.getTaskId("agent-2"), "web-1");
+      assert.equal(store.getTask("web-1")?.id, "web-1");
       const row = store["db"]
         .prepare(
           "SELECT COUNT(*) AS count FROM agent_sessions WHERE agent_key = ?",
@@ -49,52 +49,52 @@ describe("Store", () => {
     });
 
     it("persists a requested cwd even when rotation is a no-op (same agent id)", () => {
-      store.createSession("web-1", "/a", "auto", "agent-1");
+      store.createTask("web-1", "/a", "auto", "agent-1");
 
       store.rotateAgentSession("web-1", "agent-1", "/b");
 
-      assert.equal(store.getSession("web-1")?.cwd, "/b");
+      assert.equal(store.getTask("web-1")?.cwd, "/b");
       assert.equal(store.getAgentSessionId("web-1"), "agent-1");
     });
 
-    it("keeps internal ACP sessions out of the user session list", () => {
+    it("keeps internal ACP tasks out of the user task list", () => {
       store.registerInternalAgentSession("agent-title");
 
-      assert.equal(store.getWebSessionId("agent-title"), undefined);
-      assert.deepEqual(store.listSessions(), []);
+      assert.equal(store.getTaskId("agent-title"), undefined);
+      assert.deepEqual(store.listTasks(), []);
     });
 
-    it("only exposes sessions owned by the current agent", () => {
-      store.createSession("web-a", "/a", "auto", "agent-a");
+    it("only exposes tasks owned by the current agent", () => {
+      store.createTask("web-a", "/a", "auto", "agent-a");
       store.close();
 
       const other = new Store(tmpDir, "other-agent");
-      other.createSession("web-b", "/b", "auto", "agent-b");
+      other.createTask("web-b", "/b", "auto", "agent-b");
 
       assert.deepEqual(
-        other.listSessions().map((session) => session.id),
+        other.listTasks().map((task) => task.id),
         ["web-b"],
       );
-      assert.equal(other.getSession("web-a"), undefined);
-      assert.equal(other.getSessionIncludingDeleted("web-a")?.id, "web-a");
+      assert.equal(other.getTask("web-a"), undefined);
+      assert.equal(other.getTaskIncludingDeleted("web-a")?.id, "web-a");
       other.close();
 
       store = new Store(tmpDir, "test-agent");
-      assert.equal(store.getSession("web-a")?.id, "web-a");
+      assert.equal(store.getTask("web-a")?.id, "web-a");
       assert.equal(store.getAgentSessionId("web-a"), "agent-a");
-      assert.equal(store.getSession("web-b"), undefined);
+      assert.equal(store.getTask("web-b"), undefined);
     });
 
-    it("creates and retrieves a session", () => {
-      const session = store.createSession("sess-1", "/tmp/cwd");
-      assert.equal(session.id, "sess-1");
-      assert.equal(session.cwd, "/tmp/cwd");
-      assert.equal(session.title, null);
+    it("creates and retrieves a task", () => {
+      const task = store.createTask("sess-1", "/tmp/cwd");
+      assert.equal(task.id, "sess-1");
+      assert.equal(task.cwd, "/tmp/cwd");
+      assert.equal(task.title, null);
     });
 
-    it("stores an optional parent WebAgent session", () => {
-      store.createSession("root", "/tmp/root", "root", "agent-root");
-      const child = store.createSession(
+    it("stores an optional parent WebAgent task", () => {
+      store.createTask("root", "/tmp/root", "root", "agent-root");
+      const child = store.createTask(
         "child",
         "/tmp/child",
         "auto",
@@ -102,48 +102,42 @@ describe("Store", () => {
         "root",
       );
 
-      assert.equal(child.parent_session_id, "root");
-      assert.equal(store.getSession("child")?.parent_session_id, "root");
+      assert.equal(child.parent_id, "root");
+      assert.equal(store.getTask("child")?.parent_id, "root");
     });
 
-    it("creates a non-destructive Root and adopts existing top-level sessions", () => {
-      store.createSession("old-1", "/tmp/one", "auto", "agent-one");
-      store.createSession("old-2", "/tmp/two", "auto", "agent-two");
+    it("creates a non-destructive Root and adopts existing top-level tasks", () => {
+      store.createTask("old-1", "/tmp/one", "auto", "agent-one");
+      store.createTask("old-2", "/tmp/two", "auto", "agent-two");
 
-      const root = store.ensureRootSession("/tmp/root");
+      const root = store.ensureRootTask("/tmp/root");
 
       assert.equal(root.id, "root");
-      assert.equal(root.parent_session_id, null);
+      assert.equal(root.parent_id, null);
       assert.equal(root.title, "root");
-      assert.equal(
-        store.getSessionIncludingDeleted("old-1")?.parent_session_id,
-        "root",
-      );
-      assert.equal(
-        store.getSessionIncludingDeleted("old-2")?.parent_session_id,
-        "root",
-      );
+      assert.equal(store.getTaskIncludingDeleted("old-1")?.parent_id, "root");
+      assert.equal(store.getTaskIncludingDeleted("old-2")?.parent_id, "root");
       assert.deepEqual(
         store
-          .listSessions()
-          .map((session) => session.id)
+          .listTasks()
+          .map((task) => task.id)
           .sort(),
         ["old-1", "old-2"],
       );
 
-      assert.equal(store.ensureRootSession("/tmp/other").cwd, "/tmp/root");
-      assert.equal(store.ensureRootSession("/tmp/other").title, "root");
+      assert.equal(store.ensureRootTask("/tmp/other").cwd, "/tmp/root");
+      assert.equal(store.ensureRootTask("/tmp/other").title, "root");
     });
 
     it("keeps a user-renamed Root title across restarts", () => {
-      store.ensureRootSession("/tmp/root");
-      store.updateSessionTitle("root", "工作台");
+      store.ensureRootTask("/tmp/root");
+      store.updateTaskTitle("root", "工作台");
 
-      assert.equal(store.ensureRootSession("/tmp/root").title, "工作台");
+      assert.equal(store.ensureRootTask("/tmp/root").title, "工作台");
     });
 
     it("persists and clears one pending compact summary with its assistant event", () => {
-      store.createSession("web-1", "/tmp/root", "auto", "agent-1");
+      store.createTask("web-1", "/tmp/root", "auto", "agent-1");
 
       store.saveCompactSummary("web-1", "Current goal and next action");
 
@@ -173,134 +167,122 @@ describe("Store", () => {
     });
 
     it("binds an ACP execution to an existing Root record", () => {
-      store.ensureRootSession("/tmp/root");
+      store.ensureRootTask("/tmp/root");
 
       store.bindAgentSession("root", "agent-root");
 
       assert.equal(store.getAgentSessionId("root"), "agent-root");
-      assert.equal(store.getSession("root")?.id, "root");
+      assert.equal(store.getTask("root")?.id, "root");
     });
 
-    it("protects the Root session from deletion", () => {
-      store.ensureRootSession("/tmp/root");
+    it("protects the Root task from deletion", () => {
+      store.ensureRootTask("/tmp/root");
 
       assert.throws(
-        () => store.deleteSession("root"),
-        /Root session cannot be deleted/,
+        () => store.deleteTask("root"),
+        /Root task cannot be deleted/,
       );
     });
 
-    it("does not garbage-collect the Root session when it is empty", () => {
-      store.ensureRootSession("/tmp/root");
+    it("does not garbage-collect the Root task when it is empty", () => {
+      store.ensureRootTask("/tmp/root");
       store.bindAgentSession("root", "agent-root");
 
-      assert.deepEqual(store.deleteEmptySessions(0), []);
-      assert.equal(store.getSession("root")?.id, "root");
+      assert.deepEqual(store.deleteEmptyTasks(0), []);
+      assert.equal(store.getTask("root")?.id, "root");
     });
 
-    it("lists sessions ordered by last_active_at desc", () => {
-      store.createSession("old", "/a");
-      store.createSession("new", "/b");
+    it("lists tasks ordered by last_active_at desc", () => {
+      store.createTask("old", "/a");
+      store.createTask("new", "/b");
       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 2);
-      store.updateSessionLastActive("old"); // touch "old" to make it most recent
+      store.updateTaskLastActive("old"); // touch "old" to make it most recent
 
-      const list = store.listSessions();
+      const list = store.listTasks();
       assert.equal(list[0].id, "old");
       assert.equal(list[1].id, "new");
     });
 
     it("stores last_active_at with fractional-second precision", () => {
-      store.createSession("s1", "/x");
-      store.updateSessionLastActive("s1");
+      store.createTask("s1", "/x");
+      store.updateTaskLastActive("s1");
 
-      const session = store.getSession("s1")!;
+      const task = store.getTask("s1")!;
       assert.match(
-        session.last_active_at,
+        task.last_active_at,
         /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}$/,
       );
     });
 
-    it("returns undefined for non-existent session", () => {
-      assert.equal(store.getSession("nope"), undefined);
+    it("returns undefined for non-existent task", () => {
+      assert.equal(store.getTask("nope"), undefined);
     });
 
     it("updates title", () => {
-      store.createSession("s1", "/x");
-      store.updateSessionTitle("s1", "My Title");
-      assert.equal(store.getSession("s1")!.title, "My Title");
+      store.createTask("s1", "/x");
+      store.updateTaskTitle("s1", "My Title");
+      assert.equal(store.getTask("s1")!.title, "My Title");
     });
 
     it("updates config options (model, mode, reasoning_effort)", () => {
-      store.createSession("s1", "/x");
-      store.updateSessionConfig("s1", "model", "claude-sonnet");
-      store.updateSessionConfig("s1", "mode", "plan");
-      store.updateSessionConfig("s1", "reasoning_effort", "high");
-      const s = store.getSession("s1")!;
+      store.createTask("s1", "/x");
+      store.updateTaskConfig("s1", "model", "claude-sonnet");
+      store.updateTaskConfig("s1", "mode", "plan");
+      store.updateTaskConfig("s1", "reasoning_effort", "high");
+      const s = store.getTask("s1")!;
       assert.equal(s.model, "claude-sonnet");
       assert.equal(s.mode, "plan");
       assert.equal(s.reasoning_effort, "high");
 
-      store.updateSessionConfig("s1", "thought_level", "xhigh");
-      assert.equal(store.getSession("s1")!.reasoning_effort, "xhigh");
+      store.updateTaskConfig("s1", "thought_level", "xhigh");
+      assert.equal(store.getTask("s1")!.reasoning_effort, "xhigh");
     });
 
     it("ignores unknown config option ids", () => {
-      store.createSession("s1", "/x");
-      store.updateSessionConfig("s1", "unknown_thing", "value");
+      store.createTask("s1", "/x");
+      store.updateTaskConfig("s1", "unknown_thing", "value");
       // Should not throw, just no-op
-      assert.equal(store.getSession("s1")!.model, null);
+      assert.equal(store.getTask("s1")!.model, null);
     });
 
-    it("deletes session and its events", () => {
-      store.createSession("s1", "/x", "auto", "agent-s1");
+    it("deletes task and its events", () => {
+      store.createTask("s1", "/x", "auto", "agent-s1");
       store.saveEvent(
         "s1",
         "user_message",
         { text: "hi" },
         { from_ref: "user" },
       );
-      store.deleteSession("s1");
+      store.deleteTask("s1");
 
-      assert.equal(store.getSession("s1"), undefined);
+      assert.equal(store.getTask("s1"), undefined);
       assert.deepEqual(store.getEvents("s1"), []);
-      assert.equal(store.getWebSessionId("agent-s1"), undefined);
+      assert.equal(store.getTaskId("agent-s1"), undefined);
     });
   });
 
   describe("cascade deletion", () => {
     it("lists all transitive descendants", () => {
-      store.createSession("parent", "/a", "auto", "agent-parent");
-      store.createSession("child", "/b", "auto", "agent-child", "parent");
-      store.createSession(
-        "grandchild",
-        "/c",
-        "auto",
-        "agent-grandchild",
-        "child",
-      );
-      store.createSession("sibling", "/d", "auto", "agent-sibling", "parent");
+      store.createTask("parent", "/a", "auto", "agent-parent");
+      store.createTask("child", "/b", "auto", "agent-child", "parent");
+      store.createTask("grandchild", "/c", "auto", "agent-grandchild", "child");
+      store.createTask("sibling", "/d", "auto", "agent-sibling", "parent");
 
-      assert.deepEqual(store.getDescendantSessionIds("parent").sort(), [
+      assert.deepEqual(store.getDescendantTaskIds("parent").sort(), [
         "child",
         "grandchild",
         "sibling",
       ]);
-      assert.deepEqual(store.getDescendantSessionIds("child"), ["grandchild"]);
-      assert.deepEqual(store.getDescendantSessionIds("leaf"), []);
+      assert.deepEqual(store.getDescendantTaskIds("child"), ["grandchild"]);
+      assert.deepEqual(store.getDescendantTaskIds("leaf"), []);
     });
 
     it("hard-deletes a parent together with its live descendants", () => {
-      store.createSession("parent", "/a", "auto", "agent-parent");
-      store.createSession("child", "/b", "auto", "agent-child", "parent");
-      store.createSession(
-        "grandchild",
-        "/c",
-        "auto",
-        "agent-grandchild",
-        "child",
-      );
+      store.createTask("parent", "/a", "auto", "agent-parent");
+      store.createTask("child", "/b", "auto", "agent-child", "parent");
+      store.createTask("grandchild", "/c", "auto", "agent-grandchild", "child");
 
-      const result = store.deleteSession("parent");
+      const result = store.deleteTask("parent");
 
       assert.equal(result.mode, "hard");
       assert.deepEqual(result.affected.map((entry) => entry.id).sort(), [
@@ -309,7 +291,7 @@ describe("Store", () => {
         "parent",
       ]);
       for (const id of ["parent", "child", "grandchild"]) {
-        assert.equal(store.getSessionIncludingDeleted(id), undefined);
+        assert.equal(store.getTaskIncludingDeleted(id), undefined);
         assert.equal(store.getAgentSessionId(id), undefined);
       }
       const count = store["db"]
@@ -319,21 +301,21 @@ describe("Store", () => {
     });
 
     it("tombstones a share-backed child and re-parents it under Root", () => {
-      store.ensureRootSession("/root");
+      store.ensureRootTask("/root");
       store.bindAgentSession("root", "agent-root");
-      store.createSession("parent", "/a", "auto", "agent-parent");
-      store.createSession("child", "/b", "auto", "agent-child", "parent");
+      store.createTask("parent", "/a", "auto", "agent-parent");
+      store.createTask("child", "/b", "auto", "agent-child", "parent");
       const token = generateShareToken();
-      store.insertSharePreview({ token, sessionId: "child", snapshotSeq: 1 });
+      store.insertSharePreview({ token, taskId: "child", snapshotSeq: 1 });
       store.activateShare(token);
 
-      const result = store.deleteSession("parent");
+      const result = store.deleteTask("parent");
 
       assert.equal(result.mode, "hard");
-      const child = store.getSessionIncludingDeleted("child")!;
+      const child = store.getTaskIncludingDeleted("child")!;
       assert.notEqual(child.deleted_at, null); // kept for the share viewer
-      assert.equal(child.parent_session_id, "root"); // no dangling FK
-      assert.equal(store.getSession("parent"), undefined);
+      assert.equal(child.parent_id, "root"); // no dangling FK
+      assert.equal(store.getTask("parent"), undefined);
       assert.equal(
         result.affected.find((entry) => entry.id === "child")?.agentSessionId,
         "agent-child",
@@ -341,30 +323,30 @@ describe("Store", () => {
     });
 
     it("re-parents tombstoned descendants under Root when reaping a tombstone", () => {
-      store.ensureRootSession("/root");
+      store.ensureRootTask("/root");
       store.bindAgentSession("root", "agent-root");
-      store.createSession("parent", "/a", "auto", "agent-parent");
-      store.createSession("child", "/b", "auto", "agent-child", "parent");
+      store.createTask("parent", "/a", "auto", "agent-parent");
+      store.createTask("child", "/b", "auto", "agent-child", "parent");
       const parentToken = generateShareToken();
       store.insertSharePreview({
         token: parentToken,
-        sessionId: "parent",
+        taskId: "parent",
         snapshotSeq: 1,
       });
       store.activateShare(parentToken);
       const childToken = generateShareToken();
       store.insertSharePreview({
         token: childToken,
-        sessionId: "child",
+        taskId: "child",
         snapshotSeq: 1,
       });
       store.activateShare(childToken);
 
-      // Both sessions are tombstoned (kept alive by their shares).
-      const soft = store.deleteSession("parent");
+      // Both tasks are tombstoned (kept alive by their shares).
+      const soft = store.deleteTask("parent");
       assert.equal(soft.mode, "soft");
       assert.equal(
-        store.getSessionIncludingDeleted("child")!.deleted_at !== null,
+        store.getTaskIncludingDeleted("child")!.deleted_at !== null,
         true,
       );
 
@@ -373,30 +355,30 @@ describe("Store", () => {
       assert.equal(store.reapTombstoneIfOrphaned("parent"), true);
 
       // The child's tombstone survives and holds no dangling reference.
-      const child = store.getSessionIncludingDeleted("child")!;
-      assert.equal(child.parent_session_id, "root");
+      const child = store.getTaskIncludingDeleted("child")!;
+      assert.equal(child.parent_id, "root");
       assert.notEqual(child.deleted_at, null);
     });
 
-    it("unbinds the ACP binding when a session is tombstoned", () => {
-      store.createSession("s1", "/a", "auto", "agent-s1");
+    it("unbinds the ACP binding when a task is tombstoned", () => {
+      store.createTask("s1", "/a", "auto", "agent-s1");
       const token = generateShareToken();
-      store.insertSharePreview({ token, sessionId: "s1", snapshotSeq: 1 });
+      store.insertSharePreview({ token, taskId: "s1", snapshotSeq: 1 });
       store.activateShare(token);
 
-      const result = store.deleteSession("s1");
+      const result = store.deleteTask("s1");
 
       assert.equal(result.affected[0].mode, "soft");
       assert.equal(result.affected[0].agentSessionId, "agent-s1");
       assert.equal(store.getAgentSessionId("s1"), undefined);
-      assert.equal(store.getWebSessionId("agent-s1"), undefined);
+      assert.equal(store.getTaskId("agent-s1"), undefined);
     });
 
-    it("re-parents an empty GC'd session's children under Root", () => {
-      store.ensureRootSession("/root");
+    it("re-parents an empty GC'd task's children under Root", () => {
+      store.ensureRootTask("/root");
       store.bindAgentSession("root", "agent-root");
-      store.createSession("junk-parent", "/a", "auto", "agent-parent");
-      store.createSession("child", "/b", "auto", "agent-child", "junk-parent");
+      store.createTask("junk-parent", "/a", "auto", "agent-parent");
+      store.createTask("child", "/b", "auto", "agent-child", "junk-parent");
       // Child has events, so it is not itself GC'd.
       store.saveEvent(
         "child",
@@ -405,17 +387,17 @@ describe("Store", () => {
         { from_ref: "user" },
       );
 
-      const removed = store.deleteEmptySessions(0);
+      const removed = store.deleteEmptyTasks(0);
 
       assert.ok(removed.some((entry) => entry.id === "junk-parent"));
-      assert.equal(store.getSessionIncludingDeleted("junk-parent"), undefined);
-      assert.equal(store.getSession("child")!.parent_session_id, "root");
+      assert.equal(store.getTaskIncludingDeleted("junk-parent"), undefined);
+      assert.equal(store.getTask("child")!.parent_id, "root");
     });
   });
 
   describe("events", () => {
     it("saves and retrieves events with auto-incrementing seq", () => {
-      store.createSession("s1", "/x");
+      store.createTask("s1", "/x");
       store.saveEvent(
         "s1",
         "user_message",
@@ -438,7 +420,7 @@ describe("Store", () => {
     });
 
     it("excludes thinking events when requested", () => {
-      store.createSession("s1", "/x");
+      store.createTask("s1", "/x");
       store.saveEvent(
         "s1",
         "user_message",
@@ -466,13 +448,13 @@ describe("Store", () => {
       assert.ok(noThinking.every((e) => e.type !== "thinking"));
     });
 
-    it("returns empty array for session with no events", () => {
-      store.createSession("s1", "/x");
+    it("returns empty array for task with no events", () => {
+      store.createTask("s1", "/x");
       assert.deepEqual(store.getEvents("s1"), []);
     });
 
     it("filters events by afterSeq", () => {
-      store.createSession("s1", "/x");
+      store.createTask("s1", "/x");
       store.saveEvent(
         "s1",
         "user_message",
@@ -502,7 +484,7 @@ describe("Store", () => {
     });
 
     it("combines afterSeq with excludeThinking", () => {
-      store.createSession("s1", "/x");
+      store.createTask("s1", "/x");
       store.saveEvent(
         "s1",
         "user_message",
@@ -526,10 +508,10 @@ describe("Store", () => {
     });
   });
 
-  describe("deleteEmptySessions", () => {
-    it("deletes old empty sessions and returns their IDs", () => {
-      store.createSession("empty-old", "/a");
-      store.createSession("has-events", "/b");
+  describe("deleteEmptyTasks", () => {
+    it("deletes old empty tasks and returns their IDs", () => {
+      store.createTask("empty-old", "/a");
+      store.createTask("has-events", "/b");
       store.saveEvent(
         "has-events",
         "user_message",
@@ -537,32 +519,32 @@ describe("Store", () => {
         { from_ref: "user" },
       );
 
-      // With minAgeS=0, all empty sessions are eligible
-      const deleted = store.deleteEmptySessions(0);
+      // With minAgeS=0, all empty tasks are eligible
+      const deleted = store.deleteEmptyTasks(0);
       assert.deepEqual(deleted, [
         { id: "empty-old", agentSessionId: "empty-old" },
       ]);
-      assert.equal(store.getSession("empty-old"), undefined);
-      assert.ok(store.getSession("has-events")); // preserved
+      assert.equal(store.getTask("empty-old"), undefined);
+      assert.ok(store.getTask("has-events")); // preserved
     });
 
-    it("skips empty sessions younger than minAgeS", () => {
-      store.createSession("fresh-empty", "/a");
+    it("skips empty tasks younger than minAgeS", () => {
+      store.createTask("fresh-empty", "/a");
 
-      // With a large minAgeS, the just-created session is too young
-      const deleted = store.deleteEmptySessions(3600);
+      // With a large minAgeS, the just-created task is too young
+      const deleted = store.deleteEmptyTasks(3600);
       assert.deepEqual(deleted, []);
-      assert.ok(store.getSession("fresh-empty")); // still there
+      assert.ok(store.getTask("fresh-empty")); // still there
     });
 
-    it("does not delete empty sessions owned by another agent", () => {
-      store.createSession("other-empty", "/a");
+    it("does not delete empty tasks owned by another agent", () => {
+      store.createTask("other-empty", "/a");
       store.close();
 
       const other = new Store(tmpDir, "other-agent");
-      assert.deepEqual(other.deleteEmptySessions(0), []);
+      assert.deepEqual(other.deleteEmptyTasks(0), []);
       assert.equal(
-        other.getSessionIncludingDeleted("other-empty")?.id,
+        other.getTaskIncludingDeleted("other-empty")?.id,
         "other-empty",
       );
       other.close();
@@ -570,10 +552,10 @@ describe("Store", () => {
       store = new Store(tmpDir, "test-agent");
     });
 
-    it("deletes multiple old empty sessions", () => {
-      store.createSession("e1", "/a");
-      store.createSession("e2", "/b");
-      store.createSession("e3", "/c");
+    it("deletes multiple old empty tasks", () => {
+      store.createTask("e1", "/a");
+      store.createTask("e2", "/b");
+      store.createTask("e3", "/c");
       store.saveEvent(
         "e2",
         "user_message",
@@ -581,17 +563,17 @@ describe("Store", () => {
         { from_ref: "user" },
       );
 
-      const deleted = store.deleteEmptySessions(0);
+      const deleted = store.deleteEmptyTasks(0);
       assert.equal(deleted.length, 2);
       assert.ok(deleted.some((entry) => entry.id === "e1"));
       assert.ok(deleted.some((entry) => entry.id === "e3"));
-      assert.equal(store.getSession("e1"), undefined);
-      assert.equal(store.getSession("e3"), undefined);
-      assert.ok(store.getSession("e2")); // has events, kept
+      assert.equal(store.getTask("e1"), undefined);
+      assert.equal(store.getTask("e3"), undefined);
+      assert.ok(store.getTask("e2")); // has events, kept
     });
 
-    it("returns empty array when no empty sessions exist", () => {
-      store.createSession("s1", "/a");
+    it("returns empty array when no empty tasks exist", () => {
+      store.createTask("s1", "/a");
       store.saveEvent(
         "s1",
         "user_message",
@@ -599,64 +581,57 @@ describe("Store", () => {
         { from_ref: "user" },
       );
 
-      const deleted = store.deleteEmptySessions(0);
+      const deleted = store.deleteEmptyTasks(0);
       assert.deepEqual(deleted, []);
     });
   });
 
-  describe("migration", () => {
-    it("is idempotent — opening same DB twice works", () => {
-      store.createSession("s1", "/x");
-      store.close();
-
-      // Re-open same DB (triggers migration again)
-      const store2 = new Store(tmpDir, "test-agent");
-      const session = store2.getSession("s1");
-      assert.equal(session!.id, "s1");
-      store2.close();
-
-      // Replace store so afterEach doesn't double-close
-      store = new Store(tmpDir, "test-agent");
-    });
-
-    it("backfills legacy sessions to the agent active during migration", () => {
+  describe("schema reset policy", () => {
+    it("rejects a pre-1.0 sessions database and asks for a data reset", () => {
       store.close();
       rmSync(join(tmpDir, "webagent.db"), { force: true });
-
       const legacy = new Database(join(tmpDir, "webagent.db"));
       legacy.exec(`
         CREATE TABLE sessions (
           id TEXT PRIMARY KEY,
           cwd TEXT NOT NULL,
-          title TEXT,
-          created_at TEXT NOT NULL,
-          last_active_at TEXT
+          created_at TEXT NOT NULL
         );
-        INSERT INTO sessions (id, cwd, created_at, last_active_at)
-        VALUES ('legacy-id', '/legacy', '2026-01-01 00:00:00', '2026-01-01 00:00:00');
       `);
       legacy.close();
 
-      store = new Store(tmpDir, "/path/to/copilot-acp");
+      assert.throws(
+        () => new Store(tmpDir, "test-agent"),
+        /pre-1\.0.*delete.*data/i,
+      );
 
-      assert.equal(store.getAgentSessionId("legacy-id"), "legacy-id");
-      assert.deepEqual(store.getAgentSessionBinding("legacy-id"), {
-        agent_key: "/path/to/copilot-acp",
-        agent_session_id: "legacy-id",
-        web_session_id: "legacy-id",
-        created_at: "2026-01-01 00:00:00",
-      });
+      rmSync(join(tmpDir, "webagent.db"), { force: true });
+      store = new Store(tmpDir, "test-agent");
+    });
+
+    it("is idempotent — opening the current DB twice works", () => {
+      store.createTask("s1", "/x");
+      store.close();
+
+      // Re-open same current-format DB
+      const store2 = new Store(tmpDir, "test-agent");
+      const task = store2.getTask("s1");
+      assert.equal(task!.id, "s1");
+      store2.close();
+
+      // Replace store so afterEach doesn't double-close
+      store = new Store(tmpDir, "test-agent");
     });
   });
 
   describe("hasInterruptedTurn", () => {
-    it("returns false for session with no events", () => {
-      store.createSession("s1", "/x");
+    it("returns false for task with no events", () => {
+      store.createTask("s1", "/x");
       assert.equal(store.hasInterruptedTurn("s1"), false);
     });
 
     it("returns true when user_message has no following prompt_done", () => {
-      store.createSession("s1", "/x");
+      store.createTask("s1", "/x");
       store.saveEvent(
         "s1",
         "user_message",
@@ -673,7 +648,7 @@ describe("Store", () => {
     });
 
     it("returns false when prompt_done follows user_message", () => {
-      store.createSession("s1", "/x");
+      store.createTask("s1", "/x");
       store.saveEvent(
         "s1",
         "user_message",
@@ -696,7 +671,7 @@ describe("Store", () => {
     });
 
     it("returns false when an error follows user_message", () => {
-      store.createSession("s1", "/x");
+      store.createTask("s1", "/x");
       store.saveEvent(
         "s1",
         "user_message",
@@ -713,7 +688,7 @@ describe("Store", () => {
     });
 
     it("detects interrupted turn after a completed turn", () => {
-      store.createSession("s1", "/x");
+      store.createTask("s1", "/x");
       // First turn — completed
       store.saveEvent(
         "s1",
@@ -750,7 +725,7 @@ describe("Store", () => {
     });
 
     it("returns false when only non-prompt events follow prompt_done", () => {
-      store.createSession("s1", "/x");
+      store.createTask("s1", "/x");
       store.saveEvent(
         "s1",
         "user_message",
@@ -854,22 +829,6 @@ describe("Store", () => {
       assert.equal(paths.length, 1);
     });
 
-    it("migration backfills from sessions table on upgrade", () => {
-      // Simulate pre-upgrade: create sessions, then drop recent_paths to mimic old DB
-      store.createSession("s1", "/from-session-a");
-      store.createSession("s2", "/from-session-b");
-      store.createSession("s3", "/from-session-a"); // duplicate cwd
-      (store as any).db.exec("DROP TABLE recent_paths");
-
-      // Re-run migration (simulates upgrade)
-      store.close();
-      store = new Store(tmpDir, "test-agent");
-
-      const paths = store.listRecentPaths();
-      const cwds = paths.map((p) => p.cwd).sort();
-      assert.deepEqual(cwds, ["/from-session-a", "/from-session-b"]);
-    });
-
     it("deleteRecentPath removes a single path", () => {
       store.touchRecentPath("/a");
       store.touchRecentPath("/b");
@@ -888,7 +847,7 @@ describe("Store", () => {
 
   describe("client_ops (idempotency)", () => {
     beforeEach(() => {
-      store.createSession("s1", "/tmp");
+      store.createTask("s1", "/tmp");
     });
 
     it("getClientOp returns null for unseen op", () => {
@@ -910,8 +869,8 @@ describe("Store", () => {
       });
     });
 
-    it("scopes op ids per session", () => {
-      store.createSession("s2", "/tmp");
+    it("scopes op ids per task", () => {
+      store.createTask("s2", "/tmp");
       store.saveClientOp("s1", "op-shared", { status: 200, body: "a" });
       store.saveClientOp("s2", "op-shared", { status: 200, body: "b" });
       assert.equal(
@@ -942,9 +901,9 @@ describe("Store", () => {
       assert.ok(store.getClientOp("s1", "fresh"));
     });
 
-    it("deleteSession cascades to client_ops", () => {
+    it("deleteTask cascades to client_ops", () => {
       store.saveClientOp("s1", "op-1", { status: 200, body: {} });
-      store.deleteSession("s1");
+      store.deleteTask("s1");
       assert.equal(store.getClientOp("s1", "op-1"), null);
     });
   });

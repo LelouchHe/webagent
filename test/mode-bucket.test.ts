@@ -13,7 +13,7 @@ describe("mode-bucket", () => {
     it("returns the segment after # in URL form (Copilot)", () => {
       assert.equal(
         extractModeId(
-          "https://agentclientprotocol.com/protocol/session-modes#autopilot",
+          "https://agentclientprotocol.com/protocol/task-modes#autopilot",
         ),
         "autopilot",
       );
@@ -60,7 +60,7 @@ describe("mode-bucket", () => {
     it("matches Copilot autopilot URL form", () => {
       assert.ok(
         isAutopilotMode(
-          "https://agentclientprotocol.com/protocol/session-modes#autopilot",
+          "https://agentclientprotocol.com/protocol/task-modes#autopilot",
         ),
       );
     });

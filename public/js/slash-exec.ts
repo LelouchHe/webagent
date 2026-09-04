@@ -8,16 +8,15 @@
 
 import {
   state,
-  resetSessionUI,
-  requestNewSession,
+  resetTaskUI,
+  requestNewTask,
   getSelectConfigOption,
   getThinkingConfigOption,
   updateModeUI,
   updateStatusBar,
 } from "./state.ts";
 import { addSystem, formatLocalTime } from "./render.ts";
-import { fallbackToNextSession } from "./events.ts";
-import { switchToSession } from "./session-navigation.ts";
+import { switchToTask } from "./task-navigation.ts";
 import * as api from "./api.ts";
 import { log, type LogLevel } from "./log.ts";
 import { TOKEN_STORAGE_KEY } from "./login-core.ts";
@@ -31,9 +30,10 @@ import {
   showLogStatus,
 } from "./slash-commands.ts";
 import {
-  compactCurrentSession,
-  replaceCurrentSession,
-} from "./session-actions.ts";
+  compactCurrentTask,
+  exitCurrentTask,
+  replaceCurrentTask,
+} from "./task-actions.ts";
 import {
   createPreview,
   revokeShare,
@@ -165,43 +165,47 @@ export async function handleSlashCommand(text: string): Promise<boolean> {
 
     case "/new": {
       // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- empty string should fall through
-      const cwd = arg || state.sessionCwd || undefined;
+      const cwd = arg || state.taskCwd || undefined;
       // Capture before reset so model/mode inheritance still works after we
-      // clear sessionId (we clear it so any in-flight state_patch from the
-      // outgoing session is rejected by the per-session guard in handleEvent).
-      const inheritFrom = state.sessionId;
-      resetSessionUI();
-      state.sessionId = null;
-      addSystem("Creating new session…");
-      requestNewSession({ cwd: cwd, inheritFromSessionId: inheritFrom });
+      // clear taskId (we clear it so any in-flight state_patch from the
+      // outgoing task is rejected by the per-task guard in handleEvent).
+      const inheritFrom = state.taskId;
+      // Capture the tree parent the same way: after clearing taskId the
+      // requestNewTask default would resolve to null and the new task would
+      // be attached under Root instead of the launching task.
+      const parent = state.taskId;
+      resetTaskUI();
+      state.taskId = null;
+      addSystem("Creating new task…");
+      requestNewTask({
+        cwd: cwd,
+        inheritFromTaskId: inheritFrom,
+        parentId: parent,
+      });
       return true;
     }
 
     case "/rename": {
-      if (!state.sessionId) {
-        addSystem("err: No active session");
+      if (!state.taskId) {
+        addSystem("err: No active task");
         return true;
       }
       if (!arg) {
-        addSystem(`Current: ${state.sessionTitle ?? "(untitled)"}`);
+        addSystem(`Current: ${state.taskTitle ?? "(untitled)"}`);
         addSystem("Usage: /rename <new title>");
         return true;
       }
       try {
-        await api.setTitle(state.sessionId, arg);
+        await api.setTitle(state.taskId, arg);
         addSystem(`Renamed → ${arg}`);
       } catch {
-        addSystem("err: Failed to rename session");
+        addSystem("err: Failed to rename task");
       }
       return true;
     }
 
-    case "/sessions":
-      addSystem("Removed. Use /switch to see all sessions.");
-      return true;
-
     case "/clear": {
-      await replaceCurrentSession({
+      await replaceCurrentTask({
         cwd: arg || undefined,
         showCwd: Boolean(arg),
       });
@@ -209,28 +213,13 @@ export async function handleSlashCommand(text: string): Promise<boolean> {
     }
 
     case "/compact": {
-      await compactCurrentSession();
+      await compactCurrentTask();
       return true;
     }
 
-    case "/exit": {
-      if (!state.sessionId) {
-        addSystem("warn: No active session");
-        return true;
-      }
-      const exitId = state.sessionId;
-      try {
-        if (state.busy) {
-          addSystem("err: Cancel active work before exiting the session");
-          return true;
-        }
-        await api.deleteSession(exitId);
-        await fallbackToNextSession(exitId, state.sessionCwd ?? undefined);
-      } catch {
-        addSystem("err: Failed to exit session");
-      }
+    case "/exit":
+      await exitCurrentTask();
       return true;
-    }
 
     case "/logout": {
       try {
@@ -331,22 +320,22 @@ export async function handleSlashCommand(text: string): Promise<boolean> {
         return true;
       }
       try {
-        const res = await fetch("/api/v1/sessions");
-        const sessions = (await res.json()) as Array<{
+        const res = await fetch("/api/v1/tasks");
+        const tasks = (await res.json()) as Array<{
           id: string;
           title?: string | null;
         }>;
         const query = arg.toLowerCase();
-        const match = sessions.find(
+        const match = tasks.find(
           (s) => s.id.startsWith(arg) || s.title?.toLowerCase().includes(query),
         );
         if (!match) {
-          addSystem(`err: No session matching "${arg}"`);
+          addSystem(`err: No task matching "${arg}"`);
           return true;
         }
-        await switchToSession(match.id);
+        await switchToTask(match.id);
       } catch {
-        addSystem("err: Failed to switch session");
+        addSystem("err: Failed to switch task");
       }
       return true;
     }
@@ -384,7 +373,7 @@ export async function handleSlashCommand(text: string): Promise<boolean> {
       addSystem("!<command> — Run bash command");
       addSystem("// — Agent commands (agent-specific)");
       for (const c of ROOT.children!) {
-        addSystem(`${c.name} — ${c.desc ?? ""}`);
+        addSystem(`${c.name} — ${c.help ?? c.desc ?? ""}`);
       }
       addSystem("--- Shortcuts ---");
       addSystem("Enter — Send message");
@@ -455,9 +444,7 @@ export async function handleSlashCommand(text: string): Promise<boolean> {
       updateModeUI();
       updateStatusBar();
       addSystem(`${opt.name} → ${match.name}`);
-      await api
-        .setConfig(state.sessionId!, configId, match.value)
-        .catch(() => {});
+      await api.setConfig(state.taskId!, configId, match.value).catch(() => {});
       return true;
     }
 

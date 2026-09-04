@@ -1,9 +1,9 @@
 import { test, expect } from "playwright/test";
-import { createNewSession, gotoConnected } from "./helpers.ts";
+import { createNewTask, gotoConnected } from "./helpers.ts";
 
 test("/model picker can switch the selected model", async ({ page }) => {
   await gotoConnected(page);
-  await createNewSession(page);
+  await createNewTask(page);
 
   await page.locator("#input").fill("/model ");
   await expect(page.locator("#slash-menu.active .slash-item")).toHaveCount(2);

@@ -3,12 +3,12 @@
 import {
   state,
   setBusy,
-  getHashSessionId,
-  requestBootstrapSession,
-  resetSessionUI,
+  getHashTaskId,
+  requestBootstrapTask,
+  resetTaskUI,
   setConnectionStatus,
   clearCancelTimer,
-  hydrateSessionRuntime,
+  hydrateTaskRuntime,
   updateInboxCount,
 } from "./state.ts";
 import {
@@ -23,18 +23,18 @@ import {
   drainNavigationEvents,
   loadHistory,
   loadNewEvents,
-  fallbackToNextSession,
+  fallbackToNextTask,
   reconcileReplayedPendingTools,
 } from "./events.ts";
 import * as api from "./api.ts";
 import { applyConnectedLogLevel, log } from "./log.ts";
 
 const clog = log.scope("sse");
-import type { SessionDetail } from "../../src/types.ts";
+import type { TaskDetail } from "../../src/types.ts";
 import {
   getStartupMessageIntent,
   processStartupMessageIntent,
-} from "./session-navigation.ts";
+} from "./task-navigation.ts";
 
 /** If the browser has an active push subscription, tell the server which
  *  clientId owns it so per-subscription visibility filtering works. */
@@ -142,16 +142,16 @@ export function connect() {
   // Supersede any attempt still in flight so its continuation cannot open a
   // stream nobody owns.
   const gen = ++streamGen;
-  const activeSessionId = state.sessionId;
+  const activeTaskId = state.taskId;
   setConnectionStatus("connecting", "connecting");
 
   // SSE for receiving server events. EventSource cannot send Authorization,
   // so we exchange a Bearer for a single-use 60s ticket first, then open
   // the stream with ?ticket=…
-  void openStream(gen, activeSessionId);
+  void openStream(gen, activeTaskId);
 }
 
-async function openStream(gen: number, activeSessionId: string | null) {
+async function openStream(gen: number, activeTaskId: string | null) {
   // Arm before the ticket mint so a stream that never opens is also covered.
   noteStreamActivity();
   startWatchdog();
@@ -190,9 +190,9 @@ async function openStream(gen: number, activeSessionId: string | null) {
     // SSE initial handshake: server assigns clientId (no agent field)
     if (msg.type === "connected" && msg.clientId) {
       state.clientId = msg.clientId;
-      if (activeSessionId && state.sessionId === activeSessionId) {
+      if (activeTaskId && state.taskId === activeTaskId) {
         setConnectionStatus("connected", "connected");
-        void recoverAfterHandshake(activeSessionId, gen);
+        void recoverAfterHandshake(activeTaskId, gen);
       }
       if (typeof msg.pendingCount === "number") {
         updateInboxCount(msg.pendingCount);
@@ -201,7 +201,7 @@ async function openStream(gen: number, activeSessionId: string | null) {
       void api.postVisibility(
         msg.clientId,
         !document.hidden,
-        state.sessionId ?? undefined,
+        state.taskId ?? undefined,
       );
       void registerPushEndpoint(msg.clientId);
       // Bridge-originated connected events also carry agent info — pass through
@@ -223,7 +223,7 @@ async function openStream(gen: number, activeSessionId: string | null) {
   // SSE "heartbeat" named event — server emits one every 15s, plus one
   // immediately on (re)connect. Refreshing /visibility on each tick keeps
   // the server-side visibility TTL fresh: as long as this SSE is alive,
-  // the server knows we're still focused on state.sessionId. When the
+  // the server knows we're still focused on state.taskId. When the
   // connection silently dies (Cloudflare HTTP/3 stall, iOS suspension),
   // heartbeats stop, we stop refreshing, and within the TTL window the
   // server correctly expires the ghost. Binding INSIDE connect() pins the
@@ -234,78 +234,77 @@ async function openStream(gen: number, activeSessionId: string | null) {
     noteStreamActivity();
     if (!state.clientId) return;
     if (document.hidden) return; // visibilitychange owns the hidden path
-    void api.postVisibility(state.clientId, true, state.sessionId ?? undefined);
+    void api.postVisibility(state.clientId, true, state.taskId ?? undefined);
   });
 
-  // Load session immediately via REST — parallel with SSE connection
-  void initializeSessionAndIntent();
+  // Load task immediately via REST — parallel with SSE connection
+  void initializeTaskAndIntent();
 }
 
 async function recoverAfterHandshake(
-  sessionId: string,
+  taskId: string,
   gen: number,
 ): Promise<void> {
-  const hydrationPromise = hydrateSessionRuntime(sessionId, () => {
-    return gen === streamGen && state.sessionId === sessionId;
+  const hydrationPromise = hydrateTaskRuntime(taskId, () => {
+    return gen === streamGen && state.taskId === taskId;
   });
-  await loadNewEvents(sessionId);
-  if (gen !== streamGen || state.sessionId !== sessionId) return;
+  await loadNewEvents(taskId);
+  if (gen !== streamGen || state.taskId !== taskId) return;
 
   // The first call may have joined a pre-handshake request. Even a successful
   // result can be stale if an event was persisted after its query but before
   // the replacement stream registered, so always follow it with a fresh load.
   await Promise.resolve();
-  let loaded = await loadNewEvents(sessionId);
-  if (!loaded && gen === streamGen && state.sessionId === sessionId) {
+  let loaded = await loadNewEvents(taskId);
+  if (!loaded && gen === streamGen && state.taskId === taskId) {
     await Promise.resolve();
-    loaded = await loadNewEvents(sessionId);
+    loaded = await loadNewEvents(taskId);
   }
   const hydrated = await hydrationPromise;
-  if (!hydrated || gen !== streamGen || state.sessionId !== sessionId) return;
+  if (!hydrated || gen !== streamGen || state.taskId !== taskId) return;
   reconcileReplayedPendingTools();
   if (loaded) scrollToBottom(false);
 }
 
-async function initializeSessionAndIntent(): Promise<void> {
-  await initSession();
+async function initializeTaskAndIntent(): Promise<void> {
+  await initTask();
   await processStartupMessageIntent();
 }
 
-async function initSession() {
-  setConnectionStatus("connecting", "session loading");
-  const gen = state.sessionSwitchGen;
+async function initTask() {
+  setConnectionStatus("connecting", "task loading");
+  const gen = state.taskSwitchGen;
 
-  const existingId = getHashSessionId();
+  const existingId = getHashTaskId();
 
-  // Incremental reconnect: same session still in memory — skip DOM wipe
-  if (existingId && existingId === state.sessionId) {
+  // Incremental reconnect: same task still in memory — skip DOM wipe
+  if (existingId && existingId === state.taskId) {
     await resumeAndLoad(existingId, true, gen);
-    if (gen !== state.sessionSwitchGen) return;
+    if (gen !== state.taskSwitchGen) return;
     scrollToBottom(false);
     return;
   }
 
-  // Full load: different session in hash, or first connect to a hash
+  // Full load: different task in hash, or first connect to a hash
   if (existingId) {
-    resetSessionUI({
-      preserveNavigationTarget: state.pendingNavigationSessionId === existingId,
+    resetTaskUI({
+      preserveNavigationTarget: state.pendingNavigationTaskId === existingId,
     });
     await resumeAndLoad(existingId, false, gen);
-    if (gen !== state.sessionSwitchGen) return;
+    if (gen !== state.taskSwitchGen) return;
     scrollToBottom(true);
     return;
   }
 
-  // No session in URL — try to resume last active session
+  // No task in URL — try to resume last active task
   try {
-    const sessions = (await api.listSessions()) as Array<{ id: string }>;
-    if (gen !== state.sessionSwitchGen) return;
-    if (sessions.length > 0) {
-      const initialSession =
-        sessions.find((session) => session.id === "root") ?? sessions[0];
-      resetSessionUI();
-      await resumeAndLoad(initialSession.id, false, gen);
-      if (gen !== state.sessionSwitchGen) return;
+    const tasks = (await api.listTasks()) as Array<{ id: string }>;
+    if (gen !== state.taskSwitchGen) return;
+    if (tasks.length > 0) {
+      const initialTask = tasks.find((task) => task.id === "root") ?? tasks[0];
+      resetTaskUI();
+      await resumeAndLoad(initialTask.id, false, gen);
+      if (gen !== state.taskSwitchGen) return;
       scrollToBottom(true);
       return;
     }
@@ -313,88 +312,88 @@ async function initSession() {
     /* best effort */
   }
 
-  if (gen !== state.sessionSwitchGen) return;
-  // No previous sessions — create new
+  if (gen !== state.taskSwitchGen) return;
+  // No previous tasks — create new
   if (getStartupMessageIntent()) return;
-  requestBootstrapSession();
+  requestBootstrapTask();
 }
 
 async function resumeAndLoad(
-  sessionId: string,
+  taskId: string,
   incremental: boolean,
   gen: number,
 ) {
   if (incremental) {
-    // Incremental: need session details first (for config), then catch-up events
+    // Incremental: need task details first (for config), then catch-up events
     try {
-      const session = await api.getSession(sessionId);
-      if (gen !== state.sessionSwitchGen) return;
+      const task = await api.getTask(taskId);
+      if (gen !== state.taskSwitchGen) return;
       handleEvent({
-        type: "session_created",
-        sessionId: session.id,
-        cwd: session.cwd,
-        cwdDisplay: session.cwdDisplay,
-        title: session.title,
-        configOptions: session.configOptions,
+        type: "task_created",
+        taskId: task.id,
+        cwd: task.cwd,
+        cwdDisplay: task.cwdDisplay,
+        title: task.title,
+        configOptions: task.configOptions,
       });
     } catch {
-      if (gen !== state.sessionSwitchGen) return;
-      await fallbackToNextSession(sessionId, state.sessionCwd ?? undefined);
+      if (gen !== state.taskSwitchGen) return;
+      await fallbackToNextTask(taskId, state.taskCwd ?? undefined);
       return;
     }
-    if (gen !== state.sessionSwitchGen) return;
+    if (gen !== state.taskSwitchGen) return;
     // Load snapshot in parallel with catch-up events (runtime state vs history)
     const [hydrated] = await Promise.all([
-      hydrateSessionRuntime(sessionId, () => gen === state.sessionSwitchGen),
-      loadNewEvents(sessionId),
+      hydrateTaskRuntime(taskId, () => gen === state.taskSwitchGen),
+      loadNewEvents(taskId),
     ]);
-    if (gen !== state.sessionSwitchGen) return;
+    if (gen !== state.taskSwitchGen) return;
     if (!hydrated) {
-      await fallbackToNextSession(sessionId, state.sessionCwd ?? undefined);
+      await fallbackToNextTask(taskId, state.taskCwd ?? undefined);
     } else {
       reconcileReplayedPendingTools();
     }
   } else {
-    // Full load: fetch session details and history in parallel.
-    state.sessionId = null;
-    state.pendingNavigationSessionId = sessionId;
-    const historyPromise = loadHistory(sessionId);
-    let session: SessionDetail;
+    // Full load: fetch task details and history in parallel.
+    state.taskId = null;
+    state.pendingNavigationTaskId = taskId;
+    const historyPromise = loadHistory(taskId);
+    let task: TaskDetail;
     try {
       const [s, loaded] = await Promise.all([
-        api.getSession(sessionId),
+        api.getTask(taskId),
         historyPromise,
       ]);
-      // History replay drains queued live patches while sessionId is null.
+      // History replay drains queued live patches while taskId is null.
       // Fetch afterward so the authoritative snapshot includes that state.
-      const hydrated = await hydrateSessionRuntime(
-        sessionId,
-        () => gen === state.sessionSwitchGen,
+      const hydrated = await hydrateTaskRuntime(
+        taskId,
+        () => gen === state.taskSwitchGen,
       );
-      if (gen !== state.sessionSwitchGen) return;
+      if (gen !== state.taskSwitchGen) return;
       if (!hydrated) {
-        await fallbackToNextSession(sessionId, state.sessionCwd ?? undefined);
+        await fallbackToNextTask(taskId, state.taskCwd ?? undefined);
         return;
       }
       reconcileReplayedPendingTools();
-      session = s;
+      task = s;
       if (!loaded) {
         addSystem("warn: Failed to load history.");
       }
     } catch {
-      if (gen !== state.sessionSwitchGen) return;
-      await fallbackToNextSession(sessionId, state.sessionCwd ?? undefined);
+      if (gen !== state.taskSwitchGen) return;
+      await fallbackToNextTask(taskId, state.taskCwd ?? undefined);
       return;
     }
     handleEvent({
-      type: "session_created",
-      sessionId: session.id,
-      cwd: session.cwd,
-      cwdDisplay: session.cwdDisplay,
-      title: session.title,
-      configOptions: session.configOptions,
+      type: "task_created",
+      taskId: task.id,
+      cwd: task.cwd,
+      cwdDisplay: task.cwdDisplay,
+      title: task.title,
+      configOptions: task.configOptions,
     });
-    drainNavigationEvents(sessionId);
+    drainNavigationEvents(taskId);
   }
 }
 
@@ -428,9 +427,9 @@ function cleanup() {
 // header is required by the auth middleware. If the keepalive fetch gets
 // killed (rare), the SSE heartbeat (15s) and server-side visibility TTL act as
 // a backstop: a stuck "visible" flag self-clears when the SSE drops.
-function postHiddenBeacon(clientId: string, sessionId: string | null): void {
+function postHiddenBeacon(clientId: string, taskId: string | null): void {
   const url = `/api/beta/clients/${encodeURIComponent(clientId)}/visibility`;
-  const payload = JSON.stringify({ visible: false, sessionId });
+  const payload = JSON.stringify({ visible: false, taskId });
   try {
     void fetch(url, {
       method: "POST",
@@ -446,13 +445,9 @@ function postHiddenBeacon(clientId: string, sessionId: string | null): void {
 document.addEventListener("visibilitychange", () => {
   if (state.clientId) {
     if (document.hidden) {
-      postHiddenBeacon(state.clientId, state.sessionId ?? null);
+      postHiddenBeacon(state.clientId, state.taskId ?? null);
     } else {
-      void api.postVisibility(
-        state.clientId,
-        true,
-        state.sessionId ?? undefined,
-      );
+      void api.postVisibility(state.clientId, true, state.taskId ?? undefined);
     }
   }
   // Probe liveness on resume: a suspended runtime freezes its own timers, so
@@ -465,18 +460,18 @@ document.addEventListener("visibilitychange", () => {
   // runtime fields (busy).
   //
   // Deliberately NOT gated on `state.lastEventSeq > 0`. Live SSE events never
-  // advance that frontier (only loadHistory/loadNewEvents do), and a session
+  // advance that frontier (only loadHistory/loadNewEvents do), and a task
   // created via /new never calls loadHistory — so it sits at 0 for its entire
   // lifetime. Gating on it disabled this recovery on the most common path.
   // `after=0` is a well-formed catch-up: the server returns the full persisted
   // transcript and _loadNewEventsImpl replays it from sequence zero.
-  if (!document.hidden && state.sessionId && !state.replayInProgress) {
-    const sid = state.sessionId;
+  if (!document.hidden && state.taskId && !state.replayInProgress) {
+    const sid = state.taskId;
     void Promise.all([
-      hydrateSessionRuntime(sid, () => state.sessionId === sid),
+      hydrateTaskRuntime(sid, () => state.taskId === sid),
       loadNewEvents(sid),
     ]).then(([hydrated]) => {
-      if (!hydrated || state.sessionId !== sid) return;
+      if (!hydrated || state.taskId !== sid) return;
       reconcileReplayedPendingTools();
       scrollToBottom(false);
     });
@@ -488,6 +483,6 @@ document.addEventListener("visibilitychange", () => {
 // process termination), but cheap extra coverage for normal navigations.
 window.addEventListener("pagehide", () => {
   if (state.clientId) {
-    postHiddenBeacon(state.clientId, state.sessionId ?? null);
+    postHiddenBeacon(state.clientId, state.taskId ?? null);
   }
 });

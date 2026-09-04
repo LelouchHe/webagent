@@ -12,7 +12,7 @@ import { randomBytes } from "node:crypto";
  *   - Internal IDs that aren't auth-bearing (client IDs, request IDs,
  *     error correlation IDs) — see sse-manager.ts, routes.ts, etc.
  *   - HMAC signing keys (image URL secret) — see server.ts.
- *   - UUIDs used as opaque labels (session IDs, msg IDs) — these
+ *   - UUIDs used as opaque labels (task IDs, msg IDs) — these
  *     are protocol identifiers, not credentials.
  *
  * Repo convention: `node:crypto` only. No `nanoid` / `uuid` deps.

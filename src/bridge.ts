@@ -10,9 +10,9 @@ import type {
   RawInput,
   ToolContentItem,
 } from "./types.ts";
-import type { SessionManager } from "./session-manager.ts";
+import type { TaskManager } from "./task-manager.ts";
 import type { TitleService } from "./title-service.ts";
-import { interruptBashProc } from "./session-manager.ts";
+import { interruptBashProc } from "./task-manager.ts";
 import type {
   AttachmentDispatcher,
   AttachmentRef,
@@ -24,8 +24,8 @@ import { log } from "./log.ts";
 const blog = log.scope("bridge");
 
 export interface AgentSessionIds {
-  getAgentSessionId(webSessionId: string): string | undefined;
-  getWebSessionId(agentSessionId: string): string | undefined;
+  getAgentSessionId(taskId: string): string | undefined;
+  getTaskId(agentSessionId: string): string | undefined;
 }
 
 export class AgentBridge extends EventEmitter {
@@ -35,9 +35,9 @@ export class AgentBridge extends EventEmitter {
     string,
     (resp: acp.RequestPermissionResponse) => void
   >();
-  private readonly permissionRequestSessions = new Map<string, string>();
+  private readonly permissionRequestTasks = new Map<string, string>();
   private readonly silentSessions = new Set<string>(); // Sessions that don't emit events
-  private readonly silentBuffers = new Map<string, string>(); // Text buffers for silent sessions
+  private readonly silentBuffers = new Map<string, string>(); // Text buffers for silent tasks
   private pendingNewSessions = 0;
   private readonly unboundNewSessionIds = new Set<string>();
   private readonly pendingSessionUpdates = new Map<
@@ -61,12 +61,10 @@ export class AgentBridge extends EventEmitter {
     this.sessionIds = sessionIds;
   }
 
-  private agentSessionId(webSessionId: string): string {
-    const id = this.sessionIds.getAgentSessionId(webSessionId);
+  private agentSessionId(taskId: string): string {
+    const id = this.sessionIds.getAgentSessionId(taskId);
     if (!id)
-      throw new Error(
-        `Session is not available for the current agent: ${webSessionId}`,
-      );
+      throw new Error(`Task is not available for the current agent: ${taskId}`);
     return id;
   }
 
@@ -235,12 +233,12 @@ export class AgentBridge extends EventEmitter {
   }
 
   async loadSession(
-    sessionId: string,
+    taskId: string,
     cwd: string,
     mcpServers?: acp.McpServer[],
-  ): Promise<{ sessionId: string; configOptions: ConfigOption[] }> {
+  ): Promise<{ taskId: string; configOptions: ConfigOption[] }> {
     if (!this.conn) throw new Error("Not connected");
-    const agentSessionId = this.agentSessionId(sessionId);
+    const agentSessionId = this.agentSessionId(taskId);
     let session: acp.LoadSessionResponse;
     try {
       session = await this.conn.loadSession({
@@ -250,13 +248,13 @@ export class AgentBridge extends EventEmitter {
       });
     } catch (err: unknown) {
       // -32002 = Resource not found. Some agents (e.g. claude-agent-acp) don't
-      // persist sessions across process restarts, so a session in our DB may
+      // persist tasks across process restarts, so a session in our DB may
       // be unknown to the live agent. Translate the JSON-RPC error into a
       // user-actionable message; routes returns it as 500 / SSE 'error' event.
       const code = (err as { code?: number }).code;
       if (code === -32002) {
         throw new Error(
-          `The agent no longer remembers session ${sessionId.slice(0, 8)}… ` +
+          `The agent no longer remembers task ${taskId.slice(0, 8)}… ` +
             `(it may not persist sessions across restarts). Use /new to start a fresh one.`,
           { cause: err },
         );
@@ -266,23 +264,23 @@ export class AgentBridge extends EventEmitter {
     const configOptions = (session.configOptions ??
       []) as unknown as ConfigOption[];
     this.emit("event", {
-      type: "session_created",
-      sessionId,
+      type: "task_created",
+      taskId,
       cwd,
       cwdDisplay: abbreviateHomePath(cwd),
       configOptions,
     } satisfies AgentEvent);
-    return { sessionId, configOptions };
+    return { taskId, configOptions };
   }
 
   async setConfigOption(
-    sessionId: string,
+    taskId: string,
     configId: string,
     value: ConfigValue,
   ): Promise<ConfigOption[]> {
     if (!this.conn) throw new Error("Not connected");
     const result = await this.conn.setSessionConfigOption({
-      sessionId: this.agentSessionId(sessionId),
+      sessionId: this.agentSessionId(taskId),
       configId,
       ...(typeof value === "boolean"
         ? { type: "boolean" as const, value }
@@ -308,7 +306,7 @@ export class AgentBridge extends EventEmitter {
   }
 
   async prompt(
-    sessionId: string,
+    taskId: string,
     text: string,
     attachments?: AttachmentRef[],
     /** Turn identity echoed back on this prompt's terminal event, so a
@@ -318,7 +316,7 @@ export class AgentBridge extends EventEmitter {
     if (this.deadReason) {
       this.emit("event", {
         type: "error",
-        sessionId,
+        taskId,
         message: this.deadReason,
       } satisfies AgentEvent);
       return;
@@ -328,7 +326,7 @@ export class AgentBridge extends EventEmitter {
     const abortPromise = new Promise<never>((_, rej) => {
       abortReject = rej;
     });
-    this.pendingAborts.set(sessionId, abortReject);
+    this.pendingAborts.set(taskId, abortReject);
     try {
       const promptParts: PromptBlock[] = [];
       if (attachments && attachments.length > 0) {
@@ -339,24 +337,21 @@ export class AgentBridge extends EventEmitter {
           throw new Error("attachment dispatcher not configured");
         }
         for (const ref of attachments) {
-          const block = await this.attachmentDispatcher.dispatch(
-            sessionId,
-            ref,
-          );
+          const block = await this.attachmentDispatcher.dispatch(taskId, ref);
           promptParts.push(block);
         }
       }
       promptParts.push({ type: "text", text });
       const result = (await Promise.race([
         this.conn.prompt({
-          sessionId: this.agentSessionId(sessionId),
+          sessionId: this.agentSessionId(taskId),
           prompt: promptParts,
         }),
         abortPromise,
       ])) as { stopReason?: string };
       this.emit("event", {
         type: "prompt_done",
-        sessionId,
+        taskId,
         stopReason: result.stopReason ?? "end_turn",
         ...(promptId ? { promptId } : {}),
       } satisfies AgentEvent);
@@ -370,7 +365,7 @@ export class AgentBridge extends EventEmitter {
       if (/cancel/i.test(message)) {
         this.emit("event", {
           type: "prompt_done",
-          sessionId,
+          taskId,
           stopReason: "cancelled",
           ...(promptId ? { promptId } : {}),
         } satisfies AgentEvent);
@@ -378,23 +373,22 @@ export class AgentBridge extends EventEmitter {
       }
       this.emit("event", {
         type: "error",
-        sessionId,
+        taskId,
         message,
         ...(promptId ? { promptId } : {}),
       } satisfies AgentEvent);
     } finally {
-      this.pendingAborts.delete(sessionId);
+      this.pendingAborts.delete(taskId);
     }
   }
 
-  async cancel(sessionId: string): Promise<void> {
-    for (const [requestId, requestSessionId] of this
-      .permissionRequestSessions) {
-      if (requestSessionId === sessionId) {
+  async cancel(taskId: string): Promise<void> {
+    for (const [requestId, requestTaskId] of this.permissionRequestTasks) {
+      if (requestTaskId === taskId) {
         this.denyPermission(requestId);
       }
     }
-    await this.conn?.cancel({ sessionId: this.agentSessionId(sessionId) });
+    await this.conn?.cancel({ sessionId: this.agentSessionId(taskId) });
   }
 
   async cancelAgentSession(agentSessionId: string): Promise<void> {
@@ -418,10 +412,10 @@ export class AgentBridge extends EventEmitter {
     blog.error("agent subprocess dead", { reason });
     const aborts = [...this.pendingAborts.entries()];
     this.pendingAborts.clear();
-    for (const [sessionId, abort] of aborts) {
+    for (const [taskId, abort] of aborts) {
       this.emit("event", {
         type: "error",
-        sessionId,
+        taskId,
         message: reason,
       } satisfies AgentEvent);
       abort(new Error(reason));
@@ -470,7 +464,7 @@ export class AgentBridge extends EventEmitter {
     if (resolve) {
       resolve({ outcome: { outcome: "selected", optionId } });
       this.permissionResolvers.delete(requestId);
-      this.permissionRequestSessions.delete(requestId);
+      this.permissionRequestTasks.delete(requestId);
     }
   }
 
@@ -479,60 +473,57 @@ export class AgentBridge extends EventEmitter {
     if (resolve) {
       resolve({ outcome: { outcome: "cancelled" } });
       this.permissionResolvers.delete(requestId);
-      this.permissionRequestSessions.delete(requestId);
+      this.permissionRequestTasks.delete(requestId);
     }
   }
 
   /**
    * Restart the agent subprocess. Cancels all active work, cleans up state,
-   * shuts down the old process, and starts a new one. Sessions are restored
+   * shuts down the old process, and starts a new one. Tasks are restored
    * lazily via ensureResumed() on next user interaction.
    */
-  async restart(
-    sessions: SessionManager,
-    titleService: TitleService,
-  ): Promise<void> {
+  async restart(tasks: TaskManager, titleService: TitleService): Promise<void> {
     if (this.reloading) throw new Error("Already reloading");
     this.reloading = true;
-    const liveSessionIds = [...sessions.liveSessions];
+    const liveTaskIds = [...tasks.liveTasks];
     this.emit("event", { type: "agent_reloading" } satisfies AgentEvent);
     blog.info("reloading agent...");
 
     try {
       // 1. Cancel all active prompts + kill bash procs
-      for (const sessionId of [...sessions.activePrompts]) {
-        const proc = sessions.runningBashProcs.get(sessionId);
+      for (const taskId of [...tasks.activePrompts]) {
+        const proc = tasks.runningBashProcs.get(taskId);
         if (proc) {
           interruptBashProc(proc);
-          sessions.runningBashProcs.delete(sessionId);
+          tasks.runningBashProcs.delete(taskId);
         }
         try {
-          await this.cancel(sessionId);
+          await this.cancel(taskId);
         } catch {
           /* best-effort */
         }
       }
 
       // 2. Flush buffers to persist partial content
-      for (const sessionId of liveSessionIds) {
-        sessions.flushBuffers(sessionId);
+      for (const taskId of liveTaskIds) {
+        tasks.flushBuffers(taskId);
       }
 
-      // 3. Clean up SessionManager state
-      sessions.pendingPermissions.clear();
-      sessions.state.clearPlans();
-      const busySessionIds = new Set([
-        ...sessions.activePrompts,
-        ...sessions.pendingPromptSubmissions.keys(),
+      // 3. Clean up TaskManager state
+      tasks.pendingPermissions.clear();
+      tasks.state.clearPlans();
+      const busyTaskIds = new Set([
+        ...tasks.activePrompts,
+        ...tasks.pendingPromptSubmissions.keys(),
       ]);
-      for (const id of busySessionIds) {
-        sessions.state.patch(id, { runtime: { busy: null } });
+      for (const id of busyTaskIds) {
+        tasks.state.patch(id, { runtime: { busy: null } });
       }
-      for (const submissionId of sessions.pendingPromptSubmissions.values()) {
-        sessions.cancelledPromptSubmissions.add(submissionId);
+      for (const submissionId of tasks.pendingPromptSubmissions.values()) {
+        tasks.cancelledPromptSubmissions.add(submissionId);
       }
-      sessions.activePrompts.clear();
-      sessions.pendingPromptSubmissions.clear();
+      tasks.activePrompts.clear();
+      tasks.pendingPromptSubmissions.clear();
 
       // 4. Clean up bridge-side silent session state
       this.silentSessions.clear();
@@ -543,22 +534,22 @@ export class AgentBridge extends EventEmitter {
       // 5. Invalidate title service session
       titleService.invalidate();
 
-      // 5. Clear liveSessions so ensureResumed() will re-register on next access
-      sessions.liveSessions.clear();
+      // 5. Clear liveTasks so ensureResumed() will re-register on next access
+      tasks.liveTasks.clear();
       // Also clear the global configOptions cache — a restarted agent may
       // speak a different schema (e.g. agent upgrade removed a model). The
-      // next resumeSession will warm it from the user's stored config.
-      sessions.cachedConfigOptions = [];
+      // next resumeTask will warm it from the user's stored config.
+      tasks.cachedConfigOptions = [];
 
       // 6. Shutdown old process
       await this.shutdown();
       // Cancellation is asynchronous: the old agent may emit final chunks
       // before shutdown completes. Persist that tail and make the terminal
       // stream state authoritative before starting the replacement process.
-      for (const sessionId of liveSessionIds) {
-        sessions.flushBuffers(sessionId);
+      for (const taskId of liveTaskIds) {
+        tasks.flushBuffers(taskId);
       }
-      sessions.state.clearStreaming();
+      tasks.state.clearStreaming();
 
       // 7. Start new process with retry (exponential backoff, max 3 attempts)
       let lastError: unknown;
@@ -596,7 +587,7 @@ export class AgentBridge extends EventEmitter {
       resolve({ outcome: { outcome: "cancelled" } });
     }
     this.permissionResolvers.clear();
-    this.permissionRequestSessions.clear();
+    this.permissionRequestTasks.clear();
 
     const proc = this.proc;
     if (proc && !this.closedProcesses.has(proc)) {
@@ -631,8 +622,8 @@ export class AgentBridge extends EventEmitter {
   private handlePermission(
     params: acp.RequestPermissionRequest,
   ): Promise<acp.RequestPermissionResponse> {
-    const webSessionId = this.sessionIds.getWebSessionId(params.sessionId);
-    if (!webSessionId) {
+    const taskId = this.sessionIds.getTaskId(params.sessionId);
+    if (!taskId) {
       return Promise.resolve({ outcome: { outcome: "cancelled" } });
     }
     const requestId = crypto.randomUUID();
@@ -653,11 +644,11 @@ export class AgentBridge extends EventEmitter {
     return new Promise((resolve) => {
       // Register resolver BEFORE emitting, so synchronous auto-approve can find it
       this.permissionResolvers.set(requestId, resolve);
-      this.permissionRequestSessions.set(requestId, webSessionId);
+      this.permissionRequestTasks.set(requestId, taskId);
       this.emit("event", {
         type: "permission_request",
         requestId,
-        sessionId: webSessionId,
+        taskId: taskId,
         title,
         toolCallId,
         options: params.options,
@@ -678,8 +669,8 @@ export class AgentBridge extends EventEmitter {
       return Promise.resolve();
     }
 
-    const sessionId = this.sessionIds.getWebSessionId(agentSessionId);
-    if (!sessionId) {
+    const taskId = this.sessionIds.getTaskId(agentSessionId);
+    if (!taskId) {
       if (
         this.pendingNewSessions > 0 ||
         this.unboundNewSessionIds.has(agentSessionId)
@@ -694,7 +685,7 @@ export class AgentBridge extends EventEmitter {
       });
       return Promise.resolve();
     }
-    const event = this.sessionUpdateToEvent(sessionId, update);
+    const event = this.sessionUpdateToEvent(taskId, update);
     if (event) this.emit("event", event);
     return Promise.resolve();
   }
@@ -714,25 +705,25 @@ export class AgentBridge extends EventEmitter {
   }
 
   private sessionUpdateToEvent(
-    sessionId: string,
+    taskId: string,
     update: acp.SessionNotification["update"],
   ): AgentEvent | null {
     // eslint-disable-next-line @typescript-eslint/switch-exhaustiveness-check -- only handles events with UI effects
     switch (update.sessionUpdate) {
       case "agent_message_chunk":
         return update.content.type === "text"
-          ? { type: "message_chunk", sessionId, text: update.content.text }
+          ? { type: "message_chunk", taskId, text: update.content.text }
           : null;
 
       case "agent_thought_chunk":
         return update.content.type === "text"
-          ? { type: "thought_chunk", sessionId, text: update.content.text }
+          ? { type: "thought_chunk", taskId, text: update.content.text }
           : null;
 
       case "tool_call":
         return {
           type: "tool_call",
-          sessionId,
+          taskId,
           id: update.toolCallId,
           title: update.title,
           kind: update.kind ?? "unknown",
@@ -742,7 +733,7 @@ export class AgentBridge extends EventEmitter {
       case "tool_call_update":
         return {
           type: "tool_call_update",
-          sessionId,
+          taskId,
           id: update.toolCallId,
           status: update.status ?? "",
           content: (update.content ?? undefined) as
@@ -760,12 +751,12 @@ export class AgentBridge extends EventEmitter {
         };
 
       case "plan":
-        return { type: "plan", sessionId, entries: update.entries };
+        return { type: "plan", taskId, entries: update.entries };
 
       case "usage_update":
         return {
           type: "usage_update",
-          sessionId,
+          taskId,
           used: update.used,
           size: update.size,
           cost: update.cost,
@@ -774,7 +765,7 @@ export class AgentBridge extends EventEmitter {
       case "config_option_update":
         return {
           type: "config_option_update",
-          sessionId,
+          taskId,
           configOptions:
             (update as unknown as { configOptions?: ConfigOption[] })
               .configOptions ?? [],
@@ -783,7 +774,7 @@ export class AgentBridge extends EventEmitter {
       case "available_commands_update":
         return {
           type: "available_commands_update",
-          sessionId,
+          taskId,
           commands: update.availableCommands.map((command) => ({
             name: command.name,
             description: command.description,

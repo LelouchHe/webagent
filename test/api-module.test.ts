@@ -40,9 +40,9 @@ describe("api module", () => {
     delete (globalThis as any).fetch;
   });
 
-  // --- Session CRUD ---
+  // --- Task CRUD ---
 
-  it("createSession sends POST /api/v1/sessions with correct body", async () => {
+  it("createTask sends POST /api/v1/tasks with correct body", async () => {
     const data = { id: "s1", cwd: "/tmp" };
     fetchResponse = {
       status: 201,
@@ -50,33 +50,35 @@ describe("api module", () => {
       json: () => Promise.resolve(data),
       text: () => Promise.resolve(JSON.stringify(data)),
     };
-    const result = await api.createSession({
+    const result = await api.createTask({
       cwd: "/tmp",
-      inheritFromSessionId: "s0",
+      inheritFromTaskId: "s0",
+      parentId: "s-parent",
     });
     assert.equal(fetchCalls.length, 1);
-    assert.equal(fetchCalls[0].url, "/api/v1/sessions");
+    assert.equal(fetchCalls[0].url, "/api/v1/tasks");
     assert.equal(fetchCalls[0].init!.method, "POST");
     const body = JSON.parse(fetchCalls[0].init!.body as string);
     assert.equal(body.cwd, "/tmp");
-    assert.equal(body.inheritFromSessionId, "s0");
+    assert.equal(body.inheritFromTaskId, "s0");
+    assert.equal(body.parentId, "s-parent");
     assert.equal(result.id, "s1");
   });
 
-  it("createSession omits undefined fields", async () => {
+  it("createTask omits undefined fields", async () => {
     fetchResponse = {
       status: 201,
       ok: true,
       json: () => Promise.resolve({ id: "s1" }),
       text: () => Promise.resolve('{"id":"s1"}'),
     };
-    await api.createSession();
+    await api.createTask();
     const body = JSON.parse(fetchCalls[0].init!.body as string);
     assert.equal(body.cwd, undefined);
-    assert.equal(body.inheritFromSessionId, undefined);
+    assert.equal(body.inheritFromTaskId, undefined);
   });
 
-  it("bootstrapSession sends POST /api/v1/sessions/bootstrap", async () => {
+  it("bootstrapTask sends POST /api/v1/tasks/bootstrap", async () => {
     fetchResponse = {
       status: 200,
       ok: true,
@@ -84,29 +86,37 @@ describe("api module", () => {
       text: () => Promise.resolve('{"id":"s1","created":false}'),
     };
 
-    const result = await api.bootstrapSession();
+    const result = await api.bootstrapTask();
 
-    assert.equal(fetchCalls[0].url, "/api/v1/sessions/bootstrap");
+    assert.equal(fetchCalls[0].url, "/api/v1/tasks/bootstrap");
     assert.equal(fetchCalls[0].init!.method, "POST");
     assert.equal(fetchCalls[0].init!.body, undefined);
     assert.equal(result.id, "s1");
   });
 
-  it("deleteSession sends DELETE /api/v1/sessions/:id", async () => {
-    await api.deleteSession("s1");
-    assert.equal(fetchCalls[0].url, "/api/v1/sessions/s1");
+  it("deleteTask sends DELETE /api/v1/tasks/:id", async () => {
+    await api.deleteTask("s1");
+    assert.equal(fetchCalls[0].url, "/api/v1/tasks/s1");
     assert.equal(fetchCalls[0].init!.method, "DELETE");
+    assert.match(
+      String(
+        (fetchCalls[0].init!.headers as Record<string, string>)[
+          "X-Client-Op-Id"
+        ],
+      ),
+      /.+/,
+    );
   });
 
-  it("listSessions sends GET /api/v1/sessions", async () => {
+  it("listTasks sends GET /api/v1/tasks", async () => {
     fetchResponse = {
       status: 200,
       ok: true,
       json: () => Promise.resolve([]),
       text: () => Promise.resolve("[]"),
     };
-    await api.listSessions();
-    assert.equal(fetchCalls[0].url, "/api/v1/sessions");
+    await api.listTasks();
+    assert.equal(fetchCalls[0].url, "/api/v1/tasks");
     assert.equal(fetchCalls[0].init?.method, undefined); // GET
   });
 
@@ -119,7 +129,7 @@ describe("api module", () => {
       json: () => Promise.resolve([]),
       text: () => Promise.resolve("[]"),
     };
-    await api.listSessions();
+    await api.listTasks();
     const signal = fetchCalls[0].init?.signal;
     assert.ok(signal, "GET must carry an abort signal");
     assert.equal(signal.aborted, false);
@@ -131,37 +141,37 @@ describe("api module", () => {
       json: () => Promise.resolve({}),
       text: () => Promise.resolve("{}"),
     };
-    await api.cancelSession("s1");
+    await api.cancelTask("s1");
     assert.ok(fetchCalls[0].init?.signal, "POST must carry an abort signal");
     assert.equal(fetchCalls[0].init.method, "POST");
   });
 
-  it("getSession sends GET /api/v1/sessions/:id", async () => {
+  it("getTask sends GET /api/v1/tasks/:id", async () => {
     fetchResponse = {
       status: 200,
       ok: true,
       json: () => Promise.resolve({ id: "s1" }),
       text: () => Promise.resolve('{"id":"s1"}'),
     };
-    await api.getSession("s1");
-    assert.equal(fetchCalls[0].url, "/api/v1/sessions/s1");
+    await api.getTask("s1");
+    assert.equal(fetchCalls[0].url, "/api/v1/tasks/s1");
   });
 
-  it("consumeMessage forwards the session inheritance source", async () => {
+  it("consumeMessage forwards the task inheritance source", async () => {
     fetchResponse = {
       status: 200,
       ok: true,
       json: () => Promise.resolve({}),
       text: () =>
-        Promise.resolve('{"sessionId":"new-session","alreadyConsumed":false}'),
+        Promise.resolve('{"taskId":"new-task","alreadyConsumed":false}'),
     };
 
-    await api.consumeMessage("m1", "current-session");
+    await api.consumeMessage("m1", "current-task");
 
     assert.equal(fetchCalls[0].url, "/api/v1/messages/m1/consume");
     assert.equal(fetchCalls[0].init!.method, "POST");
     assert.deepEqual(JSON.parse(fetchCalls[0].init!.body as string), {
-      inheritFromSessionId: "current-session",
+      inheritFromTaskId: "current-task",
     });
   });
 
@@ -230,7 +240,7 @@ describe("api module", () => {
 
   // --- Prompt ---
 
-  it("sendMessage sends POST /api/v1/sessions/:id/prompt", async () => {
+  it("sendMessage sends POST /api/v1/tasks/:id/prompt", async () => {
     fetchResponse = {
       status: 202,
       ok: true,
@@ -245,7 +255,7 @@ describe("api module", () => {
         mimeType: "image/png",
       },
     ]);
-    assert.equal(fetchCalls[0].url, "/api/v1/sessions/s1/prompt");
+    assert.equal(fetchCalls[0].url, "/api/v1/tasks/s1/prompt");
     assert.equal(fetchCalls[0].init!.method, "POST");
     const body = JSON.parse(fetchCalls[0].init!.body as string);
     assert.equal(body.text, "hello");
@@ -273,25 +283,25 @@ describe("api module", () => {
 
   // --- Cancel ---
 
-  it("cancelSession sends POST /api/v1/sessions/:id/cancel", async () => {
-    await api.cancelSession("s1");
-    assert.equal(fetchCalls[0].url, "/api/v1/sessions/s1/cancel");
+  it("cancelTask sends POST /api/v1/tasks/:id/cancel", async () => {
+    await api.cancelTask("s1");
+    assert.equal(fetchCalls[0].url, "/api/v1/tasks/s1/cancel");
     assert.equal(fetchCalls[0].init!.method, "POST");
   });
 
   // --- Permissions ---
 
-  it("resolvePermission sends POST /api/v1/sessions/:id/permissions/:requestId", async () => {
+  it("resolvePermission sends POST /api/v1/tasks/:id/permissions/:requestId", async () => {
     await api.resolvePermission("s1", "req1", "allow_once");
-    assert.equal(fetchCalls[0].url, "/api/v1/sessions/s1/permissions/req1");
+    assert.equal(fetchCalls[0].url, "/api/v1/tasks/s1/permissions/req1");
     assert.equal(fetchCalls[0].init!.method, "POST");
     const body = JSON.parse(fetchCalls[0].init!.body as string);
     assert.equal(body.optionId, "allow_once");
   });
 
-  it("denyPermission sends POST /api/v1/sessions/:id/permissions/:requestId with denied flag", async () => {
+  it("denyPermission sends POST /api/v1/tasks/:id/permissions/:requestId with denied flag", async () => {
     await api.denyPermission("s1", "req2");
-    assert.equal(fetchCalls[0].url, "/api/v1/sessions/s1/permissions/req2");
+    assert.equal(fetchCalls[0].url, "/api/v1/tasks/s1/permissions/req2");
     assert.equal(fetchCalls[0].init!.method, "POST");
     const body = JSON.parse(fetchCalls[0].init!.body as string);
     assert.equal(body.denied, true);
@@ -299,9 +309,9 @@ describe("api module", () => {
 
   // --- Config ---
 
-  it("setConfig sends PUT /api/v1/sessions/:id/:configId", async () => {
+  it("setConfig sends PUT /api/v1/tasks/:id/:configId", async () => {
     await api.setConfig("s1", "model", "gpt-4");
-    assert.equal(fetchCalls[0].url, "/api/v1/sessions/s1/model");
+    assert.equal(fetchCalls[0].url, "/api/v1/tasks/s1/model");
     assert.equal(fetchCalls[0].init!.method, "PUT");
     const body = JSON.parse(fetchCalls[0].init!.body as string);
     assert.equal(body.value, "gpt-4");
@@ -309,17 +319,17 @@ describe("api module", () => {
 
   // --- Bash ---
 
-  it("execBash sends POST /api/v1/sessions/:id/bash", async () => {
+  it("execBash sends POST /api/v1/tasks/:id/bash", async () => {
     await api.execBash("s1", "ls -la");
-    assert.equal(fetchCalls[0].url, "/api/v1/sessions/s1/bash");
+    assert.equal(fetchCalls[0].url, "/api/v1/tasks/s1/bash");
     assert.equal(fetchCalls[0].init!.method, "POST");
     const body = JSON.parse(fetchCalls[0].init!.body as string);
     assert.equal(body.command, "ls -la");
   });
 
-  it("cancelBash sends POST /api/v1/sessions/:id/bash/cancel", async () => {
+  it("cancelBash sends POST /api/v1/tasks/:id/bash/cancel", async () => {
     await api.cancelBash("s1");
-    assert.equal(fetchCalls[0].url, "/api/v1/sessions/s1/bash/cancel");
+    assert.equal(fetchCalls[0].url, "/api/v1/tasks/s1/bash/cancel");
     assert.equal(fetchCalls[0].init!.method, "POST");
   });
 
@@ -333,23 +343,23 @@ describe("api module", () => {
     assert.equal(body.visible, true);
   });
 
-  it("postVisibility includes sessionId when provided", async () => {
-    await api.postVisibility("cl-abc", true, "session-123");
+  it("postVisibility includes taskId when provided", async () => {
+    await api.postVisibility("cl-abc", true, "task-123");
     const body = JSON.parse(fetchCalls[0].init!.body as string);
     assert.equal(body.visible, true);
-    assert.equal(body.sessionId, "session-123");
+    assert.equal(body.taskId, "task-123");
   });
 
-  it("postVisibility omits sessionId when undefined", async () => {
+  it("postVisibility omits taskId when undefined", async () => {
     await api.postVisibility("cl-abc", false);
     const body = JSON.parse(fetchCalls[0].init!.body as string);
     assert.equal(body.visible, false);
-    assert.equal(body.sessionId, undefined);
+    assert.equal(body.taskId, undefined);
   });
 
   // --- Status ---
 
-  it("getStatus sends GET /api/v1/sessions/:id/status", async () => {
+  it("getStatus sends GET /api/v1/tasks/:id/status", async () => {
     fetchResponse = {
       status: 200,
       ok: true,
@@ -357,7 +367,7 @@ describe("api module", () => {
       text: () => Promise.resolve(""),
     };
     await api.getStatus("s1");
-    assert.equal(fetchCalls[0].url, "/api/v1/sessions/s1/status");
+    assert.equal(fetchCalls[0].url, "/api/v1/tasks/s1/status");
   });
 
   // --- Error handling ---
@@ -370,7 +380,7 @@ describe("api module", () => {
       text: () => Promise.resolve('{"error":"not found"}'),
     };
     await assert.rejects(
-      () => api.deleteSession("s1"),
+      () => api.deleteTask("s1"),
       (err: any) => {
         assert.equal(err.name, "ApiError");
         assert.equal(err.status, 404);
@@ -388,7 +398,7 @@ describe("api module", () => {
       text: () => Promise.resolve("Internal Server Error"),
     };
     await assert.rejects(
-      () => api.deleteSession("s1"),
+      () => api.deleteTask("s1"),
       (err: any) => {
         assert.equal(err.name, "ApiError");
         assert.equal(err.status, 500);
