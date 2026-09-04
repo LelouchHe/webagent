@@ -13,10 +13,15 @@ export interface TaskDelete {
   agentSessionId: string | null;
 }
 
+export type WorkflowStatus = "running" | "idle" | "blocked" | "done";
+
 export interface TaskRow {
   id: string;
   cwd: string;
   title: string | null;
+  /** Initial creation record; clear never replays it automatically. */
+  brief: string;
+  workflow_status: WorkflowStatus;
   model: string | null;
   mode: string | null;
   reasoning_effort: string | null;
@@ -89,6 +94,53 @@ export class MessageNotFoundError extends Error {
     super(`Message not found: ${messageId}`);
     this.name = "MessageNotFoundError";
   }
+}
+
+export type CollaborationActor = "user" | "agent" | "system";
+export type CollaborationProjectionRole = "source" | "target" | "supervisor";
+export type CollaborationDeliveryStatus =
+  | "queued"
+  | "draining"
+  | "delivered"
+  | "failed";
+
+export interface CollaborationMessageRow {
+  id: string;
+  source_task_id: string;
+  direct_target_task_id: string;
+  source_actor: CollaborationActor;
+  body: string;
+  created_at: number;
+}
+
+export interface CollaborationProjectionRow {
+  message_id: string;
+  task_id: string;
+  role: CollaborationProjectionRole;
+  created_at: number;
+}
+
+export interface CollaborationDeliveryRow {
+  id: string;
+  message_id: string;
+  recipient_task_id: string;
+  idempotency_key: string;
+  status: CollaborationDeliveryStatus;
+  queued_at: number;
+  claimed_at: number | null;
+  delivered_at: number | null;
+  failed_at: number | null;
+  failure_reason: string | null;
+}
+
+export interface CollaborationMessageInput {
+  id: string;
+  deliveryId: string;
+  sourceTaskId: string;
+  directTargetTaskId: string;
+  sourceActor: CollaborationActor;
+  body: string;
+  createdAt?: number;
 }
 
 /** share-plan §4.1 full row shape. */
@@ -179,6 +231,8 @@ export class Store {
         "id",
         "cwd",
         "title",
+        "brief",
+        "workflow_status",
         "parent_id",
         "pending_compact_summary",
         "model",
@@ -228,6 +282,39 @@ export class Store {
         "height",
         "created_at",
       ],
+      inbox_messages: [
+        "id",
+        "from_ref",
+        "from_label",
+        "to_ref",
+        "deliver",
+        "dedup_key",
+        "title",
+        "body",
+        "cwd",
+        "created_at",
+      ],
+      messages: [
+        "id",
+        "source_task_id",
+        "direct_target_task_id",
+        "source_actor",
+        "body",
+        "created_at",
+      ],
+      message_projections: ["message_id", "task_id", "role", "created_at"],
+      deliveries: [
+        "id",
+        "message_id",
+        "recipient_task_id",
+        "idempotency_key",
+        "status",
+        "queued_at",
+        "claimed_at",
+        "delivered_at",
+        "failed_at",
+        "failure_reason",
+      ],
     };
     const incompatible = legacy
       ? "legacy sessions table"
@@ -269,6 +356,9 @@ export class Store {
         id TEXT PRIMARY KEY,
         cwd TEXT NOT NULL,
         title TEXT,
+        brief TEXT NOT NULL DEFAULT '',
+        workflow_status TEXT NOT NULL DEFAULT 'idle'
+          CHECK (workflow_status IN ('running', 'idle', 'blocked', 'done')),
         parent_id TEXT REFERENCES tasks(id),
         pending_compact_summary TEXT,
         model TEXT,
@@ -308,13 +398,13 @@ export class Store {
       );
     `);
 
-    // messages — pending unbound notifications. POST /api/v1/messages with
+    // inbox_messages — pending unbound notifications. POST /api/v1/messages with
     // `to = "user"` lands here; consumeMessageTx transactionally moves the
     // content into an existing ACP-backed task's events and deletes the
     // row. Bound messages (to = task id) skip this table entirely and go
     // straight to `events`.
     this.db.exec(`
-      CREATE TABLE IF NOT EXISTS messages (
+      CREATE TABLE IF NOT EXISTS inbox_messages (
         id              TEXT PRIMARY KEY,
         from_ref        TEXT NOT NULL,
         from_label      TEXT,
@@ -326,8 +416,46 @@ export class Store {
         cwd             TEXT,
         created_at      INTEGER NOT NULL
       );
-      CREATE INDEX IF NOT EXISTS idx_messages_created ON messages (created_at);
-      CREATE INDEX IF NOT EXISTS idx_messages_dedup   ON messages (to_ref, dedup_key);
+      CREATE INDEX IF NOT EXISTS idx_inbox_messages_created ON inbox_messages (created_at);
+      CREATE INDEX IF NOT EXISTS idx_inbox_messages_dedup ON inbox_messages (to_ref, dedup_key);
+
+      CREATE TABLE IF NOT EXISTS messages (
+        id TEXT PRIMARY KEY,
+        source_task_id TEXT NOT NULL,
+        direct_target_task_id TEXT NOT NULL,
+        source_actor TEXT NOT NULL CHECK (source_actor IN ('user', 'agent', 'system')),
+        body TEXT NOT NULL,
+        created_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_messages_source_created
+        ON messages (source_task_id, created_at);
+      CREATE INDEX IF NOT EXISTS idx_messages_target_created
+        ON messages (direct_target_task_id, created_at);
+
+      CREATE TABLE IF NOT EXISTS message_projections (
+        message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+        task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+        role TEXT NOT NULL CHECK (role IN ('source', 'target', 'supervisor')),
+        created_at INTEGER NOT NULL,
+        PRIMARY KEY (message_id, task_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_message_projections_task_created
+        ON message_projections (task_id, created_at);
+
+      CREATE TABLE IF NOT EXISTS deliveries (
+        id TEXT PRIMARY KEY,
+        message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+        recipient_task_id TEXT NOT NULL,
+        idempotency_key TEXT NOT NULL UNIQUE,
+        status TEXT NOT NULL CHECK (status IN ('queued', 'draining', 'delivered', 'failed')),
+        queued_at INTEGER NOT NULL,
+        claimed_at INTEGER,
+        delivered_at INTEGER,
+        failed_at INTEGER,
+        failure_reason TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_deliveries_recipient_status_queued
+        ON deliveries (recipient_task_id, status, queued_at);
     `);
 
     // client-server-split M2: idempotency for mutating REST calls. Stores
@@ -350,6 +478,12 @@ export class Store {
         cwd TEXT PRIMARY KEY,
         last_used_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now'))
       );
+    `);
+
+    this.db.exec(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_parent_title_live
+        ON tasks (parent_id, title)
+        WHERE deleted_at IS NULL AND title IS NOT NULL;
     `);
 
     // Secondary index for events queried by (task_id, type, created_at)
@@ -809,6 +943,7 @@ export class Store {
     // Hard delete: re-parent any survivor (share-tombstoned descendants)
     // under Root, then drop events and the row (agent_sessions cascades).
     this.reparentChildrenToRoot(id);
+    this.failOutstandingDeliveriesForDeletedTask(id);
     this.db.prepare("DELETE FROM events WHERE task_id = ?").run(id);
     this.db.prepare("DELETE FROM tasks WHERE id = ?").run(id);
     affected.unshift({
@@ -840,6 +975,7 @@ export class Store {
     // (a share-tombstoned descendant of this tombstone) still references it
     // and must be re-parented under Root before the row goes away.
     this.reparentChildrenToRoot(taskId);
+    this.failOutstandingDeliveriesForDeletedTask(taskId);
     this.db.prepare("DELETE FROM events WHERE task_id = ?").run(taskId);
     this.db.prepare("DELETE FROM tasks WHERE id = ?").run(taskId);
     return true;
@@ -874,6 +1010,7 @@ export class Store {
       // A junk task may still be someone's parent; keep the children by
       // re-parenting them under Root instead of deleting them.
       this.reparentChildrenToRoot(r.id);
+      this.failOutstandingDeliveriesForDeletedTask(r.id);
       del.run(r.id);
       removed.push({ id: r.id, agentSessionId: r.agent_session_id });
     }
@@ -1146,12 +1283,12 @@ export class Store {
     this.db.prepare("DELETE FROM recent_paths WHERE cwd = ?").run(cwd);
   }
 
-  // ===== messages (pending unbound notifications) =====
+  // ===== inbox messages (pending unbound notifications) =====
 
   createMessage(input: MessageInput): void {
     this.db
       .prepare(
-        `INSERT INTO messages
+        `INSERT INTO inbox_messages
          (id, from_ref, from_label, to_ref, deliver, dedup_key, title, body, cwd, created_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
@@ -1170,26 +1307,28 @@ export class Store {
   }
 
   getMessage(id: string): MessageRow | undefined {
-    return this.db.prepare("SELECT * FROM messages WHERE id = ?").get(id) as
-      | MessageRow
-      | undefined;
+    return this.db
+      .prepare("SELECT * FROM inbox_messages WHERE id = ?")
+      .get(id) as MessageRow | undefined;
   }
 
   listUnprocessed(): MessageRow[] {
     return this.db
-      .prepare("SELECT * FROM messages ORDER BY created_at DESC")
+      .prepare("SELECT * FROM inbox_messages ORDER BY created_at DESC")
       .all() as MessageRow[];
   }
 
   countUnprocessed(): number {
     const row = this.db
-      .prepare("SELECT COUNT(*) AS count FROM messages")
+      .prepare("SELECT COUNT(*) AS count FROM inbox_messages")
       .get() as { count: number };
     return row.count;
   }
 
   deleteMessage(id: string): number {
-    const info = this.db.prepare("DELETE FROM messages WHERE id = ?").run(id);
+    const info = this.db
+      .prepare("DELETE FROM inbox_messages WHERE id = ?")
+      .run(id);
     return info.changes;
   }
 
@@ -1199,7 +1338,7 @@ export class Store {
    */
   deleteOlderThan(thresholdMs: number): number {
     const info = this.db
-      .prepare("DELETE FROM messages WHERE created_at < ?")
+      .prepare("DELETE FROM inbox_messages WHERE created_at < ?")
       .run(thresholdMs);
     return info.changes;
   }
@@ -1212,7 +1351,7 @@ export class Store {
     if (!dedup_key) return undefined;
     return this.db
       .prepare(
-        "SELECT * FROM messages WHERE to_ref = ? AND dedup_key = ? LIMIT 1",
+        "SELECT * FROM inbox_messages WHERE to_ref = ? AND dedup_key = ? LIMIT 1",
       )
       .get(to_ref, dedup_key) as MessageRow | undefined;
   }
@@ -1251,7 +1390,7 @@ export class Store {
         { from_ref: row.from_ref },
       );
       const del = this.db
-        .prepare("DELETE FROM messages WHERE id = ?")
+        .prepare("DELETE FROM inbox_messages WHERE id = ?")
         .run(messageId);
       if (del.changes === 0) {
         throw new MessageNotFoundError(messageId);
@@ -1272,6 +1411,187 @@ export class Store {
       )
       .get(messageId) as { task_id: string } | undefined;
     return row?.task_id;
+  }
+
+  // ===== collaboration messages =====
+
+  private requireLiveTask(taskId: string): TaskRow {
+    const task = this.getTaskIncludingDeleted(taskId);
+    if (task?.deleted_at !== null) {
+      throw new Error(`Live task not found: ${taskId}`);
+    }
+    return task;
+  }
+
+  private lowestCommonAncestor(
+    sourceTaskId: string,
+    targetTaskId: string,
+  ): string {
+    const sourceLineage = this.getTaskLineage(sourceTaskId);
+    const targetLineage = this.getTaskLineage(targetTaskId);
+    if (!sourceLineage || !targetLineage) {
+      throw new Error("Cannot determine collaboration task lineage");
+    }
+    const sourceAncestors = new Set(sourceLineage);
+    for (let index = targetLineage.length - 1; index >= 0; index--) {
+      const taskId = targetLineage[index];
+      if (sourceAncestors.has(taskId)) return taskId;
+    }
+    throw new Error("Collaboration tasks have no common ancestor");
+  }
+
+  /**
+   * Persist one cross-task fact, its task-timeline projections, and the sole
+   * target Delivery in one SQLite transaction. Delivery mechanics live above
+   * this Store API; this method never resolves paths or applies reachability
+   * policy.
+   */
+  createCollaborationMessage(input: CollaborationMessageInput): {
+    message: CollaborationMessageRow;
+    delivery: CollaborationDeliveryRow;
+  } {
+    const createdAt = input.createdAt ?? Date.now();
+    return this.db.transaction(() => {
+      if (input.sourceTaskId === input.directTargetTaskId) {
+        throw new Error("Collaboration source and target must differ");
+      }
+      this.requireLiveTask(input.sourceTaskId);
+      this.requireLiveTask(input.directTargetTaskId);
+      const lcaTaskId = this.lowestCommonAncestor(
+        input.sourceTaskId,
+        input.directTargetTaskId,
+      );
+      this.db
+        .prepare(
+          `INSERT INTO messages
+           (id, source_task_id, direct_target_task_id, source_actor, body, created_at)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          input.id,
+          input.sourceTaskId,
+          input.directTargetTaskId,
+          input.sourceActor,
+          input.body,
+          createdAt,
+        );
+      const insertProjection = this.db.prepare(
+        `INSERT INTO message_projections (message_id, task_id, role, created_at)
+         VALUES (?, ?, ?, ?)`,
+      );
+      insertProjection.run(input.id, input.sourceTaskId, "source", createdAt);
+      insertProjection.run(
+        input.id,
+        input.directTargetTaskId,
+        "target",
+        createdAt,
+      );
+      if (
+        lcaTaskId !== input.sourceTaskId &&
+        lcaTaskId !== input.directTargetTaskId
+      ) {
+        insertProjection.run(input.id, lcaTaskId, "supervisor", createdAt);
+      }
+      this.db
+        .prepare(
+          `INSERT INTO deliveries
+           (id, message_id, recipient_task_id, idempotency_key, status, queued_at)
+           VALUES (?, ?, ?, ?, 'queued', ?)`,
+        )
+        .run(
+          input.deliveryId,
+          input.id,
+          input.directTargetTaskId,
+          `${input.id}:${input.directTargetTaskId}`,
+          createdAt,
+        );
+      return {
+        message: this.getCollaborationMessage(input.id)!,
+        delivery: this.getCollaborationDelivery(input.deliveryId)!,
+      };
+    })();
+  }
+
+  getCollaborationMessage(id: string): CollaborationMessageRow | undefined {
+    return this.db.prepare("SELECT * FROM messages WHERE id = ?").get(id) as
+      | CollaborationMessageRow
+      | undefined;
+  }
+
+  listCollaborationProjections(
+    messageId: string,
+  ): Array<Pick<CollaborationProjectionRow, "task_id" | "role">> {
+    return this.db
+      .prepare(
+        `SELECT task_id, role FROM message_projections
+         WHERE message_id = ?
+         ORDER BY CASE role
+           WHEN 'source' THEN 0
+           WHEN 'target' THEN 1
+           ELSE 2
+         END, task_id`,
+      )
+      .all(messageId) as Array<
+      Pick<CollaborationProjectionRow, "task_id" | "role">
+    >;
+  }
+
+  getCollaborationDelivery(id: string): CollaborationDeliveryRow | undefined {
+    return this.db.prepare("SELECT * FROM deliveries WHERE id = ?").get(id) as
+      | CollaborationDeliveryRow
+      | undefined;
+  }
+
+  /** Atomically claim every currently queued Delivery for one target task. */
+  claimQueuedDeliveries(recipientTaskId: string): CollaborationDeliveryRow[] {
+    const claimedAt = Date.now();
+    return this.db.transaction(() => {
+      const ids = this.db
+        .prepare(
+          `SELECT id FROM deliveries
+           WHERE recipient_task_id = ? AND status = 'queued'
+           ORDER BY queued_at, id`,
+        )
+        .all(recipientTaskId) as Array<{ id: string }>;
+      const claim = this.db.prepare(
+        `UPDATE deliveries
+         SET status = 'draining', claimed_at = ?
+         WHERE id = ? AND status = 'queued'`,
+      );
+      const claimed: CollaborationDeliveryRow[] = [];
+      for (const { id } of ids) {
+        if (claim.run(claimedAt, id).changes !== 1) continue;
+        const delivery = this.getCollaborationDelivery(id);
+        if (delivery) claimed.push(delivery);
+      }
+      return claimed;
+    })();
+  }
+
+  markCollaborationDeliveriesDelivered(
+    ids: string[],
+    deliveredAt = Date.now(),
+  ): void {
+    const mark = this.db.prepare(
+      `UPDATE deliveries
+       SET status = 'delivered', delivered_at = ?, failure_reason = NULL, failed_at = NULL
+       WHERE id = ? AND status = 'draining'`,
+    );
+    const tx = this.db.transaction(() => {
+      for (const id of ids) mark.run(deliveredAt, id);
+    });
+    tx();
+  }
+
+  /** Preserve the fact while recording that a deleted target cannot receive it. */
+  private failOutstandingDeliveriesForDeletedTask(taskId: string): void {
+    this.db
+      .prepare(
+        `UPDATE deliveries
+         SET status = 'failed', failed_at = ?, failure_reason = 'target_deleted'
+         WHERE recipient_task_id = ? AND status IN ('queued', 'draining')`,
+      )
+      .run(Date.now(), taskId);
   }
 
   // --- client-server-split M2: client_ops idempotency ---
