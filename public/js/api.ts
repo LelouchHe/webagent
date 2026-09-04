@@ -117,12 +117,14 @@ export function createTask(
   opts?: {
     cwd?: string;
     inheritFromTaskId?: string | null;
+    parentId?: string | null;
   },
   clientOpId?: string,
 ): Promise<Record<string, unknown>> {
   const body: Record<string, unknown> = {};
   if (opts?.cwd) body.cwd = opts.cwd;
   if (opts?.inheritFromTaskId) body.inheritFromTaskId = opts.inheritFromTaskId;
+  if (opts?.parentId) body.parentId = opts.parentId;
   return post("/api/v1/tasks", body, clientOpId);
 }
 

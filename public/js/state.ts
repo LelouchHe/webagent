@@ -647,8 +647,13 @@ export function setBusy(on: boolean) {
 export function requestNewTask({
   cwd,
   inheritFromTaskId = state.taskId,
-}: { cwd?: string; inheritFromTaskId?: string | null } = {}) {
-  void createNewTaskRequest({ cwd, inheritFromTaskId });
+  parentId = state.taskId,
+}: {
+  cwd?: string;
+  inheritFromTaskId?: string | null;
+  parentId?: string | null;
+} = {}) {
+  void createNewTaskRequest({ cwd, inheritFromTaskId, parentId });
 }
 
 export function requestBootstrapTask(): void {
@@ -658,10 +663,12 @@ export function requestBootstrapTask(): void {
 export async function createNewTaskRequest({
   cwd,
   inheritFromTaskId = state.taskId,
+  parentId = state.taskId,
   bootstrap = false,
 }: {
   cwd?: string;
   inheritFromTaskId?: string | null;
+  parentId?: string | null;
   bootstrap?: boolean;
 } = {}): Promise<boolean> {
   if (state.newTaskRequestInFlight || state.pendingNewTaskOpId) return false;
@@ -679,7 +686,7 @@ export async function createNewTaskRequest({
   try {
     const task = bootstrap
       ? await api.bootstrapTask(clientOpId)
-      : await api.createTask({ cwd, inheritFromTaskId }, clientOpId);
+      : await api.createTask({ cwd, inheritFromTaskId, parentId }, clientOpId);
     state.newTaskRequestInFlight = false;
     if (generation !== state.taskSwitchGen) {
       if (state.pendingNewTaskOpId === clientOpId) {

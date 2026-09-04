@@ -53,6 +53,7 @@ describe("api module", () => {
     const result = await api.createTask({
       cwd: "/tmp",
       inheritFromTaskId: "s0",
+      parentId: "s-parent",
     });
     assert.equal(fetchCalls.length, 1);
     assert.equal(fetchCalls[0].url, "/api/v1/tasks");
@@ -60,6 +61,7 @@ describe("api module", () => {
     const body = JSON.parse(fetchCalls[0].init!.body as string);
     assert.equal(body.cwd, "/tmp");
     assert.equal(body.inheritFromTaskId, "s0");
+    assert.equal(body.parentId, "s-parent");
     assert.equal(result.id, "s1");
   });
 
