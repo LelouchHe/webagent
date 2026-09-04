@@ -2444,7 +2444,8 @@ export function createRequestHandler(
           hasCollaborationFields &&
           (title === null ||
             typeof body.brief !== "string" ||
-            !body.brief.trim())
+            !body.brief.trim() ||
+            !body.parentId)
         ) {
           json(res, HTTP_STATUS.BAD_REQUEST, {
             error:
@@ -2464,6 +2465,8 @@ export function createRequestHandler(
             return;
           }
         }
+        const initialMessageId = title ? randomUUID() : undefined;
+        const initialDeliveryId = title ? randomUUID() : undefined;
         try {
           const { taskId, configOptions } = await tasks.createTask(
             bridge,
@@ -2475,6 +2478,16 @@ export function createRequestHandler(
               title: title ?? undefined,
               brief: body.brief,
               workflowStatus: title ? "running" : undefined,
+              initialMessage:
+                title && initialMessageId && initialDeliveryId && body.parentId
+                  ? {
+                      id: initialMessageId,
+                      deliveryId: initialDeliveryId,
+                      sourceTaskId: body.parentId,
+                      sourceActor: "user",
+                      body: body.brief!,
+                    }
+                  : undefined,
             },
           );
           const task = store.getTask(taskId);
@@ -2500,6 +2513,9 @@ export function createRequestHandler(
           }
           json(res, HTTP_STATUS.CREATED, {
             id: taskId,
+            ...(initialMessageId && initialDeliveryId
+              ? { initialMessageId, initialDeliveryId }
+              : {}),
             cwd: task?.cwd ?? body.cwd,
             cwdDisplay: task?.cwd ? abbreviateHomePath(task.cwd) : undefined,
             title: task?.title ?? null,
@@ -2511,6 +2527,7 @@ export function createRequestHandler(
             agentCommands: tasks.getAgentCommands(taskId),
             clientOpId: clientOpId ?? undefined,
           });
+          if (title) void tasks.drainCollaborationDeliveries(bridge, taskId);
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
           if (

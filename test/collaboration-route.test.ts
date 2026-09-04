@@ -111,6 +111,19 @@ describe("S3 collaboration write routes", () => {
     assert.equal(task.title, "代码 审查");
     assert.equal(task.brief, "检查发布前的改动");
     assert.equal(task.workflow_status, "running");
+    const initialMessageId = response.body.initialMessageId as string;
+    const initialDeliveryId = response.body.initialDeliveryId as string;
+    assert.equal(typeof initialMessageId, "string");
+    assert.deepEqual(store.listCollaborationProjections(initialMessageId), [
+      { task_id: "parent", role: "source" },
+      { task_id: taskId, role: "target" },
+    ]);
+    await waitFor(
+      () =>
+        store.getCollaborationDelivery(initialDeliveryId)?.status ===
+        "delivered",
+      { message: "expected the child brief to submit" },
+    );
   });
 
   it("creates a local collaboration delivery without trusting a client LCA", async () => {

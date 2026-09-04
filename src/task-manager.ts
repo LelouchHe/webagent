@@ -370,6 +370,13 @@ export class TaskManager {
       title?: string;
       brief?: string;
       workflowStatus?: WorkflowStatus;
+      initialMessage?: {
+        id: string;
+        deliveryId: string;
+        sourceTaskId: string;
+        sourceActor: "user" | "agent" | "system";
+        body: string;
+      };
     },
   ): Promise<{ taskId: string; configOptions: ConfigOption[] }> {
     const parentId = this.resolveParentId(opts?.parentId);
@@ -402,6 +409,13 @@ export class TaskManager {
       title?: string;
       brief?: string;
       workflowStatus?: WorkflowStatus;
+      initialMessage?: {
+        id: string;
+        deliveryId: string;
+        sourceTaskId: string;
+        sourceActor: "user" | "agent" | "system";
+        body: string;
+      };
     },
   ): Promise<void> {
     for (;;) {
@@ -484,6 +498,13 @@ export class TaskManager {
       title?: string;
       brief?: string;
       workflowStatus?: WorkflowStatus;
+      initialMessage?: {
+        id: string;
+        deliveryId: string;
+        sourceTaskId: string;
+        sourceActor: "user" | "agent" | "system";
+        body: string;
+      };
     },
   ): Promise<{ taskId: string; configOptions: ConfigOption[] }> {
     const taskCwd = expandHomePath(cwd ?? this.defaultCwd);
@@ -523,6 +544,7 @@ export class TaskManager {
           title: opts?.title,
           brief: opts?.brief,
           workflowStatus: opts?.workflowStatus,
+          initialMessage: opts?.initialMessage,
         },
       );
     } catch (err) {
@@ -652,6 +674,8 @@ export class TaskManager {
       void bridge.retireExecution?.(retiredAgentSessionId);
     }
     this.resetTaskRuntime(taskId, preserveRuntimeState);
+    this.store.failOutstandingDeliveriesForTaskClear(taskId);
+    this.store.updateTaskWorkflowStatus(taskId, "idle");
 
     const configOptions = await this.restoreTaskConfig(
       bridge,

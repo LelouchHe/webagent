@@ -610,6 +610,7 @@ export class Store {
       title?: string;
       brief?: string;
       workflowStatus?: WorkflowStatus;
+      initialMessage?: Omit<CollaborationMessageInput, "directTargetTaskId">;
     } = {},
   ): TaskRow {
     return this.db.transaction(() => {
@@ -633,6 +634,12 @@ export class Store {
           "INSERT INTO agent_sessions (agent_key, agent_session_id, task_id) VALUES (?, ?, ?)",
         )
         .run(this.agentKey, agentSessionId, id);
+      if (opts.initialMessage) {
+        this.createCollaborationMessage({
+          ...opts.initialMessage,
+          directTargetTaskId: id,
+        });
+      }
       return this.db
         .prepare("SELECT * FROM tasks WHERE id = ?")
         .get(id) as TaskRow;
@@ -1618,6 +1625,21 @@ export class Store {
       for (const id of ids) fail.run(failedAt, failureReason, id);
     });
     tx();
+  }
+
+  failOutstandingDeliveriesForTaskClear(taskId: string): void {
+    const failedAt = Date.now();
+    this.db
+      .prepare(
+        `UPDATE deliveries
+         SET status = 'failed', failed_at = ?, failure_reason =
+           CASE status
+             WHEN 'queued' THEN 'cleared_before_delivery'
+             ELSE 'cleared_during_delivery'
+           END
+         WHERE recipient_task_id = ? AND status IN ('queued', 'draining')`,
+      )
+      .run(failedAt, taskId);
   }
 
   /** Preserve the fact while recording that a deleted target cannot receive it. */
