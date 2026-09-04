@@ -98,6 +98,8 @@ test("+ completes directory prefixes from the parent listing", async ({
   await page.keyboard.press("ArrowDown");
   await page.keyboard.press("Tab");
   await expect(page.locator("#input")).toHaveValue("+public/");
+  // Descended rows are single-line names — the typed prefix already
+  // establishes the directory context, so no second-line path is rendered.
   await expect(page.locator("#slash-menu.active")).toContainText("js");
-  await expect(page.locator("#slash-menu.active")).toContainText("~/");
+  await expect(page.locator("#slash-menu.active .slash-path")).toHaveCount(0);
 });

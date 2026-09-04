@@ -13,7 +13,7 @@ import {
   type TaskPath,
 } from "../../src/task-path.ts";
 import { resolveBrowseTarget } from "./file-browser.ts";
-import { joinDisplay, taskDisplayPath } from "./path-display.ts";
+import { taskDisplayPath } from "./path-display.ts";
 import { state } from "./state.ts";
 import { listRecentPaths } from "./slash-commands.ts";
 import { switchToTask } from "./task-navigation.ts";
@@ -366,8 +366,8 @@ async function buildCreateCandidates(parsed: {
     candidates.push({
       spec: {
         primary: entry.name,
-        path: joinDisplay(displayDirectory, entry.name),
-        pathSecondary: "directory",
+        // Single-line row: the typed prefix already establishes the
+        // directory context, so the full path would be redundant.
         fill: `${parsed.marker}${quoteShellWord(completedPrefix + entry.name)}/`,
         continueOnFill: true,
         onSelect: () =>
