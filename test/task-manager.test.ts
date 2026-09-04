@@ -6,7 +6,7 @@ import type { AddressInfo } from "node:net";
 import { join } from "node:path";
 import { homedir, tmpdir } from "node:os";
 import { Store } from "../src/store.ts";
-import { TaskManager } from "../src/task-manager.ts";
+import { TaskBusyError, TaskManager } from "../src/task-manager.ts";
 import { CapabilityStore } from "../src/mcp/capability.ts";
 import { createMcpEndpoint } from "../src/mcp/server.ts";
 import type { ConfigOption } from "../src/types.ts";
@@ -237,7 +237,7 @@ describe("TaskManager", () => {
   });
 
   describe("deleteTask", () => {
-    it("cleans up all state", () => {
+    it("cleans up all state", async () => {
       store.createTask("s1", "/x");
       sm.liveTasks.add("s1");
       sm.taskHasTitle.add("s1");
@@ -247,7 +247,7 @@ describe("TaskManager", () => {
         { name: "context", description: "Show context usage" },
       ]);
 
-      sm.deleteTask(undefined, "s1");
+      await sm.deleteTask(undefined, "s1");
 
       assert.ok(!sm.liveTasks.has("s1"));
       assert.ok(!sm.taskHasTitle.has("s1"));
@@ -263,13 +263,12 @@ describe("TaskManager", () => {
       assert.equal(store.getTask("s1"), undefined);
     });
 
-    it("cascades to descendants, cleaning their runtime state and retiring executions", () => {
+    it("cascades to descendants, cleaning their runtime state and retiring executions", async () => {
       store.createTask("parent", "/a", "auto", "agent-parent");
       store.createTask("child", "/b", "auto", "agent-child", "parent");
       sm.liveTasks.add("parent");
       sm.liveTasks.add("child");
       sm.assistantBuffers.set("child", "partial answer");
-      sm.pendingPromptSubmissions.set("child", 7);
       const retired: string[] = [];
       const bridge = {
         async newSession() {
@@ -286,7 +285,7 @@ describe("TaskManager", () => {
         },
       };
 
-      const result = sm.deleteTask(bridge, "parent");
+      const result = await sm.deleteTask(bridge, "parent");
 
       assert.deepEqual(result.affected.map((entry) => entry.id).sort(), [
         "child",
@@ -299,13 +298,26 @@ describe("TaskManager", () => {
       assert.ok(!sm.pendingPromptSubmissions.has("child"));
     });
 
-    it("skips retirement when no bridge is available", () => {
+    it("skips retirement when no bridge is available", async () => {
       store.createTask("s1", "/x", "auto", "agent-s1");
 
-      const result = sm.deleteTask(undefined, "s1");
+      const result = await sm.deleteTask(undefined, "s1");
 
       assert.equal(result.mode, "hard");
       assert.equal(store.getTask("s1"), undefined);
+    });
+
+    it("rejects deleting a subtree with active work", async () => {
+      store.createTask("parent", "/a", "auto", "agent-parent");
+      store.createTask("child", "/b", "auto", "agent-child", "parent");
+      sm.activePrompts.add("child");
+
+      await assert.rejects(() => sm.deleteTask(undefined, "parent"), {
+        name: TaskBusyError.name,
+      });
+      assert.ok(store.getTask("parent"));
+      assert.ok(store.getTask("child"));
+      sm.activePrompts.delete("child");
     });
   });
 
@@ -969,6 +981,203 @@ describe("TaskManager", () => {
         store.listTasks().map((task) => task.id),
         ["root"],
       );
+    });
+  });
+
+  describe("task-tree mutation locking", () => {
+    it("does not hold Root lock while ACP setup is pending", async () => {
+      store.ensureRootTask(tmpDir);
+      store.createTask("a", tmpDir, "auto", "agent-a", "root");
+
+      let releaseRootCreate!: () => void;
+      const rootCreateReleased = new Promise<void>((resolve) => {
+        releaseRootCreate = resolve;
+      });
+      let rootCreateStarted!: () => void;
+      const rootCreateStartedPromise = new Promise<void>((resolve) => {
+        rootCreateStarted = resolve;
+      });
+      let newSessionCalls = 0;
+      const bridge = {
+        async newSession() {
+          const call = ++newSessionCalls;
+          if (call === 1) {
+            rootCreateStarted();
+            await rootCreateReleased;
+          }
+          return { sessionId: `agent-new-${call}`, configOptions: [] };
+        },
+        async setConfigOption() {
+          return [];
+        },
+        async loadSession() {
+          throw new Error("loadSession should not be called");
+        },
+      };
+
+      const rootCreate = sm.createTask(bridge, tmpDir, undefined, "auto", {
+        parentId: "root",
+      });
+      await rootCreateStartedPromise;
+      const branchTask = await sm.createTask(
+        bridge,
+        tmpDir,
+        undefined,
+        "auto",
+        {
+          parentId: "a",
+        },
+      );
+      assert.equal(store.getTask(branchTask.taskId)?.parent_id, "a");
+      releaseRootCreate();
+      const rootTask = await rootCreate;
+      assert.equal(store.getTask(rootTask.taskId)?.parent_id, "root");
+    });
+
+    it("does not block sibling task creation on another branch", async () => {
+      store.ensureRootTask(tmpDir);
+      store.createTask("a", tmpDir, "auto", "agent-a", "root");
+      store.createTask("b", tmpDir, "auto", "agent-b", "root");
+
+      let releaseSessions!: () => void;
+      const sessionsReleased = new Promise<void>((resolve) => {
+        releaseSessions = resolve;
+      });
+      let sessionsStarted!: () => void;
+      const bothSessionsStarted = new Promise<void>((resolve) => {
+        sessionsStarted = resolve;
+      });
+      let newSessionCalls = 0;
+      const bridge = {
+        async newSession() {
+          const call = ++newSessionCalls;
+          if (call === 2) sessionsStarted();
+          await sessionsReleased;
+          return {
+            sessionId: `agent-new-${call}`,
+            configOptions: [],
+          };
+        },
+        async setConfigOption() {
+          return [];
+        },
+        async loadSession() {
+          throw new Error("loadSession should not be called");
+        },
+      };
+
+      const first = sm.createTask(bridge, tmpDir, undefined, "auto", {
+        parentId: "a",
+      });
+      const second = sm.createTask(bridge, tmpDir, undefined, "auto", {
+        parentId: "b",
+      });
+
+      await bothSessionsStarted;
+      assert.equal(newSessionCalls, 2);
+      releaseSessions();
+      const [firstTask, secondTask] = await Promise.all([first, second]);
+      assert.equal(store.getTask(firstTask.taskId)?.parent_id, "a");
+      assert.equal(store.getTask(secondTask.taskId)?.parent_id, "b");
+    });
+
+    it("rejects Root reset when a just-created descendant is still initializing", async () => {
+      store.ensureRootTask(tmpDir);
+      store.bindAgentSession("root", "agent-root");
+      store.createTask("a", tmpDir, "auto", "agent-a", "root");
+      store.updateTaskConfig("a", "model", "model-old");
+      sm.liveTasks.add("root");
+
+      let releaseInheritance!: () => void;
+      const inheritanceReleased = new Promise<void>((resolve) => {
+        releaseInheritance = resolve;
+      });
+      let inheritanceStarted!: () => void;
+      const inheritanceStartedPromise = new Promise<void>((resolve) => {
+        inheritanceStarted = resolve;
+      });
+      let newSessionCalls = 0;
+      const bridge = {
+        async newSession() {
+          newSessionCalls++;
+          return {
+            sessionId: `agent-child-${newSessionCalls}`,
+            configOptions: [],
+          };
+        },
+        async setConfigOption() {
+          inheritanceStarted();
+          await inheritanceReleased;
+          return [];
+        },
+        async loadSession() {
+          throw new Error("loadSession should not be called");
+        },
+      };
+
+      const create = sm.createTask(bridge, tmpDir, "a", "auto", {
+        parentId: "a",
+      });
+      await inheritanceStartedPromise;
+      const reset = sm.resetRootTask(bridge);
+      await assert.rejects(reset, { name: TaskBusyError.name });
+      assert.ok(store.getTaskIncludingDeleted("a"));
+      releaseInheritance();
+      const created = await create;
+      assert.equal(store.getTask(created.taskId)?.parent_id, "a");
+    });
+
+    it("creates a task after a concurrent Root reset, never during it", async () => {
+      store.ensureRootTask(tmpDir);
+      store.bindAgentSession("root", "agent-root");
+      sm.liveTasks.add("root");
+
+      let releaseRotation!: () => void;
+      const rotationReleased = new Promise<void>((resolve) => {
+        releaseRotation = resolve;
+      });
+      let resetStarted!: () => void;
+      const resetStartedPromise = new Promise<void>((resolve) => {
+        resetStarted = resolve;
+      });
+      let newSessionCalls = 0;
+      const bridge = {
+        async newSession() {
+          newSessionCalls++;
+          if (newSessionCalls === 1) {
+            resetStarted();
+            await rotationReleased;
+          }
+          return {
+            sessionId: `agent-${newSessionCalls}`,
+            configOptions: [],
+          };
+        },
+        async setConfigOption() {
+          return [];
+        },
+        async loadSession() {
+          throw new Error("loadSession should not be called");
+        },
+      };
+
+      const reset = sm.resetRootTask(bridge);
+      await resetStartedPromise;
+      const create = sm.createTask(bridge, tmpDir, undefined, "auto", {
+        parentId: "root",
+      });
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      assert.equal(
+        newSessionCalls,
+        1,
+        "creation must wait behind the exclusive Root reset lock",
+      );
+
+      releaseRotation();
+      await reset;
+      const created = await create;
+      assert.equal(store.getTask(created.taskId)?.parent_id, "root");
+      assert.ok(store.getTask(created.taskId));
     });
   });
 
@@ -1683,7 +1892,7 @@ describe("TaskManager", () => {
       assert.ok(!m2.has("/r/1.txt"));
     });
 
-    it("deleteTask invalidates label cache", () => {
+    it("deleteTask invalidates label cache", async () => {
       store.insertAttachment({
         id: "abc12345",
         taskId: "s1",
@@ -1694,7 +1903,7 @@ describe("TaskManager", () => {
         realpath: "/r/x.txt",
       });
       sm.getLabelMap("s1"); // populate cache
-      sm.deleteTask(undefined, "s1");
+      await sm.deleteTask(undefined, "s1");
       // Re-create task and request map — must NOT see stale entry.
       store.createTask("s1", "/x");
       const m = sm.getLabelMap("s1");

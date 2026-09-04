@@ -17,6 +17,9 @@ import type { AgentEvent, ConfigOption } from "./types.ts";
 import {
   interruptBashProc,
   InvalidTaskDirectoryError,
+  TaskBusyError,
+  TaskNotFoundError,
+  TaskTreeBusyError,
 } from "./task-manager.ts";
 import { randomUUID } from "node:crypto";
 import { createWriteStream } from "node:fs";
@@ -2262,7 +2265,7 @@ export function createRequestHandler(
             }
 
             const affectedStore = tasks
-              ? tasks.deleteTask(getBridge?.() ?? undefined, taskId)
+              ? await tasks.deleteTask(getBridge?.() ?? undefined, taskId)
               : store.deleteTask(taskId);
             for (const entry of affectedStore.affected) {
               sseManager.broadcast({
@@ -2279,7 +2282,13 @@ export function createRequestHandler(
               ...(clientOpId ? { clientOpId } : {}),
             });
           } catch (err) {
-            json(res, HTTP_STATUS.BAD_REQUEST, {
+            const status =
+              err instanceof TaskNotFoundError
+                ? HTTP_STATUS.NOT_FOUND
+                : err instanceof TaskBusyError
+                  ? HTTP_STATUS.CONFLICT
+                  : HTTP_STATUS.BAD_REQUEST;
+            json(res, status, {
               error: err instanceof Error ? err.message : String(err),
             });
           }
@@ -2375,8 +2384,13 @@ export function createRequestHandler(
           });
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
-          if (err instanceof InvalidTaskDirectoryError) {
+          if (
+            err instanceof InvalidTaskDirectoryError ||
+            err instanceof TaskNotFoundError
+          ) {
             json(res, HTTP_STATUS.BAD_REQUEST, { error: msg });
+          } else if (err instanceof TaskTreeBusyError) {
+            json(res, HTTP_STATUS.CONFLICT, { error: msg });
           } else {
             json(res, HTTP_STATUS.INTERNAL_SERVER_ERROR, { error: msg });
           }

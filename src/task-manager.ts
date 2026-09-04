@@ -27,6 +27,7 @@ import { TaskStateManager } from "./task-state.ts";
 import { buildLabelMap, type LabelMap } from "./attachment-labels.ts";
 import { abbreviateHomePath, expandHomePath } from "./home-path.ts";
 import { log } from "./log.ts";
+import { TaskTreeLock, type TaskTreeLockRelease } from "./task-tree-lock.ts";
 
 const slog = log.scope("task");
 
@@ -74,6 +75,27 @@ export class InvalidTaskDirectoryError extends Error {
   }
 }
 
+export class TaskNotFoundError extends Error {
+  constructor(taskId: string) {
+    super(`Task not found: ${taskId}`);
+    this.name = "TaskNotFoundError";
+  }
+}
+
+export class TaskBusyError extends Error {
+  constructor(taskId: string) {
+    super(`Cancel active work before modifying task ${taskId}`);
+    this.name = "TaskBusyError";
+  }
+}
+
+export class TaskTreeBusyError extends Error {
+  constructor(taskId: string) {
+    super(`Task tree is busy while modifying ${taskId}`);
+    this.name = "TaskTreeBusyError";
+  }
+}
+
 export interface ConsumeMessageResult {
   taskId: string;
   alreadyConsumed: boolean;
@@ -96,6 +118,8 @@ export class TaskManager {
   readonly compactingTasks = new Set<string>();
   /** Root reset barrier covering the asynchronous tree replacement. */
   readonly resettingTasks = new Set<string>();
+  /** Structural delete barrier covering a task subtree. */
+  readonly deletingTasks = new Set<string>();
   /** Barrier covering the asynchronous ACP replacement itself. */
   readonly rotatingTasks = new Set<string>();
   readonly pendingPromptSubmissions = new Map<string, number>();
@@ -108,6 +132,10 @@ export class TaskManager {
   readonly state = new TaskStateManager();
   /** Deduplicates concurrent resume calls for the same task. */
   private readonly pendingResumes = new Map<string, Promise<void>>();
+  /** Hierarchical lock for task-tree structure mutations. */
+  private readonly treeLock = new TaskTreeLock();
+  /** Completion barrier for a Root reset requested before a create arrives. */
+  private rootResetPromise: Promise<void> | null = null;
   private nextPromptNumber = 0;
   private nextPromptSubmissionNumber = 0;
   /** Deduplicates concurrent attempts to materialize one inbox message. */
@@ -236,6 +264,21 @@ export class TaskManager {
   }
 
   /**
+   * Empty-task GC scans all branches, so it gets a short Root-exclusive lock.
+   * It is best-effort: an active branch mutation wins and a later create will
+   * get another opportunity to run the cleanup.
+   */
+  private tryCleanupEmptyTasks(bridge: SessionBridge): void {
+    const release = this.treeLock.tryAcquire({ exclusive: [ROOT_TASK_ID] });
+    if (!release) return;
+    try {
+      this.cleanupEmptyTasks(bridge);
+    } finally {
+      release();
+    }
+  }
+
+  /**
    * Create the ACP task while exposing its freshly minted capability as an
    * active initializing task. The caller promotes it to live only after
    * local persistence succeeds.
@@ -266,8 +309,145 @@ export class TaskManager {
     );
   }
 
+  /**
+   * Lock the lineage needed to mutate a task subtree. The lock request is
+   * recomputed after acquisition so a concurrent reparent/delete cannot leave
+   * us holding a stale path.
+   */
+  private async waitForRootResetIfNeeded(taskId: string): Promise<void> {
+    while (this.resettingTasks.has(taskId)) {
+      const reset = this.rootResetPromise;
+      if (!reset) throw new TaskTreeBusyError(taskId);
+      await reset;
+    }
+  }
+
+  private async acquireTaskTreeMutationLock(
+    taskId: string,
+  ): Promise<TaskTreeLockRelease> {
+    for (;;) {
+      const lineage = this.store.getTaskLineage(taskId);
+      if (!lineage) throw new TaskNotFoundError(taskId);
+      const release = await this.treeLock.acquire({
+        shared: lineage.slice(0, -1),
+        exclusive: [lineage[lineage.length - 1]],
+      });
+      const current = this.store.getTaskLineage(taskId);
+      if (
+        current?.length === lineage.length &&
+        current.every((id, index) => id === lineage[index])
+      ) {
+        return release;
+      }
+      release();
+      if (!current) throw new TaskNotFoundError(taskId);
+    }
+  }
+
   /** Create a new task in both bridge and store, inheriting the source task's config. */
   async createTask(
+    bridge: SessionBridge,
+    cwd?: string,
+    inheritFromTaskId?: string,
+    source: string = "auto",
+    opts?: { silent?: boolean; parentId?: string | null },
+  ): Promise<{ taskId: string; configOptions: ConfigOption[] }> {
+    const parentId = this.resolveParentId(opts?.parentId);
+    if (parentId) {
+      await this.waitForRootResetIfNeeded(parentId);
+      const parent = this.store.getTaskIncludingDeleted(parentId);
+      if (parent?.deleted_at !== null) throw new TaskNotFoundError(parentId);
+    }
+    const result = await this.createTaskImpl(
+      bridge,
+      cwd,
+      inheritFromTaskId,
+      source,
+      { ...opts, parentId },
+    );
+    // Empty-task GC touches arbitrary branches, so run it as a short,
+    // best-effort Root-exclusive operation after the task mutation is done.
+    // If another branch is active, skip this pass and let a later create retry.
+    this.tryCleanupEmptyTasks(bridge);
+    return result;
+  }
+
+  private async persistCreatedTask(
+    taskId: string,
+    taskCwd: string,
+    source: string,
+    agentSessionId: string,
+    parentId: string | null,
+  ): Promise<void> {
+    for (;;) {
+      // Never await the Root reset while holding a lineage lock. A reset can
+      // be queued behind this request and waiting here would deadlock both.
+      if (parentId) await this.waitForRootResetIfNeeded(parentId);
+      const release = parentId
+        ? await this.acquireTaskTreeMutationLock(parentId)
+        : null;
+      try {
+        // The reset may have been requested after the wait but before lock
+        // acquisition. Drop the lock and wait outside it before retrying.
+        if (parentId && this.resettingTasks.has(parentId)) continue;
+        if (parentId) {
+          const parent = this.store.getTaskIncludingDeleted(parentId);
+          if (parent?.deleted_at !== null)
+            throw new TaskNotFoundError(parentId);
+        }
+        this.store.createTask(
+          taskId,
+          taskCwd,
+          source,
+          agentSessionId,
+          parentId,
+        );
+        return;
+      } finally {
+        release?.();
+      }
+    }
+  }
+
+  private async inheritTaskConfig(
+    bridge: SessionBridge,
+    taskId: string,
+    configOptions: ConfigOption[],
+    sourceTask: Pick<TaskRow, "model" | "reasoning_effort">,
+  ): Promise<ConfigOption[]> {
+    const thinkingOption = configOptions.find(
+      (option) =>
+        "options" in option &&
+        (option.id === "reasoning_effort" ||
+          option.id === "thought_level" ||
+          option.category === "thought_level"),
+    );
+    const inherited: Array<{ configId: string; value: string | null }> = [
+      { configId: "model", value: sourceTask.model },
+      {
+        configId: thinkingOption?.id ?? "reasoning_effort",
+        value: sourceTask.reasoning_effort,
+      },
+    ];
+    let updatedConfigOptions = configOptions;
+    for (const { configId, value } of inherited) {
+      if (!value) continue;
+      try {
+        const next = await bridge.setConfigOption(taskId, configId, value);
+        if (next.length > 0) {
+          updatedConfigOptions = next;
+          this.recordConfigOptions(taskId, next);
+        } else {
+          this.store.updateTaskConfig(taskId, configId, value);
+        }
+      } catch {
+        // Option may no longer be available; ignore
+      }
+    }
+    return updatedConfigOptions;
+  }
+
+  private async createTaskImpl(
     bridge: SessionBridge,
     cwd?: string,
     inheritFromTaskId?: string,
@@ -281,9 +461,6 @@ export class TaskManager {
     } catch {
       throw new InvalidTaskDirectoryError(taskCwd);
     }
-
-    // Clean up empty tasks (no events) older than the threshold
-    this.cleanupEmptyTasks(bridge);
 
     const sourceTask = inheritFromTaskId
       ? this.store.getTask(inheritFromTaskId)
@@ -302,13 +479,14 @@ export class TaskManager {
         this.buildNewTaskOptions(opts?.silent, mcpServers),
       );
     let configOptions = createdConfigOptions;
+    const parentId = opts?.parentId ?? null;
     try {
-      this.store.createTask(
+      await this.persistCreatedTask(
         taskId,
         taskCwd,
         source,
         agentSessionId,
-        this.resolveParentId(opts?.parentId),
+        parentId,
       );
     } catch (err) {
       slog.warn("ACP task created but local persistence failed", {
@@ -320,52 +498,29 @@ export class TaskManager {
       this.capabilities?.revokeByTask(taskId);
       throw err;
     }
-    this.liveTasks.add(taskId);
-    this.creatingTasks.delete(taskId);
-    this.recordConfigOptions(taskId, createdConfigOptions);
-    bridge.sessionMapped?.(agentSessionId);
+    try {
+      this.liveTasks.add(taskId);
+      this.recordConfigOptions(taskId, createdConfigOptions);
+      bridge.sessionMapped?.(agentSessionId);
 
-    // Inherit config options from source task
-    if (sourceTask) {
-      const thinkingOption = createdConfigOptions.find(
-        (option) =>
-          "options" in option &&
-          (option.id === "reasoning_effort" ||
-            option.id === "thought_level" ||
-            option.category === "thought_level"),
-      );
-      const inherited: Array<{ configId: string; value: string | null }> = [
-        { configId: "model", value: sourceTask.model },
-        {
-          configId: thinkingOption?.id ?? "reasoning_effort",
-          value: sourceTask.reasoning_effort,
-        },
-      ];
-      for (const { configId, value } of inherited) {
-        if (!value) continue;
-        try {
-          const updatedConfigOptions = await bridge.setConfigOption(
-            taskId,
-            configId,
-            value,
-          );
-          if (updatedConfigOptions.length > 0) {
-            configOptions = updatedConfigOptions;
-            this.recordConfigOptions(taskId, updatedConfigOptions);
-          } else {
-            this.store.updateTaskConfig(taskId, configId, value);
-          }
-        } catch {
-          // Option may no longer be available; ignore
-        }
+      // Inherit config options from source task
+      if (sourceTask) {
+        configOptions = await this.inheritTaskConfig(
+          bridge,
+          taskId,
+          configOptions,
+          sourceTask,
+        );
       }
-    }
 
-    const task = this.store.getTask(taskId);
-    return {
-      taskId: taskId,
-      configOptions: task ? this.applyStoredConfig(configOptions, task) : [],
-    };
+      const task = this.store.getTask(taskId);
+      return {
+        taskId: taskId,
+        configOptions: task ? this.applyStoredConfig(configOptions, task) : [],
+      };
+    } finally {
+      this.creatingTasks.delete(taskId);
+    }
   }
 
   /**
@@ -623,11 +778,11 @@ export class TaskManager {
     try {
       const result = this.store.consumeMessageTx(messageId, taskId);
       if (result.alreadyConsumed) {
-        this.deleteTask(bridge, taskId);
+        await this.deleteTask(bridge, taskId);
       }
       return result;
     } catch (err) {
-      this.deleteTask(bridge, taskId);
+      await this.deleteTask(bridge, taskId);
       if (err instanceof MessageNotFoundError) {
         const consumedTaskId = this.store.findConsumedMessageTask(messageId);
         return consumedTaskId
@@ -891,12 +1046,43 @@ export class TaskManager {
     if (this.store.hasActiveShare(ROOT_TASK_ID)) {
       throw new Error("Root task has an active share");
     }
+    // Mark the currently known tree before waiting for the lock. New tasks
+    // cannot be created while the exclusive Root request is queued, because
+    // every create request takes a shared lock on its ancestors.
     const protectedIds = [
       ROOT_TASK_ID,
       ...this.store.getDescendantTaskIds(ROOT_TASK_ID),
     ];
+    const busyBeforeReset = protectedIds.find(
+      (id) => this.getBusyKind(id) !== null,
+    );
+    if (busyBeforeReset) throw new TaskBusyError(busyBeforeReset);
+    const protectedSet = new Set(protectedIds);
+    let resolveReset!: () => void;
+    const resetCompletion = new Promise<void>((resolve) => {
+      resolveReset = resolve;
+    });
+    this.rootResetPromise = resetCompletion;
     for (const id of protectedIds) this.resettingTasks.add(id);
+    let release: TaskTreeLockRelease | null = null;
     try {
+      release = await this.acquireTaskTreeMutationLock(ROOT_TASK_ID);
+      // A branch mutation that was already holding its lock may have
+      // persisted a new descendant while Root was waiting. Re-snapshot after
+      // acquiring X(Root), reject any work that began on such a task, and
+      // only then extend the reset barrier before the first await.
+      const currentIds = [
+        ROOT_TASK_ID,
+        ...this.store.getDescendantTaskIds(ROOT_TASK_ID),
+      ];
+      const newIds = currentIds.filter((id) => !protectedSet.has(id));
+      const busyNewTask = newIds.find((id) => this.getBusyKind(id) !== null);
+      if (busyNewTask) throw new TaskBusyError(busyNewTask);
+      for (const id of newIds) {
+        protectedSet.add(id);
+        protectedIds.push(id);
+        this.resettingTasks.add(id);
+      }
       await this.clearTask(bridge, ROOT_TASK_ID);
       const result = this.store.resetRootTask();
       for (const entry of result.affected) {
@@ -912,6 +1098,11 @@ export class TaskManager {
       return result;
     } finally {
       for (const id of protectedIds) this.resettingTasks.delete(id);
+      release?.();
+      if (this.rootResetPromise === resetCompletion) {
+        this.rootResetPromise = null;
+        resolveReset();
+      }
     }
   }
 
@@ -921,17 +1112,35 @@ export class TaskManager {
    *  retired explicitly and hard-deleted image directories are removed.
    *  Returns the store's affected list so callers can broadcast
    *  `task_deleted` for each removed task. */
-  deleteTask(
+  async deleteTask(
     bridge: SessionBridge | undefined,
     taskId: string,
-  ): { mode: "hard" | "soft"; affected: TaskDelete[] } {
-    const result = this.store.deleteTask(taskId);
-    for (const entry of result.affected) {
-      if (entry.agentSessionId)
-        void bridge?.retireExecution?.(entry.agentSessionId);
-      this.releaseTaskRuntime(entry.id, entry.mode);
+  ): Promise<{ mode: "hard" | "soft"; affected: TaskDelete[] }> {
+    const release = await this.acquireTaskTreeMutationLock(taskId);
+    const task = this.store.getTask(taskId);
+    if (!task) {
+      release();
+      throw new TaskNotFoundError(taskId);
     }
-    return result;
+    const affectedIds = [taskId, ...this.store.getDescendantTaskIds(taskId)];
+    const busyTask = affectedIds.find((id) => this.getBusyKind(id) !== null);
+    if (busyTask) {
+      release();
+      throw new TaskBusyError(busyTask);
+    }
+    for (const id of affectedIds) this.deletingTasks.add(id);
+    try {
+      const result = this.store.deleteTask(taskId);
+      for (const entry of result.affected) {
+        if (entry.agentSessionId)
+          void bridge?.retireExecution?.(entry.agentSessionId);
+        this.releaseTaskRuntime(entry.id, entry.mode);
+      }
+      return result;
+    } finally {
+      for (const id of affectedIds) this.deletingTasks.delete(id);
+      release();
+    }
   }
 
   /** Drop in-memory state owned by a task that no longer exists. */
@@ -1021,10 +1230,12 @@ export class TaskManager {
   }
 
   getBusyKind(taskId: string): "agent" | "bash" | null {
+    if (this.creatingTasks.has(taskId)) return "agent";
     if (this.pendingPromptSubmissions.has(taskId)) return "agent";
     if (this.activePrompts.has(taskId)) return "agent";
     if (this.compactingTasks.has(taskId)) return "agent";
     if (this.resettingTasks.has(taskId)) return "agent";
+    if (this.deletingTasks.has(taskId)) return "agent";
     if (this.rotatingTasks.has(taskId)) return "agent";
     if (this.runningBashProcs.has(taskId)) return "bash";
     return null;

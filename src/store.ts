@@ -640,6 +640,26 @@ export class Store {
       | undefined;
   }
 
+  /**
+   * Return the current lineage from Root (or the highest surviving ancestor)
+   * to a task. Includes soft-deleted ancestors so callers can detect a
+   * broken/hidden parent chain and revalidate it after acquiring a lock.
+   * Returns undefined for a missing row or a cycle.
+   */
+  getTaskLineage(id: string): string[] | undefined {
+    const reversed: string[] = [];
+    const seen = new Set<string>();
+    let current: TaskRow | undefined = this.getTaskIncludingDeleted(id);
+    while (current) {
+      if (seen.has(current.id)) return undefined;
+      seen.add(current.id);
+      reversed.push(current.id);
+      if (current.parent_id === null) return reversed.reverse();
+      current = this.getTaskIncludingDeleted(current.parent_id);
+    }
+    return undefined;
+  }
+
   /** Re-parent surviving children of a hard-deleted task under Root so the
    *  FK on parent_id stays valid. Root is guaranteed to exist post-boot
    *  (ensureRootTask runs before listen). No-op when there are no children. */
