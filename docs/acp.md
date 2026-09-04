@@ -25,9 +25,9 @@ ACP allows the client to inject extra capabilities into the agent on top of its 
 | ----------------------------------- | ---------------------- | ---------------------------------------------------------------------------------------------------------------------- |
 | `fs` (readTextFile / writeTextFile) | ✅ Implemented         | Agent can read/write files through the client                                                                          |
 | `terminal`                          | Declared but not wired | `!<command>` runs via the app's own local bash bridge, not ACP `terminal/*`                                            |
-| `mcpServers`                        | `[]` (no extras)       | Agent's own MCP servers (e.g. GitHub MCP) work normally; passing `[]` means the client isn't providing additional ones |
+| `mcpServers`                       | `webagent` (Task Server) | Client injects the `webagent` Task control-plane server (Streamable HTTP at `/mcp`, per-task capability Bearer token). P0b exposes a temporary `echo`; the five `task_*` tools land in S2 after the S3 collaboration mechanisms are validated |
 
-Passing `mcpServers: []` does **not** disable MCP — the agent loads its own configured MCP servers independently. The parameter is for the client to provide _additional_ servers the agent wouldn't have on its own.
+`webagent` is additive: the agent still loads its own configured MCP servers independently, and a backend that cannot consume client-provided MCP keeps its native MCP behavior (Task collaboration simply stays disabled for it).
 
 ## Current Limits
 

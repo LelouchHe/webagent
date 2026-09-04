@@ -227,7 +227,7 @@ selection, etc.). Single-user model = single owner scope.
 | `shares_one_active_preview` | `shares` | `(task_id) WHERE shared_at IS NULL` | At most one preview per task (partial UNIQUE) |
 | `idx_attachments_task` | `attachments` | `(task_id)` | Per-task listing + GC sweep |
 | `idx_agent_sessions_task` | `agent_sessions` | `(task_id) WHERE task_id IS NOT NULL` | One current ACP binding per visible WebAgent Task (partial UNIQUE) |
-| `idx_tasks_parent` | `tasks` | `(parent_task_id)` | Root/child Task relationship and future family queries |
+| `idx_tasks_parent` | `tasks` | `(parent_id)` | Root/child Task relationship and future family queries |
 
 ---
 
