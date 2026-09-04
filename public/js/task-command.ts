@@ -12,6 +12,13 @@ import {
   TaskPathParseError,
   type TaskPath,
 } from "../../src/task-path.ts";
+import {
+  displayBasename,
+  displayDirname,
+  joinDisplay,
+  resolveDisplayTarget,
+  taskDisplayPath,
+} from "./path-display.ts";
 import { state } from "./state.ts";
 import { switchToTask } from "./task-navigation.ts";
 import { isTaskCommand } from "./input-command.ts";
@@ -28,44 +35,25 @@ export { isTaskCommand };
 
 // --- path helpers (browser-safe, server paths are `/`-separated) ---
 
-function splitPath(p: string): string[] {
-  return p.split("/").filter((s) => s.length > 0);
-}
-
-function joinPath(parts: string[]): string {
-  return parts.join("/");
-}
-
+/**
+ * Resolve one `+` target against the current task cwd via the shared display
+ * grammar: `~`-form targets pass through as display-absolute (the backend
+ * expands them), relative targets resolve against the base.
+ */
 function resolveFilesystemPath(base: string, target: string): string {
-  const absolute = target.startsWith("/");
-  const baseParts = absolute ? [] : splitPath(base);
-  const targetParts = splitPath(target);
-  const parts = [...baseParts];
-  for (const seg of targetParts) {
-    if (seg === "..") {
-      parts.pop();
-    } else if (seg !== ".") {
-      parts.push(seg);
-    }
-  }
-  return (absolute ? "/" : "") + joinPath(parts);
+  return resolveDisplayTarget(base, target);
 }
 
 function dirname(p: string): string {
-  const parts = splitPath(p);
-  parts.pop();
-  return "/" + joinPath(parts);
+  return displayDirname(p);
 }
 
 function basename(p: string): string {
-  const parts = splitPath(p);
-  return parts[parts.length - 1] ?? "";
+  return displayBasename(p);
 }
 
 function parentAndTail(target: string): { parent: string; tail: string } {
-  const parts = splitPath(target);
-  const tail = parts.pop() ?? "";
-  return { parent: joinPath(parts), tail };
+  return { parent: displayDirname(target), tail: displayBasename(target) };
 }
 
 function quoteShellWord(word: string): string {
@@ -81,6 +69,7 @@ interface TaskNode {
   id: string;
   title: string | null;
   cwd: string;
+  cwdDisplay?: string;
   parentId: string | null;
   children: TaskNode[];
 }
@@ -92,6 +81,7 @@ function buildTaskTree(tasks: TaskSummary[]): Map<string, TaskNode> {
       id: t.id,
       title: t.title,
       cwd: t.cwd,
+      cwdDisplay: t.cwdDisplay,
       parentId: t.parent_id,
       children: [],
     });
@@ -286,8 +276,14 @@ async function buildCreateCandidates(parsed: {
   const base = state.taskCwd ?? "";
   const target = parsed.target;
   const resolved = resolveFilesystemPath(base, target);
+  // Display form: the same target resolved against the abbreviated cwd base
+  // (server `cwdDisplay`), so new children render as `~/…` even though the
+  // target directory does not exist yet. `~`-typed targets pass through.
+  const displayBase = state.taskCwdDisplay ?? base;
+  const displayResolved = resolveDisplayTarget(displayBase, target);
   const { parent, tail } = parentAndTail(resolved);
   const dirToList = tail ? resolved : dirname(resolved);
+  const dirDisplay = tail ? displayResolved : dirname(displayResolved);
   const titlePrefix = tail || basename(resolved);
 
   let entries: api.FileListEntry[] = [];
@@ -308,10 +304,10 @@ async function buildCreateCandidates(parsed: {
 
   const candidates: Candidate[] = [];
 
-  // Freeform row for the literal typed path.
+  // Freeform row for the literal typed path, rendered in display form.
   candidates.push({
     spec: {
-      primary: `create at '${resolved}'`,
+      primary: `create at '${dirDisplay}'`,
       fill: `${parsed.marker}${quoteShellWord(target)}${parsed.remainder}`,
       onSelect: () => executeCreateTask(target, parsed.remainder),
     },
@@ -325,14 +321,13 @@ async function buildCreateCandidates(parsed: {
       : parent
         ? parent + "/" + entry.name
         : "/" + entry.name;
-    const candidatePath = dirToList + "/" + entry.name;
     candidates.push(
       makeCandidate({
         marker: parsed.marker,
         targetPath: quoteShellWord(candidateTarget),
         remainder: parsed.remainder,
         primary: entry.name,
-        path: candidatePath,
+        path: joinDisplay(dirDisplay, entry.name),
         pathSecondary: "directory",
         onSelect: () => executeCreateTask(candidateTarget, parsed.remainder),
       }),
@@ -380,7 +375,7 @@ async function buildMessageCandidates(parsed: {
         targetPath: reconstructTaskPath(parsed.path, node),
         remainder: parsed.remainder,
         primary: node.title ?? node.id,
-        path: node.cwd,
+        path: taskDisplayPath(node),
         pathSecondary: relationTo(current, node),
         onSelect: () => executeMessageToTask(node.id, parsed.remainder),
       }),

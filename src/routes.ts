@@ -699,7 +699,12 @@ export function createRequestHandler(
               pending_compact_summary: _pendingCompactSummary,
               ...publicTask
             } = task;
-            return publicTask;
+            // Home-abbreviated display form for menus and lists; the raw cwd
+            // stays the canonical round-trip value.
+            return {
+              ...publicTask,
+              cwdDisplay: abbreviateHomePath(task.cwd),
+            };
           });
         res.end(JSON.stringify(publicTasks));
         return;

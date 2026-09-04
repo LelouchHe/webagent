@@ -76,6 +76,8 @@ export type RawInput =
 export interface TaskSummary {
   id: string;
   cwd: string;
+  /** Home-abbreviated display form (e.g. `~/x`), server-abbreviated at egress. */
+  cwdDisplay?: string;
   title: string | null;
   model: string | null;
   mode: string | null;
