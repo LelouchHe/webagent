@@ -81,19 +81,6 @@ describe("TaskManager", () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  describe("hydrate", () => {
-    it("populates taskHasTitle from DB", () => {
-      store.createTask("s1", "/x");
-      store.updateTaskTitle("s1", "My Title");
-      store.createTask("s2", "/y"); // no title
-
-      sm.hydrate();
-
-      assert.ok(sm.taskHasTitle.has("s1"));
-      assert.ok(!sm.taskHasTitle.has("s2"));
-    });
-  });
-
   describe("MCP capability lifecycle", () => {
     it("allows MCP auto-connect while a new ACP task is being created", async () => {
       const capabilities = new CapabilityStore();
@@ -240,7 +227,6 @@ describe("TaskManager", () => {
     it("cleans up all state", async () => {
       store.createTask("s1", "/x");
       sm.liveTasks.add("s1");
-      sm.taskHasTitle.add("s1");
       sm.assistantBuffers.set("s1", "partial");
       sm.thinkingBuffers.set("s1", "hmm");
       sm.updateAgentCommands("s1", [
@@ -250,7 +236,6 @@ describe("TaskManager", () => {
       await sm.deleteTask(undefined, "s1");
 
       assert.ok(!sm.liveTasks.has("s1"));
-      assert.ok(!sm.taskHasTitle.has("s1"));
       assert.ok(!sm.assistantBuffers.has("s1"));
       assert.ok(!sm.thinkingBuffers.has("s1"));
       const commands = sm.getAgentCommands("s1");

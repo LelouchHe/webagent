@@ -10,7 +10,6 @@ import type { SseManager } from "./sse-manager.ts";
 import type { AgentBridge } from "./bridge.ts";
 import type { Config } from "./config.ts";
 import type { PushService } from "./push-service.ts";
-import type { TitleService } from "./title-service.ts";
 import type { ClientRegistry } from "./client-registry.ts";
 import { errorMessage, MessageIngressSchema } from "./types.ts";
 import type { AgentEvent, ConfigOption } from "./types.ts";
@@ -147,7 +146,6 @@ export interface RequestHandlerDeps {
   tasks?: TaskManager;
   sseManager: SseManager;
   clientRegistry?: ClientRegistry;
-  titleService?: TitleService;
   getBridge?: () =>
     | (Pick<
         AgentBridge,
@@ -596,7 +594,7 @@ async function handleAttachmentUpload(
 export function createRequestHandler(
   deps: RequestHandlerDeps,
 ): (req: IncomingMessage, res: ServerResponse) => Promise<void> {
-  const { store, tasks, getBridge, sseManager, titleService } = deps;
+  const { store, tasks, getBridge, sseManager } = deps;
   let bootstrapTaskPromise: Promise<{
     id: string;
     cwd: string;
@@ -898,7 +896,7 @@ export function createRequestHandler(
           return;
         }
         try {
-          await bridge.restart(tasks!, titleService!);
+          await bridge.restart(tasks!);
           json(res, HTTP_STATUS.OK, { ok: true });
         } catch (err: unknown) {
           json(res, HTTP_STATUS.INTERNAL_SERVER_ERROR, {
@@ -1577,27 +1575,6 @@ export function createRequestHandler(
         } as AgentEvent;
         sseManager.broadcast(userMsgEvent);
 
-        // Generate title (fire-and-forget)
-        if (
-          titleService &&
-          tasks && // eslint-disable-line @typescript-eslint/no-unnecessary-condition -- optional dep
-          !tasks.taskHasTitle.has(taskId)
-        ) {
-          titleService.generate(
-            bridge as AgentBridge,
-            body.text,
-            taskId,
-            (title) => {
-              const titleEvent = {
-                type: "task_title_updated",
-                taskId,
-                title,
-              } as AgentEvent;
-              sseManager.broadcast(titleEvent);
-            },
-          );
-        }
-
         // Fire prompt asynchronously (don't await — response is 202)
         tasks.releasePromptSubmission(taskId, promptSubmissionId, false);
         tasks.activePrompts.add(taskId);
@@ -1885,10 +1862,6 @@ export function createRequestHandler(
           return;
         }
         store.updateTaskTitle(taskId, body.value);
-        if (tasks) tasks.taskHasTitle.add(taskId);
-        const bridge = getBridge?.();
-        if (titleService && bridge)
-          void titleService.cancel(taskId, bridge as AgentBridge);
         const titleEvent = {
           type: "task_title_updated",
           taskId,
@@ -3182,22 +3155,6 @@ export function createRequestHandler(
         // Fire-and-forget: send the prompt asynchronously, tracking busy state
         tasks.activePrompts.add(taskId);
         tasks.syncBusy(taskId);
-        // Generate title (fire-and-forget)
-        if (titleService && !tasks.taskHasTitle.has(taskId)) {
-          titleService.generate(
-            bridge as AgentBridge,
-            text,
-            taskId,
-            (title) => {
-              const titleEvent = {
-                type: "task_title_updated",
-                taskId,
-                title,
-              } as AgentEvent;
-              sseManager.broadcast(titleEvent);
-            },
-          );
-        }
         const betaPromptId =
           tasks.state.getState(taskId).runtime.busy?.promptId ?? undefined;
         bridge

@@ -8,7 +8,6 @@ import { AgentBridge } from "./bridge.ts";
 import { agentKeyFromCommand } from "./agent-key.ts";
 import { Store } from "./store.ts";
 import { TaskManager } from "./task-manager.ts";
-import { TitleService } from "./title-service.ts";
 import { CapabilityStore } from "./mcp/capability.ts";
 import { createMcpEndpoint } from "./mcp/server.ts";
 import { createRequestHandler } from "./routes.ts";
@@ -114,12 +113,6 @@ const tasks = new TaskManager(
   capabilities,
   mcpBaseUrl,
 );
-const titleService = new TitleService(
-  store,
-  tasks,
-  config.default_cwd,
-  config.title.models,
-);
 const sseManager = new SseManager();
 const clientRegistry = new ClientRegistry();
 const pushService = new PushService(
@@ -174,7 +167,6 @@ const requestHandler = createRequestHandler({
   tasks,
   sseManager,
   clientRegistry,
-  titleService,
   getBridge: () => bridge,
   publicDir: PUBLIC_DIR,
   dataDir: config.data_dir,

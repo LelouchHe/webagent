@@ -113,7 +113,6 @@ export class TaskManager {
   /** Tasks with a minted MCP capability awaiting ACP task/new. */
   readonly creatingTasks = new Set<string>();
   readonly restoringTasks = new Set<string>();
-  readonly taskHasTitle = new Set<string>();
   readonly assistantBuffers = new Map<string, string>();
   readonly thinkingBuffers = new Map<string, string>();
   readonly activePrompts = new Set<string>();
@@ -242,11 +241,10 @@ export class TaskManager {
     return options;
   }
 
-  /** Populate taskHasTitle from existing DB tasks on startup. */
   hydrate(): void {
-    for (const s of this.store.listTasks()) {
-      if (s.title) this.taskHasTitle.add(s.id);
-    }
+    // No per-task title tracking needed after automatic title-service
+    // removal; titles persist in the store and are broadcast via
+    // task_title_updated on manual rename.
   }
 
   /**
@@ -904,7 +902,6 @@ export class TaskManager {
       const mcpServers = this.buildMcpServers(taskId);
       await bridge.loadSession(taskId, task.cwd, mcpServers);
       this.liveTasks.add(taskId);
-      if (task.title) this.taskHasTitle.add(taskId);
       // Piggyback a cache-warming setConfigOption on the user's own resume
       // when the global cache is empty (typical after bridge.restart). Uses
       // the task's own stored value — idempotent, no side effect. Failure
@@ -1226,7 +1223,6 @@ export class TaskManager {
   private releaseTaskRuntime(id: string, mode: "hard" | "soft"): void {
     this.capabilities?.revokeByTask(id);
     this.liveTasks.delete(id);
-    this.taskHasTitle.delete(id);
     this.assistantBuffers.delete(id);
     this.thinkingBuffers.delete(id);
     this.activePrompts.delete(id);
