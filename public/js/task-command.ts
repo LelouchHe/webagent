@@ -357,12 +357,12 @@ async function buildCreateCandidates(parsed: {
   const candidates: Candidate[] = [];
 
   // Freeform row for the literal typed input, rendered in display form.
-  // A name-style target (no separator) becomes the child title; a path-style
-  // target keeps the last segment as the title.
-  const freeformDisplay =
-    target.includes("/") || target === "~"
-      ? `create at '${displayResolved}'`
-      : `create '${target}' at '${displayResolved}'`;
+  // The title is always the segment after the last separator (the child's
+  // own name) and the path is the directory it is created under — the
+  // title never repeats inside the path.
+  const freeformDisplay = tail
+    ? `create '${tail}' at '${dirDisplay}'`
+    : `create at '${dirDisplay}'`;
   candidates.push({
     spec: {
       primary: freeformDisplay,

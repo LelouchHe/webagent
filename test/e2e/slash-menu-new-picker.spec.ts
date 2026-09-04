@@ -66,8 +66,20 @@ test("+ name mode previews create '<title>' at the display path", async ({
   await expect(menu).toContainText(`create '${unique}' at '~/`);
   // Exactly one `~` marker: no doubled home prefix, no native path.
   await expect(menu).toContainText(/at '~\/(?!~)/);
-  await expect(menu).toContainText(new RegExp(`create '${unique}`));
   await expect(menu).not.toContainText("/Users/");
+  // The title lives only in the quoted slot, never appended to the path.
+  await expect(menu).not.toContainText(`/${unique}'`);
+});
+
+test("+ path mode splits the tail as the title at the parent path", async ({
+  page,
+}) => {
+  await gotoConnected(page);
+
+  await page.locator("#input").fill("+public/e2e-child");
+  const menu = page.locator("#slash-menu.active");
+  await expect(menu).toContainText("create 'e2e-child' at '~/");
+  await expect(menu).not.toContainText("/e2e-child'");
 });
 
 test("+ completes directory prefixes from the parent listing", async ({
