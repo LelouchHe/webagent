@@ -118,6 +118,8 @@ export function createTask(
     cwd?: string;
     inheritFromTaskId?: string | null;
     parentId?: string | null;
+    title?: string;
+    brief?: string;
   },
   clientOpId?: string,
 ): Promise<Record<string, unknown>> {
@@ -125,6 +127,8 @@ export function createTask(
   if (opts?.cwd) body.cwd = opts.cwd;
   if (opts?.inheritFromTaskId) body.inheritFromTaskId = opts.inheritFromTaskId;
   if (opts?.parentId) body.parentId = opts.parentId;
+  if (opts?.title !== undefined) body.title = opts.title;
+  if (opts?.brief !== undefined) body.brief = opts.brief;
   return post("/api/v1/tasks", body, clientOpId);
 }
 
@@ -173,6 +177,23 @@ export async function deleteTask(
   return result
     ? { ...result, clientOpId: result.clientOpId ?? clientOpId }
     : result;
+}
+
+export function sendCollaborationMessage(
+  sourceTaskId: string,
+  targetTaskId: string,
+  body: string,
+  clientOpId?: string,
+): Promise<{
+  messageId: string;
+  deliveryId: string;
+  status: "queued" | "delivered";
+}> {
+  return post(
+    `/api/v1/tasks/${encodeURIComponent(sourceTaskId)}/messages`,
+    { targetTaskId, body },
+    clientOpId,
+  );
 }
 
 export function listTasks(): Promise<TaskSummary[]> {
