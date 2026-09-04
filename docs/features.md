@@ -51,7 +51,7 @@
 
 - Auto-resumes last task on page open, no manual switching needed
 - After server restart, restores task context via ACP `loadTask` so conversations can continue
-- Auto-generated titles (async, using a fast model)
+- Task titles: explicitly set via `+<cwd>/<title> <brief>` or `/rename`; an unnamed task falls back to its stable id
 - Task history persisted in SQLite, survives restarts
 - `/switch` lists all tasks (git-branch style, `*` marks current in green)
 - Switching tasks replays full message history

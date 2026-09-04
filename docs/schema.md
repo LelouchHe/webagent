@@ -54,7 +54,7 @@ reserved Root Task has id `root` and no parent.
 |---|---|---|
 | `id` | TEXT PRIMARY KEY | Stable WebAgent UUID exposed in URLs and APIs |
 | `cwd` | TEXT NOT NULL | Working directory passed to the agent |
-| `title` | TEXT | Current display title; S3.0 migration normalizes existing values and later command handling makes it user/parent supplied |
+| `title` | TEXT | Display/name title; defaults to the stable task id when creation supplies none. User/parent sets it via `+… ` or `/rename` |
 | `brief` | TEXT NOT NULL DEFAULT `''` | Initial child-creation brief retained as history; clear does not replay it |
 | `workflow_status` | TEXT NOT NULL DEFAULT `'idle'` | `running`, `idle`, `blocked`, or `done` |
 | `created_at` | TEXT NOT NULL DEFAULT now | ISO-ish `%Y-%m-%d %H:%M:%f` |
@@ -207,7 +207,7 @@ in `store.ts`).
 
 ### `recent_paths`
 
-LRU of working directories shown in the `/new` menu.
+LRU of working directories used by `+` creation and `/clear` path pickers.
 
 | Column | Type | Notes |
 |---|---|---|
@@ -283,7 +283,7 @@ selection, etc.). Single-user model = single owner scope.
 | `idx_messages_target_created` | `messages` | `(direct_target_task_id, created_at)` | Target-side coordination history |
 | `idx_message_projections_task_created` | `message_projections` | `(task_id, created_at)` | Task timeline collaboration records |
 | `idx_deliveries_recipient_status_queued` | `deliveries` | `(recipient_task_id, status, queued_at)` | FIFO queue drain |
-| `idx_tasks_parent_title_live` | `tasks` | `(parent_id, title) WHERE deleted_at IS NULL AND title IS NOT NULL` | Unique live sibling title |
+| `idx_tasks_parent_title_live` | `tasks` | `(parent_id, title) WHERE deleted_at IS NULL AND title IS NOT NULL` | Unique live sibling title (defaults to task id, so always populated) |
 | `idx_shares_task` | `shares` | `(task_id, created_at DESC)` | Owner share-list view |
 | `shares_one_active_preview` | `shares` | `(task_id) WHERE shared_at IS NULL` | At most one preview per task (partial UNIQUE) |
 | `idx_attachments_task` | `attachments` | `(task_id)` | Per-task listing + GC sweep |

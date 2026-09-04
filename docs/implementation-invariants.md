@@ -10,9 +10,9 @@ For build, configuration, testing, and publishing commands, use
 ## Architecture Notes
 
 - **Single bridge**: One bridge instance per server, multiple tasks multiplexed over it.
-- **Agent reload**: `bridge.restart()` kills and re-spawns the agent subprocess without restarting the server. Cancels active prompts, flushes buffers, cleans up state, invalidates title task. Tasks restore lazily via `ensureResumed()`. Triggered by `/reload` slash command or `POST /api/v1/bridge/reload`. Retries start 3× with exponential backoff.
+- **Agent reload**: `bridge.restart()` kills and re-spawns the agent subprocess without restarting the server. Cancels active prompts, flushes buffers, cleans up state. Tasks restore lazily via `ensureResumed()`. Triggered by `/reload` slash command or `POST /api/v1/bridge/reload`. Retries start 3× with exponential backoff.
 - **Task restore**: `bridge.loadTask()` restores ACP context after server restart. During restore, `restoringTasks` Set suppresses duplicate event storage/broadcast.
-- **On-demand tasks**: No pre-warming. Tasks created on `/new`, auto-resumed on page open.
+- **On-demand tasks**: No pre-warming. Tasks created via `+` / autocomplete, auto-resumed on page open.
 - **Model inheritance**: A newly created task inherits the current task's saved model when available; restored tasks keep their own persisted model. Mode is NOT inherited — new tasks always start in agent mode.
 - **Auto-resume**: Frontend auto-resumes last active task on page open (no hash → fetch `/api/v1/tasks` → resume most recent).
 - **Event aggregation**: `message_chunk` / `thought_chunk` are buffered in memory, flushed to DB as full `assistant_message` / `thinking` on boundaries (tool_call, plan, prompt_done).
@@ -87,7 +87,7 @@ ACP `clientCapabilities` (`fs`, `terminal`) and `mcpServers` are **opt-in capabi
 - **Narrow event mapping**: The UI/store layer only maps a subset of ACP updates today: assistant text, thinking text, tool calls, tool call updates, and plans.
 - **Task cancel, not host-task cancel**: ACP `cancel` only stops the current task prompt/turn. In this repo we extend that to the task's own local bash/permission/title work, but WebAgent still cannot cancel host-level tasks started outside the server's runtime (for example external Copilot CLI tool invocations or subprocesses it owns).
 - **Browser UI, not full CLI parity**: Direct CLI surfaces such as `/plan`, `/fleet`, `/mcp`, `/agent`, `/skills` are not mirrored as first-class WebAgent controls. The app only renders the ACP events it receives. Autopilot mode is supported via server-side auto-approval of permissions.
-- **Silent internal task**: Title generation uses a dedicated silent ACP task and intentionally suppresses normal event emission for that task.
+- **Silent internal tasks**: ACP-internal tasks (no WebAgent task row) suppress normal event emission for that agent binding.
 - **Agent-dependent model switching**: Model switching depends on agent support and currently goes through the SDK's unstable task-model API.
 
 - **No context visibility**: ACP does not expose context window usage, token counts, or remaining capacity. The agent's context state is a black box — no way to query how full the context is.
