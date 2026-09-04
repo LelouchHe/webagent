@@ -4,7 +4,7 @@ import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import Database from "better-sqlite3";
-import { migrateS3Database } from "../scripts/migrate-s3-0.ts";
+import { migrateS3Database } from "../src/migrate-s3-0.ts";
 import { Store } from "../src/store.ts";
 
 describe("migrate-s3-0", () => {
@@ -16,12 +16,8 @@ describe("migrate-s3-0", () => {
     }
   });
 
-  it("backs up before renaming inbox messages and normalizing task data", async () => {
-    const dataDir = mkdtempSync(join(tmpdir(), "webagent-s3-migration-"));
-    dirs.push(dataDir);
-    const dbPath = join(dataDir, "webagent.db");
-    const backupPath = join(dataDir, "webagent.pre-s3-0.db");
-    const db = new Database(dbPath);
+  function createS2Fixture(dataDir: string): void {
+    const db = new Database(join(dataDir, "webagent.db"));
     db.exec(`
       CREATE TABLE tasks (
         id TEXT PRIMARY KEY,
@@ -80,9 +76,10 @@ describe("migrate-s3-0", () => {
        VALUES (?, ?, ?, ?, ?, ?)`,
     ).run("inbox-1", "external", "user", "notice", "preserve me", 100);
     db.close();
+  }
 
-    const result = await migrateS3Database({ dataDir, backupPath });
-
+  function assertMigratedState(dataDir: string): void {
+    const backupPath = join(dataDir, "webagent.pre-s3-0.db");
     assert.equal(existsSync(backupPath), true);
     const backup = new Database(backupPath, { readonly: true });
     assert.equal(
@@ -95,7 +92,9 @@ describe("migrate-s3-0", () => {
     );
     backup.close();
 
-    const migrated = new Database(dbPath, { readonly: true });
+    const migrated = new Database(join(dataDir, "webagent.db"), {
+      readonly: true,
+    });
     assert.equal(
       (
         migrated
@@ -148,9 +147,57 @@ describe("migrate-s3-0", () => {
       null,
     );
     migrated.close();
+  }
+
+  it("backs up before renaming inbox messages and normalizing task data", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "webagent-s3-migration-"));
+    dirs.push(dataDir);
+    const backupPath = join(dataDir, "webagent.pre-s3-0.db");
+    createS2Fixture(dataDir);
+
+    const result = await migrateS3Database({
+      dataDir,
+      backupPath,
+    });
+
+    assertMigratedState(dataDir);
     assert.deepEqual(result.unboundAgentSessionIds, ["old-title-session"]);
 
     const store = new Store(dataDir, "test-agent");
     store.close();
+  });
+
+  it("Store boot migrates an S2 database in place without a manual step", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "webagent-s3-migration-"));
+    dirs.push(dataDir);
+    createS2Fixture(dataDir);
+
+    // No manual migration call: the constructor detects the S2 schema,
+    // backs it up, and transforms it before schema bootstrap.
+    const store = new Store(dataDir, "test-agent");
+    store.close();
+
+    assertMigratedState(dataDir);
+
+    // The collaboration schema must be live afterwards: writing a new
+    // collaboration message through the migrated store succeeds.
+    const reopened = new Store(dataDir, "test-agent");
+    try {
+      reopened.createCollaborationMessage({
+        id: "m-boot",
+        deliveryId: "d-boot",
+        sourceTaskId: "root",
+        directTargetTaskId: "child-a",
+        sourceActor: "user",
+        body: "协作消息",
+        createdAt: 200,
+      });
+      assert.equal(
+        reopened.getCollaborationDelivery("d-boot")?.status,
+        "queued",
+      );
+    } finally {
+      reopened.close();
+    }
   });
 });
