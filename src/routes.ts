@@ -1241,7 +1241,7 @@ export function createRequestHandler(
         }
         const messageId = randomUUID();
         const deliveryId = randomUUID();
-        store.createCollaborationMessage({
+        const created = store.createCollaborationMessage({
           id: messageId,
           deliveryId,
           sourceTaskId,
@@ -1249,6 +1249,19 @@ export function createRequestHandler(
           sourceActor: "user",
           body: body.body,
         });
+        for (const projection of store.listCollaborationProjections(
+          messageId,
+        )) {
+          sseManager.broadcast({
+            type: "collaboration_message",
+            taskId: projection.task_id,
+            messageId,
+            sourceTaskId,
+            targetTaskId: targetTask.id,
+            role: projection.role,
+            body: created.message.body,
+          });
+        }
         const result = {
           messageId,
           deliveryId,

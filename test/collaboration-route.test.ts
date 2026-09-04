@@ -46,12 +46,14 @@ describe("S3 collaboration write routes", () => {
   let server: http.Server;
   let tmpDir: string;
   let port: number;
+  const broadcasts: Array<{ type: string; taskId?: string }> = [];
 
   beforeEach(async () => {
     tmpDir = mkdtempSync(join(tmpdir(), "webagent-collaboration-route-"));
     const publicDir = join(tmpDir, "public");
     mkdirSync(publicDir);
     writeFileSync(join(publicDir, "index.html"), "<h1>test</h1>");
+    broadcasts.length = 0;
     store = new Store(tmpDir, "test-agent");
     tasks = new TaskManager(store, tmpDir, tmpDir);
     let sequence = 0;
@@ -63,7 +65,11 @@ describe("S3 collaboration write routes", () => {
       },
     };
     const handler = createRequestHandler({
-      sseManager: new SseManager(),
+      sseManager: Object.assign(new SseManager(), {
+        broadcast(event: { type: string; taskId?: string }) {
+          broadcasts.push(event);
+        },
+      }),
       store,
       tasks,
       getBridge: () => bridge,
@@ -150,6 +156,13 @@ describe("S3 collaboration write routes", () => {
     assert.ok(delivery);
     assert.equal(delivery.recipient_task_id, "sibling");
     assert.equal(delivery.status, "delivered");
+    assert.deepEqual(
+      broadcasts
+        .filter((event) => event.type === "collaboration_message")
+        .map((event) => event.taskId)
+        .sort(),
+      ["parent", "sibling"],
+    );
   });
 
   it("rejects a target outside the direct family policy", async () => {

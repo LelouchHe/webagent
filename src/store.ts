@@ -1520,6 +1520,21 @@ export class Store {
       ) {
         insertProjection.run(input.id, lcaTaskId, "supervisor", createdAt);
       }
+      for (const projection of this.listCollaborationProjections(input.id)) {
+        this.saveEvent(
+          projection.task_id,
+          "system_message",
+          {
+            kind: "collaboration",
+            messageId: input.id,
+            sourceTaskId: input.sourceTaskId,
+            targetTaskId: input.directTargetTaskId,
+            role: projection.role,
+            body: input.body,
+          },
+          { from_ref: `msg:${input.id}` },
+        );
+      }
       this.db
         .prepare(
           `INSERT INTO deliveries

@@ -1246,6 +1246,19 @@ export function replayEvent(
     case "message":
       renderMessageCard(d as unknown as AgentEvent & { type: "message" });
       break;
+    case "system_message": {
+      if (d.kind === "collaboration") {
+        const role =
+          d.role === "source"
+            ? "sent"
+            : d.role === "target"
+              ? "received"
+              : "observed";
+        const body = typeof d.body === "string" ? d.body : "";
+        addSystem(`collaboration ${role}: ${body}`);
+      }
+      break;
+    }
   }
 }
 
@@ -2366,6 +2379,19 @@ export function handleEvent(msg: AgentEvent) {
       finishAssistant();
       addSystem(`err: ${msg.message}`);
       if (state.busyKind !== "bash") setBusy(false);
+      break;
+
+    case "collaboration_message":
+      if (msg.taskId === state.taskId) {
+        const role =
+          msg.role === "source"
+            ? "sent"
+            : msg.role === "target"
+              ? "received"
+              : "observed";
+        addSystem(`collaboration ${role}: ${msg.body}`);
+        scrollToBottom();
+      }
       break;
 
     case "message_created":

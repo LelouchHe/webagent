@@ -2537,6 +2537,53 @@ describe("events", () => {
         assert.equal(dom.messages.children.length, 0);
       });
 
+      it("renders collaboration messages as system rows only in their projected task", () => {
+        state.taskId = "s1";
+        events.handleEvent({
+          type: "collaboration_message",
+          taskId: "s1",
+          messageId: "m1",
+          sourceTaskId: "s0",
+          targetTaskId: "s1",
+          role: "target",
+          body: "please review",
+        });
+        events.handleEvent({
+          type: "collaboration_message",
+          taskId: "s2",
+          messageId: "m1",
+          sourceTaskId: "s0",
+          targetTaskId: "s1",
+          role: "supervisor",
+          body: "please review",
+        });
+        assert.equal(dom.messages.children.length, 1);
+        assert.match(
+          dom.messages.textContent ?? "",
+          /collaboration received: please review/,
+        );
+      });
+
+      it("replays a persisted collaboration system row", () => {
+        events.replayEvent(
+          "system_message",
+          {
+            kind: "collaboration",
+            messageId: "m1",
+            sourceTaskId: "s0",
+            targetTaskId: "s1",
+            role: "target",
+            body: "please review",
+          },
+          [],
+          0,
+        );
+        assert.match(
+          dom.messages.textContent ?? "",
+          /collaboration received: please review/,
+        );
+      });
+
       it("ignores events from other tasks", () => {
         state.taskId = "s1";
         events.handleEvent({
