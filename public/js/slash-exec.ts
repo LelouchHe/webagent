@@ -167,10 +167,18 @@ export async function handleSlashCommand(text: string): Promise<boolean> {
       // clear taskId (we clear it so any in-flight state_patch from the
       // outgoing task is rejected by the per-task guard in handleEvent).
       const inheritFrom = state.taskId;
+      // Capture the tree parent the same way: after clearing taskId the
+      // requestNewTask default would resolve to null and the new task would
+      // be attached under Root instead of the launching task.
+      const parent = state.taskId;
       resetTaskUI();
       state.taskId = null;
       addSystem("Creating new task…");
-      requestNewTask({ cwd: cwd, inheritFromTaskId: inheritFrom });
+      requestNewTask({
+        cwd: cwd,
+        inheritFromTaskId: inheritFrom,
+        parentId: parent,
+      });
       return true;
     }
 

@@ -96,6 +96,11 @@ describe("commands", () => {
       const body = JSON.parse(createCall.init.body);
       assert.equal(body.cwd, "/tmp/project");
       assert.equal(body.inheritFromTaskId, "current-task");
+      assert.equal(
+        body.parentId,
+        "current-task",
+        "/new must attach the new task under the launching task, not Root",
+      );
       assert.ok(messageLines().includes("Creating new task…"));
     });
 
