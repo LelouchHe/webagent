@@ -114,6 +114,12 @@ describe("Store collaboration records", () => {
     assert.equal(store.getTask("a2")?.title, "代码 审查");
   });
 
+  it("defaults title to the stable task id when no explicit title is given", () => {
+    const task = store.createTask("unnamed-1", "/tmp/unnamed");
+    assert.equal(task.title, "unnamed-1");
+    assert.equal(store.getTask("unnamed-1")?.title, "unnamed-1");
+  });
+
   it("initializes tasks idle with an empty creation brief", () => {
     const task = store.getTask("a1");
     assert.ok(task);

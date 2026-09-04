@@ -625,7 +625,7 @@ export class Store {
           cwd,
           source,
           parentId,
-          opts.title ?? null,
+          opts.title ?? id,
           opts.brief ?? "",
           opts.workflowStatus ?? "idle",
         );

@@ -167,7 +167,11 @@ describe("Task REST API", () => {
       assert.match(body.id, /^[0-9a-f-]{36}$/);
       assert.equal(store.getAgentSessionId(body.id), "mock-task-1");
       assert.equal(body.cwd, tmpDir);
-      assert.equal(body.title, null);
+      assert.equal(
+        body.title,
+        body.id,
+        "an unnamed task defaults its title to the stable task id",
+      );
       assert.ok(Array.isArray(body.configOptions));
     });
 
