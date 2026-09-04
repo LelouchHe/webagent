@@ -118,8 +118,6 @@ export class TaskManager {
   readonly compactingTasks = new Set<string>();
   /** Root reset barrier covering the asynchronous tree replacement. */
   readonly resettingTasks = new Set<string>();
-  /** Structural delete barrier covering a task subtree. */
-  readonly deletingTasks = new Set<string>();
   /** Barrier covering the asynchronous ACP replacement itself. */
   readonly rotatingTasks = new Set<string>();
   readonly pendingPromptSubmissions = new Map<string, number>();
@@ -314,6 +312,16 @@ export class TaskManager {
    * recomputed after acquisition so a concurrent reparent/delete cannot leave
    * us holding a stale path.
    */
+  private getActiveTaskWorkKind(taskId: string): "agent" | "bash" | null {
+    if (this.creatingTasks.has(taskId)) return "agent";
+    if (this.pendingPromptSubmissions.has(taskId)) return "agent";
+    if (this.activePrompts.has(taskId)) return "agent";
+    if (this.compactingTasks.has(taskId)) return "agent";
+    if (this.rotatingTasks.has(taskId)) return "agent";
+    if (this.runningBashProcs.has(taskId)) return "bash";
+    return null;
+  }
+
   private async waitForRootResetIfNeeded(taskId: string): Promise<void> {
     while (this.resettingTasks.has(taskId)) {
       const reset = this.rootResetPromise;
@@ -759,6 +767,24 @@ export class TaskManager {
     return operation;
   }
 
+  private async cleanupCreatedTask(
+    bridge: SessionBridge,
+    taskId: string,
+    messageId: string,
+  ): Promise<void> {
+    try {
+      await this.deleteTask(bridge, taskId);
+    } catch (error) {
+      // Cleanup is best-effort. A concurrent reset may already have removed
+      // the task; never replace the message-consume result with that error.
+      slog.warn("failed to clean up temporary message task", {
+        messageId,
+        taskId,
+        error,
+      });
+    }
+  }
+
   private async consumePendingMessage(
     bridge: SessionBridge,
     messageId: string,
@@ -778,11 +804,11 @@ export class TaskManager {
     try {
       const result = this.store.consumeMessageTx(messageId, taskId);
       if (result.alreadyConsumed) {
-        await this.deleteTask(bridge, taskId);
+        await this.cleanupCreatedTask(bridge, taskId, messageId);
       }
       return result;
     } catch (err) {
-      await this.deleteTask(bridge, taskId);
+      await this.cleanupCreatedTask(bridge, taskId, messageId);
       if (err instanceof MessageNotFoundError) {
         const consumedTaskId = this.store.findConsumedMessageTask(messageId);
         return consumedTaskId
@@ -1054,7 +1080,7 @@ export class TaskManager {
       ...this.store.getDescendantTaskIds(ROOT_TASK_ID),
     ];
     const busyBeforeReset = protectedIds.find(
-      (id) => this.getBusyKind(id) !== null,
+      (id) => this.getActiveTaskWorkKind(id) !== null,
     );
     if (busyBeforeReset) throw new TaskBusyError(busyBeforeReset);
     const protectedSet = new Set(protectedIds);
@@ -1075,9 +1101,11 @@ export class TaskManager {
         ROOT_TASK_ID,
         ...this.store.getDescendantTaskIds(ROOT_TASK_ID),
       ];
+      const busyTask = currentIds.find(
+        (id) => this.getActiveTaskWorkKind(id) !== null,
+      );
+      if (busyTask) throw new TaskBusyError(busyTask);
       const newIds = currentIds.filter((id) => !protectedSet.has(id));
-      const busyNewTask = newIds.find((id) => this.getBusyKind(id) !== null);
-      if (busyNewTask) throw new TaskBusyError(busyNewTask);
       for (const id of newIds) {
         protectedSet.add(id);
         protectedIds.push(id);
@@ -1128,7 +1156,6 @@ export class TaskManager {
       release();
       throw new TaskBusyError(busyTask);
     }
-    for (const id of affectedIds) this.deletingTasks.add(id);
     try {
       const result = this.store.deleteTask(taskId);
       for (const entry of result.affected) {
@@ -1138,7 +1165,6 @@ export class TaskManager {
       }
       return result;
     } finally {
-      for (const id of affectedIds) this.deletingTasks.delete(id);
       release();
     }
   }
@@ -1235,10 +1261,7 @@ export class TaskManager {
     if (this.activePrompts.has(taskId)) return "agent";
     if (this.compactingTasks.has(taskId)) return "agent";
     if (this.resettingTasks.has(taskId)) return "agent";
-    if (this.deletingTasks.has(taskId)) return "agent";
-    if (this.rotatingTasks.has(taskId)) return "agent";
-    if (this.runningBashProcs.has(taskId)) return "bash";
-    return null;
+    return this.getActiveTaskWorkKind(taskId);
   }
 
   /**

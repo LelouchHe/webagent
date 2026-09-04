@@ -1127,6 +1127,33 @@ describe("TaskManager", () => {
       assert.equal(store.getTask(created.taskId)?.parent_id, "a");
     });
 
+    it("rechecks work that starts while Root reset waits for its lock", async () => {
+      store.ensureRootTask(tmpDir);
+      store.createTask("a", tmpDir, "auto", "agent-a", "root");
+      const releaseBranch = await sm["treeLock"].acquire({
+        shared: ["root"],
+        exclusive: ["a"],
+      });
+      const bridge = {
+        async newSession() {
+          return { sessionId: "agent-root-new", configOptions: [] };
+        },
+        async setConfigOption() {
+          return [];
+        },
+        async loadSession() {
+          throw new Error("loadSession should not be called");
+        },
+      };
+
+      const reset = sm.resetRootTask(bridge);
+      sm.activePrompts.add("a");
+      releaseBranch();
+      await assert.rejects(reset, { name: TaskBusyError.name });
+      sm.activePrompts.delete("a");
+      assert.ok(store.getTask("a"));
+    });
+
     it("creates a task after a concurrent Root reset, never during it", async () => {
       store.ensureRootTask(tmpDir);
       store.bindAgentSession("root", "agent-root");
