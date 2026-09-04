@@ -47,6 +47,7 @@ describe("S3 collaboration write routes", () => {
   let tmpDir: string;
   let port: number;
   const broadcasts: Array<{ type: string; taskId?: string }> = [];
+  const promptCalls: Array<{ taskId: string; text: string }> = [];
 
   beforeEach(async () => {
     tmpDir = mkdtempSync(join(tmpdir(), "webagent-collaboration-route-"));
@@ -54,6 +55,7 @@ describe("S3 collaboration write routes", () => {
     mkdirSync(publicDir);
     writeFileSync(join(publicDir, "index.html"), "<h1>test</h1>");
     broadcasts.length = 0;
+    promptCalls.length = 0;
     store = new Store(tmpDir, "test-agent");
     tasks = new TaskManager(store, tmpDir, tmpDir);
     let sequence = 0;
@@ -62,6 +64,9 @@ describe("S3 collaboration write routes", () => {
       async newSession() {
         sequence++;
         return { sessionId: `agent-${sequence}`, configOptions: [] };
+      },
+      async prompt(taskId: string, text: string) {
+        promptCalls.push({ taskId, text });
       },
     };
     const handler = createRequestHandler({
@@ -130,6 +135,12 @@ describe("S3 collaboration write routes", () => {
         "delivered",
       { message: "expected the child brief to submit" },
     );
+    assert.equal(
+      promptCalls.filter((call) => call.taskId === taskId).length,
+      1,
+      "the child brief must be prompted exactly once",
+    );
+    assert.match(promptCalls[0].text, /检查发布前的改动/);
   });
 
   it("creates a local collaboration delivery without trusting a client LCA", async () => {

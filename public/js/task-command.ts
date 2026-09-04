@@ -13,6 +13,7 @@ import {
   type TaskPath,
 } from "../../src/task-path.ts";
 import { state } from "./state.ts";
+import { switchToTask } from "./task-navigation.ts";
 import { isTaskCommand } from "./input-command.ts";
 import { addSystem } from "./render.ts";
 import * as api from "./api.ts";
@@ -432,6 +433,7 @@ async function executeCreateTask(
     addSystem(
       `Created ${result.title ?? result.id} at ${result.cwd ?? body.cwd}`,
     );
+    if (result.id) await switchToTask(result.id);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     addSystem(`err: create failed — ${msg}`);

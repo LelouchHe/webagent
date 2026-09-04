@@ -8,21 +8,22 @@ async function readStatusBarCwd(
   return (text ?? "").trim();
 }
 
-test("slash-menu /new picker can create a task from a previously used cwd", async ({
-  page,
-}) => {
+test("+ creates a named child in the current cwd", async ({ page }) => {
   await gotoConnected(page);
   const currentTask = await createNewTask(page);
 
   const currentCwd = await readStatusBarCwd(page);
   expect(currentCwd).not.toBe("");
 
-  await page.locator("#input").fill(`/new ${currentCwd}`);
-  await expect(page.locator("#slash-menu.active .slash-item")).toHaveCount(1);
-  await page.locator("#input").press("Tab");
+  await page
+    .locator("#input")
+    .fill(
+      "+e2e-child-" + Date.now().toString(36) + " created via plus command",
+    );
   await page.locator("#input").press("Enter");
 
   await expect(page.locator("#messages")).toContainText("Creating new task…");
   await expect.poll(() => currentTaskId(page)).not.toBe(currentTask);
+  // A child created with no explicit path inherits the launching cwd.
   await expect.poll(() => readStatusBarCwd(page)).toBe(currentCwd);
 });
