@@ -54,4 +54,13 @@ describe("shared display-path utils", () => {
     assert.equal(resolveDisplayTarget("/base", "../other/name"), "/other/name");
     assert.equal(resolveDisplayTarget("/base", ""), "/base");
   });
+
+  it("resolves relative targets against a home-relative base without doubling ~", () => {
+    assert.equal(
+      resolveDisplayTarget("~/mine/code/web", "probe-name"),
+      "~/mine/code/web/probe-name",
+    );
+    assert.equal(resolveDisplayTarget("~", "probe-name"), "~/probe-name");
+    assert.equal(resolveDisplayTarget("~/a/b", ".."), "~/a");
+  });
 });

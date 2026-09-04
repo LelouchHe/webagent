@@ -69,16 +69,19 @@ export function taskDisplayPath(node: DisplayPathSource): string {
  */
 export function resolveDisplayTarget(base: string, target: string): string {
   if (isDisplayAbsolutePath(target)) return target;
-  const absoluteBase = base.startsWith("/");
-  const absolute = target.startsWith("/");
-  const homeRelativeBase = base === "~" || base.startsWith("~/");
-  const parts = [...(absolute ? [] : splitSegments(base))];
+  if (target.startsWith("/")) return "/" + splitSegments(target).join("/");
+  // Normalize the base to its segment list with the absolute marker kept
+  // separately, so the `~` marker is never duplicated on rejoin.
+  const homeRelative = base === "~" || base.startsWith("~/");
+  const prefix = homeRelative ? "~" : base.startsWith("/") ? "" : null;
+  const baseSegments = homeRelative
+    ? splitSegments(base.slice(1))
+    : splitSegments(base);
+  const parts = [...baseSegments];
   for (const seg of splitSegments(target)) {
     if (seg === "..") parts.pop();
     else if (seg !== ".") parts.push(seg);
   }
-  if (absolute) return "/" + parts.join("/");
-  if (!absoluteBase && homeRelativeBase) return "~/" + parts.join("/");
-  if (absoluteBase) return "/" + parts.join("/");
-  return parts.join("/");
+  if (prefix === null) return parts.join("/");
+  return prefix === "" ? "/" + parts.join("/") : "~/" + parts.join("/");
 }

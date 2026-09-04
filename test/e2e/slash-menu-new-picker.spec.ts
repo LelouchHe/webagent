@@ -41,6 +41,8 @@ test("+ menu shows home-abbreviated paths, never full native paths", async ({
   await page.locator("#input").fill("+" + unique);
   const menu = page.locator("#slash-menu.active");
   await expect(menu).toContainText("create at '~/");
+  // Exactly one `~` marker: no doubled home prefix, no native path.
+  await expect(menu).toContainText(/create at '~\/(?!~)/);
   await expect(menu).not.toContainText("/Users/");
 
   // Directory rows list under the abbreviated directory too.
