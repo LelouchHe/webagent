@@ -68,6 +68,23 @@ type SessionBridge = Pick<
 
 type DeliveryBridge = SessionBridge & Pick<AgentBridge, "prompt">;
 
+function configOptionId(
+  configOptions: ConfigOption[],
+  logicalId: "model" | "mode" | "thinking",
+): string | undefined {
+  const selectable = configOptions.filter((option) => "options" in option);
+  if (logicalId === "thinking") {
+    return (
+      selectable.find((option) => option.id === "reasoning_effort")?.id ??
+      selectable.find(
+        (option) =>
+          option.id === "thought_level" || option.category === "thought_level",
+      )?.id
+    );
+  }
+  return selectable.find((option) => option.id === logicalId)?.id;
+}
+
 /** Minimum age (seconds) before an empty task is eligible for cleanup. */
 const EMPTY_TASK_MIN_AGE_S = 60;
 
@@ -453,23 +470,22 @@ export class TaskManager {
     configOptions: ConfigOption[],
     sourceTask: Pick<TaskRow, "model" | "reasoning_effort">,
   ): Promise<ConfigOption[]> {
-    const thinkingOption = configOptions.find(
-      (option) =>
-        "options" in option &&
-        (option.id === "reasoning_effort" ||
-          option.id === "thought_level" ||
-          option.category === "thought_level"),
-    );
-    const inherited: Array<{ configId: string; value: string | null }> = [
-      { configId: "model", value: sourceTask.model },
+    const inherited: Array<{
+      configId: string | undefined;
+      value: string | null;
+    }> = [
       {
-        configId: thinkingOption?.id ?? "reasoning_effort",
+        configId: configOptionId(configOptions, "model"),
+        value: sourceTask.model,
+      },
+      {
+        configId: configOptionId(configOptions, "thinking"),
         value: sourceTask.reasoning_effort,
       },
     ];
     let updatedConfigOptions = configOptions;
     for (const { configId, value } of inherited) {
-      if (!value) continue;
+      if (!configId || !value) continue;
       try {
         const next = await bridge.setConfigOption(taskId, configId, value);
         if (next.length > 0) {
@@ -746,21 +762,20 @@ export class TaskManager {
     configOptions: ConfigOption[],
     task: Pick<TaskRow, "mode" | "reasoning_effort" | "model">,
   ): Promise<ConfigOption[]> {
-    const thinkingId =
-      configOptions.find(
-        (option) =>
-          option.id === "reasoning_effort" ||
-          option.id === "thought_level" ||
-          option.category === "thought_level",
-      )?.id ?? "reasoning_effort";
-    const values: Array<{ id: string; value: string | null }> = [
-      { id: "mode", value: task.mode },
-      { id: thinkingId, value: task.reasoning_effort },
-      { id: "model", value: task.model },
+    const values: Array<{
+      id: string | undefined;
+      value: string | null;
+    }> = [
+      { id: configOptionId(configOptions, "mode"), value: task.mode },
+      {
+        id: configOptionId(configOptions, "thinking"),
+        value: task.reasoning_effort,
+      },
+      { id: configOptionId(configOptions, "model"), value: task.model },
     ];
     let updated = configOptions;
     for (const { id, value } of values) {
-      if (!value) continue;
+      if (!id || !value) continue;
       try {
         const next = await bridge.setConfigOption(taskId, id, value);
         if (next.length > 0) {
@@ -900,16 +915,18 @@ export class TaskManager {
       // before a restart is gone with the old process, and the task is
       // still live, so it gets an MCP server entry like a new task does.
       const mcpServers = this.buildMcpServers(taskId);
-      await bridge.loadSession(taskId, task.cwd, mcpServers);
+      const loaded = await bridge.loadSession(taskId, task.cwd, mcpServers);
       this.liveTasks.add(taskId);
       // Piggyback a cache-warming setConfigOption on the user's own resume
       // when the global cache is empty (typical after bridge.restart). Uses
       // the task's own stored value — idempotent, no side effect. Failure
       // is swallowed: the resume still succeeds and the frontend falls back
       // to snapshot-based mode/model display (see public/js/state.ts).
-      await this.tryWarmCache(bridge, taskId, task);
+      await this.tryWarmCache(bridge, taskId, task, loaded.configOptions);
       const configOptions = this.applyStoredConfig(
-        this.cachedConfigOptions,
+        loaded.configOptions.length > 0
+          ? loaded.configOptions
+          : this.cachedConfigOptions,
         task,
       );
       slog.info("restored", { taskId: taskId.slice(0, 8) + "…" });
@@ -951,17 +968,19 @@ export class TaskManager {
       mode: string | null;
       reasoning_effort: string | null;
     },
+    configOptions: ConfigOption[],
   ): Promise<void> {
     if (this.cachedConfigOptions.length > 0) return;
     const candidates: Array<{ id: string; value: string }> = [];
-    if (task.mode) candidates.push({ id: "mode", value: task.mode });
-    if (task.reasoning_effort) {
-      candidates.push(
-        { id: "reasoning_effort", value: task.reasoning_effort },
-        { id: "thought_level", value: task.reasoning_effort },
-      );
+    const modeId = configOptionId(configOptions, "mode");
+    const thinkingId = configOptionId(configOptions, "thinking");
+    const modelId = configOptionId(configOptions, "model");
+    if (modeId && task.mode) candidates.push({ id: modeId, value: task.mode });
+    if (thinkingId && task.reasoning_effort) {
+      candidates.push({ id: thinkingId, value: task.reasoning_effort });
     }
-    if (task.model) candidates.push({ id: "model", value: task.model });
+    if (modelId && task.model)
+      candidates.push({ id: modelId, value: task.model });
     if (candidates.length === 0) return;
 
     let lastError: unknown = null;
