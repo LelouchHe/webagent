@@ -186,6 +186,25 @@ describe("MCP Task tool host", () => {
     assert.throws(() => host.getRecord("alpha", { seq: 0 }), /invalid_seq/);
   });
 
+  it("does not expose thinking records through raw lookup", () => {
+    store.saveEvent(
+      "alpha",
+      "thinking",
+      { text: "private reasoning" },
+      { from_ref: "agent" },
+    );
+    const host = createMcpTaskToolHost({
+      store,
+      tasks,
+      getBridge: () => null,
+    });
+
+    assert.throws(
+      () => host.getRecord("alpha", { seq: 1 }),
+      /record_not_found/,
+    );
+  });
+
   it("filters history text in the database before returning records", () => {
     store.saveEvent(
       "alpha",
@@ -365,7 +384,7 @@ describe("MCP Task tool host", () => {
       record.rawSize,
       Buffer.byteLength(store.getEvents("alpha")[0].data, "utf8"),
     );
-    assert.ok(record.text.length <= 2_001);
+    assert.ok(record.text.length <= 801);
   });
 
   it("rejects queries and sends outside the local family", async () => {

@@ -184,7 +184,11 @@ export function createMcpTaskToolHost(deps: {
         throw new Error("invalid_seq");
       }
       const event = store.getEvent(target.id, input.seq);
-      if (!event) throw new Error("record_not_found");
+      // Thinking is deliberately excluded from task_query and must not be
+      // recoverable through the explicit raw-record escape hatch.
+      if (!event || event.type === "thinking") {
+        throw new Error("record_not_found");
+      }
       return {
         taskId: target.id,
         record: {

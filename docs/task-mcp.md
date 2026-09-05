@@ -103,8 +103,8 @@ on the event type. It does not invoke an LLM or alter the stored event.
 Unknown event types and malformed payloads remain visible as a short notice
 with `rawSize`; they are not silently discarded. Thinking events are excluded.
 
-Text is capped at 2,000 characters per record; embedded tool result and command
-or shell-output excerpts are capped at 1,000 characters before being placed in
+Text is capped at 800 characters per record; embedded tool result and command
+or shell-output excerpts are capped at 400 characters before being placed in
 the record. When text is shortened, `truncated: true` is set and `rawSize`
 reports the UTF-8 size of the original event payload. A tool input such as a
 large edit diff may be represented only by its title and target path even when

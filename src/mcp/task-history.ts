@@ -1,7 +1,7 @@
 import type { McpTaskHistoryRecord } from "./tools.ts";
 
-const MAX_RECORD_TEXT = 2_000;
-const MAX_TOOL_DETAIL = 1_000;
+const MAX_RECORD_TEXT = 800;
+const MAX_TOOL_DETAIL = 400;
 
 type JsonObject = Record<string, unknown>;
 
