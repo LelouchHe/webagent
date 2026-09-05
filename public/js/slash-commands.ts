@@ -355,9 +355,10 @@ export const ROOT: CmdNode = {
           primary: guidance
             ? `compact with focus '${guidance}'`
             : "compact context · type optional focus guidance",
-          onSelect: () => {
-            void compactCurrentTask(guidance || undefined);
-          },
+          // The command head is complete but the optional guidance is not;
+          // click/Tab fills `/compact ` and leaves the menu available for it.
+          fill: guidance ? `${guidance} ` : "",
+          continueOnFill: true,
         };
       },
       onSelect: () => {

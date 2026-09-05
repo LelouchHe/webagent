@@ -44,6 +44,24 @@ test("/compact shows an assistant handoff and injects it into the next prompt", 
   expect(JSON.parse(userMessage!.data).text).toBe("after compact");
 });
 
+test("/compact click completion leaves room for optional focus guidance", async ({
+  page,
+}) => {
+  await gotoConnected(page);
+
+  await page.locator("#input").fill("/compact");
+  const menu = page.locator("#slash-menu.active");
+
+  await menu.locator(".slash-item").first().click();
+  await expect(page.locator("#input")).toHaveValue("/compact ");
+  await expect(menu).toContainText(
+    "compact context · type optional focus guidance",
+  );
+
+  await page.locator("#input").fill("/compact focus on API changes");
+  await expect(menu).toContainText("compact with focus 'focus on API changes'");
+});
+
 async function expectConnectionIdle(page: import("playwright/test").Page) {
   await expect(page.locator("#input")).toBeEnabled();
   await expect(page.locator("#status")).toHaveAttribute(

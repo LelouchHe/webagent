@@ -398,9 +398,14 @@ function tabComplete(): void {
   } else if (c.kind === "data") {
     fillDataCandidate(c, pathPrefix, preserveInput);
   } else if (c.kind === "freeform") {
-    // Freeform spec reflects the user's typed query — Tab is a no-op
-    // (input already contains what the freeform represents).
-    hideSlashMenu();
+    // Most freeform rows already represent the raw input, so Tab remains a
+    // no-op. Hierarchical/continuation freeforms (e.g. /compact guidance)
+    // opt into the same fill pipeline as data rows.
+    if (c.spec.continueOnFill) {
+      fillDataCandidate(c, pathPrefix, preserveInput);
+    } else {
+      hideSlashMenu();
+    }
   }
   dom.input.focus();
 }
