@@ -44,36 +44,6 @@ export const ConfigSchema = z.object({
       global_visibility_suppression: true,
     }),
 
-  // [title] — title generation sub-task configuration.
-  //
-  // `models` is an array of case-insensitive substring patterns. When the
-  // title sub-task is created, we look at the model list the agent
-  // reports (ACP `availableModels`) and pick the first model whose id
-  // matches any pattern in order. Match → call `setConfigOption` with
-  // that model id; no match → skip the call and inherit the agent's
-  // default model (`currentModelId`).
-  //
-  // Default list targets the cheap/fast tier across major providers:
-  //   - "haiku"      → Anthropic (claude-haiku-*)
-  //   - "flash-lite" → Google Gemini (gemini-*-flash-lite)  [must precede "flash"]
-  //   - "nano"       → OpenAI (gpt-*-nano), Gemini Nano
-  //   - "mini"       → OpenAI (gpt-*-mini, 4o-mini), Mistral
-  //   - "flash"      → Google Gemini (gemini-*-flash)
-  //   - "lite"       → Cohere, generic
-  //
-  // Set `models = []` to disable substring matching entirely and always
-  // inherit the agent's default model. To pin one specific model, pass a
-  // single-element array: `models = ["claude-haiku-4.5"]`.
-  title: z
-    .object({
-      models: z
-        .array(z.string())
-        .default(["haiku", "flash-lite", "nano", "mini", "flash", "lite"]),
-    })
-    .default({
-      models: ["haiku", "flash-lite", "nano", "mini", "flash", "lite"],
-    }),
-
   // [debug] — frontend log level.
   // level ∈ off | debug | info | warn | error. Default "off".
   // Users can override per page-load via `?debug=<level>` in the URL,

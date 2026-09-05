@@ -89,7 +89,9 @@ describe("Store", () => {
       const task = store.createTask("sess-1", "/tmp/cwd");
       assert.equal(task.id, "sess-1");
       assert.equal(task.cwd, "/tmp/cwd");
-      assert.equal(task.title, null);
+      // Without an explicit title, the stable task id is the default title
+      // so every live task has a non-empty, unique display name.
+      assert.equal(task.title, "sess-1");
     });
 
     it("stores an optional parent WebAgent task", () => {

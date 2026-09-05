@@ -28,7 +28,10 @@ export async function currentTaskId(page: Page): Promise<string> {
 
 export async function createNewTask(page: Page): Promise<string> {
   const previousId = await currentTaskId(page);
-  await page.locator("#input").fill("/new");
+  // `+name` with no brief creates a named idle child (legacy /new
+  // semantics) in the current task's cwd; the resulting task id becomes
+  // its default title.
+  await page.locator("#input").fill("+e2e-child-" + Date.now().toString(36));
   await page.locator("#input").press("Enter");
   await expect.poll(() => currentTaskId(page)).not.toBe(previousId);
   // Hash flips before the FE has finished switching (snapshot fetch +
@@ -36,7 +39,9 @@ export async function createNewTask(page: Page): Promise<string> {
   // header task-info to re-render against the new id so callers see a
   // settled UI — otherwise assertions on #send-btn race the switch.
   const newId = await currentTaskId(page);
-  await expect(page.locator("#task-info")).toContainText(newId.slice(0, 8));
+  // The header shows the task title (explicit name, not the id). Wait for
+  // it to re-render to the created child so tests race the settled UI.
+  await expect(page.locator("#task-info")).toContainText("e2e-child-");
   await expectConnectionStatus(page, "connected");
   return newId;
 }

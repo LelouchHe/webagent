@@ -8,8 +8,6 @@
 
 import {
   state,
-  resetTaskUI,
-  requestNewTask,
   getSelectConfigOption,
   getThinkingConfigOption,
   updateModeUI,
@@ -160,28 +158,6 @@ export async function handleSlashCommand(text: string): Promise<boolean> {
 
     case "/view": {
       await openViewPath(arg);
-      return true;
-    }
-
-    case "/new": {
-      // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- empty string should fall through
-      const cwd = arg || state.taskCwd || undefined;
-      // Capture before reset so model/mode inheritance still works after we
-      // clear taskId (we clear it so any in-flight state_patch from the
-      // outgoing task is rejected by the per-task guard in handleEvent).
-      const inheritFrom = state.taskId;
-      // Capture the tree parent the same way: after clearing taskId the
-      // requestNewTask default would resolve to null and the new task would
-      // be attached under Root instead of the launching task.
-      const parent = state.taskId;
-      resetTaskUI();
-      state.taskId = null;
-      addSystem("Creating new task…");
-      requestNewTask({
-        cwd: cwd,
-        inheritFromTaskId: inheritFrom,
-        parentId: parent,
-      });
       return true;
     }
 

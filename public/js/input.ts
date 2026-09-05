@@ -34,6 +34,7 @@ import {
   resolveAgentCommand,
 } from "../../src/agent-commands.ts";
 import { isLocalCommand } from "./input-command.ts";
+import { executeTaskCommand, isTaskCommand } from "./task-command.ts";
 import { HTTP_STATUS } from "../../src/http-status.ts";
 
 function isConnected(): boolean {
@@ -44,10 +45,21 @@ function isConnected(): boolean {
 state._onCancelTimeout = () =>
   addSystem("warn: Agent not responding to cancel");
 
+// eslint-disable-next-line complexity -- dispatches independent input modes before normal prompt submission
 function sendMessage() {
   const text = dom.input.value.trim();
   if (!text && state.pendingAttachments.length === 0) return;
   const isAgentCommand = text.startsWith("//");
+
+  // Task-target commands (`+` / `@`) are handled locally and may submit while busy.
+  if (isTaskCommand(text) && state.pendingAttachments.length === 0) {
+    const raw = dom.input.value;
+    setInputValue("");
+    dom.input.style.height = "auto";
+    dom.inputArea.classList.remove("bash-mode");
+    void executeTaskCommand(raw);
+    return;
+  }
 
   // Slash commands and bash always go through, even while busy
   if (isLocalCommand(text) && state.pendingAttachments.length === 0) {

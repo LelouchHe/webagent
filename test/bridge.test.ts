@@ -872,7 +872,7 @@ describe("AgentBridge", () => {
           this.assistantBuffers.delete(taskId);
           this.thinkingBuffers.delete(taskId);
         },
-        taskHasTitle: new Set<string>(),
+
         cachedConfigOptions: [],
         agentInfo: null as any,
         state: {
@@ -895,18 +895,6 @@ describe("AgentBridge", () => {
       };
     }
 
-    function createMockTitleService() {
-      let invalidated = false;
-      return {
-        invalidate() {
-          invalidated = true;
-        },
-        get wasInvalidated() {
-          return invalidated;
-        },
-      };
-    }
-
     it("emits agent_reloading, cleans state, and reconnects", async () => {
       const bridge = new AgentBridge("fake-agent", mappedTasks);
       const events: any[] = [];
@@ -921,7 +909,6 @@ describe("AgentBridge", () => {
       };
 
       const tasks = createMockTasks();
-      const titleService = createMockTitleService();
 
       // Stub start() to simulate successful restart
       let startCalls = 0;
@@ -935,7 +922,7 @@ describe("AgentBridge", () => {
         });
       };
 
-      await bridge.restart(tasks as any, titleService as any);
+      await bridge.restart(tasks as any);
 
       // Should have emitted agent_reloading first
       assert.equal(events[0].type, "agent_reloading");
@@ -975,9 +962,6 @@ describe("AgentBridge", () => {
         "thinkingBuffers should be flushed",
       );
 
-      // Title service should be invalidated
-      assert.ok(titleService.wasInvalidated);
-
       // Cancel should have been called for active prompts
       assert.ok(cancelCalled);
 
@@ -992,7 +976,6 @@ describe("AgentBridge", () => {
       const bridge = new AgentBridge("fake-agent", mappedTasks);
       (bridge as any).conn = { cancel: async () => {} };
       const tasks = createMockTasks();
-      const titleService = createMockTitleService();
 
       (bridge as any).shutdown = async () => {
         tasks.assistantBuffers.set("s1", "late chunk");
@@ -1001,7 +984,7 @@ describe("AgentBridge", () => {
         (bridge as any).conn = {};
       };
 
-      await bridge.restart(tasks as any, titleService as any);
+      await bridge.restart(tasks as any);
 
       assert.equal(tasks.assistantBuffers.has("s1"), false);
       assert.equal(tasks.streamingClearCount, 1);
@@ -1012,7 +995,6 @@ describe("AgentBridge", () => {
       (bridge as any).conn = { cancel: async () => {} };
 
       const tasks = createMockTasks();
-      const titleService = createMockTitleService();
 
       (bridge as any).start = async () => {
         (bridge as any).conn = {};
@@ -1030,10 +1012,10 @@ describe("AgentBridge", () => {
           resolveStart = r;
         });
 
-      const p1 = bridge.restart(tasks as any, titleService as any);
+      const p1 = bridge.restart(tasks as any);
 
       await assert.rejects(
-        () => bridge.restart(tasks as any, titleService as any),
+        () => bridge.restart(tasks as any),
         /Already reloading/,
       );
 
@@ -1053,7 +1035,6 @@ describe("AgentBridge", () => {
         (bridge as any).conn = { cancel: async () => {} };
 
         const tasks = createMockTasks();
-        const titleService = createMockTitleService();
 
         let attempt = 0;
         (bridge as any).start = async () => {
@@ -1067,7 +1048,7 @@ describe("AgentBridge", () => {
           });
         };
 
-        const p = bridge.restart(tasks as any, titleService as any);
+        const p = bridge.restart(tasks as any);
         for (let i = 0; i < 5; i++) {
           mock.timers.tick(5000);
           await new Promise((r) => setImmediate(r));
@@ -1091,13 +1072,12 @@ describe("AgentBridge", () => {
         (bridge as any).conn = { cancel: async () => {} };
 
         const tasks = createMockTasks();
-        const titleService = createMockTitleService();
 
         (bridge as any).start = async () => {
           throw new Error("broken");
         };
 
-        const p = bridge.restart(tasks as any, titleService as any);
+        const p = bridge.restart(tasks as any);
         const rejection = assert.rejects(() => p);
         for (let i = 0; i < 5; i++) {
           mock.timers.tick(5000);

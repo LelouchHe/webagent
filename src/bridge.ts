@@ -11,7 +11,6 @@ import type {
   ToolContentItem,
 } from "./types.ts";
 import type { TaskManager } from "./task-manager.ts";
-import type { TitleService } from "./title-service.ts";
 import { interruptBashProc } from "./task-manager.ts";
 import type {
   AttachmentDispatcher,
@@ -482,7 +481,7 @@ export class AgentBridge extends EventEmitter {
    * shuts down the old process, and starts a new one. Tasks are restored
    * lazily via ensureResumed() on next user interaction.
    */
-  async restart(tasks: TaskManager, titleService: TitleService): Promise<void> {
+  async restart(tasks: TaskManager): Promise<void> {
     if (this.reloading) throw new Error("Already reloading");
     this.reloading = true;
     const liveTaskIds = [...tasks.liveTasks];
@@ -530,9 +529,6 @@ export class AgentBridge extends EventEmitter {
       this.silentBuffers.clear();
       this.unboundNewSessionIds.clear();
       this.pendingSessionUpdates.clear();
-
-      // 5. Invalidate title service session
-      titleService.invalidate();
 
       // 5. Clear liveTasks so ensureResumed() will re-register on next access
       tasks.liveTasks.clear();

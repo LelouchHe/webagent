@@ -10,7 +10,6 @@ import type { SseManager } from "./sse-manager.ts";
 import type { AgentBridge } from "./bridge.ts";
 import type { Config } from "./config.ts";
 import type { PushService } from "./push-service.ts";
-import type { TitleService } from "./title-service.ts";
 import type { ClientRegistry } from "./client-registry.ts";
 import { errorMessage, MessageIngressSchema } from "./types.ts";
 import type { AgentEvent, ConfigOption } from "./types.ts";
@@ -147,7 +146,6 @@ export interface RequestHandlerDeps {
   tasks?: TaskManager;
   sseManager: SseManager;
   clientRegistry?: ClientRegistry;
-  titleService?: TitleService;
   getBridge?: () =>
     | (Pick<
         AgentBridge,
@@ -282,6 +280,26 @@ function saveClientOpResult(
 ): void {
   if (!opId) return;
   store.saveClientOp(taskId, opId, { status, body });
+}
+
+function isLocalCollaborationTarget(
+  source: { id: string; parent_id: string | null },
+  target: { id: string; parent_id: string | null },
+): boolean {
+  if (source.id === target.id) return false;
+  return (
+    source.parent_id === target.id ||
+    target.parent_id === source.id ||
+    (source.parent_id !== null && source.parent_id === target.parent_id)
+  );
+}
+
+function validateCollaborationTitle(title: unknown): string | null {
+  if (typeof title !== "string") return null;
+  if (!title.trim() || title.includes("/") || title === "." || title === "..") {
+    return null;
+  }
+  return title;
 }
 
 /** Send a JSON response, gzip-compressed when the client supports it. */
@@ -576,7 +594,7 @@ async function handleAttachmentUpload(
 export function createRequestHandler(
   deps: RequestHandlerDeps,
 ): (req: IncomingMessage, res: ServerResponse) => Promise<void> {
-  const { store, tasks, getBridge, sseManager, titleService } = deps;
+  const { store, tasks, getBridge, sseManager } = deps;
   let bootstrapTaskPromise: Promise<{
     id: string;
     cwd: string;
@@ -681,7 +699,12 @@ export function createRequestHandler(
               pending_compact_summary: _pendingCompactSummary,
               ...publicTask
             } = task;
-            return publicTask;
+            // Home-abbreviated display form for menus and lists; the raw cwd
+            // stays the canonical round-trip value.
+            return {
+              ...publicTask,
+              cwdDisplay: abbreviateHomePath(task.cwd),
+            };
           });
         res.end(JSON.stringify(publicTasks));
         return;
@@ -878,7 +901,7 @@ export function createRequestHandler(
           return;
         }
         try {
-          await bridge.restart(tasks!, titleService!);
+          await bridge.restart(tasks!);
           json(res, HTTP_STATUS.OK, { ok: true });
         } catch (err: unknown) {
           json(res, HTTP_STATUS.INTERNAL_SERVER_ERROR, {
@@ -1165,6 +1188,116 @@ export function createRequestHandler(
           },
           req,
         );
+        return;
+      }
+
+      // --- POST /api/v1/tasks/:sourceTaskId/messages ---
+      const collaborationMessageMatch = url.match(
+        /^\/api\/v1\/tasks\/([^/]+)\/messages\/?(?:\?.*)?$/,
+      );
+      if (collaborationMessageMatch && req.method === "POST") {
+        const sourceTaskId = decodeURIComponent(collaborationMessageMatch[1]);
+        const sourceTask = store.getTask(sourceTaskId);
+        if (!sourceTask) {
+          json(res, HTTP_STATUS.NOT_FOUND, { error: "Source task not found" });
+          return;
+        }
+        const bridge = getBridge?.();
+        if (!bridge || !tasks) {
+          json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
+            error: "Agent not ready yet",
+          });
+          return;
+        }
+        const { opId, replayed } = tryReplayClientOp(
+          req,
+          res,
+          store,
+          sourceTaskId,
+        );
+        if (replayed) return;
+        let body: { targetTaskId?: unknown; body?: unknown };
+        try {
+          body = JSON.parse(await readBody(req)) as typeof body;
+        } catch {
+          json(res, HTTP_STATUS.BAD_REQUEST, { error: "Invalid JSON" });
+          return;
+        }
+        if (
+          typeof body.targetTaskId !== "string" ||
+          typeof body.body !== "string" ||
+          !body.body.trim()
+        ) {
+          json(res, HTTP_STATUS.BAD_REQUEST, {
+            error: "targetTaskId and non-empty body are required",
+          });
+          return;
+        }
+        const targetTask = store.getTask(body.targetTaskId);
+        if (!targetTask) {
+          json(res, HTTP_STATUS.NOT_FOUND, { error: "Target task not found" });
+          return;
+        }
+        if (!isLocalCollaborationTarget(sourceTask, targetTask)) {
+          json(res, HTTP_STATUS.BAD_REQUEST, {
+            error: "Target task is outside the local collaboration scope",
+          });
+          return;
+        }
+        const messageId = randomUUID();
+        const deliveryId = randomUUID();
+        // A store-level rejection here must answer a JSON error, never an
+        // unhandled rejection: the request handler is fired with `void` and
+        // has no outer catch, so a throw would take the process down.
+        let created: ReturnType<typeof store.createCollaborationMessage>;
+        try {
+          created = store.createCollaborationMessage({
+            id: messageId,
+            deliveryId,
+            sourceTaskId,
+            directTargetTaskId: targetTask.id,
+            sourceActor: "user",
+            body: body.body,
+          });
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          if (msg.startsWith("Live task not found")) {
+            json(res, HTTP_STATUS.NOT_FOUND, { error: msg });
+          } else {
+            json(res, HTTP_STATUS.INTERNAL_SERVER_ERROR, { error: msg });
+          }
+          return;
+        }
+        for (const projection of store.listCollaborationProjections(
+          messageId,
+        )) {
+          sseManager.broadcast({
+            type: "collaboration_message",
+            taskId: projection.task_id,
+            messageId,
+            sourceTaskId,
+            sourceLabel: sourceTask.title ?? sourceTask.id.slice(0, 8),
+            targetTaskId: targetTask.id,
+            targetLabel: targetTask.title ?? targetTask.id.slice(0, 8),
+            role: projection.role,
+            body: created.message.body,
+          });
+        }
+        const result = {
+          messageId,
+          deliveryId,
+          status: "queued",
+          clientOpId: opId ?? undefined,
+        };
+        saveClientOpResult(
+          store,
+          opId,
+          sourceTaskId,
+          HTTP_STATUS.ACCEPTED,
+          result,
+        );
+        json(res, HTTP_STATUS.ACCEPTED, result, req);
+        void tasks.drainCollaborationDeliveries(bridge, targetTask.id);
         return;
       }
 
@@ -1476,27 +1609,6 @@ export function createRequestHandler(
         } as AgentEvent;
         sseManager.broadcast(userMsgEvent);
 
-        // Generate title (fire-and-forget)
-        if (
-          titleService &&
-          tasks && // eslint-disable-line @typescript-eslint/no-unnecessary-condition -- optional dep
-          !tasks.taskHasTitle.has(taskId)
-        ) {
-          titleService.generate(
-            bridge as AgentBridge,
-            body.text,
-            taskId,
-            (title) => {
-              const titleEvent = {
-                type: "task_title_updated",
-                taskId,
-                title,
-              } as AgentEvent;
-              sseManager.broadcast(titleEvent);
-            },
-          );
-        }
-
         // Fire prompt asynchronously (don't await — response is 202)
         tasks.releasePromptSubmission(taskId, promptSubmissionId, false);
         tasks.activePrompts.add(taskId);
@@ -1783,18 +1895,41 @@ export function createRequestHandler(
           });
           return;
         }
-        store.updateTaskTitle(taskId, body.value);
-        if (tasks) tasks.taskHasTitle.add(taskId);
-        const bridge = getBridge?.();
-        if (titleService && bridge)
-          void titleService.cancel(taskId, bridge as AgentBridge);
+        // The live sibling-title unique index turns an unguarded rename into
+        // a thrown constraint error; validate the same grammar as creation
+        // and reject collisions before the store sees them.
+        const title = validateCollaborationTitle(body.value);
+        if (title === null) {
+          json(res, HTTP_STATUS.BAD_REQUEST, {
+            error:
+              "Title must be non-empty and must not be '.', '..', or contain '/'",
+          });
+          return;
+        }
+        if (
+          task.parent_id !== null &&
+          store
+            .listTasks()
+            .some(
+              (live) =>
+                live.parent_id === task.parent_id &&
+                live.id !== task.id &&
+                live.title === title,
+            )
+        ) {
+          json(res, HTTP_STATUS.BAD_REQUEST, {
+            error: "A sibling task already has that title",
+          });
+          return;
+        }
+        store.updateTaskTitle(taskId, title);
         const titleEvent = {
           type: "task_title_updated",
           taskId,
-          title: body.value,
+          title,
         } as AgentEvent;
         sseManager.broadcast(titleEvent);
-        json(res, HTTP_STATUS.OK, { title: body.value });
+        json(res, HTTP_STATUS.OK, { title });
         return;
       }
 
@@ -2317,6 +2452,8 @@ export function createRequestHandler(
           inheritFromTaskId?: string;
           source?: string;
           parentId?: string;
+          title?: string;
+          brief?: string;
         };
         try {
           body = JSON.parse(await readBody(req)) as {
@@ -2324,12 +2461,33 @@ export function createRequestHandler(
             inheritFromTaskId?: string;
             source?: string;
             parentId?: string;
+            title?: string;
+            brief?: string;
           };
         } catch {
           json(res, HTTP_STATUS.BAD_REQUEST, { error: "Invalid JSON" });
           return;
         }
         const source = body.source ?? "auto";
+        const hasCollaborationFields =
+          body.title !== undefined || body.brief !== undefined;
+        const title = hasCollaborationFields
+          ? validateCollaborationTitle(body.title)
+          : undefined;
+        const hasBrief =
+          typeof body.brief === "string" && body.brief.trim().length > 0;
+        if (
+          hasCollaborationFields &&
+          (title === null ||
+            !body.parentId ||
+            (body.brief !== undefined && !hasBrief))
+        ) {
+          json(res, HTTP_STATUS.BAD_REQUEST, {
+            error:
+              "a collaboration child needs a title and parent; the brief is optional",
+          });
+          return;
+        }
         // The parent must exist and be live (not tombstoned); the FK would
         // reject a dangling reference with a raw database error otherwise.
         // A live parent row is enough — it need not have an ACP binding yet.
@@ -2342,13 +2500,38 @@ export function createRequestHandler(
             return;
           }
         }
+        const initialMessageId = title && hasBrief ? randomUUID() : undefined;
+        const initialDeliveryId = title && hasBrief ? randomUUID() : undefined;
         try {
           const { taskId, configOptions } = await tasks.createTask(
             bridge,
             body.cwd,
             body.inheritFromTaskId,
             source,
-            { parentId: body.parentId },
+            {
+              parentId: body.parentId,
+              title: title ?? undefined,
+              brief: hasBrief ? body.brief : undefined,
+              workflowStatus: title
+                ? hasBrief
+                  ? "running"
+                  : "idle"
+                : undefined,
+              initialMessage:
+                title &&
+                hasBrief &&
+                initialMessageId &&
+                initialDeliveryId &&
+                body.parentId
+                  ? {
+                      id: initialMessageId,
+                      deliveryId: initialDeliveryId,
+                      sourceTaskId: body.parentId,
+                      sourceActor: "user",
+                      body: body.brief!,
+                    }
+                  : undefined,
+            },
           );
           const task = store.getTask(taskId);
           const taskCreatedEvent = {
@@ -2373,15 +2556,22 @@ export function createRequestHandler(
           }
           json(res, HTTP_STATUS.CREATED, {
             id: taskId,
+            ...(initialMessageId && initialDeliveryId
+              ? { initialMessageId, initialDeliveryId }
+              : {}),
             cwd: task?.cwd ?? body.cwd,
             cwdDisplay: task?.cwd ? abbreviateHomePath(task.cwd) : undefined,
             title: task?.title ?? null,
+            brief: task?.brief ?? "",
+            workflowStatus: task?.workflow_status ?? "idle",
             source: task?.source ?? source,
             parentId: task?.parent_id ?? null,
             configOptions,
             agentCommands: tasks.getAgentCommands(taskId),
             clientOpId: clientOpId ?? undefined,
           });
+          if (initialMessageId)
+            void tasks.drainCollaborationDeliveries(bridge, taskId);
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
           if (
@@ -2391,6 +2581,16 @@ export function createRequestHandler(
             json(res, HTTP_STATUS.BAD_REQUEST, { error: msg });
           } else if (err instanceof TaskTreeBusyError) {
             json(res, HTTP_STATUS.CONFLICT, { error: msg });
+          } else if (
+            msg.includes(
+              "UNIQUE constraint failed: tasks.parent_id, tasks.title",
+            )
+          ) {
+            // The store's live sibling-title unique index is the authority;
+            // surface it as a client error instead of a raw 500.
+            json(res, HTTP_STATUS.BAD_REQUEST, {
+              error: "A sibling task already has that title",
+            });
           } else {
             json(res, HTTP_STATUS.INTERNAL_SERVER_ERROR, { error: msg });
           }
@@ -3036,22 +3236,6 @@ export function createRequestHandler(
         // Fire-and-forget: send the prompt asynchronously, tracking busy state
         tasks.activePrompts.add(taskId);
         tasks.syncBusy(taskId);
-        // Generate title (fire-and-forget)
-        if (titleService && !tasks.taskHasTitle.has(taskId)) {
-          titleService.generate(
-            bridge as AgentBridge,
-            text,
-            taskId,
-            (title) => {
-              const titleEvent = {
-                type: "task_title_updated",
-                taskId,
-                title,
-              } as AgentEvent;
-              sseManager.broadcast(titleEvent);
-            },
-          );
-        }
         const betaPromptId =
           tasks.state.getState(taskId).runtime.busy?.promptId ?? undefined;
         bridge

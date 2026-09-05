@@ -306,6 +306,23 @@ function cancelPendingTurnUI() {
   state.pendingPermissionRequestIds.clear();
 }
 
+/**
+ * One line for a collaboration message in any projected timeline: the
+ * absolute from/to pair with the body. Labels are server-enriched at
+ * creation; legacy rows without labels fall back to short ids.
+ */
+function collaborationLine(msg: {
+  sourceTaskId?: string;
+  sourceLabel?: string;
+  targetTaskId?: string;
+  targetLabel?: string;
+  body?: string;
+}): string {
+  const label = (id: string | undefined, fallback?: string) =>
+    fallback ?? (id ? id.slice(0, 8) : "?");
+  return `@${label(msg.sourceTaskId, msg.sourceLabel)} sent @${label(msg.targetTaskId, msg.targetLabel)}: ${msg.body ?? ""}`;
+}
+
 function promptStopNotice(stopReason: unknown): string | null {
   switch (stopReason) {
     case "cancelled":
@@ -1246,6 +1263,12 @@ export function replayEvent(
     case "message":
       renderMessageCard(d as unknown as AgentEvent & { type: "message" });
       break;
+    case "system_message": {
+      if (d.kind === "collaboration") {
+        addSystem(collaborationLine(d));
+      }
+      break;
+    }
   }
 }
 
@@ -2366,6 +2389,13 @@ export function handleEvent(msg: AgentEvent) {
       finishAssistant();
       addSystem(`err: ${msg.message}`);
       if (state.busyKind !== "bash") setBusy(false);
+      break;
+
+    case "collaboration_message":
+      if (msg.taskId === state.taskId) {
+        addSystem(collaborationLine(msg));
+        scrollToBottom();
+      }
       break;
 
     case "message_created":

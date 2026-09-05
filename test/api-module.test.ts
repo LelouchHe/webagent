@@ -65,6 +65,27 @@ describe("api module", () => {
     assert.equal(result.id, "s1");
   });
 
+  it("createTask includes structured collaboration fields", async () => {
+    fetchResponse = {
+      status: 201,
+      ok: true,
+      json: () => Promise.resolve({ id: "child" }),
+      text: () => Promise.resolve('{"id":"child"}'),
+    };
+    await api.createTask({
+      parentId: "parent",
+      cwd: "/tmp/work",
+      title: "code review",
+      brief: "review the release diff",
+    });
+    assert.deepEqual(JSON.parse(fetchCalls[0].init!.body as string), {
+      parentId: "parent",
+      cwd: "/tmp/work",
+      title: "code review",
+      brief: "review the release diff",
+    });
+  });
+
   it("createTask omits undefined fields", async () => {
     fetchResponse = {
       status: 201,
@@ -106,6 +127,35 @@ describe("api module", () => {
       ),
       /.+/,
     );
+  });
+
+  it("sendCollaborationMessage posts a structured target and body", async () => {
+    fetchResponse = {
+      status: 202,
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          messageId: "message-1",
+          deliveryId: "delivery-1",
+          status: "queued",
+        }),
+      text: () =>
+        Promise.resolve(
+          '{"messageId":"message-1","deliveryId":"delivery-1","status":"queued"}',
+        ),
+    };
+    await api.sendCollaborationMessage(
+      "source id",
+      "target id",
+      "please review",
+      "op-1",
+    );
+    assert.equal(fetchCalls[0].url, "/api/v1/tasks/source%20id/messages");
+    assert.equal(fetchCalls[0].init!.method, "POST");
+    assert.deepEqual(JSON.parse(fetchCalls[0].init!.body as string), {
+      targetTaskId: "target id",
+      body: "please review",
+    });
   });
 
   it("listTasks sends GET /api/v1/tasks", async () => {

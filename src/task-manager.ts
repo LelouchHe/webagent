@@ -10,6 +10,7 @@ import {
   type TaskDelete,
   type TaskRow,
   type Store,
+  type WorkflowStatus,
 } from "./store.ts";
 import type { AgentBridge } from "./bridge.ts";
 import { buildMcpServerEntry } from "./mcp/server.ts";
@@ -65,6 +66,8 @@ type SessionBridge = Pick<
     >
   >;
 
+type DeliveryBridge = SessionBridge & Pick<AgentBridge, "prompt">;
+
 /** Minimum age (seconds) before an empty task is eligible for cleanup. */
 const EMPTY_TASK_MIN_AGE_S = 60;
 
@@ -110,10 +113,11 @@ export class TaskManager {
   /** Tasks with a minted MCP capability awaiting ACP task/new. */
   readonly creatingTasks = new Set<string>();
   readonly restoringTasks = new Set<string>();
-  readonly taskHasTitle = new Set<string>();
   readonly assistantBuffers = new Map<string, string>();
   readonly thinkingBuffers = new Map<string, string>();
   readonly activePrompts = new Set<string>();
+  /** Delivery rows currently being claimed/resolved for one target task. */
+  private readonly drainingCollaborationTasks = new Set<string>();
   /** Tasks undergoing compact summary generation or ACP rotation. */
   readonly compactingTasks = new Set<string>();
   /** Root reset barrier covering the asynchronous tree replacement. */
@@ -237,11 +241,10 @@ export class TaskManager {
     return options;
   }
 
-  /** Populate taskHasTitle from existing DB tasks on startup. */
   hydrate(): void {
-    for (const s of this.store.listTasks()) {
-      if (s.title) this.taskHasTitle.add(s.id);
-    }
+    // No per-task title tracking needed after automatic title-service
+    // removal; titles persist in the store and are broadcast via
+    // task_title_updated on manual rename.
   }
 
   /**
@@ -315,6 +318,7 @@ export class TaskManager {
   private getActiveTaskWorkKind(taskId: string): "agent" | "bash" | null {
     if (this.creatingTasks.has(taskId)) return "agent";
     if (this.pendingPromptSubmissions.has(taskId)) return "agent";
+    if (this.drainingCollaborationTasks.has(taskId)) return "agent";
     if (this.activePrompts.has(taskId)) return "agent";
     if (this.compactingTasks.has(taskId)) return "agent";
     if (this.rotatingTasks.has(taskId)) return "agent";
@@ -358,7 +362,20 @@ export class TaskManager {
     cwd?: string,
     inheritFromTaskId?: string,
     source: string = "auto",
-    opts?: { silent?: boolean; parentId?: string | null },
+    opts?: {
+      silent?: boolean;
+      parentId?: string | null;
+      title?: string;
+      brief?: string;
+      workflowStatus?: WorkflowStatus;
+      initialMessage?: {
+        id: string;
+        deliveryId: string;
+        sourceTaskId: string;
+        sourceActor: "user" | "agent" | "system";
+        body: string;
+      };
+    },
   ): Promise<{ taskId: string; configOptions: ConfigOption[] }> {
     const parentId = this.resolveParentId(opts?.parentId);
     if (parentId) {
@@ -386,6 +403,18 @@ export class TaskManager {
     source: string,
     agentSessionId: string,
     parentId: string | null,
+    metadata: {
+      title?: string;
+      brief?: string;
+      workflowStatus?: WorkflowStatus;
+      initialMessage?: {
+        id: string;
+        deliveryId: string;
+        sourceTaskId: string;
+        sourceActor: "user" | "agent" | "system";
+        body: string;
+      };
+    },
   ): Promise<void> {
     for (;;) {
       // Never await the Root reset while holding a lineage lock. A reset can
@@ -409,6 +438,7 @@ export class TaskManager {
           source,
           agentSessionId,
           parentId,
+          metadata,
         );
         return;
       } finally {
@@ -460,7 +490,20 @@ export class TaskManager {
     cwd?: string,
     inheritFromTaskId?: string,
     source: string = "auto",
-    opts?: { silent?: boolean; parentId?: string | null },
+    opts?: {
+      silent?: boolean;
+      parentId?: string | null;
+      title?: string;
+      brief?: string;
+      workflowStatus?: WorkflowStatus;
+      initialMessage?: {
+        id: string;
+        deliveryId: string;
+        sourceTaskId: string;
+        sourceActor: "user" | "agent" | "system";
+        body: string;
+      };
+    },
   ): Promise<{ taskId: string; configOptions: ConfigOption[] }> {
     const taskCwd = expandHomePath(cwd ?? this.defaultCwd);
     try {
@@ -495,6 +538,12 @@ export class TaskManager {
         source,
         agentSessionId,
         parentId,
+        {
+          title: opts?.title,
+          brief: opts?.brief,
+          workflowStatus: opts?.workflowStatus,
+          initialMessage: opts?.initialMessage,
+        },
       );
     } catch (err) {
       slog.warn("ACP task created but local persistence failed", {
@@ -623,6 +672,8 @@ export class TaskManager {
       void bridge.retireExecution?.(retiredAgentSessionId);
     }
     this.resetTaskRuntime(taskId, preserveRuntimeState);
+    this.store.failOutstandingDeliveriesForTaskClear(taskId);
+    this.store.updateTaskWorkflowStatus(taskId, "idle");
 
     const configOptions = await this.restoreTaskConfig(
       bridge,
@@ -851,7 +902,6 @@ export class TaskManager {
       const mcpServers = this.buildMcpServers(taskId);
       await bridge.loadSession(taskId, task.cwd, mcpServers);
       this.liveTasks.add(taskId);
-      if (task.title) this.taskHasTitle.add(taskId);
       // Piggyback a cache-warming setConfigOption on the user's own resume
       // when the global cache is empty (typical after bridge.restart). Uses
       // the task's own stored value — idempotent, no side effect. Failure
@@ -1173,7 +1223,6 @@ export class TaskManager {
   private releaseTaskRuntime(id: string, mode: "hard" | "soft"): void {
     this.capabilities?.revokeByTask(id);
     this.liveTasks.delete(id);
-    this.taskHasTitle.delete(id);
     this.assistantBuffers.delete(id);
     this.thinkingBuffers.delete(id);
     this.activePrompts.delete(id);
@@ -1346,6 +1395,89 @@ export class TaskManager {
         },
       },
     });
+  }
+
+  /**
+   * Claim the complete queued Delivery snapshot for an idle target and submit
+   * it as one ACP prompt. The caller never trusts a client for this decision:
+   * Store rows, runtime busy state, and the bridge binding are authoritative.
+   */
+  async drainCollaborationDeliveries(
+    bridge: DeliveryBridge,
+    taskId: string,
+  ): Promise<boolean> {
+    if (this.getBusyKind(taskId) !== null) return false;
+    // Enter a busy turn (which mints a new promptId) only when there is
+    // something to deliver; otherwise the churn advances client turn
+    // identity for nothing and can strand a finishing turn's terminator.
+    if (this.store.countQueuedDeliveries(taskId) === 0) return false;
+    this.drainingCollaborationTasks.add(taskId);
+    this.syncBusy(taskId);
+    try {
+      await this.ensureResumed(bridge, taskId);
+      const deliveries = this.store.claimQueuedDeliveries(taskId);
+      if (deliveries.length === 0) return false;
+      const entries = deliveries.map((delivery) => {
+        const message = this.store.getCollaborationMessage(delivery.message_id);
+        if (!message) {
+          throw new Error(
+            `Collaboration message missing: ${delivery.message_id}`,
+          );
+        }
+        const source = this.store.getTaskIncludingDeleted(
+          message.source_task_id,
+        );
+        // The full source id is the only reliable reply handle available to
+        // the receiving agent today; label it explicitly. The quoted name is
+        // deliberately not labeled "title" — titles change and can collide,
+        // so the id stays the only thing presented as a precise handle. The
+        // body is fenced verbatim between scissor lines so the agent never
+        // reads metadata as instruction and the forwarding layer never
+        // rewrites the content.
+        const sourceName = source?.title ?? message.source_task_id.slice(0, 8);
+        return `From "${sourceName}" (task id ${message.source_task_id}):\n---8<---\n${message.body}\n---8<---`;
+      });
+      this.store.updateTaskWorkflowStatus(taskId, "running");
+      this.drainingCollaborationTasks.delete(taskId);
+      this.activePrompts.add(taskId);
+      this.syncBusy(taskId);
+      const promptId =
+        this.state.getState(taskId).runtime.busy?.promptId ?? undefined;
+      void bridge
+        .prompt(taskId, entries.join("\n\n"), undefined, promptId)
+        .then(
+          () => {
+            this.store.markCollaborationDeliveriesDelivered(
+              deliveries.map((delivery) => delivery.id),
+            );
+          },
+          (error: unknown) => {
+            slog.error("collaboration delivery failed", {
+              taskId: taskId.slice(0, 8),
+              error,
+            });
+            this.store.failCollaborationDeliveries(
+              deliveries.map((delivery) => delivery.id),
+              "prompt_failed",
+            );
+            if (!this.isCurrentPrompt(taskId, promptId)) return;
+            this.activePrompts.delete(taskId);
+            // Same attribution as an ACP error event: a rejected delivery
+            // prompt must not leave the target marked running.
+            this.store.updateTaskWorkflowStatus(taskId, "idle");
+            this.syncBusy(taskId);
+          },
+        );
+      return true;
+    } catch (error) {
+      slog.error("collaboration delivery drain failed", {
+        taskId: taskId.slice(0, 8),
+        error,
+      });
+      return false;
+    } finally {
+      if (this.drainingCollaborationTasks.delete(taskId)) this.syncBusy(taskId);
+    }
   }
 
   /**

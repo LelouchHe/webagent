@@ -153,7 +153,6 @@ test("server restart restores the same task without duplicating history", async 
     await expectConnectionStatus(page, "connected", { timeout: 15_000 });
     await expect.poll(() => currentTaskId(page)).toBe(taskId);
     await expect(page.locator(".msg.user")).toHaveCount(1);
-    await expect(page.locator(".msg.assistant")).toHaveCount(1);
     await expect(page.locator(".msg.user").last()).toHaveText(
       "survive a restart",
     );

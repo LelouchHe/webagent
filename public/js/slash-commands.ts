@@ -6,8 +6,6 @@
 
 import {
   state,
-  resetTaskUI,
-  requestNewTask,
   getSelectConfigOption,
   getThinkingConfigOption,
   getConfigValue,
@@ -131,7 +129,7 @@ interface PathItem {
   cwdDisplay: string;
   time: string;
 }
-async function listRecentPaths(): Promise<PathItem[]> {
+export async function listRecentPaths(): Promise<PathItem[]> {
   const limit = state.recentPathsLimit;
   const url =
     limit > 0 ? `/api/v1/recent-paths?limit=${limit}` : "/api/v1/recent-paths";
@@ -486,38 +484,6 @@ export const ROOT: CmdNode = {
     },
     configCmdNode("/mode", "Set mode", "mode"),
     configCmdNode("/model", "Set model", "model", true),
-    {
-      name: "/new",
-      desc: "New child task",
-      help: "New child task under current task.",
-      fetch: listRecentPaths,
-      toSpec: (item: unknown) => {
-        const p = item as PathItem;
-        const isCurrent =
-          p.cwd.toLowerCase() === (state.taskCwd ?? "").toLowerCase();
-        return {
-          primary: p.cwdDisplay,
-          current: isCurrent,
-          onSelect: () => {
-            resetTaskUI();
-            addSystem("Creating new task…");
-            requestNewTask({ cwd: p.cwd });
-          },
-        };
-      },
-      freeform: (q) => {
-        const trimmed = q.trim();
-        if (!trimmed) return null;
-        return {
-          primary: `create task at '${trimmed}'`,
-          onSelect: () => {
-            resetTaskUI();
-            addSystem("Creating new task…");
-            requestNewTask({ cwd: trimmed });
-          },
-        };
-      },
-    },
     {
       name: "/notify",
       desc: "Toggle notifications",

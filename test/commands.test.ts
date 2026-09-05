@@ -73,62 +73,6 @@ describe("commands", () => {
   });
 
   describe("handleSlashCommand", () => {
-    it("creates a new task using the provided cwd", async () => {
-      setFetch(() => ({
-        ok: true,
-        json: async () => ({ id: "new-1" }),
-        text: async () => '{"id":"new-1"}',
-      }));
-      state.taskId = "current-task";
-      state.taskCwd = "/current";
-
-      const handled = await commands.handleSlashCommand("/new /tmp/project");
-      await new Promise((r) => setTimeout(r, 0)); // flush microtask (fire-and-forget)
-
-      assert.equal(handled, true);
-      assert.equal(state.awaitingNewTask, false);
-      assert.equal(state.taskId, "new-1");
-      // requestNewTask now uses REST POST /api/v1/tasks
-      const createCall = fetchCalls.find(
-        (c) => c.url === "/api/v1/tasks" && c.init?.method === "POST",
-      );
-      assert.ok(createCall, "expected POST /api/v1/tasks");
-      const body = JSON.parse(createCall.init.body);
-      assert.equal(body.cwd, "/tmp/project");
-      assert.equal(body.inheritFromTaskId, "current-task");
-      assert.equal(
-        body.parentId,
-        "current-task",
-        "/new must attach the new task under the launching task, not Root",
-      );
-      assert.ok(messageLines().includes("Creating new task…"));
-    });
-
-    it("inherits current task cwd when /new has no argument", async () => {
-      setFetch(() => ({
-        ok: true,
-        json: async () => ({ id: "new-2" }),
-        text: async () => '{"id":"new-2"}',
-      }));
-      state.taskId = "current-task";
-      state.taskCwd = "/my/project";
-
-      const handled = await commands.handleSlashCommand("/new");
-      await new Promise((r) => setTimeout(r, 0));
-
-      assert.equal(handled, true);
-      const createCall = fetchCalls.find(
-        (c) => c.url === "/api/v1/tasks" && c.init?.method === "POST",
-      );
-      assert.ok(createCall, "expected POST /api/v1/tasks");
-      const body = JSON.parse(createCall.init.body);
-      assert.equal(
-        body.cwd,
-        "/my/project",
-        "should inherit cwd from current task",
-      );
-    });
-
     it("shows concise one-line help descriptions", async () => {
       const handled = await commands.handleSlashCommand("?");
 
@@ -139,7 +83,6 @@ describe("commands", () => {
       assert.ok(
         lines.includes("/exit — Exit task tree; Root resets the tree."),
       );
-      assert.ok(lines.includes("/new — New child task under current task."));
       assert.ok(
         !lines.some((line: string) => line.includes("current conversation")),
       );

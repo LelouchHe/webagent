@@ -59,26 +59,6 @@ vapid_subject = "mailto:noreply@example.com"
 # without a code change.
 global_visibility_suppression = true
 
-[title]
-# Models matched (by case-insensitive substring) against the agent's
-# reported availableModels for the title-generation internal agent session. The first
-# pattern that matches any model id wins; that model is set via
-# setConfigOption. No match → skip the call and inherit the agent's
-# default model (currentModelId).
-#
-# Default list targets the cheap/fast tier across major providers:
-#   - "haiku"      → Anthropic (claude-haiku-*)
-#   - "flash-lite" → Google Gemini (gemini-*-flash-lite)  [must precede "flash"]
-#   - "nano"       → OpenAI (gpt-*-nano), Gemini Nano
-#   - "mini"       → OpenAI (gpt-*-mini, 4o-mini), Mistral
-#   - "flash"      → Google Gemini (gemini-*-flash)
-#   - "lite"       → Cohere, generic
-#
-# Set models = [] to disable matching entirely and always inherit the
-# agent's default model. To pin one specific model, use a single-element
-# array, e.g. models = ["claude-haiku-4.5"].
-models = ["haiku", "flash-lite", "nano", "mini", "flash", "lite"]
-
 [debug]
 # Frontend log level. One of: off | debug | info | warn | error.
 # Default "off". Users can override per page-load via ?debug=<level> in
