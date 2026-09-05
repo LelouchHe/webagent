@@ -47,6 +47,13 @@ test("bare + lists the default cwd and recent paths, Enter creates an idle child
   // No warning placeholder — the bare command is immediately actionable.
   await expect(menu).not.toContainText("requires");
 
+  // Tab on the default row descends into the path (/view style): the fill
+  // ends with a separator, then the menu waits for the title segment.
+  await page.keyboard.press("Tab");
+  await expect(page.locator("#input")).toHaveValue(
+    `+${(await readStatusBarCwd(page)).replace(/\/$/, "")}/`,
+  );
+
   // Enter executes the typed bare `+`: idle child at the current cwd,
   // title defaulting to the task id.
   await page.locator("#input").press("Enter");

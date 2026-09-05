@@ -267,7 +267,7 @@ async function buildBareCreateCandidates(): Promise<Candidate[]> {
         primary: defaultDisplay,
         secondary: "default",
         current: true,
-        fill: `+${quoteShellWord(defaultDisplay)} `,
+        fill: `+${quoteShellWord(defaultDisplay)}/`,
         continueOnFill: true,
         onSelect: () => executeCreateTask("", ""),
       },
@@ -282,7 +282,7 @@ async function buildBareCreateCandidates(): Promise<Candidate[]> {
       candidates.push({
         spec: {
           primary: p.cwdDisplay,
-          fill: `+${quoteShellWord(p.cwdDisplay)} `,
+          fill: `+${quoteShellWord(p.cwdDisplay)}/`,
           continueOnFill: true,
           onSelect: () => executeCreateTask(p.cwdDisplay, ""),
         },
