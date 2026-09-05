@@ -48,3 +48,16 @@ test("@ lists the local scope immediately and filters while typing", async ({
   await page.locator("#input").fill("@r hello there");
   await expect(page.locator("#slash-menu.active")).toHaveCount(0);
 });
+
+test("an empty @ send jumps to the target instead of erroring", async ({
+  page,
+}) => {
+  await gotoConnected(page);
+  await createNewTask(page);
+
+  await page.locator("#input").fill("@root");
+  await page.locator("#input").press("Enter");
+
+  // Navigation, not a message: nothing was sent to the target timeline.
+  await expect.poll(() => currentTaskId(page)).toBe("root");
+});

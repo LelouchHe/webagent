@@ -389,6 +389,28 @@ async function buildCreateCandidates(parsed: {
   return candidates;
 }
 
+/**
+ * Resolve one @ target the way the menu and the submit path agree on:
+ * bare or relative (non-`..`) input filters the local scope (parent,
+ * children, siblings — the direct-family policy makes deeper targets
+ * invalid); `..` and absolute paths keep tree navigation.
+ */
+function resolveMessageTargets(
+  currentTaskId: string | null,
+  tasks: TaskSummary[],
+  path: TaskPath,
+): TaskNode[] {
+  const raw = path.segments;
+  const scopeFiltered = raw.length === 0 || (!path.absolute && raw[0] !== "..");
+  if (scopeFiltered) {
+    const filterSegment = raw.at(-1) ?? "";
+    return getLocalScope(currentTaskId, tasks).filter(
+      (n) => !filterSegment || matchesSegment(n, filterSegment),
+    );
+  }
+  return resolveTaskPathNodes(currentTaskId, tasks, path);
+}
+
 async function buildMessageCandidates(parsed: {
   marker: string;
   target: string;
@@ -409,29 +431,13 @@ async function buildMessageCandidates(parsed: {
 
   const scope = getLocalScope(state.taskId, tasks);
   const scopeIds = new Set(scope.map((n) => n.id));
-  const raw = parsed.path.segments;
-
-  // Bare `@` lists the whole local scope (parent, children, siblings);
-  // relative typed input without `..` navigation filters that scope by its
-  // last segment (the direct-family policy makes deeper targets invalid).
-  // `..` and absolute paths keep the tree-navigation resolution.
-  const scopeFiltered =
-    raw.length === 0 || (!parsed.path.absolute && raw[0] !== "..");
-  const filterSegment = scopeFiltered ? (raw.at(-1) ?? "") : "";
-  const resolved = scopeFiltered
-    ? scope
-    : resolveTaskPathNodes(
-        state.taskId,
-        tasks,
-        raw.length === 0 ? { ...parsed.path, segments: ["."] } : parsed.path,
-      );
+  const resolved = resolveMessageTargets(state.taskId, tasks, parsed.path);
 
   const candidates: Candidate[] = [];
 
   for (const node of resolved) {
     if (node.id === state.taskId) continue;
     if (!scopeIds.has(node.id)) continue;
-    if (filterSegment && !matchesSegment(node, filterSegment)) continue;
     candidates.push(
       makeCandidate({
         marker: parsed.marker,
@@ -524,7 +530,7 @@ async function executeMessageTask(
     return;
   }
 
-  const resolved = resolveTaskPathNodes(
+  const resolved = resolveMessageTargets(
     currentTaskId,
     tasks,
     parseTaskPath(target),
@@ -553,7 +559,10 @@ async function executeMessageToTask(
   }
   const body = remainder.trim();
   if (!body) {
-    addSystem("err: Message body cannot be empty");
+    // An empty message is navigation, not a ping: selecting a target
+    // without anything to say just jumps to it (the server rejects empty
+    // bodies, so this is the only sensible empty-body behavior).
+    await switchToTask(targetTaskId);
     return;
   }
   try {
