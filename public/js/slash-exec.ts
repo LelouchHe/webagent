@@ -189,7 +189,7 @@ export async function handleSlashCommand(text: string): Promise<boolean> {
     }
 
     case "/compact": {
-      await compactCurrentTask();
+      await compactCurrentTask(arg || undefined);
       return true;
     }
 

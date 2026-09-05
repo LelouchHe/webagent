@@ -349,6 +349,17 @@ export const ROOT: CmdNode = {
       name: "/compact",
       desc: "Compact context",
       help: "Compact context and continue.",
+      freeform: (query) => {
+        const guidance = query.trim();
+        return {
+          primary: guidance
+            ? `compact with focus '${guidance}'`
+            : "compact context · type optional focus guidance",
+          onSelect: () => {
+            void compactCurrentTask(guidance || undefined);
+          },
+        };
+      },
       onSelect: () => {
         void compactCurrentTask();
       },

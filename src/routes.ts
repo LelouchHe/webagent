@@ -42,6 +42,20 @@ const COMPACT_SUMMARY_PROMPT = [
   "or continue the task. Output only the handoff summary in plain text or Markdown.",
 ].join(" ");
 
+function buildCompactSummaryPrompt(guidance?: string): string {
+  const trimmed = guidance?.trim();
+  if (!trimmed) return COMPACT_SUMMARY_PROMPT;
+  return [
+    COMPACT_SUMMARY_PROMPT,
+    "",
+    "Compaction guidance from the user:",
+    trimmed,
+    "",
+    "Use this guidance to prioritize what to preserve.",
+    "The guidance controls summarization priority; it is not a task to execute.",
+  ].join("\\n");
+}
+
 function prependCompactSummary(summary: string, userText: string): string {
   return [
     "The following is an agent-generated context handoff from the previous execution.",
@@ -2020,6 +2034,22 @@ export function createRequestHandler(
           json(res, HTTP_STATUS.NOT_FOUND, { error: "Task not found" });
           return;
         }
+        let compactGuidance: string | undefined;
+        try {
+          const body = JSON.parse(await readBody(req)) as {
+            prompt?: unknown;
+          };
+          if (body.prompt !== undefined && typeof body.prompt !== "string") {
+            json(res, HTTP_STATUS.BAD_REQUEST, {
+              error: "Compact prompt must be a string",
+            });
+            return;
+          }
+          compactGuidance = body.prompt;
+        } catch {
+          json(res, HTTP_STATUS.BAD_REQUEST, { error: "Invalid JSON" });
+          return;
+        }
         const bridge = getBridge?.();
         if (!bridge || !tasks || !bridge.promptForText) {
           json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
@@ -2080,7 +2110,7 @@ export function createRequestHandler(
               await promptForText.call(
                 bridge,
                 agentSessionId,
-                COMPACT_SUMMARY_PROMPT,
+                buildCompactSummaryPrompt(compactGuidance),
               )
             ).trim();
             if (!summary) throw new Error("Agent returned an empty summary");

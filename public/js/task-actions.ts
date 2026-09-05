@@ -60,7 +60,7 @@ export async function exitCurrentTask(): Promise<void> {
  * broadcast takes the normal same-task branch (config repaint) instead of
  * the activation path that a null id would trigger.
  */
-export async function compactCurrentTask(): Promise<void> {
+export async function compactCurrentTask(prompt?: string): Promise<void> {
   if (!state.taskId) {
     addSystem("warn: No active task");
     return;
@@ -72,7 +72,7 @@ export async function compactCurrentTask(): Promise<void> {
   const taskId = state.taskId;
   addSystem("Compacting context…");
   try {
-    await api.compactTask(taskId);
+    await api.compactTask(taskId, prompt);
   } catch (err: unknown) {
     addSystem(`err: Failed to compact task — ${String(err)}`);
   }

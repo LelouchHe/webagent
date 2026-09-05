@@ -152,8 +152,13 @@ export function clearTask(
   return post("/api/v1/tasks/" + id + "/clear", body);
 }
 
-export function compactTask(id: string): Promise<Record<string, unknown>> {
-  return post("/api/v1/tasks/" + id + "/compact", {});
+export function compactTask(
+  id: string,
+  prompt?: string,
+): Promise<Record<string, unknown>> {
+  return post("/api/v1/tasks/" + id + "/compact", {
+    ...(prompt !== undefined ? { prompt } : {}),
+  });
 }
 
 export interface DeleteTaskResult {

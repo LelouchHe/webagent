@@ -71,7 +71,8 @@ function createMockBridge(nextId = "mock-task-1") {
       retireCalls.push(agentSessionId);
     },
     ...mockBridgeStubs(),
-    promptForText: async () => "summary of the current work",
+    promptForText: async (..._args: [string, string]) =>
+      "summary of the current work",
     newSession: async (_cwd: string) => {
       idCounter++;
       return {
@@ -643,6 +644,35 @@ describe("Task REST API", () => {
         .find((event) => event.type === "user_message");
       assert.equal(JSON.parse(userEvent!.data).text, "continue the work");
     });
+  });
+
+  it("passes optional compact guidance only when supplied", async () => {
+    store.createTask("s1", tmpDir, "auto", "agent-old");
+    tasks.liveTasks.add("s1");
+    let compactPrompt = "";
+    mockBridge.promptForText = async (_sessionId: string, text: string) => {
+      compactPrompt = text;
+      return "guided summary";
+    };
+
+    const compactRes = await makeRequest(
+      port,
+      "POST",
+      "/api/v1/tasks/s1/compact",
+      JSON.stringify({ prompt: "重点保留 API 改动" }),
+    );
+    assert.equal(compactRes.status, 202);
+    const deadline = Date.now() + 5000;
+    while (
+      (store.getPendingCompactSummary("s1") !== "guided summary" ||
+        store.getAgentSessionId("s1") !== "mock-task-1") &&
+      Date.now() < deadline
+    ) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    assert.match(compactPrompt, /Compaction guidance from the user/);
+    assert.match(compactPrompt, /重点保留 API 改动/);
+    assert.match(compactPrompt, /not a task to execute/);
   });
 
   // --- GET /api/v1/tasks/:id ---
