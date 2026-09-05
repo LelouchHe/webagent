@@ -29,6 +29,7 @@ import { enrichStoredEventsForDisplay } from "./attachment-labels.ts";
 import { agentCommandToken, resolveAgentCommand } from "./agent-commands.ts";
 import { abbreviateHomePath } from "./home-path.ts";
 import { log } from "./log.ts";
+import { isLocalCollaborationTarget } from "./task-collaboration.ts";
 
 const rlog = log.scope("routes");
 const plog = rlog.scope("prompt");
@@ -53,7 +54,7 @@ function buildCompactSummaryPrompt(guidance?: string): string {
     "",
     "Use this guidance to prioritize what to preserve.",
     "The guidance controls summarization priority; it is not a task to execute.",
-  ].join("\\n");
+  ].join("\n");
 }
 
 function prependCompactSummary(summary: string, userText: string): string {
@@ -294,18 +295,6 @@ function saveClientOpResult(
 ): void {
   if (!opId) return;
   store.saveClientOp(taskId, opId, { status, body });
-}
-
-function isLocalCollaborationTarget(
-  source: { id: string; parent_id: string | null },
-  target: { id: string; parent_id: string | null },
-): boolean {
-  if (source.id === target.id) return false;
-  return (
-    source.parent_id === target.id ||
-    target.parent_id === source.id ||
-    (source.parent_id !== null && source.parent_id === target.parent_id)
-  );
 }
 
 function validateCollaborationTitle(title: unknown): string | null {

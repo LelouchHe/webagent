@@ -1,4 +1,5 @@
 import Database from "better-sqlite3";
+import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 
@@ -1167,6 +1168,12 @@ export class Store {
       .get(taskId, seq) as EventRow;
   }
 
+  getEvent(taskId: string, seq: number): EventRow | undefined {
+    return this.db
+      .prepare("SELECT * FROM events WHERE task_id = ? AND seq = ?")
+      .get(taskId, seq) as EventRow | undefined;
+  }
+
   getEvents(
     taskId: string,
     opts?: {
@@ -1174,6 +1181,7 @@ export class Store {
       afterSeq?: number;
       beforeSeq?: number;
       limit?: number;
+      text?: string;
     },
   ): EventRow[] {
     const hasLimit = opts?.limit != null && opts.limit > 0;
@@ -1189,6 +1197,11 @@ export class Store {
     }
     if (opts?.excludeThinking) {
       conditions.push("type != 'thinking'");
+    }
+    if (opts?.text !== undefined) {
+      conditions.push("data LIKE ? ESCAPE '\\'");
+      const escaped = opts.text.replace(/[\\%_]/g, (char) => `\\${char}`);
+      params.push(`%${escaped}%`);
     }
     const where = conditions.join(" AND ");
 
@@ -1478,85 +1491,133 @@ export class Store {
     message: CollaborationMessageRow;
     delivery: CollaborationDeliveryRow;
   } {
+    return this.db.transaction(() =>
+      this.createCollaborationMessageInTransaction(input),
+    )();
+  }
+
+  private createCollaborationMessageInTransaction(
+    input: CollaborationMessageInput,
+  ): {
+    message: CollaborationMessageRow;
+    delivery: CollaborationDeliveryRow;
+  } {
     const createdAt = input.createdAt ?? Date.now();
-    return this.db.transaction(() => {
-      if (input.sourceTaskId === input.directTargetTaskId) {
-        throw new Error("Collaboration source and target must differ");
-      }
-      this.requireLiveTask(input.sourceTaskId);
-      this.requireLiveTask(input.directTargetTaskId);
-      const lcaTaskId = this.lowestCommonAncestor(
+    if (input.sourceTaskId === input.directTargetTaskId) {
+      throw new Error("Collaboration source and target must differ");
+    }
+    this.requireLiveTask(input.sourceTaskId);
+    this.requireLiveTask(input.directTargetTaskId);
+    const lcaTaskId = this.lowestCommonAncestor(
+      input.sourceTaskId,
+      input.directTargetTaskId,
+    );
+    this.db
+      .prepare(
+        `INSERT INTO messages
+         (id, source_task_id, direct_target_task_id, source_actor, body, created_at)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        input.id,
         input.sourceTaskId,
         input.directTargetTaskId,
-      );
-      this.db
-        .prepare(
-          `INSERT INTO messages
-           (id, source_task_id, direct_target_task_id, source_actor, body, created_at)
-           VALUES (?, ?, ?, ?, ?, ?)`,
-        )
-        .run(
-          input.id,
-          input.sourceTaskId,
-          input.directTargetTaskId,
-          input.sourceActor,
-          input.body,
-          createdAt,
-        );
-      const insertProjection = this.db.prepare(
-        `INSERT INTO message_projections (message_id, task_id, role, created_at)
-         VALUES (?, ?, ?, ?)`,
-      );
-      insertProjection.run(input.id, input.sourceTaskId, "source", createdAt);
-      insertProjection.run(
-        input.id,
-        input.directTargetTaskId,
-        "target",
+        input.sourceActor,
+        input.body,
         createdAt,
       );
-      if (
-        lcaTaskId !== input.sourceTaskId &&
-        lcaTaskId !== input.directTargetTaskId
-      ) {
-        insertProjection.run(input.id, lcaTaskId, "supervisor", createdAt);
-      }
-      for (const projection of this.listCollaborationProjections(input.id)) {
-        this.saveEvent(
-          projection.task_id,
-          "system_message",
-          {
-            kind: "collaboration",
-            messageId: input.id,
-            sourceTaskId: input.sourceTaskId,
-            sourceLabel:
-              this.getTask(input.sourceTaskId)?.title ??
-              input.sourceTaskId.slice(0, 8),
-            targetTaskId: input.directTargetTaskId,
-            targetLabel:
-              this.getTask(input.directTargetTaskId)?.title ??
-              input.directTargetTaskId.slice(0, 8),
-            role: projection.role,
-            body: input.body,
-          },
-          { from_ref: `msg:${input.id}` },
-        );
-      }
+    const insertProjection = this.db.prepare(
+      `INSERT INTO message_projections (message_id, task_id, role, created_at)
+       VALUES (?, ?, ?, ?)`,
+    );
+    insertProjection.run(input.id, input.sourceTaskId, "source", createdAt);
+    insertProjection.run(
+      input.id,
+      input.directTargetTaskId,
+      "target",
+      createdAt,
+    );
+    if (
+      lcaTaskId !== input.sourceTaskId &&
+      lcaTaskId !== input.directTargetTaskId
+    ) {
+      insertProjection.run(input.id, lcaTaskId, "supervisor", createdAt);
+    }
+    for (const projection of this.listCollaborationProjections(input.id)) {
+      this.saveEvent(
+        projection.task_id,
+        "system_message",
+        {
+          kind: "collaboration",
+          messageId: input.id,
+          sourceTaskId: input.sourceTaskId,
+          sourceLabel:
+            this.getTask(input.sourceTaskId)?.title ??
+            input.sourceTaskId.slice(0, 8),
+          targetTaskId: input.directTargetTaskId,
+          targetLabel:
+            this.getTask(input.directTargetTaskId)?.title ??
+            input.directTargetTaskId.slice(0, 8),
+          role: projection.role,
+          body: input.body,
+        },
+        { from_ref: `msg:${input.id}` },
+      );
+    }
+    this.db
+      .prepare(
+        `INSERT INTO deliveries
+         (id, message_id, recipient_task_id, idempotency_key, status, queued_at)
+         VALUES (?, ?, ?, ?, 'queued', ?)`,
+      )
+      .run(
+        input.deliveryId,
+        input.id,
+        input.directTargetTaskId,
+        `${input.id}:${input.directTargetTaskId}`,
+        createdAt,
+      );
+    return {
+      message: this.getCollaborationMessage(input.id)!,
+      delivery: this.getCollaborationDelivery(input.deliveryId)!,
+    };
+  }
+
+  /** Atomically record an Agent workflow update and its parent handoff. */
+  recordAgentWorkflowUpdate(
+    taskId: string,
+    status: Extract<WorkflowStatus, "blocked" | "done">,
+    body: string,
+  ): {
+    parentTaskId: string | null;
+    collaborationMessageId: string | null;
+  } {
+    return this.db.transaction(() => {
+      const task = this.requireLiveTask(taskId);
       this.db
-        .prepare(
-          `INSERT INTO deliveries
-           (id, message_id, recipient_task_id, idempotency_key, status, queued_at)
-           VALUES (?, ?, ?, ?, 'queued', ?)`,
-        )
-        .run(
-          input.deliveryId,
-          input.id,
-          input.directTargetTaskId,
-          `${input.id}:${input.directTargetTaskId}`,
-          createdAt,
-        );
+        .prepare("UPDATE tasks SET workflow_status = ? WHERE id = ?")
+        .run(status, taskId);
+      this.saveEvent(
+        taskId,
+        "task_update",
+        { status, body },
+        { from_ref: "agent" },
+      );
+      if (!task.parent_id) {
+        return { parentTaskId: null, collaborationMessageId: null };
+      }
+      const collaborationMessageId = randomUUID();
+      this.createCollaborationMessageInTransaction({
+        id: collaborationMessageId,
+        deliveryId: randomUUID(),
+        sourceTaskId: taskId,
+        directTargetTaskId: task.parent_id,
+        sourceActor: "agent",
+        body: `Task status: ${status}\n${body}`,
+      });
       return {
-        message: this.getCollaborationMessage(input.id)!,
-        delivery: this.getCollaborationDelivery(input.deliveryId)!,
+        parentTaskId: task.parent_id,
+        collaborationMessageId,
       };
     })();
   }
