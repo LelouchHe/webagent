@@ -1262,7 +1262,9 @@ export function createRequestHandler(
             taskId: projection.task_id,
             messageId,
             sourceTaskId,
+            sourceLabel: sourceTask.title ?? sourceTask.id.slice(0, 8),
             targetTaskId: targetTask.id,
+            targetLabel: targetTask.title ?? targetTask.id.slice(0, 8),
             role: projection.role,
             body: created.message.body,
           });

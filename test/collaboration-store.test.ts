@@ -51,6 +51,38 @@ describe("Store collaboration records", () => {
     ]);
   });
 
+  it("persists collaboration system rows with from/to labels", () => {
+    const created = store.createCollaborationMessage(messageInput());
+    const rows = store.getEvents("a1");
+    const system = rows.find((row) => row.type === "system_message");
+    assert.ok(system, "expected a persisted system_message row");
+    const data = JSON.parse(system.data) as {
+      sourceLabel?: string;
+      targetLabel?: string;
+      body?: string;
+    };
+    assert.equal(data.sourceLabel, "a1");
+    assert.equal(data.targetLabel, "a2");
+    assert.equal(data.body, "请检查接口定义");
+    void created;
+  });
+
+  it("uses the stored task titles as labels", () => {
+    store.updateTaskTitle("a1", "审查");
+    store.updateTaskTitle("a2", "修复");
+    store.createCollaborationMessage(messageInput());
+    const system = store
+      .getEvents("a2")
+      .find((row) => row.type === "system_message");
+    assert.ok(system);
+    const data = JSON.parse(system.data) as {
+      sourceLabel?: string;
+      targetLabel?: string;
+    };
+    assert.equal(data.sourceLabel, "审查");
+    assert.equal(data.targetLabel, "修复");
+  });
+
   it("claims each queued delivery once and completes the claimed batch", () => {
     store.createCollaborationMessage(messageInput());
 

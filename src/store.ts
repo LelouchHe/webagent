@@ -1528,7 +1528,13 @@ export class Store {
             kind: "collaboration",
             messageId: input.id,
             sourceTaskId: input.sourceTaskId,
+            sourceLabel:
+              this.getTask(input.sourceTaskId)?.title ??
+              input.sourceTaskId.slice(0, 8),
             targetTaskId: input.directTargetTaskId,
+            targetLabel:
+              this.getTask(input.directTargetTaskId)?.title ??
+              input.directTargetTaskId.slice(0, 8),
             role: projection.role,
             body: input.body,
           },
