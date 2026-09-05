@@ -1427,8 +1427,12 @@ export class TaskManager {
         const source = this.store.getTaskIncludingDeleted(
           message.source_task_id,
         );
-        const sourceLabel = source?.title ?? message.source_task_id.slice(0, 8);
-        return `${sourceLabel}: ${message.body}`;
+        // The full source id is the only reliable reply handle available to
+        // the receiving agent today; label it explicitly. The quoted name is
+        // deliberately not labeled "title" — titles change and can collide,
+        // so the id stays the only thing presented as a precise handle.
+        const sourceName = source?.title ?? message.source_task_id.slice(0, 8);
+        return `From "${sourceName}" (task id ${message.source_task_id}):\n\n${message.body}`;
       });
       this.store.updateTaskWorkflowStatus(taskId, "running");
       this.drainingCollaborationTasks.delete(taskId);
@@ -1437,12 +1441,7 @@ export class TaskManager {
       const promptId =
         this.state.getState(taskId).runtime.busy?.promptId ?? undefined;
       void bridge
-        .prompt(
-          taskId,
-          ["Collaboration messages for this task:", "", ...entries].join("\n"),
-          undefined,
-          promptId,
-        )
+        .prompt(taskId, entries.join("\n\n"), undefined, promptId)
         .then(
           () => {
             this.store.markCollaborationDeliveriesDelivered(
