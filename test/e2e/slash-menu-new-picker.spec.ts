@@ -41,7 +41,7 @@ test("clicking a bare + path row completes instead of creating", async ({
 
   await page.locator("#input").fill("+");
   const menu = page.locator("#slash-menu.active");
-  await expect(menu).toContainText("default");
+  await expect(menu).toContainText("*");
 
   // A path alone is not a complete command: click fills the path with a
   // trailing separator and keeps the menu open for the title segment.
@@ -62,7 +62,7 @@ test("bare + lists the default cwd and recent paths, Enter creates an idle child
 
   await page.locator("#input").fill("+");
   const menu = page.locator("#slash-menu.active");
-  await expect(menu).toContainText("default");
+  await expect(menu).toContainText("*");
   await expect(menu).toContainText("~/");
   // No warning placeholder — the bare command is immediately actionable.
   await expect(menu).not.toContainText("requires");

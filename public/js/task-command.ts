@@ -304,7 +304,7 @@ async function buildBareCreateCandidates(): Promise<Candidate[]> {
         fill: `+${quoteShellWord(defaultDisplay)}/`,
         continueOnFill: true,
       },
-      prefix: "",
+      prefix: "*",
       kind: "data",
     });
   }
