@@ -256,10 +256,11 @@ export async function buildTaskCommandCandidates(
     throw err;
   }
 
-  // Once the payload (brief/body) is being typed the command head is
-  // complete: no candidates → the pipeline hides the menu. Path completion
-  // is unaffected — path tokens never contain unquoted whitespace.
-  if (parsed.remainder.trim() !== "") return [];
+  // A separator after the head starts the payload (brief/body): like the
+  // other slash commands, the menu stands down once the head is complete.
+  // Path descent is unaffected — the trailing separator lives inside the
+  // target token (e.g. `+public/`).
+  if (parsed.remainder !== "") return [];
 
   if (parsed.marker === "+") {
     return buildCreateCandidates(parsed);
