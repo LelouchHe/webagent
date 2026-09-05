@@ -78,10 +78,10 @@ describe("commands", () => {
 
       assert.equal(handled, true);
       const lines = messageLines();
-      assert.ok(lines.includes("/clear — Clear context; history stays."));
-      assert.ok(lines.includes("/compact — Compact context and continue."));
+      assert.ok(lines.includes("/clear - Clear context; history stays."));
+      assert.ok(lines.includes("/compact - Compact context and continue."));
       assert.ok(
-        lines.includes("/exit — Exit task tree; Root resets the tree."),
+        lines.includes("/exit - Exit task tree; Root resets the tree."),
       );
       assert.ok(
         !lines.some((line: string) => line.includes("current conversation")),
@@ -96,10 +96,13 @@ describe("commands", () => {
 
       assert.equal(handled, true);
       const lines = messageLines();
-      assert.ok(lines.includes("? — Show help"));
-      assert.ok(lines.includes("/help — Show help"));
-      assert.ok(lines.includes("!<command> — Run bash command"));
-      assert.ok(lines.includes("// — Agent commands (agent-specific)"));
+      assert.ok(lines.includes("? - Show help"));
+      assert.ok(lines.includes("/help - Show help"));
+      assert.ok(lines.includes("!command - Run bash command"));
+      assert.ok(lines.includes("// - Agent commands (agent-specific)"));
+      assert.ok(lines.includes("+<path>/<title> - Create a child task"));
+      assert.ok(lines.includes("@<task> - Send or jump to the task"));
+      assert.ok(lines.includes("@!<task> - Force-send to a task"));
     });
 
     it("does not expose the removed /tasks command", async () => {
@@ -133,7 +136,7 @@ describe("commands", () => {
 
       assert.equal(handled, true);
       const lines = messageLines();
-      assert.ok(lines.includes("? — Show help"));
+      assert.ok(lines.includes("? - Show help"));
     });
 
     it("toggles, hides, and restores the active plan panel", async () => {

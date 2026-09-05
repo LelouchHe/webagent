@@ -736,7 +736,7 @@ function configCmdNode(
   };
 }
 
-function printHelp(): void {
+export function printHelp(): void {
   const entry = (label: string, description: string): void =>
     addSystem(`${label} - ${description}`);
   const parts: string[] = [];
@@ -749,9 +749,9 @@ function printHelp(): void {
   entry("?", "Show help");
   entry("!command", "Run bash command");
   entry("//", "Agent commands (agent-specific)");
-  entry("+path/title [brief]", "Create a child task");
-  entry("@task [message]", "Send; empty message jumps to the task");
-  entry("@!task [message]", "Force-send to a task");
+  entry("+<path>/<title>", "Create a child task");
+  entry("@<task>", "Send or jump to the task");
+  entry("@!<task>", "Force-send to a task");
   for (const c of ROOT.children!) {
     entry(c.name, c.help ?? c.desc ?? "");
   }

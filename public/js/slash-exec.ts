@@ -20,8 +20,8 @@ import { log, type LogLevel } from "./log.ts";
 import { TOKEN_STORAGE_KEY } from "./login-core.ts";
 import { HTTP_STATUS } from "../../src/http-status.ts";
 import {
-  ROOT,
   consumeInbox,
+  printHelp,
   resetLocalLogLevel,
   resetLocalState,
   setLocalLogLevel,
@@ -336,31 +336,9 @@ export async function handleSlashCommand(text: string): Promise<boolean> {
     }
 
     case "/help":
-    case "?": {
-      const helpParts: string[] = [];
-      if (state.serverVersion)
-        helpParts.push(`WebAgent ${state.serverVersion}`);
-      if (state.agentName && state.agentVersion)
-        helpParts.push(`${state.agentName} ${state.agentVersion}`);
-      if (helpParts.length) addSystem(helpParts.join(" · "));
-      addSystem("›  has next step    *  current value");
-      addSystem("Tab completes · Enter sends raw text");
-      addSystem("? — Show help");
-      addSystem("!<command> — Run bash command");
-      addSystem("// — Agent commands (agent-specific)");
-      for (const c of ROOT.children!) {
-        addSystem(`${c.name} — ${c.help ?? c.desc ?? ""}`);
-      }
-      addSystem("--- Shortcuts ---");
-      addSystem("Enter — Send message");
-      addSystem("Shift+Enter — New line");
-      addSystem("^C — Cancel current response");
-      addSystem("^M — Cycle mode (Agent → Plan → Autopilot)");
-      addSystem("^U — Attach file (any type)");
-      addSystem("--- Tips ---");
-      addSystem("Tap ❯ prompt to cycle mode");
+    case "?":
+      printHelp();
       return true;
-    }
 
     case "/model":
     case "/mode":

@@ -300,7 +300,6 @@ async function buildBareCreateCandidates(): Promise<Candidate[]> {
     candidates.push({
       spec: {
         primary: defaultDisplay,
-        secondary: "default",
         current: true,
         fill: `+${quoteShellWord(defaultDisplay)}/`,
         continueOnFill: true,
