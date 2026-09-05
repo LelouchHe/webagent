@@ -14,13 +14,14 @@ function request(
   port: number,
   path: string,
   body: Record<string, unknown>,
+  method = "POST",
 ): Promise<{ status: number; body: Record<string, unknown> }> {
   return new Promise((resolve, reject) => {
     const req = http.request(
       {
         hostname: "127.0.0.1",
         port,
-        method: "POST",
+        method,
         path,
         headers: { "Content-Type": "application/json" },
       },
@@ -46,6 +47,10 @@ describe("S3 collaboration write routes", () => {
   let server: http.Server;
   let tmpDir: string;
   let port: number;
+  let bridge: ReturnType<typeof mockBridgeStubs> & {
+    newSession(): Promise<{ sessionId: string; configOptions: never[] }>;
+    prompt(taskId: string, text: string): Promise<void>;
+  };
   const broadcasts: Array<{ type: string; taskId?: string }> = [];
   const promptCalls: Array<{ taskId: string; text: string }> = [];
 
@@ -59,7 +64,7 @@ describe("S3 collaboration write routes", () => {
     store = new Store(tmpDir, "test-agent");
     tasks = new TaskManager(store, tmpDir, tmpDir);
     let sequence = 0;
-    const bridge = {
+    bridge = {
       ...mockBridgeStubs(),
       async newSession() {
         sequence++;
@@ -209,6 +214,99 @@ describe("S3 collaboration write routes", () => {
         .sort(),
       ["parent", "sibling"],
     );
+  });
+
+  it("rejects renaming a task to a live sibling title", async () => {
+    store.createTask("sibling2", tmpDir, "auto", "agent-sibling2", "parent");
+    store.updateTaskTitle("sibling2", "二号");
+    const response = await request(
+      port,
+      "/api/v1/tasks/sibling/title",
+      { value: "二号" },
+      "PUT",
+    );
+
+    assert.equal(response.status, 400);
+    assert.match(response.body.error as string, /already/);
+    assert.equal(store.getTask("sibling")?.title, "sibling");
+  });
+
+  it("rejects invalid rename titles", async () => {
+    for (const value of [".", "..", "a/b", "   "]) {
+      const response = await request(
+        port,
+        "/api/v1/tasks/sibling/title",
+        { value },
+        "PUT",
+      );
+      assert.equal(response.status, 400, `value ${JSON.stringify(value)}`);
+    }
+    assert.equal(store.getTask("sibling")?.title, "sibling");
+  });
+
+  it("rejects creating a child with a duplicate sibling title", async () => {
+    const response = await request(port, "/api/v1/tasks", {
+      parentId: "parent",
+      cwd: tmpDir,
+      title: "sibling",
+    });
+
+    assert.equal(response.status, 400);
+    assert.match(response.body.error as string, /already/);
+  });
+
+  it("maps a collaboration store failure to a 500 without crashing", async () => {
+    const flakyStore = new Proxy(store, {
+      get(target, prop, receiver) {
+        if (prop === "createCollaborationMessage") {
+          return () => {
+            throw new Error("injected store failure");
+          };
+        }
+        return Reflect.get(target, prop, receiver);
+      },
+    });
+    const flakyHandler = createRequestHandler({
+      sseManager: Object.assign(new SseManager(), {
+        broadcast() {},
+      }),
+      store: flakyStore,
+      tasks,
+      getBridge: () => bridge,
+      publicDir: join(tmpDir, "public"),
+      dataDir: tmpDir,
+      limits: { bash_output: 1_048_576, image_upload: 10_485_760 },
+    });
+    const flakyServer = http.createServer(flakyHandler);
+    await new Promise<void>((resolve) =>
+      flakyServer.listen(0, "127.0.0.1", resolve),
+    );
+    const flakyPort = (flakyServer.address() as { port: number }).port;
+    try {
+      const response = await request(
+        flakyPort,
+        "/api/v1/tasks/parent/messages",
+        {
+          targetTaskId: "sibling",
+          body: "投递失败也不得崩服",
+        },
+      );
+      assert.equal(response.status, 500);
+      assert.match(response.body.error as string, /injected store failure/);
+
+      // The server must survive: a follow-up request still answers.
+      const after = await request(flakyPort, "/api/v1/tasks/parent/messages", {
+        targetTaskId: "sibling",
+        body: "第二次请求",
+      });
+      assert.equal(after.status, 500);
+    } finally {
+      await new Promise<void>((resolve) =>
+        flakyServer.close(() => {
+          resolve();
+        }),
+      );
+    }
   });
 
   it("rejects a target outside the direct family policy", async () => {

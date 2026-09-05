@@ -424,7 +424,12 @@ Update a task's title.
 - Broadcasts `task_title_updated` to all SSE clients
 - Persists the title to SQLite
 
-**Errors:** `400` (missing value), `404` (unknown task)
+The title follows the same grammar as a collaboration child title: non-empty,
+not `.` / `..`, and containing no `/`. A live sibling task under the same
+parent may not hold the same title.
+
+**Errors:** `400` (missing value, invalid title, or a live sibling already
+holds that title), `404` (unknown task)
 
 ---
 

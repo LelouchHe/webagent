@@ -1462,6 +1462,9 @@ export class TaskManager {
             );
             if (!this.isCurrentPrompt(taskId, promptId)) return;
             this.activePrompts.delete(taskId);
+            // Same attribution as an ACP error event: a rejected delivery
+            // prompt must not leave the target marked running.
+            this.store.updateTaskWorkflowStatus(taskId, "idle");
             this.syncBusy(taskId);
           },
         );

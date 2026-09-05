@@ -104,6 +104,42 @@ describe("TaskManager collaboration delivery drain", () => {
     }
   });
 
+  it("fails claimed deliveries and returns the target to idle when the prompt rejects", async () => {
+    store.createCollaborationMessage({
+      id: "reject-message",
+      deliveryId: "reject-delivery",
+      sourceTaskId: "source",
+      directTargetTaskId: "target",
+      sourceActor: "user",
+      body: "这次投递会失败",
+      createdAt: 3,
+    });
+    const bridge = {
+      ...mockBridgeStubs(),
+      async prompt() {
+        throw new Error("agent subprocess died");
+      },
+    };
+
+    assert.equal(
+      await tasks.drainCollaborationDeliveries(bridge, "target"),
+      true,
+    );
+    await waitFor(
+      () =>
+        store.getCollaborationDelivery("reject-delivery")?.status === "failed",
+    );
+    assert.equal(
+      store.getCollaborationDelivery("reject-delivery")?.failure_reason,
+      "prompt_failed",
+    );
+    assert.equal(
+      store.getTask("target")?.workflow_status,
+      "idle",
+      "a failed delivery prompt must not strand the target in running",
+    );
+  });
+
   it("terminates all outstanding deliveries when clear replaces the execution", async () => {
     store.createCollaborationMessage({
       id: "draining-message",

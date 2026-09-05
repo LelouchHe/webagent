@@ -1246,14 +1246,28 @@ export function createRequestHandler(
         }
         const messageId = randomUUID();
         const deliveryId = randomUUID();
-        const created = store.createCollaborationMessage({
-          id: messageId,
-          deliveryId,
-          sourceTaskId,
-          directTargetTaskId: targetTask.id,
-          sourceActor: "user",
-          body: body.body,
-        });
+        // A store-level rejection here must answer a JSON error, never an
+        // unhandled rejection: the request handler is fired with `void` and
+        // has no outer catch, so a throw would take the process down.
+        let created: ReturnType<typeof store.createCollaborationMessage>;
+        try {
+          created = store.createCollaborationMessage({
+            id: messageId,
+            deliveryId,
+            sourceTaskId,
+            directTargetTaskId: targetTask.id,
+            sourceActor: "user",
+            body: body.body,
+          });
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          if (msg.startsWith("Live task not found")) {
+            json(res, HTTP_STATUS.NOT_FOUND, { error: msg });
+          } else {
+            json(res, HTTP_STATUS.INTERNAL_SERVER_ERROR, { error: msg });
+          }
+          return;
+        }
         for (const projection of store.listCollaborationProjections(
           messageId,
         )) {
@@ -1881,14 +1895,41 @@ export function createRequestHandler(
           });
           return;
         }
-        store.updateTaskTitle(taskId, body.value);
+        // The live sibling-title unique index turns an unguarded rename into
+        // a thrown constraint error; validate the same grammar as creation
+        // and reject collisions before the store sees them.
+        const title = validateCollaborationTitle(body.value);
+        if (title === null) {
+          json(res, HTTP_STATUS.BAD_REQUEST, {
+            error:
+              "Title must be non-empty and must not be '.', '..', or contain '/'",
+          });
+          return;
+        }
+        if (
+          task.parent_id !== null &&
+          store
+            .listTasks()
+            .some(
+              (live) =>
+                live.parent_id === task.parent_id &&
+                live.id !== task.id &&
+                live.title === title,
+            )
+        ) {
+          json(res, HTTP_STATUS.BAD_REQUEST, {
+            error: "A sibling task already has that title",
+          });
+          return;
+        }
+        store.updateTaskTitle(taskId, title);
         const titleEvent = {
           type: "task_title_updated",
           taskId,
-          title: body.value,
+          title,
         } as AgentEvent;
         sseManager.broadcast(titleEvent);
-        json(res, HTTP_STATUS.OK, { title: body.value });
+        json(res, HTTP_STATUS.OK, { title });
         return;
       }
 
@@ -2540,6 +2581,16 @@ export function createRequestHandler(
             json(res, HTTP_STATUS.BAD_REQUEST, { error: msg });
           } else if (err instanceof TaskTreeBusyError) {
             json(res, HTTP_STATUS.CONFLICT, { error: msg });
+          } else if (
+            msg.includes(
+              "UNIQUE constraint failed: tasks.parent_id, tasks.title",
+            )
+          ) {
+            // The store's live sibling-title unique index is the authority;
+            // surface it as a client error instead of a raw 500.
+            json(res, HTTP_STATUS.BAD_REQUEST, {
+              error: "A sibling task already has that title",
+            });
           } else {
             json(res, HTTP_STATUS.INTERNAL_SERVER_ERROR, { error: msg });
           }
