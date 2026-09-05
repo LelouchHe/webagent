@@ -106,8 +106,9 @@ export function registerMcpTools(
     "task_list",
     {
       description:
-        "List the current Task and its locally reachable parent, children, and siblings. " +
-        "Returns stable identity data only; it does not return status or history.",
+        "List the Tasks available for coordination with the current Task. " +
+        "Returns stable identity and short description data only; it does not return workflow status or history. " +
+        "Use this to discover which Task to inspect or contact.",
       inputSchema: {},
     },
     async () => jsonContent({ tasks: host?.list(taskId) ?? unavailable() }),
@@ -117,10 +118,11 @@ export function registerMcpTools(
     "task_query",
     {
       description:
-        "Read a bounded page of one visible Task's compact persisted history. " +
-        "Omit arguments for the current Task's latest page; use the returned cursor for more. " +
-        "Records contain deterministic text projections, never raw event payloads. " +
-        "Use text only to locate a known term in the underlying stored event.",
+        "Read a bounded page of compact history records from the current Task or another available Task. " +
+        "With no arguments, returns the latest page; use the returned cursor to read older pages. " +
+        "The text filter is a literal substring search, not semantic search. " +
+        "Results include seq values that can be passed to task_get_record when a compact summary is not enough. " +
+        "Raw event payloads are not returned by this tool.",
       inputSchema: {
         task_id: TASK_ID.nullable()
           .optional()
@@ -166,8 +168,9 @@ export function registerMcpTools(
     "task_get_record",
     {
       description:
-        "Read one complete WebAgent-persisted event row by sequence. " +
-        "The data field is the exact stored JSON string; this is not guaranteed to be the complete original ACP notification.",
+        "Fetch one complete history record by its task-local seq. " +
+        "Use a seq returned by task_query when its compact summary is not sufficient. " +
+        "The result includes the full event payload rather than a compact summary.",
       inputSchema: {
         task_id: TASK_ID.nullable()
           .optional()
@@ -194,8 +197,10 @@ export function registerMcpTools(
     "task_send",
     {
       description:
-        "Send one durable graceful message to a visible parent, child, or sibling Task. " +
-        "The server queues or delivers it; do not inspect busy state first.",
+        "Send one durable message to another Task. " +
+        "Use this for ordinary coordination, questions, requests for help, context sharing, or routine progress updates. " +
+        "It does not change the sender's workflow status. " +
+        "The message is queued or delivered by the system; do not check whether the recipient is busy before sending.",
       inputSchema: {
         target: TASK_ID.describe("Stable target Task ID"),
         body: BODY.describe("Verbatim collaboration message"),
@@ -212,8 +217,11 @@ export function registerMcpTools(
     "task_update",
     {
       description:
-        "Report the current Task as blocked or done. The body is the required reason or result. " +
-        "The server records the update and informs the direct parent when one exists.",
+        "Commit a material workflow state change for the current Task. " +
+        "Use this only when the Task is blocked and cannot proceed, or when it has completed its assigned work. " +
+        "The body must contain the actionable reason or the completed result and evidence. " +
+        "The system records the update and forwards it to the relevant coordinating Task when applicable. " +
+        "Do not use this for ordinary coordination or routine progress updates; use task_send instead.",
       inputSchema: {
         status: z.enum(["blocked", "done"]),
         body: BODY.describe("Reason for blocking or result of completion"),
