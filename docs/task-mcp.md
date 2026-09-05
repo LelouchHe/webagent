@@ -40,6 +40,16 @@ For provider compatibility, each optional field also accepts `null`, which has
 exactly the same meaning as omission. MCP clients should normally omit unused
 fields.
 
+#### Provider schema compatibility
+
+Some function-calling providers emit every property in a tool schema even when
+fields are optional. Without a nullable alternative, they may invent placeholder
+values for `task_id` or `cursor`, causing lookup or pagination failures.
+
+For that reason, every optional `task_query` field also accepts `null`, and the
+server treats `null` exactly like omission. The fields remain optional for MCP
+clients that already handle the schema correctly.
+
 Without arguments, the tool examines the latest five non-thinking events from
 the current task. Normal completion events are omitted, so a returned page may
 contain fewer records. A query selects the latest matching events and returns

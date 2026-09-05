@@ -111,7 +111,7 @@ Frontend source lives in `public/js/*.ts`, bundled by esbuild into a single cont
 | **[API Reference](docs/api.md)**                        | REST endpoints, SSE events, implementation details                             |
 | **[Attachments](docs/uploads.md)**                      | Upload pipeline, on-disk layout, lifecycle, permission auto-approve, observability |
 | **[ACP Integration](docs/acp.md)**                      | Client extensions, protocol scope, current limits                              |
-| **[Task MCP Control Plane](docs/task-mcp.md)**          | Agent task discovery, compact history, collaboration, and capability scope     |
+| **[Task MCP Control Plane](docs/task-mcp.md)**          | Task tools, compact history, capability scope, and provider-schema compatibility |
 | **[Client Architecture](docs/client-architecture.md)**  | Frontend modules, data flow, conventions                                       |
 | **[Streaming Render Performance](docs/performance.md)** | rAF coalescing, incremental lex, per-block memo, single-token fast path        |
 | **[Slash Menu](docs/slash-menu.md)**                    | Walker pipeline, `CmdNode` tree, Tab/Enter/Click contract, how to add commands |
