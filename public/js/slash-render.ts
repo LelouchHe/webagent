@@ -24,11 +24,8 @@ export interface SlashItemSpec {
   /** Keep the menu open after Tab fills this data row, allowing hierarchical
    *  pickers to load the next scope. Defaults to false. */
   continueOnFill?: boolean;
-  /** Click completes via `fill` without executing — for rows whose value
-   *  alone is not a complete command (e.g. a `+` path awaiting a title).
-   *  Execution stays on the freeform row or the typed Enter. */
-  fillOnly?: true;
-  /** Selection action (Click, or Tab+Enter). Missing = read-only entry. */
+  /** Selection action (Click, or Tab+Enter). Missing = click completes via
+   *  the same fill Tab uses instead of executing. */
   onSelect?: () => void | Promise<void>;
 }
 

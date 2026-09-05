@@ -6,7 +6,6 @@
 // in slash-commands.ts so this file stays a thin pipeline.
 
 import { state, dom, setInputValue } from "./state.ts";
-import { addSystem } from "./render.ts";
 import {
   resolvePath,
   buildCandidates,
@@ -417,14 +416,6 @@ async function clickItem(idx: number): Promise<void> {
 
   if (c.kind === "separator" || c.kind === "placeholder") return;
 
-  // Completion rows whose value alone is not executable: click fills like
-  // Tab and waits for more input instead of running a partial command.
-  if (c.spec.fillOnly) {
-    fillDataCandidate(c, pathPrefix, preserveInput);
-    dom.input.focus();
-    return;
-  }
-
   if (c.kind === "subcommand" && c.node) {
     const childNodes = c.node.children ?? [];
     const hasMore =
@@ -452,13 +443,17 @@ async function clickItem(idx: number): Promise<void> {
   }
 
   // data / freeform
-  hideSlashMenu();
-  if (!preserveInput) setInputValue("");
   if (c.spec.onSelect) {
+    hideSlashMenu();
+    if (!preserveInput) setInputValue("");
     await c.spec.onSelect();
-  } else {
-    addSystem("Read-only entry — no action.");
+    return;
   }
+  // No action of its own: complete via the same fill Tab uses (e.g. `+`
+  // paths that still await a title), keeping the menu open when the row
+  // asks for it.
+  fillDataCandidate(c, pathPrefix, preserveInput);
+  dom.input.focus();
 }
 
 // --- keyboard navigation ---

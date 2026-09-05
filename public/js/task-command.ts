@@ -269,7 +269,6 @@ async function buildBareCreateCandidates(): Promise<Candidate[]> {
         current: true,
         fill: `+${quoteShellWord(defaultDisplay)}/`,
         continueOnFill: true,
-        fillOnly: true,
       },
       prefix: "",
       kind: "data",
@@ -284,7 +283,6 @@ async function buildBareCreateCandidates(): Promise<Candidate[]> {
           primary: p.cwdDisplay,
           fill: `+${quoteShellWord(p.cwdDisplay)}/`,
           continueOnFill: true,
-          fillOnly: true,
         },
         prefix: "",
         kind: "data",
@@ -370,7 +368,6 @@ async function buildCreateCandidates(parsed: {
         // directory context, so the full path would be redundant.
         fill: `${parsed.marker}${quoteShellWord(completedPrefix + entry.name)}/`,
         continueOnFill: true,
-        fillOnly: true,
       },
       prefix: "",
       kind: "data",
