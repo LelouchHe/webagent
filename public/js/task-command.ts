@@ -256,6 +256,11 @@ export async function buildTaskCommandCandidates(
     throw err;
   }
 
+  // Once the payload (brief/body) is being typed the command head is
+  // complete: no candidates → the pipeline hides the menu. Path completion
+  // is unaffected — path tokens never contain unquoted whitespace.
+  if (parsed.remainder.trim() !== "") return [];
+
   if (parsed.marker === "+") {
     return buildCreateCandidates(parsed);
   }

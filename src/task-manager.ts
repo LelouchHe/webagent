@@ -1430,9 +1430,12 @@ export class TaskManager {
         // The full source id is the only reliable reply handle available to
         // the receiving agent today; label it explicitly. The quoted name is
         // deliberately not labeled "title" — titles change and can collide,
-        // so the id stays the only thing presented as a precise handle.
+        // so the id stays the only thing presented as a precise handle. The
+        // body is fenced verbatim between scissor lines so the agent never
+        // reads metadata as instruction and the forwarding layer never
+        // rewrites the content.
         const sourceName = source?.title ?? message.source_task_id.slice(0, 8);
-        return `From "${sourceName}" (task id ${message.source_task_id}):\n\n${message.body}`;
+        return `From "${sourceName}" (task id ${message.source_task_id}):\n---8<---\n${message.body}\n---8<---`;
       });
       this.store.updateTaskWorkflowStatus(taskId, "running");
       this.drainingCollaborationTasks.delete(taskId);

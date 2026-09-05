@@ -41,4 +41,8 @@ test("@ lists the local scope immediately and filters while typing", async ({
   await page.locator("#input").fill("@r");
   await expect(menu).toContainText("root");
   await expect(menu).not.toContainText("e2e-child");
+
+  // Once the message body is being typed the menu stands down.
+  await page.locator("#input").fill("@r hello there");
+  await expect(page.locator("#slash-menu.active")).toHaveCount(0);
 });

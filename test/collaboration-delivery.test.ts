@@ -70,11 +70,11 @@ describe("TaskManager collaboration delivery drain", () => {
     assert.equal(promptCalls[0].taskId, "target");
     assert.match(
       promptCalls[0].text,
-      /From "source" \(task id source\):\n\n先检查接口/,
+      /From "source" \(task id source\):\n---8<---\n先检查接口\n---8<---/,
     );
     assert.match(
       promptCalls[0].text,
-      /From "source" \(task id source\):\n\n再检查日志/,
+      /From "source" \(task id source\):\n---8<---\n再检查日志\n---8<---/,
     );
     assert.ok(
       promptCalls[0].text.indexOf("先检查接口") <
