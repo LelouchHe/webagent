@@ -747,6 +747,9 @@ function printHelp(): void {
   addSystem("? — Show help");
   addSystem("!<command> — Run bash command");
   addSystem("// — Agent commands (agent-specific)");
+  addSystem("+<path>/<title> [brief] — Create a child task");
+  addSystem("@<task> [message] — Send; empty message jumps to the task");
+  addSystem("@!<task> [message] — Force-send to a task");
   for (const c of ROOT.children!) {
     addSystem(`${c.name} — ${c.help ?? c.desc ?? ""}`);
   }

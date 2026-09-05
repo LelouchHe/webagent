@@ -20,8 +20,10 @@ test("@ click completes the target and waits for the body", async ({
     .first()
     .click();
   await expect(page.locator("#input")).toHaveValue("@root ");
-  // The head is complete once the separator is typed: no menu.
-  await expect(page.locator("#slash-menu.active")).toHaveCount(0);
+  // The head is complete: keep only the existing placeholder affordance.
+  await expect(page.locator("#slash-menu.active")).toContainText(
+    "Enter to jump · type a message to send",
+  );
   await expect.poll(() => currentTaskId(page)).toBe(current);
 });
 

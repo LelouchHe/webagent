@@ -222,6 +222,7 @@ function makeCandidate(args: CreateCandidateArgs): Candidate {
       path: args.path,
       pathSecondary: args.pathSecondary,
       fill,
+      continueOnFill: true,
       onSelect: args.onSelect,
     },
     prefix: "",
@@ -258,9 +259,31 @@ export async function buildTaskCommandCandidates(
 
   // A separator after the head starts the payload (brief/body): like the
   // other slash commands, the menu stands down once the head is complete.
+  // For a complete @ target with only that separator, keep one existing
+  // placeholder row as a compact affordance: Enter jumps, text sends.
   // Path descent is unaffected — the trailing separator lives inside the
   // target token (e.g. `+public/`).
-  if (parsed.remainder !== "") return [];
+  if (parsed.remainder !== "") {
+    if (
+      parsed.target !== "" &&
+      (parsed.marker === "@" || parsed.marker === "@!") &&
+      parsed.remainder.trim() === ""
+    ) {
+      return [
+        {
+          spec: {
+            primary:
+              parsed.marker === "@!"
+                ? "Enter to jump · type a message to force-send"
+                : "Enter to jump · type a message to send",
+          },
+          prefix: "",
+          kind: "placeholder",
+        },
+      ];
+    }
+    return [];
+  }
 
   if (parsed.marker === "+") {
     return buildCreateCandidates(parsed);
