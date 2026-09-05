@@ -737,8 +737,9 @@ function configCmdNode(
 }
 
 export function printHelp(): void {
-  const entry = (label: string, description: string): void =>
+  const entry = (label: string, description: string): void => {
     addSystem(`${label} - ${description}`);
+  };
   const parts: string[] = [];
   if (state.serverVersion) parts.push(`WebAgent ${state.serverVersion}`);
   if (state.agentName && state.agentVersion)
