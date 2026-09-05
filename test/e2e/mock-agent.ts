@@ -110,12 +110,11 @@ class MockAgent implements Agent {
     });
   }
 
-  private async runMcpEchoPrompt(
+  private async runMcpTaskListPrompt(
     sessionId: string,
     mcpServers: McpServer[],
-    echoArg: string,
   ): Promise<PromptResponse> {
-    const result = await this.runMcpEchoRoundTrip(mcpServers, echoArg);
+    const result = await this.runMcpTaskListRoundTrip(mcpServers);
     await this.conn.sessionUpdate({
       sessionId,
       update: {
@@ -129,12 +128,11 @@ class MockAgent implements Agent {
   /**
    * Perform a real MCP round trip against the MCP server definitions
    * carried in ACP mcpServers: discover the http entry, initialize,
-   * list tools, and call the echo tool with its capability header. Returns
+   * list tools, and call task_list with its capability header. Returns
    * a human-readable summary or the raw error for e2e assertions.
    */
-  private async runMcpEchoRoundTrip(
+  private async runMcpTaskListRoundTrip(
     mcpServers: McpServer[],
-    echoArg: string,
   ): Promise<string> {
     const httpCandidate = mcpServers.find((s) => "url" in s && "headers" in s);
     if (!httpCandidate) return "E2E_MCP_RESULT: no http mcp server provided";
@@ -179,13 +177,13 @@ class MockAgent implements Agent {
         jsonrpc: "2.0",
         id: 3,
         method: "tools/call",
-        params: { name: "echo", arguments: { text: echoArg } },
+        params: { name: "task_list", arguments: {} },
       });
       const content =
         call.body?.result?.content
           ?.map((c: { text?: string }) => c.text ?? "")
           .join("") ?? JSON.stringify(call.body);
-      return `E2E_MCP_RESULT: ${init.status} tools=${names.join(",")} echo=${content}`;
+      return `E2E_MCP_RESULT: ${init.status} tools=${names.join(",")} task_list=${content}`;
     } catch (error) {
       return `E2E_MCP_RESULT: error ${error instanceof Error ? error.message : String(error)}`;
     }
@@ -271,7 +269,6 @@ class MockAgent implements Agent {
     return { configOptions: session.configOptions };
   }
 
-  // eslint-disable-next-line complexity -- TODO: refactor E2E dispatch into a route table
   async prompt(params: PromptRequest): Promise<PromptResponse> {
     const text = params.prompt
       .filter((part) => part.type === "text")
@@ -287,15 +284,12 @@ class MockAgent implements Agent {
       return await this.runSlowPlanPrompt(params.sessionId);
     }
 
-    if (text.startsWith("E2E_MCP_ECHO")) {
+    if (text.startsWith("E2E_MCP_TASK_LIST")) {
       // Real MCP round trip against the MCP server the WebAgent attached
       // through ACP mcpServers: discover the http entry, call initialize +
-      // tools/list + tools/call(echo), and surface the result as a message.
-      // This is the P0b transport proof: session capability → capability
-      // header → serving endpoint → echo result with the derived session.
+      // tools/list + tools/call(task_list), and surface the result as a message.
       const mcpServers = this.mcpServersBySession.get(params.sessionId) ?? [];
-      const echoArg = text.replace(/^E2E_MCP_ECHO\s*/, "").trim() || "hello";
-      return await this.runMcpEchoPrompt(params.sessionId, mcpServers, echoArg);
+      return await this.runMcpTaskListPrompt(params.sessionId, mcpServers);
     }
 
     if (text.startsWith("E2E_SLOW_TOOL")) {

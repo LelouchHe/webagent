@@ -3,7 +3,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import type { McpServer as AcpMcpServer } from "@agentclientprotocol/sdk";
 import type { CapabilityStore } from "./capability.ts";
-import { registerMcpTools } from "./tools.ts";
+import { registerMcpTools, type McpTaskToolHost } from "./tools.ts";
 import { HTTP_STATUS } from "../http-status.ts";
 
 /**
@@ -57,6 +57,8 @@ export interface McpEndpointOptions {
    * returns and TaskManager promotes the task to live.
    */
   isTaskActive: (taskId: string) => boolean;
+  /** Task control-plane operations used by the four direct tools. */
+  taskTools?: McpTaskToolHost;
   /** Mount path; the response `true` claims that path. */
   path?: string;
 }
@@ -129,7 +131,7 @@ export function createMcpEndpoint(
       { name: MCP_SERVER_NAME, version: "0.1.0" },
       {},
     );
-    registerMcpTools(server, taskId);
+    registerMcpTools(server, taskId, options.taskTools);
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: undefined,
       // JSON responses for POST round trips (no SSE streaming needed for the

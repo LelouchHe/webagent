@@ -86,11 +86,32 @@ describe("createMcpEndpoint", () => {
   let baseUrl: string;
   const live = new Set<string>();
   const caps = new CapabilityStore();
+  const calls: Array<unknown> = [];
+  const taskTools = {
+    list: (taskId: string) => [
+      { id: taskId, title: "Current", brief: null, relation: "self" as const },
+    ],
+    query: (_sourceTaskId: string, input: unknown) => {
+      calls.push({ kind: "query", input });
+      return {
+        workflowStatus: "idle" as const,
+        records: [],
+        hasMore: false,
+      };
+    },
+    send: async (...args: unknown[]) => {
+      calls.push({ kind: "send", args });
+    },
+    update: async (...args: unknown[]) => {
+      calls.push({ kind: "update", args });
+    },
+  };
 
   before(async () => {
     const handler = createMcpEndpoint({
       capabilities: caps,
       isTaskActive: (id) => live.has(id),
+      taskTools,
     });
     server = http.createServer((req, res) => {
       void handler(req, res).then((handled) => {
@@ -138,6 +159,7 @@ describe("createMcpEndpoint", () => {
     const handler = createMcpEndpoint({
       capabilities: caps,
       isTaskActive: (id) => live.has(id),
+      taskTools,
     });
     const req = new http.IncomingMessage(null as never);
     const res = new http.ServerResponse(req);
@@ -178,7 +200,7 @@ describe("createMcpEndpoint", () => {
     assert.equal(res.status, 401);
   });
 
-  it("serves an MCP round trip: initialize, tools/list, echo call", async () => {
+  it("serves the four Task control-plane tools", async () => {
     const token = caps.mint("web-1");
     live.add("web-1");
 
@@ -226,8 +248,13 @@ describe("createMcpEndpoint", () => {
     const listBody = (await list.json()) as {
       result?: { tools?: Array<{ name: string }> };
     };
-    const names = (listBody.result?.tools ?? []).map((t) => t.name);
-    assert.ok(names.includes("echo"));
+    const names = (listBody.result?.tools ?? []).map((t) => t.name).sort();
+    assert.deepEqual(names, [
+      "task_list",
+      "task_query",
+      "task_send",
+      "task_update",
+    ]);
 
     const call = await mcpPost(
       "/mcp",
@@ -235,16 +262,76 @@ describe("createMcpEndpoint", () => {
         jsonrpc: "2.0",
         id: 3,
         method: "tools/call",
-        params: { name: "echo", arguments: { text: "hi" } },
+        params: { name: "task_list", arguments: {} },
       },
       auth(token),
     );
     assert.equal(call.status, 200);
     const callBody = (await call.json()) as {
-      result?: { content?: Array<{ type: string; text: string }> };
+      result?: {
+        isError?: boolean;
+        content?: Array<{ type: string; text: string }>;
+      };
     };
-    const text = (callBody.result?.content ?? []).map((c) => c.text).join("");
-    assert.equal(text, "echo: hi (task web-1)");
+    assert.notEqual(callBody.result?.isError, true);
+
+    const query = await mcpPost(
+      "/mcp",
+      {
+        jsonrpc: "2.0",
+        id: 4,
+        method: "tools/call",
+        params: {
+          name: "task_query",
+          arguments: { text: "history", limit: 2 },
+        },
+      },
+      auth(token),
+    );
+    assert.equal(query.status, 200);
+
+    const send = await mcpPost(
+      "/mcp",
+      {
+        jsonrpc: "2.0",
+        id: 5,
+        method: "tools/call",
+        params: {
+          name: "task_send",
+          arguments: { target: "task-2", body: "hello" },
+        },
+      },
+      auth(token),
+    );
+    assert.equal(send.status, 200);
+
+    const update = await mcpPost(
+      "/mcp",
+      {
+        jsonrpc: "2.0",
+        id: 6,
+        method: "tools/call",
+        params: {
+          name: "task_update",
+          arguments: { status: "done", body: "finished" },
+        },
+      },
+      auth(token),
+    );
+    assert.equal(update.status, 200);
+    assert.deepEqual(calls, [
+      {
+        kind: "query",
+        input: {
+          taskId: undefined,
+          text: "history",
+          cursor: undefined,
+          limit: 2,
+        },
+      },
+      { kind: "send", args: ["web-1", "task-2", "hello"] },
+      { kind: "update", args: ["web-1", "done", "finished"] },
+    ]);
 
     live.delete("web-1");
   });
