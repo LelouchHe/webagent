@@ -737,6 +737,8 @@ function configCmdNode(
 }
 
 function printHelp(): void {
+  const entry = (label: string, description: string): void =>
+    addSystem(`${label} - ${description}`);
   const parts: string[] = [];
   if (state.serverVersion) parts.push(`WebAgent ${state.serverVersion}`);
   if (state.agentName && state.agentVersion)
@@ -744,17 +746,17 @@ function printHelp(): void {
   if (parts.length) addSystem(parts.join(" · "));
   addSystem("›  has next step    *  current value");
   addSystem("Tab completes · Enter sends raw text");
-  addSystem("? — Show help");
-  addSystem("!<command> — Run bash command");
-  addSystem("// — Agent commands (agent-specific)");
-  addSystem("+<path>/<title> [brief] — Create a child task");
-  addSystem("@<task> [message] — Send; empty message jumps to the task");
-  addSystem("@!<task> [message] — Force-send to a task");
+  entry("?", "Show help");
+  entry("!command", "Run bash command");
+  entry("//", "Agent commands (agent-specific)");
+  entry("+path/title [brief]", "Create a child task");
+  entry("@task [message]", "Send; empty message jumps to the task");
+  entry("@!task [message]", "Force-send to a task");
   for (const c of ROOT.children!) {
-    addSystem(`${c.name} — ${c.help ?? c.desc ?? ""}`);
+    entry(c.name, c.help ?? c.desc ?? "");
   }
   addSystem("--- Shortcuts ---");
-  for (const s of SHORTCUTS) addSystem(`${s.key} — ${s.desc}`);
+  for (const s of SHORTCUTS) entry(s.key, s.desc);
   addSystem("--- Tips ---");
   for (const t of TIPS) addSystem(t.text);
 }
