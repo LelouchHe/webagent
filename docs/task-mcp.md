@@ -20,6 +20,7 @@ native tools.
 | --- | --- |
 | `task_list` | List the current task and its locally reachable parent, children, and siblings. |
 | `task_query` | Read a bounded, compact history page for the current task or one visible relative. |
+| `task_get_record` | Read one complete WebAgent-persisted event row by task-local sequence. |
 | `task_send` | Send a durable collaboration message to a visible relative. |
 | `task_update` | Mark the current task `blocked` or `done`, with a handoff message to its parent when one exists. |
 
@@ -110,5 +111,44 @@ large edit diff may be represented only by its title and target path even when
 the resulting text itself does not need truncation.
 
 This compact view is intended for normal task coordination. Raw events are
-retained for the browser transcript and future, explicit diagnostic lookup;
-they are not sent through `task_query`.
+retained for the browser transcript and explicit diagnostic lookup; they are not
+sent through `task_query`.
+
+### `task_get_record`
+
+Use this tool to expand exactly one `seq` returned by `task_query`:
+
+```ts
+{
+  task_id?: string; // Visible target task; current task when omitted
+  seq: number;      // Positive event sequence within that task
+}
+```
+
+The response contains the complete WebAgent-persisted event row:
+
+```ts
+{
+  taskId: string;
+  record: {
+    id: number;
+    taskId: string;
+    seq: number;
+    type: string;
+    data: string;      // Exact JSON string stored in SQLite
+    fromRef: string;   // Persistence origin marker
+    createdAt: string;
+  };
+}
+```
+
+`data` is not compacted, parsed, summarized, or rewritten. This is the complete
+stored event record, not necessarily the complete original ACP notification:
+WebAgent may normalize ACP updates before persistence, merge assistant chunks,
+or intentionally omit fields from sensitive or high-volume notifications. The
+`fromRef` field is WebAgent metadata, not an ACP field. Current origin
+conventions include `user`, `agent`, `system`, `msg:<id>`, `cron:<id>`, and
+`external:<id>`; clients should treat it as an opaque string.
+
+The tool reads one record per call and does not support bulk sequence lookup, so
+raw payload expansion remains explicit and bounded by the caller's choice.

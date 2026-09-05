@@ -170,9 +170,9 @@ class MockAgent implements Agent {
       });
       await post({ jsonrpc: "2.0", method: "notifications/initialized" });
       const list = await post({ jsonrpc: "2.0", id: 2, method: "tools/list" });
-      const names = (list.body?.result?.tools ?? []).map(
-        (t: { name: string }) => t.name,
-      );
+      const names = (list.body?.result?.tools ?? [])
+        .map((t: { name: string }) => t.name)
+        .sort();
       const call = await post({
         jsonrpc: "2.0",
         id: 3,

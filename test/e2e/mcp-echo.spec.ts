@@ -13,6 +13,6 @@ test("mock agent reaches the MCP server and calls task_list", async ({
   await sendPrompt(page, "E2E_MCP_TASK_LIST");
 
   await expect(page.locator(".msg.assistant").last()).toContainText(
-    "E2E_MCP_RESULT: 200 tools=task_list,task_query,task_send,task_update task_list=",
+    "E2E_MCP_RESULT: 200 tools=task_get_record,task_list,task_query,task_send,task_update task_list=",
   );
 });

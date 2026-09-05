@@ -1168,6 +1168,12 @@ export class Store {
       .get(taskId, seq) as EventRow;
   }
 
+  getEvent(taskId: string, seq: number): EventRow | undefined {
+    return this.db
+      .prepare("SELECT * FROM events WHERE task_id = ? AND seq = ?")
+      .get(taskId, seq) as EventRow | undefined;
+  }
+
   getEvents(
     taskId: string,
     opts?: {

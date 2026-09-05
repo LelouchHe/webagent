@@ -154,6 +154,38 @@ describe("MCP Task tool host", () => {
     assert.equal(oldest.hasMore, false);
   });
 
+  it("reads one complete persisted record by seq", () => {
+    store.saveEvent(
+      "alpha",
+      "tool_call",
+      { id: "tool-1", title: "bash", kind: "execute" },
+      { from_ref: "agent" },
+    );
+    const host = createMcpTaskToolHost({
+      store,
+      tasks,
+      getBridge: () => null,
+    });
+
+    assert.deepEqual(host.getRecord("alpha", { seq: 1 }), {
+      taskId: "alpha",
+      record: {
+        id: 1,
+        taskId: "alpha",
+        seq: 1,
+        type: "tool_call",
+        data: '{"id":"tool-1","title":"bash","kind":"execute"}',
+        fromRef: "agent",
+        createdAt: store.getEvent("alpha", 1)?.created_at,
+      },
+    });
+    assert.throws(
+      () => host.getRecord("alpha", { seq: 2 }),
+      /record_not_found/,
+    );
+    assert.throws(() => host.getRecord("alpha", { seq: 0 }), /invalid_seq/);
+  });
+
   it("filters history text in the database before returning records", () => {
     store.saveEvent(
       "alpha",

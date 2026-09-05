@@ -56,7 +56,7 @@ The historical term "WebAgent Session" is **obsolete**; it means `task`.
 | Backend | module | `src/session-manager.ts` | `src/task-manager.ts` (class `SessionManager` → `TaskManager`) |
 | Backend | identifiers | `clearSession`, `loadSession`, `deleteEmptySessions`, `session title generation` | `clearTask`, `loadTask`, `deleteEmptyTasks`, `task title generation` |
 | Commands | slash menu | `/new /switch /rename /exit /clear /compact` | unchanged (no `session` in the words); help copy says "task" |
-| MCP (S2) | control plane | `task_*` | `task_list`, `task_query`, `task_send`, `task_update` (proposal tooling deferred) |
+| MCP (S2) | control plane | `task_*` | `task_list`, `task_query`, `task_get_record`, `task_send`, `task_update` (proposal tooling deferred) |
 | Docs | product prose | "session", "WebAgent Session", "conversation" | **task** |
 
 ## What keeps `session` (reserved, by definition)

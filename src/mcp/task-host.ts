@@ -11,6 +11,7 @@ import type {
   McpTaskQueryResult,
   McpTaskListItem,
   McpTaskToolHost,
+  McpTaskGetRecordResult,
 } from "./tools.ts";
 import { compactTaskHistoryRecord } from "./task-history.ts";
 
@@ -170,6 +171,31 @@ export function createMcpTaskToolHost(deps: {
               }),
             }
           : {}),
+      };
+    },
+
+    getRecord(sourceTaskId, input): McpTaskGetRecordResult {
+      const targetTaskId = input.taskId ?? sourceTaskId;
+      const { target } =
+        targetTaskId === sourceTaskId
+          ? { target: requireTask(sourceTaskId) }
+          : requireLocalTarget(sourceTaskId, targetTaskId);
+      if (!Number.isInteger(input.seq) || input.seq < 1) {
+        throw new Error("invalid_seq");
+      }
+      const event = store.getEvent(target.id, input.seq);
+      if (!event) throw new Error("record_not_found");
+      return {
+        taskId: target.id,
+        record: {
+          id: event.id,
+          taskId: event.task_id,
+          seq: event.seq,
+          type: event.type,
+          data: event.data,
+          fromRef: event.from_ref,
+          createdAt: event.created_at,
+        },
       };
     },
 

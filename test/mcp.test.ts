@@ -99,6 +99,21 @@ describe("createMcpEndpoint", () => {
         hasMore: false,
       };
     },
+    getRecord: (_sourceTaskId: string, input: unknown) => {
+      calls.push({ kind: "getRecord", input });
+      return {
+        taskId: "web-1",
+        record: {
+          id: 1,
+          taskId: "web-1",
+          seq: 1,
+          type: "assistant_message",
+          data: '{"text":"hello"}',
+          fromRef: "agent",
+          createdAt: "2026-01-01 00:00:00",
+        },
+      };
+    },
     send: async (...args: unknown[]) => {
       calls.push({ kind: "send", args });
     },
@@ -200,7 +215,7 @@ describe("createMcpEndpoint", () => {
     assert.equal(res.status, 401);
   });
 
-  it("serves the four Task control-plane tools", async () => {
+  it("serves the Task control-plane tools", async () => {
     const token = caps.mint("web-1");
     live.add("web-1");
 
@@ -259,6 +274,7 @@ describe("createMcpEndpoint", () => {
     const tools = listBody.result?.tools ?? [];
     const names = tools.map((tool) => tool.name).sort();
     assert.deepEqual(names, [
+      "task_get_record",
       "task_list",
       "task_query",
       "task_send",
@@ -316,11 +332,26 @@ describe("createMcpEndpoint", () => {
     );
     assert.equal(query.status, 200);
 
-    const send = await mcpPost(
+    const getRecord = await mcpPost(
       "/mcp",
       {
         jsonrpc: "2.0",
         id: 5,
+        method: "tools/call",
+        params: {
+          name: "task_get_record",
+          arguments: { task_id: null, seq: 7 },
+        },
+      },
+      auth(token),
+    );
+    assert.equal(getRecord.status, 200);
+
+    const send = await mcpPost(
+      "/mcp",
+      {
+        jsonrpc: "2.0",
+        id: 6,
         method: "tools/call",
         params: {
           name: "task_send",
@@ -335,7 +366,7 @@ describe("createMcpEndpoint", () => {
       "/mcp",
       {
         jsonrpc: "2.0",
-        id: 6,
+        id: 7,
         method: "tools/call",
         params: {
           name: "task_update",
@@ -355,6 +386,7 @@ describe("createMcpEndpoint", () => {
           limit: 2,
         },
       },
+      { kind: "getRecord", input: { taskId: undefined, seq: 7 } },
       { kind: "send", args: ["web-1", "task-2", "hello"] },
       { kind: "update", args: ["web-1", "done", "finished"] },
     ]);

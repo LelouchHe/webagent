@@ -35,10 +35,35 @@ export interface McpTaskQueryResult {
   hasMore: boolean;
 }
 
+export interface McpTaskGetRecordInput {
+  taskId?: string;
+  seq: number;
+}
+
+/** Complete WebAgent-persisted event row, not necessarily the original ACP notification. */
+export interface McpTaskStoredRecord {
+  id: number;
+  taskId: string;
+  seq: number;
+  type: string;
+  data: string;
+  fromRef: string;
+  createdAt: string;
+}
+
+export interface McpTaskGetRecordResult {
+  taskId: string;
+  record: McpTaskStoredRecord;
+}
+
 /** Operations supplied by the WebAgent runtime behind the MCP tool surface. */
 export interface McpTaskToolHost {
   list(sourceTaskId: string): McpTaskListItem[];
   query(sourceTaskId: string, input: McpTaskQueryInput): McpTaskQueryResult;
+  getRecord(
+    sourceTaskId: string,
+    input: McpTaskGetRecordInput,
+  ): McpTaskGetRecordResult;
   send(sourceTaskId: string, targetTaskId: string, body: string): Promise<void>;
   update(
     sourceTaskId: string,
@@ -71,7 +96,7 @@ function unavailable(): never {
   throw new Error("Task MCP tools are not configured");
 }
 
-/** Register the four Agent-facing Task control-plane tools. */
+/** Register the Agent-facing Task control-plane tools. */
 export function registerMcpTools(
   server: McpServer,
   taskId: string,
@@ -133,6 +158,34 @@ export function registerMcpTools(
           text: text ?? undefined,
           cursor: cursor ?? undefined,
           limit: limit ?? undefined,
+        }) ?? unavailable(),
+      ),
+  );
+
+  server.registerTool(
+    "task_get_record",
+    {
+      description:
+        "Read one complete WebAgent-persisted event row by sequence. " +
+        "The data field is the exact stored JSON string; this is not guaranteed to be the complete original ACP notification.",
+      inputSchema: {
+        task_id: TASK_ID.nullable()
+          .optional()
+          .describe(
+            "Visible target task ID; null or omission defaults to the current task",
+          ),
+        seq: z
+          .number()
+          .int()
+          .min(1)
+          .describe("Stable event sequence within the target task"),
+      },
+    },
+    async ({ task_id, seq }) =>
+      jsonContent(
+        host?.getRecord(taskId, {
+          taskId: task_id ?? undefined,
+          seq,
         }) ?? unavailable(),
       ),
   );
