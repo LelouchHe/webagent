@@ -95,6 +95,65 @@ describe("MCP Task tool host", () => {
     assert.equal(older.hasMore, false);
   });
 
+  it("paginates past skipped normal completions without losing visible records", () => {
+    store.saveEvent(
+      "alpha",
+      "user_message",
+      { text: "oldest" },
+      { from_ref: "user" },
+    );
+    store.saveEvent(
+      "alpha",
+      "prompt_done",
+      { stopReason: "end_turn" },
+      { from_ref: "agent" },
+    );
+    store.saveEvent(
+      "alpha",
+      "assistant_message",
+      { text: "middle" },
+      { from_ref: "agent" },
+    );
+    store.saveEvent(
+      "alpha",
+      "prompt_done",
+      { stopReason: "end_turn" },
+      { from_ref: "agent" },
+    );
+    store.saveEvent(
+      "alpha",
+      "task_update",
+      { status: "done", body: "latest" },
+      { from_ref: "agent" },
+    );
+    const host = createMcpTaskToolHost({
+      store,
+      tasks,
+      getBridge: () => null,
+    });
+
+    const newest = host.query("alpha", { limit: 2 });
+    assert.deepEqual(
+      newest.records.map((record) => record.seq),
+      [5],
+    );
+    assert.ok(newest.nextCursor);
+
+    const middle = host.query("alpha", { cursor: newest.nextCursor, limit: 2 });
+    assert.deepEqual(
+      middle.records.map((record) => record.seq),
+      [3],
+    );
+    assert.ok(middle.nextCursor);
+
+    const oldest = host.query("alpha", { cursor: middle.nextCursor, limit: 2 });
+    assert.deepEqual(
+      oldest.records.map((record) => record.seq),
+      [1],
+    );
+    assert.equal(oldest.hasMore, false);
+  });
+
   it("filters history text in the database before returning records", () => {
     store.saveEvent(
       "alpha",
@@ -116,7 +175,165 @@ describe("MCP Task tool host", () => {
 
     const result = host.query("alpha", { text: "keep" });
     assert.equal(result.records.length, 1);
-    assert.match(result.records[0].data, /keep this/);
+    assert.equal(result.records[0].text, "User:\nkeep this");
+  });
+
+  it("returns small text projections and skips normal completion noise", () => {
+    store.saveEvent(
+      "alpha",
+      "assistant_message",
+      { text: "The task is ready." },
+      { from_ref: "agent" },
+    );
+    store.saveEvent(
+      "alpha",
+      "tool_call",
+      {
+        id: "tool-1",
+        title: "edit",
+        kind: "edit",
+        rawInput: { path: "src/mcp/server.ts", oldText: "x".repeat(8_000) },
+      },
+      { from_ref: "agent" },
+    );
+    store.saveEvent(
+      "alpha",
+      "tool_call_update",
+      {
+        id: "tool-1",
+        status: "failed",
+        title: "edit",
+        content: [{ content: { text: "Replacement did not match" } }],
+      },
+      { from_ref: "agent" },
+    );
+    store.saveEvent(
+      "alpha",
+      "permission_request",
+      {
+        requestId: "perm-1",
+        title: "Run command?",
+        options: [
+          { optionId: "allow_once", label: "Allow once" },
+          { optionId: "deny_once", label: "Deny" },
+        ],
+      },
+      { from_ref: "agent" },
+    );
+    store.saveEvent(
+      "alpha",
+      "system_message",
+      {
+        kind: "collaboration",
+        sourceLabel: "Beta",
+        targetLabel: "Alpha",
+        body: "Please review the API.",
+      },
+      { from_ref: "msg:1" },
+    );
+    store.saveEvent(
+      "alpha",
+      "task_update",
+      { status: "blocked", body: "Waiting for API details" },
+      { from_ref: "agent" },
+    );
+    store.saveEvent(
+      "alpha",
+      "bash_result",
+      { output: "done", code: 0, signal: null },
+      { from_ref: "system" },
+    );
+    store.saveEvent(
+      "alpha",
+      "prompt_done",
+      { stopReason: "end_turn" },
+      { from_ref: "agent" },
+    );
+    store.saveEvent(
+      "alpha",
+      "error",
+      { message: "ACP connection closed" },
+      { from_ref: "agent" },
+    );
+    store.saveEvent(
+      "alpha",
+      "future_event",
+      { raw: "unrecognized" },
+      { from_ref: "system" },
+    );
+    const host = createMcpTaskToolHost({
+      store,
+      tasks,
+      getBridge: () => null,
+    });
+
+    const result = host.query("alpha", { limit: 20 });
+    assert.deepEqual(
+      result.records.map(({ type, text }) => ({ type, text })),
+      [
+        { type: "assistant_message", text: "Assistant:\nThe task is ready." },
+        {
+          type: "tool_call",
+          text: "Tool started: edit (edit)\nPath: src/mcp/server.ts",
+        },
+        {
+          type: "tool_call_update",
+          text: "Tool failed: edit\nResult:\nReplacement did not match",
+        },
+        {
+          type: "permission_request",
+          text: "Permission requested: Run command?\nOptions: Allow once, Deny",
+        },
+        {
+          type: "system_message",
+          text: "Collaboration message (Beta → Alpha):\nPlease review the API.",
+        },
+        {
+          type: "task_update",
+          text: "Task blocked:\nWaiting for API details",
+        },
+        {
+          type: "bash_result",
+          text: "Shell finished: exit 0\nOutput:\ndone",
+        },
+        { type: "error", text: "Error:\nACP connection closed" },
+        {
+          type: "future_event",
+          text: "Unrecognized future_event event; raw payload omitted.",
+        },
+      ],
+    );
+    assert.equal(
+      result.records.some((record) => "data" in record),
+      false,
+    );
+    assert.equal(result.records[1].text.includes("x".repeat(100)), false);
+    assert.equal(
+      result.records.at(-1)?.rawSize,
+      Buffer.byteLength('{"raw":"unrecognized"}', "utf8"),
+    );
+  });
+
+  it("marks shortened text and reports its original payload size", () => {
+    store.saveEvent(
+      "alpha",
+      "assistant_message",
+      { text: "a".repeat(3_000) },
+      { from_ref: "agent" },
+    );
+    const host = createMcpTaskToolHost({
+      store,
+      tasks,
+      getBridge: () => null,
+    });
+
+    const record = host.query("alpha", { limit: 1 }).records[0];
+    assert.equal(record.truncated, true);
+    assert.equal(
+      record.rawSize,
+      Buffer.byteLength(store.getEvents("alpha")[0].data, "utf8"),
+    );
+    assert.ok(record.text.length <= 2_001);
   });
 
   it("rejects queries and sends outside the local family", async () => {

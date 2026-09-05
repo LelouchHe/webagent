@@ -8,11 +8,17 @@ export interface McpTaskListItem {
   relation: "self" | "parent" | "child" | "sibling";
 }
 
+/** A bounded, human-readable projection of one persisted task event. */
 export interface McpTaskHistoryRecord {
+  /** Stable event sequence within the task; reserved for future raw lookup. */
   seq: number;
   type: string;
-  data: string;
   createdAt: string;
+  /** Deterministic text extracted from the event's known schema. */
+  text: string;
+  /** Text was shortened; rawSize is the UTF-8 size of the omitted payload. */
+  truncated?: boolean;
+  rawSize?: number;
 }
 
 export interface McpTaskQueryInput {
@@ -86,41 +92,47 @@ export function registerMcpTools(
     "task_query",
     {
       description:
-        "Read a bounded page of one visible Task's persisted history. " +
+        "Read a bounded page of one visible Task's compact persisted history. " +
         "Omit arguments for the current Task's latest page; use the returned cursor for more. " +
-        "Use text only to locate a known term; results are exact records, not summaries.",
+        "Records contain deterministic text projections, never raw event payloads. " +
+        "Use text only to locate a known term in the underlying stored event.",
       inputSchema: {
-        task_id: TASK_ID.optional().describe(
-          "Visible Task ID; defaults to the current Task",
-        ),
+        task_id: TASK_ID.nullable()
+          .optional()
+          .describe(
+            "Visible Task ID; null or omission defaults to the current Task",
+          ),
         text: z
           .string()
           .min(1)
           .max(256)
+          .nullable()
           .optional()
-          .describe("Literal text to find"),
+          .describe("Literal text to find; null is treated as omitted"),
         cursor: z
           .string()
           .min(1)
           .max(512)
+          .nullable()
           .optional()
-          .describe("Opaque cursor from a previous result"),
+          .describe("Opaque cursor from a previous result; null is omitted"),
         limit: z
           .number()
           .int()
           .min(1)
           .max(100)
+          .nullable()
           .optional()
-          .describe("Maximum records to return"),
+          .describe("Maximum records to return; null uses the default"),
       },
     },
     async ({ task_id, text, cursor, limit }) =>
       jsonContent(
         host?.query(taskId, {
-          taskId: task_id,
-          text,
-          cursor,
-          limit,
+          taskId: task_id ?? undefined,
+          text: text ?? undefined,
+          cursor: cursor ?? undefined,
+          limit: limit ?? undefined,
         }) ?? unavailable(),
       ),
   );

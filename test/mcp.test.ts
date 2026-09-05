@@ -246,15 +246,36 @@ describe("createMcpEndpoint", () => {
     );
     assert.equal(list.status, 200);
     const listBody = (await list.json()) as {
-      result?: { tools?: Array<{ name: string }> };
+      result?: {
+        tools?: Array<{
+          name: string;
+          inputSchema?: {
+            required?: string[];
+            properties?: Record<string, { anyOf?: Array<{ type?: string }> }>;
+          };
+        }>;
+      };
     };
-    const names = (listBody.result?.tools ?? []).map((t) => t.name).sort();
+    const tools = listBody.result?.tools ?? [];
+    const names = tools.map((tool) => tool.name).sort();
     assert.deepEqual(names, [
       "task_list",
       "task_query",
       "task_send",
       "task_update",
     ]);
+    const querySchema = tools.find(
+      (tool) => tool.name === "task_query",
+    )?.inputSchema;
+    assert.deepEqual(querySchema?.required ?? [], []);
+    for (const name of ["task_id", "text", "cursor", "limit"]) {
+      assert.equal(
+        querySchema?.properties?.[name]?.anyOf?.some(
+          (variant) => variant.type === "null",
+        ),
+        true,
+      );
+    }
 
     const call = await mcpPost(
       "/mcp",
@@ -283,7 +304,12 @@ describe("createMcpEndpoint", () => {
         method: "tools/call",
         params: {
           name: "task_query",
-          arguments: { text: "history", limit: 2 },
+          arguments: {
+            task_id: null,
+            text: "history",
+            cursor: null,
+            limit: 2,
+          },
         },
       },
       auth(token),

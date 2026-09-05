@@ -12,8 +12,9 @@ import type {
   McpTaskListItem,
   McpTaskToolHost,
 } from "./tools.ts";
+import { compactTaskHistoryRecord } from "./task-history.ts";
 
-const DEFAULT_QUERY_LIMIT = 20;
+const DEFAULT_QUERY_LIMIT = 5;
 const MAX_QUERY_LIMIT = 100;
 
 export interface McpTaskCollaborationEvent {
@@ -146,12 +147,16 @@ export function createMcpTaskToolHost(deps: {
           text,
         }).length > 0;
 
-      const records: McpTaskHistoryRecord[] = events.map((event) => ({
-        seq: event.seq,
-        type: event.type,
-        data: event.data,
-        createdAt: event.created_at,
-      }));
+      const records: McpTaskHistoryRecord[] = events
+        .map((event) =>
+          compactTaskHistoryRecord({
+            seq: event.seq,
+            type: event.type,
+            data: event.data,
+            createdAt: event.created_at,
+          }),
+        )
+        .filter((record): record is McpTaskHistoryRecord => record !== null);
       return {
         workflowStatus: target.workflow_status,
         records,
