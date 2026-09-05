@@ -1,5 +1,27 @@
 import { test, expect } from "playwright/test";
-import { createNewTask, gotoConnected } from "./helpers.ts";
+import { createNewTask, currentTaskId, gotoConnected } from "./helpers.ts";
+
+test("@ click completes the target and waits for the body", async ({
+  page,
+}) => {
+  await gotoConnected(page);
+  await createNewTask(page);
+  const current = await currentTaskId(page);
+
+  await page.locator("#input").fill("@");
+  const menu = page.locator("#slash-menu.active");
+  await expect(menu).toContainText("root");
+
+  // The target alone is not a command: click completes it with a trailing
+  // space and waits for the message body; nothing is sent.
+  await page
+    .locator("#slash-menu.active .slash-item")
+    .filter({ hasText: "root" })
+    .first()
+    .click();
+  await expect(page.locator("#input")).toHaveValue("@root ");
+  await expect.poll(() => currentTaskId(page)).toBe(current);
+});
 
 test("@ lists the local scope immediately and filters while typing", async ({
   page,

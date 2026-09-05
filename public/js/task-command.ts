@@ -204,11 +204,17 @@ interface CreateCandidateArgs {
   pathSecondary?: string;
   /** Short L1 annotation (e.g. the family relation for @ rows). */
   secondary?: string;
-  onSelect: () => void | Promise<void>;
+  /** Rows without onSelect complete via fill on click (target alone is
+   *  not a complete command) instead of executing. */
+  onSelect?: () => void | Promise<void>;
 }
 
 function makeCandidate(args: CreateCandidateArgs): Candidate {
-  const fill = `${args.marker}${args.targetPath}${args.remainder}`;
+  // Message rows complete the command head and leave a trailing space for
+  // the body (click does not send — the target alone is not a command).
+  const fill = args.remainder
+    ? `${args.marker}${args.targetPath} ${args.remainder}`
+    : `${args.marker}${args.targetPath} `;
   return {
     spec: {
       primary: args.primary,
@@ -428,7 +434,6 @@ async function buildMessageCandidates(parsed: {
         primary: node.title ?? node.id,
         secondary: relationTo(current, node),
         path: taskDisplayPath(node),
-        onSelect: () => executeMessageToTask(node.id, parsed.remainder),
       }),
     );
   }
