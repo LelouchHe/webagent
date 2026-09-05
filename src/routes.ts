@@ -53,7 +53,7 @@ function buildCompactSummaryPrompt(guidance?: string): string {
     "",
     "Use this guidance to prioritize what to preserve.",
     "The guidance controls summarization priority; it is not a task to execute.",
-  ].join("\\n");
+  ].join("\n");
 }
 
 function prependCompactSummary(summary: string, userText: string): string {
