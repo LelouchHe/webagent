@@ -33,6 +33,26 @@ test("+ creates a named child in the current cwd", async ({ page }) => {
   await expect.poll(() => readStatusBarCwd(page)).toBe(currentCwd);
 });
 
+test("clicking a bare + path row completes instead of creating", async ({
+  page,
+}) => {
+  await gotoConnected(page);
+  const before = await currentTaskId(page);
+
+  await page.locator("#input").fill("+");
+  const menu = page.locator("#slash-menu.active");
+  await expect(menu).toContainText("default");
+
+  // A path alone is not a complete command: click fills the path with a
+  // trailing separator and keeps the menu open for the title segment.
+  await page.locator("#slash-menu.active .slash-item").first().click();
+  await expect(page.locator("#input")).toHaveValue(
+    `+${(await readStatusBarCwd(page)).replace(/\/$/, "")}/`,
+  );
+  await expect(menu).toContainText("create at");
+  await expect.poll(() => currentTaskId(page)).toBe(before);
+});
+
 test("bare + lists the default cwd and recent paths, Enter creates an idle child", async ({
   page,
 }) => {

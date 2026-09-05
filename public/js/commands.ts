@@ -417,6 +417,14 @@ async function clickItem(idx: number): Promise<void> {
 
   if (c.kind === "separator" || c.kind === "placeholder") return;
 
+  // Completion rows whose value alone is not executable: click fills like
+  // Tab and waits for more input instead of running a partial command.
+  if (c.spec.fillOnly) {
+    fillDataCandidate(c, pathPrefix, preserveInput);
+    dom.input.focus();
+    return;
+  }
+
   if (c.kind === "subcommand" && c.node) {
     const childNodes = c.node.children ?? [];
     const hasMore =
