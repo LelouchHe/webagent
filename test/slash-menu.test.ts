@@ -621,7 +621,7 @@ describe("slash menu — Tab vs Click behavior", () => {
       [
         {
           primary: "navigate",
-          secondary: "or type a message to send",
+          secondary: "or send a message",
           prefix: "↵",
         },
         { primary: "..", secondary: "idle", prefix: "" },
@@ -642,7 +642,7 @@ describe("slash menu — Tab vs Click behavior", () => {
     );
     assert.equal(
       currentTarget.querySelector(".slash-secondary")?.textContent,
-      "or type a message to send",
+      "or send a message",
     );
 
     // Raw Enter dispatch on a browse path reopens the next path layer rather
