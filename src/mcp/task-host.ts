@@ -8,6 +8,7 @@ import {
 } from "../task-collaboration.ts";
 import type { TaskManager } from "../task-manager.ts";
 import { expandHomePath } from "../home-path.ts";
+import { formatTaskReference } from "../shared/task-reference.ts";
 import type {
   McpTaskHistoryRecord,
   McpTaskQueryResult,
@@ -21,12 +22,6 @@ import { compactTaskHistoryRecord } from "./task-history.ts";
 
 const DEFAULT_QUERY_LIMIT = 5;
 const MAX_QUERY_LIMIT = 100;
-
-function taskReference(title: string): string {
-  if (!/\s/.test(title)) return `@${title}`;
-  const escaped = title.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
-  return `@"${escaped}"`;
-}
 
 export interface McpTaskCollaborationEvent {
   messageId: string;
@@ -255,7 +250,7 @@ export function createMcpTaskToolHost(deps: {
         thinking: input.thinking,
       });
       const taskCreatedMessageId = randomUUID();
-      const taskCreatedBody = `Created task ${taskReference(input.title)}`;
+      const taskCreatedBody = `Created task ${formatTaskReference(input.title)}`;
       store.saveEvent(
         source.id,
         "system_message",
@@ -313,7 +308,7 @@ export function createMcpTaskToolHost(deps: {
         messageId: created.message.id,
         sourceTaskId,
         targetTaskId: target.id,
-        body: `@${sourceLabel} sent @${targetLabel}: ${created.message.body}`,
+        body: `${formatTaskReference(sourceLabel)} sent ${formatTaskReference(targetLabel)}: ${created.message.body}`,
       });
       if (bridge) {
         void tasks.drainCollaborationDeliveries(bridge, target.id);
@@ -331,7 +326,7 @@ export function createMcpTaskToolHost(deps: {
           messageId: collaborationMessageId,
           sourceTaskId,
           targetTaskId: parentTaskId,
-          body: `@${source.title ?? source.id.slice(0, 8)} sent @${target.title ?? target.id.slice(0, 8)}: Task status: ${status}\n${body}`,
+          body: `${formatTaskReference(source.title ?? source.id.slice(0, 8))} sent ${formatTaskReference(target.title ?? target.id.slice(0, 8))}: Task status: ${status}\n${body}`,
         });
       }
       if (bridge && parentTaskId) {

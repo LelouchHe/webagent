@@ -31,6 +31,7 @@ import { agentCommandToken, resolveAgentCommand } from "./agent-commands.ts";
 import { abbreviateHomePath } from "./home-path.ts";
 import { log } from "./log.ts";
 import { isLocalCollaborationTarget } from "./task-collaboration.ts";
+import { formatTaskReference } from "./shared/task-reference.ts";
 
 const rlog = log.scope("routes");
 const plog = rlog.scope("prompt");
@@ -1222,7 +1223,7 @@ export function createRequestHandler(
           }
           return;
         }
-        const displayBody = `@${sourceTask.title ?? sourceTask.id.slice(0, 8)} sent @${targetTask.title ?? targetTask.id.slice(0, 8)}: ${created.message.body}`;
+        const displayBody = `${formatTaskReference(sourceTask.title ?? sourceTask.id.slice(0, 8))} sent ${formatTaskReference(targetTask.title ?? targetTask.id.slice(0, 8))}: ${created.message.body}`;
         for (const projection of store.listCollaborationProjections(
           messageId,
         )) {

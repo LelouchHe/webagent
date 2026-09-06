@@ -77,6 +77,7 @@ import type {
   StoredEvent,
   ToolContentItem,
 } from "../../src/types.ts";
+import { formatTaskReference } from "../../src/shared/task-reference.ts";
 import "./plan-panel.ts";
 import { OrphanToolUpdateCache } from "./orphan-tool-updates.ts";
 
@@ -320,7 +321,7 @@ function collaborationLine(msg: {
 }): string {
   const label = (id: string | undefined, fallback?: string) =>
     fallback ?? (id ? id.slice(0, 8) : "?");
-  return `@${label(msg.sourceTaskId, msg.sourceLabel)} sent @${label(msg.targetTaskId, msg.targetLabel)}: ${msg.body ?? ""}`;
+  return `${formatTaskReference(label(msg.sourceTaskId, msg.sourceLabel))} sent ${formatTaskReference(label(msg.targetTaskId, msg.targetLabel))}: ${msg.body ?? ""}`;
 }
 
 function promptStopNotice(stopReason: unknown): string | null {

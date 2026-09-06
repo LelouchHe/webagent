@@ -22,6 +22,7 @@ import { addSystem } from "./render.ts";
 import * as api from "./api.ts";
 import type { Candidate } from "./slash-tree.ts";
 import type { TaskSummary } from "../../src/types.ts";
+import { quoteShellWord } from "../../src/shared/task-reference.ts";
 
 export function canSubmitTaskCommandWhileBusy(text: string): boolean {
   return isTaskCommand(text);
@@ -39,13 +40,6 @@ export { isTaskCommand };
 function cleanBrowseDir(directory: string): string {
   const stripped = directory.replace(/\/+$/, "");
   return stripped || "/";
-}
-
-function quoteShellWord(word: string): string {
-  if (/[\s"\\]/.test(word) || word === "") {
-    return `"${word.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
-  }
-  return word;
 }
 
 // --- task tree helpers ---

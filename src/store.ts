@@ -2,6 +2,7 @@ import Database from "better-sqlite3";
 import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
+import { formatTaskReference } from "./shared/task-reference.ts";
 
 export const ROOT_TASK_ID = "root";
 
@@ -1548,7 +1549,7 @@ export class Store {
     const targetLabel =
       this.getTask(input.directTargetTaskId)?.title ??
       input.directTargetTaskId.slice(0, 8);
-    const displayBody = `@${sourceLabel} sent @${targetLabel}: ${input.body}`;
+    const displayBody = `${formatTaskReference(sourceLabel)} sent ${formatTaskReference(targetLabel)}: ${input.body}`;
     for (const projection of this.listCollaborationProjections(input.id)) {
       this.saveEvent(
         projection.task_id,
