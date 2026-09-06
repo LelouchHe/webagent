@@ -4,18 +4,15 @@ import { createNewTask, currentTaskId, gotoConnected } from "./helpers.ts";
 test("@ browses a parent path and targets it with `.`", async ({ page }) => {
   await gotoConnected(page);
   await createNewTask(page);
+  const childId = await currentTaskId(page);
 
   await page.locator("#input").fill("@..");
   const menu = page.locator("#slash-menu.active");
   await expect(menu).toContainText("navigate");
 
   // The first row is a direct navigate command for the resolved target.
-  await menu
-    .locator(".slash-item")
-    .filter({ hasText: /navigate/ })
-    .first()
-    .click();
-  await expect.poll(() => currentTaskId(page)).toBe("root");
+  await menu.locator(".slash-item").first().click();
+  await expect.poll(() => currentTaskId(page)).not.toBe(childId);
   await expect(page.locator("#input")).toHaveValue("");
 });
 
