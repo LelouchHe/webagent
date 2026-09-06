@@ -220,17 +220,17 @@ interface CreateCandidateArgs {
   secondary?: string;
   /** Alternate action hint shown only while the row is selected. */
   selectedSecondary?: string;
-  /** Rows without onSelect complete via fill on click (target alone is
-   *  not a complete command) instead of executing. */
+  /** Rows without onSelect complete via fill on click instead of executing. */
   onSelect?: () => void | Promise<void>;
 }
 
 function makeCandidate(args: CreateCandidateArgs): Candidate {
-  // Message rows complete the command head and leave a trailing space for
-  // the body (click does not send — the target alone is not a command).
+  // Target rows complete only the path. A following space is an explicit
+  // user choice to start a message body, so the picker remains available for
+  // further path suggestions after Tab or Click.
   const fill = args.remainder
     ? `${args.marker}${args.targetPath} ${args.remainder}`
-    : `${args.marker}${args.targetPath} `;
+    : `${args.marker}${args.targetPath}`;
   return {
     spec: {
       primary: args.primary,

@@ -640,12 +640,9 @@ describe("slash menu — Tab vs Click behavior", () => {
         bubbles: true,
       }),
     );
-    assert.equal(dom.input.value, "@/backend/. ");
+    assert.equal(dom.input.value, "@/backend/.");
     await new Promise((r) => setTimeout(r, 10));
-    assert.match(
-      dom.slashMenu.textContent,
-      /navigate · type a message to send/,
-    );
+    assert.match(dom.slashMenu.textContent, /navigate · type message to send/);
 
     // Raw Enter dispatch on a browse path reopens the next path layer rather
     // than treating the path as a message target.

@@ -12,9 +12,9 @@ test("@ browses a parent path and targets it with `.`", async ({ page }) => {
   // The parent directory has a concrete `.` target. Selecting it prepares a
   // message target rather than requiring the user to remove a slash.
   await menu.locator(".slash-item").filter({ hasText: /^\./ }).click();
-  await expect(page.locator("#input")).toHaveValue("@/. ");
+  await expect(page.locator("#input")).toHaveValue("@/.");
   await expect(page.locator("#slash-menu.active")).toContainText(
-    "navigate · type a message to send",
+    "navigate · type message to send",
   );
 });
 
