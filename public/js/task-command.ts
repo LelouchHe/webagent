@@ -626,6 +626,13 @@ async function buildMessageCandidates(parsed: {
   if (parsed.path.trailingSlash) {
     const browsed = getChildrenAtPath(state.taskId, tasks, parsed.path);
     if (!browsed) return [];
+    addParentTargetEntry({
+      candidates,
+      directory: browsed.directory,
+      map,
+      marker: parsed.marker,
+      scopeIds,
+    });
     addDirectoryEntries({
       candidates,
       directory: browsed.directory,
@@ -637,6 +644,13 @@ async function buildMessageCandidates(parsed: {
   }
 
   if (parsed.target === "") {
+    addParentTargetEntry({
+      candidates,
+      directory: current,
+      map,
+      marker: parsed.marker,
+      scopeIds,
+    });
     addDirectoryEntries({
       candidates,
       directory: current,

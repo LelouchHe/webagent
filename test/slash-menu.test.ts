@@ -592,9 +592,10 @@ describe("slash menu — Tab vs Click behavior", () => {
     assert.doesNotMatch(dom.slashMenu.textContent, /parent · idle/);
     assert.doesNotMatch(dom.slashMenu.textContent, /sibling/);
 
-    // Tab selects the navigate command for the current Task first.
+    // Bare `@` has no resolved target command; Tab starts with the parent
+    // target now that it is present in the current directory scope.
     commands.handleSlashMenuKey(makeTabEvent());
-    assert.equal(dom.input.value, "@/backend/api/unit");
+    assert.equal(dom.input.value, "@/backend");
 
     // The parent path is explicit input rather than a relation shortcut.
     dom.input.value = "@../";
