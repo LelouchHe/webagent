@@ -549,7 +549,7 @@ function addNavigateCommand(args: {
       targetPath,
       primary: "navigate",
       selectedSecondary: args.scopeIds.has(args.target.id)
-        ? "navigate · type message to send"
+        ? "or type a message to send"
         : undefined,
       taskId: args.target.id,
       prefix: "↵",
