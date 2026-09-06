@@ -582,7 +582,7 @@ function addParentBrowseEntry(args: {
   if (!args.directory.parentId) return;
   const parent = args.map.get(args.directory.parentId);
   if (!parent) return;
-  args.candidates.unshift(
+  args.candidates.push(
     makeBrowseCandidate({
       marker: args.marker,
       targetPath: `${relativeTaskPath(args.current, parent, args.map)}/`,

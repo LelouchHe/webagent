@@ -577,9 +577,9 @@ describe("slash menu — Tab vs Click behavior", () => {
     assert.doesNotMatch(dom.slashMenu.textContent, /parent · idle/);
     assert.doesNotMatch(dom.slashMenu.textContent, /sibling/);
 
-    // Tab selects the parent browse entry without executing it.
+    // Tab selects the current Task target first without executing it.
     commands.handleSlashMenuKey(makeTabEvent());
-    assert.equal(dom.input.value, "@/backend/");
+    assert.equal(dom.input.value, "@/backend/api/.");
 
     // Clicking the browse row drills into the parent path and keeps the menu.
     dom.input.value = "@";
@@ -613,7 +613,7 @@ describe("slash menu — Tab vs Click behavior", () => {
     assert.ok(currentTarget);
     assert.equal(
       currentTarget.querySelector(".slash-secondary")?.textContent,
-      "navigate",
+      "navigate · type message to send",
     );
     currentTarget.dispatchEvent(
       new (globalThis.window as any).MouseEvent("mousedown", {
