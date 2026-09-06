@@ -170,6 +170,7 @@ function resolveTaskPathNodes(
   currentId: string | null,
   tasks: TaskSummary[],
   path: TaskPath,
+  exactFinal = false,
 ): TaskNode[] {
   if (!currentId) return [];
   const map = buildTaskTree(tasks);
@@ -189,7 +190,7 @@ function resolveTaskPathNodes(
         .filter((n): n is TaskNode => Boolean(n));
       continue;
     }
-    const exact = i < path.segments.length - 1;
+    const exact = exactFinal || i < path.segments.length - 1;
     const next: TaskNode[] = [];
     for (const n of nodes) {
       for (const child of n.children) {
@@ -469,16 +470,21 @@ function resolveMessageTargets(
   currentTaskId: string | null,
   tasks: TaskSummary[],
   path: TaskPath,
+  exact = false,
 ): TaskNode[] {
   const raw = path.segments;
   const scopeFiltered = raw.length === 0 || (!path.absolute && raw[0] !== "..");
   if (scopeFiltered) {
     const filterSegment = raw.at(-1) ?? "";
     return getLocalScope(currentTaskId, tasks).filter(
-      (n) => !filterSegment || matchesSegment(n, filterSegment),
+      (n) =>
+        !filterSegment ||
+        (exact
+          ? matchesSegmentExact(n, filterSegment)
+          : matchesSegment(n, filterSegment)),
     );
   }
-  return resolveTaskPathNodes(currentTaskId, tasks, path);
+  return resolveTaskPathNodes(currentTaskId, tasks, path, exact);
 }
 
 function relativeTaskPath(
@@ -803,12 +809,12 @@ async function executeMessageTask(
   }
 
   const path = parseTaskPath(target);
-  const resolved = resolveMessageTargets(currentTaskId, tasks, path);
+  const resolved = resolveMessageTargets(currentTaskId, tasks, path, true);
   const scope = getLocalScope(currentTaskId, tasks);
   const scopeIds = new Set(scope.map((n) => n.id));
   const matches = resolved;
   if (matches.length !== 1) {
-    addSystem(`err: Select one task candidate for '${target}'`);
+    addSystem(`err: Task path is incomplete or not found: '${target}'`);
     return;
   }
 

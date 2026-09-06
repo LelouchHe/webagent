@@ -671,6 +671,20 @@ describe("slash menu — Tab vs Click behavior", () => {
     assert.ok(rootRows.includes("backend/"));
     assert.ok(rootRows.includes("."));
     assert.equal(rootRows.includes("/"), false);
+
+    // Prefixes remain useful for the picker, but raw submission requires an
+    // exact path and never silently selects the prefix match.
+    await taskCommand.executeTaskCommand("@../tes");
+    assert.match(
+      dom.messages.textContent,
+      /Task path is incomplete or not found: '..\/tes'/,
+    );
+
+    // An invalid target must not leave a stale selectable menu.
+    dom.input.value = "@does-not-exist";
+    commands.updateSlashMenu();
+    await new Promise((r) => setTimeout(r, 10));
+    assert.equal(dom.slashMenu.classList.contains("active"), false);
   });
 
   // -----------------------------------------------------------------------
