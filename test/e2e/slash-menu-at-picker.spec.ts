@@ -9,9 +9,13 @@ test("@ browses a parent path and targets it with `.`", async ({ page }) => {
   const menu = page.locator("#slash-menu.active");
   await expect(menu).toContainText("e2e-child");
 
-  // The parent Root Task is represented by `.`, and selecting it completes
-  // the concrete target without a trailing slash.
-  await menu.locator(".slash-item").filter({ hasText: /^\./ }).click();
+  // The parent Root Task is represented by the first direct navigate command;
+  // selecting it completes the concrete target without a trailing slash.
+  await menu
+    .locator(".slash-item")
+    .filter({ hasText: /navigate/ })
+    .first()
+    .click();
   await expect(page.locator("#input")).toHaveValue("@/.");
   await expect(page.locator("#slash-menu.active")).toContainText(
     "type message to send",

@@ -585,9 +585,9 @@ describe("slash menu — Tab vs Click behavior", () => {
     assert.doesNotMatch(dom.slashMenu.textContent, /parent · idle/);
     assert.doesNotMatch(dom.slashMenu.textContent, /sibling/);
 
-    // Tab selects the current Task target first without executing it.
+    // Tab selects the navigate command for the current Task first.
     commands.handleSlashMenuKey(makeTabEvent());
-    assert.equal(dom.input.value, "@/backend/api/.");
+    assert.equal(dom.input.value, "@/backend/api");
 
     // The parent path is explicit input rather than a relation shortcut.
     dom.input.value = "@../";
@@ -612,29 +612,29 @@ describe("slash menu — Tab vs Click behavior", () => {
       })),
       [
         {
-          primary: "tests/",
-          secondary: "type message to send",
-          prefix: "›",
+          primary: "navigate",
+          secondary: "navigate · type message to send",
+          prefix: "↵",
         },
+        { primary: "..", secondary: "idle", prefix: "" },
         { primary: "unit", secondary: "idle", prefix: "" },
       ],
     );
 
-    // The parent Task target is displayed with a slash when it has children,
-    // but selecting it completes the concrete path without that slash.
+    // The parent Task is represented by a navigate command rather than a
+    // duplicate title/browse pair.
     dom.input.value = "@/backend/";
     commands.updateSlashMenu();
     await new Promise((r) => setTimeout(r, 10));
-    const currentTarget = [
-      ...dom.slashMenu.querySelectorAll(".slash-item"),
-    ].find(
-      (row: any) =>
-        row.querySelector(".slash-primary")?.textContent === "backend/",
-    ) as HTMLElement;
+    const currentTarget = dom.slashMenu.querySelector(".slash-item");
     assert.ok(currentTarget);
     assert.equal(
+      currentTarget.querySelector(".slash-primary")?.textContent,
+      "navigate",
+    );
+    assert.equal(
       currentTarget.querySelector(".slash-secondary")?.textContent,
-      "type message to send",
+      "navigate · type message to send",
     );
     currentTarget.dispatchEvent(
       new (globalThis.window as any).MouseEvent("mousedown", {
@@ -662,9 +662,9 @@ describe("slash menu — Tab vs Click behavior", () => {
     const rootRows = [...dom.slashMenu.querySelectorAll(".slash-item")].map(
       (row: any) => row.querySelector(".slash-primary")?.textContent,
     );
+    assert.ok(rootRows.includes("navigate"));
     assert.ok(rootRows.includes("backend/"));
-    assert.ok(rootRows.includes("."));
-    assert.equal(rootRows.includes("/"), false);
+    assert.equal(rootRows.includes("."), false);
 
     // Prefixes remain useful for the picker, but raw submission requires an
     // exact path and never silently selects the prefix match.
