@@ -580,7 +580,8 @@ describe("slash menu — Tab vs Click behavior", () => {
     dom.input.value = "@";
     commands.updateSlashMenu();
     await new Promise((r) => setTimeout(r, 10));
-    assert.match(dom.slashMenu.textContent, /\.\.\//);
+    assert.match(dom.slashMenu.textContent, /\.\./);
+    assert.match(dom.slashMenu.textContent, /navigate/);
     assert.doesNotMatch(dom.slashMenu.textContent, /parent · idle/);
     assert.doesNotMatch(dom.slashMenu.textContent, /sibling/);
 
@@ -588,25 +589,12 @@ describe("slash menu — Tab vs Click behavior", () => {
     commands.handleSlashMenuKey(makeTabEvent());
     assert.equal(dom.input.value, "@/backend/api/.");
 
-    // Clicking the browse row drills into the parent path and keeps the menu.
-    dom.input.value = "@";
+    // The parent path is explicit input rather than a relation shortcut.
+    dom.input.value = "@../";
     commands.updateSlashMenu();
     await new Promise((r) => setTimeout(r, 10));
-    const parentBrowse = [
-      ...dom.slashMenu.querySelectorAll(".slash-item"),
-    ].find(
-      (row: any) => row.querySelector(".slash-primary")?.textContent === "../",
-    ) as HTMLElement;
-    assert.ok(parentBrowse);
-    assert.equal(parentBrowse.querySelector(".slash-prefix")?.textContent, "›");
-    parentBrowse.dispatchEvent(
-      new (globalThis.window as any).MouseEvent("mousedown", {
-        bubbles: true,
-      }),
-    );
-    await new Promise((r) => setTimeout(r, 10));
-    assert.equal(dom.input.value, "@/backend/");
-    assert.match(dom.slashMenu.textContent, /tests\//);
+    assert.equal(dom.input.value, "@../");
+    assert.match(dom.slashMenu.textContent, /tests/);
     assert.doesNotMatch(dom.slashMenu.textContent, /root\/backend/);
     assert.doesNotMatch(dom.slashMenu.textContent, /child/);
 
@@ -628,7 +616,7 @@ describe("slash menu — Tab vs Click behavior", () => {
           secondary: "navigate · type message to send",
           prefix: "",
         },
-        { primary: "tests/", secondary: "blocked · browse", prefix: "›" },
+        { primary: "unit", secondary: "idle · navigate", prefix: "" },
       ],
     );
 
@@ -636,7 +624,6 @@ describe("slash menu — Tab vs Click behavior", () => {
     // slash from its browse entry.
     dom.input.value = "@/backend/";
     commands.updateSlashMenu();
-    await new Promise((r) => setTimeout(r, 10));
     await new Promise((r) => setTimeout(r, 10));
     const currentTarget = [
       ...dom.slashMenu.querySelectorAll(".slash-item"),
@@ -677,7 +664,7 @@ describe("slash menu — Tab vs Click behavior", () => {
     const rootRows = [...dom.slashMenu.querySelectorAll(".slash-item")].map(
       (row: any) => row.querySelector(".slash-primary")?.textContent,
     );
-    assert.ok(rootRows.includes("backend/"));
+    assert.ok(rootRows.includes("backend"));
     assert.ok(rootRows.includes("."));
     assert.equal(rootRows.includes("/"), false);
 
