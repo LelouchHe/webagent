@@ -258,8 +258,6 @@ function makeCandidate(args: CreateCandidateArgs): Candidate {
     spec: {
       primary: args.primary,
       secondary: args.secondary,
-      path: args.path,
-      pathSecondary: args.pathSecondary,
       fill,
       continueOnFill: true,
       onSelect: args.onSelect,
@@ -282,7 +280,6 @@ function makeBrowseCandidate(args: {
     spec: {
       primary: args.primary ? `${args.primary}/` : "/",
       secondary: args.secondary ? `${args.secondary} · browse` : "browse",
-      path: args.path,
       fill: `${args.marker}${browsePath}/`,
       continueOnFill: true,
     },
