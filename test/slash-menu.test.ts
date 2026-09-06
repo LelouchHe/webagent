@@ -542,6 +542,13 @@ describe("slash menu — Tab vs Click behavior", () => {
         workflow_status: "running",
       },
       {
+        id: "api-unit",
+        cwd: "/work/backend/api/unit",
+        title: "unit",
+        parent_id: "api",
+        workflow_status: "idle",
+      },
+      {
         id: "tests",
         cwd: "/work/backend/tests",
         title: "tests",
@@ -580,14 +587,14 @@ describe("slash menu — Tab vs Click behavior", () => {
     dom.input.value = "@";
     commands.updateSlashMenu();
     await new Promise((r) => setTimeout(r, 10));
-    assert.match(dom.slashMenu.textContent, /\.\./);
-    assert.match(dom.slashMenu.textContent, /idle/);
+    assert.match(dom.slashMenu.textContent, /unit/);
+    assert.doesNotMatch(dom.slashMenu.textContent, /navigate/);
     assert.doesNotMatch(dom.slashMenu.textContent, /parent · idle/);
     assert.doesNotMatch(dom.slashMenu.textContent, /sibling/);
 
     // Tab selects the navigate command for the current Task first.
     commands.handleSlashMenuKey(makeTabEvent());
-    assert.equal(dom.input.value, "@/backend/api");
+    assert.equal(dom.input.value, "@/backend/api/unit");
 
     // The parent path is explicit input rather than a relation shortcut.
     dom.input.value = "@../";
@@ -621,9 +628,9 @@ describe("slash menu — Tab vs Click behavior", () => {
       ],
     );
 
-    // The parent Task is represented by a navigate command rather than a
-    // duplicate title/browse pair.
-    dom.input.value = "@/backend/";
+    // The parent Task is represented by a direct navigate command rather than
+    // a duplicate title/browse pair.
+    dom.input.value = "@/backend";
     commands.updateSlashMenu();
     await new Promise((r) => setTimeout(r, 10));
     const currentTarget = dom.slashMenu.querySelector(".slash-item");
@@ -636,14 +643,6 @@ describe("slash menu — Tab vs Click behavior", () => {
       currentTarget.querySelector(".slash-secondary")?.textContent,
       "navigate · type message to send",
     );
-    currentTarget.dispatchEvent(
-      new (globalThis.window as any).MouseEvent("mousedown", {
-        bubbles: true,
-      }),
-    );
-    assert.equal(dom.input.value, "@/backend");
-    await new Promise((r) => setTimeout(r, 10));
-    assert.match(dom.slashMenu.textContent, /type message to send/);
 
     // Raw Enter dispatch on a browse path reopens the next path layer rather
     // than treating the path as a message target.
@@ -662,8 +661,8 @@ describe("slash menu — Tab vs Click behavior", () => {
     const rootRows = [...dom.slashMenu.querySelectorAll(".slash-item")].map(
       (row: any) => row.querySelector(".slash-primary")?.textContent,
     );
-    assert.ok(rootRows.includes("navigate"));
     assert.ok(rootRows.includes("backend/"));
+    assert.equal(rootRows.includes("navigate"), false);
     assert.equal(rootRows.includes("."), false);
 
     // Prefixes remain useful for the picker, but raw submission requires an

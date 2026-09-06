@@ -1,25 +1,22 @@
 import { test, expect } from "playwright/test";
-import { createNewTask, gotoConnected } from "./helpers.ts";
+import { createNewTask, currentTaskId, gotoConnected } from "./helpers.ts";
 
 test("@ browses a parent path and targets it with `.`", async ({ page }) => {
   await gotoConnected(page);
   await createNewTask(page);
 
-  await page.locator("#input").fill("@../");
+  await page.locator("#input").fill("@..");
   const menu = page.locator("#slash-menu.active");
-  await expect(menu).toContainText("e2e-child");
+  await expect(menu).toContainText("navigate");
 
-  // The parent Root Task is represented by the first direct navigate command;
-  // selecting it completes the concrete target without a trailing slash.
+  // The first row is a direct navigate command for the resolved target.
   await menu
     .locator(".slash-item")
     .filter({ hasText: /navigate/ })
     .first()
     .click();
-  await expect(page.locator("#input")).toHaveValue("@/.");
-  await expect(page.locator("#slash-menu.active")).toContainText(
-    "type message to send",
-  );
+  await expect.poll(() => currentTaskId(page)).toBe("root");
+  await expect(page.locator("#input")).toHaveValue("");
 });
 
 test("@ lists the local scope immediately and filters while typing", async ({
@@ -28,16 +25,14 @@ test("@ lists the local scope immediately and filters while typing", async ({
   await gotoConnected(page);
   await createNewTask(page);
 
-  // Bare `@` opens the current Task's path layer, not a relation shortcut
-  // list. Parent and current targets are concrete paths without a slash.
-  await page.locator("#input").fill("@");
+  // The current path layer is reached explicitly with `@../`; it lists
+  // concrete Task suggestions without relation shortcut labels.
+  await page.locator("#input").fill("@../");
   const menu = page.locator("#slash-menu.active");
-  await expect(menu).toContainText("..");
+  await expect(menu).toContainText("e2e-child");
   await expect(menu).not.toContainText("sibling");
 
-  // Browse the parent path and filter its directory entries.
-  await page.locator("#input").fill("@../");
-  await expect(menu).toContainText("e2e-child");
+  // Typing a path prefix filters the same concrete target suggestions.
   await page.locator("#input").fill("@../e2e");
   await expect(menu).toContainText("e2e-child");
 

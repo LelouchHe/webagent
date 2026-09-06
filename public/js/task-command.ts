@@ -252,6 +252,7 @@ function makeNavigationCandidate(args: {
   targetPath: string;
   primary: string;
   secondary?: string;
+  selectedSecondary?: string;
   taskId: string;
   prefix?: Candidate["prefix"];
 }): Candidate {
@@ -259,6 +260,7 @@ function makeNavigationCandidate(args: {
     spec: {
       primary: args.primary,
       secondary: args.secondary,
+      selectedSecondary: args.selectedSecondary,
       fill: `${args.marker}${args.targetPath}`,
       onSelect: async () => {
         await switchToTask(args.taskId);
@@ -537,28 +539,18 @@ function addNavigateCommand(args: {
 }): void {
   const fullPath = taskNodePath(args.target, args.map);
   const targetPath = fullPath === "/" ? "/." : fullPath;
-  if (args.scopeIds.has(args.target.id)) {
-    args.candidates.push(
-      makeCandidate({
-        marker: args.marker,
-        targetPath,
-        remainder: "",
-        primary: "navigate",
-        selectedSecondary: "navigate · type message to send",
-        prefix: "↵",
-      }),
-    );
-  } else {
-    args.candidates.push(
-      makeNavigationCandidate({
-        marker: args.marker,
-        targetPath,
-        primary: "navigate",
-        taskId: args.target.id,
-        prefix: "↵",
-      }),
-    );
-  }
+  args.candidates.push(
+    makeNavigationCandidate({
+      marker: args.marker,
+      targetPath,
+      primary: "navigate",
+      selectedSecondary: args.scopeIds.has(args.target.id)
+        ? "navigate · type message to send"
+        : undefined,
+      taskId: args.target.id,
+      prefix: "↵",
+    }),
+  );
 }
 
 function addParentTargetEntry(args: {
@@ -634,32 +626,33 @@ async function buildMessageCandidates(parsed: {
   if (parsed.path.trailingSlash) {
     const browsed = getChildrenAtPath(state.taskId, tasks, parsed.path);
     if (!browsed) return [];
-    addTaskContextEntries({
+    addDirectoryEntries({
       candidates,
       directory: browsed.directory,
-      map,
       marker: parsed.marker,
+      map,
       scopeIds,
     });
     return candidates;
   }
 
   if (parsed.target === "") {
-    addTaskContextEntries({
+    addDirectoryEntries({
       candidates,
       directory: current,
-      map,
       marker: parsed.marker,
+      map,
       scopeIds,
     });
     return candidates;
   }
 
   const resolved = resolveTaskPathNodes(state.taskId, tasks, parsed.path);
-  if (resolved.length === 1) {
+  const exact = resolveTaskPathNodes(state.taskId, tasks, parsed.path, true);
+  if (exact.length === 1) {
     addTaskContextEntries({
       candidates,
-      directory: resolved[0],
+      directory: exact[0],
       map,
       marker: parsed.marker,
       scopeIds,
