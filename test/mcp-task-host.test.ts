@@ -63,6 +63,94 @@ describe("MCP Task tool host", () => {
     ]);
   });
 
+  it("creates a direct child with inherited and requested configuration", async () => {
+    type CreateOptions = {
+      parentId: string;
+      title: string;
+      brief: string;
+      model?: string;
+      thinking?: string;
+      workflowStatus: string;
+      initialMessage: {
+        id: string;
+        deliveryId: string;
+        sourceTaskId: string;
+        sourceActor: string;
+        body: string;
+      };
+    };
+    let createCall:
+      | {
+          cwd?: string;
+          inheritFromTaskId?: string;
+          source: string;
+          options: CreateOptions;
+        }
+      | undefined;
+    const fakeTasks = {
+      createTask: async (
+        _bridge: unknown,
+        cwd: string | undefined,
+        inheritFromTaskId: string | undefined,
+        source: string,
+        options: CreateOptions,
+      ) => {
+        createCall = { cwd, inheritFromTaskId, source, options };
+        return { taskId: "created-child" };
+      },
+      drainCollaborationDeliveries: async () => true,
+    } as unknown as TaskManager;
+    const host = createMcpTaskToolHost({
+      store,
+      tasks: fakeTasks,
+      getBridge: () => ({}) as import("../src/bridge.ts").AgentBridge,
+    });
+
+    assert.deepEqual(
+      await host.create("alpha", {
+        title: "New child",
+        brief: "Implement the child work",
+        cwd: "subdir",
+        model: "model-new",
+        thinking: "high",
+      }),
+      { taskId: "created-child" },
+    );
+    if (!createCall) throw new Error("createTask was not called");
+    assert.equal(createCall.cwd, join(dir, "subdir"));
+    assert.equal(createCall.inheritFromTaskId, "alpha");
+    assert.equal(createCall.source, "agent");
+    assert.deepEqual(
+      {
+        parentId: createCall.options.parentId,
+        title: createCall.options.title,
+        brief: createCall.options.brief,
+        model: createCall.options.model,
+        thinking: createCall.options.thinking,
+        workflowStatus: createCall.options.workflowStatus,
+        sourceTaskId: createCall.options.initialMessage.sourceTaskId,
+        sourceActor: createCall.options.initialMessage.sourceActor,
+        body: createCall.options.initialMessage.body,
+      },
+      {
+        parentId: "alpha",
+        title: "New child",
+        brief: "Implement the child work",
+        model: "model-new",
+        thinking: "high",
+        workflowStatus: "running",
+        sourceTaskId: "alpha",
+        sourceActor: "agent",
+        body: "Implement the child work",
+      },
+    );
+    assert.match(createCall.options.initialMessage.id, /^[0-9a-f-]{36}$/);
+    assert.match(
+      createCall.options.initialMessage.deliveryId,
+      /^[0-9a-f-]{36}$/,
+    );
+  });
+
   it("reads bounded history pages and returns an opaque cursor", () => {
     for (let i = 1; i <= 3; i++) {
       store.saveEvent(

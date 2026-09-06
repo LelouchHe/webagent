@@ -22,6 +22,7 @@ native tools.
 | `task_query` | Read a bounded, compact history page for the current task or one visible relative. |
 | `task_get_record` | Read one complete persisted history record by task-local sequence. |
 | `task_cancel` | Stop the current execution of a child Task while preserving its history. |
+| `task_create` | Create a direct child Task with an initial brief and optional execution overrides. |
 | `task_send` | Send a durable collaboration message to another Task. |
 | `task_update` | Mark the current task `blocked` or `done`, with a handoff message to its parent when one exists. |
 
@@ -164,3 +165,10 @@ configured cancellation safety timeout is shared with the REST cancel path;
 when the Agent has not acknowledged cancellation, the result remains
 `cancelling` and the runtime exposes the unconfirmed state rather than claiming
 that execution has stopped.
+
+### `task_create`
+
+Create a direct child Task immediately. The request includes a required title
+and brief, plus optional `cwd`, `model`, and `thinking` overrides. Omitted
+execution options inherit from the current Task. The result contains the new
+Task ID; failures return an MCP tool error rather than an empty ID.

@@ -122,6 +122,10 @@ describe("createMcpEndpoint", () => {
         status: "idle" as const,
       };
     },
+    create: async (...args: unknown[]) => {
+      calls.push({ kind: "create", args });
+      return { taskId: "task-3" };
+    },
     send: async (...args: unknown[]) => {
       calls.push({ kind: "send", args });
     },
@@ -283,6 +287,7 @@ describe("createMcpEndpoint", () => {
     const names = tools.map((tool) => tool.name).sort();
     assert.deepEqual(names, [
       "task_cancel",
+      "task_create",
       "task_get_record",
       "task_list",
       "task_query",
@@ -356,11 +361,32 @@ describe("createMcpEndpoint", () => {
     );
     assert.equal(getRecord.status, 200);
 
-    const cancel = await mcpPost(
+    const create = await mcpPost(
       "/mcp",
       {
         jsonrpc: "2.0",
         id: 6,
+        method: "tools/call",
+        params: {
+          name: "task_create",
+          arguments: {
+            title: "child",
+            brief: "do work",
+            cwd: null,
+            model: "model-x",
+            thinking: null,
+          },
+        },
+      },
+      auth(token),
+    );
+    assert.equal(create.status, 200);
+
+    const cancel = await mcpPost(
+      "/mcp",
+      {
+        jsonrpc: "2.0",
+        id: 7,
         method: "tools/call",
         params: {
           name: "task_cancel",
@@ -375,7 +401,7 @@ describe("createMcpEndpoint", () => {
       "/mcp",
       {
         jsonrpc: "2.0",
-        id: 7,
+        id: 8,
         method: "tools/call",
         params: {
           name: "task_send",
@@ -390,7 +416,7 @@ describe("createMcpEndpoint", () => {
       "/mcp",
       {
         jsonrpc: "2.0",
-        id: 8,
+        id: 9,
         method: "tools/call",
         params: {
           name: "task_update",
@@ -411,6 +437,19 @@ describe("createMcpEndpoint", () => {
         },
       },
       { kind: "getRecord", input: { taskId: undefined, seq: 7 } },
+      {
+        kind: "create",
+        args: [
+          "web-1",
+          {
+            title: "child",
+            brief: "do work",
+            cwd: undefined,
+            model: "model-x",
+            thinking: undefined,
+          },
+        ],
+      },
       { kind: "cancel", args: ["web-1", "task-2", "superseded"] },
       { kind: "send", args: ["web-1", "task-2", "hello"] },
       { kind: "update", args: ["web-1", "done", "finished"] },

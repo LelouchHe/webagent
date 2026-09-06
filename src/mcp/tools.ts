@@ -62,6 +62,18 @@ export interface McpTaskCancelResult {
   status: "idle" | "cancelling" | "cancelled" | "superseded";
 }
 
+export interface McpTaskCreateInput {
+  title: string;
+  brief: string;
+  cwd?: string;
+  model?: string;
+  thinking?: string;
+}
+
+export interface McpTaskCreateResult {
+  taskId: string;
+}
+
 /** Operations supplied by the WebAgent runtime behind the MCP tool surface. */
 export interface McpTaskToolHost {
   list(sourceTaskId: string): McpTaskListItem[];
@@ -75,6 +87,10 @@ export interface McpTaskToolHost {
     targetTaskId: string,
     reason: string,
   ): Promise<McpTaskCancelResult>;
+  create(
+    sourceTaskId: string,
+    input: McpTaskCreateInput,
+  ): Promise<McpTaskCreateResult>;
   send(sourceTaskId: string, targetTaskId: string, body: string): Promise<void>;
   update(
     sourceTaskId: string,
@@ -202,6 +218,68 @@ export function registerMcpTools(
           seq,
         }) ?? unavailable(),
       ),
+  );
+
+  server.registerTool(
+    "task_create",
+    {
+      description:
+        "Create a direct child Task for independent work. " +
+        "The new Task starts with the supplied title and brief; cwd, model, and thinking are optional overrides. " +
+        "The server returns the new Task ID or an error.",
+      inputSchema: {
+        title: z
+          .string()
+          .trim()
+          .min(1)
+          .max(256)
+          .refine((value) => !value.includes("/"), "Title must not contain '/'")
+          .describe("Task title"),
+        brief: BODY.describe("Initial objective and work instructions"),
+        cwd: z
+          .string()
+          .trim()
+          .min(1)
+          .max(4096)
+          .nullable()
+          .optional()
+          .describe(
+            "Working directory; null or omission inherits the current Task",
+          ),
+        model: z
+          .string()
+          .trim()
+          .min(1)
+          .max(256)
+          .nullable()
+          .optional()
+          .describe(
+            "Model override; null or omission inherits the current Task",
+          ),
+        thinking: z
+          .string()
+          .trim()
+          .min(1)
+          .max(64)
+          .nullable()
+          .optional()
+          .describe(
+            "Thinking level override; null or omission inherits the current Task",
+          ),
+      },
+    },
+    async ({ title, brief, cwd, model, thinking }) => {
+      if (!host) return unavailable();
+      return jsonContent(
+        await host.create(taskId, {
+          title,
+          brief,
+          cwd: cwd ?? undefined,
+          model: model ?? undefined,
+          thinking: thinking ?? undefined,
+        }),
+      );
+    },
   );
 
   server.registerTool(

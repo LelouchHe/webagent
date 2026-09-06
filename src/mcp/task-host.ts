@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { isAbsolute, resolve } from "node:path";
 import type { AgentBridge } from "../bridge.ts";
 import type { Store } from "../store.ts";
 import {
@@ -6,12 +7,15 @@ import {
   collaborationRelation,
 } from "../task-collaboration.ts";
 import type { TaskManager } from "../task-manager.ts";
+import { expandHomePath } from "../home-path.ts";
 import type {
   McpTaskHistoryRecord,
   McpTaskQueryResult,
   McpTaskListItem,
   McpTaskToolHost,
   McpTaskGetRecordResult,
+  McpTaskCreateInput,
+  McpTaskCreateResult,
 } from "./tools.ts";
 import { compactTaskHistoryRecord } from "./task-history.ts";
 
@@ -211,6 +215,44 @@ export function createMcpTaskToolHost(deps: {
           createdAt: event.created_at,
         },
       };
+    },
+
+    async create(
+      sourceTaskId: string,
+      input: McpTaskCreateInput,
+    ): Promise<McpTaskCreateResult> {
+      const bridge = getBridge();
+      if (!bridge) throw new Error("agent_not_ready");
+      const source = requireTask(sourceTaskId);
+      const requestedCwd = input.cwd ? expandHomePath(input.cwd) : source.cwd;
+      const cwd = isAbsolute(requestedCwd)
+        ? requestedCwd
+        : resolve(source.cwd, requestedCwd);
+      const messageId = randomUUID();
+      const deliveryId = randomUUID();
+      const created = await tasks.createTask(bridge, cwd, source.id, "agent", {
+        parentId: source.id,
+        title: input.title,
+        brief: input.brief,
+        model: input.model,
+        thinking: input.thinking,
+        workflowStatus: "running",
+        initialMessage: {
+          id: messageId,
+          deliveryId,
+          sourceTaskId: source.id,
+          sourceActor: "agent",
+          body: input.brief,
+        },
+      });
+      broadcastCollaboration?.({
+        messageId,
+        sourceTaskId: source.id,
+        targetTaskId: created.taskId,
+        body: input.brief,
+      });
+      void tasks.drainCollaborationDeliveries(bridge, created.taskId);
+      return { taskId: created.taskId };
     },
 
     async cancel(sourceTaskId, targetTaskId, reason) {

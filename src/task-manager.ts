@@ -402,6 +402,8 @@ export class TaskManager {
       parentId?: string | null;
       title?: string;
       brief?: string;
+      model?: string;
+      thinking?: string;
       workflowStatus?: WorkflowStatus;
       initialMessage?: {
         id: string;
@@ -519,6 +521,7 @@ export class TaskManager {
     return updatedConfigOptions;
   }
 
+  // eslint-disable-next-line complexity -- task creation owns ACP setup, persistence, inheritance, and cleanup.
   private async createTaskImpl(
     bridge: SessionBridge,
     cwd?: string,
@@ -529,6 +532,8 @@ export class TaskManager {
       parentId?: string | null;
       title?: string;
       brief?: string;
+      model?: string;
+      thinking?: string;
       workflowStatus?: WorkflowStatus;
       initialMessage?: {
         id: string;
@@ -603,6 +608,25 @@ export class TaskManager {
           sourceTask,
         );
       }
+      if (opts?.model || opts?.thinking) {
+        try {
+          configOptions = await this.applyTaskConfigOverrides(
+            bridge,
+            taskId,
+            configOptions,
+            opts.model,
+            opts.thinking,
+          );
+        } catch (error) {
+          await this.deleteTask(bridge, taskId).catch((cleanupError) => {
+            slog.warn("failed to clean up task after config override failure", {
+              taskId,
+              error: cleanupError,
+            });
+          });
+          throw error;
+        }
+      }
 
       const task = this.store.getTask(taskId);
       return {
@@ -612,6 +636,45 @@ export class TaskManager {
     } finally {
       this.creatingTasks.delete(taskId);
     }
+  }
+
+  private async applyTaskConfigOverrides(
+    bridge: SessionBridge,
+    taskId: string,
+    configOptions: ConfigOption[],
+    model?: string,
+    thinking?: string,
+  ): Promise<ConfigOption[]> {
+    const requested: Array<{
+      logicalId: "model" | "thinking";
+      value: string | undefined;
+    }> = [
+      { logicalId: "model", value: model },
+      { logicalId: "thinking", value: thinking },
+    ];
+    let updated = configOptions;
+    for (const { logicalId, value } of requested) {
+      if (!value) continue;
+      const configId = configOptionId(updated, logicalId);
+      if (!configId) {
+        throw new Error(`unsupported_config:${logicalId}`);
+      }
+      const option = updated.find((entry) => entry.id === configId);
+      if (!option || !("options" in option)) {
+        throw new Error(`unsupported_config:${logicalId}`);
+      }
+      if (!option.options.some((entry) => entry.value === value)) {
+        throw new Error(`invalid_config_value:${logicalId}`);
+      }
+      const next = await bridge.setConfigOption(taskId, configId, value);
+      if (next.length > 0) {
+        updated = next;
+        this.recordConfigOptions(taskId, next);
+      } else {
+        this.store.updateTaskConfig(taskId, configId, value);
+      }
+    }
+    return updated;
   }
 
   /**
