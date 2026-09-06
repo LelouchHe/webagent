@@ -29,6 +29,13 @@ export interface McpTaskCollaborationEvent {
   body: string;
 }
 
+export interface McpTaskCreatedEvent {
+  messageId: string;
+  sourceTaskId: string;
+  targetTaskId: string;
+  body: string;
+}
+
 type QueryCursor = {
   taskId: string;
   beforeSeq: number;
@@ -70,8 +77,15 @@ export function createMcpTaskToolHost(deps: {
   getBridge: () => AgentBridge | null;
   cancelTimeoutMs?: number;
   broadcastCollaboration?: (event: McpTaskCollaborationEvent) => void;
+  broadcastTaskCreated?: (event: McpTaskCreatedEvent) => void;
 }): McpTaskToolHost {
-  const { store, tasks, getBridge, broadcastCollaboration } = deps;
+  const {
+    store,
+    tasks,
+    getBridge,
+    broadcastCollaboration,
+    broadcastTaskCreated,
+  } = deps;
 
   function requireTask(taskId: string) {
     const task = store.getTask(taskId);
@@ -244,6 +258,34 @@ export function createMcpTaskToolHost(deps: {
           sourceActor: "agent",
           body: input.brief,
         },
+      });
+      const taskCreatedMessageId = randomUUID();
+      const taskCreatedBody = [
+        `Created Task "${input.title}" (task id ${created.taskId}).`,
+        `CWD: ${cwd}`,
+        ...(input.model ? [`Model: ${input.model}`] : []),
+        ...(input.thinking ? [`Thinking: ${input.thinking}`] : []),
+        `Brief: ${input.brief}`,
+      ].join("\n");
+      store.saveEvent(
+        source.id,
+        "system_message",
+        {
+          kind: "task_created",
+          taskId: created.taskId,
+          title: input.title,
+          cwd,
+          model: input.model ?? null,
+          thinking: input.thinking ?? null,
+          body: taskCreatedBody,
+        },
+        { from_ref: "agent" },
+      );
+      broadcastTaskCreated?.({
+        messageId: taskCreatedMessageId,
+        sourceTaskId: source.id,
+        targetTaskId: created.taskId,
+        body: taskCreatedBody,
       });
       broadcastCollaboration?.({
         messageId,

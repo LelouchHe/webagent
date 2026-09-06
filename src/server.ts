@@ -174,6 +174,21 @@ const mcpTaskTools = createMcpTaskToolHost({
       });
     }
   },
+  broadcastTaskCreated: ({ messageId, sourceTaskId, targetTaskId, body }) => {
+    const source = store.getTaskIncludingDeleted(sourceTaskId);
+    const target = store.getTaskIncludingDeleted(targetTaskId);
+    sseManager.broadcast({
+      type: "collaboration_message",
+      taskId: sourceTaskId,
+      messageId,
+      sourceTaskId,
+      sourceLabel: source?.title ?? sourceTaskId.slice(0, 8),
+      targetTaskId,
+      targetLabel: target?.title ?? targetTaskId.slice(0, 8),
+      role: "source",
+      body,
+    });
+  },
 });
 const messageCleanup: CleanupHandle = startMessageCleanup(
   store,

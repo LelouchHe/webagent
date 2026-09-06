@@ -149,6 +149,7 @@ describe("MCP Task tool host", () => {
       createCall.options.initialMessage.deliveryId,
       /^[0-9a-f-]{36}$/,
     );
+    assert.match(store.getEvents("alpha").at(-1)?.data ?? "", /created-child/);
   });
 
   it("reads bounded history pages and returns an opaque cursor", () => {

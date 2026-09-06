@@ -171,4 +171,6 @@ that execution has stopped.
 Create a direct child Task immediately. The request includes a required title
 and brief, plus optional `cwd`, `model`, and `thinking` overrides. Omitted
 execution options inherit from the current Task. The result contains the new
-Task ID; failures return an MCP tool error rather than an empty ID.
+Task ID. The creating Task also receives a durable system message containing
+the child Task ID, title, cwd, and requested execution overrides; failures
+return an MCP tool error rather than an empty ID.
