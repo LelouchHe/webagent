@@ -95,8 +95,8 @@ export function resolvePath(
  * Build the candidate list for a resolved node + tail query.
  *
  * Prefix glyphs:
- *   ›   navigate — subcommand; Tab/Enter drills deeper
- *   ↵   commit   — freeform; Tab fills, Enter runs the typed action
+ *   ›   navigate — path/subcommand; Tab/Enter drills deeper
+ *   ↵   select   — target/freeform; Tab fills, Enter runs the typed action
  *   ``  data row, placeholder, separator
  *
  * Order: subcommands (›) → freeform (↵) → [separator] → data rows / placeholder.

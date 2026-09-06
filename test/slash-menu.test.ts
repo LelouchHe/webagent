@@ -592,6 +592,7 @@ describe("slash menu — Tab vs Click behavior", () => {
       (row: any) => row.querySelector(".slash-primary")?.textContent === "../",
     ) as HTMLElement;
     assert.ok(parentBrowse);
+    assert.equal(parentBrowse.querySelector(".slash-prefix")?.textContent, "›");
     parentBrowse.dispatchEvent(
       new (globalThis.window as any).MouseEvent("mousedown", {
         bubbles: true,
@@ -613,12 +614,20 @@ describe("slash menu — Tab vs Click behavior", () => {
         row.querySelector(".slash-primary")?.textContent === "backend",
     ) as HTMLElement;
     assert.ok(parentTarget);
+    assert.equal(parentTarget.querySelector(".slash-prefix")?.textContent, "↵");
     parentTarget.dispatchEvent(
       new (globalThis.window as any).MouseEvent("mousedown", {
         bubbles: true,
       }),
     );
     assert.equal(dom.input.value, "@backend ");
+    await new Promise((r) => setTimeout(r, 10));
+    assert.equal(
+      dom.slashMenu.classList.contains("active"),
+      true,
+      "selecting a Task target should retain the body hint",
+    );
+    assert.match(dom.slashMenu.textContent, /jump · type a message to send/);
 
     // Raw Enter dispatch on a browse path reopens the next path layer rather
     // than treating the path as a message target.

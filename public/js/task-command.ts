@@ -262,7 +262,7 @@ function makeCandidate(args: CreateCandidateArgs): Candidate {
       continueOnFill: true,
       onSelect: args.onSelect,
     },
-    prefix: "",
+    prefix: "↵",
     kind: "data",
   };
 }
@@ -279,8 +279,8 @@ function makeBrowseCandidate(args: {
     spec: {
       primary: `${args.primary}/`,
       secondary: args.secondary
-        ? `${args.secondary} · navigation only`
-        : "navigation only",
+        ? `${args.secondary} · navigation`
+        : "navigation",
       path: args.path,
       fill: `${args.marker}${browsePath}/`,
       continueOnFill: true,
@@ -317,12 +317,8 @@ export async function buildTaskCommandCandidates(
     throw err;
   }
 
-  // A separator after the head starts the payload (brief/body): like the
-  // other slash commands, the menu stands down once the head is complete.
-  // For a complete @ target with only that separator, keep one existing
-  // placeholder row as a compact affordance: Enter jumps, text sends.
-  // Path descent is unaffected — the trailing separator lives inside the
-  // target token (e.g. `+public/`).
+  // Once a target is followed by whitespace, keep the compact action hint in
+  // the same prefix vocabulary as the candidate rows.
   if (parsed.remainder !== "") {
     if (
       parsed.target !== "" &&
@@ -333,12 +329,12 @@ export async function buildTaskCommandCandidates(
         {
           spec: {
             primary: parsed.path.trailingSlash
-              ? "navigation only · remove / to select this Task"
+              ? "navigation · remove / to select this Task"
               : parsed.marker === "@!"
-                ? "Enter to jump · type a message to force-send"
-                : "Enter to jump · type a message to send",
+                ? "jump · type a message to force-send"
+                : "jump · type a message to send",
           },
-          prefix: "",
+          prefix: parsed.path.trailingSlash ? "›" : "↵",
           kind: "placeholder",
         },
       ];
@@ -557,7 +553,7 @@ function addTaskTargetRows(args: {
         primary: taskNodeName(node),
         secondary: reachable
           ? `${relationTo(args.current, node)} · ${statusLabel(node)}`
-          : "navigation only",
+          : "navigation",
         path: taskNodePath(node, args.map),
       }),
     );
@@ -772,7 +768,7 @@ async function executeMessageTask(
   const body = remainder.trim();
   if (body && !scopeIds.has(targetTask.id)) {
     addSystem(
-      `err: ${taskNodeName(targetTask)} is navigation only — enter this Task before sending a message`,
+      `err: ${taskNodeName(targetTask)} is navigation — enter this Task before sending a message`,
     );
     return;
   }
@@ -829,7 +825,7 @@ export async function executeTaskCommand(text: string): Promise<boolean> {
     await executeCreateTask(parsed.target, parsed.remainder);
   } else if (parsed.path.trailingSlash) {
     if (parsed.remainder.trim() !== "") {
-      addSystem("err: A path ending in / is navigation only");
+      addSystem("err: A path ending in / is navigation");
     } else {
       // Re-dispatch the unchanged browse path through the input listener so
       // the picker drills into the requested Task directory.

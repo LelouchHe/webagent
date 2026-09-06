@@ -22,7 +22,7 @@ test("@ click completes the target and waits for the body", async ({
   await expect(page.locator("#input")).toHaveValue("@root ");
   // The head is complete: keep only the existing placeholder affordance.
   await expect(page.locator("#slash-menu.active")).toContainText(
-    "Enter to jump · type a message to send",
+    "jump · type a message to send",
   );
   await expect.poll(() => currentTaskId(page)).toBe(current);
 });
