@@ -627,7 +627,15 @@ describe("slash menu — Tab vs Click behavior", () => {
       true,
       "selecting a Task target should retain the body hint",
     );
-    assert.match(dom.slashMenu.textContent, /jump · type a message to send/);
+    assert.match(
+      dom.slashMenu.textContent,
+      /navigate · type a message to send/,
+    );
+    assert.equal(
+      dom.slashMenu.querySelector(".slash-placeholder .slash-prefix")
+        ?.textContent,
+      "↵",
+    );
 
     // Raw Enter dispatch on a browse path reopens the next path layer rather
     // than treating the path as a message target.

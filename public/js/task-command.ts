@@ -331,10 +331,10 @@ export async function buildTaskCommandCandidates(
             primary: parsed.path.trailingSlash
               ? "navigation · remove / to select this Task"
               : parsed.marker === "@!"
-                ? "jump · type a message to force-send"
-                : "jump · type a message to send",
+                ? "navigate · type a message to force-send"
+                : "navigate · type a message to send",
           },
-          prefix: parsed.path.trailingSlash ? "›" : "",
+          prefix: parsed.path.trailingSlash ? "›" : "↵",
           kind: "placeholder",
         },
       ];
