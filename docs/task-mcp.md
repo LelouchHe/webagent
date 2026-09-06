@@ -79,8 +79,8 @@ type CompactTaskHistoryRecord = {
 ```
 
 `seq` is the event's stable sequence within its task. It is included as an
-identity/reference value; this version of the MCP surface does not expose a
-raw-event lookup by sequence.
+identity/reference value; pass it to `task_get_record` when the compact
+projection is not enough.
 
 ### Compact history records
 

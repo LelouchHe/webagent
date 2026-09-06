@@ -507,6 +507,41 @@ describe("TaskManager", () => {
       assert.equal(store.getTask(created.taskId)!.reasoning_effort, "high");
     });
 
+    it("cleans up when a requested config value is invalid", async () => {
+      const bridge = {
+        async newSession() {
+          return {
+            sessionId: "agent-invalid-config",
+            configOptions: [
+              {
+                type: "select" as const,
+                id: "model",
+                name: "Model",
+                currentValue: "default",
+                options: [{ value: "model-valid", name: "Valid" }],
+              },
+            ],
+          };
+        },
+        async setConfigOption() {
+          throw new Error("setConfigOption should not be called");
+        },
+        async loadSession() {
+          throw new Error("loadSession should not be called");
+        },
+      };
+
+      await assert.rejects(
+        () =>
+          sm.createTask(bridge, undefined, undefined, "agent", {
+            model: "model-invalid",
+          }),
+        /invalid_config_value:model/,
+      );
+      assert.equal(store.listTasks().length, 0);
+      assert.equal(sm.liveTasks.size, 0);
+    });
+
     it("does not set config when no source task is provided", async () => {
       let configCalled = false;
       const bridge = {

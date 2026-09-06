@@ -1265,7 +1265,11 @@ export function replayEvent(
       break;
     case "system_message": {
       if (typeof d.body === "string" && d.body.trim()) {
-        addSystem(d.body);
+        const legacyCollaboration =
+          d.kind === "collaboration" &&
+          d.messageBody === undefined &&
+          (d.sourceLabel ?? d.targetLabel) !== undefined;
+        addSystem(legacyCollaboration ? collaborationLine(d) : d.body);
       }
       break;
     }

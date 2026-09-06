@@ -618,6 +618,10 @@ export class TaskManager {
             opts.thinking,
           );
         } catch (error) {
+          // The task is live but still carries the creation barrier. Drop it
+          // before deleteTask checks busy state so failed overrides cannot
+          // strand the persisted task and ACP execution.
+          this.creatingTasks.delete(taskId);
           await this.deleteTask(bridge, taskId).catch((cleanupError) => {
             slog.warn("failed to clean up task after config override failure", {
               taskId,

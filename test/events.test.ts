@@ -2618,6 +2618,25 @@ describe("events", () => {
             targetLabel: "child-a",
             role: "target",
             body: "@what sent @child-a: please review",
+            messageBody: "please review",
+          },
+          [],
+          0,
+        );
+        assert.match(
+          dom.messages.textContent ?? "",
+          /@what sent @child-a: please review/,
+        );
+      });
+
+      it("replays legacy collaboration rows with labels using the legacy route", () => {
+        events.replayEvent(
+          "system_message",
+          {
+            kind: "collaboration",
+            sourceLabel: "what",
+            targetLabel: "child-a",
+            body: "please review",
           },
           [],
           0,
