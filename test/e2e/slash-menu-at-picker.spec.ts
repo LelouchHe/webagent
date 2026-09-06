@@ -1,30 +1,25 @@
 import { test, expect } from "playwright/test";
-import { createNewTask, currentTaskId, gotoConnected } from "./helpers.ts";
+import { createNewTask, gotoConnected } from "./helpers.ts";
 
-test("@ click completes the target and waits for the body", async ({
+test("@ browses a parent path and keeps the body target explicit", async ({
   page,
 }) => {
   await gotoConnected(page);
   await createNewTask(page);
-  const current = await currentTaskId(page);
 
   await page.locator("#input").fill("@");
   const menu = page.locator("#slash-menu.active");
-  await expect(menu).toContainText("root");
+  await expect(menu).toContainText("../");
 
-  // The target alone is not a command: click completes it with a trailing
-  // space and waits for the message body; nothing is sent.
-  await page
-    .locator("#slash-menu.active .slash-item")
-    .filter({ hasText: "root" })
-    .first()
-    .click();
-  await expect(page.locator("#input")).toHaveValue("@root ");
-  // The head is complete: keep only the existing placeholder affordance.
+  await menu.locator(".slash-item").filter({ hasText: "../" }).click();
+  await expect(page.locator("#input")).toHaveValue("@/");
+  await expect(page.locator("#slash-menu.active")).toContainText("e2e-child");
+
+  // Communication uses an explicit concrete path target, not a relation row.
+  await page.locator("#input").fill("@.. ");
   await expect(page.locator("#slash-menu.active")).toContainText(
     "navigate · type a message to send",
   );
-  await expect.poll(() => currentTaskId(page)).toBe(current);
 });
 
 test("@ lists the local scope immediately and filters while typing", async ({
@@ -33,33 +28,32 @@ test("@ lists the local scope immediately and filters while typing", async ({
   await gotoConnected(page);
   await createNewTask(page);
 
-  // Bare `@`: the whole local scope appears at once — parent, children,
-  // siblings — with absolute Task paths and no warning placeholder.
+  // Bare `@` opens the current Task's path layer, not a relation shortcut
+  // list. Parent navigation is represented by `../`.
   await page.locator("#input").fill("@");
   const menu = page.locator("#slash-menu.active");
-  await expect(menu).toContainText("root");
-  await expect(menu).toContainText("e2e-child");
-  await expect(menu).not.toContainText("requires");
+  await expect(menu).toContainText("../");
+  await expect(menu).not.toContainText("sibling");
 
-  // Typing filters the same scope by title/id prefix.
-  await page.locator("#input").fill("@r");
-  await expect(menu).toContainText("root");
-  await expect(menu).not.toContainText("e2e-child");
+  // Browse the parent path and filter its directory entries.
+  await page.locator("#input").fill("@../");
+  await expect(menu).toContainText("e2e-child");
+  await page.locator("#input").fill("@../e2e");
+  await expect(menu).toContainText("e2e-child");
 
   // Once the message body is being typed the menu stands down.
   await page.locator("#input").fill("@r hello there");
   await expect(page.locator("#slash-menu.active")).toHaveCount(0);
 });
 
-test("an empty @ send jumps to the target instead of erroring", async ({
-  page,
-}) => {
+test("an empty @ submission reports the missing target", async ({ page }) => {
   await gotoConnected(page);
   await createNewTask(page);
 
-  await page.locator("#input").fill("@root");
+  await page.locator("#input").fill("@");
   await page.locator("#input").press("Enter");
 
-  // Navigation, not a message: nothing was sent to the target timeline.
-  await expect.poll(() => currentTaskId(page)).toBe("root");
+  await expect(page.locator("#messages")).toContainText(
+    "Task target is required after @",
+  );
 });

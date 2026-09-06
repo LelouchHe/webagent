@@ -145,15 +145,6 @@ function getChildrenAtPath(
   };
 }
 
-function relationTo(
-  current: TaskNode,
-  node: TaskNode,
-): "parent" | "child" | "sibling" {
-  if (node.id === current.parentId) return "parent";
-  if (node.parentId === current.id) return "child";
-  return "sibling";
-}
-
 function matchesSegment(node: TaskNode, segment: string): boolean {
   const q = segment.toLowerCase();
   if (node.id.toLowerCase().startsWith(q)) return true;
@@ -213,23 +204,6 @@ function resolveTaskPathNodes(
   }
 
   return nodes;
-}
-
-function reconstructTaskPath(
-  originalPath: TaskPath,
-  resolvedNode: TaskNode,
-): string {
-  const segments = [...originalPath.segments];
-  if (segments.length === 0) {
-    return quoteShellWord(resolvedNode.title ?? resolvedNode.id);
-  }
-  const lastIdx = segments.length - 1;
-  const last = segments[lastIdx];
-  if (last !== "." && last !== "..") {
-    segments[lastIdx] = quoteShellWord(resolvedNode.title ?? resolvedNode.id);
-  }
-  const joined = segments.join("/");
-  return originalPath.absolute ? "/" + joined : joined;
 }
 
 // --- candidate builders ---
@@ -521,98 +495,55 @@ function relativeTaskPath(
   return [...up, ...down].join("/") || ".";
 }
 
-function appendBrowseChild(base: string, child: TaskNode): string {
-  const name = quoteShellWord(taskNodeName(child));
-  if (base === "/") return `/${name}`;
-  const cleanBase = base.replace(/\/+$/, "");
-  if (!cleanBase) return name;
-  return `${cleanBase}/${name}`;
-}
-
-function addTaskTargetRows(args: {
+function addDirectoryEntries(args: {
   candidates: Candidate[];
-  nodes: TaskNode[];
+  directory: TaskNode;
   marker: string;
-  targetPath: (node: TaskNode) => string;
-  browseTargetPath?: (node: TaskNode) => string | null;
-  current: TaskNode;
-  scopeIds: Set<string>;
   map: Map<string, TaskNode>;
 }): void {
-  for (const node of args.nodes) {
-    if (node.id === args.current.id) continue;
-    const reachable = args.scopeIds.has(node.id);
-    const targetPath = args.targetPath(node);
-    args.candidates.push(
-      makeCandidate({
-        marker: args.marker,
-        targetPath,
-        remainder: "",
-        primary: taskNodeName(node),
-        secondary: reachable
-          ? `${relationTo(args.current, node)} · ${statusLabel(node)}`
-          : "navigate",
-        path: taskNodePath(node, args.map),
-      }),
-    );
+  for (const node of args.directory.children.sort(compareTaskNodes)) {
+    const fullPath = taskNodePath(node, args.map);
     if (node.children.length > 0) {
-      const browseTargetPath = args.browseTargetPath
-        ? args.browseTargetPath(node)
-        : targetPath;
-      if (browseTargetPath) {
-        args.candidates.push(
-          makeBrowseCandidate({
-            marker: args.marker,
-            targetPath: browseTargetPath,
-            fillPath: taskNodePath(node, args.map),
-            primary: taskNodeName(node),
-            secondary: reachable
-              ? `${relationTo(args.current, node)} · ${statusLabel(node)}`
-              : undefined,
-            path: taskNodePath(node, args.map),
-          }),
-        );
-      }
+      args.candidates.push(
+        makeBrowseCandidate({
+          marker: args.marker,
+          targetPath: fullPath,
+          fillPath: fullPath,
+          primary: taskNodeName(node),
+          secondary: statusLabel(node),
+        }),
+      );
+    } else {
+      args.candidates.push(
+        makeCandidate({
+          marker: args.marker,
+          targetPath: fullPath,
+          remainder: "",
+          primary: taskNodeName(node),
+          secondary: statusLabel(node),
+        }),
+      );
     }
   }
 }
 
-function addDirectoryTargetRows(args: {
+function addParentBrowseEntry(args: {
   candidates: Candidate[];
   directory: TaskNode;
   current: TaskNode;
-  scopeIds: Set<string>;
   map: Map<string, TaskNode>;
   marker: string;
 }): void {
-  const fullPath = taskNodePath(args.directory, args.map);
-  const targetPath = args.directory.parentId ? fullPath : "/.";
-  const primary = args.directory.parentId ? taskNodeName(args.directory) : ".";
-  const reachable = args.scopeIds.has(args.directory.id);
-  const secondary = reachable
-    ? args.directory.id === args.current.id
-      ? `${statusLabel(args.directory)} · navigate`
-      : `${relationTo(args.current, args.directory)} · ${statusLabel(args.directory)}`
-    : "navigate";
-
-  args.candidates.push(
-    makeCandidate({
-      marker: args.marker,
-      targetPath,
-      remainder: "",
-      primary,
-      secondary,
-      path: fullPath,
-    }),
-  );
-  args.candidates.push(
+  if (!args.directory.parentId) return;
+  const parent = args.map.get(args.directory.parentId);
+  if (!parent) return;
+  args.candidates.unshift(
     makeBrowseCandidate({
       marker: args.marker,
-      targetPath,
-      fillPath: fullPath,
-      primary: args.directory.parentId ? taskNodeName(args.directory) : "",
-      secondary: "",
-      path: fullPath,
+      targetPath: `${relativeTaskPath(args.current, parent, args.map)}/`,
+      fillPath: `${taskNodePath(parent, args.map)}/`,
+      primary: "..",
+      secondary: "parent",
     }),
   );
 }
@@ -635,89 +566,68 @@ async function buildMessageCandidates(parsed: {
   const current = map.get(state.taskId);
   if (!current) return [];
 
-  const scope = getLocalScope(state.taskId, tasks);
-  const scopeIds = new Set(scope.map((n) => n.id));
   const candidates: Candidate[] = [];
-
   if (parsed.path.trailingSlash) {
     const browsed = getChildrenAtPath(state.taskId, tasks, parsed.path);
     if (!browsed) return [];
-    addDirectoryTargetRows({
+    addParentBrowseEntry({
       candidates,
       directory: browsed.directory,
       current,
-      scopeIds,
       map,
       marker: parsed.marker,
     });
-    if (browsed.directory.parentId) {
-      const parent = map.get(browsed.directory.parentId);
-      if (parent) {
-        candidates.push(
-          makeBrowseCandidate({
-            marker: parsed.marker,
-            targetPath: `${relativeTaskPath(current, parent, map)}/`,
-            fillPath: `${taskNodePath(parent, map)}/`,
-            primary: "..",
-            secondary: "parent",
-            path: taskNodePath(parent, map),
-          }),
-        );
-      }
-    }
-    addTaskTargetRows({
+    addDirectoryEntries({
       candidates,
-      nodes: browsed.children,
+      directory: browsed.directory,
       marker: parsed.marker,
-      targetPath: (node) => appendBrowseChild(parsed.target, node),
-      current,
-      scopeIds,
       map,
     });
     return candidates;
   }
 
-  const resolved = resolveMessageTargets(state.taskId, tasks, parsed.path);
+  if (parsed.target === "") {
+    addParentBrowseEntry({
+      candidates,
+      directory: current,
+      current,
+      map,
+      marker: parsed.marker,
+    });
+    addDirectoryEntries({
+      candidates,
+      directory: current,
+      marker: parsed.marker,
+      map,
+    });
+    return candidates;
+  }
 
-  if (parsed.target === "" && current.parentId) {
-    const parent = map.get(current.parentId);
-    if (parent) {
-      candidates.unshift(
+  const resolved = resolveTaskPathNodes(state.taskId, tasks, parsed.path);
+  for (const node of resolved) {
+    const fullPath = taskNodePath(node, map);
+    if (node.children.length > 0) {
+      candidates.push(
         makeBrowseCandidate({
           marker: parsed.marker,
-          targetPath: `${relativeTaskPath(current, parent, map)}/`,
-          fillPath: `${taskNodePath(parent, map)}/`,
-          primary: "..",
-          secondary: "parent",
-          path: taskNodePath(parent, map),
+          targetPath: fullPath,
+          fillPath: fullPath,
+          primary: taskNodeName(node),
+          secondary: statusLabel(node),
+        }),
+      );
+    } else {
+      candidates.push(
+        makeCandidate({
+          marker: parsed.marker,
+          targetPath: fullPath,
+          remainder: "",
+          primary: taskNodeName(node),
+          secondary: statusLabel(node),
         }),
       );
     }
   }
-
-  addTaskTargetRows({
-    candidates,
-    nodes: resolved,
-    marker: parsed.marker,
-    targetPath: (node) =>
-      parsed.path.segments.length === 0
-        ? quoteShellWord(taskNodeName(node))
-        : reconstructTaskPath(parsed.path, node),
-    browseTargetPath:
-      parsed.path.segments.length === 0
-        ? (node) => {
-            if (node.id === current.parentId) return null;
-            if (node.parentId === current.parentId) {
-              return `../${quoteShellWord(taskNodeName(node))}`;
-            }
-            return quoteShellWord(taskNodeName(node));
-          }
-        : undefined,
-    current,
-    scopeIds,
-    map,
-  });
-
   return candidates;
 }
 

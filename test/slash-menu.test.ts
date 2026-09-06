@@ -574,11 +574,10 @@ describe("slash menu — Tab vs Click behavior", () => {
     commands.updateSlashMenu();
     await new Promise((r) => setTimeout(r, 10));
     assert.match(dom.slashMenu.textContent, /\.\.\//);
-    assert.match(dom.slashMenu.textContent, /backend/);
-    assert.match(dom.slashMenu.textContent, /parent · idle/);
-    assert.match(dom.slashMenu.textContent, /tests/);
+    assert.doesNotMatch(dom.slashMenu.textContent, /parent · idle/);
+    assert.doesNotMatch(dom.slashMenu.textContent, /sibling/);
 
-    // Tab selects the first browse row without executing it.
+    // Tab selects the parent browse entry without executing it.
     commands.handleSlashMenuKey(makeTabEvent());
     assert.equal(dom.input.value, "@/backend/");
 
@@ -601,40 +600,24 @@ describe("slash menu — Tab vs Click behavior", () => {
     await new Promise((r) => setTimeout(r, 10));
     assert.equal(dom.input.value, "@/backend/");
     assert.match(dom.slashMenu.textContent, /tests/);
+    assert.doesNotMatch(dom.slashMenu.textContent, /root\/backend/);
 
-    // Clicking a concrete Task fills its target and leaves the user to choose
-    // between Enter (jump) and typing a body (send).
-    dom.input.value = "@";
-    commands.updateSlashMenu();
-    await new Promise((r) => setTimeout(r, 10));
-    const parentTarget = [
-      ...dom.slashMenu.querySelectorAll(".slash-item"),
-    ].find(
+    // A leaf Task is a concrete path entry; selecting it leaves the body hint.
+    const leafTarget = [...dom.slashMenu.querySelectorAll(".slash-item")].find(
       (row: any) =>
-        row.querySelector(".slash-primary")?.textContent === "backend",
+        row.querySelector(".slash-primary")?.textContent === "tests",
     ) as HTMLElement;
-    assert.ok(parentTarget);
-    assert.equal(parentTarget.querySelector(".slash-prefix")?.textContent, "");
-    parentTarget.dispatchEvent(
+    assert.ok(leafTarget);
+    leafTarget.dispatchEvent(
       new (globalThis.window as any).MouseEvent("mousedown", {
         bubbles: true,
       }),
     );
-    assert.equal(dom.input.value, "@backend ");
+    assert.equal(dom.input.value, "@/backend/tests ");
     await new Promise((r) => setTimeout(r, 10));
-    assert.equal(
-      dom.slashMenu.classList.contains("active"),
-      true,
-      "selecting a Task target should retain the body hint",
-    );
     assert.match(
       dom.slashMenu.textContent,
       /navigate · type a message to send/,
-    );
-    assert.equal(
-      dom.slashMenu.querySelector(".slash-placeholder .slash-prefix")
-        ?.textContent,
-      "↵",
     );
 
     // Raw Enter dispatch on a browse path reopens the next path layer rather
@@ -646,16 +629,16 @@ describe("slash menu — Tab vs Click behavior", () => {
     assert.equal(dom.input.value, "@/backend/");
     assert.match(dom.slashMenu.textContent, /tests/);
 
-    // Root has the same concrete-target / browse-path pair: `/.` targets
-    // Root while `/` opens its children.
+    // Root browse is an ordinary filesystem-style path; no synthetic Root
+    // target row is injected into the directory listing.
     dom.input.value = "@/";
     commands.updateSlashMenu();
     await new Promise((r) => setTimeout(r, 10));
     const rootRows = [...dom.slashMenu.querySelectorAll(".slash-item")].map(
       (row: any) => row.querySelector(".slash-primary")?.textContent,
     );
-    assert.ok(rootRows.includes("."));
-    assert.ok(rootRows.includes("/"));
+    assert.ok(rootRows.includes("backend/"));
+    assert.equal(rootRows.includes("."), false);
   });
 
   // -----------------------------------------------------------------------
