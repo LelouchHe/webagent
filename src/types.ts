@@ -86,6 +86,8 @@ export interface TaskSummary {
   created_at: string;
   last_active_at: string;
   parent_id: string | null;
+  /** Current workflow status for task navigation menus. */
+  workflow_status?: "running" | "idle" | "blocked" | "done";
 }
 
 /** Detailed task record returned by GET /api/v1/tasks/:id. */

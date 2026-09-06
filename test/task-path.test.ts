@@ -98,6 +98,15 @@ describe("task command path parsing", () => {
     });
   });
 
+  it("preserves a trailing slash as a browse request", () => {
+    assert.deepEqual(parseTaskCommand("@../"), {
+      marker: "@",
+      target: "../",
+      path: { absolute: false, segments: [".."], trailingSlash: true },
+      remainder: "",
+    });
+  });
+
   it("rejects malformed command heads instead of guessing", () => {
     // Bare `+` and `@!` are valid now (empty target → default scope listing).
     for (const input of ["", "hello", '+"unterminated brief']) {

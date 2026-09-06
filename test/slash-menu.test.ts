@@ -517,6 +517,119 @@ describe("slash menu — Tab vs Click behavior", () => {
     assert.match(dom.slashMenu.textContent, /inner\.ts/);
   });
 
+  it("uses a view-style @ picker for navigation and Task targets", async () => {
+    state.taskId = "api";
+    const tasks = [
+      {
+        id: "root",
+        cwd: "/work",
+        title: "Root",
+        parent_id: null,
+        workflow_status: "idle",
+      },
+      {
+        id: "backend",
+        cwd: "/work/backend",
+        title: "backend",
+        parent_id: "root",
+        workflow_status: "idle",
+      },
+      {
+        id: "api",
+        cwd: "/work/backend/api",
+        title: "api",
+        parent_id: "backend",
+        workflow_status: "running",
+      },
+      {
+        id: "tests",
+        cwd: "/work/backend/tests",
+        title: "tests",
+        parent_id: "backend",
+        workflow_status: "blocked",
+      },
+      {
+        id: "frontend",
+        cwd: "/work/frontend",
+        title: "frontend",
+        parent_id: "root",
+        workflow_status: "done",
+      },
+    ];
+    globalThis.fetch = ((url: string, init?: any) => {
+      fetchCalls.push({ url, init });
+      if (url === "/api/v1/tasks") {
+        return Promise.resolve({
+          ok: true,
+          text: () => Promise.resolve(JSON.stringify(tasks)),
+        });
+      }
+      return Promise.resolve({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({})),
+      });
+    }) as any;
+
+    dom.input.value = "@";
+    commands.updateSlashMenu();
+    await new Promise((r) => setTimeout(r, 10));
+    assert.match(dom.slashMenu.textContent, /\.\.\//);
+    assert.match(dom.slashMenu.textContent, /backend/);
+    assert.match(dom.slashMenu.textContent, /parent · idle/);
+    assert.match(dom.slashMenu.textContent, /tests/);
+
+    // Tab selects the first browse row without executing it.
+    commands.handleSlashMenuKey(makeTabEvent());
+    assert.equal(dom.input.value, "@../");
+
+    // Clicking the browse row drills into the parent path and keeps the menu.
+    dom.input.value = "@";
+    commands.updateSlashMenu();
+    await new Promise((r) => setTimeout(r, 10));
+    const parentBrowse = [
+      ...dom.slashMenu.querySelectorAll(".slash-item"),
+    ].find(
+      (row: any) => row.querySelector(".slash-primary")?.textContent === "../",
+    ) as HTMLElement;
+    assert.ok(parentBrowse);
+    parentBrowse.dispatchEvent(
+      new (globalThis.window as any).MouseEvent("mousedown", {
+        bubbles: true,
+      }),
+    );
+    await new Promise((r) => setTimeout(r, 10));
+    assert.equal(dom.input.value, "@../");
+    assert.match(dom.slashMenu.textContent, /tests/);
+
+    // Clicking a concrete Task fills its target and leaves the user to choose
+    // between Enter (jump) and typing a body (send).
+    dom.input.value = "@";
+    commands.updateSlashMenu();
+    await new Promise((r) => setTimeout(r, 10));
+    const parentTarget = [
+      ...dom.slashMenu.querySelectorAll(".slash-item"),
+    ].find(
+      (row: any) =>
+        row.querySelector(".slash-primary")?.textContent === "backend",
+    ) as HTMLElement;
+    assert.ok(parentTarget);
+    parentTarget.dispatchEvent(
+      new (globalThis.window as any).MouseEvent("mousedown", {
+        bubbles: true,
+      }),
+    );
+    assert.equal(dom.input.value, "@backend ");
+
+    // Raw Enter dispatch on a browse path reopens the next path layer rather
+    // than treating the path as a message target.
+    const taskCommand = await import("../public/js/task-command.ts");
+    dom.input.value = "@../";
+    await taskCommand.executeTaskCommand("@../");
+    await new Promise((r) => setTimeout(r, 10));
+    assert.equal(dom.input.value, "@../");
+    assert.match(dom.slashMenu.textContent, /tests/);
+  });
+
   // -----------------------------------------------------------------------
   // Click: fills input AND executes (tab + enter)
   // -----------------------------------------------------------------------

@@ -7,6 +7,8 @@ export interface TaskPath {
   absolute: boolean;
   /** Decoded path components. Dot components remain for the resolver to interpret. */
   segments: string[];
+  /** A trailing slash requests browsing the resolved path instead of targeting it. */
+  trailingSlash?: boolean;
 }
 
 export interface ParsedTaskCommand {
@@ -118,7 +120,11 @@ export function parseTaskPath(target: string): TaskPath {
   if (!target) return { absolute: false, segments: [] };
   const absolute = target.startsWith("/");
   const segments = target.split("/").filter(Boolean);
-  return { absolute, segments };
+  return {
+    absolute,
+    segments,
+    ...(target.endsWith("/") ? { trailingSlash: true } : {}),
+  };
 }
 
 /**
