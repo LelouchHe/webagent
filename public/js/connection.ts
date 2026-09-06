@@ -296,12 +296,20 @@ async function initTask() {
     return;
   }
 
-  // No task in URL — try to resume last active task
+  // No task in URL — resume the most recent task with user-originated input.
+  // The API list is ordered by last_active_at; Root is only the fallback when
+  // there is no user history to restore.
   try {
-    const tasks = (await api.listTasks()) as Array<{ id: string }>;
+    const tasks = (await api.listTasks()) as Array<{
+      id: string;
+      hasUserInput?: boolean;
+    }>;
     if (gen !== state.taskSwitchGen) return;
     if (tasks.length > 0) {
-      const initialTask = tasks.find((task) => task.id === "root") ?? tasks[0];
+      const initialTask =
+        tasks.find((task) => task.hasUserInput) ??
+        tasks.find((task) => task.id === "root") ??
+        tasks[0];
       resetTaskUI();
       await resumeAndLoad(initialTask.id, false, gen);
       if (gen !== state.taskSwitchGen) return;

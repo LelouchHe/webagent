@@ -6,7 +6,7 @@ import {
   sendPrompt,
 } from "./helpers.ts";
 
-test("opening the root path opens the canonical Root task", async ({
+test("opening the root path resumes the most recent user-input Task", async ({
   browser,
 }) => {
   const pageA = await browser.newPage();
@@ -25,19 +25,19 @@ test("opening the root path opens the canonical Root task", async ({
     "Echo: message from the latest task",
   );
 
-  // Root is the canonical clean URL: "/" opens Root (empty hash), not the
-  // most recently active task.
+  // A hashless startup resumes the most recent user-input Task. Root remains
+  // the clean URL only when Root itself is the selected Task.
   const freshPage = await browser.newPage();
   await gotoConnected(freshPage, "/");
 
-  await expect.poll(() => currentTaskId(freshPage)).toBe("root");
-  await expect(freshPage.locator("#messages")).not.toContainText(
+  await expect.poll(() => currentTaskId(freshPage)).toBe(taskTwoId);
+  await expect(freshPage).toHaveURL(new RegExp(`#${taskTwoId}$`));
+  await expect(freshPage.locator("#messages")).toContainText(
     "message from the latest task",
   );
 
   // Existing tasks remain reachable by their stable hash. Open a fresh
-  // page for the hash navigation: / → /#id is a same-document hash change that
-  // does not re-run initTask, so a reload/new document is required.
+  // page for the hash navigation; the hash remains the stable deep-link form.
   const taskPage = await browser.newPage();
   await gotoConnected(taskPage, `/#${taskTwoId}`);
   await expect.poll(() => currentTaskId(taskPage)).toBe(taskTwoId);

@@ -702,6 +702,7 @@ export function createRequestHandler(
           .map((task) => {
             const {
               pending_compact_summary: _pendingCompactSummary,
+              has_user_input: hasUserInput,
               ...publicTask
             } = task;
             // Home-abbreviated display form for menus and lists; the raw cwd
@@ -709,6 +710,7 @@ export function createRequestHandler(
             return {
               ...publicTask,
               cwdDisplay: abbreviateHomePath(task.cwd),
+              hasUserInput: Boolean(hasUserInput),
             };
           });
         res.end(JSON.stringify(publicTasks));

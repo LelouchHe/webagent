@@ -14,7 +14,7 @@ For build, configuration, testing, and publishing commands, use
 - **Task restore**: `bridge.loadTask()` restores ACP context after server restart. During restore, `restoringTasks` Set suppresses duplicate event storage/broadcast.
 - **On-demand tasks**: No pre-warming. Tasks created via `+` / autocomplete, auto-resumed on page open.
 - **Model inheritance**: A newly created task inherits the current task's saved model when available; restored tasks keep their own persisted model. Mode is NOT inherited — new tasks always start in agent mode.
-- **Auto-resume**: Frontend auto-resumes last active task on page open (no hash → fetch `/api/v1/tasks` → resume most recent).
+- **Auto-resume**: Frontend resumes the most recent task with user-originated input on page open (no hash → fetch `/api/v1/tasks` → choose the first `hasUserInput` task); Root is the fallback when no task has user input.
 - **Event aggregation**: `message_chunk` / `thought_chunk` are buffered in memory, flushed to DB as full `assistant_message` / `thinking` on boundaries (tool_call, plan, prompt_done).
 - **Title generation**: Uses a dedicated silent task with fast model (Haiku), async and non-blocking.
 - **Multi-client broadcast**: Events broadcast to all WS clients. Permission responses, user messages, bash output sync across devices. `broadcast()` supports sender exclusion.

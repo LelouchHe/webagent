@@ -167,7 +167,7 @@ initTask()
   ├── Hash has task ID? ──→ resumeAndLoad(id, incremental?)
   │     ├── Same as current task ──→ incremental=true  (reconnect)
   │     └── Different task ──→ incremental=false (full load)
-  ├── No hash? ──→ listTasks() → prefer Root, otherwise resume most recent
+  ├── No hash? ──→ listTasks() → resume most recent user-input task, otherwise Root
   └── No tasks? ──→ POST /tasks/bootstrap
 ```
 
@@ -378,8 +378,9 @@ Promise.all([api.getTask(targetId), loadHistory(targetId)]).then(
 
 ### Hash Routing
 
-Child Tasks are identified by URL hash: `/#task-id`. Root is the
-canonical default and omits the hash, so `/` opens Root. This enables:
+Child Tasks are identified by URL hash: `/#task-id`. Root omits the hash when
+it is active; a hashless startup resumes the most recent user-input Task and
+falls back to Root when no such Task exists. This enables:
 
 - Bookmarking tasks
 - Push notification click → navigate to task

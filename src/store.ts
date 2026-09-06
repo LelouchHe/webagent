@@ -36,6 +36,8 @@ export interface TaskRow {
   parent_id: string | null;
   /** Agent-generated context handoff waiting for the next real prompt. */
   pending_compact_summary: string | null;
+  /** Present on listTasks rows: whether a user-originated input exists. */
+  has_user_input?: number;
 }
 
 export interface AgentSessionRow {
@@ -652,7 +654,16 @@ export class Store {
     if (opts?.source) {
       return this.db
         .prepare(
-          `SELECT s.* FROM tasks s
+          `SELECT s.*,
+             EXISTS (
+               SELECT 1 FROM events e
+               WHERE e.task_id = s.id AND e.type = 'user_message'
+             ) OR EXISTS (
+               SELECT 1 FROM messages m
+               WHERE m.source_actor = 'user'
+                 AND (m.source_task_id = s.id OR m.direct_target_task_id = s.id)
+             ) AS has_user_input
+           FROM tasks s
            JOIN agent_sessions a ON a.task_id = s.id
            WHERE a.agent_key = ? AND s.source = ? AND s.deleted_at IS NULL
            ORDER BY COALESCE(s.last_active_at, s.created_at) DESC`,
@@ -661,7 +672,16 @@ export class Store {
     }
     return this.db
       .prepare(
-        `SELECT s.* FROM tasks s
+        `SELECT s.*,
+           EXISTS (
+             SELECT 1 FROM events e
+             WHERE e.task_id = s.id AND e.type = 'user_message'
+           ) OR EXISTS (
+             SELECT 1 FROM messages m
+             WHERE m.source_actor = 'user'
+               AND (m.source_task_id = s.id OR m.direct_target_task_id = s.id)
+           ) AS has_user_input
+         FROM tasks s
          JOIN agent_sessions a ON a.task_id = s.id
          WHERE a.agent_key = ? AND s.deleted_at IS NULL
          ORDER BY COALESCE(s.last_active_at, s.created_at) DESC`,
