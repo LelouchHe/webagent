@@ -651,7 +651,7 @@ Get server configuration and available config options.
 
 | Field              | Type             | Description                                                                                 |
 | ------------------ | ---------------- | ------------------------------------------------------------------------------------------- |
-| `configOptions`    | `ConfigOption[]` | Available config options from the ACP agent (model, mode, reasoning_effort)                 |
+| `configOptions`    | `ConfigOption[]` | Available config options from the ACP agent (model, mode, and agent-specific thinking option) |
 | `cancelTimeout`    | number           | Cancel timeout in ms (from `limits.cancel_timeout` config). `0` = disabled                  |
 | `recentPathsLimit` | number           | Max recent paths to show in `/new` menu (from `limits.recent_paths` config). `0` = show all |
 
@@ -659,7 +659,9 @@ Get server configuration and available config options.
 
 #### `PUT /api/v1/tasks/:id/{model,mode,reasoning-effort}`
 
-Set one of the built-in string/select ACP task config options. `reasoning-effort` maps to the ACP config id `reasoning_effort`.
+Set one of the built-in string/select ACP task config options. `reasoning-effort` is the WebAgent canonical name; the ACP wire id is selected from the agent-advertised config schema and may be `reasoning_effort` or `thought_level`.
+
+WebAgent stores the thinking value internally as `reasoning_effort` and never probes an unsupported alias during task restore.
 
 **Request body:**
 

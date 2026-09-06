@@ -673,6 +673,11 @@ describe("Task REST API", () => {
     assert.match(compactPrompt, /Compaction guidance from the user/);
     assert.match(compactPrompt, /重点保留 API 改动/);
     assert.match(compactPrompt, /not a task to execute/);
+    assert.match(
+      compactPrompt,
+      /Markdown\.\n\nCompaction guidance from the user:/,
+    );
+    assert.equal(compactPrompt.includes("\\n"), false);
   });
 
   // --- GET /api/v1/tasks/:id ---

@@ -507,6 +507,41 @@ describe("TaskManager", () => {
       assert.equal(store.getTask(created.taskId)!.reasoning_effort, "high");
     });
 
+    it("cleans up when a requested config value is invalid", async () => {
+      const bridge = {
+        async newSession() {
+          return {
+            sessionId: "agent-invalid-config",
+            configOptions: [
+              {
+                type: "select" as const,
+                id: "model",
+                name: "Model",
+                currentValue: "default",
+                options: [{ value: "model-valid", name: "Valid" }],
+              },
+            ],
+          };
+        },
+        async setConfigOption() {
+          throw new Error("setConfigOption should not be called");
+        },
+        async loadSession() {
+          throw new Error("loadSession should not be called");
+        },
+      };
+
+      await assert.rejects(
+        () =>
+          sm.createTask(bridge, undefined, undefined, "agent", {
+            model: "model-invalid",
+          }),
+        /invalid_config_value:model/,
+      );
+      assert.equal(store.listTasks().length, 0);
+      assert.equal(sm.liveTasks.size, 0);
+    });
+
     it("does not set config when no source task is provided", async () => {
       let configCalled = false;
       const bridge = {
@@ -673,7 +708,25 @@ describe("TaskManager", () => {
 
       const bridge = {
         async newSession() {
-          return { sessionId: "agent-new", configOptions: [] };
+          return {
+            sessionId: "agent-new",
+            configOptions: [
+              {
+                type: "select" as const,
+                id: "mode",
+                name: "Mode",
+                currentValue: "agent",
+                options: [{ value: "plan", name: "Plan" }],
+              },
+              {
+                type: "select" as const,
+                id: "model",
+                name: "Model",
+                currentValue: "default",
+                options: [{ value: "model-old", name: "Model" }],
+              },
+            ],
+          };
         },
         async setConfigOption(_taskId: string, id: string, value: string) {
           configCalls.push({ id, value });
@@ -1087,7 +1140,15 @@ describe("TaskManager", () => {
           newSessionCalls++;
           return {
             sessionId: `agent-child-${newSessionCalls}`,
-            configOptions: [],
+            configOptions: [
+              {
+                type: "select" as const,
+                id: "model",
+                name: "Model",
+                currentValue: "default",
+                options: [{ value: "model-old", name: "Model" }],
+              },
+            ],
           };
         },
         async setConfigOption() {
@@ -1555,11 +1616,8 @@ describe("TaskManager", () => {
   });
 
   describe("resume-time cache warming", () => {
-    // ACP's loadSession does not return configOptions (only newSession /
-    // setConfigOption do). When the global cache is empty (e.g. after
-    // bridge.restart), piggyback on the user's own resume: call
-    // setConfigOption with the task's own stored value (idempotent) to
-    // pull the full schema from the agent.
+    // When the global cache is empty after a bridge restart, only warm it
+    // through a config id the resumed session actually advertises.
 
     it("warms cachedConfigOptions on first resume when cache is empty and task has stored mode", async () => {
       store.createTask("s1", "/x");
@@ -1595,7 +1653,18 @@ describe("TaskManager", () => {
           ];
         },
         async loadSession() {
-          return { taskId: "s1", configOptions: [] };
+          return {
+            taskId: "s1",
+            configOptions: [
+              {
+                type: "select" as const,
+                id: "mode",
+                name: "Mode",
+                currentValue: "agent",
+                options: [{ value: "#plan", name: "Plan" }],
+              },
+            ],
+          };
         },
       };
 
@@ -1662,7 +1731,7 @@ describe("TaskManager", () => {
       assert.ok(sm.liveTasks.has("s1"));
     });
 
-    it("prefers mode > reasoning_effort > model when picking the warming key", async () => {
+    it("uses only advertised config keys when warming the cache", async () => {
       store.createTask("s1", "/x");
       store.updateTaskConfig("s1", "reasoning_effort", "medium");
       store.updateTaskConfig("s1", "model", "gpt-5.4");
@@ -1686,15 +1755,34 @@ describe("TaskManager", () => {
           ];
         },
         async loadSession() {
-          return { taskId: "s1", configOptions: [] };
+          return {
+            taskId: "s1",
+            configOptions: [
+              {
+                type: "select" as const,
+                id: "thought_level",
+                category: "thought_level" as const,
+                name: "Thinking",
+                currentValue: "low",
+                options: [{ value: "medium", name: "Medium" }],
+              },
+              {
+                type: "select" as const,
+                id: "model",
+                name: "Model",
+                currentValue: "default",
+                options: [{ value: "gpt-5.4", name: "GPT-5.4" }],
+              },
+            ],
+          };
         },
       };
 
       await sm.ensureResumed(bridge, "s1");
-      assert.deepEqual(setCalls, [{ id: "reasoning_effort", value: "medium" }]);
+      assert.deepEqual(setCalls, [{ id: "thought_level", value: "medium" }]);
     });
 
-    it("falls back to thought_level when reasoning_effort is unsupported", async () => {
+    it("does not probe unsupported thinking aliases", async () => {
       store.createTask("s1", "/x");
       store.updateTaskConfig("s1", "reasoning_effort", "medium");
       sm.cachedConfigOptions = [];
@@ -1706,9 +1794,6 @@ describe("TaskManager", () => {
         },
         async setConfigOption(_sid: string, id: string, value: string) {
           setCalls.push({ id, value });
-          if (id === "reasoning_effort") {
-            throw new Error("Unknown config option: reasoning_effort");
-          }
           return [
             {
               type: "select" as const,
@@ -1733,11 +1818,8 @@ describe("TaskManager", () => {
       };
 
       await sm.ensureResumed(bridge, "s1");
-      assert.deepEqual(setCalls, [
-        { id: "reasoning_effort", value: "medium" },
-        { id: "thought_level", value: "medium" },
-      ]);
-      assert.equal(sm.cachedConfigOptions.length, 2);
+      assert.deepEqual(setCalls, []);
+      assert.equal(sm.cachedConfigOptions.length, 0);
       assert.ok(sm.liveTasks.has("s1"));
     });
 

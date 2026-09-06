@@ -10,6 +10,7 @@ import { Store } from "./store.ts";
 import { TaskManager } from "./task-manager.ts";
 import { CapabilityStore } from "./mcp/capability.ts";
 import { createMcpEndpoint } from "./mcp/server.ts";
+import { createMcpTaskToolHost } from "./mcp/task-host.ts";
 import { createRequestHandler } from "./routes.ts";
 import { handleAgentEvent } from "./event-handler.ts";
 import { PushService } from "./push-service.ts";
@@ -151,6 +152,38 @@ tasks.state.onPatch((event) => {
 });
 
 let bridge: AgentBridge | null = null;
+const mcpTaskTools = createMcpTaskToolHost({
+  store,
+  tasks,
+  getBridge: () => bridge,
+  cancelTimeoutMs: config.limits.cancel_timeout,
+  broadcastCollaboration: ({ messageId, sourceTaskId, targetTaskId, body }) => {
+    for (const projection of store.listCollaborationProjections(messageId)) {
+      sseManager.broadcast({
+        type: "system_message",
+        taskId: projection.task_id,
+        kind: "collaboration",
+        messageId,
+        sourceTaskId,
+        targetTaskId,
+        role: projection.role,
+        body,
+      });
+    }
+  },
+  broadcastTaskCreated: ({ messageId, sourceTaskId, targetTaskId, body }) => {
+    sseManager.broadcast({
+      type: "system_message",
+      taskId: sourceTaskId,
+      kind: "task_created",
+      messageId,
+      sourceTaskId,
+      targetTaskId,
+      role: "source",
+      body,
+    });
+  },
+});
 const messageCleanup: CleanupHandle = startMessageCleanup(
   store,
   config.messages.unprocessed_ttl_days,
@@ -181,6 +214,7 @@ const requestHandler = createRequestHandler({
   mcpEndpoint: createMcpEndpoint({
     capabilities,
     isTaskActive: (taskId) => tasks.isMcpSessionActive(taskId),
+    taskTools: mcpTaskTools,
   }),
 });
 

@@ -68,6 +68,23 @@ type SessionBridge = Pick<
 
 type DeliveryBridge = SessionBridge & Pick<AgentBridge, "prompt">;
 
+function configOptionId(
+  configOptions: ConfigOption[],
+  logicalId: "model" | "mode" | "thinking",
+): string | undefined {
+  const selectable = configOptions.filter((option) => "options" in option);
+  if (logicalId === "thinking") {
+    return (
+      selectable.find((option) => option.id === "reasoning_effort")?.id ??
+      selectable.find(
+        (option) =>
+          option.id === "thought_level" || option.category === "thought_level",
+      )?.id
+    );
+  }
+  return selectable.find((option) => option.id === logicalId)?.id;
+}
+
 /** Minimum age (seconds) before an empty task is eligible for cleanup. */
 const EMPTY_TASK_MIN_AGE_S = 60;
 
@@ -97,6 +114,24 @@ export class TaskTreeBusyError extends Error {
     super(`Task tree is busy while modifying ${taskId}`);
     this.name = "TaskTreeBusyError";
   }
+}
+
+export class AgentNotReadyError extends Error {
+  constructor(taskId: string) {
+    super(`Agent is not ready for task ${taskId}`);
+    this.name = "AgentNotReadyError";
+  }
+}
+
+export type TaskCancelStatus =
+  | "idle"
+  | "cancelling"
+  | "cancelled"
+  | "superseded";
+
+export interface TaskCancelResult {
+  status: TaskCancelStatus;
+  workPending: boolean;
 }
 
 export interface ConsumeMessageResult {
@@ -367,6 +402,8 @@ export class TaskManager {
       parentId?: string | null;
       title?: string;
       brief?: string;
+      model?: string;
+      thinking?: string;
       workflowStatus?: WorkflowStatus;
       initialMessage?: {
         id: string;
@@ -453,23 +490,22 @@ export class TaskManager {
     configOptions: ConfigOption[],
     sourceTask: Pick<TaskRow, "model" | "reasoning_effort">,
   ): Promise<ConfigOption[]> {
-    const thinkingOption = configOptions.find(
-      (option) =>
-        "options" in option &&
-        (option.id === "reasoning_effort" ||
-          option.id === "thought_level" ||
-          option.category === "thought_level"),
-    );
-    const inherited: Array<{ configId: string; value: string | null }> = [
-      { configId: "model", value: sourceTask.model },
+    const inherited: Array<{
+      configId: string | undefined;
+      value: string | null;
+    }> = [
       {
-        configId: thinkingOption?.id ?? "reasoning_effort",
+        configId: configOptionId(configOptions, "model"),
+        value: sourceTask.model,
+      },
+      {
+        configId: configOptionId(configOptions, "thinking"),
         value: sourceTask.reasoning_effort,
       },
     ];
     let updatedConfigOptions = configOptions;
     for (const { configId, value } of inherited) {
-      if (!value) continue;
+      if (!configId || !value) continue;
       try {
         const next = await bridge.setConfigOption(taskId, configId, value);
         if (next.length > 0) {
@@ -485,6 +521,7 @@ export class TaskManager {
     return updatedConfigOptions;
   }
 
+  // eslint-disable-next-line complexity -- task creation owns ACP setup, persistence, inheritance, and cleanup.
   private async createTaskImpl(
     bridge: SessionBridge,
     cwd?: string,
@@ -495,6 +532,8 @@ export class TaskManager {
       parentId?: string | null;
       title?: string;
       brief?: string;
+      model?: string;
+      thinking?: string;
       workflowStatus?: WorkflowStatus;
       initialMessage?: {
         id: string;
@@ -569,6 +608,29 @@ export class TaskManager {
           sourceTask,
         );
       }
+      if (opts?.model || opts?.thinking) {
+        try {
+          configOptions = await this.applyTaskConfigOverrides(
+            bridge,
+            taskId,
+            configOptions,
+            opts.model,
+            opts.thinking,
+          );
+        } catch (error) {
+          // The task is live but still carries the creation barrier. Drop it
+          // before deleteTask checks busy state so failed overrides cannot
+          // strand the persisted task and ACP execution.
+          this.creatingTasks.delete(taskId);
+          await this.deleteTask(bridge, taskId).catch((cleanupError) => {
+            slog.warn("failed to clean up task after config override failure", {
+              taskId,
+              error: cleanupError,
+            });
+          });
+          throw error;
+        }
+      }
 
       const task = this.store.getTask(taskId);
       return {
@@ -578,6 +640,45 @@ export class TaskManager {
     } finally {
       this.creatingTasks.delete(taskId);
     }
+  }
+
+  private async applyTaskConfigOverrides(
+    bridge: SessionBridge,
+    taskId: string,
+    configOptions: ConfigOption[],
+    model?: string,
+    thinking?: string,
+  ): Promise<ConfigOption[]> {
+    const requested: Array<{
+      logicalId: "model" | "thinking";
+      value: string | undefined;
+    }> = [
+      { logicalId: "model", value: model },
+      { logicalId: "thinking", value: thinking },
+    ];
+    let updated = configOptions;
+    for (const { logicalId, value } of requested) {
+      if (!value) continue;
+      const configId = configOptionId(updated, logicalId);
+      if (!configId) {
+        throw new Error(`unsupported_config:${logicalId}`);
+      }
+      const option = updated.find((entry) => entry.id === configId);
+      if (!option || !("options" in option)) {
+        throw new Error(`unsupported_config:${logicalId}`);
+      }
+      if (!option.options.some((entry) => entry.value === value)) {
+        throw new Error(`invalid_config_value:${logicalId}`);
+      }
+      const next = await bridge.setConfigOption(taskId, configId, value);
+      if (next.length > 0) {
+        updated = next;
+        this.recordConfigOptions(taskId, next);
+      } else {
+        this.store.updateTaskConfig(taskId, configId, value);
+      }
+    }
+    return updated;
   }
 
   /**
@@ -746,21 +847,20 @@ export class TaskManager {
     configOptions: ConfigOption[],
     task: Pick<TaskRow, "mode" | "reasoning_effort" | "model">,
   ): Promise<ConfigOption[]> {
-    const thinkingId =
-      configOptions.find(
-        (option) =>
-          option.id === "reasoning_effort" ||
-          option.id === "thought_level" ||
-          option.category === "thought_level",
-      )?.id ?? "reasoning_effort";
-    const values: Array<{ id: string; value: string | null }> = [
-      { id: "mode", value: task.mode },
-      { id: thinkingId, value: task.reasoning_effort },
-      { id: "model", value: task.model },
+    const values: Array<{
+      id: string | undefined;
+      value: string | null;
+    }> = [
+      { id: configOptionId(configOptions, "mode"), value: task.mode },
+      {
+        id: configOptionId(configOptions, "thinking"),
+        value: task.reasoning_effort,
+      },
+      { id: configOptionId(configOptions, "model"), value: task.model },
     ];
     let updated = configOptions;
     for (const { id, value } of values) {
-      if (!value) continue;
+      if (!id || !value) continue;
       try {
         const next = await bridge.setConfigOption(taskId, id, value);
         if (next.length > 0) {
@@ -900,16 +1000,18 @@ export class TaskManager {
       // before a restart is gone with the old process, and the task is
       // still live, so it gets an MCP server entry like a new task does.
       const mcpServers = this.buildMcpServers(taskId);
-      await bridge.loadSession(taskId, task.cwd, mcpServers);
+      const loaded = await bridge.loadSession(taskId, task.cwd, mcpServers);
       this.liveTasks.add(taskId);
       // Piggyback a cache-warming setConfigOption on the user's own resume
       // when the global cache is empty (typical after bridge.restart). Uses
       // the task's own stored value — idempotent, no side effect. Failure
       // is swallowed: the resume still succeeds and the frontend falls back
       // to snapshot-based mode/model display (see public/js/state.ts).
-      await this.tryWarmCache(bridge, taskId, task);
+      await this.tryWarmCache(bridge, taskId, task, loaded.configOptions);
       const configOptions = this.applyStoredConfig(
-        this.cachedConfigOptions,
+        loaded.configOptions.length > 0
+          ? loaded.configOptions
+          : this.cachedConfigOptions,
         task,
       );
       slog.info("restored", { taskId: taskId.slice(0, 8) + "…" });
@@ -951,17 +1053,19 @@ export class TaskManager {
       mode: string | null;
       reasoning_effort: string | null;
     },
+    configOptions: ConfigOption[],
   ): Promise<void> {
     if (this.cachedConfigOptions.length > 0) return;
     const candidates: Array<{ id: string; value: string }> = [];
-    if (task.mode) candidates.push({ id: "mode", value: task.mode });
-    if (task.reasoning_effort) {
-      candidates.push(
-        { id: "reasoning_effort", value: task.reasoning_effort },
-        { id: "thought_level", value: task.reasoning_effort },
-      );
+    const modeId = configOptionId(configOptions, "mode");
+    const thinkingId = configOptionId(configOptions, "thinking");
+    const modelId = configOptionId(configOptions, "model");
+    if (modeId && task.mode) candidates.push({ id: modeId, value: task.mode });
+    if (thinkingId && task.reasoning_effort) {
+      candidates.push({ id: thinkingId, value: task.reasoning_effort });
     }
-    if (task.model) candidates.push({ id: "model", value: task.model });
+    if (modelId && task.model)
+      candidates.push({ id: modelId, value: task.model });
     if (candidates.length === 0) return;
 
     let lastError: unknown = null;
@@ -1338,6 +1442,70 @@ export class TaskManager {
     if (submissionId === undefined) return false;
     this.cancelledPromptSubmissions.add(submissionId);
     return true;
+  }
+
+  /** Cancel the current execution without deleting or retiring the Task. */
+  // eslint-disable-next-line complexity -- preserves the cancel race/state machine in one operation.
+  async cancelTaskExecution(
+    taskId: string,
+    bridge: Pick<AgentBridge, "cancel"> | null,
+    cancelTimeoutMs: number,
+  ): Promise<TaskCancelResult> {
+    const hadAgentPrompt = this.activePrompts.has(taskId);
+    const hadPendingPrompt = this.cancelPendingPromptSubmission(taskId);
+    const hadBash = this.runningBashProcs.has(taskId);
+    if (!hadAgentPrompt && !hadPendingPrompt && !hadBash) {
+      return { status: "idle", workPending: false };
+    }
+
+    const cancelledPromptId = hadAgentPrompt
+      ? (this.state.getState(taskId).runtime.busy?.promptId ?? null)
+      : null;
+
+    const proc = this.runningBashProcs.get(taskId);
+    if (proc) {
+      const force = this.interruptedBashProcs.has(proc);
+      interruptBashProc(proc, force);
+      this.interruptedBashProcs.add(proc);
+    }
+    if (hadAgentPrompt && !bridge) throw new AgentNotReadyError(taskId);
+    if (hadAgentPrompt && bridge) {
+      await bridge.cancel(taskId);
+      const busy = this.state.getState(taskId).runtime.busy;
+      const stillCancellingSamePrompt =
+        this.activePrompts.has(taskId) &&
+        busy?.kind === "agent" &&
+        busy.promptId === cancelledPromptId;
+      if (stillCancellingSamePrompt) {
+        this.state.markCancelRequested(taskId);
+      }
+    }
+
+    const busyAfterCancel = this.state.getState(taskId).runtime.busy;
+    const cancelPending =
+      hadAgentPrompt &&
+      this.activePrompts.has(taskId) &&
+      busyAfterCancel?.kind === "agent" &&
+      busyAfterCancel.promptId === cancelledPromptId;
+    if (cancelPending && cancelTimeoutMs > 0) {
+      this.state.armCancelSafety(taskId, cancelTimeoutMs);
+    }
+    this.syncBusy(taskId);
+    const workPending = cancelPending || hadBash;
+    const replacementPromptActive =
+      hadAgentPrompt &&
+      ((this.activePrompts.has(taskId) &&
+        busyAfterCancel?.kind === "agent" &&
+        busyAfterCancel.promptId !== cancelledPromptId) ||
+        this.pendingPromptSubmissions.has(taskId));
+    return {
+      status: workPending
+        ? "cancelling"
+        : replacementPromptActive
+          ? "superseded"
+          : "cancelled",
+      workPending,
+    };
   }
 
   isPromptSubmissionCancelled(submissionId: number): boolean {
