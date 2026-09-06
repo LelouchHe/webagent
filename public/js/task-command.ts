@@ -675,15 +675,28 @@ async function buildMessageCandidates(parsed: {
       continue;
     }
     const fullPath = taskNodePath(node, map);
-    candidates.push(
-      makeBrowseCandidate({
-        marker: parsed.marker,
-        targetPath: fullPath,
-        fillPath: fullPath,
-        primary: taskNodeName(node),
-        secondary: statusLabel(node),
-      }),
-    );
+    if (scopeIds.has(node.id)) {
+      candidates.push(
+        makeCandidate({
+          marker: parsed.marker,
+          targetPath: fullPath,
+          remainder: "",
+          primary: taskNodeName(node),
+          secondary: "navigate",
+          selectedSecondary: "navigate · type message to send",
+        }),
+      );
+    } else {
+      candidates.push(
+        makeNavigationCandidate({
+          marker: parsed.marker,
+          targetPath: fullPath,
+          primary: taskNodeName(node),
+          secondary: `${statusLabel(node)} · navigate`,
+          taskId: node.id,
+        }),
+      );
+    }
   }
   return candidates;
 }
