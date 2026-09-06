@@ -580,7 +580,7 @@ describe("slash menu — Tab vs Click behavior", () => {
 
     // Tab selects the first browse row without executing it.
     commands.handleSlashMenuKey(makeTabEvent());
-    assert.equal(dom.input.value, "@../");
+    assert.equal(dom.input.value, "@/backend/");
 
     // Clicking the browse row drills into the parent path and keeps the menu.
     dom.input.value = "@";
@@ -599,7 +599,7 @@ describe("slash menu — Tab vs Click behavior", () => {
       }),
     );
     await new Promise((r) => setTimeout(r, 10));
-    assert.equal(dom.input.value, "@../");
+    assert.equal(dom.input.value, "@/backend/");
     assert.match(dom.slashMenu.textContent, /tests/);
 
     // Clicking a concrete Task fills its target and leaves the user to choose
@@ -643,8 +643,19 @@ describe("slash menu — Tab vs Click behavior", () => {
     dom.input.value = "@../";
     await taskCommand.executeTaskCommand("@../");
     await new Promise((r) => setTimeout(r, 10));
-    assert.equal(dom.input.value, "@../");
+    assert.equal(dom.input.value, "@/backend/");
     assert.match(dom.slashMenu.textContent, /tests/);
+
+    // Root has the same concrete-target / browse-path pair: `/.` targets
+    // Root while `/` opens its children.
+    dom.input.value = "@/";
+    commands.updateSlashMenu();
+    await new Promise((r) => setTimeout(r, 10));
+    const rootRows = [...dom.slashMenu.querySelectorAll(".slash-item")].map(
+      (row: any) => row.querySelector(".slash-primary")?.textContent,
+    );
+    assert.ok(rootRows.includes("."));
+    assert.ok(rootRows.includes("/"));
   });
 
   // -----------------------------------------------------------------------

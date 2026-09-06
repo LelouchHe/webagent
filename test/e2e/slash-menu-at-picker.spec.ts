@@ -34,11 +34,11 @@ test("@ lists the local scope immediately and filters while typing", async ({
   await createNewTask(page);
 
   // Bare `@`: the whole local scope appears at once — parent, children,
-  // siblings — with home-abbreviated paths and no warning placeholder.
+  // siblings — with absolute Task paths and no warning placeholder.
   await page.locator("#input").fill("@");
   const menu = page.locator("#slash-menu.active");
   await expect(menu).toContainText("root");
-  await expect(menu).toContainText("~/");
+  await expect(menu).toContainText("e2e-child");
   await expect(menu).not.toContainText("requires");
 
   // Typing filters the same scope by title/id prefix.

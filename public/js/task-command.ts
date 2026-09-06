@@ -89,10 +89,12 @@ function taskNodePath(node: TaskNode, map: Map<string, TaskNode>): string {
   let current: TaskNode | undefined = node;
   while (current && !seen.has(current.id)) {
     seen.add(current.id);
+    if (current.parentId === null) break;
     segments.push(taskNodeName(current));
-    current = current.parentId ? map.get(current.parentId) : undefined;
+    current = map.get(current.parentId);
   }
-  return segments.reverse().map(quoteShellWord).join("/");
+  const path = segments.reverse().map(quoteShellWord).join("/");
+  return path ? `/${path}` : "/";
 }
 
 function statusLabel(node: TaskNode): string {
@@ -270,17 +272,16 @@ function makeCandidate(args: CreateCandidateArgs): Candidate {
 function makeBrowseCandidate(args: {
   marker: string;
   targetPath: string;
+  fillPath?: string;
   primary: string;
   path?: string;
   secondary?: string;
 }): Candidate {
-  const browsePath = args.targetPath.replace(/\/+$/, "");
+  const browsePath = (args.fillPath ?? args.targetPath).replace(/\/+$/, "");
   return {
     spec: {
-      primary: `${args.primary}/`,
-      secondary: args.secondary
-        ? `${args.secondary} · navigation`
-        : "navigation",
+      primary: args.primary ? `${args.primary}/` : "/",
+      secondary: args.secondary ? `${args.secondary} · browse` : "browse",
       path: args.path,
       fill: `${args.marker}${browsePath}/`,
       continueOnFill: true,
@@ -329,7 +330,7 @@ export async function buildTaskCommandCandidates(
         {
           spec: {
             primary: parsed.path.trailingSlash
-              ? "navigation · remove / to select this Task"
+              ? "browse · remove / to select this Task"
               : parsed.marker === "@!"
                 ? "navigate · type a message to force-send"
                 : "navigate · type a message to send",
@@ -553,7 +554,7 @@ function addTaskTargetRows(args: {
         primary: taskNodeName(node),
         secondary: reachable
           ? `${relationTo(args.current, node)} · ${statusLabel(node)}`
-          : "navigation",
+          : "navigate",
         path: taskNodePath(node, args.map),
       }),
     );
@@ -566,6 +567,7 @@ function addTaskTargetRows(args: {
           makeBrowseCandidate({
             marker: args.marker,
             targetPath: browseTargetPath,
+            fillPath: taskNodePath(node, args.map),
             primary: taskNodeName(node),
             secondary: reachable
               ? `${relationTo(args.current, node)} · ${statusLabel(node)}`
@@ -576,6 +578,46 @@ function addTaskTargetRows(args: {
       }
     }
   }
+}
+
+function addDirectoryTargetRows(args: {
+  candidates: Candidate[];
+  directory: TaskNode;
+  current: TaskNode;
+  scopeIds: Set<string>;
+  map: Map<string, TaskNode>;
+  marker: string;
+}): void {
+  const fullPath = taskNodePath(args.directory, args.map);
+  const targetPath = args.directory.parentId ? fullPath : "/.";
+  const primary = args.directory.parentId ? taskNodeName(args.directory) : ".";
+  const reachable = args.scopeIds.has(args.directory.id);
+  const secondary = reachable
+    ? args.directory.id === args.current.id
+      ? `${statusLabel(args.directory)} · navigate`
+      : `${relationTo(args.current, args.directory)} · ${statusLabel(args.directory)}`
+    : "navigate";
+
+  args.candidates.push(
+    makeCandidate({
+      marker: args.marker,
+      targetPath,
+      remainder: "",
+      primary,
+      secondary,
+      path: fullPath,
+    }),
+  );
+  args.candidates.push(
+    makeBrowseCandidate({
+      marker: args.marker,
+      targetPath,
+      fillPath: fullPath,
+      primary: args.directory.parentId ? taskNodeName(args.directory) : "",
+      secondary: "",
+      path: fullPath,
+    }),
+  );
 }
 
 async function buildMessageCandidates(parsed: {
@@ -603,6 +645,14 @@ async function buildMessageCandidates(parsed: {
   if (parsed.path.trailingSlash) {
     const browsed = getChildrenAtPath(state.taskId, tasks, parsed.path);
     if (!browsed) return [];
+    addDirectoryTargetRows({
+      candidates,
+      directory: browsed.directory,
+      current,
+      scopeIds,
+      map,
+      marker: parsed.marker,
+    });
     if (browsed.directory.parentId) {
       const parent = map.get(browsed.directory.parentId);
       if (parent) {
@@ -610,6 +660,7 @@ async function buildMessageCandidates(parsed: {
           makeBrowseCandidate({
             marker: parsed.marker,
             targetPath: `${relativeTaskPath(current, parent, map)}/`,
+            fillPath: `${taskNodePath(parent, map)}/`,
             primary: "..",
             secondary: "parent",
             path: taskNodePath(parent, map),
@@ -629,12 +680,7 @@ async function buildMessageCandidates(parsed: {
     return candidates;
   }
 
-  const resolved =
-    parsed.path.segments.length === 0
-      ? getLocalScope(state.taskId, tasks).filter(
-          (node) => !parsed.target || matchesSegment(node, parsed.target),
-        )
-      : resolveTaskPathNodes(state.taskId, tasks, parsed.path);
+  const resolved = resolveMessageTargets(state.taskId, tasks, parsed.path);
 
   if (parsed.target === "" && current.parentId) {
     const parent = map.get(current.parentId);
@@ -643,6 +689,7 @@ async function buildMessageCandidates(parsed: {
         makeBrowseCandidate({
           marker: parsed.marker,
           targetPath: `${relativeTaskPath(current, parent, map)}/`,
+          fillPath: `${taskNodePath(parent, map)}/`,
           primary: "..",
           secondary: "parent",
           path: taskNodePath(parent, map),
@@ -678,6 +725,26 @@ async function buildMessageCandidates(parsed: {
 }
 
 // --- execution ---
+
+async function expandBrowseInput(
+  marker: string,
+  rawText: string,
+  path: TaskPath,
+): Promise<void> {
+  try {
+    const tasks = await api.listTasks();
+    const current = buildTaskTree(tasks).get(state.taskId ?? "");
+    const resolved = resolveTaskPathNodes(state.taskId, tasks, path);
+    if (current && resolved.length === 1) {
+      const fullPath = taskNodePath(resolved[0], buildTaskTree(tasks));
+      setInputValue(`${marker}${fullPath === "/" ? "/" : `${fullPath}/`}`);
+      return;
+    }
+  } catch {
+    // Keep the user's relative path if expansion cannot be resolved.
+  }
+  setInputValue(rawText);
+}
 
 async function executeCreateTask(
   target: string,
@@ -831,9 +898,9 @@ export async function executeTaskCommand(text: string): Promise<boolean> {
     if (parsed.remainder.trim() !== "") {
       addSystem("err: A path ending in / is navigation");
     } else {
-      // Re-dispatch the unchanged browse path through the input listener so
-      // the picker drills into the requested Task directory.
-      setInputValue(text);
+      // Re-dispatch the browse path through the input listener, expanding it
+      // to the canonical absolute Task path like `/view` does.
+      await expandBrowseInput(parsed.marker, text, parsed.path);
     }
   } else {
     await executeMessageTask(parsed.target, parsed.remainder);
