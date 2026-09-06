@@ -72,7 +72,8 @@ Commands with submenus (`/model`, `/mode`, `/think`, `/notify`, `/switch`, `/cle
 | --------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
 | `/help` (or `?`)      | Show help                                                                                                                     |
 | `+<cwd>/<title> <brief>` | Create a named child task and immediately deliver its brief; omit `<cwd>/` to inherit the current working directory. Quote a target containing spaces. |
-| `@<task-path> <body>` | Send a graceful collaboration message to a parent, direct child, or sibling task selected through autocomplete. |
+| `@<task-path>` | Navigate to a visible Task, or browse one level with a trailing `/` (for example `@../`). |
+| `@<task-path> <body>` | Send a graceful collaboration message to a reachable parent, direct child, or sibling Task selected through the path picker. Targets marked `navigation` are rejected for delivery. |
 | `/model [name]`       | Switch model (fuzzy match, e.g. `/model opus`)                                                                                |
 | `/mode [name]`        | Switch mode (Agent / Plan / Autopilot)                                                                                        |
 | `/think [level]`      | Set thinking effort (low / medium / high)                                                                                     |
@@ -93,7 +94,7 @@ Commands with submenus (`/model`, `/mode`, `/think`, `/notify`, `/switch`, `/cle
 | `/share`              | List active public shares · Enter creates a read-only snapshot (preview → `^P` publish / `^C` cancel). See [Share Links](share.md). |
 | `/view [path]`        | Browse local folders; preview supported files up to their cap or directly download larger/unknown files                               |
 
-Type `?` for inline help listing all commands and shortcuts.
+Type `?` for inline help listing all commands and shortcuts. See [Task Interaction](task-interaction.md) for the complete `+` / `@` path, autocomplete, and Enter / Tab / Click contract.
 
 ### Agent commands (`//`)
 

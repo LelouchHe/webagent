@@ -231,12 +231,18 @@ describe("HTTP routes", () => {
     assert.deepEqual(JSON.parse(res.body), []);
   });
 
-  it("GET /api/v1/tasks returns created tasks", async () => {
+  it("GET /api/v1/tasks returns created tasks and user-input state", async () => {
     store.createTask("s1", "/x");
-    const res = await makeRequest(port, "GET", "/api/v1/tasks");
-    const tasks = JSON.parse(res.body);
+    let res = await makeRequest(port, "GET", "/api/v1/tasks");
+    let tasks = JSON.parse(res.body);
     assert.equal(tasks.length, 1);
     assert.equal(tasks[0].id, "s1");
+    assert.equal(tasks[0].hasUserInput, false);
+
+    store.saveEvent("s1", "user_message", { text: "hi" }, { from_ref: "user" });
+    res = await makeRequest(port, "GET", "/api/v1/tasks");
+    tasks = JSON.parse(res.body);
+    assert.equal(tasks[0].hasUserInput, true);
   });
 
   it("hides tasks owned by another agent from list and direct routes", async () => {

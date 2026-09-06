@@ -323,6 +323,18 @@ describe("input", () => {
     assert.equal(dom.input.value, "hello");
   });
 
+  it("submits a bare @ and reports the missing target", () => {
+    state.taskId = "s1";
+    state.clientId = "cl-1";
+    dom.input.value = "@";
+
+    keydown("Enter");
+
+    assert.equal(fetchCalls.length, 0);
+    assert.equal(dom.input.value, "");
+    assert.match(dom.messages.textContent, /Task target is required after @/);
+  });
+
   it("send button shows ↵ when typing a command while busy", () => {
     state.busy = true;
     setBusy(true);

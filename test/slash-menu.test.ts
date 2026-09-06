@@ -517,6 +517,186 @@ describe("slash menu — Tab vs Click behavior", () => {
     assert.match(dom.slashMenu.textContent, /inner\.ts/);
   });
 
+  it("uses a view-style @ picker for navigation and Task targets", async () => {
+    state.taskId = "api";
+    const tasks = [
+      {
+        id: "root",
+        cwd: "/work",
+        title: "Root",
+        parent_id: null,
+        workflow_status: "idle",
+      },
+      {
+        id: "backend",
+        cwd: "/work/backend",
+        title: "backend",
+        parent_id: "root",
+        workflow_status: "idle",
+      },
+      {
+        id: "api",
+        cwd: "/work/backend/api",
+        title: "api",
+        parent_id: "backend",
+        workflow_status: "running",
+      },
+      {
+        id: "api-unit",
+        cwd: "/work/backend/api/unit",
+        title: "unit",
+        parent_id: "api",
+        workflow_status: "idle",
+      },
+      {
+        id: "tests",
+        cwd: "/work/backend/tests",
+        title: "tests",
+        parent_id: "backend",
+        workflow_status: "blocked",
+      },
+      {
+        id: "tests-unit",
+        cwd: "/work/backend/tests/unit",
+        title: "unit",
+        parent_id: "tests",
+        workflow_status: "idle",
+      },
+      {
+        id: "frontend",
+        cwd: "/work/frontend",
+        title: "frontend",
+        parent_id: "root",
+        workflow_status: "done",
+      },
+    ];
+    globalThis.fetch = ((url: string, init?: any) => {
+      fetchCalls.push({ url, init });
+      if (url === "/api/v1/tasks") {
+        return Promise.resolve({
+          ok: true,
+          text: () => Promise.resolve(JSON.stringify(tasks)),
+        });
+      }
+      return Promise.resolve({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({})),
+      });
+    }) as any;
+
+    dom.input.value = "@";
+    commands.updateSlashMenu();
+    await new Promise((r) => setTimeout(r, 10));
+    assert.match(dom.slashMenu.textContent, /unit/);
+    assert.doesNotMatch(dom.slashMenu.textContent, /navigate/);
+    assert.doesNotMatch(dom.slashMenu.textContent, /parent · idle/);
+    assert.doesNotMatch(dom.slashMenu.textContent, /sibling/);
+
+    // Bare `@` has no resolved target command; Tab starts with the parent
+    // target now that it is present in the current directory scope.
+    commands.handleSlashMenuKey(makeTabEvent());
+    assert.equal(dom.input.value, "@/backend");
+
+    // The parent path is explicit input rather than a relation shortcut.
+    dom.input.value = "@../";
+    commands.updateSlashMenu();
+    await new Promise((r) => setTimeout(r, 10));
+    assert.equal(dom.input.value, "@../");
+    assert.match(dom.slashMenu.textContent, /tests/);
+    assert.doesNotMatch(dom.slashMenu.textContent, /root\/backend/);
+    assert.doesNotMatch(dom.slashMenu.textContent, /child/);
+
+    // A typed concrete path prioritizes the target, but also offers its child
+    // path as a second browse hint.
+    dom.input.value = "@../tests";
+    commands.updateSlashMenu();
+    await new Promise((r) => setTimeout(r, 10));
+    const testsRows = [...dom.slashMenu.querySelectorAll(".slash-item")];
+    assert.deepEqual(
+      testsRows.map((row: any) => ({
+        primary: row.querySelector(".slash-primary")?.textContent,
+        secondary: row.querySelector(".slash-secondary")?.textContent,
+        prefix: row.querySelector(".slash-prefix")?.textContent,
+      })),
+      [
+        {
+          primary: "navigate",
+          secondary: "or send a message",
+          prefix: "↵",
+        },
+        { primary: "..", secondary: "idle", prefix: "" },
+        { primary: "unit", secondary: "idle", prefix: "" },
+      ],
+    );
+
+    // The parent Task is represented by a direct navigate command rather than
+    // a duplicate title/browse pair.
+    dom.input.value = "@/backend";
+    commands.updateSlashMenu();
+    await new Promise((r) => setTimeout(r, 10));
+    const currentTarget = dom.slashMenu.querySelector(".slash-item");
+    assert.ok(currentTarget);
+    assert.equal(
+      currentTarget.querySelector(".slash-primary")?.textContent,
+      "navigate",
+    );
+    assert.equal(
+      currentTarget.querySelector(".slash-secondary")?.textContent,
+      "or send a message",
+    );
+
+    // Raw Enter dispatch on a browse path reopens the next path layer rather
+    // than treating the path as a message target.
+    const taskCommand = await import("../public/js/task-command.ts");
+    dom.input.value = "@../";
+    await taskCommand.executeTaskCommand("@../");
+    await new Promise((r) => setTimeout(r, 10));
+    assert.equal(dom.input.value, "@/backend/");
+    assert.match(dom.slashMenu.textContent, /tests/);
+
+    // Root browse is an ordinary filesystem-style path; no synthetic Root
+    // target row is injected into the directory listing.
+    dom.input.value = "@/";
+    commands.updateSlashMenu();
+    await new Promise((r) => setTimeout(r, 10));
+    const rootRows = [...dom.slashMenu.querySelectorAll(".slash-item")].map(
+      (row: any) => row.querySelector(".slash-primary")?.textContent,
+    );
+    assert.ok(rootRows.includes("backend/"));
+    assert.equal(rootRows.includes("navigate"), false);
+    assert.equal(rootRows.includes("."), false);
+
+    // A stale navigation candidate reports a visible error instead of
+    // leaking a rejected switch promise.
+    dom.input.value = "@/frontend";
+    commands.updateSlashMenu();
+    await new Promise((r) => setTimeout(r, 10));
+    const staleNavigation = dom.slashMenu.querySelector(".slash-item");
+    assert.ok(staleNavigation);
+    staleNavigation.dispatchEvent(
+      new (globalThis.window as any).MouseEvent("mousedown", {
+        bubbles: true,
+      }),
+    );
+    await new Promise((r) => setTimeout(r, 10));
+    assert.match(dom.messages.textContent, /navigation failed/);
+    state.taskId = "api";
+
+    // Prefixes remain useful for the picker, but raw submission requires an
+    // exact path and never silently selects the prefix match.
+    await taskCommand.executeTaskCommand("@../tes");
+    assert.match(
+      dom.messages.textContent,
+      /Task path is incomplete or not found: '..\/tes'/,
+    );
+
+    // An invalid target must not leave a stale selectable menu.
+    dom.input.value = "@does-not-exist";
+    commands.updateSlashMenu();
+    await new Promise((r) => setTimeout(r, 10));
+    assert.equal(dom.slashMenu.classList.contains("active"), false);
+  });
+
   // -----------------------------------------------------------------------
   // Click: fills input AND executes (tab + enter)
   // -----------------------------------------------------------------------

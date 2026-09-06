@@ -702,6 +702,7 @@ export function createRequestHandler(
           .map((task) => {
             const {
               pending_compact_summary: _pendingCompactSummary,
+              has_user_input: hasUserInput,
               ...publicTask
             } = task;
             // Home-abbreviated display form for menus and lists; the raw cwd
@@ -709,6 +710,7 @@ export function createRequestHandler(
             return {
               ...publicTask,
               cwdDisplay: abbreviateHomePath(task.cwd),
+              hasUserInput: Boolean(hasUserInput),
             };
           });
         res.end(JSON.stringify(publicTasks));
@@ -1223,6 +1225,9 @@ export function createRequestHandler(
           }
           return;
         }
+        // A user-originated collaboration action counts as activity on the
+        // Task where the user entered it, not only on the recipient.
+        store.updateTaskLastActive(sourceTaskId);
         const displayBody = `${formatTaskReference(sourceTask.title ?? sourceTask.id.slice(0, 8))} sent ${formatTaskReference(targetTask.title ?? targetTask.id.slice(0, 8))}: ${created.message.body}`;
         for (const projection of store.listCollaborationProjections(
           messageId,

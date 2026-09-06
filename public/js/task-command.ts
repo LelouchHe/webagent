@@ -13,8 +13,7 @@ import {
   type TaskPath,
 } from "../../src/task-path.ts";
 import { resolveBrowseTarget } from "./file-browser.ts";
-import { taskDisplayPath } from "./path-display.ts";
-import { state } from "./state.ts";
+import { setInputValue, state } from "./state.ts";
 import { listRecentPaths } from "./slash-commands.ts";
 import { switchToTask } from "./task-navigation.ts";
 import { isTaskCommand } from "./input-command.ts";
@@ -49,6 +48,7 @@ interface TaskNode {
   title: string | null;
   cwd: string;
   cwdDisplay?: string;
+  workflowStatus?: TaskSummary["workflow_status"];
   parentId: string | null;
   children: TaskNode[];
 }
@@ -61,6 +61,7 @@ function buildTaskTree(tasks: TaskSummary[]): Map<string, TaskNode> {
       title: t.title,
       cwd: t.cwd,
       cwdDisplay: t.cwdDisplay,
+      workflowStatus: t.workflow_status,
       parentId: t.parent_id,
       children: [],
     });
@@ -74,6 +75,32 @@ function buildTaskTree(tasks: TaskSummary[]): Map<string, TaskNode> {
   return map;
 }
 
+function compareTaskNodes(a: TaskNode, b: TaskNode): number {
+  return (a.title ?? a.id).localeCompare(b.title ?? b.id);
+}
+
+function taskNodeName(node: TaskNode): string {
+  return node.title ?? node.id;
+}
+
+function taskNodePath(node: TaskNode, map: Map<string, TaskNode>): string {
+  const segments: string[] = [];
+  const seen = new Set<string>();
+  let current: TaskNode | undefined = node;
+  while (current && !seen.has(current.id)) {
+    seen.add(current.id);
+    if (current.parentId === null) break;
+    segments.push(taskNodeName(current));
+    current = map.get(current.parentId);
+  }
+  const path = segments.reverse().map(quoteShellWord).join("/");
+  return path ? `/${path}` : "/";
+}
+
+function statusLabel(node: TaskNode): string {
+  return node.workflowStatus ?? "unknown";
+}
+
 function getLocalScope(
   currentId: string | null,
   tasks: TaskSummary[],
@@ -82,8 +109,8 @@ function getLocalScope(
   const map = buildTaskTree(tasks);
   const current = map.get(currentId);
   if (!current) return [];
-  // Menu ordering: children (the most likely message targets) first, then
-  // the parent, then siblings.
+  // Keep the target list stable; the explicit parent-path browse row is
+  // prepended by the candidate builder.
   const out: TaskNode[] = [...current.children];
   if (current.parentId) {
     const parent = map.get(current.parentId);
@@ -97,16 +124,25 @@ function getLocalScope(
       }
     }
   }
-  return out;
+  return out.sort(compareTaskNodes);
 }
 
-function relationTo(
-  current: TaskNode,
-  node: TaskNode,
-): "parent" | "child" | "sibling" {
-  if (node.id === current.parentId) return "parent";
-  if (node.parentId === current.id) return "child";
-  return "sibling";
+function getChildrenAtPath(
+  currentId: string | null,
+  tasks: TaskSummary[],
+  path: TaskPath,
+): {
+  directory: TaskNode;
+  children: TaskNode[];
+} | null {
+  if (!currentId) return null;
+  const resolved = resolveTaskPathNodes(currentId, tasks, path);
+  if (resolved.length !== 1) return null;
+  const directory = resolved[0];
+  return {
+    directory,
+    children: [...directory.children].sort(compareTaskNodes),
+  };
 }
 
 function matchesSegment(node: TaskNode, segment: string): boolean {
@@ -134,6 +170,7 @@ function resolveTaskPathNodes(
   currentId: string | null,
   tasks: TaskSummary[],
   path: TaskPath,
+  exactFinal = false,
 ): TaskNode[] {
   if (!currentId) return [];
   const map = buildTaskTree(tasks);
@@ -153,7 +190,7 @@ function resolveTaskPathNodes(
         .filter((n): n is TaskNode => Boolean(n));
       continue;
     }
-    const exact = i < path.segments.length - 1;
+    const exact = exactFinal || i < path.segments.length - 1;
     const next: TaskNode[] = [];
     for (const n of nodes) {
       for (const child of n.children) {
@@ -170,23 +207,6 @@ function resolveTaskPathNodes(
   return nodes;
 }
 
-function reconstructTaskPath(
-  originalPath: TaskPath,
-  resolvedNode: TaskNode,
-): string {
-  const segments = [...originalPath.segments];
-  if (segments.length === 0) {
-    return quoteShellWord(resolvedNode.title ?? resolvedNode.id);
-  }
-  const lastIdx = segments.length - 1;
-  const last = segments[lastIdx];
-  if (last !== "." && last !== "..") {
-    segments[lastIdx] = quoteShellWord(resolvedNode.title ?? resolvedNode.id);
-  }
-  const joined = segments.join("/");
-  return originalPath.absolute ? "/" + joined : joined;
-}
-
 // --- candidate builders ---
 
 interface CreateCandidateArgs {
@@ -198,28 +218,60 @@ interface CreateCandidateArgs {
   pathSecondary?: string;
   /** Short L1 annotation (e.g. the family relation for @ rows). */
   secondary?: string;
-  /** Rows without onSelect complete via fill on click (target alone is
-   *  not a complete command) instead of executing. */
+  /** Alternate action hint shown only while the row is selected. */
+  selectedSecondary?: string;
+  /** Prefix used for expandable target rows. */
+  prefix?: Candidate["prefix"];
+  /** Rows without onSelect complete via fill on click instead of executing. */
   onSelect?: () => void | Promise<void>;
 }
 
 function makeCandidate(args: CreateCandidateArgs): Candidate {
-  // Message rows complete the command head and leave a trailing space for
-  // the body (click does not send — the target alone is not a command).
+  // Target rows complete only the path. A following space is an explicit
+  // user choice to start a message body, so the picker remains available for
+  // further path suggestions after Tab or Click.
   const fill = args.remainder
     ? `${args.marker}${args.targetPath} ${args.remainder}`
-    : `${args.marker}${args.targetPath} `;
+    : `${args.marker}${args.targetPath}`;
   return {
     spec: {
       primary: args.primary,
       secondary: args.secondary,
-      path: args.path,
-      pathSecondary: args.pathSecondary,
+      selectedSecondary: args.selectedSecondary,
       fill,
       continueOnFill: true,
       onSelect: args.onSelect,
     },
-    prefix: "",
+    prefix: args.prefix ?? "",
+    kind: "data",
+  };
+}
+
+function makeNavigationCandidate(args: {
+  marker: string;
+  targetPath: string;
+  primary: string;
+  secondary?: string;
+  selectedSecondary?: string;
+  taskId: string;
+  prefix?: Candidate["prefix"];
+}): Candidate {
+  return {
+    spec: {
+      primary: args.primary,
+      secondary: args.secondary,
+      selectedSecondary: args.selectedSecondary,
+      fill: `${args.marker}${args.targetPath}`,
+      onSelect: async () => {
+        try {
+          await switchToTask(args.taskId);
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          addSystem(`err: navigation failed — ${message}`);
+        }
+      },
+    },
+    prefix: args.prefix ?? "",
     kind: "data",
   };
 }
@@ -251,12 +303,8 @@ export async function buildTaskCommandCandidates(
     throw err;
   }
 
-  // A separator after the head starts the payload (brief/body): like the
-  // other slash commands, the menu stands down once the head is complete.
-  // For a complete @ target with only that separator, keep one existing
-  // placeholder row as a compact affordance: Enter jumps, text sends.
-  // Path descent is unaffected — the trailing separator lives inside the
-  // target token (e.g. `+public/`).
+  // Once a target is followed by whitespace, keep the compact action hint in
+  // the same prefix vocabulary as the candidate rows.
   if (parsed.remainder !== "") {
     if (
       parsed.target !== "" &&
@@ -266,12 +314,13 @@ export async function buildTaskCommandCandidates(
       return [
         {
           spec: {
-            primary:
-              parsed.marker === "@!"
-                ? "Enter to jump · type a message to force-send"
-                : "Enter to jump · type a message to send",
+            primary: parsed.path.trailingSlash
+              ? "browse · remove / to select this Task"
+              : parsed.marker === "@!"
+                ? "type message to force-send"
+                : "type message to send",
           },
-          prefix: "",
+          prefix: parsed.path.trailingSlash ? "›" : "↵",
           kind: "placeholder",
         },
       ];
@@ -405,26 +454,152 @@ async function buildCreateCandidates(parsed: {
   return candidates;
 }
 
-/**
- * Resolve one @ target the way the menu and the submit path agree on:
- * bare or relative (non-`..`) input filters the local scope (parent,
- * children, siblings — the direct-family policy makes deeper targets
- * invalid); `..` and absolute paths keep tree navigation.
- */
+/** Resolve one submitted @ target using the full Task path semantics. */
 function resolveMessageTargets(
   currentTaskId: string | null,
   tasks: TaskSummary[],
   path: TaskPath,
 ): TaskNode[] {
-  const raw = path.segments;
-  const scopeFiltered = raw.length === 0 || (!path.absolute && raw[0] !== "..");
-  if (scopeFiltered) {
-    const filterSegment = raw.at(-1) ?? "";
-    return getLocalScope(currentTaskId, tasks).filter(
-      (n) => !filterSegment || matchesSegment(n, filterSegment),
+  if (path.segments.length === 0) return [];
+  return resolveTaskPathNodes(currentTaskId, tasks, path, true);
+}
+
+function addTaskTargetEntry(args: {
+  candidates: Candidate[];
+  node: TaskNode;
+  targetPath: string;
+  primary: string;
+  marker: string;
+  scopeIds: Set<string>;
+  /** Parent targets always complete the path; Enter performs navigation. */
+  forceCompletion?: boolean;
+}): void {
+  const expandable =
+    args.node.children.length > 0 &&
+    args.primary !== ".." &&
+    args.primary !== ".";
+  const displayPrimary = expandable ? `${args.primary}/` : args.primary;
+  const prefix: Candidate["prefix"] = expandable ? "›" : "";
+  if (args.scopeIds.has(args.node.id) || args.forceCompletion) {
+    args.candidates.push(
+      makeCandidate({
+        marker: args.marker,
+        targetPath: args.targetPath,
+        remainder: "",
+        primary: displayPrimary,
+        secondary: statusLabel(args.node),
+        selectedSecondary: args.scopeIds.has(args.node.id)
+          ? "type message to send"
+          : undefined,
+        prefix,
+      }),
+    );
+  } else {
+    args.candidates.push(
+      makeNavigationCandidate({
+        marker: args.marker,
+        targetPath: args.targetPath,
+        primary: displayPrimary,
+        secondary: statusLabel(args.node),
+        taskId: args.node.id,
+        prefix,
+      }),
     );
   }
-  return resolveTaskPathNodes(currentTaskId, tasks, path);
+}
+
+function addDirectoryEntries(args: {
+  candidates: Candidate[];
+  directory: TaskNode;
+  marker: string;
+  map: Map<string, TaskNode>;
+  scopeIds: Set<string>;
+}): void {
+  for (const node of args.directory.children.sort(compareTaskNodes)) {
+    addTaskTargetEntry({
+      candidates: args.candidates,
+      node,
+      targetPath: taskNodePath(node, args.map),
+      primary: taskNodeName(node),
+      marker: args.marker,
+      scopeIds: args.scopeIds,
+    });
+  }
+}
+
+function addNavigateCommand(args: {
+  candidates: Candidate[];
+  target: TaskNode;
+  map: Map<string, TaskNode>;
+  marker: string;
+  scopeIds: Set<string>;
+}): void {
+  const fullPath = taskNodePath(args.target, args.map);
+  const targetPath = fullPath === "/" ? "/." : fullPath;
+  args.candidates.push(
+    makeNavigationCandidate({
+      marker: args.marker,
+      targetPath,
+      primary: "navigate",
+      selectedSecondary: args.scopeIds.has(args.target.id)
+        ? "or send a message"
+        : undefined,
+      taskId: args.target.id,
+      prefix: "↵",
+    }),
+  );
+}
+
+function addParentTargetEntry(args: {
+  candidates: Candidate[];
+  directory: TaskNode;
+  map: Map<string, TaskNode>;
+  marker: string;
+  scopeIds: Set<string>;
+}): void {
+  if (!args.directory.parentId) return;
+  const parent = args.map.get(args.directory.parentId);
+  if (!parent) return;
+  const parentPath = taskNodePath(parent, args.map);
+  addTaskTargetEntry({
+    candidates: args.candidates,
+    node: parent,
+    targetPath: parentPath === "/" ? "/." : parentPath,
+    primary: "..",
+    marker: args.marker,
+    scopeIds: args.scopeIds,
+    forceCompletion: true,
+  });
+}
+
+function addTaskContextEntries(args: {
+  candidates: Candidate[];
+  directory: TaskNode;
+  map: Map<string, TaskNode>;
+  marker: string;
+  scopeIds: Set<string>;
+}): void {
+  addNavigateCommand({
+    candidates: args.candidates,
+    target: args.directory,
+    map: args.map,
+    marker: args.marker,
+    scopeIds: args.scopeIds,
+  });
+  addParentTargetEntry({
+    candidates: args.candidates,
+    directory: args.directory,
+    map: args.map,
+    marker: args.marker,
+    scopeIds: args.scopeIds,
+  });
+  addDirectoryEntries({
+    candidates: args.candidates,
+    directory: args.directory,
+    marker: args.marker,
+    map: args.map,
+    scopeIds: args.scopeIds,
+  });
 }
 
 async function buildMessageCandidates(parsed: {
@@ -444,32 +619,93 @@ async function buildMessageCandidates(parsed: {
   const map = buildTaskTree(tasks);
   const current = map.get(state.taskId);
   if (!current) return [];
-
-  const scope = getLocalScope(state.taskId, tasks);
-  const scopeIds = new Set(scope.map((n) => n.id));
-  const resolved = resolveMessageTargets(state.taskId, tasks, parsed.path);
+  const scopeIds = new Set(getLocalScope(state.taskId, tasks).map((n) => n.id));
 
   const candidates: Candidate[] = [];
-
-  for (const node of resolved) {
-    if (node.id === state.taskId) continue;
-    if (!scopeIds.has(node.id)) continue;
-    candidates.push(
-      makeCandidate({
-        marker: parsed.marker,
-        targetPath: reconstructTaskPath(parsed.path, node),
-        remainder: parsed.remainder,
-        primary: node.title ?? node.id,
-        secondary: relationTo(current, node),
-        path: taskDisplayPath(node),
-      }),
-    );
+  if (parsed.path.trailingSlash) {
+    const browsed = getChildrenAtPath(state.taskId, tasks, parsed.path);
+    if (!browsed) return [];
+    addParentTargetEntry({
+      candidates,
+      directory: browsed.directory,
+      map,
+      marker: parsed.marker,
+      scopeIds,
+    });
+    addDirectoryEntries({
+      candidates,
+      directory: browsed.directory,
+      marker: parsed.marker,
+      map,
+      scopeIds,
+    });
+    return candidates;
   }
 
+  if (parsed.target === "") {
+    addParentTargetEntry({
+      candidates,
+      directory: current,
+      map,
+      marker: parsed.marker,
+      scopeIds,
+    });
+    addDirectoryEntries({
+      candidates,
+      directory: current,
+      marker: parsed.marker,
+      map,
+      scopeIds,
+    });
+    return candidates;
+  }
+
+  const resolved = resolveTaskPathNodes(state.taskId, tasks, parsed.path);
+  const exact = resolveTaskPathNodes(state.taskId, tasks, parsed.path, true);
+  if (exact.length === 1) {
+    addTaskContextEntries({
+      candidates,
+      directory: exact[0],
+      map,
+      marker: parsed.marker,
+      scopeIds,
+    });
+  } else {
+    for (const node of resolved) {
+      addTaskTargetEntry({
+        candidates,
+        node,
+        targetPath: taskNodePath(node, map),
+        primary: taskNodeName(node),
+        marker: parsed.marker,
+        scopeIds,
+      });
+    }
+  }
   return candidates;
 }
 
 // --- execution ---
+
+async function expandBrowseInput(
+  marker: string,
+  rawText: string,
+  path: TaskPath,
+): Promise<void> {
+  try {
+    const tasks = await api.listTasks();
+    const current = buildTaskTree(tasks).get(state.taskId ?? "");
+    const resolved = resolveTaskPathNodes(state.taskId, tasks, path);
+    if (current && resolved.length === 1) {
+      const fullPath = taskNodePath(resolved[0], buildTaskTree(tasks));
+      setInputValue(`${marker}${fullPath === "/" ? "/" : `${fullPath}/`}`);
+      return;
+    }
+  } catch {
+    // Keep the user's relative path if expansion cannot be resolved.
+  }
+  setInputValue(rawText);
+}
 
 async function executeCreateTask(
   target: string,
@@ -530,6 +766,10 @@ async function executeMessageTask(
     addSystem("err: No active task");
     return;
   }
+  if (!target.trim()) {
+    addSystem("err: Task target is required after @");
+    return;
+  }
   let tasks: TaskSummary[];
   try {
     tasks = await api.listTasks();
@@ -546,22 +786,25 @@ async function executeMessageTask(
     return;
   }
 
-  const resolved = resolveMessageTargets(
-    currentTaskId,
-    tasks,
-    parseTaskPath(target),
-  );
+  const path = parseTaskPath(target);
+  const resolved = resolveMessageTargets(currentTaskId, tasks, path);
   const scope = getLocalScope(currentTaskId, tasks);
   const scopeIds = new Set(scope.map((n) => n.id));
-  const matches = resolved.filter(
-    (n) => n.id !== currentTaskId && scopeIds.has(n.id),
-  );
+  const matches = resolved;
   if (matches.length !== 1) {
-    addSystem(`err: Select one local task candidate for '${target}'`);
+    addSystem(`err: Task path is incomplete or not found: '${target}'`);
     return;
   }
 
-  await executeMessageToTask(matches[0].id, remainder);
+  const targetTask = matches[0];
+  const body = remainder.trim();
+  if (body && !scopeIds.has(targetTask.id)) {
+    addSystem(
+      `err: ${taskNodeName(targetTask)} is navigation — enter this Task before sending a message`,
+    );
+    return;
+  }
+  await executeMessageToTask(targetTask.id, remainder);
 }
 
 async function executeMessageToTask(
@@ -612,6 +855,14 @@ export async function executeTaskCommand(text: string): Promise<boolean> {
 
   if (parsed.marker === "+") {
     await executeCreateTask(parsed.target, parsed.remainder);
+  } else if (parsed.path.trailingSlash) {
+    if (parsed.remainder.trim() !== "") {
+      addSystem("err: A path ending in / is navigation");
+    } else {
+      // Re-dispatch the browse path through the input listener, expanding it
+      // to the canonical absolute Task path like `/view` does.
+      await expandBrowseInput(parsed.marker, text, parsed.path);
+    }
   } else {
     await executeMessageTask(parsed.target, parsed.remainder);
   }

@@ -114,7 +114,7 @@ API discovery endpoint. Returns the API version and top-level endpoint paths.
 
 #### `GET /api/v1/tasks`
 
-List all tasks, ordered by `last_active_at` descending.
+List all tasks, ordered by `last_active_at` descending. The frontend uses this ordering on hashless initial startup, selecting the first task with `hasUserInput: true` and falling back to Root when none qualifies. SSE reconnects preserve the task already active in the browser.
 
 | Parameter | In    | Type   | Description                                         |
 | --------- | ----- | ------ | --------------------------------------------------- |
@@ -127,13 +127,16 @@ List all tasks, ordered by `last_active_at` descending.
   {
     "id": "abc-123",
     "cwd": "/home/user/project",
+    "cwdDisplay": "~/project",
     "title": "Fix login bug",
     "model": "claude-sonnet-4-20250514",
     "mode": "agent",
     "reasoning_effort": null,
     "source": "auto",
     "created_at": "2025-01-15 10:30:00.123",
-    "last_active_at": "2025-01-15 11:45:22.456"
+    "last_active_at": "2025-01-15 11:45:22.456",
+    "workflow_status": "idle",
+    "hasUserInput": true
   }
 ]
 ```

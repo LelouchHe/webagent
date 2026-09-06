@@ -4,11 +4,11 @@ import { currentTaskId, gotoConnected } from "./helpers.ts";
 test("app boots into a connected usable task", async ({ page }) => {
   await gotoConnected(page);
 
-  // Root is the canonical landing and carries no URL hash; currentTaskId
-  // resolves the empty hash to "root". Its title defaults to the literal
-  // "root" (renameable /rename).
-  await expect.poll(() => currentTaskId(page)).toBe("root");
-  await expect(page.locator("#task-info")).toHaveText("root");
+  // Hashless startup resumes the most recent user-input Task, falling back to
+  // Root only when no Task has user input. The exact task is suite-state
+  // dependent, but it must always be usable.
+  await expect.poll(() => currentTaskId(page)).not.toBe("");
+  await expect(page.locator("#task-info")).not.toHaveText("");
   await expect(page.locator("#input")).toBeEnabled();
 });
 

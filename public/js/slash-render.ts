@@ -1,7 +1,7 @@
 // SlashItemSpec — visual template for a single slash menu item.
 // One renderer (`renderItem`) consumes this; sources (walker / tests) produce it.
 //
-// Seven optional/required fields cover visual content, completion value, and
+// Eight optional/required fields cover visual content, completion value, and
 // selection behavior. `prefix` and CSS classes are NOT spec fields — the
 // walker decides them based on item source (see slash-tree.ts).
 //
@@ -12,6 +12,8 @@ export interface SlashItemSpec {
   primary: string;
   /** L1 right-side dim/secondary text (single & double row both use). */
   secondary?: string;
+  /** Alternate L1 secondary text shown only while this row is selected. */
+  selectedSecondary?: string;
   /** Path string, L2 left, left-truncated. Presence flips to double-row. */
   path?: string;
   /** L2 right-side dim text (only meaningful when path present). */
@@ -58,10 +60,14 @@ export function renderItem(
   primaryEl.textContent = spec.primary;
   l1.appendChild(primaryEl);
 
-  if (spec.secondary !== undefined) {
+  const secondary =
+    isSelected && spec.selectedSecondary !== undefined
+      ? spec.selectedSecondary
+      : spec.secondary;
+  if (secondary !== undefined) {
     const secondaryEl = document.createElement("span");
     secondaryEl.className = "slash-secondary";
-    secondaryEl.textContent = spec.secondary;
+    secondaryEl.textContent = secondary;
     l1.appendChild(secondaryEl);
   }
 

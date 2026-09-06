@@ -265,10 +265,11 @@ describe("connection", () => {
     assert.equal(state.busy, true);
   });
 
-  it("resumes the most recent task when there is no hash and no Root", async () => {
+  it("resumes the most recent user-input task when there is no hash", async () => {
     setFetch(async (url: string) => {
       if (url.includes("/visibility")) return mockResponse({});
-      if (url === "/api/v1/tasks") return mockResponse([{ id: "recent-task" }]);
+      if (url === "/api/v1/tasks")
+        return mockResponse([{ id: "recent-task", hasUserInput: true }]);
       if (url === "/api/v1/tasks/recent-task")
         return mockResponse(taskResponse("recent-task"));
       if (url.startsWith("/api/v1/tasks/recent-task/events"))
@@ -285,11 +286,43 @@ describe("connection", () => {
     assert.equal(state.taskId, "recent-task");
   });
 
-  it("prefers Root when there is no hash", async () => {
+  it("resumes the most recent user-input task even when Root exists", async () => {
     setFetch(async (url: string) => {
       if (url.includes("/visibility")) return mockResponse({});
       if (url === "/api/v1/tasks")
-        return mockResponse([{ id: "recent-task" }, { id: "root" }]);
+        return mockResponse([
+          { id: "recent-task", hasUserInput: true },
+          { id: "root", hasUserInput: false },
+        ]);
+      if (url === "/api/v1/tasks/recent-task")
+        return mockResponse(taskResponse("recent-task"));
+      if (url.startsWith("/api/v1/tasks/recent-task/events"))
+        return mockResponse([]);
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+
+    connection.connect();
+    await flush(30);
+
+    assert.equal(state.taskId, "recent-task");
+    assert.equal(location.hash, "#recent-task");
+    assert.ok(
+      fetchCalls.some((call) => call.url === "/api/v1/tasks/recent-task"),
+    );
+    assert.equal(
+      fetchCalls.some((call) => call.url === "/api/v1/tasks/root"),
+      false,
+    );
+  });
+
+  it("falls back to Root when no task has user input", async () => {
+    setFetch(async (url: string) => {
+      if (url.includes("/visibility")) return mockResponse({});
+      if (url === "/api/v1/tasks")
+        return mockResponse([
+          { id: "recent-task", hasUserInput: false },
+          { id: "root", hasUserInput: false },
+        ]);
       if (url === "/api/v1/tasks/root")
         return mockResponse(taskResponse("root"));
       if (url.startsWith("/api/v1/tasks/root/events")) return mockResponse([]);
@@ -301,11 +334,6 @@ describe("connection", () => {
 
     assert.equal(state.taskId, "root");
     assert.equal(location.hash, "");
-    assert.ok(fetchCalls.some((call) => call.url === "/api/v1/tasks/root"));
-    assert.equal(
-      fetchCalls.some((call) => call.url === "/api/v1/tasks/recent-task"),
-      false,
-    );
   });
 
   it("falls back to next existing task when hash task is expired", async () => {
@@ -478,6 +506,36 @@ describe("connection", () => {
     assert.equal(MockEventSource.instances.length, 2);
     assert.equal(state.taskId, "restored-task");
     assert.equal(state.lastEventSeq, 2);
+  });
+
+  it("keeps hashless Root active across SSE reconnect", async () => {
+    state.taskId = "root";
+    let listCalls = 0;
+    setFetch(async (url: string) => {
+      if (url.includes("/visibility")) return mockResponse({});
+      if (url === "/api/v1/tasks") {
+        listCalls++;
+        return mockResponse([{ id: "recent-child", hasUserInput: true }]);
+      }
+      if (url === "/api/v1/tasks/root")
+        return mockResponse(taskResponse("root"));
+      if (url.startsWith("/api/v1/tasks/root/events")) return mockResponse([]);
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+
+    connection.connect();
+    await flush();
+    assert.equal(state.taskId, "root");
+    const firstES = await latestES();
+    firstES.onerror?.();
+    const reconnectIndex = timeoutCalls.indexOf(RECONNECT_DELAY_MS);
+    assert.ok(reconnectIndex >= 0);
+    timeoutFns[reconnectIndex]();
+    await flush(30);
+
+    assert.equal(state.taskId, "root");
+    assert.equal(location.hash, "");
+    assert.equal(listCalls, 0);
   });
 
   it("uses incremental sync on reconnect when taskId matches hash", async () => {
