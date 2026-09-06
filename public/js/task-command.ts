@@ -217,8 +217,6 @@ interface CreateCandidateArgs {
   pathSecondary?: string;
   /** Short L1 annotation (e.g. the family relation for @ rows). */
   secondary?: string;
-  /** L1 annotation shown only while this row is selected. */
-  selectedSecondary?: string;
   /** Rows without onSelect complete via fill on click (target alone is
    *  not a complete command) instead of executing. */
   onSelect?: () => void | Promise<void>;
@@ -234,7 +232,6 @@ function makeCandidate(args: CreateCandidateArgs): Candidate {
     spec: {
       primary: args.primary,
       secondary: args.secondary,
-      selectedSecondary: args.selectedSecondary,
       fill,
       continueOnFill: true,
       onSelect: args.onSelect,
@@ -536,8 +533,7 @@ function addDirectoryEntries(args: {
           targetPath: fullPath,
           remainder: "",
           primary: taskNodeName(node),
-          secondary: `${statusLabel(node)} · navigate`,
-          selectedSecondary: `${statusLabel(node)} · navigate · type message to send`,
+          secondary: `${statusLabel(node)} · type message to send`,
         }),
       );
     } else {
@@ -685,8 +681,7 @@ async function buildMessageCandidates(parsed: {
           targetPath: fullPath,
           remainder: "",
           primary: taskNodeName(node),
-          secondary: `${statusLabel(node)} · navigate`,
-          selectedSecondary: `${statusLabel(node)} · navigate · type message to send`,
+          secondary: `${statusLabel(node)} · type message to send`,
         }),
       );
     } else {
