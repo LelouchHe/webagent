@@ -549,6 +549,13 @@ describe("slash menu — Tab vs Click behavior", () => {
         workflow_status: "blocked",
       },
       {
+        id: "tests-unit",
+        cwd: "/work/backend/tests/unit",
+        title: "unit",
+        parent_id: "tests",
+        workflow_status: "idle",
+      },
+      {
         id: "frontend",
         cwd: "/work/frontend",
         title: "frontend",
@@ -603,31 +610,33 @@ describe("slash menu — Tab vs Click behavior", () => {
     assert.doesNotMatch(dom.slashMenu.textContent, /root\/backend/);
     assert.doesNotMatch(dom.slashMenu.textContent, /child/);
 
-    // Once a concrete path is typed, it becomes a target directly instead of
-    // requiring another browse step.
+    // A typed concrete path prioritizes the target, but also offers its child
+    // path as a second browse hint.
     dom.input.value = "@../tests";
     commands.updateSlashMenu();
     await new Promise((r) => setTimeout(r, 10));
-    const siblingTarget = dom.slashMenu.querySelector(".slash-item");
-    assert.equal(
-      siblingTarget?.querySelector(".slash-primary")?.textContent,
-      "tests",
+    const testsRows = [...dom.slashMenu.querySelectorAll(".slash-item")];
+    assert.deepEqual(
+      testsRows.map((row: any) => ({
+        primary: row.querySelector(".slash-primary")?.textContent,
+        secondary: row.querySelector(".slash-secondary")?.textContent,
+        prefix: row.querySelector(".slash-prefix")?.textContent,
+      })),
+      [
+        {
+          primary: "tests",
+          secondary: "navigate · type message to send",
+          prefix: "",
+        },
+        { primary: "tests/", secondary: "blocked · browse", prefix: "›" },
+      ],
     );
-    assert.equal(
-      siblingTarget?.querySelector(".slash-secondary")?.textContent,
-      "navigate · type message to send",
-    );
-    siblingTarget?.dispatchEvent(
-      new (globalThis.window as any).MouseEvent("mousedown", {
-        bubbles: true,
-      }),
-    );
-    assert.equal(dom.input.value, "@/backend/tests ");
 
     // The current directory Task is selected through `.`, not by deleting the
     // slash from its browse entry.
     dom.input.value = "@/backend/";
     commands.updateSlashMenu();
+    await new Promise((r) => setTimeout(r, 10));
     await new Promise((r) => setTimeout(r, 10));
     const currentTarget = [
       ...dom.slashMenu.querySelectorAll(".slash-item"),

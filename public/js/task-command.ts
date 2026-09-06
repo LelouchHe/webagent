@@ -703,6 +703,17 @@ async function buildMessageCandidates(parsed: {
         }),
       );
     }
+    if (node.children.length > 0) {
+      candidates.push(
+        makeBrowseCandidate({
+          marker: parsed.marker,
+          targetPath: fullPath,
+          fillPath: fullPath,
+          primary: taskNodeName(node),
+          secondary: statusLabel(node),
+        }),
+      );
+    }
   }
   return candidates;
 }
