@@ -599,25 +599,28 @@ describe("slash menu — Tab vs Click behavior", () => {
     );
     await new Promise((r) => setTimeout(r, 10));
     assert.equal(dom.input.value, "@/backend/");
-    assert.match(dom.slashMenu.textContent, /tests/);
+    assert.match(dom.slashMenu.textContent, /tests\//);
     assert.doesNotMatch(dom.slashMenu.textContent, /root\/backend/);
+    assert.doesNotMatch(dom.slashMenu.textContent, /child/);
 
-    // A leaf Task is a concrete path entry; selecting it leaves the body hint.
-    const leafTarget = [...dom.slashMenu.querySelectorAll(".slash-item")].find(
-      (row: any) =>
-        row.querySelector(".slash-primary")?.textContent === "tests",
+    // The current directory Task is selected through `.`, not by deleting the
+    // slash from its browse entry.
+    const currentTarget = [
+      ...dom.slashMenu.querySelectorAll(".slash-item"),
+    ].find(
+      (row: any) => row.querySelector(".slash-primary")?.textContent === ".",
     ) as HTMLElement;
-    assert.ok(leafTarget);
+    assert.ok(currentTarget);
     assert.equal(
-      leafTarget.querySelector(".slash-secondary")?.textContent,
+      currentTarget.querySelector(".slash-secondary")?.textContent,
       "navigate",
     );
-    leafTarget.dispatchEvent(
+    currentTarget.dispatchEvent(
       new (globalThis.window as any).MouseEvent("mousedown", {
         bubbles: true,
       }),
     );
-    assert.equal(dom.input.value, "@/backend/tests ");
+    assert.equal(dom.input.value, "@/backend/. ");
     await new Promise((r) => setTimeout(r, 10));
     assert.match(
       dom.slashMenu.textContent,

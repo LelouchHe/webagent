@@ -523,45 +523,19 @@ function addDirectoryEntries(args: {
   candidates: Candidate[];
   directory: TaskNode;
   marker: string;
-  scopeIds: Set<string>;
   map: Map<string, TaskNode>;
 }): void {
   for (const node of args.directory.children.sort(compareTaskNodes)) {
     const fullPath = taskNodePath(node, args.map);
-    const reachable = args.scopeIds.has(node.id);
-    if (reachable) {
-      args.candidates.push(
-        makeCandidate({
-          marker: args.marker,
-          targetPath: fullPath,
-          remainder: "",
-          primary: taskNodeName(node),
-          secondary: "navigate",
-          selectedSecondary: "navigate · type message to send",
-        }),
-      );
-    } else {
-      args.candidates.push(
-        makeNavigationCandidate({
-          marker: args.marker,
-          targetPath: fullPath,
-          primary: taskNodeName(node),
-          secondary: `${statusLabel(node)} · navigate`,
-          taskId: node.id,
-        }),
-      );
-    }
-    if (node.children.length > 0) {
-      args.candidates.push(
-        makeBrowseCandidate({
-          marker: args.marker,
-          targetPath: fullPath,
-          fillPath: fullPath,
-          primary: taskNodeName(node),
-          secondary: statusLabel(node),
-        }),
-      );
-    }
+    args.candidates.push(
+      makeBrowseCandidate({
+        marker: args.marker,
+        targetPath: fullPath,
+        fillPath: fullPath,
+        primary: taskNodeName(node),
+        secondary: statusLabel(node),
+      }),
+    );
   }
 }
 
@@ -570,17 +544,32 @@ function addCurrentTargetEntry(args: {
   directory: TaskNode;
   map: Map<string, TaskNode>;
   marker: string;
+  scopeIds: Set<string>;
 }): void {
   const fullPath = taskNodePath(args.directory, args.map);
-  args.candidates.push(
-    makeNavigationCandidate({
-      marker: args.marker,
-      targetPath: fullPath === "/" ? "/." : `${fullPath}/.`,
-      primary: ".",
-      secondary: "navigate",
-      taskId: args.directory.id,
-    }),
-  );
+  const targetPath = fullPath === "/" ? "/." : `${fullPath}/.`;
+  if (args.scopeIds.has(args.directory.id)) {
+    args.candidates.push(
+      makeCandidate({
+        marker: args.marker,
+        targetPath,
+        remainder: "",
+        primary: ".",
+        secondary: "navigate",
+        selectedSecondary: "navigate · type message to send",
+      }),
+    );
+  } else {
+    args.candidates.push(
+      makeNavigationCandidate({
+        marker: args.marker,
+        targetPath,
+        primary: ".",
+        secondary: "navigate",
+        taskId: args.directory.id,
+      }),
+    );
+  }
 }
 
 function addParentBrowseEntry(args: {
@@ -599,7 +588,6 @@ function addParentBrowseEntry(args: {
       targetPath: `${relativeTaskPath(args.current, parent, args.map)}/`,
       fillPath: `${taskNodePath(parent, args.map)}/`,
       primary: "..",
-      secondary: "parent",
     }),
   );
 }
@@ -632,6 +620,7 @@ async function buildMessageCandidates(parsed: {
       directory: browsed.directory,
       map,
       marker: parsed.marker,
+      scopeIds,
     });
     addParentBrowseEntry({
       candidates,
@@ -644,7 +633,6 @@ async function buildMessageCandidates(parsed: {
       candidates,
       directory: browsed.directory,
       marker: parsed.marker,
-      scopeIds,
       map,
     });
     return candidates;
@@ -656,6 +644,7 @@ async function buildMessageCandidates(parsed: {
       directory: current,
       map,
       marker: parsed.marker,
+      scopeIds,
     });
     addParentBrowseEntry({
       candidates,
@@ -668,7 +657,6 @@ async function buildMessageCandidates(parsed: {
       candidates,
       directory: current,
       marker: parsed.marker,
-      scopeIds,
       map,
     });
     return candidates;
@@ -676,41 +664,26 @@ async function buildMessageCandidates(parsed: {
 
   const resolved = resolveTaskPathNodes(state.taskId, tasks, parsed.path);
   for (const node of resolved) {
+    if (parsed.path.segments.at(-1) === ".") {
+      addCurrentTargetEntry({
+        candidates,
+        directory: node,
+        map,
+        marker: parsed.marker,
+        scopeIds,
+      });
+      continue;
+    }
     const fullPath = taskNodePath(node, map);
-    const reachable = scopeIds.has(node.id);
-    if (reachable) {
-      candidates.push(
-        makeCandidate({
-          marker: parsed.marker,
-          targetPath: fullPath,
-          remainder: "",
-          primary: taskNodeName(node),
-          secondary: "navigate",
-          selectedSecondary: "navigate · type message to send",
-        }),
-      );
-    } else {
-      candidates.push(
-        makeNavigationCandidate({
-          marker: parsed.marker,
-          targetPath: fullPath,
-          primary: taskNodeName(node),
-          secondary: `${statusLabel(node)} · navigate`,
-          taskId: node.id,
-        }),
-      );
-    }
-    if (node.children.length > 0) {
-      candidates.push(
-        makeBrowseCandidate({
-          marker: parsed.marker,
-          targetPath: fullPath,
-          fillPath: fullPath,
-          primary: taskNodeName(node),
-          secondary: statusLabel(node),
-        }),
-      );
-    }
+    candidates.push(
+      makeBrowseCandidate({
+        marker: parsed.marker,
+        targetPath: fullPath,
+        fillPath: fullPath,
+        primary: taskNodeName(node),
+        secondary: statusLabel(node),
+      }),
+    );
   }
   return candidates;
 }
