@@ -323,6 +323,17 @@ describe("input", () => {
     assert.equal(dom.input.value, "hello");
   });
 
+  it("keeps a bare @ picker input intact on Enter", () => {
+    state.taskId = "s1";
+    state.clientId = "cl-1";
+    dom.input.value = "@";
+
+    keydown("Enter");
+
+    assert.equal(fetchCalls.length, 0);
+    assert.equal(dom.input.value, "@");
+  });
+
   it("send button shows ↵ when typing a command while busy", () => {
     state.busy = true;
     setBusy(true);

@@ -821,6 +821,14 @@ export async function executeTaskCommand(text: string): Promise<boolean> {
     return true;
   }
 
+  if (
+    (parsed.marker === "@" || parsed.marker === "@!") &&
+    parsed.target === "" &&
+    parsed.remainder.trim() === ""
+  ) {
+    return true;
+  }
+
   if (parsed.marker === "+") {
     await executeCreateTask(parsed.target, parsed.remainder);
   } else if (parsed.path.trailingSlash) {

@@ -54,6 +54,9 @@ function sendMessage() {
   // Task-target commands (`+` / `@`) are handled locally and may submit while busy.
   if (isTaskCommand(text) && state.pendingAttachments.length === 0) {
     const raw = dom.input.value;
+    // A bare @ is the picker opener, not a complete target command. Keep it
+    // intact so Enter never submits an incomplete target as an error.
+    if (raw.trim() === "@" || raw.trim() === "@!") return;
     setInputValue("");
     dom.input.style.height = "auto";
     dom.inputArea.classList.remove("bash-mode");
