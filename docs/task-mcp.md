@@ -22,7 +22,7 @@ native tools.
 | `task_query` | Read a bounded, compact history page for the current task or one visible relative. |
 | `task_get_record` | Read one complete persisted history record by task-local sequence. |
 | `task_cancel` | Stop the current execution of a child Task while preserving its history. |
-| `task_create` | Create a direct child Task with an initial brief and optional execution overrides. |
+| `task_create` | Create a direct child Task with optional execution overrides. Use `task_send` for its first instruction. |
 | `task_send` | Send a durable collaboration message to another Task. |
 | `task_update` | Mark the current task `blocked` or `done`, with a handoff message to its parent when one exists. |
 
@@ -169,9 +169,9 @@ that execution has stopped.
 ### `task_create`
 
 Create a direct child Task immediately. The request includes a required title
-and brief, plus optional `cwd`, `model`, and `thinking` overrides. Omitted
-execution options inherit from the current Task. The result contains the new
-Task ID. The creating Task also receives a durable system message containing the child
+plus optional `cwd`, `model`, and `thinking` overrides. Omitted execution
+options inherit from the current Task. The result contains the new Task ID.
+The creating Task also receives a durable system message containing the child
 Task title. Send the first work instruction separately with `task_send`; the
 Task ID remains in the tool result and event metadata. Failures return an MCP
 tool error rather than an empty ID.
