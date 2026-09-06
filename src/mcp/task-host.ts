@@ -260,13 +260,7 @@ export function createMcpTaskToolHost(deps: {
         },
       });
       const taskCreatedMessageId = randomUUID();
-      const taskCreatedBody = [
-        `Created Task "${input.title}" (task id ${created.taskId}).`,
-        `CWD: ${cwd}`,
-        ...(input.model ? [`Model: ${input.model}`] : []),
-        ...(input.thinking ? [`Thinking: ${input.thinking}`] : []),
-        `Brief: ${input.brief}`,
-      ].join("\n");
+      const taskCreatedBody = `Created task “${input.title}”: ${input.brief}`;
       store.saveEvent(
         source.id,
         "system_message",

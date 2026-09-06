@@ -2652,14 +2652,14 @@ describe("events", () => {
           {
             kind: "task_created",
             taskId: "child-1",
-            body: 'Created Task "Child" (task id child-1).',
+            body: "Created task “Child”: review the API.",
           },
           [],
           0,
         );
         assert.match(
           dom.messages.textContent ?? "",
-          /Created Task "Child" \(task id child-1\)/,
+          /Created task “Child”: review the API/,
         );
       });
 
