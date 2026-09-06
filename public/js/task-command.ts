@@ -738,6 +738,10 @@ async function executeMessageTask(
     addSystem("err: No active task");
     return;
   }
+  if (!target.trim()) {
+    addSystem("err: Task target is required after @");
+    return;
+  }
   let tasks: TaskSummary[];
   try {
     tasks = await api.listTasks();
@@ -818,14 +822,6 @@ export async function executeTaskCommand(text: string): Promise<boolean> {
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     addSystem(`err: ${msg}`);
-    return true;
-  }
-
-  if (
-    (parsed.marker === "@" || parsed.marker === "@!") &&
-    parsed.target === "" &&
-    parsed.remainder.trim() === ""
-  ) {
     return true;
   }
 
