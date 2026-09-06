@@ -156,6 +156,7 @@ const mcpTaskTools = createMcpTaskToolHost({
   store,
   tasks,
   getBridge: () => bridge,
+  cancelTimeoutMs: config.limits.cancel_timeout,
   broadcastCollaboration: ({ messageId, sourceTaskId, targetTaskId, body }) => {
     const source = store.getTaskIncludingDeleted(sourceTaskId);
     const target = store.getTaskIncludingDeleted(targetTaskId);

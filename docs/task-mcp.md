@@ -159,4 +159,8 @@ reason and uses the existing asynchronous cancellation result states:
 `idle`, `cancelling`, `cancelled`, or `superseded`.
 
 The MCP caller may cancel only a direct child Task. Cancellation does not
-change the Task into `done`; normal completion uses `task_update` instead.
+change the Task into `done`; normal completion uses `task_update` instead. The
+configured cancellation safety timeout is shared with the REST cancel path;
+when the Agent has not acknowledged cancellation, the result remains
+`cancelling` and the runtime exposes the unconfirmed state rather than claiming
+that execution has stopped.

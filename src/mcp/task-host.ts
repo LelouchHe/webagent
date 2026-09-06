@@ -64,6 +64,7 @@ export function createMcpTaskToolHost(deps: {
   store: Store;
   tasks: TaskManager;
   getBridge: () => AgentBridge | null;
+  cancelTimeoutMs?: number;
   broadcastCollaboration?: (event: McpTaskCollaborationEvent) => void;
 }): McpTaskToolHost {
   const { store, tasks, getBridge, broadcastCollaboration } = deps;
@@ -215,7 +216,11 @@ export function createMcpTaskToolHost(deps: {
     async cancel(sourceTaskId, targetTaskId, reason) {
       const bridge = getBridge();
       const { target } = requireChildTarget(sourceTaskId, targetTaskId);
-      const result = await tasks.cancelTaskExecution(target.id, bridge, 0);
+      const result = await tasks.cancelTaskExecution(
+        target.id,
+        bridge,
+        deps.cancelTimeoutMs ?? 0,
+      );
       store.saveEvent(
         target.id,
         "task_cancel",
