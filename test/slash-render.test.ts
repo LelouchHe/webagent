@@ -80,6 +80,25 @@ describe("slash-render — renderItem", () => {
     assert.equal(el.classList.contains("selected"), true);
   });
 
+  it("selectedSecondary replaces secondary only for the selected row", () => {
+    const spec = {
+      primary: "task",
+      secondary: "running · navigate",
+      selectedSecondary: "running · navigate · type message to send",
+    };
+    const unselected = renderItem(spec, false, "");
+    assert.equal(
+      unselected.querySelector(".slash-secondary")?.textContent,
+      "running · navigate",
+    );
+
+    const selected = renderItem(spec, true, "");
+    assert.equal(
+      selected.querySelector(".slash-secondary")?.textContent,
+      "running · navigate · type message to send",
+    );
+  });
+
   it("current=true marks .slash-current on primary (walker passes prefix=*)", () => {
     const el = renderItem({ primary: "gpt-5", current: true }, false, "*");
     const primary = el.querySelector(".slash-primary");

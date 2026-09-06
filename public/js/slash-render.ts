@@ -12,6 +12,8 @@ export interface SlashItemSpec {
   primary: string;
   /** L1 right-side dim/secondary text (single & double row both use). */
   secondary?: string;
+  /** Optional L1 secondary text shown only while this row is selected. */
+  selectedSecondary?: string;
   /** Path string, L2 left, left-truncated. Presence flips to double-row. */
   path?: string;
   /** L2 right-side dim text (only meaningful when path present). */
@@ -58,10 +60,13 @@ export function renderItem(
   primaryEl.textContent = spec.primary;
   l1.appendChild(primaryEl);
 
-  if (spec.secondary !== undefined) {
+  const secondary = isSelected
+    ? (spec.selectedSecondary ?? spec.secondary)
+    : spec.secondary;
+  if (secondary !== undefined) {
     const secondaryEl = document.createElement("span");
     secondaryEl.className = "slash-secondary";
-    secondaryEl.textContent = spec.secondary;
+    secondaryEl.textContent = secondary;
     l1.appendChild(secondaryEl);
   }
 
