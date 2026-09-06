@@ -172,5 +172,5 @@ Create a direct child Task immediately. The request includes a required title
 and brief, plus optional `cwd`, `model`, and `thinking` overrides. Omitted
 execution options inherit from the current Task. The result contains the new
 Task ID. The creating Task also receives a durable system message containing
-the child Task ID, title, cwd, and requested execution overrides; failures
-return an MCP tool error rather than an empty ID.
+the child Task title and brief; the Task ID remains in the tool result and
+event metadata. Failures return an MCP tool error rather than an empty ID.
