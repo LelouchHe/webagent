@@ -1,7 +1,10 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
+import Database from "better-sqlite3";
+import { Store } from "../src/store.ts";
 
 /**
  * Staleness guard: ensures docs/schema.md covers every table and index
@@ -39,6 +42,37 @@ const indexMatches = [
   ),
 ];
 const indexes = [...new Set(indexMatches.map((m) => m[1]))];
+
+function documentedColumns(table: string): string[] {
+  const heading = "### `" + table + "`";
+  const start = SCHEMA_DOC.indexOf(heading);
+  if (start < 0) return [];
+  const rest = SCHEMA_DOC.slice(start + heading.length);
+  const end = rest.search(/^###?\s/m);
+  const section = rest.slice(0, end < 0 ? rest.length : end);
+  return [...section.matchAll(/^\|\s*`([^`]+)`\s*\|/gm)].map(
+    (match) => match[1],
+  );
+}
+
+const schemaDir = mkdtempSync(join(tmpdir(), "webagent-schema-docs-"));
+const schemaStore = new Store(schemaDir, "schema-doc-test");
+schemaStore.close();
+const schemaDb = new Database(join(schemaDir, "webagent.db"), {
+  readonly: true,
+});
+const actualColumns = new Map<string, string[]>();
+for (const table of tables) {
+  const rows = schemaDb
+    .prepare(`PRAGMA table_info('${table}')`)
+    .all() as Array<{ name: string }>;
+  actualColumns.set(
+    table,
+    rows.map((row) => row.name),
+  );
+}
+schemaDb.close();
+rmSync(schemaDir, { recursive: true, force: true });
 
 describe("schema coverage", () => {
   it("should find every table in src/store.ts", () => {
@@ -78,6 +112,16 @@ describe("schema coverage", () => {
       assert.ok(
         SCHEMA_DOC.includes(name),
         `Index \`${name}\` is created in src/store.ts but is not mentioned in docs/schema.md.`,
+      );
+    });
+  }
+
+  for (const name of tables) {
+    it(`docs/schema.md should list every column in \`${name}\``, () => {
+      assert.deepEqual(
+        documentedColumns(name).sort(),
+        [...(actualColumns.get(name) ?? [])].sort(),
+        `Column set for \`${name}\` drifted between SQLite and docs/schema.md.`,
       );
     });
   }
