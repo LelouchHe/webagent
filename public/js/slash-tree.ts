@@ -96,7 +96,7 @@ export function resolvePath(
  *
  * Prefix glyphs:
  *   ›   navigate — path/subcommand; Tab/Enter drills deeper
- *   ↵   select   — target/freeform; Tab fills, Enter runs the typed action
+ *   ↵   commit   — freeform; Tab fills, Enter runs the typed action
  *   ``  data row, placeholder, separator
  *
  * Order: subcommands (›) → freeform (↵) → [separator] → data rows / placeholder.

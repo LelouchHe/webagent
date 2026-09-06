@@ -262,7 +262,7 @@ function makeCandidate(args: CreateCandidateArgs): Candidate {
       continueOnFill: true,
       onSelect: args.onSelect,
     },
-    prefix: "↵",
+    prefix: "",
     kind: "data",
   };
 }
@@ -334,7 +334,7 @@ export async function buildTaskCommandCandidates(
                 ? "jump · type a message to force-send"
                 : "jump · type a message to send",
           },
-          prefix: parsed.path.trailingSlash ? "›" : "↵",
+          prefix: parsed.path.trailingSlash ? "›" : "",
           kind: "placeholder",
         },
       ];

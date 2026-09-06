@@ -614,7 +614,7 @@ describe("slash menu — Tab vs Click behavior", () => {
         row.querySelector(".slash-primary")?.textContent === "backend",
     ) as HTMLElement;
     assert.ok(parentTarget);
-    assert.equal(parentTarget.querySelector(".slash-prefix")?.textContent, "↵");
+    assert.equal(parentTarget.querySelector(".slash-prefix")?.textContent, "");
     parentTarget.dispatchEvent(
       new (globalThis.window as any).MouseEvent("mousedown", {
         bubbles: true,
