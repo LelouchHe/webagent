@@ -1,3 +1,4 @@
+import { formatTaskReference } from "../shared/task-reference.ts";
 import type { McpTaskHistoryRecord } from "./tools.ts";
 
 const MAX_RECORD_TEXT = 800;
@@ -209,7 +210,7 @@ export function compactTaskHistoryRecord(record: {
       const body =
         data.messageBody === undefined &&
         (textValue(data.sourceLabel) || textValue(data.targetLabel))
-          ? `@${textValue(data.sourceLabel) || textValue(data.sourceTaskId)} sent @${textValue(data.targetLabel) || textValue(data.targetTaskId)}: ${textValue(data.body)}`
+          ? `${formatTaskReference(textValue(data.sourceLabel) || textValue(data.sourceTaskId))} sent ${formatTaskReference(textValue(data.targetLabel) || textValue(data.targetTaskId))}: ${textValue(data.body)}`
           : textValue(data.body);
       result = joinText([body || "(empty system message)"]);
       break;

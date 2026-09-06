@@ -339,8 +339,8 @@ describe("MCP Task tool host", () => {
       "system_message",
       {
         kind: "collaboration",
-        sourceLabel: "Beta",
-        targetLabel: "Alpha",
+        sourceLabel: "Beta team",
+        targetLabel: "Alpha team",
         body: "Please review the API.",
       },
       { from_ref: "msg:1" },
@@ -400,7 +400,7 @@ describe("MCP Task tool host", () => {
         },
         {
           type: "system_message",
-          text: "@Beta sent @Alpha: Please review the API.",
+          text: '@"Beta team" sent @"Alpha team": Please review the API.',
         },
         {
           type: "task_update",
