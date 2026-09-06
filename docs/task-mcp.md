@@ -20,8 +20,9 @@ native tools.
 | --- | --- |
 | `task_list` | List the current task and its locally reachable parent, children, and siblings. |
 | `task_query` | Read a bounded, compact history page for the current task or one visible relative. |
-| `task_get_record` | Read one complete WebAgent-persisted event row by task-local sequence. |
-| `task_send` | Send a durable collaboration message to a visible relative. |
+| `task_get_record` | Read one complete persisted history record by task-local sequence. |
+| `task_cancel` | Stop the current execution of a child Task while preserving its history. |
+| `task_send` | Send a durable collaboration message to another Task. |
 | `task_update` | Mark the current task `blocked` or `done`, with a handoff message to its parent when one exists. |
 
 ### `task_query`
@@ -96,7 +97,7 @@ on the event type. It does not invoke an LLM or alter the stored event.
 | `plan` | Each plan entry's status and content. |
 | `permission_request`, `permission_response` | Permission title and choices, or allow/deny outcome. |
 | `error` | Error message. |
-| `system_message`, `task_update`, `message` | Collaboration route/status and message body. |
+| `system_message`, `task_update`, `task_cancel`, `message` | Collaboration route/status and message body. |
 | `bash_command`, `bash_result` | Command, exit code/signal, and bounded output. |
 | `prompt_done` | Non-normal stop reasons only; ordinary `end_turn` is omitted as noise. |
 
@@ -143,12 +144,19 @@ The response contains the complete WebAgent-persisted event row:
 ```
 
 `data` is not compacted, parsed, summarized, or rewritten. This is the complete
-stored event record, not necessarily the complete original ACP notification:
-WebAgent may normalize ACP updates before persistence, merge assistant chunks,
-or intentionally omit fields from sensitive or high-volume notifications. The
-`fromRef` field is WebAgent metadata, not an ACP field. Current origin
-conventions include `user`, `agent`, `system`, `msg:<id>`, `cron:<id>`, and
-`external:<id>`; clients should treat it as an opaque string.
+stored event record, not necessarily the complete original ACP notification.
+The `fromRef` field is persistence metadata, not an ACP field; clients should
+treat it as an opaque string.
 
 The tool reads one record per call and does not support bulk sequence lookup, so
-raw payload expansion remains explicit and bounded by the caller's choice.
+full payload expansion remains explicit and bounded by the caller's choice.
+
+### `task_cancel`
+
+Stop the current execution of a child Task without deleting or retiring the
+Task. The Task and its history remain available. The request records a required
+reason and uses the existing asynchronous cancellation result states:
+`idle`, `cancelling`, `cancelled`, or `superseded`.
+
+The MCP caller may cancel only a direct child Task. Cancellation does not
+change the Task into `done`; normal completion uses `task_update` instead.

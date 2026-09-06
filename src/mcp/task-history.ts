@@ -223,6 +223,12 @@ export function compactTaskHistoryRecord(record: {
         textValue(data.body) || "(no details)",
       ]);
       break;
+    case "task_cancel":
+      result = joinText([
+        "Task cancellation requested:",
+        textValue(data.reason) || "(no reason)",
+      ]);
+      break;
     case "message":
       result = joinText([
         `Message from ${textValue(data.from_label) || textValue(data.from_ref) || "unknown sender"}: ${textValue(data.title) || "Untitled"}`,

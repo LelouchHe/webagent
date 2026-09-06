@@ -83,6 +83,15 @@ export function createMcpTaskToolHost(deps: {
     return { source, target };
   }
 
+  function requireChildTarget(sourceTaskId: string, targetTaskId: string) {
+    const source = requireTask(sourceTaskId);
+    const target = requireTask(targetTaskId);
+    if (target.parent_id !== source.id) {
+      throw new Error("target_not_allowed");
+    }
+    return { source, target };
+  }
+
   return {
     list(sourceTaskId) {
       const source = requireTask(sourceTaskId);
@@ -201,6 +210,19 @@ export function createMcpTaskToolHost(deps: {
           createdAt: event.created_at,
         },
       };
+    },
+
+    async cancel(sourceTaskId, targetTaskId, reason) {
+      const bridge = getBridge();
+      const { target } = requireChildTarget(sourceTaskId, targetTaskId);
+      const result = await tasks.cancelTaskExecution(target.id, bridge, 0);
+      store.saveEvent(
+        target.id,
+        "task_cancel",
+        { sourceTaskId, reason, status: result.status },
+        { from_ref: "agent" },
+      );
+      return { accepted: true, taskId: target.id, status: result.status };
     },
 
     async send(sourceTaskId, targetTaskId, body) {

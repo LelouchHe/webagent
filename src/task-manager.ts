@@ -116,6 +116,24 @@ export class TaskTreeBusyError extends Error {
   }
 }
 
+export class AgentNotReadyError extends Error {
+  constructor(taskId: string) {
+    super(`Agent is not ready for task ${taskId}`);
+    this.name = "AgentNotReadyError";
+  }
+}
+
+export type TaskCancelStatus =
+  | "idle"
+  | "cancelling"
+  | "cancelled"
+  | "superseded";
+
+export interface TaskCancelResult {
+  status: TaskCancelStatus;
+  workPending: boolean;
+}
+
 export interface ConsumeMessageResult {
   taskId: string;
   alreadyConsumed: boolean;
@@ -1357,6 +1375,70 @@ export class TaskManager {
     if (submissionId === undefined) return false;
     this.cancelledPromptSubmissions.add(submissionId);
     return true;
+  }
+
+  /** Cancel the current execution without deleting or retiring the Task. */
+  // eslint-disable-next-line complexity -- preserves the cancel race/state machine in one operation.
+  async cancelTaskExecution(
+    taskId: string,
+    bridge: Pick<AgentBridge, "cancel"> | null,
+    cancelTimeoutMs: number,
+  ): Promise<TaskCancelResult> {
+    const hadAgentPrompt = this.activePrompts.has(taskId);
+    const hadPendingPrompt = this.cancelPendingPromptSubmission(taskId);
+    const hadBash = this.runningBashProcs.has(taskId);
+    if (!hadAgentPrompt && !hadPendingPrompt && !hadBash) {
+      return { status: "idle", workPending: false };
+    }
+
+    const cancelledPromptId = hadAgentPrompt
+      ? (this.state.getState(taskId).runtime.busy?.promptId ?? null)
+      : null;
+
+    const proc = this.runningBashProcs.get(taskId);
+    if (proc) {
+      const force = this.interruptedBashProcs.has(proc);
+      interruptBashProc(proc, force);
+      this.interruptedBashProcs.add(proc);
+    }
+    if (hadAgentPrompt && !bridge) throw new AgentNotReadyError(taskId);
+    if (hadAgentPrompt && bridge) {
+      await bridge.cancel(taskId);
+      const busy = this.state.getState(taskId).runtime.busy;
+      const stillCancellingSamePrompt =
+        this.activePrompts.has(taskId) &&
+        busy?.kind === "agent" &&
+        busy.promptId === cancelledPromptId;
+      if (stillCancellingSamePrompt) {
+        this.state.markCancelRequested(taskId);
+      }
+    }
+
+    const busyAfterCancel = this.state.getState(taskId).runtime.busy;
+    const cancelPending =
+      hadAgentPrompt &&
+      this.activePrompts.has(taskId) &&
+      busyAfterCancel?.kind === "agent" &&
+      busyAfterCancel.promptId === cancelledPromptId;
+    if (cancelPending && cancelTimeoutMs > 0) {
+      this.state.armCancelSafety(taskId, cancelTimeoutMs);
+    }
+    this.syncBusy(taskId);
+    const workPending = cancelPending || hadBash;
+    const replacementPromptActive =
+      hadAgentPrompt &&
+      ((this.activePrompts.has(taskId) &&
+        busyAfterCancel?.kind === "agent" &&
+        busyAfterCancel.promptId !== cancelledPromptId) ||
+        this.pendingPromptSubmissions.has(taskId));
+    return {
+      status: workPending
+        ? "cancelling"
+        : replacementPromptActive
+          ? "superseded"
+          : "cancelled",
+      workPending,
+    };
   }
 
   isPromptSubmissionCancelled(submissionId: number): boolean {

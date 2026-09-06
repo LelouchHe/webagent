@@ -387,6 +387,55 @@ describe("MCP Task tool host", () => {
     assert.ok(record.text.length <= 801);
   });
 
+  it("cancels only a direct child and records the reason", async () => {
+    let cancelCalls = 0;
+    const bridge = {
+      cancel: async () => {
+        cancelCalls++;
+      },
+    } as unknown as import("../src/bridge.ts").AgentBridge;
+    tasks.activePrompts.add("alpha-child");
+    tasks.syncBusy("alpha-child", "prompt-1");
+    const host = createMcpTaskToolHost({
+      store,
+      tasks,
+      getBridge: () => bridge,
+    });
+
+    const result = await host.cancel(
+      "alpha",
+      "alpha-child",
+      "No longer needed",
+    );
+    assert.deepEqual(result, {
+      accepted: true,
+      taskId: "alpha-child",
+      status: "cancelling",
+    });
+    assert.equal(cancelCalls, 1);
+    assert.match(
+      store.getEvents("alpha-child").at(-1)?.data ?? "",
+      /No longer needed/,
+    );
+    await assert.rejects(
+      () => host.cancel("alpha", "beta", "wrong scope"),
+      /target_not_allowed/,
+    );
+  });
+
+  it("returns idle when a direct child has no active execution", async () => {
+    const host = createMcpTaskToolHost({
+      store,
+      tasks,
+      getBridge: () => null,
+    });
+
+    assert.deepEqual(
+      await host.cancel("alpha", "alpha-child", "stop before start"),
+      { accepted: true, taskId: "alpha-child", status: "idle" },
+    );
+  });
+
   it("rejects queries and sends outside the local family", async () => {
     const host = createMcpTaskToolHost({
       store,

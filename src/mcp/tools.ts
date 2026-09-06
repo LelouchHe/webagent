@@ -56,6 +56,12 @@ export interface McpTaskGetRecordResult {
   record: McpTaskStoredRecord;
 }
 
+export interface McpTaskCancelResult {
+  accepted: true;
+  taskId: string;
+  status: "idle" | "cancelling" | "cancelled" | "superseded";
+}
+
 /** Operations supplied by the WebAgent runtime behind the MCP tool surface. */
 export interface McpTaskToolHost {
   list(sourceTaskId: string): McpTaskListItem[];
@@ -64,6 +70,11 @@ export interface McpTaskToolHost {
     sourceTaskId: string,
     input: McpTaskGetRecordInput,
   ): McpTaskGetRecordResult;
+  cancel(
+    sourceTaskId: string,
+    targetTaskId: string,
+    reason: string,
+  ): Promise<McpTaskCancelResult>;
   send(sourceTaskId: string, targetTaskId: string, body: string): Promise<void>;
   update(
     sourceTaskId: string,
@@ -191,6 +202,25 @@ export function registerMcpTools(
           seq,
         }) ?? unavailable(),
       ),
+  );
+
+  server.registerTool(
+    "task_cancel",
+    {
+      description:
+        "Cancel the current execution of a child Task. " +
+        "Use this when the child should stop its current work; the Task and its history are preserved. " +
+        "The reason is recorded for coordination history. " +
+        "This does not delete or retire the Task.",
+      inputSchema: {
+        target: TASK_ID.describe("Stable child Task ID"),
+        reason: BODY.describe("Why the child Task should stop"),
+      },
+    },
+    async ({ target, reason }) => {
+      if (!host) return unavailable();
+      return jsonContent(await host.cancel(taskId, target, reason));
+    },
   );
 
   server.registerTool(

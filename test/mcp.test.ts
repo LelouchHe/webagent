@@ -114,6 +114,14 @@ describe("createMcpEndpoint", () => {
         },
       };
     },
+    cancel: async (...args: unknown[]) => {
+      calls.push({ kind: "cancel", args });
+      return {
+        accepted: true as const,
+        taskId: "task-2",
+        status: "idle" as const,
+      };
+    },
     send: async (...args: unknown[]) => {
       calls.push({ kind: "send", args });
     },
@@ -274,6 +282,7 @@ describe("createMcpEndpoint", () => {
     const tools = listBody.result?.tools ?? [];
     const names = tools.map((tool) => tool.name).sort();
     assert.deepEqual(names, [
+      "task_cancel",
       "task_get_record",
       "task_list",
       "task_query",
@@ -347,11 +356,26 @@ describe("createMcpEndpoint", () => {
     );
     assert.equal(getRecord.status, 200);
 
-    const send = await mcpPost(
+    const cancel = await mcpPost(
       "/mcp",
       {
         jsonrpc: "2.0",
         id: 6,
+        method: "tools/call",
+        params: {
+          name: "task_cancel",
+          arguments: { target: "task-2", reason: "superseded" },
+        },
+      },
+      auth(token),
+    );
+    assert.equal(cancel.status, 200);
+
+    const send = await mcpPost(
+      "/mcp",
+      {
+        jsonrpc: "2.0",
+        id: 7,
         method: "tools/call",
         params: {
           name: "task_send",
@@ -366,7 +390,7 @@ describe("createMcpEndpoint", () => {
       "/mcp",
       {
         jsonrpc: "2.0",
-        id: 7,
+        id: 8,
         method: "tools/call",
         params: {
           name: "task_update",
@@ -387,6 +411,7 @@ describe("createMcpEndpoint", () => {
         },
       },
       { kind: "getRecord", input: { taskId: undefined, seq: 7 } },
+      { kind: "cancel", args: ["web-1", "task-2", "superseded"] },
       { kind: "send", args: ["web-1", "task-2", "hello"] },
       { kind: "update", args: ["web-1", "done", "finished"] },
     ]);

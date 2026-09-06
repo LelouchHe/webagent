@@ -15,6 +15,7 @@ import { errorMessage, MessageIngressSchema } from "./types.ts";
 import type { AgentEvent, ConfigOption } from "./types.ts";
 import {
   interruptBashProc,
+  AgentNotReadyError,
   InvalidTaskDirectoryError,
   TaskBusyError,
   TaskNotFoundError,
@@ -1025,86 +1026,36 @@ export function createRequestHandler(
         const { opId, replayed } = tryReplayClientOp(req, res, store, taskId);
         if (replayed) return;
 
-        const hadAgentPrompt = tasks?.activePrompts.has(taskId) ?? false;
-        const hadPendingPrompt =
-          tasks?.cancelPendingPromptSubmission(taskId) ?? false;
-        const hadBash = tasks?.runningBashProcs.has(taskId) ?? false;
-        if (!hadAgentPrompt && !hadPendingPrompt && !hadBash) {
+        if (!tasks) {
           const idleBody = { ok: true, status: "idle" };
           saveClientOpResult(store, opId, taskId, HTTP_STATUS.OK, idleBody);
           json(res, HTTP_STATUS.OK, idleBody);
           return;
         }
-        const cancelledPromptId = hadAgentPrompt
-          ? (tasks?.state.getState(taskId).runtime.busy?.promptId ?? null)
+        const bridge = tasks.activePrompts.has(taskId)
+          ? (getBridge?.() ?? null)
           : null;
-
-        // Kill running bash process if any
-        const proc = tasks?.runningBashProcs.get(taskId);
-        if (proc) {
-          const force = tasks!.interruptedBashProcs.has(proc);
-          interruptBashProc(proc, force);
-          tasks!.interruptedBashProcs.add(proc);
-        }
-        const bridge = hadAgentPrompt ? getBridge?.() : null;
-        if (hadAgentPrompt && !bridge) {
-          json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
-            error: "Agent not ready yet",
-          });
-          return;
-        }
-        // ACP cancel is a notification, not an acknowledgement. Keep the
-        // prompt active until its prompt response supplies the terminal stop
-        // reason, and allow repeated requests to resend the notification.
-        if (hadAgentPrompt && tasks && bridge) {
-          const previousCancelStatus =
-            tasks.state.getState(taskId).runtime.busy?.cancelStatus ?? null;
-          rlog.info("cancel requested", {
-            taskId: taskId.slice(0, 8),
-            retry: previousCancelStatus !== null,
-            previousStatus: previousCancelStatus,
-          });
-          await bridge.cancel(taskId);
-          const busy = tasks.state.getState(taskId).runtime.busy;
-          const stillCancellingSamePrompt =
-            tasks.activePrompts.has(taskId) &&
-            busy?.kind === "agent" &&
-            busy.promptId === cancelledPromptId;
-          if (stillCancellingSamePrompt) {
-            tasks.state.markCancelRequested(taskId);
+        let result;
+        try {
+          result = await tasks.cancelTaskExecution(
+            taskId,
+            bridge,
+            deps.limits.cancel_timeout ?? 0,
+          );
+        } catch (error) {
+          if (error instanceof AgentNotReadyError) {
+            json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
+              error: "Agent not ready yet",
+            });
+            return;
           }
+          throw error;
         }
-        // If prompt_done does not arrive, expose the lack of acknowledgement
-        // instead of pretending the prompt stopped.
-        const cancelTimeout = deps.limits.cancel_timeout ?? 0;
-        const busyAfterCancel = tasks?.state.getState(taskId).runtime.busy;
-        const cancelPending =
-          hadAgentPrompt &&
-          tasks?.activePrompts.has(taskId) === true &&
-          busyAfterCancel?.kind === "agent" &&
-          busyAfterCancel.promptId === cancelledPromptId;
-        if (cancelPending && cancelTimeout > 0)
-          tasks.state.armCancelSafety(taskId, cancelTimeout);
-        tasks?.syncBusy(taskId);
-        const workPending = cancelPending || hadBash;
-        const replacementPromptActive =
-          hadAgentPrompt &&
-          ((tasks?.activePrompts.has(taskId) === true &&
-            busyAfterCancel?.kind === "agent" &&
-            busyAfterCancel.promptId !== cancelledPromptId) ||
-            tasks?.pendingPromptSubmissions.has(taskId) === true);
         const status =
-          workPending || replacementPromptActive
+          result.status === "cancelling" || result.status === "superseded"
             ? HTTP_STATUS.ACCEPTED
             : HTTP_STATUS.OK;
-        const okBody = {
-          ok: true,
-          status: workPending
-            ? "cancelling"
-            : replacementPromptActive
-              ? "superseded"
-              : "cancelled",
-        };
+        const okBody = { ok: true, status: result.status };
         saveClientOpResult(store, opId, taskId, status, okBody);
         json(res, status, okBody);
         return;
