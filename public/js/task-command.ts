@@ -478,6 +478,8 @@ function addTaskTargetEntry(args: {
   primary: string;
   marker: string;
   scopeIds: Set<string>;
+  /** Parent targets always complete the path; Enter performs navigation. */
+  forceCompletion?: boolean;
 }): void {
   const expandable =
     args.node.children.length > 0 &&
@@ -485,7 +487,7 @@ function addTaskTargetEntry(args: {
     args.primary !== ".";
   const displayPrimary = expandable ? `${args.primary}/` : args.primary;
   const prefix: Candidate["prefix"] = expandable ? "›" : "";
-  if (args.scopeIds.has(args.node.id)) {
+  if (args.scopeIds.has(args.node.id) || args.forceCompletion) {
     args.candidates.push(
       makeCandidate({
         marker: args.marker,
@@ -493,7 +495,9 @@ function addTaskTargetEntry(args: {
         remainder: "",
         primary: displayPrimary,
         secondary: statusLabel(args.node),
-        selectedSecondary: "type message to send",
+        selectedSecondary: args.scopeIds.has(args.node.id)
+          ? "type message to send"
+          : undefined,
         prefix,
       }),
     );
@@ -563,13 +567,15 @@ function addParentTargetEntry(args: {
   if (!args.directory.parentId) return;
   const parent = args.map.get(args.directory.parentId);
   if (!parent) return;
+  const parentPath = taskNodePath(parent, args.map);
   addTaskTargetEntry({
     candidates: args.candidates,
     node: parent,
-    targetPath: taskNodePath(parent, args.map),
+    targetPath: parentPath === "/" ? "/." : parentPath,
     primary: "..",
     marker: args.marker,
     scopeIds: args.scopeIds,
+    forceCompletion: true,
   });
 }
 
