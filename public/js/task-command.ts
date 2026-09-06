@@ -263,7 +263,12 @@ function makeNavigationCandidate(args: {
       selectedSecondary: args.selectedSecondary,
       fill: `${args.marker}${args.targetPath}`,
       onSelect: async () => {
-        await switchToTask(args.taskId);
+        try {
+          await switchToTask(args.taskId);
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          addSystem(`err: navigation failed — ${message}`);
+        }
       },
     },
     prefix: args.prefix ?? "",
@@ -449,26 +454,14 @@ async function buildCreateCandidates(parsed: {
   return candidates;
 }
 
-/** Resolve one @ target for the local collaboration policy. */
+/** Resolve one submitted @ target using the full Task path semantics. */
 function resolveMessageTargets(
   currentTaskId: string | null,
   tasks: TaskSummary[],
   path: TaskPath,
-  exact = false,
 ): TaskNode[] {
-  const raw = path.segments;
-  const scopeFiltered = raw.length === 0 || (!path.absolute && raw[0] !== "..");
-  if (scopeFiltered) {
-    const filterSegment = raw.at(-1) ?? "";
-    return getLocalScope(currentTaskId, tasks).filter(
-      (n) =>
-        !filterSegment ||
-        (exact
-          ? matchesSegmentExact(n, filterSegment)
-          : matchesSegment(n, filterSegment)),
-    );
-  }
-  return resolveTaskPathNodes(currentTaskId, tasks, path, exact);
+  if (path.segments.length === 0) return [];
+  return resolveTaskPathNodes(currentTaskId, tasks, path, true);
 }
 
 function addTaskTargetEntry(args: {
@@ -794,7 +787,7 @@ async function executeMessageTask(
   }
 
   const path = parseTaskPath(target);
-  const resolved = resolveMessageTargets(currentTaskId, tasks, path, true);
+  const resolved = resolveMessageTargets(currentTaskId, tasks, path);
   const scope = getLocalScope(currentTaskId, tasks);
   const scopeIds = new Set(scope.map((n) => n.id));
   const matches = resolved;

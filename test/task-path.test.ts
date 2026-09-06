@@ -91,6 +91,15 @@ describe("task command path parsing", () => {
     );
   });
 
+  it("round-trips apostrophes inside a quoted target", () => {
+    assert.deepEqual(parseTaskCommand('@"O\'Reilly"'), {
+      marker: "@",
+      target: "O'Reilly",
+      path: { absolute: false, segments: ["O'Reilly"] },
+      remainder: "",
+    });
+  });
+
   it("preserves dot segments for the server-side resolver", () => {
     assert.deepEqual(parseTaskPath("./child/../sibling"), {
       absolute: false,

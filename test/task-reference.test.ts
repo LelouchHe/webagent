@@ -26,4 +26,9 @@ describe("task reference formatting", () => {
     assert.equal(quoteShellWord('a"b\\c'), '"a\\"b\\\\c"');
     assert.equal(formatTaskReference('a"b\\c'), '@"a\\"b\\\\c"');
   });
+
+  it("quotes apostrophes for the task parser", () => {
+    assert.equal(quoteShellWord("O'Reilly"), '"O\'Reilly"');
+    assert.equal(formatTaskReference("O'Reilly"), '@"O\'Reilly"');
+  });
 });

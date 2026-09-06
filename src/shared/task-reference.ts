@@ -1,6 +1,6 @@
 /** Quote one task/path word for the shell-style task command grammar. */
 export function quoteShellWord(word: string): string {
-  if (/[\s"\\]/.test(word) || word === "") {
+  if (/[\s"'\\]/.test(word) || word === "") {
     return `"${word.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
   }
   return word;

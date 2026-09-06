@@ -666,6 +666,22 @@ describe("slash menu — Tab vs Click behavior", () => {
     assert.equal(rootRows.includes("navigate"), false);
     assert.equal(rootRows.includes("."), false);
 
+    // A stale navigation candidate reports a visible error instead of
+    // leaking a rejected switch promise.
+    dom.input.value = "@/frontend";
+    commands.updateSlashMenu();
+    await new Promise((r) => setTimeout(r, 10));
+    const staleNavigation = dom.slashMenu.querySelector(".slash-item");
+    assert.ok(staleNavigation);
+    staleNavigation.dispatchEvent(
+      new (globalThis.window as any).MouseEvent("mousedown", {
+        bubbles: true,
+      }),
+    );
+    await new Promise((r) => setTimeout(r, 10));
+    assert.match(dom.messages.textContent, /navigation failed/);
+    state.taskId = "api";
+
     // Prefixes remain useful for the picker, but raw submission requires an
     // exact path and never silently selects the prefix match.
     await taskCommand.executeTaskCommand("@../tes");
