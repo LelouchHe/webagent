@@ -638,7 +638,8 @@ describe("slash menu — Tab vs Click behavior", () => {
       (row: any) => row.querySelector(".slash-primary")?.textContent,
     );
     assert.ok(rootRows.includes("backend/"));
-    assert.equal(rootRows.includes("."), false);
+    assert.ok(rootRows.includes("."));
+    assert.equal(rootRows.includes("/"), false);
   });
 
   // -----------------------------------------------------------------------

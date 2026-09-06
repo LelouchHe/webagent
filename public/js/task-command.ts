@@ -527,6 +527,24 @@ function addDirectoryEntries(args: {
   }
 }
 
+function addCurrentTargetEntry(args: {
+  candidates: Candidate[];
+  directory: TaskNode;
+  map: Map<string, TaskNode>;
+  marker: string;
+}): void {
+  const fullPath = taskNodePath(args.directory, args.map);
+  args.candidates.push(
+    makeCandidate({
+      marker: args.marker,
+      targetPath: fullPath === "/" ? "/." : `${fullPath}/.`,
+      remainder: "",
+      primary: ".",
+      secondary: "navigate",
+    }),
+  );
+}
+
 function addParentBrowseEntry(args: {
   candidates: Candidate[];
   directory: TaskNode;
@@ -570,6 +588,12 @@ async function buildMessageCandidates(parsed: {
   if (parsed.path.trailingSlash) {
     const browsed = getChildrenAtPath(state.taskId, tasks, parsed.path);
     if (!browsed) return [];
+    addCurrentTargetEntry({
+      candidates,
+      directory: browsed.directory,
+      map,
+      marker: parsed.marker,
+    });
     addParentBrowseEntry({
       candidates,
       directory: browsed.directory,
@@ -587,6 +611,12 @@ async function buildMessageCandidates(parsed: {
   }
 
   if (parsed.target === "") {
+    addCurrentTargetEntry({
+      candidates,
+      directory: current,
+      map,
+      marker: parsed.marker,
+    });
     addParentBrowseEntry({
       candidates,
       directory: current,
@@ -606,7 +636,7 @@ async function buildMessageCandidates(parsed: {
   const resolved = resolveTaskPathNodes(state.taskId, tasks, parsed.path);
   for (const node of resolved) {
     const fullPath = taskNodePath(node, map);
-    if (node.children.length > 0) {
+    if (node.children.length > 0 && parsed.path.segments.at(-1) !== ".") {
       candidates.push(
         makeBrowseCandidate({
           marker: parsed.marker,
@@ -736,7 +766,7 @@ async function executeMessageTask(
   const resolved = resolveMessageTargets(currentTaskId, tasks, path);
   const scope = getLocalScope(currentTaskId, tasks);
   const scopeIds = new Set(scope.map((n) => n.id));
-  const matches = resolved.filter((n) => n.id !== currentTaskId);
+  const matches = resolved;
   if (matches.length !== 1) {
     addSystem(`err: Select one task candidate for '${target}'`);
     return;
