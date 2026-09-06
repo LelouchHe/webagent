@@ -22,6 +22,12 @@ import { compactTaskHistoryRecord } from "./task-history.ts";
 const DEFAULT_QUERY_LIMIT = 5;
 const MAX_QUERY_LIMIT = 100;
 
+function taskReference(title: string): string {
+  if (!/\s/.test(title)) return `@${title}`;
+  const escaped = title.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+  return `@"${escaped}"`;
+}
+
 export interface McpTaskCollaborationEvent {
   messageId: string;
   sourceTaskId: string;
@@ -242,25 +248,14 @@ export function createMcpTaskToolHost(deps: {
       const cwd = isAbsolute(requestedCwd)
         ? requestedCwd
         : resolve(source.cwd, requestedCwd);
-      const messageId = randomUUID();
-      const deliveryId = randomUUID();
       const created = await tasks.createTask(bridge, cwd, source.id, "agent", {
         parentId: source.id,
         title: input.title,
-        brief: input.brief,
         model: input.model,
         thinking: input.thinking,
-        workflowStatus: "running",
-        initialMessage: {
-          id: messageId,
-          deliveryId,
-          sourceTaskId: source.id,
-          sourceActor: "agent",
-          body: input.brief,
-        },
       });
       const taskCreatedMessageId = randomUUID();
-      const taskCreatedBody = `Created task “${input.title}”: ${input.brief}`;
+      const taskCreatedBody = `Created task ${taskReference(input.title)}`;
       store.saveEvent(
         source.id,
         "system_message",
@@ -281,13 +276,6 @@ export function createMcpTaskToolHost(deps: {
         targetTaskId: created.taskId,
         body: taskCreatedBody,
       });
-      broadcastCollaboration?.({
-        messageId,
-        sourceTaskId: source.id,
-        targetTaskId: created.taskId,
-        body: input.brief,
-      });
-      void tasks.drainCollaborationDeliveries(bridge, created.taskId);
       return { taskId: created.taskId };
     },
 

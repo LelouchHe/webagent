@@ -371,7 +371,6 @@ describe("createMcpEndpoint", () => {
           name: "task_create",
           arguments: {
             title: "child",
-            brief: "do work",
             cwd: null,
             model: "model-x",
             thinking: null,
@@ -443,7 +442,6 @@ describe("createMcpEndpoint", () => {
           "web-1",
           {
             title: "child",
-            brief: "do work",
             cwd: undefined,
             model: "model-x",
             thinking: undefined,

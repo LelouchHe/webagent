@@ -67,17 +67,8 @@ describe("MCP Task tool host", () => {
     type CreateOptions = {
       parentId: string;
       title: string;
-      brief: string;
       model?: string;
       thinking?: string;
-      workflowStatus: string;
-      initialMessage: {
-        id: string;
-        deliveryId: string;
-        sourceTaskId: string;
-        sourceActor: string;
-        body: string;
-      };
     };
     let createCall:
       | {
@@ -98,7 +89,6 @@ describe("MCP Task tool host", () => {
         createCall = { cwd, inheritFromTaskId, source, options };
         return { taskId: "created-child" };
       },
-      drainCollaborationDeliveries: async () => true,
     } as unknown as TaskManager;
     const host = createMcpTaskToolHost({
       store,
@@ -109,7 +99,6 @@ describe("MCP Task tool host", () => {
     assert.deepEqual(
       await host.create("alpha", {
         title: "New child",
-        brief: "Implement the child work",
         cwd: "subdir",
         model: "model-new",
         thinking: "high",
@@ -124,30 +113,15 @@ describe("MCP Task tool host", () => {
       {
         parentId: createCall.options.parentId,
         title: createCall.options.title,
-        brief: createCall.options.brief,
         model: createCall.options.model,
         thinking: createCall.options.thinking,
-        workflowStatus: createCall.options.workflowStatus,
-        sourceTaskId: createCall.options.initialMessage.sourceTaskId,
-        sourceActor: createCall.options.initialMessage.sourceActor,
-        body: createCall.options.initialMessage.body,
       },
       {
         parentId: "alpha",
         title: "New child",
-        brief: "Implement the child work",
         model: "model-new",
         thinking: "high",
-        workflowStatus: "running",
-        sourceTaskId: "alpha",
-        sourceActor: "agent",
-        body: "Implement the child work",
       },
-    );
-    assert.match(createCall.options.initialMessage.id, /^[0-9a-f-]{36}$/);
-    assert.match(
-      createCall.options.initialMessage.deliveryId,
-      /^[0-9a-f-]{36}$/,
     );
     assert.match(store.getEvents("alpha").at(-1)?.data ?? "", /created-child/);
   });

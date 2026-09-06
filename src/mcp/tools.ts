@@ -64,7 +64,6 @@ export interface McpTaskCancelResult {
 
 export interface McpTaskCreateInput {
   title: string;
-  brief: string;
   cwd?: string;
   model?: string;
   thinking?: string;
@@ -225,7 +224,8 @@ export function registerMcpTools(
     {
       description:
         "Create a direct child Task for independent work. " +
-        "The new Task starts with the supplied title and brief; cwd, model, and thinking are optional overrides. " +
+        "The new Task starts with the supplied title; cwd, model, and thinking are optional overrides. " +
+        "Use task_send to deliver its first work instruction after creation. " +
         "The server returns the new Task ID or an error.",
       inputSchema: {
         title: z
@@ -235,7 +235,6 @@ export function registerMcpTools(
           .max(256)
           .refine((value) => !value.includes("/"), "Title must not contain '/'")
           .describe("Task title"),
-        brief: BODY.describe("Initial objective and work instructions"),
         cwd: z
           .string()
           .trim()
@@ -268,12 +267,11 @@ export function registerMcpTools(
           ),
       },
     },
-    async ({ title, brief, cwd, model, thinking }) => {
+    async ({ title, cwd, model, thinking }) => {
       if (!host) return unavailable();
       return jsonContent(
         await host.create(taskId, {
           title,
-          brief,
           cwd: cwd ?? undefined,
           model: model ?? undefined,
           thinking: thinking ?? undefined,
