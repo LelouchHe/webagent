@@ -581,7 +581,7 @@ describe("slash menu — Tab vs Click behavior", () => {
     commands.updateSlashMenu();
     await new Promise((r) => setTimeout(r, 10));
     assert.match(dom.slashMenu.textContent, /\.\./);
-    assert.match(dom.slashMenu.textContent, /navigate/);
+    assert.match(dom.slashMenu.textContent, /idle/);
     assert.doesNotMatch(dom.slashMenu.textContent, /parent · idle/);
     assert.doesNotMatch(dom.slashMenu.textContent, /sibling/);
 
@@ -612,37 +612,38 @@ describe("slash menu — Tab vs Click behavior", () => {
       })),
       [
         {
-          primary: "tests",
-          secondary: "navigate · type message to send",
-          prefix: "",
+          primary: "tests/",
+          secondary: "type message to send",
+          prefix: "›",
         },
-        { primary: "unit", secondary: "idle · navigate", prefix: "" },
+        { primary: "unit", secondary: "idle", prefix: "" },
       ],
     );
 
-    // The current directory Task is selected through `.`, not by deleting the
-    // slash from its browse entry.
+    // The parent Task target is displayed with a slash when it has children,
+    // but selecting it completes the concrete path without that slash.
     dom.input.value = "@/backend/";
     commands.updateSlashMenu();
     await new Promise((r) => setTimeout(r, 10));
     const currentTarget = [
       ...dom.slashMenu.querySelectorAll(".slash-item"),
     ].find(
-      (row: any) => row.querySelector(".slash-primary")?.textContent === ".",
+      (row: any) =>
+        row.querySelector(".slash-primary")?.textContent === "backend/",
     ) as HTMLElement;
     assert.ok(currentTarget);
     assert.equal(
       currentTarget.querySelector(".slash-secondary")?.textContent,
-      "navigate · type message to send",
+      "type message to send",
     );
     currentTarget.dispatchEvent(
       new (globalThis.window as any).MouseEvent("mousedown", {
         bubbles: true,
       }),
     );
-    assert.equal(dom.input.value, "@/backend/.");
+    assert.equal(dom.input.value, "@/backend");
     await new Promise((r) => setTimeout(r, 10));
-    assert.match(dom.slashMenu.textContent, /navigate · type message to send/);
+    assert.match(dom.slashMenu.textContent, /type message to send/);
 
     // Raw Enter dispatch on a browse path reopens the next path layer rather
     // than treating the path as a message target.
@@ -661,7 +662,7 @@ describe("slash menu — Tab vs Click behavior", () => {
     const rootRows = [...dom.slashMenu.querySelectorAll(".slash-item")].map(
       (row: any) => row.querySelector(".slash-primary")?.textContent,
     );
-    assert.ok(rootRows.includes("backend"));
+    assert.ok(rootRows.includes("backend/"));
     assert.ok(rootRows.includes("."));
     assert.equal(rootRows.includes("/"), false);
 

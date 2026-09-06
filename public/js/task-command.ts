@@ -220,6 +220,8 @@ interface CreateCandidateArgs {
   secondary?: string;
   /** Alternate action hint shown only while the row is selected. */
   selectedSecondary?: string;
+  /** Prefix used for expandable target rows. */
+  prefix?: Candidate["prefix"];
   /** Rows without onSelect complete via fill on click instead of executing. */
   onSelect?: () => void | Promise<void>;
 }
@@ -240,7 +242,7 @@ function makeCandidate(args: CreateCandidateArgs): Candidate {
       continueOnFill: true,
       onSelect: args.onSelect,
     },
-    prefix: "",
+    prefix: args.prefix ?? "",
     kind: "data",
   };
 }
@@ -251,6 +253,7 @@ function makeNavigationCandidate(args: {
   primary: string;
   secondary: string;
   taskId: string;
+  prefix?: Candidate["prefix"];
 }): Candidate {
   return {
     spec: {
@@ -261,7 +264,7 @@ function makeNavigationCandidate(args: {
         await switchToTask(args.taskId);
       },
     },
-    prefix: "",
+    prefix: args.prefix ?? "",
     kind: "data",
   };
 }
@@ -307,8 +310,8 @@ export async function buildTaskCommandCandidates(
             primary: parsed.path.trailingSlash
               ? "browse · remove / to select this Task"
               : parsed.marker === "@!"
-                ? "navigate · type a message to force-send"
-                : "navigate · type a message to send",
+                ? "type message to force-send"
+                : "type message to send",
           },
           prefix: parsed.path.trailingSlash ? "›" : "↵",
           kind: "placeholder",
@@ -474,15 +477,22 @@ function addTaskTargetEntry(args: {
   marker: string;
   scopeIds: Set<string>;
 }): void {
+  const expandable =
+    args.node.children.length > 0 &&
+    args.primary !== ".." &&
+    args.primary !== ".";
+  const displayPrimary = expandable ? `${args.primary}/` : args.primary;
+  const prefix: Candidate["prefix"] = expandable ? "›" : "";
   if (args.scopeIds.has(args.node.id)) {
     args.candidates.push(
       makeCandidate({
         marker: args.marker,
         targetPath: args.targetPath,
         remainder: "",
-        primary: args.primary,
-        secondary: "navigate",
-        selectedSecondary: "navigate · type message to send",
+        primary: displayPrimary,
+        secondary: statusLabel(args.node),
+        selectedSecondary: "type message to send",
+        prefix,
       }),
     );
   } else {
@@ -490,9 +500,10 @@ function addTaskTargetEntry(args: {
       makeNavigationCandidate({
         marker: args.marker,
         targetPath: args.targetPath,
-        primary: args.primary,
-        secondary: `${statusLabel(args.node)} · navigate`,
+        primary: displayPrimary,
+        secondary: statusLabel(args.node),
         taskId: args.node.id,
+        prefix,
       }),
     );
   }
@@ -578,17 +589,16 @@ async function buildMessageCandidates(parsed: {
   if (parsed.path.trailingSlash) {
     const browsed = getChildrenAtPath(state.taskId, tasks, parsed.path);
     if (!browsed) return [];
-    addCurrentTargetEntry({
+    addTaskTargetEntry({
       candidates,
-      directory: browsed.directory,
-      map,
-      marker: parsed.marker,
-      scopeIds,
-    });
-    addParentTargetEntry({
-      candidates,
-      directory: browsed.directory,
-      map,
+      node: browsed.directory,
+      targetPath:
+        taskNodePath(browsed.directory, map) === "/"
+          ? "/."
+          : taskNodePath(browsed.directory, map),
+      primary: browsed.directory.parentId
+        ? taskNodeName(browsed.directory)
+        : ".",
       marker: parsed.marker,
       scopeIds,
     });
