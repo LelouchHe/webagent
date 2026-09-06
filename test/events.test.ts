@@ -2537,7 +2537,28 @@ describe("events", () => {
         assert.equal(dom.messages.children.length, 0);
       });
 
-      it("renders collaboration messages as system rows only in their projected task", () => {
+      it("renders system messages directly in their projected task", () => {
+        state.taskId = "s1";
+        events.handleEvent({
+          type: "system_message",
+          taskId: "s1",
+          kind: "collaboration",
+          body: "@what sent @child-a: please review",
+        });
+        events.handleEvent({
+          type: "system_message",
+          taskId: "s2",
+          kind: "collaboration",
+          body: "@what sent @child-a: please review",
+        });
+        assert.equal(dom.messages.children.length, 1);
+        assert.match(
+          dom.messages.textContent ?? "",
+          /@what sent @child-a: please review/,
+        );
+      });
+
+      it("keeps legacy collaboration events readable", () => {
         state.taskId = "s1";
         events.handleEvent({
           type: "collaboration_message",
@@ -2596,7 +2617,7 @@ describe("events", () => {
             targetTaskId: "s1",
             targetLabel: "child-a",
             role: "target",
-            body: "please review",
+            body: "@what sent @child-a: please review",
           },
           [],
           0,
@@ -2607,7 +2628,7 @@ describe("events", () => {
         );
       });
 
-      it("replays legacy collaboration rows without labels via short ids", () => {
+      it("replays legacy collaboration rows without labels via raw body", () => {
         events.replayEvent(
           "system_message",
           {
@@ -2621,9 +2642,24 @@ describe("events", () => {
           [],
           0,
         );
+        assert.match(dom.messages.textContent ?? "", /please review/);
+        assert.doesNotMatch(dom.messages.textContent ?? "", /@s0 sent @s1:/);
+      });
+
+      it("replays task creation system messages directly", () => {
+        events.replayEvent(
+          "system_message",
+          {
+            kind: "task_created",
+            taskId: "child-1",
+            body: 'Created Task "Child" (task id child-1).',
+          },
+          [],
+          0,
+        );
         assert.match(
           dom.messages.textContent ?? "",
-          /@s0 sent @s1: please review/,
+          /Created Task "Child" \(task id child-1\)/,
         );
       });
 

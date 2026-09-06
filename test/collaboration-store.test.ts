@@ -60,10 +60,12 @@ describe("Store collaboration records", () => {
       sourceLabel?: string;
       targetLabel?: string;
       body?: string;
+      messageBody?: string;
     };
     assert.equal(data.sourceLabel, "a1");
     assert.equal(data.targetLabel, "a2");
-    assert.equal(data.body, "请检查接口定义");
+    assert.equal(data.body, "@a1 sent @a2: 请检查接口定义");
+    assert.equal(data.messageBody, "请检查接口定义");
     void created;
   });
 

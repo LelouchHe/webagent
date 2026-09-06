@@ -1222,19 +1222,19 @@ export function createRequestHandler(
           }
           return;
         }
+        const displayBody = `@${sourceTask.title ?? sourceTask.id.slice(0, 8)} sent @${targetTask.title ?? targetTask.id.slice(0, 8)}: ${created.message.body}`;
         for (const projection of store.listCollaborationProjections(
           messageId,
         )) {
           sseManager.broadcast({
-            type: "collaboration_message",
+            type: "system_message",
             taskId: projection.task_id,
+            kind: "collaboration",
             messageId,
             sourceTaskId,
-            sourceLabel: sourceTask.title ?? sourceTask.id.slice(0, 8),
             targetTaskId: targetTask.id,
-            targetLabel: targetTask.title ?? targetTask.id.slice(0, 8),
             role: projection.role,
-            body: created.message.body,
+            body: displayBody,
           });
         }
         const result = {

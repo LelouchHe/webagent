@@ -259,6 +259,16 @@ export type AgentEvent =
       }>;
     }
   | {
+      type: "system_message";
+      taskId: string;
+      kind: string;
+      body: string;
+      messageId?: string;
+      sourceTaskId?: string;
+      targetTaskId?: string;
+      role?: "source" | "target" | "supervisor";
+    }
+  | {
       type: "collaboration_message";
       taskId: string;
       messageId: string;

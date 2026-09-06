@@ -206,15 +206,12 @@ export function compactTaskHistoryRecord(record: {
       result = joinText(["Error:", textValue(data.message) || "Unknown error"]);
       break;
     case "system_message": {
-      const source =
-        textValue(data.sourceLabel) || textValue(data.sourceTaskId);
-      const target =
-        textValue(data.targetLabel) || textValue(data.targetTaskId);
-      const route = source && target ? ` (${source} → ${target})` : "";
-      result = joinText([
-        `Collaboration message${route}:`,
-        textValue(data.body) || "(empty message)",
-      ]);
+      const body =
+        data.messageBody === undefined &&
+        (textValue(data.sourceLabel) || textValue(data.targetLabel))
+          ? `@${textValue(data.sourceLabel) || textValue(data.sourceTaskId)} sent @${textValue(data.targetLabel) || textValue(data.targetTaskId)}: ${textValue(data.body)}`
+          : textValue(data.body);
+      result = joinText([body || "(empty system message)"]);
       break;
     }
     case "task_update":

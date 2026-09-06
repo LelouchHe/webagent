@@ -316,7 +316,7 @@ export function createMcpTaskToolHost(deps: {
 
     async send(sourceTaskId, targetTaskId, body) {
       const bridge = getBridge();
-      const { target } = requireLocalTarget(sourceTaskId, targetTaskId);
+      const { source, target } = requireLocalTarget(sourceTaskId, targetTaskId);
       const created = store.createCollaborationMessage({
         id: randomUUID(),
         deliveryId: randomUUID(),
@@ -325,11 +325,13 @@ export function createMcpTaskToolHost(deps: {
         sourceActor: "agent",
         body,
       });
+      const sourceLabel = source.title ?? source.id.slice(0, 8);
+      const targetLabel = target.title ?? target.id.slice(0, 8);
       broadcastCollaboration?.({
         messageId: created.message.id,
         sourceTaskId,
         targetTaskId: target.id,
-        body: created.message.body,
+        body: `@${sourceLabel} sent @${targetLabel}: ${created.message.body}`,
       });
       if (bridge) {
         void tasks.drainCollaborationDeliveries(bridge, target.id);
@@ -341,11 +343,13 @@ export function createMcpTaskToolHost(deps: {
       const { parentTaskId, collaborationMessageId } =
         store.recordAgentWorkflowUpdate(sourceTaskId, status, body);
       if (collaborationMessageId && parentTaskId) {
+        const source = requireTask(sourceTaskId);
+        const target = requireTask(parentTaskId);
         broadcastCollaboration?.({
           messageId: collaborationMessageId,
           sourceTaskId,
           targetTaskId: parentTaskId,
-          body: `Task status: ${status}\n${body}`,
+          body: `@${source.title ?? source.id.slice(0, 8)} sent @${target.title ?? target.id.slice(0, 8)}: Task status: ${status}\n${body}`,
         });
       }
       if (bridge && parentTaskId) {

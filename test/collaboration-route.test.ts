@@ -209,7 +209,7 @@ describe("S3 collaboration write routes", () => {
     assert.equal(delivery.status, "delivered");
     assert.deepEqual(
       broadcasts
-        .filter((event) => event.type === "collaboration_message")
+        .filter((event) => event.type === "system_message")
         .map((event) => event.taskId)
         .sort(),
       ["parent", "sibling"],

@@ -1264,8 +1264,8 @@ export function replayEvent(
       renderMessageCard(d as unknown as AgentEvent & { type: "message" });
       break;
     case "system_message": {
-      if (d.kind === "collaboration") {
-        addSystem(collaborationLine(d));
+      if (typeof d.body === "string" && d.body.trim()) {
+        addSystem(d.body);
       }
       break;
     }
@@ -2389,6 +2389,13 @@ export function handleEvent(msg: AgentEvent) {
       finishAssistant();
       addSystem(`err: ${msg.message}`);
       if (state.busyKind !== "bash") setBusy(false);
+      break;
+
+    case "system_message":
+      if (msg.taskId === state.taskId) {
+        addSystem(msg.body);
+        scrollToBottom();
+      }
       break;
 
     case "collaboration_message":

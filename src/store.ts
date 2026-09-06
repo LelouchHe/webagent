@@ -1543,6 +1543,12 @@ export class Store {
     ) {
       insertProjection.run(input.id, lcaTaskId, "supervisor", createdAt);
     }
+    const sourceLabel =
+      this.getTask(input.sourceTaskId)?.title ?? input.sourceTaskId.slice(0, 8);
+    const targetLabel =
+      this.getTask(input.directTargetTaskId)?.title ??
+      input.directTargetTaskId.slice(0, 8);
+    const displayBody = `@${sourceLabel} sent @${targetLabel}: ${input.body}`;
     for (const projection of this.listCollaborationProjections(input.id)) {
       this.saveEvent(
         projection.task_id,
@@ -1551,15 +1557,12 @@ export class Store {
           kind: "collaboration",
           messageId: input.id,
           sourceTaskId: input.sourceTaskId,
-          sourceLabel:
-            this.getTask(input.sourceTaskId)?.title ??
-            input.sourceTaskId.slice(0, 8),
+          sourceLabel,
           targetTaskId: input.directTargetTaskId,
-          targetLabel:
-            this.getTask(input.directTargetTaskId)?.title ??
-            input.directTargetTaskId.slice(0, 8),
+          targetLabel,
           role: projection.role,
-          body: input.body,
+          body: displayBody,
+          messageBody: input.body,
         },
         { from_ref: `msg:${input.id}` },
       );

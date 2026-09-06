@@ -158,17 +158,14 @@ const mcpTaskTools = createMcpTaskToolHost({
   getBridge: () => bridge,
   cancelTimeoutMs: config.limits.cancel_timeout,
   broadcastCollaboration: ({ messageId, sourceTaskId, targetTaskId, body }) => {
-    const source = store.getTaskIncludingDeleted(sourceTaskId);
-    const target = store.getTaskIncludingDeleted(targetTaskId);
     for (const projection of store.listCollaborationProjections(messageId)) {
       sseManager.broadcast({
-        type: "collaboration_message",
+        type: "system_message",
         taskId: projection.task_id,
+        kind: "collaboration",
         messageId,
         sourceTaskId,
-        sourceLabel: source?.title ?? sourceTaskId.slice(0, 8),
         targetTaskId,
-        targetLabel: target?.title ?? targetTaskId.slice(0, 8),
         role: projection.role,
         body,
       });
