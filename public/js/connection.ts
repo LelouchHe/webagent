@@ -237,8 +237,10 @@ async function openStream(gen: number, activeTaskId: string | null) {
     void api.postVisibility(state.clientId, true, state.taskId ?? undefined);
   });
 
-  // Load task immediately via REST — parallel with SSE connection
-  void initializeTaskAndIntent();
+  // Load task immediately via REST — parallel with SSE connection. Pass the
+  // task that was active when this connection attempt began so a hashless
+  // Root reconnect cannot be mistaken for a fresh startup.
+  void initializeTaskAndIntent(activeTaskId);
 }
 
 async function recoverAfterHandshake(
@@ -266,12 +268,14 @@ async function recoverAfterHandshake(
   if (loaded) scrollToBottom(false);
 }
 
-async function initializeTaskAndIntent(): Promise<void> {
-  await initTask();
+async function initializeTaskAndIntent(
+  reconnectTaskId: string | null,
+): Promise<void> {
+  await initTask(reconnectTaskId);
   await processStartupMessageIntent();
 }
 
-async function initTask() {
+async function initTask(reconnectTaskId: string | null = null) {
   setConnectionStatus("connecting", "task loading");
   const gen = state.taskSwitchGen;
 
@@ -280,6 +284,16 @@ async function initTask() {
   // Incremental reconnect: same task still in memory — skip DOM wipe
   if (existingId && existingId === state.taskId) {
     await resumeAndLoad(existingId, true, gen);
+    if (gen !== state.taskSwitchGen) return;
+    scrollToBottom(false);
+    return;
+  }
+
+  // A hashless reconnect must keep the task already shown in the browser.
+  // Root intentionally has no hash, so this guard must precede hashless
+  // recent-task selection.
+  if (!existingId && reconnectTaskId && state.taskId === reconnectTaskId) {
+    await resumeAndLoad(reconnectTaskId, true, gen);
     if (gen !== state.taskSwitchGen) return;
     scrollToBottom(false);
     return;

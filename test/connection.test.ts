@@ -508,6 +508,36 @@ describe("connection", () => {
     assert.equal(state.lastEventSeq, 2);
   });
 
+  it("keeps hashless Root active across SSE reconnect", async () => {
+    state.taskId = "root";
+    let listCalls = 0;
+    setFetch(async (url: string) => {
+      if (url.includes("/visibility")) return mockResponse({});
+      if (url === "/api/v1/tasks") {
+        listCalls++;
+        return mockResponse([{ id: "recent-child", hasUserInput: true }]);
+      }
+      if (url === "/api/v1/tasks/root")
+        return mockResponse(taskResponse("root"));
+      if (url.startsWith("/api/v1/tasks/root/events")) return mockResponse([]);
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+
+    connection.connect();
+    await flush();
+    assert.equal(state.taskId, "root");
+    const firstES = await latestES();
+    firstES.onerror?.();
+    const reconnectIndex = timeoutCalls.indexOf(RECONNECT_DELAY_MS);
+    assert.ok(reconnectIndex >= 0);
+    timeoutFns[reconnectIndex]();
+    await flush(30);
+
+    assert.equal(state.taskId, "root");
+    assert.equal(location.hash, "");
+    assert.equal(listCalls, 0);
+  });
+
   it("uses incremental sync on reconnect when taskId matches hash", async () => {
     history.replaceState(null, "", "/#incr-task");
     state.taskId = "incr-task";
