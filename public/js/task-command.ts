@@ -241,6 +241,27 @@ function makeCandidate(args: CreateCandidateArgs): Candidate {
   };
 }
 
+function makeNavigationCandidate(args: {
+  marker: string;
+  targetPath: string;
+  primary: string;
+  secondary: string;
+  taskId: string;
+}): Candidate {
+  return {
+    spec: {
+      primary: args.primary,
+      secondary: args.secondary,
+      fill: `${args.marker}${args.targetPath}`,
+      onSelect: async () => {
+        await switchToTask(args.taskId);
+      },
+    },
+    prefix: "",
+    kind: "data",
+  };
+}
+
 function makeBrowseCandidate(args: {
   marker: string;
   targetPath: string;
@@ -499,26 +520,39 @@ function addDirectoryEntries(args: {
   candidates: Candidate[];
   directory: TaskNode;
   marker: string;
+  scopeIds: Set<string>;
   map: Map<string, TaskNode>;
 }): void {
   for (const node of args.directory.children.sort(compareTaskNodes)) {
     const fullPath = taskNodePath(node, args.map);
+    const reachable = args.scopeIds.has(node.id);
+    if (reachable) {
+      args.candidates.push(
+        makeCandidate({
+          marker: args.marker,
+          targetPath: fullPath,
+          remainder: "",
+          primary: taskNodeName(node),
+          secondary: `${statusLabel(node)} · type message to send`,
+        }),
+      );
+    } else {
+      args.candidates.push(
+        makeNavigationCandidate({
+          marker: args.marker,
+          targetPath: fullPath,
+          primary: taskNodeName(node),
+          secondary: `${statusLabel(node)} · navigate`,
+          taskId: node.id,
+        }),
+      );
+    }
     if (node.children.length > 0) {
       args.candidates.push(
         makeBrowseCandidate({
           marker: args.marker,
           targetPath: fullPath,
           fillPath: fullPath,
-          primary: taskNodeName(node),
-          secondary: statusLabel(node),
-        }),
-      );
-    } else {
-      args.candidates.push(
-        makeCandidate({
-          marker: args.marker,
-          targetPath: fullPath,
-          remainder: "",
           primary: taskNodeName(node),
           secondary: statusLabel(node),
         }),
@@ -535,12 +569,12 @@ function addCurrentTargetEntry(args: {
 }): void {
   const fullPath = taskNodePath(args.directory, args.map);
   args.candidates.push(
-    makeCandidate({
+    makeNavigationCandidate({
       marker: args.marker,
       targetPath: fullPath === "/" ? "/." : `${fullPath}/.`,
-      remainder: "",
       primary: ".",
       secondary: "navigate",
+      taskId: args.directory.id,
     }),
   );
 }
@@ -583,6 +617,7 @@ async function buildMessageCandidates(parsed: {
   const map = buildTaskTree(tasks);
   const current = map.get(state.taskId);
   if (!current) return [];
+  const scopeIds = new Set(getLocalScope(state.taskId, tasks).map((n) => n.id));
 
   const candidates: Candidate[] = [];
   if (parsed.path.trailingSlash) {
@@ -605,6 +640,7 @@ async function buildMessageCandidates(parsed: {
       candidates,
       directory: browsed.directory,
       marker: parsed.marker,
+      scopeIds,
       map,
     });
     return candidates;
@@ -628,6 +664,7 @@ async function buildMessageCandidates(parsed: {
       candidates,
       directory: current,
       marker: parsed.marker,
+      scopeIds,
       map,
     });
     return candidates;
@@ -636,22 +673,34 @@ async function buildMessageCandidates(parsed: {
   const resolved = resolveTaskPathNodes(state.taskId, tasks, parsed.path);
   for (const node of resolved) {
     const fullPath = taskNodePath(node, map);
-    if (node.children.length > 0 && parsed.path.segments.at(-1) !== ".") {
-      candidates.push(
-        makeBrowseCandidate({
-          marker: parsed.marker,
-          targetPath: fullPath,
-          fillPath: fullPath,
-          primary: taskNodeName(node),
-          secondary: statusLabel(node),
-        }),
-      );
-    } else {
+    const reachable = scopeIds.has(node.id);
+    if (reachable) {
       candidates.push(
         makeCandidate({
           marker: parsed.marker,
           targetPath: fullPath,
           remainder: "",
+          primary: taskNodeName(node),
+          secondary: `${statusLabel(node)} · type message to send`,
+        }),
+      );
+    } else {
+      candidates.push(
+        makeNavigationCandidate({
+          marker: parsed.marker,
+          targetPath: fullPath,
+          primary: taskNodeName(node),
+          secondary: `${statusLabel(node)} · navigate`,
+          taskId: node.id,
+        }),
+      );
+    }
+    if (node.children.length > 0) {
+      candidates.push(
+        makeBrowseCandidate({
+          marker: parsed.marker,
+          targetPath: fullPath,
+          fillPath: fullPath,
           primary: taskNodeName(node),
           secondary: statusLabel(node),
         }),
