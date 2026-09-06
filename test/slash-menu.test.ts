@@ -608,6 +608,10 @@ describe("slash menu — Tab vs Click behavior", () => {
         row.querySelector(".slash-primary")?.textContent === "tests",
     ) as HTMLElement;
     assert.ok(leafTarget);
+    assert.equal(
+      leafTarget.querySelector(".slash-secondary")?.textContent,
+      "navigate",
+    );
     leafTarget.dispatchEvent(
       new (globalThis.window as any).MouseEvent("mousedown", {
         bubbles: true,
