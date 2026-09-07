@@ -194,9 +194,11 @@ important earlier context out of the active model context:
 task_query({ limit: 10 })
 ```
 
-With no `task_id`, this reads the current Task's persisted, compact history. Use
-the cursor in the result to read older entries. Task history survives context
-compaction and `clear`.
+With no `task_id`, this reads the current Task's persisted history as a
+compact projection. Use the cursor in the result to read older entries. The
+history itself is not compacted or cleared: `/compact` changes the active model
+context, and `/clear` rotates the active execution while keeping the Task's
+history.
 
 When one compact entry is not enough, expand the specific sequence returned by
 `task_query`:

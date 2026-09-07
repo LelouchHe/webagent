@@ -106,13 +106,18 @@ and causal mechanism. Prefer references and concise explanations over copying
 large files or entire transcripts.
 
 History inspection is an exception path, but it also applies to the current
-Task. When `compact` or `clear` has moved earlier context out of the active
-model context, use `task_query` without a target to read the current Task's
-persisted history, then use `task_get_record` for one specific event when the
-compact entry is not enough. Task history survives context compaction and
-`clear`; these tools expose that history but do not recreate hidden model
-reasoning or silently restore the old context. Do not make history queries the
-normal way of passing results between Tasks.
+Task. Task history is persisted in the database and is not compacted or cleared.
+The word `compact` has two separate meanings here: `task_query` returns a
+compact projection of history, while `/compact` changes the active model
+context. Likewise, `/clear` rotates the active execution while keeping the
+Task's history.
+
+After `/compact` or `/clear`, use `task_query` without a target to read the
+current Task's persisted history, then use `task_get_record` for one specific
+event when the compact entry is not enough. These tools expose stored events;
+they do not recreate hidden model reasoning or silently restore the old model
+context. Do not make history queries the normal way of passing results between
+Tasks.
 
 ## Keep the workflow proportional
 

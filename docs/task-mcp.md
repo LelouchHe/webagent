@@ -65,7 +65,10 @@ payload; it is not a semantic or full-text query.
 
 The current Task's persisted history remains available after context
 compaction or `clear`, so omitting `task_id` is also the way to recover earlier
-context for the current Task. This exposes stored events; it does not restore
+context for the current Task. The history itself is not compacted by
+`task_query`: that tool only returns a compact projection. `/compact` changes
+the active model context, while `/clear` rotates the active execution and keeps
+the Task's history. These tools expose stored events; they do not restore
 hidden reasoning or automatically rebuild the previous model context.
 
 ```ts
