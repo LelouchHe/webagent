@@ -23,6 +23,18 @@ import { HTTP_STATUS } from "../http-status.ts";
 /** Uniquely-named WebAgent MCP server appended to an ACP session's mcpServers. */
 export const MCP_SERVER_NAME = "webagent";
 
+/**
+ * Short, transport-level usage guidance advertised through MCP initialize.
+ * Keep this generic and bounded: detailed workflow guidance belongs in tool
+ * descriptions, the Task Manual, or an on-demand skill.
+ */
+export const MCP_SERVER_INSTRUCTIONS = [
+  "Use task_send for normal Task coordination and task_update(done|blocked) for lifecycle handoffs.",
+  "After dispatching work, end the current turn; do not poll with task_query.",
+  "Use task_query and task_get_record only for history recovery, diagnosis, or audit.",
+  "Omit task_id to inspect the current Task's persisted history.",
+].join("\n");
+
 const DEFAULT_PATH = "/mcp";
 
 /**
@@ -129,7 +141,7 @@ export function createMcpEndpoint(
     // --- MCP protocol (stateless, one server+transport per request) ---
     const server = new McpServer(
       { name: MCP_SERVER_NAME, version: "0.1.0" },
-      {},
+      { instructions: MCP_SERVER_INSTRUCTIONS },
     );
     registerMcpTools(server, taskId, options.taskTools);
     const transport = new StreamableHTTPServerTransport({

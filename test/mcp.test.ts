@@ -3,7 +3,11 @@ import assert from "node:assert/strict";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 import { CapabilityStore } from "../src/mcp/capability.ts";
-import { buildMcpServerEntry, createMcpEndpoint } from "../src/mcp/server.ts";
+import {
+  buildMcpServerEntry,
+  createMcpEndpoint,
+  MCP_SERVER_INSTRUCTIONS,
+} from "../src/mcp/server.ts";
 
 // --- CapabilityStore ---
 
@@ -247,9 +251,15 @@ describe("createMcpEndpoint", () => {
     );
     assert.equal(init.status, 200);
     const initBody = (await init.json()) as {
-      result?: { serverInfo?: { name: string } };
+      result?: {
+        serverInfo?: { name: string };
+        instructions?: string;
+      };
     };
     assert.equal(initBody.result?.serverInfo?.name, "webagent");
+    const initResult = initBody.result;
+    assert.ok(initResult);
+    assert.equal(initResult.instructions, MCP_SERVER_INSTRUCTIONS);
 
     // notifications/initialized — fire and forget, must not error
     const notif = await mcpPost(

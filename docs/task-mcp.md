@@ -17,6 +17,23 @@ can access only that task plus its parent, direct children, and siblings.
 The server is additive. It does not replace an agent's own MCP configuration or
 native tools.
 
+## Server instructions
+
+The server advertises a short, generic usage contract through the MCP
+`initialize` result:
+
+```text
+Use task_send for normal Task coordination and task_update(done|blocked) for lifecycle handoffs.
+After dispatching work, end the current turn; do not poll with task_query.
+Use task_query and task_get_record only for history recovery, diagnosis, or audit.
+Omit task_id to inspect the current Task's persisted history.
+```
+
+Clients may surface these instructions through their own discovery UI or tool;
+they are not a replacement for the individual tool descriptions. Detailed
+workflow guidance belongs in the [Task Manual](task-manual.md) or an on-demand
+skill.
+
 ## Tools
 
 | Tool | Purpose |
