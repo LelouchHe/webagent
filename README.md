@@ -107,7 +107,7 @@ Frontend source lives in `public/js/*.ts`, bundled by esbuild into a single cont
 | ------------------------------------------------------- | ------------------------------------------------------------------------------ |
 | **[Features](docs/features.md)**                        | Chat, attachments, bash, tasks, slash commands, keyboard shortcuts, themes  |
 | **[Task UX](docs/task-ux.md)**                          | `+` creation, `@` paths, autocomplete, navigation, and collaboration       |
-| **[Task Manual](docs/task-manual.md)**                  | How to delegate, communicate, hand off, and coordinate Tasks               |
+| **[Task Manual](docs/task-manual.md)**                  | Principles for using Tasks effectively                                 |
 | **[Configuration & Operations](docs/configuration.md)** | TOML config, daemon commands, agent setup, upgrading                           |
 | **[Security](docs/security.md)**                        | Bearer auth, token storage, SSE ticket, signed image URLs, CSP, data layout    |
 | **[API Reference](docs/api.md)**                        | REST endpoints, SSE events, implementation details                             |
