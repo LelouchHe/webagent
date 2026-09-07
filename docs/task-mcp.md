@@ -4,6 +4,9 @@ WebAgent injects a `webagent` MCP server into each compatible ACP session. It
 lets an agent inspect and coordinate with tasks in its local task family without
 granting access to unrelated tasks.
 
+This document is the tool reference. For the user-facing coordination workflow,
+see [Task Coordination Guide](task-coordination.md).
+
 ## Scope and authentication
 
 The server is a Streamable HTTP endpoint at `/mcp`. Each ACP session receives a
