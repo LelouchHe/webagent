@@ -184,24 +184,32 @@ Messages may be delivered together if the recipient is busy. Separate messages
 are useful for incremental discussion; combine them when they form one result
 that should be reviewed as a unit.
 
-## Inspect history only when needed
+## Recover context from the current Task
 
-Normal collaboration uses messages and handoffs. Use history tools when the
-normal path is not enough:
-
-```text
-task_query(...)
-```
-
-is appropriate when a delivery appears to be missing, a task must be recovered,
-or an earlier decision needs to be revisited.
+Normal collaboration uses messages and handoffs, not history queries. History
+is also available for the current Task when `compact` or `clear` has moved
+important earlier context out of the active model context:
 
 ```text
-task_get_record(...)
+task_query({ limit: 10 })
 ```
 
-is appropriate when one specific persisted event must be audited in full. Do
-not use either tool as a waiting loop or as a replacement for a useful handoff.
+With no `task_id`, this reads the current Task's persisted, compact history. Use
+the cursor in the result to read older entries. Task history survives context
+compaction and `clear`.
+
+When one compact entry is not enough, expand the specific sequence returned by
+`task_query`:
+
+```text
+task_get_record({ seq: 42 })
+```
+
+These tools expose persisted history; they do not restore hidden model
+reasoning or automatically recreate the old model context. They are also
+appropriate when a delivery appears to be missing, a Task must be recovered,
+or an earlier decision needs to be revisited. Do not use either tool as a
+waiting loop or as a replacement for a useful handoff.
 
 ## Keep the example small
 

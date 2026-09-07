@@ -63,6 +63,11 @@ that page in chronological order. `nextCursor`, when present, reads older
 events. Search is literal database matching against the original stored
 payload; it is not a semantic or full-text query.
 
+The current Task's persisted history remains available after context
+compaction or `clear`, so omitting `task_id` is also the way to recover earlier
+context for the current Task. This exposes stored events; it does not restore
+hidden reasoning or automatically rebuild the previous model context.
+
 ```ts
 {
   workflowStatus: "running" | "idle" | "blocked" | "done";

@@ -105,10 +105,14 @@ For code, identify the relevant file, symbol or line range, observed behavior,
 and causal mechanism. Prefer references and concise explanations over copying
 large files or entire transcripts.
 
-History inspection is an exception path. Use history tools when a delivery is
-missing, a Task is being recovered, an earlier decision must be revisited, or a
-specific record needs to be audited. Do not make history queries the normal
-way of passing results between Tasks.
+History inspection is an exception path, but it also applies to the current
+Task. When `compact` or `clear` has moved earlier context out of the active
+model context, use `task_query` without a target to read the current Task's
+persisted history, then use `task_get_record` for one specific event when the
+compact entry is not enough. Task history survives context compaction and
+`clear`; these tools expose that history but do not recreate hidden model
+reasoning or silently restore the old context. Do not make history queries the
+normal way of passing results between Tasks.
 
 ## Keep the workflow proportional
 
