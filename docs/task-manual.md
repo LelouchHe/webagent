@@ -2,7 +2,8 @@
 
 This is a field guide to using Tasks well. It describes the principles and
 mental model behind Task coordination, not the detailed MCP tool contract. See
-[Task MCP Control Plane](task-mcp.md) for tool names, inputs, and boundaries.
+[Task Examples](task-examples.md) for short usage patterns and [Task MCP Control
+Plane](task-mcp.md) for tool names, inputs, and boundaries.
 
 ## What a Task is
 

@@ -4,8 +4,8 @@ WebAgent injects a `webagent` MCP server into each compatible ACP session. It
 lets an agent inspect and coordinate with tasks in its local task family without
 granting access to unrelated tasks.
 
-This document is the tool reference. For the user-facing Task manual,
-see [Task Manual](task-manual.md).
+This document is the tool reference. For the user-facing principles and
+examples, see the [Task Manual](task-manual.md) and [Task Examples](task-examples.md).
 
 ## Scope and authentication
 
