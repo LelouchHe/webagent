@@ -23,6 +23,7 @@ The server advertises a short, generic usage contract through the MCP
 `initialize` result:
 
 ```text
+Use task_create for a direct child, then immediately use task_send to give it its first instruction.
 Use task_send for normal Task coordination and task_update(done|blocked) for lifecycle handoffs.
 After dispatching work, end the current turn; do not poll with task_query.
 Use task_query and task_get_record only for history recovery, diagnosis, or audit.

@@ -29,6 +29,7 @@ export const MCP_SERVER_NAME = "webagent";
  * descriptions, the Task Manual, or an on-demand skill.
  */
 export const MCP_SERVER_INSTRUCTIONS = [
+  "Use task_create for a direct child, then immediately use task_send to give it its first instruction.",
   "Use task_send for normal Task coordination and task_update(done|blocked) for lifecycle handoffs.",
   "After dispatching work, end the current turn; do not poll with task_query.",
   "Use task_query and task_get_record only for history recovery, diagnosis, or audit.",
