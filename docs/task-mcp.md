@@ -24,7 +24,7 @@ The server advertises a short, generic usage contract through the MCP
 
 ```text
 Use task_create for a direct child, then immediately use task_send to give it its first instruction.
-Use task_send for normal Task coordination and task_update(done|blocked) for lifecycle handoffs.
+Use task_send for normal coordination and for continuing or resuming existing Tasks; use task_update(done|blocked) for typed lifecycle handoffs. A done Task remains available and is not deleted or permanently closed.
 After dispatching work, end the current turn; do not poll with task_query.
 Use task_query and task_get_record only for history recovery, diagnosis, or audit.
 Omit task_id to inspect the current Task's persisted history.
@@ -44,8 +44,8 @@ skill.
 | `task_get_record` | Read one complete persisted history record by task-local sequence. |
 | `task_cancel` | Stop the current execution of a child Task while preserving its history. |
 | `task_create` | Create a direct child Task with optional execution overrides. Use `task_send` for its first instruction. |
-| `task_send` | Send a durable collaboration message to another Task. |
-| `task_update` | Mark the current task `blocked` or `done`, with a handoff message to its parent when one exists. |
+| `task_send` | Send a durable coordination message, including follow-up or resume instructions for an existing Task. Use `task_update` for typed `blocked`/`done` status. |
+| `task_update` | Send a typed `blocked` or `done` lifecycle handoff for the current Task; this does not delete or permanently close it. |
 
 ### `task_query`
 

@@ -48,8 +48,10 @@ child to work without repeatedly asking what it is supposed to do.
 
 Use messages as the normal coordination path. A Task should send useful
 progress, questions, findings, and decisions to the relevant Task as they arise.
-A final result should include the conclusion and the evidence needed by the
-recipient to act on it.
+Use `task_update` when the current assignment becomes materially blocked or
+complete; its status is a typed message, not Task deletion. A final result
+should include the conclusion and the evidence needed by the recipient to act
+on it.
 
 Task coordination is event-driven:
 
@@ -71,13 +73,19 @@ Use the lifecycle to communicate material state, not ordinary progress:
 
 - **running** — work is in progress;
 - **idle** — no turn is currently running; this does not prove completion;
-- **blocked** — the Task cannot continue without a decision or missing input;
-- **done** — the assigned work is complete and the result has been handed off.
+- **blocked** — the current work cannot continue without a decision or missing input;
+- **done** — the current assignment is complete and its result has been handed off.
+
+`task_update` is the typed lifecycle handoff for `blocked` and `done`; use
+`task_send` for ordinary progress, findings, and decisions. A blocked or done
+state does not delete or permanently close the Task. Its history remains
+available, and a later `task_send` can continue or resume it.
 
 A blocked Task should explain what it needs and what will happen after it gets
 that input. The parent resumes it by sending the decision or information. A
 blocked state is not a reason to poll, and a done state should not be used for
-an intermediate update.
+an intermediate update. Create a new Task for follow-up work only when it
+needs a separate boundary, context, owner, or execution policy.
 
 ## Let Tasks contribute at the right level
 

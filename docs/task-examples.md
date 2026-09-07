@@ -130,6 +130,18 @@ task_send(
 The message is the continuation signal. Do not create a replacement Task or
 poll the blocked Task unless recovery is actually needed.
 
+A completed Task remains available for follow-up work as well:
+
+```text
+task_send(
+  target: <done-task-id>,
+  body: "The review found one more bounded issue. Please investigate it and report the result."
+)
+```
+
+Use a new Task only when the follow-up needs a separate boundary, context,
+owner, or execution policy.
+
 ## Finish a coordinated task
 
 A coordinator can fan work out and then fan it back in:
@@ -141,8 +153,9 @@ Coordinator
 └── C — inspect operational impact
 ```
 
-Each child returns one concise terminal handoff. The coordinator then produces
-one synthesis containing:
+Each child returns one concise lifecycle handoff. A `done` handoff marks that
+assignment complete; it does not delete or permanently close the Task. The
+coordinator then produces one synthesis containing:
 
 ```text
 Conclusion:

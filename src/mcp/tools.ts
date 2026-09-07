@@ -294,12 +294,16 @@ export function registerMcpTools(
     "task_send",
     {
       description:
-        "Send a durable coordination message. " +
-        "Use it for instructions, questions, findings, progress, and decisions. " +
-        "Send messages without waiting for or polling the recipient.",
+        "Send a durable coordination message to another Task. " +
+        "Use it for instructions, questions, findings, routine progress, decisions, " +
+        "and follow-up work, including continuing or resuming a Task marked blocked or done. " +
+        "When reporting that the current Task is blocked or its assignment is complete, " +
+        "use task_update instead. Send messages without waiting for or polling the recipient.",
       inputSchema: {
         target: TASK_ID.describe("Stable target Task ID"),
-        body: BODY.describe("Verbatim collaboration message"),
+        body: BODY.describe(
+          "Verbatim coordination message; use task_update for blocked/done status",
+        ),
       },
     },
     async ({ target, body }) => {
@@ -313,12 +317,15 @@ export function registerMcpTools(
     "task_update",
     {
       description:
-        "Mark the current Task as blocked or done and provide handoff details. " +
-        "Use blocked when required input prevents progress, and done only when the work is complete. " +
-        "Do not use this for routine progress.",
+        "Send a typed lifecycle handoff for the current Task. " +
+        "Use blocked when the current work cannot continue without input, and done when the current assignment is complete. " +
+        "This does not delete or permanently close the Task: its history remains available and a later task_send may continue it. " +
+        "Use task_send for routine progress and follow-up coordination.",
       inputSchema: {
         status: z.enum(["blocked", "done"]),
-        body: BODY.describe("Reason for blocking or result of completion"),
+        body: BODY.describe(
+          "Actionable blocker explanation or evidence-backed completion result",
+        ),
       },
     },
     async ({ status, body }) => {
