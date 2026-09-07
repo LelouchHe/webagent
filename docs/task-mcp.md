@@ -24,16 +24,18 @@ The server advertises a short, generic usage contract through the MCP
 
 ```text
 Use task_create for a direct child, then immediately use task_send to give it its first instruction.
-Use task_send for normal coordination and for continuing or resuming existing Tasks; use task_update(done|blocked) for typed lifecycle handoffs. A done Task remains available and is not deleted or permanently closed.
+Use task_send for normal coordination and for continuing or resuming existing Tasks; task_send is not a lifecycle handoff. Use task_update(done|blocked) for typed lifecycle handoffs. A done Task remains available and is not deleted or permanently closed.
 After dispatching work, end the current turn; do not poll with task_query.
 Use task_query and task_get_record only for history recovery, diagnosis, or audit.
 Omit task_id to inspect the current Task's persisted history.
 ```
 
 Clients may surface these instructions through their own discovery UI or tool;
-they are not a replacement for the individual tool descriptions. Detailed
-workflow guidance belongs in the [Task Manual](task-manual.md) or an on-demand
-skill.
+they are not a replacement for the individual tool descriptions. When a
+collaboration turn ends while the Task is still `running` without a typed
+`task_update(done|blocked)` handoff, WebAgent may send one Markdown handoff
+reminder before leaving the Task idle. Detailed workflow guidance belongs in
+the [Task Manual](task-manual.md) or an on-demand skill.
 
 ## Tools
 

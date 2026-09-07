@@ -307,6 +307,11 @@ function handlePromptDone(
   // The tail this turn buffered must always land, even when the turn has
   // already been superseded — it is the only copy of that text.
   const isCurrent = tasks.isCurrentPrompt(event.taskId, event.promptId);
+  const taskBeforeIdle = isCurrent ? store.getTask(event.taskId) : null;
+  const needsHandoffReminder =
+    isCurrent &&
+    event.stopReason !== "cancelled" &&
+    taskBeforeIdle?.workflow_status === "running";
   if (isCurrent) {
     tasks.activePrompts.delete(event.taskId);
     tasks.syncBusy(event.taskId);
@@ -332,16 +337,22 @@ function handlePromptDone(
     { from_ref: "agent" },
   );
   if (isCurrent) {
-    if (store.getTask(event.taskId)?.workflow_status === "running") {
+    if (taskBeforeIdle?.workflow_status === "running") {
       store.updateTaskWorkflowStatus(event.taskId, "idle");
     }
     // Defer past the synchronous prompt_done broadcast below: a busy patch
     // minted by the drain must never race ahead of the finished turn's own
     // terminator, or clients drop the terminator as a superseded turn and
     // strand its pending tool/permission UI.
-    void Promise.resolve().then(() =>
-      tasks.drainCollaborationDeliveries(bridge, event.taskId),
-    );
+    void Promise.resolve().then(async () => {
+      const drained = await tasks.drainCollaborationDeliveries(
+        bridge,
+        event.taskId,
+      );
+      if (!drained && needsHandoffReminder) {
+        await tasks.promptHandoffReminder(bridge, event.taskId);
+      }
+    });
   }
 }
 
