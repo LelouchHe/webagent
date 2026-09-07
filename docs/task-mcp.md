@@ -4,6 +4,9 @@ WebAgent injects a `webagent` MCP server into each compatible ACP session. It
 lets an agent inspect and coordinate with tasks in its local task family without
 granting access to unrelated tasks.
 
+This document is the tool reference. For the user-facing principles and
+examples, see the [Task Manual](task-manual.md) and [Task Examples](task-examples.md).
+
 ## Scope and authentication
 
 The server is a Streamable HTTP endpoint at `/mcp`. Each ACP session receives a
@@ -14,6 +17,24 @@ can access only that task plus its parent, direct children, and siblings.
 The server is additive. It does not replace an agent's own MCP configuration or
 native tools.
 
+## Server instructions
+
+The server advertises a short, generic usage contract through the MCP
+`initialize` result:
+
+```text
+Use task_create for a direct child, then immediately use task_send to give it its first instruction.
+Use task_send for normal coordination and for continuing or resuming existing Tasks; use task_update(done|blocked) for typed lifecycle handoffs. A done Task remains available and is not deleted or permanently closed.
+After dispatching work, end the current turn; do not poll with task_query.
+Use task_query and task_get_record only for history recovery, diagnosis, or audit.
+Omit task_id to inspect the current Task's persisted history.
+```
+
+Clients may surface these instructions through their own discovery UI or tool;
+they are not a replacement for the individual tool descriptions. Detailed
+workflow guidance belongs in the [Task Manual](task-manual.md) or an on-demand
+skill.
+
 ## Tools
 
 | Tool | Purpose |
@@ -23,8 +44,8 @@ native tools.
 | `task_get_record` | Read one complete persisted history record by task-local sequence. |
 | `task_cancel` | Stop the current execution of a child Task while preserving its history. |
 | `task_create` | Create a direct child Task with optional execution overrides. Use `task_send` for its first instruction. |
-| `task_send` | Send a durable collaboration message to another Task. |
-| `task_update` | Mark the current task `blocked` or `done`, with a handoff message to its parent when one exists. |
+| `task_send` | Send a durable coordination message, including follow-up or resume instructions for an existing Task. Use `task_update` for typed `blocked`/`done` status. |
+| `task_update` | Send a typed `blocked` or `done` lifecycle handoff for the current Task; this does not delete or permanently close it. |
 
 ### `task_query`
 
@@ -59,6 +80,14 @@ contain fewer records. A query selects the latest matching events and returns
 that page in chronological order. `nextCursor`, when present, reads older
 events. Search is literal database matching against the original stored
 payload; it is not a semantic or full-text query.
+
+The current Task's persisted history remains available after context
+compaction or `clear`, so omitting `task_id` is also the way to recover earlier
+context for the current Task. The history itself is not compacted by
+`task_query`: that tool only returns a compact projection. `/compact` changes
+the active model context, while `/clear` rotates the active execution and keeps
+the Task's history. These tools expose stored events; they do not restore
+hidden reasoning or automatically rebuild the previous model context.
 
 ```ts
 {
@@ -98,7 +127,8 @@ on the event type. It does not invoke an LLM or alter the stored event.
 | `plan` | Each plan entry's status and content. |
 | `permission_request`, `permission_response` | Permission title and choices, or allow/deny outcome. |
 | `error` | Error message. |
-| `system_message`, `task_update`, `task_cancel`, `message` | Collaboration route/status and message body. |
+| `system_message` | Message title and optional body; collaboration/task details use both fields. |
+| `task_update`, `task_cancel`, `message` | Collaboration route/status and message body. |
 | `bash_command`, `bash_result` | Command, exit code/signal, and bounded output. |
 | `prompt_done` | Non-normal stop reasons only; ordinary `end_turn` is omitted as noise. |
 

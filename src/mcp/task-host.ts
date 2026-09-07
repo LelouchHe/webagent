@@ -27,6 +27,7 @@ export interface McpTaskCollaborationEvent {
   messageId: string;
   sourceTaskId: string;
   targetTaskId: string;
+  title: string;
   body: string;
 }
 
@@ -34,6 +35,7 @@ export interface McpTaskCreatedEvent {
   messageId: string;
   sourceTaskId: string;
   targetTaskId: string;
+  title: string;
   body: string;
 }
 
@@ -250,17 +252,24 @@ export function createMcpTaskToolHost(deps: {
         thinking: input.thinking,
       });
       const taskCreatedMessageId = randomUUID();
-      const taskCreatedBody = `Created task ${formatTaskReference(input.title)}`;
+      const taskCreatedTitle = `Created task ${formatTaskReference(input.title)}`;
+      const taskCreatedBody = [
+        `Task ID: ${created.taskId}`,
+        `cwd: ${cwd}`,
+        input.model ? `model: ${input.model}` : "model: inherited",
+        input.thinking ? `thinking: ${input.thinking}` : "thinking: inherited",
+      ].join("\n");
       store.saveEvent(
         source.id,
         "system_message",
         {
           kind: "task_created",
           taskId: created.taskId,
-          title: input.title,
+          taskTitle: input.title,
           cwd,
           model: input.model ?? null,
           thinking: input.thinking ?? null,
+          title: taskCreatedTitle,
           body: taskCreatedBody,
         },
         { from_ref: "agent" },
@@ -269,6 +278,7 @@ export function createMcpTaskToolHost(deps: {
         messageId: taskCreatedMessageId,
         sourceTaskId: source.id,
         targetTaskId: created.taskId,
+        title: taskCreatedTitle,
         body: taskCreatedBody,
       });
       return { taskId: created.taskId };
@@ -308,7 +318,8 @@ export function createMcpTaskToolHost(deps: {
         messageId: created.message.id,
         sourceTaskId,
         targetTaskId: target.id,
-        body: `${formatTaskReference(sourceLabel)} sent ${formatTaskReference(targetLabel)}: ${created.message.body}`,
+        title: `${formatTaskReference(sourceLabel)} sent ${formatTaskReference(targetLabel)}`,
+        body: created.message.body,
       });
       if (bridge) {
         void tasks.drainCollaborationDeliveries(bridge, target.id);
@@ -326,7 +337,8 @@ export function createMcpTaskToolHost(deps: {
           messageId: collaborationMessageId,
           sourceTaskId,
           targetTaskId: parentTaskId,
-          body: `${formatTaskReference(source.title ?? source.id.slice(0, 8))} sent ${formatTaskReference(target.title ?? target.id.slice(0, 8))}: Task status: ${status}\n${body}`,
+          title: `${formatTaskReference(source.title ?? source.id.slice(0, 8))} sent ${formatTaskReference(target.title ?? target.id.slice(0, 8))}`,
+          body: `Task status: ${status}\n${body}`,
         });
       }
       if (bridge && parentTaskId) {

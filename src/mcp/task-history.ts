@@ -1,4 +1,3 @@
-import { formatTaskReference } from "../shared/task-reference.ts";
 import type { McpTaskHistoryRecord } from "./tools.ts";
 
 const MAX_RECORD_TEXT = 800;
@@ -206,15 +205,12 @@ export function compactTaskHistoryRecord(record: {
     case "error":
       result = joinText(["Error:", textValue(data.message) || "Unknown error"]);
       break;
-    case "system_message": {
-      const body =
-        data.messageBody === undefined &&
-        (textValue(data.sourceLabel) || textValue(data.targetLabel))
-          ? `${formatTaskReference(textValue(data.sourceLabel) || textValue(data.sourceTaskId))} sent ${formatTaskReference(textValue(data.targetLabel) || textValue(data.targetTaskId))}: ${textValue(data.body)}`
-          : textValue(data.body);
-      result = joinText([body || "(empty system message)"]);
+    case "system_message":
+      result = joinText([
+        textValue(data.title) || "(empty system message)",
+        textValue(data.body) || undefined,
+      ]);
       break;
-    }
     case "task_update":
       result = joinText([
         `Task ${textValue(data.status) || "updated"}:`,

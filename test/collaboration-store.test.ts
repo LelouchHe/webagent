@@ -59,14 +59,67 @@ describe("Store collaboration records", () => {
     const data = JSON.parse(system.data) as {
       sourceLabel?: string;
       targetLabel?: string;
+      title?: string;
       body?: string;
-      messageBody?: string;
     };
     assert.equal(data.sourceLabel, "a1");
     assert.equal(data.targetLabel, "a2");
-    assert.equal(data.body, "@a1 sent @a2: 请检查接口定义");
-    assert.equal(data.messageBody, "请检查接口定义");
+    assert.equal(data.title, "@a1 sent @a2");
+    assert.equal(data.body, "请检查接口定义");
     void created;
+  });
+
+  it("normalizes legacy system payloads before replay", () => {
+    store.saveEvent(
+      "a1",
+      "system_message",
+      {
+        kind: "collaboration",
+        sourceTaskId: "a1",
+        sourceLabel: "a1",
+        targetTaskId: "a2",
+        targetLabel: "a2",
+        body: "@a1 sent @a2: 请检查接口定义",
+        messageBody: "请检查接口定义",
+      },
+      { from_ref: "msg:legacy" },
+    );
+    store.saveEvent(
+      "a1",
+      "system_message",
+      { kind: "notice", body: "Agent reloading..." },
+      { from_ref: "system" },
+    );
+    store.saveEvent(
+      "a1",
+      "system_message",
+      {
+        kind: "task_created",
+        taskId: "child-1",
+        title: "Child",
+        body: "Created task @Child",
+      },
+      { from_ref: "agent" },
+    );
+
+    store.close();
+    store = new Store(tmpDir, "test-agent");
+
+    const rows = store
+      .getEvents("a1")
+      .filter((row) => row.type === "system_message");
+    const collaboration = JSON.parse(rows[0].data) as Record<string, unknown>;
+    assert.equal(collaboration.title, "@a1 sent @a2");
+    assert.equal(collaboration.body, "请检查接口定义");
+    assert.equal("messageBody" in collaboration, false);
+
+    const notice = JSON.parse(rows[1].data) as Record<string, unknown>;
+    assert.equal(notice.title, "Agent reloading...");
+    assert.equal("body" in notice, false);
+
+    const taskCreated = JSON.parse(rows[2].data) as Record<string, unknown>;
+    assert.equal(taskCreated.title, "Created task @Child");
+    assert.equal("body" in taskCreated, false);
   });
 
   it("uses the stored task titles as labels", () => {

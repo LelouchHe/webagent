@@ -202,6 +202,56 @@ export interface AttachmentInput {
   height?: number | null;
 }
 
+type JsonObject = Record<string, unknown>;
+
+function stringField(data: JsonObject, key: string): string | undefined {
+  return typeof data[key] === "string" ? data[key] : undefined;
+}
+
+/** Normalize pre-title system events before any replay or egress path sees them. */
+function migrateSystemMessageData(raw: string): string | null {
+  const data = JSON.parse(raw) as JsonObject;
+  const existingTitle = stringField(data, "title");
+  const body = stringField(data, "body");
+
+  // Older task-created rows used `title` for the child task title, while the
+  // new payload uses it for the visible system-message title. Their `body`
+  // already contains the old visible text, so preserve it as title-only.
+  if (
+    data.kind === "task_created" &&
+    data.taskTitle === undefined &&
+    existingTitle !== undefined &&
+    body !== undefined
+  ) {
+    const migrated: JsonObject = { ...data, title: body };
+    delete migrated.body;
+    return JSON.stringify(migrated);
+  }
+
+  if (existingTitle?.trim()) return null;
+
+  const messageBody = stringField(data, "messageBody");
+  const migrated: JsonObject = { ...data };
+
+  if (data.kind === "collaboration" && messageBody !== undefined) {
+    const source =
+      stringField(data, "sourceLabel") ??
+      stringField(data, "sourceTaskId") ??
+      "?";
+    const target =
+      stringField(data, "targetLabel") ??
+      stringField(data, "targetTaskId") ??
+      "?";
+    migrated.title = `${formatTaskReference(source)} sent ${formatTaskReference(target)}`;
+    migrated.body = messageBody;
+  } else {
+    migrated.title = body?.trim() ? body : "System message";
+    delete migrated.body;
+  }
+  delete migrated.messageBody;
+  return JSON.stringify(migrated);
+}
+
 export class Store {
   private readonly db: Database.Database;
   private readonly dataDir: string;
@@ -218,6 +268,7 @@ export class Store {
       this.db.pragma("foreign_keys = ON");
       this.assertSupportedSchema();
       this.initializeSchema();
+      this.migrateSystemMessagePayloads();
     } catch (error) {
       this.db.close();
       throw error;
@@ -563,6 +614,21 @@ export class Store {
         updated_at INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER) * 1000)
       );
     `);
+  }
+
+  /** Normalize the pre-title system_message payload in place. This is
+   * idempotent and runs before any event can be replayed or returned. */
+  private migrateSystemMessagePayloads(): void {
+    const rows = this.db
+      .prepare("SELECT id, data FROM events WHERE type = 'system_message'")
+      .all() as Array<{ id: number; data: string }>;
+    const update = this.db.prepare("UPDATE events SET data = ? WHERE id = ?");
+    this.db.transaction(() => {
+      for (const row of rows) {
+        const migrated = migrateSystemMessageData(row.data);
+        if (migrated !== null) update.run(migrated, row.id);
+      }
+    })();
   }
 
   /**
@@ -1569,7 +1635,7 @@ export class Store {
     const targetLabel =
       this.getTask(input.directTargetTaskId)?.title ??
       input.directTargetTaskId.slice(0, 8);
-    const displayBody = `${formatTaskReference(sourceLabel)} sent ${formatTaskReference(targetLabel)}: ${input.body}`;
+    const collaborationTitle = `${formatTaskReference(sourceLabel)} sent ${formatTaskReference(targetLabel)}`;
     for (const projection of this.listCollaborationProjections(input.id)) {
       this.saveEvent(
         projection.task_id,
@@ -1582,8 +1648,8 @@ export class Store {
           targetTaskId: input.directTargetTaskId,
           targetLabel,
           role: projection.role,
-          body: displayBody,
-          messageBody: input.body,
+          title: collaborationTitle,
+          body: input.body,
         },
         { from_ref: `msg:${input.id}` },
       );

@@ -39,6 +39,7 @@ import {
 import {
   addMessage,
   addSystem,
+  addSystemMessage,
   finishAssistant,
   finishThinking,
   hideWaiting,
@@ -308,20 +309,18 @@ function cancelPendingTurnUI() {
 }
 
 /**
- * One line for a collaboration message in any projected timeline: the
- * absolute from/to pair with the body. Labels are server-enriched at
- * creation; legacy rows without labels fall back to short ids.
+ * Title for a collaboration message in any projected timeline. Labels are
+ * server-enriched at creation; missing labels fall back to short ids.
  */
-function collaborationLine(msg: {
+function collaborationTitle(msg: {
   sourceTaskId?: string;
   sourceLabel?: string;
   targetTaskId?: string;
   targetLabel?: string;
-  body?: string;
 }): string {
   const label = (id: string | undefined, fallback?: string) =>
     fallback ?? (id ? id.slice(0, 8) : "?");
-  return `${formatTaskReference(label(msg.sourceTaskId, msg.sourceLabel))} sent ${formatTaskReference(label(msg.targetTaskId, msg.targetLabel))}: ${msg.body ?? ""}`;
+  return `${formatTaskReference(label(msg.sourceTaskId, msg.sourceLabel))} sent ${formatTaskReference(label(msg.targetTaskId, msg.targetLabel))}`;
 }
 
 function promptStopNotice(stopReason: unknown): string | null {
@@ -1264,16 +1263,14 @@ export function replayEvent(
     case "message":
       renderMessageCard(d as unknown as AgentEvent & { type: "message" });
       break;
-    case "system_message": {
-      if (typeof d.body === "string" && d.body.trim()) {
-        const legacyCollaboration =
-          d.kind === "collaboration" &&
-          d.messageBody === undefined &&
-          (d.sourceLabel ?? d.targetLabel) !== undefined;
-        addSystem(legacyCollaboration ? collaborationLine(d) : d.body);
+    case "system_message":
+      if (typeof d.title === "string" && d.title.trim()) {
+        addSystemMessage({
+          title: d.title,
+          body: typeof d.body === "string" ? d.body : undefined,
+        });
       }
       break;
-    }
   }
 }
 
@@ -2398,14 +2395,17 @@ export function handleEvent(msg: AgentEvent) {
 
     case "system_message":
       if (msg.taskId === state.taskId) {
-        addSystem(msg.body);
+        addSystemMessage({ title: msg.title, body: msg.body });
         scrollToBottom();
       }
       break;
 
     case "collaboration_message":
       if (msg.taskId === state.taskId) {
-        addSystem(collaborationLine(msg));
+        addSystemMessage({
+          title: collaborationTitle(msg),
+          body: msg.body,
+        });
         scrollToBottom();
       }
       break;

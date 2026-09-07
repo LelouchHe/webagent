@@ -94,7 +94,7 @@ Commands with submenus (`/model`, `/mode`, `/think`, `/notify`, `/switch`, `/cle
 | `/share`              | List active public shares · Enter creates a read-only snapshot (preview → `^P` publish / `^C` cancel). See [Share Links](share.md). |
 | `/view [path]`        | Browse local folders; preview supported files up to their cap or directly download larger/unknown files                               |
 
-Type `?` for inline help listing all commands and shortcuts. See [Task Interaction](task-interaction.md) for the complete `+` / `@` path, autocomplete, and Enter / Tab / Click contract.
+Type `?` for inline help listing all commands and shortcuts. See [Task UX](task-ux.md) for the complete `+` / `@` path, autocomplete, and Enter / Tab / Click contract.
 
 ### Agent commands (`//`)
 

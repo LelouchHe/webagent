@@ -3,7 +3,11 @@ import assert from "node:assert/strict";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 import { CapabilityStore } from "../src/mcp/capability.ts";
-import { buildMcpServerEntry, createMcpEndpoint } from "../src/mcp/server.ts";
+import {
+  buildMcpServerEntry,
+  createMcpEndpoint,
+  MCP_SERVER_INSTRUCTIONS,
+} from "../src/mcp/server.ts";
 
 // --- CapabilityStore ---
 
@@ -247,9 +251,15 @@ describe("createMcpEndpoint", () => {
     );
     assert.equal(init.status, 200);
     const initBody = (await init.json()) as {
-      result?: { serverInfo?: { name: string } };
+      result?: {
+        serverInfo?: { name: string };
+        instructions?: string;
+      };
     };
     assert.equal(initBody.result?.serverInfo?.name, "webagent");
+    const initResult = initBody.result;
+    assert.ok(initResult);
+    assert.equal(initResult.instructions, MCP_SERVER_INSTRUCTIONS);
 
     // notifications/initialized — fire and forget, must not error
     const notif = await mcpPost(
@@ -276,6 +286,7 @@ describe("createMcpEndpoint", () => {
       result?: {
         tools?: Array<{
           name: string;
+          description?: string;
           inputSchema?: {
             required?: string[];
             properties?: Record<string, { anyOf?: Array<{ type?: string }> }>;
@@ -294,6 +305,16 @@ describe("createMcpEndpoint", () => {
       "task_send",
       "task_update",
     ]);
+    const sendDescription = tools.find(
+      (tool) => tool.name === "task_send",
+    )?.description;
+    assert.match(sendDescription ?? "", /task_update/);
+    assert.match(sendDescription ?? "", /blocked/);
+    const updateDescription = tools.find(
+      (tool) => tool.name === "task_update",
+    )?.description;
+    assert.match(updateDescription ?? "", /typed lifecycle handoff/);
+    assert.match(updateDescription ?? "", /not delete or permanently close/);
     const querySchema = tools.find(
       (tool) => tool.name === "task_query",
     )?.inputSchema;
