@@ -1569,7 +1569,7 @@ export class Store {
     const targetLabel =
       this.getTask(input.directTargetTaskId)?.title ??
       input.directTargetTaskId.slice(0, 8);
-    const displayBody = `${formatTaskReference(sourceLabel)} sent ${formatTaskReference(targetLabel)}: ${input.body}`;
+    const collaborationTitle = `${formatTaskReference(sourceLabel)} sent ${formatTaskReference(targetLabel)}`;
     for (const projection of this.listCollaborationProjections(input.id)) {
       this.saveEvent(
         projection.task_id,
@@ -1582,8 +1582,8 @@ export class Store {
           targetTaskId: input.directTargetTaskId,
           targetLabel,
           role: projection.role,
-          body: displayBody,
-          messageBody: input.body,
+          title: collaborationTitle,
+          body: input.body,
         },
         { from_ref: `msg:${input.id}` },
       );

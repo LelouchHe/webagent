@@ -1228,7 +1228,7 @@ export function createRequestHandler(
         // A user-originated collaboration action counts as activity on the
         // Task where the user entered it, not only on the recipient.
         store.updateTaskLastActive(sourceTaskId);
-        const displayBody = `${formatTaskReference(sourceTask.title ?? sourceTask.id.slice(0, 8))} sent ${formatTaskReference(targetTask.title ?? targetTask.id.slice(0, 8))}: ${created.message.body}`;
+        const collaborationTitle = `${formatTaskReference(sourceTask.title ?? sourceTask.id.slice(0, 8))} sent ${formatTaskReference(targetTask.title ?? targetTask.id.slice(0, 8))}`;
         for (const projection of store.listCollaborationProjections(
           messageId,
         )) {
@@ -1240,7 +1240,8 @@ export function createRequestHandler(
             sourceTaskId,
             targetTaskId: targetTask.id,
             role: projection.role,
-            body: displayBody,
+            title: collaborationTitle,
+            body: created.message.body,
           });
         }
         const result = {

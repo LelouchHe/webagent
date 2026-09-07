@@ -266,7 +266,8 @@ export type AgentEvent =
       type: "system_message";
       taskId: string;
       kind: string;
-      body: string;
+      title: string;
+      body?: string;
       messageId?: string;
       sourceTaskId?: string;
       targetTaskId?: string;

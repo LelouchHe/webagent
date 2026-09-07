@@ -428,6 +428,20 @@ body {
   color: var(--text-dim);
   white-space: pre-wrap;
 }
+.system-msg.expandable {
+  padding-top: 4px;
+  padding-bottom: 4px;
+  border-left: 2px solid var(--border);
+}
+.system-msg.expandable summary {
+  cursor: pointer;
+  color: var(--text-dim);
+}
+.system-msg-body {
+  margin: 4px 0 2px 16px;
+  color: var(--text);
+  white-space: pre-wrap;
+}
 .system-msg a {
   color: var(--accent);
   text-decoration: underline;

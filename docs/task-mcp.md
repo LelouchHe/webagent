@@ -127,7 +127,8 @@ on the event type. It does not invoke an LLM or alter the stored event.
 | `plan` | Each plan entry's status and content. |
 | `permission_request`, `permission_response` | Permission title and choices, or allow/deny outcome. |
 | `error` | Error message. |
-| `system_message`, `task_update`, `task_cancel`, `message` | Collaboration route/status and message body. |
+| `system_message` | Message title and optional body; collaboration/task details use both fields. |
+| `task_update`, `task_cancel`, `message` | Collaboration route/status and message body. |
 | `bash_command`, `bash_result` | Command, exit code/signal, and bounded output. |
 | `prompt_done` | Non-normal stop reasons only; ordinary `end_turn` is omitted as noise. |
 

@@ -341,6 +341,7 @@ describe("MCP Task tool host", () => {
         kind: "collaboration",
         sourceLabel: "Beta team",
         targetLabel: "Alpha team",
+        title: '@"Beta team" sent @"Alpha team"',
         body: "Please review the API.",
       },
       { from_ref: "msg:1" },
@@ -400,7 +401,7 @@ describe("MCP Task tool host", () => {
         },
         {
           type: "system_message",
-          text: '@"Beta team" sent @"Alpha team": Please review the API.',
+          text: '@"Beta team" sent @"Alpha team"\nPlease review the API.',
         },
         {
           type: "task_update",
@@ -546,10 +547,8 @@ describe("MCP Task tool host", () => {
     );
     const parentUpdate = JSON.parse(
       store.getEvents("root").at(-1)?.data ?? "{}",
-    ) as { body?: string };
-    assert.equal(
-      parentUpdate.body,
-      "@Alpha sent @Root: Task status: blocked\nNeed API details",
-    );
+    ) as { title?: string; body?: string };
+    assert.equal(parentUpdate.title, "@Alpha sent @Root");
+    assert.equal(parentUpdate.body, "Task status: blocked\nNeed API details");
   });
 });

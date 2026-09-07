@@ -2543,22 +2543,29 @@ describe("events", () => {
           type: "system_message",
           taskId: "s1",
           kind: "collaboration",
-          body: "@what sent @child-a: please review",
+          title: "@what sent @child-a",
+          body: "please review",
         });
         events.handleEvent({
           type: "system_message",
           taskId: "s2",
           kind: "collaboration",
-          body: "@what sent @child-a: please review",
+          title: "@what sent @child-a",
+          body: "please review",
         });
         assert.equal(dom.messages.children.length, 1);
-        assert.match(
-          dom.messages.textContent ?? "",
-          /@what sent @child-a: please review/,
+        assert.equal(dom.messages.querySelectorAll("details").length, 1);
+        assert.equal(
+          dom.messages.querySelector("summary")?.textContent,
+          "@what sent @child-a",
+        );
+        assert.equal(
+          dom.messages.querySelector(".system-msg-body")?.textContent,
+          "please review",
         );
       });
 
-      it("keeps legacy collaboration events readable", () => {
+      it("renders collaboration events as title and body", () => {
         state.taskId = "s1";
         events.handleEvent({
           type: "collaboration_message",
@@ -2583,9 +2590,13 @@ describe("events", () => {
           body: "please review",
         });
         assert.equal(dom.messages.children.length, 1);
-        assert.match(
-          dom.messages.textContent ?? "",
-          /@what sent @child-a: please review/,
+        assert.equal(
+          dom.messages.querySelector("summary")?.textContent,
+          "@what sent @child-a",
+        );
+        assert.equal(
+          dom.messages.querySelector(".system-msg-body")?.textContent,
+          "please review",
         );
       });
 
@@ -2600,9 +2611,13 @@ describe("events", () => {
           role: "target",
           body: "please review",
         });
-        assert.match(
-          dom.messages.textContent ?? "",
-          /@s0 sent @s1: please review/,
+        assert.equal(
+          dom.messages.querySelector("summary")?.textContent,
+          "@s0 sent @s1",
+        );
+        assert.equal(
+          dom.messages.querySelector(".system-msg-body")?.textContent,
+          "please review",
         );
       });
 
@@ -2617,52 +2632,55 @@ describe("events", () => {
             targetTaskId: "s1",
             targetLabel: "child-a",
             role: "target",
-            body: "@what sent @child-a: please review",
-            messageBody: "please review",
-          },
-          [],
-          0,
-        );
-        assert.match(
-          dom.messages.textContent ?? "",
-          /@what sent @child-a: please review/,
-        );
-      });
-
-      it("replays legacy collaboration rows with labels using the legacy route", () => {
-        events.replayEvent(
-          "system_message",
-          {
-            kind: "collaboration",
-            sourceLabel: "what",
-            targetLabel: "child-a",
+            title: "@what sent @child-a",
             body: "please review",
           },
           [],
           0,
         );
-        assert.match(
-          dom.messages.textContent ?? "",
-          /@what sent @child-a: please review/,
+        assert.equal(
+          dom.messages.querySelector("summary")?.textContent,
+          "@what sent @child-a",
+        );
+        assert.equal(
+          dom.messages.querySelector(".system-msg-body")?.textContent,
+          "please review",
         );
       });
 
-      it("replays legacy collaboration rows without labels via raw body", () => {
+      it("renders title-only system messages without a disclosure", () => {
         events.replayEvent(
           "system_message",
           {
-            kind: "collaboration",
-            messageId: "m1",
-            sourceTaskId: "s0",
-            targetTaskId: "s1",
-            role: "target",
-            body: "please review",
+            kind: "notice",
+            title: "Agent reloading...",
           },
           [],
           0,
         );
-        assert.match(dom.messages.textContent ?? "", /please review/);
-        assert.doesNotMatch(dom.messages.textContent ?? "", /@s0 sent @s1:/);
+        assert.equal(dom.messages.querySelectorAll("details").length, 0);
+        assert.equal(dom.messages.textContent, "Agent reloading...");
+      });
+
+      it("replays a system message body beneath its title", () => {
+        events.replayEvent(
+          "system_message",
+          {
+            kind: "task_created",
+            title: "Task created",
+            body: "Created task @child",
+          },
+          [],
+          0,
+        );
+        assert.equal(
+          dom.messages.querySelector("summary")?.textContent,
+          "Task created",
+        );
+        assert.equal(
+          dom.messages.querySelector(".system-msg-body")?.textContent,
+          "Created task @child",
+        );
       });
 
       it("replays task creation system messages directly", () => {
@@ -2671,14 +2689,19 @@ describe("events", () => {
           {
             kind: "task_created",
             taskId: "child-1",
-            body: "Created task “Child”: review the API.",
+            title: "Created task “Child”",
+            body: "review the API.",
           },
           [],
           0,
         );
-        assert.match(
-          dom.messages.textContent ?? "",
-          /Created task “Child”: review the API/,
+        assert.equal(
+          dom.messages.querySelector("summary")?.textContent,
+          "Created task “Child”",
+        );
+        assert.equal(
+          dom.messages.querySelector(".system-msg-body")?.textContent,
+          "review the API.",
         );
       });
 

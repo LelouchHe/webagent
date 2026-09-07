@@ -38,12 +38,39 @@ export function addMessage(role: string, text: string): HTMLDivElement {
   return el;
 }
 
-export function addSystem(text: string): HTMLDivElement {
-  const el = document.createElement("div");
-  el.className = "system-msg";
-  el.textContent = text;
+export interface SystemMessageOptions {
+  title: string;
+  body?: string;
+}
+
+/** Render a system message. Messages with a body use the same native
+ * disclosure pattern as thinking and inbox messages; title-only messages
+ * remain compact plain text. */
+export function addSystemMessage({
+  title,
+  body,
+}: SystemMessageOptions): HTMLElement {
+  const hasBody = body !== undefined && body.length > 0;
+  const el = document.createElement(hasBody ? "details" : "div");
+  el.className = `system-msg${hasBody ? " expandable" : ""}`;
+
+  if (hasBody) {
+    const summary = document.createElement("summary");
+    summary.textContent = title;
+    const content = document.createElement("div");
+    content.className = "system-msg-body";
+    content.textContent = body;
+    el.append(summary, content);
+  } else {
+    el.textContent = title;
+  }
+
   appendMessageElement(el);
   return el;
+}
+
+export function addSystem(text: string): HTMLDivElement {
+  return addSystemMessage({ title: text }) as HTMLDivElement;
 }
 
 export function finishAssistant() {
