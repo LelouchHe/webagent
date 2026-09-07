@@ -132,9 +132,8 @@ export function registerMcpTools(
     "task_list",
     {
       description:
-        "List the Tasks available for coordination with the current Task. " +
-        "Returns stable identity and short description data only; it does not return workflow status or history. " +
-        "Use this to discover which Task to inspect or contact.",
+        "Discover Tasks available for coordination. " +
+        "Use this before choosing a Task to contact.",
       inputSchema: {},
     },
     async () => jsonContent({ tasks: host?.list(taskId) ?? unavailable() }),
@@ -144,11 +143,8 @@ export function registerMcpTools(
     "task_query",
     {
       description:
-        "Read a bounded page of compact history records from the current Task or another available Task. " +
-        "With no arguments, returns the latest page; use the returned cursor to read older pages. " +
-        "The text filter is a literal substring search, not semantic search. " +
-        "Results include seq values that can be passed to task_get_record when a compact summary is not enough. " +
-        "Raw event payloads are not returned by this tool.",
+        "Inspect Task history when earlier context or a prior result needs recovery. " +
+        "Do not use this tool to wait for work or poll for completion.",
       inputSchema: {
         task_id: TASK_ID.nullable()
           .optional()
@@ -194,9 +190,8 @@ export function registerMcpTools(
     "task_get_record",
     {
       description:
-        "Fetch one complete history record by its task-local seq. " +
-        "Use a seq returned by task_query when its compact summary is not sufficient. " +
-        "The result includes the full event payload rather than a compact summary.",
+        "Inspect one full history record when the available history summary is insufficient. " +
+        "Use a sequence obtained from task_query.",
       inputSchema: {
         task_id: TASK_ID.nullable()
           .optional()
@@ -223,10 +218,8 @@ export function registerMcpTools(
     "task_create",
     {
       description:
-        "Create a direct child Task for independent work. " +
-        "The new Task starts with the supplied title; cwd, model, and thinking are optional overrides. " +
-        "Use task_send to deliver its first work instruction after creation. " +
-        "The server returns the new Task ID or an error.",
+        "Create a child Task for independent work. " +
+        "Send its first instruction with task_send, then end the dispatch turn.",
       inputSchema: {
         title: z
           .string()
@@ -284,10 +277,8 @@ export function registerMcpTools(
     "task_cancel",
     {
       description:
-        "Cancel the current execution of a child Task. " +
-        "Use this when the child should stop its current work; the Task and its history are preserved. " +
-        "The reason is recorded for coordination history. " +
-        "This does not delete or retire the Task.",
+        "Stop a child Task's current work when it should no longer continue. " +
+        "The Task and its history remain available.",
       inputSchema: {
         target: TASK_ID.describe("Stable child Task ID"),
         reason: BODY.describe("Why the child Task should stop"),
@@ -303,10 +294,9 @@ export function registerMcpTools(
     "task_send",
     {
       description:
-        "Send one durable message to another Task. " +
-        "Use this for ordinary coordination, questions, requests for help, context sharing, or routine progress updates. " +
-        "It does not change the sender's workflow status. " +
-        "The message is queued or delivered by the system; do not check whether the recipient is busy before sending.",
+        "Send a durable coordination message. " +
+        "Use it for instructions, questions, findings, progress, and decisions. " +
+        "Send messages without waiting for or polling the recipient.",
       inputSchema: {
         target: TASK_ID.describe("Stable target Task ID"),
         body: BODY.describe("Verbatim collaboration message"),
@@ -323,11 +313,9 @@ export function registerMcpTools(
     "task_update",
     {
       description:
-        "Commit a material workflow state change for the current Task. " +
-        "Use this only when the Task is blocked and cannot proceed, or when it has completed its assigned work. " +
-        "The body must contain the actionable reason or the completed result and evidence. " +
-        "The system records the update and forwards it to the relevant coordinating Task when applicable. " +
-        "Do not use this for ordinary coordination or routine progress updates; use task_send instead.",
+        "Mark the current Task as blocked or done and provide handoff details. " +
+        "Use blocked when required input prevents progress, and done only when the work is complete. " +
+        "Do not use this for routine progress.",
       inputSchema: {
         status: z.enum(["blocked", "done"]),
         body: BODY.describe("Reason for blocking or result of completion"),
