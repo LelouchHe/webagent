@@ -330,12 +330,23 @@ SELECT COUNT(*) FROM events WHERE task_id NOT IN (SELECT id FROM tasks);
 
 ---
 
+## Event payload normalization
+
+The `events.data` column stores JSON whose shape depends on `type`. The
+`system_message` payload uses a required `title` and an optional `body`.
+When opening a current-schema database written before this payload split,
+`Store` performs an idempotent transaction that normalizes title-less
+`system_message` rows before any replay or egress path can read them. This is a
+payload normalization, not a SQLite table migration; after startup, all event
+readers use the current `title`/`body` shape.
+
 ## Pre-1.0 reset policy
 
 Schema changes before 1.0 are breaking changes. Server startup never performs
-an implicit compatibility migration: obsolete pre-1.0 schemas have no
-compatibility path — the strict schema guard rejects them at boot, and
-operators must back up and reset their data directory before restarting.
+an implicit compatibility migration for obsolete table schemas: the strict
+schema guard rejects them at boot, and operators must back up and reset their
+data directory before restarting. Event payload normalization described above
+is the explicit exception for the current `system_message` payload split.
 
 ---
 
