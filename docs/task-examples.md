@@ -36,8 +36,8 @@ task_send(
 )
 ```
 
-After dispatching, continue useful work or end the current turn. Do not wait by
-repeatedly querying the child.
+After dispatching, end the current turn. Do not wait by repeatedly querying the
+child.
 
 The child reports completion with a handoff:
 
@@ -74,7 +74,7 @@ Failure-mode:
   Look for error, timeout, cancellation, and recovery paths.
 ```
 
-The parent should wait for the children through their terminal handoffs, then
+The parent should wait for the children through their lifecycle handoffs, then
 combine the results. It should not poll every child to discover whether it has
 finished.
 
