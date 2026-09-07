@@ -5,6 +5,7 @@
   --text: #c9d1d9;
   --text-dim: #6e7681;
   --accent: #58a6ff;
+  --system-accent: #bc8cff;
   --green: #3fb950;
   --yellow: #d29922;
   --red: #f85149;
@@ -25,6 +26,7 @@
   --text: #1f2328;
   --text-dim: #656d76;
   --accent: #0969da;
+  --system-accent: #8250df;
   --green: #1a7f37;
   --yellow: #9a6700;
   --red: #cf222e;
@@ -43,6 +45,7 @@
     --text: #1f2328;
     --text-dim: #656d76;
     --accent: #0969da;
+    --system-accent: #8250df;
     --green: #1a7f37;
     --yellow: #9a6700;
     --red: #cf222e;
@@ -431,11 +434,11 @@ body {
 .system-msg.expandable {
   padding-top: 4px;
   padding-bottom: 4px;
-  border-left: 2px solid var(--border);
+  border-left: 2px solid var(--system-accent);
 }
 .system-msg.expandable summary {
   cursor: pointer;
-  color: var(--text-dim);
+  color: var(--system-accent);
 }
 .system-msg-body {
   margin: 4px 0 2px 16px;
