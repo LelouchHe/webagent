@@ -1,6 +1,6 @@
-# Task Coordination Guide
+# Task Manual
 
-This is the user-facing guide to coordinating work between Tasks. It explains
+This is the user-facing manual for coordinating work between Tasks. It explains
 how to use the Task collaboration surface; it does not describe WebAgent's
 internal implementation.
 
