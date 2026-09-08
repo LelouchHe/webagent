@@ -24,16 +24,49 @@ The server advertises a short, generic usage contract through the MCP
 
 ```text
 Use task_create for a direct child, then immediately use task_send to give it its first instruction.
-Use task_send for normal coordination and for continuing or resuming existing Tasks; use task_update(done|blocked) for typed lifecycle handoffs. A done Task remains available and is not deleted or permanently closed.
+Use task_send for normal coordination and for continuing or resuming existing Tasks; task_send is not a lifecycle handoff. Use task_update(done|blocked) for typed lifecycle handoffs. A done Task remains available and is not deleted or permanently closed.
 After dispatching work, end the current turn; do not poll with task_query.
 Use task_query and task_get_record only for history recovery, diagnosis, or audit.
 Omit task_id to inspect the current Task's persisted history.
 ```
 
 Clients may surface these instructions through their own discovery UI or tool;
-they are not a replacement for the individual tool descriptions. Detailed
-workflow guidance belongs in the [Task Manual](task-manual.md) or an on-demand
-skill.
+they are not a replacement for the individual tool descriptions. When an
+Agent-created delegated Task's collaboration turn ends or errors while
+the Task is still `running` without a typed `task_update(done|blocked)` handoff,
+WebAgent may send one Markdown handoff reminder before leaving the Task idle.
+User-created interactive Tasks are not subject to this automatic reminder.
+Detailed workflow guidance belongs in
+the [Task Manual](task-manual.md) or an on-demand skill.
+
+## Lifecycle at a glance
+
+The MCP surface participates in this loop:
+
+```mermaid
+sequenceDiagram
+    participant P as Parent Task
+    participant C as Child Task
+
+    P->>C: task_create
+    P->>C: task_send(Task Contract)
+    C->>C: Execute work
+    C-->>P: task_update(done|blocked)
+    P->>P: Verify contract, result, and evidence
+    alt Accepted
+        P->>P: Complete its own Task when ready
+    else Follow-up needed
+        P->>C: task_send(focused follow-up)
+        C->>C: Continue work
+    else Blocked
+        P->>C: task_send(missing decision or input)
+        C->>C: Resume work
+    end
+```
+
+`task_send` does not complete the current Task. A `done` Task remains available
+for history and follow-up. Parent Tasks receive direct child handoffs only;
+WebAgent does not automatically rebroadcast raw child reports to ancestors.
 
 ## Tools
 
@@ -201,7 +234,31 @@ that execution has stopped.
 Create a direct child Task immediately. The request includes a required title
 plus optional `cwd`, `model`, and `thinking` overrides. Omitted execution
 options inherit from the current Task. The result contains the new Task ID.
-The creating Task also receives a durable system message containing the child
-Task title. Send the first work instruction separately with `task_send`; the
-Task ID remains in the tool result and event metadata. Failures return an MCP
-tool error rather than an empty ID.
+This creates an Agent-delegated Task: immediately send its first Task Contract
+with `task_send`, including the goal, scope, completion criteria, and report
+format, then end the dispatch turn without polling. Failures return an MCP tool
+error rather than an empty ID.
+
+### `task_send`
+
+Send a durable coordination message to another Task. Use it for instructions,
+questions, findings, progress, decisions, and focused follow-up, including
+continuing a Task marked `blocked` or `done`.
+
+`task_send` is not a lifecycle handoff and does not complete the current Task.
+Use `task_update(done|blocked)` when the current assignment is complete or
+cannot continue. The recipient receives the full message body; important
+findings are not discarded because the message is coordination.
+
+### `task_update`
+
+Submit a typed lifecycle handoff for the current Task:
+
+- `blocked`: explain the missing input or decision and how the Task can resume;
+- `done`: provide the result, completion evidence, limitations, and useful next
+  step.
+
+A `done` handoff is a result submission, not proof that the parent has accepted
+it. The parent or verifier checks the original Task Contract and may accept it,
+request focused follow-up with `task_send`, or keep it blocked. The Task and its
+history remain available after either status.

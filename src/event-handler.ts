@@ -307,6 +307,14 @@ function handlePromptDone(
   // The tail this turn buffered must always land, even when the turn has
   // already been superseded — it is the only copy of that text.
   const isCurrent = tasks.isCurrentPrompt(event.taskId, event.promptId);
+  const taskBeforeIdle = isCurrent ? store.getTask(event.taskId) : null;
+  // Only Agent-created delegated Tasks owe a lifecycle handoff. User-created
+  // Tasks may receive the same collaboration content but remain interactive.
+  const needsHandoffReminder =
+    isCurrent &&
+    taskBeforeIdle?.source === "agent" &&
+    event.stopReason !== "cancelled" &&
+    taskBeforeIdle.workflow_status === "running";
   if (isCurrent) {
     tasks.activePrompts.delete(event.taskId);
     tasks.syncBusy(event.taskId);
@@ -332,16 +340,29 @@ function handlePromptDone(
     { from_ref: "agent" },
   );
   if (isCurrent) {
-    if (store.getTask(event.taskId)?.workflow_status === "running") {
+    if (taskBeforeIdle?.workflow_status === "running") {
       store.updateTaskWorkflowStatus(event.taskId, "idle");
     }
     // Defer past the synchronous prompt_done broadcast below: a busy patch
     // minted by the drain must never race ahead of the finished turn's own
     // terminator, or clients drop the terminator as a superseded turn and
     // strand its pending tool/permission UI.
-    void Promise.resolve().then(() =>
-      tasks.drainCollaborationDeliveries(bridge, event.taskId),
-    );
+    void Promise.resolve()
+      .then(async () => {
+        const drained = await tasks.drainCollaborationDeliveries(
+          bridge,
+          event.taskId,
+        );
+        if (!drained && needsHandoffReminder) {
+          await tasks.promptHandoffReminder(bridge, event.taskId);
+        }
+      })
+      .catch((error: unknown) => {
+        clog.warn("handoff recovery failed", {
+          taskId: event.taskId.slice(0, 8),
+          error,
+        });
+      });
   }
 }
 
@@ -352,9 +373,15 @@ function handleError(
   bridge: AgentBridge,
 ): void {
   if (event.taskId) {
+    const taskId = event.taskId;
     // Same attribution as a completion: a superseded turn failing late must
     // not end the turn that replaced it. The buffered tail still flushes.
     const isCurrent = tasks.isCurrentPrompt(event.taskId, event.promptId);
+    const taskBeforeIdle = isCurrent ? store.getTask(event.taskId) : null;
+    const needsHandoffReminder =
+      isCurrent &&
+      taskBeforeIdle?.source === "agent" &&
+      taskBeforeIdle.workflow_status === "running";
     if (isCurrent) {
       tasks.activePrompts.delete(event.taskId);
       tasks.syncBusy(event.taskId);
@@ -379,10 +406,25 @@ function handleError(
       { from_ref: "agent" },
     );
     if (isCurrent) {
-      if (store.getTask(event.taskId)?.workflow_status === "running") {
+      if (taskBeforeIdle?.workflow_status === "running") {
         store.updateTaskWorkflowStatus(event.taskId, "idle");
       }
-      void tasks.drainCollaborationDeliveries(bridge, event.taskId);
+      void Promise.resolve()
+        .then(async () => {
+          const drained = await tasks.drainCollaborationDeliveries(
+            bridge,
+            taskId,
+          );
+          if (!drained && needsHandoffReminder) {
+            await tasks.promptHandoffReminder(bridge, taskId);
+          }
+        })
+        .catch((recoveryError: unknown) => {
+          clog.warn("handoff recovery failed after agent error", {
+            taskId: taskId.slice(0, 8),
+            error: recoveryError,
+          });
+        });
     }
   }
 }

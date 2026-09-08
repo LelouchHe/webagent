@@ -87,6 +87,18 @@ function configOptionId(
 
 /** Minimum age (seconds) before an empty task is eligible for cleanup. */
 const EMPTY_TASK_MIN_AGE_S = 60;
+const HANDOFF_REMINDER_TEXT = [
+  "## Task Handoff Required",
+  "",
+  "This Task turn ended without a lifecycle handoff.",
+  "",
+  "Choose one:",
+  "- Continue the work if it is not finished.",
+  "- If the assignment is complete, call `task_update(done, ...)` with the completion report.",
+  "- If the Task cannot continue without input or a decision, call `task_update(blocked, ...)` and explain what is missing.",
+  "",
+  "Do not end this Task turn with a prose answer only.",
+].join("\n");
 
 export class InvalidTaskDirectoryError extends Error {
   constructor(cwd: string) {
@@ -1563,6 +1575,50 @@ export class TaskManager {
         },
       },
     });
+  }
+
+  /**
+   * Give a collaboration task one recovery turn when its previous prompt
+   * ended while the workflow was still running. The caller has already
+   * transitioned the workflow back to idle; keeping this prompt out of the
+   * running status prevents a missing handoff from triggering a reminder loop.
+   */
+  async promptHandoffReminder(
+    bridge: Pick<AgentBridge, "prompt">,
+    taskId: string,
+  ): Promise<boolean> {
+    if (this.getBusyKind(taskId) !== null) return false;
+    const task = this.store.getTask(taskId);
+    if (task?.workflow_status !== "idle") return false;
+
+    this.store.saveEvent(
+      taskId,
+      "system_message",
+      {
+        kind: "handoff_reminder",
+        title: "Task handoff required",
+        body: HANDOFF_REMINDER_TEXT,
+      },
+      { from_ref: "system" },
+    );
+    this.activePrompts.add(taskId);
+    this.syncBusy(taskId);
+    const promptId =
+      this.state.getState(taskId).runtime.busy?.promptId ?? undefined;
+    try {
+      await bridge.prompt(taskId, HANDOFF_REMINDER_TEXT, undefined, promptId);
+      return true;
+    } catch (error) {
+      slog.warn("handoff reminder failed", {
+        taskId: taskId.slice(0, 8),
+        error,
+      });
+      if (this.isCurrentPrompt(taskId, promptId)) {
+        this.activePrompts.delete(taskId);
+        this.syncBusy(taskId);
+      }
+      return false;
+    }
   }
 
   /**

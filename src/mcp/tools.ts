@@ -218,8 +218,8 @@ export function registerMcpTools(
     "task_create",
     {
       description:
-        "Create a child Task for independent work. " +
-        "Send its first instruction with task_send, then end the dispatch turn.",
+        "Create a direct child Task for independent work. " +
+        "Immediately use task_send to give it the first instruction, then end the dispatch turn without polling.",
       inputSchema: {
         title: z
           .string()
@@ -295,15 +295,12 @@ export function registerMcpTools(
     {
       description:
         "Send a durable coordination message to another Task. " +
-        "Use it for instructions, questions, findings, routine progress, decisions, " +
-        "and follow-up work, including continuing or resuming a Task marked blocked or done. " +
-        "When reporting that the current Task is blocked or its assignment is complete, " +
-        "use task_update instead. Send messages without waiting for or polling the recipient.",
+        "Use it for instructions, questions, findings, progress, decisions, and follow-up. " +
+        "This is communication, not a lifecycle handoff; use task_update(done|blocked) for completion or blocking. " +
+        "Do not wait for or poll the recipient.",
       inputSchema: {
         target: TASK_ID.describe("Stable target Task ID"),
-        body: BODY.describe(
-          "Verbatim coordination message; use task_update for blocked/done status",
-        ),
+        body: BODY.describe("Verbatim coordination or handoff message"),
       },
     },
     async ({ target, body }) => {
@@ -318,13 +315,13 @@ export function registerMcpTools(
     {
       description:
         "Send a typed lifecycle handoff for the current Task. " +
-        "Use blocked when the current work cannot continue without input, and done when the current assignment is complete. " +
-        "This does not delete or permanently close the Task: its history remains available and a later task_send may continue it. " +
-        "Use task_send for routine progress and follow-up coordination.",
+        "Use blocked when work needs input or a decision, and done when the assignment is complete. " +
+        "The parent receives the handoff and decides the next step; this does not delete or permanently close the Task. " +
+        "Use task_send for normal communication.",
       inputSchema: {
         status: z.enum(["blocked", "done"]),
         body: BODY.describe(
-          "Actionable blocker explanation or evidence-backed completion result",
+          "Handoff body: explain the blocker or report the completed result",
         ),
       },
     },
