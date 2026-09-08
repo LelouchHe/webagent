@@ -308,8 +308,12 @@ function handlePromptDone(
   // already been superseded — it is the only copy of that text.
   const isCurrent = tasks.isCurrentPrompt(event.taskId, event.promptId);
   const taskBeforeIdle = isCurrent ? store.getTask(event.taskId) : null;
+  const collaborationReminder = isCurrent
+    ? tasks.consumeCollaborationTurnReminder(event.taskId, event.promptId)
+    : null;
   const needsHandoffReminder =
     isCurrent &&
+    collaborationReminder === true &&
     event.stopReason !== "cancelled" &&
     taskBeforeIdle?.workflow_status === "running";
   if (isCurrent) {
@@ -344,15 +348,22 @@ function handlePromptDone(
     // minted by the drain must never race ahead of the finished turn's own
     // terminator, or clients drop the terminator as a superseded turn and
     // strand its pending tool/permission UI.
-    void Promise.resolve().then(async () => {
-      const drained = await tasks.drainCollaborationDeliveries(
-        bridge,
-        event.taskId,
-      );
-      if (!drained && needsHandoffReminder) {
-        await tasks.promptHandoffReminder(bridge, event.taskId);
-      }
-    });
+    void Promise.resolve()
+      .then(async () => {
+        const drained = await tasks.drainCollaborationDeliveries(
+          bridge,
+          event.taskId,
+        );
+        if (!drained && needsHandoffReminder) {
+          await tasks.promptHandoffReminder(bridge, event.taskId);
+        }
+      })
+      .catch((error: unknown) => {
+        clog.warn("handoff recovery failed", {
+          taskId: event.taskId.slice(0, 8),
+          error,
+        });
+      });
   }
 }
 
@@ -363,9 +374,18 @@ function handleError(
   bridge: AgentBridge,
 ): void {
   if (event.taskId) {
+    const taskId = event.taskId;
     // Same attribution as a completion: a superseded turn failing late must
     // not end the turn that replaced it. The buffered tail still flushes.
     const isCurrent = tasks.isCurrentPrompt(event.taskId, event.promptId);
+    const taskBeforeIdle = isCurrent ? store.getTask(event.taskId) : null;
+    const collaborationReminder = isCurrent
+      ? tasks.consumeCollaborationTurnReminder(event.taskId, event.promptId)
+      : null;
+    const needsHandoffReminder =
+      isCurrent &&
+      collaborationReminder === true &&
+      taskBeforeIdle?.workflow_status === "running";
     if (isCurrent) {
       tasks.activePrompts.delete(event.taskId);
       tasks.syncBusy(event.taskId);
@@ -390,10 +410,25 @@ function handleError(
       { from_ref: "agent" },
     );
     if (isCurrent) {
-      if (store.getTask(event.taskId)?.workflow_status === "running") {
+      if (taskBeforeIdle?.workflow_status === "running") {
         store.updateTaskWorkflowStatus(event.taskId, "idle");
       }
-      void tasks.drainCollaborationDeliveries(bridge, event.taskId);
+      void Promise.resolve()
+        .then(async () => {
+          const drained = await tasks.drainCollaborationDeliveries(
+            bridge,
+            taskId,
+          );
+          if (!drained && needsHandoffReminder) {
+            await tasks.promptHandoffReminder(bridge, taskId);
+          }
+        })
+        .catch((recoveryError: unknown) => {
+          clog.warn("handoff recovery failed after agent error", {
+            taskId: taskId.slice(0, 8),
+            error: recoveryError,
+          });
+        });
     }
   }
 }

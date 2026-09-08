@@ -21,7 +21,7 @@ function createMockSseManager() {
   };
 }
 
-function createMockBridge(promptError?: Error) {
+function createMockBridge(promptErrors: Array<Error | undefined> = []) {
   const calls = {
     resolvePermission: [] as Array<{ requestId: string; optionId: string }>,
     prompts: [] as Array<{ taskId: string; text: string; promptId?: string }>,
@@ -38,11 +38,38 @@ function createMockBridge(promptError?: Error) {
         promptId?: string,
       ) {
         calls.prompts.push({ taskId, text, promptId });
+        const promptError = promptErrors.shift();
         return promptError ? Promise.reject(promptError) : Promise.resolve();
       },
     } as any,
     calls,
   };
+}
+
+async function startCollaborationTurn(
+  store: Store,
+  tasks: TaskManager,
+  bridge: Parameters<TaskManager["drainCollaborationDeliveries"]>[0],
+  body = "Continue the assigned work.",
+): Promise<string> {
+  store.createTask("root", "/tmp", "root", "agent-root");
+  store.createTask("source", "/tmp", "agent", "agent-source", "root");
+  store.createTask("target", "/tmp", "agent", "agent-target", "root");
+  tasks.liveTasks.add("target");
+  store.createCollaborationMessage({
+    id: "message-1",
+    deliveryId: "delivery-1",
+    sourceTaskId: "source",
+    directTargetTaskId: "target",
+    sourceActor: "agent",
+    body,
+    createdAt: Date.now(),
+  });
+  assert.equal(
+    await tasks.drainCollaborationDeliveries(bridge, "target"),
+    true,
+  );
+  return "target";
 }
 
 describe("handleAgentEvent", () => {
@@ -215,15 +242,17 @@ describe("handleAgentEvent", () => {
   });
 
   it("reminds a running collaboration task to send a lifecycle handoff", async () => {
-    store.createTask("s1", "/tmp");
-    store.updateTaskWorkflowStatus("s1", "running");
-    tasks.activePrompts.add("s1");
-    tasks.syncBusy("s1");
     const { bridge, calls } = createMockBridge();
+    const taskId = await startCollaborationTurn(store, tasks, bridge);
     const { sseManager } = createMockSseManager();
 
     handleAgentEvent(
-      { type: "prompt_done", taskId: "s1", stopReason: "end_turn" } as any,
+      {
+        type: "prompt_done",
+        taskId,
+        promptId: calls.prompts[0].promptId,
+        stopReason: "end_turn",
+      } as any,
       tasks,
       store,
       bridge,
@@ -232,15 +261,15 @@ describe("handleAgentEvent", () => {
     );
     await new Promise<void>((resolve) => setImmediate(resolve));
 
-    assert.equal(store.getTask("s1")?.workflow_status, "idle");
-    assert.equal(calls.prompts.length, 1);
+    assert.equal(store.getTask(taskId)?.workflow_status, "idle");
+    assert.equal(calls.prompts.length, 2);
     assert.match(
-      calls.prompts[0].text,
+      calls.prompts[1].text,
       /task_update\(done|task_update\(blocked/,
     );
     assert.ok(
       store
-        .getEvents("s1")
+        .getEvents(taskId)
         .some(
           (event) =>
             event.type === "system_message" &&
@@ -250,15 +279,17 @@ describe("handleAgentEvent", () => {
   });
 
   it("does not remind again when the handoff reminder itself ends", async () => {
-    store.createTask("s1", "/tmp");
-    store.updateTaskWorkflowStatus("s1", "running");
-    tasks.activePrompts.add("s1");
-    tasks.syncBusy("s1");
     const { bridge, calls } = createMockBridge();
+    const taskId = await startCollaborationTurn(store, tasks, bridge);
     const { sseManager } = createMockSseManager();
 
     handleAgentEvent(
-      { type: "prompt_done", taskId: "s1", stopReason: "end_turn" } as any,
+      {
+        type: "prompt_done",
+        taskId,
+        promptId: calls.prompts[0].promptId,
+        stopReason: "end_turn",
+      } as any,
       tasks,
       store,
       bridge,
@@ -266,12 +297,69 @@ describe("handleAgentEvent", () => {
       sseManager as any,
     );
     await new Promise<void>((resolve) => setImmediate(resolve));
-    assert.equal(calls.prompts.length, 1);
+    assert.equal(calls.prompts.length, 2);
 
     handleAgentEvent(
       {
         type: "prompt_done",
-        taskId: "s1",
+        taskId,
+        promptId: calls.prompts[1].promptId,
+        stopReason: "end_turn",
+      } as any,
+      tasks,
+      store,
+      bridge,
+      makeEventHandlerConfig(),
+      sseManager as any,
+    );
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    assert.equal(calls.prompts.length, 2);
+  });
+
+  it("cleans up the reminder turn when the bridge rejects it", async () => {
+    const { bridge, calls } = createMockBridge([
+      undefined,
+      new Error("bridge unavailable"),
+    ]);
+    const taskId = await startCollaborationTurn(store, tasks, bridge);
+    const { sseManager } = createMockSseManager();
+
+    handleAgentEvent(
+      {
+        type: "prompt_done",
+        taskId,
+        promptId: calls.prompts[0].promptId,
+        stopReason: "end_turn",
+      } as any,
+      tasks,
+      store,
+      bridge,
+      makeEventHandlerConfig(),
+      sseManager as any,
+    );
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    assert.equal(calls.prompts.length, 2);
+    assert.equal(tasks.activePrompts.has(taskId), false);
+    assert.equal(tasks.getBusyKind(taskId), null);
+    assert.equal(store.getTask(taskId)?.workflow_status, "idle");
+  });
+
+  it("does not remind after a pure Task status notification", async () => {
+    const { bridge, calls } = createMockBridge();
+    const taskId = await startCollaborationTurn(
+      store,
+      tasks,
+      bridge,
+      "Task status: done\nChild completed its assignment.",
+    );
+    const { sseManager } = createMockSseManager();
+
+    handleAgentEvent(
+      {
+        type: "prompt_done",
+        taskId,
         promptId: calls.prompts[0].promptId,
         stopReason: "end_turn",
       } as any,
@@ -284,18 +372,21 @@ describe("handleAgentEvent", () => {
     await new Promise<void>((resolve) => setImmediate(resolve));
 
     assert.equal(calls.prompts.length, 1);
+    assert.equal(store.getTask(taskId)?.workflow_status, "idle");
   });
 
-  it("cleans up the reminder turn when the bridge rejects it", async () => {
-    store.createTask("s1", "/tmp");
-    store.updateTaskWorkflowStatus("s1", "running");
-    tasks.activePrompts.add("s1");
-    tasks.syncBusy("s1");
-    const { bridge, calls } = createMockBridge(new Error("bridge unavailable"));
+  it("reminds after a collaboration turn reports an agent error", async () => {
+    const { bridge, calls } = createMockBridge();
+    const taskId = await startCollaborationTurn(store, tasks, bridge);
     const { sseManager } = createMockSseManager();
 
     handleAgentEvent(
-      { type: "prompt_done", taskId: "s1", stopReason: "end_turn" } as any,
+      {
+        type: "error",
+        taskId,
+        promptId: calls.prompts[0].promptId,
+        message: "agent failed",
+      } as any,
       tasks,
       store,
       bridge,
@@ -304,10 +395,8 @@ describe("handleAgentEvent", () => {
     );
     await new Promise<void>((resolve) => setImmediate(resolve));
 
-    assert.equal(calls.prompts.length, 1);
-    assert.equal(tasks.activePrompts.has("s1"), false);
-    assert.equal(tasks.getBusyKind("s1"), null);
-    assert.equal(store.getTask("s1")?.workflow_status, "idle");
+    assert.equal(calls.prompts.length, 2);
+    assert.match(calls.prompts[1].text, /Task Handoff Required/);
   });
 
   it("prefers a queued collaboration delivery over a handoff reminder", async () => {
