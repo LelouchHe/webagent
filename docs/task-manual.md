@@ -50,15 +50,19 @@ A Task has two related lifecycles: execution and acceptance. The Agent owns
 execution; the parent or user decides whether the submitted result is accepted.
 The normal delegated shape is:
 
-```text
-create Task
-  → send the first Task Contract
-  → run the work
-  → submit a typed done or blocked handoff
-  → parent receives the handoff
-  → parent verifies the contract, result, and evidence
-  → accept, request focused follow-up, or keep blocked
-  → parent completes its own Task when its own goal is satisfied
+```mermaid
+flowchart TD
+    A[Create Task] --> B[Send first Task Contract]
+    B --> C[Run the work]
+    C --> D[Submit typed done or blocked handoff]
+    D --> E[Parent receives full handoff]
+    E --> F{Parent verifies contract, result, and evidence}
+    F -->|Accept| G[Parent completes its own Task when its goal is satisfied]
+    F -->|Focused follow-up| H[Parent sends follow-up instruction]
+    H --> C
+    F -->|Still blocked| I[Keep Task blocked]
+    I --> J[Resume after missing input or decision]
+    J --> C
 ```
 
 `task_update(done, ...)` means that the current Agent is submitting its result;

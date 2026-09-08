@@ -43,14 +43,25 @@ the [Task Manual](task-manual.md) or an on-demand skill.
 
 The MCP surface participates in this loop:
 
-```text
-task_create
-  → task_send: first Task Contract
-  → agent executes
-  → task_update(done|blocked): typed handoff
-  → parent receives the full handoff body
-  → parent verifies, accepts, or sends focused follow-up
-  → parent reports its own result when its own Task is complete
+```mermaid
+sequenceDiagram
+    participant P as Parent Task
+    participant C as Child Task
+
+    P->>C: task_create
+    P->>C: task_send(Task Contract)
+    C->>C: Execute work
+    C-->>P: task_update(done|blocked)
+    P->>P: Verify contract, result, and evidence
+    alt Accepted
+        P->>P: Complete its own Task when ready
+    else Follow-up needed
+        P->>C: task_send(focused follow-up)
+        C->>C: Continue work
+    else Blocked
+        P->>C: task_send(missing decision or input)
+        C->>C: Resume work
+    end
 ```
 
 `task_send` does not complete the current Task. A `done` Task remains available
