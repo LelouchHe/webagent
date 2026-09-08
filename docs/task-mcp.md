@@ -234,7 +234,31 @@ that execution has stopped.
 Create a direct child Task immediately. The request includes a required title
 plus optional `cwd`, `model`, and `thinking` overrides. Omitted execution
 options inherit from the current Task. The result contains the new Task ID.
-The creating Task also receives a durable system message containing the child
-Task title. Send the first work instruction separately with `task_send`; the
-Task ID remains in the tool result and event metadata. Failures return an MCP
-tool error rather than an empty ID.
+This creates an Agent-delegated Task: immediately send its first Task Contract
+with `task_send`, including the goal, scope, completion criteria, and report
+format, then end the dispatch turn without polling. Failures return an MCP tool
+error rather than an empty ID.
+
+### `task_send`
+
+Send a durable coordination message to another Task. Use it for instructions,
+questions, findings, progress, decisions, and focused follow-up, including
+continuing a Task marked `blocked` or `done`.
+
+`task_send` is not a lifecycle handoff and does not complete the current Task.
+Use `task_update(done|blocked)` when the current assignment is complete or
+cannot continue. The recipient receives the full message body; important
+findings are not discarded because the message is coordination.
+
+### `task_update`
+
+Submit a typed lifecycle handoff for the current Task:
+
+- `blocked`: explain the missing input or decision and how the Task can resume;
+- `done`: provide the result, completion evidence, limitations, and useful next
+  step.
+
+A `done` handoff is a result submission, not proof that the parent has accepted
+it. The parent or verifier checks the original Task Contract and may accept it,
+request focused follow-up with `task_send`, or keep it blocked. The Task and its
+history remain available after either status.
