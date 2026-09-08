@@ -308,14 +308,13 @@ function handlePromptDone(
   // already been superseded — it is the only copy of that text.
   const isCurrent = tasks.isCurrentPrompt(event.taskId, event.promptId);
   const taskBeforeIdle = isCurrent ? store.getTask(event.taskId) : null;
-  const collaborationReminder = isCurrent
-    ? tasks.consumeCollaborationTurnReminder(event.taskId, event.promptId)
-    : null;
+  // Only Agent-created delegated Tasks owe a lifecycle handoff. User-created
+  // Tasks may receive the same collaboration content but remain interactive.
   const needsHandoffReminder =
     isCurrent &&
-    collaborationReminder === true &&
+    taskBeforeIdle?.source === "agent" &&
     event.stopReason !== "cancelled" &&
-    taskBeforeIdle?.workflow_status === "running";
+    taskBeforeIdle.workflow_status === "running";
   if (isCurrent) {
     tasks.activePrompts.delete(event.taskId);
     tasks.syncBusy(event.taskId);
@@ -379,13 +378,10 @@ function handleError(
     // not end the turn that replaced it. The buffered tail still flushes.
     const isCurrent = tasks.isCurrentPrompt(event.taskId, event.promptId);
     const taskBeforeIdle = isCurrent ? store.getTask(event.taskId) : null;
-    const collaborationReminder = isCurrent
-      ? tasks.consumeCollaborationTurnReminder(event.taskId, event.promptId)
-      : null;
     const needsHandoffReminder =
       isCurrent &&
-      collaborationReminder === true &&
-      taskBeforeIdle?.workflow_status === "running";
+      taskBeforeIdle?.source === "agent" &&
+      taskBeforeIdle.workflow_status === "running";
     if (isCurrent) {
       tasks.activePrompts.delete(event.taskId);
       tasks.syncBusy(event.taskId);

@@ -165,11 +165,6 @@ export class TaskManager {
   readonly activePrompts = new Set<string>();
   /** Delivery rows currently being claimed/resolved for one target task. */
   private readonly drainingCollaborationTasks = new Set<string>();
-  /** Reminder eligibility for the currently running collaboration turn. */
-  private readonly collaborationTurnReminder = new Map<
-    string,
-    { promptId: string | null; eligible: boolean }
-  >();
   /** Tasks undergoing compact summary generation or ACP rotation. */
   readonly compactingTasks = new Set<string>();
   /** Root reset barrier covering the asynchronous tree replacement. */
@@ -1347,7 +1342,6 @@ export class TaskManager {
     this.assistantBuffers.delete(id);
     this.thinkingBuffers.delete(id);
     this.activePrompts.delete(id);
-    this.collaborationTurnReminder.delete(id);
     this.compactingTasks.delete(id);
     this.resettingTasks.delete(id);
     this.rotatingTasks.delete(id);
@@ -1584,24 +1578,6 @@ export class TaskManager {
   }
 
   /**
-   * Consume the reminder eligibility recorded for the current collaboration
-   * turn. A null result means that the turn was not started by a collaboration
-   * delivery; false means it was only a terminal status notification.
-   */
-  consumeCollaborationTurnReminder(
-    taskId: string,
-    promptId?: string,
-  ): boolean | null {
-    const marker = this.collaborationTurnReminder.get(taskId);
-    if (!marker) return null;
-    if (promptId && marker.promptId && promptId !== marker.promptId) {
-      return null;
-    }
-    this.collaborationTurnReminder.delete(taskId);
-    return marker.eligible;
-  }
-
-  /**
    * Give a collaboration task one recovery turn when its previous prompt
    * ended while the workflow was still running. The caller has already
    * transitioned the workflow back to idle; keeping this prompt out of the
@@ -1691,17 +1667,6 @@ export class TaskManager {
       this.syncBusy(taskId);
       const promptId =
         this.state.getState(taskId).runtime.busy?.promptId ?? undefined;
-      const reminderEligible = deliveries.some((delivery) => {
-        const message = this.store.getCollaborationMessage(delivery.message_id);
-        return !(
-          message?.source_actor === "agent" &&
-          /^Task status: (?:done|blocked)\n/.test(message.body)
-        );
-      });
-      this.collaborationTurnReminder.set(taskId, {
-        promptId: promptId ?? null,
-        eligible: reminderEligible,
-      });
       void bridge
         .prompt(taskId, entries.join("\n\n"), undefined, promptId)
         .then(
@@ -1720,7 +1685,6 @@ export class TaskManager {
               "prompt_failed",
             );
             if (!this.isCurrentPrompt(taskId, promptId)) return;
-            this.collaborationTurnReminder.delete(taskId);
             this.activePrompts.delete(taskId);
             // Same attribution as an ACP error event: a rejected delivery
             // prompt must not leave the target marked running.

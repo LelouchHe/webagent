@@ -45,7 +45,8 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - autopilot auto-approval with allow_once
   - autopilot fallback when no allow_once option exists
   - normal permission_request broadcast in non-autopilot mode
-  - collaboration handoff reminder when a running turn ends without `task_update(done|blocked)`
+  - handoff reminder for Agent-created delegated Tasks when a running turn ends without `task_update(done|blocked)`
+  - user-created interactive Tasks remain exempt while still receiving collaboration content
   - handoff reminder loop prevention, bridge failure cleanup, queued-delivery priority, terminal-status preservation, and error-turn recovery
 
 - `test/task-manager.test.ts`

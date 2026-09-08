@@ -346,14 +346,23 @@ describe("handleAgentEvent", () => {
     assert.equal(store.getTask(taskId)?.workflow_status, "idle");
   });
 
-  it("does not remind after a pure Task status notification", async () => {
+  it("does not remind a user-created task after collaboration input", async () => {
+    store.createTask("root", "/tmp", "root", "agent-root");
+    store.createTask("source", "/tmp", "agent", "agent-source", "root");
+    store.createTask("manual", "/tmp", "auto", "agent-manual", "root");
+    tasks.liveTasks.add("manual");
+    store.createCollaborationMessage({
+      id: "message-1",
+      deliveryId: "delivery-1",
+      sourceTaskId: "source",
+      directTargetTaskId: "manual",
+      sourceActor: "agent",
+      body: "Important result for the user-owned task.",
+      createdAt: Date.now(),
+    });
     const { bridge, calls } = createMockBridge();
-    const taskId = await startCollaborationTurn(
-      store,
-      tasks,
-      bridge,
-      "Task status: done\nChild completed its assignment.",
-    );
+    const taskId = "manual";
+    await tasks.drainCollaborationDeliveries(bridge, taskId);
     const { sseManager } = createMockSseManager();
 
     handleAgentEvent(

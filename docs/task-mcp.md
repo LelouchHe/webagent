@@ -32,9 +32,11 @@ Omit task_id to inspect the current Task's persisted history.
 
 Clients may surface these instructions through their own discovery UI or tool;
 they are not a replacement for the individual tool descriptions. When a
-collaboration turn ends or errors while the Task is still `running` without a
-typed `task_update(done|blocked)` handoff, WebAgent may send one Markdown
-handoff reminder before leaving the Task idle. Detailed workflow guidance belongs in
+an Agent-created delegated Task's collaboration turn ends or errors while
+the Task is still `running` without a typed `task_update(done|blocked)` handoff,
+WebAgent may send one Markdown handoff reminder before leaving the Task idle.
+User-created interactive Tasks are not subject to this automatic reminder.
+Detailed workflow guidance belongs in
 the [Task Manual](task-manual.md) or an on-demand skill.
 
 ## Tools
