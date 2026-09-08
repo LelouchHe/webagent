@@ -65,6 +65,11 @@ The `/view` filesystem grammar is reused for the creation prefix:
 - the brief is delivered as its first instruction;
 - after successful creation, the browser opens the new Task.
 
+A `+`-created Task is user-owned and interactive. It can receive messages and
+child results, but the runtime does not automatically require a typed
+`task_update(done|blocked)` handoff after each turn. Agent-created delegated
+Tasks follow the lifecycle handoff contract described in the [Task Manual](task-manual.md).
+
 A bare `+` opens the default current cwd and recent paths. Selecting a cwd
 continues the picker so the user can enter the title; it does not create a Task
 until the completed command is submitted.

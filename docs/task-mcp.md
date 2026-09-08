@@ -31,13 +31,31 @@ Omit task_id to inspect the current Task's persisted history.
 ```
 
 Clients may surface these instructions through their own discovery UI or tool;
-they are not a replacement for the individual tool descriptions. When a
-an Agent-created delegated Task's collaboration turn ends or errors while
+they are not a replacement for the individual tool descriptions. When an
+Agent-created delegated Task's collaboration turn ends or errors while
 the Task is still `running` without a typed `task_update(done|blocked)` handoff,
 WebAgent may send one Markdown handoff reminder before leaving the Task idle.
 User-created interactive Tasks are not subject to this automatic reminder.
 Detailed workflow guidance belongs in
 the [Task Manual](task-manual.md) or an on-demand skill.
+
+## Lifecycle at a glance
+
+The MCP surface participates in this loop:
+
+```text
+task_create
+  → task_send: first Task Contract
+  → agent executes
+  → task_update(done|blocked): typed handoff
+  → parent receives the full handoff body
+  → parent verifies, accepts, or sends focused follow-up
+  → parent reports its own result when its own Task is complete
+```
+
+`task_send` does not complete the current Task. A `done` Task remains available
+for history and follow-up. Parent Tasks receive direct child handoffs only;
+WebAgent does not automatically rebroadcast raw child reports to ancestors.
 
 ## Tools
 

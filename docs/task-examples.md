@@ -48,7 +48,10 @@ task_update(
 )
 ```
 
-The completed handoff is delivered to the parent automatically.
+The completed handoff is delivered to the parent automatically. The parent
+checks the original completion condition and evidence; receiving `done` is not
+itself acceptance. If the result is incomplete, send focused follow-up work;
+otherwise accept it and continue the parent's own Task.
 
 ## Split independent investigations
 
@@ -155,7 +158,8 @@ Coordinator
 
 Each child returns one concise lifecycle handoff. A `done` handoff marks that
 assignment complete; it does not delete or permanently close the Task. The
-coordinator then produces one synthesis containing:
+coordinator verifies each handoff, requests focused follow-up when needed, and
+then produces one synthesis containing:
 
 ```text
 Conclusion:
@@ -171,7 +175,9 @@ Next step:
   the smallest action that follows
 ```
 
-The coordinator completes its own Task with:
+The coordinator completes its own Task with its own handoff; it does not
+blindly forward the children's raw reports. The coordinator completes its own
+Task with:
 
 ```text
 task_update(
@@ -181,6 +187,14 @@ task_update(
 ```
 
 That handoff wakes its parent. No polling loop is part of the normal path.
+
+## User-created interactive Task
+
+A Task created directly by the user can still receive collaboration messages
+and important child results, but it remains an interactive workspace. The user
+can discuss or steer it without an automatic runtime demand for
+`task_update(done|blocked)` after every turn. It may still use typed handoffs
+when the user or its own workflow wants an explicit completion boundary.
 
 ## Send several discoveries
 

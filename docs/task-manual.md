@@ -44,6 +44,44 @@ A child creation normally has two conceptual steps: create the Task, then give
 it its first instruction. The instruction should provide enough context for the
 child to work without repeatedly asking what it is supposed to do.
 
+## The Task lifecycle
+
+A Task has two related lifecycles: execution and acceptance. The Agent owns
+execution; the parent or user decides whether the submitted result is accepted.
+The normal delegated shape is:
+
+```text
+create Task
+  → send the first Task Contract
+  → run the work
+  → submit a typed done or blocked handoff
+  → parent receives the handoff
+  → parent verifies the contract, result, and evidence
+  → accept, request focused follow-up, or keep blocked
+  → parent completes its own Task when its own goal is satisfied
+```
+
+`task_update(done, ...)` means that the current Agent is submitting its result;
+it does not prove that a parent has accepted the result. The handoff should
+include the conclusion, satisfied criteria, evidence, limitations, and a next
+step when useful. `task_update(blocked, ...)` should name the missing input or
+decision and explain how the Task can resume.
+
+`task_send` is for ordinary coordination, questions, progress, and follow-up;
+it is not a terminal lifecycle handoff. A Task may send useful information and
+still need to continue or later submit `done` or `blocked`.
+
+A Task created by an Agent as a delegated child follows the handoff contract.
+A user-created interactive Task remains a user-controlled workspace: it can
+receive collaboration messages and important results, but the runtime does not
+automatically require a lifecycle handoff after each turn.
+
+After a parent accepts a result, the Task remains available for history and
+follow-up. A retrospective may be recorded after acceptance, but it is not a
+prerequisite for accepting the result. If a delegated turn ends without a
+typed handoff, WebAgent may send one automatic Markdown reminder; this is a
+recovery aid, not a substitute for the Agent's typed handoff.
+
 ## Communicate through messages
 
 Use messages as the normal coordination path. A Task should send useful
@@ -51,7 +89,8 @@ progress, questions, findings, and decisions to the relevant Task as they arise.
 Use `task_update` when the current assignment becomes materially blocked or
 complete; its status is a typed message, not Task deletion. A final result
 should include the conclusion and the evidence needed by the recipient to act
-on it.
+on it. The recipient receives the full handoff body, including important
+findings; it should summarize rather than blindly forward a child's raw report.
 
 Task coordination is event-driven:
 
@@ -65,11 +104,17 @@ recipient continues or makes a decision
 
 A parent should not repeatedly inspect a child while waiting for its result.
 Once work has been dispatched, end the current turn and let the completion or
-blocking message bring the next decision back to the coordinator.
+blocking message bring the next decision back to the coordinator. If a
+collaboration delivery contains a child result, the parent handles that result
+locally; WebAgent does not automatically broadcast the raw handoff to every
+ancestor. A parent sends its own summary upward only when its own Task is ready
+to report.
 
 ## Use lifecycle states deliberately
 
-Use the lifecycle to communicate material state, not ordinary progress:
+Use the lifecycle to communicate material state, not ordinary progress. These
+states describe the current execution record; `done` and `blocked` do not
+remove the Task or prevent a later continuation:
 
 - **running** — work is in progress;
 - **idle** — no turn is currently running; this does not prove completion;
