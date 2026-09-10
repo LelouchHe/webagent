@@ -69,14 +69,24 @@ canonical anchor.
 4. Server classifies `kind = image | file` from sniffed MIME, picks the
    size cap (`limits.image_upload` or `limits.file_upload`), streams to
    `<uuid>.<ext>.tmp`, renames atomically on success, inserts a row into
-   `attachments`.
+   `attachments`. The disk extension comes from the sniffed MIME, so
+   heic/heif/avif/bmp/tiff land as `<uuid>.heic` etc. rather than `.bin`.
 5. After all uploads resolve, the browser fires `POST /prompt` with the
    `attachments[]` array of refs.
 6. Server's `AttachmentDispatcher` resolves each ref to a file:// URI
-   under `tasksAnchor` and turns it into an ACP block. Any failure
-   (DB row missing, file missing, realpath outside anchor) falls back
-   to an ACP `text` block reading `[attachment removed: <displayName>]`
-   — the prompt still goes through, just without that file.
+   under `tasksAnchor` and turns it into one or more ACP blocks. Whether a
+   payload is treated as an image comes from the **server-side row**
+   (`row.kind`, set by the upload sniff), never from the client's ref.
+   Image blocks (base64 inline) are emitted only for the upstream-accepted
+   mimes `image/png`, `image/jpeg`, `image/gif`, `image/webp`
+   (`isUpstreamImageMime`); any other image container (heic, heif, avif,
+   bmp, tiff, svg, ...) is degraded to a one-line hint plus an ACP
+   `resource_link`, because the provider rejects the wire format with 400
+   and a failed block poisons the whole session history. Non-image kinds
+   emit a `resource_link` alone. Any failure (DB row missing, file
+   missing, realpath outside anchor) falls back to an ACP `text` block
+   reading `[attachment removed: <displayName>]` — the prompt still goes
+   through, just without that file.
 
 ## Permission auto-approve
 
@@ -195,6 +205,14 @@ Everything else (including `image/svg+xml` and `text/html`) is forced
 to `attachment` so a malicious upload cannot script the page when the
 user clicks the link. Combined with `X-Content-Type-Options: nosniff`,
 this neutralizes Chrome's MIME-sniffing fallback.
+
+The display allow-list (`INLINE_MIMES` / `isInlineMime`) and the upstream
+wire allow-list (`UPSTREAM_IMAGE_MIMES` / `isUpstreamImageMime`, see the
+upload pipeline) are two separate constants that currently hold the same
+four mimes. They are intentionally not derived from each other: the first
+is an XSS/display policy, the second an upstream provider compatibility
+policy, and they are free to diverge (e.g. upstream gaining HEIC support
+changes only the second).
 
 ## Signed URLs (egress)
 

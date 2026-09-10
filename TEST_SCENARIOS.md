@@ -304,6 +304,11 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - file picker and paste handling for both image and non-image files
   - send-time upload + AbortController cancel; file chip swap to anchor on success
 
+- `test/attachments-mime.test.ts`, `test/attachment-dispatch.test.ts`
+  - sniffed MIME detection (PDF/PNG/ZIP/HEIC magic bytes, UTF-8 text vs binary) and mime → disk extension mapping, including heic/heif/avif/bmp/tiff
+  - dispatcher wire format driven by the server-side row, not the client ref: upstream-accepted image mimes inline as base64 image blocks; heic and other unsupported image containers degrade to a hint plus `resource_link`; non-images emit `resource_link` alone
+  - fallback text block on row miss, cross-task ref, anchor breach, and disk failure; client-supplied uri/data/path rejection
+
 - `test/api-module.test.ts`
   - frontend API client: all REST endpoints (tasks, prompt, cancel, permissions, bash, files, config, visibility, status)
   - error handling (ApiError, non-JSON responses)

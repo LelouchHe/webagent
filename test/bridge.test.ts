@@ -33,11 +33,13 @@ describe("AgentBridge", () => {
     // Stub dispatcher: turns refs into the same image block the old test
     // verified, without needing a real Store on disk.
     bridge.setAttachmentDispatcher({
-      dispatch: async (_sid: string, ref: { mimeType: string }) => ({
-        type: "image",
-        data: "abc",
-        mimeType: ref.mimeType,
-      }),
+      dispatch: async (_sid: string, ref: { mimeType: string }) => [
+        {
+          type: "image",
+          data: "abc",
+          mimeType: ref.mimeType,
+        },
+      ],
     } as any);
 
     await bridge.prompt("s1", "hello", [

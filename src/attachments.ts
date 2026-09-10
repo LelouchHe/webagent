@@ -18,6 +18,11 @@ const MIME_TO_EXT: Record<string, string> = {
   "image/jpeg": "jpg",
   "image/gif": "gif",
   "image/webp": "webp",
+  "image/heic": "heic",
+  "image/heif": "heif",
+  "image/avif": "avif",
+  "image/bmp": "bmp",
+  "image/tiff": "tif",
   "image/svg+xml": "svg",
   "application/pdf": "pdf",
   "text/plain": "txt",
@@ -137,6 +142,28 @@ const INLINE_MIMES = new Set([
 
 export function isInlineMime(mime: string): boolean {
   return INLINE_MIMES.has(mime.toLowerCase());
+}
+
+/**
+ * Image mimes the upstream model accepts as inline ACP image blocks.
+ *
+ * This is deliberately a SEPARATE set from INLINE_MIMES even though the two
+ * currently hold the same values: INLINE_MIMES is a display/XSS policy (which
+ * mimes may be served `Content-Disposition: inline` in the browser), while
+ * UPSTREAM_IMAGE_MIMES is an upstream compatibility policy (which image
+ * containers the model provider accepts on the wire). They answer different
+ * questions and will diverge — e.g. upstream support for HEIC would change
+ * only this set. Never reference one from the other's check.
+ */
+const UPSTREAM_IMAGE_MIMES = new Set([
+  "image/png",
+  "image/jpeg",
+  "image/gif",
+  "image/webp",
+]);
+
+export function isUpstreamImageMime(mime: string): boolean {
+  return UPSTREAM_IMAGE_MIMES.has(mime.toLowerCase());
 }
 
 /**
