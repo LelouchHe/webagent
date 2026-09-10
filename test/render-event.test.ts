@@ -299,6 +299,48 @@ describe("render-event", () => {
       assert.ok(a?.getAttribute("href")?.endsWith("/s/TKN/attachments/a2.txt"));
     });
 
+    it("degraded image link reuses the rewritten URL, not the raw stored path", () => {
+      const el = append(
+        mod.renderContentEvent(
+          "user_message",
+          {
+            text: "x",
+            attachments: [
+              {
+                kind: "image",
+                attachmentId: "a3",
+                displayName: "IMG_1040.HEIC",
+                mimeType: "image/heic",
+                path: "/api/v1/tasks/s1/attachments/a3.heic",
+              },
+            ],
+          },
+          makeHooks({
+            rewriteAttachmentSrc: (src) =>
+              src.replace(
+                /^\/api\/v1\/tasks\/[^/]+\/attachments\//,
+                "/s/TKN/attachments/",
+              ),
+          }),
+        ),
+      )!;
+      const img = el.querySelector("img.user-image")!;
+      // The hook is baked into the src the browser is asked to decode...
+      assert.ok(
+        img.getAttribute("src")?.endsWith("/s/TKN/attachments/a3.heic"),
+      );
+
+      // ...so the decode-failure link must reuse that same URL. Falling back
+      // to the raw `/api/v1/...` path would hand a share viewer a dead,
+      // bearer-authenticated URL and fails this assertion.
+      img.dispatchEvent(new globalThis.window.Event("error"));
+      const link = el.querySelector("a.user-file");
+      assert.ok(link, "decode failure must degrade to <a.user-file>");
+      assert.equal(link.getAttribute("href"), "/s/TKN/attachments/a3.heic");
+      assert.equal(link.getAttribute("download"), "IMG_1040.HEIC");
+      assert.equal(el.querySelectorAll("img.user-image").length, 0);
+    });
+
     it("falls back to [kind: name] text marker only when path is missing", () => {
       const el = append(
         mod.renderContentEvent(
