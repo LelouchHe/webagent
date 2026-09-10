@@ -244,23 +244,33 @@ function buildUserMessage(
     if (kind === "image" && src) {
       const imgEl = document.createElement("img");
       imgEl.className = "user-image";
-      imgEl.src = src;
       imgEl.alt = name;
       const displaySize = imageDisplaySize(a.width, a.height);
       if (displaySize) {
         imgEl.width = displaySize.width;
         imgEl.height = displaySize.height;
       }
+      // Whether the thumbnail renders at all is a client capability, not a
+      // policy: iOS/macOS Safari decode HEIC natively, desktop Chrome and
+      // Firefox do not. So the browser's own decode attempt — not a shared
+      // mime allow-list — decides thumbnail vs. file link. A cached/pre-fix
+      // mime list would regress the platform that *can* decode. See
+      // docs/uploads.md ("Inline rendering allow-list").
+      let swapped = false;
+      const fallbackToFileLink = () => {
+        if (swapped) return;
+        swapped = true;
+        imgEl.parentNode?.replaceChild(buildUserFileLink(src, name), imgEl);
+      };
+      imgEl.addEventListener("error", fallbackToFileLink);
+      imgEl.addEventListener("load", () => {
+        // An image that "loads" with no intrinsic size is undecodable too.
+        if (imgEl.naturalWidth === 0) fallbackToFileLink();
+      });
+      imgEl.src = src;
       el.appendChild(imgEl);
     } else if (kind === "file" && src) {
-      const link = document.createElement("a");
-      link.className = "user-file";
-      link.href = src;
-      link.target = "_blank";
-      link.rel = "noopener";
-      link.download = name;
-      link.textContent = name;
-      el.appendChild(link);
+      el.appendChild(buildUserFileLink(src, name));
     } else {
       // Fallback for events stored without `path` (only happens for
       // pre-fix data on disk; new events always carry path).
@@ -271,6 +281,19 @@ function buildUserMessage(
     }
   }
   return el;
+}
+
+// Shared by the `kind === "file"` branch and the image decode-failure
+// fallback so both produce byte-identical download links.
+function buildUserFileLink(src: string, name: string): HTMLAnchorElement {
+  const link = document.createElement("a");
+  link.className = "user-file";
+  link.href = src;
+  link.target = "_blank";
+  link.rel = "noopener";
+  link.download = name;
+  link.textContent = name;
+  return link;
 }
 
 function imageDisplaySize(

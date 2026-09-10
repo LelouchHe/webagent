@@ -215,6 +215,23 @@ is an XSS/display policy, the second an upstream provider compatibility
 policy, and they are free to diverge (e.g. upstream gaining HEIC support
 changes only the second).
 
+Neither constant decides how the UI renders an attachment.
+
+**Client-side thumbnail fallback (no allow-list)** — the UI picks
+"thumbnail vs. download link" at render time by letting the browser
+attempt the decode. `public/js/render-event.ts` (chat bubbles) and
+`public/js/attachments.ts` (pending chips) mount the `<img>`
+unconditionally and swap it **in place** for the existing
+`<a class="user-file">` / `.attach-file` chip when the image fires
+`error`, or loads with `naturalWidth === 0` ("loaded but not
+decodable"). There is deliberately no shared mime list behind this
+decision: decodability is a client capability, not a server policy —
+iOS/macOS Safari decode HEIC natively while desktop Chrome and Firefox
+do not, so a hardcoded list would regress the platform that *can*
+decode. The `isInlineMime` policy above only governs the HTTP
+`Content-Disposition` response, never whether the UI tries to render an
+image.
+
 ## Signed URLs (egress)
 
 Attachment URLs are HMAC-signed; only the server has the secret
