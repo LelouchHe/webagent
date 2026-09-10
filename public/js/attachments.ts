@@ -57,7 +57,8 @@ export function renderAttachPreview() {
       // Thumbnail vs. file chip is decided by this browser's own decode
       // attempt, not a shared mime allow-list: iOS/macOS Safari decode HEIC
       // natively while desktop Chrome/Firefox do not, so a hardcoded list
-      // would regress the platform that can decode. See docs/uploads.md.
+      // would regress the platform that can decode. See docs/uploads.md
+      // ("Client-side thumbnail fallback (no allow-list)").
       let swapped = false;
       const fallbackToFileChip = () => {
         if (swapped) return;

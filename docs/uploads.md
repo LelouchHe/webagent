@@ -217,11 +217,12 @@ changes only the second).
 
 Neither constant decides how the UI renders an attachment.
 
-**Client-side thumbnail fallback (no allow-list)** — the UI picks
-"thumbnail vs. download link" at render time by letting the browser
-attempt the decode. `public/js/render-event.ts` (chat bubbles) and
-`public/js/attachments.ts` (pending chips) mount the `<img>`
-unconditionally and swap it **in place** for the existing
+### Client-side thumbnail fallback (no allow-list)
+
+The UI picks "thumbnail vs. download link" at render time by letting
+the browser attempt the decode. `public/js/render-event.ts` (chat
+bubbles) and `public/js/attachments.ts` (pending chips) mount the
+`<img>` unconditionally and swap it **in place** for the existing
 `<a class="user-file">` / `.attach-file` chip when the image fires
 `error`, or loads with `naturalWidth === 0` ("loaded but not
 decodable"). There is deliberately no shared mime list behind this
@@ -280,7 +281,7 @@ The `path` field is what the renderer keys on. Three branches in
 
 | `kind`  | renders                                                                      |
 | ------- | ---------------------------------------------------------------------------- |
-| `image` | `<img class="user-image" src={signed URL} alt={displayName} width height>` when dimensions are known |
+| `image` | `<img class="user-image" src={signed URL} alt={displayName} width height>` (`width height` when known); replaced **in place** by the `<a class="user-file">` link below when the browser cannot decode it |
 | `file`  | `<a class="user-file" href={signed URL} target="_blank" download={name}>`   |
 | (any, missing path) | `<div class="user-attachment">[<kind>: <name>]</div>` — pre-fix data only |
 
@@ -303,7 +304,7 @@ the two render paths agree on classes:
 | -------------------- | -------------------------------- | ------------------------------------------- |
 | Send-time, before upload resolves (`input.ts`) | `<img class=user-image src={dataURL}>` (FileReader local URL) | `<div class=user-attachment>[file: name]</div>` (placeholder chip) |
 | Send-time, after upload resolves (`input.ts`) | unchanged — dataURL stays until reload | `<a class=user-file href={signed URL}>` (placeholder swapped in place) |
-| Reload (`render-event.ts`) | `<img class=user-image src={signed URL}>` | `<a class=user-file href={signed URL}>` |
+| Reload (`render-event.ts`) | `<img class=user-image src={signed URL}>`; swapped in place for `<a class=user-file>` when the browser cannot decode it | `<a class=user-file href={signed URL}>` |
 
 The sender's own SSE-broadcast `user_message` echo is suppressed
 (`sentMessageForTask` in `events.ts`) so the optimistic bubble is
@@ -311,20 +312,27 @@ never replaced live. To stop the file branch from being stuck on the
 text chip until the user reloads, `input.ts` actively swaps each chip
 for a real `<a>` the moment the upload promise resolves — using the
 signed URL the server returned in the upload response. Reload is the
-independent SSE-replay path; the two paths now produce identical
-shapes.
+independent SSE-replay path. The two paths produce identical shapes for
+file attachments and for images this browser can decode; the
+decode-failure fallback is the one intended exception. An image the
+browser cannot decode is rebuilt as `<a class="user-file">` on reload,
+while the optimistic send-time bubble keeps its undecodable `<img>`
+until the history is replayed. That asymmetry is bounded to the live
+bubble — the sender's own echo is suppressed, so a replayed view
+(reload, or any other client) shows the fallback link, and the decode
+verdict still belongs to the viewing browser.
 
 ## Tests — what guards what
 
 | Layer        | Test                                            | Pins                                                                            |
 | ------------ | ----------------------------------------------- | ------------------------------------------------------------------------------- |
-| Server unit  | `test/attachments.test.ts`                      | `mimeToExt`, `isInlineMime`, `classifyKind`, `normalizeDisplayName`             |
+| Server unit  | `test/attachments-mime.test.ts`                 | `sniffMime` magic-byte detection, `mimeToExt` disk-extension mapping            |
 | Server unit  | `test/store-attachments.test.ts`                | DB row insert / lookup / `ON DELETE CASCADE`                                     |
 | Server unit  | `test/attachment-dispatch.test.ts`              | ref → ACP block conversion, fallback paths, anchor check, cross-task reject |
 | Server unit  | `test/attachment-interceptor.test.ts`           | F1–F7 auto-approve defenses                                                     |
 | Frontend unit| `test/attachments.test.ts` (frontend twin)      | `renderAttachPreview` — preview thumbs + remove button                          |
-| Frontend unit| `test/render-event.test.ts`                     | `<img.user-image>` and `<a.user-file>` shape per `kind` / missing-path fallback |
-| E2E          | `test/e2e/image-upload-reload.spec.ts`          | Upload → optimistic preview → reload → signed-URL `<img>` survives              |
+| Frontend unit| `test/render-event.test.ts`                     | `<img.user-image>` and `<a.user-file>` shape per `kind` / missing-path fallback; undecodable image (`error` / zero-size `load`) degrades in place to the link |
+| E2E          | `test/e2e/image-upload-reload.spec.ts`          | Upload → optimistic preview → reload → signed-URL `<img>` survives; undecodable image degrades to a file link (real Chromium decode failure) |
 | E2E          | `test/e2e/image-lightbox.spec.ts`               | Click `<img.user-image>` → overlay; backdrop / Escape close; wheel zoom         |
 | E2E          | `test/e2e/file-attachment-download.spec.ts`     | `<a.user-file>` post-reload, click triggers download, `Content-Disposition: attachment; filename=` from server |
 

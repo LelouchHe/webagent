@@ -255,7 +255,7 @@ function buildUserMessage(
       // Firefox do not. So the browser's own decode attempt — not a shared
       // mime allow-list — decides thumbnail vs. file link. A cached/pre-fix
       // mime list would regress the platform that *can* decode. See
-      // docs/uploads.md ("Inline rendering allow-list").
+      // docs/uploads.md ("Client-side thumbnail fallback (no allow-list)").
       let swapped = false;
       const fallbackToFileLink = () => {
         if (swapped) return;

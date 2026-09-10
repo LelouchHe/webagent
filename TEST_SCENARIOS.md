@@ -539,6 +539,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
 
 - `image-upload-reload.spec.ts`
   - uploaded images are sent and restored after reload
+  - undecodable images fall back to a file link instead of a broken image
 
 - `image-lightbox.spec.ts`
   - clicking an image opens the lightbox overlay
