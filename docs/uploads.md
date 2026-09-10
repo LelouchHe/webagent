@@ -70,7 +70,7 @@ canonical anchor.
    size cap (`limits.image_upload` or `limits.file_upload`), streams to
    `<uuid>.<ext>.tmp`, renames atomically on success, inserts a row into
    `attachments`. The disk extension comes from the sniffed MIME, so
-   heic/heif/avif/bmp/tiff land as `<uuid>.heic` etc. rather than `.bin`.
+   heic/heif/avif/bmp/tif land as `<uuid>.heic` etc. rather than `.bin`.
 5. After all uploads resolve, the browser fires `POST /prompt` with the
    `attachments[]` array of refs.
 6. Server's `AttachmentDispatcher` resolves each ref to a file:// URI
@@ -79,11 +79,12 @@ canonical anchor.
    (`row.kind`, set by the upload sniff), never from the client's ref.
    Image blocks (base64 inline) are emitted only for the upstream-accepted
    mimes `image/png`, `image/jpeg`, `image/gif`, `image/webp`
-   (`isUpstreamImageMime`); any other image container (heic, heif, avif,
-   bmp, tiff, svg, ...) is degraded to a one-line hint plus an ACP
-   `resource_link`, because the provider rejects the wire format with 400
-   and a failed block poisons the whole session history. Non-image kinds
-   emit a `resource_link` alone. Any failure (DB row missing, file
+   (`isUpstreamImageMime`); any other container the sniff classifies as
+   `image/*` but upstream does not accept (heic, heif, avif, bmp, tiff,
+   and other `image/*` containers) is degraded to a one-line hint plus an
+   ACP `resource_link`, because the provider rejects the wire format with
+   400 and a failed block poisons the whole session history. Non-image
+   kinds emit a `resource_link` alone. Any failure (DB row missing, file
    missing, realpath outside anchor) falls back to an ACP `text` block
    reading `[attachment removed: <displayName>]` — the prompt still goes
    through, just without that file.
@@ -193,8 +194,8 @@ separators (`/`, `\`), reject `.` and `..`, cap at 255 UTF-8 bytes
 substitutes a generated default like `image-N` / `file-N`.
 
 **On-disk extension** (`mimeToExt`) — derived from server-sniffed MIME
-against a fixed allow-list (`png/jpg/gif/webp/svg/pdf/txt/md/html/csv/
-json/zip`). Anything else falls through to `.bin`. The user-supplied
+against the fixed allow-list in `MIME_TO_EXT` (`src/attachments.ts`);
+mimes outside that table fall through to `.bin`. The user-supplied
 extension is **never** trusted — a `.txt` claiming to be `image/png`
 gets stored as `<uuid>.png`, which defeats extension-based heuristics
 that downstream tooling might apply.

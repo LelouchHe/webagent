@@ -113,10 +113,13 @@ describe("AttachmentDispatcher", () => {
   });
 
   it("unsupported image mime becomes a hint plus resource_link, never an image block", async () => {
+    // Deliberately mismatched client displayName: the hint and the
+    // resource_link must both name the file the server row holds, not what
+    // the client claimed.
     const blocks = await dispatcher.dispatch("s1", {
       kind: "image",
       attachmentId: "s1-heic",
-      displayName: "photo.heic",
+      displayName: "client-lie.heic",
       mimeType: "image/heic",
     });
     assert.deepEqual(
@@ -128,7 +131,14 @@ describe("AttachmentDispatcher", () => {
       "no base64 image block for a heic attachment",
     );
     const hint = blocks[0] as { type: "text"; text: string };
-    assert.ok(hint.text.includes("photo.heic"), "hint names the attachment");
+    assert.ok(
+      hint.text.includes("photo.heic"),
+      "hint names the server-side row name",
+    );
+    assert.ok(
+      !hint.text.includes("client-lie.heic"),
+      "hint does not echo the client displayName",
+    );
     assert.ok(hint.text.includes("image/heic"), "hint names the mime");
     assert.ok(!hint.text.includes("\n"), "hint is a single line");
     const link = blocks[1] as { uri: string; name: string; mimeType: string };

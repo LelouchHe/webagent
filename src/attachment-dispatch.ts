@@ -135,16 +135,17 @@ export class AttachmentDispatcher {
       }
 
       // Image container the upstream model rejects (heic/heif/avif/bmp/
-      // tiff/svg/...). Sending it as an image block poisons the session
-      // history: the provider 400s on every later turn too. Degrade to a
-      // file link plus a hint instead.
+      // tiff and other `image/*` containers — note an SVG sniffs as text,
+      // so it never reaches this branch). Sending it as an image block
+      // poisons the session history: the provider 400s on every later turn
+      // too. Degrade to a file link plus a hint instead.
       this.logger.warn(
         `[attachments] image downgraded to resource_link (mime=${row.mime}) for ${taskId}/${ref.attachmentId}`,
       );
       return [
         {
           type: "text",
-          text: `[attachment ${ref.displayName} (${row.mime}) cannot be read as an inline image by the model; convert it to png or jpeg to make it readable]`,
+          text: `[attachment ${row.name} (${row.mime}) cannot be read as an inline image by the model; convert it to png or jpeg to make it readable]`,
         },
         this.resourceLink(row, resolvedPath),
       ];
