@@ -94,7 +94,9 @@ A bare `+` has no title to create with. It shows the hint
 `/new [cwd]` is the unnamed form of the same creation: it creates a direct
 child of the current Task without a title (the task id stands in), optionally
 in another cwd, and switches to it. Use `+` when the child needs a name that
-other Tasks can address.
+other Tasks can address. Its picker mirrors `+`: the action row `create task`
+(extended to `create task at '<cwd>'` once a path is typed) leads, and the
+current cwd is listed first with `*`, ahead of the recent paths.
 
 ## `@` — target, navigate, and send
 

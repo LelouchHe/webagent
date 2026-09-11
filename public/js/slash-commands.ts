@@ -24,6 +24,7 @@ import {
   setStoredLogLevel,
 } from "./log.ts";
 import type { CmdNode } from "./slash-tree.ts";
+import { previewCwdDisplay, previewValue } from "./create-preview.ts";
 import type { TaskSummary } from "../../src/types.ts";
 import { HTTP_STATUS } from "../../src/http-status.ts";
 import { TOKEN_STORAGE_KEY } from "./login-core.ts";
@@ -311,6 +312,17 @@ function shareRowSpec(s: ShareListRow, kind: "open" | "revoke") {
 
 // --- ROOT tree ---
 
+/**
+ * Create a child task from the `/new` picker. The recents rows and the action
+ * row share this so click and Enter stay the same effect; the defaults capture
+ * `state.taskId` at call time, so the child attaches under the visible task.
+ */
+function createNewChildTask(cwd?: string): void {
+  resetTaskUI();
+  addSystem("Creating new task…");
+  requestNewTask({ cwd });
+}
+
 export const ROOT: CmdNode = {
   name: "<root>",
   children: [
@@ -501,32 +513,54 @@ export const ROOT: CmdNode = {
     {
       name: "/new",
       desc: "Create a child task",
-      fetch: listRecentPaths,
+      fetch: async () => {
+        const base = state.taskCwd ?? "";
+        const items: PathItem[] = [];
+        if (base) {
+          items.push({
+            cwd: base,
+            cwdDisplay: state.taskCwdDisplay ?? base,
+            time: "",
+          });
+        }
+        try {
+          for (const p of await listRecentPaths()) {
+            if (base !== "" && p.cwd.toLowerCase() === base.toLowerCase())
+              continue;
+            items.push(p);
+          }
+        } catch {
+          // Recent paths unavailable; the current cwd row still stands.
+        }
+        return items;
+      },
       toSpec: (item: unknown) => {
         const p = item as PathItem;
+        const currentCwd = state.taskCwd;
         const isCurrent =
-          p.cwd.toLowerCase() === (state.taskCwd ?? "").toLowerCase();
+          currentCwd !== null &&
+          p.cwd.toLowerCase() === currentCwd.toLowerCase();
         return {
           primary: p.cwdDisplay,
           current: isCurrent,
           onSelect: () => {
-            resetTaskUI();
-            addSystem("Creating new task…");
-            // Defaults capture state.taskId at call time, so the child is
-            // created under the currently visible task.
-            requestNewTask({ cwd: p.cwd });
+            createNewChildTask(p.cwd);
           },
         };
       },
       freeform: (q) => {
+        // The action row mirrors `+`: the default cwd is implicit, and `at`
+        // appears only once a path is typed. `previewValue` keeps a quoted
+        // path from reading as another field.
         const trimmed = q.trim();
-        if (!trimmed) return null;
         return {
-          primary: `create task at '${trimmed}'`,
+          primary: trimmed
+            ? `create task at ${previewValue(previewCwdDisplay(trimmed))}`
+            : "create task",
           onSelect: () => {
-            resetTaskUI();
-            addSystem("Creating new task…");
-            requestNewTask({ cwd: trimmed });
+            createNewChildTask(
+              trimmed === "" ? (state.taskCwd ?? undefined) : trimmed,
+            );
           },
         };
       },

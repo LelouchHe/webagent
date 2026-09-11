@@ -468,6 +468,117 @@ describe("slash menu — Tab vs Click behavior", () => {
     assert.equal(body.title, undefined, "/new stays unnamed (id title)");
   });
 
+  it("/new picker leads with the action row and marks the current cwd first", async () => {
+    state.taskId = "s1";
+    state.taskCwd = "/current";
+    state.taskCwdDisplay = "~/current";
+    globalThis.fetch = ((url: string, init?: any) => {
+      fetchCalls.push({ url, init });
+      if (url.startsWith("/api/v1/recent-paths")) {
+        return Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve([
+              { cwd: "/current", last_used_at: "2026-04-29 09:00:00" },
+              { cwd: "/tmp/other", last_used_at: "2026-04-29 08:00:00" },
+            ]),
+        });
+      }
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ id: "child-1", cwd: "/current" }),
+      });
+    }) as any;
+
+    dom.input.value = "/new ";
+    commands.updateSlashMenu();
+    await new Promise((r) => setTimeout(r, 10));
+
+    const rows = [...dom.slashMenu.querySelectorAll(".slash-item")].map(
+      (row: any) => ({
+        primary: row.querySelector(".slash-primary")?.textContent,
+        prefix: row.querySelector(".slash-prefix")?.textContent,
+      }),
+    );
+    // The action row is first; the recomputed current cwd takes the `*` slot
+    // ahead of the recents and is not duplicated.
+    assert.deepEqual(rows, [
+      { primary: "create task", prefix: "↵" },
+      { primary: "~/current", prefix: "*" },
+      { primary: "/tmp/other", prefix: "" },
+    ]);
+  });
+
+  it("/new action row creates in the current cwd when no path is typed", async () => {
+    state.taskId = "s1";
+    state.taskCwd = "/current";
+    state.taskCwdDisplay = "~/current";
+    globalThis.fetch = ((url: string, init?: any) => {
+      fetchCalls.push({ url, init });
+      if (url.startsWith("/api/v1/recent-paths")) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve([]) });
+      }
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ id: "child-1", cwd: "/current" }),
+      });
+    }) as any;
+
+    dom.input.value = "/new ";
+    commands.updateSlashMenu();
+    await new Promise((r) => setTimeout(r, 10));
+
+    const first = dom.slashMenu.querySelector(".slash-item");
+    assert.ok(first, "expected the action row");
+    assert.equal(
+      first.querySelector(".slash-primary")?.textContent,
+      "create task",
+    );
+    first.dispatchEvent(
+      new (globalThis.window as any).MouseEvent("mousedown", { bubbles: true }),
+    );
+    await new Promise((r) => setTimeout(r, 20));
+
+    const createCall = fetchCalls.find(
+      (c) => c.url === "/api/v1/tasks" && c.init?.method === "POST",
+    );
+    assert.ok(createCall, "the action row must create on click");
+    const body = JSON.parse(createCall.init.body);
+    assert.equal(body.cwd, "/current");
+    assert.equal(body.parentId, "s1");
+    assert.equal(body.title, undefined, "/new stays unnamed (id title)");
+  });
+
+  it("/new previews a typed path with an unambiguous at clause", async () => {
+    state.taskCwd = "/current";
+    state.taskCwdDisplay = "~/current";
+    globalThis.fetch = ((url: string, init?: any) => {
+      fetchCalls.push({ url, init });
+      if (url.startsWith("/api/v1/recent-paths")) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve([]) });
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
+    }) as any;
+
+    dom.input.value = "/new /tmp/x";
+    commands.updateSlashMenu();
+    await new Promise((r) => setTimeout(r, 10));
+    assert.equal(
+      dom.slashMenu.querySelector(".slash-primary")?.textContent,
+      "create task at '/tmp/x'",
+    );
+
+    // A path containing a quote switches to the shared JSON rendering so it
+    // cannot read as another field.
+    dom.input.value = "/new /tmp/x'y";
+    commands.updateSlashMenu();
+    await new Promise((r) => setTimeout(r, 10));
+    assert.equal(
+      dom.slashMenu.querySelector(".slash-primary")?.textContent,
+      `create task at "/tmp/x'y"`,
+    );
+  });
+
   it("/view lists cwd, filters locally, and Tab preserves the display path", async () => {
     state.taskCwd = "/work";
     globalThis.fetch = ((url: string, init?: any) => {

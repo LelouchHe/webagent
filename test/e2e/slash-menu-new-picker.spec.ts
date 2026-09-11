@@ -90,6 +90,43 @@ test("/new attaches the child under the launching task, not Root", async ({
   await expect.poll(() => currentTaskId(page)).toBe(parentId);
 });
 
+test("/new picker leads with the action row and marks the current cwd first", async ({
+  page,
+}) => {
+  await gotoConnected(page);
+  const parentId = await currentTaskId(page);
+  const parentCwd = await readTaskCwd(page, parentId);
+  const parentCwdDisplay = (await readStatusBarCwd(page)).replace(/\/$/, "");
+
+  await page.locator("#input").fill("/new ");
+  const menu = page.locator("#slash-menu.active");
+  const rows = menu.locator(".slash-item");
+  await expect(rows.nth(0)).toContainText("create task");
+  await expect(rows.nth(0).locator(".slash-prefix")).toHaveText("↵");
+  await expect(rows.nth(1)).toContainText(parentCwdDisplay);
+  await expect(rows.nth(1).locator(".slash-prefix")).toHaveText("*");
+
+  // The action row creates in the current cwd and then switches, like Enter.
+  await rows.nth(0).click();
+  await expect(page.locator("#messages")).toContainText("Creating new task…");
+  await expect.poll(() => currentTaskId(page)).not.toBe(parentId);
+  expect(await readTaskCwd(page, await currentTaskId(page))).toBe(parentCwd);
+});
+
+test("/new previews a typed path without ambiguity", async ({ page }) => {
+  await gotoConnected(page);
+
+  await page.locator("#input").fill("/new /tmp/x");
+  await expect(page.locator("#slash-menu.active")).toContainText(
+    "create task at '/tmp/x'",
+  );
+
+  await page.locator("#input").fill("/new /tmp/x'y");
+  await expect(page.locator("#slash-menu.active")).toContainText(
+    `create task at "/tmp/x'y"`,
+  );
+});
+
 test("+ creates a titled child in the current cwd without switching", async ({
   page,
 }) => {

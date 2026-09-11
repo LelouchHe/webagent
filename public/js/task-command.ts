@@ -13,6 +13,11 @@ import {
   type TaskPath,
 } from "../../src/task-path.ts";
 import { resolveBrowseTarget, resolveViewPath } from "./file-browser.ts";
+import {
+  previewCwdDisplay,
+  previewValue,
+  tidyResolvedPath,
+} from "./create-preview.ts";
 import { setInputValue, state } from "./state.ts";
 import { listRecentPaths } from "./slash-commands.ts";
 import { switchToTask } from "./task-navigation.ts";
@@ -30,45 +35,6 @@ export function canSubmitTaskCommandWhileBusy(text: string): boolean {
 export { isTaskCommand };
 
 // --- path helpers (browser-safe, server paths are `/`-separated) ---
-
-/**
- * Collapse the `.` segments and duplicate separators a relative `+` cwd picks
- * up from the join, without canonicalizing symlinks: `/tmp/my dir` stays
- * literal while `./rel` stops leaking a `/./`.
- */
-function tidyResolvedPath(path: string): string {
-  return path
-    .replace(/\/\.\//g, "/")
-    .replace(/\/{2,}/g, "/")
-    .replace(/\/\.$/, "");
-}
-
-/**
- * Render one `+` preview field so a value can never be misread as a different
- * (title, cwd) pair. A value without a quote character keeps today's
- * single-quote form byte for byte; a value containing `'` or `"` switches to a
- * JSON string (double quotes with `\"`/`\\` escapes) so the delimiters stay
- * unambiguous. Titles and cwds share this rendering.
- */
-function previewValue(value: string): string {
-  if (!/['"]/.test(value)) return `'${value}'`;
-  return JSON.stringify(value);
-}
-
-/**
- * Display form of the `+` cwd for the action preview. Resolved against the
- * abbreviated cwd base so it stays `~/…`-styled; never touches the filesystem.
- */
-function previewCwdDisplay(rawCwd: string): string {
-  const base = state.taskCwd ?? "";
-  const displayBase = state.taskCwdDisplay ?? base;
-  if (rawCwd === "") return displayBase;
-  try {
-    return tidyResolvedPath(resolveViewPath(rawCwd, displayBase || null));
-  } catch {
-    return rawCwd;
-  }
-}
 
 /**
  * Resolve the `+` cwd field (everything after the title, taken verbatim) to an

@@ -560,6 +560,8 @@ spot gaps, and decide what still needs to be added without reading every spec.
 - `slash-menu-new-picker.spec.ts`
   - `/new` creates an unnamed child in the current cwd or an explicit cwd, and
     attaches it under the launching task (`/exit` returns there)
+  - the `/new` picker leads with the `create task` action row and marks the
+    current cwd first with `*`, ahead of the recent paths
   - `+<title>` creates a titled child without switching; `@<title> <body>` then
     delivers the first instruction from the same task
   - `+` takes the cwd verbatim after the title (spaces, relative path, `~`) and
