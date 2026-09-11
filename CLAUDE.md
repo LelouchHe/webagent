@@ -96,3 +96,12 @@ Publishing uses the `v*` tag workflow documented in
 ## TODO
 
 - Add multi-client integration coverage for task-created broadcast guards.
+- Harden `/new` create-failure recovery. The command clears the view and drops
+  the active task *before* sending the create request, so any failure (5xx, cwd
+  removed after the probe, source task deleted between the liveness check and
+  the request) leaves the client with no active task until a reload. The cwd
+  probe's `isSourceTaskMissing` guard deliberately fails open, since treating an
+  unreadable task list as "source gone" would block legitimate creates. The
+  durable fix is to clear only after a successful create, or to restore the
+  previous task on failure; both change legacy `/new` failure semantics and the
+  shared create-failure path in `public/js/state.ts`.
