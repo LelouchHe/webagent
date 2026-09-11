@@ -5,6 +5,14 @@ input starts with `/`. It is the only surface for slash-style commands; both
 "pick from a list" (e.g. `/switch`, `/mode`) and "free-form arguments" (e.g.
 `/token mytest`, `/rename …`) flow through the same UI.
 
+> **Scope:** this document covers the `/`-prefixed command menu. `+` (create a
+> child Task) and `@` (address or message a Task) are *not* slash commands:
+> `task-command.ts` parses them with their own grammar and builds the same
+> `Candidate` list directly, without the `CmdNode` walker. They do share this
+> menu's rendering and key handling — one `renderItem`, one Tab/Enter/Click
+> contract in `commands.ts` — so a change here can reach them too. Their user
+> contract lives in [Task UX](task-ux.md).
+
 ## Goals
 
 1. **One template, one walker, one renderer.** Adding a new command, a new
