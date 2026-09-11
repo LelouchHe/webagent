@@ -82,13 +82,14 @@ child results, but the runtime does not automatically require a typed
 Tasks follow the lifecycle handoff contract described in the [Task Manual](task-manual.md).
 
 Autocomplete serves the second field. Once a title is present the menu leads
-with the action row for the current input — `↵ create 'api-fix' at '~/…'` — so
-what Enter will do is visible. A space then lists cwd candidates: the current
-cwd marked `*`, the recent paths, and, once a path prefix is typed, the real
-directory layer to drill into.
+with the action row for the current input — `↵ create 'api-fix'`, extended to
+`create 'api-fix' at '/tmp/repo'` only when a cwd is given explicitly — so what
+Enter will do is visible. The default cwd is implicit and is not echoed back. A
+space then lists cwd candidates: the current cwd marked `*`, the recent paths,
+and, once a path prefix is typed, the real directory layer to drill into.
 
-A bare `+` has no title to create with. It shows only the syntax line, and
-Enter reports `err: Task title is required after +`.
+A bare `+` has no title to create with. It shows the hint
+`create task · type a title`, and Enter reports `err: Task title is required after +`.
 
 `/new [cwd]` is the unnamed form of the same creation: it creates a direct
 child of the current Task without a title (the task id stands in), optionally

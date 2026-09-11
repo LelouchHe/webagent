@@ -240,7 +240,7 @@ test("bare + shows the syntax hint and Enter reports the missing title", async (
 
   await page.locator("#input").fill("+");
   const menu = page.locator("#slash-menu.active");
-  await expect(menu).toContainText("+<title> [<cwd>]");
+  await expect(menu).toContainText("create task · type a title");
 
   await page.locator("#input").press("Enter");
   await expect(page.locator("#messages")).toContainText(
@@ -258,7 +258,9 @@ test("+ menu previews the action and lists cwd candidates after a space", async 
 
   await page.locator("#input").fill("+" + unique);
   const menu = page.locator("#slash-menu.active");
-  await expect(menu).toContainText(`create '${unique}' at '~/`);
+  // The default cwd is implicit; the action row does not echo it back.
+  await expect(menu).toContainText(`create '${unique}'`);
+  await expect(menu).not.toContainText(" at '");
   await expect(menu).not.toContainText("/Users/");
   // No cwd rows until the separating space is typed.
   await expect(menu.locator(".slash-separator")).toHaveCount(0);

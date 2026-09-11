@@ -251,7 +251,14 @@ describe("+ title-first create", () => {
     commands.updateSlashMenu();
     await settle();
 
-    assert.match(dom.slashMenu.textContent, /\+<title> \[<cwd>\]/);
+    const row = dom.slashMenu.querySelector(".slash-item");
+    assert.ok(row);
+    assert.equal(
+      row.querySelector(".slash-primary")?.textContent,
+      "create task · type a title",
+    );
+    assert.equal(row.querySelector(".slash-secondary")?.textContent, undefined);
+    assert.equal(row.querySelector(".slash-prefix")?.textContent, "");
     assert.doesNotMatch(dom.slashMenu.textContent, /create '/);
   });
 
@@ -262,11 +269,25 @@ describe("+ title-first create", () => {
 
     const rows = [...dom.slashMenu.querySelectorAll(".slash-item")];
     assert.equal(rows.length, 1, "no cwd rows before the separating space");
+    // The default cwd is implicit, so it is not echoed back.
     assert.equal(
       rows[0].querySelector(".slash-primary")?.textContent,
-      "create 'api-fix' at '~/work'",
+      "create 'api-fix'",
     );
     assert.equal(rows[0].querySelector(".slash-prefix")?.textContent, "↵");
+  });
+
+  it("previews an explicit cwd with an at clause", async () => {
+    dom.input.value = "+api-fix /tmp/x";
+    commands.updateSlashMenu();
+    await settle();
+
+    const row = dom.slashMenu.querySelector(".slash-item");
+    assert.ok(row);
+    assert.equal(
+      row.querySelector(".slash-primary")?.textContent,
+      "create 'api-fix' at '/tmp/x'",
+    );
   });
 
   it("lists cwd candidates only after the separating space", async () => {
@@ -280,7 +301,7 @@ describe("+ title-first create", () => {
         prefix: row.querySelector(".slash-prefix")?.textContent,
       }),
     );
-    assert.equal(rows[0].primary, "create 'api-fix' at '~/work'");
+    assert.equal(rows[0].primary, "create 'api-fix'");
     assert.deepEqual(rows[1], { primary: "~/work", prefix: "*" });
   });
 

@@ -378,14 +378,11 @@ export async function buildTaskCommandCandidates(
   return buildMessageCandidates(parsed);
 }
 
-/** Syntax hint for a bare `+`: there is no title to create with yet. */
+/** Hint for a bare `+`: there is no title to create with yet. */
 function bareCreateCandidates(): Candidate[] {
   return [
     {
-      spec: {
-        primary: "+<title> [<cwd>]",
-        secondary: "title first · Enter creates",
-      },
+      spec: { primary: "create task · type a title" },
       prefix: "",
       kind: "placeholder",
     },
@@ -510,7 +507,10 @@ async function buildCreateCandidates(parsed: {
   const candidates: Candidate[] = [
     {
       spec: {
-        primary: `create '${title}' at '${previewCwdDisplay(rawCwd)}'`,
+        primary:
+          rawCwd === ""
+            ? `create '${title}'`
+            : `create '${title}' at '${previewCwdDisplay(rawCwd)}'`,
         fill: `+${quoteShellWord(title)}${parsed.remainder}`,
         onSelect: () => executeCreateTask(title, parsed.remainder),
       },

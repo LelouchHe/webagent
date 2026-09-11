@@ -564,8 +564,10 @@ spot gaps, and decide what still needs to be added without reading every spec.
     delivers the first instruction from the same task
   - `+` takes the cwd verbatim after the title (spaces, relative path, `~`) and
     refuses a missing directory or a `/` in the title
-  - bare `+` shows the syntax hint and Enter reports the missing title
-  - the `+` picker leads with the action preview and lists cwd candidates only
+  - bare `+` shows the `create task · type a title` hint and Enter reports the
+    missing title
+  - the `+` picker leads with the action preview (`create '<title>'`, with an
+    `at '<cwd>'` clause only when a cwd is given) and lists cwd candidates only
     after the separating space
 
 - `model-picker.spec.ts`
