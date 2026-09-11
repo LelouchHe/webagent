@@ -25,6 +25,7 @@ import {
 } from "./log.ts";
 import type { CmdNode } from "./slash-tree.ts";
 import {
+  isSourceTaskMissing,
   previewCwdDisplay,
   previewValue,
   resolveCreateCwd,
@@ -579,6 +580,14 @@ export const ROOT: CmdNode = {
               return;
             }
             const resolved = await resolveCreateCwd(trimmed);
+            // A source Task deleted while the probe was pending must not
+            // trigger the destructive reset: keep the current view intact.
+            if (await isSourceTaskMissing(sourceTaskId)) {
+              addSystem(
+                "err: create failed — the launching task no longer exists",
+              );
+              return;
+            }
             if ("error" in resolved) {
               addSystem(`err: create failed — ${resolved.error}`);
               return;

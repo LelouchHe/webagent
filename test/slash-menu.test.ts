@@ -585,6 +585,12 @@ describe("slash menu — Tab vs Click behavior", () => {
     state.taskCwdDisplay = "~/current";
     globalThis.fetch = ((url: string, init?: any) => {
       fetchCalls.push({ url, init });
+      if (url === "/api/v1/tasks" && !init?.method) {
+        return Promise.resolve({
+          ok: true,
+          text: () => Promise.resolve('[{"id":"s1"}]'),
+        });
+      }
       if (url.startsWith("/api/v1/files/info?")) {
         return Promise.resolve({
           ok: true,
@@ -649,6 +655,9 @@ describe("slash menu — Tab vs Click behavior", () => {
     state.taskCwdDisplay = "~/a";
     globalThis.fetch = (async (url: string, init?: any) => {
       fetchCalls.push({ url, init });
+      if (url === "/api/v1/tasks" && !init?.method) {
+        return new Response('[{"id":"A"}]', { status: 200 });
+      }
       if (url.startsWith("/api/v1/files/info?")) {
         await infoGate;
         return new Response(
@@ -698,6 +707,79 @@ describe("slash menu — Tab vs Click behavior", () => {
     );
     assert.equal(body.inheritFromTaskId, "A");
     assert.equal(body.cwd, "/a/rel");
+  });
+
+  it("/new action row keeps the current view when the launching task is deleted", async () => {
+    let releaseInfo!: () => void;
+    const infoGate = new Promise<void>((resolve) => {
+      releaseInfo = resolve;
+    });
+    state.taskId = "A";
+    state.taskCwd = "/a";
+    state.taskCwdDisplay = "~/a";
+    globalThis.fetch = (async (url: string, init?: any) => {
+      fetchCalls.push({ url, init });
+      if (url === "/api/v1/tasks" && !init?.method) {
+        // The launching task was deleted while the probe was pending.
+        return new Response("[]", { status: 200 });
+      }
+      if (url.startsWith("/api/v1/files/info?")) {
+        await infoGate;
+        return new Response(
+          JSON.stringify({
+            path: "/a/rel",
+            kind: "dir",
+            name: "rel",
+            size: 0,
+            mtime: 1,
+          }),
+          { status: 200 },
+        );
+      }
+      if (url.startsWith("/api/v1/recent-paths")) {
+        return new Response(JSON.stringify([]), { status: 200 });
+      }
+      return new Response(JSON.stringify({ error: "Parent task not found" }), {
+        status: 400,
+      });
+    }) as any;
+
+    dom.input.value = "/new ./rel";
+    commands.updateSlashMenu();
+    await new Promise((r) => setTimeout(r, 10));
+
+    const first = dom.slashMenu.querySelector(".slash-item");
+    assert.ok(first, "expected the action row");
+    first.dispatchEvent(
+      new (globalThis.window as any).MouseEvent("mousedown", { bubbles: true }),
+    );
+    await new Promise((r) => setTimeout(r, 0)); // the probe is in flight
+    // A is deleted; the client falls back to B, whose view is already rendered.
+    state.taskId = "B";
+    state.taskCwd = "/b";
+    dom.messages.innerHTML = '<div class="msg">B view</div>';
+    releaseInfo();
+    await new Promise((r) => setTimeout(r, 20));
+
+    assert.equal(state.taskId, "B", "must not blank the fallback task");
+    assert.match(
+      dom.messages.textContent ?? "",
+      /B view/,
+      "B view must survive",
+    );
+    assert.match(
+      dom.messages.textContent ?? "",
+      /launching task no longer exists/,
+    );
+    assert.equal(state.awaitingNewTask, false);
+    assert.equal(state.pendingNewTaskOpId, null);
+    assert.equal(
+      fetchCalls.some(
+        (c) => c.url === "/api/v1/tasks" && c.init?.method === "POST",
+      ),
+      false,
+      "a deleted launching task must not reach the create endpoint",
+    );
   });
 
   it("/view lists cwd, filters locally, and Tab preserves the display path", async () => {

@@ -74,7 +74,10 @@ describe("commands", () => {
 
   describe("handleSlashCommand", () => {
     it("creates a new task using the provided cwd", async () => {
-      setFetch((url) => {
+      setFetch((url, init) => {
+        if (url === "/api/v1/tasks" && !init?.method) {
+          return { ok: true, text: async () => '[{"id":"current-task"}]' };
+        }
         if (url.startsWith("/api/v1/files/info?")) {
           return {
             ok: true,
@@ -144,7 +147,10 @@ describe("commands", () => {
     });
 
     it("resolves a relative /new cwd against the current task cwd", async () => {
-      setFetch((url) => {
+      setFetch((url, init) => {
+        if (url === "/api/v1/tasks" && !init?.method) {
+          return { ok: true, text: async () => '[{"id":"current-task"}]' };
+        }
         if (url.startsWith("/api/v1/files/info?")) {
           return {
             ok: true,
@@ -182,7 +188,10 @@ describe("commands", () => {
     });
 
     it("reports a missing /new cwd instead of sending it to the server", async () => {
-      setFetch((url) => {
+      setFetch((url, init) => {
+        if (url === "/api/v1/tasks" && !init?.method) {
+          return { ok: true, text: async () => '[{"id":"current-task"}]' };
+        }
         if (url.startsWith("/api/v1/files/info?")) {
           return {
             ok: false,
@@ -218,7 +227,10 @@ describe("commands", () => {
       const infoGate = new Promise<void>((resolve) => {
         releaseInfo = resolve;
       });
-      setFetch(async (url) => {
+      setFetch(async (url, init) => {
+        if (url === "/api/v1/tasks" && !init?.method) {
+          return { ok: true, text: async () => '[{"id":"A"}]' };
+        }
         if (url.startsWith("/api/v1/files/info?")) {
           await infoGate;
           return {
@@ -255,6 +267,63 @@ describe("commands", () => {
         body.cwd,
         "/a/rel",
         "the cwd must resolve in the launching task",
+      );
+    });
+
+    it("keeps the current view when the launching task is deleted during the probe", async () => {
+      let releaseInfo!: () => void;
+      const infoGate = new Promise<void>((resolve) => {
+        releaseInfo = resolve;
+      });
+      setFetch(async (url, init) => {
+        if (url === "/api/v1/tasks" && !init?.method) {
+          // The launching task was deleted while the probe was pending.
+          return { ok: true, text: async () => "[]" };
+        }
+        if (url.startsWith("/api/v1/files/info?")) {
+          await infoGate;
+          return {
+            ok: true,
+            text: async () =>
+              '{"path":"/a/rel","kind":"dir","name":"rel","size":0,"mtime":1}',
+          };
+        }
+        return {
+          ok: false,
+          status: 400,
+          json: async () => ({ error: "Parent task not found" }),
+        };
+      });
+      state.taskId = "A";
+      state.taskCwd = "/a";
+
+      const pending = commands.handleSlashCommand("/new ./rel");
+      await new Promise((r) => setTimeout(r, 0)); // the probe is in flight
+      // A is deleted; the client falls back to B, whose view is already shown.
+      state.taskId = "B";
+      state.taskCwd = "/b";
+      dom.messages.innerHTML = '<div class="msg">B view</div>';
+      releaseInfo();
+      await pending;
+
+      assert.equal(state.taskId, "B", "must not blank the fallback task");
+      assert.match(
+        dom.messages.textContent ?? "",
+        /B view/,
+        "B view must survive",
+      );
+      assert.match(
+        dom.messages.textContent ?? "",
+        /launching task no longer exists/,
+      );
+      assert.equal(state.awaitingNewTask, false);
+      assert.equal(state.pendingNewTaskOpId, null);
+      assert.equal(
+        fetchCalls.some(
+          (c) => c.url === "/api/v1/tasks" && c.init?.method === "POST",
+        ),
+        false,
+        "a deleted launching task must not reach the create endpoint",
       );
     });
 

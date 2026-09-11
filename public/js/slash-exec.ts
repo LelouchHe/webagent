@@ -43,7 +43,7 @@ import {
 import { controlPlanPanel } from "./plan-panel.ts";
 import { requestAuthoritativeCancel } from "./cancel-command.ts";
 import { openViewPath } from "./view-command.ts";
-import { resolveCreateCwd } from "./create-command.ts";
+import { isSourceTaskMissing, resolveCreateCwd } from "./create-command.ts";
 
 async function subscribePush(): Promise<void> {
   try {
@@ -175,6 +175,13 @@ export async function handleSlashCommand(text: string): Promise<boolean> {
       let cwd: string | undefined;
       if (arg) {
         const resolved = await resolveCreateCwd(arg);
+        // A source Task deleted while the probe was pending must not trigger
+        // the destructive reset below: keep the current (fallback) view intact
+        // and report why. The check only rejects a definite deletion.
+        if (await isSourceTaskMissing(sourceTaskId)) {
+          addSystem("err: create failed — the launching task no longer exists");
+          return true;
+        }
         if ("error" in resolved) {
           addSystem(`err: create failed — ${resolved.error}`);
           return true;

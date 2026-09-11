@@ -88,3 +88,22 @@ export async function resolveCreateCwd(
   }
   return { cwd: resolved };
 }
+
+/**
+ * Whether the Task a create command was submitted in no longer exists. Called
+ * after the cwd probe so a source Task deleted while the probe was pending
+ * cannot trigger the destructive create reset. Only a definite absence counts:
+ * any other failure returns false, so a transient list error never blocks a
+ * valid create.
+ */
+export async function isSourceTaskMissing(
+  sourceTaskId: string | null,
+): Promise<boolean> {
+  if (!sourceTaskId) return false;
+  try {
+    const tasks = await api.listTasks();
+    return !tasks.some((task) => task.id === sourceTaskId);
+  } catch {
+    return false;
+  }
+}
