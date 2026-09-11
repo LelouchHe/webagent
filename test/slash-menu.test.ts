@@ -782,6 +782,61 @@ describe("slash menu — Tab vs Click behavior", () => {
     );
   });
 
+  it("/new action row reports a cwd error without waiting on the task list", async () => {
+    let releaseList!: () => void;
+    const listGate = new Promise<void>((resolve) => {
+      releaseList = resolve;
+    });
+    let listRequested = false;
+    state.taskId = "s1";
+    state.taskCwd = "/current";
+    state.taskCwdDisplay = "~/current";
+    globalThis.fetch = (async (url: string, init?: any) => {
+      fetchCalls.push({ url, init });
+      if (url.startsWith("/api/v1/files/info?")) {
+        return new Response(JSON.stringify({ error: "not found" }), {
+          status: 404,
+        });
+      }
+      if (url === "/api/v1/tasks" && !init?.method) {
+        listRequested = true;
+        await listGate;
+        return new Response("[]", { status: 200 });
+      }
+      if (url.startsWith("/api/v1/recent-paths")) {
+        return new Response("[]", { status: 200 });
+      }
+      return new Response('{"id":"child-1"}', { status: 200 });
+    }) as any;
+
+    dom.input.value = "/new /missing";
+    commands.updateSlashMenu();
+    await new Promise((r) => setTimeout(r, 10));
+
+    const first = dom.slashMenu.querySelector(".slash-item");
+    assert.ok(first, "expected the action row");
+    first.dispatchEvent(
+      new (globalThis.window as any).MouseEvent("mousedown", { bubbles: true }),
+    );
+    await new Promise((r) => setTimeout(r, 0));
+
+    // The cwd error is visible while the liveness list is still pending.
+    assert.ok(
+      (dom.messages.textContent ?? "").includes(
+        "directory not found: '/missing'",
+      ),
+      `expected the cwd error before the list resolves, got: ${dom.messages.textContent}`,
+    );
+    assert.equal(
+      listRequested,
+      false,
+      "a definite cwd error must not probe the task list",
+    );
+
+    releaseList();
+    await new Promise((r) => setTimeout(r, 0));
+  });
+
   it("/view lists cwd, filters locally, and Tab preserves the display path", async () => {
     state.taskCwd = "/work";
     globalThis.fetch = ((url: string, init?: any) => {

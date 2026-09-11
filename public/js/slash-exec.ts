@@ -175,15 +175,17 @@ export async function handleSlashCommand(text: string): Promise<boolean> {
       let cwd: string | undefined;
       if (arg) {
         const resolved = await resolveCreateCwd(arg);
+        // A definite cwd error has nothing left to do: report it immediately
+        // rather than waiting on the task-list liveness probe.
+        if ("error" in resolved) {
+          addSystem(`err: create failed — ${resolved.error}`);
+          return true;
+        }
         // A source Task deleted while the probe was pending must not trigger
         // the destructive reset below: keep the current (fallback) view intact
         // and report why. The check only rejects a definite deletion.
         if (await isSourceTaskMissing(sourceTaskId)) {
           addSystem("err: create failed — the launching task no longer exists");
-          return true;
-        }
-        if ("error" in resolved) {
-          addSystem(`err: create failed — ${resolved.error}`);
           return true;
         }
         cwd = resolved.cwd;

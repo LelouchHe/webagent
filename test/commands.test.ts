@@ -327,6 +327,50 @@ describe("commands", () => {
       );
     });
 
+    it("reports a cwd error without waiting on the task list", async () => {
+      let releaseList!: () => void;
+      const listGate = new Promise<void>((resolve) => {
+        releaseList = resolve;
+      });
+      let listRequested = false;
+      setFetch(async (url, init) => {
+        if (url.startsWith("/api/v1/files/info?")) {
+          return {
+            ok: false,
+            status: 404,
+            json: async () => ({ error: "not found" }),
+          };
+        }
+        if (url === "/api/v1/tasks" && !init?.method) {
+          listRequested = true;
+          await listGate;
+          return { ok: true, text: async () => "[]" };
+        }
+        return { ok: true, text: async () => '{"id":"new-7"}' };
+      });
+      state.taskId = "current-task";
+      state.taskCwd = "/my/project";
+
+      const pending = commands.handleSlashCommand("/new /missing");
+      await new Promise((r) => setTimeout(r, 0));
+
+      // The cwd error is visible while the liveness list is still pending.
+      assert.ok(
+        messageLines().some((l) =>
+          l.includes("directory not found: '/missing'"),
+        ),
+        `expected the cwd error before the list resolves, got: ${JSON.stringify(messageLines())}`,
+      );
+      assert.equal(
+        listRequested,
+        false,
+        "a definite cwd error must not probe the task list",
+      );
+
+      releaseList();
+      await pending;
+    });
+
     it("shows concise one-line help descriptions", async () => {
       const handled = await commands.handleSlashCommand("?");
 
