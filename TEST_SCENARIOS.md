@@ -667,6 +667,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
 
 - `scripts/screenshots.spec.ts` — run via `npm run screenshots`
   - capture desktop chat, slash menu, permission, and mobile screenshots
+  - signs a fresh temporary token for every run, then revokes it and removes the temporary auth data at teardown
 
 ## Known Boundary
 
