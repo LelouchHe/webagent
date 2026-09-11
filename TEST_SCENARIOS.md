@@ -264,7 +264,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - retryUnconfirmedPermissions after reconnect
 
 - `test/commands.test.ts`, `test/slash-menu.test.ts`
-  - `/new`, `/pwd`, `/switch`, `/exit`, `/prune`, `/cancel`, `/rename`
+  - `/new`, `/switch`, `/exit`, `/cancel`, `/rename`
   - `/new` (typed and picker-selected) posts a child create whose parent and
     inheritance source are the launching task, keeping the id as its title
   - typed and menu-clicked `/cancel` remain authoritative escape hatches when frontend busy state is stale
@@ -508,9 +508,6 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - a share-tombstoned descendant survives and is re-parented under Root
   - creating a task under an unknown parent is rejected with `400`
   - `DELETE /api/v1/tasks/root` is rejected
-
-- `task-prune-command.spec.ts`
-  - `/prune` removes all non-current tasks
 
 - `task-clear-command.spec.ts`
   - `/clear` keeps the stable WebAgent task id, history, and cwd; only the
