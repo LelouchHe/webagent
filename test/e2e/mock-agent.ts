@@ -29,6 +29,18 @@ type PendingPrompt = {
   resolve: (resp: PromptResponse) => void;
 };
 
+const COLLABORATION_PARENT_PROMPT =
+  "Delegate a focused review of the authentication flow.";
+const COLLABORATION_CHILD_INSTRUCTION =
+  "Review the authentication flow for access-control gaps. Summarize the highest-priority finding and hand the task back when finished.";
+const COLLABORATION_DONE_SUMMARY =
+  "Authentication review complete: session checks consistently enforce the requested access boundary; no high-priority gaps found.";
+const SCREENSHOT_PROMPT_ALIASES = new Map([
+  ["Update the server configuration for deployment.", "E2E_TOOL_EDIT"],
+  ["Add the default configuration module.", "E2E_TOOL_CREATE"],
+  ["Request approval before running the sensitive command.", "E2E_PERMISSION"],
+]);
+
 function createConfigOptions(): SessionConfigOption[] {
   return [
     {
@@ -189,6 +201,164 @@ class MockAgent implements Agent {
     }
   }
 
+  /** Run the screenshot's realistic parent → child collaboration sequence. */
+  private async runMcpTaskCollaborationPrompt(
+    sessionId: string,
+    mcpServers: McpServer[],
+  ): Promise<PromptResponse> {
+    try {
+      const childTaskId =
+        await this.runMcpTaskCreateAndSendRoundTrip(mcpServers);
+      if (!childTaskId) throw new Error("task_create returned no task id");
+      await this.conn.sessionUpdate({
+        sessionId,
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          content: {
+            type: "text",
+            text: "I've assigned a focused authentication review and will incorporate the findings when it returns.",
+          },
+        },
+      });
+    } catch {
+      await this.conn.sessionUpdate({
+        sessionId,
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          content: {
+            type: "text",
+            text: "I couldn't delegate the authentication review.",
+          },
+        },
+      });
+    }
+    return { stopReason: "end_turn" };
+  }
+
+  /** Complete the child-side lifecycle handoff after its assigned review. */
+  private async runMcpTaskHandoffPrompt(
+    mcpServers: McpServer[],
+  ): Promise<PromptResponse> {
+    try {
+      await this.runMcpTaskUpdateRoundTrip(mcpServers);
+    } catch {
+      // The parent fixture waits for the recorded handoff, so a failed call is
+      // intentionally silent instead of adding unrelated transcript noise.
+    }
+    return { stopReason: "end_turn" };
+  }
+
+  /** Initialize the injected MCP server, create a child, then dispatch it. */
+  private async runMcpTaskCreateAndSendRoundTrip(
+    mcpServers: McpServer[],
+  ): Promise<string | null> {
+    const httpCandidate = mcpServers.find((s) => "url" in s && "headers" in s);
+    if (!httpCandidate) throw new Error("no http mcp server provided");
+    const entry = httpCandidate as unknown as McpServerHttp;
+    const bearer = entry.headers.find((h) => h.name === "Authorization");
+    if (!bearer) throw new Error("missing Authorization header");
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+      Accept: "application/json, text/event-stream",
+      Authorization: bearer.value,
+    };
+    const post = (body: unknown): Promise<any> =>
+      fetch(entry.url, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(body),
+      }).then(async (res) => ({
+        status: res.status,
+        body:
+          res.status === 204 || res.status === 202 ? null : await res.json(),
+      }));
+    const init = await post({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "initialize",
+      params: {
+        protocolVersion: "2025-06-18",
+        capabilities: {},
+        clientInfo: { name: "mock-agent", version: "0.1.0" },
+      },
+    });
+    if (init.status !== 200) throw new Error("MCP initialization failed");
+    await post({ jsonrpc: "2.0", method: "notifications/initialized" });
+    const created = await post({
+      jsonrpc: "2.0",
+      id: 2,
+      method: "tools/call",
+      params: { name: "task_create", arguments: { title: "audit-auth-flow" } },
+    });
+    const text = created.body?.result?.content
+      ?.map((content: { text?: string }) => content.text ?? "")
+      .join("");
+    const childTaskId = JSON.parse(text ?? "null")?.taskId;
+    if (typeof childTaskId !== "string") return null;
+    const sent = await post({
+      jsonrpc: "2.0",
+      id: 3,
+      method: "tools/call",
+      params: {
+        name: "task_send",
+        arguments: {
+          target: childTaskId,
+          body: COLLABORATION_CHILD_INSTRUCTION,
+        },
+      },
+    });
+    if (sent.body?.error) throw new Error("task_send failed");
+    return childTaskId;
+  }
+
+  /** Initialize the injected MCP server and submit the child completion. */
+  private async runMcpTaskUpdateRoundTrip(
+    mcpServers: McpServer[],
+  ): Promise<void> {
+    const httpCandidate = mcpServers.find((s) => "url" in s && "headers" in s);
+    if (!httpCandidate) throw new Error("no http mcp server provided");
+    const entry = httpCandidate as unknown as McpServerHttp;
+    const bearer = entry.headers.find((h) => h.name === "Authorization");
+    if (!bearer) throw new Error("missing Authorization header");
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+      Accept: "application/json, text/event-stream",
+      Authorization: bearer.value,
+    };
+    const post = (body: unknown): Promise<any> =>
+      fetch(entry.url, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(body),
+      }).then(async (res) => ({
+        status: res.status,
+        body:
+          res.status === 204 || res.status === 202 ? null : await res.json(),
+      }));
+    const init = await post({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "initialize",
+      params: {
+        protocolVersion: "2025-06-18",
+        capabilities: {},
+        clientInfo: { name: "mock-agent", version: "0.1.0" },
+      },
+    });
+    if (init.status !== 200) throw new Error("MCP initialization failed");
+    await post({ jsonrpc: "2.0", method: "notifications/initialized" });
+    const updated = await post({
+      jsonrpc: "2.0",
+      id: 2,
+      method: "tools/call",
+      params: {
+        name: "task_update",
+        arguments: { status: "done", body: COLLABORATION_DONE_SUMMARY },
+      },
+    });
+    if (updated.body?.error) throw new Error("task_update failed");
+  }
+
   private async advertiseCommands(sessionId: string): Promise<void> {
     await this.conn.sessionUpdate({
       sessionId,
@@ -275,7 +445,13 @@ class MockAgent implements Agent {
       .map((part) => part.text)
       .join(" ")
       .trim();
+    return await this.runPrimaryPrompt(params, text);
+  }
 
+  private async runPrimaryPrompt(
+    params: PromptRequest,
+    text: string,
+  ): Promise<PromptResponse> {
     if (text.startsWith("E2E_RETRY_CANCEL")) {
       return await this.runPendingPrompt(params.sessionId, 0);
     }
@@ -292,6 +468,34 @@ class MockAgent implements Agent {
       return await this.runMcpTaskListPrompt(params.sessionId, mcpServers);
     }
 
+    if (text === COLLABORATION_PARENT_PROMPT) {
+      const mcpServers = this.mcpServersBySession.get(params.sessionId) ?? [];
+      return await this.runMcpTaskCollaborationPrompt(
+        params.sessionId,
+        mcpServers,
+      );
+    }
+
+    if (text.includes(COLLABORATION_CHILD_INSTRUCTION)) {
+      const mcpServers = this.mcpServersBySession.get(params.sessionId) ?? [];
+      return await this.runMcpTaskHandoffPrompt(mcpServers);
+    }
+
+    if (text.includes(COLLABORATION_DONE_SUMMARY)) {
+      // The parent receives the handoff as a delivery; it needs no reply.
+      return { stopReason: "end_turn" };
+    }
+
+    return await this.runRemainingPrompt(
+      params,
+      SCREENSHOT_PROMPT_ALIASES.get(text) ?? text,
+    );
+  }
+
+  private async runRemainingPrompt(
+    params: PromptRequest,
+    text: string,
+  ): Promise<PromptResponse> {
     if (text.startsWith("E2E_SLOW_TOOL")) {
       const toolCallId = `tool-${++this.toolCallCounter}`;
       await this.conn.sessionUpdate({
