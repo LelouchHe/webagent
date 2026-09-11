@@ -28,20 +28,21 @@ export async function currentTaskId(page: Page): Promise<string> {
 
 export async function createNewTask(page: Page): Promise<string> {
   const previousId = await currentTaskId(page);
-  // `+name` with no brief creates a named idle child (legacy /new
-  // semantics) in the current task's cwd; the resulting task id becomes
-  // its default title.
-  await page.locator("#input").fill("+e2e-child-" + Date.now().toString(36));
+  // `+name` creates a titled child without switching (see docs/task-ux.md);
+  // the follow-up `@name` navigation enters it. Two steps keep the helper on
+  // the documented title-first flow.
+  const title = "e2e-child-" + Date.now().toString(36);
+  await page.locator("#input").fill(`+${title}`);
+  await page.locator("#input").press("Enter");
+  // Creation is async; the follow-up @ needs the child to exist server-side.
+  await expect(page.locator("#messages")).toContainText(`Created ${title}`);
+  await page.locator("#input").fill(`@${title}`);
   await page.locator("#input").press("Enter");
   await expect.poll(() => currentTaskId(page)).not.toBe(previousId);
-  // Hash flips before the FE has finished switching (snapshot fetch +
-  // resetTaskUI run async after task_created arrives). Wait for the
-  // header task-info to re-render against the new id so callers see a
-  // settled UI — otherwise assertions on #send-btn race the switch.
   const newId = await currentTaskId(page);
   // The header shows the task title (explicit name, not the id). Wait for
   // it to re-render to the created child so tests race the settled UI.
-  await expect(page.locator("#task-info")).toContainText("e2e-child-");
+  await expect(page.locator("#task-info")).toContainText(title);
   await expectConnectionStatus(page, "connected");
   return newId;
 }

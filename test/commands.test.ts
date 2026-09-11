@@ -162,7 +162,7 @@ describe("commands", () => {
       assert.ok(lines.includes("/help - Show help"));
       assert.ok(lines.includes("!command - Run bash command"));
       assert.ok(lines.includes("// - Agent commands (agent-specific)"));
-      assert.ok(lines.includes("+<path>/<title> - Create a child task"));
+      assert.ok(lines.includes("+<title> [<cwd>] - Create a named child task"));
       assert.ok(lines.includes("@<task> - Send or jump to the task"));
       assert.ok(lines.includes("@!<task> - Force-send to a task"));
     });

@@ -797,7 +797,7 @@ export function printHelp(): void {
   entry("?", "Show help");
   entry("!command", "Run bash command");
   entry("//", "Agent commands (agent-specific)");
-  entry("+<path>/<title>", "Create a child task");
+  entry("+<title> [<cwd>]", "Create a named child task");
   entry("@<task>", "Send or jump to the task");
   entry("@!<task>", "Force-send to a task");
   for (const c of ROOT.children!) {

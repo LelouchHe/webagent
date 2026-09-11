@@ -560,7 +560,15 @@ spot gaps, and decide what still needs to be added without reading every spec.
 - `slash-menu-new-picker.spec.ts`
   - `/new` creates an unnamed child in the current cwd or an explicit cwd, and
     attaches it under the launching task (`/exit` returns there)
-  - `+` path picker creates a named child from a selected or completed cwd
+  - `+<title>` creates a titled child without switching; `@<title> <body>` then
+    delivers the first instruction from the same task
+  - `+` takes the cwd verbatim after the title (spaces, relative path, `~`) and
+    refuses a missing directory or a `/`, `.`, or `..` title
+  - bare `+` (and a whitespace-only title) shows the `create task · type a
+    title` hint and Enter reports the missing title
+  - the `+` picker leads with the action preview (`create '<title>'`, with an
+    `at '<cwd>'` clause only when a cwd is given) and lists cwd candidates only
+    after the separating space
 
 - `model-picker.spec.ts`
   - `/model` picker changes the selected model
