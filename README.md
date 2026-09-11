@@ -31,10 +31,20 @@ See [Features](docs/features.md) for the full tour.
 <table>
   <tr>
     <td width="60%">
-      <img src="docs/images/chat-desktop.png" alt="Desktop chat with tool calls and diffs" />
+      <img src="docs/images/task-collaboration.png" alt="A parent Task delegating to a child Task and receiving the handoff" />
     </td>
     <td width="40%">
       <img src="docs/images/mobile-chat.png" alt="Mobile layout" />
+    </td>
+  </tr>
+  <tr>
+    <td width="50%">
+      <img src="docs/images/plus-command.png" alt="Creating a named child Task with +" />
+      <br /><sub><code>+</code> creates a named child Task: title first, working directory optional.</sub>
+    </td>
+    <td width="50%">
+      <img src="docs/images/at-command.png" alt="Addressing the Task family with @" />
+      <br /><sub><code>@</code> addresses the Task family — a child, the parent, or a message to either.</sub>
     </td>
   </tr>
 </table>
@@ -45,13 +55,20 @@ See [Features](docs/features.md) for the full tour.
 <table>
   <tr>
     <td width="50%">
-      <img src="docs/images/permission.png" alt="Permission dialog" />
-      <br /><sub>Inline permission prompts, synced across devices.</sub>
+      <img src="docs/images/chat-desktop.png" alt="Desktop chat with tool calls and diffs" />
+      <br /><sub>Desktop chat: streamed output, tool calls, and diffs.</sub>
     </td>
     <td width="50%">
       <img src="docs/images/slash-menu.png" alt="Slash command menu" />
       <br /><sub>Slash command autocomplete menu.</sub>
     </td>
+  </tr>
+  <tr>
+    <td width="50%">
+      <img src="docs/images/permission.png" alt="Permission dialog" />
+      <br /><sub>Inline permission prompts, synced across devices.</sub>
+    </td>
+    <td width="50%"></td>
   </tr>
 </table>
 
