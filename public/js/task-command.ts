@@ -12,7 +12,7 @@ import {
   TaskPathParseError,
   type TaskPath,
 } from "../../src/task-path.ts";
-import { resolveBrowseTarget } from "./file-browser.ts";
+import { resolveBrowseTarget, resolveViewPath } from "./file-browser.ts";
 import { setInputValue, state } from "./state.ts";
 import { listRecentPaths } from "./slash-commands.ts";
 import { switchToTask } from "./task-navigation.ts";
@@ -32,13 +32,58 @@ export { isTaskCommand };
 // --- path helpers (browser-safe, server paths are `/`-separated) ---
 
 /**
- * Normalize a directory from the browse grammar for round-tripping: strip
- * trailing separators (keeping the root forms), since `+` passes the result
- * to task creation as the child cwd.
+ * Collapse the `.` segments and duplicate separators a relative `+` cwd picks
+ * up from the join, without canonicalizing symlinks: `/tmp/my dir` stays
+ * literal while `./rel` stops leaking a `/./`.
  */
-function cleanBrowseDir(directory: string): string {
-  const stripped = directory.replace(/\/+$/, "");
-  return stripped || "/";
+function tidyResolvedPath(path: string): string {
+  return path
+    .replace(/\/\.\//g, "/")
+    .replace(/\/{2,}/g, "/")
+    .replace(/\/\.$/, "");
+}
+
+/**
+ * Display form of the `+` cwd for the action preview. Resolved against the
+ * abbreviated cwd base so it stays `~/…`-styled; never touches the filesystem.
+ */
+function previewCwdDisplay(rawCwd: string): string {
+  const base = state.taskCwd ?? "";
+  const displayBase = state.taskCwdDisplay ?? base;
+  if (rawCwd === "") return displayBase;
+  try {
+    return tidyResolvedPath(resolveViewPath(rawCwd, displayBase || null));
+  } catch {
+    return rawCwd;
+  }
+}
+
+/**
+ * Resolve the `+` cwd field (everything after the title, taken verbatim) to an
+ * existing directory. A relative cwd resolves against the current Task cwd,
+ * `~` expands HOME on the server, and the directory must already exist.
+ */
+async function resolveCreateCwd(
+  rawCwd: string,
+): Promise<{ cwd: string } | { error: string }> {
+  const base = state.taskCwd ?? "";
+  let resolved: string;
+  try {
+    resolved = rawCwd === "" ? base : resolveViewPath(rawCwd, base || null);
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : String(err) };
+  }
+  if (resolved === "") return { error: "No active task cwd" };
+  resolved = tidyResolvedPath(resolved);
+  try {
+    const info = await api.getFileInfo(resolved);
+    if (info.kind !== "dir") {
+      return { error: `not a directory: '${rawCwd}'` };
+    }
+  } catch {
+    return { error: `directory not found: '${rawCwd}'` };
+  }
+  return { cwd: resolved };
 }
 
 // --- task tree helpers ---
@@ -303,14 +348,16 @@ export async function buildTaskCommandCandidates(
     throw err;
   }
 
+  // `+` owns its whole surface: the first word is the title and the rest is
+  // the cwd, so it never falls through to the `@` message/body handling.
+  if (parsed.marker === "+") {
+    return buildCreateCandidates(parsed);
+  }
+
   // Once a target is followed by whitespace, keep the compact action hint in
   // the same prefix vocabulary as the candidate rows.
   if (parsed.remainder !== "") {
-    if (
-      parsed.target !== "" &&
-      (parsed.marker === "@" || parsed.marker === "@!") &&
-      parsed.remainder.trim() === ""
-    ) {
+    if (parsed.target !== "" && parsed.remainder.trim() === "") {
       return [
         {
           spec: {
@@ -328,129 +375,158 @@ export async function buildTaskCommandCandidates(
     return [];
   }
 
-  if (parsed.marker === "+") {
-    return buildCreateCandidates(parsed);
-  }
   return buildMessageCandidates(parsed);
 }
 
-/** Bare `+` rows: the default cwd (the child's parent path) plus recents. */
-async function buildBareCreateCandidates(): Promise<Candidate[]> {
-  const base = state.taskCwd ?? "";
-  const candidates: Candidate[] = [];
-  const defaultDisplay = state.taskCwdDisplay ?? base;
-  if (base) {
-    candidates.push({
+/** Syntax hint for a bare `+`: there is no title to create with yet. */
+function bareCreateCandidates(): Candidate[] {
+  return [
+    {
       spec: {
-        primary: defaultDisplay,
-        current: true,
-        fill: `+${quoteShellWord(defaultDisplay)}/`,
-        continueOnFill: true,
+        primary: "+<title> [<cwd>]",
+        secondary: "title first · Enter creates",
       },
-      prefix: "*",
-      kind: "data",
-    });
-  }
-  try {
-    const recents = await listRecentPaths();
-    for (const p of recents) {
-      if (p.cwd.toLowerCase() === base.toLowerCase()) continue;
+      prefix: "",
+      kind: "placeholder",
+    },
+  ];
+}
+
+/**
+ * cwd rows for `+`: the current cwd plus recents when no cwd is typed yet, or
+ * the real directory layer to drill into once a prefix is present.
+ */
+async function buildCreateCwdCandidates(
+  title: string,
+  rawCwd: string,
+): Promise<Candidate[]> {
+  const titleWord = quoteShellWord(title);
+  const base = state.taskCwd ?? "";
+
+  if (rawCwd === "") {
+    const candidates: Candidate[] = [];
+    const display = state.taskCwdDisplay ?? base;
+    if (base) {
       candidates.push({
         spec: {
-          primary: p.cwdDisplay,
-          fill: `+${quoteShellWord(p.cwdDisplay)}/`,
+          primary: display,
+          current: true,
+          fill: `+${titleWord} ${display}`,
           continueOnFill: true,
         },
-        prefix: "",
+        prefix: "*",
         kind: "data",
       });
     }
-  } catch {
-    // Recent paths unavailable; the default row still stands.
+    try {
+      const recents = await listRecentPaths();
+      for (const p of recents) {
+        if (p.cwd.toLowerCase() === base.toLowerCase()) continue;
+        candidates.push({
+          spec: {
+            primary: p.cwdDisplay,
+            fill: `+${titleWord} ${p.cwdDisplay}`,
+            continueOnFill: true,
+          },
+          prefix: "",
+          kind: "data",
+        });
+      }
+    } catch {
+      // Recent paths unavailable; the current cwd row still stands.
+    }
+    return candidates;
   }
-  return candidates;
+
+  let directory: string;
+  let filter: string;
+  try {
+    ({ directory, filter } = resolveBrowseTarget(rawCwd, base || null));
+  } catch {
+    return [];
+  }
+
+  let entries: api.FileListEntry[];
+  try {
+    entries = (await api.listFiles(directory)).entries;
+  } catch {
+    // The prefix may not resolve to a readable directory yet.
+    return [];
+  }
+
+  const lastSep = rawCwd.lastIndexOf("/");
+  const completedPrefix = lastSep >= 0 ? rawCwd.slice(0, lastSep + 1) : "";
+
+  return entries
+    .filter(
+      (e) =>
+        e.kind === "dir" &&
+        (filter === "" ||
+          e.name.toLowerCase().startsWith(filter.toLowerCase())),
+    )
+    .map((entry) => ({
+      spec: {
+        primary: entry.name,
+        // The cwd is verbatim, so the completed path is appended raw: a
+        // space in a directory name never needs quoting after the title.
+        fill: `+${titleWord} ${completedPrefix}${entry.name}/`,
+        continueOnFill: true,
+      },
+      prefix: "",
+      kind: "data",
+    }));
 }
 
 async function buildCreateCandidates(parsed: {
   marker: string;
   target: string;
-  path: TaskPath;
   remainder: string;
 }): Promise<Candidate[]> {
-  const target = parsed.target;
+  const title = parsed.target;
+  if (title === "") return bareCreateCandidates();
 
-  // Bare `+`: immediate scope = the current cwd (the child's parent path,
-  // the default) plus recently used paths, mirroring the legacy /new picker.
-  if (target === "") return buildBareCreateCandidates();
-
-  // The `/view` browse grammar owns the path semantics end to end: `~`
-  // passes through, the typed tail resolves against the task cwd, a
-  // trailing separator means "inside this directory" (no filter), and the
-  // final segment is the local filter / child title.
-  const base = state.taskCwd ?? "";
-  const { directory, filter } = resolveBrowseTarget(target, base);
-  // Parallel resolution against the abbreviated cwd base yields the `~/…`
-  // display form even for directories that do not exist yet.
-  const displayBase = state.taskCwdDisplay ?? base;
-  const displayDirectory = cleanBrowseDir(
-    resolveBrowseTarget(target, displayBase).directory,
-  );
-
-  let entries: api.FileListEntry[] = [];
-  try {
-    entries = (await api.listFiles(directory)).entries;
-  } catch {
-    // Directory may not exist; fall through to freeform placeholder.
-  }
-
-  const matched = entries.filter(
-    (e) =>
-      (filter === "" ||
-        e.name.toLowerCase().startsWith(filter.toLowerCase())) &&
-      // Prefer directories as task cwd/title candidates.
-      e.kind === "dir",
-  );
-
-  const candidates: Candidate[] = [];
-
-  // Freeform row for the literal typed input: the title is the final
-  // segment (absent while browsing a directory) and the path is the
-  // directory the child is created under — the title never repeats inside
-  // the path.
-  const freeformDisplay = filter
-    ? `create '${filter}' at '${displayDirectory}'`
-    : `create at '${displayDirectory}'`;
-  candidates.push({
-    spec: {
-      primary: freeformDisplay,
-      fill: `${parsed.marker}${quoteShellWord(target)}${parsed.remainder}`,
-      onSelect: () => executeCreateTask(target, parsed.remainder),
-    },
-    prefix: "\u21b5",
-    kind: "freeform",
-  });
-
-  // Complete the typed prefix style: a bare name completes to the bare
-  // name, `a/` to `a/<name>/`, `~/x/p` stays home-relative. The trailing
-  // separator descends into the completed directory (Tab keeps the menu
-  // open for the next segment); execution resolves it against the cwd.
-  const lastSep = target.lastIndexOf("/");
-  const completedPrefix = lastSep >= 0 ? target.slice(0, lastSep + 1) : "";
-
-  for (const entry of matched) {
-    candidates.push({
-      spec: {
-        primary: entry.name,
-        // Single-line row: the typed prefix already establishes the
-        // directory context, so the full path would be redundant.
-        fill: `${parsed.marker}${quoteShellWord(completedPrefix + entry.name)}/`,
-        continueOnFill: true,
+  // A `/` in the title would make the Task unreachable through the `@` path
+  // grammar, so the picker reports it instead of previewing a create.
+  if (title.includes("/")) {
+    return [
+      {
+        spec: { primary: "(task title cannot contain '/')" },
+        prefix: "",
+        kind: "placeholder",
       },
-      prefix: "",
-      kind: "data",
-    });
+    ];
+  }
+  if (title === "." || title === "..") {
+    return [
+      {
+        spec: { primary: "(task title cannot be '.' or '..')" },
+        prefix: "",
+        kind: "placeholder",
+      },
+    ];
   }
 
+  const rawCwd = parsed.remainder.trim();
+  const candidates: Candidate[] = [
+    {
+      spec: {
+        primary: `create '${title}' at '${previewCwdDisplay(rawCwd)}'`,
+        fill: `+${quoteShellWord(title)}${parsed.remainder}`,
+        onSelect: () => executeCreateTask(title, parsed.remainder),
+      },
+      prefix: "\u21b5",
+      kind: "freeform",
+    },
+  ];
+
+  // The cwd field only exists once the separating space has been typed.
+  if (parsed.remainder === "") return candidates;
+
+  const cwdCandidates = await buildCreateCwdCandidates(title, rawCwd);
+  if (cwdCandidates.length > 0) {
+    candidates.push({ spec: { primary: "" }, prefix: "", kind: "separator" });
+    candidates.push(...cwdCandidates);
+  }
   return candidates;
 }
 
@@ -708,35 +784,39 @@ async function expandBrowseInput(
 }
 
 async function executeCreateTask(
-  target: string,
+  title: string,
   remainder: string,
 ): Promise<void> {
   const currentTaskId = state.taskId;
-  const base = state.taskCwd ?? "";
-  const brief = remainder.trim();
-
   if (!currentTaskId) {
     addSystem("err: No active task");
     return;
   }
-  // The `/view` browse grammar decides cwd and title: the final segment is
-  // the child title (absent while browsing a directory — the task id then
-  // becomes the title, matching legacy /new semantics) and everything
-  // before it is the directory the child is created under.
-  const { directory, filter } = resolveBrowseTarget(target, base);
-  const cwd = cleanBrowseDir(directory);
-  const title = filter || null;
-  if (title !== null && (!title || title === "." || title === "..")) {
-    addSystem("err: Task title cannot be '.', '..', or empty");
+  if (title === "") {
+    addSystem("err: Task title is required after +");
     return;
   }
-  // A brief kicks the child off immediately; without one the child is
-  // created as a named idle task (legacy /new semantics).
+  if (title.includes("/")) {
+    addSystem("err: Task title cannot contain '/'");
+    return;
+  }
+  if (title === "." || title === "..") {
+    addSystem("err: Task title cannot be '.' or '..'");
+    return;
+  }
+
+  const resolved = await resolveCreateCwd(remainder.trim());
+  if ("error" in resolved) {
+    addSystem(`err: create failed — ${resolved.error}`);
+    return;
+  }
+
+  // Title first, cwd verbatim: creation is idle and does not switch. The
+  // first instruction follows as a separate `@<title> <body>` send.
   const body = {
     parentId: currentTaskId,
-    cwd,
-    ...(title ? { title } : {}),
-    ...(brief ? { brief } : {}),
+    cwd: resolved.cwd,
+    title,
     inheritFromTaskId: currentTaskId,
   };
 
@@ -745,12 +825,18 @@ async function executeCreateTask(
     const result = (await api.createTask(body)) as {
       id: string;
       cwd?: string;
+      cwdDisplay?: string;
       title?: string | null;
     };
+    const created = result.title ?? result.id;
     addSystem(
-      `Created ${result.title ?? result.id} at ${result.cwd ?? body.cwd}`,
+      `Created ${created} at ${
+        result.cwdDisplay ?? result.cwd ?? resolved.cwd
+      }`,
     );
-    if (result.id) await switchToTask(result.id);
+    addSystem(
+      `Send its first instruction with @${quoteShellWord(created)} <message>`,
+    );
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     addSystem(`err: create failed — ${msg}`);
