@@ -75,6 +75,7 @@ Commands with submenus (`/model`, `/mode`, `/think`, `/notify`, `/switch`, `/cle
 | `@<task-path>` | Navigate to a visible Task, or browse one level with a trailing `/` (for example `@../`). |
 | `@<task-path> <body>` | Send a graceful collaboration message to a reachable parent, direct child, or sibling Task selected through the path picker. Targets marked `navigation` are rejected for delivery. |
 | `/model [name]`       | Switch model (fuzzy match, e.g. `/model opus`)                                                                                |
+| `/new [cwd]`          | Create an unnamed child task under the current task, optionally in another cwd (recent-paths picker; use `+` to name it)       |
 | `/mode [name]`        | Switch mode (Agent / Plan / Autopilot)                                                                                        |
 | `/think [level]`      | Set thinking effort (low / medium / high)                                                                                     |
 | `/notify [on\|off]`   | Toggle push notifications                                                                                                     |

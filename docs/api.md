@@ -656,7 +656,7 @@ Get server configuration and available config options.
 | ------------------ | ---------------- | ------------------------------------------------------------------------------------------- |
 | `configOptions`    | `ConfigOption[]` | Available config options from the ACP agent (model, mode, and agent-specific thinking option) |
 | `cancelTimeout`    | number           | Cancel timeout in ms (from `limits.cancel_timeout` config). `0` = disabled                  |
-| `recentPathsLimit` | number           | Max recent paths to show in `/new` menu (from `limits.recent_paths` config). `0` = show all |
+| `recentPathsLimit` | number           | Max recent paths to show in the `/new` / `+` path pickers (from `limits.recent_paths` config). `0` = show all |
 
 ---
 

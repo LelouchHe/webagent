@@ -416,6 +416,58 @@ describe("slash menu — Tab vs Click behavior", () => {
     );
   });
 
+  it("/new menu lists recent paths and creates the child under the current task", async () => {
+    state.taskId = "s1";
+    state.taskCwd = "/current";
+    globalThis.fetch = ((url: string, init?: any) => {
+      fetchCalls.push({ url, init });
+      if (url.startsWith("/api/v1/recent-paths")) {
+        return Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve([
+              { cwd: "/current", last_used_at: "2026-04-29 09:00:00" },
+              { cwd: "/tmp/other", last_used_at: "2026-04-29 08:00:00" },
+            ]),
+        });
+      }
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ id: "child-1", cwd: "/tmp/other" }),
+      });
+    }) as any;
+
+    dom.input.value = "/new ";
+    commands.updateSlashMenu();
+    await new Promise((r) => setTimeout(r, 10));
+    assert.ok(dom.slashMenu.textContent.includes("/tmp/other"));
+
+    const rows = [...dom.slashMenu.querySelectorAll(".slash-item")];
+    const target = rows.find(
+      (row: any) =>
+        row.querySelector(".slash-primary")?.textContent === "/tmp/other",
+    );
+    assert.ok(target, "expected the /tmp/other recent-path row");
+    target.dispatchEvent(
+      new (globalThis.window as any).MouseEvent("mousedown", { bubbles: true }),
+    );
+    await new Promise((r) => setTimeout(r, 20));
+
+    const createCall = fetchCalls.find(
+      (c) => c.url === "/api/v1/tasks" && c.init?.method === "POST",
+    );
+    assert.ok(createCall, "expected POST /api/v1/tasks");
+    const body = JSON.parse(createCall.init.body);
+    assert.equal(body.cwd, "/tmp/other");
+    assert.equal(
+      body.parentId,
+      "s1",
+      "/new menu must attach the child under the current task",
+    );
+    assert.equal(body.inheritFromTaskId, "s1");
+    assert.equal(body.title, undefined, "/new stays unnamed (id title)");
+  });
+
   it("/view lists cwd, filters locally, and Tab preserves the display path", async () => {
     state.taskCwd = "/work";
     globalThis.fetch = ((url: string, init?: any) => {

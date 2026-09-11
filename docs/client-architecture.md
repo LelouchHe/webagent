@@ -562,7 +562,7 @@ Triggered by `/` prefix in input. Handled in `commands.ts`.
 | Command             | API Call                                                    | Description                          |
 | ------------------- | ----------------------------------------------------------- | ------------------------------------ |
 | `/switch [query]`   | `api.listTasks()` + `api.getTask()` + `loadHistory()` | Switch to another task            |
-| `/new [path]`       | `api.createTask()`                                       | Create a child task               |
+| `/new [path]`       | `requestNewTask()` → `api.createTask()`                  | Create an unnamed child task         |
 | `/exit`             | `api.deleteTask()` + task navigation                 | Exit task tree; prefer parent     |
 | `/rename <title>`   | `api.setTitle(taskId, title)`                            | Rename current task               |
 | `/model [name]`     | `api.setConfig(taskId, 'model', value)`                 | Set model                           |

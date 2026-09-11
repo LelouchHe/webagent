@@ -6,6 +6,8 @@
 
 import {
   state,
+  resetTaskUI,
+  requestNewTask,
   getSelectConfigOption,
   getThinkingConfigOption,
   getConfigValue,
@@ -496,6 +498,39 @@ export const ROOT: CmdNode = {
     },
     configCmdNode("/mode", "Set mode", "mode"),
     configCmdNode("/model", "Set model", "model", true),
+    {
+      name: "/new",
+      desc: "Create a child task",
+      fetch: listRecentPaths,
+      toSpec: (item: unknown) => {
+        const p = item as PathItem;
+        const isCurrent =
+          p.cwd.toLowerCase() === (state.taskCwd ?? "").toLowerCase();
+        return {
+          primary: p.cwdDisplay,
+          current: isCurrent,
+          onSelect: () => {
+            resetTaskUI();
+            addSystem("Creating new task…");
+            // Defaults capture state.taskId at call time, so the child is
+            // created under the currently visible task.
+            requestNewTask({ cwd: p.cwd });
+          },
+        };
+      },
+      freeform: (q) => {
+        const trimmed = q.trim();
+        if (!trimmed) return null;
+        return {
+          primary: `create task at '${trimmed}'`,
+          onSelect: () => {
+            resetTaskUI();
+            addSystem("Creating new task…");
+            requestNewTask({ cwd: trimmed });
+          },
+        };
+      },
+    },
     {
       name: "/notify",
       desc: "Toggle notifications",

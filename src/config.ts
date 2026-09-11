@@ -22,7 +22,7 @@ export const ConfigSchema = z.object({
       image_upload: z.number().int().positive().default(10_485_760), // 10 MB
       file_upload: z.number().int().positive().default(52_428_800), // 50 MB — non-image attachments
       cancel_timeout: z.number().int().nonnegative().default(10_000), // 10s; 0 disables
-      recent_paths: z.number().int().nonnegative().default(10), // /new menu display limit; 0 = show all
+      recent_paths: z.number().int().nonnegative().default(10), // /new + path-picker display limit; 0 = show all
       recent_paths_ttl: z.number().int().nonnegative().default(30), // days before auto-cleanup; 0 = keep forever
     })
     .default({

@@ -13,6 +13,65 @@ async function readStatusBarCwd(
   return (text ?? "").trim();
 }
 
+/** Server-side truth for a task's cwd (independent of the display form). */
+async function readTaskCwd(
+  page: import("playwright/test").Page,
+  id: string,
+): Promise<string> {
+  return page.evaluate(async (taskId) => {
+    const res = await fetch(`/api/v1/tasks/${taskId}`);
+    const j = await res.json();
+    return j.cwd as string;
+  }, id);
+}
+
+test("/new creates an unnamed child in the current cwd", async ({ page }) => {
+  await gotoConnected(page);
+  const parentId = await createNewTask(page);
+  const parentCwd = await readTaskCwd(page, parentId);
+
+  await page.locator("#input").fill("/new");
+  await page.locator("#input").press("Enter");
+
+  await expect(page.locator("#messages")).toContainText("Creating new task…");
+  await expect.poll(() => currentTaskId(page)).not.toBe(parentId);
+  const childId = await currentTaskId(page);
+  // No title is sent, so the task id stays the title (legacy contract);
+  // naming is what `+<title>` is for.
+  await expect(page.locator("#task-info")).toContainText(childId);
+  expect(await readTaskCwd(page, childId)).toBe(parentCwd);
+});
+
+test("/new <cwd> creates the child in that directory", async ({ page }) => {
+  await gotoConnected(page);
+  const parentId = await createNewTask(page);
+  // A repo subdirectory that exists in every environment.
+  const targetCwd = `${await readTaskCwd(page, parentId)}/public`;
+
+  await page.locator("#input").fill(`/new ${targetCwd}`);
+  await page.locator("#input").press("Enter");
+
+  await expect.poll(() => currentTaskId(page)).not.toBe(parentId);
+  const childId = await currentTaskId(page);
+  expect(await readTaskCwd(page, childId)).toBe(targetCwd);
+});
+
+test("/new attaches the child under the launching task, not Root", async ({
+  page,
+}) => {
+  await gotoConnected(page);
+  const parentId = await createNewTask(page);
+
+  await page.locator("#input").fill("/new");
+  await page.locator("#input").press("Enter");
+  await expect.poll(() => currentTaskId(page)).not.toBe(parentId);
+
+  // /exit lands on the deleted task's parent, so this fails if the child
+  // was attached anywhere but the launching task.
+  await sendPrompt(page, "/exit");
+  await expect.poll(() => currentTaskId(page)).toBe(parentId);
+});
+
 test("+ creates a named child in the current cwd", async ({ page }) => {
   await gotoConnected(page);
   const currentTask = await createNewTask(page);

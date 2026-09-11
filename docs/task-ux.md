@@ -74,6 +74,10 @@ A bare `+` opens the default current cwd and recent paths. Selecting a cwd
 continues the picker so the user can enter the title; it does not create a Task
 until the completed command is submitted.
 
+`/new [cwd]` is the unnamed form of the same creation: it creates a direct child
+of the current Task without a title (the task id stands in) and switches to it.
+Use `+` when the child needs a name or an immediate brief.
+
 ## `@` — target, navigate, and send
 
 ```text

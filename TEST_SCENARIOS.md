@@ -265,6 +265,8 @@ spot gaps, and decide what still needs to be added without reading every spec.
 
 - `test/commands.test.ts`, `test/slash-menu.test.ts`
   - `/new`, `/pwd`, `/switch`, `/exit`, `/prune`, `/cancel`, `/rename`
+  - `/new` (typed and picker-selected) posts a child create whose parent and
+    inheritance source are the launching task, keeping the id as its title
   - typed and menu-clicked `/cancel` remain authoritative escape hatches when frontend busy state is stale
   - `/model`, `/mode`, `/think` query / fuzzy match / ambiguity handling
   - help output and shortcut listing
@@ -559,7 +561,9 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - slash-menu task switch works from keyboard navigation
 
 - `slash-menu-new-picker.spec.ts`
-  - `/new` path picker creates a task from a selected cwd
+  - `/new` creates an unnamed child in the current cwd or an explicit cwd, and
+    attaches it under the launching task (`/exit` returns there)
+  - `+` path picker creates a named child from a selected or completed cwd
 
 - `model-picker.spec.ts`
   - `/model` picker changes the selected model
