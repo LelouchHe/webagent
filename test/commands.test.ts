@@ -213,6 +213,51 @@ describe("commands", () => {
       );
     });
 
+    it("keeps the launching task when the /new probe outlives a switch", async () => {
+      let releaseInfo!: () => void;
+      const infoGate = new Promise<void>((resolve) => {
+        releaseInfo = resolve;
+      });
+      setFetch(async (url) => {
+        if (url.startsWith("/api/v1/files/info?")) {
+          await infoGate;
+          return {
+            ok: true,
+            text: async () =>
+              '{"path":"/a/rel","kind":"dir","name":"rel","size":0,"mtime":1}',
+          };
+        }
+        return { ok: true, text: async () => '{"id":"new-5"}' };
+      });
+      state.taskId = "A";
+      state.taskCwd = "/a";
+
+      const pending = commands.handleSlashCommand("/new ./rel");
+      await new Promise((r) => setTimeout(r, 0)); // the probe is in flight
+      // The user navigates to B while the probe is unresolved.
+      state.taskId = "B";
+      state.taskCwd = "/b";
+      releaseInfo();
+      await pending;
+
+      const createCall = fetchCalls.find(
+        (c) => c.url === "/api/v1/tasks" && c.init?.method === "POST",
+      );
+      assert.ok(createCall, "expected POST /api/v1/tasks");
+      const body = JSON.parse(createCall.init.body);
+      assert.equal(
+        body.parentId,
+        "A",
+        "the probe must not reparent the child to the switched task",
+      );
+      assert.equal(body.inheritFromTaskId, "A");
+      assert.equal(
+        body.cwd,
+        "/a/rel",
+        "the cwd must resolve in the launching task",
+      );
+    });
+
     it("shows concise one-line help descriptions", async () => {
       const handled = await commands.handleSlashCommand("?");
 

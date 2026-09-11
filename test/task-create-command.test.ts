@@ -20,6 +20,8 @@ describe("+ title-first create", () => {
     size: null;
     mtime: number;
   }>;
+  let infoFailure: { status: number; message: string } | null;
+  let infoNetworkError: boolean;
 
   before(async () => {
     setupDOM();
@@ -45,6 +47,8 @@ describe("+ title-first create", () => {
     state.taskId = "s1";
     state.taskCwd = "/work";
     state.taskCwdDisplay = "~/work";
+    infoFailure = null;
+    infoNetworkError = false;
     globalThis.fetch = (async (input: any, init?: any) => {
       const url =
         typeof input === "string"
@@ -54,6 +58,12 @@ describe("+ title-first create", () => {
             : input.url;
       fetchCalls.push({ url, init });
       if (url.startsWith("/api/v1/files/info?")) {
+        if (infoNetworkError) throw new TypeError("Failed to fetch");
+        if (infoFailure) {
+          return new Response(JSON.stringify({ error: infoFailure.message }), {
+            status: infoFailure.status,
+          });
+        }
         const path = decodeURIComponent(
           url.slice("/api/v1/files/info?path=".length),
         );
@@ -241,6 +251,46 @@ describe("+ title-first create", () => {
         messageLines(),
       )}`,
     );
+    assert.equal(createCall(), undefined);
+  });
+
+  it("surfaces a permission denial instead of claiming the cwd is missing", async () => {
+    infoFailure = { status: 403, message: "Permission denied" };
+
+    await taskCommand.executeTaskCommand("+api-fix /locked");
+
+    const lines = messageLines().join("\n");
+    assert.match(lines, /Permission denied/);
+    assert.doesNotMatch(lines, /directory not found/);
+    assert.equal(createCall(), undefined);
+  });
+
+  it("surfaces a server error instead of claiming the cwd is missing", async () => {
+    infoFailure = { status: 503, message: "Agent not ready yet" };
+
+    await taskCommand.executeTaskCommand("+api-fix /existing");
+
+    const lines = messageLines().join("\n");
+    assert.match(lines, /Agent not ready yet/);
+    assert.doesNotMatch(lines, /directory not found/);
+    assert.equal(createCall(), undefined);
+  });
+
+  it("reports a network failure as a check failure, not a missing cwd", async () => {
+    infoNetworkError = true;
+
+    await taskCommand.executeTaskCommand("+api-fix /existing");
+
+    const lines = messageLines().join("\n");
+    assert.match(lines, /could not check directory '\/existing'/);
+    assert.doesNotMatch(lines, /directory not found/);
+    assert.equal(createCall(), undefined);
+  });
+
+  it("still reports a true 404 as a missing cwd", async () => {
+    await taskCommand.executeTaskCommand("+api-fix /nope");
+
+    assert.match(messageLines().join("\n"), /directory not found: '\/nope'/);
     assert.equal(createCall(), undefined);
   });
 

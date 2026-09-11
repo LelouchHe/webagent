@@ -639,6 +639,67 @@ describe("slash menu — Tab vs Click behavior", () => {
     );
   });
 
+  it("/new action row keeps the launching task when the probe outlives a switch", async () => {
+    let releaseInfo!: () => void;
+    const infoGate = new Promise<void>((resolve) => {
+      releaseInfo = resolve;
+    });
+    state.taskId = "A";
+    state.taskCwd = "/a";
+    state.taskCwdDisplay = "~/a";
+    globalThis.fetch = (async (url: string, init?: any) => {
+      fetchCalls.push({ url, init });
+      if (url.startsWith("/api/v1/files/info?")) {
+        await infoGate;
+        return new Response(
+          JSON.stringify({
+            path: "/a/rel",
+            kind: "dir",
+            name: "rel",
+            size: 0,
+            mtime: 1,
+          }),
+          { status: 200 },
+        );
+      }
+      if (url.startsWith("/api/v1/recent-paths")) {
+        return new Response(JSON.stringify([]), { status: 200 });
+      }
+      return new Response('{"id":"child-1","cwd":"/a/rel"}', {
+        status: 200,
+      });
+    }) as any;
+
+    dom.input.value = "/new ./rel";
+    commands.updateSlashMenu();
+    await new Promise((r) => setTimeout(r, 10));
+
+    const first = dom.slashMenu.querySelector(".slash-item");
+    assert.ok(first, "expected the action row");
+    first.dispatchEvent(
+      new (globalThis.window as any).MouseEvent("mousedown", { bubbles: true }),
+    );
+    await new Promise((r) => setTimeout(r, 0)); // the probe is in flight
+    // The user navigates to B while the probe is unresolved.
+    state.taskId = "B";
+    state.taskCwd = "/b";
+    releaseInfo();
+    await new Promise((r) => setTimeout(r, 20));
+
+    const createCall = fetchCalls.find(
+      (c) => c.url === "/api/v1/tasks" && c.init?.method === "POST",
+    );
+    assert.ok(createCall, "the action row must create on click");
+    const body = JSON.parse(createCall.init.body);
+    assert.equal(
+      body.parentId,
+      "A",
+      "the probe must not reparent the child to the switched task",
+    );
+    assert.equal(body.inheritFromTaskId, "A");
+    assert.equal(body.cwd, "/a/rel");
+  });
+
   it("/view lists cwd, filters locally, and Tab preserves the display path", async () => {
     state.taskCwd = "/work";
     globalThis.fetch = ((url: string, init?: any) => {

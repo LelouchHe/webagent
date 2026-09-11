@@ -9,6 +9,7 @@
 import { state } from "./state.ts";
 import { resolveViewPath } from "./file-browser.ts";
 import * as api from "./api.ts";
+import { HTTP_STATUS } from "../../src/http-status.ts";
 
 /**
  * Collapse the `.` segments and duplicate separators a relative cwd picks up
@@ -72,8 +73,18 @@ export async function resolveCreateCwd(
     if (info.kind !== "dir") {
       return { error: `not a directory: '${rawCwd}'` };
     }
-  } catch {
-    return { error: `directory not found: '${rawCwd}'` };
+  } catch (err) {
+    // Only a definite 404 is "missing". A permission denial, a 5xx, a network
+    // failure, or the request timeout must not be reported as a missing
+    // directory: surface the real reason so the user can act on it.
+    if (err instanceof api.ApiError) {
+      if (err.status === HTTP_STATUS.NOT_FOUND) {
+        return { error: `directory not found: '${rawCwd}'` };
+      }
+      return { error: err.message };
+    }
+    const detail = err instanceof Error ? err.message : String(err);
+    return { error: `could not check directory '${rawCwd}': ${detail}` };
   }
   return { cwd: resolved };
 }

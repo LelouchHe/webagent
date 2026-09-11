@@ -165,6 +165,10 @@ export async function handleSlashCommand(text: string): Promise<boolean> {
     }
 
     case "/new": {
+      // Snapshot the source task before any await: the cwd probe can outlive a
+      // navigation, and the child must stay under (and inherit from) the Task
+      // the user actually submitted the command in.
+      const sourceTaskId = state.taskId;
       // A typed cwd resolves against the current Task cwd via the same helper
       // the picker uses, so Enter and the action row create in the same place.
       // A bare `/new` keeps the legacy behavior: current cwd, no extra probe.
@@ -179,21 +183,16 @@ export async function handleSlashCommand(text: string): Promise<boolean> {
       } else {
         cwd = state.taskCwd ?? undefined;
       }
-      // Capture before reset so model/mode inheritance still works after we
-      // clear taskId (we clear it so any in-flight state_patch from the
-      // outgoing task is rejected by the per-task guard in handleEvent).
-      const inheritFrom = state.taskId;
-      // Capture the tree parent the same way: after clearing taskId the
-      // requestNewTask default would resolve to null and the new task would
-      // be attached under Root instead of the launching task.
-      const parent = state.taskId;
+      // Pass the snapshot explicitly: after clearing taskId the requestNewTask
+      // defaults would resolve to null (or to a Task the user switched to
+      // during the probe) instead of the launching task.
       resetTaskUI();
       state.taskId = null;
       addSystem("Creating new task…");
       requestNewTask({
         cwd: cwd,
-        inheritFromTaskId: inheritFrom,
-        parentId: parent,
+        inheritFromTaskId: sourceTaskId,
+        parentId: sourceTaskId,
       });
       return true;
     }

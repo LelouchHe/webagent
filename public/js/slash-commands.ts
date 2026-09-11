@@ -318,13 +318,21 @@ function shareRowSpec(s: ShareListRow, kind: "open" | "revoke") {
 
 /**
  * Create a child task from the `/new` picker. The recents rows and the action
- * row share this so click and Enter stay the same effect; the defaults capture
- * `state.taskId` at call time, so the child attaches under the visible task.
+ * row share this so click and Enter stay the same effect. `sourceTaskId` is
+ * captured before any await so the child stays under (and inherits from) the
+ * Task the command was submitted in, even across the cwd probe.
  */
-function createNewChildTask(cwd?: string): void {
+function createNewChildTask(
+  cwd: string | undefined,
+  sourceTaskId: string | null,
+): void {
   resetTaskUI();
   addSystem("Creating new task…");
-  requestNewTask({ cwd });
+  requestNewTask({
+    cwd,
+    inheritFromTaskId: sourceTaskId,
+    parentId: sourceTaskId,
+  });
 }
 
 export const ROOT: CmdNode = {
@@ -548,7 +556,7 @@ export const ROOT: CmdNode = {
           primary: p.cwdDisplay,
           current: isCurrent,
           onSelect: () => {
-            createNewChildTask(p.cwd);
+            createNewChildTask(p.cwd, state.taskId);
           },
         };
       },
@@ -563,8 +571,11 @@ export const ROOT: CmdNode = {
             ? `create task at ${previewValue(previewCwdDisplay(trimmed))}`
             : "create task",
           onSelect: async () => {
+            // Snapshot the source task before the probe: the child must stay
+            // under (and inherit from) the Task the command was submitted in.
+            const sourceTaskId = state.taskId;
             if (trimmed === "") {
-              createNewChildTask(state.taskCwd ?? undefined);
+              createNewChildTask(state.taskCwd ?? undefined, sourceTaskId);
               return;
             }
             const resolved = await resolveCreateCwd(trimmed);
@@ -572,7 +583,7 @@ export const ROOT: CmdNode = {
               addSystem(`err: create failed — ${resolved.error}`);
               return;
             }
-            createNewChildTask(resolved.cwd);
+            createNewChildTask(resolved.cwd, sourceTaskId);
           },
         };
       },
