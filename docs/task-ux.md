@@ -42,41 +42,58 @@ User input includes normal prompts and user-originated collaboration/create
 messages. Agent output, background deliveries, navigation, and merely viewing
 a Task do not make it the most recent user Task.
 
-## `+` — create a child Task
+## `+` — create a named child Task
 
 ```text
-+<cwd>/<title> <brief>
++<title> [<cwd>]
 ```
 
 Examples:
 
 ```text
-+./api-fix 修复接口错误处理
-+~/work/webagent/tests 增加回归测试
++api-fix                    child named `api-fix` in the current Task cwd
++"api fix" /tmp/repo         quoted title, explicit cwd
++api-fix /tmp/my dir         a cwd containing spaces needs no quoting
 ```
 
-The `/view` filesystem grammar is reused for the creation prefix:
+Both input forms share one shape: a shell-style word addressing the object,
+followed by a verbatim remainder. For `+` the address is the new Task title and
+the remainder is its working directory; for `@` the address is a Task path and
+the remainder is the message body.
 
-- the final path segment is the new Task title;
-- preceding segments resolve the child working directory;
-- a relative cwd is resolved from the current Task cwd;
-- quoting and backslash escaping are supported for path segments;
+- the first shell-style word is the child's title, with the same quoting and
+  backslash escaping as `@`;
+- the title must not contain `/`, which would make the Task unreachable through
+  the `@` path grammar;
+- everything after the title is the child working directory, taken verbatim —
+  quotes are ordinary characters there;
+- a relative cwd resolves against the current Task cwd, `~` expands to HOME, and
+  the directory must already exist;
+- omitting the cwd creates the child in the current Task cwd;
 - the new Task is a direct child of the current Task;
-- the brief is delivered as its first instruction;
-- after successful creation, the browser opens the new Task.
+- creation does not switch to the new Task; the system message reports the
+  created title so the next step can address it;
+- the first instruction is not part of the command. Send it with
+  `@<title> <message>`, or use `@<title>` alone to open the new Task.
 
 A `+`-created Task is user-owned and interactive. It can receive messages and
 child results, but the runtime does not automatically require a typed
 `task_update(done|blocked)` handoff after each turn. Agent-created delegated
 Tasks follow the lifecycle handoff contract described in the [Task Manual](task-manual.md).
 
-A bare `+` opens the default current cwd and recent paths. Selecting a cwd
-continues the picker so the user can enter the title; it does not create a Task
-until the completed command is submitted.
+Autocomplete serves the second field. Once a title is present the menu leads
+with the action row for the current input — `↵ create 'api-fix' at '~/…'` — so
+what Enter will do is visible. A space then lists cwd candidates: the current
+cwd marked `*`, the recent paths, and, once a path prefix is typed, the real
+directory layer to drill into.
 
-`/new [cwd]` is the unnamed form of the same creation: it creates a direct child
-of the current Task without a title (the task id stands in) and switches to it.
-Use `+` when the child needs a name or an immediate brief.
+A bare `+` has no title to create with. It shows only the syntax line, and
+Enter reports `err: Task title is required after +`.
+
+`/new [cwd]` is the unnamed form of the same creation: it creates a direct
+child of the current Task without a title (the task id stands in), optionally
+in another cwd, and switches to it. Use `+` when the child needs a name that
+other Tasks can address.
 
 ## `@` — target, navigate, and send
 
@@ -87,7 +104,8 @@ Use `+` when the child needs a name or an immediate brief.
 
 Without a message body, submitting an exact target navigates to that Task. With
 a message body, it sends a collaboration message when the target is reachable
-from the current Task.
+from the current Task. The target is one shell-style word; everything after it
+is the message body, taken verbatim.
 
 ```text
 @../                 navigate to the parent Task

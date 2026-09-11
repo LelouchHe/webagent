@@ -51,7 +51,7 @@
 
 - Auto-resumes last task on page open, no manual switching needed
 - After server restart, restores task context via ACP `loadTask` so conversations can continue
-- Task titles: explicitly set via `+<cwd>/<title> <brief>` or `/rename`; an unnamed task falls back to its stable id
+- Task titles: explicitly set via `+<title>` or `/rename`; an unnamed task falls back to its stable id
 - Task history persisted in SQLite, survives restarts
 - `/switch` lists all tasks (git-branch style, `*` marks current in green)
 - Switching tasks replays full message history
@@ -71,7 +71,7 @@ Commands with submenus (`/model`, `/mode`, `/think`, `/notify`, `/switch`, `/cle
 | Command               | Description                                                                                                                   |
 | --------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
 | `/help` (or `?`)      | Show help                                                                                                                     |
-| `+<cwd>/<title> <brief>` | Create a named child task and immediately deliver its brief; omit `<cwd>/` to inherit the current working directory. Quote a target containing spaces. |
+| `+<title> [<cwd>]` | Create a named child task without switching to it; the title is the `@` address and an optional `<cwd>` (spaces allowed) sets its working directory. Send the first instruction separately with `@<title> <body>`. |
 | `@<task-path>` | Navigate to a visible Task, or browse one level with a trailing `/` (for example `@../`). |
 | `@<task-path> <body>` | Send a graceful collaboration message to a reachable parent, direct child, or sibling Task selected through the path picker. Targets marked `navigation` are rejected for delivery. |
 | `/model [name]`       | Switch model (fuzzy match, e.g. `/model opus`)                                                                                |
