@@ -12,12 +12,12 @@ import {
   TaskPathParseError,
   type TaskPath,
 } from "../../src/task-path.ts";
-import { resolveBrowseTarget, resolveViewPath } from "./file-browser.ts";
+import { resolveBrowseTarget } from "./file-browser.ts";
 import {
   previewCwdDisplay,
   previewValue,
-  tidyResolvedPath,
-} from "./create-preview.ts";
+  resolveCreateCwd,
+} from "./create-command.ts";
 import { setInputValue, state } from "./state.ts";
 import { listRecentPaths } from "./slash-commands.ts";
 import { switchToTask } from "./task-navigation.ts";
@@ -35,34 +35,6 @@ export function canSubmitTaskCommandWhileBusy(text: string): boolean {
 export { isTaskCommand };
 
 // --- path helpers (browser-safe, server paths are `/`-separated) ---
-
-/**
- * Resolve the `+` cwd field (everything after the title, taken verbatim) to an
- * existing directory. A relative cwd resolves against the current Task cwd,
- * `~` expands HOME on the server, and the directory must already exist.
- */
-async function resolveCreateCwd(
-  rawCwd: string,
-): Promise<{ cwd: string } | { error: string }> {
-  const base = state.taskCwd ?? "";
-  let resolved: string;
-  try {
-    resolved = rawCwd === "" ? base : resolveViewPath(rawCwd, base || null);
-  } catch (err) {
-    return { error: err instanceof Error ? err.message : String(err) };
-  }
-  if (resolved === "") return { error: "No active task cwd" };
-  resolved = tidyResolvedPath(resolved);
-  try {
-    const info = await api.getFileInfo(resolved);
-    if (info.kind !== "dir") {
-      return { error: `not a directory: '${rawCwd}'` };
-    }
-  } catch {
-    return { error: `directory not found: '${rawCwd}'` };
-  }
-  return { cwd: resolved };
-}
 
 // --- task tree helpers ---
 

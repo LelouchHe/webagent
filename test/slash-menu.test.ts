@@ -579,6 +579,66 @@ describe("slash menu — Tab vs Click behavior", () => {
     );
   });
 
+  it("/new action row resolves a relative path against the current task cwd", async () => {
+    state.taskId = "s1";
+    state.taskCwd = "/current";
+    state.taskCwdDisplay = "~/current";
+    globalThis.fetch = ((url: string, init?: any) => {
+      fetchCalls.push({ url, init });
+      if (url.startsWith("/api/v1/files/info?")) {
+        return Promise.resolve({
+          ok: true,
+          text: () =>
+            Promise.resolve(
+              '{"path":"/current/rel","kind":"dir","name":"rel","size":0,"mtime":1}',
+            ),
+        });
+      }
+      if (url.startsWith("/api/v1/recent-paths")) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve([]) });
+      }
+      return Promise.resolve({
+        ok: true,
+        text: () => Promise.resolve('{"id":"child-1","cwd":"/current/rel"}'),
+      });
+    }) as any;
+
+    dom.input.value = "/new ./rel";
+    commands.updateSlashMenu();
+    await new Promise((r) => setTimeout(r, 10));
+
+    // The preview names the resolved directory, not the raw query.
+    assert.equal(
+      dom.slashMenu.querySelector(".slash-primary")?.textContent,
+      "create task at '~/current/rel'",
+    );
+
+    const first = dom.slashMenu.querySelector(".slash-item");
+    assert.ok(first, "expected the action row");
+    first.dispatchEvent(
+      new (globalThis.window as any).MouseEvent("mousedown", { bubbles: true }),
+    );
+    await new Promise((r) => setTimeout(r, 20));
+
+    assert.ok(
+      fetchCalls.some((c) =>
+        c.url.includes(
+          `/api/v1/files/info?path=${encodeURIComponent("/current/rel")}`,
+        ),
+      ),
+      `expected the task-cwd probe, got: ${JSON.stringify(fetchCalls.map((c) => c.url))}`,
+    );
+    const createCall = fetchCalls.find(
+      (c) => c.url === "/api/v1/tasks" && c.init?.method === "POST",
+    );
+    assert.ok(createCall, "the action row must create on click");
+    assert.equal(
+      JSON.parse(createCall.init.body).cwd,
+      "/current/rel",
+      "the resolved path must be sent, not the raw query",
+    );
+  });
+
   it("/view lists cwd, filters locally, and Tab preserves the display path", async () => {
     state.taskCwd = "/work";
     globalThis.fetch = ((url: string, init?: any) => {

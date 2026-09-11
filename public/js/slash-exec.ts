@@ -43,6 +43,7 @@ import {
 import { controlPlanPanel } from "./plan-panel.ts";
 import { requestAuthoritativeCancel } from "./cancel-command.ts";
 import { openViewPath } from "./view-command.ts";
+import { resolveCreateCwd } from "./create-command.ts";
 
 async function subscribePush(): Promise<void> {
   try {
@@ -164,8 +165,20 @@ export async function handleSlashCommand(text: string): Promise<boolean> {
     }
 
     case "/new": {
-      // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- empty string should fall through
-      const cwd = arg || state.taskCwd || undefined;
+      // A typed cwd resolves against the current Task cwd via the same helper
+      // the picker uses, so Enter and the action row create in the same place.
+      // A bare `/new` keeps the legacy behavior: current cwd, no extra probe.
+      let cwd: string | undefined;
+      if (arg) {
+        const resolved = await resolveCreateCwd(arg);
+        if ("error" in resolved) {
+          addSystem(`err: create failed — ${resolved.error}`);
+          return true;
+        }
+        cwd = resolved.cwd;
+      } else {
+        cwd = state.taskCwd ?? undefined;
+      }
       // Capture before reset so model/mode inheritance still works after we
       // clear taskId (we clear it so any in-flight state_patch from the
       // outgoing task is rejected by the per-task guard in handleEvent).

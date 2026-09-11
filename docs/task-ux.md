@@ -93,10 +93,13 @@ A bare `+` has no title to create with. It shows the hint
 
 `/new [cwd]` is the unnamed form of the same creation: it creates a direct
 child of the current Task without a title (the task id stands in), optionally
-in another cwd, and switches to it. Use `+` when the child needs a name that
-other Tasks can address. Its picker mirrors `+`: the action row `create task`
-(extended to `create task at '<cwd>'` once a path is typed) leads, and the
-current cwd is listed first with `*`, ahead of the recent paths.
+in another cwd, and switches to it. A relative `cwd` resolves against the
+current Task cwd, `~` expands on the server, and the directory must already
+exist; both the picker action row and Enter send that resolved path, so the
+preview names the directory that is actually created. Use `+` when the child
+needs a name that other Tasks can address. Its picker mirrors `+`: the action
+row `create task` (extended to `create task at '<cwd>'` once a path is typed)
+leads, and the current cwd is listed first with `*`, ahead of the recent paths.
 
 ## `@` — target, navigate, and send
 

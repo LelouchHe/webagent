@@ -2,7 +2,12 @@ import { test, expect } from "playwright/test";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
-import { createNewTask, currentTaskId, gotoConnected } from "./helpers.ts";
+import {
+  createNewTask,
+  currentTaskId,
+  gotoConnected,
+  sendPrompt,
+} from "./helpers.ts";
 
 async function readStatusBarCwd(
   page: import("playwright/test").Page,
@@ -125,6 +130,67 @@ test("/new previews a typed path without ambiguity", async ({ page }) => {
   await expect(page.locator("#slash-menu.active")).toContainText(
     `create task at "/tmp/x'y"`,
   );
+});
+
+test("/new resolves a relative cwd against the current task cwd on Enter", async ({
+  page,
+}) => {
+  await gotoConnected(page);
+  const parentId = await currentTaskId(page);
+  const parentCwd = await readTaskCwd(page, parentId);
+  const parentDisplay = (await readStatusBarCwd(page)).replace(/\/$/, "");
+  const dirName = "new-rel-" + Date.now().toString(36);
+  mkdirSync(join(parentCwd, dirName));
+  try {
+    await page.locator("#input").fill(`/new ./${dirName}`);
+    // The preview names the resolved directory, not the raw query.
+    await expect(page.locator("#slash-menu.active")).toContainText(
+      `create task at '${parentDisplay}/${dirName}'`,
+    );
+
+    await page.locator("#input").press("Enter");
+    await expect(page.locator("#messages")).toContainText("Creating new task…");
+    await expect.poll(() => currentTaskId(page)).not.toBe(parentId);
+    expect(await readTaskCwd(page, await currentTaskId(page))).toBe(
+      join(parentCwd, dirName),
+    );
+
+    // Return to the parent before the directory is removed.
+    await sendPrompt(page, "/exit");
+    await expect.poll(() => currentTaskId(page)).toBe(parentId);
+  } finally {
+    rmSync(join(parentCwd, dirName), { recursive: true, force: true });
+  }
+});
+
+test("/new resolves a relative cwd against the current task cwd from the picker", async ({
+  page,
+}) => {
+  await gotoConnected(page);
+  const parentId = await currentTaskId(page);
+  const parentCwd = await readTaskCwd(page, parentId);
+  const parentDisplay = (await readStatusBarCwd(page)).replace(/\/$/, "");
+  const dirName = "new-pick-" + Date.now().toString(36);
+  mkdirSync(join(parentCwd, dirName));
+  try {
+    await page.locator("#input").fill(`/new ./${dirName}`);
+    const menu = page.locator("#slash-menu.active");
+    await expect(menu).toContainText(
+      `create task at '${parentDisplay}/${dirName}'`,
+    );
+
+    await menu.locator(".slash-item").first().click();
+    await expect(page.locator("#messages")).toContainText("Creating new task…");
+    await expect.poll(() => currentTaskId(page)).not.toBe(parentId);
+    expect(await readTaskCwd(page, await currentTaskId(page))).toBe(
+      join(parentCwd, dirName),
+    );
+
+    await sendPrompt(page, "/exit");
+    await expect.poll(() => currentTaskId(page)).toBe(parentId);
+  } finally {
+    rmSync(join(parentCwd, dirName), { recursive: true, force: true });
+  }
 });
 
 test("+ creates a titled child in the current cwd without switching", async ({

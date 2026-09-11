@@ -24,7 +24,11 @@ import {
   setStoredLogLevel,
 } from "./log.ts";
 import type { CmdNode } from "./slash-tree.ts";
-import { previewCwdDisplay, previewValue } from "./create-preview.ts";
+import {
+  previewCwdDisplay,
+  previewValue,
+  resolveCreateCwd,
+} from "./create-command.ts";
 import type { TaskSummary } from "../../src/types.ts";
 import { HTTP_STATUS } from "../../src/http-status.ts";
 import { TOKEN_STORAGE_KEY } from "./login-core.ts";
@@ -550,17 +554,25 @@ export const ROOT: CmdNode = {
       },
       freeform: (q) => {
         // The action row mirrors `+`: the default cwd is implicit, and `at`
-        // appears only once a path is typed. `previewValue` keeps a quoted
-        // path from reading as another field.
+        // appears only once a path is typed. A typed path resolves against the
+        // current Task cwd, so the preview names the directory that will be
+        // created.
         const trimmed = q.trim();
         return {
           primary: trimmed
             ? `create task at ${previewValue(previewCwdDisplay(trimmed))}`
             : "create task",
-          onSelect: () => {
-            createNewChildTask(
-              trimmed === "" ? (state.taskCwd ?? undefined) : trimmed,
-            );
+          onSelect: async () => {
+            if (trimmed === "") {
+              createNewChildTask(state.taskCwd ?? undefined);
+              return;
+            }
+            const resolved = await resolveCreateCwd(trimmed);
+            if ("error" in resolved) {
+              addSystem(`err: create failed — ${resolved.error}`);
+              return;
+            }
+            createNewChildTask(resolved.cwd);
           },
         };
       },

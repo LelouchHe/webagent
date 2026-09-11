@@ -74,11 +74,20 @@ describe("commands", () => {
 
   describe("handleSlashCommand", () => {
     it("creates a new task using the provided cwd", async () => {
-      setFetch(() => ({
-        ok: true,
-        json: async () => ({ id: "new-1" }),
-        text: async () => '{"id":"new-1"}',
-      }));
+      setFetch((url) => {
+        if (url.startsWith("/api/v1/files/info?")) {
+          return {
+            ok: true,
+            text: async () =>
+              '{"path":"/tmp/project","kind":"dir","name":"project","size":0,"mtime":1}',
+          };
+        }
+        return {
+          ok: true,
+          json: async () => ({ id: "new-1" }),
+          text: async () => '{"id":"new-1"}',
+        };
+      });
       state.taskId = "current-task";
       state.taskCwd = "/current";
 
@@ -131,6 +140,76 @@ describe("commands", () => {
         body.parentId,
         "current-task",
         "/new must attach the new task under the launching task",
+      );
+    });
+
+    it("resolves a relative /new cwd against the current task cwd", async () => {
+      setFetch((url) => {
+        if (url.startsWith("/api/v1/files/info?")) {
+          return {
+            ok: true,
+            text: async () =>
+              '{"path":"/my/project/rel","kind":"dir","name":"rel","size":0,"mtime":1}',
+          };
+        }
+        return { ok: true, text: async () => '{"id":"new-3"}' };
+      });
+      state.taskId = "current-task";
+      state.taskCwd = "/my/project";
+
+      const handled = await commands.handleSlashCommand("/new ./rel");
+      await new Promise((r) => setTimeout(r, 0));
+
+      assert.equal(handled, true);
+      // The probe resolves against the task cwd, not the server process cwd.
+      assert.ok(
+        fetchCalls.some((c) =>
+          c.url.includes(
+            `/api/v1/files/info?path=${encodeURIComponent("/my/project/rel")}`,
+          ),
+        ),
+        `expected the task-cwd probe, got: ${JSON.stringify(fetchCalls.map((c) => c.url))}`,
+      );
+      const createCall = fetchCalls.find(
+        (c) => c.url === "/api/v1/tasks" && c.init?.method === "POST",
+      );
+      assert.ok(createCall, "expected POST /api/v1/tasks");
+      assert.equal(
+        JSON.parse(createCall.init.body).cwd,
+        "/my/project/rel",
+        "the resolved path must be sent, not the raw query",
+      );
+    });
+
+    it("reports a missing /new cwd instead of sending it to the server", async () => {
+      setFetch((url) => {
+        if (url.startsWith("/api/v1/files/info?")) {
+          return {
+            ok: false,
+            status: 404,
+            json: async () => ({ error: "not found" }),
+          };
+        }
+        return { ok: true, text: async () => '{"id":"new-4"}' };
+      });
+      state.taskId = "current-task";
+      state.taskCwd = "/my/project";
+
+      const handled = await commands.handleSlashCommand("/new /missing");
+
+      assert.equal(handled, true);
+      assert.ok(
+        messageLines().some((l) =>
+          l.includes("err: create failed — directory not found: '/missing'"),
+        ),
+        `expected the readable error, got: ${JSON.stringify(messageLines())}`,
+      );
+      assert.equal(
+        fetchCalls.some(
+          (c) => c.url === "/api/v1/tasks" && c.init?.method === "POST",
+        ),
+        false,
+        "a missing cwd must not reach the create endpoint",
       );
     });
 
