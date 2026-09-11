@@ -3,6 +3,8 @@
  *
  * Run:  npm run screenshots
  */
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { test, expect } from "playwright/test";
 import {
   gotoConnected,
@@ -15,6 +17,26 @@ const MOBILE = { width: 375, height: 812 };
 const OUT = "docs/images";
 
 type Page = import("playwright/test").Page;
+type Browser = import("playwright/test").Browser;
+
+const AUTH_STORAGE_STATE = fileURLToPath(
+  new URL("../test/e2e-data/storage-state.json", import.meta.url),
+);
+const SCREENSHOT_TOKEN = readFileSync(
+  new URL("../test/e2e-data/.token", import.meta.url),
+  "utf8",
+).trim();
+
+async function newAuthenticatedContext(
+  browser: Browser,
+  viewport: { width: number; height: number },
+) {
+  return await browser.newContext({
+    viewport,
+    storageState: AUTH_STORAGE_STATE,
+    extraHTTPHeaders: { Authorization: `Bearer ${SCREENSHOT_TOKEN}` },
+  });
+}
 
 async function sendAndWait(page: Page, text: string) {
   await sendPrompt(page, text);
@@ -29,7 +51,7 @@ async function setLightTheme(page: Page) {
 }
 
 test("capture desktop chat screenshot", async ({ browser }) => {
-  const ctx = await browser.newContext({ viewport: DESKTOP });
+  const ctx = await newAuthenticatedContext(browser, DESKTOP);
   const page = await ctx.newPage();
   await gotoConnected(page);
   await setLightTheme(page);
@@ -46,7 +68,7 @@ test("capture desktop chat screenshot", async ({ browser }) => {
 });
 
 test("capture slash menu screenshot", async ({ browser }) => {
-  const ctx = await browser.newContext({ viewport: DESKTOP });
+  const ctx = await newAuthenticatedContext(browser, DESKTOP);
   const page = await ctx.newPage();
   await gotoConnected(page);
   await setLightTheme(page);
@@ -60,7 +82,7 @@ test("capture slash menu screenshot", async ({ browser }) => {
 });
 
 test("capture permission screenshot", async ({ browser }) => {
-  const ctx = await browser.newContext({ viewport: DESKTOP });
+  const ctx = await newAuthenticatedContext(browser, DESKTOP);
   const page = await ctx.newPage();
   await gotoConnected(page);
   await setLightTheme(page);
@@ -77,7 +99,7 @@ test("capture permission screenshot", async ({ browser }) => {
 });
 
 test("capture mobile screenshot", async ({ browser }) => {
-  const ctx = await browser.newContext({ viewport: MOBILE });
+  const ctx = await newAuthenticatedContext(browser, MOBILE);
   const page = await ctx.newPage();
   await gotoConnected(page);
   await setLightTheme(page);
