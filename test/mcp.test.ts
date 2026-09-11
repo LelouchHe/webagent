@@ -9,6 +9,16 @@ import {
   MCP_SERVER_INSTRUCTIONS,
 } from "../src/mcp/server.ts";
 
+// Description text of a registered Task tool, or "" when the tool is absent.
+// Keeps the tools/list description assertions free of optional chaining so the
+// large test body stays inside the configured complexity budget.
+function toolDescription(
+  tools: Array<{ name: string; description?: string }>,
+  name: string,
+): string {
+  return tools.find((tool) => tool.name === name)?.description ?? "";
+}
+
 // --- CapabilityStore ---
 
 describe("CapabilityStore", () => {
@@ -315,6 +325,8 @@ describe("createMcpEndpoint", () => {
     )?.description;
     assert.match(updateDescription ?? "", /typed lifecycle handoff/);
     assert.match(updateDescription ?? "", /not delete or permanently close/);
+    assert.match(toolDescription(tools, "task_query"), /recorded turn history/);
+    assert.match(toolDescription(tools, "task_query"), /provider errors/);
     const querySchema = tools.find(
       (tool) => tool.name === "task_query",
     )?.inputSchema;

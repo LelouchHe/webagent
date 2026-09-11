@@ -143,8 +143,10 @@ export function registerMcpTools(
     "task_query",
     {
       description:
-        "Inspect Task history when earlier context or a prior result needs recovery. " +
-        "Do not use this tool to wait for work or poll for completion.",
+        "Inspect a Task's recorded turn history — what happened and what earlier " +
+        "turns decided. Turn events, including provider errors and attachment " +
+        "metadata, are recorded here. Do not use this tool to wait for work or " +
+        "poll for completion.",
       inputSchema: {
         task_id: TASK_ID.nullable()
           .optional()

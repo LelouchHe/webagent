@@ -60,6 +60,16 @@ describe("sniffMime", () => {
     assert.equal(await sniffMime(bad), "application/octet-stream");
   });
 
+  it("detects a HEIC header (ftypheic) as image/heic", async () => {
+    // 24-byte ISO-BMFF header: box size, "ftyp", major brand "heic",
+    // minor version, then compatible brands "mif1"/"heic".
+    const heic = Buffer.from(
+      "000000186674797068656963000000006d69663168656963",
+      "hex",
+    );
+    assert.equal(await sniffMime(heic), "image/heic");
+  });
+
   it("classifies random binary as octet-stream", async () => {
     // Random non-magic bytes containing a NUL — clearly binary.
     const bin = Buffer.from([
@@ -96,6 +106,17 @@ describe("mimeToExt", () => {
     assert.equal(mimeToExt("text/plain"), "txt");
     assert.equal(mimeToExt("application/zip"), "zip");
     assert.equal(mimeToExt("application/json"), "json");
+  });
+
+  it("gives image containers an extension instead of falling through to bin", () => {
+    // pi-acp turns a resource_link into a bare `file://…` context line
+    // without name/mimeType, so the on-disk extension is the agent's only
+    // clue about the format.
+    assert.equal(mimeToExt("image/heic"), "heic");
+    assert.equal(mimeToExt("image/heif"), "heif");
+    assert.equal(mimeToExt("image/avif"), "avif");
+    assert.equal(mimeToExt("image/bmp"), "bmp");
+    assert.equal(mimeToExt("image/tiff"), "tif");
   });
 
   it("falls through to bin for unknown mimes", () => {

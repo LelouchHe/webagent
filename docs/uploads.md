@@ -69,14 +69,25 @@ canonical anchor.
 4. Server classifies `kind = image | file` from sniffed MIME, picks the
    size cap (`limits.image_upload` or `limits.file_upload`), streams to
    `<uuid>.<ext>.tmp`, renames atomically on success, inserts a row into
-   `attachments`.
+   `attachments`. The disk extension comes from the sniffed MIME, so
+   heic/heif/avif/bmp/tif land as `<uuid>.heic` etc. rather than `.bin`.
 5. After all uploads resolve, the browser fires `POST /prompt` with the
    `attachments[]` array of refs.
 6. Server's `AttachmentDispatcher` resolves each ref to a file:// URI
-   under `tasksAnchor` and turns it into an ACP block. Any failure
-   (DB row missing, file missing, realpath outside anchor) falls back
-   to an ACP `text` block reading `[attachment removed: <displayName>]`
-   — the prompt still goes through, just without that file.
+   under `tasksAnchor` and turns it into one or more ACP blocks. Whether a
+   payload is treated as an image comes from the **server-side row**
+   (`row.kind`, set by the upload sniff), never from the client's ref.
+   Image blocks (base64 inline) are emitted only for the upstream-accepted
+   mimes `image/png`, `image/jpeg`, `image/gif`, `image/webp`
+   (`isUpstreamImageMime`); any other container the sniff classifies as
+   `image/*` but upstream does not accept (heic, heif, avif, bmp, tiff,
+   and other `image/*` containers) is degraded to a one-line hint plus an
+   ACP `resource_link`, because the provider rejects the wire format with
+   400 and a failed block poisons the whole session history. Non-image
+   kinds emit a `resource_link` alone. Any failure (DB row missing, file
+   missing, realpath outside anchor) falls back to an ACP `text` block
+   reading `[attachment removed: <displayName>]` — the prompt still goes
+   through, just without that file.
 
 ## Permission auto-approve
 
@@ -183,8 +194,8 @@ separators (`/`, `\`), reject `.` and `..`, cap at 255 UTF-8 bytes
 substitutes a generated default like `image-N` / `file-N`.
 
 **On-disk extension** (`mimeToExt`) — derived from server-sniffed MIME
-against a fixed allow-list (`png/jpg/gif/webp/svg/pdf/txt/md/html/csv/
-json/zip`). Anything else falls through to `.bin`. The user-supplied
+against the fixed allow-list in `MIME_TO_EXT` (`src/attachments.ts`);
+mimes outside that table fall through to `.bin`. The user-supplied
 extension is **never** trusted — a `.txt` claiming to be `image/png`
 gets stored as `<uuid>.png`, which defeats extension-based heuristics
 that downstream tooling might apply.
@@ -195,6 +206,32 @@ Everything else (including `image/svg+xml` and `text/html`) is forced
 to `attachment` so a malicious upload cannot script the page when the
 user clicks the link. Combined with `X-Content-Type-Options: nosniff`,
 this neutralizes Chrome's MIME-sniffing fallback.
+
+The display allow-list (`INLINE_MIMES` / `isInlineMime`) and the upstream
+wire allow-list (`UPSTREAM_IMAGE_MIMES` / `isUpstreamImageMime`, see the
+upload pipeline) are two separate constants that currently hold the same
+four mimes. They are intentionally not derived from each other: the first
+is an XSS/display policy, the second an upstream provider compatibility
+policy, and they are free to diverge (e.g. upstream gaining HEIC support
+changes only the second).
+
+Neither constant decides how the UI renders an attachment.
+
+### Client-side thumbnail fallback (no allow-list)
+
+The UI picks "thumbnail vs. download link" at render time by letting
+the browser attempt the decode. `public/js/render-event.ts` (chat
+bubbles) and `public/js/attachments.ts` (pending chips) mount the
+`<img>` unconditionally and swap it **in place** for the existing
+`<a class="user-file">` / `.attach-file` chip when the image fires
+`error`, or loads with `naturalWidth === 0` ("loaded but not
+decodable"). There is deliberately no shared mime list behind this
+decision: decodability is a client capability, not a server policy —
+iOS/macOS Safari decode HEIC natively while desktop Chrome and Firefox
+do not, so a hardcoded list would regress the platform that *can*
+decode. The `isInlineMime` policy above only governs the HTTP
+`Content-Disposition` response, never whether the UI tries to render an
+image.
 
 ## Signed URLs (egress)
 
@@ -244,7 +281,7 @@ The `path` field is what the renderer keys on. Three branches in
 
 | `kind`  | renders                                                                      |
 | ------- | ---------------------------------------------------------------------------- |
-| `image` | `<img class="user-image" src={signed URL} alt={displayName} width height>` when dimensions are known |
+| `image` | `<img class="user-image" src={signed URL} alt={displayName} width height>` (`width height` when known); replaced **in place** by the `<a class="user-file">` link below when the browser cannot decode it |
 | `file`  | `<a class="user-file" href={signed URL} target="_blank" download={name}>`   |
 | (any, missing path) | `<div class="user-attachment">[<kind>: <name>]</div>` — pre-fix data only |
 
@@ -267,7 +304,7 @@ the two render paths agree on classes:
 | -------------------- | -------------------------------- | ------------------------------------------- |
 | Send-time, before upload resolves (`input.ts`) | `<img class=user-image src={dataURL}>` (FileReader local URL) | `<div class=user-attachment>[file: name]</div>` (placeholder chip) |
 | Send-time, after upload resolves (`input.ts`) | unchanged — dataURL stays until reload | `<a class=user-file href={signed URL}>` (placeholder swapped in place) |
-| Reload (`render-event.ts`) | `<img class=user-image src={signed URL}>` | `<a class=user-file href={signed URL}>` |
+| Reload (`render-event.ts`) | `<img class=user-image src={signed URL}>`; swapped in place for `<a class=user-file>` when the browser cannot decode it | `<a class=user-file href={signed URL}>` |
 
 The sender's own SSE-broadcast `user_message` echo is suppressed
 (`sentMessageForTask` in `events.ts`) so the optimistic bubble is
@@ -275,20 +312,27 @@ never replaced live. To stop the file branch from being stuck on the
 text chip until the user reloads, `input.ts` actively swaps each chip
 for a real `<a>` the moment the upload promise resolves — using the
 signed URL the server returned in the upload response. Reload is the
-independent SSE-replay path; the two paths now produce identical
-shapes.
+independent SSE-replay path. The two paths produce identical shapes for
+file attachments and for images this browser can decode; the
+decode-failure fallback is the one intended exception. An image the
+browser cannot decode is rebuilt as `<a class="user-file">` on reload,
+while the optimistic send-time bubble keeps its undecodable `<img>`
+until the history is replayed. That asymmetry is bounded to the live
+bubble — the sender's own echo is suppressed, so a replayed view
+(reload, or any other client) shows the fallback link, and the decode
+verdict still belongs to the viewing browser.
 
 ## Tests — what guards what
 
 | Layer        | Test                                            | Pins                                                                            |
 | ------------ | ----------------------------------------------- | ------------------------------------------------------------------------------- |
-| Server unit  | `test/attachments.test.ts`                      | `mimeToExt`, `isInlineMime`, `classifyKind`, `normalizeDisplayName`             |
+| Server unit  | `test/attachments-mime.test.ts`                 | `sniffMime` magic-byte detection, `mimeToExt` disk-extension mapping            |
 | Server unit  | `test/store-attachments.test.ts`                | DB row insert / lookup / `ON DELETE CASCADE`                                     |
 | Server unit  | `test/attachment-dispatch.test.ts`              | ref → ACP block conversion, fallback paths, anchor check, cross-task reject |
 | Server unit  | `test/attachment-interceptor.test.ts`           | F1–F7 auto-approve defenses                                                     |
 | Frontend unit| `test/attachments.test.ts` (frontend twin)      | `renderAttachPreview` — preview thumbs + remove button                          |
-| Frontend unit| `test/render-event.test.ts`                     | `<img.user-image>` and `<a.user-file>` shape per `kind` / missing-path fallback |
-| E2E          | `test/e2e/image-upload-reload.spec.ts`          | Upload → optimistic preview → reload → signed-URL `<img>` survives              |
+| Frontend unit| `test/render-event.test.ts`                     | `<img.user-image>` and `<a.user-file>` shape per `kind` / missing-path fallback; undecodable image (`error` / zero-size `load`) degrades in place to the link |
+| E2E          | `test/e2e/image-upload-reload.spec.ts`          | Upload → optimistic preview → reload → signed-URL `<img>` survives; undecodable image degrades to a file link (real Chromium decode failure) |
 | E2E          | `test/e2e/image-lightbox.spec.ts`               | Click `<img.user-image>` → overlay; backdrop / Escape close; wheel zoom         |
 | E2E          | `test/e2e/file-attachment-download.spec.ts`     | `<a.user-file>` post-reload, click triggers download, `Content-Disposition: attachment; filename=` from server |
 

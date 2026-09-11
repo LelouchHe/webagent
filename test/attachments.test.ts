@@ -70,6 +70,98 @@ describe("attachments", () => {
     assert.equal(dom.attachPreview.classList.contains("active"), false);
   });
 
+  // Decode probe, not a mime allow-list: iOS/macOS Safari render HEIC
+  // thumbnails, desktop Chrome does not (the reported IMG_1040.HEIC bug).
+  it("degrades an undecodable image thumbnail to a file chip", () => {
+    state.pendingAttachments.push({
+      kind: "image",
+      file: { name: "IMG_1040.HEIC", type: "image/heic" },
+      mimeType: "image/heic",
+      name: "IMG_1040.HEIC",
+      previewUrl: "data:image/heic;base64,abc",
+    });
+
+    attachments.renderAttachPreview();
+    const img = dom.attachPreview.querySelector(".attach-thumb img");
+    assert.ok(img, "thumbnail first — the browser gets to try decoding");
+
+    // happy-dom never decodes images, so the decode verdict is driven here.
+    img.dispatchEvent(new globalThis.window.Event("error"));
+
+    assert.equal(
+      dom.attachPreview.querySelectorAll(".attach-thumb img").length,
+      0,
+      "undecodable thumbnail must be removed",
+    );
+    const chip = dom.attachPreview.querySelector(".attach-thumb.attach-file");
+    assert.ok(chip, "undecodable image must degrade to the file chip");
+    assert.ok(
+      chip.textContent.includes("IMG_1040.HEIC"),
+      "file chip shows the original name",
+    );
+    assert.equal(
+      chip.querySelectorAll(".remove").length,
+      1,
+      "remove button survives the swap",
+    );
+    assert.equal(state.pendingAttachments.length, 1);
+  });
+
+  it("treats a thumbnail load with no intrinsic size as undecodable", () => {
+    state.pendingAttachments.push({
+      kind: "image",
+      file: { name: "IMG_1040.HEIC", type: "image/heic" },
+      mimeType: "image/heic",
+      name: "IMG_1040.HEIC",
+      previewUrl: "data:image/heic;base64,abc",
+    });
+
+    attachments.renderAttachPreview();
+    const img = dom.attachPreview.querySelector(".attach-thumb img");
+    // happy-dom reports naturalWidth 0 for every image: the "loaded but
+    // not decodable" signal the chip renderer must distrust.
+    assert.equal(img.naturalWidth, 0);
+    img.dispatchEvent(new globalThis.window.Event("load"));
+
+    assert.equal(
+      dom.attachPreview.querySelectorAll(".attach-thumb img").length,
+      0,
+    );
+    assert.ok(
+      dom.attachPreview.querySelector(".attach-thumb.attach-file"),
+      "zero-size load must degrade to the file chip",
+    );
+  });
+
+  it("keeps the thumbnail for an image the browser can decode", () => {
+    state.pendingAttachments.push({
+      kind: "image",
+      file: { name: "x.png", type: "image/png" },
+      mimeType: "image/png",
+      name: "x.png",
+      previewUrl: "data:image/png;base64,abc",
+    });
+
+    attachments.renderAttachPreview();
+    const img = dom.attachPreview.querySelector(".attach-thumb img");
+    Object.defineProperty(img, "naturalWidth", {
+      value: 120,
+      configurable: true,
+    });
+    img.dispatchEvent(new globalThis.window.Event("load"));
+
+    assert.equal(
+      dom.attachPreview.querySelectorAll(".attach-thumb img").length,
+      1,
+      "decodable thumbnail must stay an <img>",
+    );
+    assert.equal(
+      dom.attachPreview.querySelectorAll(".attach-thumb.attach-file").length,
+      0,
+      "decodable image must NOT become a file chip",
+    );
+  });
+
   it("renders non-image attachments as a text chip", () => {
     state.pendingAttachments.push({
       kind: "file",

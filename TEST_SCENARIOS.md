@@ -301,8 +301,24 @@ spot gaps, and decide what still needs to be added without reading every spec.
 
 - `test/attachments.test.ts`
   - attach preview: image thumbnail vs file chip rendering, × overlay removal
+  - undecodable image preview — HEIC on desktop Chrome/Firefox, which has no
+    decoder — degrades to the same file chip on the browser's `error` event or
+    a zero-size `load`; a decodable image keeps its `<img>` thumbnail
   - file picker and paste handling for both image and non-image files
   - send-time upload + AbortController cancel; file chip swap to anchor on success
+
+- `test/render-event.test.ts`
+  - chat bubble attachment DOM shape: `<img class=user-image>` for a decodable
+    image, `<a class=user-file download>` link, `[kind: name]` marker only when
+    `path` is missing, thumbnail max-size variables, no upscaling
+  - undecodable image (HEIC on desktop Chrome/Firefox, but not on iOS/macOS
+    Safari) is replaced **in place** by the same file link on `error` or a
+    zero-size `load`; a decodable image gets no link
+
+- `test/attachments-mime.test.ts`, `test/attachment-dispatch.test.ts`
+  - sniffed MIME detection (PDF/PNG/ZIP/HEIC magic bytes, UTF-8 text vs binary) and mime → disk extension mapping, including heic/heif/avif/bmp/tiff
+  - dispatcher wire format driven by the server-side row, not the client ref: upstream-accepted image mimes inline as base64 image blocks; heic and other unsupported image containers degrade to a hint plus `resource_link`; non-images emit `resource_link` alone
+  - fallback text block on row miss, cross-task ref, anchor breach, and disk failure; client-supplied uri/data/path rejection
 
 - `test/api-module.test.ts`
   - frontend API client: all REST endpoints (tasks, prompt, cancel, permissions, bash, files, config, visibility, status)
@@ -523,6 +539,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
 
 - `image-upload-reload.spec.ts`
   - uploaded images are sent and restored after reload
+  - undecodable images fall back to a file link instead of a broken image
 
 - `image-lightbox.spec.ts`
   - clicking an image opens the lightbox overlay

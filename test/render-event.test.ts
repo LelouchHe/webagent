@@ -299,6 +299,48 @@ describe("render-event", () => {
       assert.ok(a?.getAttribute("href")?.endsWith("/s/TKN/attachments/a2.txt"));
     });
 
+    it("degraded image link reuses the rewritten URL, not the raw stored path", () => {
+      const el = append(
+        mod.renderContentEvent(
+          "user_message",
+          {
+            text: "x",
+            attachments: [
+              {
+                kind: "image",
+                attachmentId: "a3",
+                displayName: "IMG_1040.HEIC",
+                mimeType: "image/heic",
+                path: "/api/v1/tasks/s1/attachments/a3.heic",
+              },
+            ],
+          },
+          makeHooks({
+            rewriteAttachmentSrc: (src) =>
+              src.replace(
+                /^\/api\/v1\/tasks\/[^/]+\/attachments\//,
+                "/s/TKN/attachments/",
+              ),
+          }),
+        ),
+      )!;
+      const img = el.querySelector("img.user-image")!;
+      // The hook is baked into the src the browser is asked to decode...
+      assert.ok(
+        img.getAttribute("src")?.endsWith("/s/TKN/attachments/a3.heic"),
+      );
+
+      // ...so the decode-failure link must reuse that same URL. Falling back
+      // to the raw `/api/v1/...` path would hand a share viewer a dead,
+      // bearer-authenticated URL and fails this assertion.
+      img.dispatchEvent(new globalThis.window.Event("error"));
+      const link = el.querySelector("a.user-file");
+      assert.ok(link, "decode failure must degrade to <a.user-file>");
+      assert.equal(link.getAttribute("href"), "/s/TKN/attachments/a3.heic");
+      assert.equal(link.getAttribute("download"), "IMG_1040.HEIC");
+      assert.equal(el.querySelectorAll("img.user-image").length, 0);
+    });
+
     it("falls back to [kind: name] text marker only when path is missing", () => {
       const el = append(
         mod.renderContentEvent(
@@ -320,6 +362,139 @@ describe("render-event", () => {
       assert.equal(el.querySelector("img.user-image"), null);
       const note = el.querySelector(".user-attachment");
       assert.equal(note?.textContent, "[image: old.png]");
+    });
+
+    // Thumbnail vs. file link is a client-capability decision at runtime,
+    // not a shared mime allow-list: iOS/macOS Safari decode HEIC natively,
+    // desktop Chrome/Firefox do not (the reported IMG_1040.HEIC bug —
+    // mobile preview fine, desktop Chrome broken icon). A hardcoded list
+    // would regress the platform that *can* decode. See docs/uploads.md.
+    it("degrades an undecodable image attachment to a file link in place", () => {
+      const el = append(
+        mod.renderContentEvent(
+          "user_message",
+          {
+            text: "see",
+            attachments: [
+              {
+                kind: "image",
+                attachmentId: "a3",
+                displayName: "IMG_1040.HEIC",
+                mimeType: "image/heic",
+                path: "/api/v1/tasks/s1/attachments/a3.heic",
+              },
+              {
+                kind: "file",
+                attachmentId: "a4",
+                displayName: "notes.txt",
+                mimeType: "text/plain",
+                path: "/api/v1/tasks/s1/attachments/a4.txt",
+              },
+            ],
+          },
+          makeHooks(),
+        ),
+      )!;
+      const img = el.querySelector("img.user-image");
+      assert.ok(
+        img,
+        "image attachment must still render as <img> so the browser gets to try",
+      );
+
+      // happy-dom never decodes images, so the browser's own decode verdict
+      // has to be driven by hand here.
+      img.dispatchEvent(new globalThis.window.Event("error"));
+
+      assert.equal(
+        el.querySelectorAll("img.user-image").length,
+        0,
+        "undecodable image must not stay as a broken <img>",
+      );
+      assert.equal(el.querySelectorAll(".user-attachment").length, 0);
+      const links = el.querySelectorAll("a.user-file");
+      assert.equal(links.length, 2, "one link per attachment");
+      const link = links[0];
+      assert.equal(link.textContent, "IMG_1040.HEIC");
+      assert.equal(link.getAttribute("target"), "_blank");
+      assert.equal(link.getAttribute("rel"), "noopener");
+      assert.equal(link.getAttribute("download"), "IMG_1040.HEIC");
+      assert.ok(
+        link
+          .getAttribute("href")!
+          .endsWith("/api/v1/tasks/s1/attachments/a3.heic"),
+      );
+      // In-place replacement: the heic link keeps slot 0 instead of being
+      // appended after the trailing file attachment.
+      assert.equal(links[1].textContent, "notes.txt");
+    });
+
+    it("treats a load with no intrinsic size as an undecodable image", () => {
+      const el = append(
+        mod.renderContentEvent(
+          "user_message",
+          {
+            text: "see",
+            attachments: [
+              {
+                kind: "image",
+                attachmentId: "a3",
+                displayName: "IMG_1040.HEIC",
+                mimeType: "image/heic",
+                path: "/api/v1/tasks/s1/attachments/a3.heic",
+              },
+            ],
+          },
+          makeHooks(),
+        ),
+      )!;
+      const img = el.querySelector<HTMLImageElement>("img.user-image")!;
+      // happy-dom reports naturalWidth 0 for every image, which is exactly
+      // the "loaded but not decodable" signal the renderer must distrust.
+      assert.equal(img.naturalWidth, 0);
+      img.dispatchEvent(new globalThis.window.Event("load"));
+      assert.equal(el.querySelectorAll("img.user-image").length, 0);
+      assert.equal(
+        el.querySelector("a.user-file")?.textContent,
+        "IMG_1040.HEIC",
+      );
+    });
+
+    it("keeps the thumbnail when the browser can decode the image", () => {
+      const el = append(
+        mod.renderContentEvent(
+          "user_message",
+          {
+            text: "see",
+            attachments: [
+              {
+                kind: "image",
+                attachmentId: "a1",
+                displayName: "a.png",
+                mimeType: "image/png",
+                path: "/api/v1/tasks/s1/attachments/a1.png",
+              },
+            ],
+          },
+          makeHooks(),
+        ),
+      )!;
+      const img = el.querySelector("img.user-image")!;
+      Object.defineProperty(img, "naturalWidth", {
+        value: 800,
+        configurable: true,
+      });
+      img.dispatchEvent(new globalThis.window.Event("load"));
+
+      assert.ok(
+        el.querySelector("img.user-image"),
+        "decodable image must stay an <img>",
+      );
+      assert.equal(
+        el.querySelectorAll("a.user-file").length,
+        0,
+        "decodable image must NOT get a download link",
+      );
+      assert.equal(el.querySelectorAll(".user-attachment").length, 0);
     });
   });
 

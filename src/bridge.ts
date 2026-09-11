@@ -336,8 +336,8 @@ export class AgentBridge extends EventEmitter {
           throw new Error("attachment dispatcher not configured");
         }
         for (const ref of attachments) {
-          const block = await this.attachmentDispatcher.dispatch(taskId, ref);
-          promptParts.push(block);
+          const blocks = await this.attachmentDispatcher.dispatch(taskId, ref);
+          promptParts.push(...blocks);
         }
       }
       promptParts.push({ type: "text", text });
