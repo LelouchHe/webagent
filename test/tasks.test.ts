@@ -903,12 +903,20 @@ describe("Task REST API", () => {
     it("rejects deletion when a descendant has active work", async () => {
       store.createTask("parent", tmpDir, "auto", "agent-parent");
       store.createTask("child", tmpDir, "auto", "agent-child", "parent");
+      store.updateTaskTitle("parent", "Parent");
+      store.updateTaskTitle("child", "Child");
       tasks.activePrompts.add("child");
       tasks.syncBusy("child");
 
       const res = await makeRequest(port, "DELETE", "/api/v1/tasks/parent");
 
       assert.equal(res.status, 409);
+      // The user clicked the parent, so the refusal has to name the descendant
+      // holding the work — by path, which they can paste back into the input.
+      assert.equal(
+        JSON.parse(res.body).error,
+        "Cancel active work in @/Parent/Child before deleting this task",
+      );
       assert.equal(store.getTask("parent")?.id, "parent");
       assert.equal(store.getTask("child")?.id, "child");
     });

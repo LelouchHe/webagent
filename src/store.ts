@@ -2,7 +2,10 @@ import Database from "better-sqlite3";
 import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { formatTaskReference } from "./shared/task-reference.ts";
+import {
+  formatTaskPath,
+  formatTaskReference,
+} from "./shared/task-reference.ts";
 
 export const ROOT_TASK_ID = "root";
 
@@ -902,6 +905,24 @@ export class Store {
       current = this.getTaskIncludingDeleted(current.parent_id);
     }
     return undefined;
+  }
+
+  /**
+   * The task's tree path (`@/parent/child`) for user-facing messages, or
+   * undefined when the row is missing or the lineage is broken. Users read this
+   * as the name of a task they can act on, unlike a raw id. Root is the path's
+   * origin and is never a segment, matching what the input grammar resolves.
+   */
+  getTaskPath(id: string): string | undefined {
+    const lineage = this.getTaskLineage(id);
+    if (!lineage) return undefined;
+    const segments = lineage[0] === ROOT_TASK_ID ? lineage.slice(1) : lineage;
+    return formatTaskPath(
+      segments.map(
+        (taskId) =>
+          this.getTaskIncludingDeleted(taskId)?.title ?? taskId.slice(0, 8),
+      ),
+    );
   }
 
   /** Re-parent surviving children of a hard-deleted task under Root so the

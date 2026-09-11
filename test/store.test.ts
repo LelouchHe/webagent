@@ -138,6 +138,27 @@ describe("Store", () => {
       assert.equal(store.ensureRootTask("/tmp/root").title, "工作台");
     });
 
+    it("names a task by its root-relative tree path", () => {
+      store.ensureRootTask("/tmp/root");
+      store.createTask("path-parent", "/tmp/root", "auto", "agent-p", "root");
+      store.createTask(
+        "path-child",
+        "/tmp/root",
+        "auto",
+        "agent-c",
+        "path-parent",
+      );
+      store.updateTaskTitle("path-parent", "Bench");
+      store.updateTaskTitle("path-child", "Review notes");
+
+      // Root is the path origin, never a segment, and a segment with a space is
+      // quoted so the result pastes straight into the input.
+      assert.equal(store.getTaskPath("path-child"), '@/Bench/"Review notes"');
+      assert.equal(store.getTaskPath("path-parent"), "@/Bench");
+      assert.equal(store.getTaskPath("root"), "@/");
+      assert.equal(store.getTaskPath("missing-task"), undefined);
+    });
+
     it("persists and clears one pending compact summary with its assistant event", () => {
       store.createTask("web-1", "/tmp/root", "auto", "agent-1");
 

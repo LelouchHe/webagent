@@ -2326,21 +2326,26 @@ export function createRequestHandler(
             return;
           }
           if (tasks && tasks.getBusyKind(taskId) !== null) {
+            const busyPath = store.getTaskPath(taskId) ?? taskId;
             json(res, HTTP_STATUS.CONFLICT, {
-              error: "Cancel active work before deleting the task",
+              error: `Cancel active work in ${busyPath} before deleting this task`,
             });
             return;
           }
           // The cascade removes descendants too; gate on their busy state as
           // well so deleting an idle parent cannot silently abort an
-          // in-flight prompt or bash run in a child.
+          // in-flight prompt or bash run in a child. Name that child by its
+          // path: the user clicked a different task and has to know where the
+          // active work actually is.
           if (tasks) {
             const busyDescendant = store
               .getDescendantTaskIds(taskId)
               .find((descendantId) => tasks.getBusyKind(descendantId) !== null);
             if (busyDescendant) {
+              const busyPath =
+                store.getTaskPath(busyDescendant) ?? busyDescendant;
               json(res, HTTP_STATUS.CONFLICT, {
-                error: "Cancel active work before deleting the task",
+                error: `Cancel active work in ${busyPath} before deleting this task`,
               });
               return;
             }

@@ -115,8 +115,11 @@ export class TaskNotFoundError extends Error {
 }
 
 export class TaskBusyError extends Error {
-  constructor(taskId: string) {
-    super(`Cancel active work before modifying task ${taskId}`);
+  /** `taskPath` is the task's tree path when the store could resolve one. */
+  constructor(taskId: string, taskPath?: string) {
+    super(
+      `Cancel active work in ${taskPath ?? taskId} before modifying that task`,
+    );
     this.name = "TaskBusyError";
   }
 }
@@ -1248,7 +1251,12 @@ export class TaskManager {
     const busyBeforeReset = protectedIds.find(
       (id) => this.getActiveTaskWorkKind(id) !== null,
     );
-    if (busyBeforeReset) throw new TaskBusyError(busyBeforeReset);
+    if (busyBeforeReset) {
+      throw new TaskBusyError(
+        busyBeforeReset,
+        this.store.getTaskPath(busyBeforeReset),
+      );
+    }
     const protectedSet = new Set(protectedIds);
     let resolveReset!: () => void;
     const resetCompletion = new Promise<void>((resolve) => {
@@ -1270,7 +1278,9 @@ export class TaskManager {
       const busyTask = currentIds.find(
         (id) => this.getActiveTaskWorkKind(id) !== null,
       );
-      if (busyTask) throw new TaskBusyError(busyTask);
+      if (busyTask) {
+        throw new TaskBusyError(busyTask, this.store.getTaskPath(busyTask));
+      }
       const newIds = currentIds.filter((id) => !protectedSet.has(id));
       for (const id of newIds) {
         protectedSet.add(id);
@@ -1320,7 +1330,7 @@ export class TaskManager {
     const busyTask = affectedIds.find((id) => this.getBusyKind(id) !== null);
     if (busyTask) {
       release();
-      throw new TaskBusyError(busyTask);
+      throw new TaskBusyError(busyTask, this.store.getTaskPath(busyTask));
     }
     try {
       const result = this.store.deleteTask(taskId);
