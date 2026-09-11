@@ -278,6 +278,37 @@ test("+ menu previews the action and lists cwd candidates after a space", async 
   );
 });
 
+test("+ previews a title containing an apostrophe without faking a cwd", async ({
+  page,
+}) => {
+  await gotoConnected(page);
+  const before = await currentTaskId(page);
+
+  await page.locator("#input").fill(`+"foo' at 'bar"`);
+  const menu = page.locator("#slash-menu.active");
+  await expect(menu).toContainText(`create "foo' at 'bar"`);
+  await expect(menu).not.toContainText("create 'foo'");
+
+  await page.locator("#input").press("Enter");
+  await expect(page.locator("#messages")).toContainText(`Created foo' at 'bar`);
+  expect(await currentTaskId(page)).toBe(before);
+});
+
+test("a whitespace-only + title is rejected as missing", async ({ page }) => {
+  await gotoConnected(page);
+  const before = await currentTaskId(page);
+
+  await page.locator("#input").fill(`+"   "`);
+  const menu = page.locator("#slash-menu.active");
+  await expect(menu).toContainText("create task · type a title");
+
+  await page.locator("#input").press("Enter");
+  await expect(page.locator("#messages")).toContainText(
+    "Task title is required after +",
+  );
+  expect(await currentTaskId(page)).toBe(before);
+});
+
 test("+ drills into a typed cwd prefix", async ({ page }) => {
   await gotoConnected(page);
   const unique = "e2e-plus-drill-" + Date.now().toString(36);

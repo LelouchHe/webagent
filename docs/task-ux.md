@@ -63,8 +63,8 @@ the remainder is the message body.
 
 - the first shell-style word is the child's title, with the same quoting and
   backslash escaping as `@`;
-- the title must not contain `/`, which would make the Task unreachable through
-  the `@` path grammar;
+- the title must not contain `/` or be `.`/`..`, which would make the Task
+  unreachable through the `@` path grammar;
 - everything after the title is the child working directory, taken verbatim —
   quotes are ordinary characters there;
 - a relative cwd resolves against the current Task cwd, `~` expands to HOME, and

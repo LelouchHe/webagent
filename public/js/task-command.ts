@@ -44,6 +44,18 @@ function tidyResolvedPath(path: string): string {
 }
 
 /**
+ * Render one `+` preview field so a value can never be misread as a different
+ * (title, cwd) pair. A value without a quote character keeps today's
+ * single-quote form byte for byte; a value containing `'` or `"` switches to a
+ * JSON string (double quotes with `\"`/`\\` escapes) so the delimiters stay
+ * unambiguous. Titles and cwds share this rendering.
+ */
+function previewValue(value: string): string {
+  if (!/['"]/.test(value)) return `'${value}'`;
+  return JSON.stringify(value);
+}
+
+/**
  * Display form of the `+` cwd for the action preview. Resolved against the
  * abbreviated cwd base so it stays `~/…`-styled; never touches the filesystem.
  */
@@ -480,7 +492,7 @@ async function buildCreateCandidates(parsed: {
   remainder: string;
 }): Promise<Candidate[]> {
   const title = parsed.target;
-  if (title === "") return bareCreateCandidates();
+  if (title.trim() === "") return bareCreateCandidates();
 
   // A `/` in the title would make the Task unreachable through the `@` path
   // grammar, so the picker reports it instead of previewing a create.
@@ -509,8 +521,8 @@ async function buildCreateCandidates(parsed: {
       spec: {
         primary:
           rawCwd === ""
-            ? `create '${title}'`
-            : `create '${title}' at '${previewCwdDisplay(rawCwd)}'`,
+            ? `create ${previewValue(title)}`
+            : `create ${previewValue(title)} at ${previewValue(previewCwdDisplay(rawCwd))}`,
         fill: `+${quoteShellWord(title)}${parsed.remainder}`,
         onSelect: () => executeCreateTask(title, parsed.remainder),
       },
@@ -792,7 +804,7 @@ async function executeCreateTask(
     addSystem("err: No active task");
     return;
   }
-  if (title === "") {
+  if (title.trim() === "") {
     addSystem("err: Task title is required after +");
     return;
   }

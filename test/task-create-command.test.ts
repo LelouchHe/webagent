@@ -290,6 +290,53 @@ describe("+ title-first create", () => {
     );
   });
 
+  it("renders a title containing a quote without fabricating an at clause", async () => {
+    dom.input.value = `+"foo' at 'bar"`;
+    commands.updateSlashMenu();
+    await settle();
+
+    const row = dom.slashMenu.querySelector(".slash-item");
+    assert.ok(row);
+    const primary = row.querySelector(".slash-primary")?.textContent;
+    // One double-quoted field: the inner `at` is part of the title, not a cwd.
+    assert.equal(primary, `create "foo' at 'bar"`);
+    assert.notEqual(primary, "create 'foo' at 'bar'");
+  });
+
+  it("renders a cwd containing a quote without ambiguity", async () => {
+    dom.input.value = `+api-fix /tmp/x'y`;
+    commands.updateSlashMenu();
+    await settle();
+
+    const row = dom.slashMenu.querySelector(".slash-item");
+    assert.ok(row);
+    assert.equal(
+      row.querySelector(".slash-primary")?.textContent,
+      `create 'api-fix' at "/tmp/x'y"`,
+    );
+  });
+
+  it("treats a whitespace-only title as missing", async () => {
+    dom.input.value = `+"   "`;
+    commands.updateSlashMenu();
+    await settle();
+
+    assert.equal(
+      dom.slashMenu.querySelector(".slash-primary")?.textContent,
+      "create task · type a title",
+    );
+    assert.doesNotMatch(dom.slashMenu.textContent, /create '/);
+
+    await taskCommand.executeTaskCommand(`+"   "`);
+    assert.ok(
+      messageLines().some((l) =>
+        l.includes("err: Task title is required after +"),
+      ),
+      `expected missing-title error, got: ${JSON.stringify(messageLines())}`,
+    );
+    assert.equal(createCall(), undefined);
+  });
+
   it("lists cwd candidates only after the separating space", async () => {
     dom.input.value = "+api-fix ";
     commands.updateSlashMenu();
