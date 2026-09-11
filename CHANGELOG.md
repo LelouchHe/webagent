@@ -4,6 +4,37 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/), and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.10.0] - 2026-09-11
+
+### ⚠️ BREAKING
+
+- **Reset the data directory before upgrading.** The durable product entity and its schema are now Tasks: the old `sessions` table is rejected at startup rather than migrated, and the Task schema adds the collaboration tables. Back up and remove the existing data directory before restarting, then let WebAgent create a fresh one. Attachment storage also moves from `<data_dir>/sessions/` to `<data_dir>/tasks/<sid>/`.
+- **Update REST and SSE integrations.** The `/api/v1/sessions` endpoint family is now `/api/v1/tasks`; product SSE event names and their `session_id` payload field likewise use `task_*` and `task_id`. Scripts and custom clients must update; there is no compatibility alias.
+- **Use the new child-Task creation forms.** `+` now means `+<title> [<cwd>]`: it creates a named child without switching to it and takes no brief. Send the first instruction separately with `@<title> <message>`. `/new` is again the unnamed child-Task command and switches to the new Task.
+
+### Added
+
+- **Task-first workflow and collaboration** — a Task is now the durable unit of work, with its own history, attachments, working directory, lifecycle, and parent/child relationships. Use filesystem-style `@` paths to navigate among related Tasks or send a durable message to a reachable parent, child, or sibling; collaboration messages appear in the participating Task timelines.
+- **Task control plane for Agents** — compatible ACP Agents receive a scoped WebAgent MCP server for coordinating local Task families. It supports creating a child (`task_create`), sending durable instructions and follow-ups (`task_send`), and handing off blocked or completed work (`task_update`), plus bounded history lookup and child cancellation.
+- **Explicit Task lifecycle and handoffs** — delegated Tasks can report `blocked` or `done` without being deleted, and WebAgent reminds an Agent-created child when its collaboration turn ends without the expected typed handoff. User-created interactive Tasks remain user-controlled.
+- **Expandable Task and collaboration notices** — structured system messages (child created, collaboration sends, lifecycle handoffs) collapse to a summary line and expand to the full body, so ids, working directories, and message text no longer fill the transcript inline.
+
+### Changed
+
+- **Tasks remain durable while execution changes** — the reserved Root Task provides the clean starting point, and `/clear` rotates only the underlying ACP execution while retaining the Task’s history, identity, and place in the tree. On a hashless open, WebAgent resumes the most recently user-active Task rather than one changed only by background activity.
+- **`/exit` leaves the tree properly** — it ends the current Task and returns to its parent instead of falling back to whichever Task was most recently active; on Root it resets Root and removes its descendant tree.
+- **Compaction can follow your direction** — `/compact` now accepts optional guidance for the summary that prepares the next active context.
+
+### Fixed
+
+- **Unreadable image formats no longer break an Agent prompt** — images an Agent cannot decode are sent as ordinary file links, while the browser falls back to a file link if it cannot preview an uploaded image.
+- **Child creation keeps its original context** — a delayed `/new <cwd>` now resolves the directory, parent, and inherited settings against the Task where the command was submitted, even if you navigate elsewhere while it is checking. If that source Task disappears, the visible fallback Task is preserved and a useful error is shown instead of leaving the app blank.
+- **Task navigation and recovery are more reliable** — reconnecting preserves the current Task, `@` requires an exact path rather than guessing a target, and a Task created from an invalid or inaccessible cwd reports the underlying problem promptly.
+
+### Removed
+
+- **Automatic title generation** — WebAgent no longer opens a background Agent task to generate titles or exposes the `[title]` model configuration. Name a Task with `+<title>` or `/rename`; unnamed Tasks use their stable ID.
+
 ## [0.9.0] - 2026-09-01
 
 ### Added
@@ -413,6 +444,7 @@ Initial release of WebAgent — a terminal-style web UI for ACP-compatible agent
 - **CI/CD**: GitHub Actions for CI (unit + E2E tests) and npm publishing on tag push
 - **npm package**: Published as `@lelouchhe/webagent`
 
+[0.10.0]: https://github.com/LelouchHe/webagent/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/LelouchHe/webagent/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/LelouchHe/webagent/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/LelouchHe/webagent/compare/v0.6.0...v0.7.0
