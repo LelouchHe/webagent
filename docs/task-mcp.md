@@ -17,6 +17,21 @@ can access only that task plus its parent, direct children, and siblings.
 The server is additive. It does not replace an agent's own MCP configuration or
 native tools.
 
+### Agent requirements
+
+Injection only works when the agent's ACP implementation cooperates. The agent
+must forward the MCP server definitions that arrive with `session/new` and
+`session/load` into its own MCP stack, and it must honor the `_meta.directTools`
+hint WebAgent attaches to the entry by exposing the discovered tools as
+first-class model tools instead of hiding them behind a proxy hop. An agent that
+ignores session MCP servers never sees these tools, and WebAgent does not fall
+back to writing an agent's MCP configuration files.
+
+For Pi that combination comes from the LelouchHe forks of `pi-acp` and
+`pi-mcp-adapter`; see
+[Configuration & Operations](configuration.md#acp-compatible-agents) for the
+setup and caveats.
+
 ## Server instructions
 
 The server advertises a short, generic usage contract through the MCP

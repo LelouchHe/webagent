@@ -22,6 +22,7 @@ These agents need a separate adapter package that wraps the underlying CLI into 
 | -------------------------------------------------------------------- | -------------------- | -------------------------------------------------- |
 | [Claude Code](https://docs.anthropic.com/en/docs/agents/claude-code) | `claude-agent-acp`   | `npm i -g @agentclientprotocol/claude-agent-acp`   |
 | [Codex](https://github.com/openai/codex)                             | `codex-acp`          | `npm i -g @zed-industries/codex-acp`               |
+| [Pi](https://github.com/earendil-works/pi)                           | `pi-acp`             | Fork from source — see the Pi caveat below         |
 | [Qwen Code](https://github.com/QwenLM/qwen-code)                     | `qwen --acp`         | `npm i -g @qwen-code/qwen-code`                    |
 
 To pin an agent explicitly:
@@ -61,6 +62,27 @@ This is by design in `codex-rs` (Zed's editor spawns one `codex-acp` per project
 **OpenCode modes are user-extensible.** Beyond the built-in `build` / `plan` / `general`, anything the user defines under `~/.config/opencode/` as a non-subagent, non-hidden agent will appear as a selectable mode. WebAgent treats them as default-bucket modes (shown in the pill, no auto-approve).
 
 In auto-allow modes (`bypassPermissions`, `full-access`, `yolo`), the agent itself skips emitting `permission_request` entirely — the agent self-handles it. WebAgent's auto-approve code path is therefore mostly relevant to Copilot-style agents that still emit permission requests in autopilot. Gemini's `autoEdit` is a partial autopilot (auto-approves edits only, still prompts for shell/web) — WebAgent treats it as a default-bucket mode and forwards permission requests as-is.
+
+**Pi (`pi-acp`) — needs the LelouchHe forks, not the npm releases.**
+Pi reaches WebAgent through an adapter, and WebAgent's Pi support depends on two forks maintained alongside this project. Installing the published `pi-acp` and `pi-mcp-adapter` packages is not enough:
+
+- [`LelouchHe/pi-acp`](https://github.com/LelouchHe/pi-acp) keeps multiple ACP sessions alive on one connection instead of closing the previous `pi` subprocess, and forwards the MCP server definitions from ACP `session/new` and `session/load` into Pi, including the per-server `_meta.directTools` hint. Upstream `pi-acp` replaces the previous session when another one is created — so switching Tasks kills the other Task's agent — and ignores session MCP servers entirely.
+- [`LelouchHe/pi-mcp-adapter`](https://github.com/LelouchHe/pi-mcp-adapter) honors `directTools` on runtime-registered MCP servers and connects them automatically. Upstream treats runtime registrations as proxy-only, so the injected `webagent` server's tools never appear in Pi's tool surface and the [Task MCP control plane](task-mcp.md) is unavailable.
+
+Neither fork is published to npm, and `npm i -g pi-acp` or `pi install npm:pi-mcp-adapter` install the upstream releases without the behavior above. `pi-acp`'s `bin` points at `dist/`, so installing the fork straight from git produces nothing runnable either. Build it from a checkout:
+
+```bash
+git clone https://github.com/LelouchHe/pi-acp.git
+cd pi-acp && npm install && npm run build
+```
+
+Then point `agent_cmd` at the built entry point. `--approve` trusts project-local Pi settings and resources for every subprocess the adapter starts, and `--extension-commands` exposes extension slash commands that support headless execution; both are optional and, for untrusted projects, should stay off.
+
+```toml
+agent_cmd = "/path/to/pi-acp/dist/index.js --approve --extension-commands"
+```
+
+Install the adapter fork as a Pi package on the same machine, following its README; Pi takes either a git source or a local checkout path in its package list.
 
 ## Configuration
 
