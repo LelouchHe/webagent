@@ -9,7 +9,10 @@ import { createRequestHandler } from "../src/routes.ts";
 import { SseManager } from "../src/sse-manager.ts";
 import { TaskManager } from "../src/task-manager.ts";
 import { createMcpTaskToolHost } from "../src/mcp/task-host.ts";
-import { buildTaskCreatedSystemMessage } from "../src/task-created-message.ts";
+import {
+  buildTaskCreatedBroadcast,
+  buildTaskCreatedSystemMessage,
+} from "../src/task-created-message.ts";
 import type { AgentBridge } from "../src/bridge.ts";
 import { mockBridgeStubs, waitFor } from "./fixtures.ts";
 
@@ -54,7 +57,7 @@ describe("S3 collaboration write routes", () => {
     newSession(): Promise<{ sessionId: string; configOptions: never[] }>;
     prompt(taskId: string, text: string): Promise<void>;
   };
-  const broadcasts: Array<{ type: string; taskId?: string }> = [];
+  const broadcasts: Array<Record<string, unknown>> = [];
   const promptCalls: Array<{ taskId: string; text: string }> = [];
 
   beforeEach(async () => {
@@ -172,6 +175,8 @@ describe("S3 collaboration write routes", () => {
       store,
       tasks,
       getBridge: () => bridge as unknown as AgentBridge,
+      broadcastTaskCreated: (event) =>
+        broadcasts.push({ ...buildTaskCreatedBroadcast(event) }),
     });
     await host.create("parent", { title: "agent-child" });
 
@@ -204,6 +209,73 @@ describe("S3 collaboration write routes", () => {
     assert.equal(agentData.kind, userData.kind);
     assert.match(String(agentData.title), /^Created task @agent-child$/);
     assert.match(String(agentData.body), /model: inherited/);
+
+    // Each path broadcasts the wire envelope for its own row, so a live row
+    // cannot drift from its persisted twin. The protocol fields are spelled out
+    // here rather than produced by the builder under test, or the assertion
+    // would only compare the builder with itself.
+    const envelopes = broadcasts.filter(
+      (event) => event.kind === "task_created",
+    );
+    assert.equal(envelopes.length, 2);
+    const [userEnvelope, agentEnvelope] = envelopes;
+    assert.deepEqual(userEnvelope, {
+      type: "system_message",
+      taskId: "parent",
+      kind: "task_created",
+      messageId: String(userEnvelope.messageId),
+      sourceTaskId: "parent",
+      targetTaskId: userTaskId,
+      role: "source",
+      title: "Created task @usr-child",
+      body: String(userData.body),
+    });
+    assert.deepEqual(agentEnvelope, {
+      type: "system_message",
+      taskId: "parent",
+      kind: "task_created",
+      messageId: String(agentEnvelope.messageId),
+      sourceTaskId: "parent",
+      targetTaskId: String(agentData.taskId),
+      role: "source",
+      title: "Created task @agent-child",
+      body: String(agentData.body),
+    });
+    assert.deepEqual(
+      Object.keys(userEnvelope).sort(),
+      Object.keys(agentEnvelope).sort(),
+      "both initiators must announce the same envelope shape",
+    );
+  });
+
+  it("rejects dot titles even when they are padded", async () => {
+    for (const title of [" . ", " .. ", "\t.\t"]) {
+      const response = await request(port, "/api/v1/tasks", {
+        parentId: "parent",
+        cwd: tmpDir,
+        title,
+      });
+      assert.equal(response.status, 400, `"${title}" must be rejected`);
+    }
+  });
+
+  it("normalizes a padded title so the stored name matches the recorded one", async () => {
+    const response = await request(port, "/api/v1/tasks", {
+      parentId: "parent",
+      cwd: tmpDir,
+      title: "  padded  ",
+    });
+    assert.equal(response.status, 201);
+    const taskId = response.body.id as string;
+    assert.equal(store.getTask(taskId)?.title, "padded");
+    const row = store
+      .getEvents("parent")
+      .filter((event) => event.type === "system_message")
+      .at(-1);
+    assert.ok(row);
+    const data = JSON.parse(row.data) as Record<string, unknown>;
+    assert.equal(data.title, "Created task @padded");
+    assert.equal(data.taskTitle, "padded");
   });
 
   it("records nothing for an untitled child", async () => {

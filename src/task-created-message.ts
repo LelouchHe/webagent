@@ -1,4 +1,5 @@
 import { formatTaskReference } from "./shared/task-reference.ts";
+import type { AgentEvent } from "./types.ts";
 
 export interface TaskCreatedMessageInput {
   /** The task that was created. */
@@ -45,5 +46,33 @@ export function buildTaskCreatedSystemMessage(
       title,
       body,
     },
+  };
+}
+
+export interface TaskCreatedBroadcastInput {
+  messageId: string;
+  sourceTaskId: string;
+  targetTaskId: string;
+  title: string;
+  body: string;
+}
+
+/**
+ * The single wire envelope for the row above. Every producer broadcasts this
+ * shape, so a live row and its persisted twin cannot drift apart.
+ */
+export function buildTaskCreatedBroadcast(
+  input: TaskCreatedBroadcastInput,
+): Extract<AgentEvent, { type: "system_message" }> {
+  return {
+    type: "system_message",
+    taskId: input.sourceTaskId,
+    kind: "task_created",
+    messageId: input.messageId,
+    sourceTaskId: input.sourceTaskId,
+    targetTaskId: input.targetTaskId,
+    role: "source",
+    title: input.title,
+    body: input.body,
   };
 }

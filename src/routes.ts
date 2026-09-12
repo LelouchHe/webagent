@@ -32,7 +32,10 @@ import { abbreviateHomePath } from "./home-path.ts";
 import { log } from "./log.ts";
 import { isLocalCollaborationTarget } from "./task-collaboration.ts";
 import { formatTaskReference } from "./shared/task-reference.ts";
-import { buildTaskCreatedSystemMessage } from "./task-created-message.ts";
+import {
+  buildTaskCreatedBroadcast,
+  buildTaskCreatedSystemMessage,
+} from "./task-created-message.ts";
 
 const rlog = log.scope("routes");
 const plog = rlog.scope("prompt");
@@ -302,10 +305,18 @@ function saveClientOpResult(
 
 function validateCollaborationTitle(title: unknown): string | null {
   if (typeof title !== "string") return null;
-  if (!title.trim() || title.includes("/") || title === "." || title === "..") {
+  // Normalize here: the stored title and the `Created task @<title>` reference
+  // must be the same string, or the reference cannot address the task.
+  const trimmed = title.trim();
+  if (
+    !trimmed ||
+    trimmed.includes("/") ||
+    trimmed === "." ||
+    trimmed === ".."
+  ) {
     return null;
   }
-  return title;
+  return trimmed;
 }
 
 /** Send a JSON response, gzip-compressed when the client supports it. */
@@ -2506,10 +2517,9 @@ export function createRequestHandler(
           // The stored title cannot answer that — an untitled task defaults to
           // its own id (`store.ts`), so only the request knows a name was given.
           const createdParentId = task?.parent_id ?? body.parentId;
-          const createdTitle =
-            typeof body.title === "string" && body.title.trim() !== ""
-              ? body.title.trim()
-              : null;
+          // Same value the store kept: the validated (trimmed) title, so the
+          // reference in the row always addresses the task it names.
+          const createdTitle = typeof title === "string" ? title : null;
           if (createdParentId && createdTitle) {
             const taskCreated = buildTaskCreatedSystemMessage({
               taskId,
@@ -2522,17 +2532,15 @@ export function createRequestHandler(
               taskCreated.data,
               { from_ref: "user" },
             );
-            sseManager.broadcast({
-              type: "system_message",
-              taskId: createdParentId,
-              kind: "task_created",
-              messageId: randomUUID(),
-              sourceTaskId: createdParentId,
-              targetTaskId: taskId,
-              role: "source",
-              title: taskCreated.title,
-              body: taskCreated.body,
-            });
+            sseManager.broadcast(
+              buildTaskCreatedBroadcast({
+                messageId: randomUUID(),
+                sourceTaskId: createdParentId,
+                targetTaskId: taskId,
+                title: taskCreated.title,
+                body: taskCreated.body,
+              }),
+            );
           }
           // ACP's task_created event fires before inheritance runs, so
           // broadcast final configOptions so SSE clients get the inherited values.

@@ -11,6 +11,7 @@ import { TaskManager } from "./task-manager.ts";
 import { CapabilityStore } from "./mcp/capability.ts";
 import { createMcpEndpoint } from "./mcp/server.ts";
 import { createMcpTaskToolHost } from "./mcp/task-host.ts";
+import { buildTaskCreatedBroadcast } from "./task-created-message.ts";
 import { createRequestHandler } from "./routes.ts";
 import { handleAgentEvent } from "./event-handler.ts";
 import { PushService } from "./push-service.ts";
@@ -178,24 +179,8 @@ const mcpTaskTools = createMcpTaskToolHost({
       });
     }
   },
-  broadcastTaskCreated: ({
-    messageId,
-    sourceTaskId,
-    targetTaskId,
-    title,
-    body,
-  }) => {
-    sseManager.broadcast({
-      type: "system_message",
-      taskId: sourceTaskId,
-      kind: "task_created",
-      messageId,
-      sourceTaskId,
-      targetTaskId,
-      role: "source",
-      title,
-      body,
-    });
+  broadcastTaskCreated: (event) => {
+    sseManager.broadcast(buildTaskCreatedBroadcast(event));
   },
 });
 const messageCleanup: CleanupHandle = startMessageCleanup(
