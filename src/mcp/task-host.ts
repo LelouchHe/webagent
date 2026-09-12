@@ -126,7 +126,6 @@ export function createMcpTaskToolHost(deps: {
           return {
             id: task.id,
             title: task.title ?? task.id,
-            brief: task.brief || null,
             relation,
           } satisfies McpTaskListItem;
         })

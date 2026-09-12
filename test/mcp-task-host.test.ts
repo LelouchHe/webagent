@@ -20,7 +20,6 @@ describe("MCP Task tool host", () => {
     });
     store.createTask("alpha", dir, "auto", "session-alpha", "root", {
       title: "Alpha",
-      brief: "Alpha work",
     });
     store.createTask("beta", dir, "auto", "session-beta", "root", {
       title: "Beta",
@@ -51,15 +50,10 @@ describe("MCP Task tool host", () => {
     });
 
     assert.deepEqual(host.list("alpha"), [
-      { id: "alpha", title: "Alpha", brief: "Alpha work", relation: "self" },
-      { id: "root", title: "Root", brief: null, relation: "parent" },
-      {
-        id: "alpha-child",
-        title: "Alpha child",
-        brief: null,
-        relation: "child",
-      },
-      { id: "beta", title: "Beta", brief: null, relation: "sibling" },
+      { id: "alpha", title: "Alpha", relation: "self" },
+      { id: "root", title: "Root", relation: "parent" },
+      { id: "alpha-child", title: "Alpha child", relation: "child" },
+      { id: "beta", title: "Beta", relation: "sibling" },
     ]);
   });
 

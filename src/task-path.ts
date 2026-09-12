@@ -130,7 +130,7 @@ export function parseTaskPath(target: string): TaskPath {
 /**
  * Parse the command marker and its target word. Policy and path resolution are
  * intentionally outside this module; callers retain the raw remainder as the
- * eventual message body or creation brief.
+ * eventual message body.
  */
 export function parseTaskCommand(source: string): ParsedTaskCommand {
   const markerStart = skipWhitespace(source, 0);

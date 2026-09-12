@@ -2436,7 +2436,6 @@ export function createRequestHandler(
           source?: string;
           parentId?: string;
           title?: string;
-          brief?: string;
         };
         try {
           body = JSON.parse(await readBody(req)) as {
@@ -2445,29 +2444,21 @@ export function createRequestHandler(
             source?: string;
             parentId?: string;
             title?: string;
-            brief?: string;
           };
         } catch {
           json(res, HTTP_STATUS.BAD_REQUEST, { error: "Invalid JSON" });
           return;
         }
         const source = body.source ?? "auto";
-        const hasCollaborationFields =
-          body.title !== undefined || body.brief !== undefined;
-        const title = hasCollaborationFields
-          ? validateCollaborationTitle(body.title)
-          : undefined;
-        const hasBrief =
-          typeof body.brief === "string" && body.brief.trim().length > 0;
-        if (
-          hasCollaborationFields &&
-          (title === null ||
-            !body.parentId ||
-            (body.brief !== undefined && !hasBrief))
-        ) {
+        // A named child belongs to a parent; an unnamed one is the bare `/new`
+        // task and needs neither.
+        const title =
+          body.title !== undefined
+            ? validateCollaborationTitle(body.title)
+            : undefined;
+        if (title !== undefined && (title === null || !body.parentId)) {
           json(res, HTTP_STATUS.BAD_REQUEST, {
-            error:
-              "a collaboration child needs a title and parent; the brief is optional",
+            error: "a named child needs a non-empty title and a parent",
           });
           return;
         }
@@ -2483,8 +2474,6 @@ export function createRequestHandler(
             return;
           }
         }
-        const initialMessageId = title && hasBrief ? randomUUID() : undefined;
-        const initialDeliveryId = title && hasBrief ? randomUUID() : undefined;
         try {
           const { taskId, configOptions } = await tasks.createTask(
             bridge,
@@ -2494,26 +2483,7 @@ export function createRequestHandler(
             {
               parentId: body.parentId,
               title: title ?? undefined,
-              brief: hasBrief ? body.brief : undefined,
-              workflowStatus: title
-                ? hasBrief
-                  ? "running"
-                  : "idle"
-                : undefined,
-              initialMessage:
-                title &&
-                hasBrief &&
-                initialMessageId &&
-                initialDeliveryId &&
-                body.parentId
-                  ? {
-                      id: initialMessageId,
-                      deliveryId: initialDeliveryId,
-                      sourceTaskId: body.parentId,
-                      sourceActor: "user",
-                      body: body.brief!,
-                    }
-                  : undefined,
+              workflowStatus: title ? "idle" : undefined,
             },
           );
           const task = store.getTask(taskId);
@@ -2575,13 +2545,9 @@ export function createRequestHandler(
           }
           json(res, HTTP_STATUS.CREATED, {
             id: taskId,
-            ...(initialMessageId && initialDeliveryId
-              ? { initialMessageId, initialDeliveryId }
-              : {}),
             cwd: task?.cwd ?? body.cwd,
             cwdDisplay: task?.cwd ? abbreviateHomePath(task.cwd) : undefined,
             title: task?.title ?? null,
-            brief: task?.brief ?? "",
             workflowStatus: task?.workflow_status ?? "idle",
             source: task?.source ?? source,
             parentId: task?.parent_id ?? null,
@@ -2589,8 +2555,6 @@ export function createRequestHandler(
             agentCommands: tasks.getAgentCommands(taskId),
             clientOpId: clientOpId ?? undefined,
           });
-          if (initialMessageId)
-            void tasks.drainCollaborationDeliveries(bridge, taskId);
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
           if (

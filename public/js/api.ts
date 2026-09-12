@@ -119,7 +119,6 @@ export function createTask(
     inheritFromTaskId?: string | null;
     parentId?: string | null;
     title?: string;
-    brief?: string;
   },
   clientOpId?: string,
 ): Promise<Record<string, unknown>> {
@@ -128,7 +127,6 @@ export function createTask(
   if (opts?.inheritFromTaskId) body.inheritFromTaskId = opts.inheritFromTaskId;
   if (opts?.parentId) body.parentId = opts.parentId;
   if (opts?.title !== undefined) body.title = opts.title;
-  if (opts?.brief !== undefined) body.brief = opts.brief;
   return post("/api/v1/tasks", body, clientOpId);
 }
 

@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/), and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Changed
+
+- **Task creation is recorded once, by the server.** `POST /api/v1/tasks` now writes and broadcasts the same persisted `Created task @<title>` row the Agent's `task_create` tool writes, so a user-created child survives a reload and looks identical to an agent-created one. The web client no longer fabricates its own creation or send acknowledgements. An untitled child (bare `/new`) records nothing, since there is no name to reference.
+
+### Removed
+
+- **`brief` and one-step child creation.** `+` is `+<title> [<cwd>]` and the first instruction is a separate `@<title> <message>`; the REST `brief` parameter, the `tasks.brief` column, and the initial-message path it fed are gone. An existing database drops the column on startup — no data reset is required.
+
 ## [0.10.0] - 2026-09-11
 
 ### ⚠️ BREAKING

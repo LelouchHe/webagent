@@ -416,17 +416,9 @@ export class TaskManager {
       silent?: boolean;
       parentId?: string | null;
       title?: string;
-      brief?: string;
       model?: string;
       thinking?: string;
       workflowStatus?: WorkflowStatus;
-      initialMessage?: {
-        id: string;
-        deliveryId: string;
-        sourceTaskId: string;
-        sourceActor: "user" | "agent" | "system";
-        body: string;
-      };
     },
   ): Promise<{ taskId: string; configOptions: ConfigOption[] }> {
     const parentId = this.resolveParentId(opts?.parentId);
@@ -457,15 +449,7 @@ export class TaskManager {
     parentId: string | null,
     metadata: {
       title?: string;
-      brief?: string;
       workflowStatus?: WorkflowStatus;
-      initialMessage?: {
-        id: string;
-        deliveryId: string;
-        sourceTaskId: string;
-        sourceActor: "user" | "agent" | "system";
-        body: string;
-      };
     },
   ): Promise<void> {
     for (;;) {
@@ -546,17 +530,9 @@ export class TaskManager {
       silent?: boolean;
       parentId?: string | null;
       title?: string;
-      brief?: string;
       model?: string;
       thinking?: string;
       workflowStatus?: WorkflowStatus;
-      initialMessage?: {
-        id: string;
-        deliveryId: string;
-        sourceTaskId: string;
-        sourceActor: "user" | "agent" | "system";
-        body: string;
-      };
     },
   ): Promise<{ taskId: string; configOptions: ConfigOption[] }> {
     const taskCwd = expandHomePath(cwd ?? this.defaultCwd);
@@ -594,9 +570,7 @@ export class TaskManager {
         parentId,
         {
           title: opts?.title,
-          brief: opts?.brief,
           workflowStatus: opts?.workflowStatus,
-          initialMessage: opts?.initialMessage,
         },
       );
     } catch (err) {

@@ -55,7 +55,6 @@ reserved Root Task has id `root` and no parent.
 | `id` | TEXT PRIMARY KEY | Stable WebAgent UUID exposed in URLs and APIs |
 | `cwd` | TEXT NOT NULL | Working directory passed to the agent |
 | `title` | TEXT | Display/name title; defaults to the stable task id when creation supplies none. User/parent sets it via `+… ` or `/rename` |
-| `brief` | TEXT NOT NULL DEFAULT `''` | Initial child-creation brief retained as history; clear does not replay it |
 | `workflow_status` | TEXT NOT NULL DEFAULT `'idle'` | `running`, `idle`, `blocked`, or `done` |
 | `created_at` | TEXT NOT NULL DEFAULT now | ISO-ish `%Y-%m-%d %H:%M:%f` |
 | `last_active_at` | TEXT NOT NULL DEFAULT now | Updated on every prompt |
@@ -338,15 +337,23 @@ When opening a current-schema database written before this payload split,
 `Store` performs an idempotent transaction that normalizes title-less
 `system_message` rows before any replay or egress path can read them. This is a
 payload normalization, not a SQLite table migration; after startup, all event
-readers use the current `title`/`body` shape.
+readers use the current `title`/`body` shape. The retired `tasks.brief` column
+is handled the same way: the schema guard tolerates it and startup drops it
+(see [Pre-1.0 reset policy](#pre-10-reset-policy)).
 
 ## Pre-1.0 reset policy
 
 Schema changes before 1.0 are breaking changes. Server startup never performs
 an implicit compatibility migration for obsolete table schemas: the strict
 schema guard rejects them at boot, and operators must back up and reset their
-data directory before restarting. Event payload normalization described above
-is the explicit exception for the current `system_message` payload split.
+data directory before restarting. Two narrow, column-scoped edits are the
+explicit exceptions, and both converge an existing database on the current
+schema instead of requiring a reset:
+
+- the `system_message` payload normalization described above for the current
+  `title`/`body` split;
+- dropping the retired `tasks.brief` column in place (`0.10` replaced one-step
+  child creation with `+<title>` followed by `@<title> <message>`).
 
 ---
 

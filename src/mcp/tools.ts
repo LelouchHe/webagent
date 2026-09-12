@@ -4,7 +4,6 @@ import { z } from "zod";
 export interface McpTaskListItem {
   id: string;
   title: string;
-  brief: string | null;
   relation: "self" | "parent" | "child" | "sibling";
 }
 

@@ -114,44 +114,7 @@ describe("S3 collaboration write routes", () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("persists structured title and brief when creating a child", async () => {
-    const response = await request(port, "/api/v1/tasks", {
-      parentId: "parent",
-      cwd: tmpDir,
-      title: "代码 审查",
-      brief: "检查发布前的改动",
-    });
-
-    assert.equal(response.status, 201);
-    const taskId = response.body.id;
-    assert.equal(typeof taskId, "string");
-    const task = store.getTask(taskId as string);
-    assert.ok(task);
-    assert.equal(task.title, "代码 审查");
-    assert.equal(task.brief, "检查发布前的改动");
-    assert.equal(task.workflow_status, "running");
-    const initialMessageId = response.body.initialMessageId as string;
-    const initialDeliveryId = response.body.initialDeliveryId as string;
-    assert.equal(typeof initialMessageId, "string");
-    assert.deepEqual(store.listCollaborationProjections(initialMessageId), [
-      { task_id: "parent", role: "source" },
-      { task_id: taskId, role: "target" },
-    ]);
-    await waitFor(
-      () =>
-        store.getCollaborationDelivery(initialDeliveryId)?.status ===
-        "delivered",
-      { message: "expected the child brief to submit" },
-    );
-    assert.equal(
-      promptCalls.filter((call) => call.taskId === taskId).length,
-      1,
-      "the child brief must be prompted exactly once",
-    );
-    assert.match(promptCalls[0].text, /检查发布前的改动/);
-  });
-
-  it("creates a named child without a brief as an idle task", async () => {
+  it("creates a named child as an idle task without minting a message", async () => {
     const response = await request(port, "/api/v1/tasks", {
       parentId: "parent",
       cwd: tmpDir,
@@ -163,12 +126,10 @@ describe("S3 collaboration write routes", () => {
     const task = store.getTask(taskId);
     assert.ok(task);
     assert.equal(task.title, "仅命名");
-    assert.equal(task.brief, "");
     assert.equal(task.workflow_status, "idle");
-    // No collaboration message is minted, so no initial ids are returned
-    // and no prompt is submitted — the task stays idle until the user acts.
-    assert.equal(response.body.initialMessageId, undefined);
-    assert.equal(response.body.initialDeliveryId, undefined);
+    // Naming is the whole request: no collaboration message is minted and no
+    // prompt is submitted, so the child stays idle until the user sends one.
+    assert.equal("brief" in task, false, "the brief column is gone");
     await new Promise((resolve) => setTimeout(resolve, 20));
     assert.equal(
       promptCalls.filter((call) => call.taskId === taskId).length,

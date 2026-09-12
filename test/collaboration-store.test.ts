@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import Database from "better-sqlite3";
 import { Store, type CollaborationMessageInput } from "../src/store.ts";
 
 describe("Store collaboration records", () => {
@@ -207,10 +208,35 @@ describe("Store collaboration records", () => {
     assert.equal(store.getTask("unnamed-1")?.title, "unnamed-1");
   });
 
-  it("initializes tasks idle with an empty creation brief", () => {
+  it("drops the legacy tasks.brief column on open", () => {
+    // A pre-0.10 database still carries the column the old one-step creation
+    // wrote. Reopening must migrate it instead of leaving two shapes around.
+    store.close();
+    const raw = new Database(join(tmpDir, "webagent.db"));
+    raw.exec("ALTER TABLE tasks ADD COLUMN brief TEXT NOT NULL DEFAULT ''");
+    raw.exec("UPDATE tasks SET brief = 'legacy'");
+    raw.close();
+
+    store = new Store(tmpDir, "test-agent");
+    const database = (store as unknown as { db: Database.Database }).db;
+    const columns = database.pragma("table_info(tasks)") as Array<{
+      name: string;
+    }>;
+    assert.equal(
+      columns.some((column) => column.name === "brief"),
+      false,
+      "the legacy column must be gone",
+    );
+    const row = database
+      .prepare("SELECT * FROM tasks WHERE id = ?")
+      .get("a1") as Record<string, unknown>;
+    assert.equal("brief" in row, false);
+  });
+
+  it("initializes tasks idle with no creation brief", () => {
     const task = store.getTask("a1");
     assert.ok(task);
     assert.equal(task.workflow_status, "idle");
-    assert.equal(task.brief, "");
+    assert.equal("brief" in task, false);
   });
 });

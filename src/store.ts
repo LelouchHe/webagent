@@ -24,8 +24,6 @@ export interface TaskRow {
   id: string;
   cwd: string;
   title: string | null;
-  /** Initial creation record; clear never replays it automatically. */
-  brief: string;
   workflow_status: WorkflowStatus;
   model: string | null;
   mode: string | null;
@@ -271,6 +269,7 @@ export class Store {
       this.db.pragma("foreign_keys = ON");
       this.assertSupportedSchema();
       this.initializeSchema();
+      this.dropLegacyColumns();
       this.migrateSystemMessagePayloads();
     } catch (error) {
       this.db.close();
@@ -289,7 +288,6 @@ export class Store {
         "id",
         "cwd",
         "title",
-        "brief",
         "workflow_status",
         "parent_id",
         "pending_compact_summary",
@@ -374,6 +372,10 @@ export class Store {
         "failure_reason",
       ],
     };
+    // Columns that earlier versions wrote and this one migrates away (see
+    // dropLegacyColumns). Tolerated here, then removed, so an upgraded
+    // database converges on the exact schema below without a data reset.
+    const legacyColumns: Record<string, string[]> = { tasks: ["brief"] };
     const incompatible = legacy
       ? "legacy sessions table"
       : Object.entries(requiredColumns).find(([table, columns]) => {
@@ -390,9 +392,13 @@ export class Store {
               }>
             ).map((column) => column.name),
           );
+          const tolerated = new Set([
+            ...columns,
+            ...(legacyColumns[table] ?? []),
+          ]);
           return (
             columns.some((column) => !actual.has(column)) ||
-            [...actual].some((column) => !columns.includes(column)) ||
+            [...actual].some((column) => !tolerated.has(column)) ||
             (table === "events" &&
               this.db
                 .prepare(
@@ -414,7 +420,6 @@ export class Store {
         id TEXT PRIMARY KEY,
         cwd TEXT NOT NULL,
         title TEXT,
-        brief TEXT NOT NULL DEFAULT '',
         workflow_status TEXT NOT NULL DEFAULT 'idle'
           CHECK (workflow_status IN ('running', 'idle', 'blocked', 'done')),
         parent_id TEXT REFERENCES tasks(id),
@@ -621,6 +626,23 @@ export class Store {
 
   /** Normalize the pre-title system_message payload in place. This is
    * idempotent and runs before any event can be replayed or returned. */
+  /**
+   * One-shot migrations for columns the current code no longer uses, so every
+   * database — fresh or upgraded — ends up with the same shape.
+   */
+  private dropLegacyColumns(): void {
+    // `tasks.brief` held the pre-0.10 one-step creation brief. Creation is
+    // title-first now (`+<title>` then `@<title> <message>`), the column is
+    // gone from the code, and an existing database keeps an unused copy until
+    // it is dropped here.
+    const columns = this.db.pragma("table_info(tasks)") as Array<{
+      name: string;
+    }>;
+    if (columns.some((column) => column.name === "brief")) {
+      this.db.exec("ALTER TABLE tasks DROP COLUMN brief");
+    }
+  }
+
   private migrateSystemMessagePayloads(): void {
     const rows = this.db
       .prepare("SELECT id, data FROM events WHERE type = 'system_message'")
@@ -681,17 +703,15 @@ export class Store {
     parentId: string | null = null,
     opts: {
       title?: string;
-      brief?: string;
       workflowStatus?: WorkflowStatus;
-      initialMessage?: Omit<CollaborationMessageInput, "directTargetTaskId">;
     } = {},
   ): TaskRow {
     return this.db.transaction(() => {
       this.db
         .prepare(
           `INSERT INTO tasks
-           (id, cwd, source, parent_id, title, brief, workflow_status)
-           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+           (id, cwd, source, parent_id, title, workflow_status)
+           VALUES (?, ?, ?, ?, ?, ?)`,
         )
         .run(
           id,
@@ -699,7 +719,6 @@ export class Store {
           source,
           parentId,
           opts.title ?? id,
-          opts.brief ?? "",
           opts.workflowStatus ?? "idle",
         );
       this.db
@@ -707,12 +726,6 @@ export class Store {
           "INSERT INTO agent_sessions (agent_key, agent_session_id, task_id) VALUES (?, ?, ?)",
         )
         .run(this.agentKey, agentSessionId, id);
-      if (opts.initialMessage) {
-        this.createCollaborationMessage({
-          ...opts.initialMessage,
-          directTargetTaskId: id,
-        });
-      }
       return this.db
         .prepare("SELECT * FROM tasks WHERE id = ?")
         .get(id) as TaskRow;

@@ -76,13 +76,11 @@ describe("api module", () => {
       parentId: "parent",
       cwd: "/tmp/work",
       title: "code review",
-      brief: "review the release diff",
     });
     assert.deepEqual(JSON.parse(fetchCalls[0].init!.body as string), {
       parentId: "parent",
       cwd: "/tmp/work",
       title: "code review",
-      brief: "review the release diff",
     });
   });
 

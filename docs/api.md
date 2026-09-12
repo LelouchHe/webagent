@@ -155,8 +155,7 @@ Create a new task. Optionally inherits model and reasoning_effort from another t
 | `inheritFromTaskId` | string | No       | Copy model + reasoning_effort from this task                                   |
 | `source`               | string | No       | Tag for the task origin. Default: `"auto"`                                     |
 | `parentId`          | string | No       | Parent WebAgent Task. Defaults to the reserved Root when it exists.              |
-| `title`             | string | No       | Explicit collaboration child title. Must be non-empty, not `.` / `..`, and contain no `/`. Required with `brief`. |
-| `brief`             | string | No       | Initial collaboration child brief. Required with `title`; non-empty. |
+| `title`             | string | No       | Name for a child task. Must be non-empty, not `.` / `..`, and contain no `/`; requires `parentId`. The first instruction is sent separately with `@<title> <message>`. |
 
 **Response** `201`:
 
@@ -165,8 +164,7 @@ Create a new task. Optionally inherits model and reasoning_effort from another t
   "id": "new-task-id",
   "cwd": "/home/user/project",
   "title": "code review",
-  "brief": "Review the release diff.",
-  "workflowStatus": "running",
+  "workflowStatus": "idle",
   "source": "auto",
   "parentId": "root",
   "configOptions": [...]

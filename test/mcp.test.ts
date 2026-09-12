@@ -103,7 +103,7 @@ describe("createMcpEndpoint", () => {
   const calls: Array<unknown> = [];
   const taskTools = {
     list: (taskId: string) => [
-      { id: taskId, title: "Current", brief: null, relation: "self" as const },
+      { id: taskId, title: "Current", relation: "self" as const },
     ],
     query: (_sourceTaskId: string, input: unknown) => {
       calls.push({ kind: "query", input });
