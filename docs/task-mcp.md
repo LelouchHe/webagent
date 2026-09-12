@@ -17,20 +17,34 @@ can access only that task plus its parent, direct children, and siblings.
 The server is additive. It does not replace an agent's own MCP configuration or
 native tools.
 
-### Agent requirements
+## How the server reaches the agent
 
-Injection only works when the agent's ACP implementation cooperates. The agent
-must forward the MCP server definitions that arrive with `session/new` and
-`session/load` into its own MCP stack, and it must honor the `_meta.directTools`
-hint WebAgent attaches to the entry by exposing the discovered tools as
-first-class model tools instead of hiding them behind a proxy hop. An agent that
-ignores session MCP servers never sees these tools, and WebAgent does not fall
-back to writing an agent's MCP configuration files.
+WebAgent does not write an agent's MCP configuration files. It attaches the
+server to the ACP session request — `session/new` and `session/load` — through
+the protocol's `mcpServers` field, which carries standard transport
+descriptions (`stdio`, `http`, `sse`). Putting those definitions to work is the
+agent's own MCP implementation. One thing is required of it; the other is only
+a preference:
 
-For Pi that combination comes from the LelouchHe forks of `pi-acp` and
-`pi-mcp-adapter`; see
-[Configuration & Operations](configuration.md#acp-compatible-agents) for the
-setup and caveats.
+- Required: forward the session's `mcpServers` into its own MCP stack. An agent
+  that ignores the field never sees this server.
+- Preferred: expose the discovered tools to the model directly instead of behind
+  a generic proxy step. WebAgent expresses that with `_meta.directTools: true`
+  on the server entry.
+
+The preference is not a requirement. `_meta` is where the protocol reserves
+exactly this kind of non-standard note, and it forbids implementations from
+assuming anything about the values there, so ignoring the hint is a normal
+outcome rather than a failure: the tools still work, they simply surface the way
+that agent exposes MCP tools. A presentation preference like this has no
+standard field by design — MCP describes what a server offers, not how a client
+presents it — so whether tools are registered directly or reached through a
+proxy stays the client's or agent's choice.
+
+The definitions are per session, which is also why this entry cannot live in a
+static MCP configuration file: the endpoint carries a capability token minted
+for one task. Which agents put the definitions to use is noted in
+[Configuration & Operations](configuration.md#acp-compatible-agents).
 
 ## Server instructions
 

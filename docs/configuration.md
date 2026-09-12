@@ -67,22 +67,15 @@ In auto-allow modes (`bypassPermissions`, `full-access`, `yolo`), the agent itse
 Pi reaches WebAgent through an adapter, and WebAgent's Pi support depends on two forks maintained alongside this project. Installing the published `pi-acp` and `pi-mcp-adapter` packages is not enough:
 
 - [`LelouchHe/pi-acp`](https://github.com/LelouchHe/pi-acp) keeps multiple ACP sessions alive on one connection instead of closing the previous `pi` subprocess, and forwards the MCP server definitions from ACP `session/new` and `session/load` into Pi, including the per-server `_meta.directTools` hint. Upstream `pi-acp` replaces the previous session when another one is created — so switching Tasks kills the other Task's agent — and ignores session MCP servers entirely.
-- [`LelouchHe/pi-mcp-adapter`](https://github.com/LelouchHe/pi-mcp-adapter) honors `directTools` on runtime-registered MCP servers and connects them automatically. Upstream treats runtime registrations as proxy-only, so the injected `webagent` server's tools never appear in Pi's tool surface and the [Task MCP control plane](task-mcp.md) is unavailable.
+- [`LelouchHe/pi-mcp-adapter`](https://github.com/LelouchHe/pi-mcp-adapter) honors `directTools` on runtime-registered MCP servers and connects them automatically. Upstream treats runtime registrations as proxy-only: the injected `webagent` server still reaches the agent, but its tools stay behind the generic MCP gateway instead of appearing as native tools in Pi's tool surface. The task control plane keeps working either way; this is a presentation preference, not a hard requirement (see [How the server reaches the agent](task-mcp.md#how-the-server-reaches-the-agent)).
 
-Neither fork is published to npm, and `npm i -g pi-acp` or `pi install npm:pi-mcp-adapter` install the upstream releases without the behavior above. `pi-acp`'s `bin` points at `dist/`, so installing the fork straight from git produces nothing runnable either. Build it from a checkout:
-
-```bash
-git clone https://github.com/LelouchHe/pi-acp.git
-cd pi-acp && npm install && npm run build
-```
-
-Then point `agent_cmd` at the built entry point. `--approve` trusts project-local Pi settings and resources for every subprocess the adapter starts, and `--extension-commands` exposes extension slash commands that support headless execution; both are optional and, for untrusted projects, should stay off.
+Neither fork is published to npm, and `npm i -g pi-acp` or `pi install npm:pi-mcp-adapter` install the upstream releases without the behavior above. Each fork's README covers installing it from a checkout; once installed, point `agent_cmd` at the built entry point:
 
 ```toml
 agent_cmd = "/path/to/pi-acp/dist/index.js --approve --extension-commands"
 ```
 
-Install the adapter fork as a Pi package on the same machine, following its README; Pi takes either a git source or a local checkout path in its package list.
+`--approve` trusts project-local Pi settings and resources for every subprocess the adapter starts, and `--extension-commands` exposes extension slash commands that support headless execution; both are optional and, for untrusted projects, should stay off.
 
 ## Configuration
 
