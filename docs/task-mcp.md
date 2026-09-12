@@ -41,6 +41,11 @@ standard field by design — MCP describes what a server offers, not how a clien
 presents it — so whether tools are registered directly or reached through a
 proxy stays the client's or agent's choice.
 
+Neither is required for the session itself: MCP is separate from the rest of the
+session. An agent that cannot attach these servers still serves the user
+normally — chat, files, permissions, and other tools are unaffected — it simply
+has no task tools, and the client does not treat the failure as fatal.
+
 The definitions are per session, which is also why this entry cannot live in a
 static MCP configuration file: the endpoint carries a capability token minted
 for one task. Which agents put the definitions to use is noted in
