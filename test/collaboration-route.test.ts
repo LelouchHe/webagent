@@ -8,6 +8,9 @@ import { Store } from "../src/store.ts";
 import { createRequestHandler } from "../src/routes.ts";
 import { SseManager } from "../src/sse-manager.ts";
 import { TaskManager } from "../src/task-manager.ts";
+import { createMcpTaskToolHost } from "../src/mcp/task-host.ts";
+import { buildTaskCreatedSystemMessage } from "../src/task-created-message.ts";
+import type { AgentBridge } from "../src/bridge.ts";
 import { mockBridgeStubs, waitFor } from "./fixtures.ts";
 
 function request(
@@ -171,6 +174,99 @@ describe("S3 collaboration write routes", () => {
       promptCalls.filter((call) => call.taskId === taskId).length,
       0,
       "a briefless child must not be prompted",
+    );
+  });
+
+  it("records the created child on the source task the same way the agent tool does", async () => {
+    const response = await request(port, "/api/v1/tasks", {
+      parentId: "parent",
+      cwd: tmpDir,
+      title: "usr-child",
+    });
+    assert.equal(response.status, 201);
+    const userTaskId = response.body.id as string;
+
+    const systemRows = () =>
+      store.getEvents("parent").filter((row) => row.type === "system_message");
+    const userRows = systemRows();
+    assert.equal(userRows.length, 1);
+    assert.equal(userRows[0].from_ref, "user");
+    const userData = JSON.parse(userRows[0].data) as Record<string, unknown>;
+    assert.equal(userData.kind, "task_created");
+    assert.equal(userData.taskId, userTaskId);
+    assert.equal(userData.taskTitle, "usr-child");
+    assert.equal(userData.title, "Created task @usr-child");
+    assert.match(String(userData.body), /^Task ID: /);
+    assert.match(String(userData.body), /model: inherited/);
+    assert.match(String(userData.body), /thinking: inherited/);
+    assert.equal(
+      broadcasts.filter((event) => event.type === "system_message").length,
+      1,
+      "the created row must be announced live, not only stored",
+    );
+
+    // The agent path writes into the same stream through the same builder, so
+    // both initiators produce one identical row shape.
+    const host = createMcpTaskToolHost({
+      store,
+      tasks,
+      getBridge: () => bridge as unknown as AgentBridge,
+    });
+    await host.create("parent", { title: "agent-child" });
+
+    const agentRow = systemRows().find((row) => row.from_ref === "agent");
+    assert.ok(agentRow, "the agent path must still record its own row");
+    const agentData = JSON.parse(agentRow.data) as Record<string, unknown>;
+    assert.deepEqual(
+      agentData,
+      buildTaskCreatedSystemMessage({
+        taskId: String(agentData.taskId),
+        taskTitle: "agent-child",
+        cwd: tmpDir,
+      }).data,
+      "the agent row must be exactly what the shared builder produces",
+    );
+    assert.deepEqual(
+      userData,
+      buildTaskCreatedSystemMessage({
+        taskId: userTaskId,
+        taskTitle: "usr-child",
+        cwd: tmpDir,
+      }).data,
+      "the user row must be exactly what the shared builder produces",
+    );
+    assert.deepEqual(
+      Object.keys(agentData).sort(),
+      Object.keys(userData).sort(),
+      "user- and agent-created rows must carry the same fields",
+    );
+    assert.equal(agentData.kind, userData.kind);
+    assert.match(String(agentData.title), /^Created task @agent-child$/);
+    assert.match(String(agentData.body), /model: inherited/);
+  });
+
+  it("records nothing for an untitled child", async () => {
+    const before = broadcasts.filter(
+      (event) => event.type === "system_message",
+    ).length;
+    const response = await request(port, "/api/v1/tasks", {
+      parentId: "parent",
+      cwd: tmpDir,
+    });
+    assert.equal(response.status, 201);
+    const task = store.getTask(response.body.id as string);
+    // The store names an untitled task after its own id, which is exactly why
+    // the row cannot be built from the stored title.
+    assert.equal(task?.title, task?.id);
+    // "Created task @<uuid>" would name nothing, so an untitled create stays
+    // silent; the task list is the record of it.
+    assert.deepEqual(
+      store.getEvents("parent").filter((row) => row.type === "system_message"),
+      [],
+    );
+    assert.equal(
+      broadcasts.filter((event) => event.type === "system_message").length,
+      before,
     );
   });
 

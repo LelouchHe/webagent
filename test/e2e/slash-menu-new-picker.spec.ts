@@ -206,7 +206,9 @@ test("+ creates a titled child in the current cwd without switching", async ({
 
   // The child is created idle and addressable; the system message reports the
   // title and the @ address. The user stays on the launching task.
-  await expect(page.locator("#messages")).toContainText(`Created ${title}`);
+  await expect(page.locator("#messages")).toContainText(
+    `Created task @${title}`,
+  );
   await expect(page.locator("#messages")).toContainText(`@${title}`);
   expect(await currentTaskId(page)).toBe(parentId);
 
@@ -225,12 +227,14 @@ test("+ then @<title> delivers the first instruction without switching", async (
 
   await page.locator("#input").fill(`+${title}`);
   await page.locator("#input").press("Enter");
-  await expect(page.locator("#messages")).toContainText(`Created ${title}`);
+  await expect(page.locator("#messages")).toContainText(
+    `Created task @${title}`,
+  );
   expect(await currentTaskId(page)).toBe(parentId);
 
   await page.locator("#input").fill(`@${title} do the first thing`);
   await page.locator("#input").press("Enter");
-  await expect(page.locator("#messages")).toContainText("Sent →");
+  await expect(page.locator("#messages")).toContainText(`sent @${title}`);
   // Delivery is a message, not a navigation: the sender stays put.
   expect(await currentTaskId(page)).toBe(parentId);
 
@@ -254,7 +258,9 @@ test("+ takes the cwd verbatim, so spaces need no quoting", async ({
     await page.locator("#input").fill(`+${title} ${target}`);
     await page.locator("#input").press("Enter");
 
-    await expect(page.locator("#messages")).toContainText(`Created ${title}`);
+    await expect(page.locator("#messages")).toContainText(
+      `Created task @${title}`,
+    );
     const child = await findTaskByTitle(page, title);
     expect(child).not.toBeNull();
     expect(child!.cwd).toBe(target);
@@ -276,7 +282,9 @@ test("+ resolves a relative cwd against the current task cwd", async ({
     await page.locator("#input").fill(`+${title} ./${dirName}`);
     await page.locator("#input").press("Enter");
 
-    await expect(page.locator("#messages")).toContainText(`Created ${title}`);
+    await expect(page.locator("#messages")).toContainText(
+      `Created task @${title}`,
+    );
     const child = await findTaskByTitle(page, title);
     expect(child).not.toBeNull();
     expect(child!.cwd).toBe(join(parentCwd, dirName));
@@ -292,7 +300,9 @@ test("+ expands ~ for the child cwd", async ({ page }) => {
   await page.locator("#input").fill(`+${title} ~`);
   await page.locator("#input").press("Enter");
 
-  await expect(page.locator("#messages")).toContainText(`Created ${title}`);
+  await expect(page.locator("#messages")).toContainText(
+    `Created task @${title}`,
+  );
   const child = await findTaskByTitle(page, title);
   expect(child).not.toBeNull();
   expect(child!.cwd).toBe(homedir());
@@ -377,7 +387,7 @@ test("+ menu previews the action and lists cwd candidates after a space", async 
   await currentRow.first().click();
   await expect(page.locator("#input")).toHaveValue(`+${unique} ${currentCwd}`);
   await expect(page.locator("#messages")).not.toContainText(
-    `Created ${unique}`,
+    `Created task @${unique}`,
   );
 });
 
@@ -393,7 +403,9 @@ test("+ previews a title containing an apostrophe without faking a cwd", async (
   await expect(menu).not.toContainText("create 'foo'");
 
   await page.locator("#input").press("Enter");
-  await expect(page.locator("#messages")).toContainText(`Created foo' at 'bar`);
+  await expect(page.locator("#messages")).toContainText(
+    `Created task @"foo' at 'bar"`,
+  );
   expect(await currentTaskId(page)).toBe(before);
 });
 

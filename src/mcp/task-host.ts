@@ -9,6 +9,7 @@ import {
 import type { TaskManager } from "../task-manager.ts";
 import { expandHomePath } from "../home-path.ts";
 import { formatTaskReference } from "../shared/task-reference.ts";
+import { buildTaskCreatedSystemMessage } from "../task-created-message.ts";
 import type {
   McpTaskHistoryRecord,
   McpTaskQueryResult,
@@ -252,34 +253,22 @@ export function createMcpTaskToolHost(deps: {
         thinking: input.thinking,
       });
       const taskCreatedMessageId = randomUUID();
-      const taskCreatedTitle = `Created task ${formatTaskReference(input.title)}`;
-      const taskCreatedBody = [
-        `Task ID: ${created.taskId}`,
-        `cwd: ${cwd}`,
-        input.model ? `model: ${input.model}` : "model: inherited",
-        input.thinking ? `thinking: ${input.thinking}` : "thinking: inherited",
-      ].join("\n");
-      store.saveEvent(
-        source.id,
-        "system_message",
-        {
-          kind: "task_created",
-          taskId: created.taskId,
-          taskTitle: input.title,
-          cwd,
-          model: input.model ?? null,
-          thinking: input.thinking ?? null,
-          title: taskCreatedTitle,
-          body: taskCreatedBody,
-        },
-        { from_ref: "agent" },
-      );
+      const taskCreated = buildTaskCreatedSystemMessage({
+        taskId: created.taskId,
+        taskTitle: input.title,
+        cwd,
+        model: input.model,
+        thinking: input.thinking,
+      });
+      store.saveEvent(source.id, "system_message", taskCreated.data, {
+        from_ref: "agent",
+      });
       broadcastTaskCreated?.({
         messageId: taskCreatedMessageId,
         sourceTaskId: source.id,
         targetTaskId: created.taskId,
-        title: taskCreatedTitle,
-        body: taskCreatedBody,
+        title: taskCreated.title,
+        body: taskCreated.body,
       });
       return { taskId: created.taskId };
     },

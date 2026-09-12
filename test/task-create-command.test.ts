@@ -155,15 +155,13 @@ describe("+ title-first create", () => {
       title: "api-fix",
       inheritFromTaskId: "s1",
     });
-    assert.ok(
-      messageLines().some((l) => l.includes("Created api-fix at /work")),
-      `expected created line, got: ${JSON.stringify(messageLines())}`,
-    );
-    assert.ok(
-      messageLines().some((l) =>
-        l.includes("Send its first instruction with @api-fix <message>"),
-      ),
-      "expected the @<title> handoff hint",
+    // The "Created api-fix" row is the server's now (same shape the agent's
+    // task_create writes), so the client must not fabricate a local copy — nor a
+    // handoff hint — that would vanish on reload.
+    assert.deepEqual(
+      messageLines().filter((l) => l.includes("api-fix")),
+      [],
+      `the client must add no local row here, got: ${JSON.stringify(messageLines())}`,
     );
     // Creation is idle and keeps the user on the launching task.
     assert.equal(state.taskId, "s1");

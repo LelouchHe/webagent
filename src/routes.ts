@@ -32,6 +32,7 @@ import { abbreviateHomePath } from "./home-path.ts";
 import { log } from "./log.ts";
 import { isLocalCollaborationTarget } from "./task-collaboration.ts";
 import { formatTaskReference } from "./shared/task-reference.ts";
+import { buildTaskCreatedSystemMessage } from "./task-created-message.ts";
 
 const rlog = log.scope("routes");
 const plog = rlog.scope("prompt");
@@ -2527,6 +2528,42 @@ export function createRequestHandler(
             clientOpId: clientOpId ?? undefined,
           } as AgentEvent;
           sseManager.broadcast(taskCreatedEvent);
+          // One record shape for every initiator: the parent task's stream gets
+          // the same row the agent's task_create tool writes, with the user as
+          // its origin. Broadcast too, so live clients see it without a reload.
+          // An untitled task (the bare `/new` flow) records nothing: the row
+          // exists to name the child, and "Created task @<uuid>" names nothing.
+          // The stored title cannot answer that — an untitled task defaults to
+          // its own id (`store.ts`), so only the request knows a name was given.
+          const createdParentId = task?.parent_id ?? body.parentId;
+          const createdTitle =
+            typeof body.title === "string" && body.title.trim() !== ""
+              ? body.title.trim()
+              : null;
+          if (createdParentId && createdTitle) {
+            const taskCreated = buildTaskCreatedSystemMessage({
+              taskId,
+              taskTitle: createdTitle,
+              cwd: task?.cwd ?? body.cwd ?? process.cwd(),
+            });
+            store.saveEvent(
+              createdParentId,
+              "system_message",
+              taskCreated.data,
+              { from_ref: "user" },
+            );
+            sseManager.broadcast({
+              type: "system_message",
+              taskId: createdParentId,
+              kind: "task_created",
+              messageId: randomUUID(),
+              sourceTaskId: createdParentId,
+              targetTaskId: taskId,
+              role: "source",
+              title: taskCreated.title,
+              body: taskCreated.body,
+            });
+          }
           // ACP's task_created event fires before inheritance runs, so
           // broadcast final configOptions so SSE clients get the inherited values.
           if (configOptions.length) {

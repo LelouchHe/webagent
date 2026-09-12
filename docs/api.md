@@ -179,6 +179,10 @@ Create a new task. Optionally inherits model and reasoning_effort from another t
 
 - Broadcasts `task_created` to all SSE clients
 - Broadcasts `config_option_update` if config was inherited
+- Records and broadcasts a `system_message` (`kind: task_created`) on the parent
+  task — the same row the Agent's `task_create` tool writes, with `from_ref`
+  `user` instead of `agent` — so user- and agent-created tasks look identical in
+  the task flow and survive a reload
 - Cleans up empty tasks older than 60 seconds
 
 ---

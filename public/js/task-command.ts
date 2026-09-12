@@ -771,22 +771,11 @@ async function executeCreateTask(
   };
 
   try {
-    addSystem("Creating new task…");
-    const result = (await api.createTask(body)) as {
-      id: string;
-      cwd?: string;
-      cwdDisplay?: string;
-      title?: string | null;
-    };
-    const created = result.title ?? result.id;
-    addSystem(
-      `Created ${created} at ${
-        result.cwdDisplay ?? result.cwd ?? resolved.cwd
-      }`,
-    );
-    addSystem(
-      `Send its first instruction with @${quoteShellWord(created)} <message>`,
-    );
+    // The server records "Created <task>" in this task's flow (the same row the
+    // agent's task_create writes) and the send that follows leaves its own
+    // persisted collaboration row, so the client adds nothing here: a local row
+    // would duplicate that fact and disappear on reload.
+    await api.createTask(body);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     addSystem(`err: create failed — ${msg}`);
@@ -861,12 +850,9 @@ async function executeMessageToTask(
     return;
   }
   try {
-    const result = await api.sendCollaborationMessage(
-      sourceTaskId,
-      targetTaskId,
-      body,
-    );
-    addSystem(`Sent → ${result.messageId}`);
+    // No local acknowledgement: the send is recorded server-side and broadcast
+    // as a collaboration row, and a local copy would just vanish on reload.
+    await api.sendCollaborationMessage(sourceTaskId, targetTaskId, body);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     addSystem(`err: message failed — ${msg}`);

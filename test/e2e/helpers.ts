@@ -35,7 +35,9 @@ export async function createNewTask(page: Page): Promise<string> {
   await page.locator("#input").fill(`+${title}`);
   await page.locator("#input").press("Enter");
   // Creation is async; the follow-up @ needs the child to exist server-side.
-  await expect(page.locator("#messages")).toContainText(`Created ${title}`);
+  await expect(page.locator("#messages")).toContainText(
+    `Created task @${title}`,
+  );
   await page.locator("#input").fill(`@${title}`);
   await page.locator("#input").press("Enter");
   await expect.poll(() => currentTaskId(page)).not.toBe(previousId);
