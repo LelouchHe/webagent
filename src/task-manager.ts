@@ -1617,12 +1617,20 @@ export class TaskManager {
     bridge: DeliveryBridge,
     taskId: string,
   ): Promise<boolean> {
-    if (this.getBusyKind(taskId) !== null) {
+    const busyKind = this.getBusyKind(taskId);
+    if (busyKind === "agent") {
       slog.debug("handoff reminder skipped", {
         taskId: taskId.slice(0, 8),
         reason: "busy",
       });
       return false;
+    }
+    // Bash runs outside the ACP session, so it must not suppress the closing
+    // ACP handoff turn. Record the overlap explicitly for diagnosis.
+    if (busyKind === "bash") {
+      slog.debug("handoff reminder allowed during bash", {
+        taskId: taskId.slice(0, 8),
+      });
     }
     const task = this.store.getTask(taskId);
     if (!task) {
