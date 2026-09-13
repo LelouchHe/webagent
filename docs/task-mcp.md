@@ -68,13 +68,18 @@ Clients may surface these instructions through their own discovery UI or tool;
 they are not a replacement for the individual tool descriptions. When an
 Agent-created delegated Task ends or errors a turn without a typed
 `task_update(done|blocked)` handoff, WebAgent may send one Markdown handoff
-reminder. The obligation belongs to the Task and covers every turn, not only
-turns started by collaboration delivery: a
-user-prompted turn and a user-cancelled turn owe the handoff too, and
-`workflow_status` is not a condition. The reminder is a closing turn — it asks
-the Agent to report the turn's outcome and submit `task_update(done|blocked)`,
-and it forbids starting new work. User-created interactive Tasks are not subject
-to this automatic reminder.
+reminder. The obligation is scoped to the parent edge: an agent-created Task
+owes a handoff on a turn the user starts, and on a collaboration turn whose
+claimed batch includes the Task's parent. A turn caused only by a sibling or by
+the Task's own child — including a `blocked` handoff — owes nothing and is never
+reminded; the parent handles a `blocked` child on its own initiative. Lateral
+messages therefore carry no obligation machinery: no extra `task_send` or
+`task_update` parameter, no per-counterparty ledger, and no expectation level.
+The user-started case is deliberate — an agent-created Task must keep reporting
+on user-prompted turns — and `workflow_status` is not a condition. The reminder
+is a closing turn: it asks the Agent to report the turn's outcome and submit
+`task_update(done|blocked)`, and it forbids starting new work. User-created
+interactive Tasks are not subject to this automatic reminder.
 Detailed workflow guidance belongs in
 the [Task Manual](task-manual.md) or an on-demand skill.
 

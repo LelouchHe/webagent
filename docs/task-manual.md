@@ -84,7 +84,11 @@ After a parent accepts a result, the Task remains available for history and
 follow-up. A retrospective may be recorded after acceptance, but it is not a
 prerequisite for accepting the result. If a delegated turn ends without a
 typed handoff, WebAgent may send one automatic Markdown reminder; this is a
-recovery aid, not a substitute for the Agent's typed handoff.
+recovery aid, not a substitute for the Agent's typed handoff. That obligation
+is scoped to the parent edge: a turn the user starts owes, a collaboration turn
+owes only when its claimed batch includes the Task's parent, and a turn caused
+only by a sibling or by the Task's own child — including a `blocked` handoff —
+owes nothing. Lateral messages carry no obligation machinery.
 
 ## Communicate through messages
 
