@@ -58,6 +58,7 @@ The server advertises a short, generic usage contract through the MCP
 
 ```text
 Use task_create for a direct child, then immediately use task_send to give it its first instruction.
+Use task_list to check each reachable Task's workflowStatus and lastEventAt before deciding to act; workflowStatus is per turn, not a lifecycle terminal.
 Use task_send for normal coordination and for continuing or resuming existing Tasks; task_send is not a lifecycle handoff. Use task_update(done|blocked) for typed lifecycle handoffs. A done Task remains available and is not deleted or permanently closed.
 After dispatching work, end the current turn; do not poll with task_query.
 Use task_query and task_get_record only for history recovery, diagnosis, or audit.
@@ -119,13 +120,46 @@ WebAgent does not automatically rebroadcast raw child reports to ancestors.
 
 | Tool | Purpose |
 | --- | --- |
-| `task_list` | List the current task and its locally reachable parent, children, and siblings. |
+| `task_list` | List the current task and its locally reachable parent, children, and siblings, each with `workflowStatus` and `lastEventAt` for triage. |
 | `task_query` | Read a bounded, compact history page for the current task or one visible relative. |
 | `task_get_record` | Read one complete persisted history record by task-local sequence. |
 | `task_cancel` | Stop the current execution of a child Task while preserving its history. |
 | `task_create` | Create a direct child Task with optional execution overrides. Use `task_send` for its first instruction. |
 | `task_send` | Send a durable coordination message, including follow-up or resume instructions for an existing Task. Use `task_update` for typed `blocked`/`done` status. |
 | `task_update` | Send a typed `blocked` or `done` lifecycle handoff for the current Task; this does not delete or permanently close it. |
+
+### `task_list`
+
+Takes no arguments and returns the current Task plus every locally reachable
+parent, child, and sibling. The whole family gets the same fields, with no
+special-casing. Ordering is relation-then-id (`self`, `parent`, `child`,
+`sibling`) and is deliberately not status-sorted, so the caller reads the
+statuses instead of inheriting a second prioritization policy.
+
+```ts
+type McpTaskListItem = {
+  id: string;
+  title: string;
+  relation: "self" | "parent" | "child" | "sibling";
+  workflowStatus: "running" | "idle" | "blocked" | "done";
+  lastEventAt: string | null;
+};
+```
+
+`workflowStatus` uses the same vocabulary as `task_query`'s `workflowStatus`.
+It is **per turn, not a lifecycle terminal**: a `done` Task can be woken by a
+later message and run again, so `done` means the Task reported complete for that
+turn, not that it is finished forever. Use `task_list` to decide whether to act
+on a Task; use `task_query` only for history recovery or diagnosis, not to poll.
+
+`lastEventAt` is the `created_at` of the Task's most recent persisted event, any
+type — the Task's own activity clock, not its user-visible `last_active_at`.
+It uses the same representation as other MCP timestamps: SQLite
+`strftime('%Y-%m-%d %H:%M:%f', 'now')` output, for example
+`2026-09-13 21:05:03.123`, in **UTC with no timezone marker**. It is `null` when
+the Task has no persisted events yet. A stale `lastEventAt` next to
+`workflowStatus: "running"` is a **lag signal, not proof of work**: a long
+silent tool call can look stale while the Task is still running.
 
 ### `task_query`
 

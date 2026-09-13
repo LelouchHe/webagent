@@ -1357,6 +1357,31 @@ export class Store {
     return row.seq;
   }
 
+  /**
+   * `created_at` of the latest persisted event per task, for the given task
+   * ids. One grouped query against the `(task_id, seq)` index; tasks with no
+   * events are simply absent from the result, so this never scans the event
+   * log.
+   */
+  getLatestEventTimes(taskIds: readonly string[]): Map<string, string> {
+    if (taskIds.length === 0) return new Map();
+    const placeholders = taskIds.map(() => "?").join(", ");
+    const rows = this.db
+      .prepare(
+        `SELECT e.task_id AS task_id, e.created_at AS created_at
+         FROM events e
+         JOIN (
+           SELECT task_id, MAX(seq) AS max_seq
+           FROM events
+           WHERE task_id IN (${placeholders})
+           GROUP BY task_id
+         ) latest
+           ON latest.task_id = e.task_id AND latest.max_seq = e.seq`,
+      )
+      .all(...taskIds) as Array<{ task_id: string; created_at: string }>;
+    return new Map(rows.map((row) => [row.task_id, row.created_at]));
+  }
+
   /** Check if the most recent agent turn lacks a completion or error terminal event. */
   hasInterruptedTurn(taskId: string): boolean {
     const row = this.db
