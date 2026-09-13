@@ -30,6 +30,15 @@ function createMockBridge(promptErrors: Array<Error | undefined> = []) {
   };
   return {
     bridge: {
+      async newSession() {
+        return { sessionId: "", configOptions: [] };
+      },
+      async setConfigOption() {
+        return [];
+      },
+      async loadSession(taskId: string) {
+        return { taskId, configOptions: [] };
+      },
       resolvePermission(requestId: string, optionId: string) {
         calls.resolvePermission.push({ requestId, optionId });
       },
@@ -45,6 +54,45 @@ function createMockBridge(promptErrors: Array<Error | undefined> = []) {
       },
     } as any,
     calls,
+  };
+}
+
+/**
+ * Bridge whose ACP session must be resumed before it can accept a prompt,
+ * mirroring the real lazy-restore contract instead of silently accepting a
+ * prompt for an unloaded session.
+ */
+function createLazySessionBridge() {
+  let resumed = false;
+  const calls = {
+    loadSession: 0,
+    prompts: [] as Array<{ taskId: string; text: string; promptId?: string }>,
+  };
+  return {
+    bridge: {
+      async newSession() {
+        return { sessionId: "", configOptions: [] };
+      },
+      async setConfigOption() {
+        return [];
+      },
+      async loadSession(taskId: string) {
+        calls.loadSession++;
+        resumed = true;
+        return { taskId, configOptions: [] };
+      },
+      async prompt(
+        taskId: string,
+        text: string,
+        _attachments?: unknown,
+        promptId?: string,
+      ) {
+        if (!resumed) throw new Error("session not live");
+        calls.prompts.push({ taskId, text, promptId });
+      },
+    } as any,
+    calls,
+    isResumed: () => resumed,
   };
 }
 
@@ -340,25 +388,46 @@ describe("handleAgentEvent", () => {
     const taskId = await startCollaborationTurn(store, tasks, bridge);
     const { sseManager } = createMockSseManager();
 
-    handleAgentEvent(
-      {
-        type: "prompt_done",
-        taskId,
-        promptId: calls.prompts[0].promptId,
-        stopReason: "end_turn",
-      } as any,
-      tasks,
-      store,
-      bridge,
-      makeEventHandlerConfig(),
-      sseManager as any,
-    );
-    await new Promise<void>((resolve) => setImmediate(resolve));
+    const lines: string[] = [];
+    const previousLevel = getLogLevel();
+    setLogLevel("debug");
+    setLogSink((_stream, line) => lines.push(line));
+    try {
+      handleAgentEvent(
+        {
+          type: "prompt_done",
+          taskId,
+          promptId: calls.prompts[0].promptId,
+          stopReason: "end_turn",
+        } as any,
+        tasks,
+        store,
+        bridge,
+        makeEventHandlerConfig(),
+        sseManager as any,
+      );
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    } finally {
+      setLogSink(null);
+      setLogLevel(previousLevel);
+    }
 
     assert.equal(calls.prompts.length, 2);
     assert.equal(tasks.activePrompts.has(taskId), false);
     assert.equal(tasks.getBusyKind(taskId), null);
     assert.equal(store.getTask(taskId)?.workflow_status, "idle");
+    // A failed reminder retires the debt instead of restoring it: there is no
+    // other trigger for a finished turn, and restoring would re-enter through
+    // the error event as an async retry loop.
+    assert.equal(tasks.owesHandoff(taskId), false);
+    assert.ok(
+      lines.some(
+        (line) =>
+          line.includes("handoff reminder failed") &&
+          line.includes('"obligationRetired":true'),
+      ),
+      "the failed reminder must record that the debt is retired",
+    );
   });
 
   it("does not remind a user-created task after collaboration input", async () => {
@@ -422,6 +491,39 @@ describe("handleAgentEvent", () => {
     );
     await new Promise<void>((resolve) => setImmediate(resolve));
 
+    assert.equal(calls.prompts.length, 1);
+    assert.match(calls.prompts[0].text, /Task Handoff Required/);
+  });
+
+  // Review F1: the reminder is the only prompt path that used to skip
+  // ensureResumed. Without it a non-live session rejects the prompt while the
+  // obligation is already retired, so the handoff is lost silently.
+  it("resumes a non-live session before submitting the handoff reminder", async () => {
+    store.createTask("child", "/tmp", "agent", "agent-child");
+    const { bridge, calls, isResumed } = createLazySessionBridge();
+    const { sseManager } = createMockSseManager();
+    const promptId = startUserTurn(tasks, "child");
+    assert.equal(tasks.liveTasks.has("child"), false);
+    assert.equal(calls.loadSession, 0);
+
+    handleAgentEvent(
+      {
+        type: "prompt_done",
+        taskId: "child",
+        promptId,
+        stopReason: "end_turn",
+      } as any,
+      tasks,
+      store,
+      bridge,
+      makeEventHandlerConfig(),
+      sseManager as any,
+    );
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    assert.equal(isResumed(), true);
+    assert.equal(calls.loadSession, 1);
+    assert.equal(tasks.liveTasks.has("child"), true);
     assert.equal(calls.prompts.length, 1);
     assert.match(calls.prompts[0].text, /Task Handoff Required/);
   });

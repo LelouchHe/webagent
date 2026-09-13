@@ -1608,9 +1608,13 @@ export class TaskManager {
    * Give an agent-created Task one closing turn when its previous prompt ended
    * without a lifecycle handoff. The reminder turn is recorded as owing
    * nothing, so a prose-only reply to it cannot trigger another reminder.
+   *
+   * Resumes the ACP session first like every other prompt path: the bridge
+   * restores sessions lazily, so prompting a Task that is not live throws —
+   * and this reminder is the last chance to hand off, not a place to lose it.
    */
   async promptHandoffReminder(
-    bridge: Pick<AgentBridge, "prompt">,
+    bridge: DeliveryBridge,
     taskId: string,
   ): Promise<boolean> {
     if (this.getBusyKind(taskId) !== null) {
@@ -1645,11 +1649,17 @@ export class TaskManager {
     const promptId =
       this.state.getState(taskId).runtime.busy?.promptId ?? undefined;
     try {
+      await this.ensureResumed(bridge, taskId);
       await bridge.prompt(taskId, HANDOFF_REMINDER_TEXT, undefined, promptId);
       return true;
     } catch (error) {
+      // The obligation was already retired when this reminder turn was
+      // recorded. Do not restore it: on a dead bridge a restored obligation
+      // would re-enter through the error event into an async retry loop, and
+      // the finished turn has no other trigger. The loss is logged instead.
       slog.warn("handoff reminder failed", {
         taskId: taskId.slice(0, 8),
+        obligationRetired: true,
         error,
       });
       if (this.isCurrentPrompt(taskId, promptId)) {

@@ -66,10 +66,15 @@ Omit task_id to inspect the current Task's persisted history.
 
 Clients may surface these instructions through their own discovery UI or tool;
 they are not a replacement for the individual tool descriptions. When an
-Agent-created delegated Task's collaboration turn ends or errors while
-the Task is still `running` without a typed `task_update(done|blocked)` handoff,
-WebAgent may send one Markdown handoff reminder before leaving the Task idle.
-User-created interactive Tasks are not subject to this automatic reminder.
+Agent-created delegated Task ends or errors a turn without a typed
+`task_update(done|blocked)` handoff, WebAgent may send one Markdown handoff
+reminder before leaving the Task idle. The obligation belongs to the Task and
+covers every turn, not only turns started by collaboration delivery: a
+user-prompted turn and a user-cancelled turn owe the handoff too, and
+`workflow_status` is not a condition. The reminder is a closing turn — it asks
+the Agent to report the turn's outcome and submit `task_update(done|blocked)`,
+and it forbids starting new work. User-created interactive Tasks are not subject
+to this automatic reminder.
 Detailed workflow guidance belongs in
 the [Task Manual](task-manual.md) or an on-demand skill.
 
