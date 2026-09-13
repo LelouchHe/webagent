@@ -740,6 +740,97 @@ describe("handleAgentEvent", () => {
 
   // Acceptance (e): a claimed delivery wins the turn, and the debt survives
   // into the next turn the drain itself starts.
+  it("delivers queued collaboration before reminding while bash runs", async () => {
+    store.createTask("root", "/tmp", "root", "agent-root");
+    store.createTask("source", "/tmp", "agent", "agent-source", "root");
+    store.createTask("target", "/tmp", "agent", "agent-target", "root");
+    tasks.liveTasks.add("target");
+    store.createCollaborationMessage({
+      id: "bash-message",
+      deliveryId: "bash-delivery",
+      sourceTaskId: "source",
+      directTargetTaskId: "target",
+      sourceActor: "agent",
+      body: "A delivery must win over the reminder.",
+      createdAt: Date.now(),
+    });
+    const { bridge, calls } = createMockBridge();
+    const { sseManager } = createMockSseManager();
+    const promptId = startUserTurn(tasks, "target");
+    tasks.runningBashProcs.set("target", {} as any);
+    const lines: string[] = [];
+    const previousLevel = getLogLevel();
+    setLogLevel("debug");
+    setLogSink((_stream, line) => lines.push(line));
+    try {
+      handleAgentEvent(
+        {
+          type: "prompt_done",
+          taskId: "target",
+          promptId,
+          stopReason: "end_turn",
+        } as any,
+        tasks,
+        store,
+        bridge,
+        makeEventHandlerConfig(),
+        sseManager as any,
+      );
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    } finally {
+      setLogSink(null);
+      setLogLevel(previousLevel);
+    }
+
+    // This fails if drain still rejects Bash as busy: the reminder then wins.
+    assert.equal(calls.prompts.length, 1);
+    // This fails if the drain loses priority to the reminder even after it
+    // submits, or if the delivery is not submitted while Bash remains active.
+    assert.match(
+      calls.prompts[0].text,
+      /A delivery must win over the reminder/,
+    );
+    assert.doesNotMatch(calls.prompts[0].text, /Task Handoff Required/);
+    assert.equal(tasks.runningBashProcs.has("target"), true);
+    // This fails if Bash coexistence is allowed without the diagnostic log.
+    assert.ok(
+      lines.some((line) =>
+        line.includes("collaboration delivery allowed during bash"),
+      ),
+      "parallel Bash delivery must be diagnosable",
+    );
+
+    tasks.runningBashProcs.delete("target");
+  });
+
+  it("keeps queued collaboration blocked by an active ACP prompt", async () => {
+    store.createTask("root", "/tmp", "root", "agent-root");
+    store.createTask("source", "/tmp", "agent", "agent-source", "root");
+    store.createTask("target", "/tmp", "agent", "agent-target", "root");
+    tasks.liveTasks.add("target");
+    store.createCollaborationMessage({
+      id: "active-message",
+      deliveryId: "active-delivery",
+      sourceTaskId: "source",
+      directTargetTaskId: "target",
+      sourceActor: "agent",
+      body: "Wait for the active ACP prompt.",
+      createdAt: Date.now(),
+    });
+    const { bridge, calls } = createMockBridge();
+    tasks.activePrompts.add("target");
+
+    const drained = await tasks.drainCollaborationDeliveries(bridge, "target");
+
+    // This fails if the narrowed guard permits all busy kinds, including ACP.
+    assert.equal(drained, false);
+    assert.equal(calls.prompts.length, 0);
+    assert.equal(
+      store.getCollaborationDelivery("active-delivery")?.status,
+      "queued",
+    );
+  });
+
   it("lets a queued delivery claim an agent turn, then reminds on the next idle turn", async () => {
     store.createTask("root", "/tmp", "root", "agent-root");
     store.createTask("source", "/tmp", "agent", "agent-source", "root");
