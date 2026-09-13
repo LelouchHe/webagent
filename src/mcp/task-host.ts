@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { isAbsolute, resolve } from "node:path";
 import type { AgentBridge } from "../bridge.ts";
-import type { Store } from "../store.ts";
+import type { Store, TaskRow } from "../store.ts";
 import {
   isLocalCollaborationTarget,
   collaborationRelation,
@@ -118,23 +118,37 @@ export function createMcpTaskToolHost(deps: {
   return {
     list(sourceTaskId) {
       const source = requireTask(sourceTaskId);
-      return store
+      const entries = store
         .listTasks()
-        .map((task) => {
-          const relation = collaborationRelation(source, task);
-          if (!relation) return null;
-          return {
-            id: task.id,
-            title: task.title ?? task.id,
-            relation,
-          } satisfies McpTaskListItem;
-        })
-        .filter((task): task is McpTaskListItem => task !== null)
+        .map((task) => ({
+          task,
+          relation: collaborationRelation(source, task),
+        }))
+        .filter(
+          (
+            entry,
+          ): entry is {
+            task: TaskRow;
+            relation: McpTaskListItem["relation"];
+          } => entry.relation !== null,
+        )
         .sort(
           (a, b) =>
             relationOrder(a.relation) - relationOrder(b.relation) ||
-            a.id.localeCompare(b.id),
+            a.task.id.localeCompare(b.task.id),
         );
+      const lastEventTimes = store.getLatestEventTimes(
+        entries.map((entry) => entry.task.id),
+      );
+      return entries.map(
+        ({ task, relation }): McpTaskListItem => ({
+          id: task.id,
+          title: task.title ?? task.id,
+          relation,
+          workflowStatus: task.workflow_status,
+          lastEventAt: lastEventTimes.get(task.id) ?? null,
+        }),
+      );
     },
 
     query(sourceTaskId, input): McpTaskQueryResult {

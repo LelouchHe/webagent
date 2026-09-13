@@ -30,6 +30,7 @@ export const MCP_SERVER_NAME = "webagent";
  */
 export const MCP_SERVER_INSTRUCTIONS = [
   "Use task_create for a direct child, then immediately use task_send to give it its first instruction.",
+  "Use task_list to check each reachable Task's workflowStatus and lastEventAt before deciding to act; workflowStatus is per turn, not a lifecycle terminal.",
   "Use task_send for normal coordination and for continuing or resuming existing Tasks; task_send is not a lifecycle handoff. Use task_update(done|blocked) for typed lifecycle handoffs. A done Task remains available and is not deleted or permanently closed.",
   "After dispatching work, end the current turn; do not poll with task_query.",
   "Use task_query and task_get_record only for history recovery, diagnosis, or audit.",

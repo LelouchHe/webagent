@@ -42,7 +42,47 @@ describe("MCP Task tool host", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  it("lists self, parent, children, and siblings with identity data only", () => {
+  it("lists the family with differing statuses and latest-event times", () => {
+    // Distinct statuses so a constant workflowStatus cannot pass this check.
+    store.updateTaskWorkflowStatus("root", "done");
+    store.updateTaskWorkflowStatus("alpha", "running");
+    store.updateTaskWorkflowStatus("alpha-child", "blocked");
+    store.updateTaskWorkflowStatus("beta", "idle");
+
+    // Give each member an older and a newer event, then pin both timestamps.
+    // `lastEventAt` must come from the newest event, so returning the first
+    // event (or a constant) fails this check.
+    const pinLatest = (id: string, at: string) =>
+      store["db"]
+        .prepare(
+          "UPDATE events SET created_at = ? WHERE task_id = ? AND seq = (SELECT MAX(seq) FROM events WHERE task_id = ?)",
+        )
+        .run(at, id, id);
+    const seedEvents = (id: string, older: string, latest: string) => {
+      store.saveEvent(
+        id,
+        "assistant_message",
+        { text: "older" },
+        { from_ref: "agent" },
+      );
+      pinLatest(id, older);
+      store.saveEvent(
+        id,
+        "assistant_message",
+        { text: "latest" },
+        { from_ref: "agent" },
+      );
+      pinLatest(id, latest);
+    };
+    seedEvents("alpha", "2026-09-13 21:00:00.001", "2026-09-13 21:00:01.001");
+    seedEvents("root", "2026-09-13 21:00:00.002", "2026-09-13 21:00:01.002");
+    seedEvents(
+      "alpha-child",
+      "2026-09-13 21:00:00.003",
+      "2026-09-13 21:00:01.003",
+    );
+    seedEvents("beta", "2026-09-13 21:00:00.004", "2026-09-13 21:00:01.004");
+
     const host = createMcpTaskToolHost({
       store,
       tasks,
@@ -50,11 +90,57 @@ describe("MCP Task tool host", () => {
     });
 
     assert.deepEqual(host.list("alpha"), [
-      { id: "alpha", title: "Alpha", relation: "self" },
-      { id: "root", title: "Root", relation: "parent" },
-      { id: "alpha-child", title: "Alpha child", relation: "child" },
-      { id: "beta", title: "Beta", relation: "sibling" },
+      {
+        id: "alpha",
+        title: "Alpha",
+        relation: "self",
+        workflowStatus: "running",
+        lastEventAt: "2026-09-13 21:00:01.001",
+      },
+      {
+        id: "root",
+        title: "Root",
+        relation: "parent",
+        workflowStatus: "done",
+        lastEventAt: "2026-09-13 21:00:01.002",
+      },
+      {
+        id: "alpha-child",
+        title: "Alpha child",
+        relation: "child",
+        workflowStatus: "blocked",
+        lastEventAt: "2026-09-13 21:00:01.003",
+      },
+      {
+        id: "beta",
+        title: "Beta",
+        relation: "sibling",
+        workflowStatus: "idle",
+        lastEventAt: "2026-09-13 21:00:01.004",
+      },
     ]);
+
+    // The exposed timestamp is the stored SQLite strftime output: UTC with no
+    // timezone marker.
+    for (const item of host.list("alpha")) {
+      assert.match(
+        item.lastEventAt ?? "",
+        /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}$/,
+      );
+    }
+  });
+
+  it("reports a null latest-event time for a task with no persisted events", () => {
+    const host = createMcpTaskToolHost({
+      store,
+      tasks,
+      getBridge: () => null,
+    });
+
+    const beta = host.list("alpha").find((item) => item.id === "beta");
+    assert.ok(beta, "beta must be reachable from alpha");
+    assert.equal(beta.workflowStatus, "idle");
+    assert.equal(beta.lastEventAt, null);
   });
 
   it("creates a direct child with inherited and requested configuration", async () => {

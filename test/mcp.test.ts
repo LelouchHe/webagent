@@ -103,7 +103,13 @@ describe("createMcpEndpoint", () => {
   const calls: Array<unknown> = [];
   const taskTools = {
     list: (taskId: string) => [
-      { id: taskId, title: "Current", relation: "self" as const },
+      {
+        id: taskId,
+        title: "Current",
+        relation: "self" as const,
+        workflowStatus: "idle" as const,
+        lastEventAt: "2026-01-01 00:00:00.000",
+      },
     ],
     query: (_sourceTaskId: string, input: unknown) => {
       calls.push({ kind: "query", input });
@@ -327,6 +333,16 @@ describe("createMcpEndpoint", () => {
     assert.match(updateDescription ?? "", /not delete or permanently close/);
     assert.match(toolDescription(tools, "task_query"), /recorded turn history/);
     assert.match(toolDescription(tools, "task_query"), /provider errors/);
+    // `task_list` is the cheap triage surface: state fields plus the per-turn
+    // meaning of `done`, without weakening task_query's no-poll guidance.
+    assert.match(toolDescription(tools, "task_list"), /workflowStatus/);
+    assert.match(toolDescription(tools, "task_list"), /lastEventAt/);
+    assert.match(toolDescription(tools, "task_list"), /per turn/);
+    assert.match(
+      toolDescription(tools, "task_list"),
+      /not a lifecycle terminal/,
+    );
+    assert.match(toolDescription(tools, "task_list"), /lag signal/);
     const querySchema = tools.find(
       (tool) => tool.name === "task_query",
     )?.inputSchema;

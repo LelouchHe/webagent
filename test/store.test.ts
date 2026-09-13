@@ -476,6 +476,35 @@ describe("Store", () => {
       assert.deepEqual(store.getEvents("s1"), []);
     });
 
+    it("returns the latest event time per requested task", () => {
+      store.createTask("s1", "/x");
+      store.createTask("s2", "/x");
+      store.createTask("empty", "/x");
+      store.saveEvent("s1", "user_message", {}, { from_ref: "user" });
+      store.saveEvent("s1", "assistant_message", {}, { from_ref: "agent" });
+      store.saveEvent("s2", "user_message", {}, { from_ref: "user" });
+      for (const [taskId, seq, at] of [
+        ["s1", 1, "2026-01-01 00:00:00.001"],
+        ["s1", 2, "2026-01-01 00:00:02.001"],
+        ["s2", 1, "2026-01-01 00:00:03.001"],
+      ] as const) {
+        store["db"]
+          .prepare(
+            "UPDATE events SET created_at = ? WHERE task_id = ? AND seq = ?",
+          )
+          .run(at, taskId, seq);
+      }
+
+      const times = store.getLatestEventTimes(["s1", "s2", "empty", "missing"]);
+      // `s1` reports its newest event, `empty`/`missing` are absent, and no
+      // unrelated task leaks in.
+      assert.deepEqual([...times.entries()].sort(), [
+        ["s1", "2026-01-01 00:00:02.001"],
+        ["s2", "2026-01-01 00:00:03.001"],
+      ]);
+      assert.deepEqual(store.getLatestEventTimes([]), new Map());
+    });
+
     it("filters events by afterSeq", () => {
       store.createTask("s1", "/x");
       store.saveEvent(

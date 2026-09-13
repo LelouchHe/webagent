@@ -1,10 +1,26 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
+export type McpWorkflowStatus = "running" | "idle" | "blocked" | "done";
+
 export interface McpTaskListItem {
   id: string;
   title: string;
   relation: "self" | "parent" | "child" | "sibling";
+  /**
+   * Lifecycle status of the Task's last turn, matching `task_query`'s
+   * `workflowStatus`. `done` is per turn, not a lifecycle terminal.
+   */
+  workflowStatus: McpWorkflowStatus;
+  /**
+   * `created_at` of the Task's most recent persisted event, any type — the
+   * Task's own activity clock. Same representation as other MCP timestamps:
+   * SQLite `strftime('%Y-%m-%d %H:%M:%f', 'now')` output, UTC with no timezone
+   * marker. `null` when the Task has no persisted events yet. It is a lag
+   * signal, not proof of work: a long silent tool call can look stale while
+   * the Task is still running.
+   */
+  lastEventAt: string | null;
 }
 
 /** A bounded, human-readable projection of one persisted task event. */
@@ -28,7 +44,7 @@ export interface McpTaskQueryInput {
 }
 
 export interface McpTaskQueryResult {
-  workflowStatus: "running" | "idle" | "blocked" | "done";
+  workflowStatus: McpWorkflowStatus;
   records: McpTaskHistoryRecord[];
   nextCursor?: string;
   hasMore: boolean;
@@ -132,7 +148,13 @@ export function registerMcpTools(
     {
       description:
         "Discover Tasks available for coordination. " +
-        "Use this before choosing a Task to contact.",
+        "Use this before choosing a Task to contact, and inspect each item's " +
+        "workflowStatus and lastEventAt. workflowStatus is per turn, not a " +
+        "lifecycle terminal: a `done` Task can be woken and run again. " +
+        "lastEventAt is the created_at of the Task's latest persisted event, " +
+        "or null when it has none; it is a lag signal, not proof of work — a " +
+        "long silent tool call can look stale while the Task is still " +
+        "running. This is a cheap inspection, not a polling loop.",
       inputSchema: {},
     },
     async () => jsonContent({ tasks: host?.list(taskId) ?? unavailable() }),
