@@ -1754,44 +1754,6 @@ export class TaskManager {
     }
   }
 
-  /**
-   * If the task's last turn was interrupted (user_message without prompt_done),
-   * auto-retry by prompting the agent to continue. Returns true if retrying.
-   */
-  autoRetryIfNeeded(
-    bridge: Pick<AgentBridge, "prompt">,
-    taskId: string,
-  ): boolean {
-    if (this.activePrompts.has(taskId)) return false;
-    if (!this.store.hasInterruptedTurn(taskId)) return false;
-
-    slog.info("auto-retrying interrupted turn", {
-      taskId: taskId.slice(0, 8) + "…",
-    });
-    this.recordHandoffObligation(taskId);
-    this.activePrompts.add(taskId);
-    this.syncBusy(taskId);
-    const promptId =
-      this.state.getState(taskId).runtime.busy?.promptId ?? undefined;
-    bridge
-      .prompt(
-        taskId,
-        "Continue your previous response — it was interrupted mid-way.",
-        undefined,
-        promptId,
-      )
-      .catch((err: unknown) => {
-        slog.error("auto-retry failed", {
-          taskId: taskId.slice(0, 8) + "…",
-          error: err,
-        });
-        if (!this.isCurrentPrompt(taskId, promptId)) return;
-        this.activePrompts.delete(taskId);
-        this.syncBusy(taskId);
-      });
-    return true;
-  }
-
   /** Get pending permission requests for a task (or all tasks if no id). */
   getPendingPermissions(taskId?: string): PendingPermission[] {
     const perms = [...this.pendingPermissions.values()];

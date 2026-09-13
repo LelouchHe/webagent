@@ -1701,7 +1701,6 @@ This means:
                                  ▼
                         ┌── resumeTask() ──┐
                         │ bridge.loadTask() │
-                        │ autoRetryIfNeeded()  │
                         └──────────────────────┘
 ```
 
