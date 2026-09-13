@@ -59,7 +59,6 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - assistant / thinking buffer flush behavior
   - busy-kind reporting
   - cwd lookup fallback
-  - interrupted-turn detection (recovery is user-driven)
   - deduplicated resume (ensureResumed)
   - revisioned Agent command snapshot lifecycle and cleanup
   - authoritative snapshot waits for command discovery during warm-cache restore
@@ -98,6 +97,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - gzip compression for events endpoint
   - streaming buffer flush on events endpoint
   - auto-resume of non-live tasks
+  - restoring an interrupted turn does not auto-continue it (recovery is user-driven)
   - input validation and bridge-not-ready errors
 
 - `test/file-viewer-routes.test.ts`
