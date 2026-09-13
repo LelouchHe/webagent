@@ -631,4 +631,24 @@ describe("MCP Task tool host", () => {
     assert.equal(parentUpdate.title, "@Alpha sent @Root");
     assert.equal(parentUpdate.body, "Task status: blocked\nNeed API details");
   });
+
+  it("rejects an unknown obligation id without any store or message change", async () => {
+    const host = createMcpTaskToolHost({
+      store,
+      tasks,
+      getBridge: () => null,
+    });
+    const before = store.getEvents("alpha").length;
+
+    // Mutation evidence: falling back to the uncorrelated path on an invalid
+    // receipt would record a task_update and send a parent message instead of
+    // failing here.
+    await assert.rejects(
+      () => host.update("alpha", "done", "report", "bogus-id"),
+      /obligation_not_found/,
+    );
+    assert.equal(store.getTask("alpha")?.workflow_status, "idle");
+    assert.equal(store.getEvents("alpha").length, before);
+    assert.equal(store.getEvents("root").length, 0);
+  });
 });

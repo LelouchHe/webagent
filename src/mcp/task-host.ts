@@ -328,27 +328,69 @@ export function createMcpTaskToolHost(deps: {
       }
     },
 
-    async update(sourceTaskId, status, body) {
+    async update(sourceTaskId, status, body, obligationId) {
       const bridge = getBridge();
-      const { parentTaskId, collaborationMessageId } =
-        store.recordAgentWorkflowUpdate(sourceTaskId, status, body);
-      // The live turn just handed off; retiring its obligation keeps the
-      // completion path from prompting a redundant reminder turn and sending
-      // the parent a duplicate status message.
-      tasks.clearHandoffObligation(sourceTaskId);
-      if (collaborationMessageId && parentTaskId) {
+
+      function broadcastAccount(
+        accountTargetTaskId: string,
+        collaborationMessageId: string,
+      ) {
         const source = requireTask(sourceTaskId);
-        const target = requireTask(parentTaskId);
+        const target = requireTask(accountTargetTaskId);
         broadcastCollaboration?.({
           messageId: collaborationMessageId,
           sourceTaskId,
-          targetTaskId: parentTaskId,
+          targetTaskId: accountTargetTaskId,
           title: `${formatTaskReference(source.title ?? source.id.slice(0, 8))} sent ${formatTaskReference(target.title ?? target.id.slice(0, 8))}`,
           body: `Task status: ${status}\n${body}`,
         });
       }
-      if (bridge && parentTaskId) {
-        void tasks.drainCollaborationDeliveries(bridge, parentTaskId);
+
+      // A correlated account validates the receipt, performs the settlement
+      // transaction, and retires the edge in one synchronous critical section.
+      // An invalid receipt never falls back to the uncorrelated path: that
+      // would send an account while leaving the obligation open.
+      if (obligationId !== undefined) {
+        const settled = tasks.settleObligation(
+          sourceTaskId,
+          obligationId,
+          status,
+          body,
+        );
+        if (!settled) throw new Error("obligation_not_found");
+        if (settled.collaborationMessageId) {
+          broadcastAccount(
+            settled.accountTargetTaskId,
+            settled.collaborationMessageId,
+          );
+        }
+        if (bridge && settled.collaborationMessageId) {
+          void tasks.drainCollaborationDeliveries(
+            bridge,
+            settled.accountTargetTaskId,
+          );
+        }
+        return;
+      }
+
+      // Uncorrelated update: still recorded and reported to the current
+      // parent, but it settles no directed obligation.
+      const source = requireTask(sourceTaskId);
+      const { collaborationMessageId } = store.recordAgentWorkflowUpdate(
+        sourceTaskId,
+        status,
+        body,
+        source.parent_id,
+      );
+      // The live turn just handed off; retiring its obligation keeps the
+      // completion path from prompting a redundant reminder turn and sending
+      // the parent a duplicate status message.
+      tasks.clearHandoffObligation(sourceTaskId);
+      if (collaborationMessageId && source.parent_id) {
+        broadcastAccount(source.parent_id, collaborationMessageId);
+        if (bridge) {
+          void tasks.drainCollaborationDeliveries(bridge, source.parent_id);
+        }
       }
     },
   };

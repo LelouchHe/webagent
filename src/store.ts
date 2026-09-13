@@ -1732,13 +1732,19 @@ export class Store {
     };
   }
 
-  /** Atomically record an Agent workflow update and its parent handoff. */
+  /**
+   * Atomically record an Agent workflow update and, when a bound account
+   * target is supplied, its directed account message. The endpoint is passed
+   * in rather than re-read from the mutable current `parent_id`, so a
+   * correlated settlement always reports to the stored obligation source even
+   * if the tree changed after arming.
+   */
   recordAgentWorkflowUpdate(
     taskId: string,
     status: Extract<WorkflowStatus, "blocked" | "done">,
     body: string,
+    accountTargetTaskId: string | null,
   ): {
-    parentTaskId: string | null;
     collaborationMessageId: string | null;
   } {
     return this.db.transaction(() => {
@@ -1752,22 +1758,19 @@ export class Store {
         { status, body },
         { from_ref: "agent" },
       );
-      if (!task.parent_id) {
-        return { parentTaskId: null, collaborationMessageId: null };
+      if (!accountTargetTaskId || accountTargetTaskId === task.id) {
+        return { collaborationMessageId: null };
       }
       const collaborationMessageId = randomUUID();
       this.createCollaborationMessageInTransaction({
         id: collaborationMessageId,
         deliveryId: randomUUID(),
         sourceTaskId: taskId,
-        directTargetTaskId: task.parent_id,
+        directTargetTaskId: accountTargetTaskId,
         sourceActor: "agent",
         body: `Task status: ${status}\n${body}`,
       });
-      return {
-        parentTaskId: task.parent_id,
-        collaborationMessageId,
-      };
+      return { collaborationMessageId };
     })();
   }
 

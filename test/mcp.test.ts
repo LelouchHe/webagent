@@ -19,6 +19,18 @@ function toolDescription(
   return tools.find((tool) => tool.name === name)?.description ?? "";
 }
 
+function toolHasProperty(
+  tools: Array<{
+    name: string;
+    inputSchema?: { properties?: Record<string, unknown> };
+  }>,
+  toolName: string,
+  property: string,
+): boolean {
+  const tool = tools.find((candidate) => candidate.name === toolName);
+  return tool?.inputSchema?.properties?.[property] !== undefined;
+}
+
 // --- CapabilityStore ---
 
 describe("CapabilityStore", () => {
@@ -326,11 +338,17 @@ describe("createMcpEndpoint", () => {
     )?.description;
     assert.match(sendDescription ?? "", /task_update/);
     assert.match(sendDescription ?? "", /blocked/);
-    const updateDescription = tools.find(
-      (tool) => tool.name === "task_update",
-    )?.description;
-    assert.match(updateDescription ?? "", /typed lifecycle handoff/);
-    assert.match(updateDescription ?? "", /not delete or permanently close/);
+    const updateDescription =
+      tools.find((tool) => tool.name === "task_update")?.description ?? "";
+    assert.match(updateDescription, /typed lifecycle account/);
+    assert.match(updateDescription, /obligationId/);
+    assert.match(updateDescription, /correlation receipt/);
+    assert.match(updateDescription, /settles nothing/);
+    assert.match(updateDescription, /not delete or permanently close/);
+    assert.ok(
+      toolHasProperty(tools, "task_update", "obligationId"),
+      "task_update must expose the obligation correlation id",
+    );
     assert.match(toolDescription(tools, "task_query"), /recorded turn history/);
     assert.match(toolDescription(tools, "task_query"), /provider errors/);
     // `task_list` is the cheap triage surface: state fields plus the per-turn
