@@ -1475,7 +1475,11 @@ describe("TaskManager", () => {
 
       sm.activePrompts.delete("child");
       sm.syncBusy("child");
-      // Repeated syncs while already idle must not enqueue another recovery.
+      // Create a second busy→idle edge before the first microtask runs. The
+      // pending taskId recovery must absorb it rather than submit twice.
+      sm.activePrompts.add("child");
+      sm.syncBusy("child");
+      sm.activePrompts.delete("child");
       sm.syncBusy("child");
       await new Promise<void>((resolve) => setImmediate(resolve));
       await new Promise<void>((resolve) => setImmediate(resolve));

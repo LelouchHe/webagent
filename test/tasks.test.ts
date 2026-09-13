@@ -644,6 +644,77 @@ describe("Task REST API", () => {
         .find((event) => event.type === "user_message");
       assert.equal(JSON.parse(userEvent!.data).text, "continue the work");
     });
+
+    it("recovers a delivery queued during successful compaction", async () => {
+      store.createTask("root", tmpDir, "root", "agent-root");
+      store.createTask("source", tmpDir, "agent", "agent-source", "root");
+      store.createTask("s1", tmpDir, "agent", "agent-old", "root");
+      store.updateTaskConfig("s1", "mode", "agent");
+      tasks.liveTasks.add("s1");
+
+      const configOptions: ConfigOption[] = [
+        {
+          type: "select",
+          id: "mode",
+          name: "Mode",
+          currentValue: "agent",
+          options: [{ value: "agent", name: "Agent" }],
+        },
+      ];
+      const originalNewSession = mockBridge.newSession as unknown as (
+        cwd: string,
+        options?: unknown,
+      ) => Promise<{ sessionId: string; configOptions: ConfigOption[] }>;
+      mockBridge.newSession = (async (cwd: string, options?: unknown) => ({
+        ...(await originalNewSession(cwd, options)),
+        configOptions,
+      })) as typeof mockBridge.newSession;
+      let queued = false;
+      const originalSetConfigOption = mockBridge.setConfigOption;
+      mockBridge.setConfigOption = async (
+        taskId: string,
+        configId: string,
+        value: string | boolean,
+      ) => {
+        if (!queued) {
+          queued = true;
+          store.createCollaborationMessage({
+            id: "compact-delivery-message",
+            deliveryId: "compact-delivery",
+            sourceTaskId: "source",
+            directTargetTaskId: "s1",
+            sourceActor: "agent",
+            body: "Deliver this after compaction.",
+          });
+        }
+        return originalSetConfigOption(taskId, configId, value);
+      };
+      const prompts: string[] = [];
+      mockBridge.prompt = async (_taskId: string, text: string) => {
+        prompts.push(text);
+      };
+
+      const compactRes = await makeRequest(
+        port,
+        "POST",
+        "/api/v1/tasks/s1/compact",
+        "{}",
+      );
+      assert.equal(compactRes.status, 202);
+      const deadline = Date.now() + 5000;
+      while (prompts.length === 0 && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+
+      // This fails on the old direct runtime.busy=null path: the queued
+      // delivery remains queued and no recovery prompt is submitted.
+      assert.equal(prompts.length, 1);
+      assert.match(prompts[0], /Deliver this after compaction/);
+      assert.equal(
+        store.getCollaborationDelivery("compact-delivery")?.status,
+        "delivered",
+      );
+    });
   });
 
   it("passes optional compact guidance only when supplied", async () => {

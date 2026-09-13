@@ -2021,6 +2021,7 @@ export function createRequestHandler(
           });
           return;
         }
+        tasks.setRecoveryBridge(bridge);
         if (tasks.getBusyKind(taskId) !== null) {
           json(res, HTTP_STATUS.CONFLICT, {
             error: "Cancel active work before compacting the task",
@@ -2098,13 +2099,16 @@ export function createRequestHandler(
             );
             tasks.state.patch(taskId, {
               runtime: {
-                busy: null,
                 streaming: { assistant: false, thinking: false },
                 pendingPermissions: [],
                 plan: null,
                 contextUsage: null,
               },
             });
+            // Clear the compaction busy source through syncBusy so a delivery
+            // queued during rotation gets the normal busy→idle recovery edge.
+            tasks.compactingTasks.delete(taskId);
+            tasks.syncBusy(taskId);
 
             const fresh = store.getTask(taskId);
             if (!fresh) throw new Error("Task disappeared during compaction");
