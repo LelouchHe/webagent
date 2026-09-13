@@ -209,6 +209,32 @@ describe("Prompt REST API", () => {
       assert.equal(mockBridge.lastPromptArgs!.text, "hello world");
     });
 
+    it("records the handoff obligation for an agent task but not a user task", async () => {
+      // The obligation is fixed at submission from the Task's `source`, not
+      // re-derived later from workflow state that a user prompt never sets.
+      const agentTaskId = "agent-created";
+      store.createTask(agentTaskId, tmpDir, "agent", `agent-${agentTaskId}`);
+      const userTaskId = await createTask();
+
+      const agentRes = await makeRequest(
+        port,
+        "POST",
+        `/api/v1/tasks/${agentTaskId}/prompt`,
+        JSON.stringify({ text: "do the delegated work" }),
+      );
+      const userRes = await makeRequest(
+        port,
+        "POST",
+        `/api/v1/tasks/${userTaskId}/prompt`,
+        JSON.stringify({ text: "hello from the user" }),
+      );
+
+      assert.equal(agentRes.status, 202);
+      assert.equal(userRes.status, 202);
+      assert.equal(tasks.owesHandoff(agentTaskId), true);
+      assert.equal(tasks.owesHandoff(userTaskId), false);
+    });
+
     it("stores and broadcasts raw agent slash text but sends the canonical command to the bridge", async () => {
       const taskId = await createTask();
       tasks.updateAgentCommands(taskId, [

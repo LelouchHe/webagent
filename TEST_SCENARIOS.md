@@ -45,9 +45,10 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - autopilot auto-approval with allow_once
   - autopilot fallback when no allow_once option exists
   - normal permission_request broadcast in non-autopilot mode
-  - handoff reminder for Agent-created delegated Tasks when a running turn ends without `task_update(done|blocked)`
+  - handoff reminder obligation is fixed at prompt submission from the Task's `source`: an agent-created Task owes after a user-prompted, cancelled, errored, or woken-blocked turn
+  - a `task_update(done|blocked)` retires the obligation, so a clean handoff is never re-reminded
   - user-created interactive Tasks remain exempt while still receiving collaboration content
-  - handoff reminder loop prevention, bridge failure cleanup, queued-delivery priority, terminal-status preservation, and error-turn recovery
+  - handoff reminder loop prevention, bridge failure cleanup, queued-delivery priority and successor-turn inheritance, and debug-level gate logging
 
 - `test/task-manager.test.ts`
   - task title hydration
@@ -109,6 +110,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
 
 - `test/prompt.test.ts`
   - prompt acceptance and bridge forwarding
+  - handoff obligation recorded from `source` at prompt submission (agent vs user task)
   - unsolicited Main-agent buffer flush before the next user turn
   - user_message storage and broadcast
   - last_active_at update and active-prompt tracking

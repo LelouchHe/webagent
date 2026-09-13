@@ -1584,6 +1584,10 @@ export function createRequestHandler(
 
         // Fire prompt asynchronously (don't await — response is 202)
         tasks.releasePromptSubmission(taskId, promptSubmissionId, false);
+        // Fix the lifecycle-handoff obligation while the Task's `source` is
+        // the authority; a later completion must not re-derive it from
+        // mutable workflow state.
+        tasks.recordHandoffObligation(taskId);
         tasks.activePrompts.add(taskId);
         tasks.syncBusy(taskId);
         const promptId =

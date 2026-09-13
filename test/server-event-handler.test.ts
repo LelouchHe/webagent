@@ -6,6 +6,8 @@ import { tmpdir } from "node:os";
 import { Store } from "../src/store.ts";
 import { TaskManager } from "../src/task-manager.ts";
 import { handleAgentEvent } from "../src/event-handler.ts";
+import { createMcpTaskToolHost } from "../src/mcp/task-host.ts";
+import { getLogLevel, setLogLevel, setLogSink } from "../src/log.ts";
 import type { AgentEvent } from "../src/types.ts";
 import { makeEventHandlerConfig } from "./fixtures.ts";
 
@@ -72,6 +74,17 @@ async function startCollaborationTurn(
   return "target";
 }
 
+/**
+ * Start a turn the way the prompt route does: fix the handoff obligation before
+ * the turn is marked busy. Returns the turn's prompt id.
+ */
+function startUserTurn(tasks: TaskManager, taskId: string): string | undefined {
+  tasks.recordHandoffObligation(taskId);
+  tasks.activePrompts.add(taskId);
+  tasks.syncBusy(taskId);
+  return tasks.state.getState(taskId).runtime.busy?.promptId ?? undefined;
+}
+
 describe("handleAgentEvent", () => {
   let tmpDir: string;
   let store: Store;
@@ -84,6 +97,8 @@ describe("handleAgentEvent", () => {
   });
 
   afterEach(() => {
+    setLogSink(null);
+    setLogLevel("off");
     store.close();
     rmSync(tmpDir, { recursive: true, force: true });
   });
@@ -384,6 +399,255 @@ describe("handleAgentEvent", () => {
     assert.equal(store.getTask(taskId)?.workflow_status, "idle");
   });
 
+  // Acceptance (a): the obligation comes from the Task, not from how the turn
+  // started. A user-prompted turn on an agent-created Task owes a handoff.
+  it("reminds an agent task whose turn was started by a user prompt", async () => {
+    store.createTask("child", "/tmp", "agent", "agent-child");
+    const { bridge, calls } = createMockBridge();
+    const { sseManager } = createMockSseManager();
+    const promptId = startUserTurn(tasks, "child");
+
+    handleAgentEvent(
+      {
+        type: "prompt_done",
+        taskId: "child",
+        promptId,
+        stopReason: "end_turn",
+      } as any,
+      tasks,
+      store,
+      bridge,
+      makeEventHandlerConfig(),
+      sseManager as any,
+    );
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    assert.equal(calls.prompts.length, 1);
+    assert.match(calls.prompts[0].text, /Task Handoff Required/);
+  });
+
+  // Acceptance (b): cancellation no longer drops the handoff. It changes what
+  // the reminder asks for, not whether the parent must learn the outcome.
+  it("reminds a cancelled agent-task turn and forbids resuming work", async () => {
+    store.createTask("child", "/tmp", "agent", "agent-child");
+    const { bridge, calls } = createMockBridge();
+    const { sseManager } = createMockSseManager();
+    const promptId = startUserTurn(tasks, "child");
+
+    handleAgentEvent(
+      {
+        type: "prompt_done",
+        taskId: "child",
+        promptId,
+        stopReason: "cancelled",
+      } as any,
+      tasks,
+      store,
+      bridge,
+      makeEventHandlerConfig(),
+      sseManager as any,
+    );
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    assert.equal(calls.prompts.length, 1);
+    assert.match(calls.prompts[0].text, /Task Handoff Required/);
+    assert.match(calls.prompts[0].text, /cancelled/);
+    assert.doesNotMatch(calls.prompts[0].text, /Continue the work/);
+  });
+
+  // Acceptance (b) corollary: the old idle prerequisite silently dropped this
+  // case too — a blocked child that is woken and ends without re-handing off
+  // leaves the parent unaware unless the reminder fires while non-idle.
+  it("reminds a woken blocked agent task that ends without a handoff", async () => {
+    store.createTask("child", "/tmp", "agent", "agent-child");
+    const { bridge, calls } = createMockBridge();
+    const { sseManager } = createMockSseManager();
+    const host = createMcpTaskToolHost({
+      store,
+      tasks,
+      getBridge: () => bridge,
+    });
+    await host.update("child", "blocked", "waiting on a decision");
+    const promptId = startUserTurn(tasks, "child");
+
+    handleAgentEvent(
+      {
+        type: "prompt_done",
+        taskId: "child",
+        promptId,
+        stopReason: "end_turn",
+      } as any,
+      tasks,
+      store,
+      bridge,
+      makeEventHandlerConfig(),
+      sseManager as any,
+    );
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    assert.equal(store.getTask("child")?.workflow_status, "blocked");
+    assert.equal(calls.prompts.length, 1);
+    assert.match(calls.prompts[0].text, /Task Handoff Required/);
+  });
+
+  // Acceptance (c): a user-created Task never owes, even though a user prompt
+  // may start its turn.
+  it("does not remind a user-created task whose user turn ends", async () => {
+    store.createTask("manual", "/tmp", "auto", "agent-manual");
+    const { bridge, calls } = createMockBridge();
+    const { sseManager } = createMockSseManager();
+    const promptId = startUserTurn(tasks, "manual");
+
+    handleAgentEvent(
+      {
+        type: "prompt_done",
+        taskId: "manual",
+        promptId,
+        stopReason: "end_turn",
+      } as any,
+      tasks,
+      store,
+      bridge,
+      makeEventHandlerConfig(),
+      sseManager as any,
+    );
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    assert.equal(calls.prompts.length, 0);
+  });
+
+  // Decision 7: skips were invisible, which is why the miss needed manual
+  // cross-task comparison. Every decision now names its gate inputs.
+  it("logs each handoff decision with its gate inputs", async () => {
+    store.createTask("manual", "/tmp", "auto", "agent-manual");
+    store.createTask("child", "/tmp", "agent", "agent-child");
+    const { bridge } = createMockBridge();
+    const { sseManager } = createMockSseManager();
+    const manualPromptId = startUserTurn(tasks, "manual");
+    const childPromptId = startUserTurn(tasks, "child");
+    const lines: string[] = [];
+    const previousLevel = getLogLevel();
+    setLogLevel("debug");
+    setLogSink((_stream, line) => lines.push(line));
+    try {
+      for (const [taskId, promptId] of [
+        ["manual", manualPromptId],
+        ["child", childPromptId],
+      ] as const) {
+        handleAgentEvent(
+          {
+            type: "prompt_done",
+            taskId,
+            promptId,
+            stopReason: "end_turn",
+          } as any,
+          tasks,
+          store,
+          bridge,
+          makeEventHandlerConfig(),
+          sseManager as any,
+        );
+        await new Promise<void>((resolve) => setImmediate(resolve));
+      }
+    } finally {
+      setLogSink(null);
+      setLogLevel(previousLevel);
+    }
+
+    const skipped = lines.find(
+      (line) =>
+        line.includes("handoff reminder skipped") &&
+        line.includes('"taskId":"manual"'),
+    );
+    assert.ok(skipped, "the skip must be recorded");
+    assert.match(skipped, /"isCurrent":true/);
+    assert.match(skipped, /"owesHandoff":false/);
+    assert.match(skipped, /"reason":"no_obligation"/);
+    assert.ok(
+      lines.some(
+        (line) =>
+          line.includes("handoff reminder issued") &&
+          line.includes('"taskId":"child"'),
+      ),
+      "the reminder must be recorded",
+    );
+  });
+
+  // Acceptance (e): a claimed delivery wins the turn, and the debt survives
+  // into the next turn the drain itself starts.
+  it("lets a queued delivery claim an agent turn, then reminds on the next idle turn", async () => {
+    store.createTask("root", "/tmp", "root", "agent-root");
+    store.createTask("source", "/tmp", "agent", "agent-source", "root");
+    store.createTask("target", "/tmp", "agent", "agent-target", "root");
+    tasks.liveTasks.add("target");
+    const { bridge, calls } = createMockBridge();
+    const { sseManager } = createMockSseManager();
+    const promptId = startUserTurn(tasks, "target");
+    store.createCollaborationMessage({
+      id: "message-1",
+      deliveryId: "delivery-1",
+      sourceTaskId: "source",
+      directTargetTaskId: "target",
+      sourceActor: "agent",
+      body: "A delivery that arrived mid-turn.",
+      createdAt: Date.now(),
+    });
+
+    const lines: string[] = [];
+    const previousLevel = getLogLevel();
+    setLogLevel("debug");
+    setLogSink((_stream, line) => lines.push(line));
+    try {
+      handleAgentEvent(
+        {
+          type: "prompt_done",
+          taskId: "target",
+          promptId,
+          stopReason: "end_turn",
+        } as any,
+        tasks,
+        store,
+        bridge,
+        makeEventHandlerConfig(),
+        sseManager as any,
+      );
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    } finally {
+      setLogSink(null);
+      setLogLevel(previousLevel);
+    }
+
+    assert.equal(calls.prompts.length, 1);
+    assert.match(calls.prompts[0].text, /A delivery that arrived mid-turn/);
+    assert.doesNotMatch(calls.prompts[0].text, /Task Handoff Required/);
+    assert.ok(
+      lines.some(
+        (line) =>
+          line.includes("handoff reminder skipped") &&
+          line.includes('"reason":"delivery_claimed"'),
+      ),
+      "the claimed-delivery skip must be recorded",
+    );
+
+    handleAgentEvent(
+      {
+        type: "prompt_done",
+        taskId: "target",
+        promptId: calls.prompts[0].promptId,
+        stopReason: "end_turn",
+      } as any,
+      tasks,
+      store,
+      bridge,
+      makeEventHandlerConfig(),
+      sseManager as any,
+    );
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    assert.equal(calls.prompts.length, 2);
+    assert.match(calls.prompts[1].text, /Task Handoff Required/);
+  });
+
   it("reminds after a collaboration turn reports an agent error", async () => {
     const { bridge, calls } = createMockBridge();
     const taskId = await startCollaborationTurn(store, tasks, bridge);
@@ -422,9 +686,7 @@ describe("handleAgentEvent", () => {
       body: "Continue with the next check.",
       createdAt: Date.now(),
     });
-    store.updateTaskWorkflowStatus("target", "running");
-    tasks.activePrompts.add("target");
-    tasks.syncBusy("target");
+    const promptId = startUserTurn(tasks, "target");
     const { bridge, calls } = createMockBridge();
     const { sseManager } = createMockSseManager();
 
@@ -432,6 +694,7 @@ describe("handleAgentEvent", () => {
       {
         type: "prompt_done",
         taskId: "target",
+        promptId,
         stopReason: "end_turn",
       } as any,
       tasks,
@@ -447,18 +710,27 @@ describe("handleAgentEvent", () => {
     assert.doesNotMatch(calls.prompts[0].text, /Task Handoff Required/);
   });
 
-  it("does not remind after a done or blocked handoff", async () => {
+  it("does not remind after an agent task records a done or blocked handoff", async () => {
     const { bridge, calls } = createMockBridge();
     const { sseManager } = createMockSseManager();
+    const host = createMcpTaskToolHost({
+      store,
+      tasks,
+      getBridge: () => bridge,
+    });
     for (const status of ["done", "blocked"] as const) {
       const taskId = `s1-${status}`;
-      store.createTask(taskId, "/tmp");
-      store.updateTaskWorkflowStatus(taskId, status);
-      tasks.activePrompts.add(taskId);
-      tasks.syncBusy(taskId);
+      store.createTask(taskId, "/tmp", "agent", `agent-${taskId}`);
+      const promptId = startUserTurn(tasks, taskId);
+      await host.update(taskId, status, `${status} report`);
 
       handleAgentEvent(
-        { type: "prompt_done", taskId, stopReason: "end_turn" } as any,
+        {
+          type: "prompt_done",
+          taskId,
+          promptId,
+          stopReason: "end_turn",
+        } as any,
         tasks,
         store,
         bridge,
@@ -473,16 +745,19 @@ describe("handleAgentEvent", () => {
     assert.equal(store.getTask("s1-blocked")?.workflow_status, "blocked");
   });
 
-  it("does not remind when a running turn is cancelled", async () => {
-    store.createTask("s1", "/tmp");
-    store.updateTaskWorkflowStatus("s1", "running");
-    tasks.activePrompts.add("s1");
-    tasks.syncBusy("s1");
+  it("does not remind a user-created task whose turn is cancelled", async () => {
+    store.createTask("s1", "/tmp", "auto", "agent-s1");
+    const promptId = startUserTurn(tasks, "s1");
     const { bridge, calls } = createMockBridge();
     const { sseManager } = createMockSseManager();
 
     handleAgentEvent(
-      { type: "prompt_done", taskId: "s1", stopReason: "cancelled" } as any,
+      {
+        type: "prompt_done",
+        taskId: "s1",
+        promptId,
+        stopReason: "cancelled",
+      } as any,
       tasks,
       store,
       bridge,

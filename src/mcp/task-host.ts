@@ -318,6 +318,10 @@ export function createMcpTaskToolHost(deps: {
       const bridge = getBridge();
       const { parentTaskId, collaborationMessageId } =
         store.recordAgentWorkflowUpdate(sourceTaskId, status, body);
+      // The live turn just handed off; retiring its obligation keeps the
+      // completion path from prompting a redundant reminder turn and sending
+      // the parent a duplicate status message.
+      tasks.clearHandoffObligation(sourceTaskId);
       if (collaborationMessageId && parentTaskId) {
         const source = requireTask(sourceTaskId);
         const target = requireTask(parentTaskId);
