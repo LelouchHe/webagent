@@ -48,7 +48,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - handoff reminder obligation is fixed at prompt submission from the Task's `source`: an agent-created Task owes after a user-prompted, cancelled, errored, or woken-blocked turn
   - a `task_update(done|blocked)` retires the obligation, so a clean handoff is never re-reminded
   - user-created interactive Tasks remain exempt while still receiving collaboration content
-  - handoff reminder loop prevention, bridge failure cleanup, queued-delivery priority and successor-turn inheritance, and debug-level gate logging
+  - handoff reminder loop prevention, non-live session resume before reminding, failed-reminder debt retirement, queued-delivery priority and successor-turn inheritance, and debug-level gate logging
 
 - `test/task-manager.test.ts`
   - task title hydration
