@@ -1786,7 +1786,11 @@ export class TaskManager {
     this.handoffObligations.delete(taskId);
   }
 
-  /** Whether the live turn for `taskId` still owes a lifecycle handoff. */
+  /**
+   * Whether `taskId` currently owes a lifecycle handoff. The debt belongs to
+   * the Task, not to one turn: an unanswered parent-caused turn keeps owing
+   * until a `task_update` or the reminder turn settles it.
+   */
   owesHandoff(taskId: string): boolean {
     return this.handoffObligations.has(taskId);
   }
