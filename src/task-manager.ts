@@ -1559,6 +1559,9 @@ export class TaskManager {
         // Every busy→idle transition retries unfinished work. The condition
         // deliberately checks only queued deliveries or handoff debt, not the
         // busy source, so a future busy source cannot silently strand work.
+        // Keep this deferred: the synchronous terminator broadcast must land
+        // before the drain's busy patch, or clients can treat that terminator
+        // as superseded and strand its pending tool/permission UI.
         this.scheduleUnfinishedWorkRecovery(taskId, recoveryOrigin);
       }
       // Also clear any pending cancel safety net now that we are idle.
@@ -1599,6 +1602,14 @@ export class TaskManager {
    * event-handler call supplies the bridge and terminal-event origin when the
    * edge itself had no registered bridge. Pending-task deduplication makes the
    * two entry points one bounded recovery, not two prompts.
+   *
+   * The decision here is task state (queued deliveries or handoff debt), not a
+   * prompt identity, so recovery has no turn identity of its own. The
+   * event-handler caller has already established that the terminal event is
+   * for the current turn because it must also perform activePrompts deletion,
+   * syncBusy, and workflow-status→idle; a late superseded event must not do
+   * those things. A superseded turn does not lose debt: the replacement turn
+   * ends against the same Task state and runs recovery again.
    */
   recoverUnfinishedWork(
     bridge: DeliveryBridge,
@@ -1613,7 +1624,6 @@ export class TaskManager {
     const fields = {
       taskId: taskId.slice(0, 8),
       origin,
-      isCurrent: true,
       owesHandoff: this.handoffObligations.has(taskId),
     };
     if (this.store.countQueuedDeliveries(taskId) === 0 && !fields.owesHandoff) {
@@ -1675,7 +1685,6 @@ export class TaskManager {
     const fields = {
       taskId: taskId.slice(0, 8),
       origin,
-      isCurrent: true,
       owesHandoff: this.handoffObligations.has(taskId),
     };
     const drained = await this.drainCollaborationDeliveries(bridge, taskId);

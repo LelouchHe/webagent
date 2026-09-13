@@ -725,7 +725,6 @@ describe("handleAgentEvent", () => {
         line.includes('"taskId":"manual"'),
     );
     assert.ok(skipped, "the skip must be recorded");
-    assert.match(skipped, /"isCurrent":true/);
     assert.match(skipped, /"owesHandoff":false/);
     assert.match(skipped, /"reason":"no_obligation"/);
     assert.ok(
