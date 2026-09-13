@@ -104,7 +104,9 @@ async function startCollaborationTurn(
 ): Promise<string> {
   store.createTask("root", "/tmp", "root", "agent-root");
   store.createTask("source", "/tmp", "agent", "agent-source", "root");
-  store.createTask("target", "/tmp", "agent", "agent-target", "root");
+  // `source` is deliberately `target`'s parent: a collaboration-caused turn
+  // owes a handoff only when the claimed batch includes the Task's parent.
+  store.createTask("target", "/tmp", "agent", "agent-target", "source");
   tasks.liveTasks.add("target");
   store.createCollaborationMessage({
     id: "message-1",
@@ -830,10 +832,193 @@ describe("handleAgentEvent", () => {
     );
   });
 
-  it("lets a queued delivery claim an agent turn, then reminds on the next idle turn", async () => {
+  // Scope: an agent-created Task owes a handoff on turns the user starts and
+  // on collaboration turns whose claimed batch includes the Task's parent. A
+  // batch mixing the parent with any other sender still owes (any-cause).
+  it("owes a handoff for a collaboration turn whose batch includes the parent", async () => {
+    store.createTask("root", "/tmp", "root", "agent-root");
+    store.createTask("target", "/tmp", "agent", "agent-target", "root");
+    tasks.liveTasks.add("target");
+    store.createCollaborationMessage({
+      id: "parent-message",
+      deliveryId: "parent-delivery",
+      sourceTaskId: "root",
+      directTargetTaskId: "target",
+      sourceActor: "agent",
+      body: "A direct instruction from the parent.",
+      createdAt: Date.now(),
+    });
+    const { bridge } = createMockBridge();
+
+    assert.equal(
+      await tasks.drainCollaborationDeliveries(bridge, "target"),
+      true,
+    );
+
+    // Mutation evidence: an always-false rule fails here; the old wide rule
+    // also passes, which is why this asserts the parent edge is not over-cut.
+    assert.equal(tasks.owesHandoff("target"), true);
+  });
+
+  it("owes a handoff when one claimed batch mixes the parent with a sibling", async () => {
+    store.createTask("root", "/tmp", "root", "agent-root");
+    store.createTask("sibling", "/tmp", "agent", "agent-sibling", "root");
+    store.createTask("target", "/tmp", "agent", "agent-target", "root");
+    tasks.liveTasks.add("target");
+    store.createCollaborationMessage({
+      id: "mix-parent",
+      deliveryId: "mix-parent-delivery",
+      sourceTaskId: "root",
+      directTargetTaskId: "target",
+      sourceActor: "agent",
+      body: "A parent instruction.",
+      createdAt: Date.now(),
+    });
+    store.createCollaborationMessage({
+      id: "mix-sibling",
+      deliveryId: "mix-sibling-delivery",
+      sourceTaskId: "sibling",
+      directTargetTaskId: "target",
+      sourceActor: "agent",
+      body: "A sibling note.",
+      createdAt: Date.now() + 1,
+    });
+    const { bridge, calls } = createMockBridge();
+
+    assert.equal(
+      await tasks.drainCollaborationDeliveries(bridge, "target"),
+      true,
+    );
+
+    // Both senders were claimed into one turn.
+    assert.match(calls.prompts[0].text, /A parent instruction/);
+    assert.match(calls.prompts[0].text, /A sibling note/);
+    // Mutation evidence: requiring the parent to be the *only* sender (an
+    // `every`/single-cause rule) fails here, which is the conservative
+    // any-cause reading this asserts.
+    assert.equal(tasks.owesHandoff("target"), true);
+  });
+
+  it("does not owe a handoff for a turn caused only by a sibling", async () => {
+    store.createTask("root", "/tmp", "root", "agent-root");
+    store.createTask("sibling", "/tmp", "agent", "agent-sibling", "root");
+    store.createTask("target", "/tmp", "agent", "agent-target", "root");
+    tasks.liveTasks.add("target");
+    store.createCollaborationMessage({
+      id: "sibling-message",
+      deliveryId: "sibling-delivery",
+      sourceTaskId: "sibling",
+      directTargetTaskId: "target",
+      sourceActor: "agent",
+      body: "A sibling note that must not demand a handoff.",
+      createdAt: Date.now(),
+    });
+    const { bridge, calls } = createMockBridge();
+    const { sseManager } = createMockSseManager();
+    const lines: string[] = [];
+    const previousLevel = getLogLevel();
+    setLogLevel("debug");
+    setLogSink((_stream, line) => lines.push(line));
+    try {
+      assert.equal(
+        await tasks.drainCollaborationDeliveries(bridge, "target"),
+        true,
+      );
+      // Fails on the pre-change wide rule, which owes on `source` alone.
+      assert.equal(tasks.owesHandoff("target"), false);
+
+      handleAgentEvent(
+        {
+          type: "prompt_done",
+          taskId: "target",
+          promptId: calls.prompts[0].promptId,
+          stopReason: "end_turn",
+        } as any,
+        tasks,
+        store,
+        bridge,
+        makeEventHandlerConfig(),
+        sseManager as any,
+      );
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    } finally {
+      setLogSink(null);
+      setLogLevel(previousLevel);
+    }
+
+    // Fails on the pre-change rule: the reminder would make this 2.
+    assert.equal(calls.prompts.length, 1);
+    assert.ok(
+      lines.some(
+        (line) =>
+          line.includes("handoff reminder skipped") &&
+          line.includes('"reason":"no_obligation"'),
+      ),
+      "the sibling-only skip must leave a trace",
+    );
+  });
+
+  it("does not owe a handoff for a turn caused only by the task's own blocked child", async () => {
+    store.createTask("root", "/tmp", "root", "agent-root");
+    store.createTask("target", "/tmp", "agent", "agent-target", "root");
+    store.createTask(
+      "grandchild",
+      "/tmp",
+      "agent",
+      "agent-grandchild",
+      "target",
+    );
+    tasks.liveTasks.add("target");
+    const { bridge, calls } = createMockBridge();
+    const { sseManager } = createMockSseManager();
+    const host = createMcpTaskToolHost({
+      store,
+      tasks,
+      getBridge: () => bridge,
+    });
+
+    // The child's typed blocked handoff is a collaboration message to its
+    // parent, so the parent's resulting turn is child-caused, not parent-caused.
+    await host.update("grandchild", "blocked", "waiting on a decision");
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(calls.prompts.length, 1);
+    // Fails on the pre-change wide rule, which owes on `source` alone.
+    assert.equal(tasks.owesHandoff("target"), false);
+
+    handleAgentEvent(
+      {
+        type: "prompt_done",
+        taskId: "target",
+        promptId: calls.prompts[0].promptId,
+        stopReason: "end_turn",
+      } as any,
+      tasks,
+      store,
+      bridge,
+      makeEventHandlerConfig(),
+      sseManager as any,
+    );
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    // Fails on the pre-change rule: the reminder would make this 2.
+    assert.equal(calls.prompts.length, 1);
+  });
+
+  it("owes a handoff on a user-started turn of an agent-created task", () => {
+    store.createTask("child", "/tmp", "agent", "agent-child");
+
+    // No collaboration cause is passed for a user prompt, so the agent-created
+    // obligation is kept. Mutation evidence: an always-false rule fails here.
+    assert.equal(tasks.recordHandoffObligation("child"), true);
+    assert.equal(tasks.owesHandoff("child"), true);
+  });
+
+  it("lets a queued parent delivery claim an agent turn, then reminds on the next idle turn", async () => {
     store.createTask("root", "/tmp", "root", "agent-root");
     store.createTask("source", "/tmp", "agent", "agent-source", "root");
-    store.createTask("target", "/tmp", "agent", "agent-target", "root");
+    // `source` is `target`'s parent, so the claimed turn inherits the handoff
+    // obligation and the successor turn still reminds.
+    store.createTask("target", "/tmp", "agent", "agent-target", "source");
     tasks.liveTasks.add("target");
     const { bridge, calls } = createMockBridge();
     const { sseManager } = createMockSseManager();

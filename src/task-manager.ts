@@ -171,10 +171,13 @@ export class TaskManager {
   /**
    * Tasks whose live turn still owes a lifecycle handoff. Set when a work
    * turn is submitted and cleared when that turn records `task_update` or
-   * when the reminder turn starts. `source` is a Task property, but "this
-   * turn was started by a collaboration delivery" is not one: deriving the
-   * obligation from `workflow_status === "running"` silently dropped
-   * user-prompted turns on agent-created Tasks.
+   * when the reminder turn starts. The obligation is scoped to the parent
+   * edge: a turn the user starts owes, and a collaboration turn owes only when
+   * its claimed batch includes the Task's parent — a sibling or child cause
+   * owes nothing. `source` is a Task property, but "this turn was started by a
+   * collaboration delivery" is not one: deriving the obligation from
+   * `workflow_status === "running"` silently dropped user-prompted turns on
+   * agent-created Tasks.
    */
   private readonly handoffObligations = new Set<string>();
   /** One microtask recovery per task while an unfinished-work retry is active. */
@@ -1717,16 +1720,34 @@ export class TaskManager {
 
   /**
    * Record the lifecycle-handoff obligation for the work turn about to be
-   * submitted. Agent-created Tasks owe one per turn; user-created Tasks never
-   * do, and the reminder turn itself is exempt — that exemption is the only
-   * loop guard a prose-only reply to a reminder needs.
+   * submitted. The obligation is scoped to the parent edge: an agent-created
+   * Task owes a handoff on turns the user starts, and on collaboration turns
+   * whose claimed batch includes the Task's parent. A turn caused only by a
+   * sibling or by the Task's own child (including a `blocked` handoff) owes
+   * nothing — lateral messages carry no obligation machinery. User-created
+   * Tasks never owe, and the reminder turn itself is exempt; that exemption is
+   * the only loop guard a prose-only reply to a reminder needs.
    */
   recordHandoffObligation(
     taskId: string,
-    opts: { isHandoffReminder?: boolean } = {},
+    opts: {
+      isHandoffReminder?: boolean;
+      /**
+       * Task ids of the collaboration senders whose messages caused this turn.
+       * Omit for a turn no collaboration message caused (a user prompt), which
+       * keeps the agent-created obligation.
+       */
+      causedBy?: readonly string[];
+    } = {},
   ): boolean {
-    const owes =
-      !opts.isHandoffReminder && this.store.getTask(taskId)?.source === "agent";
+    const task = this.store.getTask(taskId);
+    let owes = false;
+    if (!opts.isHandoffReminder && task?.source === "agent") {
+      owes =
+        opts.causedBy === undefined
+          ? true
+          : task.parent_id !== null && opts.causedBy.includes(task.parent_id);
+    }
     if (owes) this.handoffObligations.add(taskId);
     else this.handoffObligations.delete(taskId);
     return owes;
@@ -1748,8 +1769,10 @@ export class TaskManager {
 
   /**
    * Give an agent-created Task one closing turn when its previous prompt ended
-   * without a lifecycle handoff. The reminder turn is recorded as owing
-   * nothing, so a prose-only reply to it cannot trigger another reminder.
+   * without a lifecycle handoff. The obligation was already scoped to the
+   * parent edge when that turn was submitted, so this helper only acts on the
+   * debt it finds; it never widens the scope. The reminder turn is recorded as
+   * owing nothing, so a prose-only reply to it cannot trigger another reminder.
    *
    * Resumes the ACP session first like every other prompt path: the bridge
    * restores sessions lazily, so prompting a Task that is not live throws —
@@ -1856,6 +1879,10 @@ export class TaskManager {
       await this.ensureResumed(bridge, taskId);
       const deliveries = this.store.claimQueuedDeliveries(taskId);
       if (deliveries.length === 0) return false;
+      // One claimed batch can span senders; the parent edge is satisfied by
+      // any of them, so collect the causing senders as a set and let
+      // recordHandoffObligation decide from the parent id.
+      const causes = new Set<string>();
       const entries = deliveries.map((delivery) => {
         const message = this.store.getCollaborationMessage(delivery.message_id);
         if (!message) {
@@ -1863,6 +1890,7 @@ export class TaskManager {
             `Collaboration message missing: ${delivery.message_id}`,
           );
         }
+        causes.add(message.source_task_id);
         const source = this.store.getTaskIncludingDeleted(
           message.source_task_id,
         );
@@ -1878,7 +1906,7 @@ export class TaskManager {
       });
       this.store.updateTaskWorkflowStatus(taskId, "running");
       this.drainingCollaborationTasks.delete(taskId);
-      this.recordHandoffObligation(taskId);
+      this.recordHandoffObligation(taskId, { causedBy: [...causes] });
       this.activePrompts.add(taskId);
       this.syncBusy(taskId);
       const promptId =
