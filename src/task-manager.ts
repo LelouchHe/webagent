@@ -174,10 +174,10 @@ export class TaskManager {
    * when the reminder turn starts. The obligation is scoped to the parent
    * edge: a turn the user starts owes, and a collaboration turn owes only when
    * its claimed batch includes the Task's parent — a sibling or child cause
-   * owes nothing. `source` is a Task property, but "this turn was started by a
-   * collaboration delivery" is not one: deriving the obligation from
-   * `workflow_status === "running"` silently dropped user-prompted turns on
-   * agent-created Tasks.
+   * creates no debt and leaves any outstanding one intact. `source` is a Task
+   * property, but "this turn was started by a collaboration delivery" is not
+   * one: deriving the obligation from `workflow_status === "running"` silently
+   * dropped user-prompted turns on agent-created Tasks.
    */
   private readonly handoffObligations = new Set<string>();
   /** One microtask recovery per task while an unfinished-work retry is active. */
@@ -1611,8 +1611,11 @@ export class TaskManager {
    * event-handler caller has already established that the terminal event is
    * for the current turn because it must also perform activePrompts deletion,
    * syncBusy, and workflow-status→idle; a late superseded event must not do
-   * those things. A superseded turn does not lose debt: the replacement turn
-   * ends against the same Task state and runs recovery again.
+   * those things. Recovery drains before it considers the debt, so a delivery
+   * that claims the turn defers the reminder instead of dropping it: a
+   * non-parent batch leaves the outstanding debt intact, and the drain turn's
+   * own end re-enters recovery. A superseded turn likewise does not lose debt,
+   * because the replacement turn ends against the same Task state.
    */
   recoverUnfinishedWork(
     bridge: DeliveryBridge,
@@ -1685,33 +1688,41 @@ export class TaskManager {
     ) {
       return;
     }
-    const fields = {
-      taskId: taskId.slice(0, 8),
-      origin,
-      owesHandoff: this.handoffObligations.has(taskId),
-    };
+    const base = { taskId: taskId.slice(0, 8), origin };
+    const owesHandoffBefore = this.handoffObligations.has(taskId);
     const drained = await this.drainCollaborationDeliveries(bridge, taskId);
+    const owesHandoffAfterDrain = this.handoffObligations.has(taskId);
     if (drained) {
       slog.debug("handoff reminder skipped", {
-        ...fields,
+        ...base,
+        owesHandoffBefore,
+        owesHandoffAfterDrain,
         deliveryClaimed: true,
         reason: "delivery_claimed",
       });
       return;
     }
-    if (!this.handoffObligations.has(taskId)) {
+    if (!owesHandoffAfterDrain) {
       slog.debug("handoff reminder skipped", {
-        ...fields,
+        ...base,
+        owesHandoffBefore,
+        owesHandoffAfterDrain,
         deliveryClaimed: false,
         reason: "no_obligation",
       });
       return;
     }
     if (await this.promptHandoffReminder(bridge, taskId)) {
-      slog.debug("handoff reminder issued", fields);
+      slog.debug("handoff reminder issued", {
+        ...base,
+        owesHandoffBefore,
+        owesHandoffAfterDrain,
+      });
     } else {
       slog.debug("handoff reminder skipped", {
-        ...fields,
+        ...base,
+        owesHandoffBefore,
+        owesHandoffAfterDrain,
         deliveryClaimed: false,
         reason: "not_submittable",
       });
@@ -1720,13 +1731,21 @@ export class TaskManager {
 
   /**
    * Record the lifecycle-handoff obligation for the work turn about to be
-   * submitted. The obligation is scoped to the parent edge: an agent-created
-   * Task owes a handoff on turns the user starts, and on collaboration turns
-   * whose claimed batch includes the Task's parent. A turn caused only by a
-   * sibling or by the Task's own child (including a `blocked` handoff) owes
-   * nothing — lateral messages carry no obligation machinery. User-created
-   * Tasks never owe, and the reminder turn itself is exempt; that exemption is
-   * the only loop guard a prose-only reply to a reminder needs.
+   * submitted. The obligation is scoped to the parent edge:
+   *
+   * - a turn the user starts, or a collaboration turn whose claimed batch
+   *   includes the Task's parent, owes a handoff and sets the debt;
+   * - the reminder turn clears the debt (it is the loop guard);
+   * - a collaboration turn caused only by a sibling or by the Task's own child
+   *   (including a `blocked` handoff) neither creates nor clears debt: an
+   *   outstanding debt survives, because a later turn must still answer for the
+   *   earlier unanswered request.
+   *
+   * The debt is per Task, not per turn, so "this turn owes nothing" is never
+   * implemented as "this Task owes nothing". A user-created Task can never
+   * owe, so any debt on one is stale and is cleared.
+   *
+   * Returns whether the Task owes a handoff after this call.
    */
   recordHandoffObligation(
     taskId: string,
@@ -1741,16 +1760,21 @@ export class TaskManager {
     } = {},
   ): boolean {
     const task = this.store.getTask(taskId);
-    let owes = false;
-    if (!opts.isHandoffReminder && task?.source === "agent") {
-      owes =
-        opts.causedBy === undefined
-          ? true
-          : task.parent_id !== null && opts.causedBy.includes(task.parent_id);
+    if (opts.isHandoffReminder) {
+      this.handoffObligations.delete(taskId);
+      return false;
     }
+    if (task?.source !== "agent") {
+      // No debt can be legitimate for a non-agent Task; clear any stale flag.
+      this.handoffObligations.delete(taskId);
+      return false;
+    }
+    const owes =
+      opts.causedBy === undefined ||
+      (task.parent_id !== null && opts.causedBy.includes(task.parent_id));
     if (owes) this.handoffObligations.add(taskId);
-    else this.handoffObligations.delete(taskId);
-    return owes;
+    // A non-parent collaboration turn leaves any outstanding debt intact.
+    return this.handoffObligations.has(taskId);
   }
 
   /**
