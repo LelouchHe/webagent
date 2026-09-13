@@ -72,9 +72,12 @@ reminder. The obligation is scoped to the parent edge: an agent-created Task
 owes a handoff on a turn the user starts, and on a collaboration turn whose
 claimed batch includes the Task's parent. A turn caused only by a sibling or by
 the Task's own child — including a `blocked` handoff — owes nothing and is never
-reminded; the parent handles a `blocked` child on its own initiative. Lateral
-messages therefore carry no obligation machinery: no extra `task_send` or
-`task_update` parameter, no per-counterparty ledger, and no expectation level.
+reminded; the parent handles a `blocked` child on its own initiative. That turn
+neither creates nor clears a debt: if an earlier turn left one outstanding, it
+survives the non-parent delivery and is reminded at the first turn that ends
+with nothing left to drain. Lateral messages therefore carry no obligation
+machinery: no extra `task_send` or `task_update` parameter, no per-counterparty
+ledger, and no expectation level.
 The user-started case is deliberate — an agent-created Task must keep reporting
 on user-prompted turns — and `workflow_status` is not a condition. The reminder
 is a closing turn: it asks the Agent to report the turn's outcome and submit

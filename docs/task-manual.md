@@ -88,7 +88,10 @@ recovery aid, not a substitute for the Agent's typed handoff. That obligation
 is scoped to the parent edge: a turn the user starts owes, a collaboration turn
 owes only when its claimed batch includes the Task's parent, and a turn caused
 only by a sibling or by the Task's own child — including a `blocked` handoff —
-owes nothing. Lateral messages carry no obligation machinery.
+owes nothing. Such a non-parent turn neither creates nor clears a debt: if an
+earlier turn left one outstanding, it survives the delivery and is reminded at
+the first turn that ends with nothing left to drain. Lateral messages carry no
+obligation machinery.
 
 ## Communicate through messages
 
