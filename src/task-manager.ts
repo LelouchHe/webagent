@@ -1687,11 +1687,25 @@ export class TaskManager {
     bridge: DeliveryBridge,
     taskId: string,
   ): Promise<boolean> {
-    if (this.getBusyKind(taskId) !== null) return false;
+    const busyKind = this.getBusyKind(taskId);
+    if (busyKind === "agent") {
+      slog.debug("collaboration delivery skipped", {
+        taskId: taskId.slice(0, 8),
+        reason: "busy",
+      });
+      return false;
+    }
     // Enter a busy turn (which mints a new promptId) only when there is
     // something to deliver; otherwise the churn advances client turn
     // identity for nothing and can strand a finishing turn's terminator.
     if (this.store.countQueuedDeliveries(taskId) === 0) return false;
+    // Bash runs outside the ACP session, so it must not suppress a queued
+    // collaboration turn. Record the overlap explicitly for diagnosis.
+    if (busyKind === "bash") {
+      slog.debug("collaboration delivery allowed during bash", {
+        taskId: taskId.slice(0, 8),
+      });
+    }
     this.drainingCollaborationTasks.add(taskId);
     this.syncBusy(taskId);
     try {
