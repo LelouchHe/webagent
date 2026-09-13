@@ -289,77 +289,6 @@ function handlePermissionRequest(
   return false;
 }
 
-/**
- * Decide and apply lifecycle-handoff recovery for a finished turn. Every gate
- * is recorded at debug level: silent skips are what hid the original bug. The
- * obligation was fixed when the turn's prompt was submitted; it is never
- * re-derived here from Task state that user intervention, cancellation, or a
- * delivery can mutate.
- */
-function recoverHandoff(
-  tasks: TaskManager,
-  bridge: AgentBridge,
-  taskId: string,
-  gates: { isCurrent: boolean; owesHandoff: boolean; origin: string },
-): void {
-  const shortId = taskId.slice(0, 8);
-  const fields = {
-    taskId: shortId,
-    origin: gates.origin,
-    isCurrent: gates.isCurrent,
-    owesHandoff: gates.owesHandoff,
-  };
-  if (!gates.isCurrent) {
-    clog.debug("handoff reminder skipped", {
-      ...fields,
-      reason: "superseded",
-    });
-    return;
-  }
-  // Defer past the synchronous terminator broadcast: a busy patch minted by
-  // the drain must never race ahead of the finished turn's own terminator, or
-  // clients drop the terminator as a superseded turn and strand its pending
-  // tool/permission UI.
-  void Promise.resolve()
-    .then(async () => {
-      const drained = await tasks.drainCollaborationDeliveries(bridge, taskId);
-      if (drained) {
-        clog.debug("handoff reminder skipped", {
-          ...fields,
-          deliveryClaimed: true,
-          reason: "delivery_claimed",
-        });
-        return;
-      }
-      if (!gates.owesHandoff) {
-        clog.debug("handoff reminder skipped", {
-          ...fields,
-          deliveryClaimed: false,
-          reason: "no_obligation",
-        });
-        return;
-      }
-      // A busy or deleted task is named by promptHandoffReminder's own log;
-      // this line carries the full gate set either way.
-      if (await tasks.promptHandoffReminder(bridge, taskId)) {
-        clog.debug("handoff reminder issued", fields);
-      } else {
-        clog.debug("handoff reminder skipped", {
-          ...fields,
-          deliveryClaimed: false,
-          reason: "not_submittable",
-        });
-      }
-    })
-    .catch((error: unknown) => {
-      clog.warn("handoff recovery failed", {
-        taskId: shortId,
-        origin: gates.origin,
-        error,
-      });
-    });
-}
-
 function handlePromptDone(
   event: PromptDoneEvent,
   tasks: TaskManager,
@@ -379,13 +308,10 @@ function handlePromptDone(
   // already been superseded — it is the only copy of that text.
   const isCurrent = tasks.isCurrentPrompt(event.taskId, event.promptId);
   const taskBeforeIdle = isCurrent ? store.getTask(event.taskId) : null;
-  // Read the obligation this turn was submitted with. A cancelled turn still
-  // owes a handoff: cancellation changes what the reminder asks for, not
-  // whether the parent must learn the outcome.
-  const owesHandoff = tasks.owesHandoff(event.taskId);
   if (isCurrent) {
     tasks.activePrompts.delete(event.taskId);
-    tasks.syncBusy(event.taskId);
+    tasks.syncBusy(event.taskId, undefined, "prompt_done");
+    tasks.recoverUnfinishedWork(bridge, event.taskId, "prompt_done");
   } else {
     clog.info("completion from a superseded turn", {
       taskId: event.taskId.slice(0, 8),
@@ -410,11 +336,6 @@ function handlePromptDone(
   if (isCurrent && taskBeforeIdle?.workflow_status === "running") {
     store.updateTaskWorkflowStatus(event.taskId, "idle");
   }
-  recoverHandoff(tasks, bridge, event.taskId, {
-    isCurrent,
-    owesHandoff,
-    origin: "prompt_done",
-  });
 }
 
 function handleError(
@@ -429,10 +350,10 @@ function handleError(
     // not end the turn that replaced it. The buffered tail still flushes.
     const isCurrent = tasks.isCurrentPrompt(event.taskId, event.promptId);
     const taskBeforeIdle = isCurrent ? store.getTask(event.taskId) : null;
-    const owesHandoff = tasks.owesHandoff(event.taskId);
     if (isCurrent) {
       tasks.activePrompts.delete(event.taskId);
-      tasks.syncBusy(event.taskId);
+      tasks.syncBusy(event.taskId, undefined, "error");
+      tasks.recoverUnfinishedWork(bridge, taskId, "error");
     } else {
       clog.info("failure from a superseded turn", {
         taskId: event.taskId.slice(0, 8),
@@ -456,11 +377,6 @@ function handleError(
     if (isCurrent && taskBeforeIdle?.workflow_status === "running") {
       store.updateTaskWorkflowStatus(event.taskId, "idle");
     }
-    recoverHandoff(tasks, bridge, taskId, {
-      isCurrent,
-      owesHandoff,
-      origin: "error",
-    });
   }
 }
 
@@ -561,6 +477,7 @@ export function handleAgentEvent(
   pushService?: PushService,
   _clientRegistry?: ClientRegistry,
 ): void {
+  tasks.setRecoveryBridge(bridge);
   if (event.type === "usage_update") {
     handleUsageUpdate(event, tasks);
     return;

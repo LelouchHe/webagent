@@ -216,23 +216,36 @@ describe("Prompt REST API", () => {
       store.createTask(agentTaskId, tmpDir, "agent", `agent-${agentTaskId}`);
       const userTaskId = await createTask();
 
-      const agentRes = await makeRequest(
-        port,
-        "POST",
-        `/api/v1/tasks/${agentTaskId}/prompt`,
-        JSON.stringify({ text: "do the delegated work" }),
-      );
-      const userRes = await makeRequest(
-        port,
-        "POST",
-        `/api/v1/tasks/${userTaskId}/prompt`,
-        JSON.stringify({ text: "hello from the user" }),
-      );
+      let releasePrompt!: () => void;
+      const promptGate = new Promise<void>((resolve) => {
+        releasePrompt = resolve;
+      });
+      mockBridge.prompt = async () => {
+        await promptGate;
+      };
+      try {
+        const agentRes = await makeRequest(
+          port,
+          "POST",
+          `/api/v1/tasks/${agentTaskId}/prompt`,
+          JSON.stringify({ text: "do the delegated work" }),
+        );
+        const userRes = await makeRequest(
+          port,
+          "POST",
+          `/api/v1/tasks/${userTaskId}/prompt`,
+          JSON.stringify({ text: "hello from the user" }),
+        );
 
-      assert.equal(agentRes.status, 202);
-      assert.equal(userRes.status, 202);
-      assert.equal(tasks.owesHandoff(agentTaskId), true);
-      assert.equal(tasks.owesHandoff(userTaskId), false);
+        assert.equal(agentRes.status, 202);
+        assert.equal(userRes.status, 202);
+        // Keep both prompts active so the idle-edge recovery cannot settle
+        // the agent obligation before this submission-time assertion runs.
+        assert.equal(tasks.owesHandoff(agentTaskId), true);
+        assert.equal(tasks.owesHandoff(userTaskId), false);
+      } finally {
+        releasePrompt();
+      }
     });
 
     it("stores and broadcasts raw agent slash text but sends the canonical command to the bridge", async () => {
