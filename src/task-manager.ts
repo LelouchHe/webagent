@@ -90,14 +90,16 @@ const EMPTY_TASK_MIN_AGE_S = 60;
 const HANDOFF_REMINDER_TEXT = [
   "## Task Handoff Required",
   "",
-  "This Task turn ended without a lifecycle handoff.",
+  "This Task turn ended without a lifecycle handoff. Close this turn out now —",
+  "do not start any new work.",
   "",
-  "Choose one:",
-  "- Continue the work if it is not finished.",
+  "Report what this turn established, then do exactly one of:",
   "- If the assignment is complete, call `task_update(done, ...)` with the completion report.",
   "- If the Task cannot continue without input or a decision, call `task_update(blocked, ...)` and explain what is missing.",
   "",
-  "Do not end this Task turn with a prose answer only.",
+  "If the user cancelled this turn, say so plainly in that report instead of",
+  "resuming the cancelled work. Do not start new work, and do not end this turn",
+  "with a prose answer only.",
 ].join("\n");
 
 export class InvalidTaskDirectoryError extends Error {
@@ -166,6 +168,15 @@ export class TaskManager {
   readonly assistantBuffers = new Map<string, string>();
   readonly thinkingBuffers = new Map<string, string>();
   readonly activePrompts = new Set<string>();
+  /**
+   * Tasks whose live turn still owes a lifecycle handoff. Set when a work
+   * turn is submitted and cleared when that turn records `task_update` or
+   * when the reminder turn starts. `source` is a Task property, but "this
+   * turn was started by a collaboration delivery" is not one: deriving the
+   * obligation from `workflow_status === "running"` silently dropped
+   * user-prompted turns on agent-created Tasks.
+   */
+  private readonly handoffObligations = new Set<string>();
   /** Delivery rows currently being claimed/resolved for one target task. */
   private readonly drainingCollaborationTasks = new Set<string>();
   /** Tasks undergoing compact summary generation or ACP rotation. */
@@ -1326,6 +1337,7 @@ export class TaskManager {
     this.assistantBuffers.delete(id);
     this.thinkingBuffers.delete(id);
     this.activePrompts.delete(id);
+    this.handoffObligations.delete(id);
     this.compactingTasks.delete(id);
     this.resettingTasks.delete(id);
     this.rotatingTasks.delete(id);
@@ -1562,19 +1574,62 @@ export class TaskManager {
   }
 
   /**
-   * Give a collaboration task one recovery turn when its previous prompt
-   * ended while the workflow was still running. The caller has already
-   * transitioned the workflow back to idle; keeping this prompt out of the
-   * running status prevents a missing handoff from triggering a reminder loop.
+   * Record the lifecycle-handoff obligation for the work turn about to be
+   * submitted. Agent-created Tasks owe one per turn; user-created Tasks never
+   * do, and the reminder turn itself is exempt — that exemption is the only
+   * loop guard a prose-only reply to a reminder needs.
+   */
+  recordHandoffObligation(
+    taskId: string,
+    opts: { isHandoffReminder?: boolean } = {},
+  ): boolean {
+    const owes =
+      !opts.isHandoffReminder && this.store.getTask(taskId)?.source === "agent";
+    if (owes) this.handoffObligations.add(taskId);
+    else this.handoffObligations.delete(taskId);
+    return owes;
+  }
+
+  /**
+   * Retire the obligation once the live turn has actually handed off. Without
+   * this, every clean `task_update(done|blocked)` turn would draw a redundant
+   * reminder turn and a duplicate status message to the parent.
+   */
+  clearHandoffObligation(taskId: string): void {
+    this.handoffObligations.delete(taskId);
+  }
+
+  /** Whether the live turn for `taskId` still owes a lifecycle handoff. */
+  owesHandoff(taskId: string): boolean {
+    return this.handoffObligations.has(taskId);
+  }
+
+  /**
+   * Give an agent-created Task one closing turn when its previous prompt ended
+   * without a lifecycle handoff. The reminder turn is recorded as owing
+   * nothing, so a prose-only reply to it cannot trigger another reminder.
    */
   async promptHandoffReminder(
     bridge: Pick<AgentBridge, "prompt">,
     taskId: string,
   ): Promise<boolean> {
-    if (this.getBusyKind(taskId) !== null) return false;
+    if (this.getBusyKind(taskId) !== null) {
+      slog.debug("handoff reminder skipped", {
+        taskId: taskId.slice(0, 8),
+        reason: "busy",
+      });
+      return false;
+    }
     const task = this.store.getTask(taskId);
-    if (task?.workflow_status !== "idle") return false;
+    if (!task) {
+      slog.debug("handoff reminder skipped", {
+        taskId: taskId.slice(0, 8),
+        reason: "task_missing",
+      });
+      return false;
+    }
 
+    this.recordHandoffObligation(taskId, { isHandoffReminder: true });
     this.store.saveEvent(
       taskId,
       "system_message",
@@ -1647,6 +1702,7 @@ export class TaskManager {
       });
       this.store.updateTaskWorkflowStatus(taskId, "running");
       this.drainingCollaborationTasks.delete(taskId);
+      this.recordHandoffObligation(taskId);
       this.activePrompts.add(taskId);
       this.syncBusy(taskId);
       const promptId =
@@ -1702,6 +1758,7 @@ export class TaskManager {
     slog.info("auto-retrying interrupted turn", {
       taskId: taskId.slice(0, 8) + "…",
     });
+    this.recordHandoffObligation(taskId);
     this.activePrompts.add(taskId);
     this.syncBusy(taskId);
     const promptId =
