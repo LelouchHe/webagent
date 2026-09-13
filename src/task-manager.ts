@@ -25,6 +25,11 @@ import type {
 } from "./types.ts";
 
 import { TaskStateManager } from "./task-state.ts";
+import {
+  ObligationController,
+  type DirectedObligation,
+  type ObligationNotice,
+} from "./obligation-controller.ts";
 import { buildLabelMap, type LabelMap } from "./attachment-labels.ts";
 import { abbreviateHomePath, expandHomePath } from "./home-path.ts";
 import { log } from "./log.ts";
@@ -184,6 +189,8 @@ export class TaskManager {
   private readonly pendingWorkRecoveries = new Set<string>();
   /** Bridge used by busy→idle recovery when the transition has no caller bridge. */
   private recoveryBridge: DeliveryBridge | null = null;
+  /** Process-local directed-dispatch obligation state machine. */
+  private readonly obligations: ObligationController;
   /** Delivery rows currently being claimed/resolved for one target task. */
   private readonly drainingCollaborationTasks = new Set<string>();
   /** Tasks undergoing compact summary generation or ACP rotation. */
@@ -255,6 +262,21 @@ export class TaskManager {
     this.dataDir = dataDir;
     this.capabilities = capabilities;
     this.mcpBaseUrl = mcpBaseUrl;
+    this.obligations = new ObligationController({
+      now: () => Date.now(),
+      setTimer: (fn, ms) => setTimeout(fn, ms),
+      clearTimer: (handle) => {
+        clearTimeout(handle);
+      },
+      isAgentBusy: (taskId) => this.getBusyKind(taskId) === "agent",
+      submitReminder: (obligation) => this.submitObligationReminder(obligation),
+      emitNotice: (notice, obligation) => {
+        this.emitObligationNotice(notice, obligation);
+      },
+      log: (event, fields) => {
+        slog.debug(event, fields);
+      },
+    });
   }
 
   /**
@@ -1727,6 +1749,56 @@ export class TaskManager {
         reason: "not_submittable",
       });
     }
+  }
+
+  /**
+   * Settle one directed obligation from a correlated `task_update`. Returns
+   * the created account message and the stored source it was addressed to, or
+   * `undefined` when the id is invalid, stale, wrong-target, or already
+   * settled — in which case no store or source-message change occurs.
+   */
+  settleObligation(
+    sourceTaskId: string,
+    obligationId: string,
+    status: "blocked" | "done",
+    body: string,
+  ):
+    | { collaborationMessageId: string | null; accountTargetTaskId: string }
+    | undefined {
+    return this.obligations.settle({
+      sourceTaskId,
+      obligationId,
+      run: (obligation) => {
+        const { collaborationMessageId } = this.store.recordAgentWorkflowUpdate(
+          sourceTaskId,
+          status,
+          body,
+          obligation.sourceTaskId,
+        );
+        return {
+          collaborationMessageId,
+          accountTargetTaskId: obligation.sourceTaskId,
+        };
+      },
+    });
+  }
+
+  /** Submit one accounting reminder; implemented with the arming path. */
+  private submitObligationReminder(
+    _obligation: DirectedObligation,
+  ): Promise<boolean> {
+    return Promise.resolve(false);
+  }
+
+  /** Emit a runtime outcome notice; implemented with the notice dispatcher. */
+  private emitObligationNotice(
+    notice: ObligationNotice,
+    _obligation: DirectedObligation,
+  ): void {
+    slog.debug("obligation notice", {
+      obligationId: notice.obligationId,
+      reason: notice.reason,
+    });
   }
 
   /**
