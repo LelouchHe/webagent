@@ -65,6 +65,24 @@ async function assertMcpInitialize(
   assert.equal(response.status, 200);
 }
 
+function makeRecoveryBridge(promptTexts: string[]) {
+  return {
+    async newSession() {
+      return { sessionId: "", configOptions: [] };
+    },
+    async setConfigOption() {
+      return [];
+    },
+    async loadSession(taskId: string) {
+      return { taskId, configOptions: [] };
+    },
+    async prompt(_taskId: string, text: string) {
+      promptTexts.push(text);
+    },
+    async cancel() {},
+  };
+}
+
 describe("TaskManager", () => {
   let store: Store;
   let sm: TaskManager;
@@ -1383,6 +1401,115 @@ describe("TaskManager", () => {
       assert.equal(sm.isPromptSubmissionCancelled(first), true);
       sm.releasePromptSubmission("s1", first);
       assert.equal(sm.isPromptSubmissionCancelled(first), false);
+    });
+
+    it("recovers a delivery after a pending prompt is cancelled", async () => {
+      store.createTask("root", tmpDir, "root", "agent-root");
+      store.createTask("source", tmpDir, "agent", "agent-source", "root");
+      store.createTask("target", tmpDir, "agent", "agent-target", "root");
+      sm.liveTasks.add("target");
+      store.createCollaborationMessage({
+        id: "cancelled-message",
+        deliveryId: "cancelled-delivery",
+        sourceTaskId: "source",
+        directTargetTaskId: "target",
+        sourceActor: "agent",
+        body: "Deliver after the cancelled submission.",
+      });
+      const prompts: string[] = [];
+      const bridge = makeRecoveryBridge(prompts);
+      const submissionId = sm.reservePromptSubmission("target");
+      assert.ok(submissionId);
+      sm.syncBusy("target");
+
+      // The delivery is observed during the pending submission and is
+      // intentionally rejected by the ACP busy guard. This call is the
+      // registration point for the later idle recovery in the fixed code.
+      assert.equal(
+        await sm.drainCollaborationDeliveries(bridge, "target"),
+        false,
+      );
+      const cancelled = await sm.cancelTaskExecution("target", bridge, 0);
+      // Pending submissions are cancelled before ACP starts, so no terminal
+      // response is awaited; the route still releases the reservation below.
+      assert.equal(cancelled.status, "cancelled");
+      // The route releases the submission after cancelTaskExecution returns.
+      sm.releasePromptSubmission("target", submissionId);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+
+      // This fails if the busy→idle transition does not retry queued work.
+      assert.equal(prompts.length, 1);
+      assert.match(prompts[0], /Deliver after the cancelled submission/);
+      assert.equal(
+        store.getCollaborationDelivery("cancelled-delivery")?.status,
+        "delivered",
+      );
+    });
+
+    it("bounds recovery to one drain and one reminder per idle transition", async () => {
+      store.createTask("child", tmpDir, "agent", "agent-child");
+      const prompts: string[] = [];
+      const bridge = makeRecoveryBridge(prompts);
+      sm.setRecoveryBridge(bridge);
+      sm.recordHandoffObligation("child");
+      sm.activePrompts.add("child");
+      sm.syncBusy("child");
+      let drainCalls = 0;
+      let reminderCalls = 0;
+      const drain = sm.drainCollaborationDeliveries.bind(sm);
+      const reminder = sm.promptHandoffReminder.bind(sm);
+      (sm as any).drainCollaborationDeliveries = async (
+        bridgeArg: Parameters<TaskManager["drainCollaborationDeliveries"]>[0],
+        taskId: string,
+      ) => {
+        drainCalls++;
+        return drain(bridgeArg, taskId);
+      };
+      (sm as any).promptHandoffReminder = async (
+        bridgeArg: Parameters<TaskManager["promptHandoffReminder"]>[0],
+        taskId: string,
+      ) => {
+        reminderCalls++;
+        return reminder(bridgeArg, taskId);
+      };
+
+      sm.activePrompts.delete("child");
+      sm.syncBusy("child");
+      // Repeated syncs while already idle must not enqueue another recovery.
+      sm.syncBusy("child");
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      await new Promise<void>((resolve) => setImmediate(resolve));
+
+      // These fail if recovery recursively re-enters or misses the transition.
+      assert.equal(drainCalls, 1);
+      assert.equal(reminderCalls, 1);
+      assert.equal(prompts.length, 1);
+    });
+
+    it("does not recover when an idle transition has no unfinished work", async () => {
+      store.createTask("manual", tmpDir, "auto", "agent-manual");
+      const prompts: string[] = [];
+      const bridge = makeRecoveryBridge(prompts);
+      sm.setRecoveryBridge(bridge);
+      sm.activePrompts.add("manual");
+      sm.syncBusy("manual");
+      let drainCalls = 0;
+      const drain = sm.drainCollaborationDeliveries.bind(sm);
+      (sm as any).drainCollaborationDeliveries = async (
+        bridgeArg: Parameters<TaskManager["drainCollaborationDeliveries"]>[0],
+        taskId: string,
+      ) => {
+        drainCalls++;
+        return drain(bridgeArg, taskId);
+      };
+
+      sm.activePrompts.delete("manual");
+      sm.syncBusy("manual");
+      await new Promise<void>((resolve) => setImmediate(resolve));
+
+      // This fails if every idle transition invents a recovery prompt.
+      assert.equal(drainCalls, 0);
+      assert.equal(prompts.length, 0);
     });
   });
 

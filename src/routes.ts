@@ -1317,6 +1317,7 @@ export function createRequestHandler(
           });
           return;
         }
+        tasks.setRecoveryBridge(bridge);
 
         const { opId, replayed } = tryReplayClientOp(req, res, store, taskId);
         if (replayed) return;

@@ -177,6 +177,10 @@ export class TaskManager {
    * user-prompted turns on agent-created Tasks.
    */
   private readonly handoffObligations = new Set<string>();
+  /** One microtask recovery per task while an unfinished-work retry is active. */
+  private readonly pendingWorkRecoveries = new Set<string>();
+  /** Bridge used by busy→idle recovery when the transition has no caller bridge. */
+  private recoveryBridge: DeliveryBridge | null = null;
   /** Delivery rows currently being claimed/resolved for one target task. */
   private readonly drainingCollaborationTasks = new Set<string>();
   /** Tasks undergoing compact summary generation or ACP rotation. */
@@ -1338,6 +1342,7 @@ export class TaskManager {
     this.thinkingBuffers.delete(id);
     this.activePrompts.delete(id);
     this.handoffObligations.delete(id);
+    this.pendingWorkRecoveries.delete(id);
     this.compactingTasks.delete(id);
     this.resettingTasks.delete(id);
     this.rotatingTasks.delete(id);
@@ -1540,12 +1545,22 @@ export class TaskManager {
    * `promptId` attaches to an agent busy transition (ignored otherwise). If
    * omitted when staying agent-busy, the existing promptId is preserved.
    */
-  syncBusy(taskId: string, promptId?: string | null): void {
+  syncBusy(
+    taskId: string,
+    promptId?: string | null,
+    recoveryOrigin = "busy_idle",
+  ): void {
     const kind = this.getBusyKind(taskId);
     const current = this.state.getState(taskId).runtime.busy;
     if (kind === null) {
-      if (current !== null)
+      const becameIdle = current !== null;
+      if (becameIdle) {
         this.state.patch(taskId, { runtime: { busy: null } });
+        // Every busy→idle transition retries unfinished work. The condition
+        // deliberately checks only queued deliveries or handoff debt, not the
+        // busy source, so a future busy source cannot silently strand work.
+        this.scheduleUnfinishedWorkRecovery(taskId, recoveryOrigin);
+      }
       // Also clear any pending cancel safety net now that we are idle.
       this.state.clearCancelSafety(taskId);
       return;
@@ -1571,6 +1586,124 @@ export class TaskManager {
         },
       },
     });
+  }
+
+  /** Remember the bridge used by a caller that may later transition idle. */
+  setRecoveryBridge(bridge: DeliveryBridge): void {
+    this.recoveryBridge = bridge;
+  }
+
+  /**
+   * Schedule the one recovery implementation after an event-handler finish.
+   * `syncBusy()` normally schedules this at the busy→idle edge; the explicit
+   * event-handler call supplies the bridge and terminal-event origin when the
+   * edge itself had no registered bridge. Pending-task deduplication makes the
+   * two entry points one bounded recovery, not two prompts.
+   */
+  recoverUnfinishedWork(
+    bridge: DeliveryBridge,
+    taskId: string,
+    origin: string,
+  ): void {
+    this.setRecoveryBridge(bridge);
+    const busyKind = this.getBusyKind(taskId);
+    if (busyKind === "agent") return;
+    if (this.state.getState(taskId).runtime.busy?.kind === "agent") return;
+    if (!this.store.getTask(taskId)) return;
+    const fields = {
+      taskId: taskId.slice(0, 8),
+      origin,
+      isCurrent: true,
+      owesHandoff: this.handoffObligations.has(taskId),
+    };
+    if (this.store.countQueuedDeliveries(taskId) === 0 && !fields.owesHandoff) {
+      slog.debug("handoff reminder skipped", {
+        ...fields,
+        deliveryClaimed: false,
+        reason: "no_obligation",
+      });
+      return;
+    }
+    this.scheduleUnfinishedWorkRecovery(taskId, origin);
+  }
+
+  private scheduleUnfinishedWorkRecovery(taskId: string, origin: string): void {
+    if (this.pendingWorkRecoveries.has(taskId)) return;
+    if (!this.recoveryBridge) return;
+    if (
+      !this.store.getTask(taskId) ||
+      this.resettingTasks.has(taskId) ||
+      this.rotatingTasks.has(taskId)
+    ) {
+      return;
+    }
+    if (
+      this.store.countQueuedDeliveries(taskId) === 0 &&
+      !this.handoffObligations.has(taskId)
+    ) {
+      return;
+    }
+
+    const bridge = this.recoveryBridge;
+    this.pendingWorkRecoveries.add(taskId);
+    void Promise.resolve()
+      .then(() => this.runUnfinishedWorkRecovery(bridge, taskId, origin))
+      .catch((error: unknown) => {
+        slog.warn("unfinished work recovery failed", {
+          taskId: taskId.slice(0, 8),
+          origin,
+          error,
+        });
+      })
+      .finally(() => {
+        this.pendingWorkRecoveries.delete(taskId);
+      });
+  }
+
+  private async runUnfinishedWorkRecovery(
+    bridge: DeliveryBridge,
+    taskId: string,
+    origin: string,
+  ): Promise<void> {
+    if (
+      !this.store.getTask(taskId) ||
+      this.resettingTasks.has(taskId) ||
+      this.rotatingTasks.has(taskId)
+    ) {
+      return;
+    }
+    const fields = {
+      taskId: taskId.slice(0, 8),
+      origin,
+      isCurrent: true,
+      owesHandoff: this.handoffObligations.has(taskId),
+    };
+    const drained = await this.drainCollaborationDeliveries(bridge, taskId);
+    if (drained) {
+      slog.debug("handoff reminder skipped", {
+        ...fields,
+        deliveryClaimed: true,
+        reason: "delivery_claimed",
+      });
+      return;
+    }
+    if (!this.handoffObligations.has(taskId)) {
+      slog.debug("handoff reminder skipped", {
+        ...fields,
+        deliveryClaimed: false,
+        reason: "no_obligation",
+      });
+      return;
+    }
+    if (await this.promptHandoffReminder(bridge, taskId)) {
+      slog.debug("handoff reminder issued", fields);
+    } else {
+      slog.debug("handoff reminder skipped", {
+        ...fields,
+        deliveryClaimed: false,
+        reason: "not_submittable",
+      });
+    }
   }
 
   /**
@@ -1617,6 +1750,7 @@ export class TaskManager {
     bridge: DeliveryBridge,
     taskId: string,
   ): Promise<boolean> {
+    this.setRecoveryBridge(bridge);
     const busyKind = this.getBusyKind(taskId);
     if (busyKind === "agent") {
       slog.debug("handoff reminder skipped", {
@@ -1687,6 +1821,7 @@ export class TaskManager {
     bridge: DeliveryBridge,
     taskId: string,
   ): Promise<boolean> {
+    this.setRecoveryBridge(bridge);
     const busyKind = this.getBusyKind(taskId);
     if (busyKind === "agent") {
       slog.debug("collaboration delivery skipped", {
