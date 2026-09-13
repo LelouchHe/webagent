@@ -1004,6 +1004,96 @@ describe("handleAgentEvent", () => {
     assert.equal(calls.prompts.length, 1);
   });
 
+  it("keeps an outstanding handoff debt when a later sibling delivery claims the turn", async () => {
+    store.createTask("root", "/tmp", "root", "agent-root");
+    store.createTask("parent", "/tmp", "agent", "agent-parent", "root");
+    store.createTask("target", "/tmp", "agent", "agent-target", "parent");
+    store.createTask("sibling", "/tmp", "agent", "agent-sibling", "parent");
+    tasks.liveTasks.add("target");
+    const { bridge, calls } = createMockBridge();
+    const { sseManager } = createMockSseManager();
+    const lines: string[] = [];
+    const previousLevel = getLogLevel();
+    setLogLevel("debug");
+    setLogSink((_stream, line) => lines.push(line));
+
+    try {
+      // A user-started turn of `target` owes a handoff and ends without one.
+      const userPromptId = startUserTurn(tasks, "target");
+      // A sibling delivery arrives while `target` is agent-busy, so it queues
+      // behind the live turn rather than starting one.
+      store.createCollaborationMessage({
+        id: "late-sibling",
+        deliveryId: "late-sibling-delivery",
+        sourceTaskId: "sibling",
+        directTargetTaskId: "target",
+        sourceActor: "agent",
+        body: "A sibling note that arrives mid-turn.",
+        createdAt: Date.now(),
+      });
+
+      handleAgentEvent(
+        {
+          type: "prompt_done",
+          taskId: "target",
+          promptId: userPromptId,
+          stopReason: "end_turn",
+        } as any,
+        tasks,
+        store,
+        bridge,
+        makeEventHandlerConfig(),
+        sseManager as any,
+      );
+      await new Promise<void>((resolve) => setImmediate(resolve));
+
+      // The sibling batch claimed the replacement turn. It neither created nor
+      // cleared debt: `target` still owes for the unanswered user turn. This
+      // fails at d31c14f, which deleted the flag on the non-parent drain.
+      assert.equal(calls.prompts.length, 1);
+      assert.match(
+        calls.prompts[0].text,
+        /A sibling note that arrives mid-turn/,
+      );
+      assert.equal(tasks.owesHandoff("target"), true);
+
+      // The skip log must report the post-drain state, not the stale pre-drain
+      // snapshot that still read `true` while the debt was being deleted. This
+      // fails at d31c14f, which had no post-drain field.
+      const claimed = lines.find(
+        (line) =>
+          line.includes("handoff reminder skipped") &&
+          line.includes('"reason":"delivery_claimed"'),
+      );
+      assert.ok(claimed, "the claimed-delivery skip must be recorded");
+      assert.match(claimed, /"owesHandoffBefore":true/);
+      assert.match(claimed, /"owesHandoffAfterDrain":true/);
+
+      // The drain turn ends with nothing left to drain, so the preserved debt
+      // is reminded now rather than lost.
+      handleAgentEvent(
+        {
+          type: "prompt_done",
+          taskId: "target",
+          promptId: calls.prompts[0].promptId,
+          stopReason: "end_turn",
+        } as any,
+        tasks,
+        store,
+        bridge,
+        makeEventHandlerConfig(),
+        sseManager as any,
+      );
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    } finally {
+      setLogSink(null);
+      setLogLevel(previousLevel);
+    }
+
+    assert.equal(calls.prompts.length, 2);
+    assert.match(calls.prompts[1].text, /Task Handoff Required/);
+  });
+
   it("owes a handoff on a user-started turn of an agent-created task", () => {
     store.createTask("child", "/tmp", "agent", "agent-child");
 
@@ -1148,6 +1238,10 @@ describe("handleAgentEvent", () => {
     assert.equal(calls.prompts.length, 1);
     assert.match(calls.prompts[0].text, /Continue with the next check/);
     assert.doesNotMatch(calls.prompts[0].text, /Task Handoff Required/);
+    // The sibling sender does not include `target`'s parent, so the drain
+    // neither creates nor clears debt: the user turn's outstanding handoff
+    // survives the delivery turn. This fails at d31c14f, which dropped it.
+    assert.equal(tasks.owesHandoff("target"), true);
   });
 
   it("does not remind after an agent task records a done or blocked handoff", async () => {
