@@ -470,6 +470,69 @@ describe("handleAgentEvent", () => {
 
   // Acceptance (a): the obligation comes from the Task, not from how the turn
   // started. A user-prompted turn on an agent-created Task owes a handoff.
+  it("submits a reminder while a user bash command is still running", async () => {
+    store.createTask("child", "/tmp", "agent", "agent-child");
+    const { bridge, calls } = createMockBridge();
+    const { sseManager } = createMockSseManager();
+    const promptId = startUserTurn(tasks, "child");
+    // The REST bash route permits this orthogonal user process alongside ACP
+    // work. Keeping the fake process in the map proves the reminder is sent
+    // while Bash remains active, not after it has finished.
+    tasks.runningBashProcs.set("child", {} as any);
+    const lines: string[] = [];
+    const previousLevel = getLogLevel();
+    setLogLevel("debug");
+    setLogSink((_stream, line) => lines.push(line));
+    try {
+      handleAgentEvent(
+        {
+          type: "prompt_done",
+          taskId: "child",
+          promptId,
+          stopReason: "end_turn",
+        } as any,
+        tasks,
+        store,
+        bridge,
+        makeEventHandlerConfig(),
+        sseManager as any,
+      );
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    } finally {
+      setLogSink(null);
+      setLogLevel(previousLevel);
+    }
+
+    // This fails if the reminder gate still rejects every non-null
+    // getBusyKind(), which is the regression this test protects.
+    assert.equal(calls.prompts.length, 1);
+    // This fails if the Bash exception is silent or is incorrectly logged as a
+    // skipped busy reminder instead of recording the allowed overlap.
+    assert.ok(
+      lines.some((line) =>
+        line.includes("handoff reminder allowed during bash"),
+      ),
+      "parallel Bash allowance must be diagnosable",
+    );
+    assert.equal(tasks.runningBashProcs.has("child"), true);
+
+    tasks.runningBashProcs.delete("child");
+  });
+
+  it("keeps the reminder blocked by an active ACP prompt", async () => {
+    store.createTask("child", "/tmp", "agent", "agent-child");
+    const { bridge, calls } = createMockBridge();
+    tasks.recordHandoffObligation("child");
+    // A new ACP prompt is the busy condition the reminder must still reject.
+    tasks.activePrompts.add("child");
+
+    const submitted = await tasks.promptHandoffReminder(bridge, "child");
+
+    // This fails if the narrowed gate accidentally permits all busy kinds.
+    assert.equal(submitted, false);
+    assert.equal(calls.prompts.length, 0);
+  });
+
   it("reminds an agent task whose turn was started by a user prompt", async () => {
     store.createTask("child", "/tmp", "agent", "agent-child");
     const { bridge, calls } = createMockBridge();
