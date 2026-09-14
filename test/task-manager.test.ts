@@ -267,6 +267,27 @@ describe("TaskManager", () => {
       assert.equal(store.getTask("s1"), undefined);
     });
 
+    it("purges obligation records when a task is released", async () => {
+      store.createTask("root", tmpDir, "root", "agent-root");
+      store.createTask("source", tmpDir, "agent", "agent-source", "root");
+      store.createTask("target", tmpDir, "agent", "agent-target", "source");
+      store.createCollaborationMessage({
+        id: "purge-message",
+        deliveryId: "purge-delivery",
+        sourceTaskId: "source",
+        directTargetTaskId: "target",
+        sourceActor: "agent",
+        body: "Dispatch.",
+      });
+      assert.ok(sm.getObligation("source", "target"));
+
+      await sm.deleteTask(undefined, "target");
+
+      // Mutation evidence: without releaseTaskRuntime purging the controller,
+      // the deleted task's record survives in the edge-keyed map.
+      assert.equal(sm.getObligation("source", "target"), undefined);
+    });
+
     it("cascades to descendants, cleaning their runtime state and retiring executions", async () => {
       store.createTask("parent", "/a", "auto", "agent-parent");
       store.createTask("child", "/b", "auto", "agent-child", "parent");

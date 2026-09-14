@@ -637,6 +637,30 @@ export class ObligationController {
     this.watchdogTimers.clear();
     this.watchdog.clear();
   }
+
+  /**
+   * Drop every record whose source or target is `taskId`, cancelling its
+   * timers. Called when a task is released so a deleted task cannot leave a
+   * record or a scheduled attempt behind; this is hygiene, not deletion
+   * recovery.
+   */
+  purgeTask(taskId: string): void {
+    for (const [key, obligation] of [...this.active]) {
+      if (
+        obligation.sourceTaskId !== taskId &&
+        obligation.targetTaskId !== taskId
+      ) {
+        continue;
+      }
+      this.clearAttemptTimer(key);
+      this.clearWatchdogTimer(key);
+      this.watchdog.delete(key);
+      this.active.delete(key);
+    }
+    for (const seen of [...this.silenceNotified]) {
+      if (seen.startsWith(`${taskId}\u0000`)) this.silenceNotified.delete(seen);
+    }
+  }
 }
 
 /**
