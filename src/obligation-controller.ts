@@ -78,9 +78,10 @@ export interface DirectedObligation {
   openingDeliveryId: string;
   openedAt: number;
   /**
-   * Turn identity (promptId) of the dispatch that currently owns this record.
-   * Internal only: it guards late callbacks from a superseded dispatch, and is
-   * not the agent-visible correlation token that was rejected.
+   * Turn identity (promptId) of the live dispatch attempt that owns this
+   * record. It is installed at the start of that attempt's drain and replaced
+   * only when a newer attempt's drain installs its own; a coalescing follow-up
+   * keeps it. Internal only, and not the agent-visible token that was rejected.
    */
   dispatchPromptId?: string;
   /**
@@ -177,8 +178,10 @@ function silenceKey(targetTaskId: string, promptId: string): string {
 /**
  * Strict, uniform attempt-identity comparison: a fact carrying identity X
  * applies only when the record's current identity is exactly X (both
- * `undefined` counts as "no identity"). A record with no identity therefore
- * accepts only facts that also carry none.
+ * `undefined` counts as "no identity"). The current identity is the live
+ * dispatch attempt's, so only a fact from that attempt — or from the drain
+ * that owns it — applies; a fact from an older attempt after a newer attempt
+ * installed its identity is dropped.
  */
 function matchesDispatch(
   obligation: DirectedObligation,
@@ -386,9 +389,9 @@ export class ObligationController {
       existing.openingMessageId = input.messageId;
       existing.openingDeliveryId = input.deliveryId;
       existing.epoch += 1;
-      // Clear the superseded attempt's identity: until the follow-up's own
-      // beginDispatch, no callback may match this record again.
-      existing.dispatchPromptId = undefined;
+      // Ownership stays with the live attempt: a coalescing follow-up is not a
+      // new attempt, it only adds its message to the batch that attempt will
+      // deliver, so it must not clear or replace the identity here.
       // `awaiting_delivery` and `open` stay; `reminder_due` and an in-flight
       // `reminder_submitting` return to `open` so the next turn boundary
       // resumes recovery with the refreshed budget, and the in-flight

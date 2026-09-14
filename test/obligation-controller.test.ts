@@ -587,38 +587,59 @@ describe("ObligationController", () => {
     assert.equal(obligation.consecutiveSubmissionFailures, 1);
   });
 
-  it("ignores a hand-off from an attempt superseded by coalescing", () => {
+  it("keeps the live attempt's ownership across coalescing", () => {
     const h = makeController();
     const obligation = armDirect(h);
     h.controller.beginDispatch("parent", "child", "dispatch-A");
-    // B coalesces while A is in flight; the record's identity is cleared.
+    // A's resume is in flight; a follow-up coalesces its message into the
+    // batch A's drain will deliver.
     h.controller.arm({
       sourceTaskId: "parent",
       targetTaskId: "child",
       messageId: "m-2",
       deliveryId: "d-2",
     });
-    assert.equal(obligation.dispatchPromptId, undefined);
+    // Coalescing is not a new attempt, so A still owns the record.
+    assert.equal(obligation.dispatchPromptId, "dispatch-A");
 
-    // Mutation evidence: a lenient comparison accepts A here, opens the
-    // coalesced record, reinstalls A, and clears B's dispatch advisory.
+    // Mutation evidence: clearing the identity on coalescing rejects this
+    // hand-off, leaving the record awaiting_delivery and the target with a
+    // spurious reminder turn for content it received.
+    h.controller.markDelivered("parent", "child", "dispatch-A");
+    assert.notEqual(obligation.state, "awaiting_delivery");
+    assert.equal(obligation.dispatchPromptId, "dispatch-A");
+  });
+
+  it("rejects a hand-off from an older attempt after a newer attempt began", () => {
+    const h = makeController();
+    const obligation = armDirect(h);
+    h.controller.beginDispatch("parent", "child", "dispatch-A");
+    h.controller.arm({
+      sourceTaskId: "parent",
+      targetTaskId: "child",
+      messageId: "m-2",
+      deliveryId: "d-2",
+    });
+    h.controller.beginDispatch("parent", "child", "dispatch-B");
+
+    // A is now genuinely stale: a newer attempt installed its own identity.
     h.controller.markDelivered("parent", "child", "dispatch-A");
     assert.equal(obligation.state, "awaiting_delivery");
-    assert.equal(obligation.dispatchPromptId, undefined);
+    assert.equal(obligation.dispatchPromptId, "dispatch-B");
     assert.equal((h.controller as any).dispatchAdvisoryTimers.size, 1);
 
-    // The follow-up's own hand-off still applies.
-    h.controller.beginDispatch("parent", "child", "dispatch-B");
+    // The newer attempt's hand-off applies.
     h.controller.markDelivered("parent", "child", "dispatch-B");
     assert.notEqual(obligation.state, "awaiting_delivery");
     assert.equal(obligation.dispatchPromptId, "dispatch-B");
   });
 
-  it("ignores a failure from an attempt superseded by coalescing", () => {
+  it("applies the live attempt's failure across coalescing", () => {
     const h = makeController();
     const obligation = armDirect(h);
     h.controller.beginDispatch("parent", "child", "resume-A");
-    // A's resume is still in flight when B coalesces onto the edge.
+    // A's resume is still in flight when a follow-up coalesces; A remains the
+    // live attempt, so A's failure is the record's own transport accounting.
     h.controller.arm({
       sourceTaskId: "parent",
       targetTaskId: "child",
@@ -626,23 +647,19 @@ describe("ObligationController", () => {
       deliveryId: "d-2",
     });
 
-    // Mutation evidence: a preserved identity lets A's late failure consume
-    // the coalesced record's transport budget.
+    // Mutation evidence: treating coalescing as a supersession drops the live
+    // attempt's own failure instead of counting it.
     h.controller.markDeliveryFailed("parent", "child", "resume-A");
-    assert.equal(obligation.consecutiveSubmissionFailures, 0);
-    assert.equal(obligation.dispatchPromptId, undefined);
-
-    // The follow-up's own attempt still counts once it takes over.
-    h.controller.beginDispatch("parent", "child", "resume-B");
-    h.controller.markDeliveryFailed("parent", "child", "resume-B");
     assert.equal(obligation.consecutiveSubmissionFailures, 1);
+    assert.equal(obligation.dispatchPromptId, "resume-A");
   });
 
   it("ignores a resume failure from a superseded dispatch", () => {
     const h = makeController();
     const obligation = armDirect(h);
     h.controller.beginDispatch("parent", "child", "resume-A");
-    // A's resume is in flight; B coalesces onto the same edge and takes over.
+    // A's resume is in flight; a follow-up coalesces, then a newer attempt
+    // installs its own identity.
     h.controller.arm({
       sourceTaskId: "parent",
       targetTaskId: "child",
