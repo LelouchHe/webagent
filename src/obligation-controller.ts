@@ -12,9 +12,10 @@
  * record's state and the target's active agent turn, not from a value the
  * agent must echo back.
  *
- * Only direct parent→child dispatch calls `arm()`; creation, user prompts,
- * sibling/child messages, reminders, cancellation, supersession, rotation, and
- * incoming status/notice messages neither arm nor settle an edge.
+ * Every external event enters through `apply(fact)`. A fact is named, carries
+ * the identity of the turn it describes, and is a no-op when that identity does
+ * not match the record's current identity. `apply` is the single transition
+ * point: no other method mutates the record or arms a timer.
  */
 
 /** Successful closing prompts a target may receive before `unresolved`. */
@@ -71,24 +72,49 @@ export type ObligationState =
   | "unresolved"
   | "settled";
 
-export interface DirectedObligation {
+export type ObligationTimerKind =
+  | "attempt"
+  | "watchdog"
+  | "dispatch_advisory"
+  | "age_advisory";
+
+/**
+ * Read-only projection of a live record. The mutable record type stays private
+ * to this module: callers observe state and feed facts, never write fields.
+ */
+export interface ObligationView {
+  readonly sourceTaskId: string;
+  readonly targetTaskId: string;
+  readonly openingMessageId: string;
+  readonly openingDeliveryId: string;
+  readonly openedAt: number;
+  /**
+   * Turn identity (promptId) of the live dispatch attempt that owns this
+   * record. Installed at the start of that attempt's drain and replaced only by
+   * a newer attempt's drain; a coalescing follow-up keeps it.
+   */
+  readonly dispatchPromptId?: string;
+  /**
+   * Recovery-budget generation. A coalescing follow-up bumps it so an
+   * in-flight reminder submission from the previous generation is ignored.
+   * Deliberately distinct from hand-off ownership.
+   */
+  readonly epoch: number;
+  readonly state: ObligationState;
+  readonly deliveredAttempts: number;
+  readonly consecutiveSubmissionFailures: number;
+  readonly lastDeliveredAttemptAt?: number;
+  readonly nextAttemptAt?: number;
+  readonly noAccountNotified: boolean;
+}
+
+interface ObligationRecord {
   sourceTaskId: string;
   targetTaskId: string;
   openingMessageId: string;
   openingDeliveryId: string;
   openedAt: number;
-  /**
-   * Turn identity (promptId) of the live dispatch attempt that owns this
-   * record. It is installed at the start of that attempt's drain and replaced
-   * only when a newer attempt's drain installs its own; a coalescing follow-up
-   * keeps it. Internal only, and not the agent-visible token that was rejected.
-   */
   dispatchPromptId?: string;
-  /**
-   * Monotonic epoch for this record's recovery budget. A coalescing follow-up
-   * bumps it, so an in-flight reminder submission from the previous epoch is
-   * ignored instead of counting against the refreshed budget.
-   */
   epoch: number;
   state: ObligationState;
   deliveredAttempts: number;
@@ -97,6 +123,75 @@ export interface DirectedObligation {
   nextAttemptAt?: number;
   noAccountNotified: boolean;
 }
+
+/**
+ * The named vocabulary of external events. Every fact carries the identity of
+ * the turn it describes: dispatch-scoped facts carry the dispatch attempt id,
+ * the reminder outcome carries the recovery generation. A fact whose identity
+ * does not match the record is a no-op.
+ */
+export type ObligationFact =
+  | {
+      type: "armed";
+      sourceTaskId: string;
+      targetTaskId: string;
+      messageId: string;
+      deliveryId: string;
+    }
+  | {
+      type: "attempt_begun";
+      sourceTaskId: string;
+      targetTaskId: string;
+      attemptId: string;
+    }
+  | {
+      type: "handed_over";
+      sourceTaskId: string;
+      targetTaskId: string;
+      attemptId?: string;
+    }
+  | {
+      type: "dispatch_succeeded";
+      sourceTaskId: string;
+      targetTaskId: string;
+      attemptId?: string;
+    }
+  | {
+      type: "dispatch_failed";
+      sourceTaskId: string;
+      targetTaskId: string;
+      attemptId?: string;
+    }
+  | { type: "turn_begun"; targetTaskId: string; attemptId: string }
+  | { type: "turn_ended"; targetTaskId: string }
+  | { type: "turn_aborted"; targetTaskId: string }
+  | { type: "agent_activity"; targetTaskId: string; at: number }
+  | { type: "released"; taskId: string }
+  | { type: "reminder_started"; sourceTaskId: string; targetTaskId: string }
+  | {
+      type: "reminder_resolved";
+      sourceTaskId: string;
+      targetTaskId: string;
+      recoveryGeneration: number;
+      accepted: boolean;
+    }
+  | {
+      type: "timer_due";
+      sourceTaskId: string;
+      targetTaskId: string;
+      kind: ObligationTimerKind;
+      attemptId?: string;
+    }
+  | {
+      type: "settle_requested";
+      targetTaskId: string;
+      activeTurn: ActiveAgentTurn | null;
+      run: (decision: SettlementDecision) => unknown;
+    }
+  | { type: "disposed" };
+
+/** Compatibility alias: the read-only record projection callers observe. */
+export type DirectedObligation = ObligationView;
 
 export type ObligationNoticeReason =
   | "no_account"
@@ -138,7 +233,7 @@ export interface ObligationControllerOptions {
   /**
    * True when `promptId` is still the target's live turn. A silence notice is
    * emitted only for a live turn, so a runtime reset that clears busy state
-   * without going through `onTargetTurnEnded` cannot produce a stale notice.
+   * without going through a turn-end fact cannot produce a stale notice.
    */
   isTurnRunning?: (taskId: string, promptId: string) => boolean;
   /**
@@ -146,18 +241,15 @@ export interface ObligationControllerOptions {
    * when the bridge accepts (and the turn completes); a rejected submission
    * must resolve `false`.
    */
-  submitReminder: (obligation: DirectedObligation) => Promise<boolean>;
+  submitReminder: (obligation: ObligationView) => Promise<boolean>;
   /**
    * Retry the original dispatch at an idle boundary after its prompt was
-   * rejected. A successful retry re-enters through `markDelivered`; a failure
-   * through `markDeliveryFailed`.
+   * rejected. A successful retry re-enters through a hand-off fact; a failure
+   * through a dispatch-failure fact.
    */
-  retryDispatch: (obligation: DirectedObligation) => void;
+  retryDispatch: (obligation: ObligationView) => void;
   /** Emit a runtime `task_outcome_notice` to the obligation's source. */
-  emitNotice: (
-    notice: ObligationNotice,
-    obligation: DirectedObligation,
-  ) => void;
+  emitNotice: (notice: ObligationNotice, obligation: ObligationView) => void;
   log?: (event: string, fields: Record<string, unknown>) => void;
 }
 
@@ -178,16 +270,14 @@ function silenceKey(targetTaskId: string, promptId: string): string {
 /**
  * Strict, uniform attempt-identity comparison: a fact carrying identity X
  * applies only when the record's current identity is exactly X (both
- * `undefined` counts as "no identity"). The current identity is the live
- * dispatch attempt's, so only a fact from that attempt — or from the drain
- * that owns it — applies; a fact from an older attempt after a newer attempt
- * installed its identity is dropped.
+ * `undefined` counts as "no identity"). Only a fact from the live dispatch
+ * attempt — or from the drain that owns it — applies.
  */
 function matchesDispatch(
-  obligation: DirectedObligation,
-  promptId: string | undefined,
+  obligation: ObligationRecord,
+  attemptId: string | undefined,
 ): boolean {
-  return obligation.dispatchPromptId === promptId;
+  return obligation.dispatchPromptId === attemptId;
 }
 
 /** No further supervision: the runtime has stopped, or the record is settled. */
@@ -209,7 +299,7 @@ function isSettleable(state: ObligationState): boolean {
   );
 }
 
-function logFields(obligation: DirectedObligation): Record<string, unknown> {
+function logFields(obligation: ObligationRecord): Record<string, unknown> {
   return {
     sourceTaskId: obligation.sourceTaskId.slice(0, 8),
     targetTaskId: obligation.targetTaskId.slice(0, 8),
@@ -219,14 +309,14 @@ function logFields(obligation: DirectedObligation): Record<string, unknown> {
 /**
  * Process-local directed-obligation state machine. All transitions are
  * synchronous; the only asynchronous work is bridge submission, and its
- * completion re-enters through a fresh critical-section check.
+ * completion re-enters through a fresh fact.
  *
  * Terminal records stay in the edge-keyed map so a later account can still be
  * routed to the stored source. A later dispatch for the same edge replaces a
  * terminal record.
  */
 export class ObligationController {
-  private readonly active = new Map<string, DirectedObligation>();
+  private readonly active = new Map<string, ObligationRecord>();
   private readonly attemptTimers = new Map<string, TimerHandle>();
   private readonly watchdogTimers = new Map<string, TimerHandle>();
   private readonly dispatchAdvisoryTimers = new Map<string, TimerHandle>();
@@ -246,6 +336,185 @@ export class ObligationController {
   private log(event: string, fields: Record<string, unknown>): void {
     this.opts.log?.(event, fields);
   }
+
+  /**
+   * The single transition point. Every fact is applied here; a fact whose
+   * identity does not match the current record is a no-op.
+   */
+  apply(fact: ObligationFact): unknown {
+    switch (fact.type) {
+      case "armed":
+        this.transitionArmed(fact);
+        return undefined;
+      case "attempt_begun":
+        this.transitionAttemptBegun(fact);
+        return undefined;
+      case "handed_over":
+        this.transitionHandedOver(fact);
+        return undefined;
+      case "dispatch_succeeded":
+        this.transitionDispatchSucceeded(fact);
+        return undefined;
+      case "dispatch_failed":
+        this.transitionDispatchFailed(fact);
+        return undefined;
+      case "turn_begun":
+        this.transitionTurnBegun(fact);
+        return undefined;
+      case "turn_ended":
+        this.transitionTurnEnded(fact);
+        return undefined;
+      case "turn_aborted":
+        this.transitionTurnAborted(fact);
+        return undefined;
+      case "agent_activity":
+        this.transitionAgentActivity(fact);
+        return undefined;
+      case "released":
+        this.transitionReleased(fact);
+        return undefined;
+      case "reminder_started":
+        this.transitionReminderStarted(fact);
+        return undefined;
+      case "reminder_resolved":
+        this.transitionReminderResolved(fact);
+        return undefined;
+      case "timer_due":
+        this.transitionTimerDue(fact);
+        return undefined;
+      case "settle_requested":
+        return this.transitionSettle(fact);
+      case "disposed":
+        this.transitionDisposed();
+        return undefined;
+    }
+  }
+
+  // --- Public fact emitters (no mutation; they only call apply) ---
+
+  getActive(
+    sourceTaskId: string,
+    targetTaskId: string,
+  ): ObligationView | undefined {
+    return this.active.get(edgeKey(sourceTaskId, targetTaskId));
+  }
+
+  /** The sole record for a target, active or terminal. */
+  getForTarget(targetTaskId: string): ObligationView | undefined {
+    return this.findForTarget(targetTaskId);
+  }
+
+  isOwed(sourceTaskId: string, targetTaskId: string): boolean {
+    const obligation = this.active.get(edgeKey(sourceTaskId, targetTaskId));
+    return obligation !== undefined && !isTerminal(obligation.state);
+  }
+
+  arm(input: {
+    sourceTaskId: string;
+    targetTaskId: string;
+    messageId: string;
+    deliveryId: string;
+  }): ObligationView {
+    this.apply({
+      type: "armed",
+      sourceTaskId: input.sourceTaskId,
+      targetTaskId: input.targetTaskId,
+      messageId: input.messageId,
+      deliveryId: input.deliveryId,
+    });
+    return this.active.get(edgeKey(input.sourceTaskId, input.targetTaskId))!;
+  }
+
+  beginDispatch(
+    sourceTaskId: string,
+    targetTaskId: string,
+    promptId: string,
+  ): void {
+    this.apply({
+      type: "attempt_begun",
+      sourceTaskId,
+      targetTaskId,
+      attemptId: promptId,
+    });
+  }
+
+  markDelivered(
+    sourceTaskId: string,
+    targetTaskId: string,
+    promptId?: string,
+  ): void {
+    this.apply({
+      type: "handed_over",
+      sourceTaskId,
+      targetTaskId,
+      attemptId: promptId,
+    });
+  }
+
+  markDispatchSucceeded(
+    sourceTaskId: string,
+    targetTaskId: string,
+    promptId?: string,
+  ): void {
+    this.apply({
+      type: "dispatch_succeeded",
+      sourceTaskId,
+      targetTaskId,
+      attemptId: promptId,
+    });
+  }
+
+  markDeliveryFailed(
+    sourceTaskId: string,
+    targetTaskId: string,
+    promptId?: string,
+  ): void {
+    this.apply({
+      type: "dispatch_failed",
+      sourceTaskId,
+      targetTaskId,
+      attemptId: promptId,
+    });
+  }
+
+  onTargetTurnEnded(targetTaskId: string): void {
+    this.apply({ type: "turn_ended", targetTaskId });
+  }
+
+  beginTurn(targetTaskId: string, promptId: string): void {
+    this.apply({ type: "turn_begun", targetTaskId, attemptId: promptId });
+  }
+
+  noteAgentActivity(targetTaskId: string): void {
+    this.apply({ type: "agent_activity", targetTaskId, at: this.now() });
+  }
+
+  abortTurn(targetTaskId: string): void {
+    this.apply({ type: "turn_aborted", targetTaskId });
+  }
+
+  purgeTask(taskId: string): void {
+    this.apply({ type: "released", taskId });
+  }
+
+  dispose(): void {
+    this.apply({ type: "disposed" });
+  }
+
+  settleReport<T>(input: {
+    targetTaskId: string;
+    activeTurn: ActiveAgentTurn | null;
+    run: (decision: SettlementDecision) => T;
+  }): { decision: SettlementDecision; result: T } {
+    return this.apply({
+      type: "settle_requested",
+      targetTaskId: input.targetTaskId,
+      activeTurn: input.activeTurn,
+      run: (decision) => input.run(decision),
+    }) as { decision: SettlementDecision; result: T };
+  }
+
+  // --- Timer helpers (armed only from within apply's call graph) ---
 
   private clearAttemptTimer(key: string): void {
     const handle = this.attemptTimers.get(key);
@@ -275,109 +544,76 @@ export class ObligationController {
     this.opts.clearTimer(handle);
   }
 
-  private armDispatchAdvisory(obligation: DirectedObligation): void {
+  private timerDue(
+    obligation: ObligationRecord,
+    kind: ObligationTimerKind,
+    attemptId?: string,
+  ): void {
+    this.apply({
+      type: "timer_due",
+      sourceTaskId: obligation.sourceTaskId,
+      targetTaskId: obligation.targetTaskId,
+      kind,
+      attemptId,
+    });
+  }
+
+  private armDispatchAdvisory(obligation: ObligationRecord): void {
     const key = edgeKey(obligation.sourceTaskId, obligation.targetTaskId);
     this.clearDispatchAdvisory(key);
     const handle = this.opts.setTimer(() => {
       this.dispatchAdvisoryTimers.delete(key);
-      const current = this.active.get(key);
-      if (!current || current !== obligation) return;
-      if (current.state !== "awaiting_delivery") return;
-      this.log("obligation dispatch still queued", logFields(current));
-      this.opts.emitNotice(
-        {
-          reason: "still_waiting",
-          message: `This dispatch has not been handed to the target for ${Math.round(
-            (this.now() - current.openedAt) / 60_000,
-          )} minutes; it is still queued.`,
-          evidence: {
-            phase: "not_handed_over",
-            waitingMs: this.now() - current.openedAt,
-          },
-        },
-        current,
-      );
+      this.timerDue(obligation, "dispatch_advisory");
     }, DISPATCH_ADVISORY_MS);
     this.dispatchAdvisoryTimers.set(key, handle);
   }
 
-  private armAgeAdvisory(obligation: DirectedObligation): void {
+  private armAgeAdvisory(obligation: ObligationRecord): void {
     const key = edgeKey(obligation.sourceTaskId, obligation.targetTaskId);
     this.clearAgeAdvisory(key);
     const handle = this.opts.setTimer(() => {
       this.ageAdvisoryTimers.delete(key);
-      const current = this.active.get(key);
-      if (!current || current !== obligation) return;
-      if (isTerminal(current.state)) return;
-      const lastAgentActivityAt =
-        this.watchdog.get(key)?.lastAgentActivityAt ?? null;
-      this.log("obligation age advisory", logFields(current));
-      this.opts.emitNotice(
-        {
-          reason: "still_waiting",
-          message: `This Task has had no typed account for ${Math.round(
-            (this.now() - current.openedAt) / 3_600_000,
-          )} hours; the runtime is still waiting.`,
-          evidence: {
-            phase: "no_account",
-            openForMs: this.now() - current.openedAt,
-            deliveredAttempts: current.deliveredAttempts,
-            lastAgentActivityAt,
-          },
-        },
-        current,
-      );
+      this.timerDue(obligation, "age_advisory");
     }, AGE_ADVISORY_MS);
     this.ageAdvisoryTimers.set(key, handle);
   }
 
-  private armAttemptTimer(
-    obligation: DirectedObligation,
-    delayMs: number,
-  ): void {
+  private armAttemptTimer(obligation: ObligationRecord, delayMs: number): void {
     const key = edgeKey(obligation.sourceTaskId, obligation.targetTaskId);
     this.clearAttemptTimer(key);
     const handle = this.opts.setTimer(
       () => {
         this.attemptTimers.delete(key);
-        this.runAttempt(key);
+        this.timerDue(obligation, "attempt");
       },
       Math.max(0, delayMs),
     );
     this.attemptTimers.set(key, handle);
   }
 
-  getActive(
-    sourceTaskId: string,
-    targetTaskId: string,
-  ): DirectedObligation | undefined {
-    return this.active.get(edgeKey(sourceTaskId, targetTaskId));
+  private armWatchdog(
+    obligation: ObligationRecord,
+    state: WatchdogState,
+  ): void {
+    const key = edgeKey(obligation.sourceTaskId, obligation.targetTaskId);
+    this.clearWatchdogTimer(key);
+    const dueAt = state.lastAgentActivityAt + SILENCE_THRESHOLD_S * 1000;
+    const handle = this.opts.setTimer(
+      () => {
+        this.watchdogTimers.delete(key);
+        this.timerDue(obligation, "watchdog", state.promptId);
+      },
+      Math.max(0, dueAt - this.now()),
+    );
+    this.watchdogTimers.set(key, handle);
   }
 
-  /** The sole record for a target, active or terminal. */
-  getForTarget(targetTaskId: string): DirectedObligation | undefined {
-    return this.findForTarget(targetTaskId);
-  }
+  // --- Transition table (each row is reachable only through apply) ---
 
-  isOwed(sourceTaskId: string, targetTaskId: string): boolean {
-    const obligation = this.getActive(sourceTaskId, targetTaskId);
-    return obligation !== undefined && !isTerminal(obligation.state);
-  }
-
-  /**
-   * Arm (or coalesce) the directed obligation for an accepted direct
-   * parent→child dispatch. A same-source follow-up coalesces: it preserves the
-   * record, refreshes the delivered-attempt and submission-failure budgets,
-   * and makes the next attempt due after the next eligible target turn
-   * boundary. A dispatch after a terminal record starts a fresh epoch.
-   */
-  arm(input: {
-    sourceTaskId: string;
-    targetTaskId: string;
-    messageId: string;
-    deliveryId: string;
-  }): DirectedObligation {
-    const key = edgeKey(input.sourceTaskId, input.targetTaskId);
+  private transitionArmed(
+    fact: Extract<ObligationFact, { type: "armed" }>,
+  ): void {
+    const key = edgeKey(fact.sourceTaskId, fact.targetTaskId);
     const existing = this.active.get(key);
     if (existing && !isTerminal(existing.state)) {
       this.clearAttemptTimer(key);
@@ -385,17 +621,9 @@ export class ObligationController {
       existing.consecutiveSubmissionFailures = 0;
       existing.noAccountNotified = false;
       existing.lastDeliveredAttemptAt = undefined;
-      existing.nextAttemptAt = undefined;
-      existing.openingMessageId = input.messageId;
-      existing.openingDeliveryId = input.deliveryId;
+      existing.openingMessageId = fact.messageId;
+      existing.openingDeliveryId = fact.deliveryId;
       existing.epoch += 1;
-      // Ownership stays with the live attempt: a coalescing follow-up is not a
-      // new attempt, it only adds its message to the batch that attempt will
-      // deliver, so it must not clear or replace the identity here.
-      // `awaiting_delivery` and `open` stay; `reminder_due` and an in-flight
-      // `reminder_submitting` return to `open` so the next turn boundary
-      // resumes recovery with the refreshed budget, and the in-flight
-      // submission's outcome is ignored by the epoch check.
       if (
         existing.state === "reminder_due" ||
         existing.state === "reminder_submitting"
@@ -408,14 +636,14 @@ export class ObligationController {
         ...logFields(existing),
         state: existing.state,
       });
-      return existing;
+      return;
     }
 
-    const obligation: DirectedObligation = {
-      sourceTaskId: input.sourceTaskId,
-      targetTaskId: input.targetTaskId,
-      openingMessageId: input.messageId,
-      openingDeliveryId: input.deliveryId,
+    const obligation: ObligationRecord = {
+      sourceTaskId: fact.sourceTaskId,
+      targetTaskId: fact.targetTaskId,
+      openingMessageId: fact.messageId,
+      openingDeliveryId: fact.deliveryId,
       openedAt: this.now(),
       epoch: 0,
       state: "awaiting_delivery",
@@ -430,32 +658,22 @@ export class ObligationController {
       ...logFields(obligation),
       replacedTerminal: existing !== undefined,
     });
-    return obligation;
   }
 
-  /**
-   * Record the turn identity of a dispatch attempt before its hand-off. Called
-   * when the drain starts (before `ensureResumed`) so a resume failure can be
-   * attributed to the attempt, and so a later callback from a superseded
-   * attempt is ignored.
-   */
-  beginDispatch(
-    sourceTaskId: string,
-    targetTaskId: string,
-    promptId: string,
+  private transitionAttemptBegun(
+    fact: Extract<ObligationFact, { type: "attempt_begun" }>,
   ): void {
-    const obligation = this.getActive(sourceTaskId, targetTaskId);
+    const obligation = this.active.get(
+      edgeKey(fact.sourceTaskId, fact.targetTaskId),
+    );
     if (!obligation || isTerminal(obligation.state)) return;
-    obligation.dispatchPromptId = promptId;
+    obligation.dispatchPromptId = fact.attemptId;
   }
 
-  /** The qualifying source dispatch was handed to the target's session. */
-  markDelivered(
-    sourceTaskId: string,
-    targetTaskId: string,
-    promptId?: string,
+  private transitionHandedOver(
+    fact: Extract<ObligationFact, { type: "handed_over" }>,
   ): void {
-    const key = edgeKey(sourceTaskId, targetTaskId);
+    const key = edgeKey(fact.sourceTaskId, fact.targetTaskId);
     const obligation = this.active.get(key);
     if (!obligation) return;
     if (
@@ -464,59 +682,36 @@ export class ObligationController {
     ) {
       return;
     }
-    // A stale hand-off from a superseded attempt must not take over the record:
-    // strict identity, so a cleared identity rejects any identified hand-off.
-    if (!matchesDispatch(obligation, promptId)) return;
-    if (promptId !== undefined) obligation.dispatchPromptId = promptId;
+    if (!matchesDispatch(obligation, fact.attemptId)) return;
+    if (fact.attemptId !== undefined)
+      obligation.dispatchPromptId = fact.attemptId;
     this.clearDispatchAdvisory(key);
     this.clearAttemptTimer(key);
     obligation.state = "open";
-    // Do not reset `consecutiveSubmissionFailures` here: a retry issuance can
-    // still be rejected, and resetting would let the transport budget restart
-    // forever. It resets only once the submission resolves (see
-    // `markDispatchSucceeded`).
     this.log("obligation opened", logFields(obligation));
     this.maybeRemindAtBoundary(obligation);
   }
 
-  /**
-   * The dispatch prompt resolved, so the submission succeeded and its transport
-   * failure streak is cleared. A resolved turn still counts as a successful
-   * submission even when the turn itself ends in an agent error.
-   */
-  markDispatchSucceeded(
-    sourceTaskId: string,
-    targetTaskId: string,
-    promptId?: string,
+  private transitionDispatchSucceeded(
+    fact: Extract<ObligationFact, { type: "dispatch_succeeded" }>,
   ): void {
-    const obligation = this.getActive(sourceTaskId, targetTaskId);
+    const obligation = this.active.get(
+      edgeKey(fact.sourceTaskId, fact.targetTaskId),
+    );
     if (!obligation) return;
-    if (!matchesDispatch(obligation, promptId)) return;
+    if (!matchesDispatch(obligation, fact.attemptId)) return;
     if (isTerminal(obligation.state)) return;
     obligation.consecutiveSubmissionFailures = 0;
   }
 
-  /**
-   * The qualifying source dispatch could not be handed to the target. The
-   * record returns to `awaiting_delivery` and the original delivery is retried
-   * at idle boundaries under the transport bound; it never prompts the target
-   * to account for unseen content. Three consecutive failed submissions end
-   * the edge with `no_account` and `delivery_unavailable` evidence. Those
-   * failures never consume the three delivered closing reminders.
-   *
-   * A rejection can arrive after issuance, when the record already opened; the
-   * record then returns to `awaiting_delivery` (a pending state) and its
-   * reminder schedule is cancelled, so the failure consumes the transport
-   * budget once and the dispatch is retried rather than stranded open.
-   */
-  markDeliveryFailed(
-    sourceTaskId: string,
-    targetTaskId: string,
-    promptId?: string,
+  private transitionDispatchFailed(
+    fact: Extract<ObligationFact, { type: "dispatch_failed" }>,
   ): void {
-    const obligation = this.getActive(sourceTaskId, targetTaskId);
+    const obligation = this.active.get(
+      edgeKey(fact.sourceTaskId, fact.targetTaskId),
+    );
     if (!obligation) return;
-    if (!matchesDispatch(obligation, promptId)) return;
+    if (!matchesDispatch(obligation, fact.attemptId)) return;
     const key = edgeKey(obligation.sourceTaskId, obligation.targetTaskId);
     const dispatchPhase =
       obligation.state === "awaiting_delivery" ||
@@ -545,13 +740,10 @@ export class ObligationController {
     this.retrySchedule(obligation);
   }
 
-  /**
-   * A current target turn ended. An `open` edge enters `reminder_due` and
-   * reminder 1 is scheduled; `awaiting_delivery` waits for the dispatch's own
-   * acceptance. Nothing here clears obligations or widens scope.
-   */
-  onTargetTurnEnded(targetTaskId: string): void {
-    const obligation = this.findForTarget(targetTaskId);
+  private transitionTurnEnded(
+    fact: Extract<ObligationFact, { type: "turn_ended" }>,
+  ): void {
+    const obligation = this.findForTarget(fact.targetTaskId);
     if (!obligation) return;
     const key = edgeKey(obligation.sourceTaskId, obligation.targetTaskId);
     this.clearWatchdogTimer(key);
@@ -560,10 +752,6 @@ export class ObligationController {
       this.maybeRemindAtBoundary(obligation);
       return;
     }
-    // Reminder 1 may already be `reminder_due` only because the target was
-    // busy when it became due; the turn boundary is its natural moment. Once a
-    // reminder has been delivered, keep its +2m/+5m schedule instead of
-    // restarting it on every unrelated turn.
     if (
       obligation.state === "reminder_due" &&
       obligation.deliveredAttempts === 0
@@ -572,139 +760,84 @@ export class ObligationController {
     }
   }
 
-  /**
-   * A target turn started. The watchdog observes only a running turn that
-   * already has an active obligation.
-   */
-  beginTurn(targetTaskId: string, promptId: string): void {
-    const obligation = this.findForTarget(targetTaskId);
-    // Terminal records stay in the map for late-account routing, but they have
-    // no open obligation to watch. Starting a watchdog for one would emit a
-    // spurious no_activity notice for a closed edge.
+  private transitionTurnBegun(
+    fact: Extract<ObligationFact, { type: "turn_begun" }>,
+  ): void {
+    const obligation = this.findForTarget(fact.targetTaskId);
     if (!obligation || isTerminal(obligation.state)) return;
-    this.startWatchdog(obligation, promptId);
+    this.startWatchdog(obligation, fact.attemptId);
   }
 
-  /**
-   * Qualifying agent-runtime activity for a running turn. User and system
-   * events must not reset the watchdog.
-   */
-  noteAgentActivity(targetTaskId: string, at = this.now()): void {
-    const obligation = this.findForTarget(targetTaskId);
+  private transitionAgentActivity(
+    fact: Extract<ObligationFact, { type: "agent_activity" }>,
+  ): void {
+    const obligation = this.findForTarget(fact.targetTaskId);
     if (!obligation || isTerminal(obligation.state)) return;
     const key = edgeKey(obligation.sourceTaskId, obligation.targetTaskId);
     const state = this.watchdog.get(key);
     if (!state) return;
-    state.lastAgentActivityAt = at;
+    state.lastAgentActivityAt = fact.at;
     this.armWatchdog(obligation, state);
   }
 
-  private startWatchdog(
-    obligation: DirectedObligation,
-    promptId: string,
+  private transitionTurnAborted(
+    fact: Extract<ObligationFact, { type: "turn_aborted" }>,
   ): void {
-    const at = this.now();
-    const state: WatchdogState = {
-      promptId,
-      runningSince: at,
-      lastAgentActivityAt: at,
-    };
-    this.watchdog.set(
-      edgeKey(obligation.sourceTaskId, obligation.targetTaskId),
-      state,
-    );
-    this.armWatchdog(obligation, state);
-  }
-
-  private armWatchdog(
-    obligation: DirectedObligation,
-    state: WatchdogState,
-  ): void {
+    const obligation = this.findForTarget(fact.targetTaskId);
+    if (!obligation) return;
     const key = edgeKey(obligation.sourceTaskId, obligation.targetTaskId);
     this.clearWatchdogTimer(key);
-    const dueAt = state.lastAgentActivityAt + SILENCE_THRESHOLD_S * 1000;
-    const handle = this.opts.setTimer(
-      () => {
-        this.watchdogTimers.delete(key);
-        this.emitSilence(obligation);
-      },
-      Math.max(0, dueAt - this.now()),
-    );
-    this.watchdogTimers.set(key, handle);
+    this.watchdog.delete(key);
   }
 
-  private maybeRemindAtBoundary(obligation: DirectedObligation): void {
-    if (isTerminal(obligation.state)) return;
-    if (obligation.state === "reminder_submitting") return;
-    if (obligation.deliveredAttempts >= MAX_REMINDER_ATTEMPTS) {
-      this.exhaust(obligation, "no_account");
-      return;
+  private transitionReleased(
+    fact: Extract<ObligationFact, { type: "released" }>,
+  ): void {
+    for (const [key, obligation] of [...this.active]) {
+      if (
+        obligation.sourceTaskId !== fact.taskId &&
+        obligation.targetTaskId !== fact.taskId
+      ) {
+        continue;
+      }
+      this.clearAttemptTimer(key);
+      this.clearWatchdogTimer(key);
+      this.clearDispatchAdvisory(key);
+      this.clearAgeAdvisory(key);
+      this.watchdog.delete(key);
+      this.active.delete(key);
     }
-    obligation.state = "reminder_due";
-    this.scheduleNextAttempt(obligation);
+    for (const seen of [...this.silenceNotified]) {
+      if (seen.startsWith(`${fact.taskId}\u0000`)) {
+        this.silenceNotified.delete(seen);
+      }
+    }
   }
 
-  private scheduleNextAttempt(obligation: DirectedObligation): void {
-    const index = obligation.deliveredAttempts;
-    const delay = REMINDER_DELAYS_MS[index] ?? 0;
-    const base =
-      index === 0
-        ? this.now()
-        : (obligation.lastDeliveredAttemptAt ?? this.now());
-    obligation.nextAttemptAt = base + delay;
-    this.armAttemptTimer(obligation, obligation.nextAttemptAt - this.now());
-  }
-
-  private retrySchedule(obligation: DirectedObligation): void {
-    const failures = obligation.consecutiveSubmissionFailures;
-    const backoff = Math.min(
-      REMINDER_RETRY_BASE_MS * 2 ** Math.max(0, failures - 1),
-      REMINDER_RETRY_MAX_MS,
+  private transitionReminderStarted(
+    fact: Extract<ObligationFact, { type: "reminder_started" }>,
+  ): void {
+    const obligation = this.active.get(
+      edgeKey(fact.sourceTaskId, fact.targetTaskId),
     );
-    obligation.nextAttemptAt = this.now() + backoff;
-    this.armAttemptTimer(obligation, backoff);
+    if (!obligation) return;
+    obligation.state = "reminder_submitting";
+    this.clearAttemptTimer(
+      edgeKey(obligation.sourceTaskId, obligation.targetTaskId),
+    );
   }
 
-  /** Scheduler entry point: submit only while the target is idle. */
-  private runAttempt(key: string): void {
+  private transitionReminderResolved(
+    fact: Extract<ObligationFact, { type: "reminder_resolved" }>,
+  ): void {
+    const key = edgeKey(fact.sourceTaskId, fact.targetTaskId);
     const obligation = this.active.get(key);
     if (!obligation) return;
-    if (obligation.state === "awaiting_delivery") {
-      if (this.opts.isAgentBusy(obligation.targetTaskId)) {
-        this.retrySchedule(obligation);
-        return;
-      }
-      this.opts.retryDispatch(obligation);
+    if (obligation.state === "settled" || obligation.state === "unresolved") {
       return;
     }
-    if (obligation.state !== "reminder_due") return;
-    if (this.opts.isAgentBusy(obligation.targetTaskId)) {
-      this.retrySchedule(obligation);
-      return;
-    }
-    void this.submit(obligation);
-  }
-
-  private async submit(obligation: DirectedObligation): Promise<void> {
-    const key = edgeKey(obligation.sourceTaskId, obligation.targetTaskId);
-    const epoch = obligation.epoch;
-    obligation.state = "reminder_submitting";
-    this.clearAttemptTimer(key);
-    const accepted = await this.opts.submitReminder(obligation);
-    // `submitReminder` awaits a live agent turn; the target may have settled
-    // the edge through `task_update` while that turn ran, or a coalescing
-    // follow-up may have started a new recovery epoch. Re-read state after the
-    // await rather than trusting the pre-await narrowing.
-    const stateAfter = readObligationState(obligation);
-    if (
-      stateAfter === "settled" ||
-      stateAfter === "unresolved" ||
-      obligation.epoch !== epoch ||
-      this.active.get(key) !== obligation
-    ) {
-      return;
-    }
-    if (!accepted) {
+    if (obligation.epoch !== fact.recoveryGeneration) return;
+    if (!fact.accepted) {
       obligation.consecutiveSubmissionFailures += 1;
       if (
         obligation.consecutiveSubmissionFailures >=
@@ -734,54 +867,87 @@ export class ObligationController {
     this.scheduleNextAttempt(obligation);
   }
 
-  /**
-   * Decide and perform one agent update for `targetTaskId`.
-   *
-   * A record settles only when both hold: its state is
-   * `open|reminder_due|reminder_submitting`, and the target has an active
-   * current agent turn. Otherwise the update is routed without settling: a
-   * record that exists addresses its stored source, and no record addresses
-   * the caller's current parent.
-   *
-   * There is deliberately **no timestamp guard** here. The delivery turn is
-   * added to `activePrompts` and stamped before `bridge.prompt` is issued, and
-   * `markDelivered` runs only when that prompt resolves, so any comparison of
-   * the current turn's start against bridge-acceptance time would reject the
-   * legitimate dispatch account. The accepted residual is handled by the state
-   * gate and documented instead; do not reintroduce a timestamp condition.
-   *
-   * `run` performs the synchronous store transaction for the chosen route. The
-   * in-memory transition happens only after it succeeds, so a throwing `run`
-   * leaves a settleable record open. No await occurs between validation and
-   * transition.
-   */
-  settleReport<T>(input: {
-    targetTaskId: string;
-    activeTurn: ActiveAgentTurn | null;
-    run: (decision: SettlementDecision) => T;
-  }): { decision: SettlementDecision; result: T } {
-    const obligation = this.findForTarget(input.targetTaskId);
+  private transitionTimerDue(
+    fact: Extract<ObligationFact, { type: "timer_due" }>,
+  ): void {
+    const key = edgeKey(fact.sourceTaskId, fact.targetTaskId);
+    const obligation = this.active.get(key);
+    if (!obligation) return;
+    switch (fact.kind) {
+      case "dispatch_advisory": {
+        if (obligation.state !== "awaiting_delivery") return;
+        this.log("obligation dispatch still queued", logFields(obligation));
+        this.opts.emitNotice(
+          {
+            reason: "still_waiting",
+            message: `This dispatch has not been handed to the target for ${Math.round(
+              (this.now() - obligation.openedAt) / 60_000,
+            )} minutes; it is still queued.`,
+            evidence: {
+              phase: "not_handed_over",
+              waitingMs: this.now() - obligation.openedAt,
+            },
+          },
+          obligation,
+        );
+        return;
+      }
+      case "age_advisory": {
+        if (isTerminal(obligation.state)) return;
+        const lastAgentActivityAt =
+          this.watchdog.get(key)?.lastAgentActivityAt ?? null;
+        this.log("obligation age advisory", logFields(obligation));
+        this.opts.emitNotice(
+          {
+            reason: "still_waiting",
+            message: `This Task has had no typed account for ${Math.round(
+              (this.now() - obligation.openedAt) / 3_600_000,
+            )} hours; the runtime is still waiting.`,
+            evidence: {
+              phase: "no_account",
+              openForMs: this.now() - obligation.openedAt,
+              deliveredAttempts: obligation.deliveredAttempts,
+              lastAgentActivityAt,
+            },
+          },
+          obligation,
+        );
+        return;
+      }
+      case "watchdog":
+        this.emitSilence(obligation, fact.attemptId);
+        return;
+      case "attempt":
+        this.runAttempt(obligation);
+        return;
+    }
+  }
+
+  private transitionSettle(
+    fact: Extract<ObligationFact, { type: "settle_requested" }>,
+  ): { decision: SettlementDecision; result: unknown } {
+    const obligation = this.findForTarget(fact.targetTaskId);
     if (!obligation) {
       const decision: SettlementDecision = {
         kind: "current-parent",
         sourceTaskId: null,
       };
-      return { decision, result: input.run(decision) };
+      return { decision, result: fact.run(decision) };
     }
     const settleable =
-      isSettleable(obligation.state) && input.activeTurn !== null;
+      isSettleable(obligation.state) && fact.activeTurn !== null;
     if (!settleable) {
       const decision: SettlementDecision = {
         kind: "stored-source",
         sourceTaskId: obligation.sourceTaskId,
       };
-      return { decision, result: input.run(decision) };
+      return { decision, result: fact.run(decision) };
     }
     const decision: SettlementDecision = {
       kind: "settle",
       sourceTaskId: obligation.sourceTaskId,
     };
-    const result = input.run(decision);
+    const result = fact.run(decision);
     const key = edgeKey(obligation.sourceTaskId, obligation.targetTaskId);
     this.clearAttemptTimer(key);
     this.clearWatchdogTimer(key);
@@ -793,9 +959,111 @@ export class ObligationController {
     return { decision, result };
   }
 
-  /** Bounded recovery ended without a matching account. */
+  private transitionDisposed(): void {
+    for (const handle of this.attemptTimers.values()) {
+      this.opts.clearTimer(handle);
+    }
+    for (const handle of this.watchdogTimers.values()) {
+      this.opts.clearTimer(handle);
+    }
+    for (const handle of this.dispatchAdvisoryTimers.values()) {
+      this.opts.clearTimer(handle);
+    }
+    for (const handle of this.ageAdvisoryTimers.values()) {
+      this.opts.clearTimer(handle);
+    }
+    this.attemptTimers.clear();
+    this.watchdogTimers.clear();
+    this.dispatchAdvisoryTimers.clear();
+    this.ageAdvisoryTimers.clear();
+    this.watchdog.clear();
+  }
+
+  // --- Effect helpers (called only from transition rows) ---
+
+  private startWatchdog(obligation: ObligationRecord, promptId: string): void {
+    const at = this.now();
+    const state: WatchdogState = {
+      promptId,
+      runningSince: at,
+      lastAgentActivityAt: at,
+    };
+    this.watchdog.set(
+      edgeKey(obligation.sourceTaskId, obligation.targetTaskId),
+      state,
+    );
+    this.armWatchdog(obligation, state);
+  }
+
+  private maybeRemindAtBoundary(obligation: ObligationRecord): void {
+    if (isTerminal(obligation.state)) return;
+    if (obligation.state === "reminder_submitting") return;
+    if (obligation.deliveredAttempts >= MAX_REMINDER_ATTEMPTS) {
+      this.exhaust(obligation, "no_account");
+      return;
+    }
+    obligation.state = "reminder_due";
+    this.scheduleNextAttempt(obligation);
+  }
+
+  private scheduleNextAttempt(obligation: ObligationRecord): void {
+    const index = obligation.deliveredAttempts;
+    const delay = REMINDER_DELAYS_MS[index] ?? 0;
+    const base =
+      index === 0
+        ? this.now()
+        : (obligation.lastDeliveredAttemptAt ?? this.now());
+    obligation.nextAttemptAt = base + delay;
+    this.armAttemptTimer(obligation, obligation.nextAttemptAt - this.now());
+  }
+
+  private retrySchedule(obligation: ObligationRecord): void {
+    const failures = obligation.consecutiveSubmissionFailures;
+    const backoff = Math.min(
+      REMINDER_RETRY_BASE_MS * 2 ** Math.max(0, failures - 1),
+      REMINDER_RETRY_MAX_MS,
+    );
+    obligation.nextAttemptAt = this.now() + backoff;
+    this.armAttemptTimer(obligation, backoff);
+  }
+
+  /** Scheduler entry point: submit only while the target is idle. */
+  private runAttempt(obligation: ObligationRecord): void {
+    if (obligation.state === "awaiting_delivery") {
+      if (this.opts.isAgentBusy(obligation.targetTaskId)) {
+        this.retrySchedule(obligation);
+        return;
+      }
+      this.opts.retryDispatch(obligation);
+      return;
+    }
+    if (obligation.state !== "reminder_due") return;
+    if (this.opts.isAgentBusy(obligation.targetTaskId)) {
+      this.retrySchedule(obligation);
+      return;
+    }
+    void this.submit(obligation);
+  }
+
+  private async submit(obligation: ObligationRecord): Promise<void> {
+    const generation = obligation.epoch;
+    this.apply({
+      type: "reminder_started",
+      sourceTaskId: obligation.sourceTaskId,
+      targetTaskId: obligation.targetTaskId,
+    });
+    const accepted = await this.opts.submitReminder(obligation);
+    this.apply({
+      type: "reminder_resolved",
+      sourceTaskId: obligation.sourceTaskId,
+      targetTaskId: obligation.targetTaskId,
+      recoveryGeneration: generation,
+      accepted,
+    });
+  }
+
   private exhaust(
-    obligation: DirectedObligation,
+    obligation: ObligationRecord,
     reason: Extract<ObligationNoticeReason, "no_account" | "delivery_failed">,
     extraEvidence: Record<string, unknown> = {},
   ): void {
@@ -815,8 +1083,6 @@ export class ObligationController {
       lastDeliveredAttemptAt: obligation.lastDeliveredAttemptAt ?? null,
       ...extraEvidence,
     };
-    // A delivery failure is a capability fact about the runtime, never a claim
-    // about the target's work.
     const message =
       reason === "delivery_failed"
         ? `I could not deliver this dispatch after ${obligation.consecutiveSubmissionFailures} attempts; I have stopped.`
@@ -829,21 +1095,22 @@ export class ObligationController {
     });
   }
 
-  private findForTarget(targetTaskId: string): DirectedObligation | undefined {
+  private findForTarget(targetTaskId: string): ObligationRecord | undefined {
     for (const obligation of this.active.values()) {
       if (obligation.targetTaskId === targetTaskId) return obligation;
     }
     return undefined;
   }
 
-  /** Watchdog timer fired: emit at most one `no_activity` per target×turn. */
-  private emitSilence(obligation: DirectedObligation): void {
+  private emitSilence(
+    obligation: ObligationRecord,
+    attemptId: string | undefined,
+  ): void {
     const key = edgeKey(obligation.sourceTaskId, obligation.targetTaskId);
     if (this.active.get(key) !== obligation) return;
     const state = this.watchdog.get(key);
     if (!state) return;
-    // Require the turn to still be live: the watchdog timer can outlive a
-    // runtime reset that never delivered a terminal event.
+    if (attemptId !== undefined && state.promptId !== attemptId) return;
     if (
       this.opts.isTurnRunning &&
       !this.opts.isTurnRunning(obligation.targetTaskId, state.promptId)
@@ -874,72 +1141,4 @@ export class ObligationController {
       promptId: state.promptId,
     });
   }
-
-  /**
-   * Drop the watchdog for the target's turn without touching the record. Called
-   * by runtime reset paths (rotation, bridge restart) that end a turn without a
-   * terminal event.
-   */
-  abortTurn(targetTaskId: string): void {
-    const obligation = this.findForTarget(targetTaskId);
-    if (!obligation) return;
-    const key = edgeKey(obligation.sourceTaskId, obligation.targetTaskId);
-    this.clearWatchdogTimer(key);
-    this.watchdog.delete(key);
-  }
-
-  /** Stop all scheduled work (shutdown/tests); the controller is then unusable. */
-  dispose(): void {
-    for (const handle of this.attemptTimers.values()) {
-      this.opts.clearTimer(handle);
-    }
-    for (const handle of this.watchdogTimers.values()) {
-      this.opts.clearTimer(handle);
-    }
-    for (const handle of this.dispatchAdvisoryTimers.values()) {
-      this.opts.clearTimer(handle);
-    }
-    for (const handle of this.ageAdvisoryTimers.values()) {
-      this.opts.clearTimer(handle);
-    }
-    this.attemptTimers.clear();
-    this.watchdogTimers.clear();
-    this.dispatchAdvisoryTimers.clear();
-    this.ageAdvisoryTimers.clear();
-    this.watchdog.clear();
-  }
-
-  /**
-   * Drop every record whose source or target is `taskId`, cancelling its
-   * timers. Called when a task is released so a deleted task cannot leave a
-   * record or a scheduled attempt behind; this is hygiene, not deletion
-   * recovery.
-   */
-  purgeTask(taskId: string): void {
-    for (const [key, obligation] of [...this.active]) {
-      if (
-        obligation.sourceTaskId !== taskId &&
-        obligation.targetTaskId !== taskId
-      ) {
-        continue;
-      }
-      this.clearAttemptTimer(key);
-      this.clearWatchdogTimer(key);
-      this.clearDispatchAdvisory(key);
-      this.clearAgeAdvisory(key);
-      this.watchdog.delete(key);
-      this.active.delete(key);
-    }
-    for (const seen of [...this.silenceNotified]) {
-      if (seen.startsWith(`${taskId}\u0000`)) this.silenceNotified.delete(seen);
-    }
-  }
-}
-
-/**
- * Read the current state through a helper so TypeScript does not carry a
- * pre-`await` narrowing (a live agent turn can settle the edge mid-submission).
- */
-function readObligationState(obligation: DirectedObligation): ObligationState {
-  return obligation.state;
 }
