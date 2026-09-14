@@ -6,6 +6,10 @@ import {
   formatTaskPath,
   formatTaskReference,
 } from "./shared/task-reference.ts";
+import {
+  CollaborationMessageEmitter,
+  type CollaborationMessageObserver,
+} from "./collaboration-emitter.ts";
 
 export const ROOT_TASK_ID = "root";
 
@@ -257,6 +261,7 @@ export class Store {
   private readonly db: Database.Database;
   private readonly dataDir: string;
   readonly agentKey: string;
+  private readonly collaborationEmitter: CollaborationMessageEmitter;
 
   constructor(dataDir: string, agentKey: string) {
     if (!agentKey) throw new Error("agentKey is required");
@@ -264,6 +269,10 @@ export class Store {
     this.dataDir = dataDir;
     mkdirSync(dataDir, { recursive: true });
     this.db = new Database(join(dataDir, "webagent.db"));
+    this.collaborationEmitter = new CollaborationMessageEmitter({
+      write: (input) => this.createCollaborationMessageInTransaction(input),
+      transaction: (fn) => this.db.transaction(fn)(),
+    });
     try {
       this.db.pragma("journal_mode = WAL");
       this.db.pragma("foreign_keys = ON");
@@ -1628,18 +1637,26 @@ export class Store {
   }
 
   /**
+   * Register the single post-commit collaboration-message observer. The Store
+   * emits a neutral fact; reachability and obligation policy stay above it.
+   */
+  onCollaborationMessageCreated(observer: CollaborationMessageObserver): void {
+    this.collaborationEmitter.onCreated(observer);
+  }
+
+  /**
    * Persist one cross-task fact, its task-timeline projections, and the sole
    * target Delivery in one SQLite transaction. Delivery mechanics live above
    * this Store API; this method never resolves paths or applies reachability
-   * policy.
+   * policy. It is the sole application entry point for message creation: the
+   * raw insert below is private, and every created message is reported once
+   * through the collaboration emitter after commit.
    */
   createCollaborationMessage(input: CollaborationMessageInput): {
     message: CollaborationMessageRow;
     delivery: CollaborationDeliveryRow;
   } {
-    return this.db.transaction(() =>
-      this.createCollaborationMessageInTransaction(input),
-    )();
+    return this.collaborationEmitter.create(input);
   }
 
   private createCollaborationMessageInTransaction(
@@ -1747,7 +1764,7 @@ export class Store {
   ): {
     collaborationMessageId: string | null;
   } {
-    return this.db.transaction(() => {
+    const result = this.db.transaction(() => {
       const task = this.requireLiveTask(taskId);
       this.db
         .prepare("UPDATE tasks SET workflow_status = ? WHERE id = ?")
@@ -1762,7 +1779,7 @@ export class Store {
         return { collaborationMessageId: null };
       }
       const collaborationMessageId = randomUUID();
-      this.createCollaborationMessageInTransaction({
+      this.collaborationEmitter.createInTransaction({
         id: collaborationMessageId,
         deliveryId: randomUUID(),
         sourceTaskId: taskId,
@@ -1772,6 +1789,8 @@ export class Store {
       });
       return { collaborationMessageId };
     })();
+    this.collaborationEmitter.afterCommit();
+    return result;
   }
 
   getCollaborationMessage(id: string): CollaborationMessageRow | undefined {

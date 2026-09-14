@@ -39,6 +39,36 @@ describe("Store collaboration records", () => {
     };
   }
 
+  it("emits exactly one post-commit fact per created message", () => {
+    const seen: Array<{ messageId: string; deliveryId: string }> = [];
+    store.onCollaborationMessageCreated(({ message, delivery }) => {
+      seen.push({ messageId: message.id, deliveryId: delivery.id });
+    });
+
+    store.createCollaborationMessage(messageInput());
+
+    // Mutation evidence: a second emission, or an emission before the insert
+    // committed, changes this list.
+    assert.deepEqual(seen, [
+      { messageId: "message-a1-a2", deliveryId: "delivery-a1-a2" },
+    ]);
+  });
+
+  it("emits the account message created inside the workflow-update transaction", () => {
+    const seen: string[] = [];
+    store.onCollaborationMessageCreated(({ message }) => seen.push(message.id));
+
+    const { collaborationMessageId } = store.recordAgentWorkflowUpdate(
+      "a1",
+      "done",
+      "complete",
+      "parent",
+    );
+    assert.ok(collaborationMessageId);
+    // The in-transaction entry point reports the same fact as the normal one.
+    assert.deepEqual(seen, [collaborationMessageId]);
+  });
+
   it("creates one message with source, target, and LCA projections", () => {
     const created = store.createCollaborationMessage(messageInput());
 
