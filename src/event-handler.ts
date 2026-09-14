@@ -312,7 +312,7 @@ function handlePromptDone(
     tasks.activePrompts.delete(event.taskId);
     tasks.syncBusy(event.taskId, undefined, "prompt_done");
     tasks.recoverUnfinishedWork(bridge, event.taskId, "prompt_done");
-    tasks.onTargetTurnEnded(event.taskId);
+    tasks.onTargetTurnEnded(event.taskId, event.promptId);
   } else {
     clog.info("completion from a superseded turn", {
       taskId: event.taskId.slice(0, 8),
@@ -355,7 +355,7 @@ function handleError(
       tasks.activePrompts.delete(event.taskId);
       tasks.syncBusy(event.taskId, undefined, "error");
       tasks.recoverUnfinishedWork(bridge, taskId, "error");
-      tasks.onTargetTurnEnded(taskId);
+      tasks.onTargetTurnEnded(taskId, event.promptId);
     } else {
       clog.info("failure from a superseded turn", {
         taskId: event.taskId.slice(0, 8),
