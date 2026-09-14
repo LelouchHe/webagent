@@ -86,7 +86,7 @@ prerequisite for accepting the result. If an agent-authored direct parent→chil
 dispatch turn ends without an account, WebAgent may send up to three closing
 reminders; this is a recovery aid, not a substitute for the Agent's typed
 account. A plain `task_update(done|blocked)` closes that edge when it comes from
-an eligible current turn; there is no correlation parameter to copy back. There
+an active current turn; there is no correlation parameter to copy back. There
 is no expectation level, per-counterparty ledger, or extra lifecycle status. A
 user prompt, a sibling or child message, and a runtime notice never create an
 obligation, so a lateral turn neither arms nor clears one.

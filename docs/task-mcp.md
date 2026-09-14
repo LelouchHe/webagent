@@ -60,7 +60,7 @@ The server advertises a short, generic usage contract through the MCP
 Use task_create for a direct child, then immediately use task_send to give it its first instruction.
 Use task_list to check each reachable Task's workflowStatus, executionState, lastEventAt, and lastAgentActivityAt before deciding to act; workflowStatus is per turn, not a lifecycle terminal, and executionState is the live runtime source.
 Use task_send for normal coordination and for continuing or resuming existing Tasks; task_send is not a lifecycle handoff. Use task_update(done|blocked) for typed lifecycle handoffs. A done Task remains available and is not deleted or permanently closed.
-task_update(done|blocked) settles the directed obligation when it comes from the current eligible turn; there is no correlation parameter to copy back.
+task_update(done|blocked) settles the directed obligation when it comes from the current active turn; there is no correlation parameter to copy back.
 After dispatching work, end the current turn; do not poll with task_query.
 Use task_query and task_get_record only for history recovery, diagnosis, or audit.
 Omit task_id to inspect the current Task's persisted history.
@@ -113,7 +113,7 @@ nothing.
 
 **Accepted residual.** Settlement is judged from the *current* turn, not from
 the turn that produced the content. A call delayed from an earlier turn that
-arrives while a later eligible turn is current therefore settles the record and
+arrives while a later turn is current therefore settles the record and
 the source receives the earlier turn's content: a mis-attributed account, not
 silence. That is a deliberate boundary, not a bug.
 
@@ -139,6 +139,186 @@ exhaustion notice.
 
 Obligation state is process-local runtime memory. It is not persisted, does not
 survive a restart, and carries no cross-restart recovery promise.
+
+#### Flow
+
+The invariants above are the contract; the diagrams below show the same
+mechanism as states, paths, and exceptions. Each state and transition names the
+test that pins it at the end of this subsection.
+
+**Record state machine**
+
+```mermaid
+stateDiagram-v2
+    [*] --> awaiting_delivery: agent parent→child dispatch posted
+    awaiting_delivery --> open: bridge accepts the dispatch prompt
+    awaiting_delivery --> awaiting_delivery: initial submission rejected, retry with backoff
+    awaiting_delivery --> unanswered: 3 consecutive submission failures
+    open --> reminder_due: current target turn ends without an account
+    reminder_due --> reminder_submitting: target idle, closing prompt submitted
+    reminder_submitting --> reminder_due: submission rejected (no delivered attempt)
+    reminder_submitting --> reminder_due: delivered attempt 1 or 2, schedule +2m / +5m
+    reminder_submitting --> unanswered: 3 delivered attempts finished
+    reminder_submitting --> unanswered: 3 consecutive submission failures
+    open --> settled: task_update from an active current turn
+    reminder_due --> settled: task_update from an active current turn
+    reminder_submitting --> settled: task_update from an active current turn
+    note right of awaiting_delivery
+      A report here is refused: routed to the
+      stored source, record unchanged.
+    end note
+    note right of unanswered
+      Terminal. A later account is routed to the
+      stored source; never re-settled, notice not
+      retracted.
+    end note
+    note right of settled
+      Terminal. A later account is routed to the
+      stored source; never re-settled.
+    end note
+```
+
+**Happy path: dispatch, account, settlement**
+
+```mermaid
+sequenceDiagram
+    participant S as Source Task
+    participant E as CollaborationMessageEmitter
+    participant R as ObligationController
+    participant B as Target bridge
+    participant T as Target Task
+
+    S->>E: task_send (agent, direct child)
+    E->>E: persist message + delivery (transaction)
+    E-->>R: post-commit onCollaborationMessageCreated
+    R->>R: shouldArm(message, source, target) is true
+    R->>R: arm(): state = awaiting_delivery
+    B->>T: drain submits the dispatch prompt
+    B-->>R: prompt resolves, markDelivered(): state = open
+    T->>T: run the turn
+    T->>R: task_update(done|blocked)
+    R->>R: settleReport(): state open + active turn = settle
+    R->>S: account message to the stored source (workflow_status updated)
+    R->>R: state = settled, timers cancelled
+```
+
+**Recovery path: three delivered reminders**
+
+```mermaid
+sequenceDiagram
+    participant R as ObligationController
+    participant T as Target Task
+    participant S as Source Task
+
+    Note over R,T: record is open and a turn ends without an account
+    R->>T: reminder 1 at the turn boundary
+    Note over R: delivered attempt 1
+    R->>T: reminder 2 at +2 min after the delivered reminder
+    Note over R: delivered attempt 2
+    R->>T: reminder 3 at +5 min after the delivered reminder
+    Note over R: delivered attempt 3
+    R->>R: 3 delivered attempts finished, state = unanswered
+    R->>S: one task_outcome_notice (reason = no_account)
+```
+
+**Failure paths: two separate budgets**
+
+```mermaid
+flowchart TD
+    subgraph Initial["Initial-delivery budget (awaiting_delivery)"]
+        A1[awaiting_delivery] -->|submission rejected| A2[submission-failure count +1]
+        A2 -->|count < 3| A3[requeue and retry with backoff at an idle boundary]
+        A3 --> A1
+        A2 -->|count = 3| A4[unanswered + no_account<br/>evidence delivery_unavailable]
+    end
+    subgraph Closing["Closing-reminder budget (reminder_due / reminder_submitting)"]
+        B1[reminder_due] -->|submission rejected| B2[submission-failure count +1,<br/>no delivered attempt]
+        B2 -->|count < 3| B3[retry with backoff, stays reminder_due]
+        B3 --> B1
+        B2 -->|count = 3| B4[unanswered + no_account<br/>evidence delivery_unavailable]
+        B1 -->|submission accepted| B5[deliveredAttempts +1, submission-failure count reset]
+        B5 -->|deliveredAttempts < 3| B1
+        B5 -->|deliveredAttempts = 3| B6[unanswered + no_account]
+    end
+    Note[The two budgets are independent: a rejected submission never consumes<br/>a delivered attempt, and a delivered reminder never counts as a failure.]
+```
+
+**Watchdog: silence observation, independent of the record**
+
+```mermaid
+sequenceDiagram
+    participant A as Agent-runtime events
+    participant W as Watchdog (per target×turn)
+    participant S as Stored source
+
+    Note over W: starts only while the target has a non-terminal record and a running turn
+    A->>W: qualifying activity (message/thinking chunk, tool call, plan, permission)
+    W->>W: lastAgentActivityAt = now, re-arm timer
+    Note over W: 900 s with no qualifying activity
+    W->>S: one task_outcome_notice (reason = no_activity)
+    Note over W: never changes the record, never reminds the target,<br/>never cancels or retries
+    Note over W,S: its limiter epoch is independent from no_account,<br/>so silence cannot suppress the factual outcome
+```
+
+**Cases that do not belong on the state diagram**
+
+| Case | What happens |
+| --- | --- |
+| A user prompt | Starts a turn but arms nothing; the turn can never settle a record. |
+| A sibling message | Ordinary delivery; it can claim the target's next turn but never arms and never erases an open record. |
+| A message from the target's own child | Ordinary delivery; the relation fails the arming predicate. |
+| A cancellation | The current turn's boundary is still a recovery boundary, so a reminder can follow; the record is unaffected. |
+| A supersession | A superseded terminal event does not call `onTargetTurnEnded`; the live turn owns the boundary. |
+| A session rotation | Delivery and reminder submissions bail while the target is rotating; the record is untouched. |
+| A user-originated send from the source's own session | The actor fails the arming predicate; it is seen by the emitter and excluded. |
+| A second dispatch from the same source while the record is open | Coalesces onto the same record, refreshes the budgets, and makes the next attempt due at the next turn boundary. |
+| A report while `awaiting_delivery` | Refused as settlement; routed to the stored source, record unchanged. |
+| A report while no turn is active | Refused as settlement; routed to the stored source. |
+| A report after `unanswered` | Never re-settles, notice not retracted; the account still reaches the stored source. |
+| A report after `settled` | Never re-settles; the account still reaches the stored source. |
+| A report from a target with no record | Ordinary report to the caller's current parent; settles nothing. |
+| A process restart | Obligation state is gone by decision, tasks do not auto-start, and no recovery promise is made. |
+
+**State and transition to test**
+
+| State or transition | Pinned by |
+| --- | --- |
+| Arming predicate (`shouldArm` true) | `test/task-collaboration.test.ts` "arms only an agent-authored direct parent→child dispatch"; `server-event-handler` "arms a direct parent dispatch and leaves unrelated sends ordinary"; `collaboration-store` "emits exactly one post-commit fact per created message" |
+| → `awaiting_delivery` | `obligation-controller` "does not request an account until the source dispatch is accepted" |
+| `awaiting_delivery` → `open` | `obligation-controller` "does not request an account until the source dispatch is accepted" |
+| `awaiting_delivery` → `awaiting_delivery` retry | `obligation-controller` "retries a rejected initial dispatch and bounds the transport failures"; `server-event-handler` "retries a rejected initial dispatch at an idle boundary" |
+| `awaiting_delivery` → `unanswered` (transport) | `obligation-controller` "exhausts awaiting_delivery after the transport bound without spending reminders"; `server-event-handler` "emits one factual no_account notice when initial delivery keeps failing" |
+| `open` → `reminder_due` | `server-event-handler` "reminds at the dispatch turn boundary and states the closing-only contract" |
+| `reminder_due` → `reminder_submitting` | `obligation-controller` "delivers reminders at the turn boundary and at +2m and +5m"; "waits for the target to be idle before submitting" |
+| `reminder_submitting` → `reminder_due` (delivered 1 or 2) | `obligation-controller` "delivers reminders at the turn boundary and at +2m and +5m" |
+| `reminder_submitting` → `reminder_due` (rejected) | `obligation-controller` "does not consume an attempt on rejection and bounds consecutive failures"; `server-event-handler` "records no successful reminder when the bridge rejects it" |
+| `reminder_submitting` → `unanswered` (3 delivered) | `obligation-controller` "declares unanswered and notifies no_account exactly once after the last reminder" |
+| `reminder_submitting` → `unanswered` (3 failures) | `obligation-controller` "does not consume an attempt on rejection and bounds consecutive failures" |
+| `open`/`reminder_due`/`reminder_submitting` → `settled` | `obligation-controller` "settles the record from an active current turn and routes to the stored source"; `server-event-handler` "settles the record from an active current turn and routes to the stored source" |
+| `awaiting_delivery` refusal | `obligation-controller` "does not settle while the record is awaiting_delivery"; `server-event-handler` "does not settle while the record is awaiting_delivery and still routes to the stored source" |
+| No active turn refusal | `obligation-controller` "does not settle without an active turn" |
+| `unanswered` non-re-settle | `obligation-controller` "does not re-settle a terminal record, retracts nothing, and still routes to the stored source" |
+| `settled` non-re-settle | `obligation-controller` "settles the record from an active current turn and routes to the stored source" (second call) |
+| No record → current parent | `obligation-controller` "routes to the current parent when no record exists" |
+| Coalescing | `obligation-controller` "coalesces a same-source follow-up and replaces a terminal record" |
+| Accepted residual | `obligation-controller` "accepts a delayed call from an earlier turn while a later turn is current" |
+| Watchdog start, activity, silence, single notice | `obligation-controller` "emits one heuristic no_activity notice per target×turn"; "resets the watchdog on qualifying activity and keeps epochs independent"; "never changes obligation state from a silence notice"; "does not start a watchdog without an active obligation"; "does not watch a terminal record" |
+| Process-local loss | `obligation-controller` "loses all obligation state when the controller is reconstructed" |
+
+Two rows have no obligation-level test:
+
+- **Supersession** is guarded only by the event handler's current-prompt check
+  (`server-event-handler` "keeps the live turn busy when a superseded turn
+  completes"); there is no settlement-specific supersession test because the
+  controller is never consulted for a superseded turn.
+- **Session rotation** is guarded by the `rotatingTasks` checks inside
+  `drainCollaborationDeliveries` and `submitObligationReminder`; no test asserts
+  record preservation across a rotation, because deletion/rotation recovery is
+  out of scope by decision.
+
+The earlier timestamp-guard transition (`startedAt >= deliveredAt`) was removed
+by decision and is deliberately absent from these diagrams.
+
 
 Detailed workflow guidance belongs in
 the [Task Manual](task-manual.md) or an on-demand skill.
@@ -182,7 +362,7 @@ WebAgent does not automatically rebroadcast raw child reports to ancestors.
 | `task_cancel` | Stop the current execution of a child Task while preserving its history. |
 | `task_create` | Create a direct child Task with optional execution overrides. Use `task_send` for its first instruction. |
 | `task_send` | Send a durable coordination message, including follow-up or resume instructions for an existing Task. Use `task_update` for typed `blocked`/`done` status. |
-| `task_update` | Send a typed `blocked` or `done` lifecycle account for the current Task. A plain `(status, body)` call settles the directed obligation when it comes from an eligible current turn; there is no correlation parameter. This does not delete or permanently close the Task. |
+| `task_update` | Send a typed `blocked` or `done` lifecycle account for the current Task. A plain `(status, body)` call settles the directed obligation when it comes from an active current turn; there is no correlation parameter. This does not delete or permanently close the Task. |
 
 ### `task_list`
 
@@ -414,7 +594,7 @@ task_update(status: "blocked" | "done", body: string)
   step.
 
 There is **no new parameter**. The runtime identifies the target's sole directed
-obligation itself and settles it only from an eligible current turn: the record
+obligation itself and settles it only from an active current turn: the record
 must be `open`, `reminder_due`, or `reminder_submitting`, and the target must
 have an active agent turn. A settleable call is one atomic step that records the
 update, changes the reported status, creates the account to the **stored
@@ -432,7 +612,7 @@ before `bridge.prompt` is issued while the record opens only when it resolves;
 comparing the two would reject the legitimate dispatch account.
 
 Because settlement is judged from the current turn, a call delayed from an
-earlier turn that arrives while a later eligible turn is current settles the
+earlier turn that arrives while a later turn is current settles the
 record and the source receives the earlier turn's content. That is an accepted
 boundary, not a bug.
 
