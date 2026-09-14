@@ -54,7 +54,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - a queued sibling delivery claims the next turn without erasing the open obligation, and the reminder is recovered on the next turn boundary
   - a request-level prompt failure (error event plus `PromptNotDeliveredError` rejection) consumes the transport budget, while an in-turn agent error (error event plus resolution) does not
   - a rejected initial dispatch is retried under the transport bound (backoff, no immediate idle re-drain) and ends in one factual `no_account` notice with `delivery_unavailable` evidence; a resume that keeps failing exhausts the same budget and a dispatch deadline backstops a never-handed-over dispatch
-  - a late callback from a superseded dispatch prompt identity is ignored; a runtime rotation aborts the watchdog and a silence notice requires a live current turn
+  - a late callback from a superseded dispatch prompt identity is ignored, including a failing resume and a stale hand-off; the dispatch deadline timer is cleared on terminal states; an in-flight reminder from a previous epoch is ignored after a coalescing follow-up; a runtime rotation (and bridge restart, including a draining turn) aborts the watchdog and a silence notice requires a live current turn
   - the closing reminder states the closing-only contract (`do not start any new work`), non-live session resume before reminding, rejected-reminder non-recording, and debug-level obligation lifecycle logging
 
 - `test/obligation-controller.test.ts`
