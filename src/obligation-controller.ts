@@ -49,6 +49,15 @@ export const REMINDER_RETRY_MAX_MS = 60_000;
  */
 export const SILENCE_THRESHOLD_S = 900;
 
+/**
+ * Backstop for an armed dispatch that is never handed to the target's session
+ * (for example a resume that keeps failing before any prompt is issued). When
+ * this elapses while the record is still `awaiting_delivery`, the edge ends in
+ * `unanswered` with a factual `no_account` and `delivery_unavailable` evidence,
+ * so the source is told instead of waiting forever.
+ */
+export const DISPATCH_DEADLINE_MS = 60 * 60_000;
+
 export type ObligationState =
   | "awaiting_delivery"
   | "open"
@@ -63,6 +72,12 @@ export interface DirectedObligation {
   openingMessageId: string;
   openingDeliveryId: string;
   openedAt: number;
+  /**
+   * Turn identity (promptId) of the dispatch that currently owns this record.
+   * Internal only: it guards late callbacks from a superseded dispatch, and is
+   * not the agent-visible correlation token that was rejected.
+   */
+  dispatchPromptId?: string;
   state: ObligationState;
   deliveredAttempts: number;
   consecutiveSubmissionFailures: number;
@@ -103,6 +118,12 @@ export interface ObligationControllerOptions {
   /** True while the target has an ACP turn (or an equivalent delivery) running. */
   isAgentBusy: (taskId: string) => boolean;
   /**
+   * True when `promptId` is still the target's live turn. A silence notice is
+   * emitted only for a live turn, so a runtime reset that clears busy state
+   * without going through `onTargetTurnEnded` cannot produce a stale notice.
+   */
+  isTurnRunning?: (taskId: string, promptId: string) => boolean;
+  /**
    * Submit a closing accounting prompt to the target. Resolves `true` only
    * when the bridge accepts (and the turn completes); a rejected submission
    * must resolve `false`.
@@ -136,6 +157,14 @@ function silenceKey(targetTaskId: string, promptId: string): string {
   return `${targetTaskId}\u0000${promptId}`;
 }
 
+function matchesDispatch(
+  obligation: DirectedObligation,
+  promptId: string | undefined,
+): boolean {
+  if (promptId === undefined) return true;
+  return obligation.dispatchPromptId === promptId;
+}
+
 function isTerminal(state: ObligationState): boolean {
   return state === "unanswered" || state === "settled";
 }
@@ -160,6 +189,7 @@ export class ObligationController {
   private readonly active = new Map<string, DirectedObligation>();
   private readonly attemptTimers = new Map<string, TimerHandle>();
   private readonly watchdogTimers = new Map<string, TimerHandle>();
+  private readonly dispatchDeadlineTimers = new Map<string, TimerHandle>();
   private readonly watchdog = new Map<string, WatchdogState>();
   private readonly silenceNotified = new Set<string>();
   private readonly opts: ObligationControllerOptions;
@@ -188,6 +218,30 @@ export class ObligationController {
     if (handle === undefined) return;
     this.watchdogTimers.delete(key);
     this.opts.clearTimer(handle);
+  }
+
+  private clearDispatchDeadline(key: string): void {
+    const handle = this.dispatchDeadlineTimers.get(key);
+    if (handle === undefined) return;
+    this.dispatchDeadlineTimers.delete(key);
+    this.opts.clearTimer(handle);
+  }
+
+  private armDispatchDeadline(obligation: DirectedObligation): void {
+    const key = edgeKey(obligation.sourceTaskId, obligation.targetTaskId);
+    this.clearDispatchDeadline(key);
+    const handle = this.opts.setTimer(() => {
+      this.dispatchDeadlineTimers.delete(key);
+      const current = this.active.get(key);
+      if (!current || current !== obligation) return;
+      if (current.state !== "awaiting_delivery") return;
+      this.log("obligation dispatch deadline exceeded", logFields(current));
+      this.exhaust(current, {
+        deliveryUnavailable: true,
+        dispatchDeadlineExceeded: true,
+      });
+    }, DISPATCH_DEADLINE_MS);
+    this.dispatchDeadlineTimers.set(key, handle);
   }
 
   private armAttemptTimer(
@@ -250,6 +304,7 @@ export class ObligationController {
       // `awaiting_delivery` and `open` stay; `reminder_due` returns to `open`
       // so the next turn boundary resumes recovery with the refreshed budget.
       if (existing.state === "reminder_due") existing.state = "open";
+      this.armDispatchDeadline(existing);
       this.log("obligation coalesced", {
         ...logFields(existing),
         state: existing.state,
@@ -269,6 +324,7 @@ export class ObligationController {
       noAccountNotified: false,
     };
     this.active.set(key, obligation);
+    this.armDispatchDeadline(obligation);
     this.log("obligation armed", {
       ...logFields(obligation),
       replacedTerminal: existing !== undefined,
@@ -276,8 +332,12 @@ export class ObligationController {
     return obligation;
   }
 
-  /** The qualifying source dispatch was accepted by the bridge. */
-  markDelivered(sourceTaskId: string, targetTaskId: string): void {
+  /** The qualifying source dispatch was handed to the target's session. */
+  markDelivered(
+    sourceTaskId: string,
+    targetTaskId: string,
+    promptId?: string,
+  ): void {
     const key = edgeKey(sourceTaskId, targetTaskId);
     const obligation = this.active.get(key);
     if (!obligation) return;
@@ -287,6 +347,8 @@ export class ObligationController {
     ) {
       return;
     }
+    if (promptId !== undefined) obligation.dispatchPromptId = promptId;
+    this.clearDispatchDeadline(key);
     this.clearAttemptTimer(key);
     obligation.state = "open";
     // Do not reset `consecutiveSubmissionFailures` here: a retry issuance can
@@ -302,9 +364,14 @@ export class ObligationController {
    * failure streak is cleared. A resolved turn still counts as a successful
    * submission even when the turn itself ends in an agent error.
    */
-  markDispatchSucceeded(sourceTaskId: string, targetTaskId: string): void {
+  markDispatchSucceeded(
+    sourceTaskId: string,
+    targetTaskId: string,
+    promptId?: string,
+  ): void {
     const obligation = this.getActive(sourceTaskId, targetTaskId);
     if (!obligation) return;
+    if (!matchesDispatch(obligation, promptId)) return;
     if (isTerminal(obligation.state)) return;
     obligation.consecutiveSubmissionFailures = 0;
   }
@@ -322,9 +389,14 @@ export class ObligationController {
    * reminder schedule is cancelled, so the failure consumes the transport
    * budget once and the dispatch is retried rather than stranded open.
    */
-  markDeliveryFailed(sourceTaskId: string, targetTaskId: string): void {
+  markDeliveryFailed(
+    sourceTaskId: string,
+    targetTaskId: string,
+    promptId?: string,
+  ): void {
     const obligation = this.getActive(sourceTaskId, targetTaskId);
     if (!obligation) return;
+    if (!matchesDispatch(obligation, promptId)) return;
     const key = edgeKey(obligation.sourceTaskId, obligation.targetTaskId);
     const dispatchPhase =
       obligation.state === "awaiting_delivery" ||
@@ -634,6 +706,16 @@ export class ObligationController {
     if (this.active.get(key) !== obligation) return;
     const state = this.watchdog.get(key);
     if (!state) return;
+    // Require the turn to still be live: the watchdog timer can outlive a
+    // runtime reset that never delivered a terminal event.
+    if (
+      this.opts.isTurnRunning &&
+      !this.opts.isTurnRunning(obligation.targetTaskId, state.promptId)
+    ) {
+      this.clearWatchdogTimer(key);
+      this.watchdog.delete(key);
+      return;
+    }
     const seen = silenceKey(obligation.targetTaskId, state.promptId);
     if (this.silenceNotified.has(seen)) return;
     this.silenceNotified.add(seen);
@@ -654,6 +736,19 @@ export class ObligationController {
     });
   }
 
+  /**
+   * Drop the watchdog for the target's turn without touching the record. Called
+   * by runtime reset paths (rotation, bridge restart) that end a turn without a
+   * terminal event.
+   */
+  abortTurn(targetTaskId: string): void {
+    const obligation = this.findForTarget(targetTaskId);
+    if (!obligation) return;
+    const key = edgeKey(obligation.sourceTaskId, obligation.targetTaskId);
+    this.clearWatchdogTimer(key);
+    this.watchdog.delete(key);
+  }
+
   /** Stop all scheduled work (shutdown/tests); the controller is then unusable. */
   dispose(): void {
     for (const handle of this.attemptTimers.values()) {
@@ -662,8 +757,12 @@ export class ObligationController {
     for (const handle of this.watchdogTimers.values()) {
       this.opts.clearTimer(handle);
     }
+    for (const handle of this.dispatchDeadlineTimers.values()) {
+      this.opts.clearTimer(handle);
+    }
     this.attemptTimers.clear();
     this.watchdogTimers.clear();
+    this.dispatchDeadlineTimers.clear();
     this.watchdog.clear();
   }
 
@@ -683,6 +782,7 @@ export class ObligationController {
       }
       this.clearAttemptTimer(key);
       this.clearWatchdogTimer(key);
+      this.clearDispatchDeadline(key);
       this.watchdog.delete(key);
       this.active.delete(key);
     }

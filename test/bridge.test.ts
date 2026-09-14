@@ -1,7 +1,7 @@
 import { afterEach, describe, it, mock } from "node:test";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
-import { AgentBridge } from "../src/bridge.ts";
+import { AgentBridge, PromptNotDeliveredError } from "../src/bridge.ts";
 
 const mappedTasks = {
   getAgentSessionId(taskId: string) {
@@ -359,7 +359,7 @@ describe("AgentBridge", () => {
     ]);
   });
 
-  it("emits error events for non-cancellation prompt failures", async () => {
+  it("resolves for an in-turn agent error and emits an error event", async () => {
     const bridge = new AgentBridge("fake-agent", mappedTasks);
     const events: any[] = [];
     bridge.on("event", (event) => events.push(event));
@@ -370,6 +370,8 @@ describe("AgentBridge", () => {
       },
     };
 
+    // The request was handed over before it failed, so this is an in-turn
+    // agent error, not a transport failure: it resolves.
     await bridge.prompt("s1", "hello");
 
     assert.deepEqual(events, [
@@ -379,6 +381,25 @@ describe("AgentBridge", () => {
         message: "boom",
       },
     ]);
+  });
+
+  it("rejects a request-level prompt failure with a distinct error", async () => {
+    const bridge = new AgentBridge("fake-agent", mappedTasks);
+    const events: any[] = [];
+    bridge.on("event", (event) => events.push(event));
+
+    (bridge as any).markAgentDead("Agent process exited unexpectedly.");
+
+    // The agent never received the prompt, so the failure must be visible to
+    // transport accounting as a rejection, after the error event.
+    await assert.rejects(
+      () => bridge.prompt("s2", "hello"),
+      (error: unknown) => error instanceof PromptNotDeliveredError,
+    );
+    const err = events.find((e: any) => e.type === "error");
+    assert.ok(err, "expected error event");
+    assert.equal(err.taskId, "s2");
+    assert.match(err.message, /exited unexpectedly/);
   });
 
   it("buffers silent prompt text in promptForText without emitting events", async () => {
@@ -754,7 +775,10 @@ describe("AgentBridge", () => {
 
       (bridge as any).markAgentDead("Agent process exited unexpectedly.");
 
-      await bridge.prompt("s2", "hello");
+      await assert.rejects(
+        () => bridge.prompt("s2", "hello"),
+        (error: unknown) => error instanceof PromptNotDeliveredError,
+      );
 
       const err = events.find((e: any) => e.type === "error");
       assert.ok(err, "expected error event");
@@ -859,6 +883,7 @@ describe("AgentBridge", () => {
         liveTasks: new Set(["s1", "s2"]),
         restoringTasks: new Set<string>(),
         activePrompts: new Set(["s1"]),
+        abortObligationTurn(_id: string) {},
         pendingPromptSubmissions: new Map([["s2", 22]]),
         cancelledPromptSubmissions: new Set([22]),
         runningBashProcs: new Map<string, any>(),

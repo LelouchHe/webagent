@@ -27,6 +27,21 @@ export interface AgentSessionIds {
   getTaskId(agentSessionId: string): string | undefined;
 }
 
+/**
+ * Thrown by `AgentBridge.prompt` when the prompt was never handed to the agent
+ * session (dead bridge, missing connection, or an attachment-dispatch
+ * misconfiguration before the request was sent). The bridge still emits an
+ * `error` event first; this type is the machine-readable signal that the
+ * failure was request-level, so callers must not account for it as a delivered
+ * turn or count it as a delivered reminder.
+ */
+export class PromptNotDeliveredError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "PromptNotDeliveredError";
+  }
+}
+
 export class AgentBridge extends EventEmitter {
   private proc: ChildProcess | null = null;
   private conn: acp.ClientSideConnection | null = null;
@@ -318,14 +333,15 @@ export class AgentBridge extends EventEmitter {
         taskId,
         message: this.deadReason,
       } satisfies AgentEvent);
-      return;
+      throw new PromptNotDeliveredError(this.deadReason);
     }
-    if (!this.conn) throw new Error("Not connected");
+    if (!this.conn) throw new PromptNotDeliveredError("Not connected");
     let abortReject: (e: Error) => void = () => {};
     const abortPromise = new Promise<never>((_, rej) => {
       abortReject = rej;
     });
     this.pendingAborts.set(taskId, abortReject);
+    let handedOver = false;
     try {
       const promptParts: PromptBlock[] = [];
       if (attachments && attachments.length > 0) {
@@ -341,13 +357,16 @@ export class AgentBridge extends EventEmitter {
         }
       }
       promptParts.push({ type: "text", text });
-      const result = (await Promise.race([
-        this.conn.prompt({
-          sessionId: this.agentSessionId(taskId),
-          prompt: promptParts,
-        }),
-        abortPromise,
-      ])) as { stopReason?: string };
+      // Evaluate the request call before flipping the flag: a synchronous
+      // throw here means the agent never received the prompt.
+      const request = this.conn.prompt({
+        sessionId: this.agentSessionId(taskId),
+        prompt: promptParts,
+      });
+      handedOver = true;
+      const result = (await Promise.race([request, abortPromise])) as {
+        stopReason?: string;
+      };
       this.emit("event", {
         type: "prompt_done",
         taskId,
@@ -376,6 +395,10 @@ export class AgentBridge extends EventEmitter {
         message,
         ...(promptId ? { promptId } : {}),
       } satisfies AgentEvent);
+      // A failure before the request was handed over is request-level and must
+      // reject so callers do not account for it as a delivered turn. A failure
+      // after hand-off is an in-turn agent error and resolves.
+      if (!handedOver) throw new PromptNotDeliveredError(message);
     } finally {
       this.pendingAborts.delete(taskId);
     }
@@ -516,6 +539,7 @@ export class AgentBridge extends EventEmitter {
         ...tasks.pendingPromptSubmissions.keys(),
       ]);
       for (const id of busyTaskIds) {
+        tasks.abortObligationTurn(id);
         tasks.state.patch(id, { runtime: { busy: null } });
       }
       for (const submissionId of tasks.pendingPromptSubmissions.values()) {
