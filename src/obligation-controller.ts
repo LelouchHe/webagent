@@ -355,7 +355,10 @@ export class ObligationController {
    */
   beginTurn(targetTaskId: string, promptId: string): void {
     const obligation = this.findForTarget(targetTaskId);
-    if (!obligation) return;
+    // Terminal records stay in the map for late-account routing, but they have
+    // no open obligation to watch. Starting a watchdog for one would emit a
+    // spurious no_activity notice for a closed edge.
+    if (!obligation || isTerminal(obligation.state)) return;
     this.startWatchdog(obligation, promptId);
   }
 
@@ -365,7 +368,7 @@ export class ObligationController {
    */
   noteAgentActivity(targetTaskId: string, at = this.now()): void {
     const obligation = this.findForTarget(targetTaskId);
-    if (!obligation) return;
+    if (!obligation || isTerminal(obligation.state)) return;
     const key = edgeKey(obligation.sourceTaskId, obligation.targetTaskId);
     const state = this.watchdog.get(key);
     if (!state) return;
