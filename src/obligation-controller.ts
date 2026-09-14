@@ -105,6 +105,14 @@ export interface ObligationView {
   readonly consecutiveSubmissionFailures: number;
   readonly lastDeliveredAttemptAt?: number;
   readonly nextAttemptAt?: number;
+  /** Advisory receipt: the queued-dispatch advisory is no longer pending. */
+  readonly dispatchAdvised: boolean;
+  /** Advisory receipt: the age advisory has been emitted. */
+  readonly ageAdvised: boolean;
+  /** Anchor for the queued-dispatch advisory (set at arm and coalescing). */
+  readonly dispatchAdvisoryFrom: number;
+  /** Anchor for the age advisory (set at arm and coalescing). */
+  readonly ageAdvisoryFrom: number;
   readonly noAccountNotified: boolean;
 }
 
@@ -121,6 +129,10 @@ interface ObligationRecord {
   consecutiveSubmissionFailures: number;
   lastDeliveredAttemptAt?: number;
   nextAttemptAt?: number;
+  dispatchAdvised: boolean;
+  ageAdvised: boolean;
+  dispatchAdvisoryFrom: number;
+  ageAdvisoryFrom: number;
   noAccountNotified: boolean;
 }
 
@@ -317,12 +329,11 @@ function logFields(obligation: ObligationRecord): Record<string, unknown> {
  */
 export class ObligationController {
   private readonly active = new Map<string, ObligationRecord>();
-  private readonly attemptTimers = new Map<string, TimerHandle>();
-  private readonly watchdogTimers = new Map<string, TimerHandle>();
-  private readonly dispatchAdvisoryTimers = new Map<string, TimerHandle>();
-  private readonly ageAdvisoryTimers = new Map<string, TimerHandle>();
   private readonly watchdog = new Map<string, WatchdogState>();
   private readonly silenceNotified = new Set<string>();
+  /** The one armed timer, covering the earliest pending deadline. */
+  private deadlineTimer: TimerHandle | undefined;
+  private disposed = false;
   private readonly opts: ObligationControllerOptions;
 
   constructor(options: ObligationControllerOptions) {
@@ -342,52 +353,56 @@ export class ObligationController {
    * identity does not match the current record is a no-op.
    */
   apply(fact: ObligationFact): unknown {
+    let result: unknown;
     switch (fact.type) {
       case "armed":
         this.transitionArmed(fact);
-        return undefined;
+        break;
       case "attempt_begun":
         this.transitionAttemptBegun(fact);
-        return undefined;
+        break;
       case "handed_over":
         this.transitionHandedOver(fact);
-        return undefined;
+        break;
       case "dispatch_succeeded":
         this.transitionDispatchSucceeded(fact);
-        return undefined;
+        break;
       case "dispatch_failed":
         this.transitionDispatchFailed(fact);
-        return undefined;
+        break;
       case "turn_begun":
         this.transitionTurnBegun(fact);
-        return undefined;
+        break;
       case "turn_ended":
         this.transitionTurnEnded(fact);
-        return undefined;
+        break;
       case "turn_aborted":
         this.transitionTurnAborted(fact);
-        return undefined;
+        break;
       case "agent_activity":
         this.transitionAgentActivity(fact);
-        return undefined;
+        break;
       case "released":
         this.transitionReleased(fact);
-        return undefined;
+        break;
       case "reminder_started":
         this.transitionReminderStarted(fact);
-        return undefined;
+        break;
       case "reminder_resolved":
         this.transitionReminderResolved(fact);
-        return undefined;
+        break;
       case "timer_due":
         this.transitionTimerDue(fact);
-        return undefined;
+        break;
       case "settle_requested":
-        return this.transitionSettle(fact);
+        result = this.transitionSettle(fact);
+        break;
       case "disposed":
         this.transitionDisposed();
-        return undefined;
+        break;
     }
+    this.schedule();
+    return result;
   }
 
   // --- Public fact emitters (no mutation; they only call apply) ---
@@ -514,34 +529,99 @@ export class ObligationController {
     }) as { decision: SettlementDecision; result: T };
   }
 
-  // --- Timer helpers (armed only from within apply's call graph) ---
+  // --- The one scheduler: deadlines derived from record state ---
 
-  private clearAttemptTimer(key: string): void {
-    const handle = this.attemptTimers.get(key);
-    if (handle === undefined) return;
-    this.attemptTimers.delete(key);
-    this.opts.clearTimer(handle);
+  /**
+   * Arm a single timer for the earliest pending deadline across all records.
+   * This is the only place that arms or clears a timer.
+   */
+  private schedule(): void {
+    if (this.deadlineTimer !== undefined) {
+      this.opts.clearTimer(this.deadlineTimer);
+      this.deadlineTimer = undefined;
+    }
+    if (this.disposed) return;
+    const now = this.now();
+    let earliest: number | undefined;
+    for (const obligation of this.active.values()) {
+      for (const deadline of this.pendingDeadlines(obligation)) {
+        if (earliest === undefined || deadline < earliest) earliest = deadline;
+      }
+    }
+    if (earliest === undefined) return;
+    this.deadlineTimer = this.opts.setTimer(
+      () => {
+        this.deadlineTimer = undefined;
+        this.fireDue();
+      },
+      Math.max(0, earliest - now),
+    );
   }
 
-  private clearWatchdogTimer(key: string): void {
-    const handle = this.watchdogTimers.get(key);
-    if (handle === undefined) return;
-    this.watchdogTimers.delete(key);
-    this.opts.clearTimer(handle);
+  /** Every deadline a record is currently waiting on, derived from its state. */
+  private pendingDeadlines(obligation: ObligationRecord): number[] {
+    const deadlines: number[] = [];
+    const key = edgeKey(obligation.sourceTaskId, obligation.targetTaskId);
+    if (
+      obligation.nextAttemptAt !== undefined &&
+      (obligation.state === "awaiting_delivery" ||
+        obligation.state === "reminder_due")
+    ) {
+      deadlines.push(obligation.nextAttemptAt);
+    }
+    const watchdog = this.watchdog.get(key);
+    if (watchdog) {
+      deadlines.push(watchdog.lastAgentActivityAt + SILENCE_THRESHOLD_S * 1000);
+    }
+    if (
+      obligation.state === "awaiting_delivery" &&
+      !obligation.dispatchAdvised
+    ) {
+      deadlines.push(obligation.dispatchAdvisoryFrom + DISPATCH_ADVISORY_MS);
+    }
+    if (!isTerminal(obligation.state) && !obligation.ageAdvised) {
+      deadlines.push(obligation.ageAdvisoryFrom + AGE_ADVISORY_MS);
+    }
+    return deadlines;
   }
 
-  private clearDispatchAdvisory(key: string): void {
-    const handle = this.dispatchAdvisoryTimers.get(key);
-    if (handle === undefined) return;
-    this.dispatchAdvisoryTimers.delete(key);
-    this.opts.clearTimer(handle);
-  }
-
-  private clearAgeAdvisory(key: string): void {
-    const handle = this.ageAdvisoryTimers.get(key);
-    if (handle === undefined) return;
-    this.ageAdvisoryTimers.delete(key);
-    this.opts.clearTimer(handle);
+  /** Dispatch every deadline that has passed, then re-arm for the next. */
+  private fireDue(): void {
+    const now = this.now();
+    for (const obligation of [...this.active.values()]) {
+      const key = edgeKey(obligation.sourceTaskId, obligation.targetTaskId);
+      if (
+        obligation.nextAttemptAt !== undefined &&
+        obligation.nextAttemptAt <= now &&
+        (obligation.state === "awaiting_delivery" ||
+          obligation.state === "reminder_due")
+      ) {
+        obligation.nextAttemptAt = undefined;
+        this.timerDue(obligation, "attempt");
+      }
+      const watchdog = this.watchdog.get(key);
+      if (
+        watchdog &&
+        watchdog.lastAgentActivityAt + SILENCE_THRESHOLD_S * 1000 <= now
+      ) {
+        this.timerDue(obligation, "watchdog", watchdog.promptId);
+      }
+      if (
+        obligation.state === "awaiting_delivery" &&
+        !obligation.dispatchAdvised &&
+        obligation.dispatchAdvisoryFrom + DISPATCH_ADVISORY_MS <= now
+      ) {
+        this.timerDue(obligation, "dispatch_advisory");
+      }
+      if (
+        !isTerminal(obligation.state) &&
+        !obligation.ageAdvised &&
+        obligation.ageAdvisoryFrom + AGE_ADVISORY_MS <= now
+      ) {
+        this.timerDue(obligation, "age_advisory");
+      }
+    }
+    this.schedule();
   }
 
   private timerDue(
@@ -558,56 +638,6 @@ export class ObligationController {
     });
   }
 
-  private armDispatchAdvisory(obligation: ObligationRecord): void {
-    const key = edgeKey(obligation.sourceTaskId, obligation.targetTaskId);
-    this.clearDispatchAdvisory(key);
-    const handle = this.opts.setTimer(() => {
-      this.dispatchAdvisoryTimers.delete(key);
-      this.timerDue(obligation, "dispatch_advisory");
-    }, DISPATCH_ADVISORY_MS);
-    this.dispatchAdvisoryTimers.set(key, handle);
-  }
-
-  private armAgeAdvisory(obligation: ObligationRecord): void {
-    const key = edgeKey(obligation.sourceTaskId, obligation.targetTaskId);
-    this.clearAgeAdvisory(key);
-    const handle = this.opts.setTimer(() => {
-      this.ageAdvisoryTimers.delete(key);
-      this.timerDue(obligation, "age_advisory");
-    }, AGE_ADVISORY_MS);
-    this.ageAdvisoryTimers.set(key, handle);
-  }
-
-  private armAttemptTimer(obligation: ObligationRecord, delayMs: number): void {
-    const key = edgeKey(obligation.sourceTaskId, obligation.targetTaskId);
-    this.clearAttemptTimer(key);
-    const handle = this.opts.setTimer(
-      () => {
-        this.attemptTimers.delete(key);
-        this.timerDue(obligation, "attempt");
-      },
-      Math.max(0, delayMs),
-    );
-    this.attemptTimers.set(key, handle);
-  }
-
-  private armWatchdog(
-    obligation: ObligationRecord,
-    state: WatchdogState,
-  ): void {
-    const key = edgeKey(obligation.sourceTaskId, obligation.targetTaskId);
-    this.clearWatchdogTimer(key);
-    const dueAt = state.lastAgentActivityAt + SILENCE_THRESHOLD_S * 1000;
-    const handle = this.opts.setTimer(
-      () => {
-        this.watchdogTimers.delete(key);
-        this.timerDue(obligation, "watchdog", state.promptId);
-      },
-      Math.max(0, dueAt - this.now()),
-    );
-    this.watchdogTimers.set(key, handle);
-  }
-
   // --- Transition table (each row is reachable only through apply) ---
 
   private transitionArmed(
@@ -616,9 +646,13 @@ export class ObligationController {
     const key = edgeKey(fact.sourceTaskId, fact.targetTaskId);
     const existing = this.active.get(key);
     if (existing && !isTerminal(existing.state)) {
-      this.clearAttemptTimer(key);
       existing.deliveredAttempts = 0;
       existing.consecutiveSubmissionFailures = 0;
+      existing.dispatchAdvised = false;
+      existing.ageAdvised = false;
+      existing.dispatchAdvisoryFrom = this.now();
+      existing.ageAdvisoryFrom = this.now();
+      existing.nextAttemptAt = undefined;
       existing.noAccountNotified = false;
       existing.lastDeliveredAttemptAt = undefined;
       existing.openingMessageId = fact.messageId;
@@ -630,8 +664,6 @@ export class ObligationController {
       ) {
         existing.state = "open";
       }
-      this.armDispatchAdvisory(existing);
-      this.armAgeAdvisory(existing);
       this.log("obligation coalesced", {
         ...logFields(existing),
         state: existing.state,
@@ -649,11 +681,13 @@ export class ObligationController {
       state: "awaiting_delivery",
       deliveredAttempts: 0,
       consecutiveSubmissionFailures: 0,
+      dispatchAdvised: false,
+      ageAdvised: false,
+      dispatchAdvisoryFrom: this.now(),
+      ageAdvisoryFrom: this.now(),
       noAccountNotified: false,
     };
     this.active.set(key, obligation);
-    this.armDispatchAdvisory(obligation);
-    this.armAgeAdvisory(obligation);
     this.log("obligation armed", {
       ...logFields(obligation),
       replacedTerminal: existing !== undefined,
@@ -685,8 +719,6 @@ export class ObligationController {
     if (!matchesDispatch(obligation, fact.attemptId)) return;
     if (fact.attemptId !== undefined)
       obligation.dispatchPromptId = fact.attemptId;
-    this.clearDispatchAdvisory(key);
-    this.clearAttemptTimer(key);
     obligation.state = "open";
     this.log("obligation opened", logFields(obligation));
     this.maybeRemindAtBoundary(obligation);
@@ -719,8 +751,6 @@ export class ObligationController {
       (obligation.state === "reminder_due" &&
         obligation.deliveredAttempts === 0);
     if (!dispatchPhase) return;
-    this.clearAttemptTimer(key);
-    this.clearWatchdogTimer(key);
     this.watchdog.delete(key);
     obligation.state = "awaiting_delivery";
     obligation.consecutiveSubmissionFailures += 1;
@@ -746,7 +776,6 @@ export class ObligationController {
     const obligation = this.findForTarget(fact.targetTaskId);
     if (!obligation) return;
     const key = edgeKey(obligation.sourceTaskId, obligation.targetTaskId);
-    this.clearWatchdogTimer(key);
     this.watchdog.delete(key);
     if (obligation.state === "open") {
       this.maybeRemindAtBoundary(obligation);
@@ -777,7 +806,6 @@ export class ObligationController {
     const state = this.watchdog.get(key);
     if (!state) return;
     state.lastAgentActivityAt = fact.at;
-    this.armWatchdog(obligation, state);
   }
 
   private transitionTurnAborted(
@@ -786,7 +814,6 @@ export class ObligationController {
     const obligation = this.findForTarget(fact.targetTaskId);
     if (!obligation) return;
     const key = edgeKey(obligation.sourceTaskId, obligation.targetTaskId);
-    this.clearWatchdogTimer(key);
     this.watchdog.delete(key);
   }
 
@@ -800,10 +827,6 @@ export class ObligationController {
       ) {
         continue;
       }
-      this.clearAttemptTimer(key);
-      this.clearWatchdogTimer(key);
-      this.clearDispatchAdvisory(key);
-      this.clearAgeAdvisory(key);
       this.watchdog.delete(key);
       this.active.delete(key);
     }
@@ -822,9 +845,6 @@ export class ObligationController {
     );
     if (!obligation) return;
     obligation.state = "reminder_submitting";
-    this.clearAttemptTimer(
-      edgeKey(obligation.sourceTaskId, obligation.targetTaskId),
-    );
   }
 
   private transitionReminderResolved(
@@ -876,6 +896,7 @@ export class ObligationController {
     switch (fact.kind) {
       case "dispatch_advisory": {
         if (obligation.state !== "awaiting_delivery") return;
+        obligation.dispatchAdvised = true;
         this.log("obligation dispatch still queued", logFields(obligation));
         this.opts.emitNotice(
           {
@@ -894,6 +915,7 @@ export class ObligationController {
       }
       case "age_advisory": {
         if (isTerminal(obligation.state)) return;
+        obligation.ageAdvised = true;
         const lastAgentActivityAt =
           this.watchdog.get(key)?.lastAgentActivityAt ?? null;
         this.log("obligation age advisory", logFields(obligation));
@@ -916,6 +938,8 @@ export class ObligationController {
       }
       case "watchdog":
         this.emitSilence(obligation, fact.attemptId);
+        // One notice per turn: drop the watchdog so it cannot re-fire.
+        this.watchdog.delete(key);
         return;
       case "attempt":
         this.runAttempt(obligation);
@@ -949,10 +973,6 @@ export class ObligationController {
     };
     const result = fact.run(decision);
     const key = edgeKey(obligation.sourceTaskId, obligation.targetTaskId);
-    this.clearAttemptTimer(key);
-    this.clearWatchdogTimer(key);
-    this.clearDispatchAdvisory(key);
-    this.clearAgeAdvisory(key);
     this.watchdog.delete(key);
     obligation.state = "settled";
     this.log("obligation settled", logFields(obligation));
@@ -960,23 +980,7 @@ export class ObligationController {
   }
 
   private transitionDisposed(): void {
-    for (const handle of this.attemptTimers.values()) {
-      this.opts.clearTimer(handle);
-    }
-    for (const handle of this.watchdogTimers.values()) {
-      this.opts.clearTimer(handle);
-    }
-    for (const handle of this.dispatchAdvisoryTimers.values()) {
-      this.opts.clearTimer(handle);
-    }
-    for (const handle of this.ageAdvisoryTimers.values()) {
-      this.opts.clearTimer(handle);
-    }
-    this.attemptTimers.clear();
-    this.watchdogTimers.clear();
-    this.dispatchAdvisoryTimers.clear();
-    this.ageAdvisoryTimers.clear();
-    this.watchdog.clear();
+    this.disposed = true;
   }
 
   // --- Effect helpers (called only from transition rows) ---
@@ -992,7 +996,6 @@ export class ObligationController {
       edgeKey(obligation.sourceTaskId, obligation.targetTaskId),
       state,
     );
-    this.armWatchdog(obligation, state);
   }
 
   private maybeRemindAtBoundary(obligation: ObligationRecord): void {
@@ -1014,7 +1017,6 @@ export class ObligationController {
         ? this.now()
         : (obligation.lastDeliveredAttemptAt ?? this.now());
     obligation.nextAttemptAt = base + delay;
-    this.armAttemptTimer(obligation, obligation.nextAttemptAt - this.now());
   }
 
   private retrySchedule(obligation: ObligationRecord): void {
@@ -1024,7 +1026,6 @@ export class ObligationController {
       REMINDER_RETRY_MAX_MS,
     );
     obligation.nextAttemptAt = this.now() + backoff;
-    this.armAttemptTimer(obligation, backoff);
   }
 
   /** Scheduler entry point: submit only while the target is idle. */
@@ -1069,10 +1070,6 @@ export class ObligationController {
   ): void {
     if (obligation.state === "unresolved") return;
     const key = edgeKey(obligation.sourceTaskId, obligation.targetTaskId);
-    this.clearAttemptTimer(key);
-    this.clearWatchdogTimer(key);
-    this.clearDispatchAdvisory(key);
-    this.clearAgeAdvisory(key);
     this.watchdog.delete(key);
     obligation.state = "unresolved";
     if (obligation.noAccountNotified) return;
@@ -1115,7 +1112,6 @@ export class ObligationController {
       this.opts.isTurnRunning &&
       !this.opts.isTurnRunning(obligation.targetTaskId, state.promptId)
     ) {
-      this.clearWatchdogTimer(key);
       this.watchdog.delete(key);
       return;
     }
