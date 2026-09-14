@@ -498,7 +498,7 @@ describe("handleAgentEvent", () => {
     assert.ok(payload.openingDeliveryId);
   });
 
-  it("settles the record from the current eligible turn and routes to the stored source", async () => {
+  it("settles the record from an active current turn and routes to the stored source", async () => {
     seedFamily();
     const { bridge, calls } = createControllableBridge();
     await armDirectDispatch(store, tasks, bridge, "parent", "child");
@@ -699,56 +699,6 @@ describe("handleAgentEvent", () => {
 
     assert.equal(calls.prompts.length, 2);
     assert.match(calls.prompts[1].text, /do not start any new work/i);
-    calls.prompts[1].resolve();
-    await flushTimers();
-  });
-
-  it("does not settle from a turn that started before deliveredAt", async () => {
-    seedFamily();
-    const { bridge, calls } = createControllableBridge();
-    const obligation = await armDirectDispatch(
-      store,
-      tasks,
-      bridge,
-      "parent",
-      "child",
-    );
-    endTurn(bridge, "child", calls.prompts[0].promptId);
-    calls.prompts[0].resolve();
-    await flushTimers();
-    assert.ok(obligation.deliveredAt);
-    const deliveredAt = obligation.deliveredAt;
-
-    // Force the active turn to look older than the accepted dispatch.
-    tasks.state.patch("child", {
-      runtime: {
-        busy: {
-          kind: "agent",
-          since: new Date(deliveredAt - 10_000).toISOString(),
-          promptId: "prompt-early",
-          cancelStatus: null,
-        },
-      },
-    });
-    const host = createMcpTaskToolHost({
-      store,
-      tasks,
-      getBridge: () => bridge,
-    });
-    await host.update("child", "done", "Report from an early turn.");
-
-    // Mutation evidence: ignoring the turn guard settles the record here.
-    assert.notEqual(tasks.getObligation("parent", "child")?.state, "settled");
-    assert.ok(
-      store
-        .getEvents("parent")
-        .some(
-          (event) =>
-            event.type === "system_message" &&
-            event.data.includes("Report from an early turn."),
-        ),
-      "an ineligible report is still routed to the stored source",
-    );
     calls.prompts[1].resolve();
     await flushTimers();
   });

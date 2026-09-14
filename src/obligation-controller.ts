@@ -63,8 +63,6 @@ export interface DirectedObligation {
   openingMessageId: string;
   openingDeliveryId: string;
   openedAt: number;
-  /** When the qualifying source dispatch was accepted by the bridge. */
-  deliveredAt?: number;
   state: ObligationState;
   deliveredAttempts: number;
   consecutiveSubmissionFailures: number;
@@ -291,12 +289,8 @@ export class ObligationController {
     }
     this.clearAttemptTimer(key);
     obligation.state = "open";
-    obligation.deliveredAt = this.now();
     obligation.consecutiveSubmissionFailures = 0;
-    this.log("obligation opened", {
-      ...logFields(obligation),
-      deliveredAt: obligation.deliveredAt,
-    });
+    this.log("obligation opened", logFields(obligation));
     this.maybeRemindAtBoundary(obligation);
   }
 
@@ -512,12 +506,18 @@ export class ObligationController {
   /**
    * Decide and perform one agent update for `targetTaskId`.
    *
-   * A record settles only when all three hold: its state is
-   * `open|reminder_due|reminder_submitting`, the target has an active agent
-   * turn, and that turn started at or after the accepted dispatch
-   * (`deliveredAt`). Otherwise the update is routed without settling: a record
-   * that exists addresses its stored source, and no record addresses the
-   * caller's current parent.
+   * A record settles only when both hold: its state is
+   * `open|reminder_due|reminder_submitting`, and the target has an active
+   * current agent turn. Otherwise the update is routed without settling: a
+   * record that exists addresses its stored source, and no record addresses
+   * the caller's current parent.
+   *
+   * There is deliberately **no timestamp guard** here. The delivery turn is
+   * added to `activePrompts` and stamped before `bridge.prompt` is issued, and
+   * `markDelivered` runs only when that prompt resolves, so any comparison of
+   * the current turn's start against bridge-acceptance time would reject the
+   * legitimate dispatch account. The accepted residual is handled by the state
+   * gate and documented instead; do not reintroduce a timestamp condition.
    *
    * `run` performs the synchronous store transaction for the chosen route. The
    * in-memory transition happens only after it succeeds, so a throwing `run`
@@ -541,9 +541,7 @@ export class ObligationController {
       (obligation.state === "open" ||
         obligation.state === "reminder_due" ||
         obligation.state === "reminder_submitting") &&
-      input.activeTurn !== null &&
-      obligation.deliveredAt !== undefined &&
-      input.activeTurn.startedAt >= obligation.deliveredAt;
+      input.activeTurn !== null;
     if (!settleable) {
       const decision: SettlementDecision = {
         kind: "stored-source",
