@@ -310,6 +310,15 @@ function edgeKey(sourceTaskId: string, targetTaskId: string): string {
 }
 
 /**
+ * Compile-time exhaustiveness guard for the single transition point: `apply`
+ * narrows its argument to `never` here, so a fact added to `ObligationFact`
+ * without a transition fails the type check instead of doing nothing at runtime.
+ */
+function assertNever(value: never): never {
+  throw new Error(`unhandled obligation fact: ${JSON.stringify(value)}`);
+}
+
+/**
  * Strict, uniform attempt-identity comparison: a fact carrying identity X
  * applies only when the record's current identity is exactly X (both
  * `undefined` counts as "no identity"). Only a fact from the live dispatch
@@ -429,6 +438,10 @@ export class ObligationController {
       case "disposed":
         this.transitionDisposed();
         break;
+      default:
+        // Compile-time exhaustiveness: a new fact type without a transition here
+        // fails the type check instead of silently doing nothing.
+        assertNever(fact);
     }
     this.schedule();
     return result;

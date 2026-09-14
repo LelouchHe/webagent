@@ -8,6 +8,15 @@ import { fileURLToPath } from "node:url";
  * behaviour; they prove the shape that makes the recurring defect classes
  * inexpressible: one transition point, one scheduler, no exported mutable
  * record, and every fact carrying the identity of the turn it describes.
+ *
+ * These checks read the source text, so they are smoke tests over the shape
+ * rather than proofs: the write scan and the identity scan match a parsed field
+ * list and a parsed union, so they catch a field written outside the transition
+ * graph and a fact declared without an identity, but they cannot show that an
+ * identity is actually compared. What holds regardless of the text is the type
+ * system — the mutable record is unexported behind a `readonly` projection, and
+ * `apply`'s switch is exhaustiveness-checked, so a fact without a transition
+ * fails the type check — together with the runtime transition tests.
  */
 const source = readFileSync(
   fileURLToPath(new URL("../src/obligation-controller.ts", import.meta.url)),

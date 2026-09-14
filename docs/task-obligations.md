@@ -158,6 +158,9 @@ vocabulary:
 cancels a timer; the record type is unexported and callers observe a read-only
 view. There is one state-derived scheduler: the controller computes each
 record's pending deadlines from state and arms a single timer for the earliest.
+A fact added to the vocabulary without a transition fails the type check: the
+switch is exhaustiveness-checked, so the transition table cannot fall behind the
+fact list.
 No timer's expiry decides an outcome — timers emit `timer_due`, and terminal
 transitions come only from a real account or from bounded accounting of real
 submission failures. The transition diagram:
