@@ -401,6 +401,38 @@ describe("handleAgentEvent", () => {
     await flushTimers();
   });
 
+  it("delivers even when the prompt audit write fails", async () => {
+    seedFamily();
+    const { bridge, calls } = createControllableBridge();
+    const originalSaveEvent = store.saveEvent.bind(store);
+    let auditAttempted = false;
+    store.saveEvent = (taskId, type, data, meta) => {
+      if (type === "collaboration_prompt") {
+        auditAttempted = true;
+        throw new Error("audit storage boom");
+      }
+      return originalSaveEvent(taskId, type, data, meta);
+    };
+    try {
+      await armDirectDispatch(store, tasks, bridge, "parent", "child");
+      await flushTimers();
+    } finally {
+      store.saveEvent = originalSaveEvent;
+    }
+
+    // Mutation evidence: letting the audit throw escape strands the claimed
+    // dispatch: no prompt, record left awaiting_delivery.
+    assert.equal(auditAttempted, true);
+    assert.equal(calls.prompts.length, 1);
+    assert.notEqual(
+      tasks.getObligation("parent", "child")?.state,
+      "awaiting_delivery",
+    );
+    assert.equal(store.countQueuedDeliveries("child"), 0);
+    calls.prompts[0].resolve();
+    await flushTimers();
+  });
+
   it("persists a bounded audit copy of the drained prompt", async () => {
     seedFamily();
     const { bridge, calls } = createControllableBridge();
@@ -498,8 +530,8 @@ describe("handleAgentEvent", () => {
     await new Promise<void>((resolve) => setTimeout(resolve, 2_100));
     await flushTimers();
 
-    // Mutation evidence: without resume-failure accounting (or the dispatch
-    // deadline) the record waits forever with no notice.
+    // Mutation evidence: without resume-failure accounting the record waits
+    // with no closure notice (the queued advisory is non-terminal).
     assert.equal(tasks.getObligation("parent", "child")?.state, "unresolved");
     assert.equal(broadcasts.length, 1);
     const notice = JSON.parse(broadcasts[0].body) as {
