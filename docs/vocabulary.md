@@ -90,7 +90,7 @@ entity; they name the runtime's bookkeeping.
 |---|---|
 | **directed obligation** | A process-local record that one source Task awaits one account from a target, armed by an agent-authored direct parent→child dispatch. Not a persisted entity, and not a Task. |
 | **account** | The target's typed `done` or `blocked` report submitted with `task_update`. A result submission, not proof that the parent accepted it. |
-| **settlement** | The atomic transition that records the account, updates the reported status, creates the account message to the stored source, and retires the record. There is no correlation parameter. |
+| **settlement** | The atomic transition that records the account, updates the reported status, creates the account message to the stored source, and marks the record `settled`. There is no correlation parameter. |
 | **stored source** | The source Task recorded when the obligation was armed. Accounts and notices route there even if the task tree changed afterwards. |
 | **closing reminder** | A runtime-injected closing turn that asks the target to account for the turn it just ran. It is a recovery aid, not a lifecycle verdict. |
 

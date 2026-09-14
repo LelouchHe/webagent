@@ -38,7 +38,7 @@ message.source_actor === "agent" && target.parent_id === source.id
 ```
 
 A user send (including a human message in the parent session), a sibling or
-child message, a correlated account, and a runtime outcome notice never arm an
+child message, a typed account, and a runtime outcome notice never arm an
 obligation. The policy is derived from data the rows already carry: there is no
 classification field at message creation and no body inspection.
 
@@ -216,9 +216,10 @@ is a no-op and cannot mutate the record that replaced it.
 
 ## Recovery and notices (operator policy)
 
-> The thresholds in this section are **operator policy set in advance**, not
-> validated against usage data. They are the mechanism's current defaults; a
-> deployment may tune them, and the runtime never uses them to declare an
+> The thresholds in this section are **operator policy set in advance**. They are
+> hard-coded module constants, not exposed configuration, so changing one is a
+> code change. They are not validated against usage data: they are the
+> mechanism's current values, and the runtime never uses them to declare an
 > outcome. The mechanism only reports facts.
 
 **Initial delivery and transport retry.** A request-level prompt failure — the
@@ -236,7 +237,8 @@ with backoff and consumes the separate transport budget instead.
 
 **Advisories.** A dispatch still queued at `DISPATCH_ADVISORY_MS` and a record
 still without an account at `AGE_ADVISORY_MS` each emit one non-terminal
-`still_waiting` notice per epoch. The record is unchanged and the accountable
+`still_waiting` notice per epoch. Both pending advisories are cleared on
+settlement, exhaustion, or release. The record is unchanged and the accountable
 party decides.
 
 **Watchdog.** While a target turn with a non-terminal record is running, a quiet
@@ -271,7 +273,7 @@ show verbatim), and `evidence`. A notice cannot arm an obligation.
 | `no_account` | Bounded delivered reminders finished without an account. | `deliveredAttempts`, `consecutiveSubmissionFailures`, `lastDeliveredAttemptAt`. | The outcome is unknown; the parent may follow up with `task_send` or `task_cancel`. A later account still settles. |
 | `delivery_failed` | The transport bound was reached. | The above plus `deliveryUnavailable: true`. | The runtime could not deliver; the parent decides whether to re-dispatch or cancel. |
 | `no_activity` | A running turn produced no qualifying activity for the threshold. | `runningSince`, `lastAgentActivityAt`, `promptId`. | Heuristic only; the parent may `task_cancel` a turn that looks stalled. |
-| `still_waiting` | A dispatch advisory or age advisory elapsed. | `phase` (`not_handed_over` or `no_account`), waiting/open time, delivered attempts, last agent activity. | The runtime is still waiting; the parent decides whether to keep waiting or cancel. |
+| `still_waiting` | A dispatch advisory or age advisory elapsed. | `phase`, plus per phase: `not_handed_over` carries `waitingMs`; `no_account` carries `openForMs`, `deliveredAttempts`, `lastAgentActivityAt`. | The runtime is still waiting; the parent decides whether to keep waiting or cancel. |
 
 ## Observability, lifetime, and limits
 
