@@ -174,11 +174,16 @@ function silenceKey(targetTaskId: string, promptId: string): string {
   return `${targetTaskId}\u0000${promptId}`;
 }
 
+/**
+ * Strict, uniform attempt-identity comparison: a fact carrying identity X
+ * applies only when the record's current identity is exactly X (both
+ * `undefined` counts as "no identity"). A record with no identity therefore
+ * accepts only facts that also carry none.
+ */
 function matchesDispatch(
   obligation: DirectedObligation,
   promptId: string | undefined,
 ): boolean {
-  if (promptId === undefined) return true;
   return obligation.dispatchPromptId === promptId;
 }
 
@@ -456,14 +461,9 @@ export class ObligationController {
     ) {
       return;
     }
-    // A stale hand-off from a superseded attempt must not take over the record.
-    if (
-      promptId !== undefined &&
-      obligation.dispatchPromptId !== undefined &&
-      obligation.dispatchPromptId !== promptId
-    ) {
-      return;
-    }
+    // A stale hand-off from a superseded attempt must not take over the record:
+    // strict identity, so a cleared identity rejects any identified hand-off.
+    if (!matchesDispatch(obligation, promptId)) return;
     if (promptId !== undefined) obligation.dispatchPromptId = promptId;
     this.clearDispatchAdvisory(key);
     this.clearAttemptTimer(key);

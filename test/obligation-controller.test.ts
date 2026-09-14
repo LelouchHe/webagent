@@ -587,6 +587,33 @@ describe("ObligationController", () => {
     assert.equal(obligation.consecutiveSubmissionFailures, 1);
   });
 
+  it("ignores a hand-off from an attempt superseded by coalescing", () => {
+    const h = makeController();
+    const obligation = armDirect(h);
+    h.controller.beginDispatch("parent", "child", "dispatch-A");
+    // B coalesces while A is in flight; the record's identity is cleared.
+    h.controller.arm({
+      sourceTaskId: "parent",
+      targetTaskId: "child",
+      messageId: "m-2",
+      deliveryId: "d-2",
+    });
+    assert.equal(obligation.dispatchPromptId, undefined);
+
+    // Mutation evidence: a lenient comparison accepts A here, opens the
+    // coalesced record, reinstalls A, and clears B's dispatch advisory.
+    h.controller.markDelivered("parent", "child", "dispatch-A");
+    assert.equal(obligation.state, "awaiting_delivery");
+    assert.equal(obligation.dispatchPromptId, undefined);
+    assert.equal((h.controller as any).dispatchAdvisoryTimers.size, 1);
+
+    // The follow-up's own hand-off still applies.
+    h.controller.beginDispatch("parent", "child", "dispatch-B");
+    h.controller.markDelivered("parent", "child", "dispatch-B");
+    assert.notEqual(obligation.state, "awaiting_delivery");
+    assert.equal(obligation.dispatchPromptId, "dispatch-B");
+  });
+
   it("ignores a failure from an attempt superseded by coalescing", () => {
     const h = makeController();
     const obligation = armDirect(h);
