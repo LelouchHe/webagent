@@ -525,6 +525,50 @@ describe("handleAgentEvent", () => {
     assert.equal(calls.prompts.filter((p) => p.taskId === "child").length, 2);
   });
 
+  it("routes a correlated account to the stored source after a tree change", async () => {
+    seedFamily();
+    const { bridge, calls } = createControllableBridge();
+    const id = await armDirectDispatch(store, tasks, bridge, "parent", "child");
+    // The tree changes after arming: child is reparented under a sibling.
+    store["db"]
+      .prepare("UPDATE tasks SET parent_id = ? WHERE id = ?")
+      .run("sibling", "child");
+
+    const host = createMcpTaskToolHost({
+      store,
+      tasks,
+      getBridge: () => bridge,
+    });
+    await host.update("child", "done", "Stored-source account.", id);
+
+    // Mutation evidence: routing to the current parent_id sends this to
+    // "sibling" instead, leaving the originally accountable source unaware.
+    assert.ok(
+      store
+        .getEvents("parent")
+        .some(
+          (event) =>
+            event.type === "system_message" &&
+            event.data.includes("Stored-source account."),
+        ),
+      "the account must reach the stored source",
+    );
+    assert.equal(
+      store
+        .getEvents("sibling")
+        .some(
+          (event) =>
+            event.type === "system_message" &&
+            event.data.includes("Stored-source account."),
+        ),
+      false,
+    );
+    // Let the account delivery drain finish.
+    await flushTimers();
+    calls.prompts.at(-1)?.resolve();
+    await flushTimers();
+  });
+
   it("does not settle an open edge with an uncorrelated account", async () => {
     seedFamily();
     const { bridge, calls } = createControllableBridge();
