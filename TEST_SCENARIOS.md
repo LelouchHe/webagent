@@ -48,13 +48,13 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - directed dispatch closure: only an agent-authored direct parent→child dispatch arms an obligation; a user send, a sibling/child message, an account, and a runtime notice do not
   - settlement predicate: a plain `task_update` settles only an `open|reminder_due|reminder_submitting` record when the target has an active current agent turn; `awaiting_delivery`, a terminal record, and no active turn do not settle and still route to the stored source
   - a terminal `unanswered` record is not re-settled, its notice is not retracted, and a late account still reaches the stored source; with no record the report goes to the current parent and settles nothing
-  - the accepted boundary: a delayed call from an earlier turn arriving while a later eligible turn is current settles the record, and the source receives the earlier turn's content
+  - the accepted boundary: a delayed call from an earlier turn arriving while a later turn is current settles the record, and the source receives the earlier turn's content
   - a queued sibling delivery claims the next turn without erasing the open obligation, and the reminder is recovered on the next turn boundary
   - a rejected initial dispatch is retried under the transport bound (backoff, no immediate idle re-drain) and ends in one factual `no_account` notice with `delivery_unavailable` evidence
   - the closing reminder states the closing-only contract (`do not start any new work`), non-live session resume before reminding, rejected-reminder non-recording, and debug-level obligation lifecycle logging
 
 - `test/obligation-controller.test.ts`
-  - awaiting_delivery → open timing, coalescing without a fresh record, +2m/+5m delivered-reminder schedule, transport-bound exhaustion, idle wait, the two-condition settlement predicate and its guards (awaiting_delivery, no active turn, terminal records), stored-source/current-parent routing, the accepted boundary, process-local loss on reconstruction, and independent watchdog/no-account epochs
+  - awaiting_delivery → open timing, coalescing without a fresh record, +2m/+5m delivered-reminder schedule, transport-bound exhaustion, idle wait, the two-condition settlement predicate and its guards (awaiting_delivery, no active turn, terminal records), stored-source/current-parent routing, the accepted boundary, process-local loss on reconstruction, terminal records never watched, and independent watchdog/no-account epochs
 
 - `test/task-collaboration.test.ts`
   - pure `shouldArm` policy: agent parent→child only; user, system, and non-parent relations never arm
