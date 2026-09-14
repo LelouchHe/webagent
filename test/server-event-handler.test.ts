@@ -536,6 +536,52 @@ describe("handleAgentEvent", () => {
     );
   });
 
+  it("settles the account from the same dispatch turn through the real delivery path", async () => {
+    seedFamily();
+    const { bridge, calls } = createControllableBridge();
+    await armDirectDispatch(store, tasks, bridge, "parent", "child");
+    await flushTimers();
+    assert.equal(calls.prompts.length, 1);
+
+    // The real path: the dispatch prompt resolves, so markDelivered runs and
+    // the record becomes settleable. The turn is still the dispatch turn
+    // (prompt_done has not been processed), so this is the account the
+    // dispatch itself produces. Do not replace this with a synthetic turn: a
+    // constructed turn can satisfy guards that the real delivery turn cannot.
+    calls.prompts[0].resolve();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(calls.prompts.length, 1, "reminder must not have started yet");
+
+    const host = createMcpTaskToolHost({
+      store,
+      tasks,
+      getBridge: () => bridge,
+    });
+    await host.update("child", "done", "Settled from the dispatch turn.");
+
+    assert.ok(tasks.getActiveAgentTurn("child"));
+    assert.equal(tasks.getObligation("parent", "child")?.state, "settled");
+    assert.ok(
+      store
+        .getEvents("parent")
+        .some(
+          (event) =>
+            event.type === "system_message" &&
+            event.data.includes("Settled from the dispatch turn."),
+        ),
+      "the account must reach the stored source",
+    );
+    calls.prompts.at(-1)?.resolve();
+    await flushTimers();
+    // No reminder turn was needed: the same-turn account closed the edge.
+    assert.equal(
+      calls.prompts.filter((prompt) =>
+        prompt.text.includes("Task Handoff Required"),
+      ).length,
+      0,
+    );
+  });
+
   it("does not settle while the record is awaiting_delivery and still routes to the stored source", async () => {
     seedFamily();
     const { bridge, calls } = createControllableBridge();
