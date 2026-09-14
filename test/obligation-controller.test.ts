@@ -314,6 +314,12 @@ describe("ObligationController", () => {
     await tick(h, 60 * 60_000);
     assert.equal(h.submissions.length, 1);
     assert.equal(h.notices.length, 0);
+
+    // A settled record is terminal: a later report is routed to the stored
+    // source but never re-settles.
+    const later = settleNow(h);
+    assert.equal(later.decision.kind, "stored-source");
+    assert.equal(obligation.state, "settled");
   });
 
   it("does not settle while the record is awaiting_delivery", async () => {
@@ -479,6 +485,26 @@ describe("ObligationController", () => {
     assert.equal(obligation.state, "awaiting_delivery");
     assert.equal(obligation.deliveredAttempts, 0);
     assert.equal(h.submissions.length, 0);
+  });
+
+  it("does not watch a terminal record", async () => {
+    const h = makeController();
+    const obligation = armOpen(h);
+    await tick(h);
+    await tick(h, 2 * 60_000);
+    await tick(h, 5 * 60_000);
+    assert.equal(obligation.state, "unanswered");
+
+    // A later turn on the target must not start a watchdog for the closed edge.
+    h.controller.beginTurn("child", "prompt-late");
+    h.controller.noteAgentActivity("child");
+    await tick(h, SILENCE_THRESHOLD_S * 2000);
+    // Mutation evidence: dropping the terminal check in beginTurn emits a
+    // spurious no_activity notice for this closed edge.
+    assert.equal(
+      h.notices.filter((notice) => notice.reason === "no_activity").length,
+      0,
+    );
   });
 
   it("does not start a watchdog without an active obligation", async () => {
