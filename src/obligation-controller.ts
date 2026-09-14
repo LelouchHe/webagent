@@ -50,13 +50,18 @@ export const REMINDER_RETRY_MAX_MS = 60_000;
 export const SILENCE_THRESHOLD_S = 900;
 
 /**
- * Backstop for an armed dispatch that is never handed to the target's session
- * (for example a resume that keeps failing before any prompt is issued). When
- * this elapses while the record is still `awaiting_delivery`, the edge ends in
- * `unanswered` with a factual `no_account` and `delivery_unavailable` evidence,
- * so the source is told instead of waiting forever.
+ * Advisory: an armed dispatch that has still not been handed to the target's
+ * session (for example queued behind a busy target or waiting on a resume).
+ * The runtime reports the fact and keeps waiting; it does not conclude.
  */
-export const DISPATCH_DEADLINE_MS = 60 * 60_000;
+export const DISPATCH_ADVISORY_MS = 60 * 60_000;
+
+/**
+ * Advisory: a record has existed for this long with no typed account. The
+ * runtime reports how long it has waited and keeps waiting; it does not
+ * conclude about the work.
+ */
+export const AGE_ADVISORY_MS = 4 * 60 * 60_000;
 
 export type ObligationState =
   | "awaiting_delivery"
@@ -92,7 +97,11 @@ export interface DirectedObligation {
   noAccountNotified: boolean;
 }
 
-export type ObligationNoticeReason = "no_account" | "no_activity";
+export type ObligationNoticeReason =
+  | "no_account"
+  | "no_activity"
+  | "still_waiting"
+  | "delivery_failed";
 
 export interface ObligationNotice {
   reason: ObligationNoticeReason;
@@ -195,7 +204,8 @@ export class ObligationController {
   private readonly active = new Map<string, DirectedObligation>();
   private readonly attemptTimers = new Map<string, TimerHandle>();
   private readonly watchdogTimers = new Map<string, TimerHandle>();
-  private readonly dispatchDeadlineTimers = new Map<string, TimerHandle>();
+  private readonly dispatchAdvisoryTimers = new Map<string, TimerHandle>();
+  private readonly ageAdvisoryTimers = new Map<string, TimerHandle>();
   private readonly watchdog = new Map<string, WatchdogState>();
   private readonly silenceNotified = new Set<string>();
   private readonly opts: ObligationControllerOptions;
@@ -226,28 +236,68 @@ export class ObligationController {
     this.opts.clearTimer(handle);
   }
 
-  private clearDispatchDeadline(key: string): void {
-    const handle = this.dispatchDeadlineTimers.get(key);
+  private clearDispatchAdvisory(key: string): void {
+    const handle = this.dispatchAdvisoryTimers.get(key);
     if (handle === undefined) return;
-    this.dispatchDeadlineTimers.delete(key);
+    this.dispatchAdvisoryTimers.delete(key);
     this.opts.clearTimer(handle);
   }
 
-  private armDispatchDeadline(obligation: DirectedObligation): void {
+  private clearAgeAdvisory(key: string): void {
+    const handle = this.ageAdvisoryTimers.get(key);
+    if (handle === undefined) return;
+    this.ageAdvisoryTimers.delete(key);
+    this.opts.clearTimer(handle);
+  }
+
+  private armDispatchAdvisory(obligation: DirectedObligation): void {
     const key = edgeKey(obligation.sourceTaskId, obligation.targetTaskId);
-    this.clearDispatchDeadline(key);
+    this.clearDispatchAdvisory(key);
     const handle = this.opts.setTimer(() => {
-      this.dispatchDeadlineTimers.delete(key);
+      this.dispatchAdvisoryTimers.delete(key);
       const current = this.active.get(key);
       if (!current || current !== obligation) return;
       if (current.state !== "awaiting_delivery") return;
-      this.log("obligation dispatch deadline exceeded", logFields(current));
-      this.exhaust(current, {
-        deliveryUnavailable: true,
-        dispatchDeadlineExceeded: true,
-      });
-    }, DISPATCH_DEADLINE_MS);
-    this.dispatchDeadlineTimers.set(key, handle);
+      this.log("obligation dispatch still queued", logFields(current));
+      this.opts.emitNotice(
+        {
+          reason: "still_waiting",
+          evidence: {
+            phase: "not_handed_over",
+            waitingMs: this.now() - current.openedAt,
+          },
+        },
+        current,
+      );
+    }, DISPATCH_ADVISORY_MS);
+    this.dispatchAdvisoryTimers.set(key, handle);
+  }
+
+  private armAgeAdvisory(obligation: DirectedObligation): void {
+    const key = edgeKey(obligation.sourceTaskId, obligation.targetTaskId);
+    this.clearAgeAdvisory(key);
+    const handle = this.opts.setTimer(() => {
+      this.ageAdvisoryTimers.delete(key);
+      const current = this.active.get(key);
+      if (!current || current !== obligation) return;
+      if (isTerminal(current.state)) return;
+      const lastAgentActivityAt =
+        this.watchdog.get(key)?.lastAgentActivityAt ?? null;
+      this.log("obligation age advisory", logFields(current));
+      this.opts.emitNotice(
+        {
+          reason: "still_waiting",
+          evidence: {
+            phase: "no_account",
+            openForMs: this.now() - current.openedAt,
+            deliveredAttempts: current.deliveredAttempts,
+            lastAgentActivityAt,
+          },
+        },
+        current,
+      );
+    }, AGE_ADVISORY_MS);
+    this.ageAdvisoryTimers.set(key, handle);
   }
 
   private armAttemptTimer(
@@ -318,7 +368,8 @@ export class ObligationController {
       ) {
         existing.state = "open";
       }
-      this.armDispatchDeadline(existing);
+      this.armDispatchAdvisory(existing);
+      this.armAgeAdvisory(existing);
       this.log("obligation coalesced", {
         ...logFields(existing),
         state: existing.state,
@@ -339,7 +390,8 @@ export class ObligationController {
       noAccountNotified: false,
     };
     this.active.set(key, obligation);
-    this.armDispatchDeadline(obligation);
+    this.armDispatchAdvisory(obligation);
+    this.armAgeAdvisory(obligation);
     this.log("obligation armed", {
       ...logFields(obligation),
       replacedTerminal: existing !== undefined,
@@ -387,7 +439,7 @@ export class ObligationController {
       return;
     }
     if (promptId !== undefined) obligation.dispatchPromptId = promptId;
-    this.clearDispatchDeadline(key);
+    this.clearDispatchAdvisory(key);
     this.clearAttemptTimer(key);
     obligation.state = "open";
     // Do not reset `consecutiveSubmissionFailures` here: a retry issuance can
@@ -703,7 +755,8 @@ export class ObligationController {
     const key = edgeKey(obligation.sourceTaskId, obligation.targetTaskId);
     this.clearAttemptTimer(key);
     this.clearWatchdogTimer(key);
-    this.clearDispatchDeadline(key);
+    this.clearDispatchAdvisory(key);
+    this.clearAgeAdvisory(key);
     this.watchdog.delete(key);
     obligation.state = "settled";
     this.log("obligation settled", logFields(obligation));
@@ -719,7 +772,8 @@ export class ObligationController {
     const key = edgeKey(obligation.sourceTaskId, obligation.targetTaskId);
     this.clearAttemptTimer(key);
     this.clearWatchdogTimer(key);
-    this.clearDispatchDeadline(key);
+    this.clearDispatchAdvisory(key);
+    this.clearAgeAdvisory(key);
     this.watchdog.delete(key);
     obligation.state = "unanswered";
     if (obligation.noAccountNotified) return;
@@ -801,12 +855,16 @@ export class ObligationController {
     for (const handle of this.watchdogTimers.values()) {
       this.opts.clearTimer(handle);
     }
-    for (const handle of this.dispatchDeadlineTimers.values()) {
+    for (const handle of this.dispatchAdvisoryTimers.values()) {
+      this.opts.clearTimer(handle);
+    }
+    for (const handle of this.ageAdvisoryTimers.values()) {
       this.opts.clearTimer(handle);
     }
     this.attemptTimers.clear();
     this.watchdogTimers.clear();
-    this.dispatchDeadlineTimers.clear();
+    this.dispatchAdvisoryTimers.clear();
+    this.ageAdvisoryTimers.clear();
     this.watchdog.clear();
   }
 
@@ -826,7 +884,8 @@ export class ObligationController {
       }
       this.clearAttemptTimer(key);
       this.clearWatchdogTimer(key);
-      this.clearDispatchDeadline(key);
+      this.clearDispatchAdvisory(key);
+      this.clearAgeAdvisory(key);
       this.watchdog.delete(key);
       this.active.delete(key);
     }
