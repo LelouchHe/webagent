@@ -1,7 +1,8 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
-  DISPATCH_DEADLINE_MS,
+  AGE_ADVISORY_MS,
+  DISPATCH_ADVISORY_MS,
   MAX_REMINDER_ATTEMPTS,
   MAX_REMINDER_SUBMISSION_FAILURES,
   ObligationController,
@@ -628,16 +629,17 @@ describe("ObligationController", () => {
     assert.equal(obligation.deliveredAttempts, 0);
   });
 
-  it("clears the dispatch deadline when a record becomes terminal", () => {
+  it("clears the advisory timers when a record becomes terminal", () => {
     const h = makeController();
     const obligation = armDirect(h);
     h.controller.markDeliveryFailed("parent", "child");
     h.controller.markDeliveryFailed("parent", "child");
     h.controller.markDeliveryFailed("parent", "child");
     assert.equal(obligation.state, "unanswered");
-    // Mutation evidence: leaving the deadline armed keeps a live timer that
+    // Mutation evidence: leaving an advisory armed keeps a live timer that
     // outlives the record.
-    assert.equal((h.controller as any).dispatchDeadlineTimers.size, 0);
+    assert.equal((h.controller as any).dispatchAdvisoryTimers.size, 0);
+    assert.equal((h.controller as any).ageAdvisoryTimers.size, 0);
   });
 
   it("does not let a stale hand-off take over the record", () => {
@@ -671,20 +673,64 @@ describe("ObligationController", () => {
     assert.equal(h.notices.length, 0);
   });
 
-  it("ends a never-delivered dispatch at the deadline", async () => {
+  it("emits a still-waiting advisory for a never-handed-over dispatch", async () => {
     const h = makeController();
     const obligation = armDirect(h);
-    assert.equal(obligation.state, "awaiting_delivery");
-    await tick(h, DISPATCH_DEADLINE_MS - 1);
-    assert.equal(obligation.state, "awaiting_delivery");
+    await tick(h, DISPATCH_ADVISORY_MS - 1);
+    assert.equal(h.notices.length, 0);
     await tick(h, 1);
-    // Mutation evidence: without the dispatch deadline this record waits
-    // forever with no notice.
-    assert.equal(obligation.state, "unanswered");
+    // Mutation evidence: a terminal dispatch deadline would move this record
+    // to a terminal state; an advisory must leave it unchanged.
+    assert.equal(obligation.state, "awaiting_delivery");
     assert.equal(h.notices.length, 1);
-    assert.equal(h.notices[0].reason, "no_account");
-    assert.equal(h.notices[0].evidence.deliveryUnavailable, true);
-    assert.equal(h.notices[0].evidence.dispatchDeadlineExceeded, true);
+    assert.equal(h.notices[0].reason, "still_waiting");
+    assert.equal(h.notices[0].evidence.phase, "not_handed_over");
+  });
+
+  it("emits one age advisory per epoch without changing state", async () => {
+    const h = makeController();
+    const obligation = armDirect(h);
+    await tick(h, AGE_ADVISORY_MS);
+    const age = h.notices.find(
+      (notice) => notice.evidence.phase === "no_account",
+    );
+    // Mutation evidence: a terminal age deadline would move this to a terminal
+    // state instead of advising.
+    assert.ok(age);
+    assert.equal(age.reason, "still_waiting");
+    assert.equal(obligation.state, "awaiting_delivery");
+
+    // One per epoch: the timer is not re-armed.
+    const before = h.notices.length;
+    await tick(h, AGE_ADVISORY_MS);
+    assert.equal(h.notices.length, before);
+
+    // A coalescing follow-up resets the age, so a fresh epoch advises again.
+    h.controller.arm({
+      sourceTaskId: "parent",
+      targetTaskId: "child",
+      messageId: "m-2",
+      deliveryId: "d-2",
+    });
+    await tick(h, AGE_ADVISORY_MS);
+    assert.equal(
+      h.notices.filter((notice) => notice.evidence.phase === "no_account")
+        .length,
+      2,
+    );
+  });
+
+  it("clears the not-handed-over advisory once the dispatch is handed over", async () => {
+    const h = makeController();
+    armOpen(h);
+    await tick(h, DISPATCH_ADVISORY_MS);
+    // Mutation evidence: not clearing it at hand-off emits a queued advisory
+    // for a dispatch that was delivered.
+    assert.equal(
+      h.notices.filter((notice) => notice.evidence.phase === "not_handed_over")
+        .length,
+      0,
+    );
   });
 
   it("does not start a watchdog without an active obligation", async () => {
