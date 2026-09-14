@@ -727,9 +727,10 @@ describe("ObligationController", () => {
   it("clears the not-handed-over advisory once the dispatch is handed over", async () => {
     const h = makeController();
     armOpen(h);
+    // Mutation evidence: not clearing it at hand-off leaves a live timer that
+    // outlives the hand-off (the state guard would mask the notice).
+    assert.equal((h.controller as any).dispatchAdvisoryTimers.size, 0);
     await tick(h, DISPATCH_ADVISORY_MS);
-    // Mutation evidence: not clearing it at hand-off emits a queued advisory
-    // for a dispatch that was delivered.
     assert.equal(
       h.notices.filter((notice) => notice.evidence.phase === "not_handed_over")
         .length,
