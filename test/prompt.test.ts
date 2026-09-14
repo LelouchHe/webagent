@@ -154,6 +154,7 @@ describe("Prompt REST API", () => {
         resolve();
       }),
     );
+    tasks.dispose();
     store.close();
     rmSync(tmpDir, { recursive: true, force: true });
   });
@@ -209,11 +210,18 @@ describe("Prompt REST API", () => {
       assert.equal(mockBridge.lastPromptArgs!.text, "hello world");
     });
 
-    it("records the handoff obligation for an agent task but not a user task", async () => {
-      // The obligation is fixed at submission from the Task's `source`, not
-      // re-derived later from workflow state that a user prompt never sets.
+    it("does not arm a directed obligation for a user-started turn", async () => {
+      // Only a direct parent dispatch arms. A user prompt starts a turn but
+      // affects no obligation edge, whether the Task is agent- or user-created.
+      store.createTask("prompt-parent", tmpDir, "agent", "agent-prompt-parent");
       const agentTaskId = "agent-created";
-      store.createTask(agentTaskId, tmpDir, "agent", `agent-${agentTaskId}`);
+      store.createTask(
+        agentTaskId,
+        tmpDir,
+        "agent",
+        `agent-${agentTaskId}`,
+        "prompt-parent",
+      );
       const userTaskId = await createTask();
 
       let releasePrompt!: () => void;
@@ -239,10 +247,12 @@ describe("Prompt REST API", () => {
 
         assert.equal(agentRes.status, 202);
         assert.equal(userRes.status, 202);
-        // Keep both prompts active so the idle-edge recovery cannot settle
-        // the agent obligation before this submission-time assertion runs.
-        assert.equal(tasks.owesHandoff(agentTaskId), true);
-        assert.equal(tasks.owesHandoff(userTaskId), false);
+        // Mutation evidence: arming on the prompt route (the pre-change
+        // behaviour) puts an active obligation on this parent edge.
+        assert.equal(
+          tasks.getObligation("prompt-parent", agentTaskId),
+          undefined,
+        );
       } finally {
         releasePrompt();
       }

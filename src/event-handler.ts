@@ -312,6 +312,7 @@ function handlePromptDone(
     tasks.activePrompts.delete(event.taskId);
     tasks.syncBusy(event.taskId, undefined, "prompt_done");
     tasks.recoverUnfinishedWork(bridge, event.taskId, "prompt_done");
+    tasks.onTargetTurnEnded(event.taskId);
   } else {
     clog.info("completion from a superseded turn", {
       taskId: event.taskId.slice(0, 8),
@@ -354,6 +355,7 @@ function handleError(
       tasks.activePrompts.delete(event.taskId);
       tasks.syncBusy(event.taskId, undefined, "error");
       tasks.recoverUnfinishedWork(bridge, taskId, "error");
+      tasks.onTargetTurnEnded(taskId);
     } else {
       clog.info("failure from a superseded turn", {
         taskId: event.taskId.slice(0, 8),
@@ -467,6 +469,24 @@ function maybePushNotify(event: AgentEvent, pushService: PushService): void {
   });
 }
 
+/**
+ * Agent-runtime events that count as watchdog activity. User, system, and
+ * turn-terminal events must not reset the silence clock.
+ */
+const AGENT_ACTIVITY_EVENT_TYPES = new Set([
+  "message_chunk",
+  "thought_chunk",
+  "tool_call",
+  "tool_call_update",
+  "plan",
+  "permission_request",
+]);
+
+function isAgentActivityEvent(event: AgentEvent): boolean {
+  if (!AGENT_ACTIVITY_EVENT_TYPES.has(event.type)) return false;
+  return "taskId" in event && typeof event.taskId === "string";
+}
+
 export function handleAgentEvent(
   event: AgentEvent,
   tasks: TaskManager,
@@ -478,6 +498,9 @@ export function handleAgentEvent(
   _clientRegistry?: ClientRegistry,
 ): void {
   tasks.setRecoveryBridge(bridge);
+  if (isAgentActivityEvent(event) && "taskId" in event && event.taskId) {
+    tasks.noteAgentActivity(event.taskId);
+  }
   if (event.type === "usage_update") {
     handleUsageUpdate(event, tasks);
     return;

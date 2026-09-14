@@ -1890,6 +1890,24 @@ export class Store {
     tx();
   }
 
+  /**
+   * Return claimed or failed deliveries to the queue so the bounded
+   * initial-delivery retry can resubmit them. Rows resolved since the failure
+   * are left untouched.
+   */
+  requeueCollaborationDeliveries(ids: readonly string[]): void {
+    if (ids.length === 0) return;
+    const requeue = this.db.prepare(
+      `UPDATE deliveries
+       SET status = 'queued', claimed_at = NULL, delivered_at = NULL,
+           failed_at = NULL, failure_reason = NULL
+       WHERE id = ? AND status IN ('draining', 'failed')`,
+    );
+    this.db.transaction(() => {
+      for (const id of ids) requeue.run(id);
+    })();
+  }
+
   failOutstandingDeliveriesForTaskClear(taskId: string): void {
     const failedAt = Date.now();
     this.db

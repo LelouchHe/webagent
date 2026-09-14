@@ -38,6 +38,7 @@ describe("MCP Task tool host", () => {
   });
 
   afterEach(() => {
+    tasks.dispose();
     store.close();
     rmSync(dir, { recursive: true, force: true });
   });
