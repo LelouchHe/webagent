@@ -72,8 +72,10 @@ they are not a replacement for the individual tool descriptions.
 ### Directed dispatch closure
 
 When an agent-authored parent Task dispatches work directly to a child Task, the
-runtime guarantees the source learns exactly one outcome: the child's typed
-account, or a factual notice that no account arrived. It records and reports
+runtime keeps one process-local obligation for that edge and reports its outcome
+to the source: the child's typed account, or a factual notice that the runtime
+stopped its own attempts without one. A notice is not a verdict — a late account
+still settles the edge. It records and reports
 facts — a dispatch was handed over, a turn ended, a request was rejected, a timer
 elapsed, delivery failed — and never turns them into a conclusion about the work.
 The full mechanism, identities, state machine, budgets, and notices are in

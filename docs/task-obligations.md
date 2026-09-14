@@ -2,21 +2,22 @@
 
 This document describes WebAgent's **directed-dispatch closure** mechanism: when
 an agent-authored parent Task dispatches work directly to a child Task, the
-runtime ensures the source learns an outcome exactly once — either the child's
-typed account, or a factual notice that no account arrived. It records and
-reports facts; it never concludes for the accountable party. The task-semantic
-principle behind that boundary is in
+runtime keeps one process-local obligation for that edge and reports its outcome
+to the source: the child's typed account, or a factual notice that the runtime
+stopped its own attempts without one. A notice is not a verdict — a late account
+still settles the edge. The runtime records and reports facts; it never concludes
+for the accountable party. The task-semantic principle behind that boundary is in
 [Task semantic authority](implementation-invariants.md#task-semantic-authority).
 
 ## Purpose and semantic boundary
 
 An **account** is the child's typed lifecycle report, `done` or `blocked`. The
-one-account rule is: one accepted direct dispatch creates one obligation, and
-the source receives exactly one of
+one-account rule is: one accepted direct dispatch creates one obligation, and the
+source stops waiting when either
 
-- the child's correlated account, or
-- one runtime notice that the runtime stopped its own attempts and the outcome
-  is unknown.
+- the child's typed account arrives, or
+- one runtime notice reports that the runtime stopped its own attempts and the
+  outcome is unknown — after which a late account still settles the edge.
 
 The runtime supervises and keeps the books. It records that a dispatch was
 handed over, that a turn ended, that a submission was rejected, that a deadline
