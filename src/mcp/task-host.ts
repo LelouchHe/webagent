@@ -330,13 +330,20 @@ export function createMcpTaskToolHost(deps: {
       }
     },
 
-    async update(sourceTaskId, status, body, obligationId) {
+    async update(sourceTaskId, status, body) {
       const bridge = getBridge();
-
-      function broadcastAccount(
-        accountTargetTaskId: string,
-        collaborationMessageId: string,
-      ) {
+      // The controller decides whether this update settles the target's sole
+      // record (eligible current turn) or is only routed: to the stored source
+      // when a record exists, or to the current parent when none does.
+      const activeTurn = tasks.getActiveAgentTurn(sourceTaskId);
+      const routed = tasks.settleAgentUpdate(
+        sourceTaskId,
+        status,
+        body,
+        activeTurn,
+      );
+      const { collaborationMessageId, accountTargetTaskId } = routed;
+      if (collaborationMessageId && accountTargetTaskId) {
         const source = requireTask(sourceTaskId);
         const target = requireTask(accountTargetTaskId);
         broadcastCollaboration?.({
@@ -346,48 +353,8 @@ export function createMcpTaskToolHost(deps: {
           title: `${formatTaskReference(source.title ?? source.id.slice(0, 8))} sent ${formatTaskReference(target.title ?? target.id.slice(0, 8))}`,
           body: `Task status: ${status}\n${body}`,
         });
-      }
-
-      // A correlated account validates the receipt, performs the settlement
-      // transaction, and retires the edge in one synchronous critical section.
-      // An invalid receipt never falls back to the uncorrelated path: that
-      // would send an account while leaving the obligation open.
-      if (obligationId !== undefined) {
-        const settled = tasks.settleObligation(
-          sourceTaskId,
-          obligationId,
-          status,
-          body,
-        );
-        if (!settled) throw new Error("obligation_not_found");
-        if (settled.collaborationMessageId) {
-          broadcastAccount(
-            settled.accountTargetTaskId,
-            settled.collaborationMessageId,
-          );
-        }
-        if (bridge && settled.collaborationMessageId) {
-          void tasks.drainCollaborationDeliveries(
-            bridge,
-            settled.accountTargetTaskId,
-          );
-        }
-        return;
-      }
-
-      // Uncorrelated update: still recorded and reported to the current
-      // parent, but it settles no directed obligation.
-      const source = requireTask(sourceTaskId);
-      const { collaborationMessageId } = store.recordAgentWorkflowUpdate(
-        sourceTaskId,
-        status,
-        body,
-        source.parent_id,
-      );
-      if (collaborationMessageId && source.parent_id) {
-        broadcastAccount(source.parent_id, collaborationMessageId);
         if (bridge) {
-          void tasks.drainCollaborationDeliveries(bridge, source.parent_id);
+          void tasks.drainCollaborationDeliveries(bridge, accountTargetTaskId);
         }
       }
     },

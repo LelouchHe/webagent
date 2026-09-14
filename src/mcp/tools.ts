@@ -123,7 +123,6 @@ export interface McpTaskToolHost {
     sourceTaskId: string,
     status: "blocked" | "done",
     body: string,
-    obligationId?: string,
   ): Promise<void>;
 }
 
@@ -355,28 +354,19 @@ export function registerMcpTools(
     {
       description:
         "Send a typed lifecycle account for the current Task: `done` when the assignment is complete, `blocked` when it needs input or a decision. " +
-        "When the runtime dispatched this Task work, the dispatch and any closing prompt carry an `obligationId`; passing it back is a correlation receipt that settles that directed obligation, and the parent receives the account and decides the next step. " +
-        "Omit `obligationId` for an uncorrelated report when you have no obligation id (for example answering a user prompt): the update is still recorded and sent to the parent, but it settles nothing, so an open obligation will still be recovered. " +
+        "There is no correlation parameter: the runtime identifies the directed obligation from the current Task's sole record and closes it when this update comes from an eligible current turn. " +
+        "The parent receives the account and decides the next step; an update outside an eligible turn is still recorded and reported without closing the obligation. " +
         "This does not delete or permanently close the Task. Use task_send for normal communication.",
       inputSchema: {
         status: z.enum(["blocked", "done"]),
         body: BODY.describe(
           "Handoff body: explain the blocker or report the completed result",
         ),
-        obligationId: TASK_ID.nullable()
-          .optional()
-          .describe(
-            "Runtime-issued obligation correlation id copied from the dispatch or closing prompt; null or omitted for an uncorrelated update that settles no obligation",
-          ),
       },
     },
-    async ({ status, body, obligationId }) => {
+    async ({ status, body }) => {
       if (!host) return unavailable();
-      if (obligationId) {
-        await host.update(taskId, status, body, obligationId);
-      } else {
-        await host.update(taskId, status, body);
-      }
+      await host.update(taskId, status, body);
       return accepted();
     },
   );
