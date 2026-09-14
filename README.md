@@ -130,6 +130,7 @@ Frontend source lives in `public/js/*.ts`, bundled by esbuild into a single cont
 | **[Task Manual](docs/task-manual.md)**                  | Principles for using Tasks effectively                                 |
 | **[Task Examples](docs/task-examples.md)**              | Short examples of direct work, delegation, handoff, and coordination     |
 | **[Task MCP Control Plane](docs/task-mcp.md)**          | Task tools, compact history, capability scope, and provider-schema compatibility |
+| **[Task Obligations](docs/task-obligations.md)**        | Directed-dispatch closure: arming, accounts, state machine, budgets, and notices |
 | **[Vocabulary](docs/vocabulary.md)**                    | Task vs ACP session naming, and the storage, API, and UI vocabulary contract |
 | **[Configuration & Operations](docs/configuration.md)** | TOML config, daemon commands, agent setup, upgrading                           |
 | **[Security](docs/security.md)**                        | Bearer auth, token storage, SSE ticket, signed image URLs, CSP, data layout    |
