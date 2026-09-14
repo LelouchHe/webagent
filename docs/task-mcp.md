@@ -104,8 +104,11 @@ resolves: `bridge.prompt` resolves at the end of the turn, after it emits
 
 `markDelivered` is that hand-off transition. The prompt promise's resolution is
 used only for transport accounting: a resolution clears the submission-failure
-streak (`markDispatchSucceeded`), while a rejection consumes the transport
-budget and returns the record to `awaiting_delivery` for a bounded retry.
+streak (`markDispatchSucceeded`), while a request-level rejection
+(`PromptNotDeliveredError`, thrown only when the request never reached the
+session) consumes the transport budget and returns the record to
+`awaiting_delivery` for a bounded retry. An agent error **inside a delivered
+turn** emits an error event but resolves, so it is not a transport failure.
 
 There is deliberately **no timestamp guard**. The delivery turn is stamped
 before the prompt is handed to the bridge, so comparing the turn's start
@@ -171,6 +174,9 @@ stateDiagram-v2
     awaiting_delivery --> unanswered: 3 consecutive submission failures
     open --> awaiting_delivery: submission rejected after hand-off, transport retry
     open --> unanswered: 3 consecutive submission failures
+    reminder_due --> awaiting_delivery: dispatch submission rejected with no delivered reminder
+    reminder_due --> unanswered: 3 consecutive submission failures
+    awaiting_delivery --> unanswered: dispatch deadline with no hand-off
     open --> reminder_due: current target turn ends without an account
     reminder_due --> reminder_submitting: target idle, closing prompt submitted
     reminder_submitting --> reminder_due: submission rejected (no delivered attempt)
@@ -244,10 +250,13 @@ sequenceDiagram
 ```mermaid
 flowchart TD
     subgraph Initial["Initial-delivery budget (dispatch submission)"]
-        A1[dispatch issued: open] -->|submission rejected| A2[submission-failure count +1]
+        A0[dispatch armed: awaiting_delivery] -->|handed over| A1[open]
+        A0 -->|resume keeps failing| A2[submission-failure count +1]
+        A1 -->|submission rejected| A2
         A2 -->|count < 3| A3[return to awaiting_delivery,<br/>requeue and retry with backoff]
-        A3 --> A1
+        A3 --> A0
         A2 -->|count = 3| A4[unanswered + no_account<br/>evidence delivery_unavailable]
+        A0 -->|dispatch deadline, never handed over| A4
     end
     subgraph Closing["Closing-reminder budget (reminder_due / reminder_submitting)"]
         B1[reminder_due] -->|submission rejected| B2[submission-failure count +1,<br/>no delivered attempt]
