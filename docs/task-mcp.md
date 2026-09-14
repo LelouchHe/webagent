@@ -96,11 +96,16 @@ per-counterparty ledger, and no separate lifecycle status beyond the existing
 It is refused without settling when the state is `awaiting_delivery`,
 `unanswered`, or `settled`, or when no agent turn is active.
 
-There is deliberately **no timestamp guard**. The delivery turn is added to the
-runtime's active prompts and stamped before `bridge.prompt` is issued, while
-the record opens only when that prompt resolves, so comparing the turn's start
-against dispatch acceptance would reject the legitimate dispatch account. Any
-future proposal to add such a guard must account for that ordering.
+The record opens when the dispatch is **handed to the target's session** (right
+after `ensureResumed` and the prompt call), not when the prompt promise
+resolves: `bridge.prompt` resolves at the end of the turn, after it emits
+`prompt_done`, so a resolution-time open would leave the dispatch turn itself
+`awaiting_delivery` and refuse the account that turn produces.
+
+There is deliberately **no timestamp guard**. The delivery turn is stamped
+before the prompt is handed to the bridge, so comparing the turn's start
+against the hand-off time would still reject the legitimate dispatch account.
+Any future proposal to add such a guard must account for that ordering.
 
 **Routing.** A settleable record is one atomic step: the update is persisted,
 the reported `workflow_status` changes, the account message is created to the
@@ -156,9 +161,11 @@ test that pins it at the end of this subsection.
 ```mermaid
 stateDiagram-v2
     [*] --> awaiting_delivery: agent parent→child dispatch posted
-    awaiting_delivery --> open: bridge accepts the dispatch prompt
-    awaiting_delivery --> awaiting_delivery: initial submission rejected, retry with backoff
+    awaiting_delivery --> open: dispatch handed to the target's session
+    awaiting_delivery --> awaiting_delivery: submission rejected before hand-off, retry with backoff
     awaiting_delivery --> unanswered: 3 consecutive submission failures
+    open --> awaiting_delivery: submission rejected after hand-off, transport retry
+    open --> unanswered: 3 consecutive submission failures
     open --> reminder_due: current target turn ends without an account
     reminder_due --> reminder_submitting: target idle, closing prompt submitted
     reminder_submitting --> reminder_due: submission rejected (no delivered attempt)
@@ -189,17 +196,18 @@ stateDiagram-v2
 sequenceDiagram
     participant S as Source Task
     participant E as CollaborationMessageEmitter
+    participant M as TaskManager
     participant R as ObligationController
     participant B as Target bridge
     participant T as Target Task
 
     S->>E: task_send (agent, direct child)
     E->>E: persist message + delivery (transaction)
-    E-->>R: post-commit onCollaborationMessageCreated
-    R->>R: shouldArm(message, source, target) is true
-    R->>R: arm(): state = awaiting_delivery
-    B->>T: drain submits the dispatch prompt
-    B-->>R: prompt resolves, markDelivered(): state = open
+    E-->>M: post-commit onCollaborationMessageCreated
+    M->>R: shouldArm(message, source, target) is true
+    M->>R: arm(): state = awaiting_delivery
+    M->>B: drain hands the dispatch prompt to the session
+    M->>R: markDelivered(): state = open (content is actionable now)
     T->>T: run the turn
     T->>R: task_update(done|blocked)
     R->>R: settleReport(): state open + active turn = settle
@@ -230,9 +238,9 @@ sequenceDiagram
 
 ```mermaid
 flowchart TD
-    subgraph Initial["Initial-delivery budget (awaiting_delivery)"]
-        A1[awaiting_delivery] -->|submission rejected| A2[submission-failure count +1]
-        A2 -->|count < 3| A3[requeue and retry with backoff at an idle boundary]
+    subgraph Initial["Initial-delivery budget (dispatch submission)"]
+        A1[dispatch issued: open] -->|submission rejected| A2[submission-failure count +1]
+        A2 -->|count < 3| A3[return to awaiting_delivery,<br/>requeue and retry with backoff]
         A3 --> A1
         A2 -->|count = 3| A4[unanswered + no_account<br/>evidence delivery_unavailable]
     end
@@ -290,7 +298,7 @@ sequenceDiagram
 | --- | --- |
 | Arming predicate (`shouldArm` true) | `test/task-collaboration.test.ts` "arms only an agent-authored direct parent→child dispatch"; `server-event-handler` "arms a direct parent dispatch and leaves unrelated sends ordinary"; `collaboration-store` "emits exactly one post-commit fact per created message" |
 | → `awaiting_delivery` | `obligation-controller` "does not request an account until the source dispatch is accepted" |
-| `awaiting_delivery` → `open` | `obligation-controller` "does not request an account until the source dispatch is accepted" |
+| `awaiting_delivery` → `open` (at hand-off) | `obligation-controller` "does not request an account until the source dispatch is accepted"; `server-event-handler` "settles the account from the same dispatch turn through the real delivery path" |
 | `awaiting_delivery` → `awaiting_delivery` retry | `obligation-controller` "retries a rejected initial dispatch and bounds the transport failures"; `server-event-handler` "retries a rejected initial dispatch at an idle boundary" |
 | `awaiting_delivery` → `unanswered` (transport) | `obligation-controller` "exhausts awaiting_delivery after the transport bound without spending reminders"; `server-event-handler` "emits one factual no_account notice when initial delivery keeps failing" |
 | `open` → `reminder_due` | `server-event-handler` "reminds at the dispatch turn boundary and states the closing-only contract" |
@@ -312,14 +320,14 @@ sequenceDiagram
 | Release purge | `obligation-controller` "purges records when a task is released, cancelling their timers"; `task-manager` "purges obligation records when a task is released" |
 
 **Real path versus constructed turns.** The settlement assertions that must
-prove the real delivery ordering — `awaiting_delivery` opening on bridge
-acceptance and the same-turn account settling — run through the creation
-boundary and the mock bridge (settlement tests in
+prove the real delivery ordering — `awaiting_delivery` opening when the
+dispatch is handed to the target's session and the same-turn account settling —
+run through the creation boundary and the mock bridge (settlement tests in
 `test/server-event-handler.test.ts`, notably "settles the account from the same
 dispatch turn through the real delivery path"). The refusal cases
-(`awaiting_delivery`, no active turn) drive `settleReport` with a constructed
-active turn, which is enough to pin the guard but cannot catch an ordering bug;
-that is why the same-turn test exists.
+(`awaiting_delivery` while queued, no active turn) drive `settleReport` with a
+constructed active turn, which is enough to pin the guard but cannot catch an
+ordering bug; that is why the same-turn test exists.
 
 Two rows have no obligation-level test:
 

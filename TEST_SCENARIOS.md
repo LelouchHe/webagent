@@ -48,7 +48,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - directed dispatch closure: only an agent-authored direct parent→child dispatch arms an obligation; a user send, a sibling/child message, an account, and a runtime notice do not
   - settlement predicate: a plain `task_update` settles only an `open|reminder_due|reminder_submitting` record when the target has an active current agent turn; `awaiting_delivery`, a terminal record, and no active turn do not settle and still route to the stored source
   - a terminal `unanswered` record is not re-settled, its notice is not retracted, and a late account still reaches the stored source; with no record the report goes to the current parent and settles nothing
-  - the real delivery path: the dispatch prompt resolves, markDelivered opens the record, and the account arriving from that same turn settles it (this is the assertion that fails if a timestamp guard is reintroduced)
+  - the real delivery path: the dispatch is handed to the target's session (opening the record at hand-off, not at prompt resolution), and the account arriving from that same dispatch turn settles it with no reminder issued (this is the assertion that fails if the record opens at turn end or if a timestamp guard is reintroduced)
   - the accepted boundary: a delayed call from an earlier turn arriving while a later turn is current settles the record, and the source receives the earlier turn's content
   - releasing a task purges every record where it is either endpoint and cancels their timers
   - a queued sibling delivery claims the next turn without erasing the open obligation, and the reminder is recovered on the next turn boundary

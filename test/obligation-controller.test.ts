@@ -158,9 +158,13 @@ describe("ObligationController", () => {
     assert.equal(h.dispatchRetries.length, 1);
 
     h.controller.markDelivered("parent", "child");
+    // Issuance alone does not clear the transport streak; a resolved
+    // submission does, so a retry that is rejected again still accumulates.
+    assert.equal(obligation.consecutiveSubmissionFailures, 1);
+    h.controller.markDispatchSucceeded("parent", "child");
+    assert.equal(obligation.consecutiveSubmissionFailures, 0);
     await tick(h);
     assert.equal(obligation.state, "reminder_due");
-    assert.equal(obligation.consecutiveSubmissionFailures, 0);
     assert.equal(h.submissions.length, 1);
   });
 

@@ -335,7 +335,9 @@ describe("handleAgentEvent", () => {
     assert.match(calls.prompts[0].text, /Work on the assignment\./);
     // No correlation token is injected: settlement is derived from the record.
     assert.doesNotMatch(calls.prompts[0].text, /obligation id/i);
-    assert.equal(obligation.state, "awaiting_delivery");
+    // The drain handed the dispatch to the session, so the record is open (or
+    // already due for a reminder), not waiting.
+    assert.notEqual(obligation.state, "awaiting_delivery");
 
     // A sibling message to the same child is ordinary delivery: it never arms.
     const host = createMcpTaskToolHost({
@@ -543,14 +545,15 @@ describe("handleAgentEvent", () => {
     await flushTimers();
     assert.equal(calls.prompts.length, 1);
 
-    // The real path: the dispatch prompt resolves, so markDelivered runs and
-    // the record becomes settleable. The turn is still the dispatch turn
-    // (prompt_done has not been processed), so this is the account the
-    // dispatch itself produces. Do not replace this with a synthetic turn: a
-    // constructed turn can satisfy guards that the real delivery turn cannot.
-    calls.prompts[0].resolve();
-    await new Promise<void>((resolve) => setImmediate(resolve));
-    assert.equal(calls.prompts.length, 1, "reminder must not have started yet");
+    // The record opens when the dispatch is handed to the target's session, so
+    // the dispatch turn's own account settles it while the prompt is still in
+    // flight. Mutation evidence: opening on prompt resolution instead leaves
+    // the record awaiting_delivery here and refuses the account. Do not
+    // replace this with a synthetic turn: a constructed turn can satisfy
+    // guards that the real delivery turn cannot.
+    const obligation = tasks.getObligation("parent", "child");
+    assert.notEqual(obligation?.state, "awaiting_delivery");
+    assert.ok(tasks.getActiveAgentTurn("child"));
 
     const host = createMcpTaskToolHost({
       store,
@@ -559,7 +562,6 @@ describe("handleAgentEvent", () => {
     });
     await host.update("child", "done", "Settled from the dispatch turn.");
 
-    assert.ok(tasks.getActiveAgentTurn("child"));
     assert.equal(tasks.getObligation("parent", "child")?.state, "settled");
     assert.ok(
       store
@@ -571,31 +573,43 @@ describe("handleAgentEvent", () => {
         ),
       "the account must reach the stored source",
     );
-    calls.prompts.at(-1)?.resolve();
+    // No reminder turn is issued for this edge.
     await flushTimers();
-    // No reminder turn was needed: the same-turn account closed the edge.
     assert.equal(
       calls.prompts.filter((prompt) =>
         prompt.text.includes("Task Handoff Required"),
       ).length,
       0,
     );
+    calls.prompts[0].resolve();
+    await flushTimers();
   });
 
-  it("does not settle while the record is awaiting_delivery and still routes to the stored source", async () => {
+  it("does not settle while the record is queued awaiting delivery", async () => {
     seedFamily();
     const { bridge, calls } = createControllableBridge();
+    // A live turn on the target keeps the dispatch queued: the record is armed
+    // but nothing has been handed to the target's session, so it stays
+    // awaiting_delivery and the state gate must refuse settlement.
+    tasks.activePrompts.add("child");
+    tasks.syncBusy("child");
+
     await armDirectDispatch(store, tasks, bridge, "parent", "child");
     await flushTimers();
+    assert.equal(calls.prompts.length, 0);
+    assert.equal(
+      tasks.getObligation("parent", "child")?.state,
+      "awaiting_delivery",
+    );
 
     const host = createMcpTaskToolHost({
       store,
       tasks,
       getBridge: () => bridge,
     });
-    // The dispatch turn is active, but the record has not been accepted yet.
     await host.update("child", "done", "Early report.");
 
+    // Mutation evidence: dropping the awaiting_delivery state gate settles here.
     assert.equal(
       tasks.getObligation("parent", "child")?.state,
       "awaiting_delivery",
@@ -611,9 +625,15 @@ describe("handleAgentEvent", () => {
       "a report with an existing record still reaches the stored source",
     );
 
-    calls.prompts[0].resolve();
+    // Release the busy turn so the queued dispatch can be handed over.
+    tasks.activePrompts.delete("child");
+    tasks.syncBusy("child");
     await flushTimers();
-    calls.prompts.at(-1)?.resolve();
+    assert.notEqual(
+      tasks.getObligation("parent", "child")?.state,
+      "awaiting_delivery",
+    );
+    for (const prompt of calls.prompts) prompt.resolve();
     await flushTimers();
   });
 
