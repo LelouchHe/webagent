@@ -71,6 +71,10 @@ they are not a replacement for the individual tool descriptions.
 
 ### Directed dispatch closure
 
+> The runtime supervises and keeps the books; it reports what is true and never
+> concludes for the accountable party. See
+> [Task semantic authority](implementation-invariants.md#task-semantic-authority).
+
 An accepted **agent-authored direct parent→child dispatch** creates one
 directed obligation: a process-local record that the source is awaiting one
 account from that target. The runtime decides this at the collaboration-message

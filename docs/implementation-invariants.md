@@ -7,6 +7,30 @@ corresponding implementation area; do not load the entire file by default.
 For build, configuration, testing, and publishing commands, use
 [`CLAUDE.md`](../CLAUDE.md) and [`development.md`](./development.md).
 
+## Task semantic authority
+
+The runtime supervises and keeps the books. It records and reports what is true,
+and nothing more.
+
+- The accountable party is the parent Task that dispatched the work; for a
+  user-owned Task it is the user.
+- Runtime facts — a dispatch was handed over, a turn ended, a request was
+  rejected, a timer elapsed, delivery failed — are recorded and reported. They
+  are never converted into a conclusion about the work: not complete, not
+  failed, not abandoned, not worth continuing.
+- Every notice states a fact, the evidence behind it, and what the recipient can
+  do next.
+- The runtime never starts, continues, stops, reassigns, or re-scopes work on
+  the accountable party's behalf.
+- When no accountable party is reachable, report to the user; never invent one.
+- Mechanical and safety invariants — authentication, authorization, protocol
+  and concurrency correctness, host and storage protection, and limits the
+  operator configured in advance — are not task decisions and always apply.
+  When enforced, say what was enforced.
+- Classify every new automation before building it: does it record/report a
+  fact, enforce a mechanical or safety invariant, or require an accountable
+  party's decision?
+
 ## Architecture Notes
 
 - **Single bridge**: One bridge instance per server, multiple tasks multiplexed over it.
