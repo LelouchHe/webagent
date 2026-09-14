@@ -78,6 +78,12 @@ export interface DirectedObligation {
    * not the agent-visible correlation token that was rejected.
    */
   dispatchPromptId?: string;
+  /**
+   * Monotonic epoch for this record's recovery budget. A coalescing follow-up
+   * bumps it, so an in-flight reminder submission from the previous epoch is
+   * ignored instead of counting against the refreshed budget.
+   */
+  epoch: number;
   state: ObligationState;
   deliveredAttempts: number;
   consecutiveSubmissionFailures: number;
@@ -301,9 +307,17 @@ export class ObligationController {
       existing.nextAttemptAt = undefined;
       existing.openingMessageId = input.messageId;
       existing.openingDeliveryId = input.deliveryId;
-      // `awaiting_delivery` and `open` stay; `reminder_due` returns to `open`
-      // so the next turn boundary resumes recovery with the refreshed budget.
-      if (existing.state === "reminder_due") existing.state = "open";
+      existing.epoch += 1;
+      // `awaiting_delivery` and `open` stay; `reminder_due` and an in-flight
+      // `reminder_submitting` return to `open` so the next turn boundary
+      // resumes recovery with the refreshed budget, and the in-flight
+      // submission's outcome is ignored by the epoch check.
+      if (
+        existing.state === "reminder_due" ||
+        existing.state === "reminder_submitting"
+      ) {
+        existing.state = "open";
+      }
       this.armDispatchDeadline(existing);
       this.log("obligation coalesced", {
         ...logFields(existing),
@@ -318,6 +332,7 @@ export class ObligationController {
       openingMessageId: input.messageId,
       openingDeliveryId: input.deliveryId,
       openedAt: this.now(),
+      epoch: 0,
       state: "awaiting_delivery",
       deliveredAttempts: 0,
       consecutiveSubmissionFailures: 0,
@@ -332,6 +347,22 @@ export class ObligationController {
     return obligation;
   }
 
+  /**
+   * Record the turn identity of a dispatch attempt before its hand-off. Called
+   * when the drain starts (before `ensureResumed`) so a resume failure can be
+   * attributed to the attempt, and so a later callback from a superseded
+   * attempt is ignored.
+   */
+  beginDispatch(
+    sourceTaskId: string,
+    targetTaskId: string,
+    promptId: string,
+  ): void {
+    const obligation = this.getActive(sourceTaskId, targetTaskId);
+    if (!obligation || isTerminal(obligation.state)) return;
+    obligation.dispatchPromptId = promptId;
+  }
+
   /** The qualifying source dispatch was handed to the target's session. */
   markDelivered(
     sourceTaskId: string,
@@ -344,6 +375,14 @@ export class ObligationController {
     if (
       obligation.state !== "awaiting_delivery" &&
       obligation.state !== "open"
+    ) {
+      return;
+    }
+    // A stale hand-off from a superseded attempt must not take over the record.
+    if (
+      promptId !== undefined &&
+      obligation.dispatchPromptId !== undefined &&
+      obligation.dispatchPromptId !== promptId
     ) {
       return;
     }
@@ -565,16 +604,19 @@ export class ObligationController {
 
   private async submit(obligation: DirectedObligation): Promise<void> {
     const key = edgeKey(obligation.sourceTaskId, obligation.targetTaskId);
+    const epoch = obligation.epoch;
     obligation.state = "reminder_submitting";
     this.clearAttemptTimer(key);
     const accepted = await this.opts.submitReminder(obligation);
     // `submitReminder` awaits a live agent turn; the target may have settled
-    // the edge through `task_update` while that turn ran. Re-read state after
-    // the await rather than trusting the pre-await narrowing.
+    // the edge through `task_update` while that turn ran, or a coalescing
+    // follow-up may have started a new recovery epoch. Re-read state after the
+    // await rather than trusting the pre-await narrowing.
     const stateAfter = readObligationState(obligation);
     if (
       stateAfter === "settled" ||
       stateAfter === "unanswered" ||
+      obligation.epoch !== epoch ||
       this.active.get(key) !== obligation
     ) {
       return;
@@ -661,6 +703,7 @@ export class ObligationController {
     const key = edgeKey(obligation.sourceTaskId, obligation.targetTaskId);
     this.clearAttemptTimer(key);
     this.clearWatchdogTimer(key);
+    this.clearDispatchDeadline(key);
     this.watchdog.delete(key);
     obligation.state = "settled";
     this.log("obligation settled", logFields(obligation));
@@ -676,6 +719,7 @@ export class ObligationController {
     const key = edgeKey(obligation.sourceTaskId, obligation.targetTaskId);
     this.clearAttemptTimer(key);
     this.clearWatchdogTimer(key);
+    this.clearDispatchDeadline(key);
     this.watchdog.delete(key);
     obligation.state = "unanswered";
     if (obligation.noAccountNotified) return;

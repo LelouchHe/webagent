@@ -1833,6 +1833,23 @@ export class Store {
     return row.count;
   }
 
+  /**
+   * Distinct source task ids of a target's queued deliveries. Lets a caller
+   * decide whether a qualifying parent dispatch is waiting before it claims
+   * anything, so a pre-resume failure is not attributed to an unrelated edge.
+   */
+  queuedDeliverySources(recipientTaskId: string): string[] {
+    const rows = this.db
+      .prepare(
+        `SELECT DISTINCT m.source_task_id AS source
+         FROM deliveries d
+         JOIN messages m ON m.id = d.message_id
+         WHERE d.recipient_task_id = ? AND d.status = 'queued'`,
+      )
+      .all(recipientTaskId) as Array<{ source: string }>;
+    return rows.map((row) => row.source);
+  }
+
   /** Atomically claim every currently queued Delivery for one target task. */
   claimQueuedDeliveries(recipientTaskId: string): CollaborationDeliveryRow[] {
     const claimedAt = Date.now();
