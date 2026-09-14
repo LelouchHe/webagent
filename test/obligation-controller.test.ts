@@ -610,7 +610,7 @@ describe("ObligationController", () => {
     assert.equal(obligation.dispatchPromptId, "dispatch-A");
   });
 
-  it("rejects a hand-off from an older attempt after a newer attempt began", () => {
+  it("rejects a hand-off from an older attempt after a newer attempt began", async () => {
     const h = makeController();
     const obligation = armDirect(h);
     h.controller.beginDispatch("parent", "child", "dispatch-A");
@@ -626,7 +626,13 @@ describe("ObligationController", () => {
     h.controller.markDelivered("parent", "child", "dispatch-A");
     assert.equal(obligation.state, "awaiting_delivery");
     assert.equal(obligation.dispatchPromptId, "dispatch-B");
-    assert.equal((h.controller as any).dispatchAdvisoryTimers.size, 1);
+    // The stale hand-off did not cancel the queued advisory: it still fires.
+    await tick(h, DISPATCH_ADVISORY_MS);
+    assert.equal(
+      h.notices.filter((notice) => notice.evidence.phase === "not_handed_over")
+        .length,
+      1,
+    );
 
     // The newer attempt's hand-off applies.
     h.controller.markDelivered("parent", "child", "dispatch-B");
@@ -701,17 +707,19 @@ describe("ObligationController", () => {
     assert.equal(obligation.deliveredAttempts, 0);
   });
 
-  it("clears the advisory timers when a record becomes terminal", () => {
+  it("clears the advisory deadlines when a record becomes terminal", async () => {
     const h = makeController();
     const obligation = armDirect(h);
     h.controller.markDeliveryFailed("parent", "child");
     h.controller.markDeliveryFailed("parent", "child");
     h.controller.markDeliveryFailed("parent", "child");
     assert.equal(obligation.state, "unresolved");
-    // Mutation evidence: leaving an advisory armed keeps a live timer that
-    // outlives the record.
-    assert.equal((h.controller as any).dispatchAdvisoryTimers.size, 0);
-    assert.equal((h.controller as any).ageAdvisoryTimers.size, 0);
+    // Mutation evidence: leaving an advisory pending outlives the record.
+    await tick(h, AGE_ADVISORY_MS);
+    assert.equal(
+      h.notices.filter((notice) => notice.reason === "still_waiting").length,
+      0,
+    );
   });
 
   it("does not let a stale hand-off take over the record", () => {
@@ -795,9 +803,8 @@ describe("ObligationController", () => {
   it("clears the not-handed-over advisory once the dispatch is handed over", async () => {
     const h = makeController();
     armOpen(h);
-    // Mutation evidence: not clearing it at hand-off leaves a live timer that
-    // outlives the hand-off (the state guard would mask the notice).
-    assert.equal((h.controller as any).dispatchAdvisoryTimers.size, 0);
+    // Mutation evidence: not cancelling it at hand-off emits the queued
+    // advisory for a dispatch that was delivered.
     await tick(h, DISPATCH_ADVISORY_MS);
     assert.equal(
       h.notices.filter((notice) => notice.evidence.phase === "not_handed_over")
