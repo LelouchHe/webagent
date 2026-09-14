@@ -381,6 +381,9 @@ export class ObligationController {
       existing.openingMessageId = input.messageId;
       existing.openingDeliveryId = input.deliveryId;
       existing.epoch += 1;
+      // Clear the superseded attempt's identity: until the follow-up's own
+      // beginDispatch, no callback may match this record again.
+      existing.dispatchPromptId = undefined;
       // `awaiting_delivery` and `open` stay; `reminder_due` and an in-flight
       // `reminder_submitting` return to `open` so the next turn boundary
       // resumes recovery with the refreshed budget, and the in-flight

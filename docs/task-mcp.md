@@ -119,13 +119,17 @@ budget under the attempt's own turn identity. An agent error **inside a
 delivered turn** emits an error event but resolves, so it is not a transport
 failure.
 
-Timers never conclude. A dispatch still queued at `DISPATCH_ADVISORY_MS` and a
-record still without an account at `AGE_ADVISORY_MS` each produce one
-non-terminal `still_waiting` advisory per epoch, with the age and the last
-observed agent activity; the record is unchanged and the accountable party
-decides. A coalescing follow-up resets both advisories and bumps the record's
-recovery epoch, so an in-flight reminder submission from the previous epoch is
-ignored rather than counted against the refreshed budget.
+No timer's expiry decides an outcome. A dispatch still queued at
+`DISPATCH_ADVISORY_MS` and a record still without an account at
+`AGE_ADVISORY_MS` each produce one non-terminal `still_waiting` advisory per
+epoch, with the age and the last observed agent activity; the record is
+unchanged and the accountable party decides. The attempt timer only schedules a
+retry or a closing prompt; it is the bounded accounting of real events — three
+submission failures, or three delivered reminders — that can move a record to
+`unresolved`, never a timer's expiry. A coalescing follow-up resets both
+advisories and bumps the record's recovery epoch, so an in-flight reminder
+submission from the previous epoch is ignored rather than counted against the
+refreshed budget.
 
 There is deliberately **no timestamp guard**. The delivery turn is stamped
 before the prompt is handed to the bridge, so comparing the turn's start
@@ -173,11 +177,13 @@ independent: while a target turn with an active record runs, a quiet stretch of
 target×turn, never changes obligation state, and shares no limiter with the
 exhaustion notices or the advisories.
 
-Every drained collaboration prompt is also persisted on the target as a bounded
-`collaboration_prompt` audit event (batch message ids, the exact text,
-`truncated`, `rawSize`), so which text a child received is provable after the
-fact. The closing reminder persists its own text as the `handoff_reminder`
-system message. Neither record participates in the agent's control flow.
+Every drained collaboration prompt is also persisted on the target as a
+`collaboration_prompt` audit event: the batch message ids plus up to 16 KiB of
+the text. A batch larger than that records only a prefix and a
+`truncated`/`rawSize` marker, so for an oversized prompt the prefix and its
+size are provable, not the full rendered text. The closing reminder persists
+its own full text as the `handoff_reminder` system message. Neither record
+participates in the agent's control flow.
 
 Obligation state is process-local runtime memory. It is not persisted, does not
 survive a restart, and carries no cross-restart recovery promise. Releasing a

@@ -1999,17 +1999,26 @@ export class TaskManager {
     messageIds: string[],
     text: string,
   ): void {
-    const rawSize = Buffer.byteLength(text, "utf8");
-    const truncated = text.length > MAX_COLLABORATION_PROMPT_AUDIT;
-    const bounded = truncated
-      ? `${text.slice(0, MAX_COLLABORATION_PROMPT_AUDIT - 2)}\n…`
-      : text;
-    this.store.saveEvent(
-      taskId,
-      "collaboration_prompt",
-      { messageIds, text: bounded, truncated, rawSize },
-      { from_ref: "system" },
-    );
+    // The audit is subordinate to delivery: a storage failure here must never
+    // block the prompt, the delivery marking, or the retry bookkeeping.
+    try {
+      const rawSize = Buffer.byteLength(text, "utf8");
+      const truncated = text.length > MAX_COLLABORATION_PROMPT_AUDIT;
+      const bounded = truncated
+        ? `${text.slice(0, MAX_COLLABORATION_PROMPT_AUDIT - 2)}\n…`
+        : text;
+      this.store.saveEvent(
+        taskId,
+        "collaboration_prompt",
+        { messageIds, text: bounded, truncated, rawSize },
+        { from_ref: "system" },
+      );
+    } catch (error) {
+      slog.warn("collaboration prompt audit failed", {
+        taskId: taskId.slice(0, 8),
+        error,
+      });
+    }
   }
 
   /**

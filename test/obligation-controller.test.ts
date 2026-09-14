@@ -587,6 +587,30 @@ describe("ObligationController", () => {
     assert.equal(obligation.consecutiveSubmissionFailures, 1);
   });
 
+  it("ignores a failure from an attempt superseded by coalescing", () => {
+    const h = makeController();
+    const obligation = armDirect(h);
+    h.controller.beginDispatch("parent", "child", "resume-A");
+    // A's resume is still in flight when B coalesces onto the edge.
+    h.controller.arm({
+      sourceTaskId: "parent",
+      targetTaskId: "child",
+      messageId: "m-2",
+      deliveryId: "d-2",
+    });
+
+    // Mutation evidence: a preserved identity lets A's late failure consume
+    // the coalesced record's transport budget.
+    h.controller.markDeliveryFailed("parent", "child", "resume-A");
+    assert.equal(obligation.consecutiveSubmissionFailures, 0);
+    assert.equal(obligation.dispatchPromptId, undefined);
+
+    // The follow-up's own attempt still counts once it takes over.
+    h.controller.beginDispatch("parent", "child", "resume-B");
+    h.controller.markDeliveryFailed("parent", "child", "resume-B");
+    assert.equal(obligation.consecutiveSubmissionFailures, 1);
+  });
+
   it("ignores a resume failure from a superseded dispatch", () => {
     const h = makeController();
     const obligation = armDirect(h);
