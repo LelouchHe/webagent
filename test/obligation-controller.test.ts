@@ -143,7 +143,6 @@ describe("ObligationController", () => {
     h.controller.markDelivered("parent", "child");
     await tick(h);
     assert.equal(obligation.state, "reminder_due");
-    assert.equal(obligation.deliveredAt, h.clock.now);
     assert.equal(h.submissions.length, 1);
   });
 
@@ -297,7 +296,7 @@ describe("ObligationController", () => {
     assert.equal(h.submissions.length, 2);
   });
 
-  it("settles the record from an eligible current turn and routes to the stored source", async () => {
+  it("settles the record from an active current turn and routes to the stored source", async () => {
     const h = makeController();
     const obligation = armOpen(h);
     await tick(h);
@@ -342,19 +341,6 @@ describe("ObligationController", () => {
     assert.notEqual(obligation.state, "settled");
   });
 
-  it("does not settle from a turn that started before deliveredAt", async () => {
-    const h = makeController();
-    const obligation = armOpen(h);
-    const deliveredAt = obligation.deliveredAt!;
-    const { decision } = h.controller.settleReport({
-      targetTaskId: "child",
-      activeTurn: { promptId: "prompt-early", startedAt: deliveredAt - 1 },
-      run: () => "ok",
-    });
-    assert.equal(decision.kind, "stored-source");
-    assert.notEqual(obligation.state, "settled");
-  });
-
   it("does not re-settle a terminal record, retracts nothing, and still routes to the stored source", async () => {
     const h = makeController();
     const obligation = armOpen(h);
@@ -380,18 +366,19 @@ describe("ObligationController", () => {
     assert.equal(decision.sourceTaskId, null);
   });
 
-  it("accepts a delayed call from an earlier turn while a later eligible turn is current", async () => {
+  it("accepts a delayed call from an earlier turn while a later turn is current", async () => {
     // Accepted boundary, not a bug: settlement is judged from the *current*
-    // turn, so a call delayed from an earlier turn settles while a later
-    // eligible turn is current, and the stored source receives the earlier
-    // turn's content. Do not "fix" this into silence.
+    // turn, so a call delayed from an earlier turn can settle while a newer
+    // turn is current, and the stored source receives the earlier turn's
+    // content. Closing this would need prompt-scoped transport attribution,
+    // which is larger than the token echoing that was rejected. Do not "fix"
+    // this into silence, and do not reintroduce a timestamp guard.
     const h = makeController();
     const obligation = armOpen(h);
     await tick(h);
-    const deliveredAt = obligation.deliveredAt!;
     const { decision, result } = h.controller.settleReport({
       targetTaskId: "child",
-      activeTurn: { promptId: "prompt-later", startedAt: deliveredAt + 5_000 },
+      activeTurn: { promptId: "prompt-later", startedAt: h.clock.now + 5_000 },
       run: () => "earlier-turn-content",
     });
     assert.equal(decision.kind, "settle");

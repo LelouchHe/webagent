@@ -88,16 +88,19 @@ intent or expectation control. There is no expectation level, no
 per-counterparty ledger, and no separate lifecycle status beyond the existing
 `running`/`idle`/`blocked`/`done` report.
 
-**Settlement predicate.** A record settles only when all three hold:
+**Settlement predicate.** A record settles only when both hold:
 
 1. its state is `open`, `reminder_due`, or `reminder_submitting`;
-2. the target has an active current agent turn;
-3. that turn started at or after the accepted dispatch (`deliveredAt`, the
-   bridge-acceptance time — not the arm time).
+2. the target has an active current agent turn.
 
 It is refused without settling when the state is `awaiting_delivery`,
-`unanswered`, or `settled`, when no agent turn is active, or when the current
-turn predates `deliveredAt`.
+`unanswered`, or `settled`, or when no agent turn is active.
+
+There is deliberately **no timestamp guard**. The delivery turn is added to the
+runtime's active prompts and stamped before `bridge.prompt` is issued, while
+the record opens only when that prompt resolves, so comparing the turn's start
+against dispatch acceptance would reject the legitimate dispatch account. Any
+future proposal to add such a guard must account for that ordering.
 
 **Routing.** A settleable record is one atomic step: the update is persisted,
 the reported `workflow_status` changes, the account message is created to the
@@ -412,18 +415,21 @@ task_update(status: "blocked" | "done", body: string)
 
 There is **no new parameter**. The runtime identifies the target's sole directed
 obligation itself and settles it only from an eligible current turn: the record
-must be `open`, `reminder_due`, or `reminder_submitting`; the target must have an
-active agent turn; and that turn must have started at or after the accepted
-dispatch (`deliveredAt`). A settleable call is one atomic step that records the
+must be `open`, `reminder_due`, or `reminder_submitting`, and the target must
+have an active agent turn. A settleable call is one atomic step that records the
 update, changes the reported status, creates the account to the **stored
 source**, and cancels the record's timers.
 
 When a record exists but those conditions do not hold — `awaiting_delivery`, a
-terminal `unanswered`/`settled` record, no active turn, or a turn older than
-`deliveredAt` — the update is still recorded and routed to the stored source,
-without settling. When no record exists for the target, the update is an
-ordinary report to the current parent and settles nothing. A terminal record is
-never re-settled and its earlier `no_account` notice is never retracted.
+terminal `unanswered`/`settled` record, or no active turn — the update is still
+recorded and routed to the stored source, without settling. When no record
+exists for the target, the update is an ordinary report to the current parent
+and settles nothing. A terminal record is never re-settled and its earlier
+`no_account` notice is never retracted.
+
+There is deliberately no timestamp guard, because the delivery turn is stamped
+before `bridge.prompt` is issued while the record opens only when it resolves;
+comparing the two would reject the legitimate dispatch account.
 
 Because settlement is judged from the current turn, a call delayed from an
 earlier turn that arrives while a later eligible turn is current settles the
