@@ -291,6 +291,7 @@ export class TaskManager {
         clearTimeout(handle);
       },
       isAgentBusy: (taskId) => this.getBusyKind(taskId) === "agent",
+      isTurnRunning: (taskId, promptId) => this.isTurnRunning(taskId, promptId),
       submitReminder: (obligation) => this.submitObligationReminder(obligation),
       retryDispatch: (obligation) => {
         const bridge = this.recoveryBridge;
@@ -891,6 +892,7 @@ export class TaskManager {
     this.assistantBuffers.delete(taskId);
     this.thinkingBuffers.delete(taskId);
     this.activePrompts.delete(taskId);
+    this.obligations.abortTurn(taskId);
     const pendingSubmission = this.pendingPromptSubmissions.get(taskId);
     this.pendingPromptSubmissions.delete(taskId);
     if (pendingSubmission !== undefined) {
@@ -1814,6 +1816,17 @@ export class TaskManager {
     return this.obligations.getActive(sourceTaskId, targetTaskId);
   }
 
+  /** True when `promptId` is still the task's live agent turn. */
+  isTurnRunning(taskId: string, promptId: string): boolean {
+    const busy = this.state.getState(taskId).runtime.busy;
+    return busy?.kind === "agent" && busy.promptId === promptId;
+  }
+
+  /** Cancel the target's obligation watchdog after a runtime reset. */
+  abortObligationTurn(taskId: string): void {
+    this.obligations.abortTurn(taskId);
+  }
+
   /** The target's current live agent turn, if any, with its start time. */
   getActiveAgentTurn(taskId: string): ActiveAgentTurn | null {
     const busy = this.state.getState(taskId).runtime.busy;
@@ -1891,7 +1904,8 @@ export class TaskManager {
       await this.ensureResumed(bridge, task.id);
       await bridge.prompt(task.id, text, undefined, promptId);
       // Truthful: the reminder text reached the target, so record it now. A
-      // rejected submission records nothing.
+      // request-level failure throws `PromptNotDeliveredError` and records
+      // nothing; an in-turn agent error resolves and is a delivered attempt.
       this.store.saveEvent(
         task.id,
         "system_message",
@@ -2000,13 +2014,29 @@ export class TaskManager {
     this.drainingCollaborationTasks.add(taskId);
     this.syncBusy(taskId);
     try {
-      await this.ensureResumed(bridge, taskId);
+      try {
+        await this.ensureResumed(bridge, taskId);
+      } catch (error) {
+        slog.error("collaboration delivery resume failed", {
+          taskId: taskId.slice(0, 8),
+          error,
+        });
+        // The dispatch was never handed over. Consume the transport budget so
+        // the bounded initial-delivery retry can end in `unanswered` plus
+        // `no_account`, rather than leaving the source waiting forever. The
+        // controller also arms a dispatch deadline as a second backstop.
+        const obligation = this.obligations.getForTarget(taskId);
+        if (obligation) {
+          this.obligations.markDeliveryFailed(obligation.sourceTaskId, taskId);
+        }
+        return false;
+      }
       const deliveries = this.store.claimQueuedDeliveries(taskId);
       if (deliveries.length === 0) return false;
       const task = this.store.getTask(taskId);
-      // Only a direct parent dispatch carries an obligation receipt. The
-      // injected context hands the target the opaque correlation id it must
-      // echo back on `task_update`; unrelated messages carry none.
+      // Only a direct parent dispatch participates in the directed obligation;
+      // unrelated messages are ordinary collaboration and carry no obligation
+      // state or settlement role.
       const qualifyingSources = new Set<string>();
       const qualifyingDeliveryIds: string[] = [];
       const allDeliveryIds = deliveries.map((delivery) => delivery.id);
@@ -2057,45 +2087,44 @@ export class TaskManager {
       // end of the turn, so a resolution-time open would leave the dispatch
       // turn itself `awaiting_delivery` and refuse the account it produces.
       for (const sourceTaskId of qualifyingSources) {
-        this.obligations.markDelivered(sourceTaskId, taskId);
+        this.obligations.markDelivered(sourceTaskId, taskId, promptId);
       }
-      void promptPromise.then(
-        () => {
-          this.store.markCollaborationDeliveriesDelivered(allDeliveryIds);
-          for (const sourceTaskId of qualifyingSources) {
-            this.obligations.markDispatchSucceeded(sourceTaskId, taskId);
-          }
-          if (qualifyingSources.size > 0) {
-            this.pendingDispatchRetries.delete(taskId);
-          }
-        },
-        (error: unknown) => {
-          slog.error("collaboration delivery failed", {
-            taskId: taskId.slice(0, 8),
-            error,
-          });
-          this.store.failCollaborationDeliveries(
-            allDeliveryIds,
-            "prompt_failed",
+      const dispatchFailed = (error: unknown) => {
+        slog.error("collaboration delivery failed", {
+          taskId: taskId.slice(0, 8),
+          error,
+        });
+        this.store.failCollaborationDeliveries(allDeliveryIds, "prompt_failed");
+        // A qualifying dispatch is not abandoned on one request-level failure.
+        // Hold its claimed rows for the controller's bounded initial-delivery
+        // retry, which requeues and resubmits them under backoff; an immediate
+        // idle drain would bypass that budget.
+        if (qualifyingDeliveryIds.length > 0) {
+          this.pendingDispatchRetries.set(taskId, qualifyingDeliveryIds);
+        }
+        for (const sourceTaskId of qualifyingSources) {
+          this.obligations.markDeliveryFailed(sourceTaskId, taskId, promptId);
+        }
+        if (!this.isCurrentPrompt(taskId, promptId)) return;
+        this.activePrompts.delete(taskId);
+        // Same attribution as an ACP error event: a rejected delivery prompt
+        // must not leave the target marked running.
+        this.store.updateTaskWorkflowStatus(taskId, "idle");
+        this.syncBusy(taskId);
+      };
+      void promptPromise.then(() => {
+        this.store.markCollaborationDeliveriesDelivered(allDeliveryIds);
+        for (const sourceTaskId of qualifyingSources) {
+          this.obligations.markDispatchSucceeded(
+            sourceTaskId,
+            taskId,
+            promptId,
           );
-          // A qualifying dispatch is not abandoned on one rejected prompt.
-          // Hold its claimed rows for the controller's bounded initial-
-          // delivery retry, which requeues and resubmits them under backoff;
-          // an immediate idle drain would bypass that budget.
-          if (qualifyingDeliveryIds.length > 0) {
-            this.pendingDispatchRetries.set(taskId, qualifyingDeliveryIds);
-          }
-          for (const sourceTaskId of qualifyingSources) {
-            this.obligations.markDeliveryFailed(sourceTaskId, taskId);
-          }
-          if (!this.isCurrentPrompt(taskId, promptId)) return;
-          this.activePrompts.delete(taskId);
-          // Same attribution as an ACP error event: a rejected delivery
-          // prompt must not leave the target marked running.
-          this.store.updateTaskWorkflowStatus(taskId, "idle");
-          this.syncBusy(taskId);
-        },
-      );
+        }
+        if (qualifyingSources.size > 0) {
+          this.pendingDispatchRetries.delete(taskId);
+        }
+      }, dispatchFailed);
       return true;
     } catch (error) {
       slog.error("collaboration delivery drain failed", {

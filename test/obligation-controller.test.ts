@@ -1,6 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
+  DISPATCH_DEADLINE_MS,
   MAX_REMINDER_ATTEMPTS,
   MAX_REMINDER_SUBMISSION_FAILURES,
   ObligationController,
@@ -60,6 +61,7 @@ interface Harness {
   dispatchRetries: DirectedObligation[];
   busy: Set<string>;
   setSubmitMode: (mode: "accept" | "reject") => void;
+  setTurnRunning: (running: boolean) => void;
 }
 
 function makeController(): Harness {
@@ -69,6 +71,7 @@ function makeController(): Harness {
   const dispatchRetries: DirectedObligation[] = [];
   const busy = new Set<string>();
   let submitMode: "accept" | "reject" = "accept";
+  let turnRunning = true;
   const controller = new ObligationController({
     now: () => clock.now,
     setTimer: (fn, ms) => clock.setTimer(fn, ms),
@@ -76,6 +79,7 @@ function makeController(): Harness {
       clock.clearTimer(handle);
     },
     isAgentBusy: (taskId) => busy.has(taskId),
+    isTurnRunning: () => turnRunning,
     submitReminder: (obligation) => {
       submissions.push(obligation);
       return Promise.resolve(submitMode === "accept");
@@ -96,6 +100,9 @@ function makeController(): Harness {
     busy,
     setSubmitMode: (mode) => {
       submitMode = mode;
+    },
+    setTurnRunning: (running) => {
+      turnRunning = running;
     },
   };
 }
@@ -531,6 +538,71 @@ describe("ObligationController", () => {
     await tick(bySource);
     bySource.controller.purgeTask("parent");
     assert.equal(bySource.controller.getForTarget("child"), undefined);
+  });
+
+  it("ignores callbacks from a superseded dispatch", () => {
+    const h = makeController();
+    const obligation = armDirect(h);
+
+    // Dispatch A is issued, then fails at request level and is retried.
+    h.controller.markDelivered("parent", "child", "dispatch-A");
+    h.controller.markDeliveryFailed("parent", "child", "dispatch-A");
+    assert.equal(obligation.state, "awaiting_delivery");
+    assert.equal(obligation.consecutiveSubmissionFailures, 1);
+
+    // Dispatch B is issued next and succeeds.
+    h.controller.markDelivered("parent", "child", "dispatch-B");
+    h.controller.markDispatchSucceeded("parent", "child", "dispatch-B");
+    assert.equal(obligation.consecutiveSubmissionFailures, 0);
+
+    // A late failure from A must not push B back to awaiting_delivery or
+    // consume its transport budget, and a late success from A must not clear
+    // B's streak.
+    h.controller.markDeliveryFailed("parent", "child", "dispatch-A");
+    assert.notEqual(obligation.state, "awaiting_delivery");
+    assert.equal(obligation.consecutiveSubmissionFailures, 0);
+    // Give B a fresh streak, then a stale A success must not clear it.
+    h.controller.markDeliveryFailed("parent", "child", "dispatch-B");
+    assert.equal(obligation.consecutiveSubmissionFailures, 1);
+    h.controller.markDispatchSucceeded("parent", "child", "dispatch-A");
+    assert.equal(obligation.consecutiveSubmissionFailures, 1);
+  });
+
+  it("does not emit a silence notice after the turn is aborted", async () => {
+    const h = makeController();
+    armDirect(h);
+    h.controller.beginTurn("child", "prompt-1");
+    h.controller.abortTurn("child");
+    await tick(h, SILENCE_THRESHOLD_S * 1000);
+    // Mutation evidence: without abortTurn the watchdog survives the reset.
+    assert.equal(h.notices.length, 0);
+  });
+
+  it("requires a live current turn for a silence notice", async () => {
+    const h = makeController();
+    armDirect(h);
+    h.controller.beginTurn("child", "prompt-1");
+    h.setTurnRunning(false);
+    await tick(h, SILENCE_THRESHOLD_S * 1000);
+    // Mutation evidence: dropping the live-turn guard emits a no_activity
+    // notice for a turn that is no longer running.
+    assert.equal(h.notices.length, 0);
+  });
+
+  it("ends a never-delivered dispatch at the deadline", async () => {
+    const h = makeController();
+    const obligation = armDirect(h);
+    assert.equal(obligation.state, "awaiting_delivery");
+    await tick(h, DISPATCH_DEADLINE_MS - 1);
+    assert.equal(obligation.state, "awaiting_delivery");
+    await tick(h, 1);
+    // Mutation evidence: without the dispatch deadline this record waits
+    // forever with no notice.
+    assert.equal(obligation.state, "unanswered");
+    assert.equal(h.notices.length, 1);
+    assert.equal(h.notices[0].reason, "no_account");
+    assert.equal(h.notices[0].evidence.deliveryUnavailable, true);
+    assert.equal(h.notices[0].evidence.dispatchDeadlineExceeded, true);
   });
 
   it("does not start a watchdog without an active obligation", async () => {

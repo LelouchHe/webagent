@@ -738,6 +738,40 @@ describe("TaskManager", () => {
   });
 
   describe("clearTask", () => {
+    it("clears the obligation watchdog on runtime rotation", async () => {
+      store.createTask("parent", tmpDir, "agent", "agent-parent");
+      store.createTask("child", tmpDir, "agent", "agent-child", "parent");
+      sm.liveTasks.add("child");
+      store.createCollaborationMessage({
+        id: "rotation-obligation",
+        deliveryId: "rotation-delivery",
+        sourceTaskId: "parent",
+        directTargetTaskId: "child",
+        sourceActor: "agent",
+        body: "Dispatch.",
+      });
+      sm.activePrompts.add("child");
+      sm.syncBusy("child");
+      assert.equal((sm as any).obligations.watchdog.size, 1);
+
+      const bridge = {
+        async newSession() {
+          return { sessionId: "agent-new", configOptions: [] };
+        },
+        async setConfigOption() {
+          return [];
+        },
+        async loadSession() {
+          throw new Error("loadSession should not be called");
+        },
+      };
+      await sm.clearTask(bridge, "child");
+
+      // Mutation evidence: without abortTurn in resetTaskRuntime the watchdog
+      // survives the rotation and later emits for an idle task.
+      assert.equal((sm as any).obligations.watchdog.size, 0);
+    });
+
     it("rotates the ACP execution while preserving the WebAgent task", async () => {
       store.createTask("web-1", tmpDir, "auto", "agent-old");
       store.updateTaskConfig("web-1", "model", "model-old");

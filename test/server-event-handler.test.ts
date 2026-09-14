@@ -353,6 +353,54 @@ describe("handleAgentEvent", () => {
     await flushTimers();
   });
 
+  it("treats an in-turn agent error as delivered, not a transport failure", async () => {
+    seedFamily();
+    const { bridge, calls } = createControllableBridge();
+    await armDirectDispatch(store, tasks, bridge, "parent", "child");
+    await flushTimers();
+    const promptId = calls.prompts[0].promptId;
+
+    // Real bridge contract: an in-turn agent error emits an error event and
+    // then resolves, so the drain must not treat it as a transport failure.
+    const { sseManager } = createMockSseManager();
+    handleAgentEvent(
+      {
+        type: "error",
+        taskId: "child",
+        promptId,
+        message: "turn boom",
+      } as any,
+      tasks,
+      store,
+      bridge,
+      makeEventHandlerConfig(),
+      sseManager as any,
+    );
+    calls.prompts[0].resolve();
+    await flushTimers();
+
+    // Mutation evidence: treating every non-success as a request-level failure
+    // would reset this to awaiting_delivery and retry the dispatch.
+    assert.notEqual(
+      tasks.getObligation("parent", "child")?.state,
+      "awaiting_delivery",
+    );
+    assert.equal(
+      calls.prompts.filter((prompt) =>
+        prompt.text.includes("Do the assigned work."),
+      ).length,
+      1,
+    );
+    assert.ok(
+      calls.prompts.some((prompt) =>
+        prompt.text.includes("Task Handoff Required"),
+      ),
+      "the errored dispatch turn still needs a closing reminder",
+    );
+    calls.prompts.at(-1)?.resolve();
+    await flushTimers();
+  });
+
   it("retries a rejected initial dispatch at an idle boundary", async () => {
     seedFamily();
     const { bridge, calls } = createControllableBridge();
@@ -378,6 +426,53 @@ describe("handleAgentEvent", () => {
     assert.equal(calls.prompts.length, 2);
     assert.match(calls.prompts[1].text, /Do the assigned work\./);
     calls.prompts[1].resolve();
+    await flushTimers();
+  });
+
+  it("ends a dispatch whose resume keeps failing", async () => {
+    seedFamily();
+    // Keep the task non-live so every attempt must resume, and make resume fail.
+    tasks.liveTasks.delete("child");
+    const broadcasts: Array<{ body: string }> = [];
+    tasks.setCollaborationBroadcast((event) => broadcasts.push(event));
+    const bridge = {
+      async newSession() {
+        return { sessionId: "", configOptions: [] };
+      },
+      async setConfigOption() {
+        return [];
+      },
+      async loadSession() {
+        throw new Error("resume keeps failing");
+      },
+      async prompt() {
+        throw new Error("prompt must not be reached");
+      },
+    };
+
+    await armDirectDispatch(store, tasks, bridge, "parent", "child");
+    await flushTimers();
+    assert.equal(
+      tasks.getObligation("parent", "child")?.state,
+      "awaiting_delivery",
+    );
+
+    // The bounded transport retries (1s then 2s backoff) exhaust the budget.
+    await new Promise<void>((resolve) => setTimeout(resolve, 1_100));
+    await flushTimers();
+    await new Promise<void>((resolve) => setTimeout(resolve, 2_100));
+    await flushTimers();
+
+    // Mutation evidence: without resume-failure accounting (or the dispatch
+    // deadline) the record waits forever with no notice.
+    assert.equal(tasks.getObligation("parent", "child")?.state, "unanswered");
+    assert.equal(broadcasts.length, 1);
+    const notice = JSON.parse(broadcasts[0].body) as {
+      reason: string;
+      evidence: Record<string, unknown>;
+    };
+    assert.equal(notice.reason, "no_account");
+    assert.equal(notice.evidence.deliveryUnavailable, true);
     await flushTimers();
   });
 
