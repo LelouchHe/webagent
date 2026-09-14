@@ -120,6 +120,8 @@ describe("createMcpEndpoint", () => {
         title: "Current",
         relation: "self" as const,
         workflowStatus: "idle" as const,
+        executionState: "idle" as const,
+        lastAgentActivityAt: null,
         lastEventAt: "2026-01-01 00:00:00.000",
       },
     ],
@@ -354,7 +356,9 @@ describe("createMcpEndpoint", () => {
     // `task_list` is the cheap triage surface: state fields plus the per-turn
     // meaning of `done`, without weakening task_query's no-poll guidance.
     assert.match(toolDescription(tools, "task_list"), /workflowStatus/);
+    assert.match(toolDescription(tools, "task_list"), /executionState/);
     assert.match(toolDescription(tools, "task_list"), /lastEventAt/);
+    assert.match(toolDescription(tools, "task_list"), /lastAgentActivityAt/);
     assert.match(toolDescription(tools, "task_list"), /per turn/);
     assert.match(
       toolDescription(tools, "task_list"),

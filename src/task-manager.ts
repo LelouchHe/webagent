@@ -192,6 +192,18 @@ export class TaskManager {
   private recoveryBridge: DeliveryBridge | null = null;
   /** Claimed dispatch deliveries awaiting a bounded controller retry. */
   private readonly pendingDispatchRetries = new Map<string, string[]>();
+  /** Latest qualifying agent-runtime activity per task, epoch ms. */
+  private readonly lastAgentActivityAt = new Map<string, number>();
+  /** SSE broadcast hook for runtime collaboration messages. */
+  private collaborationBroadcast:
+    | ((event: {
+        messageId: string;
+        sourceTaskId: string;
+        targetTaskId: string;
+        title: string;
+        body: string;
+      }) => void)
+    | null = null;
   /** Process-local directed-dispatch obligation state machine. */
   private readonly obligations: ObligationController;
   /** Delivery rows currently being claimed/resolved for one target task. */
@@ -1416,6 +1428,7 @@ export class TaskManager {
     this.thinkingBuffers.delete(id);
     this.activePrompts.delete(id);
     this.pendingWorkRecoveries.delete(id);
+    this.lastAgentActivityAt.delete(id);
     this.compactingTasks.delete(id);
     this.resettingTasks.delete(id);
     this.rotatingTasks.delete(id);
@@ -1758,9 +1771,34 @@ export class TaskManager {
     this.obligations.onTargetTurnEnded(taskId);
   }
 
-  /** Qualifying agent-runtime activity for the watchdog. */
+  /** Qualifying agent-runtime activity for the watchdog and telemetry. */
   noteAgentActivity(taskId: string): void {
+    this.lastAgentActivityAt.set(taskId, Date.now());
     this.obligations.noteAgentActivity(taskId);
+  }
+
+  /** Live execution source for task_list telemetry. */
+  getExecutionState(taskId: string): "idle" | "agent" | "bash" {
+    return this.getBusyKind(taskId) ?? "idle";
+  }
+
+  /** ISO-8601 timestamp of the latest qualifying agent activity, if any. */
+  getLastAgentActivityAt(taskId: string): string | null {
+    const at = this.lastAgentActivityAt.get(taskId);
+    return at === undefined ? null : new Date(at).toISOString();
+  }
+
+  /** Install the SSE broadcast hook for runtime collaboration messages. */
+  setCollaborationBroadcast(
+    broadcast: (event: {
+      messageId: string;
+      sourceTaskId: string;
+      targetTaskId: string;
+      title: string;
+      body: string;
+    }) => void,
+  ): void {
+    this.collaborationBroadcast = broadcast;
   }
 
   /** Active directed obligation for a source→target edge, when one exists. */
@@ -1863,12 +1901,47 @@ export class TaskManager {
   /** Emit a runtime outcome notice; implemented with the notice dispatcher. */
   private emitObligationNotice(
     notice: ObligationNotice,
-    _obligation: DirectedObligation,
+    obligation: DirectedObligation,
   ): void {
-    slog.debug("obligation notice", {
+    const body = JSON.stringify({
       obligationId: notice.obligationId,
       reason: notice.reason,
+      evidence: notice.evidence,
     });
+    // The notice is ordinary parent-facing collaboration from the target to
+    // the stored source, with a system actor. The emitter observer sees it and
+    // declines to arm it (system actor), independently of direction.
+    const created = this.store.createCollaborationMessage({
+      id: randomUUID(),
+      deliveryId: randomUUID(),
+      sourceTaskId: obligation.targetTaskId,
+      directTargetTaskId: obligation.sourceTaskId,
+      sourceActor: "system",
+      body,
+    });
+    this.store.saveEvent(
+      obligation.targetTaskId,
+      "task_outcome_notice",
+      {
+        obligationId: notice.obligationId,
+        reason: notice.reason,
+        evidence: notice.evidence,
+      },
+      { from_ref: "system" },
+    );
+    const source = this.store.getTaskIncludingDeleted(obligation.targetTaskId);
+    const target = this.store.getTaskIncludingDeleted(obligation.sourceTaskId);
+    this.collaborationBroadcast?.({
+      messageId: created.message.id,
+      sourceTaskId: obligation.targetTaskId,
+      targetTaskId: obligation.sourceTaskId,
+      title: `${source?.title ?? obligation.targetTaskId.slice(0, 8)} sent ${target?.title ?? obligation.sourceTaskId.slice(0, 8)}`,
+      body,
+    });
+    const bridge = this.recoveryBridge;
+    if (bridge) {
+      void this.drainCollaborationDeliveries(bridge, obligation.sourceTaskId);
+    }
   }
 
   /**

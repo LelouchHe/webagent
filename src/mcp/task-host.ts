@@ -146,6 +146,8 @@ export function createMcpTaskToolHost(deps: {
           title: task.title ?? task.id,
           relation,
           workflowStatus: task.workflow_status,
+          executionState: tasks.getExecutionState(task.id),
+          lastAgentActivityAt: tasks.getLastAgentActivityAt(task.id),
           lastEventAt: lastEventTimes.get(task.id) ?? null,
         }),
       );

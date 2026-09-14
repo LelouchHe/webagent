@@ -96,6 +96,8 @@ describe("MCP Task tool host", () => {
         title: "Alpha",
         relation: "self",
         workflowStatus: "running",
+        executionState: "idle",
+        lastAgentActivityAt: null,
         lastEventAt: "2026-09-13 21:00:01.001",
       },
       {
@@ -103,6 +105,8 @@ describe("MCP Task tool host", () => {
         title: "Root",
         relation: "parent",
         workflowStatus: "done",
+        executionState: "idle",
+        lastAgentActivityAt: null,
         lastEventAt: "2026-09-13 21:00:01.002",
       },
       {
@@ -110,6 +114,8 @@ describe("MCP Task tool host", () => {
         title: "Alpha child",
         relation: "child",
         workflowStatus: "blocked",
+        executionState: "idle",
+        lastAgentActivityAt: null,
         lastEventAt: "2026-09-13 21:00:01.003",
       },
       {
@@ -117,6 +123,8 @@ describe("MCP Task tool host", () => {
         title: "Beta",
         relation: "sibling",
         workflowStatus: "idle",
+        executionState: "idle",
+        lastAgentActivityAt: null,
         lastEventAt: "2026-09-13 21:00:01.004",
       },
     ]);
@@ -611,6 +619,29 @@ describe("MCP Task tool host", () => {
       .filter((event) => event.type === "system_message");
     assert.equal(messages.length, 1);
     assert.match(messages[0].data, /hello beta/);
+  });
+
+  it("reports live execution state and last agent activity", () => {
+    const host = createMcpTaskToolHost({
+      store,
+      tasks,
+      getBridge: () => null,
+    });
+    const before = host.list("alpha");
+    assert.ok(before.every((item) => item.executionState === "idle"));
+    assert.ok(before.every((item) => item.lastAgentActivityAt === null));
+
+    tasks.activePrompts.add("alpha-child");
+    tasks.noteAgentActivity("alpha");
+    const after = host.list("alpha");
+    // Mutation evidence: deriving executionState from workflowStatus reports
+    // idle here; deriving activity from the latest event ignores the runtime
+    // tracker.
+    assert.equal(
+      after.find((item) => item.id === "alpha-child")?.executionState,
+      "agent",
+    );
+    assert.ok(after.find((item) => item.id === "alpha")?.lastAgentActivityAt);
   });
 
   it("updates its own workflow and sends a parent status message", async () => {
