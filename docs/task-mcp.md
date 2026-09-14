@@ -102,6 +102,11 @@ resolves: `bridge.prompt` resolves at the end of the turn, after it emits
 `prompt_done`, so a resolution-time open would leave the dispatch turn itself
 `awaiting_delivery` and refuse the account that turn produces.
 
+`markDelivered` is that hand-off transition. The prompt promise's resolution is
+used only for transport accounting: a resolution clears the submission-failure
+streak (`markDispatchSucceeded`), while a rejection consumes the transport
+budget and returns the record to `awaiting_delivery` for a bounded retry.
+
 There is deliberately **no timestamp guard**. The delivery turn is stamped
 before the prompt is handed to the bridge, so comparing the turn's start
 against the hand-off time would still reject the legitimate dispatch account.
@@ -324,10 +329,13 @@ prove the real delivery ordering — `awaiting_delivery` opening when the
 dispatch is handed to the target's session and the same-turn account settling —
 run through the creation boundary and the mock bridge (settlement tests in
 `test/server-event-handler.test.ts`, notably "settles the account from the same
-dispatch turn through the real delivery path"). The refusal cases
-(`awaiting_delivery` while queued, no active turn) drive `settleReport` with a
-constructed active turn, which is enough to pin the guard but cannot catch an
-ordering bug; that is why the same-turn test exists.
+dispatch turn through the real delivery path", which emits the account while
+the dispatch prompt is still pending). The pre-issuance refusal is also an
+integration test: "does not settle while the record is queued awaiting
+delivery" keeps the target agent-busy so no prompt is issued, which is the real
+`awaiting_delivery` window. The controller-level refusal tests additionally
+drive `settleReport` with a constructed active turn; those pin the guard but
+cannot catch an ordering bug, which is why the same-turn test exists.
 
 Two rows have no obligation-level test:
 
