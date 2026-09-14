@@ -600,14 +600,14 @@ describe("ObligationController", () => {
       deliveryId: "d-2",
     });
     // Coalescing is not a new attempt, so A still owns the record.
-    assert.equal(obligation.dispatchPromptId, "dispatch-A");
+    assert.equal(obligation.attemptId, "dispatch-A");
 
     // Mutation evidence: clearing the identity on coalescing rejects this
     // hand-off, leaving the record awaiting_delivery and the target with a
     // spurious reminder turn for content it received.
     h.controller.markDelivered("parent", "child", "dispatch-A");
     assert.notEqual(obligation.state, "awaiting_delivery");
-    assert.equal(obligation.dispatchPromptId, "dispatch-A");
+    assert.equal(obligation.attemptId, "dispatch-A");
   });
 
   it("rejects a hand-off from an older attempt after a newer attempt began", async () => {
@@ -625,7 +625,7 @@ describe("ObligationController", () => {
     // A is now genuinely stale: a newer attempt installed its own identity.
     h.controller.markDelivered("parent", "child", "dispatch-A");
     assert.equal(obligation.state, "awaiting_delivery");
-    assert.equal(obligation.dispatchPromptId, "dispatch-B");
+    assert.equal(obligation.attemptId, "dispatch-B");
     // The stale hand-off did not cancel the queued advisory: it still fires.
     await tick(h, DISPATCH_ADVISORY_MS);
     assert.equal(
@@ -637,7 +637,7 @@ describe("ObligationController", () => {
     // The newer attempt's hand-off applies.
     h.controller.markDelivered("parent", "child", "dispatch-B");
     assert.notEqual(obligation.state, "awaiting_delivery");
-    assert.equal(obligation.dispatchPromptId, "dispatch-B");
+    assert.equal(obligation.attemptId, "dispatch-B");
   });
 
   it("applies the live attempt's failure across coalescing", () => {
@@ -657,7 +657,7 @@ describe("ObligationController", () => {
     // attempt's own failure instead of counting it.
     h.controller.markDeliveryFailed("parent", "child", "resume-A");
     assert.equal(obligation.consecutiveSubmissionFailures, 1);
-    assert.equal(obligation.dispatchPromptId, "resume-A");
+    assert.equal(obligation.attemptId, "resume-A");
   });
 
   it("ignores a resume failure from a superseded dispatch", () => {
@@ -677,7 +677,7 @@ describe("ObligationController", () => {
     // Mutation evidence: without identity scoping A's failure increments B.
     h.controller.markDeliveryFailed("parent", "child", "resume-A");
     assert.equal(obligation.consecutiveSubmissionFailures, 0);
-    assert.equal(obligation.dispatchPromptId, "resume-B");
+    assert.equal(obligation.attemptId, "resume-B");
 
     h.controller.markDeliveryFailed("parent", "child", "resume-B");
     assert.equal(obligation.consecutiveSubmissionFailures, 1);
@@ -729,7 +729,7 @@ describe("ObligationController", () => {
     h.controller.markDelivered("parent", "child", "dispatch-B");
     // Mutation evidence: without the hand-off identity check B opens the record.
     assert.equal(obligation.state, "awaiting_delivery");
-    assert.equal(obligation.dispatchPromptId, "dispatch-A");
+    assert.equal(obligation.attemptId, "dispatch-A");
   });
 
   it("does not emit a silence notice after the turn is aborted", async () => {

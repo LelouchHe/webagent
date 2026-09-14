@@ -93,22 +93,24 @@ export interface ObligationView {
    * record. Installed at the start of that attempt's drain and replaced only by
    * a newer attempt's drain; a coalescing follow-up keeps it.
    */
-  readonly dispatchPromptId?: string;
+  readonly attemptId?: string;
   /**
    * Recovery-budget generation. A coalescing follow-up bumps it so an
    * in-flight reminder submission from the previous generation is ignored.
    * Deliberately distinct from hand-off ownership.
    */
-  readonly epoch: number;
+  readonly recoveryGeneration: number;
   readonly state: ObligationState;
   readonly deliveredAttempts: number;
   readonly consecutiveSubmissionFailures: number;
   readonly lastDeliveredAttemptAt?: number;
-  readonly nextAttemptAt?: number;
+  readonly waitingSince?: number;
   /** Advisory receipt: the queued-dispatch advisory is no longer pending. */
   readonly dispatchAdvised: boolean;
   /** Advisory receipt: the age advisory has been emitted. */
   readonly ageAdvised: boolean;
+  /** Per-turn marker: the turn id whose silence notice was already emitted. */
+  readonly silencedAttemptId?: string;
   /** Anchor for the queued-dispatch advisory (set at arm and coalescing). */
   readonly dispatchAdvisoryFrom: number;
   /** Anchor for the age advisory (set at arm and coalescing). */
@@ -122,15 +124,18 @@ interface ObligationRecord {
   openingMessageId: string;
   openingDeliveryId: string;
   openedAt: number;
-  dispatchPromptId?: string;
-  epoch: number;
+  attemptId?: string;
+  recoveryGeneration: number;
   state: ObligationState;
   deliveredAttempts: number;
   consecutiveSubmissionFailures: number;
   lastDeliveredAttemptAt?: number;
-  nextAttemptAt?: number;
+  waitingSince?: number;
+  /** True when the current wait is a busy/failure retry, not the reminder schedule. */
+  retrying: boolean;
   dispatchAdvised: boolean;
   ageAdvised: boolean;
+  silencedAttemptId?: string;
   dispatchAdvisoryFrom: number;
   ageAdvisoryFrom: number;
   noAccountNotified: boolean;
@@ -179,7 +184,12 @@ export type ObligationFact =
   | { type: "turn_aborted"; targetTaskId: string }
   | { type: "agent_activity"; targetTaskId: string; at: number }
   | { type: "released"; taskId: string }
-  | { type: "reminder_started"; sourceTaskId: string; targetTaskId: string }
+  | {
+      type: "reminder_started";
+      sourceTaskId: string;
+      targetTaskId: string;
+      recoveryGeneration: number;
+    }
   | {
       type: "reminder_resolved";
       sourceTaskId: string;
@@ -275,10 +285,6 @@ function edgeKey(sourceTaskId: string, targetTaskId: string): string {
   return `${sourceTaskId}\u0000${targetTaskId}`;
 }
 
-function silenceKey(targetTaskId: string, promptId: string): string {
-  return `${targetTaskId}\u0000${promptId}`;
-}
-
 /**
  * Strict, uniform attempt-identity comparison: a fact carrying identity X
  * applies only when the record's current identity is exactly X (both
@@ -289,7 +295,7 @@ function matchesDispatch(
   obligation: ObligationRecord,
   attemptId: string | undefined,
 ): boolean {
-  return obligation.dispatchPromptId === attemptId;
+  return obligation.attemptId === attemptId;
 }
 
 /** No further supervision: the runtime has stopped, or the record is settled. */
@@ -330,7 +336,6 @@ function logFields(obligation: ObligationRecord): Record<string, unknown> {
 export class ObligationController {
   private readonly active = new Map<string, ObligationRecord>();
   private readonly watchdog = new Map<string, WatchdogState>();
-  private readonly silenceNotified = new Set<string>();
   /** The one armed timer, covering the earliest pending deadline. */
   private deadlineTimer: TimerHandle | undefined;
   private disposed = false;
@@ -558,17 +563,32 @@ export class ObligationController {
     );
   }
 
+  /**
+   * The attempt deadline, derived from the wait anchor and the phase: a
+   * dispatch retry uses the failure backoff, and a closing reminder uses its
+   * index delay (reminder 1 is due immediately).
+   */
+  private attemptDeadline(obligation: ObligationRecord): number | undefined {
+    if (obligation.waitingSince === undefined) return undefined;
+    if (obligation.state === "awaiting_delivery") {
+      return obligation.waitingSince + this.backoffFor(obligation);
+    }
+    if (obligation.state === "reminder_due") {
+      if (obligation.retrying) {
+        return obligation.waitingSince + this.backoffFor(obligation);
+      }
+      const delay = REMINDER_DELAYS_MS[obligation.deliveredAttempts] ?? 0;
+      return obligation.waitingSince + delay;
+    }
+    return undefined;
+  }
+
   /** Every deadline a record is currently waiting on, derived from its state. */
   private pendingDeadlines(obligation: ObligationRecord): number[] {
     const deadlines: number[] = [];
     const key = edgeKey(obligation.sourceTaskId, obligation.targetTaskId);
-    if (
-      obligation.nextAttemptAt !== undefined &&
-      (obligation.state === "awaiting_delivery" ||
-        obligation.state === "reminder_due")
-    ) {
-      deadlines.push(obligation.nextAttemptAt);
-    }
+    const attemptDeadline = this.attemptDeadline(obligation);
+    if (attemptDeadline !== undefined) deadlines.push(attemptDeadline);
     const watchdog = this.watchdog.get(key);
     if (watchdog) {
       deadlines.push(watchdog.lastAgentActivityAt + SILENCE_THRESHOLD_S * 1000);
@@ -590,13 +610,9 @@ export class ObligationController {
     const now = this.now();
     for (const obligation of [...this.active.values()]) {
       const key = edgeKey(obligation.sourceTaskId, obligation.targetTaskId);
-      if (
-        obligation.nextAttemptAt !== undefined &&
-        obligation.nextAttemptAt <= now &&
-        (obligation.state === "awaiting_delivery" ||
-          obligation.state === "reminder_due")
-      ) {
-        obligation.nextAttemptAt = undefined;
+      const attemptDeadline = this.attemptDeadline(obligation);
+      if (attemptDeadline !== undefined && attemptDeadline <= now) {
+        obligation.waitingSince = undefined;
         this.timerDue(obligation, "attempt");
       }
       const watchdog = this.watchdog.get(key);
@@ -652,12 +668,13 @@ export class ObligationController {
       existing.ageAdvised = false;
       existing.dispatchAdvisoryFrom = this.now();
       existing.ageAdvisoryFrom = this.now();
-      existing.nextAttemptAt = undefined;
+      existing.waitingSince = undefined;
+      existing.retrying = false;
       existing.noAccountNotified = false;
       existing.lastDeliveredAttemptAt = undefined;
       existing.openingMessageId = fact.messageId;
       existing.openingDeliveryId = fact.deliveryId;
-      existing.epoch += 1;
+      existing.recoveryGeneration += 1;
       if (
         existing.state === "reminder_due" ||
         existing.state === "reminder_submitting"
@@ -677,10 +694,11 @@ export class ObligationController {
       openingMessageId: fact.messageId,
       openingDeliveryId: fact.deliveryId,
       openedAt: this.now(),
-      epoch: 0,
+      recoveryGeneration: 0,
       state: "awaiting_delivery",
       deliveredAttempts: 0,
       consecutiveSubmissionFailures: 0,
+      retrying: false,
       dispatchAdvised: false,
       ageAdvised: false,
       dispatchAdvisoryFrom: this.now(),
@@ -701,7 +719,7 @@ export class ObligationController {
       edgeKey(fact.sourceTaskId, fact.targetTaskId),
     );
     if (!obligation || isTerminal(obligation.state)) return;
-    obligation.dispatchPromptId = fact.attemptId;
+    obligation.attemptId = fact.attemptId;
   }
 
   private transitionHandedOver(
@@ -717,8 +735,7 @@ export class ObligationController {
       return;
     }
     if (!matchesDispatch(obligation, fact.attemptId)) return;
-    if (fact.attemptId !== undefined)
-      obligation.dispatchPromptId = fact.attemptId;
+    if (fact.attemptId !== undefined) obligation.attemptId = fact.attemptId;
     obligation.state = "open";
     this.log("obligation opened", logFields(obligation));
     this.maybeRemindAtBoundary(obligation);
@@ -830,11 +847,6 @@ export class ObligationController {
       this.watchdog.delete(key);
       this.active.delete(key);
     }
-    for (const seen of [...this.silenceNotified]) {
-      if (seen.startsWith(`${fact.taskId}\u0000`)) {
-        this.silenceNotified.delete(seen);
-      }
-    }
   }
 
   private transitionReminderStarted(
@@ -844,6 +856,7 @@ export class ObligationController {
       edgeKey(fact.sourceTaskId, fact.targetTaskId),
     );
     if (!obligation) return;
+    if (obligation.recoveryGeneration !== fact.recoveryGeneration) return;
     obligation.state = "reminder_submitting";
   }
 
@@ -856,7 +869,7 @@ export class ObligationController {
     if (obligation.state === "settled" || obligation.state === "unresolved") {
       return;
     }
-    if (obligation.epoch !== fact.recoveryGeneration) return;
+    if (obligation.recoveryGeneration !== fact.recoveryGeneration) return;
     if (!fact.accepted) {
       obligation.consecutiveSubmissionFailures += 1;
       if (
@@ -1009,23 +1022,26 @@ export class ObligationController {
     this.scheduleNextAttempt(obligation);
   }
 
-  private scheduleNextAttempt(obligation: ObligationRecord): void {
-    const index = obligation.deliveredAttempts;
-    const delay = REMINDER_DELAYS_MS[index] ?? 0;
-    const base =
-      index === 0
-        ? this.now()
-        : (obligation.lastDeliveredAttemptAt ?? this.now());
-    obligation.nextAttemptAt = base + delay;
-  }
-
-  private retrySchedule(obligation: ObligationRecord): void {
+  private backoffFor(obligation: ObligationRecord): number {
     const failures = obligation.consecutiveSubmissionFailures;
-    const backoff = Math.min(
+    return Math.min(
       REMINDER_RETRY_BASE_MS * 2 ** Math.max(0, failures - 1),
       REMINDER_RETRY_MAX_MS,
     );
-    obligation.nextAttemptAt = this.now() + backoff;
+  }
+
+  private scheduleNextAttempt(obligation: ObligationRecord): void {
+    const index = obligation.deliveredAttempts;
+    obligation.waitingSince =
+      index === 0
+        ? this.now()
+        : (obligation.lastDeliveredAttemptAt ?? this.now());
+    obligation.retrying = false;
+  }
+
+  private retrySchedule(obligation: ObligationRecord): void {
+    obligation.waitingSince = this.now();
+    obligation.retrying = true;
   }
 
   /** Scheduler entry point: submit only while the target is idle. */
@@ -1047,11 +1063,12 @@ export class ObligationController {
   }
 
   private async submit(obligation: ObligationRecord): Promise<void> {
-    const generation = obligation.epoch;
+    const generation = obligation.recoveryGeneration;
     this.apply({
       type: "reminder_started",
       sourceTaskId: obligation.sourceTaskId,
       targetTaskId: obligation.targetTaskId,
+      recoveryGeneration: generation,
     });
     const accepted = await this.opts.submitReminder(obligation);
     this.apply({
@@ -1115,9 +1132,8 @@ export class ObligationController {
       this.watchdog.delete(key);
       return;
     }
-    const seen = silenceKey(obligation.targetTaskId, state.promptId);
-    if (this.silenceNotified.has(seen)) return;
-    this.silenceNotified.add(seen);
+    if (obligation.silencedAttemptId === state.promptId) return;
+    obligation.silencedAttemptId = state.promptId;
     this.opts.emitNotice(
       {
         reason: "no_activity",
