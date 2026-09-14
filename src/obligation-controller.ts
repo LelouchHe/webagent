@@ -105,12 +105,16 @@ export interface ObligationView {
   readonly consecutiveSubmissionFailures: number;
   readonly lastDeliveredAttemptAt?: number;
   readonly waitingSince?: number;
+  /** True when the current wait is a busy/failure retry, not a reminder delay. */
+  readonly retrying: boolean;
   /** Advisory receipt: the queued-dispatch advisory is no longer pending. */
   readonly dispatchAdvised: boolean;
   /** Advisory receipt: the age advisory has been emitted. */
   readonly ageAdvised: boolean;
   /** Per-turn marker: the turn id whose silence notice was already emitted. */
   readonly silencedAttemptId?: string;
+  /** The target turn observed via a turn_begun fact, for stale turn_ended checks. */
+  readonly observedTurnId?: string;
   /** Anchor for the queued-dispatch advisory (set at arm and coalescing). */
   readonly dispatchAdvisoryFrom: number;
   /** Anchor for the age advisory (set at arm and coalescing). */
@@ -136,6 +140,7 @@ interface ObligationRecord {
   dispatchAdvised: boolean;
   ageAdvised: boolean;
   silencedAttemptId?: string;
+  observedTurnId?: string;
   dispatchAdvisoryFrom: number;
   ageAdvisoryFrom: number;
   noAccountNotified: boolean;
@@ -179,10 +184,30 @@ export type ObligationFact =
       targetTaskId: string;
       attemptId?: string;
     }
-  | { type: "turn_begun"; targetTaskId: string; attemptId: string }
-  | { type: "turn_ended"; targetTaskId: string }
-  | { type: "turn_aborted"; targetTaskId: string }
-  | { type: "agent_activity"; targetTaskId: string; at: number }
+  | { type: "turn_begun"; targetTaskId: string; turnId: string }
+  | {
+      // `turnId` is the ending turn when known. It is optional because older
+      // stored terminal events carry no prompt id; see transitionTurnEnded for
+      // the fail-open rule.
+      type: "turn_ended";
+      targetTaskId: string;
+      turnId?: string;
+    }
+  | {
+      // Cleanup-scoped: the only emitter is the bridge-restart/reset path,
+      // which aborts whatever is busy rather than reporting a specific turn.
+      type: "turn_aborted";
+      targetTaskId: string;
+    }
+  | {
+      // Unattributable: agent-runtime chunk/tool/plan/permission events carry a
+      // task id, not a prompt id, so the watchdog's activity reset cannot be
+      // tied to a turn. A superseded turn's trailing activity can therefore
+      // extend the current turn's report-only silence window; accepted.
+      type: "agent_activity";
+      targetTaskId: string;
+      at: number;
+    }
   | { type: "released"; taskId: string }
   | {
       type: "reminder_started";
@@ -497,12 +522,12 @@ export class ObligationController {
     });
   }
 
-  onTargetTurnEnded(targetTaskId: string): void {
-    this.apply({ type: "turn_ended", targetTaskId });
+  onTargetTurnEnded(targetTaskId: string, turnId?: string): void {
+    this.apply({ type: "turn_ended", targetTaskId, turnId });
   }
 
   beginTurn(targetTaskId: string, promptId: string): void {
-    this.apply({ type: "turn_begun", targetTaskId, attemptId: promptId });
+    this.apply({ type: "turn_begun", targetTaskId, turnId: promptId });
   }
 
   noteAgentActivity(targetTaskId: string): void {
@@ -791,6 +816,22 @@ export class ObligationController {
   ): void {
     const obligation = this.findForTarget(fact.targetTaskId);
     if (!obligation) return;
+    // Identity discipline for turn lifecycle, fail-open when either side is
+    // unknown: a `turn_ended` whose identity differs from the observed turn is
+    // a stale callback and is a no-op. It is accepted when the fact carries no
+    // identity (older stored events) or when no turn was observed (an
+    // obligation armed mid-turn), so a legitimate boundary still schedules.
+    // Residual risk: without an observed turn, one stale boundary can pass;
+    // both production emitters are gated on the current prompt, so this is
+    // unreachable there and exists only as defensive tolerance.
+    if (
+      fact.turnId !== undefined &&
+      obligation.observedTurnId !== undefined &&
+      fact.turnId !== obligation.observedTurnId
+    ) {
+      return;
+    }
+    obligation.observedTurnId = undefined;
     const key = edgeKey(obligation.sourceTaskId, obligation.targetTaskId);
     this.watchdog.delete(key);
     if (obligation.state === "open") {
@@ -810,7 +851,8 @@ export class ObligationController {
   ): void {
     const obligation = this.findForTarget(fact.targetTaskId);
     if (!obligation || isTerminal(obligation.state)) return;
-    this.startWatchdog(obligation, fact.attemptId);
+    obligation.observedTurnId = fact.turnId;
+    this.startWatchdog(obligation, fact.turnId);
   }
 
   private transitionAgentActivity(

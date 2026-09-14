@@ -100,27 +100,41 @@ describe("obligation controller structure", () => {
     const end = source.indexOf("export type ObligationNoticeReason");
     assert.ok(start >= 0 && end > start);
     const union = source.slice(start, end);
-    // Facts that create a record, address the target's sole record by target
-    // id, or are lifecycle events do not describe a specific turn.
-    const identityFree = new Set([
-      "armed",
-      "turn_ended",
-      "turn_aborted",
-      "agent_activity",
-      "released",
-      "settle_requested",
-      "timer_due",
-      "disposed",
+    // Every identity-free fact needs a documented reason; an unexplained one
+    // fails the check. The list is exhaustive by construction below.
+    const identityFreeReasons = new Map<string, string>([
+      ["armed", "record-creating"],
+      ["turn_aborted", "cleanup-scoped (bridge reset aborts whatever is busy)"],
+      ["agent_activity", "unattributable (agent events carry no prompt id)"],
+      ["released", "lifecycle"],
+      ["settle_requested", "target-addressed-by-sole-record"],
+      ["timer_due", "target-addressed-by-sole-record; kind-scoped"],
+      ["disposed", "lifecycle"],
     ]);
     const members = union.split(/\n {2}\| /).slice(1);
     assert.ok(members.length >= 10, "union parse");
+    const seen = new Set<string>();
     for (const member of members) {
       const typeName = /type: "([a-z_]+)"/.exec(member)?.[1];
       assert.ok(typeName, `unparsed fact member: ${member.slice(0, 40)}`);
-      if (identityFree.has(typeName)) continue;
+      seen.add(typeName);
+      if (
+        member.includes("attemptId") ||
+        member.includes("recoveryGeneration") ||
+        member.includes("turnId")
+      ) {
+        continue;
+      }
+      const reason = identityFreeReasons.get(typeName);
       assert.ok(
-        member.includes("attemptId") || member.includes("recoveryGeneration"),
-        `fact ${typeName} lacks a turn identity`,
+        reason !== undefined && reason.length > 0,
+        `fact ${typeName} is identity-free without a documented reason`,
+      );
+    }
+    for (const typeName of identityFreeReasons.keys()) {
+      assert.ok(
+        seen.has(typeName),
+        `identity-free allowlist entry ${typeName} matches no fact`,
       );
     }
   });

@@ -1779,8 +1779,8 @@ export class TaskManager {
   }
 
   /** A current target turn ended; the controller may enter `reminder_due`. */
-  onTargetTurnEnded(taskId: string): void {
-    this.obligations.onTargetTurnEnded(taskId);
+  onTargetTurnEnded(taskId: string, turnId?: string): void {
+    this.obligations.onTargetTurnEnded(taskId, turnId);
   }
 
   /** Qualifying agent-runtime activity for the watchdog and telemetry. */

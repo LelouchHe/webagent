@@ -743,6 +743,55 @@ describe("ObligationController", () => {
     assert.equal(obligation.attemptId, "dispatch-A");
   });
 
+  it("ignores a turn_ended from a turn older than the observed one", async () => {
+    const h = makeController();
+    const obligation = armOpen(h);
+    const scheduledAt = obligation.waitingSince;
+    h.controller.beginTurn("child", "turn-B");
+    assert.equal(obligation.observedTurnId, "turn-B");
+
+    // Mutation evidence: dropping the identity comparison accepts this stale
+    // boundary, clearing the watchdog and the observed turn.
+    h.controller.onTargetTurnEnded("child", "turn-A");
+    assert.equal(obligation.observedTurnId, "turn-B");
+    assert.equal(obligation.state, "reminder_due");
+    assert.equal(obligation.waitingSince, scheduledAt);
+
+    // The watchdog survived, so the silence threshold still reports.
+    await tick(h, SILENCE_THRESHOLD_S * 1000);
+    assert.ok(h.notices.some((notice) => notice.reason === "no_activity"));
+  });
+
+  it("accepts a turn boundary when no turn was observed (fail open)", async () => {
+    const h = makeController();
+    const obligation = armOpen(h);
+    h.busy.add("child");
+    await tick(h);
+    // The due reminder was deferred while busy; no turn_begun was observed.
+    assert.equal(obligation.retrying, true);
+    assert.equal(obligation.observedTurnId, undefined);
+
+    // Mutation evidence: requiring an observed identity rejects this boundary
+    // and leaves the reminder deferred.
+    h.controller.onTargetTurnEnded("child", "turn-A");
+    assert.equal(obligation.retrying, false);
+    assert.equal(obligation.state, "reminder_due");
+  });
+
+  it("accepts a turn boundary whose identity is absent (fail open)", async () => {
+    const h = makeController();
+    const obligation = armOpen(h);
+    h.controller.beginTurn("child", "turn-B");
+    h.busy.add("child");
+    await tick(h);
+    assert.equal(obligation.retrying, true);
+
+    // Older stored terminal events carry no prompt id.
+    h.controller.onTargetTurnEnded("child");
+    assert.equal(obligation.retrying, false);
+    assert.equal(obligation.observedTurnId, undefined);
+  });
+
   it("does not emit a silence notice after the turn is aborted", async () => {
     const h = makeController();
     armDirect(h);
