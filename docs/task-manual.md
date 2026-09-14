@@ -100,7 +100,8 @@ account. A plain `task_update(done|blocked)` closes that edge when it comes from
 an active current turn; there is no correlation parameter to copy back. There
 is no expectation level, per-counterparty ledger, or extra lifecycle status. A
 user prompt, a sibling or child message, and a runtime notice never create an
-obligation, so a lateral turn neither arms nor clears one.
+obligation, so a lateral turn neither arms nor clears one. The mechanism's
+details are in [Task Obligations](task-obligations.md).
 
 ## Communicate through messages
 

@@ -80,6 +80,25 @@ The historical term "WebAgent Session" is **obsolete**; it means `task`.
   contract do not migrate that legacy path. Back up and remove the old data
   directory before restarting.
 
+## Task obligation vocabulary
+
+The directed-dispatch closure mechanism has its own terms
+([Task Obligations](./task-obligations.md)). These do not rename the product
+entity; they name the runtime's bookkeeping.
+
+| Term | Means |
+|---|---|
+| **directed obligation** | A process-local record that one source Task awaits one account from a target, armed by an agent-authored direct parent→child dispatch. Not a persisted entity, and not a Task. |
+| **account** | The target's typed `done` or `blocked` report submitted with `task_update`. A result submission, not proof that the parent accepted it. |
+| **settlement** | The atomic transition that records the account, updates the reported status, creates the account message to the stored source, and retires the record. There is no correlation parameter. |
+| **stored source** | The source Task recorded when the obligation was armed. Accounts and notices route there even if the task tree changed afterwards. |
+| **closing reminder** | A runtime-injected closing turn that asks the target to account for the turn it just ran. It is a recovery aid, not a lifecycle verdict. |
+
+**`handoff` stays reserved.** It continues to mean the provider/lifecycle handoff
+and the session-compaction handoff (for example `pending_compact_summary`); it is
+not another name for the obligation, its account, or settlement. Prefer *account*
+or *settlement* for this mechanism.
+
 ## Prose and UI rules
 
 - User-facing copy, slash-help text, README, and `docs/*.md` describe the
