@@ -9,7 +9,7 @@ Plane](task-mcp.md) for tool names, inputs, and boundaries.
 
 WebAgent supervises work and keeps the books, but it does not decide what your
 work means. It tells you what it observed — a dispatch was handed over, a turn
-ended, a notice went unanswered — and what you can do next. It never decides
+ended, a notice went unresolved — and what you can do next. It never decides
 that work is complete, failed, or abandoned, and it never starts, continues, or
 stops work for you. That decision belongs to the parent Task that dispatched
 the work, or to you for a Task you own. Mechanical and safety rules

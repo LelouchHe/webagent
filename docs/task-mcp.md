@@ -94,11 +94,14 @@ per-counterparty ledger, and no separate lifecycle status beyond the existing
 
 **Settlement predicate.** A record settles only when both hold:
 
-1. its state is `open`, `reminder_due`, or `reminder_submitting`;
+1. its state is `open`, `reminder_due`, `reminder_submitting`, or
+   `unresolved` — `unresolved` stays settleable so a late account can resolve
+   an edge the runtime stopped supervising;
 2. the target has an active current agent turn.
 
-It is refused without settling when the state is `awaiting_delivery`,
-`unanswered`, or `settled`, or when no agent turn is active.
+It is refused without settling only when the state is `awaiting_delivery` (the
+dispatch was never handed over) or `settled` (already resolved), or when no
+agent turn is active.
 
 The record opens when the dispatch is **handed to the target's session** (right
 after `ensureResumed` and the prompt call), not when the prompt promise
@@ -132,10 +135,11 @@ Any future proposal to add such a guard must account for that ordering.
 **Routing.** A settleable record is one atomic step: the update is persisted,
 the reported `workflow_status` changes, the account message is created to the
 **stored source**, the record becomes `settled`, and its timers are cancelled. A
-record that exists but is not settleable — including an `awaiting_delivery`
-record and a terminal `unanswered`/`settled` record — still routes its account
-to the stored source without settling, so a terminal record is never re-settled
-and its earlier notice is never retracted. With no record for the target, the
+record that exists but is not settleable — an `awaiting_delivery` record or an
+already-`settled` one — still routes its account to the stored source without
+settling, so a `settled` record is never re-settled and its earlier notice is
+never retracted. A late account for an `unresolved` record does settle it,
+without retracting the historical notice. With no record for the target, the
 update is an ordinary report to the caller's **current parent** and settles
 nothing. Routing an existing record to the current parent instead of the stored
 source would misroute the account after a tree change.
@@ -151,20 +155,29 @@ delivered closing reminders: one at the turn boundary, one two minutes after
 the previous delivered reminder, and one five minutes after that. A rejected
 submission never consumes a delivered attempt: it is retried with backoff while
 the target is idle, and three consecutive submission failures end the edge with
-a factual `no_account` notice carrying `delivery_unavailable` evidence. A
-rejected **initial** dispatch is retried the same way instead of being
+a **`delivery_failed`** notice — a capability fact ("I could not deliver this
+dispatch after N attempts; I have stopped"), never a claim about the target's
+work. A rejected **initial** dispatch is retried the same way instead of being
 abandoned. When the last delivered reminder completes without an account the
-edge becomes `unanswered` and the source receives exactly one `no_account`
-notice; a later account is still routed to the stored source.
+edge becomes `unresolved` and the source receives exactly one **`no_account`**
+notice: "no typed account arrived after N delivered reminders; the runtime has
+stopped its own attempts; the outcome is unknown." A later account settles the
+record without retracting that notice.
 
-The `no_account` notice is a `task_outcome_notice` collaboration message with a
-system actor, routed target→stored source, carrying `sourceTaskId`,
-`targetTaskId`, `openingMessageId`, `openingDeliveryId`, `reason`, and
-`evidence`. It cannot arm an obligation. The watchdog is independent: while a
-target turn with an active record runs, a quiet stretch of
+Each notice is a `task_outcome_notice` collaboration message with a system
+actor, routed target→stored source, carrying `sourceTaskId`, `targetTaskId`,
+`openingMessageId`, `openingDeliveryId`, `reason`, `message` (the fact, safe to
+show verbatim), and `evidence`. It cannot arm an obligation. The watchdog is
+independent: while a target turn with an active record runs, a quiet stretch of
 `SILENCE_THRESHOLD_S = 900` emits one heuristic `no_activity` notice per
 target×turn, never changes obligation state, and shares no limiter with the
-exhaustion notice.
+exhaustion notices or the advisories.
+
+Every drained collaboration prompt is also persisted on the target as a bounded
+`collaboration_prompt` audit event (batch message ids, the exact text,
+`truncated`, `rawSize`), so which text a child received is provable after the
+fact. The closing reminder persists its own text as the `handoff_reminder`
+system message. Neither record participates in the agent's control flow.
 
 Obligation state is process-local runtime memory. It is not persisted, does not
 survive a restart, and carries no cross-restart recovery promise. Releasing a
@@ -186,15 +199,15 @@ stateDiagram-v2
     awaiting_delivery --> open: dispatch handed to the target's session
     awaiting_delivery --> awaiting_delivery: submission rejected before hand-off, retry with backoff
     open --> awaiting_delivery: submission rejected after hand-off, transport retry
-    open --> unanswered: 3 consecutive submission failures
+    open --> unresolved: 3 consecutive submission failures
     reminder_due --> awaiting_delivery: dispatch submission rejected with no delivered reminder
-    reminder_due --> unanswered: 3 consecutive submission failures
+    reminder_due --> unresolved: 3 consecutive submission failures
     open --> reminder_due: current target turn ends without an account
     reminder_due --> reminder_submitting: target idle, closing prompt submitted
     reminder_submitting --> reminder_due: submission rejected (no delivered attempt)
     reminder_submitting --> reminder_due: delivered attempt 1 or 2, schedule +2m / +5m
-    reminder_submitting --> unanswered: 3 delivered attempts finished
-    reminder_submitting --> unanswered: 3 consecutive submission failures
+    reminder_submitting --> unresolved: 3 delivered attempts finished
+    reminder_submitting --> unresolved: 3 consecutive submission failures
     open --> settled: task_update from an active current turn
     reminder_due --> settled: task_update from an active current turn
     reminder_submitting --> settled: task_update from an active current turn
@@ -202,10 +215,10 @@ stateDiagram-v2
       A report here is refused: routed to the
       stored source, record unchanged.
     end note
-    note right of unanswered
-      Terminal. A later account is routed to the
-      stored source; never re-settled, notice not
-      retracted.
+    note right of unresolved
+      The runtime stopped its own attempts; the
+      outcome is unknown. A later account still
+      settles it without retracting the notice.
     end note
     note right of settled
       Terminal. A later account is routed to the
@@ -253,7 +266,7 @@ sequenceDiagram
     Note over R: delivered attempt 2
     R->>T: reminder 3 at +5 min after the delivered reminder
     Note over R: delivered attempt 3
-    R->>R: 3 delivered attempts finished, state = unanswered
+    R->>R: 3 delivered attempts finished, state = unresolved
     R->>S: one task_outcome_notice (reason = no_account)
 ```
 
@@ -267,16 +280,16 @@ flowchart TD
         A1 -->|submission rejected| A2
         A2 -->|count < 3| A3[return to awaiting_delivery,<br/>requeue and retry with backoff]
         A3 --> A0
-        A2 -->|count = 3| A4[unanswered + no_account<br/>evidence delivery_unavailable]
+        A2 -->|count = 3| A4[unresolved + delivery_failed<br/>evidence delivery_unavailable]
     end
     subgraph Closing["Closing-reminder budget (reminder_due / reminder_submitting)"]
         B1[reminder_due] -->|submission rejected| B2[submission-failure count +1,<br/>no delivered attempt]
         B2 -->|count < 3| B3[retry with backoff, stays reminder_due]
         B3 --> B1
-        B2 -->|count = 3| B4[unanswered + no_account<br/>evidence delivery_unavailable]
+        B2 -->|count = 3| B4[unresolved + delivery_failed<br/>evidence delivery_unavailable]
         B1 -->|submission accepted| B5[deliveredAttempts +1, submission-failure count reset]
         B5 -->|deliveredAttempts < 3| B1
-        B5 -->|deliveredAttempts = 3| B6[unanswered + no_account]
+        B5 -->|deliveredAttempts = 3| B6[unresolved + no_account]
     end
     Note[The two budgets are independent: a rejected submission never consumes<br/>a delivered attempt, and a delivered reminder never counts as a failure.]
 ```
@@ -312,7 +325,7 @@ sequenceDiagram
 | A second dispatch from the same source while the record is open | Coalesces onto the same record, refreshes the budgets, and makes the next attempt due at the next turn boundary. |
 | A report while `awaiting_delivery` | Refused as settlement; routed to the stored source, record unchanged. |
 | A report while no turn is active | Refused as settlement; routed to the stored source. |
-| A report after `unanswered` | Never re-settles, notice not retracted; the account still reaches the stored source. |
+| A report after `unresolved` | Settles the record (a late account resolves an edge the runtime stopped supervising); the historical notice is not retracted and the account still reaches the stored source. |
 | A report after `settled` | Never re-settles; the account still reaches the stored source. |
 | A report from a target with no record | Ordinary report to the caller's current parent; settles nothing. |
 | A dispatch never handed over | A resume that keeps failing consumes the transport budget; if nothing retries, a non-terminal `still_waiting` advisory reports that it is still queued and the accountable party decides. |
@@ -326,19 +339,19 @@ sequenceDiagram
 | → `awaiting_delivery` | `obligation-controller` "does not request an account until the source dispatch is accepted" |
 | `awaiting_delivery` → `open` (at hand-off) | `obligation-controller` "does not request an account until the source dispatch is accepted"; `server-event-handler` "settles the account from the same dispatch turn through the real delivery path" |
 | `awaiting_delivery` → `awaiting_delivery` retry | `obligation-controller` "retries a rejected initial dispatch and bounds the transport failures"; `server-event-handler` "retries a rejected initial dispatch at an idle boundary" |
-| `awaiting_delivery` → `unanswered` (transport) | `obligation-controller` "exhausts awaiting_delivery after the transport bound without spending reminders"; `server-event-handler` "emits one factual no_account notice when initial delivery keeps failing"; `server-event-handler` "ends a dispatch whose resume keeps failing" |
+| `awaiting_delivery` → `unresolved` (transport) | `obligation-controller` "exhausts awaiting_delivery after the transport bound without spending reminders"; `server-event-handler` "emits one delivery_failed notice when initial delivery keeps failing"; `server-event-handler` "ends a dispatch whose resume keeps failing" |
 | `awaiting_delivery` advisory | `obligation-controller` "emits a still-waiting advisory for a never-handed-over dispatch" |
 | age advisory | `obligation-controller` "emits one age advisory per epoch without changing state" |
 | `open` → `reminder_due` | `server-event-handler` "reminds at the dispatch turn boundary and states the closing-only contract" |
 | `reminder_due` → `reminder_submitting` | `obligation-controller` "delivers reminders at the turn boundary and at +2m and +5m"; "waits for the target to be idle before submitting" |
 | `reminder_submitting` → `reminder_due` (delivered 1 or 2) | `obligation-controller` "delivers reminders at the turn boundary and at +2m and +5m" |
 | `reminder_submitting` → `reminder_due` (rejected) | `obligation-controller` "does not consume an attempt on rejection and bounds consecutive failures"; `server-event-handler` "records no successful reminder when the bridge rejects it" |
-| `reminder_submitting` → `unanswered` (3 delivered) | `obligation-controller` "declares unanswered and notifies no_account exactly once after the last reminder" |
-| `reminder_submitting` → `unanswered` (3 failures) | `obligation-controller` "does not consume an attempt on rejection and bounds consecutive failures" |
+| `reminder_submitting` → `unresolved` (3 delivered) | `obligation-controller` "declares unresolved and notifies no_account exactly once after the last reminder" |
+| `reminder_submitting` → `unresolved` (3 failures) | `obligation-controller` "does not consume an attempt on rejection and bounds consecutive failures" |
 | `open`/`reminder_due`/`reminder_submitting` → `settled` | `obligation-controller` "settles the record from an active current turn and routes to the stored source"; `server-event-handler` "settles the record from an active current turn and routes to the stored source" |
 | `awaiting_delivery` refusal | `obligation-controller` "does not settle while the record is awaiting_delivery"; `server-event-handler` "does not settle while the record is awaiting_delivery and still routes to the stored source" |
 | No active turn refusal | `obligation-controller` "does not settle without an active turn" |
-| `unanswered` non-re-settle | `obligation-controller` "does not re-settle a terminal record, retracts nothing, and still routes to the stored source" |
+| `unresolved` late settle | `obligation-controller` "a late account settles an unresolved record without retracting the notice" |
 | `settled` non-re-settle | `obligation-controller` "settles the record from an active current turn and routes to the stored source" (second call) |
 | No record → current parent | `obligation-controller` "routes to the current parent when no record exists" |
 | Coalescing | `obligation-controller` "coalesces a same-source follow-up and replaces a terminal record" |
@@ -650,14 +663,14 @@ task_update(status: "blocked" | "done", body: string)
 
 There is **no new parameter**. The runtime identifies the target's sole directed
 obligation itself and settles it only from an active current turn: the record
-must be `open`, `reminder_due`, or `reminder_submitting`, and the target must
-have an active agent turn. A settleable call is one atomic step that records the
-update, changes the reported status, creates the account to the **stored
-source**, and cancels the record's timers.
+must be `open`, `reminder_due`, `reminder_submitting`, or `unresolved`, and the
+target must have an active agent turn. A settleable call is one atomic step that
+records the update, changes the reported status, creates the account to the
+**stored source**, and cancels the record's timers.
 
-When a record exists but those conditions do not hold — `awaiting_delivery`, a
-terminal `unanswered`/`settled` record, or no active turn — the update is still
-recorded and routed to the stored source, without settling. When no record
+When a record exists but those conditions do not hold — `awaiting_delivery`, an
+already-`settled` record, or no active turn — the update is still recorded and
+routed to the stored source, without settling. When no record
 exists for the target, the update is an ordinary report to the current parent
 and settles nothing. A terminal record is never re-settled and its earlier
 `no_account` notice is never retracted.

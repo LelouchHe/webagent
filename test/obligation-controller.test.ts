@@ -198,11 +198,13 @@ describe("ObligationController", () => {
     ) {
       h.controller.markDeliveryFailed("parent", "child");
     }
-    assert.equal(obligation.state, "unanswered");
+    assert.equal(obligation.state, "unresolved");
     assert.equal(obligation.deliveredAttempts, 0);
     assert.equal(h.notices.length, 1);
-    assert.equal(h.notices[0].reason, "no_account");
+    assert.equal(h.notices[0].reason, "delivery_failed");
     assert.equal(h.notices[0].evidence.deliveryUnavailable, true);
+    // The notice is a capability fact, never a claim about the target's work.
+    assert.match(h.notices[0].message, /could not deliver/);
     await tick(h, 60 * 60_000);
     assert.equal(h.dispatchRetries.length, 0);
   });
@@ -229,7 +231,7 @@ describe("ObligationController", () => {
     assert.equal(obligation.deliveredAttempts, MAX_REMINDER_ATTEMPTS);
   });
 
-  it("declares unanswered and notifies no_account exactly once after the last reminder", async () => {
+  it("declares unresolved and notifies no_account exactly once after the last reminder", async () => {
     const h = makeController();
     const obligation = armOpen(h);
     await tick(h);
@@ -237,7 +239,7 @@ describe("ObligationController", () => {
     await tick(h, 5 * 60_000);
 
     assert.equal(h.submissions.length, MAX_REMINDER_ATTEMPTS);
-    assert.equal(obligation.state, "unanswered");
+    assert.equal(obligation.state, "unresolved");
     await tick(h, 60 * 60_000);
     assert.equal(h.submissions.length, MAX_REMINDER_ATTEMPTS);
     assert.equal(h.notices.length, 1);
@@ -275,7 +277,7 @@ describe("ObligationController", () => {
     // Exhaust, then a later dispatch starts a fresh epoch.
     await tick(h, 2 * 60_000);
     await tick(h, 5 * 60_000);
-    assert.equal(obligation.state, "unanswered");
+    assert.equal(obligation.state, "unresolved");
     const fresh = h.controller.arm({
       sourceTaskId: "parent",
       targetTaskId: "child",
@@ -299,10 +301,11 @@ describe("ObligationController", () => {
     await tick(h, 2_000);
     assert.equal(h.submissions.length, MAX_REMINDER_SUBMISSION_FAILURES);
     assert.equal(obligation.deliveredAttempts, 0);
-    assert.equal(obligation.state, "unanswered");
+    assert.equal(obligation.state, "unresolved");
     assert.equal(h.notices.length, 1);
-    assert.equal(h.notices[0].reason, "no_account");
+    assert.equal(h.notices[0].reason, "delivery_failed");
     assert.equal(h.notices[0].evidence.deliveryUnavailable, true);
+    assert.match(h.notices[0].message, /could not deliver/);
   });
 
   it("waits for the target to be idle before submitting", async () => {
@@ -371,21 +374,22 @@ describe("ObligationController", () => {
     assert.notEqual(obligation.state, "settled");
   });
 
-  it("does not re-settle a terminal record, retracts nothing, and still routes to the stored source", async () => {
+  it("a late account settles an unresolved record without retracting the notice", async () => {
     const h = makeController();
     const obligation = armOpen(h);
     await tick(h);
     await tick(h, 2 * 60_000);
     await tick(h, 5 * 60_000);
-    assert.equal(obligation.state, "unanswered");
+    assert.equal(obligation.state, "unresolved");
     assert.equal(h.notices.length, 1);
 
     const { decision } = settleNow(h);
-    // Mutation evidence: treating a terminal record as settleable closes it and
-    // suppresses this stored-source route.
-    assert.equal(decision.kind, "stored-source");
+    // Mutation evidence: refusing to settle an unresolved record leaves the
+    // outcome permanently unknown even after the account arrives.
+    assert.equal(decision.kind, "settle");
     assert.equal(decision.sourceTaskId, "parent");
-    assert.equal(obligation.state, "unanswered");
+    assert.equal(obligation.state, "settled");
+    // The historical notice is not retracted.
     assert.equal(h.notices.length, 1);
   });
 
@@ -445,7 +449,7 @@ describe("ObligationController", () => {
     // Mutation evidence: re-deriving endpoints from the current parent_id
     // would not preserve this stored record.
     const seen = settleNow(h, (d) => d.sourceTaskId);
-    assert.equal(seen.decision.kind, "stored-source");
+    assert.equal(seen.decision.kind, "settle");
     assert.equal(seen.result, "parent");
   });
 
@@ -497,7 +501,7 @@ describe("ObligationController", () => {
     await tick(h, 5 * 60_000);
     assert.equal(h.notices.length, 2);
     assert.equal(h.notices[1].reason, "no_account");
-    assert.equal(obligation.state, "unanswered");
+    assert.equal(obligation.state, "unresolved");
   });
 
   it("never changes obligation state from a silence notice", async () => {
@@ -517,7 +521,7 @@ describe("ObligationController", () => {
     await tick(h);
     await tick(h, 2 * 60_000);
     await tick(h, 5 * 60_000);
-    assert.equal(obligation.state, "unanswered");
+    assert.equal(obligation.state, "unresolved");
 
     // A later turn on the target must not start a watchdog for the closed edge.
     h.controller.beginTurn("child", "prompt-late");
@@ -635,7 +639,7 @@ describe("ObligationController", () => {
     h.controller.markDeliveryFailed("parent", "child");
     h.controller.markDeliveryFailed("parent", "child");
     h.controller.markDeliveryFailed("parent", "child");
-    assert.equal(obligation.state, "unanswered");
+    assert.equal(obligation.state, "unresolved");
     // Mutation evidence: leaving an advisory armed keeps a live timer that
     // outlives the record.
     assert.equal((h.controller as any).dispatchAdvisoryTimers.size, 0);

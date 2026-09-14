@@ -98,6 +98,9 @@ function configOptionId(
 /** Minimum age (seconds) before an empty task is eligible for cleanup. */
 const EMPTY_TASK_MIN_AGE_S = 60;
 
+/** Bound for the persisted audit copy of a drained collaboration prompt. */
+const MAX_COLLABORATION_PROMPT_AUDIT = 16 * 1024;
+
 /**
  * Closing accounting prompt for a directed obligation. The target needs no
  * token: the record for it is unambiguous, so the prompt only asks for the
@@ -107,8 +110,10 @@ function handoffReminderText(): string {
   return [
     "## Task Handoff Required",
     "",
-    "This Task turn ended without a lifecycle account. Close this turn out now —",
-    "do not start any new work.",
+    "This is a runtime-injected closing turn: report what this turn established",
+    "and end it.",
+    "",
+    "Do not begin new work as part of this closing turn.",
     "",
     "Report what this turn established, then call exactly one of:",
     "- `task_update(done, ...)` with the completion report.",
@@ -1947,6 +1952,7 @@ export class TaskManager {
       openingMessageId: obligation.openingMessageId,
       openingDeliveryId: obligation.openingDeliveryId,
       reason: notice.reason,
+      message: notice.message,
       evidence: notice.evidence,
     };
     const body = JSON.stringify(payload);
@@ -1983,6 +1989,30 @@ export class TaskManager {
   }
 
   /**
+   * Persist a bounded audit copy of the text handed to the target. This is not
+   * part of the agent's control flow: it exists so an operator or parent can
+   * prove what a child actually received. Truncation mirrors the history
+   * projection, with `rawSize` as the size marker.
+   */
+  private persistCollaborationPromptAudit(
+    taskId: string,
+    messageIds: string[],
+    text: string,
+  ): void {
+    const rawSize = Buffer.byteLength(text, "utf8");
+    const truncated = text.length > MAX_COLLABORATION_PROMPT_AUDIT;
+    const bounded = truncated
+      ? `${text.slice(0, MAX_COLLABORATION_PROMPT_AUDIT - 2)}\n…`
+      : text;
+    this.store.saveEvent(
+      taskId,
+      "collaboration_prompt",
+      { messageIds, text: bounded, truncated, rawSize },
+      { from_ref: "system" },
+    );
+  }
+
+  /**
    * Record this attempt's turn identity on the target's obligation before the
    * resume, so a resume failure is attributed to this attempt and a coalescing
    * or replacing dispatch cannot be mutated by this attempt's late failure.
@@ -2006,7 +2036,7 @@ export class TaskManager {
   /**
    * A resume failed, so the dispatch was never handed over. Consume the
    * transport budget so the bounded initial-delivery retry can end in
-   * `unanswered` plus `no_account`; the controller also arms a dispatch
+   * `unresolved` plus `no_account`; the controller also arms a dispatch
    * deadline as a second backstop.
    */
   private failResumeAttempt(
@@ -2104,6 +2134,11 @@ export class TaskManager {
         }
         return `From "${sourceName}" (task id ${message.source_task_id}):\n---8<---\n${message.body}\n---8<---`;
       });
+      this.persistCollaborationPromptAudit(
+        taskId,
+        deliveries.map((delivery) => delivery.message_id),
+        entries.join("\n\n"),
+      );
       this.store.updateTaskWorkflowStatus(taskId, "running");
       this.drainingCollaborationTasks.delete(taskId);
       this.activePrompts.add(taskId);
