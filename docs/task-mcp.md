@@ -107,8 +107,16 @@ used only for transport accounting: a resolution clears the submission-failure
 streak (`markDispatchSucceeded`), while a request-level rejection
 (`PromptNotDeliveredError`, thrown only when the request never reached the
 session) consumes the transport budget and returns the record to
-`awaiting_delivery` for a bounded retry. An agent error **inside a delivered
-turn** emits an error event but resolves, so it is not a transport failure.
+`awaiting_delivery` for a bounded retry. A resume failure consumes the same
+budget under the attempt's own turn identity. An agent error **inside a
+delivered turn** emits an error event but resolves, so it is not a transport
+failure.
+
+The dispatch deadline is cleared whenever a record is handed over, settles, is
+exhausted, or is released, so its timer never outlives the record. A coalescing
+follow-up bumps the record's recovery epoch, so an in-flight reminder
+submission from the previous epoch is ignored rather than counted against the
+refreshed budget.
 
 There is deliberately **no timestamp guard**. The delivery turn is stamped
 before the prompt is handed to the bridge, so comparing the turn's start
@@ -304,6 +312,7 @@ sequenceDiagram
 | A report after `unanswered` | Never re-settles, notice not retracted; the account still reaches the stored source. |
 | A report after `settled` | Never re-settles; the account still reaches the stored source. |
 | A report from a target with no record | Ordinary report to the caller's current parent; settles nothing. |
+| A dispatch never handed over | A resume that keeps failing consumes the transport budget; if nothing retries, the dispatch deadline ends it in `unanswered` plus a factual `no_account` with `delivery_unavailable` evidence. |
 | A process restart | Obligation state is gone by decision, tasks do not auto-start, and no recovery promise is made. |
 
 **State and transition to test**
@@ -314,7 +323,8 @@ sequenceDiagram
 | → `awaiting_delivery` | `obligation-controller` "does not request an account until the source dispatch is accepted" |
 | `awaiting_delivery` → `open` (at hand-off) | `obligation-controller` "does not request an account until the source dispatch is accepted"; `server-event-handler` "settles the account from the same dispatch turn through the real delivery path" |
 | `awaiting_delivery` → `awaiting_delivery` retry | `obligation-controller` "retries a rejected initial dispatch and bounds the transport failures"; `server-event-handler` "retries a rejected initial dispatch at an idle boundary" |
-| `awaiting_delivery` → `unanswered` (transport) | `obligation-controller` "exhausts awaiting_delivery after the transport bound without spending reminders"; `server-event-handler` "emits one factual no_account notice when initial delivery keeps failing" |
+| `awaiting_delivery` → `unanswered` (transport) | `obligation-controller` "exhausts awaiting_delivery after the transport bound without spending reminders"; `server-event-handler` "emits one factual no_account notice when initial delivery keeps failing"; `server-event-handler` "ends a dispatch whose resume keeps failing" |
+| `awaiting_delivery` → `unanswered` (dispatch deadline) | `obligation-controller` "ends a never-delivered dispatch at the deadline" |
 | `open` → `reminder_due` | `server-event-handler` "reminds at the dispatch turn boundary and states the closing-only contract" |
 | `reminder_due` → `reminder_submitting` | `obligation-controller` "delivers reminders at the turn boundary and at +2m and +5m"; "waits for the target to be idle before submitting" |
 | `reminder_submitting` → `reminder_due` (delivered 1 or 2) | `obligation-controller` "delivers reminders at the turn boundary and at +2m and +5m" |
