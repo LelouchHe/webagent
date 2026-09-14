@@ -792,6 +792,35 @@ describe("ObligationController", () => {
     assert.equal(obligation.observedTurnId, undefined);
   });
 
+  it("clears the observed turn on abort so a later boundary is accepted", async () => {
+    const h = makeController();
+    const obligation = armOpen(h);
+    h.controller.beginTurn("child", "turn-B");
+    assert.equal(obligation.observedTurnId, "turn-B");
+
+    h.controller.abortTurn("child");
+    // Mutation evidence: leaving the observed turn populated rejects the
+    // boundary below and leaves the reminder deferred.
+    assert.equal(obligation.observedTurnId, undefined);
+
+    h.busy.add("child");
+    await tick(h);
+    assert.equal(obligation.retrying, true);
+    h.controller.onTargetTurnEnded("child", "turn-A");
+    assert.equal(obligation.retrying, false);
+  });
+
+  it("clears the observed turn when the record settles", () => {
+    const h = makeController();
+    const obligation = armOpen(h);
+    h.controller.beginTurn("child", "turn-B");
+    settleNow(h);
+    assert.equal(obligation.state, "settled");
+    // Mutation evidence: leaving the observed turn populated lets a later
+    // boundary be compared against a finished turn.
+    assert.equal(obligation.observedTurnId, undefined);
+  });
+
   it("does not emit a silence notice after the turn is aborted", async () => {
     const h = makeController();
     armDirect(h);

@@ -113,7 +113,12 @@ export interface ObligationView {
   readonly ageAdvised: boolean;
   /** Per-turn marker: the turn id whose silence notice was already emitted. */
   readonly silencedAttemptId?: string;
-  /** The target turn observed via a turn_begun fact, for stale turn_ended checks. */
+  /**
+   * A record holds an observed turn only while that turn may still be live.
+   * Set by turn_begun, and cleared when the turn ends, is aborted, or the
+   * record reaches a terminal state, so a stale turn_ended can never be
+   * compared against a turn that has already finished.
+   */
   readonly observedTurnId?: string;
   /** Anchor for the queued-dispatch advisory (set at arm and coalescing). */
   readonly dispatchAdvisoryFrom: number;
@@ -871,6 +876,8 @@ export class ObligationController {
   ): void {
     const obligation = this.findForTarget(fact.targetTaskId);
     if (!obligation) return;
+    // The observed turn can no longer be live after an abort.
+    obligation.observedTurnId = undefined;
     const key = edgeKey(obligation.sourceTaskId, obligation.targetTaskId);
     this.watchdog.delete(key);
   }
@@ -1031,6 +1038,7 @@ export class ObligationController {
     const result = fact.run(decision);
     const key = edgeKey(obligation.sourceTaskId, obligation.targetTaskId);
     this.watchdog.delete(key);
+    obligation.observedTurnId = undefined;
     obligation.state = "settled";
     this.log("obligation settled", logFields(obligation));
     return { decision, result };
@@ -1132,6 +1140,7 @@ export class ObligationController {
     if (obligation.state === "unresolved") return;
     const key = edgeKey(obligation.sourceTaskId, obligation.targetTaskId);
     this.watchdog.delete(key);
+    obligation.observedTurnId = undefined;
     obligation.state = "unresolved";
     if (obligation.noAccountNotified) return;
     obligation.noAccountNotified = true;
