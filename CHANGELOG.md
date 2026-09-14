@@ -4,11 +4,21 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/), and this project adheres to [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.11.0] - 2026-09-14
+
+### Added
+
+- **The parent now learns what happened to delegated work.** When an Agent-authored parent Task dispatches work directly to a child Task, WebAgent keeps one supervised obligation for that edge and reports its outcome to the source: the child's typed `task_update(done|blocked)` account, or a factual notice that the runtime stopped its own attempts. A parent can receive a notice when no account arrived after the delivered reminders (`no_account`), when the dispatch could not be delivered at all (`delivery_failed`), or when a running turn has gone quiet (`no_activity`), plus non-terminal still-waiting advisories at one hour and four hours. Every notice carries its evidence, and none of them is a verdict: no timer's expiry concludes anything, and an edge the runtime stopped waiting on still settles if a late account arrives. Settlement needs no correlation token — `task_update(done|blocked)` closes the edge when it comes from the Task's current active turn. See [Task Obligations](docs/task-obligations.md).
+- **Task status and activity are visible to Agents without reading history.** `task_list` reports each Task's `workflowStatus` (per turn, not a lifecycle terminal), its live `executionState` (`agent`, `bash`, or `idle`), and its activity timestamps, so an Agent can tell a busy Task from a silent one.
+- **Pi is a supported Agent, with its install requirement documented.** Pi needs the `LelouchHe` forks of `pi-acp` and `pi-mcp-adapter` — upstream closes the previous session and ignores ACP session MCP servers, and the forks are not published to npm — so it is built from a checkout rather than installed from the registry. See [configuration](docs/configuration.md).
 
 ### Changed
 
 - **Task creation is recorded once, by the server.** `POST /api/v1/tasks` now writes and broadcasts the same persisted `Created task @<title>` row the Agent's `task_create` tool writes, so a user-created child survives a reload and looks identical to an agent-created one. The web client no longer fabricates its own creation or send acknowledgements. An untitled child (bare `/new`) records nothing, since there is no name to reference.
+
+### Fixed
+
+- **Queued collaboration work is delivered while a Task runs a shell command, and drains when a Task goes idle.** A Task executing a user shell command no longer blocks queued delivery or its closing reminder, and pending deliveries are retried when the Task becomes idle instead of waiting for the next interaction.
 
 ### Removed
 
@@ -454,6 +464,7 @@ Initial release of WebAgent — a terminal-style web UI for ACP-compatible agent
 - **CI/CD**: GitHub Actions for CI (unit + E2E tests) and npm publishing on tag push
 - **npm package**: Published as `@lelouchhe/webagent`
 
+[0.11.0]: https://github.com/LelouchHe/webagent/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/LelouchHe/webagent/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/LelouchHe/webagent/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/LelouchHe/webagent/compare/v0.7.0...v0.8.0
