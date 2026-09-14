@@ -105,11 +105,13 @@ future proposal to add such a guard must account for that ordering.
 **Routing.** A settleable record is one atomic step: the update is persisted,
 the reported `workflow_status` changes, the account message is created to the
 **stored source**, the record becomes `settled`, and its timers are cancelled. A
-record that exists but is not settleable still routes its account to the stored
-source without settling, so a terminal `unanswered` record is never re-settled
+record that exists but is not settleable — including an `awaiting_delivery`
+record and a terminal `unanswered`/`settled` record — still routes its account
+to the stored source without settling, so a terminal record is never re-settled
 and its earlier notice is never retracted. With no record for the target, the
 update is an ordinary report to the caller's **current parent** and settles
-nothing.
+nothing. Routing an existing record to the current parent instead of the stored
+source would misroute the account after a tree change.
 
 **Accepted residual.** Settlement is judged from the *current* turn, not from
 the turn that produced the content. A call delayed from an earlier turn that
@@ -138,7 +140,10 @@ target×turn, never changes obligation state, and shares no limiter with the
 exhaustion notice.
 
 Obligation state is process-local runtime memory. It is not persisted, does not
-survive a restart, and carries no cross-restart recovery promise.
+survive a restart, and carries no cross-restart recovery promise. Releasing a
+task (its deletion path) purges every record where it is either endpoint and
+cancels that record's timers, so the map grows only with live edges; this is
+hygiene, not deletion recovery.
 
 #### Flow
 
@@ -304,6 +309,17 @@ sequenceDiagram
 | Accepted residual | `obligation-controller` "accepts a delayed call from an earlier turn while a later turn is current" |
 | Watchdog start, activity, silence, single notice | `obligation-controller` "emits one heuristic no_activity notice per target×turn"; "resets the watchdog on qualifying activity and keeps epochs independent"; "never changes obligation state from a silence notice"; "does not start a watchdog without an active obligation"; "does not watch a terminal record" |
 | Process-local loss | `obligation-controller` "loses all obligation state when the controller is reconstructed" |
+| Release purge | `obligation-controller` "purges records when a task is released, cancelling their timers"; `task-manager` "purges obligation records when a task is released" |
+
+**Real path versus constructed turns.** The settlement assertions that must
+prove the real delivery ordering — `awaiting_delivery` opening on bridge
+acceptance and the same-turn account settling — run through the creation
+boundary and the mock bridge (settlement tests in
+`test/server-event-handler.test.ts`, notably "settles the account from the same
+dispatch turn through the real delivery path"). The refusal cases
+(`awaiting_delivery`, no active turn) drive `settleReport` with a constructed
+active turn, which is enough to pin the guard but cannot catch an ordering bug;
+that is why the same-turn test exists.
 
 Two rows have no obligation-level test:
 

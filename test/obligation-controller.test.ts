@@ -507,6 +507,28 @@ describe("ObligationController", () => {
     );
   });
 
+  it("purges records when a task is released, cancelling their timers", async () => {
+    const h = makeController();
+    armOpen(h);
+    await tick(h);
+    assert.ok(h.controller.getForTarget("child"));
+
+    h.controller.purgeTask("child");
+    // Mutation evidence: without the purge the record and its reminder timer
+    // survive the release.
+    assert.equal(h.controller.getForTarget("child"), undefined);
+    assert.equal(h.controller.getActive("parent", "child"), undefined);
+    const submissionsBefore = h.submissions.length;
+    await tick(h, 60 * 60_000);
+    assert.equal(h.submissions.length, submissionsBefore);
+
+    const bySource = makeController();
+    armOpen(bySource);
+    await tick(bySource);
+    bySource.controller.purgeTask("parent");
+    assert.equal(bySource.controller.getForTarget("child"), undefined);
+  });
+
   it("does not start a watchdog without an active obligation", async () => {
     const h = makeController();
     h.controller.beginTurn("child", "prompt-4");

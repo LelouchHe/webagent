@@ -1432,6 +1432,8 @@ export class TaskManager {
     this.activePrompts.delete(id);
     this.pendingWorkRecoveries.delete(id);
     this.lastAgentActivityAt.delete(id);
+    this.pendingDispatchRetries.delete(id);
+    this.obligations.purgeTask(id);
     this.compactingTasks.delete(id);
     this.resettingTasks.delete(id);
     this.rotatingTasks.delete(id);
