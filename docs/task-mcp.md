@@ -60,7 +60,7 @@ The server advertises a short, generic usage contract through the MCP
 Use task_create for a direct child, then immediately use task_send to give it its first instruction.
 Use task_list to check each reachable Task's workflowStatus, executionState, lastEventAt, and lastAgentActivityAt before deciding to act; workflowStatus is per turn, not a lifecycle terminal, and executionState is the live runtime source.
 Use task_send for normal coordination and for continuing or resuming existing Tasks; task_send is not a lifecycle handoff. Use task_update(done|blocked) for typed lifecycle handoffs. A done Task remains available and is not deleted or permanently closed.
-When a dispatch or closing prompt gives you an obligationId, copy that id into task_update(done|blocked, ..., obligationId): it settles that directed obligation. Omit it only when you have no such id, and the update then settles nothing.
+task_update(done|blocked) settles the directed obligation when it comes from the current eligible turn; there is no correlation parameter to copy back.
 After dispatching work, end the current turn; do not poll with task_query.
 Use task_query and task_get_record only for history recovery, diagnosis, or audit.
 Omit task_id to inspect the current Task's persisted history.
@@ -77,39 +77,62 @@ account from that target. The runtime decides this at the collaboration-message
 boundary with the pure policy
 `message.source_actor === "agent" && target.parent_id === source.id`. A user
 send (including a human message in the parent session), a sibling or child
-message, the correlated account itself, and a runtime outcome notice never arm
-an obligation. The policy is derived from data the rows already carry: there is
-no classification field at message creation and no body inspection.
+message, an account, and a runtime outcome notice never arm an obligation. The
+policy is derived from data the rows already carry: there is no classification
+field at message creation and no body inspection.
 
-The obligation id is a **correlation receipt, not an intent or expectation
-control**. The runtime injects it into the dispatch context and repeats it in
-every closing prompt so the target can name the edge it is closing. There is no
-expectation level, no per-counterparty ledger, and no separate lifecycle status
-beyond the existing `running`/`idle`/`blocked`/`done` report.
+There is **no correlation token**. A target has one direct parent, so the
+target's sole record is unambiguous; a plain `task_update(status, body)` decides
+settlement from the record and the caller's turn. The record is still not an
+intent or expectation control. There is no expectation level, no
+per-counterparty ledger, and no separate lifecycle status beyond the existing
+`running`/`idle`/`blocked`/`done` report.
 
-The target closes the edge with a correlated `task_update(done|blocked, ...)`
-using that id, which also updates the target's reported `workflow_status` and
-creates the account message to the **stored source**, even if the tree changed
-since arming. An uncorrelated `task_update` (no id) is still recorded and sent
-to the current parent, but it settles no obligation.
+**Settlement predicate.** A record settles only when all three hold:
 
-If a dispatch turn ends without a correlated account, the controller submits up
-to three delivered closing reminders: one at the turn boundary, one two minutes
-after the previous delivered reminder, and one five minutes after that. A
-rejected submission never consumes a delivered attempt: it is retried with
-backoff while the target is idle, and three consecutive submission failures end
-the edge with a factual `no_account` notice carrying `delivery_unavailable`
-evidence. A rejected **initial** dispatch is retried the same way instead of
-being abandoned. When the last delivered reminder completes without a matching
-account the edge becomes `unanswered` and the source receives exactly one
-`no_account` notice; a later account with the same id still settles it.
+1. its state is `open`, `reminder_due`, or `reminder_submitting`;
+2. the target has an active current agent turn;
+3. that turn started at or after the accepted dispatch (`deliveredAt`, the
+   bridge-acceptance time — not the arm time).
+
+It is refused without settling when the state is `awaiting_delivery`,
+`unanswered`, or `settled`, when no agent turn is active, or when the current
+turn predates `deliveredAt`.
+
+**Routing.** A settleable record is one atomic step: the update is persisted,
+the reported `workflow_status` changes, the account message is created to the
+**stored source**, the record becomes `settled`, and its timers are cancelled. A
+record that exists but is not settleable still routes its account to the stored
+source without settling, so a terminal `unanswered` record is never re-settled
+and its earlier notice is never retracted. With no record for the target, the
+update is an ordinary report to the caller's **current parent** and settles
+nothing.
+
+**Accepted residual.** Settlement is judged from the *current* turn, not from
+the turn that produced the content. A call delayed from an earlier turn that
+arrives while a later eligible turn is current therefore settles the record and
+the source receives the earlier turn's content: a mis-attributed account, not
+silence. That is a deliberate boundary, not a bug.
+
+If a dispatch turn ends without an account, the controller submits up to three
+delivered closing reminders: one at the turn boundary, one two minutes after
+the previous delivered reminder, and one five minutes after that. A rejected
+submission never consumes a delivered attempt: it is retried with backoff while
+the target is idle, and three consecutive submission failures end the edge with
+a factual `no_account` notice carrying `delivery_unavailable` evidence. A
+rejected **initial** dispatch is retried the same way instead of being
+abandoned. When the last delivered reminder completes without an account the
+edge becomes `unanswered` and the source receives exactly one `no_account`
+notice; a later account is still routed to the stored source.
 
 The `no_account` notice is a `task_outcome_notice` collaboration message with a
-system actor, routed target→stored source, so it cannot arm an obligation. The
-watchdog is independent: while a target turn with an active obligation runs, a
-quiet stretch of `SILENCE_THRESHOLD_S = 900` emits one heuristic `no_activity`
-notice per edge×turn, never changes obligation state, and shares no limiter with
-the exhaustion notice.
+system actor, routed target→stored source, carrying `sourceTaskId`,
+`targetTaskId`, `openingMessageId`, `openingDeliveryId`, `reason`, and
+`evidence`. It cannot arm an obligation. The watchdog is independent: while a
+target turn with an active record runs, a quiet stretch of
+`SILENCE_THRESHOLD_S = 900` emits one heuristic `no_activity` notice per
+target×turn, never changes obligation state, and shares no limiter with the
+exhaustion notice.
 
 Obligation state is process-local runtime memory. It is not persisted, does not
 survive a restart, and carries no cross-restart recovery promise.
@@ -156,7 +179,7 @@ WebAgent does not automatically rebroadcast raw child reports to ancestors.
 | `task_cancel` | Stop the current execution of a child Task while preserving its history. |
 | `task_create` | Create a direct child Task with optional execution overrides. Use `task_send` for its first instruction. |
 | `task_send` | Send a durable coordination message, including follow-up or resume instructions for an existing Task. Use `task_update` for typed `blocked`/`done` status. |
-| `task_update` | Send a typed `blocked` or `done` lifecycle account for the current Task. Pass the optional `obligationId` correlation receipt from a dispatch or closing prompt to settle that directed obligation; this does not delete or permanently close the Task. |
+| `task_update` | Send a typed `blocked` or `done` lifecycle account for the current Task. A plain `(status, body)` call settles the directed obligation when it comes from an eligible current turn; there is no correlation parameter. This does not delete or permanently close the Task. |
 
 ### `task_list`
 
@@ -380,24 +403,32 @@ findings are not discarded because the message is coordination.
 Submit a typed lifecycle account for the current Task:
 
 ```ts
-task_update(status: "blocked" | "done", body: string, obligationId?: string)
+task_update(status: "blocked" | "done", body: string)
 ```
 
 - `blocked`: explain the missing input or decision and how the Task can resume;
 - `done`: provide the result, completion evidence, limitations, and useful next
   step.
 
-The optional `obligationId` is a **correlation receipt**. Copy it from the
-dispatch context or from a closing-handoff prompt to close that directed
-obligation: the runtime validates the id against the stored source/target edge,
-records the update transactionally, and retires the edge. An unknown, stale,
-wrong-target, or already-settled id makes no state or message change and the
-tool call fails with `obligation_not_found`; it never silently falls back to the
-uncorrelated path.
+There is **no new parameter**. The runtime identifies the target's sole directed
+obligation itself and settles it only from an eligible current turn: the record
+must be `open`, `reminder_due`, or `reminder_submitting`; the target must have an
+active agent turn; and that turn must have started at or after the accepted
+dispatch (`deliveredAt`). A settleable call is one atomic step that records the
+update, changes the reported status, creates the account to the **stored
+source**, and cancels the record's timers.
 
-Omit `obligationId` when you have no open receipt (for example answering a user
-prompt). The update is still recorded and reported to the current parent, but it
-settles nothing, so an open obligation remains open and will still be recovered.
+When a record exists but those conditions do not hold — `awaiting_delivery`, a
+terminal `unanswered`/`settled` record, no active turn, or a turn older than
+`deliveredAt` — the update is still recorded and routed to the stored source,
+without settling. When no record exists for the target, the update is an
+ordinary report to the current parent and settles nothing. A terminal record is
+never re-settled and its earlier `no_account` notice is never retracted.
+
+Because settlement is judged from the current turn, a call delayed from an
+earlier turn that arrives while a later eligible turn is current settles the
+record and the source receives the earlier turn's content. That is an accepted
+boundary, not a bug.
 
 A `done` account is a result submission, not proof that the parent has accepted
 it. The parent or verifier checks the original Task Contract and may accept it,
