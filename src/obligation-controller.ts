@@ -289,24 +289,53 @@ export class ObligationController {
     }
     this.clearAttemptTimer(key);
     obligation.state = "open";
-    obligation.consecutiveSubmissionFailures = 0;
+    // Do not reset `consecutiveSubmissionFailures` here: a retry issuance can
+    // still be rejected, and resetting would let the transport budget restart
+    // forever. It resets only once the submission resolves (see
+    // `markDispatchSucceeded`).
     this.log("obligation opened", logFields(obligation));
     this.maybeRemindAtBoundary(obligation);
   }
 
   /**
-   * The qualifying source dispatch could not be delivered. The record stays
-   * `awaiting_delivery` and the original delivery is retried at idle
-   * boundaries under the transport bound; it never prompts the target to
-   * account for unseen content. Three consecutive failed initial-delivery
-   * submissions end the edge with `no_account` and `delivery_unavailable`
-   * evidence. Those failures never consume the three delivered closing
-   * reminders.
+   * The dispatch prompt resolved, so the submission succeeded and its transport
+   * failure streak is cleared. A resolved turn still counts as a successful
+   * submission even when the turn itself ends in an agent error.
+   */
+  markDispatchSucceeded(sourceTaskId: string, targetTaskId: string): void {
+    const obligation = this.getActive(sourceTaskId, targetTaskId);
+    if (!obligation) return;
+    if (isTerminal(obligation.state)) return;
+    obligation.consecutiveSubmissionFailures = 0;
+  }
+
+  /**
+   * The qualifying source dispatch could not be handed to the target. The
+   * record returns to `awaiting_delivery` and the original delivery is retried
+   * at idle boundaries under the transport bound; it never prompts the target
+   * to account for unseen content. Three consecutive failed submissions end
+   * the edge with `no_account` and `delivery_unavailable` evidence. Those
+   * failures never consume the three delivered closing reminders.
+   *
+   * A rejection can arrive after issuance, when the record already opened; the
+   * record then returns to `awaiting_delivery` (a pending state) and its
+   * reminder schedule is cancelled, so the failure consumes the transport
+   * budget once and the dispatch is retried rather than stranded open.
    */
   markDeliveryFailed(sourceTaskId: string, targetTaskId: string): void {
     const obligation = this.getActive(sourceTaskId, targetTaskId);
     if (!obligation) return;
-    if (obligation.state !== "awaiting_delivery") return;
+    const key = edgeKey(obligation.sourceTaskId, obligation.targetTaskId);
+    const dispatchPhase =
+      obligation.state === "awaiting_delivery" ||
+      obligation.state === "open" ||
+      (obligation.state === "reminder_due" &&
+        obligation.deliveredAttempts === 0);
+    if (!dispatchPhase) return;
+    this.clearAttemptTimer(key);
+    this.clearWatchdogTimer(key);
+    this.watchdog.delete(key);
+    obligation.state = "awaiting_delivery";
     obligation.consecutiveSubmissionFailures += 1;
     if (
       obligation.consecutiveSubmissionFailures >=

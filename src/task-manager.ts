@@ -2046,45 +2046,56 @@ export class TaskManager {
       this.syncBusy(taskId);
       const promptId =
         this.state.getState(taskId).runtime.busy?.promptId ?? undefined;
-      void bridge
-        .prompt(taskId, entries.join("\n\n"), undefined, promptId)
-        .then(
-          () => {
-            this.store.markCollaborationDeliveriesDelivered(allDeliveryIds);
-            for (const sourceTaskId of qualifyingSources) {
-              this.obligations.markDelivered(sourceTaskId, taskId);
-            }
-            if (qualifyingSources.size > 0) {
-              this.pendingDispatchRetries.delete(taskId);
-            }
-          },
-          (error: unknown) => {
-            slog.error("collaboration delivery failed", {
-              taskId: taskId.slice(0, 8),
-              error,
-            });
-            this.store.failCollaborationDeliveries(
-              allDeliveryIds,
-              "prompt_failed",
-            );
-            // A qualifying dispatch is not abandoned on one rejected prompt.
-            // Hold its claimed rows for the controller's bounded initial-
-            // delivery retry, which requeues and resubmits them under
-            // backoff; an immediate idle drain would bypass that budget.
-            if (qualifyingDeliveryIds.length > 0) {
-              this.pendingDispatchRetries.set(taskId, qualifyingDeliveryIds);
-            }
-            for (const sourceTaskId of qualifyingSources) {
-              this.obligations.markDeliveryFailed(sourceTaskId, taskId);
-            }
-            if (!this.isCurrentPrompt(taskId, promptId)) return;
-            this.activePrompts.delete(taskId);
-            // Same attribution as an ACP error event: a rejected delivery
-            // prompt must not leave the target marked running.
-            this.store.updateTaskWorkflowStatus(taskId, "idle");
-            this.syncBusy(taskId);
-          },
-        );
+      const promptPromise = bridge.prompt(
+        taskId,
+        entries.join("\n\n"),
+        undefined,
+        promptId,
+      );
+      // The record opens when the content is handed to the target's session,
+      // not when the prompt promise resolves: `bridge.prompt` resolves at the
+      // end of the turn, so a resolution-time open would leave the dispatch
+      // turn itself `awaiting_delivery` and refuse the account it produces.
+      for (const sourceTaskId of qualifyingSources) {
+        this.obligations.markDelivered(sourceTaskId, taskId);
+      }
+      void promptPromise.then(
+        () => {
+          this.store.markCollaborationDeliveriesDelivered(allDeliveryIds);
+          for (const sourceTaskId of qualifyingSources) {
+            this.obligations.markDispatchSucceeded(sourceTaskId, taskId);
+          }
+          if (qualifyingSources.size > 0) {
+            this.pendingDispatchRetries.delete(taskId);
+          }
+        },
+        (error: unknown) => {
+          slog.error("collaboration delivery failed", {
+            taskId: taskId.slice(0, 8),
+            error,
+          });
+          this.store.failCollaborationDeliveries(
+            allDeliveryIds,
+            "prompt_failed",
+          );
+          // A qualifying dispatch is not abandoned on one rejected prompt.
+          // Hold its claimed rows for the controller's bounded initial-
+          // delivery retry, which requeues and resubmits them under backoff;
+          // an immediate idle drain would bypass that budget.
+          if (qualifyingDeliveryIds.length > 0) {
+            this.pendingDispatchRetries.set(taskId, qualifyingDeliveryIds);
+          }
+          for (const sourceTaskId of qualifyingSources) {
+            this.obligations.markDeliveryFailed(sourceTaskId, taskId);
+          }
+          if (!this.isCurrentPrompt(taskId, promptId)) return;
+          this.activePrompts.delete(taskId);
+          // Same attribution as an ACP error event: a rejected delivery
+          // prompt must not leave the target marked running.
+          this.store.updateTaskWorkflowStatus(taskId, "idle");
+          this.syncBusy(taskId);
+        },
+      );
       return true;
     } catch (error) {
       slog.error("collaboration delivery drain failed", {
