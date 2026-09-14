@@ -36,6 +36,11 @@ class FakeClock {
     );
   }
 
+  /** The injected scheduler port: every live deadline the controller armed. */
+  pendingDeadlineTimes(): number[] {
+    return this.timers.map((timer) => timer.at);
+  }
+
   advance(ms: number): void {
     const target = this.now + ms;
     for (;;) {
@@ -714,8 +719,14 @@ describe("ObligationController", () => {
     h.controller.markDeliveryFailed("parent", "child");
     h.controller.markDeliveryFailed("parent", "child");
     assert.equal(obligation.state, "unresolved");
-    // Mutation evidence: leaving an advisory pending outlives the record.
-    await tick(h, AGE_ADVISORY_MS);
+    // Cancellation, observed at the injected scheduler port: a terminal record
+    // leaves no live deadline at all, so no callback can arrive.
+    // Mutation evidence: leaving the queued dispatch advisory pending keeps a
+    // timer armed here.
+    assert.deepEqual(h.clock.pendingDeadlineTimes(), []);
+    // And advancing arbitrarily far produces no further callback or notice.
+    await tick(h, AGE_ADVISORY_MS * 10);
+    assert.deepEqual(h.clock.pendingDeadlineTimes(), []);
     assert.equal(
       h.notices.filter((notice) => notice.reason === "still_waiting").length,
       0,

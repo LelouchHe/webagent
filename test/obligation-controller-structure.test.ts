@@ -68,29 +68,19 @@ describe("obligation controller structure", () => {
       "exhaust",
       "emitSilence",
       "startWatchdog",
-      "fireDue",
     ]);
+    // Derive the field list from the record type so a field added later is
+    // covered without touching this test.
+    const recordStart = source.indexOf("interface ObligationRecord {");
+    const recordEnd = source.indexOf("}", recordStart);
     const recordFields = [
-      "sourceTaskId",
-      "targetTaskId",
-      "openingMessageId",
-      "openingDeliveryId",
-      "openedAt",
-      "attemptId",
-      "recoveryGeneration",
-      "state",
-      "deliveredAttempts",
-      "consecutiveSubmissionFailures",
-      "lastDeliveredAttemptAt",
-      "waitingSince",
-      "retrying",
-      "dispatchAdvised",
-      "ageAdvised",
-      "silencedAttemptId",
-      "dispatchAdvisoryFrom",
-      "ageAdvisoryFrom",
-      "noAccountNotified",
-    ].join("|");
+      ...source
+        .slice(recordStart, recordEnd)
+        .matchAll(/^ {2}([A-Za-z0-9_]+)\??:/gm),
+    ]
+      .map((match) => match[1])
+      .join("|");
+    assert.ok(recordFields.includes("state"));
     const writeRe = new RegExp(
       `\\b[A-Za-z0-9_]+[.](?:${recordFields}) (?:[+\\-*/]?=)(?!=)`,
     );

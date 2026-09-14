@@ -612,7 +612,6 @@ export class ObligationController {
       const key = edgeKey(obligation.sourceTaskId, obligation.targetTaskId);
       const attemptDeadline = this.attemptDeadline(obligation);
       if (attemptDeadline !== undefined && attemptDeadline <= now) {
-        obligation.waitingSince = undefined;
         this.timerDue(obligation, "attempt");
       }
       const watchdog = this.watchdog.get(key);
@@ -955,6 +954,9 @@ export class ObligationController {
         this.watchdog.delete(key);
         return;
       case "attempt":
+        // The transition owns clearing the wait anchor; the scheduler only
+        // computes and dispatches.
+        obligation.waitingSince = undefined;
         this.runAttempt(obligation);
         return;
     }
