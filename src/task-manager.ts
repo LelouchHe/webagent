@@ -7,11 +7,14 @@ import { join } from "node:path";
 import {
   MessageNotFoundError,
   ROOT_TASK_ID,
+  type CollaborationDeliveryRow,
+  type CollaborationMessageRow,
   type TaskDelete,
   type TaskRow,
   type Store,
   type WorkflowStatus,
 } from "./store.ts";
+import { shouldArm } from "./task-collaboration.ts";
 import type { AgentBridge } from "./bridge.ts";
 import { buildMcpServerEntry } from "./mcp/server.ts";
 import type { CapabilityStore } from "./mcp/capability.ts";
@@ -92,20 +95,30 @@ function configOptionId(
 
 /** Minimum age (seconds) before an empty task is eligible for cleanup. */
 const EMPTY_TASK_MIN_AGE_S = 60;
-const HANDOFF_REMINDER_TEXT = [
-  "## Task Handoff Required",
-  "",
-  "This Task turn ended without a lifecycle handoff. Close this turn out now —",
-  "do not start any new work.",
-  "",
-  "Report what this turn established, then do exactly one of:",
-  "- If the assignment is complete, call `task_update(done, ...)` with the completion report.",
-  "- If the Task cannot continue without input or a decision, call `task_update(blocked, ...)` and explain what is missing.",
-  "",
-  "If the user cancelled this turn, say so plainly in that report instead of",
-  "resuming the cancelled work. Do not start new work, and do not end this turn",
-  "with a prose answer only.",
-].join("\n");
+
+/**
+ * Closing accounting prompt for an unanswered directed obligation. It contains
+ * the obligation id so the target can correlate its typed account; without it
+ * the settlement protocol would be unusable in practice.
+ */
+function handoffReminderText(obligationId: string): string {
+  return [
+    "## Task Handoff Required",
+    "",
+    "This Task turn ended without a lifecycle account. Close this turn out now —",
+    "do not start any new work.",
+    "",
+    `Obligation id: ${obligationId}`,
+    "",
+    "Report what this turn established, then call exactly one of:",
+    `- \`task_update(done, ..., obligationId: "${obligationId}")\` with the completion report.`,
+    `- \`task_update(blocked, ..., obligationId: "${obligationId}")\` and explain what is missing.`,
+    "",
+    "If the user cancelled this turn, say so plainly in that report instead of",
+    "resuming the cancelled work. Do not start new work, and do not end this turn",
+    "with a prose answer only.",
+  ].join("\n");
+}
 
 export class InvalidTaskDirectoryError extends Error {
   constructor(cwd: string) {
@@ -173,22 +186,12 @@ export class TaskManager {
   readonly assistantBuffers = new Map<string, string>();
   readonly thinkingBuffers = new Map<string, string>();
   readonly activePrompts = new Set<string>();
-  /**
-   * Tasks whose live turn still owes a lifecycle handoff. Set when a work
-   * turn is submitted and cleared when that turn records `task_update` or
-   * when the reminder turn starts. The obligation is scoped to the parent
-   * edge: a turn the user starts owes, and a collaboration turn owes only when
-   * its claimed batch includes the Task's parent — a sibling or child cause
-   * creates no debt and leaves any outstanding one intact. `source` is a Task
-   * property, but "this turn was started by a collaboration delivery" is not
-   * one: deriving the obligation from `workflow_status === "running"` silently
-   * dropped user-prompted turns on agent-created Tasks.
-   */
-  private readonly handoffObligations = new Set<string>();
   /** One microtask recovery per task while an unfinished-work retry is active. */
   private readonly pendingWorkRecoveries = new Set<string>();
   /** Bridge used by busy→idle recovery when the transition has no caller bridge. */
   private recoveryBridge: DeliveryBridge | null = null;
+  /** Claimed dispatch deliveries awaiting a bounded controller retry. */
+  private readonly pendingDispatchRetries = new Map<string, string[]>();
   /** Process-local directed-dispatch obligation state machine. */
   private readonly obligations: ObligationController;
   /** Delivery rows currently being claimed/resolved for one target task. */
@@ -264,18 +267,64 @@ export class TaskManager {
     this.mcpBaseUrl = mcpBaseUrl;
     this.obligations = new ObligationController({
       now: () => Date.now(),
-      setTimer: (fn, ms) => setTimeout(fn, ms),
+      setTimer: (fn, ms) => {
+        const handle = setTimeout(fn, ms);
+        // Reminder/watchdog timers must never hold the process open; the
+        // server is long-lived and a stalled timer is recoverable on the next
+        // turn boundary anyway.
+        handle.unref();
+        return handle;
+      },
       clearTimer: (handle) => {
         clearTimeout(handle);
       },
       isAgentBusy: (taskId) => this.getBusyKind(taskId) === "agent",
       submitReminder: (obligation) => this.submitObligationReminder(obligation),
+      retryDispatch: (obligation) => {
+        const bridge = this.recoveryBridge;
+        const deliveryIds = this.pendingDispatchRetries.get(obligation.id);
+        if (!bridge) return;
+        if (deliveryIds?.length) {
+          this.pendingDispatchRetries.delete(obligation.id);
+          this.store.requeueCollaborationDeliveries(deliveryIds);
+        }
+        void this.drainCollaborationDeliveries(bridge, obligation.targetTaskId);
+      },
       emitNotice: (notice, obligation) => {
         this.emitObligationNotice(notice, obligation);
       },
       log: (event, fields) => {
         slog.debug(event, fields);
       },
+    });
+    // One structural choke point: the Store emits exactly one fact per created
+    // message and this observer decides the arming policy, so no creation path
+    // can silently bypass it.
+    store.onCollaborationMessageCreated(({ message, delivery }) => {
+      this.onCollaborationMessageCreated(message, delivery);
+    });
+  }
+
+  /**
+   * Pure arming policy over the post-commit creation fact: an agent-authored
+   * direct parent→child dispatch asks for an account; a user send, a sibling
+   * or child message, an account, and a runtime notice never do.
+   */
+  private onCollaborationMessageCreated(
+    message: CollaborationMessageRow,
+    delivery: CollaborationDeliveryRow,
+  ): void {
+    const source = this.store.getTaskIncludingDeleted(message.source_task_id);
+    const target = this.store.getTaskIncludingDeleted(
+      message.direct_target_task_id,
+    );
+    if (!source || !target) return;
+    if (!shouldArm(message, source, target)) return;
+    this.obligations.arm({
+      sourceTaskId: message.source_task_id,
+      targetTaskId: message.direct_target_task_id,
+      messageId: message.id,
+      deliveryId: delivery.id,
     });
   }
 
@@ -1366,7 +1415,6 @@ export class TaskManager {
     this.assistantBuffers.delete(id);
     this.thinkingBuffers.delete(id);
     this.activePrompts.delete(id);
-    this.handoffObligations.delete(id);
     this.pendingWorkRecoveries.delete(id);
     this.compactingTasks.delete(id);
     this.resettingTasks.delete(id);
@@ -1603,6 +1651,11 @@ export class TaskManager {
     const sameWork =
       current?.kind === kind && current.promptId === nextPromptId;
     if (sameWork) return;
+    if (kind === "agent" && nextPromptId) {
+      // The watchdog observes only a running target turn that already has an
+      // active obligation; a turn with no obligation is ignored.
+      this.obligations.beginTurn(taskId, nextPromptId);
+    }
     this.state.patch(taskId, {
       runtime: {
         busy: {
@@ -1622,22 +1675,16 @@ export class TaskManager {
   }
 
   /**
-   * Schedule the one recovery implementation after an event-handler finish.
-   * `syncBusy()` normally schedules this at the busy→idle edge; the explicit
-   * event-handler call supplies the bridge and terminal-event origin when the
-   * edge itself had no registered bridge. Pending-task deduplication makes the
-   * two entry points one bounded recovery, not two prompts.
+   * Schedule the one generic delivery-drain implementation after an
+   * event-handler finish. `syncBusy()` normally schedules this at the
+   * busy→idle edge; the explicit event-handler call supplies the bridge when
+   * that edge had no registered bridge. Pending-task deduplication makes the
+   * two entry points one bounded drain, not two prompts.
    *
-   * The decision here is task state (queued deliveries or handoff debt), not a
-   * prompt identity, so recovery has no turn identity of its own. The
-   * event-handler caller has already established that the terminal event is
-   * for the current turn because it must also perform activePrompts deletion,
-   * syncBusy, and workflow-status→idle; a late superseded event must not do
-   * those things. Recovery drains before it considers the debt, so a delivery
-   * that claims the turn defers the reminder instead of dropping it: a
-   * non-parent batch leaves the outstanding debt intact, and the drain turn's
-   * own end re-enters recovery. A superseded turn likewise does not lose debt,
-   * because the replacement turn ends against the same Task state.
+   * Closing reminders are owned by ObligationController and scheduled by
+   * `onTargetTurnEnded`; this helper never submits one. A queued delivery
+   * claims the replacement turn and the controller defers its reminder until
+   * the target is idle again.
    */
   recoverUnfinishedWork(
     bridge: DeliveryBridge,
@@ -1645,20 +1692,13 @@ export class TaskManager {
     origin: string,
   ): void {
     this.setRecoveryBridge(bridge);
-    const busyKind = this.getBusyKind(taskId);
-    if (busyKind === "agent") return;
-    if (this.state.getState(taskId).runtime.busy?.kind === "agent") return;
+    if (this.getBusyKind(taskId) === "agent") return;
     if (!this.store.getTask(taskId)) return;
-    const fields = {
-      taskId: taskId.slice(0, 8),
-      origin,
-      owesHandoff: this.handoffObligations.has(taskId),
-    };
-    if (this.store.countQueuedDeliveries(taskId) === 0 && !fields.owesHandoff) {
-      slog.debug("handoff reminder skipped", {
-        ...fields,
-        deliveryClaimed: false,
-        reason: "no_obligation",
+    if (this.store.countQueuedDeliveries(taskId) === 0) {
+      slog.debug("collaboration drain skipped", {
+        taskId: taskId.slice(0, 8),
+        origin,
+        reason: "no_delivery",
       });
       return;
     }
@@ -1675,12 +1715,7 @@ export class TaskManager {
     ) {
       return;
     }
-    if (
-      this.store.countQueuedDeliveries(taskId) === 0 &&
-      !this.handoffObligations.has(taskId)
-    ) {
-      return;
-    }
+    if (this.store.countQueuedDeliveries(taskId) === 0) return;
 
     const bridge = this.recoveryBridge;
     this.pendingWorkRecoveries.add(taskId);
@@ -1710,45 +1745,35 @@ export class TaskManager {
     ) {
       return;
     }
-    const base = { taskId: taskId.slice(0, 8), origin };
-    const owesHandoffBefore = this.handoffObligations.has(taskId);
     const drained = await this.drainCollaborationDeliveries(bridge, taskId);
-    const owesHandoffAfterDrain = this.handoffObligations.has(taskId);
-    if (drained) {
-      slog.debug("handoff reminder skipped", {
-        ...base,
-        owesHandoffBefore,
-        owesHandoffAfterDrain,
-        deliveryClaimed: true,
-        reason: "delivery_claimed",
-      });
-      return;
-    }
-    if (!owesHandoffAfterDrain) {
-      slog.debug("handoff reminder skipped", {
-        ...base,
-        owesHandoffBefore,
-        owesHandoffAfterDrain,
-        deliveryClaimed: false,
-        reason: "no_obligation",
-      });
-      return;
-    }
-    if (await this.promptHandoffReminder(bridge, taskId)) {
-      slog.debug("handoff reminder issued", {
-        ...base,
-        owesHandoffBefore,
-        owesHandoffAfterDrain,
-      });
-    } else {
-      slog.debug("handoff reminder skipped", {
-        ...base,
-        owesHandoffBefore,
-        owesHandoffAfterDrain,
-        deliveryClaimed: false,
-        reason: "not_submittable",
-      });
-    }
+    slog.debug("unfinished work recovery", {
+      taskId: taskId.slice(0, 8),
+      origin,
+      deliveryClaimed: drained,
+    });
+  }
+
+  /** A current target turn ended; the controller may enter `reminder_due`. */
+  onTargetTurnEnded(taskId: string): void {
+    this.obligations.onTargetTurnEnded(taskId);
+  }
+
+  /** Qualifying agent-runtime activity for the watchdog. */
+  noteAgentActivity(taskId: string): void {
+    this.obligations.noteAgentActivity(taskId);
+  }
+
+  /** Active directed obligation for a source→target edge, when one exists. */
+  getObligation(
+    sourceTaskId: string,
+    targetTaskId: string,
+  ): DirectedObligation | undefined {
+    return this.obligations.getActive(sourceTaskId, targetTaskId);
+  }
+
+  /** Cancel all process-local obligation scheduling (shutdown/tests). */
+  dispose(): void {
+    this.obligations.dispose();
   }
 
   /**
@@ -1775,6 +1800,7 @@ export class TaskManager {
           body,
           obligation.sourceTaskId,
         );
+        this.pendingDispatchRetries.delete(obligationId);
         return {
           collaborationMessageId,
           accountTargetTaskId: obligation.sourceTaskId,
@@ -1783,11 +1809,55 @@ export class TaskManager {
     });
   }
 
-  /** Submit one accounting reminder; implemented with the arming path. */
-  private submitObligationReminder(
-    _obligation: DirectedObligation,
+  /**
+   * Submit one closing accounting prompt and record a truthful accepted
+   * reminder event. Returns false when the bridge rejects the submission; a
+   * rejection never records a successful reminder and never consumes an
+   * attempt.
+   */
+  private async submitObligationReminder(
+    obligation: DirectedObligation,
   ): Promise<boolean> {
-    return Promise.resolve(false);
+    const bridge = this.recoveryBridge;
+    const task = this.store.getTask(obligation.targetTaskId);
+    if (!bridge || !task) return false;
+    if (this.resettingTasks.has(task.id) || this.rotatingTasks.has(task.id)) {
+      return false;
+    }
+    const text = handoffReminderText(obligation.id);
+    this.activePrompts.add(task.id);
+    this.syncBusy(task.id);
+    const promptId =
+      this.state.getState(task.id).runtime.busy?.promptId ?? undefined;
+    try {
+      await this.ensureResumed(bridge, task.id);
+      await bridge.prompt(task.id, text, undefined, promptId);
+      // Truthful: the reminder text reached the target, so record it now. A
+      // rejected submission records nothing.
+      this.store.saveEvent(
+        task.id,
+        "system_message",
+        {
+          kind: "handoff_reminder",
+          title: "Task handoff required",
+          body: text,
+          obligationId: obligation.id,
+        },
+        { from_ref: "system" },
+      );
+      return true;
+    } catch (error) {
+      slog.warn("handoff reminder failed", {
+        taskId: task.id.slice(0, 8),
+        obligationId: obligation.id,
+        error,
+      });
+      if (this.isCurrentPrompt(task.id, promptId)) {
+        this.activePrompts.delete(task.id);
+        this.syncBusy(task.id);
+      }
+      return false;
+    }
   }
 
   /** Emit a runtime outcome notice; implemented with the notice dispatcher. */
@@ -1799,149 +1869,6 @@ export class TaskManager {
       obligationId: notice.obligationId,
       reason: notice.reason,
     });
-  }
-
-  /**
-   * Record the lifecycle-handoff obligation for the work turn about to be
-   * submitted. The obligation is scoped to the parent edge:
-   *
-   * - a turn the user starts, or a collaboration turn whose claimed batch
-   *   includes the Task's parent, owes a handoff and sets the debt;
-   * - the reminder turn clears the debt (it is the loop guard);
-   * - a collaboration turn caused only by a sibling or by the Task's own child
-   *   (including a `blocked` handoff) neither creates nor clears debt: an
-   *   outstanding debt survives, because a later turn must still answer for the
-   *   earlier unanswered request.
-   *
-   * The debt is per Task, not per turn, so "this turn owes nothing" is never
-   * implemented as "this Task owes nothing". A user-created Task can never
-   * owe, so any debt on one is stale and is cleared.
-   *
-   * Returns whether the Task owes a handoff after this call.
-   */
-  recordHandoffObligation(
-    taskId: string,
-    opts: {
-      isHandoffReminder?: boolean;
-      /**
-       * Task ids of the collaboration senders whose messages caused this turn.
-       * Omit for a turn no collaboration message caused (a user prompt), which
-       * keeps the agent-created obligation.
-       */
-      causedBy?: readonly string[];
-    } = {},
-  ): boolean {
-    const task = this.store.getTask(taskId);
-    if (opts.isHandoffReminder) {
-      this.handoffObligations.delete(taskId);
-      return false;
-    }
-    if (task?.source !== "agent") {
-      // No debt can be legitimate for a non-agent Task; clear any stale flag.
-      this.handoffObligations.delete(taskId);
-      return false;
-    }
-    const owes =
-      opts.causedBy === undefined ||
-      (task.parent_id !== null && opts.causedBy.includes(task.parent_id));
-    if (owes) this.handoffObligations.add(taskId);
-    // A non-parent collaboration turn leaves any outstanding debt intact.
-    return this.handoffObligations.has(taskId);
-  }
-
-  /**
-   * Retire the obligation once the live turn has actually handed off. Without
-   * this, every clean `task_update(done|blocked)` turn would draw a redundant
-   * reminder turn and a duplicate status message to the parent.
-   */
-  clearHandoffObligation(taskId: string): void {
-    this.handoffObligations.delete(taskId);
-  }
-
-  /**
-   * Whether `taskId` currently owes a lifecycle handoff. The debt belongs to
-   * the Task, not to one turn: an unanswered parent-caused turn keeps owing
-   * until a `task_update` or the reminder turn settles it.
-   */
-  owesHandoff(taskId: string): boolean {
-    return this.handoffObligations.has(taskId);
-  }
-
-  /**
-   * Give an agent-created Task one closing turn when its previous prompt ended
-   * without a lifecycle handoff. The obligation was already scoped to the
-   * parent edge when that turn was submitted, so this helper only acts on the
-   * debt it finds; it never widens the scope. The reminder turn is recorded as
-   * owing nothing, so a prose-only reply to it cannot trigger another reminder.
-   *
-   * Resumes the ACP session first like every other prompt path: the bridge
-   * restores sessions lazily, so prompting a Task that is not live throws —
-   * and this reminder is the last chance to hand off, not a place to lose it.
-   */
-  async promptHandoffReminder(
-    bridge: DeliveryBridge,
-    taskId: string,
-  ): Promise<boolean> {
-    this.setRecoveryBridge(bridge);
-    const busyKind = this.getBusyKind(taskId);
-    if (busyKind === "agent") {
-      slog.debug("handoff reminder skipped", {
-        taskId: taskId.slice(0, 8),
-        reason: "busy",
-      });
-      return false;
-    }
-    // Bash runs outside the ACP session, so it must not suppress the closing
-    // ACP handoff turn. Record the overlap explicitly for diagnosis.
-    if (busyKind === "bash") {
-      slog.debug("handoff reminder allowed during bash", {
-        taskId: taskId.slice(0, 8),
-      });
-    }
-    const task = this.store.getTask(taskId);
-    if (!task) {
-      slog.debug("handoff reminder skipped", {
-        taskId: taskId.slice(0, 8),
-        reason: "task_missing",
-      });
-      return false;
-    }
-
-    this.recordHandoffObligation(taskId, { isHandoffReminder: true });
-    this.store.saveEvent(
-      taskId,
-      "system_message",
-      {
-        kind: "handoff_reminder",
-        title: "Task handoff required",
-        body: HANDOFF_REMINDER_TEXT,
-      },
-      { from_ref: "system" },
-    );
-    this.activePrompts.add(taskId);
-    this.syncBusy(taskId);
-    const promptId =
-      this.state.getState(taskId).runtime.busy?.promptId ?? undefined;
-    try {
-      await this.ensureResumed(bridge, taskId);
-      await bridge.prompt(taskId, HANDOFF_REMINDER_TEXT, undefined, promptId);
-      return true;
-    } catch (error) {
-      // The obligation was already retired when this reminder turn was
-      // recorded. Do not restore it: on a dead bridge a restored obligation
-      // would re-enter through the error event into an async retry loop, and
-      // the finished turn has no other trigger. The loss is logged instead.
-      slog.warn("handoff reminder failed", {
-        taskId: taskId.slice(0, 8),
-        obligationRetired: true,
-        error,
-      });
-      if (this.isCurrentPrompt(taskId, promptId)) {
-        this.activePrompts.delete(taskId);
-        this.syncBusy(taskId);
-      }
-      return false;
-    }
   }
 
   /**
@@ -1979,10 +1906,13 @@ export class TaskManager {
       await this.ensureResumed(bridge, taskId);
       const deliveries = this.store.claimQueuedDeliveries(taskId);
       if (deliveries.length === 0) return false;
-      // One claimed batch can span senders; the parent edge is satisfied by
-      // any of them, so collect the causing senders as a set and let
-      // recordHandoffObligation decide from the parent id.
-      const causes = new Set<string>();
+      const task = this.store.getTask(taskId);
+      // Only a direct parent dispatch carries an obligation receipt. The
+      // injected context hands the target the opaque correlation id it must
+      // echo back on `task_update`; unrelated messages carry none.
+      const qualifyingSources = new Map<string, string>();
+      const qualifyingBySource = new Map<string, string[]>();
+      const allDeliveryIds = deliveries.map((delivery) => delivery.id);
       const entries = deliveries.map((delivery) => {
         const message = this.store.getCollaborationMessage(delivery.message_id);
         if (!message) {
@@ -1990,7 +1920,6 @@ export class TaskManager {
             `Collaboration message missing: ${delivery.message_id}`,
           );
         }
-        causes.add(message.source_task_id);
         const source = this.store.getTaskIncludingDeleted(
           message.source_task_id,
         );
@@ -2002,22 +1931,46 @@ export class TaskManager {
         // reads metadata as instruction and the forwarding layer never
         // rewrites the content.
         const sourceName = source?.title ?? message.source_task_id.slice(0, 8);
-        return `From "${sourceName}" (task id ${message.source_task_id}):\n---8<---\n${message.body}\n---8<---`;
+        let obligationLine = "";
+        if (message.source_task_id === task?.parent_id) {
+          const obligation = this.obligations.getActive(
+            message.source_task_id,
+            taskId,
+          );
+          if (obligation) {
+            obligationLine = `[account obligation id: ${obligation.id}]\n`;
+            qualifyingSources.set(message.source_task_id, obligation.id);
+            const ids = qualifyingBySource.get(message.source_task_id) ?? [];
+            ids.push(delivery.id);
+            qualifyingBySource.set(message.source_task_id, ids);
+          }
+        }
+        return `From "${sourceName}" (task id ${message.source_task_id}):\n${obligationLine}---8<---\n${message.body}\n---8<---`;
       });
       this.store.updateTaskWorkflowStatus(taskId, "running");
       this.drainingCollaborationTasks.delete(taskId);
-      this.recordHandoffObligation(taskId, { causedBy: [...causes] });
       this.activePrompts.add(taskId);
       this.syncBusy(taskId);
       const promptId =
         this.state.getState(taskId).runtime.busy?.promptId ?? undefined;
+      const settleDispatches = (accepted: boolean) => {
+        for (const sourceTaskId of qualifyingSources.keys()) {
+          if (accepted) {
+            this.obligations.markDelivered(sourceTaskId, taskId);
+          } else {
+            this.obligations.markDeliveryFailed(sourceTaskId, taskId);
+          }
+        }
+      };
       void bridge
         .prompt(taskId, entries.join("\n\n"), undefined, promptId)
         .then(
           () => {
-            this.store.markCollaborationDeliveriesDelivered(
-              deliveries.map((delivery) => delivery.id),
-            );
+            this.store.markCollaborationDeliveriesDelivered(allDeliveryIds);
+            settleDispatches(true);
+            for (const obligationId of qualifyingSources.values()) {
+              this.pendingDispatchRetries.delete(obligationId);
+            }
           },
           (error: unknown) => {
             slog.error("collaboration delivery failed", {
@@ -2025,9 +1978,19 @@ export class TaskManager {
               error,
             });
             this.store.failCollaborationDeliveries(
-              deliveries.map((delivery) => delivery.id),
+              allDeliveryIds,
               "prompt_failed",
             );
+            // A qualifying dispatch is not abandoned on one rejected prompt.
+            // Hold its claimed rows for the controller's bounded initial-
+            // delivery retry, which requeues and resubmits them under
+            // backoff; an immediate idle drain would bypass that budget.
+            for (const [sourceTaskId, ids] of qualifyingBySource) {
+              const obligationId = qualifyingSources.get(sourceTaskId);
+              if (obligationId)
+                this.pendingDispatchRetries.set(obligationId, ids);
+            }
+            settleDispatches(false);
             if (!this.isCurrentPrompt(taskId, promptId)) return;
             this.activePrompts.delete(taskId);
             // Same attribution as an ACP error event: a rejected delivery

@@ -58,15 +58,19 @@ function createMockBridge(promptErrors: Array<Error | undefined> = []) {
 }
 
 /**
- * Bridge whose ACP session must be resumed before it can accept a prompt,
- * mirroring the real lazy-restore contract instead of silently accepting a
- * prompt for an unloaded session.
+ * Bridge that resolves prompts only when the test completes them, so turn
+ * boundaries can be driven in the same order as the live bridge (prompt_done
+ * fires while the prompt promise is still pending).
  */
-function createLazySessionBridge() {
-  let resumed = false;
+function createControllableBridge() {
   const calls = {
-    loadSession: 0,
-    prompts: [] as Array<{ taskId: string; text: string; promptId?: string }>,
+    prompts: [] as Array<{
+      taskId: string;
+      text: string;
+      promptId?: string;
+      resolve: () => void;
+      reject: (error: Error) => void;
+    }>,
   };
   return {
     bridge: {
@@ -77,62 +81,45 @@ function createLazySessionBridge() {
         return [];
       },
       async loadSession(taskId: string) {
-        calls.loadSession++;
-        resumed = true;
         return { taskId, configOptions: [] };
       },
-      async prompt(
+      prompt(
         taskId: string,
         text: string,
         _attachments?: unknown,
         promptId?: string,
       ) {
-        if (!resumed) throw new Error("session not live");
-        calls.prompts.push({ taskId, text, promptId });
+        return new Promise<void>((resolve, reject) => {
+          calls.prompts.push({ taskId, text, promptId, resolve, reject });
+        });
       },
     } as any,
     calls,
-    isResumed: () => resumed,
   };
 }
 
-async function startCollaborationTurn(
+/** Arm a directed obligation the way a direct parent dispatch does. */
+async function armDirectDispatch(
   store: Store,
   tasks: TaskManager,
-  bridge: Parameters<TaskManager["drainCollaborationDeliveries"]>[0],
-  body = "Continue the assigned work.",
+  bridge: any,
+  sourceTaskId: string,
+  targetTaskId: string,
+  body = "Do the assigned work.",
 ): Promise<string> {
-  store.createTask("root", "/tmp", "root", "agent-root");
-  store.createTask("source", "/tmp", "agent", "agent-source", "root");
-  // `source` is deliberately `target`'s parent: a collaboration-caused turn
-  // owes a handoff only when the claimed batch includes the Task's parent.
-  store.createTask("target", "/tmp", "agent", "agent-target", "source");
-  tasks.liveTasks.add("target");
-  store.createCollaborationMessage({
-    id: "message-1",
-    deliveryId: "delivery-1",
-    sourceTaskId: "source",
-    directTargetTaskId: "target",
-    sourceActor: "agent",
-    body,
-    createdAt: Date.now(),
-  });
-  assert.equal(
-    await tasks.drainCollaborationDeliveries(bridge, "target"),
-    true,
-  );
-  return "target";
+  const host = createMcpTaskToolHost({ store, tasks, getBridge: () => bridge });
+  await host.send(sourceTaskId, targetTaskId, body);
+  const obligation = tasks.getObligation(sourceTaskId, targetTaskId);
+  assert.ok(obligation, "a direct parent dispatch must arm an obligation");
+  return obligation.id;
 }
 
-/**
- * Start a turn the way the prompt route does: fix the handoff obligation before
- * the turn is marked busy. Returns the turn's prompt id.
- */
-function startUserTurn(tasks: TaskManager, taskId: string): string | undefined {
-  tasks.recordHandoffObligation(taskId);
-  tasks.activePrompts.add(taskId);
-  tasks.syncBusy(taskId);
-  return tasks.state.getState(taskId).runtime.busy?.promptId ?? undefined;
+/** Let queued zero-delay reminder timers and drain microtasks run. */
+async function flushTimers(): Promise<void> {
+  for (let round = 0; round < 3; round++) {
+    await new Promise<void>((resolve) => setTimeout(resolve, 1));
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
 }
 
 describe("handleAgentEvent", () => {
@@ -149,6 +136,7 @@ describe("handleAgentEvent", () => {
   afterEach(() => {
     setLogSink(null);
     setLogLevel("off");
+    tasks.dispose();
     store.close();
     rmSync(tmpDir, { recursive: true, force: true });
   });
@@ -306,502 +294,243 @@ describe("handleAgentEvent", () => {
     assert.equal(broadcasted.length, 1);
   });
 
-  it("reminds a running collaboration task to send a lifecycle handoff", async () => {
-    const { bridge, calls } = createMockBridge();
-    const taskId = await startCollaborationTurn(store, tasks, bridge);
-    const { sseManager } = createMockSseManager();
+  function seedFamily() {
+    store.createTask("grand", "/tmp", "root", "agent-grand");
+    store.createTask("parent", "/tmp", "agent", "agent-parent", "grand");
+    store.createTask("child", "/tmp", "agent", "agent-child", "parent");
+    store.createTask("sibling", "/tmp", "agent", "agent-sibling", "parent");
+    tasks.liveTasks.add("child");
+  }
 
+  function endTurn(
+    bridge: Parameters<TaskManager["drainCollaborationDeliveries"]>[0],
+    taskId: string,
+    promptId: string | undefined,
+    stopReason = "end_turn",
+  ) {
+    const { sseManager } = createMockSseManager();
     handleAgentEvent(
-      {
-        type: "prompt_done",
-        taskId,
-        promptId: calls.prompts[0].promptId,
-        stopReason: "end_turn",
-      } as any,
+      { type: "prompt_done", taskId, promptId, stopReason } as any,
       tasks,
       store,
-      bridge,
+      bridge as any,
       makeEventHandlerConfig(),
       sseManager as any,
     );
-    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
 
-    assert.equal(store.getTask(taskId)?.workflow_status, "idle");
-    assert.equal(calls.prompts.length, 2);
+  it("arms only a direct parent dispatch and injects the correlation id", async () => {
+    seedFamily();
+    const { bridge, calls } = createControllableBridge();
+    const id = await armDirectDispatch(
+      store,
+      tasks,
+      bridge,
+      "parent",
+      "child",
+      "Work on the assignment.",
+    );
+    // The target can discover the id: it is injected into the dispatch context.
+    assert.equal(calls.prompts.length, 1);
     assert.match(
-      calls.prompts[1].text,
-      /task_update\(done|task_update\(blocked/,
+      calls.prompts[0].text,
+      new RegExp(`\\[account obligation id: ${id}\\]`),
     );
-    assert.ok(
-      store
-        .getEvents(taskId)
-        .some(
-          (event) =>
-            event.type === "system_message" &&
-            JSON.parse(event.data).kind === "handoff_reminder",
-        ),
+    assert.match(calls.prompts[0].text, /Work on the assignment\./);
+    assert.equal(
+      tasks.getObligation("parent", "child")?.state,
+      "awaiting_delivery",
     );
-  });
 
-  it("does not remind again when the handoff reminder itself ends", async () => {
-    const { bridge, calls } = createMockBridge();
-    const taskId = await startCollaborationTurn(store, tasks, bridge);
-    const { sseManager } = createMockSseManager();
-
-    handleAgentEvent(
-      {
-        type: "prompt_done",
-        taskId,
-        promptId: calls.prompts[0].promptId,
-        stopReason: "end_turn",
-      } as any,
-      tasks,
-      store,
-      bridge,
-      makeEventHandlerConfig(),
-      sseManager as any,
-    );
-    await new Promise<void>((resolve) => setImmediate(resolve));
-    assert.equal(calls.prompts.length, 2);
-
-    handleAgentEvent(
-      {
-        type: "prompt_done",
-        taskId,
-        promptId: calls.prompts[1].promptId,
-        stopReason: "end_turn",
-      } as any,
-      tasks,
-      store,
-      bridge,
-      makeEventHandlerConfig(),
-      sseManager as any,
-    );
-    await new Promise<void>((resolve) => setImmediate(resolve));
-
-    assert.equal(calls.prompts.length, 2);
-  });
-
-  it("cleans up the reminder turn when the bridge rejects it", async () => {
-    const { bridge, calls } = createMockBridge([
-      undefined,
-      new Error("bridge unavailable"),
-    ]);
-    const taskId = await startCollaborationTurn(store, tasks, bridge);
-    const { sseManager } = createMockSseManager();
-
-    const lines: string[] = [];
-    const previousLevel = getLogLevel();
-    setLogLevel("debug");
-    setLogSink((_stream, line) => lines.push(line));
-    try {
-      handleAgentEvent(
-        {
-          type: "prompt_done",
-          taskId,
-          promptId: calls.prompts[0].promptId,
-          stopReason: "end_turn",
-        } as any,
-        tasks,
-        store,
-        bridge,
-        makeEventHandlerConfig(),
-        sseManager as any,
-      );
-      await new Promise<void>((resolve) => setImmediate(resolve));
-    } finally {
-      setLogSink(null);
-      setLogLevel(previousLevel);
-    }
-
-    assert.equal(calls.prompts.length, 2);
-    assert.equal(tasks.activePrompts.has(taskId), false);
-    assert.equal(tasks.getBusyKind(taskId), null);
-    assert.equal(store.getTask(taskId)?.workflow_status, "idle");
-    // A failed reminder retires the debt instead of restoring it: there is no
-    // other trigger for a finished turn, and restoring would re-enter through
-    // the error event as an async retry loop.
-    assert.equal(tasks.owesHandoff(taskId), false);
-    assert.ok(
-      lines.some(
-        (line) =>
-          line.includes("handoff reminder failed") &&
-          line.includes('"obligationRetired":true'),
-      ),
-      "the failed reminder must record that the debt is retired",
-    );
-  });
-
-  it("does not remind a user-created task after collaboration input", async () => {
-    store.createTask("root", "/tmp", "root", "agent-root");
-    store.createTask("source", "/tmp", "agent", "agent-source", "root");
-    store.createTask("manual", "/tmp", "auto", "agent-manual", "root");
-    tasks.liveTasks.add("manual");
-    store.createCollaborationMessage({
-      id: "message-1",
-      deliveryId: "delivery-1",
-      sourceTaskId: "source",
-      directTargetTaskId: "manual",
-      sourceActor: "agent",
-      body: "Important result for the user-owned task.",
-      createdAt: Date.now(),
-    });
-    const { bridge, calls } = createMockBridge();
-    const taskId = "manual";
-    await tasks.drainCollaborationDeliveries(bridge, taskId);
-    const { sseManager } = createMockSseManager();
-
-    handleAgentEvent(
-      {
-        type: "prompt_done",
-        taskId,
-        promptId: calls.prompts[0].promptId,
-        stopReason: "end_turn",
-      } as any,
-      tasks,
-      store,
-      bridge,
-      makeEventHandlerConfig(),
-      sseManager as any,
-    );
-    await new Promise<void>((resolve) => setImmediate(resolve));
-
-    assert.equal(calls.prompts.length, 1);
-    assert.equal(store.getTask(taskId)?.workflow_status, "idle");
-  });
-
-  // Acceptance (a): the obligation comes from the Task, not from how the turn
-  // started. A user-prompted turn on an agent-created Task owes a handoff.
-  it("submits a reminder while a user bash command is still running", async () => {
-    store.createTask("child", "/tmp", "agent", "agent-child");
-    const { bridge, calls } = createMockBridge();
-    const { sseManager } = createMockSseManager();
-    const promptId = startUserTurn(tasks, "child");
-    // The REST bash route permits this orthogonal user process alongside ACP
-    // work. Keeping the fake process in the map proves the reminder is sent
-    // while Bash remains active, not after it has finished.
-    tasks.runningBashProcs.set("child", {} as any);
-    const lines: string[] = [];
-    const previousLevel = getLogLevel();
-    setLogLevel("debug");
-    setLogSink((_stream, line) => lines.push(line));
-    try {
-      handleAgentEvent(
-        {
-          type: "prompt_done",
-          taskId: "child",
-          promptId,
-          stopReason: "end_turn",
-        } as any,
-        tasks,
-        store,
-        bridge,
-        makeEventHandlerConfig(),
-        sseManager as any,
-      );
-      await new Promise<void>((resolve) => setImmediate(resolve));
-    } finally {
-      setLogSink(null);
-      setLogLevel(previousLevel);
-    }
-
-    // This fails if the reminder gate still rejects every non-null
-    // getBusyKind(), which is the regression this test protects.
-    assert.equal(calls.prompts.length, 1);
-    // This fails if the Bash exception is silent or is incorrectly logged as a
-    // skipped busy reminder instead of recording the allowed overlap.
-    assert.ok(
-      lines.some((line) =>
-        line.includes("handoff reminder allowed during bash"),
-      ),
-      "parallel Bash allowance must be diagnosable",
-    );
-    assert.equal(tasks.runningBashProcs.has("child"), true);
-
-    tasks.runningBashProcs.delete("child");
-  });
-
-  it("keeps the reminder blocked by an active ACP prompt", async () => {
-    store.createTask("child", "/tmp", "agent", "agent-child");
-    const { bridge, calls } = createMockBridge();
-    tasks.recordHandoffObligation("child");
-    // A new ACP prompt is the busy condition the reminder must still reject.
-    tasks.activePrompts.add("child");
-
-    const submitted = await tasks.promptHandoffReminder(bridge, "child");
-
-    // This fails if the narrowed gate accidentally permits all busy kinds.
-    assert.equal(submitted, false);
-    assert.equal(calls.prompts.length, 0);
-  });
-
-  it("reminds an agent task whose turn was started by a user prompt", async () => {
-    store.createTask("child", "/tmp", "agent", "agent-child");
-    const { bridge, calls } = createMockBridge();
-    const { sseManager } = createMockSseManager();
-    const promptId = startUserTurn(tasks, "child");
-
-    handleAgentEvent(
-      {
-        type: "prompt_done",
-        taskId: "child",
-        promptId,
-        stopReason: "end_turn",
-      } as any,
-      tasks,
-      store,
-      bridge,
-      makeEventHandlerConfig(),
-      sseManager as any,
-    );
-    await new Promise<void>((resolve) => setImmediate(resolve));
-
-    assert.equal(calls.prompts.length, 1);
-    assert.match(calls.prompts[0].text, /Task Handoff Required/);
-  });
-
-  // Review F1: the reminder is the only prompt path that used to skip
-  // ensureResumed. Without it a non-live session rejects the prompt while the
-  // obligation is already retired, so the handoff is lost silently.
-  it("resumes a non-live session before submitting the handoff reminder", async () => {
-    store.createTask("child", "/tmp", "agent", "agent-child");
-    const { bridge, calls, isResumed } = createLazySessionBridge();
-    const { sseManager } = createMockSseManager();
-    const promptId = startUserTurn(tasks, "child");
-    assert.equal(tasks.liveTasks.has("child"), false);
-    assert.equal(calls.loadSession, 0);
-
-    handleAgentEvent(
-      {
-        type: "prompt_done",
-        taskId: "child",
-        promptId,
-        stopReason: "end_turn",
-      } as any,
-      tasks,
-      store,
-      bridge,
-      makeEventHandlerConfig(),
-      sseManager as any,
-    );
-    await new Promise<void>((resolve) => setImmediate(resolve));
-
-    assert.equal(isResumed(), true);
-    assert.equal(calls.loadSession, 1);
-    assert.equal(tasks.liveTasks.has("child"), true);
-    assert.equal(calls.prompts.length, 1);
-    assert.match(calls.prompts[0].text, /Task Handoff Required/);
-  });
-
-  // Acceptance (b): cancellation no longer drops the handoff. It changes what
-  // the reminder asks for, not whether the parent must learn the outcome.
-  it("reminds a cancelled agent-task turn and forbids resuming work", async () => {
-    store.createTask("child", "/tmp", "agent", "agent-child");
-    const { bridge, calls } = createMockBridge();
-    const { sseManager } = createMockSseManager();
-    const promptId = startUserTurn(tasks, "child");
-
-    handleAgentEvent(
-      {
-        type: "prompt_done",
-        taskId: "child",
-        promptId,
-        stopReason: "cancelled",
-      } as any,
-      tasks,
-      store,
-      bridge,
-      makeEventHandlerConfig(),
-      sseManager as any,
-    );
-    await new Promise<void>((resolve) => setImmediate(resolve));
-
-    assert.equal(calls.prompts.length, 1);
-    assert.match(calls.prompts[0].text, /Task Handoff Required/);
-    assert.match(calls.prompts[0].text, /cancelled/);
-    assert.doesNotMatch(calls.prompts[0].text, /Continue the work/);
-  });
-
-  // Acceptance (b) corollary: the old idle prerequisite silently dropped this
-  // case too — a blocked child that is woken and ends without re-handing off
-  // leaves the parent unaware unless the reminder fires while non-idle.
-  it("reminds a woken blocked agent task that ends without a handoff", async () => {
-    store.createTask("child", "/tmp", "agent", "agent-child");
-    const { bridge, calls } = createMockBridge();
-    const { sseManager } = createMockSseManager();
+    // A sibling message to the same child is ordinary delivery: it never arms.
     const host = createMcpTaskToolHost({
       store,
       tasks,
       getBridge: () => bridge,
     });
-    await host.update("child", "blocked", "waiting on a decision");
-    const promptId = startUserTurn(tasks, "child");
+    await host.send("sibling", "child", "A sibling note.");
+    // Mutation evidence: arming on any local relation puts an obligation here.
+    assert.equal(tasks.getObligation("sibling", "child"), undefined);
+    calls.prompts[0].resolve();
+    calls.prompts[1]?.resolve();
+    await flushTimers();
+  });
 
-    handleAgentEvent(
-      {
-        type: "prompt_done",
-        taskId: "child",
-        promptId,
-        stopReason: "end_turn",
-      } as any,
-      tasks,
-      store,
-      bridge,
-      makeEventHandlerConfig(),
-      sseManager as any,
-    );
-    await new Promise<void>((resolve) => setImmediate(resolve));
-
-    assert.equal(store.getTask("child")?.workflow_status, "blocked");
+  it("retries a rejected initial dispatch at an idle boundary", async () => {
+    seedFamily();
+    const { bridge, calls } = createControllableBridge();
+    const id = await armDirectDispatch(store, tasks, bridge, "parent", "child");
+    await flushTimers();
     assert.equal(calls.prompts.length, 1);
-    assert.match(calls.prompts[0].text, /Task Handoff Required/);
-  });
 
-  // Acceptance (c): a user-created Task never owes, even though a user prompt
-  // may start its turn.
-  it("does not remind a user-created task whose user turn ends", async () => {
-    store.createTask("manual", "/tmp", "auto", "agent-manual");
-    const { bridge, calls } = createMockBridge();
-    const { sseManager } = createMockSseManager();
-    const promptId = startUserTurn(tasks, "manual");
+    // The original dispatch prompt is rejected before the target sees it.
+    calls.prompts[0].reject(new Error("bridge unavailable"));
+    await flushTimers();
 
-    handleAgentEvent(
-      {
-        type: "prompt_done",
-        taskId: "manual",
-        promptId,
-        stopReason: "end_turn",
-      } as any,
-      tasks,
-      store,
-      bridge,
-      makeEventHandlerConfig(),
-      sseManager as any,
-    );
-    await new Promise<void>((resolve) => setImmediate(resolve));
-
-    assert.equal(calls.prompts.length, 0);
-  });
-
-  // Decision 7: skips were invisible, which is why the miss needed manual
-  // cross-task comparison. Every decision now names its gate inputs.
-  it("logs each handoff decision with its gate inputs", async () => {
-    store.createTask("manual", "/tmp", "auto", "agent-manual");
-    store.createTask("child", "/tmp", "agent", "agent-child");
-    const { bridge } = createMockBridge();
-    const { sseManager } = createMockSseManager();
-    const manualPromptId = startUserTurn(tasks, "manual");
-    const childPromptId = startUserTurn(tasks, "child");
-    const lines: string[] = [];
-    const previousLevel = getLogLevel();
-    setLogLevel("debug");
-    setLogSink((_stream, line) => lines.push(line));
-    try {
-      for (const [taskId, promptId] of [
-        ["manual", manualPromptId],
-        ["child", childPromptId],
-      ] as const) {
-        handleAgentEvent(
-          {
-            type: "prompt_done",
-            taskId,
-            promptId,
-            stopReason: "end_turn",
-          } as any,
-          tasks,
-          store,
-          bridge,
-          makeEventHandlerConfig(),
-          sseManager as any,
-        );
-        await new Promise<void>((resolve) => setImmediate(resolve));
-      }
-    } finally {
-      setLogSink(null);
-      setLogLevel(previousLevel);
-    }
-
-    const skipped = lines.find(
-      (line) =>
-        line.includes("handoff reminder skipped") &&
-        line.includes('"taskId":"manual"'),
-    );
-    assert.ok(skipped, "the skip must be recorded");
-    assert.match(skipped, /"owesHandoff":false/);
-    assert.match(skipped, /"reason":"no_obligation"/);
-    assert.ok(
-      lines.some(
-        (line) =>
-          line.includes("handoff reminder issued") &&
-          line.includes('"taskId":"child"'),
-      ),
-      "the reminder must be recorded",
-    );
-  });
-
-  // Acceptance (e): a claimed delivery wins the turn, and the debt survives
-  // into the next turn the drain itself starts.
-  it("delivers queued collaboration before reminding while bash runs", async () => {
-    store.createTask("root", "/tmp", "root", "agent-root");
-    store.createTask("source", "/tmp", "agent", "agent-source", "root");
-    store.createTask("target", "/tmp", "agent", "agent-target", "root");
-    tasks.liveTasks.add("target");
-    store.createCollaborationMessage({
-      id: "bash-message",
-      deliveryId: "bash-delivery",
-      sourceTaskId: "source",
-      directTargetTaskId: "target",
-      sourceActor: "agent",
-      body: "A delivery must win over the reminder.",
-      createdAt: Date.now(),
-    });
-    const { bridge, calls } = createMockBridge();
-    const { sseManager } = createMockSseManager();
-    const promptId = startUserTurn(tasks, "target");
-    tasks.runningBashProcs.set("target", {} as any);
-    const lines: string[] = [];
-    const previousLevel = getLogLevel();
-    setLogLevel("debug");
-    setLogSink((_stream, line) => lines.push(line));
-    try {
-      handleAgentEvent(
-        {
-          type: "prompt_done",
-          taskId: "target",
-          promptId,
-          stopReason: "end_turn",
-        } as any,
-        tasks,
-        store,
-        bridge,
-        makeEventHandlerConfig(),
-        sseManager as any,
-      );
-      await new Promise<void>((resolve) => setImmediate(resolve));
-    } finally {
-      setLogSink(null);
-      setLogLevel(previousLevel);
-    }
-
-    // This fails if drain still rejects Bash as busy: the reminder then wins.
+    const obligation = tasks.getObligation("parent", "child");
+    assert.ok(obligation);
+    assert.equal(obligation.state, "awaiting_delivery");
+    // The retry is held for the controller's backoff: an immediate idle drain
+    // would bypass the transport budget. Mutation evidence: requeuing in the
+    // rejection handler submits a second prompt right here.
     assert.equal(calls.prompts.length, 1);
-    // This fails if the drain loses priority to the reminder even after it
-    // submits, or if the delivery is not submitted while Bash remains active.
+
+    // The bounded retry resubmits the same dispatch with its receipt.
+    await new Promise<void>((resolve) => setTimeout(resolve, 1_100));
+    await flushTimers();
+    assert.equal(calls.prompts.length, 2);
     assert.match(
-      calls.prompts[0].text,
-      /A delivery must win over the reminder/,
+      calls.prompts[1].text,
+      new RegExp(`\\[account obligation id: ${id}\\]`),
     );
-    assert.doesNotMatch(calls.prompts[0].text, /Task Handoff Required/);
-    assert.equal(tasks.runningBashProcs.has("target"), true);
-    // This fails if Bash coexistence is allowed without the diagnostic log.
+    calls.prompts[1].resolve();
+    await flushTimers();
+  });
+
+  it("does not arm for a user-originated parent send", async () => {
+    seedFamily();
+    // A human message in the parent session is ordinary collaboration, not the
+    // parent agent's dispatch contract, even though the direction is the same.
+    // Mutation evidence: dropping the actor term arms this edge.
+    store.createCollaborationMessage({
+      id: "user-parent-message",
+      deliveryId: "user-parent-delivery",
+      sourceTaskId: "parent",
+      directTargetTaskId: "child",
+      sourceActor: "user",
+      body: "A human message in the parent session.",
+    });
+    assert.equal(tasks.getObligation("parent", "child"), undefined);
+  });
+
+  it("reminds at the dispatch turn boundary with the correlation id in the closing prompt", async () => {
+    seedFamily();
+    const { bridge, calls } = createControllableBridge();
+    const id = await armDirectDispatch(store, tasks, bridge, "parent", "child");
+    endTurn(bridge, "child", calls.prompts[0].promptId);
+    calls.prompts[0].resolve();
+    await flushTimers();
+
+    assert.equal(calls.prompts.length, 2);
+    assert.match(calls.prompts[1].text, new RegExp(`Obligation id: ${id}`));
+    assert.match(calls.prompts[1].text, /task_update\(done/);
+
+    // The successful reminder event is recorded only after the bridge accepts.
+    assert.equal(
+      store
+        .getEvents("child")
+        .some(
+          (event) =>
+            event.type === "system_message" &&
+            JSON.parse(event.data).kind === "handoff_reminder",
+        ),
+      false,
+    );
+    calls.prompts[1].resolve();
+    await flushTimers();
+    const reminder = store
+      .getEvents("child")
+      .find(
+        (event) =>
+          event.type === "system_message" &&
+          JSON.parse(event.data).kind === "handoff_reminder",
+      );
+    assert.ok(reminder, "an accepted reminder must be recorded");
+    assert.equal(JSON.parse(reminder.data).obligationId, id);
+  });
+
+  it("settles the edge on a correlated account and cancels reminders", async () => {
+    seedFamily();
+    const { bridge, calls } = createControllableBridge();
+    const id = await armDirectDispatch(store, tasks, bridge, "parent", "child");
+    endTurn(bridge, "child", calls.prompts[0].promptId);
+    calls.prompts[0].resolve();
+    await flushTimers();
+    assert.equal(calls.prompts.length, 2);
+
+    const host = createMcpTaskToolHost({
+      store,
+      tasks,
+      getBridge: () => bridge,
+    });
+    await host.update("child", "done", "Everything is verified.", id);
+
+    assert.equal(store.getTask("child")?.workflow_status, "done");
+    // Mutation evidence: not retiring on settle leaves an active obligation.
+    assert.equal(tasks.getObligation("parent", "child"), undefined);
     assert.ok(
-      lines.some((line) =>
-        line.includes("collaboration delivery allowed during bash"),
-      ),
-      "parallel Bash delivery must be diagnosable",
+      store
+        .getEvents("parent")
+        .some(
+          (event) =>
+            event.type === "system_message" &&
+            event.data.includes("Everything is verified."),
+        ),
+      "the account must reach the stored source",
     );
 
-    tasks.runningBashProcs.delete("target");
+    calls.prompts[1].resolve();
+    await flushTimers();
+    // The in-flight reminder completion must not schedule another attempt. The
+    // third prompt is the account delivery to the parent, not a reminder.
+    assert.equal(calls.prompts.filter((p) => p.taskId === "child").length, 2);
+  });
+
+  it("does not settle an open edge with an uncorrelated account", async () => {
+    seedFamily();
+    const { bridge, calls } = createControllableBridge();
+    await armDirectDispatch(store, tasks, bridge, "parent", "child");
+    endTurn(bridge, "child", calls.prompts[0].promptId);
+    calls.prompts[0].resolve();
+    await flushTimers();
+
+    const host = createMcpTaskToolHost({
+      store,
+      tasks,
+      getBridge: () => bridge,
+    });
+    await host.update("child", "done", "Report without a receipt");
+
+    assert.equal(store.getTask("child")?.workflow_status, "done");
+    const obligation = tasks.getObligation("parent", "child");
+    // Mutation evidence: recording any update as settlement closes this edge.
+    assert.ok(obligation);
+    assert.notEqual(obligation.state, "settled");
+    calls.prompts[1].resolve();
+    await flushTimers();
+  });
+
+  it("lets a queued sibling delivery claim the next turn without erasing the obligation", async () => {
+    seedFamily();
+    const { bridge, calls } = createControllableBridge();
+    const id = await armDirectDispatch(store, tasks, bridge, "parent", "child");
+    const host = createMcpTaskToolHost({
+      store,
+      tasks,
+      getBridge: () => bridge,
+    });
+    // The sibling delivery queues behind the live dispatch turn.
+    await host.send("sibling", "child", "A sibling note that settles nothing.");
+
+    endTurn(bridge, "child", calls.prompts[0].promptId);
+    calls.prompts[0].resolve();
+    await flushTimers();
+
+    // The drain microtask wins the turn over the reminder timer.
+    assert.equal(calls.prompts.length, 2);
+    assert.match(calls.prompts[1].text, /sibling note that settles nothing/);
+    assert.doesNotMatch(calls.prompts[1].text, /Obligation id/);
+    assert.ok(tasks.getObligation("parent", "child"));
+
+    // The sibling turn ends; the open obligation is recovered on the next
+    // boundary with the refreshed budget.
+    endTurn(bridge, "child", calls.prompts[1].promptId);
+    calls.prompts[1].resolve();
+    await flushTimers();
+    assert.equal(calls.prompts.length, 3);
+    assert.match(calls.prompts[2].text, new RegExp(`Obligation id: ${id}`));
+    calls.prompts[2].resolve();
+    await flushTimers();
   });
 
   it("keeps queued collaboration blocked by an active ACP prompt", async () => {
@@ -832,475 +561,156 @@ describe("handleAgentEvent", () => {
     );
   });
 
-  // Scope: an agent-created Task owes a handoff on turns the user starts and
-  // on collaboration turns whose claimed batch includes the Task's parent. A
-  // batch mixing the parent with any other sender still owes (any-cause).
-  it("owes a handoff for a collaboration turn whose batch includes the parent", async () => {
-    store.createTask("root", "/tmp", "root", "agent-root");
-    store.createTask("target", "/tmp", "agent", "agent-target", "root");
-    tasks.liveTasks.add("target");
-    store.createCollaborationMessage({
-      id: "parent-message",
-      deliveryId: "parent-delivery",
-      sourceTaskId: "root",
-      directTargetTaskId: "target",
-      sourceActor: "agent",
-      body: "A direct instruction from the parent.",
-      createdAt: Date.now(),
-    });
-    const { bridge } = createMockBridge();
+  it("does not remind for a user-started turn", async () => {
+    store.createTask("manual", "/tmp", "auto", "agent-manual");
+    const { bridge, calls } = createMockBridge();
+    tasks.activePrompts.add("manual");
+    tasks.syncBusy("manual");
+    const promptId =
+      tasks.state.getState("manual").runtime.busy?.promptId ?? undefined;
 
-    assert.equal(
-      await tasks.drainCollaborationDeliveries(bridge, "target"),
-      true,
-    );
+    endTurn(bridge, "manual", promptId);
+    await flushTimers();
 
-    // Mutation evidence: an always-false rule fails here; the old wide rule
-    // also passes, which is why this asserts the parent edge is not over-cut.
-    assert.equal(tasks.owesHandoff("target"), true);
+    // Mutation evidence: arming on a user prompt produces a reminder here.
+    assert.equal(calls.prompts.length, 0);
   });
 
-  it("owes a handoff when one claimed batch mixes the parent with a sibling", async () => {
-    store.createTask("root", "/tmp", "root", "agent-root");
-    store.createTask("sibling", "/tmp", "agent", "agent-sibling", "root");
-    store.createTask("target", "/tmp", "agent", "agent-target", "root");
-    tasks.liveTasks.add("target");
-    store.createCollaborationMessage({
-      id: "mix-parent",
-      deliveryId: "mix-parent-delivery",
-      sourceTaskId: "root",
-      directTargetTaskId: "target",
-      sourceActor: "agent",
-      body: "A parent instruction.",
-      createdAt: Date.now(),
-    });
-    store.createCollaborationMessage({
-      id: "mix-sibling",
-      deliveryId: "mix-sibling-delivery",
-      sourceTaskId: "sibling",
-      directTargetTaskId: "target",
-      sourceActor: "agent",
-      body: "A sibling note.",
-      createdAt: Date.now() + 1,
-    });
-    const { bridge, calls } = createMockBridge();
+  it("still reminds when the dispatch turn was cancelled", async () => {
+    seedFamily();
+    const { bridge, calls } = createControllableBridge();
+    const id = await armDirectDispatch(store, tasks, bridge, "parent", "child");
+    endTurn(bridge, "child", calls.prompts[0].promptId, "cancelled");
+    calls.prompts[0].resolve();
+    await flushTimers();
 
-    assert.equal(
-      await tasks.drainCollaborationDeliveries(bridge, "target"),
-      true,
-    );
-
-    // Both senders were claimed into one turn.
-    assert.match(calls.prompts[0].text, /A parent instruction/);
-    assert.match(calls.prompts[0].text, /A sibling note/);
-    // Mutation evidence: requiring the parent to be the *only* sender (an
-    // `every`/single-cause rule) fails here, which is the conservative
-    // any-cause reading this asserts.
-    assert.equal(tasks.owesHandoff("target"), true);
+    assert.equal(calls.prompts.length, 2);
+    assert.match(calls.prompts[1].text, new RegExp(`Obligation id: ${id}`));
+    calls.prompts[1].resolve();
+    await flushTimers();
   });
 
-  it("does not owe a handoff for a turn caused only by a sibling", async () => {
-    store.createTask("root", "/tmp", "root", "agent-root");
-    store.createTask("sibling", "/tmp", "agent", "agent-sibling", "root");
-    store.createTask("target", "/tmp", "agent", "agent-target", "root");
-    tasks.liveTasks.add("target");
-    store.createCollaborationMessage({
-      id: "sibling-message",
-      deliveryId: "sibling-delivery",
-      sourceTaskId: "sibling",
-      directTargetTaskId: "target",
-      sourceActor: "agent",
-      body: "A sibling note that must not demand a handoff.",
-      createdAt: Date.now(),
-    });
-    const { bridge, calls } = createMockBridge();
-    const { sseManager } = createMockSseManager();
-    const lines: string[] = [];
-    const previousLevel = getLogLevel();
-    setLogLevel("debug");
-    setLogSink((_stream, line) => lines.push(line));
-    try {
-      assert.equal(
-        await tasks.drainCollaborationDeliveries(bridge, "target"),
-        true,
-      );
-      // Fails on the pre-change wide rule, which owes on `source` alone.
-      assert.equal(tasks.owesHandoff("target"), false);
-
-      handleAgentEvent(
-        {
-          type: "prompt_done",
-          taskId: "target",
-          promptId: calls.prompts[0].promptId,
-          stopReason: "end_turn",
-        } as any,
-        tasks,
-        store,
-        bridge,
-        makeEventHandlerConfig(),
-        sseManager as any,
-      );
-      await new Promise<void>((resolve) => setImmediate(resolve));
-    } finally {
-      setLogSink(null);
-      setLogLevel(previousLevel);
-    }
-
-    // Fails on the pre-change rule: the reminder would make this 2.
+  it("resumes a non-live session before submitting the reminder", async () => {
+    seedFamily();
+    tasks.liveTasks.delete("child");
+    let resumed = false;
+    const calls = {
+      loadSession: 0,
+      prompts: [] as Array<{
+        taskId: string;
+        text: string;
+        promptId?: string;
+        resolve: () => void;
+        reject: (error: Error) => void;
+      }>,
+    };
+    const bridge = {
+      async newSession() {
+        return { sessionId: "", configOptions: [] };
+      },
+      async setConfigOption() {
+        return [];
+      },
+      async loadSession(taskId: string) {
+        calls.loadSession += 1;
+        resumed = true;
+        return { taskId, configOptions: [] };
+      },
+      prompt(
+        taskId: string,
+        text: string,
+        _attachments?: unknown,
+        promptId?: string,
+      ) {
+        if (!resumed) return Promise.reject(new Error("session not live"));
+        return new Promise<void>((resolve, reject) => {
+          calls.prompts.push({ taskId, text, promptId, resolve, reject });
+        });
+      },
+    };
+    const id = await armDirectDispatch(store, tasks, bridge, "parent", "child");
+    await flushTimers();
+    assert.equal(resumed, true);
     assert.equal(calls.prompts.length, 1);
-    assert.ok(
-      lines.some(
-        (line) =>
-          line.includes("handoff reminder skipped") &&
-          line.includes('"reason":"no_obligation"'),
-      ),
-      "the sibling-only skip must leave a trace",
-    );
+
+    endTurn(bridge, "child", calls.prompts[0].promptId);
+    calls.prompts[0].resolve();
+    await flushTimers();
+
+    assert.equal(calls.loadSession, 1);
+    assert.equal(calls.prompts.length, 2);
+    assert.match(calls.prompts[1].text, new RegExp(`Obligation id: ${id}`));
+    calls.prompts[1].resolve();
   });
 
-  it("does not owe a handoff for a turn caused only by the task's own blocked child", async () => {
-    store.createTask("root", "/tmp", "root", "agent-root");
-    store.createTask("target", "/tmp", "agent", "agent-target", "root");
-    store.createTask(
-      "grandchild",
-      "/tmp",
-      "agent",
-      "agent-grandchild",
-      "target",
+  it("records no successful reminder when the bridge rejects it", async () => {
+    seedFamily();
+    const { bridge, calls } = createControllableBridge();
+    const id = await armDirectDispatch(store, tasks, bridge, "parent", "child");
+    endTurn(bridge, "child", calls.prompts[0].promptId);
+    calls.prompts[0].resolve();
+    await flushTimers();
+    assert.equal(calls.prompts.length, 2);
+
+    calls.prompts[1].reject(new Error("bridge unavailable"));
+    await flushTimers();
+
+    // Mutation evidence: writing the reminder event before submission records
+    // a delivery the target never saw.
+    assert.equal(
+      store
+        .getEvents("child")
+        .some(
+          (event) =>
+            event.type === "system_message" &&
+            JSON.parse(event.data).kind === "handoff_reminder",
+        ),
+      false,
     );
-    tasks.liveTasks.add("target");
-    const { bridge, calls } = createMockBridge();
-    const { sseManager } = createMockSseManager();
+    assert.equal(tasks.activePrompts.has("child"), false);
+    assert.equal(tasks.getBusyKind("child"), null);
+    assert.ok(tasks.getObligation("parent", "child"));
+
+    // Settle to cancel the bounded retry budget before the test ends.
     const host = createMcpTaskToolHost({
       store,
       tasks,
       getBridge: () => bridge,
     });
-
-    // The child's typed blocked handoff is a collaboration message to its
-    // parent, so the parent's resulting turn is child-caused, not parent-caused.
-    await host.update("grandchild", "blocked", "waiting on a decision");
-    await new Promise<void>((resolve) => setImmediate(resolve));
-    assert.equal(calls.prompts.length, 1);
-    // Fails on the pre-change wide rule, which owes on `source` alone.
-    assert.equal(tasks.owesHandoff("target"), false);
-
-    handleAgentEvent(
-      {
-        type: "prompt_done",
-        taskId: "target",
-        promptId: calls.prompts[0].promptId,
-        stopReason: "end_turn",
-      } as any,
-      tasks,
-      store,
-      bridge,
-      makeEventHandlerConfig(),
-      sseManager as any,
-    );
-    await new Promise<void>((resolve) => setImmediate(resolve));
-
-    // Fails on the pre-change rule: the reminder would make this 2.
-    assert.equal(calls.prompts.length, 1);
+    await host.update("child", "done", "done", id);
+    assert.equal(tasks.getObligation("parent", "child"), undefined);
+    // Let the account delivery drain finish before the store closes.
+    await flushTimers();
+    calls.prompts.at(-1)?.resolve();
+    await flushTimers();
   });
 
-  it("keeps an outstanding handoff debt when a later sibling delivery claims the turn", async () => {
-    store.createTask("root", "/tmp", "root", "agent-root");
-    store.createTask("parent", "/tmp", "agent", "agent-parent", "root");
-    store.createTask("target", "/tmp", "agent", "agent-target", "parent");
-    store.createTask("sibling", "/tmp", "agent", "agent-sibling", "parent");
-    tasks.liveTasks.add("target");
-    const { bridge, calls } = createMockBridge();
-    const { sseManager } = createMockSseManager();
-    const lines: string[] = [];
-    const previousLevel = getLogLevel();
-    setLogLevel("debug");
-    setLogSink((_stream, line) => lines.push(line));
-
-    try {
-      // A user-started turn of `target` owes a handoff and ends without one.
-      const userPromptId = startUserTurn(tasks, "target");
-      // A sibling delivery arrives while `target` is agent-busy, so it queues
-      // behind the live turn rather than starting one.
-      store.createCollaborationMessage({
-        id: "late-sibling",
-        deliveryId: "late-sibling-delivery",
-        sourceTaskId: "sibling",
-        directTargetTaskId: "target",
-        sourceActor: "agent",
-        body: "A sibling note that arrives mid-turn.",
-        createdAt: Date.now(),
-      });
-
-      handleAgentEvent(
-        {
-          type: "prompt_done",
-          taskId: "target",
-          promptId: userPromptId,
-          stopReason: "end_turn",
-        } as any,
-        tasks,
-        store,
-        bridge,
-        makeEventHandlerConfig(),
-        sseManager as any,
-      );
-      await new Promise<void>((resolve) => setImmediate(resolve));
-
-      // The sibling batch claimed the replacement turn. It neither created nor
-      // cleared debt: `target` still owes for the unanswered user turn. This
-      // fails at d31c14f, which deleted the flag on the non-parent drain.
-      assert.equal(calls.prompts.length, 1);
-      assert.match(
-        calls.prompts[0].text,
-        /A sibling note that arrives mid-turn/,
-      );
-      assert.equal(tasks.owesHandoff("target"), true);
-
-      // The skip log must report the post-drain state, not the stale pre-drain
-      // snapshot that still read `true` while the debt was being deleted. This
-      // fails at d31c14f, which had no post-drain field.
-      const claimed = lines.find(
-        (line) =>
-          line.includes("handoff reminder skipped") &&
-          line.includes('"reason":"delivery_claimed"'),
-      );
-      assert.ok(claimed, "the claimed-delivery skip must be recorded");
-      assert.match(claimed, /"owesHandoffBefore":true/);
-      assert.match(claimed, /"owesHandoffAfterDrain":true/);
-
-      // The drain turn ends with nothing left to drain, so the preserved debt
-      // is reminded now rather than lost.
-      handleAgentEvent(
-        {
-          type: "prompt_done",
-          taskId: "target",
-          promptId: calls.prompts[0].promptId,
-          stopReason: "end_turn",
-        } as any,
-        tasks,
-        store,
-        bridge,
-        makeEventHandlerConfig(),
-        sseManager as any,
-      );
-      await new Promise<void>((resolve) => setImmediate(resolve));
-    } finally {
-      setLogSink(null);
-      setLogLevel(previousLevel);
-    }
-
-    assert.equal(calls.prompts.length, 2);
-    assert.match(calls.prompts[1].text, /Task Handoff Required/);
-  });
-
-  it("owes a handoff on a user-started turn of an agent-created task", () => {
-    store.createTask("child", "/tmp", "agent", "agent-child");
-
-    // No collaboration cause is passed for a user prompt, so the agent-created
-    // obligation is kept. Mutation evidence: an always-false rule fails here.
-    assert.equal(tasks.recordHandoffObligation("child"), true);
-    assert.equal(tasks.owesHandoff("child"), true);
-  });
-
-  it("lets a queued parent delivery claim an agent turn, then reminds on the next idle turn", async () => {
-    store.createTask("root", "/tmp", "root", "agent-root");
-    store.createTask("source", "/tmp", "agent", "agent-source", "root");
-    // `source` is `target`'s parent, so the claimed turn inherits the handoff
-    // obligation and the successor turn still reminds.
-    store.createTask("target", "/tmp", "agent", "agent-target", "source");
-    tasks.liveTasks.add("target");
-    const { bridge, calls } = createMockBridge();
-    const { sseManager } = createMockSseManager();
-    const promptId = startUserTurn(tasks, "target");
-    store.createCollaborationMessage({
-      id: "message-1",
-      deliveryId: "delivery-1",
-      sourceTaskId: "source",
-      directTargetTaskId: "target",
-      sourceActor: "agent",
-      body: "A delivery that arrived mid-turn.",
-      createdAt: Date.now(),
-    });
-
+  it("logs obligation lifecycle decisions at debug level", async () => {
+    seedFamily();
+    const { bridge, calls } = createControllableBridge();
     const lines: string[] = [];
     const previousLevel = getLogLevel();
     setLogLevel("debug");
     setLogSink((_stream, line) => lines.push(line));
     try {
-      handleAgentEvent(
-        {
-          type: "prompt_done",
-          taskId: "target",
-          promptId,
-          stopReason: "end_turn",
-        } as any,
-        tasks,
-        store,
-        bridge,
-        makeEventHandlerConfig(),
-        sseManager as any,
-      );
-      await new Promise<void>((resolve) => setImmediate(resolve));
+      await armDirectDispatch(store, tasks, bridge, "parent", "child");
+      endTurn(bridge, "child", calls.prompts[0].promptId);
+      calls.prompts[0].resolve();
+      await flushTimers();
+      calls.prompts[1].resolve();
+      await flushTimers();
     } finally {
       setLogSink(null);
       setLogLevel(previousLevel);
     }
-
-    assert.equal(calls.prompts.length, 1);
-    assert.match(calls.prompts[0].text, /A delivery that arrived mid-turn/);
-    assert.doesNotMatch(calls.prompts[0].text, /Task Handoff Required/);
     assert.ok(
-      lines.some(
-        (line) =>
-          line.includes("handoff reminder skipped") &&
-          line.includes('"reason":"delivery_claimed"'),
-      ),
-      "the claimed-delivery skip must be recorded",
+      lines.some((line) => line.includes("obligation armed")),
+      "the arm decision must be diagnosable",
     );
-
-    handleAgentEvent(
-      {
-        type: "prompt_done",
-        taskId: "target",
-        promptId: calls.prompts[0].promptId,
-        stopReason: "end_turn",
-      } as any,
-      tasks,
-      store,
-      bridge,
-      makeEventHandlerConfig(),
-      sseManager as any,
+    assert.ok(
+      lines.some((line) => line.includes("obligation reminder delivered")),
+      "the delivered reminder must be diagnosable",
     );
-    await new Promise<void>((resolve) => setImmediate(resolve));
-
-    assert.equal(calls.prompts.length, 2);
-    assert.match(calls.prompts[1].text, /Task Handoff Required/);
-  });
-
-  it("reminds after a collaboration turn reports an agent error", async () => {
-    const { bridge, calls } = createMockBridge();
-    const taskId = await startCollaborationTurn(store, tasks, bridge);
-    const { sseManager } = createMockSseManager();
-
-    handleAgentEvent(
-      {
-        type: "error",
-        taskId,
-        promptId: calls.prompts[0].promptId,
-        message: "agent failed",
-      } as any,
-      tasks,
-      store,
-      bridge,
-      makeEventHandlerConfig(),
-      sseManager as any,
-    );
-    await new Promise<void>((resolve) => setImmediate(resolve));
-
-    assert.equal(calls.prompts.length, 2);
-    assert.match(calls.prompts[1].text, /Task Handoff Required/);
-  });
-
-  it("prefers a queued collaboration delivery over a handoff reminder", async () => {
-    store.createTask("root", "/tmp", "root", "agent-root");
-    store.createTask("source", "/tmp", "agent", "agent-source", "root");
-    store.createTask("target", "/tmp", "agent", "agent-target", "root");
-    tasks.liveTasks.add("target");
-    store.createCollaborationMessage({
-      id: "message-1",
-      deliveryId: "delivery-1",
-      sourceTaskId: "source",
-      directTargetTaskId: "target",
-      sourceActor: "agent",
-      body: "Continue with the next check.",
-      createdAt: Date.now(),
-    });
-    const promptId = startUserTurn(tasks, "target");
-    const { bridge, calls } = createMockBridge();
-    const { sseManager } = createMockSseManager();
-
-    handleAgentEvent(
-      {
-        type: "prompt_done",
-        taskId: "target",
-        promptId,
-        stopReason: "end_turn",
-      } as any,
-      tasks,
-      store,
-      bridge,
-      makeEventHandlerConfig(),
-      sseManager as any,
-    );
-    await new Promise<void>((resolve) => setImmediate(resolve));
-
-    assert.equal(calls.prompts.length, 1);
-    assert.match(calls.prompts[0].text, /Continue with the next check/);
-    assert.doesNotMatch(calls.prompts[0].text, /Task Handoff Required/);
-    // The sibling sender does not include `target`'s parent, so the drain
-    // neither creates nor clears debt: the user turn's outstanding handoff
-    // survives the delivery turn. This fails at d31c14f, which dropped it.
-    assert.equal(tasks.owesHandoff("target"), true);
-  });
-
-  it("does not remind after an agent task records a done or blocked handoff", async () => {
-    const { bridge, calls } = createMockBridge();
-    const { sseManager } = createMockSseManager();
-    const host = createMcpTaskToolHost({
-      store,
-      tasks,
-      getBridge: () => bridge,
-    });
-    for (const status of ["done", "blocked"] as const) {
-      const taskId = `s1-${status}`;
-      store.createTask(taskId, "/tmp", "agent", `agent-${taskId}`);
-      const promptId = startUserTurn(tasks, taskId);
-      await host.update(taskId, status, `${status} report`);
-
-      handleAgentEvent(
-        {
-          type: "prompt_done",
-          taskId,
-          promptId,
-          stopReason: "end_turn",
-        } as any,
-        tasks,
-        store,
-        bridge,
-        makeEventHandlerConfig(),
-        sseManager as any,
-      );
-    }
-    await new Promise<void>((resolve) => setImmediate(resolve));
-
-    assert.equal(calls.prompts.length, 0);
-    assert.equal(store.getTask("s1-done")?.workflow_status, "done");
-    assert.equal(store.getTask("s1-blocked")?.workflow_status, "blocked");
-  });
-
-  it("does not remind a user-created task whose turn is cancelled", async () => {
-    store.createTask("s1", "/tmp", "auto", "agent-s1");
-    const promptId = startUserTurn(tasks, "s1");
-    const { bridge, calls } = createMockBridge();
-    const { sseManager } = createMockSseManager();
-
-    handleAgentEvent(
-      {
-        type: "prompt_done",
-        taskId: "s1",
-        promptId,
-        stopReason: "cancelled",
-      } as any,
-      tasks,
-      store,
-      bridge,
-      makeEventHandlerConfig(),
-      sseManager as any,
-    );
-    await new Promise<void>((resolve) => setImmediate(resolve));
-
-    assert.equal(calls.prompts.length, 0);
   });
 
   it("stores the turn a completion ends", () => {

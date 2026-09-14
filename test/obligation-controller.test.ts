@@ -62,6 +62,7 @@ interface Harness {
   clock: FakeClock;
   notices: ObligationNotice[];
   submissions: DirectedObligation[];
+  dispatchRetries: DirectedObligation[];
   busy: Set<string>;
   setSubmitMode: (mode: "accept" | "reject") => void;
 }
@@ -70,6 +71,7 @@ function makeController(): Harness {
   const clock = new FakeClock();
   const notices: ObligationNotice[] = [];
   const submissions: DirectedObligation[] = [];
+  const dispatchRetries: DirectedObligation[] = [];
   const busy = new Set<string>();
   let submitMode: "accept" | "reject" = "accept";
   let idSeq = 0;
@@ -87,6 +89,9 @@ function makeController(): Harness {
     emitNotice: (notice) => {
       notices.push(notice);
     },
+    retryDispatch: (obligation) => {
+      dispatchRetries.push(obligation);
+    },
     newId: () => `ob-${++idSeq}`,
   });
   return {
@@ -94,6 +99,7 @@ function makeController(): Harness {
     clock,
     notices,
     submissions,
+    dispatchRetries,
     busy,
     setSubmitMode: (mode) => {
       submitMode = mode;
@@ -134,21 +140,54 @@ describe("ObligationController", () => {
     assert.equal(h.submissions.length, 1);
   });
 
-  it("drops the edge when the qualifying dispatch is rejected", async () => {
+  it("retries a rejected initial dispatch and bounds the transport failures", async () => {
     const h = makeController();
-    h.controller.arm({
+    const obligation = h.controller.arm({
       sourceTaskId: "parent",
       targetTaskId: "child",
       messageId: "m-1",
       deliveryId: "d-1",
     });
-    h.controller.markRejected("parent", "child");
-    await tick(h, 10 * 60_000);
-    assert.equal(h.controller.getById("ob-1"), undefined);
-    assert.equal(h.submissions.length, 0);
-    // Mutation evidence: removing markRejected leaves an awaiting_delivery edge
-    // that a delivery acceptance would still open.
-    assert.equal(h.notices.length, 0);
+    h.controller.markDeliveryFailed("parent", "child");
+    assert.equal(obligation.state, "awaiting_delivery");
+    assert.equal(obligation.consecutiveSubmissionFailures, 1);
+    // Mutation evidence: dropping the edge on rejection (the prior behaviour)
+    // would leave getById undefined instead of retrying.
+    await tick(h, 1_000);
+    assert.equal(h.dispatchRetries.length, 1);
+
+    // The retry succeeds and opens the edge without consuming a reminder.
+    h.controller.markDelivered("parent", "child");
+    await tick(h);
+    assert.equal(obligation.state, "reminder_due");
+    assert.equal(obligation.consecutiveSubmissionFailures, 0);
+    assert.equal(h.submissions.length, 1);
+  });
+
+  it("exhausts awaiting_delivery after the transport bound without spending reminders", async () => {
+    const h = makeController();
+    const obligation = h.controller.arm({
+      sourceTaskId: "parent",
+      targetTaskId: "child",
+      messageId: "m-1",
+      deliveryId: "d-1",
+    });
+    for (
+      let failure = 0;
+      failure < MAX_REMINDER_SUBMISSION_FAILURES;
+      failure++
+    ) {
+      h.controller.markDeliveryFailed("parent", "child");
+    }
+    assert.equal(obligation.state, "unanswered");
+    assert.equal(obligation.deliveredAttempts, 0);
+    assert.equal(h.notices.length, 1);
+    assert.equal(h.notices[0].reason, "no_account");
+    assert.equal(h.notices[0].evidence.deliveryUnavailable, true);
+    // Mutation evidence: omitting the initial-delivery bound leaves the edge
+    // awaiting_delivery forever with no notice.
+    await tick(h, 60 * 60_000);
+    assert.equal(h.dispatchRetries.length, 0);
   });
 
   it("delivers reminders at the turn boundary and at +2m and +5m", async () => {
@@ -211,11 +250,14 @@ describe("ObligationController", () => {
     // Mutation evidence: allocating a fresh id on coalescing fails both asserts.
     assert.equal(coalesced.id, obligation.id);
     assert.equal(coalesced.deliveredAttempts, 0);
-    assert.equal(coalesced.state, "awaiting_delivery");
+    assert.equal(coalesced.state, "open");
     assert.equal(coalesced.openingMessageId, "m-2");
     h.controller.markDelivered("parent", "child");
     await tick(h);
-    // The refreshed budget is spent from the new turn boundary again.
+    // An already-open edge ignores the follow-up delivery acceptance and waits
+    // for the next turn boundary; the refreshed budget is spent there.
+    h.controller.onTargetTurnEnded("child");
+    await tick(h);
     assert.equal(coalesced.deliveredAttempts, 1);
     await tick(h, 2 * 60_000);
     assert.equal(coalesced.deliveredAttempts, 2);

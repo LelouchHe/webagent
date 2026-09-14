@@ -100,6 +100,12 @@ export interface ObligationControllerOptions {
    * prompt text so the target can name the edge.
    */
   submitReminder: (obligation: DirectedObligation) => Promise<boolean>;
+  /**
+   * Retry the original dispatch at an idle boundary after its prompt was
+   * rejected. A successful retry re-enters through `markDelivered`; a failure
+   * through `markDeliveryFailed`.
+   */
+  retryDispatch: (obligation: DirectedObligation) => void;
   /** Emit a runtime `task_outcome_notice` to the obligation's source. */
   emitNotice: (
     notice: ObligationNotice,
@@ -198,6 +204,19 @@ export class ObligationController {
     return this.active.get(activeKey(sourceTaskId, targetTaskId));
   }
 
+  /** Stop all scheduled work (shutdown/tests); the controller is then unusable. */
+  dispose(): void {
+    for (const handle of this.attemptTimers.values()) {
+      this.opts.clearTimer(handle);
+    }
+    for (const handle of this.watchdogTimers.values()) {
+      this.opts.clearTimer(handle);
+    }
+    this.attemptTimers.clear();
+    this.watchdogTimers.clear();
+    this.watchdog.clear();
+  }
+
   getById(obligationId: string): DirectedObligation | undefined {
     return this.activeById.get(obligationId) ?? this.archive.get(obligationId);
   }
@@ -234,9 +253,12 @@ export class ObligationController {
       existing.nextAttemptAt = undefined;
       existing.openingMessageId = input.messageId;
       existing.openingDeliveryId = input.deliveryId;
-      if (existing.state !== "reminder_submitting") {
-        existing.state = "awaiting_delivery";
-      }
+      // A follow-up never interrupts a running turn and never rewinds an
+      // already-delivered edge: an open account survives a failed follow-up
+      // dispatch. `awaiting_delivery` stays awaiting the new dispatch;
+      // `reminder_due` returns to `open` so the next turn boundary resumes
+      // recovery with the refreshed budget.
+      if (existing.state === "reminder_due") existing.state = "open";
       this.log("obligation coalesced", {
         obligationId: existing.id,
         targetTaskId: existing.targetTaskId.slice(0, 8),
@@ -272,7 +294,9 @@ export class ObligationController {
     const obligation = this.getActive(sourceTaskId, targetTaskId);
     if (!obligation) return;
     if (obligation.state !== "awaiting_delivery") return;
+    this.clearAttemptTimer(obligation.id);
     obligation.state = "open";
+    obligation.consecutiveSubmissionFailures = 0;
     this.log("obligation opened", {
       obligationId: obligation.id,
       targetTaskId: targetTaskId.slice(0, 8),
@@ -281,16 +305,31 @@ export class ObligationController {
   }
 
   /**
-   * The qualifying source dispatch could not be delivered. No account is
-   * requested for work the target never received; the edge is dropped. A
-   * coalesced follow-up never reaches this path with an earlier open account
-   * at stake, because coalescing only rewinds an `awaiting_delivery` record.
+   * The qualifying source dispatch could not be delivered. The record stays
+   * `awaiting_delivery` and the original delivery is retried at idle
+   * boundaries under the transport bound; it never prompts the target to
+   * account for unseen content. Three consecutive failed initial-delivery
+   * submissions end the edge with `no_account` and `delivery_unavailable`
+   * evidence. Those failures never consume the three delivered closing
+   * reminders.
    */
-  markRejected(sourceTaskId: string, targetTaskId: string): void {
+  markDeliveryFailed(sourceTaskId: string, targetTaskId: string): void {
     const obligation = this.getActive(sourceTaskId, targetTaskId);
     if (!obligation) return;
     if (obligation.state !== "awaiting_delivery") return;
-    this.discard(obligation, "delivery_rejected");
+    obligation.consecutiveSubmissionFailures += 1;
+    if (
+      obligation.consecutiveSubmissionFailures >=
+      MAX_REMINDER_SUBMISSION_FAILURES
+    ) {
+      this.exhaust(obligation, { deliveryUnavailable: true });
+      return;
+    }
+    this.log("obligation dispatch retry scheduled", {
+      obligationId: obligation.id,
+      consecutiveSubmissionFailures: obligation.consecutiveSubmissionFailures,
+    });
+    this.retrySchedule(obligation);
   }
 
   /**
@@ -305,6 +344,17 @@ export class ObligationController {
     this.watchdog.delete(obligation.id);
     if (obligation.state === "open") {
       this.maybeRemindAtBoundary(obligation);
+      return;
+    }
+    // Reminder 1 may already be `reminder_due` only because the target was
+    // busy when it became due; the turn boundary is its natural moment. Once a
+    // reminder has been delivered, keep its +2m/+5m schedule instead of
+    // restarting it on every unrelated turn.
+    if (
+      obligation.state === "reminder_due" &&
+      obligation.deliveredAttempts === 0
+    ) {
+      this.scheduleNextAttempt(obligation);
     }
   }
 
@@ -399,6 +449,14 @@ export class ObligationController {
   private runAttempt(obligationId: string): void {
     const obligation = this.activeById.get(obligationId);
     if (!obligation) return;
+    if (obligation.state === "awaiting_delivery") {
+      if (this.opts.isAgentBusy(obligation.targetTaskId)) {
+        this.retrySchedule(obligation);
+        return;
+      }
+      this.opts.retryDispatch(obligation);
+      return;
+    }
     if (obligation.state !== "reminder_due") return;
     if (this.opts.isAgentBusy(obligation.targetTaskId)) {
       this.retrySchedule(obligation);
@@ -448,20 +506,6 @@ export class ObligationController {
     }
     obligation.state = "reminder_due";
     this.scheduleNextAttempt(obligation);
-  }
-
-  private discard(obligation: DirectedObligation, reason: string): void {
-    this.clearAttemptTimer(obligation.id);
-    this.clearWatchdogTimer(obligation.id);
-    this.watchdog.delete(obligation.id);
-    this.active.delete(
-      activeKey(obligation.sourceTaskId, obligation.targetTaskId),
-    );
-    this.activeById.delete(obligation.id);
-    this.log("obligation discarded", {
-      obligationId: obligation.id,
-      reason,
-    });
   }
 
   /**

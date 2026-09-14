@@ -382,10 +382,6 @@ export function createMcpTaskToolHost(deps: {
         body,
         source.parent_id,
       );
-      // The live turn just handed off; retiring its obligation keeps the
-      // completion path from prompting a redundant reminder turn and sending
-      // the parent a duplicate status message.
-      tasks.clearHandoffObligation(sourceTaskId);
       if (collaborationMessageId && source.parent_id) {
         broadcastAccount(source.parent_id, collaborationMessageId);
         if (bridge) {

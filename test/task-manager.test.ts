@@ -95,6 +95,7 @@ describe("TaskManager", () => {
   });
 
   afterEach(() => {
+    sm.dispose();
     store.close();
     rmSync(tmpDir, { recursive: true, force: true });
   });
@@ -1446,31 +1447,32 @@ describe("TaskManager", () => {
       );
     });
 
-    it("bounds recovery to one drain and one reminder per idle transition", async () => {
-      store.createTask("child", tmpDir, "agent", "agent-child");
+    it("bounds the delivery drain to one per idle transition", async () => {
+      store.createTask("root", tmpDir, "root", "agent-root");
+      store.createTask("source", tmpDir, "agent", "agent-source", "root");
+      store.createTask("child", tmpDir, "agent", "agent-child", "root");
+      sm.liveTasks.add("child");
+      store.createCollaborationMessage({
+        id: "bounded-message",
+        deliveryId: "bounded-delivery",
+        sourceTaskId: "source",
+        directTargetTaskId: "child",
+        sourceActor: "agent",
+        body: "Drain exactly once.",
+      });
       const prompts: string[] = [];
       const bridge = makeRecoveryBridge(prompts);
       sm.setRecoveryBridge(bridge);
-      sm.recordHandoffObligation("child");
       sm.activePrompts.add("child");
       sm.syncBusy("child");
       let drainCalls = 0;
-      let reminderCalls = 0;
       const drain = sm.drainCollaborationDeliveries.bind(sm);
-      const reminder = sm.promptHandoffReminder.bind(sm);
       (sm as any).drainCollaborationDeliveries = async (
         bridgeArg: Parameters<TaskManager["drainCollaborationDeliveries"]>[0],
         taskId: string,
       ) => {
         drainCalls++;
         return drain(bridgeArg, taskId);
-      };
-      (sm as any).promptHandoffReminder = async (
-        bridgeArg: Parameters<TaskManager["promptHandoffReminder"]>[0],
-        taskId: string,
-      ) => {
-        reminderCalls++;
-        return reminder(bridgeArg, taskId);
       };
 
       sm.activePrompts.delete("child");
@@ -1486,8 +1488,8 @@ describe("TaskManager", () => {
 
       // These fail if recovery recursively re-enters or misses the transition.
       assert.equal(drainCalls, 1);
-      assert.equal(reminderCalls, 1);
       assert.equal(prompts.length, 1);
+      assert.match(prompts[0], /Drain exactly once/);
     });
 
     it("does not recover when an idle transition has no unfinished work", async () => {
