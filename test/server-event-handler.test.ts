@@ -403,6 +403,55 @@ describe("handleAgentEvent", () => {
     assert.equal(tasks.getObligation("parent", "child"), undefined);
   });
 
+  it("emits one factual no_account notice when initial delivery keeps failing", async () => {
+    seedFamily();
+    const broadcasts: Array<{
+      messageId: string;
+      sourceTaskId: string;
+      targetTaskId: string;
+      body: string;
+    }> = [];
+    tasks.setCollaborationBroadcast((event) => broadcasts.push(event));
+    const { bridge, calls } = createControllableBridge();
+    await armDirectDispatch(store, tasks, bridge, "parent", "child");
+    await flushTimers();
+    assert.equal(calls.prompts.length, 1);
+
+    calls.prompts[0].reject(new Error("down"));
+    await new Promise<void>((resolve) => setTimeout(resolve, 1_100));
+    await flushTimers();
+    assert.equal(calls.prompts.length, 2);
+    calls.prompts[1].reject(new Error("down"));
+    await new Promise<void>((resolve) => setTimeout(resolve, 2_100));
+    await flushTimers();
+    assert.equal(calls.prompts.length, 3);
+    calls.prompts[2].reject(new Error("down"));
+    await flushTimers();
+
+    assert.equal(tasks.getObligation("parent", "child")?.state, "unanswered");
+    // One notice, routed target->stored source with system actor.
+    assert.equal(broadcasts.length, 1);
+    assert.equal(broadcasts[0].sourceTaskId, "child");
+    assert.equal(broadcasts[0].targetTaskId, "parent");
+    const notice = JSON.parse(broadcasts[0].body) as {
+      obligationId: string;
+      reason: string;
+      evidence: Record<string, unknown>;
+    };
+    assert.equal(notice.reason, "no_account");
+    assert.equal(notice.evidence.deliveryUnavailable, true);
+    assert.ok(
+      store
+        .getEvents("child")
+        .some((event) => event.type === "task_outcome_notice"),
+    );
+
+    // Let the notice delivery drain finish before the store closes.
+    await flushTimers();
+    calls.prompts.at(-1)?.resolve();
+    await flushTimers();
+  });
+
   it("reminds at the dispatch turn boundary with the correlation id in the closing prompt", async () => {
     seedFamily();
     const { bridge, calls } = createControllableBridge();

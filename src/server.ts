@@ -153,32 +153,40 @@ tasks.state.onPatch((event) => {
 });
 
 let bridge: AgentBridge | null = null;
+const broadcastCollaboration = ({
+  messageId,
+  sourceTaskId,
+  targetTaskId,
+  title,
+  body,
+}: {
+  messageId: string;
+  sourceTaskId: string;
+  targetTaskId: string;
+  title: string;
+  body: string;
+}): void => {
+  for (const projection of store.listCollaborationProjections(messageId)) {
+    sseManager.broadcast({
+      type: "system_message",
+      taskId: projection.task_id,
+      kind: "collaboration",
+      messageId,
+      sourceTaskId,
+      targetTaskId,
+      role: projection.role,
+      title,
+      body,
+    });
+  }
+};
+tasks.setCollaborationBroadcast(broadcastCollaboration);
 const mcpTaskTools = createMcpTaskToolHost({
   store,
   tasks,
   getBridge: () => bridge,
   cancelTimeoutMs: config.limits.cancel_timeout,
-  broadcastCollaboration: ({
-    messageId,
-    sourceTaskId,
-    targetTaskId,
-    title,
-    body,
-  }) => {
-    for (const projection of store.listCollaborationProjections(messageId)) {
-      sseManager.broadcast({
-        type: "system_message",
-        taskId: projection.task_id,
-        kind: "collaboration",
-        messageId,
-        sourceTaskId,
-        targetTaskId,
-        role: projection.role,
-        title,
-        body,
-      });
-    }
-  },
+  broadcastCollaboration,
   broadcastTaskCreated: (event) => {
     sseManager.broadcast(buildTaskCreatedBroadcast(event));
   },
