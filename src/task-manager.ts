@@ -207,7 +207,7 @@ export class TaskManager {
   /** Process-local directed-dispatch obligation state machine. */
   private readonly obligations: ObligationController;
   /** Delivery rows currently being claimed/resolved for one target task. */
-  private readonly drainingCollaborationTasks = new Set<string>();
+  readonly drainingCollaborationTasks = new Set<string>();
   /** Tasks undergoing compact summary generation or ACP rotation. */
   readonly compactingTasks = new Set<string>();
   /** Root reset barrier covering the asynchronous tree replacement. */
@@ -1983,6 +1983,50 @@ export class TaskManager {
   }
 
   /**
+   * Record this attempt's turn identity on the target's obligation before the
+   * resume, so a resume failure is attributed to this attempt and a coalescing
+   * or replacing dispatch cannot be mutated by this attempt's late failure.
+   * Only a queued direct-parent dispatch qualifies.
+   */
+  private beginResumeAttempt(
+    taskId: string,
+  ): { sourceTaskId: string; promptId: string } | null {
+    const promptId = this.state.getState(taskId).runtime.busy?.promptId;
+    if (!promptId) return null;
+    const parentId = this.store.getTask(taskId)?.parent_id;
+    if (!parentId) return null;
+    if (!this.obligations.isOwed(parentId, taskId)) return null;
+    if (!this.store.queuedDeliverySources(taskId).includes(parentId)) {
+      return null;
+    }
+    this.obligations.beginDispatch(parentId, taskId, promptId);
+    return { sourceTaskId: parentId, promptId };
+  }
+
+  /**
+   * A resume failed, so the dispatch was never handed over. Consume the
+   * transport budget so the bounded initial-delivery retry can end in
+   * `unanswered` plus `no_account`; the controller also arms a dispatch
+   * deadline as a second backstop.
+   */
+  private failResumeAttempt(
+    taskId: string,
+    attempt: { sourceTaskId: string; promptId: string } | null,
+    error: unknown,
+  ): void {
+    slog.error("collaboration delivery resume failed", {
+      taskId: taskId.slice(0, 8),
+      error,
+    });
+    if (!attempt) return;
+    this.obligations.markDeliveryFailed(
+      attempt.sourceTaskId,
+      taskId,
+      attempt.promptId,
+    );
+  }
+
+  /**
    * Claim the complete queued Delivery snapshot for an idle target and submit
    * it as one ACP prompt. The caller never trusts a client for this decision:
    * Store rows, runtime busy state, and the bridge binding are authoritative.
@@ -2013,22 +2057,12 @@ export class TaskManager {
     }
     this.drainingCollaborationTasks.add(taskId);
     this.syncBusy(taskId);
+    const resumeAttempt = this.beginResumeAttempt(taskId);
     try {
       try {
         await this.ensureResumed(bridge, taskId);
       } catch (error) {
-        slog.error("collaboration delivery resume failed", {
-          taskId: taskId.slice(0, 8),
-          error,
-        });
-        // The dispatch was never handed over. Consume the transport budget so
-        // the bounded initial-delivery retry can end in `unanswered` plus
-        // `no_account`, rather than leaving the source waiting forever. The
-        // controller also arms a dispatch deadline as a second backstop.
-        const obligation = this.obligations.getForTarget(taskId);
-        if (obligation) {
-          this.obligations.markDeliveryFailed(obligation.sourceTaskId, taskId);
-        }
+        this.failResumeAttempt(taskId, resumeAttempt, error);
         return false;
       }
       const deliveries = this.store.claimQueuedDeliveries(taskId);

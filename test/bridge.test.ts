@@ -879,11 +879,16 @@ describe("AgentBridge", () => {
     function createMockTasks() {
       let plansCleared = false;
       let streamingClearCount = 0;
+      const abortedTaskIds: string[] = [];
       return {
+        abortedTaskIds,
         liveTasks: new Set(["s1", "s2"]),
         restoringTasks: new Set<string>(),
         activePrompts: new Set(["s1"]),
-        abortObligationTurn(_id: string) {},
+        drainingCollaborationTasks: new Set(["s3"]),
+        abortObligationTurn(id: string) {
+          abortedTaskIds.push(id);
+        },
         pendingPromptSubmissions: new Map([["s2", 22]]),
         cancelledPromptSubmissions: new Set([22]),
         runningBashProcs: new Map<string, any>(),
@@ -971,6 +976,9 @@ describe("AgentBridge", () => {
         1,
         "pending submissions should remain cancellation tombstones",
       );
+      // A drain that had started a turn but not yet issued its prompt must be
+      // aborted too, or its stale watchdog can fire after the restart.
+      assert.deepEqual([...tasks.abortedTaskIds].sort(), ["s1", "s2", "s3"]);
       assert.equal(tasks.cancelledPromptSubmissions.has(22), true);
       assert.equal(
         tasks.pendingPermissions.size,

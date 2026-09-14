@@ -537,6 +537,10 @@ export class AgentBridge extends EventEmitter {
       const busyTaskIds = new Set([
         ...tasks.activePrompts,
         ...tasks.pendingPromptSubmissions.keys(),
+        // A drain that has started a turn but not yet issued its prompt keeps
+        // the target busy; abort its watchdog too or a stale no_activity can
+        // fire after the restart.
+        ...tasks.drainingCollaborationTasks,
       ]);
       for (const id of busyTaskIds) {
         tasks.abortObligationTurn(id);

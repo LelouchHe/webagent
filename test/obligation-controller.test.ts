@@ -60,8 +60,9 @@ interface Harness {
   submissions: DirectedObligation[];
   dispatchRetries: DirectedObligation[];
   busy: Set<string>;
-  setSubmitMode: (mode: "accept" | "reject") => void;
+  setSubmitMode: (mode: "accept" | "reject" | "manual") => void;
   setTurnRunning: (running: boolean) => void;
+  resolveSubmission: (index: number, accepted: boolean) => void;
 }
 
 function makeController(): Harness {
@@ -69,8 +70,9 @@ function makeController(): Harness {
   const notices: ObligationNotice[] = [];
   const submissions: DirectedObligation[] = [];
   const dispatchRetries: DirectedObligation[] = [];
+  const pendingSubmissions: Array<(accepted: boolean) => void> = [];
   const busy = new Set<string>();
-  let submitMode: "accept" | "reject" = "accept";
+  let submitMode: "accept" | "reject" | "manual" = "accept";
   let turnRunning = true;
   const controller = new ObligationController({
     now: () => clock.now,
@@ -82,6 +84,11 @@ function makeController(): Harness {
     isTurnRunning: () => turnRunning,
     submitReminder: (obligation) => {
       submissions.push(obligation);
+      if (submitMode === "manual") {
+        return new Promise<boolean>((resolve) =>
+          pendingSubmissions.push(resolve),
+        );
+      }
       return Promise.resolve(submitMode === "accept");
     },
     emitNotice: (notice) => {
@@ -103,6 +110,11 @@ function makeController(): Harness {
     },
     setTurnRunning: (running) => {
       turnRunning = running;
+    },
+    resolveSubmission: (index, accepted) => {
+      const resolve = pendingSubmissions[index];
+      assert.ok(resolve, `no pending submission at ${index}`);
+      resolve(accepted);
     },
   };
 }
@@ -545,12 +557,14 @@ describe("ObligationController", () => {
     const obligation = armDirect(h);
 
     // Dispatch A is issued, then fails at request level and is retried.
+    h.controller.beginDispatch("parent", "child", "dispatch-A");
     h.controller.markDelivered("parent", "child", "dispatch-A");
     h.controller.markDeliveryFailed("parent", "child", "dispatch-A");
     assert.equal(obligation.state, "awaiting_delivery");
     assert.equal(obligation.consecutiveSubmissionFailures, 1);
 
     // Dispatch B is issued next and succeeds.
+    h.controller.beginDispatch("parent", "child", "dispatch-B");
     h.controller.markDelivered("parent", "child", "dispatch-B");
     h.controller.markDispatchSucceeded("parent", "child", "dispatch-B");
     assert.equal(obligation.consecutiveSubmissionFailures, 0);
@@ -566,6 +580,74 @@ describe("ObligationController", () => {
     assert.equal(obligation.consecutiveSubmissionFailures, 1);
     h.controller.markDispatchSucceeded("parent", "child", "dispatch-A");
     assert.equal(obligation.consecutiveSubmissionFailures, 1);
+  });
+
+  it("ignores a resume failure from a superseded dispatch", () => {
+    const h = makeController();
+    const obligation = armDirect(h);
+    h.controller.beginDispatch("parent", "child", "resume-A");
+    // A's resume is in flight; B coalesces onto the same edge and takes over.
+    h.controller.arm({
+      sourceTaskId: "parent",
+      targetTaskId: "child",
+      messageId: "m-2",
+      deliveryId: "d-2",
+    });
+    h.controller.beginDispatch("parent", "child", "resume-B");
+
+    // Mutation evidence: without identity scoping A's failure increments B.
+    h.controller.markDeliveryFailed("parent", "child", "resume-A");
+    assert.equal(obligation.consecutiveSubmissionFailures, 0);
+    assert.equal(obligation.dispatchPromptId, "resume-B");
+
+    h.controller.markDeliveryFailed("parent", "child", "resume-B");
+    assert.equal(obligation.consecutiveSubmissionFailures, 1);
+  });
+
+  it("ignores an in-flight reminder outcome after a coalescing follow-up", async () => {
+    const h = makeController();
+    const obligation = armOpen(h);
+    h.setSubmitMode("manual");
+    await tick(h);
+    assert.equal(h.submissions.length, 1);
+    assert.equal(obligation.state, "reminder_submitting");
+
+    // A coalescing follow-up refreshes the budget while the reminder is in
+    // flight; its epoch bump must make the old outcome count for nothing.
+    h.controller.arm({
+      sourceTaskId: "parent",
+      targetTaskId: "child",
+      messageId: "m-2",
+      deliveryId: "d-2",
+    });
+    h.resolveSubmission(0, true);
+    await tick(h);
+
+    // Mutation evidence: without the epoch check the old reminder increments
+    // the follow-up's delivered attempt.
+    assert.equal(obligation.deliveredAttempts, 0);
+  });
+
+  it("clears the dispatch deadline when a record becomes terminal", () => {
+    const h = makeController();
+    const obligation = armDirect(h);
+    h.controller.markDeliveryFailed("parent", "child");
+    h.controller.markDeliveryFailed("parent", "child");
+    h.controller.markDeliveryFailed("parent", "child");
+    assert.equal(obligation.state, "unanswered");
+    // Mutation evidence: leaving the deadline armed keeps a live timer that
+    // outlives the record.
+    assert.equal((h.controller as any).dispatchDeadlineTimers.size, 0);
+  });
+
+  it("does not let a stale hand-off take over the record", () => {
+    const h = makeController();
+    const obligation = armDirect(h);
+    h.controller.beginDispatch("parent", "child", "dispatch-A");
+    h.controller.markDelivered("parent", "child", "dispatch-B");
+    // Mutation evidence: without the hand-off identity check B opens the record.
+    assert.equal(obligation.state, "awaiting_delivery");
+    assert.equal(obligation.dispatchPromptId, "dispatch-A");
   });
 
   it("does not emit a silence notice after the turn is aborted", async () => {
