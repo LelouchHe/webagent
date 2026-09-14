@@ -58,32 +58,62 @@ The server advertises a short, generic usage contract through the MCP
 
 ```text
 Use task_create for a direct child, then immediately use task_send to give it its first instruction.
-Use task_list to check each reachable Task's workflowStatus and lastEventAt before deciding to act; workflowStatus is per turn, not a lifecycle terminal.
+Use task_list to check each reachable Task's workflowStatus, executionState, lastEventAt, and lastAgentActivityAt before deciding to act; workflowStatus is per turn, not a lifecycle terminal, and executionState is the live runtime source.
 Use task_send for normal coordination and for continuing or resuming existing Tasks; task_send is not a lifecycle handoff. Use task_update(done|blocked) for typed lifecycle handoffs. A done Task remains available and is not deleted or permanently closed.
+When a dispatch or closing prompt gives you an obligationId, copy that id into task_update(done|blocked, ..., obligationId): it settles that directed obligation. Omit it only when you have no such id, and the update then settles nothing.
 After dispatching work, end the current turn; do not poll with task_query.
 Use task_query and task_get_record only for history recovery, diagnosis, or audit.
 Omit task_id to inspect the current Task's persisted history.
 ```
 
 Clients may surface these instructions through their own discovery UI or tool;
-they are not a replacement for the individual tool descriptions. When an
-Agent-created delegated Task ends or errors a turn without a typed
-`task_update(done|blocked)` handoff, WebAgent may send one Markdown handoff
-reminder. The obligation is scoped to the parent edge: an agent-created Task
-owes a handoff on a turn the user starts, and on a collaboration turn whose
-claimed batch includes the Task's parent. A turn caused only by a sibling or by
-the Task's own child — including a `blocked` handoff — owes nothing and is never
-reminded; the parent handles a `blocked` child on its own initiative. That turn
-neither creates nor clears a debt: if an earlier turn left one outstanding, it
-survives the non-parent delivery and is reminded at the first turn that ends
-with nothing left to drain. Lateral messages therefore carry no obligation
-machinery: no extra `task_send` or `task_update` parameter, no per-counterparty
-ledger, and no expectation level.
-The user-started case is deliberate — an agent-created Task must keep reporting
-on user-prompted turns — and `workflow_status` is not a condition. The reminder
-is a closing turn: it asks the Agent to report the turn's outcome and submit
-`task_update(done|blocked)`, and it forbids starting new work. User-created
-interactive Tasks are not subject to this automatic reminder.
+they are not a replacement for the individual tool descriptions.
+
+### Directed dispatch closure
+
+An accepted **agent-authored direct parent→child dispatch** creates one
+directed obligation: a process-local record that the source is awaiting one
+account from that target. The runtime decides this at the collaboration-message
+boundary with the pure policy
+`message.source_actor === "agent" && target.parent_id === source.id`. A user
+send (including a human message in the parent session), a sibling or child
+message, the correlated account itself, and a runtime outcome notice never arm
+an obligation. The policy is derived from data the rows already carry: there is
+no classification field at message creation and no body inspection.
+
+The obligation id is a **correlation receipt, not an intent or expectation
+control**. The runtime injects it into the dispatch context and repeats it in
+every closing prompt so the target can name the edge it is closing. There is no
+expectation level, no per-counterparty ledger, and no separate lifecycle status
+beyond the existing `running`/`idle`/`blocked`/`done` report.
+
+The target closes the edge with a correlated `task_update(done|blocked, ...)`
+using that id, which also updates the target's reported `workflow_status` and
+creates the account message to the **stored source**, even if the tree changed
+since arming. An uncorrelated `task_update` (no id) is still recorded and sent
+to the current parent, but it settles no obligation.
+
+If a dispatch turn ends without a correlated account, the controller submits up
+to three delivered closing reminders: one at the turn boundary, one two minutes
+after the previous delivered reminder, and one five minutes after that. A
+rejected submission never consumes a delivered attempt: it is retried with
+backoff while the target is idle, and three consecutive submission failures end
+the edge with a factual `no_account` notice carrying `delivery_unavailable`
+evidence. A rejected **initial** dispatch is retried the same way instead of
+being abandoned. When the last delivered reminder completes without a matching
+account the edge becomes `unanswered` and the source receives exactly one
+`no_account` notice; a later account with the same id still settles it.
+
+The `no_account` notice is a `task_outcome_notice` collaboration message with a
+system actor, routed target→stored source, so it cannot arm an obligation. The
+watchdog is independent: while a target turn with an active obligation runs, a
+quiet stretch of `SILENCE_THRESHOLD_S = 900` emits one heuristic `no_activity`
+notice per edge×turn, never changes obligation state, and shares no limiter with
+the exhaustion notice.
+
+Obligation state is process-local runtime memory. It is not persisted, does not
+survive a restart, and carries no cross-restart recovery promise.
+
 Detailed workflow guidance belongs in
 the [Task Manual](task-manual.md) or an on-demand skill.
 
@@ -120,13 +150,13 @@ WebAgent does not automatically rebroadcast raw child reports to ancestors.
 
 | Tool | Purpose |
 | --- | --- |
-| `task_list` | List the current task and its locally reachable parent, children, and siblings, each with `workflowStatus` and `lastEventAt` for triage. |
+| `task_list` | List the current task and its locally reachable parent, children, and siblings, each with `workflowStatus`, `executionState`, `lastEventAt`, and `lastAgentActivityAt` for triage. |
 | `task_query` | Read a bounded, compact history page for the current task or one visible relative. |
 | `task_get_record` | Read one complete persisted history record by task-local sequence. |
 | `task_cancel` | Stop the current execution of a child Task while preserving its history. |
 | `task_create` | Create a direct child Task with optional execution overrides. Use `task_send` for its first instruction. |
 | `task_send` | Send a durable coordination message, including follow-up or resume instructions for an existing Task. Use `task_update` for typed `blocked`/`done` status. |
-| `task_update` | Send a typed `blocked` or `done` lifecycle handoff for the current Task; this does not delete or permanently close it. |
+| `task_update` | Send a typed `blocked` or `done` lifecycle account for the current Task. Pass the optional `obligationId` correlation receipt from a dispatch or closing prompt to settle that directed obligation; this does not delete or permanently close the Task. |
 
 ### `task_list`
 
@@ -142,7 +172,9 @@ type McpTaskListItem = {
   title: string;
   relation: "self" | "parent" | "child" | "sibling";
   workflowStatus: "running" | "idle" | "blocked" | "done";
+  executionState: "idle" | "agent" | "bash";
   lastEventAt: string | null;
+  lastAgentActivityAt: string | null;
 };
 ```
 
@@ -152,6 +184,12 @@ later message and run again, so `done` means the Task reported complete for that
 turn, not that it is finished forever. Use `task_list` to decide whether to act
 on a Task; use `task_query` only for history recovery or diagnosis, not to poll.
 
+`executionState` is the live runtime source: `agent` while an ACP turn or a
+collaboration delivery is running, `bash` while a user shell command owns the
+Task, and `idle` otherwise. It is execution telemetry, not a quality signal, and
+it is deliberately separate from `workflowStatus`, which is only the last typed
+report.
+
 `lastEventAt` is the `created_at` of the Task's most recent persisted event, any
 type — the Task's own activity clock, not its user-visible `last_active_at`.
 It uses the same representation as other MCP timestamps: SQLite
@@ -160,6 +198,12 @@ It uses the same representation as other MCP timestamps: SQLite
 the Task has no persisted events yet. A stale `lastEventAt` next to
 `workflowStatus: "running"` is a **lag signal, not proof of work**: a long
 silent tool call can look stale while the Task is still running.
+
+`lastAgentActivityAt` is an ISO-8601 timestamp of the Task's latest qualifying
+agent-runtime event (assistant or thinking chunks, tool calls, plans, or
+permission requests), or `null` when none has been observed. Unlike
+`lastEventAt`, it ignores user and system events, so a running turn with no
+agent activity is a silence signal rather than an activity claim.
 
 ### `task_query`
 
@@ -333,13 +377,29 @@ findings are not discarded because the message is coordination.
 
 ### `task_update`
 
-Submit a typed lifecycle handoff for the current Task:
+Submit a typed lifecycle account for the current Task:
+
+```ts
+task_update(status: "blocked" | "done", body: string, obligationId?: string)
+```
 
 - `blocked`: explain the missing input or decision and how the Task can resume;
 - `done`: provide the result, completion evidence, limitations, and useful next
   step.
 
-A `done` handoff is a result submission, not proof that the parent has accepted
+The optional `obligationId` is a **correlation receipt**. Copy it from the
+dispatch context or from a closing-handoff prompt to close that directed
+obligation: the runtime validates the id against the stored source/target edge,
+records the update transactionally, and retires the edge. An unknown, stale,
+wrong-target, or already-settled id makes no state or message change and the
+tool call fails with `obligation_not_found`; it never silently falls back to the
+uncorrelated path.
+
+Omit `obligationId` when you have no open receipt (for example answering a user
+prompt). The update is still recorded and reported to the current parent, but it
+settles nothing, so an open obligation remains open and will still be recovered.
+
+A `done` account is a result submission, not proof that the parent has accepted
 it. The parent or verifier checks the original Task Contract and may accept it,
 request focused follow-up with `task_send`, or keep it blocked. The Task and its
 history remain available after either status.

@@ -82,16 +82,15 @@ automatically require a lifecycle handoff after each turn.
 
 After a parent accepts a result, the Task remains available for history and
 follow-up. A retrospective may be recorded after acceptance, but it is not a
-prerequisite for accepting the result. If a delegated turn ends without a
-typed handoff, WebAgent may send one automatic Markdown reminder; this is a
-recovery aid, not a substitute for the Agent's typed handoff. That obligation
-is scoped to the parent edge: a turn the user starts owes, a collaboration turn
-owes only when its claimed batch includes the Task's parent, and a turn caused
-only by a sibling or by the Task's own child — including a `blocked` handoff —
-owes nothing. Such a non-parent turn neither creates nor clears a debt: if an
-earlier turn left one outstanding, it survives the delivery and is reminded at
-the first turn that ends with nothing left to drain. Lateral messages carry no
-obligation machinery.
+prerequisite for accepting the result. If an agent-authored direct parent→child
+dispatch turn ends without a correlated account, WebAgent may send up to three
+closing reminders; this is a recovery aid, not a substitute for the Agent's
+typed account. The dispatch context and each reminder carry an `obligationId`
+that the Agent must copy into `task_update(done|blocked, ..., obligationId)` to
+close that edge. The id is only a correlation receipt; it carries no
+expectation level, per-counterparty ledger, or extra lifecycle status. A user
+prompt, a sibling or child message, and a runtime notice never create an
+obligation, so a lateral turn neither arms nor clears one.
 
 ## Communicate through messages
 
