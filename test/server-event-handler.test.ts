@@ -9,6 +9,7 @@ import { handleAgentEvent } from "../src/event-handler.ts";
 import { createMcpTaskToolHost } from "../src/mcp/task-host.ts";
 import { getLogLevel, setLogLevel, setLogSink } from "../src/log.ts";
 import type { AgentEvent } from "../src/types.ts";
+import type { DirectedObligation } from "../src/obligation-controller.ts";
 import { makeEventHandlerConfig } from "./fixtures.ts";
 
 function createMockSseManager() {
@@ -106,12 +107,12 @@ async function armDirectDispatch(
   sourceTaskId: string,
   targetTaskId: string,
   body = "Do the assigned work.",
-): Promise<string> {
+): Promise<DirectedObligation> {
   const host = createMcpTaskToolHost({ store, tasks, getBridge: () => bridge });
   await host.send(sourceTaskId, targetTaskId, body);
   const obligation = tasks.getObligation(sourceTaskId, targetTaskId);
   assert.ok(obligation, "a direct parent dispatch must arm an obligation");
-  return obligation.id;
+  return obligation;
 }
 
 /** Let queued zero-delay reminder timers and drain microtasks run. */
@@ -319,10 +320,10 @@ describe("handleAgentEvent", () => {
     );
   }
 
-  it("arms only a direct parent dispatch and injects the correlation id", async () => {
+  it("arms a direct parent dispatch and leaves unrelated sends ordinary", async () => {
     seedFamily();
     const { bridge, calls } = createControllableBridge();
-    const id = await armDirectDispatch(
+    const obligation = await armDirectDispatch(
       store,
       tasks,
       bridge,
@@ -330,17 +331,11 @@ describe("handleAgentEvent", () => {
       "child",
       "Work on the assignment.",
     );
-    // The target can discover the id: it is injected into the dispatch context.
     assert.equal(calls.prompts.length, 1);
-    assert.match(
-      calls.prompts[0].text,
-      new RegExp(`\\[account obligation id: ${id}\\]`),
-    );
     assert.match(calls.prompts[0].text, /Work on the assignment\./);
-    assert.equal(
-      tasks.getObligation("parent", "child")?.state,
-      "awaiting_delivery",
-    );
+    // No correlation token is injected: settlement is derived from the record.
+    assert.doesNotMatch(calls.prompts[0].text, /obligation id/i);
+    assert.equal(obligation.state, "awaiting_delivery");
 
     // A sibling message to the same child is ordinary delivery: it never arms.
     const host = createMcpTaskToolHost({
@@ -349,7 +344,7 @@ describe("handleAgentEvent", () => {
       getBridge: () => bridge,
     });
     await host.send("sibling", "child", "A sibling note.");
-    // Mutation evidence: arming on any local relation puts an obligation here.
+    // Mutation evidence: arming on any local relation puts a record here.
     assert.equal(tasks.getObligation("sibling", "child"), undefined);
     calls.prompts[0].resolve();
     calls.prompts[1]?.resolve();
@@ -359,7 +354,7 @@ describe("handleAgentEvent", () => {
   it("retries a rejected initial dispatch at an idle boundary", async () => {
     seedFamily();
     const { bridge, calls } = createControllableBridge();
-    const id = await armDirectDispatch(store, tasks, bridge, "parent", "child");
+    await armDirectDispatch(store, tasks, bridge, "parent", "child");
     await flushTimers();
     assert.equal(calls.prompts.length, 1);
 
@@ -375,14 +370,11 @@ describe("handleAgentEvent", () => {
     // rejection handler submits a second prompt right here.
     assert.equal(calls.prompts.length, 1);
 
-    // The bounded retry resubmits the same dispatch with its receipt.
+    // The bounded retry resubmits the same dispatch.
     await new Promise<void>((resolve) => setTimeout(resolve, 1_100));
     await flushTimers();
     assert.equal(calls.prompts.length, 2);
-    assert.match(
-      calls.prompts[1].text,
-      new RegExp(`\\[account obligation id: ${id}\\]`),
-    );
+    assert.match(calls.prompts[1].text, /Do the assigned work\./);
     calls.prompts[1].resolve();
     await flushTimers();
   });
@@ -434,10 +426,17 @@ describe("handleAgentEvent", () => {
     assert.equal(broadcasts[0].sourceTaskId, "child");
     assert.equal(broadcasts[0].targetTaskId, "parent");
     const notice = JSON.parse(broadcasts[0].body) as {
-      obligationId: string;
+      sourceTaskId: string;
+      targetTaskId: string;
+      openingMessageId: string;
+      openingDeliveryId: string;
       reason: string;
       evidence: Record<string, unknown>;
     };
+    assert.equal(notice.sourceTaskId, "parent");
+    assert.equal(notice.targetTaskId, "child");
+    assert.ok(notice.openingMessageId);
+    assert.ok(notice.openingDeliveryId);
     assert.equal(notice.reason, "no_account");
     assert.equal(notice.evidence.deliveryUnavailable, true);
     assert.ok(
@@ -452,17 +451,19 @@ describe("handleAgentEvent", () => {
     await flushTimers();
   });
 
-  it("reminds at the dispatch turn boundary with the correlation id in the closing prompt", async () => {
+  it("reminds at the dispatch turn boundary and states the closing-only contract", async () => {
     seedFamily();
     const { bridge, calls } = createControllableBridge();
-    const id = await armDirectDispatch(store, tasks, bridge, "parent", "child");
+    await armDirectDispatch(store, tasks, bridge, "parent", "child");
     endTurn(bridge, "child", calls.prompts[0].promptId);
     calls.prompts[0].resolve();
     await flushTimers();
 
     assert.equal(calls.prompts.length, 2);
-    assert.match(calls.prompts[1].text, new RegExp(`Obligation id: ${id}`));
     assert.match(calls.prompts[1].text, /task_update\(done/);
+    // The reminder's whole behavioural contract is prose: closing only.
+    assert.match(calls.prompts[1].text, /do not start any new work/i);
+    assert.doesNotMatch(calls.prompts[1].text, /obligation id/i);
 
     // The successful reminder event is recorded only after the bridge accepts.
     assert.equal(
@@ -485,13 +486,22 @@ describe("handleAgentEvent", () => {
           JSON.parse(event.data).kind === "handoff_reminder",
       );
     assert.ok(reminder, "an accepted reminder must be recorded");
-    assert.equal(JSON.parse(reminder.data).obligationId, id);
+    const payload = JSON.parse(reminder.data) as {
+      sourceTaskId: string;
+      targetTaskId: string;
+      openingMessageId: string;
+      openingDeliveryId: string;
+    };
+    assert.equal(payload.sourceTaskId, "parent");
+    assert.equal(payload.targetTaskId, "child");
+    assert.ok(payload.openingMessageId);
+    assert.ok(payload.openingDeliveryId);
   });
 
-  it("settles the edge on a correlated account and cancels reminders", async () => {
+  it("settles the record from the current eligible turn and routes to the stored source", async () => {
     seedFamily();
     const { bridge, calls } = createControllableBridge();
-    const id = await armDirectDispatch(store, tasks, bridge, "parent", "child");
+    await armDirectDispatch(store, tasks, bridge, "parent", "child");
     endTurn(bridge, "child", calls.prompts[0].promptId);
     calls.prompts[0].resolve();
     await flushTimers();
@@ -502,11 +512,11 @@ describe("handleAgentEvent", () => {
       tasks,
       getBridge: () => bridge,
     });
-    await host.update("child", "done", "Everything is verified.", id);
+    await host.update("child", "done", "Everything is verified.");
 
     assert.equal(store.getTask("child")?.workflow_status, "done");
-    // Mutation evidence: not retiring on settle leaves an active obligation.
-    assert.equal(tasks.getObligation("parent", "child"), undefined);
+    // Mutation evidence: not retiring on settle leaves a non-terminal record.
+    assert.equal(tasks.getObligation("parent", "child")?.state, "settled");
     assert.ok(
       store
         .getEvents("parent")
@@ -520,15 +530,54 @@ describe("handleAgentEvent", () => {
 
     calls.prompts[1].resolve();
     await flushTimers();
-    // The in-flight reminder completion must not schedule another attempt. The
-    // third prompt is the account delivery to the parent, not a reminder.
-    assert.equal(calls.prompts.filter((p) => p.taskId === "child").length, 2);
+    assert.equal(
+      calls.prompts.filter((prompt) => prompt.taskId === "child").length,
+      2,
+    );
   });
 
-  it("routes a correlated account to the stored source after a tree change", async () => {
+  it("does not settle while the record is awaiting_delivery and still routes to the stored source", async () => {
     seedFamily();
     const { bridge, calls } = createControllableBridge();
-    const id = await armDirectDispatch(store, tasks, bridge, "parent", "child");
+    await armDirectDispatch(store, tasks, bridge, "parent", "child");
+    await flushTimers();
+
+    const host = createMcpTaskToolHost({
+      store,
+      tasks,
+      getBridge: () => bridge,
+    });
+    // The dispatch turn is active, but the record has not been accepted yet.
+    await host.update("child", "done", "Early report.");
+
+    assert.equal(
+      tasks.getObligation("parent", "child")?.state,
+      "awaiting_delivery",
+    );
+    assert.ok(
+      store
+        .getEvents("parent")
+        .some(
+          (event) =>
+            event.type === "system_message" &&
+            event.data.includes("Early report."),
+        ),
+      "a report with an existing record still reaches the stored source",
+    );
+
+    calls.prompts[0].resolve();
+    await flushTimers();
+    calls.prompts.at(-1)?.resolve();
+    await flushTimers();
+  });
+
+  it("routes an account to the stored source after a tree change", async () => {
+    seedFamily();
+    const { bridge, calls } = createControllableBridge();
+    await armDirectDispatch(store, tasks, bridge, "parent", "child");
+    endTurn(bridge, "child", calls.prompts[0].promptId);
+    calls.prompts[0].resolve();
+    await flushTimers();
     // The tree changes after arming: child is reparented under a sibling.
     store["db"]
       .prepare("UPDATE tasks SET parent_id = ? WHERE id = ?")
@@ -539,7 +588,7 @@ describe("handleAgentEvent", () => {
       tasks,
       getBridge: () => bridge,
     });
-    await host.update("child", "done", "Stored-source account.", id);
+    await host.update("child", "done", "Stored-source account.");
 
     // Mutation evidence: routing to the current parent_id sends this to
     // "sibling" instead, leaving the originally accountable source unaware.
@@ -563,40 +612,14 @@ describe("handleAgentEvent", () => {
         ),
       false,
     );
-    // Let the account delivery drain finish.
-    await flushTimers();
-    calls.prompts.at(-1)?.resolve();
-    await flushTimers();
-  });
-
-  it("does not settle an open edge with an uncorrelated account", async () => {
-    seedFamily();
-    const { bridge, calls } = createControllableBridge();
-    await armDirectDispatch(store, tasks, bridge, "parent", "child");
-    endTurn(bridge, "child", calls.prompts[0].promptId);
-    calls.prompts[0].resolve();
-    await flushTimers();
-
-    const host = createMcpTaskToolHost({
-      store,
-      tasks,
-      getBridge: () => bridge,
-    });
-    await host.update("child", "done", "Report without a receipt");
-
-    assert.equal(store.getTask("child")?.workflow_status, "done");
-    const obligation = tasks.getObligation("parent", "child");
-    // Mutation evidence: recording any update as settlement closes this edge.
-    assert.ok(obligation);
-    assert.notEqual(obligation.state, "settled");
     calls.prompts[1].resolve();
     await flushTimers();
   });
 
-  it("lets a queued sibling delivery claim the next turn without erasing the obligation", async () => {
+  it("lets a queued sibling delivery claim the next turn without erasing the record", async () => {
     seedFamily();
     const { bridge, calls } = createControllableBridge();
-    const id = await armDirectDispatch(store, tasks, bridge, "parent", "child");
+    await armDirectDispatch(store, tasks, bridge, "parent", "child");
     const host = createMcpTaskToolHost({
       store,
       tasks,
@@ -612,16 +635,14 @@ describe("handleAgentEvent", () => {
     // The drain microtask wins the turn over the reminder timer.
     assert.equal(calls.prompts.length, 2);
     assert.match(calls.prompts[1].text, /sibling note that settles nothing/);
-    assert.doesNotMatch(calls.prompts[1].text, /Obligation id/);
+    assert.doesNotMatch(calls.prompts[1].text, /Task Handoff Required/);
     assert.ok(tasks.getObligation("parent", "child"));
 
-    // The sibling turn ends; the open obligation is recovered on the next
-    // boundary with the refreshed budget.
     endTurn(bridge, "child", calls.prompts[1].promptId);
     calls.prompts[1].resolve();
     await flushTimers();
     assert.equal(calls.prompts.length, 3);
-    assert.match(calls.prompts[2].text, new RegExp(`Obligation id: ${id}`));
+    assert.match(calls.prompts[2].text, /Task Handoff Required/);
     calls.prompts[2].resolve();
     await flushTimers();
   });
@@ -645,7 +666,6 @@ describe("handleAgentEvent", () => {
 
     const drained = await tasks.drainCollaborationDeliveries(bridge, "target");
 
-    // This fails if the narrowed guard permits all busy kinds, including ACP.
     assert.equal(drained, false);
     assert.equal(calls.prompts.length, 0);
     assert.equal(
@@ -672,13 +692,63 @@ describe("handleAgentEvent", () => {
   it("still reminds when the dispatch turn was cancelled", async () => {
     seedFamily();
     const { bridge, calls } = createControllableBridge();
-    const id = await armDirectDispatch(store, tasks, bridge, "parent", "child");
+    await armDirectDispatch(store, tasks, bridge, "parent", "child");
     endTurn(bridge, "child", calls.prompts[0].promptId, "cancelled");
     calls.prompts[0].resolve();
     await flushTimers();
 
     assert.equal(calls.prompts.length, 2);
-    assert.match(calls.prompts[1].text, new RegExp(`Obligation id: ${id}`));
+    assert.match(calls.prompts[1].text, /do not start any new work/i);
+    calls.prompts[1].resolve();
+    await flushTimers();
+  });
+
+  it("does not settle from a turn that started before deliveredAt", async () => {
+    seedFamily();
+    const { bridge, calls } = createControllableBridge();
+    const obligation = await armDirectDispatch(
+      store,
+      tasks,
+      bridge,
+      "parent",
+      "child",
+    );
+    endTurn(bridge, "child", calls.prompts[0].promptId);
+    calls.prompts[0].resolve();
+    await flushTimers();
+    assert.ok(obligation.deliveredAt);
+    const deliveredAt = obligation.deliveredAt;
+
+    // Force the active turn to look older than the accepted dispatch.
+    tasks.state.patch("child", {
+      runtime: {
+        busy: {
+          kind: "agent",
+          since: new Date(deliveredAt - 10_000).toISOString(),
+          promptId: "prompt-early",
+          cancelStatus: null,
+        },
+      },
+    });
+    const host = createMcpTaskToolHost({
+      store,
+      tasks,
+      getBridge: () => bridge,
+    });
+    await host.update("child", "done", "Report from an early turn.");
+
+    // Mutation evidence: ignoring the turn guard settles the record here.
+    assert.notEqual(tasks.getObligation("parent", "child")?.state, "settled");
+    assert.ok(
+      store
+        .getEvents("parent")
+        .some(
+          (event) =>
+            event.type === "system_message" &&
+            event.data.includes("Report from an early turn."),
+        ),
+      "an ineligible report is still routed to the stored source",
+    );
     calls.prompts[1].resolve();
     await flushTimers();
   });
@@ -721,7 +791,7 @@ describe("handleAgentEvent", () => {
         });
       },
     };
-    const id = await armDirectDispatch(store, tasks, bridge, "parent", "child");
+    await armDirectDispatch(store, tasks, bridge, "parent", "child");
     await flushTimers();
     assert.equal(resumed, true);
     assert.equal(calls.prompts.length, 1);
@@ -732,14 +802,14 @@ describe("handleAgentEvent", () => {
 
     assert.equal(calls.loadSession, 1);
     assert.equal(calls.prompts.length, 2);
-    assert.match(calls.prompts[1].text, new RegExp(`Obligation id: ${id}`));
+    assert.match(calls.prompts[1].text, /do not start any new work/i);
     calls.prompts[1].resolve();
   });
 
   it("records no successful reminder when the bridge rejects it", async () => {
     seedFamily();
     const { bridge, calls } = createControllableBridge();
-    const id = await armDirectDispatch(store, tasks, bridge, "parent", "child");
+    await armDirectDispatch(store, tasks, bridge, "parent", "child");
     endTurn(bridge, "child", calls.prompts[0].promptId);
     calls.prompts[0].resolve();
     await flushTimers();
@@ -770,9 +840,7 @@ describe("handleAgentEvent", () => {
       tasks,
       getBridge: () => bridge,
     });
-    await host.update("child", "done", "done", id);
-    assert.equal(tasks.getObligation("parent", "child"), undefined);
-    // Let the account delivery drain finish before the store closes.
+    await host.update("child", "done", "done");
     await flushTimers();
     calls.prompts.at(-1)?.resolve();
     await flushTimers();

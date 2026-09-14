@@ -7,6 +7,7 @@ import {
   SILENCE_THRESHOLD_S,
   type DirectedObligation,
   type ObligationNotice,
+  type SettlementDecision,
   type TimerHandle,
 } from "../src/obligation-controller.ts";
 
@@ -51,12 +52,6 @@ class FakeClock {
 
 const flush = () => new Promise<void>((resolve) => setImmediate(resolve));
 
-/** Fire due timers at the current instant, then drain microtasks. */
-async function tick(h: Harness, ms = 0): Promise<void> {
-  h.clock.advance(ms);
-  await flush();
-}
-
 interface Harness {
   controller: ObligationController;
   clock: FakeClock;
@@ -74,7 +69,6 @@ function makeController(): Harness {
   const dispatchRetries: DirectedObligation[] = [];
   const busy = new Set<string>();
   let submitMode: "accept" | "reject" = "accept";
-  let idSeq = 0;
   const controller = new ObligationController({
     now: () => clock.now,
     setTimer: (fn, ms) => clock.setTimer(fn, ms),
@@ -92,7 +86,6 @@ function makeController(): Harness {
     retryDispatch: (obligation) => {
       dispatchRetries.push(obligation);
     },
-    newId: () => `ob-${++idSeq}`,
   });
   return {
     controller,
@@ -107,29 +100,42 @@ function makeController(): Harness {
   };
 }
 
-function armOpen(h: Harness): DirectedObligation {
-  const obligation = h.controller.arm({
+async function tick(h: Harness, ms = 0): Promise<void> {
+  h.clock.advance(ms);
+  await flush();
+}
+
+function armDirect(h: Harness): DirectedObligation {
+  return h.controller.arm({
     sourceTaskId: "parent",
     targetTaskId: "child",
     messageId: "m-1",
     deliveryId: "d-1",
   });
+}
+
+function armOpen(h: Harness): DirectedObligation {
+  const obligation = armDirect(h);
   h.controller.markDelivered("parent", "child");
   return obligation;
+}
+
+function settleNow(
+  h: Harness,
+  run: (decision: SettlementDecision) => unknown = () => "ok",
+): { decision: SettlementDecision; result: unknown } {
+  return h.controller.settleReport({
+    targetTaskId: "child",
+    activeTurn: { promptId: "prompt-current", startedAt: h.clock.now },
+    run,
+  });
 }
 
 describe("ObligationController", () => {
   it("does not request an account until the source dispatch is accepted", async () => {
     const h = makeController();
-    const obligation = h.controller.arm({
-      sourceTaskId: "parent",
-      targetTaskId: "child",
-      messageId: "m-1",
-      deliveryId: "d-1",
-    });
+    const obligation = armDirect(h);
     assert.equal(obligation.state, "awaiting_delivery");
-    // Mutation evidence: deleting the awaiting_delivery gate opens the edge at
-    // arm time and schedules reminder 1 here, so this advance would submit.
     await tick(h, 10 * 60_000);
     assert.deepEqual(h.submissions, []);
     assert.equal(h.notices.length, 0);
@@ -137,26 +143,21 @@ describe("ObligationController", () => {
     h.controller.markDelivered("parent", "child");
     await tick(h);
     assert.equal(obligation.state, "reminder_due");
+    assert.equal(obligation.deliveredAt, h.clock.now);
     assert.equal(h.submissions.length, 1);
   });
 
   it("retries a rejected initial dispatch and bounds the transport failures", async () => {
     const h = makeController();
-    const obligation = h.controller.arm({
-      sourceTaskId: "parent",
-      targetTaskId: "child",
-      messageId: "m-1",
-      deliveryId: "d-1",
-    });
+    const obligation = armDirect(h);
     h.controller.markDeliveryFailed("parent", "child");
     assert.equal(obligation.state, "awaiting_delivery");
     assert.equal(obligation.consecutiveSubmissionFailures, 1);
     // Mutation evidence: dropping the edge on rejection (the prior behaviour)
-    // would leave getById undefined instead of retrying.
+    // would leave getForTarget undefined instead of retrying.
     await tick(h, 1_000);
     assert.equal(h.dispatchRetries.length, 1);
 
-    // The retry succeeds and opens the edge without consuming a reminder.
     h.controller.markDelivered("parent", "child");
     await tick(h);
     assert.equal(obligation.state, "reminder_due");
@@ -166,12 +167,7 @@ describe("ObligationController", () => {
 
   it("exhausts awaiting_delivery after the transport bound without spending reminders", async () => {
     const h = makeController();
-    const obligation = h.controller.arm({
-      sourceTaskId: "parent",
-      targetTaskId: "child",
-      messageId: "m-1",
-      deliveryId: "d-1",
-    });
+    const obligation = armDirect(h);
     for (
       let failure = 0;
       failure < MAX_REMINDER_SUBMISSION_FAILURES;
@@ -184,8 +180,6 @@ describe("ObligationController", () => {
     assert.equal(h.notices.length, 1);
     assert.equal(h.notices[0].reason, "no_account");
     assert.equal(h.notices[0].evidence.deliveryUnavailable, true);
-    // Mutation evidence: omitting the initial-delivery bound leaves the edge
-    // awaiting_delivery forever with no notice.
     await tick(h, 60 * 60_000);
     assert.equal(h.dispatchRetries.length, 0);
   });
@@ -221,46 +215,52 @@ describe("ObligationController", () => {
 
     assert.equal(h.submissions.length, MAX_REMINDER_ATTEMPTS);
     assert.equal(obligation.state, "unanswered");
-    // Mutation evidence: omitting the deliveredAttempts cap keeps scheduling a
-    // fourth reminder (submissions.length grows past the bound).
     await tick(h, 60 * 60_000);
     assert.equal(h.submissions.length, MAX_REMINDER_ATTEMPTS);
     assert.equal(h.notices.length, 1);
-    const notice = h.notices[0];
-    assert.equal(notice.reason, "no_account");
-    assert.equal(notice.obligationId, obligation.id);
-    assert.equal(notice.evidence.deliveredAttempts, MAX_REMINDER_ATTEMPTS);
+    assert.equal(h.notices[0].reason, "no_account");
+    assert.equal(
+      h.notices[0].evidence.deliveredAttempts,
+      MAX_REMINDER_ATTEMPTS,
+    );
   });
 
-  it("coalesces a same-source follow-up without a fresh id or budget", async () => {
+  it("coalesces a same-source follow-up and replaces a terminal record", async () => {
     const h = makeController();
     const obligation = armOpen(h);
     await tick(h);
     await tick(h, 2 * 60_000);
-    assert.equal(h.submissions.length, 2);
     assert.equal(obligation.deliveredAttempts, 2);
 
-    // The follow-up coalesces onto the open edge.
     const coalesced = h.controller.arm({
       sourceTaskId: "parent",
       targetTaskId: "child",
       messageId: "m-2",
       deliveryId: "d-2",
     });
-    // Mutation evidence: allocating a fresh id on coalescing fails both asserts.
-    assert.equal(coalesced.id, obligation.id);
+    // Mutation evidence: allocating a fresh record on coalescing fails both
+    // the identity and the budget assertions.
+    assert.equal(coalesced, obligation);
     assert.equal(coalesced.deliveredAttempts, 0);
-    assert.equal(coalesced.state, "open");
     assert.equal(coalesced.openingMessageId, "m-2");
     h.controller.markDelivered("parent", "child");
     await tick(h);
-    // An already-open edge ignores the follow-up delivery acceptance and waits
-    // for the next turn boundary; the refreshed budget is spent there.
     h.controller.onTargetTurnEnded("child");
     await tick(h);
     assert.equal(coalesced.deliveredAttempts, 1);
+
+    // Exhaust, then a later dispatch starts a fresh epoch.
     await tick(h, 2 * 60_000);
-    assert.equal(coalesced.deliveredAttempts, 2);
+    await tick(h, 5 * 60_000);
+    assert.equal(obligation.state, "unanswered");
+    const fresh = h.controller.arm({
+      sourceTaskId: "parent",
+      targetTaskId: "child",
+      messageId: "m-3",
+      deliveryId: "d-3",
+    });
+    assert.notEqual(fresh, obligation);
+    assert.equal(fresh.state, "awaiting_delivery");
   });
 
   it("does not consume an attempt on rejection and bounds consecutive failures", async () => {
@@ -272,8 +272,6 @@ describe("ObligationController", () => {
     assert.equal(obligation.deliveredAttempts, 0);
     assert.equal(obligation.consecutiveSubmissionFailures, 1);
 
-    // Mutation evidence: counting the rejected prompt as delivered makes
-    // deliveredAttempts 1 here; omitting the cut-off never reaches exhausted.
     await tick(h, 1_000);
     await tick(h, 2_000);
     assert.equal(h.submissions.length, MAX_REMINDER_SUBMISSION_FAILURES);
@@ -299,50 +297,65 @@ describe("ObligationController", () => {
     assert.equal(h.submissions.length, 2);
   });
 
-  it("retires the edge on a correlated account and cancels scheduling", async () => {
+  it("settles the record from an eligible current turn and routes to the stored source", async () => {
     const h = makeController();
     const obligation = armOpen(h);
     await tick(h);
-    const settledBy: DirectedObligation[] = [];
-    const result = h.controller.settle({
-      sourceTaskId: "child",
-      obligationId: obligation.id,
-      run: (o) => {
-        settledBy.push(o);
-        return "tx";
-      },
+    const seen: SettlementDecision[] = [];
+    const { decision, result } = settleNow(h, (d) => {
+      seen.push(d);
+      return "tx";
     });
+    assert.equal(decision.kind, "settle");
+    assert.equal(decision.sourceTaskId, "parent");
     assert.equal(result, "tx");
-    assert.equal(settledBy[0].id, obligation.id);
+    assert.deepEqual(seen, [{ kind: "settle", sourceTaskId: "parent" }]);
     assert.equal(obligation.state, "settled");
-    // Mutation evidence: not retiring on settle leaves the timer armed and a
-    // reminder would be submitted after this advance.
+    // Mutation evidence: not retiring on settle leaves the timer armed.
     await tick(h, 60 * 60_000);
     assert.equal(h.submissions.length, 1);
     assert.equal(h.notices.length, 0);
   });
 
-  it("leaves the edge open when the settlement transaction throws", async () => {
+  it("does not settle while the record is awaiting_delivery", async () => {
     const h = makeController();
-    const obligation = armOpen(h);
-    await tick(h);
-    assert.throws(() => {
-      h.controller.settle({
-        sourceTaskId: "child",
-        obligationId: obligation.id,
-        run: () => {
-          throw new Error("tx failed");
-        },
-      });
+    const obligation = armDirect(h);
+    let ran = false;
+    const { decision } = settleNow(h, () => {
+      ran = true;
     });
-    assert.equal(obligation.state, "reminder_due");
-    // Mutation evidence: marking settled before running the transaction would
-    // suppress this delivered reminder.
-    await tick(h, 2 * 60_000);
-    assert.equal(h.submissions.length, 2);
+    // Mutation evidence: dropping the awaiting_delivery guard settles here.
+    assert.equal(ran, true);
+    assert.equal(decision.kind, "stored-source");
+    assert.equal(obligation.state, "awaiting_delivery");
   });
 
-  it("accepts a late account for an unanswered edge without retracting the notice", async () => {
+  it("does not settle without an active turn", async () => {
+    const h = makeController();
+    const obligation = armOpen(h);
+    const { decision } = h.controller.settleReport({
+      targetTaskId: "child",
+      activeTurn: null,
+      run: () => "ok",
+    });
+    assert.equal(decision.kind, "stored-source");
+    assert.notEqual(obligation.state, "settled");
+  });
+
+  it("does not settle from a turn that started before deliveredAt", async () => {
+    const h = makeController();
+    const obligation = armOpen(h);
+    const deliveredAt = obligation.deliveredAt!;
+    const { decision } = h.controller.settleReport({
+      targetTaskId: "child",
+      activeTurn: { promptId: "prompt-early", startedAt: deliveredAt - 1 },
+      run: () => "ok",
+    });
+    assert.equal(decision.kind, "stored-source");
+    assert.notEqual(obligation.state, "settled");
+  });
+
+  it("does not re-settle a terminal record, retracts nothing, and still routes to the stored source", async () => {
     const h = makeController();
     const obligation = armOpen(h);
     await tick(h);
@@ -351,137 +364,103 @@ describe("ObligationController", () => {
     assert.equal(obligation.state, "unanswered");
     assert.equal(h.notices.length, 1);
 
-    const ran = h.controller.settle({
-      sourceTaskId: "child",
-      obligationId: obligation.id,
-      run: () => "late",
-    });
-    assert.equal(ran, "late");
-    assert.equal(obligation.state, "settled");
+    const { decision } = settleNow(h);
+    // Mutation evidence: treating a terminal record as settleable closes it and
+    // suppresses this stored-source route.
+    assert.equal(decision.kind, "stored-source");
+    assert.equal(decision.sourceTaskId, "parent");
+    assert.equal(obligation.state, "unanswered");
     assert.equal(h.notices.length, 1);
-    // Mutation evidence: rejecting archived ids returns undefined here.
-    assert.equal(h.controller.getById(obligation.id)?.state, "settled");
   });
 
-  it("ignores stale, wrong-target, and settled obligation ids", async () => {
+  it("routes to the current parent when no record exists", () => {
+    const h = makeController();
+    const { decision } = settleNow(h);
+    assert.equal(decision.kind, "current-parent");
+    assert.equal(decision.sourceTaskId, null);
+  });
+
+  it("accepts a delayed call from an earlier turn while a later eligible turn is current", async () => {
+    // Accepted boundary, not a bug: settlement is judged from the *current*
+    // turn, so a call delayed from an earlier turn settles while a later
+    // eligible turn is current, and the stored source receives the earlier
+    // turn's content. Do not "fix" this into silence.
     const h = makeController();
     const obligation = armOpen(h);
     await tick(h);
-    let ran = false;
-    // Wrong target.
-    assert.equal(
-      h.controller.settle({
-        sourceTaskId: "other",
-        obligationId: obligation.id,
-        run: () => {
-          ran = true;
-        },
-      }),
-      undefined,
-    );
-    // Unknown id.
-    assert.equal(
-      h.controller.settle({
-        sourceTaskId: "child",
-        obligationId: "nope",
-        run: () => {
-          ran = true;
-        },
-      }),
-      undefined,
-    );
-    // Mutation evidence: dropping the target check or unknown-id guard runs the
-    // transaction for one of the two calls above.
-    assert.equal(ran, false);
-    h.controller.settle({
-      sourceTaskId: "child",
-      obligationId: obligation.id,
-      run: () => "ok",
+    const deliveredAt = obligation.deliveredAt!;
+    const { decision, result } = h.controller.settleReport({
+      targetTaskId: "child",
+      activeTurn: { promptId: "prompt-later", startedAt: deliveredAt + 5_000 },
+      run: () => "earlier-turn-content",
     });
-    // Repeated settlement after retirement is a no-op.
-    assert.equal(
-      h.controller.settle({
-        sourceTaskId: "child",
-        obligationId: obligation.id,
-        run: () => {
-          ran = true;
-        },
-      }),
-      undefined,
-    );
-    assert.equal(ran, false);
+    assert.equal(decision.kind, "settle");
+    assert.equal(result, "earlier-turn-content");
+    assert.equal(obligation.state, "settled");
+  });
+
+  it("leaves the record open when the settlement transaction throws", async () => {
+    const h = makeController();
+    const obligation = armOpen(h);
+    await tick(h);
+    assert.throws(() => {
+      settleNow(h, () => {
+        throw new Error("tx failed");
+      });
+    });
+    assert.notEqual(obligation.state, "settled");
+    // Mutation evidence: marking settled before running the transaction would
+    // suppress this delivered reminder.
+    await tick(h, 2 * 60_000);
+    assert.equal(h.submissions.length, 2);
   });
 
   it("preserves the stored endpoints through arming, settlement, and notice", async () => {
     const h = makeController();
     const obligation = armOpen(h);
     await tick(h);
-    assert.equal(obligation.sourceTaskId, "parent");
-    assert.equal(obligation.targetTaskId, "child");
     await tick(h, 2 * 60_000);
     await tick(h, 5 * 60_000);
-    assert.equal(h.notices[0].obligationId, obligation.id);
+    assert.equal(obligation.sourceTaskId, "parent");
+    assert.equal(obligation.targetTaskId, "child");
+    assert.equal(obligation.openingMessageId, "m-1");
+    assert.equal(obligation.openingDeliveryId, "d-1");
     // Mutation evidence: re-deriving endpoints from the current parent_id
-    // would not fix this store-and-read round trip.
-    const seen = h.controller.settle({
-      sourceTaskId: "child",
-      obligationId: obligation.id,
-      run: (o) => `${o.sourceTaskId}->${o.targetTaskId}`,
-    });
-    assert.equal(seen, "parent->child");
+    // would not preserve this stored record.
+    const seen = settleNow(h, (d) => d.sourceTaskId);
+    assert.equal(seen.decision.kind, "stored-source");
+    assert.equal(seen.result, "parent");
   });
 
   it("loses all obligation state when the controller is reconstructed", async () => {
     const first = makeController();
     const obligation = armOpen(first);
     await tick(first);
-    assert.ok(first.controller.getById(obligation.id));
+    assert.equal(first.controller.getForTarget("child"), obligation);
 
-    // A fresh controller is the process-local loss boundary; no restart or
-    // persistence participates.
     const second = makeController();
-    assert.equal(second.controller.getById(obligation.id), undefined);
-    assert.equal(
-      second.controller.settle({
-        sourceTaskId: "child",
-        obligationId: obligation.id,
-        run: () => "should not run",
-      }),
-      undefined,
-    );
+    assert.equal(second.controller.getForTarget("child"), undefined);
+    assert.equal(settleNow(second).decision.kind, "current-parent");
   });
 
-  it("emits one heuristic no_activity notice per edge×turn", async () => {
+  it("emits one heuristic no_activity notice per target×turn", async () => {
     const h = makeController();
-    const obligation = h.controller.arm({
-      sourceTaskId: "parent",
-      targetTaskId: "child",
-      messageId: "m-1",
-      deliveryId: "d-1",
-    });
+    armDirect(h);
     h.controller.beginTurn("child", "prompt-1");
     await tick(h, SILENCE_THRESHOLD_S * 1000);
     assert.equal(h.notices.length, 1);
     assert.equal(h.notices[0].reason, "no_activity");
-    assert.equal(h.notices[0].obligationId, obligation.id);
     // Mutation evidence: letting the watchdog invoke submitReminder would add
-    // a submission here; sharing the no_account epoch would suppress that
-    // independent notice below.
+    // a submission here.
     assert.equal(h.submissions.length, 0);
 
-    // A second threshold with no further activity does not repeat.
     await tick(h, SILENCE_THRESHOLD_S * 1000);
     assert.equal(h.notices.length, 1);
   });
 
   it("resets the watchdog on qualifying activity and keeps epochs independent", async () => {
     const h = makeController();
-    const obligation = h.controller.arm({
-      sourceTaskId: "parent",
-      targetTaskId: "child",
-      messageId: "m-1",
-      deliveryId: "d-1",
-    });
+    const obligation = armDirect(h);
     h.controller.beginTurn("child", "prompt-2");
     h.clock.advance(SILENCE_THRESHOLD_S * 1000 - 1);
     h.controller.noteAgentActivity("child");
@@ -494,8 +473,7 @@ describe("ObligationController", () => {
     assert.equal(h.notices.length, 1);
     assert.equal(h.notices[0].reason, "no_activity");
 
-    // The no_account exhaustion notice is a separate epoch from silence, so
-    // the silence notice cannot suppress the factual outcome.
+    // The no_account exhaustion notice is a separate epoch from silence.
     h.controller.markDelivered("parent", "child");
     await tick(h);
     await tick(h, 2 * 60_000);
@@ -507,12 +485,7 @@ describe("ObligationController", () => {
 
   it("never changes obligation state from a silence notice", async () => {
     const h = makeController();
-    const obligation = h.controller.arm({
-      sourceTaskId: "parent",
-      targetTaskId: "child",
-      messageId: "m-1",
-      deliveryId: "d-1",
-    });
+    const obligation = armDirect(h);
     h.controller.beginTurn("child", "prompt-3");
     await tick(h, SILENCE_THRESHOLD_S * 1000);
     assert.equal(h.notices[0].reason, "no_activity");

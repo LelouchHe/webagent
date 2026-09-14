@@ -343,13 +343,13 @@ describe("createMcpEndpoint", () => {
     const updateDescription =
       tools.find((tool) => tool.name === "task_update")?.description ?? "";
     assert.match(updateDescription, /typed lifecycle account/);
-    assert.match(updateDescription, /obligationId/);
-    assert.match(updateDescription, /correlation receipt/);
-    assert.match(updateDescription, /settles nothing/);
+    assert.match(updateDescription, /no correlation parameter/);
     assert.match(updateDescription, /not delete or permanently close/);
-    assert.ok(
+    // Mutation evidence: re-adding a correlation parameter flips this check.
+    assert.equal(
       toolHasProperty(tools, "task_update", "obligationId"),
-      "task_update must expose the obligation correlation id",
+      false,
+      "task_update must not expose a correlation parameter",
     );
     assert.match(toolDescription(tools, "task_query"), /recorded turn history/);
     assert.match(toolDescription(tools, "task_query"), /provider errors/);

@@ -1,22 +1,20 @@
-import { randomUUID } from "node:crypto";
-
 /**
  * Directed dispatch closure.
  *
  * A qualifying direct parent→child dispatch arms exactly one process-local
- * directed obligation. The source learns exactly one outcome: a correlated
- * typed `task_update(done|blocked)` account, or one runtime `no_account`
- * notice once bounded recovery is exhausted. Obligation state is runtime
- * memory, never SQLite, and never survives a restart.
+ * directed obligation per `(sourceTaskId, targetTaskId)` edge. The source
+ * learns exactly one outcome: a typed `task_update(done|blocked)` account from
+ * an eligible target turn, or one runtime `no_account` notice once bounded
+ * recovery is exhausted.
  *
- * The obligation id is an opaque correlation receipt, not an intent or
- * expectation control: it tells the runtime which open edge an account closes,
- * and nothing about why the account was requested. Ordinary unspecialized
- * communication stays `task_send`.
+ * There is no correlation token. Because a target has one direct parent, the
+ * current record for the target is unambiguous: settlement is decided from the
+ * record's state and the target's active agent turn, not from a value the
+ * agent must echo back.
  *
  * Only direct parent→child dispatch calls `arm()`; creation, user prompts,
- * sibling/child messages, reminders, cancellation, supersession, rotation,
- * and incoming status/notice messages neither arm nor settle an edge.
+ * sibling/child messages, reminders, cancellation, supersession, rotation, and
+ * incoming status/notice messages neither arm nor settle an edge.
  */
 
 /** Successful closing prompts a target may receive before `unanswered`. */
@@ -51,9 +49,6 @@ export const REMINDER_RETRY_MAX_MS = 60_000;
  */
 export const SILENCE_THRESHOLD_S = 900;
 
-/** Terminal records retained for late-account routing; oldest are evicted. */
-export const MAX_ARCHIVED_OBLIGATIONS = 1024;
-
 export type ObligationState =
   | "awaiting_delivery"
   | "open"
@@ -63,12 +58,13 @@ export type ObligationState =
   | "settled";
 
 export interface DirectedObligation {
-  id: string;
   sourceTaskId: string;
   targetTaskId: string;
   openingMessageId: string;
   openingDeliveryId: string;
   openedAt: number;
+  /** When the qualifying source dispatch was accepted by the bridge. */
+  deliveredAt?: number;
   state: ObligationState;
   deliveredAttempts: number;
   consecutiveSubmissionFailures: number;
@@ -80,9 +76,24 @@ export interface DirectedObligation {
 export type ObligationNoticeReason = "no_account" | "no_activity";
 
 export interface ObligationNotice {
-  obligationId: string;
   reason: ObligationNoticeReason;
   evidence: Record<string, unknown>;
+}
+
+export interface ActiveAgentTurn {
+  promptId: string;
+  /** Turn start, epoch ms. */
+  startedAt: number;
+}
+
+/**
+ * How one agent update should be routed. `settle` and `stored-source` both
+ * address the record's stored source; `current-parent` is an ordinary report
+ * with no record to address.
+ */
+export interface SettlementDecision {
+  kind: "settle" | "stored-source" | "current-parent";
+  sourceTaskId: string | null;
 }
 
 export type TimerHandle = ReturnType<typeof setTimeout>;
@@ -96,8 +107,7 @@ export interface ObligationControllerOptions {
   /**
    * Submit a closing accounting prompt to the target. Resolves `true` only
    * when the bridge accepts (and the turn completes); a rejected submission
-   * must resolve `false`. The runtime includes the obligation id in the
-   * prompt text so the target can name the edge.
+   * must resolve `false`.
    */
   submitReminder: (obligation: DirectedObligation) => Promise<boolean>;
   /**
@@ -112,7 +122,6 @@ export interface ObligationControllerOptions {
     obligation: DirectedObligation,
   ) => void;
   log?: (event: string, fields: Record<string, unknown>) => void;
-  newId?: () => string;
 }
 
 interface WatchdogState {
@@ -121,31 +130,36 @@ interface WatchdogState {
   lastAgentActivityAt: number;
 }
 
-function activeKey(sourceTaskId: string, targetTaskId: string): string {
+function edgeKey(sourceTaskId: string, targetTaskId: string): string {
   return `${sourceTaskId}\u0000${targetTaskId}`;
 }
 
-function silenceKey(obligationId: string, promptId: string): string {
-  return `${obligationId}\u0000${promptId}`;
+function silenceKey(targetTaskId: string, promptId: string): string {
+  return `${targetTaskId}\u0000${promptId}`;
 }
 
-/**
- * Read the current state through a helper so TypeScript does not carry a
- * pre-`await` narrowing (a live agent turn can settle the edge mid-submission).
- */
-function readObligationState(obligation: DirectedObligation): ObligationState {
-  return obligation.state;
+function isTerminal(state: ObligationState): boolean {
+  return state === "unanswered" || state === "settled";
+}
+
+function logFields(obligation: DirectedObligation): Record<string, unknown> {
+  return {
+    sourceTaskId: obligation.sourceTaskId.slice(0, 8),
+    targetTaskId: obligation.targetTaskId.slice(0, 8),
+  };
 }
 
 /**
  * Process-local directed-obligation state machine. All transitions are
  * synchronous; the only asynchronous work is bridge submission, and its
  * completion re-enters through a fresh critical-section check.
+ *
+ * Terminal records stay in the edge-keyed map so a later account can still be
+ * routed to the stored source. A later dispatch for the same edge replaces a
+ * terminal record.
  */
 export class ObligationController {
   private readonly active = new Map<string, DirectedObligation>();
-  private readonly activeById = new Map<string, DirectedObligation>();
-  private readonly archive = new Map<string, DirectedObligation>();
   private readonly attemptTimers = new Map<string, TimerHandle>();
   private readonly watchdogTimers = new Map<string, TimerHandle>();
   private readonly watchdog = new Map<string, WatchdogState>();
@@ -160,25 +174,21 @@ export class ObligationController {
     return this.opts.now();
   }
 
-  private newId(): string {
-    return this.opts.newId?.() ?? randomUUID();
-  }
-
   private log(event: string, fields: Record<string, unknown>): void {
     this.opts.log?.(event, fields);
   }
 
-  private clearAttemptTimer(obligationId: string): void {
-    const handle = this.attemptTimers.get(obligationId);
+  private clearAttemptTimer(key: string): void {
+    const handle = this.attemptTimers.get(key);
     if (handle === undefined) return;
-    this.attemptTimers.delete(obligationId);
+    this.attemptTimers.delete(key);
     this.opts.clearTimer(handle);
   }
 
-  private clearWatchdogTimer(obligationId: string): void {
-    const handle = this.watchdogTimers.get(obligationId);
+  private clearWatchdogTimer(key: string): void {
+    const handle = this.watchdogTimers.get(key);
     if (handle === undefined) return;
-    this.watchdogTimers.delete(obligationId);
+    this.watchdogTimers.delete(key);
     this.opts.clearTimer(handle);
   }
 
@@ -186,55 +196,41 @@ export class ObligationController {
     obligation: DirectedObligation,
     delayMs: number,
   ): void {
-    this.clearAttemptTimer(obligation.id);
+    const key = edgeKey(obligation.sourceTaskId, obligation.targetTaskId);
+    this.clearAttemptTimer(key);
     const handle = this.opts.setTimer(
       () => {
-        this.attemptTimers.delete(obligation.id);
-        this.runAttempt(obligation.id);
+        this.attemptTimers.delete(key);
+        this.runAttempt(key);
       },
       Math.max(0, delayMs),
     );
-    this.attemptTimers.set(obligation.id, handle);
+    this.attemptTimers.set(key, handle);
   }
 
   getActive(
     sourceTaskId: string,
     targetTaskId: string,
   ): DirectedObligation | undefined {
-    return this.active.get(activeKey(sourceTaskId, targetTaskId));
+    return this.active.get(edgeKey(sourceTaskId, targetTaskId));
   }
 
-  /** Stop all scheduled work (shutdown/tests); the controller is then unusable. */
-  dispose(): void {
-    for (const handle of this.attemptTimers.values()) {
-      this.opts.clearTimer(handle);
-    }
-    for (const handle of this.watchdogTimers.values()) {
-      this.opts.clearTimer(handle);
-    }
-    this.attemptTimers.clear();
-    this.watchdogTimers.clear();
-    this.watchdog.clear();
-  }
-
-  getById(obligationId: string): DirectedObligation | undefined {
-    return this.activeById.get(obligationId) ?? this.archive.get(obligationId);
+  /** The sole record for a target, active or terminal. */
+  getForTarget(targetTaskId: string): DirectedObligation | undefined {
+    return this.findForTarget(targetTaskId);
   }
 
   isOwed(sourceTaskId: string, targetTaskId: string): boolean {
     const obligation = this.getActive(sourceTaskId, targetTaskId);
-    return obligation !== undefined && obligation.state !== "settled";
+    return obligation !== undefined && !isTerminal(obligation.state);
   }
 
   /**
    * Arm (or coalesce) the directed obligation for an accepted direct
-   * parent→child dispatch. The caller has already established the parent-edge
-   * policy; this method enforces only record shape and state.
-   *
-   * A same-source follow-up coalesces: it preserves the obligation id, resets
-   * the delivered-attempt and submission-failure budgets, and makes the next
-   * attempt due after the next eligible target turn boundary. It never
-   * interrupts a running turn.
+   * parent→child dispatch. A same-source follow-up coalesces: it preserves the
+   * record, refreshes the delivered-attempt and submission-failure budgets,
+   * and makes the next attempt due after the next eligible target turn
+   * boundary. A dispatch after a terminal record starts a fresh epoch.
    */
   arm(input: {
     sourceTaskId: string;
@@ -242,10 +238,10 @@ export class ObligationController {
     messageId: string;
     deliveryId: string;
   }): DirectedObligation {
-    const key = activeKey(input.sourceTaskId, input.targetTaskId);
+    const key = edgeKey(input.sourceTaskId, input.targetTaskId);
     const existing = this.active.get(key);
-    if (existing) {
-      this.clearAttemptTimer(existing.id);
+    if (existing && !isTerminal(existing.state)) {
+      this.clearAttemptTimer(key);
       existing.deliveredAttempts = 0;
       existing.consecutiveSubmissionFailures = 0;
       existing.noAccountNotified = false;
@@ -253,22 +249,17 @@ export class ObligationController {
       existing.nextAttemptAt = undefined;
       existing.openingMessageId = input.messageId;
       existing.openingDeliveryId = input.deliveryId;
-      // A follow-up never interrupts a running turn and never rewinds an
-      // already-delivered edge: an open account survives a failed follow-up
-      // dispatch. `awaiting_delivery` stays awaiting the new dispatch;
-      // `reminder_due` returns to `open` so the next turn boundary resumes
-      // recovery with the refreshed budget.
+      // `awaiting_delivery` and `open` stay; `reminder_due` returns to `open`
+      // so the next turn boundary resumes recovery with the refreshed budget.
       if (existing.state === "reminder_due") existing.state = "open";
       this.log("obligation coalesced", {
-        obligationId: existing.id,
-        targetTaskId: existing.targetTaskId.slice(0, 8),
+        ...logFields(existing),
         state: existing.state,
       });
       return existing;
     }
 
     const obligation: DirectedObligation = {
-      id: this.newId(),
       sourceTaskId: input.sourceTaskId,
       targetTaskId: input.targetTaskId,
       openingMessageId: input.messageId,
@@ -280,26 +271,31 @@ export class ObligationController {
       noAccountNotified: false,
     };
     this.active.set(key, obligation);
-    this.activeById.set(obligation.id, obligation);
     this.log("obligation armed", {
-      obligationId: obligation.id,
-      sourceTaskId: obligation.sourceTaskId.slice(0, 8),
-      targetTaskId: obligation.targetTaskId.slice(0, 8),
+      ...logFields(obligation),
+      replacedTerminal: existing !== undefined,
     });
     return obligation;
   }
 
   /** The qualifying source dispatch was accepted by the bridge. */
   markDelivered(sourceTaskId: string, targetTaskId: string): void {
-    const obligation = this.getActive(sourceTaskId, targetTaskId);
+    const key = edgeKey(sourceTaskId, targetTaskId);
+    const obligation = this.active.get(key);
     if (!obligation) return;
-    if (obligation.state !== "awaiting_delivery") return;
-    this.clearAttemptTimer(obligation.id);
+    if (
+      obligation.state !== "awaiting_delivery" &&
+      obligation.state !== "open"
+    ) {
+      return;
+    }
+    this.clearAttemptTimer(key);
     obligation.state = "open";
+    obligation.deliveredAt = this.now();
     obligation.consecutiveSubmissionFailures = 0;
     this.log("obligation opened", {
-      obligationId: obligation.id,
-      targetTaskId: targetTaskId.slice(0, 8),
+      ...logFields(obligation),
+      deliveredAt: obligation.deliveredAt,
     });
     this.maybeRemindAtBoundary(obligation);
   }
@@ -326,7 +322,7 @@ export class ObligationController {
       return;
     }
     this.log("obligation dispatch retry scheduled", {
-      obligationId: obligation.id,
+      ...logFields(obligation),
       consecutiveSubmissionFailures: obligation.consecutiveSubmissionFailures,
     });
     this.retrySchedule(obligation);
@@ -338,10 +334,11 @@ export class ObligationController {
    * acceptance. Nothing here clears obligations or widens scope.
    */
   onTargetTurnEnded(targetTaskId: string): void {
-    const obligation = this.findActiveForTarget(targetTaskId);
+    const obligation = this.findForTarget(targetTaskId);
     if (!obligation) return;
-    this.clearWatchdogTimer(obligation.id);
-    this.watchdog.delete(obligation.id);
+    const key = edgeKey(obligation.sourceTaskId, obligation.targetTaskId);
+    this.clearWatchdogTimer(key);
+    this.watchdog.delete(key);
     if (obligation.state === "open") {
       this.maybeRemindAtBoundary(obligation);
       return;
@@ -363,7 +360,7 @@ export class ObligationController {
    * already has an active obligation.
    */
   beginTurn(targetTaskId: string, promptId: string): void {
-    const obligation = this.findActiveForTarget(targetTaskId);
+    const obligation = this.findForTarget(targetTaskId);
     if (!obligation) return;
     this.startWatchdog(obligation, promptId);
   }
@@ -373,9 +370,10 @@ export class ObligationController {
    * events must not reset the watchdog.
    */
   noteAgentActivity(targetTaskId: string, at = this.now()): void {
-    const obligation = this.findActiveForTarget(targetTaskId);
+    const obligation = this.findForTarget(targetTaskId);
     if (!obligation) return;
-    const state = this.watchdog.get(obligation.id);
+    const key = edgeKey(obligation.sourceTaskId, obligation.targetTaskId);
+    const state = this.watchdog.get(key);
     if (!state) return;
     state.lastAgentActivityAt = at;
     this.armWatchdog(obligation, state);
@@ -391,7 +389,10 @@ export class ObligationController {
       runningSince: at,
       lastAgentActivityAt: at,
     };
-    this.watchdog.set(obligation.id, state);
+    this.watchdog.set(
+      edgeKey(obligation.sourceTaskId, obligation.targetTaskId),
+      state,
+    );
     this.armWatchdog(obligation, state);
   }
 
@@ -399,22 +400,21 @@ export class ObligationController {
     obligation: DirectedObligation,
     state: WatchdogState,
   ): void {
-    this.clearWatchdogTimer(obligation.id);
+    const key = edgeKey(obligation.sourceTaskId, obligation.targetTaskId);
+    this.clearWatchdogTimer(key);
     const dueAt = state.lastAgentActivityAt + SILENCE_THRESHOLD_S * 1000;
     const handle = this.opts.setTimer(
       () => {
-        this.watchdogTimers.delete(obligation.id);
-        this.emitSilence(obligation.id);
+        this.watchdogTimers.delete(key);
+        this.emitSilence(obligation);
       },
       Math.max(0, dueAt - this.now()),
     );
-    this.watchdogTimers.set(obligation.id, handle);
+    this.watchdogTimers.set(key, handle);
   }
 
   private maybeRemindAtBoundary(obligation: DirectedObligation): void {
-    if (obligation.state === "settled" || obligation.state === "unanswered") {
-      return;
-    }
+    if (isTerminal(obligation.state)) return;
     if (obligation.state === "reminder_submitting") return;
     if (obligation.deliveredAttempts >= MAX_REMINDER_ATTEMPTS) {
       this.exhaust(obligation);
@@ -446,8 +446,8 @@ export class ObligationController {
   }
 
   /** Scheduler entry point: submit only while the target is idle. */
-  private runAttempt(obligationId: string): void {
-    const obligation = this.activeById.get(obligationId);
+  private runAttempt(key: string): void {
+    const obligation = this.active.get(key);
     if (!obligation) return;
     if (obligation.state === "awaiting_delivery") {
       if (this.opts.isAgentBusy(obligation.targetTaskId)) {
@@ -466,8 +466,9 @@ export class ObligationController {
   }
 
   private async submit(obligation: DirectedObligation): Promise<void> {
+    const key = edgeKey(obligation.sourceTaskId, obligation.targetTaskId);
     obligation.state = "reminder_submitting";
-    this.clearAttemptTimer(obligation.id);
+    this.clearAttemptTimer(key);
     const accepted = await this.opts.submitReminder(obligation);
     // `submitReminder` awaits a live agent turn; the target may have settled
     // the edge through `task_update` while that turn ran. Re-read state after
@@ -476,7 +477,7 @@ export class ObligationController {
     if (
       stateAfter === "settled" ||
       stateAfter === "unanswered" ||
-      !this.activeById.has(obligation.id)
+      this.active.get(key) !== obligation
     ) {
       return;
     }
@@ -497,7 +498,7 @@ export class ObligationController {
     obligation.lastDeliveredAttemptAt = this.now();
     obligation.consecutiveSubmissionFailures = 0;
     this.log("obligation reminder delivered", {
-      obligationId: obligation.id,
+      ...logFields(obligation),
       deliveredAttempts: obligation.deliveredAttempts,
     });
     if (obligation.deliveredAttempts >= MAX_REMINDER_ATTEMPTS) {
@@ -509,21 +510,72 @@ export class ObligationController {
   }
 
   /**
-   * Bounded recovery ended without a matching account. The only notice reason
-   * is the factual `no_account`; a transport-exhaustion cause is evidence, not
-   * a second outcome.
+   * Decide and perform one agent update for `targetTaskId`.
+   *
+   * A record settles only when all three hold: its state is
+   * `open|reminder_due|reminder_submitting`, the target has an active agent
+   * turn, and that turn started at or after the accepted dispatch
+   * (`deliveredAt`). Otherwise the update is routed without settling: a record
+   * that exists addresses its stored source, and no record addresses the
+   * caller's current parent.
+   *
+   * `run` performs the synchronous store transaction for the chosen route. The
+   * in-memory transition happens only after it succeeds, so a throwing `run`
+   * leaves a settleable record open. No await occurs between validation and
+   * transition.
    */
+  settleReport<T>(input: {
+    targetTaskId: string;
+    activeTurn: ActiveAgentTurn | null;
+    run: (decision: SettlementDecision) => T;
+  }): { decision: SettlementDecision; result: T } {
+    const obligation = this.findForTarget(input.targetTaskId);
+    if (!obligation) {
+      const decision: SettlementDecision = {
+        kind: "current-parent",
+        sourceTaskId: null,
+      };
+      return { decision, result: input.run(decision) };
+    }
+    const settleable =
+      (obligation.state === "open" ||
+        obligation.state === "reminder_due" ||
+        obligation.state === "reminder_submitting") &&
+      input.activeTurn !== null &&
+      obligation.deliveredAt !== undefined &&
+      input.activeTurn.startedAt >= obligation.deliveredAt;
+    if (!settleable) {
+      const decision: SettlementDecision = {
+        kind: "stored-source",
+        sourceTaskId: obligation.sourceTaskId,
+      };
+      return { decision, result: input.run(decision) };
+    }
+    const decision: SettlementDecision = {
+      kind: "settle",
+      sourceTaskId: obligation.sourceTaskId,
+    };
+    const result = input.run(decision);
+    const key = edgeKey(obligation.sourceTaskId, obligation.targetTaskId);
+    this.clearAttemptTimer(key);
+    this.clearWatchdogTimer(key);
+    this.watchdog.delete(key);
+    obligation.state = "settled";
+    this.log("obligation settled", logFields(obligation));
+    return { decision, result };
+  }
+
+  /** Bounded recovery ended without a matching account. */
   private exhaust(
     obligation: DirectedObligation,
     extraEvidence: Record<string, unknown> = {},
   ): void {
     if (obligation.state === "unanswered") return;
-    this.clearAttemptTimer(obligation.id);
-    this.clearWatchdogTimer(obligation.id);
-    this.watchdog.delete(obligation.id);
+    const key = edgeKey(obligation.sourceTaskId, obligation.targetTaskId);
+    this.clearAttemptTimer(key);
+    this.clearWatchdogTimer(key);
+    this.watchdog.delete(key);
     obligation.state = "unanswered";
-    this.archive.set(obligation.id, obligation);
-    this.evictArchive();
     if (obligation.noAccountNotified) return;
     obligation.noAccountNotified = true;
     const evidence: Record<string, unknown> = {
@@ -532,95 +584,31 @@ export class ObligationController {
       lastDeliveredAttemptAt: obligation.lastDeliveredAttemptAt ?? null,
       ...extraEvidence,
     };
-    this.opts.emitNotice(
-      { obligationId: obligation.id, reason: "no_account", evidence },
-      obligation,
-    );
+    this.opts.emitNotice({ reason: "no_account", evidence }, obligation);
     this.log("obligation unanswered", {
-      obligationId: obligation.id,
+      ...logFields(obligation),
       evidence,
     });
   }
 
-  private evictArchive(): void {
-    while (this.archive.size > MAX_ARCHIVED_OBLIGATIONS) {
-      const oldest = this.archive.keys().next().value;
-      if (oldest === undefined) return;
-      this.archive.delete(oldest);
-    }
-  }
-
-  private findActiveForTarget(
-    targetTaskId: string,
-  ): DirectedObligation | undefined {
+  private findForTarget(targetTaskId: string): DirectedObligation | undefined {
     for (const obligation of this.active.values()) {
       if (obligation.targetTaskId === targetTaskId) return obligation;
     }
     return undefined;
   }
 
-  /**
-   * Settle one open edge. Validation and the transition are one synchronous
-   * critical section: `run` performs the store transaction (typed update,
-   * workflow status, source-directed account message) and only after it
-   * succeeds is the in-memory record retired. A throwing `run` leaves the
-   * edge open. No await occurs between validation and transition.
-   *
-   * A terminal `unanswered` edge accepts a later account with its own id and
-   * becomes late `settled`, without retracting the historical notice.
-   */
-  settle<T>(input: {
-    sourceTaskId: string;
-    obligationId: string;
-    run: (obligation: DirectedObligation) => T;
-  }): T | undefined {
-    const activeObligation = this.activeById.get(input.obligationId);
-    if (activeObligation) {
-      if (activeObligation.targetTaskId !== input.sourceTaskId)
-        return undefined;
-      if (activeObligation.state === "settled") return undefined;
-      const result = input.run(activeObligation);
-      this.clearAttemptTimer(activeObligation.id);
-      this.clearWatchdogTimer(activeObligation.id);
-      this.watchdog.delete(activeObligation.id);
-      this.active.delete(
-        activeKey(activeObligation.sourceTaskId, activeObligation.targetTaskId),
-      );
-      this.activeById.delete(activeObligation.id);
-      activeObligation.state = "settled";
-      this.archive.set(activeObligation.id, activeObligation);
-      this.evictArchive();
-      this.log("obligation settled", {
-        obligationId: activeObligation.id,
-        targetTaskId: activeObligation.targetTaskId.slice(0, 8),
-      });
-      return result;
-    }
-    const archived = this.archive.get(input.obligationId);
-    if (!archived) return undefined;
-    if (archived.targetTaskId !== input.sourceTaskId) return undefined;
-    if (archived.state !== "unanswered") return undefined;
-    const result = input.run(archived);
-    archived.state = "settled";
-    this.log("obligation settled late", {
-      obligationId: archived.id,
-      targetTaskId: archived.targetTaskId.slice(0, 8),
-    });
-    return result;
-  }
-
-  /** Watchdog timer fired: emit at most one `no_activity` per edge×turn. */
-  private emitSilence(obligationId: string): void {
-    const obligation = this.activeById.get(obligationId);
-    if (!obligation) return;
-    const state = this.watchdog.get(obligationId);
+  /** Watchdog timer fired: emit at most one `no_activity` per target×turn. */
+  private emitSilence(obligation: DirectedObligation): void {
+    const key = edgeKey(obligation.sourceTaskId, obligation.targetTaskId);
+    if (this.active.get(key) !== obligation) return;
+    const state = this.watchdog.get(key);
     if (!state) return;
-    const key = silenceKey(obligation.id, state.promptId);
-    if (this.silenceNotified.has(key)) return;
-    this.silenceNotified.add(key);
+    const seen = silenceKey(obligation.targetTaskId, state.promptId);
+    if (this.silenceNotified.has(seen)) return;
+    this.silenceNotified.add(seen);
     this.opts.emitNotice(
       {
-        obligationId: obligation.id,
         reason: "no_activity",
         evidence: {
           runningSince: state.runningSince,
@@ -631,8 +619,29 @@ export class ObligationController {
       obligation,
     );
     this.log("obligation silence notice", {
-      obligationId: obligation.id,
+      ...logFields(obligation),
       promptId: state.promptId,
     });
   }
+
+  /** Stop all scheduled work (shutdown/tests); the controller is then unusable. */
+  dispose(): void {
+    for (const handle of this.attemptTimers.values()) {
+      this.opts.clearTimer(handle);
+    }
+    for (const handle of this.watchdogTimers.values()) {
+      this.opts.clearTimer(handle);
+    }
+    this.attemptTimers.clear();
+    this.watchdogTimers.clear();
+    this.watchdog.clear();
+  }
+}
+
+/**
+ * Read the current state through a helper so TypeScript does not carry a
+ * pre-`await` narrowing (a live agent turn can settle the edge mid-submission).
+ */
+function readObligationState(obligation: DirectedObligation): ObligationState {
+  return obligation.state;
 }

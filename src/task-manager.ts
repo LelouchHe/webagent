@@ -30,8 +30,10 @@ import type {
 import { TaskStateManager } from "./task-state.ts";
 import {
   ObligationController,
+  type ActiveAgentTurn,
   type DirectedObligation,
   type ObligationNotice,
+  type SettlementDecision,
 } from "./obligation-controller.ts";
 import { buildLabelMap, type LabelMap } from "./attachment-labels.ts";
 import { abbreviateHomePath, expandHomePath } from "./home-path.ts";
@@ -97,22 +99,20 @@ function configOptionId(
 const EMPTY_TASK_MIN_AGE_S = 60;
 
 /**
- * Closing accounting prompt for an unanswered directed obligation. It contains
- * the obligation id so the target can correlate its typed account; without it
- * the settlement protocol would be unusable in practice.
+ * Closing accounting prompt for a directed obligation. The target needs no
+ * token: the record for it is unambiguous, so the prompt only asks for the
+ * typed account and restates the closing-only contract.
  */
-function handoffReminderText(obligationId: string): string {
+function handoffReminderText(): string {
   return [
     "## Task Handoff Required",
     "",
     "This Task turn ended without a lifecycle account. Close this turn out now —",
     "do not start any new work.",
     "",
-    `Obligation id: ${obligationId}`,
-    "",
     "Report what this turn established, then call exactly one of:",
-    `- \`task_update(done, ..., obligationId: "${obligationId}")\` with the completion report.`,
-    `- \`task_update(blocked, ..., obligationId: "${obligationId}")\` and explain what is missing.`,
+    "- `task_update(done, ...)` with the completion report.",
+    "- `task_update(blocked, ...)` and explain what is missing.",
     "",
     "If the user cancelled this turn, say so plainly in that report instead of",
     "resuming the cancelled work. Do not start new work, and do not end this turn",
@@ -294,10 +294,13 @@ export class TaskManager {
       submitReminder: (obligation) => this.submitObligationReminder(obligation),
       retryDispatch: (obligation) => {
         const bridge = this.recoveryBridge;
-        const deliveryIds = this.pendingDispatchRetries.get(obligation.id);
+        // A target has one record, so its pending retry is keyed by target.
+        const deliveryIds = this.pendingDispatchRetries.get(
+          obligation.targetTaskId,
+        );
         if (!bridge) return;
         if (deliveryIds?.length) {
-          this.pendingDispatchRetries.delete(obligation.id);
+          this.pendingDispatchRetries.delete(obligation.targetTaskId);
           this.store.requeueCollaborationDeliveries(deliveryIds);
         }
         void this.drainCollaborationDeliveries(bridge, obligation.targetTaskId);
@@ -1809,42 +1812,57 @@ export class TaskManager {
     return this.obligations.getActive(sourceTaskId, targetTaskId);
   }
 
+  /** The target's current live agent turn, if any, with its start time. */
+  getActiveAgentTurn(taskId: string): ActiveAgentTurn | null {
+    const busy = this.state.getState(taskId).runtime.busy;
+    if (busy?.kind !== "agent" || !busy.promptId) return null;
+    const startedAt = Date.parse(busy.since);
+    if (Number.isNaN(startedAt)) return null;
+    return { promptId: busy.promptId, startedAt };
+  }
+
   /** Cancel all process-local obligation scheduling (shutdown/tests). */
   dispose(): void {
     this.obligations.dispose();
   }
 
   /**
-   * Settle one directed obligation from a correlated `task_update`. Returns
-   * the created account message and the stored source it was addressed to, or
-   * `undefined` when the id is invalid, stale, wrong-target, or already
-   * settled — in which case no store or source-message change occurs.
+   * Route one typed agent update for `targetTaskId`. The controller decides
+   * whether the target's sole record settles from an eligible turn; either way
+   * the account addresses the stored source when a record exists, and the
+   * caller's current parent when none does.
    */
-  settleObligation(
-    sourceTaskId: string,
-    obligationId: string,
+  settleAgentUpdate(
+    targetTaskId: string,
     status: "blocked" | "done",
     body: string,
-  ):
-    | { collaborationMessageId: string | null; accountTargetTaskId: string }
-    | undefined {
-    return this.obligations.settle({
-      sourceTaskId,
-      obligationId,
-      run: (obligation) => {
+    activeTurn: ActiveAgentTurn | null,
+  ): {
+    decision: SettlementDecision;
+    collaborationMessageId: string | null;
+    accountTargetTaskId: string | null;
+  } {
+    const routed = this.obligations.settleReport({
+      targetTaskId,
+      activeTurn,
+      run: (decision) => {
+        const accountTargetTaskId =
+          decision.kind === "current-parent"
+            ? (this.store.getTask(targetTaskId)?.parent_id ?? null)
+            : decision.sourceTaskId;
         const { collaborationMessageId } = this.store.recordAgentWorkflowUpdate(
-          sourceTaskId,
+          targetTaskId,
           status,
           body,
-          obligation.sourceTaskId,
+          accountTargetTaskId,
         );
-        this.pendingDispatchRetries.delete(obligationId);
-        return {
-          collaborationMessageId,
-          accountTargetTaskId: obligation.sourceTaskId,
-        };
+        return { collaborationMessageId, accountTargetTaskId };
       },
     });
+    if (routed.decision.kind === "settle") {
+      this.pendingDispatchRetries.delete(targetTaskId);
+    }
+    return { decision: routed.decision, ...routed.result };
   }
 
   /**
@@ -1862,7 +1880,7 @@ export class TaskManager {
     if (this.resettingTasks.has(task.id) || this.rotatingTasks.has(task.id)) {
       return false;
     }
-    const text = handoffReminderText(obligation.id);
+    const text = handoffReminderText();
     this.activePrompts.add(task.id);
     this.syncBusy(task.id);
     const promptId =
@@ -1879,7 +1897,10 @@ export class TaskManager {
           kind: "handoff_reminder",
           title: "Task handoff required",
           body: text,
-          obligationId: obligation.id,
+          sourceTaskId: obligation.sourceTaskId,
+          targetTaskId: obligation.targetTaskId,
+          openingMessageId: obligation.openingMessageId,
+          openingDeliveryId: obligation.openingDeliveryId,
         },
         { from_ref: "system" },
       );
@@ -1887,7 +1908,8 @@ export class TaskManager {
     } catch (error) {
       slog.warn("handoff reminder failed", {
         taskId: task.id.slice(0, 8),
-        obligationId: obligation.id,
+        sourceTaskId: obligation.sourceTaskId.slice(0, 8),
+        targetTaskId: obligation.targetTaskId.slice(0, 8),
         error,
       });
       if (this.isCurrentPrompt(task.id, promptId)) {
@@ -1903,11 +1925,15 @@ export class TaskManager {
     notice: ObligationNotice,
     obligation: DirectedObligation,
   ): void {
-    const body = JSON.stringify({
-      obligationId: notice.obligationId,
+    const payload = {
+      sourceTaskId: obligation.sourceTaskId,
+      targetTaskId: obligation.targetTaskId,
+      openingMessageId: obligation.openingMessageId,
+      openingDeliveryId: obligation.openingDeliveryId,
       reason: notice.reason,
       evidence: notice.evidence,
-    });
+    };
+    const body = JSON.stringify(payload);
     // The notice is ordinary parent-facing collaboration from the target to
     // the stored source, with a system actor. The emitter observer sees it and
     // declines to arm it (system actor), independently of direction.
@@ -1922,11 +1948,7 @@ export class TaskManager {
     this.store.saveEvent(
       obligation.targetTaskId,
       "task_outcome_notice",
-      {
-        obligationId: notice.obligationId,
-        reason: notice.reason,
-        evidence: notice.evidence,
-      },
+      payload,
       { from_ref: "system" },
     );
     const source = this.store.getTaskIncludingDeleted(obligation.targetTaskId);
@@ -1983,8 +2005,8 @@ export class TaskManager {
       // Only a direct parent dispatch carries an obligation receipt. The
       // injected context hands the target the opaque correlation id it must
       // echo back on `task_update`; unrelated messages carry none.
-      const qualifyingSources = new Map<string, string>();
-      const qualifyingBySource = new Map<string, string[]>();
+      const qualifyingSources = new Set<string>();
+      const qualifyingDeliveryIds: string[] = [];
       const allDeliveryIds = deliveries.map((delivery) => delivery.id);
       const entries = deliveries.map((delivery) => {
         const message = this.store.getCollaborationMessage(delivery.message_id);
@@ -2004,21 +2026,17 @@ export class TaskManager {
         // reads metadata as instruction and the forwarding layer never
         // rewrites the content.
         const sourceName = source?.title ?? message.source_task_id.slice(0, 8);
-        let obligationLine = "";
         if (message.source_task_id === task?.parent_id) {
           const obligation = this.obligations.getActive(
             message.source_task_id,
             taskId,
           );
           if (obligation) {
-            obligationLine = `[account obligation id: ${obligation.id}]\n`;
-            qualifyingSources.set(message.source_task_id, obligation.id);
-            const ids = qualifyingBySource.get(message.source_task_id) ?? [];
-            ids.push(delivery.id);
-            qualifyingBySource.set(message.source_task_id, ids);
+            qualifyingSources.add(message.source_task_id);
+            qualifyingDeliveryIds.push(delivery.id);
           }
         }
-        return `From "${sourceName}" (task id ${message.source_task_id}):\n${obligationLine}---8<---\n${message.body}\n---8<---`;
+        return `From "${sourceName}" (task id ${message.source_task_id}):\n---8<---\n${message.body}\n---8<---`;
       });
       this.store.updateTaskWorkflowStatus(taskId, "running");
       this.drainingCollaborationTasks.delete(taskId);
@@ -2026,23 +2044,16 @@ export class TaskManager {
       this.syncBusy(taskId);
       const promptId =
         this.state.getState(taskId).runtime.busy?.promptId ?? undefined;
-      const settleDispatches = (accepted: boolean) => {
-        for (const sourceTaskId of qualifyingSources.keys()) {
-          if (accepted) {
-            this.obligations.markDelivered(sourceTaskId, taskId);
-          } else {
-            this.obligations.markDeliveryFailed(sourceTaskId, taskId);
-          }
-        }
-      };
       void bridge
         .prompt(taskId, entries.join("\n\n"), undefined, promptId)
         .then(
           () => {
             this.store.markCollaborationDeliveriesDelivered(allDeliveryIds);
-            settleDispatches(true);
-            for (const obligationId of qualifyingSources.values()) {
-              this.pendingDispatchRetries.delete(obligationId);
+            for (const sourceTaskId of qualifyingSources) {
+              this.obligations.markDelivered(sourceTaskId, taskId);
+            }
+            if (qualifyingSources.size > 0) {
+              this.pendingDispatchRetries.delete(taskId);
             }
           },
           (error: unknown) => {
@@ -2058,12 +2069,12 @@ export class TaskManager {
             // Hold its claimed rows for the controller's bounded initial-
             // delivery retry, which requeues and resubmits them under
             // backoff; an immediate idle drain would bypass that budget.
-            for (const [sourceTaskId, ids] of qualifyingBySource) {
-              const obligationId = qualifyingSources.get(sourceTaskId);
-              if (obligationId)
-                this.pendingDispatchRetries.set(obligationId, ids);
+            if (qualifyingDeliveryIds.length > 0) {
+              this.pendingDispatchRetries.set(taskId, qualifyingDeliveryIds);
             }
-            settleDispatches(false);
+            for (const sourceTaskId of qualifyingSources) {
+              this.obligations.markDeliveryFailed(sourceTaskId, taskId);
+            }
             if (!this.isCurrentPrompt(taskId, promptId)) return;
             this.activePrompts.delete(taskId);
             // Same attribution as an ACP error event: a rejected delivery

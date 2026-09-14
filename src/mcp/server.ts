@@ -32,7 +32,7 @@ export const MCP_SERVER_INSTRUCTIONS = [
   "Use task_create for a direct child, then immediately use task_send to give it its first instruction.",
   "Use task_list to check each reachable Task's workflowStatus, executionState, lastEventAt, and lastAgentActivityAt before deciding to act; workflowStatus is per turn, not a lifecycle terminal, and executionState is the live runtime source.",
   "Use task_send for normal coordination and for continuing or resuming existing Tasks; task_send is not a lifecycle handoff. Use task_update(done|blocked) for typed lifecycle handoffs. A done Task remains available and is not deleted or permanently closed.",
-  "When a dispatch or closing prompt gives you an obligationId, copy that id into task_update(done|blocked, ..., obligationId): it settles that directed obligation. Omit it only when you have no such id, and the update then settles nothing.",
+  "task_update(done|blocked) settles the directed obligation when it comes from the current eligible turn; there is no correlation parameter to copy back.",
   "After dispatching work, end the current turn; do not poll with task_query.",
   "Use task_query and task_get_record only for history recovery, diagnosis, or audit.",
   "Omit task_id to inspect the current Task's persisted history.",
