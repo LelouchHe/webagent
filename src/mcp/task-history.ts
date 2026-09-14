@@ -217,6 +217,17 @@ export function compactTaskHistoryRecord(record: {
         textValue(data.body) || "(no details)",
       ]);
       break;
+    case "collaboration_prompt": {
+      const ids = Array.isArray(data.messageIds) ? data.messageIds.length : 0;
+      const truncated = data.truncated === true;
+      result = joinText([
+        `Collaboration prompt handed to the target (${ids} message(s))${
+          truncated ? `, truncated from ${String(data.rawSize)} bytes` : ""
+        }:`,
+        textValue(data.text) || "(empty prompt)",
+      ]);
+      break;
+    }
     case "task_cancel":
       result = joinText([
         "Task cancellation requested:",

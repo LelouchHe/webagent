@@ -17,12 +17,12 @@
  * incoming status/notice messages neither arm nor settle an edge.
  */
 
-/** Successful closing prompts a target may receive before `unanswered`. */
+/** Successful closing prompts a target may receive before `unresolved`. */
 export const MAX_REMINDER_ATTEMPTS = 3;
 
 /**
  * Consecutive rejected reminder submissions before the edge is declared
- * `unanswered`. This is a transport bound, not a reminder-attempt count: a
+ * `unresolved`. This is a transport bound, not a reminder-attempt count: a
  * rejected submission never consumes a reminder attempt, so without this the
  * source could wait forever while the successful-delivery budget is never
  * spent.
@@ -68,7 +68,7 @@ export type ObligationState =
   | "open"
   | "reminder_due"
   | "reminder_submitting"
-  | "unanswered"
+  | "unresolved"
   | "settled";
 
 export interface DirectedObligation {
@@ -105,6 +105,8 @@ export type ObligationNoticeReason =
 
 export interface ObligationNotice {
   reason: ObligationNoticeReason;
+  /** Human-readable fact statement, safe to show verbatim to the recipient. */
+  message: string;
   evidence: Record<string, unknown>;
 }
 
@@ -180,8 +182,23 @@ function matchesDispatch(
   return obligation.dispatchPromptId === promptId;
 }
 
+/** No further supervision: the runtime has stopped, or the record is settled. */
 function isTerminal(state: ObligationState): boolean {
-  return state === "unanswered" || state === "settled";
+  return state === "unresolved" || state === "settled";
+}
+
+/**
+ * A typed account can settle the record. `unresolved` stays settleable: the
+ * runtime stopped its own attempts, but a later account still resolves the
+ * edge. `settled` is the only state that cannot be settled again.
+ */
+function isSettleable(state: ObligationState): boolean {
+  return (
+    state === "open" ||
+    state === "reminder_due" ||
+    state === "reminder_submitting" ||
+    state === "unresolved"
+  );
 }
 
 function logFields(obligation: DirectedObligation): Record<string, unknown> {
@@ -262,6 +279,9 @@ export class ObligationController {
       this.opts.emitNotice(
         {
           reason: "still_waiting",
+          message: `This dispatch has not been handed to the target for ${Math.round(
+            (this.now() - current.openedAt) / 60_000,
+          )} minutes; it is still queued.`,
           evidence: {
             phase: "not_handed_over",
             waitingMs: this.now() - current.openedAt,
@@ -287,6 +307,9 @@ export class ObligationController {
       this.opts.emitNotice(
         {
           reason: "still_waiting",
+          message: `This Task has had no typed account for ${Math.round(
+            (this.now() - current.openedAt) / 3_600_000,
+          )} hours; the runtime is still waiting.`,
           evidence: {
             phase: "no_account",
             openForMs: this.now() - current.openedAt,
@@ -504,7 +527,9 @@ export class ObligationController {
       obligation.consecutiveSubmissionFailures >=
       MAX_REMINDER_SUBMISSION_FAILURES
     ) {
-      this.exhaust(obligation, { deliveryUnavailable: true });
+      this.exhaust(obligation, "delivery_failed", {
+        deliveryUnavailable: true,
+      });
       return;
     }
     this.log("obligation dispatch retry scheduled", {
@@ -606,7 +631,7 @@ export class ObligationController {
     if (isTerminal(obligation.state)) return;
     if (obligation.state === "reminder_submitting") return;
     if (obligation.deliveredAttempts >= MAX_REMINDER_ATTEMPTS) {
-      this.exhaust(obligation);
+      this.exhaust(obligation, "no_account");
       return;
     }
     obligation.state = "reminder_due";
@@ -667,7 +692,7 @@ export class ObligationController {
     const stateAfter = readObligationState(obligation);
     if (
       stateAfter === "settled" ||
-      stateAfter === "unanswered" ||
+      stateAfter === "unresolved" ||
       obligation.epoch !== epoch ||
       this.active.get(key) !== obligation
     ) {
@@ -679,7 +704,9 @@ export class ObligationController {
         obligation.consecutiveSubmissionFailures >=
         MAX_REMINDER_SUBMISSION_FAILURES
       ) {
-        this.exhaust(obligation, { deliveryUnavailable: true });
+        this.exhaust(obligation, "delivery_failed", {
+          deliveryUnavailable: true,
+        });
         return;
       }
       obligation.state = "reminder_due";
@@ -694,7 +721,7 @@ export class ObligationController {
       deliveredAttempts: obligation.deliveredAttempts,
     });
     if (obligation.deliveredAttempts >= MAX_REMINDER_ATTEMPTS) {
-      this.exhaust(obligation);
+      this.exhaust(obligation, "no_account");
       return;
     }
     obligation.state = "reminder_due";
@@ -736,10 +763,7 @@ export class ObligationController {
       return { decision, result: input.run(decision) };
     }
     const settleable =
-      (obligation.state === "open" ||
-        obligation.state === "reminder_due" ||
-        obligation.state === "reminder_submitting") &&
-      input.activeTurn !== null;
+      isSettleable(obligation.state) && input.activeTurn !== null;
     if (!settleable) {
       const decision: SettlementDecision = {
         kind: "stored-source",
@@ -766,16 +790,17 @@ export class ObligationController {
   /** Bounded recovery ended without a matching account. */
   private exhaust(
     obligation: DirectedObligation,
+    reason: Extract<ObligationNoticeReason, "no_account" | "delivery_failed">,
     extraEvidence: Record<string, unknown> = {},
   ): void {
-    if (obligation.state === "unanswered") return;
+    if (obligation.state === "unresolved") return;
     const key = edgeKey(obligation.sourceTaskId, obligation.targetTaskId);
     this.clearAttemptTimer(key);
     this.clearWatchdogTimer(key);
     this.clearDispatchAdvisory(key);
     this.clearAgeAdvisory(key);
     this.watchdog.delete(key);
-    obligation.state = "unanswered";
+    obligation.state = "unresolved";
     if (obligation.noAccountNotified) return;
     obligation.noAccountNotified = true;
     const evidence: Record<string, unknown> = {
@@ -784,9 +809,16 @@ export class ObligationController {
       lastDeliveredAttemptAt: obligation.lastDeliveredAttemptAt ?? null,
       ...extraEvidence,
     };
-    this.opts.emitNotice({ reason: "no_account", evidence }, obligation);
-    this.log("obligation unanswered", {
+    // A delivery failure is a capability fact about the runtime, never a claim
+    // about the target's work.
+    const message =
+      reason === "delivery_failed"
+        ? `I could not deliver this dispatch after ${obligation.consecutiveSubmissionFailures} attempts; I have stopped.`
+        : `No typed done|blocked account arrived after ${obligation.deliveredAttempts} delivered reminders; the runtime has stopped its own attempts. The outcome is unknown.`;
+    this.opts.emitNotice({ reason, message, evidence }, obligation);
+    this.log("obligation unresolved", {
       ...logFields(obligation),
+      reason,
       evidence,
     });
   }
@@ -820,6 +852,9 @@ export class ObligationController {
     this.opts.emitNotice(
       {
         reason: "no_activity",
+        message: `No agent activity for ${Math.round(
+          (this.now() - state.lastAgentActivityAt) / 1000,
+        )} seconds; the turn is still running.`,
         evidence: {
           runningSince: state.runningSince,
           lastAgentActivityAt: state.lastAgentActivityAt,

@@ -401,6 +401,41 @@ describe("handleAgentEvent", () => {
     await flushTimers();
   });
 
+  it("persists a bounded audit copy of the drained prompt", async () => {
+    seedFamily();
+    const { bridge, calls } = createControllableBridge();
+    await armDirectDispatch(
+      store,
+      tasks,
+      bridge,
+      "parent",
+      "child",
+      "Audit me.",
+    );
+    await flushTimers();
+
+    const audit = store
+      .getEvents("child")
+      .find((event) => event.type === "collaboration_prompt");
+    // Mutation evidence: without persisting the audit copy, a parent cannot
+    // prove which text a child received.
+    assert.ok(audit, "the drained prompt must be auditable");
+    const data = JSON.parse(audit.data) as {
+      messageIds: string[];
+      text: string;
+      truncated: boolean;
+      rawSize: number;
+    };
+    assert.equal(data.messageIds.length, 1);
+    assert.match(data.text, /From "/);
+    assert.match(data.text, /Audit me\./);
+    assert.equal(data.truncated, false);
+    assert.ok(data.rawSize > 0);
+
+    calls.prompts[0].resolve();
+    await flushTimers();
+  });
+
   it("retries a rejected initial dispatch at an idle boundary", async () => {
     seedFamily();
     const { bridge, calls } = createControllableBridge();
@@ -465,14 +500,16 @@ describe("handleAgentEvent", () => {
 
     // Mutation evidence: without resume-failure accounting (or the dispatch
     // deadline) the record waits forever with no notice.
-    assert.equal(tasks.getObligation("parent", "child")?.state, "unanswered");
+    assert.equal(tasks.getObligation("parent", "child")?.state, "unresolved");
     assert.equal(broadcasts.length, 1);
     const notice = JSON.parse(broadcasts[0].body) as {
       reason: string;
+      message: string;
       evidence: Record<string, unknown>;
     };
-    assert.equal(notice.reason, "no_account");
+    assert.equal(notice.reason, "delivery_failed");
     assert.equal(notice.evidence.deliveryUnavailable, true);
+    assert.match(notice.message, /could not deliver/);
     await flushTimers();
   });
 
@@ -492,7 +529,7 @@ describe("handleAgentEvent", () => {
     assert.equal(tasks.getObligation("parent", "child"), undefined);
   });
 
-  it("emits one factual no_account notice when initial delivery keeps failing", async () => {
+  it("emits one delivery_failed notice when initial delivery keeps failing", async () => {
     seedFamily();
     const broadcasts: Array<{
       messageId: string;
@@ -517,7 +554,7 @@ describe("handleAgentEvent", () => {
     calls.prompts[2].reject(new Error("down"));
     await flushTimers();
 
-    assert.equal(tasks.getObligation("parent", "child")?.state, "unanswered");
+    assert.equal(tasks.getObligation("parent", "child")?.state, "unresolved");
     // One notice, routed target->stored source with system actor.
     assert.equal(broadcasts.length, 1);
     assert.equal(broadcasts[0].sourceTaskId, "child");
@@ -528,14 +565,16 @@ describe("handleAgentEvent", () => {
       openingMessageId: string;
       openingDeliveryId: string;
       reason: string;
+      message: string;
       evidence: Record<string, unknown>;
     };
     assert.equal(notice.sourceTaskId, "parent");
     assert.equal(notice.targetTaskId, "child");
     assert.ok(notice.openingMessageId);
     assert.ok(notice.openingDeliveryId);
-    assert.equal(notice.reason, "no_account");
+    assert.equal(notice.reason, "delivery_failed");
     assert.equal(notice.evidence.deliveryUnavailable, true);
+    assert.match(notice.message, /could not deliver/);
     assert.ok(
       store
         .getEvents("child")
@@ -559,7 +598,13 @@ describe("handleAgentEvent", () => {
     assert.equal(calls.prompts.length, 2);
     assert.match(calls.prompts[1].text, /task_update\(done/);
     // The reminder's whole behavioural contract is prose: closing only.
-    assert.match(calls.prompts[1].text, /do not start any new work/i);
+    // The prohibition is scoped to the runtime-injected closing turn, not to
+    // the underlying work.
+    assert.match(calls.prompts[1].text, /runtime-injected closing turn/i);
+    assert.match(
+      calls.prompts[1].text,
+      /Do not begin new work as part of this closing turn\./,
+    );
     assert.doesNotMatch(calls.prompts[1].text, /obligation id/i);
 
     // The successful reminder event is recorded only after the bridge accepts.
@@ -859,7 +904,13 @@ describe("handleAgentEvent", () => {
     await flushTimers();
 
     assert.equal(calls.prompts.length, 2);
-    assert.match(calls.prompts[1].text, /do not start any new work/i);
+    // The prohibition is scoped to the runtime-injected closing turn, not to
+    // the underlying work.
+    assert.match(calls.prompts[1].text, /runtime-injected closing turn/i);
+    assert.match(
+      calls.prompts[1].text,
+      /Do not begin new work as part of this closing turn\./,
+    );
     calls.prompts[1].resolve();
     await flushTimers();
   });
@@ -913,7 +964,13 @@ describe("handleAgentEvent", () => {
 
     assert.equal(calls.loadSession, 1);
     assert.equal(calls.prompts.length, 2);
-    assert.match(calls.prompts[1].text, /do not start any new work/i);
+    // The prohibition is scoped to the runtime-injected closing turn, not to
+    // the underlying work.
+    assert.match(calls.prompts[1].text, /runtime-injected closing turn/i);
+    assert.match(
+      calls.prompts[1].text,
+      /Do not begin new work as part of this closing turn\./,
+    );
     calls.prompts[1].resolve();
   });
 
