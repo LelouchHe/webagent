@@ -83,13 +83,12 @@ automatically require a lifecycle handoff after each turn.
 After a parent accepts a result, the Task remains available for history and
 follow-up. A retrospective may be recorded after acceptance, but it is not a
 prerequisite for accepting the result. If an agent-authored direct parent→child
-dispatch turn ends without a correlated account, WebAgent may send up to three
-closing reminders; this is a recovery aid, not a substitute for the Agent's
-typed account. The dispatch context and each reminder carry an `obligationId`
-that the Agent must copy into `task_update(done|blocked, ..., obligationId)` to
-close that edge. The id is only a correlation receipt; it carries no
-expectation level, per-counterparty ledger, or extra lifecycle status. A user
-prompt, a sibling or child message, and a runtime notice never create an
+dispatch turn ends without an account, WebAgent may send up to three closing
+reminders; this is a recovery aid, not a substitute for the Agent's typed
+account. A plain `task_update(done|blocked)` closes that edge when it comes from
+an eligible current turn; there is no correlation parameter to copy back. There
+is no expectation level, per-counterparty ledger, or extra lifecycle status. A
+user prompt, a sibling or child message, and a runtime notice never create an
 obligation, so a lateral turn neither arms nor clears one.
 
 ## Communicate through messages
