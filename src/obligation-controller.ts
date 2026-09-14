@@ -111,8 +111,6 @@ export interface ObligationView {
   readonly dispatchAdvised: boolean;
   /** Advisory receipt: the age advisory has been emitted. */
   readonly ageAdvised: boolean;
-  /** Per-turn marker: the turn id whose silence notice was already emitted. */
-  readonly silencedAttemptId?: string;
   /**
    * A record holds an observed turn only while that turn may still be live.
    * Set by turn_begun, and cleared when the turn ends, is aborted, or the
@@ -120,10 +118,8 @@ export interface ObligationView {
    * compared against a turn that has already finished.
    */
   readonly observedTurnId?: string;
-  /** Anchor for the queued-dispatch advisory (set at arm and coalescing). */
-  readonly dispatchAdvisoryFrom: number;
-  /** Anchor for the age advisory (set at arm and coalescing). */
-  readonly ageAdvisoryFrom: number;
+  /** Anchor for the queued-dispatch and age advisories (set at arm/coalescing). */
+  readonly advisoryFrom: number;
   readonly noAccountNotified: boolean;
 }
 
@@ -144,10 +140,8 @@ interface ObligationRecord {
   retrying: boolean;
   dispatchAdvised: boolean;
   ageAdvised: boolean;
-  silencedAttemptId?: string;
   observedTurnId?: string;
-  dispatchAdvisoryFrom: number;
-  ageAdvisoryFrom: number;
+  advisoryFrom: number;
   noAccountNotified: boolean;
 }
 
@@ -627,10 +621,10 @@ export class ObligationController {
       obligation.state === "awaiting_delivery" &&
       !obligation.dispatchAdvised
     ) {
-      deadlines.push(obligation.dispatchAdvisoryFrom + DISPATCH_ADVISORY_MS);
+      deadlines.push(obligation.advisoryFrom + DISPATCH_ADVISORY_MS);
     }
     if (!isTerminal(obligation.state) && !obligation.ageAdvised) {
-      deadlines.push(obligation.ageAdvisoryFrom + AGE_ADVISORY_MS);
+      deadlines.push(obligation.advisoryFrom + AGE_ADVISORY_MS);
     }
     return deadlines;
   }
@@ -654,14 +648,14 @@ export class ObligationController {
       if (
         obligation.state === "awaiting_delivery" &&
         !obligation.dispatchAdvised &&
-        obligation.dispatchAdvisoryFrom + DISPATCH_ADVISORY_MS <= now
+        obligation.advisoryFrom + DISPATCH_ADVISORY_MS <= now
       ) {
         this.timerDue(obligation, "dispatch_advisory");
       }
       if (
         !isTerminal(obligation.state) &&
         !obligation.ageAdvised &&
-        obligation.ageAdvisoryFrom + AGE_ADVISORY_MS <= now
+        obligation.advisoryFrom + AGE_ADVISORY_MS <= now
       ) {
         this.timerDue(obligation, "age_advisory");
       }
@@ -695,8 +689,7 @@ export class ObligationController {
       existing.consecutiveSubmissionFailures = 0;
       existing.dispatchAdvised = false;
       existing.ageAdvised = false;
-      existing.dispatchAdvisoryFrom = this.now();
-      existing.ageAdvisoryFrom = this.now();
+      existing.advisoryFrom = this.now();
       existing.waitingSince = undefined;
       existing.retrying = false;
       existing.noAccountNotified = false;
@@ -730,8 +723,7 @@ export class ObligationController {
       retrying: false,
       dispatchAdvised: false,
       ageAdvised: false,
-      dispatchAdvisoryFrom: this.now(),
-      ageAdvisoryFrom: this.now(),
+      advisoryFrom: this.now(),
       noAccountNotified: false,
     };
     this.active.set(key, obligation);
@@ -997,11 +989,22 @@ export class ObligationController {
         );
         return;
       }
-      case "watchdog":
-        this.emitSilence(obligation, fact.attemptId);
-        // One notice per turn: drop the watchdog so it cannot re-fire.
+      case "watchdog": {
+        const watchdogState = this.watchdog.get(key);
+        if (!watchdogState) return;
+        if (
+          fact.attemptId !== undefined &&
+          watchdogState.promptId !== fact.attemptId
+        ) {
+          return;
+        }
+        // One notice per turn: the entry's absence is the receipt, so delete it
+        // before emitting. A synchronous re-entry from the notice emitter then
+        // finds no turn to re-arm.
         this.watchdog.delete(key);
+        this.emitSilence(obligation, watchdogState);
         return;
+      }
       case "attempt":
         // The transition owns clearing the wait anchor; the scheduler only
         // computes and dispatches.
@@ -1171,22 +1174,16 @@ export class ObligationController {
 
   private emitSilence(
     obligation: ObligationRecord,
-    attemptId: string | undefined,
+    state: WatchdogState,
   ): void {
     const key = edgeKey(obligation.sourceTaskId, obligation.targetTaskId);
     if (this.active.get(key) !== obligation) return;
-    const state = this.watchdog.get(key);
-    if (!state) return;
-    if (attemptId !== undefined && state.promptId !== attemptId) return;
     if (
       this.opts.isTurnRunning &&
       !this.opts.isTurnRunning(obligation.targetTaskId, state.promptId)
     ) {
-      this.watchdog.delete(key);
       return;
     }
-    if (obligation.silencedAttemptId === state.promptId) return;
-    obligation.silencedAttemptId = state.promptId;
     this.opts.emitNotice(
       {
         reason: "no_activity",

@@ -71,7 +71,7 @@ interface Harness {
   resolveSubmission: (index: number, accepted: boolean) => void;
 }
 
-function makeController(): Harness {
+function makeController(options: { reentrantNotice?: boolean } = {}): Harness {
   const clock = new FakeClock();
   const notices: ObligationNotice[] = [];
   const submissions: DirectedObligation[] = [];
@@ -97,8 +97,13 @@ function makeController(): Harness {
       }
       return Promise.resolve(submitMode === "accept");
     },
-    emitNotice: (notice) => {
+    emitNotice: (notice, obligation) => {
       notices.push(notice);
+      // Worst-case synchronous re-entry from the notice emitter: the emitter
+      // observes activity on the same turn before the transition returns.
+      if (options.reentrantNotice) {
+        controller.noteAgentActivity(obligation.targetTaskId);
+      }
     },
     retryDispatch: (obligation) => {
       dispatchRetries.push(obligation);
@@ -819,6 +824,27 @@ describe("ObligationController", () => {
     // Mutation evidence: leaving the observed turn populated lets a later
     // boundary be compared against a finished turn.
     assert.equal(obligation.observedTurnId, undefined);
+  });
+
+  it("emits the silence notice once even when the emitter re-enters", async () => {
+    const h = makeController({ reentrantNotice: true });
+    armDirect(h);
+    h.controller.beginTurn("child", "turn-B");
+    await tick(h, SILENCE_THRESHOLD_S * 1000);
+    // Mutation evidence: re-arming the watchdog inside emitSilence leaves the
+    // entry for the re-entrant activity to extend, emitting a second notice.
+    assert.equal(
+      h.notices.filter((notice) => notice.reason === "no_activity").length,
+      1,
+    );
+
+    // A second activity burst after the notice does not re-emit for the turn.
+    h.controller.noteAgentActivity("child");
+    await tick(h, SILENCE_THRESHOLD_S * 1000);
+    assert.equal(
+      h.notices.filter((notice) => notice.reason === "no_activity").length,
+      1,
+    );
   });
 
   it("does not emit a silence notice after the turn is aborted", async () => {
