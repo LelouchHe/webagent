@@ -25,13 +25,9 @@ describe("formatRelativeTime", () => {
     );
   });
 
-  it("reads unix milliseconds and a bare UTC string the same way", () => {
-    // Deployment-window tolerance: a not-yet-restarted backend sends a bare
-    // `YYYY-MM-DD HH:MM:SS` string, which must be read as UTC.
+  it("reads unix milliseconds", () => {
     const ms = Date.UTC(2026, 3, 28, 11, 55, 0);
     assert.equal(formatRelativeTime(ms, NOW), "5m ago");
-    assert.equal(formatRelativeTime("2026-04-28 11:55:00", NOW), "5m ago");
-    assert.equal(formatRelativeTime("2026-04-28 11:55:00.000", NOW), "5m ago");
   });
 
   it("returns 'just now' for clock-skew slightly in the future", () => {
@@ -140,14 +136,9 @@ describe("formatExactUtc", () => {
     );
   });
 
-  it("reads unix milliseconds and a bare UTC string (deploy-window tolerance)", () => {
+  it("reads unix milliseconds", () => {
     const ms = Date.UTC(2026, 3, 28, 5, 19, 0);
     assert.equal(formatExactUtc(ms), "2026-04-28 05:19 UTC");
-    assert.equal(formatExactUtc("2026-04-28 05:19:00"), "2026-04-28 05:19 UTC");
-    assert.equal(
-      formatExactUtc("2026-04-28 05:19:00.000"),
-      "2026-04-28 05:19 UTC",
-    );
   });
 
   it("zero-pads single-digit components", () => {

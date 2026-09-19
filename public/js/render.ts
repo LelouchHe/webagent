@@ -278,8 +278,8 @@ export function formatLocalTime(
   utc: string | number | null | undefined,
 ): string {
   if (utc === null || utc === undefined || utc === "") return "";
-  // `parseTimestamp` reads unix milliseconds and ISO-8601 with `Z` directly,
-  // and patches `Z` onto a bare UTC string for the deploy window (see there).
+  // `parseTimestamp` reads the two contract shapes: unix milliseconds and
+  // ISO-8601 with an explicit `Z` / offset.
   const d = parseTimestamp(utc);
   if (isNaN(d.getTime())) return "";
   const pad = (n: number) => String(n).padStart(2, "0");

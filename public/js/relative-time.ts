@@ -39,21 +39,14 @@ function pad2(n: number): string {
 }
 
 /**
- * Parse a stored or egressed timestamp.
- *
- * Numbers are unix milliseconds. Strings carrying `Z` or an explicit offset
- * are parsed as written. A bare `YYYY-MM-DD HH:MM:SS[.SSS]` string has no
- * timezone marker and is UTC, so `Z` is patched before parsing.
- *
- * That last branch is **deploy-window tolerance, not the storage contract**.
- * Storage is INTEGER unix milliseconds and egress renders ISO-8601 with `Z`;
- * the fallback only keeps an already-cached old frontend or a backend that has
- * not restarted yet reading the right instant.
+ * Parse a timestamp in one of the two shapes the API contract produces:
+ * unix milliseconds (store-shaped REST responses) or an ISO-8601 string with
+ * an explicit timezone marker `Z` / offset (presentation and agent-facing
+ * egress). A string without a marker is not part of the contract and is not
+ * supported.
  */
 export function parseTimestamp(value: string | number): Date {
-  if (typeof value === "number") return new Date(value);
-  const marked = value.endsWith("Z") || /[+-]\d{2}:?\d{2}$/.test(value);
-  return new Date(marked ? value : `${value}Z`);
+  return new Date(value);
 }
 
 /**
