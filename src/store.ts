@@ -587,7 +587,7 @@ export class Store {
         ttl_hours INTEGER,
         display_name TEXT,
         owner_label TEXT,
-        created_at INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER) * 1000),
+        created_at INTEGER NOT NULL DEFAULT 0,
         last_accessed_at INTEGER
       );
       CREATE INDEX IF NOT EXISTS idx_shares_task ON shares(task_id, created_at DESC);
@@ -636,7 +636,7 @@ export class Store {
       CREATE TABLE IF NOT EXISTS owner_prefs (
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL,
-        updated_at INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER) * 1000)
+        updated_at INTEGER NOT NULL DEFAULT 0
       );
     `);
   }
@@ -2112,8 +2112,8 @@ export class Store {
   }): ShareRow {
     this.db
       .prepare(
-        `INSERT INTO shares (token, task_id, share_snapshot_seq, ttl_hours, display_name, owner_label)
-       VALUES (?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO shares (token, task_id, share_snapshot_seq, ttl_hours, display_name, owner_label, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         input.token,
@@ -2122,6 +2122,7 @@ export class Store {
         input.ttlHours ?? null,
         input.displayName ?? null,
         input.ownerLabel ?? null,
+        Date.now(),
       );
     return this.getShareByToken(input.token)!;
   }

@@ -30,7 +30,8 @@ describe("share preview cleanup — sweepStaleSharePreviewsOnce", () => {
   function insertPreviewWithAge(token: string, ageMs: number) {
     store.insertSharePreview({ token, taskId: "s", snapshotSeq: 1 });
     const t = Date.now() - ageMs;
-    // direct UPDATE — Store's insertSharePreview uses the default strftime timestamp.
+    // direct UPDATE — `insertSharePreview` now writes `Date.now()` explicitly;
+    // this backdates the row for the TTL test.
     (
       store as unknown as {
         db: { prepare: (q: string) => { run: (...a: unknown[]) => void } };

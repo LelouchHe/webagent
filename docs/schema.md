@@ -235,8 +235,8 @@ Revocation is hard-delete; no audit trail.
 | `ttl_hours` | INTEGER | Optional auto-expire window |
 | `display_name` | TEXT | Owner-supplied label shown to viewers |
 | `owner_label` | TEXT | Owner identity label |
-| `created_at` | INTEGER NOT NULL DEFAULT now-ms | |
-| `last_accessed_at` | INTEGER | Bumped on each viewer GET |
+| `created_at` | INTEGER NOT NULL DEFAULT 0 | Unix milliseconds; writers pass `Date.now()` explicitly |
+| `last_accessed_at` | INTEGER | Unix millis; bumped on each viewer GET |
 
 Multi-share per task is allowed, but a partial unique index
 (`shares_one_active_preview`) caps un-activated previews to one per task.
@@ -271,7 +271,7 @@ selection, etc.). Single-user model = single owner scope.
 |---|---|---|
 | `key` | TEXT PRIMARY KEY | |
 | `value` | TEXT NOT NULL | Free-form (typically JSON) |
-| `updated_at` | INTEGER NOT NULL DEFAULT now-ms | |
+| `updated_at` | INTEGER NOT NULL DEFAULT 0 | Unix milliseconds; writers pass `Date.now()` explicitly |
 
 ---
 
