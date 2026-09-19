@@ -457,7 +457,12 @@ describe("GET /api/v1/shares — owner list", () => {
     await handleShareRoutes(ownerReq("/api/v1/shares"), r.res, deps);
     assert.equal(r.status(), 200);
     const { shares } = r.json() as {
-      shares: Array<{ token: string; shared_at: number | null }>;
+      shares: Array<{
+        token: string;
+        shared_at: string | null;
+        created_at: string;
+        last_accessed_at: string | null;
+      }>;
     };
     const tokens = shares.map((s) => s.token).sort();
     assert.deepEqual(tokens.includes(tA), true);
@@ -467,11 +472,21 @@ describe("GET /api/v1/shares — owner list", () => {
       false,
       "revoked share should NOT be listed",
     );
-    // preview row has shared_at null; active has number
+    // preview row has shared_at null; active has ISO, and every timestamp in
+    // the owner list is rendered ISO-8601.
     const rowA = shares.find((s) => s.token === tA)!;
     const rowB = shares.find((s) => s.token === tB)!;
+    const iso = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
     assert.equal(rowA.shared_at, null);
-    assert.equal(typeof rowB.shared_at, "number");
+    assert.match(rowA.created_at, iso);
+    assert.match(String(rowB.shared_at), iso);
+    assert.match(rowB.created_at, iso);
+    for (const row of shares) {
+      assert.ok(
+        row.last_accessed_at === null || iso.test(row.last_accessed_at),
+        `last_accessed_at not ISO: ${String(row.last_accessed_at)}`,
+      );
+    }
   });
 });
 

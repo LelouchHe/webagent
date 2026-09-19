@@ -393,7 +393,8 @@ export interface InboxMessage {
   title: string;
   body: string;
   cwd: string | null;
-  created_at: number;
+  /** ISO-8601 UTC with an explicit `Z`. */
+  created_at: string;
 }
 
 export function listMessages(): Promise<{ messages: InboxMessage[] }> {
@@ -420,8 +421,10 @@ export function ackMessage(id: string): Promise<void> {
 export interface TokenSummary {
   name: string;
   scope: "admin" | "api";
-  createdAt: number;
-  lastUsedAt: number | null;
+  /** ISO-8601 UTC with an explicit `Z`. */
+  createdAt: string;
+  /** ISO-8601 UTC with an explicit `Z`, or `null` when never used. */
+  lastUsedAt: string | null;
   isSelf: boolean;
 }
 

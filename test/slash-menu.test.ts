@@ -385,8 +385,8 @@ describe("slash menu — Tab vs Click behavior", () => {
     globalThis.fetch = ((url: string, init?: any) => {
       fetchCalls.push({ url, init });
       const data = [
-        { cwd: "/current", last_used_at: "2026-04-29 09:00:00" },
-        { cwd: "/tmp/other", last_used_at: "2026-04-29 08:00:00" },
+        { cwd: "/current", last_used_at: "2026-04-29T09:00:00.000Z" },
+        { cwd: "/tmp/other", last_used_at: "2026-04-29T08:00:00.000Z" },
       ];
       return Promise.resolve({
         ok: true,
@@ -426,8 +426,8 @@ describe("slash menu — Tab vs Click behavior", () => {
           ok: true,
           json: () =>
             Promise.resolve([
-              { cwd: "/current", last_used_at: "2026-04-29 09:00:00" },
-              { cwd: "/tmp/other", last_used_at: "2026-04-29 08:00:00" },
+              { cwd: "/current", last_used_at: "2026-04-29T09:00:00.000Z" },
+              { cwd: "/tmp/other", last_used_at: "2026-04-29T08:00:00.000Z" },
             ]),
         });
       }
@@ -479,8 +479,8 @@ describe("slash menu — Tab vs Click behavior", () => {
           ok: true,
           json: () =>
             Promise.resolve([
-              { cwd: "/current", last_used_at: "2026-04-29 09:00:00" },
-              { cwd: "/tmp/other", last_used_at: "2026-04-29 08:00:00" },
+              { cwd: "/current", last_used_at: "2026-04-29T09:00:00.000Z" },
+              { cwd: "/tmp/other", last_used_at: "2026-04-29T08:00:00.000Z" },
             ]),
         });
       }

@@ -156,9 +156,12 @@ describe("share smoke — end-to-end lifecycle", () => {
       deps,
     );
     assert.equal(r2.status(), 200);
-    const pub = r2.json() as { public_url: string; shared_at: number };
+    const pub = r2.json() as { public_url: string; shared_at: string };
     assert.match(pub.public_url, new RegExp(`/s/${token}$`));
-    assert.ok(pub.shared_at > 0);
+    assert.match(
+      pub.shared_at,
+      /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/,
+    );
 
     // 3. Public viewer JSON.
     const r3 = mockRes();

@@ -10,14 +10,12 @@ Timestamps are stored as **INTEGER unix milliseconds**. Writers pass
 `Date.now()` explicitly; the `DEFAULT 0` in the DDL is a schema placeholder and
 is never relied on.
 
-**Egress rule.** Agent-facing timestamps (MCP `at` / `createdAt`) and
-presentation surfaces (the share viewer bundle, the task snapshot) render a
-stored value as ISO-8601 UTC with an explicit `Z` (`src/shared/time.ts`). A
-`shared_at` that shares a JSON object with a rendered-ISO `created_at` renders
-ISO too. Otherwise, store-shaped REST responses — `GET /api/v1/tasks`,
-`/events`, `/recent-paths`, `/shares`, and `shared_at` without a rendered
-sibling — carry the stored integer unix milliseconds unchanged, because
-`src/types.ts` defines those fields as `number`.
+**Egress rule.** Every JSON egress renders a stored millisecond value as
+ISO-8601 UTC with an explicit `Z` (`src/shared/time.ts`). Storage stays integer
+milliseconds; no endpoint returns the integer form. Fields that are durations
+or counters rather than instants (`ttl_hours`, `share_snapshot_seq`,
+`upload_seq`, `seq`, …) keep their numeric types. See
+[docs/api.md → Timestamps](./api.md#timestamps).
 
 ## Table of Contents
 
@@ -398,12 +396,9 @@ one; a database carrying an older ALTER-built layout (for example the older
 that layout and only converges the timestamp declarations. Running the
 migration again is a no-op.
 
-This release is a **breaking change for the store-shaped REST responses**:
-`GET /api/v1/tasks` (`created_at`, `last_active_at`),
-`GET /api/v1/tasks/:id/events` (`created_at`) and `GET /api/v1/recent-paths`
-(`last_used_at`) previously returned bare UTC strings and now return integer
-unix milliseconds. See [docs/api.md → Timestamps](./api.md#timestamps) for the
-full egress rule.
+This release changes the **JSON egress**: every timestamp field now renders
+ISO-8601 UTC with an explicit `Z` (`docs/api.md` → `Timestamps`). Storage stays
+integer milliseconds; the wire never carries the integer form.
 
 ### Migration and rollback
 

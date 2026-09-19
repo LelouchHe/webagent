@@ -3,10 +3,9 @@ import { extname, join } from "node:path";
 import { homedir } from "node:os";
 import { randomUUID } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import type { Store } from "../store.ts";
+import type { EventRow, Store } from "../store.ts";
 import type { TaskManager } from "../task-manager.ts";
 import type { Config } from "../config.ts";
-import type { StoredEvent } from "../types.ts";
 import type { ShareRow } from "../store.ts";
 import { generateShareToken } from "../tokens.ts";
 import { SanitizeError, sanitizeEventsForShare } from "./sanitize.ts";
@@ -387,7 +386,7 @@ async function handlePreviewCreate(
       ttl_hours: result.row.ttl_hours,
       display_name: result.row.display_name,
       owner_label: result.row.owner_label,
-      shared_at: result.row.shared_at,
+      shared_at: isoFromMillisOrNull(result.row.shared_at),
       reused: result.reused,
     });
   } catch (err: unknown) {
@@ -410,7 +409,7 @@ async function handlePreviewCreate(
 }
 
 function runSanitizeGate(
-  events: StoredEvent[],
+  events: EventRow[],
   cwd: string,
   internalHosts: string[],
 ): void {
@@ -582,7 +581,7 @@ async function handlePublish(
     json(res, HTTP_STATUS.CONFLICT, {
       error: "share already active",
       token: row.token,
-      shared_at: row.shared_at,
+      shared_at: isoFromMillis(row.shared_at),
     });
     return;
   }
@@ -624,7 +623,7 @@ async function handlePublish(
       json(res, HTTP_STATUS.CONFLICT, {
         error: "share already active",
         token: fresh.token,
-        shared_at: fresh.shared_at,
+        shared_at: isoFromMillisOrNull(fresh.shared_at),
       });
       return;
     }
@@ -653,7 +652,7 @@ async function handlePublish(
   json(res, HTTP_STATUS.OK, {
     token: after.token,
     task_id: taskId,
-    shared_at: after.shared_at,
+    shared_at: isoFromMillisOrNull(after.shared_at),
     display_name: after.display_name,
     owner_label: after.owner_label,
     public_url: `${origin}/s/${after.token}`,
@@ -1176,7 +1175,14 @@ async function handleOwnerList(
   deps: ShareRouteDeps,
 ): Promise<void> {
   const rows = deps.store.listOwnerShares();
-  json(res, HTTP_STATUS.OK, { shares: rows });
+  json(res, HTTP_STATUS.OK, {
+    shares: rows.map((row) => ({
+      ...row,
+      shared_at: isoFromMillisOrNull(row.shared_at),
+      created_at: isoFromMillis(row.created_at),
+      last_accessed_at: isoFromMillisOrNull(row.last_accessed_at),
+    })),
+  });
 }
 
 /**

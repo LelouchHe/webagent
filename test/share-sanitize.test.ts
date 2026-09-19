@@ -235,7 +235,7 @@ describe("sanitize — Layer 1c hard reject", () => {
 });
 
 describe("sanitize — API", () => {
-  it("accepts StoredEvent shape (data as JSON string)", () => {
+  it("accepts the store row shape (data as JSON string)", () => {
     const out = sanitizeEventsForShare({
       events: [
         {
@@ -244,6 +244,7 @@ describe("sanitize — API", () => {
           seq: 1,
           type: "assistant_message",
           data: JSON.stringify({ text: `home: ${HOME}` }),
+          from_ref: "agent",
           created_at: Date.UTC(2026, 0, 1),
         },
       ],
@@ -263,6 +264,7 @@ describe("sanitize — API", () => {
           seq: 1,
           type: "assistant_message",
           data: "{not-valid-json",
+          from_ref: "agent",
           created_at: Date.UTC(2026, 0, 1),
         },
       ],

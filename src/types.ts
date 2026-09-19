@@ -83,10 +83,10 @@ export interface TaskSummary {
   mode: string | null;
   reasoning_effort: string | null;
   source: string;
-  /** Epoch milliseconds. */
-  created_at: number;
-  /** Epoch milliseconds. */
-  last_active_at: number;
+  /** ISO-8601 UTC with an explicit `Z`. */
+  created_at: string;
+  /** ISO-8601 UTC with an explicit `Z`. */
+  last_active_at: string;
   parent_id: string | null;
   /** Current workflow status for task navigation menus. */
   workflow_status?: "running" | "idle" | "blocked" | "done";
@@ -114,8 +114,8 @@ export interface StoredEvent {
   seq: number;
   type: string;
   data: string;
-  /** Epoch milliseconds. */
-  created_at: number;
+  /** ISO-8601 UTC with an explicit `Z`. */
+  created_at: string;
 }
 
 /** Pending permission request tracked in memory. */

@@ -192,12 +192,15 @@ describe("share publish route — POST /api/v1/tasks/:id/share/publish", () => {
     assert.equal(r2.status(), 200);
     const body = r2.json() as {
       token: string;
-      shared_at: number;
+      shared_at: string;
       display_name: string;
       public_url: string;
     };
     assert.equal(body.token, token);
-    assert.ok(body.shared_at > 0);
+    assert.match(
+      body.shared_at,
+      /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/,
+    );
     assert.equal(body.display_name, "alice");
     assert.match(body.public_url, new RegExp(`/s/${token}$`));
 

@@ -122,7 +122,7 @@ describe("createMcpEndpoint", () => {
         workflowStatus: "idle" as const,
         executionState: "idle" as const,
         lastAgentActivityAt: null,
-        lastEventAt: "2026-01-01 00:00:00.000",
+        lastEventAt: "2026-01-01T00:00:00.000Z",
       },
     ],
     query: (_sourceTaskId: string, input: unknown) => {
@@ -144,7 +144,7 @@ describe("createMcpEndpoint", () => {
           type: "assistant_message",
           data: '{"text":"hello"}',
           fromRef: "agent",
-          createdAt: "2026-01-01 00:00:00",
+          createdAt: "2026-01-01T00:00:00.000Z",
         },
       };
     },
