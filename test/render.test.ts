@@ -83,6 +83,16 @@ describe("render", () => {
       assert.equal(render.formatLocalTime(ms), render.formatLocalTime(iso));
     });
 
+    it("treats a bare UTC string as UTC (deploy-window tolerance)", () => {
+      // Old backends send `YYYY-MM-DD HH:MM:SS[.SSS]` with no marker; the
+      // fallback patches `Z` so a cached frontend reads the right instant.
+      const withZ = render.formatLocalTime("2024-01-01T00:00:00Z");
+      const withoutZ = render.formatLocalTime("2024-01-01T00:00:00");
+      const spaced = render.formatLocalTime("2024-01-01 00:00:00");
+      assert.equal(withoutZ, withZ);
+      assert.equal(spaced, withZ);
+    });
+
     it("accepts epoch milliseconds (number) — InboxMessage.created_at is number", () => {
       // Regression: TypeError "e.endsWith is not a function" was thrown when
       // /inbox menu rendered InboxMessage.created_at, which the store returns

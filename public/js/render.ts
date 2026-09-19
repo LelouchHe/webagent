@@ -2,6 +2,7 @@
 
 import { dom, state } from "./state.ts";
 import { enhanceCodeBlocks } from "./highlight.ts";
+import { parseTimestamp } from "./relative-time.ts";
 
 // Pure DOM helpers live in render-event.ts (single source for both main app
 // and share viewer). Re-exported here for callers that want them via render.ts.
@@ -277,10 +278,9 @@ export function formatLocalTime(
   utc: string | number | null | undefined,
 ): string {
   if (utc === null || utc === undefined || utc === "") return "";
-  // Storage is unix milliseconds and egress timestamps are ISO-8601 with an
-  // explicit `Z`, so both shapes are unambiguous and `Date` reads them
-  // directly — no timezone patching.
-  const d = new Date(utc);
+  // `parseTimestamp` reads unix milliseconds and ISO-8601 with `Z` directly,
+  // and patches `Z` onto a bare UTC string for the deploy window (see there).
+  const d = parseTimestamp(utc);
   if (isNaN(d.getTime())) return "";
   const pad = (n: number) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;

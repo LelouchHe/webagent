@@ -25,6 +25,15 @@ describe("formatRelativeTime", () => {
     );
   });
 
+  it("reads unix milliseconds and a bare UTC string the same way", () => {
+    // Deployment-window tolerance: a not-yet-restarted backend sends a bare
+    // `YYYY-MM-DD HH:MM:SS` string, which must be read as UTC.
+    const ms = Date.UTC(2026, 3, 28, 11, 55, 0);
+    assert.equal(formatRelativeTime(ms, NOW), "5m ago");
+    assert.equal(formatRelativeTime("2026-04-28 11:55:00", NOW), "5m ago");
+    assert.equal(formatRelativeTime("2026-04-28 11:55:00.000", NOW), "5m ago");
+  });
+
   it("returns 'just now' for clock-skew slightly in the future", () => {
     // Clients can have small clock drift; a 30s positive delta should
     // not render as "30s in the future" — degrade to "just now".
@@ -127,6 +136,16 @@ describe("formatExactUtc", () => {
   it("formats as 'YYYY-MM-DD HH:MM UTC'", () => {
     assert.equal(
       formatExactUtc(new Date("2026-04-28T05:19:00Z").toISOString()),
+      "2026-04-28 05:19 UTC",
+    );
+  });
+
+  it("reads unix milliseconds and a bare UTC string (deploy-window tolerance)", () => {
+    const ms = Date.UTC(2026, 3, 28, 5, 19, 0);
+    assert.equal(formatExactUtc(ms), "2026-04-28 05:19 UTC");
+    assert.equal(formatExactUtc("2026-04-28 05:19:00"), "2026-04-28 05:19 UTC");
+    assert.equal(
+      formatExactUtc("2026-04-28 05:19:00.000"),
       "2026-04-28 05:19 UTC",
     );
   });

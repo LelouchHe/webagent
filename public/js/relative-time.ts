@@ -39,13 +39,31 @@ function pad2(n: number): string {
 }
 
 /**
+ * Parse a stored or egressed timestamp.
+ *
+ * Numbers are unix milliseconds. Strings carrying `Z` or an explicit offset
+ * are parsed as written. A bare `YYYY-MM-DD HH:MM:SS[.SSS]` string has no
+ * timezone marker and is UTC, so `Z` is patched before parsing.
+ *
+ * That last branch is **deploy-window tolerance, not the storage contract**.
+ * Storage is INTEGER unix milliseconds and egress renders ISO-8601 with `Z`;
+ * the fallback only keeps an already-cached old frontend or a backend that has
+ * not restarted yet reading the right instant.
+ */
+export function parseTimestamp(value: string | number): Date {
+  if (typeof value === "number") return new Date(value);
+  const marked = value.endsWith("Z") || /[+-]\d{2}:?\d{2}$/.test(value);
+  return new Date(marked ? value : `${value}Z`);
+}
+
+/**
  * Format an ISO-8601 string or unix milliseconds as a short relative-time
  * string. Returns "" on invalid input. `now` is injected so unit tests can fix
  * the reference point; pass `new Date()` in production.
  */
 export function formatRelativeTime(value: string | number, now: Date): string {
   if (value === "") return "";
-  const d = new Date(value);
+  const d = parseTimestamp(value);
   const t = d.getTime();
   if (isNaN(t)) return "";
 
@@ -83,7 +101,7 @@ export function formatRelativeTime(value: string | number, now: Date): string {
  */
 export function formatExactUtc(value: string | number): string {
   if (value === "") return "";
-  const d = new Date(value);
+  const d = parseTimestamp(value);
   if (isNaN(d.getTime())) return "";
   return (
     `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())} ` +
