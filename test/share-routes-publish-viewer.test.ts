@@ -448,6 +448,12 @@ describe("share public viewer — GET /s/:token + /api/v1/shared/:token/events",
     assert.ok(!("task_id" in body.share), "task_id leaked to public viewer");
     assert.ok(Array.isArray(body.events));
     assert.ok(body.events.length >= 2);
+    // Same object, same shape: `shared_at` renders ISO next to the ISO
+    // `created_at` instead of mixing an integer into the bundle.
+    const iso = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+    assert.equal(typeof body.share.shared_at, "string");
+    assert.match(String(body.share.shared_at), iso);
+    assert.match(String(body.share.created_at), iso);
     assert.match(r.headers()["Content-Type"] ?? "", /application\/json/);
     assert.match(r.headers()["Cache-Control"] ?? "", /no-store/);
   });

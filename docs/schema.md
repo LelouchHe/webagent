@@ -12,11 +12,12 @@ is never relied on.
 
 **Egress rule.** Agent-facing timestamps (MCP `at` / `createdAt`) and
 presentation surfaces (the share viewer bundle, the task snapshot) render a
-stored value as ISO-8601 UTC with an explicit `Z` (`src/shared/time.ts`).
-Store-shaped REST responses — `GET /api/v1/tasks`, `/events`, `/recent-paths`,
-`/shares`, and the share-row `shared_at` fields — carry the stored integer unix
-milliseconds unchanged, because `src/types.ts` defines those fields as
-`number`.
+stored value as ISO-8601 UTC with an explicit `Z` (`src/shared/time.ts`). A
+`shared_at` that shares a JSON object with a rendered-ISO `created_at` renders
+ISO too. Otherwise, store-shaped REST responses — `GET /api/v1/tasks`,
+`/events`, `/recent-paths`, `/shares`, and `shared_at` without a rendered
+sibling — carry the stored integer unix milliseconds unchanged, because
+`src/types.ts` defines those fields as `number`.
 
 ## Table of Contents
 

@@ -12,7 +12,7 @@ import { generateShareToken } from "../tokens.ts";
 import { SanitizeError, sanitizeEventsForShare } from "./sanitize.ts";
 import { buildContentDisposition, isInlineMime } from "../attachments.ts";
 import { enrichStoredEventsForDisplay } from "../attachment-labels.ts";
-import { isoFromMillis } from "../shared/time.ts";
+import { isoFromMillis, isoFromMillisOrNull } from "../shared/time.ts";
 import { log } from "../log.ts";
 import { HTTP_STATUS } from "../http-status.ts";
 
@@ -498,7 +498,7 @@ async function handlePreviewRead(
         token: row.token,
         task_id: taskId,
         task_title: task.title,
-        shared_at: null,
+        shared_at: isoFromMillisOrNull(row.shared_at),
         snapshot_seq: row.share_snapshot_seq,
         current_last_seq: currentLastSeq,
         events_since_snapshot: eventsSinceSnapshot,
@@ -791,7 +791,7 @@ async function handleSharedEvents(
         share: {
           token: row.token,
           task_title: task.title,
-          shared_at: row.shared_at,
+          shared_at: isoFromMillisOrNull(row.shared_at),
           snapshot_seq: row.share_snapshot_seq,
           display_name: row.display_name,
           created_at: isoFromMillis(row.created_at),
