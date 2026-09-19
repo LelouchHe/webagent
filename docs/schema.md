@@ -8,8 +8,15 @@ schema must be backed up and removed before starting a new release.
 
 Timestamps are stored as **INTEGER unix milliseconds**. Writers pass
 `Date.now()` explicitly; the `DEFAULT 0` in the DDL is a schema placeholder and
-is never relied on. Every egress surface renders a stored millisecond value as
-ISO-8601 UTC with an explicit `Z` (`src/shared/time.ts`).
+is never relied on.
+
+**Egress rule.** Agent-facing timestamps (MCP `at` / `createdAt`) and
+presentation surfaces (the share viewer bundle, the task snapshot) render a
+stored value as ISO-8601 UTC with an explicit `Z` (`src/shared/time.ts`).
+Store-shaped REST responses — `GET /api/v1/tasks`, `/events`, `/recent-paths`,
+`/shares`, and the share-row `shared_at` fields — carry the stored integer unix
+milliseconds unchanged, because `src/types.ts` defines those fields as
+`number`.
 
 ## Table of Contents
 
@@ -355,14 +362,24 @@ Seven tables hold eight timestamp columns (`tasks.created_at`,
 them as bare UTC strings, in two shapes: `%Y-%m-%d %H:%M:%S` and
 `%Y-%m-%d %H:%M:%S.%f`, neither with a timezone marker.
 
-At startup, `migrateTimestampsToMillis()` rebuilds each table whose columns are
-still declared TEXT, in one transaction, converting every value with
+At startup, `migrateTimestampsToMillis()` rebuilds each table whose target
+column declarations differ from the canonical DDL (wrong type, extra or missing
+constraints, or a legacy default expression), in one transaction, converting
+every legacy value with
 `CAST(ROUND((julianday(col) - 2440587.5) * 86400000) AS INTEGER)` (SQLite reads
 a suffix-less time string as UTC, so no `utc`/`localtime` modifier is applied).
 Foreign keys are disabled for the rebuild and a `foreign_key_check` must pass
 before the transaction commits. A NULL in a legacy nullable column falls back
 to that row's converted `created_at`, matching what
 `ORDER BY COALESCE(last_active_at, created_at)` already meant.
+
+The migration is **fail-closed**. Before any DDL it scans every target column:
+a legacy column must hold a `YYYY-MM-DD HH:MM:SS[.SSS]` UTC string that SQLite
+can parse (`'0'`, the empty string, `'now'`, a `T` separator, and out-of-range
+dates all fail), and a column already declared INTEGER must hold an integer.
+Any offending value aborts the migration with the table, column, row identity
+(`id`, `task_id`/`seq`, …), and original value, and the transaction rolls back —
+a malformed value is never silently coerced to a plausible-looking number.
 
 The rebuild reads the live `CREATE TABLE` / `CREATE INDEX` text from
 `sqlite_master` and replaces only the timestamp declarations, so no second copy

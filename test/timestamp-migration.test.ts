@@ -25,6 +25,30 @@ interface SchemaRow {
   sql: string | null;
 }
 
+/** Columns that identify a row in the abort report and in samples. */
+const IDENTITY: Readonly<Record<string, readonly string[]>> = {
+  tasks: ["id"],
+  agent_sessions: ["agent_key", "agent_session_id"],
+  events: ["task_id", "seq"],
+  push_subscriptions: ["endpoint"],
+  client_ops: ["task_id", "client_op_id"],
+  attachments: ["id"],
+  recent_paths: ["cwd"],
+};
+
+const MIGRATED_TABLES = Object.keys(TIMESTAMP_COLUMNS);
+
+/** Indexes that live on rebuilt tables and must survive the rebuild. */
+const REBUILT_INDEXES = [
+  "idx_events_task",
+  "idx_events_type",
+  "idx_tasks_parent_title_live",
+  "idx_agent_sessions_task",
+  "idx_attachments_task",
+  "idx_shares_task",
+  "shares_one_active_preview",
+] as const;
+
 function dbPath(dir: string): string {
   return join(dir, "webagent.db");
 }
@@ -37,22 +61,84 @@ function readSchema(db: Database.Database): SchemaRow[] {
     .all() as SchemaRow[];
 }
 
+function schemaSqlByName(db: Database.Database): Map<string, string | null> {
+  return new Map(readSchema(db).map((row) => [row.name, row.sql]));
+}
+
 function signedColumns(): Array<[string, string]> {
   return Object.entries(TIMESTAMP_COLUMNS).flatMap(([table, columns]) =>
     columns.map((column): [string, string] => [table, column]),
   );
 }
 
+function tableCounts(db: Database.Database): Record<string, number> {
+  return Object.fromEntries(
+    MIGRATED_TABLES.map((table) => [
+      table,
+      (
+        db.prepare(`SELECT COUNT(*) AS n FROM "${table}"`).get() as {
+          n: number;
+        }
+      ).n,
+    ]),
+  );
+}
+
+interface TimestampSample {
+  table: string;
+  column: string;
+  id: string;
+  value: string | number | null;
+}
+
+/** Every stored timestamp cell, keyed by its row identity. */
+function sampleTimestamps(db: Database.Database): TimestampSample[] {
+  const samples: TimestampSample[] = [];
+  for (const [table, columns] of Object.entries(TIMESTAMP_COLUMNS)) {
+    const keys = IDENTITY[table];
+    const keyList = keys.map((key) => `"${key}"`).join(", ");
+    for (const column of columns) {
+      const rows = db
+        .prepare(
+          `SELECT ${keyList}, "${column}" AS value FROM "${table}" ORDER BY ${keyList}`,
+        )
+        .all() as Array<Record<string, unknown>>;
+      for (const row of rows) {
+        const id = keys
+          .map((key) => `${key}=${JSON.stringify(row[key])}`)
+          .join(",");
+        samples.push({
+          table,
+          column,
+          id,
+          value: row.value as string | number | null,
+        });
+      }
+    }
+  }
+  return samples;
+}
+
+function sampleKey(sample: TimestampSample): string {
+  return `${sample.table}.${sample.column}#${sample.id}`;
+}
+
+/** Independent conversion: treat the bare string as UTC and let JS parse it. */
+function expectedMillis(value: string): number {
+  return Date.parse(`${value.replace(" ", "T")}Z`);
+}
+
 type LegacyVariant = "strftime" | "datetime";
 
 /**
- * Create a database the way the *previous* release did: same DDL as
+ * Create a database the way a previous release did: same DDL as
  * `initializeSchema`, except the eight timestamp columns are TEXT. Returns the
  * fresh canonical schema so it can be compared after migration.
  */
 function createLegacyDatabase(
   dir: string,
   variant: LegacyVariant,
+  override?: (table: string, sql: string) => string,
 ): SchemaRow[] {
   const seed = new Store(dir, AGENT);
   seed.close();
@@ -72,7 +158,9 @@ function createLegacyDatabase(
     if (row.sql === null || row.name === "sqlite_sequence") continue;
     const columns =
       row.type === "table" ? TIMESTAMP_COLUMNS[row.name] : undefined;
-    legacy.exec(columns ? legacyTableSql(row.sql, columns, variant) : row.sql);
+    let sql = columns ? legacyTableSql(row.sql, columns, variant) : row.sql;
+    if (override) sql = override(row.name, sql);
+    legacy.exec(sql);
   }
   legacy.close();
   return freshSchema;
@@ -102,6 +190,57 @@ function legacyTableSql(
     );
   }
   return out;
+}
+
+/**
+ * The exact `tasks` / `events` DDL shapes the long-lived dogfood database
+ * carries: quoted table names, columns appended out of order, `datetime('now')`
+ * defaults, and a nullable `last_active_at` / `from_ref`.
+ */
+const HISTORICAL_TABLE_SQL: Readonly<Record<string, string>> = {
+  tasks: `CREATE TABLE "tasks" (
+        id TEXT PRIMARY KEY,
+        cwd TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      , title TEXT, last_active_at TEXT, model TEXT, mode TEXT, reasoning_effort TEXT, source TEXT NOT NULL DEFAULT 'auto', deleted_at INTEGER, parent_id TEXT REFERENCES "tasks"(id), pending_compact_summary TEXT, workflow_status TEXT NOT NULL DEFAULT 'idle' CHECK (workflow_status IN ('running', 'idle', 'blocked', 'done')))`,
+  events: `CREATE TABLE events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        task_id TEXT NOT NULL REFERENCES "tasks"(id),
+        seq INTEGER NOT NULL,
+        type TEXT NOT NULL,
+        data TEXT NOT NULL DEFAULT '{}',
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      , from_ref TEXT)`,
+};
+
+function createHistoricalDatabase(dir: string): SchemaRow[] {
+  const seed = new Store(dir, AGENT);
+  seed.close();
+  const fresh = new Database(dbPath(dir));
+  const freshSchema = readSchema(fresh);
+  fresh.close();
+  for (const suffix of ["", "-wal", "-shm"]) {
+    rmSync(`${dbPath(dir)}${suffix}`, { force: true });
+  }
+
+  const legacy = new Database(dbPath(dir));
+  const ordered = [...freshSchema].sort(
+    (a, b) => (a.type === "table" ? 0 : 1) - (b.type === "table" ? 0 : 1),
+  );
+  for (const row of ordered) {
+    if (row.sql === null || row.name === "sqlite_sequence") continue;
+    if (row.type === "table" && HISTORICAL_TABLE_SQL[row.name]) {
+      legacy.exec(HISTORICAL_TABLE_SQL[row.name]);
+      continue;
+    }
+    const columns =
+      row.type === "table" ? TIMESTAMP_COLUMNS[row.name] : undefined;
+    legacy.exec(
+      columns ? legacyTableSql(row.sql, columns, "strftime") : row.sql,
+    );
+  }
+  legacy.close();
+  return freshSchema;
 }
 
 /** Seed one row per migrated table, exercising both legacy string formats. */
@@ -147,6 +286,56 @@ function seedLegacyRows(db: Database.Database): void {
   );
 }
 
+/** Multiple rows per table, so a dropped row cannot pass a count assertion. */
+function seedManyLegacyRows(db: Database.Database): void {
+  for (let i = 1; i <= 3; i += 1) {
+    db.prepare(
+      "INSERT INTO tasks (id, cwd, created_at, last_active_at) VALUES (?, ?, ?, ?)",
+    ).run(`t${i}`, "/x", NO_MS, MS);
+    db.prepare(
+      "INSERT INTO agent_sessions (agent_key, agent_session_id, task_id, created_at) VALUES (?, ?, ?, ?)",
+    ).run(AGENT, `sess${i}`, `t${i}`, i % 2 === 1 ? NO_MS : MS);
+    db.prepare(
+      "INSERT INTO push_subscriptions (endpoint, auth, p256dh, created_at) VALUES (?, ?, ?, ?)",
+    ).run(`https://push.example/${i}`, "auth", "p256dh", NO_MS);
+    db.prepare(
+      "INSERT INTO client_ops (task_id, client_op_id, result_json, created_at) VALUES (?, ?, ?, ?)",
+    ).run(`t${i}`, `op${i}`, "{}", MS);
+    db.prepare(
+      "INSERT INTO recent_paths (cwd, last_used_at) VALUES (?, ?)",
+    ).run(`/p${i}`, NO_MS);
+    db.prepare(
+      `INSERT INTO attachments
+         (id, task_id, kind, name, mime, size, realpath, upload_seq, width, height, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      `att${i}`,
+      `t${i}`,
+      "file",
+      `f${i}.txt`,
+      "text/plain",
+      1,
+      `/f${i}.txt`,
+      2,
+      null,
+      null,
+      MS,
+    );
+    for (let seq = 1; seq <= 2; seq += 1) {
+      db.prepare(
+        "INSERT INTO events (task_id, seq, type, data, created_at, from_ref) VALUES (?, ?, ?, ?, ?, ?)",
+      ).run(
+        `t${i}`,
+        seq,
+        seq === 1 ? "user_message" : "assistant_message",
+        "{}",
+        seq === 1 ? NO_MS : MS,
+        seq === 1 ? "user" : "agent",
+      );
+    }
+  }
+}
+
 function assertIntegerTimestamps(db: Database.Database): void {
   for (const [table, column] of signedColumns()) {
     const types = db
@@ -159,6 +348,16 @@ function assertIntegerTimestamps(db: Database.Database): void {
       `${table}.${column} must be stored as integer, saw ${JSON.stringify(types)}`,
     );
   }
+}
+
+function assertIntegrity(db: Database.Database): void {
+  assert.deepEqual(
+    (db.pragma("integrity_check") as Array<{ integrity_check: string }>).map(
+      (row) => row.integrity_check,
+    ),
+    ["ok"],
+  );
+  assert.deepEqual(db.pragma("foreign_key_check"), []);
 }
 
 describe("timestamp millis migration", () => {
@@ -197,16 +396,56 @@ describe("timestamp millis migration", () => {
 
     const db = new Database(dbPath(dir));
     assertIntegerTimestamps(db);
-    assert.deepEqual(db.pragma("foreign_key_check"), []);
-    assert.deepEqual(
-      (db.pragma("integrity_check") as Array<{ integrity_check: string }>).map(
-        (row) => row.integrity_check,
-      ),
-      ["ok"],
-    );
+    assertIntegrity(db);
     assert.deepEqual(db.prepare("SELECT created_at FROM client_ops").all(), [
       { created_at: MS_MILLIS },
     ]);
+    db.close();
+  });
+
+  it("preserves every row and converts every value", () => {
+    const dir = tempDir();
+    createLegacyDatabase(dir, "strftime");
+    const legacy = new Database(dbPath(dir));
+    seedManyLegacyRows(legacy);
+    const preCounts = tableCounts(legacy);
+    const preSamples = sampleTimestamps(legacy);
+    legacy.close();
+
+    // Non-vacuous counts: every migrated table actually holds rows.
+    for (const [table, count] of Object.entries(preCounts)) {
+      assert.ok(count > 0, `${table} must be seeded (got ${count})`);
+    }
+    assert.equal(preCounts.events, 6);
+    assert.equal(preCounts.tasks, 3);
+    assert.equal(preSamples.length, 27);
+    assert.ok(preSamples.every((sample) => typeof sample.value === "string"));
+
+    const store = new Store(dir, AGENT);
+    store.close();
+
+    const db = new Database(dbPath(dir));
+    assert.deepEqual(
+      tableCounts(db),
+      preCounts,
+      "row counts must be preserved",
+    );
+    const post = sampleTimestamps(db);
+    assert.equal(post.length, preSamples.length, "no sample may disappear");
+    const expected = new Map(
+      preSamples.map((sample) => [sampleKey(sample), sample.value as string]),
+    );
+    for (const sample of post) {
+      const old = expected.get(sampleKey(sample));
+      assert.ok(old !== undefined, `missing sample ${sampleKey(sample)}`);
+      assert.equal(
+        sample.value,
+        expectedMillis(old),
+        `value for ${sampleKey(sample)}`,
+      );
+    }
+    assertIntegerTimestamps(db);
+    assertIntegrity(db);
     db.close();
   });
 
@@ -223,6 +462,35 @@ describe("timestamp millis migration", () => {
     const migrated = new Database(dbPath(dir));
     assert.deepEqual(readSchema(migrated), freshSchema);
     migrated.close();
+  });
+
+  it("recreates every index that lives on a rebuilt table", () => {
+    const dir = tempDir();
+    const freshSchema = createLegacyDatabase(dir, "strftime");
+    const legacy = new Database(dbPath(dir));
+    seedLegacyRows(legacy);
+    legacy.close();
+
+    const store = new Store(dir, AGENT);
+    store.close();
+
+    const db = new Database(dbPath(dir));
+    const freshIndexes = new Map(
+      freshSchema
+        .filter((row) => row.type === "index")
+        .map((row) => [row.name, row.sql]),
+    );
+    const liveIndexes = schemaSqlByName(db);
+    for (const name of REBUILT_INDEXES) {
+      assert.ok(liveIndexes.has(name), `missing index ${name}`);
+      assert.equal(
+        liveIndexes.get(name),
+        freshIndexes.get(name),
+        `index text for ${name}`,
+      );
+    }
+    assertIntegrity(db);
+    db.close();
   });
 
   it("accepts the oldest live DDL shape (datetime('now'), nullable column)", () => {
@@ -246,9 +514,224 @@ describe("timestamp millis migration", () => {
 
     const db = new Database(dbPath(dir));
     assertIntegerTimestamps(db);
-    assert.deepEqual(db.pragma("foreign_key_check"), []);
+    assertIntegrity(db);
     db.close();
   });
+
+  it("migrates the real historical tasks/events layout without rewriting it", () => {
+    const dir = tempDir();
+    const freshSchema = createHistoricalDatabase(dir);
+    const legacy = new Database(dbPath(dir));
+    legacy
+      .prepare(
+        "INSERT INTO tasks (id, cwd, created_at, last_active_at) VALUES (?, ?, ?, ?)",
+      )
+      .run("t1", "/x", NO_MS, null);
+    legacy
+      .prepare(
+        "INSERT INTO tasks (id, cwd, created_at, last_active_at) VALUES (?, ?, ?, ?)",
+      )
+      .run("t2", "/y", MS, MS);
+    legacy
+      .prepare(
+        "INSERT INTO agent_sessions (agent_key, agent_session_id, task_id, created_at) VALUES (?, ?, ?, ?)",
+      )
+      .run(AGENT, "sess1", "t1", NO_MS);
+    legacy
+      .prepare(
+        "INSERT INTO agent_sessions (agent_key, agent_session_id, task_id, created_at) VALUES (?, ?, ?, ?)",
+      )
+      .run(AGENT, "sess2", "t2", MS);
+    legacy
+      .prepare(
+        "INSERT INTO events (task_id, seq, type, data, created_at, from_ref) VALUES (?, ?, ?, ?, ?, ?)",
+      )
+      .run("t1", 1, "user_message", "{}", MS, "user");
+    legacy
+      .prepare(
+        "INSERT INTO events (task_id, seq, type, data, created_at, from_ref) VALUES (?, ?, ?, ?, ?, ?)",
+      )
+      .run("t1", 2, "assistant_message", '{"text":"hi"}', NO_MS, "agent");
+    legacy.close();
+
+    const store = new Store(dir, AGENT);
+    assert.equal(store.getTask("t1")!.created_at, NO_MS_MILLIS);
+    assert.equal(store.getTask("t1")!.last_active_at, NO_MS_MILLIS);
+    assert.equal(store.getTask("t2")!.last_active_at, MS_MILLIS);
+    assert.equal(store.getEvent("t1", 1)!.created_at, MS_MILLIS);
+    assert.equal(store.getEvent("t1", 2)!.created_at, NO_MS_MILLIS);
+    store.close();
+
+    const db = new Database(dbPath(dir));
+    const live = schemaSqlByName(db);
+    const tasksSql = live.get("tasks")!;
+    const eventsSql = live.get("events")!;
+    // The historical layout (quoted name, out-of-order columns) is preserved;
+    // only the timestamp declarations converge.
+    assert.ok(tasksSql.startsWith('CREATE TABLE "tasks" ('), tasksSql);
+    assert.ok(eventsSql.startsWith("CREATE TABLE events ("), eventsSql);
+    assert.match(tasksSql, /created_at INTEGER NOT NULL DEFAULT 0/);
+    assert.match(tasksSql, /last_active_at INTEGER NOT NULL DEFAULT 0/);
+    assert.match(eventsSql, /created_at INTEGER NOT NULL DEFAULT 0/);
+    assert.ok(!tasksSql.includes("datetime('now')"), tasksSql);
+    assert.ok(!eventsSql.includes("datetime('now')"), eventsSql);
+    // Nullable legacy columns that are not timestamp columns are untouched.
+    assert.match(eventsSql, /from_ref TEXT\)/);
+
+    const freshIndexes = new Map(
+      freshSchema
+        .filter((row) => row.type === "index")
+        .map((row) => [row.name, row.sql]),
+    );
+    for (const name of [
+      "idx_events_task",
+      "idx_events_type",
+      "idx_tasks_parent_title_live",
+    ]) {
+      assert.equal(
+        live.get(name),
+        freshIndexes.get(name),
+        `index text ${name}`,
+      );
+    }
+    assertIntegerTimestamps(db);
+    assertIntegrity(db);
+    db.close();
+  });
+
+  it("rebuilds an INTEGER column whose default is still the legacy expression", () => {
+    const dir = tempDir();
+    createLegacyDatabase(dir, "strftime", (table, sql) =>
+      table === "client_ops"
+        ? sql.replace(
+            "created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now'))",
+            "created_at   INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER) * 1000)",
+          )
+        : sql,
+    );
+    const legacy = new Database(dbPath(dir));
+    seedLegacyRows(legacy);
+    // An already-millisecond value must be copied through, never run through
+    // julianday() (which would corrupt it).
+    legacy.prepare("UPDATE client_ops SET created_at = ?").run(1789833067123);
+    const beforeDdl = schemaSqlByName(legacy).get("client_ops")!;
+    assert.match(
+      beforeDdl,
+      /CAST\(strftime\('%s','now'\) AS INTEGER\) \* 1000/,
+    );
+    legacy.close();
+
+    const store = new Store(dir, AGENT);
+    store.close();
+
+    const db = new Database(dbPath(dir));
+    assert.match(
+      schemaSqlByName(db).get("client_ops")!,
+      /created_at {3}INTEGER NOT NULL DEFAULT 0/,
+    );
+    assert.deepEqual(db.prepare("SELECT created_at FROM client_ops").all(), [
+      { created_at: 1789833067123 },
+    ]);
+    assertIntegerTimestamps(db);
+    assertIntegrity(db);
+    db.close();
+  });
+
+  it("converts boundary values without aborting", () => {
+    const dir = tempDir();
+    createLegacyDatabase(dir, "strftime");
+    const legacy = new Database(dbPath(dir));
+    dbPrepareTask(legacy, "t1");
+    legacy
+      .prepare(
+        "INSERT INTO events (task_id, seq, type, data, created_at, from_ref) VALUES (?, ?, ?, ?, ?, ?)",
+      )
+      .run("t1", 1, "user_message", "{}", "1970-01-01 00:00:00", "user");
+    legacy
+      .prepare(
+        "INSERT INTO events (task_id, seq, type, data, created_at, from_ref) VALUES (?, ?, ?, ?, ?, ?)",
+      )
+      .run("t1", 2, "assistant_message", "{}", "9999-12-31 23:59:59", "agent");
+    legacy.close();
+
+    const store = new Store(dir, AGENT);
+    assert.equal(store.getEvent("t1", 1)!.created_at, 0);
+    assert.equal(
+      store.getEvent("t1", 2)!.created_at,
+      Date.parse("9999-12-31T23:59:59Z"),
+    );
+    store.close();
+  });
+
+  for (const bad of [
+    "0",
+    "",
+    "not-a-date",
+    "2026-13-45 99:99:99",
+    "now",
+    "2026-09-19T15:51:07",
+    "2026-09-19",
+    " 2026-09-19 15:51:07",
+  ]) {
+    it(`aborts and rolls back on malformed legacy value ${JSON.stringify(bad)}`, () => {
+      const dir = tempDir();
+      createLegacyDatabase(dir, "strftime");
+      const legacy = new Database(dbPath(dir));
+      dbPrepareTask(legacy, "t1");
+      legacy
+        .prepare(
+          "INSERT INTO events (task_id, seq, type, data, created_at, from_ref) VALUES (?, ?, ?, ?, ?, ?)",
+        )
+        .run("t1", 1, "user_message", "{}", bad, "user");
+      const schemaBefore = readSchema(legacy);
+      const countsBefore = tableCounts(legacy);
+      legacy.close();
+
+      assert.throws(
+        () => new Store(dir, AGENT),
+        (error: unknown) => {
+          assert.ok(error instanceof Error);
+          assert.match(error.message, /Timestamp migration aborted/);
+          assert.match(error.message, /events\.created_at/);
+          assert.ok(
+            error.message.includes('task_id="t1"'),
+            `expected the offending task id, got: ${error.message}`,
+          );
+          assert.ok(
+            error.message.includes("seq=1"),
+            `expected the offending seq, got: ${error.message}`,
+          );
+          assert.ok(
+            error.message.includes(JSON.stringify(bad)),
+            `expected the original value ${JSON.stringify(bad)}, got: ${error.message}`,
+          );
+          return true;
+        },
+      );
+
+      // Fail closed: nothing was rebuilt, converted, or left behind.
+      const db = new Database(dbPath(dir));
+      assert.deepEqual(readSchema(db), schemaBefore);
+      assert.deepEqual(tableCounts(db), countsBefore);
+      assert.deepEqual(
+        db
+          .prepare(
+            "SELECT typeof(created_at) AS t, created_at AS v FROM events",
+          )
+          .all(),
+        [{ t: "text", v: bad }],
+      );
+      assert.deepEqual(
+        db
+          .prepare(
+            "SELECT name FROM sqlite_master WHERE name LIKE '%timestamp_migration%'",
+          )
+          .all(),
+        [],
+      );
+      db.close();
+    });
+  }
 
   it("is idempotent — reopening a migrated database changes nothing", () => {
     const dir = tempDir();
@@ -320,3 +803,9 @@ describe("timestamp millis migration", () => {
     db.close();
   });
 });
+
+function dbPrepareTask(db: Database.Database, id: string): void {
+  db.prepare(
+    "INSERT INTO tasks (id, cwd, created_at, last_active_at) VALUES (?, ?, ?, ?)",
+  ).run(id, "/x", NO_MS, MS);
+}
