@@ -356,28 +356,35 @@ is handled the same way: the schema guard tolerates it and startup drops it
 
 ## Timestamp normalization
 
-Seven tables hold eight timestamp columns (`tasks.created_at`,
+Nine tables hold ten timestamp columns. Eight of them (`tasks.created_at`,
 `tasks.last_active_at`, `agent_sessions.created_at`, `events.created_at`,
 `push_subscriptions.created_at`, `client_ops.created_at`,
-`attachments.created_at`, `recent_paths.last_used_at`). Older databases store
-them as bare UTC strings, in two shapes: `%Y-%m-%d %H:%M:%S` and
-`%Y-%m-%d %H:%M:%S.%f`, neither with a timezone marker.
+`attachments.created_at`, `recent_paths.last_used_at`) were bare UTC strings in
+older databases, in two shapes: `%Y-%m-%d %H:%M:%S` and
+`%Y-%m-%d %H:%M:%S.%f`, neither with a timezone marker. The other two
+(`shares.created_at`, `owner_prefs.updated_at`) were already INTEGER but
+defaulted to `CAST(strftime('%s','now') AS INTEGER) * 1000` (seconds aligned).
 
 At startup, `migrateTimestampsToMillis()` rebuilds each table whose target
 column declarations differ from the canonical DDL (wrong type, extra or missing
-constraints, or a legacy default expression), in one transaction, converting
-every legacy value with
+constraints, or a legacy default expression), in one transaction. String
+columns are converted with
 `CAST(ROUND((julianday(col) - 2440587.5) * 86400000) AS INTEGER)` (SQLite reads
-a suffix-less time string as UTC, so no `utc`/`localtime` modifier is applied).
+a suffix-less time string as UTC, so no `utc`/`localtime` modifier is applied);
+the two already-INTEGER columns only have their declaration converged and their
+values are copied through untouched.
 Foreign keys are disabled for the rebuild and a `foreign_key_check` must pass
 before the transaction commits. A NULL in a legacy nullable column falls back
 to that row's converted `created_at`, matching what
 `ORDER BY COALESCE(last_active_at, created_at)` already meant.
 
 The migration is **fail-closed**. Before any DDL it scans every target column:
-a legacy column must hold a `YYYY-MM-DD HH:MM:SS[.SSS]` UTC string that SQLite
-can parse (`'0'`, the empty string, `'now'`, a `T` separator, and out-of-range
-dates all fail), and a column already declared INTEGER must hold an integer.
+a legacy column must hold a `YYYY-MM-DD HH:MM:SS[.SSS]` UTC string whose
+numeric instant round-trips back to the same literal date-time (`'0'`, the
+empty string, `'now'`, a `T` separator, and calendar-invalid values such as
+`2026-02-29`, `2026-04-31`, `24:00:00`, or `23:59:60` all fail — SQLite would
+otherwise normalize those silently), and a column already declared INTEGER
+must hold an integer.
 Any offending value aborts the migration with the table, column, row identity
 (`id`, `task_id`/`seq`, …), and original value, and the transaction rolls back —
 a malformed value is never silently coerced to a plausible-looking number.

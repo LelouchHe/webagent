@@ -18,12 +18,24 @@ const MS = "2026-09-19 15:51:07.123";
 const NO_MS_MILLIS = Date.parse("2026-09-19T15:51:07Z");
 const MS_MILLIS = Date.parse("2026-09-19T15:51:07.123Z");
 
-interface SchemaRow {
-  type: string;
-  name: string;
-  tbl_name: string;
-  sql: string | null;
-}
+/** The eight columns that were TEXT in old releases and need data conversion. */
+const TEXT_TIMESTAMP_COLUMNS: Readonly<Record<string, readonly string[]>> = {
+  tasks: ["created_at", "last_active_at"],
+  agent_sessions: ["created_at"],
+  events: ["created_at"],
+  push_subscriptions: ["created_at"],
+  client_ops: ["created_at"],
+  attachments: ["created_at"],
+  recent_paths: ["last_used_at"],
+};
+
+/** The two columns that were already INTEGER with a seconds-aligned default. */
+const DEFAULT_ONLY_COLUMNS: Readonly<Record<string, readonly string[]>> = {
+  shares: ["created_at"],
+  owner_prefs: ["updated_at"],
+};
+
+const TEXT_TABLES = Object.keys(TEXT_TIMESTAMP_COLUMNS);
 
 /** Columns that identify a row in the abort report and in samples. */
 const IDENTITY: Readonly<Record<string, readonly string[]>> = {
@@ -35,8 +47,6 @@ const IDENTITY: Readonly<Record<string, readonly string[]>> = {
   attachments: ["id"],
   recent_paths: ["cwd"],
 };
-
-const MIGRATED_TABLES = Object.keys(TIMESTAMP_COLUMNS);
 
 /** Indexes that live on rebuilt tables and must survive the rebuild. */
 const REBUILT_INDEXES = [
@@ -73,7 +83,7 @@ function signedColumns(): Array<[string, string]> {
 
 function tableCounts(db: Database.Database): Record<string, number> {
   return Object.fromEntries(
-    MIGRATED_TABLES.map((table) => [
+    TEXT_TABLES.map((table) => [
       table,
       (
         db.prepare(`SELECT COUNT(*) AS n FROM "${table}"`).get() as {
@@ -91,10 +101,10 @@ interface TimestampSample {
   value: string | number | null;
 }
 
-/** Every stored timestamp cell, keyed by its row identity. */
+/** Every stored timestamp cell of the converted tables, keyed by row identity. */
 function sampleTimestamps(db: Database.Database): TimestampSample[] {
   const samples: TimestampSample[] = [];
-  for (const [table, columns] of Object.entries(TIMESTAMP_COLUMNS)) {
+  for (const [table, columns] of Object.entries(TEXT_TIMESTAMP_COLUMNS)) {
     const keys = IDENTITY[table];
     const keyList = keys.map((key) => `"${key}"`).join(", ");
     for (const column of columns) {
@@ -130,15 +140,81 @@ function expectedMillis(value: string): number {
 
 type LegacyVariant = "strftime" | "datetime";
 
+function legacyTypeFor(variant: LegacyVariant): string {
+  return variant === "strftime"
+    ? "TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now'))"
+    : "TEXT NOT NULL DEFAULT (datetime('now'))";
+}
+
+/** Turn a fresh target column into its legacy TEXT declaration. */
+function legacyTextSql(
+  sql: string,
+  columns: readonly string[],
+  variant: LegacyVariant,
+): string {
+  let out = sql;
+  for (const column of columns) {
+    out = out.replace(
+      new RegExp(`${column}(\\s+)INTEGER NOT NULL DEFAULT 0`),
+      `${column}$1${legacyTypeFor(variant)}`,
+    );
+  }
+  if (variant === "datetime") {
+    // The oldest live DDL added this column without NOT NULL or a default.
+    out = out.replace(
+      "last_active_at TEXT NOT NULL DEFAULT (datetime('now'))",
+      "last_active_at TEXT",
+    );
+  }
+  return out;
+}
+
+/** Turn a fresh target column into its legacy seconds-aligned default. */
+function legacyDefaultSql(sql: string, columns: readonly string[]): string {
+  let out = sql;
+  for (const column of columns) {
+    out = out.replace(
+      new RegExp(`${column}(\\s+)INTEGER NOT NULL DEFAULT 0`),
+      `${column}$1INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER) * 1000)`,
+    );
+  }
+  return out;
+}
+
+/** The previous release's DDL for one table (fresh DDL, legacy declarations). */
+function previousReleaseSql(
+  table: string,
+  sql: string,
+  variant: LegacyVariant,
+): string {
+  if (table in TEXT_TIMESTAMP_COLUMNS) {
+    return legacyTextSql(sql, TEXT_TIMESTAMP_COLUMNS[table], variant);
+  }
+  if (table in DEFAULT_ONLY_COLUMNS) {
+    return legacyDefaultSql(sql, DEFAULT_ONLY_COLUMNS[table]);
+  }
+  return sql;
+}
+
 /**
- * Create a database the way a previous release did: same DDL as
- * `initializeSchema`, except the eight timestamp columns are TEXT. Returns the
- * fresh canonical schema so it can be compared after migration.
+ * Create a database the way a previous release did. Returns the fresh canonical
+ * schema so it can be compared after migration.
  */
 function createLegacyDatabase(
   dir: string,
   variant: LegacyVariant,
   override?: (table: string, sql: string) => string,
+): SchemaRow[] {
+  return buildLegacyDatabase(dir, (table, sql) => {
+    let out = previousReleaseSql(table, sql, variant);
+    if (override) out = override(table, out);
+    return out;
+  });
+}
+
+function buildLegacyDatabase(
+  dir: string,
+  transform: (table: string, sql: string) => string,
 ): SchemaRow[] {
   const seed = new Store(dir, AGENT);
   seed.close();
@@ -156,40 +232,10 @@ function createLegacyDatabase(
   );
   for (const row of ordered) {
     if (row.sql === null || row.name === "sqlite_sequence") continue;
-    const columns =
-      row.type === "table" ? TIMESTAMP_COLUMNS[row.name] : undefined;
-    let sql = columns ? legacyTableSql(row.sql, columns, variant) : row.sql;
-    if (override) sql = override(row.name, sql);
-    legacy.exec(sql);
+    legacy.exec(row.type === "table" ? transform(row.name, row.sql) : row.sql);
   }
   legacy.close();
   return freshSchema;
-}
-
-function legacyTableSql(
-  sql: string,
-  columns: readonly string[],
-  variant: LegacyVariant,
-): string {
-  let out = sql;
-  for (const column of columns) {
-    const legacyType =
-      variant === "strftime"
-        ? "TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now'))"
-        : "TEXT NOT NULL DEFAULT (datetime('now'))";
-    out = out.replace(
-      new RegExp(`${column}(\\s+)INTEGER NOT NULL DEFAULT 0`),
-      `${column}$1${legacyType}`,
-    );
-  }
-  if (variant === "datetime") {
-    // The oldest live DDL added this column without NOT NULL or a default.
-    out = out.replace(
-      "last_active_at TEXT NOT NULL DEFAULT (datetime('now'))",
-      "last_active_at TEXT",
-    );
-  }
-  return out;
 }
 
 /**
@@ -214,36 +260,14 @@ const HISTORICAL_TABLE_SQL: Readonly<Record<string, string>> = {
 };
 
 function createHistoricalDatabase(dir: string): SchemaRow[] {
-  const seed = new Store(dir, AGENT);
-  seed.close();
-  const fresh = new Database(dbPath(dir));
-  const freshSchema = readSchema(fresh);
-  fresh.close();
-  for (const suffix of ["", "-wal", "-shm"]) {
-    rmSync(`${dbPath(dir)}${suffix}`, { force: true });
-  }
-
-  const legacy = new Database(dbPath(dir));
-  const ordered = [...freshSchema].sort(
-    (a, b) => (a.type === "table" ? 0 : 1) - (b.type === "table" ? 0 : 1),
+  return buildLegacyDatabase(
+    dir,
+    (table, sql) =>
+      HISTORICAL_TABLE_SQL[table] ?? previousReleaseSql(table, sql, "strftime"),
   );
-  for (const row of ordered) {
-    if (row.sql === null || row.name === "sqlite_sequence") continue;
-    if (row.type === "table" && HISTORICAL_TABLE_SQL[row.name]) {
-      legacy.exec(HISTORICAL_TABLE_SQL[row.name]);
-      continue;
-    }
-    const columns =
-      row.type === "table" ? TIMESTAMP_COLUMNS[row.name] : undefined;
-    legacy.exec(
-      columns ? legacyTableSql(row.sql, columns, "strftime") : row.sql,
-    );
-  }
-  legacy.close();
-  return freshSchema;
 }
 
-/** Seed one row per migrated table, exercising both legacy string formats. */
+/** Seed one row per converted table, exercising both legacy string formats. */
 function seedLegacyRows(db: Database.Database): void {
   db.prepare(
     "INSERT INTO tasks (id, cwd, created_at, last_active_at) VALUES (?, ?, ?, ?)",
@@ -286,7 +310,7 @@ function seedLegacyRows(db: Database.Database): void {
   );
 }
 
-/** Multiple rows per table, so a dropped row cannot pass a count assertion. */
+/** Multiple rows per converted table, so a dropped row cannot pass. */
 function seedManyLegacyRows(db: Database.Database): void {
   for (let i = 1; i <= 3; i += 1) {
     db.prepare(
@@ -336,6 +360,12 @@ function seedManyLegacyRows(db: Database.Database): void {
   }
 }
 
+function dbPrepareTask(db: Database.Database, id: string): void {
+  db.prepare(
+    "INSERT INTO tasks (id, cwd, created_at, last_active_at) VALUES (?, ?, ?, ?)",
+  ).run(id, "/x", NO_MS, MS);
+}
+
 function assertIntegerTimestamps(db: Database.Database): void {
   for (const [table, column] of signedColumns()) {
     const types = db
@@ -360,6 +390,13 @@ function assertIntegrity(db: Database.Database): void {
   assert.deepEqual(db.pragma("foreign_key_check"), []);
 }
 
+interface SchemaRow {
+  type: string;
+  name: string;
+  tbl_name: string;
+  sql: string | null;
+}
+
 describe("timestamp millis migration", () => {
   const dirs: string[] = [];
 
@@ -373,6 +410,13 @@ describe("timestamp millis migration", () => {
     while (dirs.length > 0) {
       rmSync(dirs.pop()!, { recursive: true, force: true });
     }
+  });
+
+  it("converges exactly the columns the contract lists", () => {
+    assert.deepEqual(TIMESTAMP_COLUMNS, {
+      ...TEXT_TIMESTAMP_COLUMNS,
+      ...DEFAULT_ONLY_COLUMNS,
+    });
   });
 
   it("converts both legacy string formats to unix millis", () => {
@@ -412,7 +456,7 @@ describe("timestamp millis migration", () => {
     const preSamples = sampleTimestamps(legacy);
     legacy.close();
 
-    // Non-vacuous counts: every migrated table actually holds rows.
+    // Non-vacuous counts: every converted table actually holds rows.
     for (const [table, count] of Object.entries(preCounts)) {
       assert.ok(count > 0, `${table} must be seeded (got ${count})`);
     }
@@ -489,6 +533,63 @@ describe("timestamp millis migration", () => {
         `index text for ${name}`,
       );
     }
+    assertIntegrity(db);
+    db.close();
+  });
+
+  it("converges INTEGER columns that still carry the legacy seconds default", () => {
+    const dir = tempDir();
+    const freshSchema = createLegacyDatabase(dir, "strftime");
+    const legacy = new Database(dbPath(dir));
+    dbPrepareTask(legacy, "t1");
+    // Written through the old default, so both values are seconds aligned.
+    legacy
+      .prepare(
+        "INSERT INTO shares (token, task_id, share_snapshot_seq) VALUES (?, ?, ?)",
+      )
+      .run("tok", "t1", 1);
+    legacy
+      .prepare("INSERT INTO owner_prefs (key, value) VALUES (?, ?)")
+      .run("k", "v");
+    const before = legacy
+      .prepare(
+        "SELECT (SELECT created_at FROM shares WHERE token = 'tok') AS share_at, (SELECT updated_at FROM owner_prefs WHERE key = 'k') AS pref_at",
+      )
+      .get() as { share_at: number; pref_at: number };
+    assert.equal(before.share_at % 1000, 0, "expected the legacy default");
+    assert.equal(before.pref_at % 1000, 0, "expected the legacy default");
+    const sharesBefore = schemaSqlByName(legacy).get("shares")!;
+    assert.match(
+      sharesBefore,
+      /CAST\(strftime\('%s','now'\) AS INTEGER\) \* 1000/,
+    );
+    legacy.close();
+
+    const store = new Store(dir, AGENT);
+    store.close();
+
+    const db = new Database(dbPath(dir));
+    const live = schemaSqlByName(db);
+    assert.equal(
+      live.get("shares"),
+      freshSchema.find((r) => r.name === "shares")!.sql,
+    );
+    assert.equal(
+      live.get("owner_prefs"),
+      freshSchema.find((r) => r.name === "owner_prefs")!.sql,
+    );
+    assert.ok(!live.get("shares")!.includes("strftime"));
+    assert.ok(!live.get("owner_prefs")!.includes("strftime"));
+    // Values are copied through untouched, not run through julianday().
+    assert.deepEqual(
+      db.prepare("SELECT created_at FROM shares WHERE token = 'tok'").get(),
+      { created_at: before.share_at },
+    );
+    assert.deepEqual(
+      db.prepare("SELECT updated_at FROM owner_prefs WHERE key = 'k'").get(),
+      { updated_at: before.pref_at },
+    );
+    assertIntegerTimestamps(db);
     assertIntegrity(db);
     db.close();
   });
@@ -642,16 +743,20 @@ describe("timestamp millis migration", () => {
     createLegacyDatabase(dir, "strftime");
     const legacy = new Database(dbPath(dir));
     dbPrepareTask(legacy, "t1");
-    legacy
-      .prepare(
-        "INSERT INTO events (task_id, seq, type, data, created_at, from_ref) VALUES (?, ?, ?, ?, ?, ?)",
-      )
-      .run("t1", 1, "user_message", "{}", "1970-01-01 00:00:00", "user");
-    legacy
-      .prepare(
-        "INSERT INTO events (task_id, seq, type, data, created_at, from_ref) VALUES (?, ?, ?, ?, ?, ?)",
-      )
-      .run("t1", 2, "assistant_message", "{}", "9999-12-31 23:59:59", "agent");
+    const insert = legacy.prepare(
+      "INSERT INTO events (task_id, seq, type, data, created_at, from_ref) VALUES (?, ?, ?, ?, ?, ?)",
+    );
+    insert.run("t1", 1, "user_message", "{}", "1970-01-01 00:00:00", "user");
+    insert.run(
+      "t1",
+      2,
+      "assistant_message",
+      "{}",
+      "9999-12-31 23:59:59",
+      "agent",
+    );
+    // A real leap day must still be accepted.
+    insert.run("t1", 3, "user_message", "{}", "2024-02-29 00:00:00", "user");
     legacy.close();
 
     const store = new Store(dir, AGENT);
@@ -659,6 +764,10 @@ describe("timestamp millis migration", () => {
     assert.equal(
       store.getEvent("t1", 2)!.created_at,
       Date.parse("9999-12-31T23:59:59Z"),
+    );
+    assert.equal(
+      store.getEvent("t1", 3)!.created_at,
+      Date.parse("2024-02-29T00:00:00Z"),
     );
     store.close();
   });
@@ -672,6 +781,14 @@ describe("timestamp millis migration", () => {
     "2026-09-19T15:51:07",
     "2026-09-19",
     " 2026-09-19 15:51:07",
+    // Calendar-invalid values SQLite would otherwise normalize silently.
+    "2026-02-29 00:00:00",
+    "2026-04-31 00:00:00",
+    "2026-06-31 00:00:00",
+    "2026-02-30 00:00:00",
+    "2026-09-19 24:00:00",
+    "2026-09-19 23:59:60",
+    "2026-02-29 00:00:00.000",
   ]) {
     it(`aborts and rolls back on malformed legacy value ${JSON.stringify(bad)}`, () => {
       const dir = tempDir();
@@ -764,6 +881,8 @@ describe("timestamp millis migration", () => {
     store.saveClientOp("t1", "op", {});
     store.touchRecentPath("/x");
     store.saveSubscription("https://push.example/e", "auth", "p256dh");
+    store.insertSharePreview({ token: "tok", taskId: "t1", snapshotSeq: 1 });
+    store.setOwnerPref("k", "v");
     store.close();
 
     const db = new Database(dbPath(dir));
@@ -778,6 +897,18 @@ describe("timestamp millis migration", () => {
     // The guard is only meaningful if the writers actually ran.
     assert.equal(
       (db.prepare("SELECT COUNT(*) AS n FROM events").get() as { n: number }).n,
+      1,
+    );
+    assert.equal(
+      (db.prepare("SELECT COUNT(*) AS n FROM shares").get() as { n: number }).n,
+      1,
+    );
+    assert.equal(
+      (
+        db.prepare("SELECT COUNT(*) AS n FROM owner_prefs").get() as {
+          n: number;
+        }
+      ).n,
       1,
     );
     db.close();
@@ -803,9 +934,3 @@ describe("timestamp millis migration", () => {
     db.close();
   });
 });
-
-function dbPrepareTask(db: Database.Database, id: string): void {
-  db.prepare(
-    "INSERT INTO tasks (id, cwd, created_at, last_active_at) VALUES (?, ?, ?, ?)",
-  ).run(id, "/x", NO_MS, MS);
-}

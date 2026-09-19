@@ -1,9 +1,19 @@
 import type Database from "better-sqlite3";
 
 /**
- * Timestamp columns that moved from bare UTC strings ("YYYY-MM-DD HH:MM:SS"
- * with or without milliseconds, no timezone marker) to INTEGER unix
- * milliseconds.
+ * Timestamp columns the migration converges on the canonical declaration.
+ *
+ * Two categories:
+ *
+ * - columns that moved from bare UTC strings ("YYYY-MM-DD HH:MM:SS" with or
+ *   without milliseconds, no timezone marker) to INTEGER unix milliseconds and
+ *   therefore need a data conversion;
+ * - columns that were already INTEGER but carried a seconds-aligned default
+ *   expression (`shares.created_at`, `owner_prefs.updated_at`): they need only
+ *   a declaration convergence, their values are copied through untouched.
+ *
+ * Which category a column falls into is decided per table from the live
+ * declaration (`PRAGMA table_info`), not from this map.
  *
  * A table is rebuilt only while at least one target column's declaration still
  * differs from the canonical one (wrong type, extra/fewer constraints, or a
@@ -18,6 +28,8 @@ export const TIMESTAMP_COLUMNS: Readonly<Record<string, readonly string[]>> = {
   client_ops: ["created_at"],
   attachments: ["created_at"],
   recent_paths: ["last_used_at"],
+  shares: ["created_at"],
+  owner_prefs: ["updated_at"],
 };
 
 /**
@@ -185,21 +197,29 @@ function readCreateTableSql(
 
 /**
  * A declarative SQL predicate: the column holds a legacy bare-UTC timestamp in
- * one of the two shapes the old writers produced. Anything else — `'0'`, the
- * empty string, `'now'`, a `T` separator, a bad or out-of-range date — fails
- * the predicate so the migration can refuse it instead of coercing it.
+ * one of the two shapes the old writers produced, **and** the value survives a
+ * round trip through the numeric instant. The round trip is what catches
+ * calendar-invalid values SQLite would otherwise normalize silently
+ * (`2026-02-29`, `2026-04-31`, `24:00:00`, `23:59:60`): converting to the
+ * julian instant and back must reproduce the literal date-time. `'0'`, the
+ * empty string, `'now'`, a `T` separator and out-of-range values fail the
+ * shape check or the round trip, so the migration refuses them instead of
+ * coercing them.
  */
 function isLegacyTimestampSql(column: string): string {
   const col = `"${column}"`;
   const date = "[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]";
   const time = "[0-9][0-9]:[0-9][0-9]:[0-9][0-9]";
+  const roundTrip =
+    `strftime('%Y-%m-%d %H:%M:%S', ` +
+    `(julianday(${col}) - 2440587.5) * 86400, 'unixepoch')`;
   return `(
     typeof(${col}) = 'text'
     AND (
       (length(${col}) = 19 AND ${col} GLOB '${date} ${time}')
       OR (length(${col}) = 23 AND ${col} GLOB '${date} ${time}.[0-9][0-9][0-9]')
     )
-    AND julianday(${col}) IS NOT NULL
+    AND COALESCE(${roundTrip} = substr(${col}, 1, 19), 0)
   )`;
 }
 
@@ -212,6 +232,8 @@ const ROW_IDENTITY: Readonly<Record<string, readonly string[]>> = {
   client_ops: ["task_id", "client_op_id"],
   attachments: ["id"],
   recent_paths: ["cwd"],
+  shares: ["token"],
+  owner_prefs: ["key"],
 };
 
 const MAX_REPORTED_VALUES = 20;
