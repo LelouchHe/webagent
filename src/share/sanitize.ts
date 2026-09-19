@@ -41,7 +41,8 @@ export interface ParsedEvent {
   seq: number;
   type: string;
   data: Record<string, unknown>;
-  created_at?: string;
+  /** Epoch milliseconds. */
+  created_at?: number;
 }
 
 export interface SanitizeInput {

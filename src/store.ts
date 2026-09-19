@@ -10,6 +10,7 @@ import {
   CollaborationMessageEmitter,
   type CollaborationMessageObserver,
 } from "./collaboration-emitter.ts";
+import { migrateTimestampsToMillis } from "./timestamp-migration.ts";
 
 export const ROOT_TASK_ID = "root";
 
@@ -33,8 +34,10 @@ export interface TaskRow {
   mode: string | null;
   reasoning_effort: string | null;
   source: string;
-  created_at: string;
-  last_active_at: string;
+  /** Epoch milliseconds. */
+  created_at: number;
+  /** Epoch milliseconds. */
+  last_active_at: number;
   /** epoch ms; NULL = live; non-NULL = soft-deleted (kept alive for active shares). */
   deleted_at: number | null;
   /** Optional parent WebAgent task; the reserved Root has NULL. */
@@ -49,7 +52,8 @@ export interface AgentSessionRow {
   agent_key: string;
   agent_session_id: string;
   task_id: string | null;
-  created_at: string;
+  /** Epoch milliseconds. */
+  created_at: number;
 }
 
 export interface EventRow {
@@ -60,7 +64,8 @@ export interface EventRow {
   data: string; // JSON
   /** Origin marker: 'user' | 'system' | 'agent' | 'msg:<id>'. */
   from_ref: string;
-  created_at: string;
+  /** Epoch milliseconds. */
+  created_at: number;
 }
 
 export interface SubscriptionRow {
@@ -68,7 +73,8 @@ export interface SubscriptionRow {
   endpoint: string;
   auth: string;
   p256dh: string;
-  created_at: string;
+  /** Epoch milliseconds. */
+  created_at: number;
 }
 
 /** A pending unbound notification -- posted via /api/v1/messages with to="user". */
@@ -192,7 +198,8 @@ export interface AttachmentRow {
   upload_seq: number;
   width: number | null;
   height: number | null;
-  created_at: string;
+  /** Epoch milliseconds. */
+  created_at: number;
 }
 
 export interface AttachmentInput {
@@ -278,6 +285,7 @@ export class Store {
       this.db.pragma("foreign_keys = ON");
       this.assertSupportedSchema();
       this.initializeSchema();
+      migrateTimestampsToMillis(this.db);
       this.dropLegacyColumns();
       this.migrateSystemMessagePayloads();
     } catch (error) {
@@ -438,14 +446,14 @@ export class Store {
         reasoning_effort TEXT,
         source TEXT NOT NULL DEFAULT 'auto',
         deleted_at INTEGER,
-        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now')),
-        last_active_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now'))
+        created_at INTEGER NOT NULL DEFAULT 0,
+        last_active_at INTEGER NOT NULL DEFAULT 0
       );
       CREATE TABLE IF NOT EXISTS agent_sessions (
         agent_key TEXT NOT NULL,
         agent_session_id TEXT NOT NULL,
         task_id TEXT REFERENCES tasks(id) ON DELETE CASCADE,
-        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now')),
+        created_at INTEGER NOT NULL DEFAULT 0,
         PRIMARY KEY (agent_key, agent_session_id)
       );
       CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_sessions_task
@@ -457,7 +465,7 @@ export class Store {
         seq INTEGER NOT NULL,
         type TEXT NOT NULL,
         data TEXT NOT NULL DEFAULT '{}',
-        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now')),
+        created_at INTEGER NOT NULL DEFAULT 0,
         from_ref TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS idx_events_task ON events(task_id, seq);
@@ -466,7 +474,7 @@ export class Store {
         endpoint TEXT NOT NULL UNIQUE,
         auth TEXT NOT NULL,
         p256dh TEXT NOT NULL,
-        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now'))
+        created_at INTEGER NOT NULL DEFAULT 0
       );
     `);
 
@@ -539,7 +547,7 @@ export class Store {
         task_id   TEXT NOT NULL,
         client_op_id TEXT NOT NULL,
         result_json  TEXT NOT NULL,
-        created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now')),
+        created_at   INTEGER NOT NULL DEFAULT 0,
         PRIMARY KEY (task_id, client_op_id)
       );
     `);
@@ -548,7 +556,7 @@ export class Store {
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS recent_paths (
         cwd TEXT PRIMARY KEY,
-        last_used_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now'))
+        last_used_at INTEGER NOT NULL DEFAULT 0
       );
     `);
 
@@ -616,7 +624,7 @@ export class Store {
         upload_seq   INTEGER NOT NULL,
         width        INTEGER,
         height       INTEGER,
-        created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now'))
+        created_at   INTEGER NOT NULL DEFAULT 0
       );
       CREATE INDEX IF NOT EXISTS idx_attachments_task ON attachments(task_id);
     `);
@@ -677,11 +685,12 @@ export class Store {
    */
   ensureRootTask(cwd: string): TaskRow {
     return this.db.transaction(() => {
+      const now = Date.now();
       this.db
         .prepare(
-          "INSERT OR IGNORE INTO tasks (id, cwd, source, parent_id, title) VALUES (?, ?, 'root', NULL, 'root')",
+          "INSERT OR IGNORE INTO tasks (id, cwd, source, parent_id, title, created_at, last_active_at) VALUES (?, ?, 'root', NULL, 'root', ?, ?)",
         )
-        .run("root", cwd);
+        .run("root", cwd, now, now);
       this.db
         .prepare("UPDATE tasks SET parent_id = NULL WHERE id = ?")
         .run("root");
@@ -716,11 +725,12 @@ export class Store {
     } = {},
   ): TaskRow {
     return this.db.transaction(() => {
+      const now = Date.now();
       this.db
         .prepare(
           `INSERT INTO tasks
-           (id, cwd, source, parent_id, title, workflow_status)
-           VALUES (?, ?, ?, ?, ?, ?)`,
+           (id, cwd, source, parent_id, title, workflow_status, created_at, last_active_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           id,
@@ -729,12 +739,14 @@ export class Store {
           parentId,
           opts.title ?? id,
           opts.workflowStatus ?? "idle",
+          now,
+          now,
         );
       this.db
         .prepare(
-          "INSERT INTO agent_sessions (agent_key, agent_session_id, task_id) VALUES (?, ?, ?)",
+          "INSERT INTO agent_sessions (agent_key, agent_session_id, task_id, created_at) VALUES (?, ?, ?, ?)",
         )
-        .run(this.agentKey, agentSessionId, id);
+        .run(this.agentKey, agentSessionId, id, now);
       return this.db
         .prepare("SELECT * FROM tasks WHERE id = ?")
         .get(id) as TaskRow;
@@ -794,9 +806,9 @@ export class Store {
   registerInternalAgentSession(agentSessionId: string): AgentSessionRow {
     this.db
       .prepare(
-        "INSERT OR IGNORE INTO agent_sessions (agent_key, agent_session_id, task_id) VALUES (?, ?, NULL)",
+        "INSERT OR IGNORE INTO agent_sessions (agent_key, agent_session_id, task_id, created_at) VALUES (?, ?, NULL, ?)",
       )
-      .run(this.agentKey, agentSessionId);
+      .run(this.agentKey, agentSessionId, Date.now());
     const row = this.db
       .prepare(
         "SELECT * FROM agent_sessions WHERE agent_key = ? AND agent_session_id = ?",
@@ -866,9 +878,9 @@ export class Store {
         .run(this.agentKey, taskId);
       this.db
         .prepare(
-          "INSERT INTO agent_sessions (agent_key, agent_session_id, task_id) VALUES (?, ?, ?)",
+          "INSERT INTO agent_sessions (agent_key, agent_session_id, task_id, created_at) VALUES (?, ?, ?, ?)",
         )
-        .run(this.agentKey, agentSessionId, taskId);
+        .run(this.agentKey, agentSessionId, taskId, Date.now());
 
       return this.getAgentSessionBinding(taskId)!;
     })();
@@ -887,9 +899,9 @@ export class Store {
       }
       this.db
         .prepare(
-          "INSERT INTO agent_sessions (agent_key, agent_session_id, task_id) VALUES (?, ?, ?)",
+          "INSERT INTO agent_sessions (agent_key, agent_session_id, task_id, created_at) VALUES (?, ?, ?, ?)",
         )
-        .run(this.agentKey, agentSessionId, taskId);
+        .run(this.agentKey, agentSessionId, taskId, Date.now());
       return this.getAgentSessionBinding(taskId)!;
     })();
   }
@@ -1149,10 +1161,10 @@ export class Store {
         AND s.id != ?
         AND a.agent_key = ?
         AND s.deleted_at IS NULL
-        AND strftime('%s', 'now') - strftime('%s', s.created_at) >= ?
+        AND s.created_at <= ?
     `,
       )
-      .all(ROOT_TASK_ID, this.agentKey, minAgeS) as Array<{
+      .all(ROOT_TASK_ID, this.agentKey, Date.now() - minAgeS * 1000) as Array<{
       id: string;
       agent_session_id: string;
     }>;
@@ -1182,10 +1194,8 @@ export class Store {
 
   updateTaskLastActive(id: string): void {
     this.db
-      .prepare(
-        "UPDATE tasks SET last_active_at = strftime('%Y-%m-%d %H:%M:%f', 'now') WHERE id = ?",
-      )
-      .run(id);
+      .prepare("UPDATE tasks SET last_active_at = ? WHERE id = ?")
+      .run(Date.now(), id);
   }
 
   /** Return the hidden summary waiting to be prepended to the next prompt. */
@@ -1211,7 +1221,7 @@ export class Store {
       ).next;
       this.db
         .prepare(
-          "INSERT INTO events (task_id, seq, type, data, from_ref) VALUES (?, ?, ?, ?, ?)",
+          "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
         )
         .run(
           taskId,
@@ -1219,6 +1229,7 @@ export class Store {
           "assistant_message",
           JSON.stringify({ text: summary }),
           "agent",
+          Date.now(),
         );
       this.db
         .prepare("UPDATE tasks SET pending_compact_summary = ? WHERE id = ?")
@@ -1289,9 +1300,9 @@ export class Store {
 
     this.db
       .prepare(
-        "INSERT INTO events (task_id, seq, type, data, from_ref) VALUES (?, ?, ?, ?, ?)",
+        "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
       )
-      .run(taskId, seq, type, JSON.stringify(data), fromRef);
+      .run(taskId, seq, type, JSON.stringify(data), fromRef, Date.now());
 
     return this.db
       .prepare("SELECT * FROM events WHERE task_id = ? AND seq = ?")
@@ -1372,7 +1383,7 @@ export class Store {
    * events are simply absent from the result, so this never scans the event
    * log.
    */
-  getLatestEventTimes(taskIds: readonly string[]): Map<string, string> {
+  getLatestEventTimes(taskIds: readonly string[]): Map<string, number> {
     if (taskIds.length === 0) return new Map();
     const placeholders = taskIds.map(() => "?").join(", ");
     const rows = this.db
@@ -1387,7 +1398,7 @@ export class Store {
          ) latest
            ON latest.task_id = e.task_id AND latest.max_seq = e.seq`,
       )
-      .all(...taskIds) as Array<{ task_id: string; created_at: string }>;
+      .all(...taskIds) as Array<{ task_id: string; created_at: number }>;
     return new Map(rows.map((row) => [row.task_id, row.created_at]));
   }
 
@@ -1417,11 +1428,11 @@ export class Store {
   saveSubscription(endpoint: string, auth: string, p256dh: string): void {
     this.db
       .prepare(
-        `INSERT INTO push_subscriptions (endpoint, auth, p256dh)
-       VALUES (?, ?, ?)
+        `INSERT INTO push_subscriptions (endpoint, auth, p256dh, created_at)
+       VALUES (?, ?, ?, ?)
        ON CONFLICT(endpoint) DO UPDATE SET auth = excluded.auth, p256dh = excluded.p256dh`,
       )
-      .run(endpoint, auth, p256dh);
+      .run(endpoint, auth, p256dh, Date.now());
   }
 
   removeSubscription(endpoint: string): void {
@@ -1442,23 +1453,21 @@ export class Store {
     this.db
       .prepare(
         `INSERT INTO recent_paths (cwd, last_used_at)
-       VALUES (?, strftime('%Y-%m-%d %H:%M:%f', 'now'))
-       ON CONFLICT(cwd) DO UPDATE SET last_used_at = strftime('%Y-%m-%d %H:%M:%f', 'now')`,
+       VALUES (?, ?)
+       ON CONFLICT(cwd) DO UPDATE SET last_used_at = excluded.last_used_at`,
       )
-      .run(cwd);
+      .run(cwd, Date.now());
   }
 
   listRecentPaths(opts?: {
     limit?: number;
     ttlDays?: number;
-  }): Array<{ cwd: string; last_used_at: string }> {
+  }): Array<{ cwd: string; last_used_at: number }> {
     const ttl = opts?.ttlDays ?? 0;
     if (ttl > 0) {
       this.db
-        .prepare(
-          "DELETE FROM recent_paths WHERE last_used_at < strftime('%Y-%m-%d %H:%M:%f', 'now', ?)",
-        )
-        .run(`-${ttl} days`);
+        .prepare("DELETE FROM recent_paths WHERE last_used_at < ?")
+        .run(Date.now() - ttl * 86_400_000);
     }
     const limit = opts?.limit;
     if (limit && limit > 0) {
@@ -1466,13 +1475,13 @@ export class Store {
         .prepare(
           "SELECT cwd, last_used_at FROM recent_paths ORDER BY last_used_at DESC LIMIT ?",
         )
-        .all(limit) as Array<{ cwd: string; last_used_at: string }>;
+        .all(limit) as Array<{ cwd: string; last_used_at: number }>;
     }
     return this.db
       .prepare(
         "SELECT cwd, last_used_at FROM recent_paths ORDER BY last_used_at DESC",
       )
-      .all() as Array<{ cwd: string; last_used_at: string }>;
+      .all() as Array<{ cwd: string; last_used_at: number }>;
   }
 
   deleteRecentPath(cwd: string): void {
@@ -1978,19 +1987,16 @@ export class Store {
   saveClientOp(taskId: string, clientOpId: string, result: unknown): void {
     this.db
       .prepare(
-        "INSERT OR IGNORE INTO client_ops (task_id, client_op_id, result_json) VALUES (?, ?, ?)",
+        "INSERT OR IGNORE INTO client_ops (task_id, client_op_id, result_json, created_at) VALUES (?, ?, ?, ?)",
       )
-      .run(taskId, clientOpId, JSON.stringify(result));
+      .run(taskId, clientOpId, JSON.stringify(result), Date.now());
   }
 
   /** Prune client_ops rows older than `maxAgeMs` (milliseconds). Returns rows deleted. */
   pruneClientOps(maxAgeMs: number): number {
-    const seconds = Math.floor(maxAgeMs / 1000);
     const info = this.db
-      .prepare(
-        "DELETE FROM client_ops WHERE strftime('%s','now') - strftime('%s', created_at) >= ?",
-      )
-      .run(seconds);
+      .prepare("DELETE FROM client_ops WHERE created_at < ?")
+      .run(Date.now() - maxAgeMs);
     return info.changes;
   }
 
@@ -2013,8 +2019,8 @@ export class Store {
     this.db
       .prepare(
         `INSERT INTO attachments
-           (id, task_id, kind, name, mime, size, realpath, upload_seq, width, height)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           (id, task_id, kind, name, mime, size, realpath, upload_seq, width, height, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         input.id,
@@ -2027,6 +2033,7 @@ export class Store {
         uploadSeq,
         input.width ?? null,
         input.height ?? null,
+        Date.now(),
       );
     return this.db
       .prepare("SELECT * FROM attachments WHERE id = ?")

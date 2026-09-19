@@ -27,11 +27,10 @@ export interface McpTaskListItem {
   lastAgentActivityAt: string | null;
   /**
    * `created_at` of the Task's most recent persisted event, any type — the
-   * Task's own activity clock. Same representation as other MCP timestamps:
-   * SQLite `strftime('%Y-%m-%d %H:%M:%f', 'now')` output, UTC with no timezone
-   * marker. `null` when the Task has no persisted events yet. It is a lag
-   * signal, not proof of work: a long silent tool call can look stale while
-   * the Task is still running.
+   * Task's own activity clock. Rendered as ISO-8601 UTC with an explicit `Z`,
+   * like every other MCP timestamp. `null` when the Task has no persisted
+   * events yet. It is a lag signal, not proof of work: a long silent tool call
+   * can look stale while the Task is still running.
    */
   lastEventAt: string | null;
 }

@@ -145,12 +145,12 @@ export async function listRecentPaths(): Promise<PathItem[]> {
   const data = (await res.json()) as Array<{
     cwd: string;
     cwdDisplay?: string;
-    last_used_at: string;
+    last_used_at: number;
   }>;
   return data.map((p) => ({
     cwd: p.cwd,
     cwdDisplay: p.cwdDisplay ?? p.cwd,
-    time: p.last_used_at,
+    time: formatLocalTime(p.last_used_at),
   }));
 }
 

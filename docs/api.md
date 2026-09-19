@@ -120,7 +120,10 @@ List all tasks, ordered by `last_active_at` descending. The frontend uses this o
 | --------- | ----- | ------ | --------------------------------------------------- |
 | `source`  | query | string | Optional. Filter by task source (e.g., `"auto"`) |
 
-**Response** `200`: Array of `TaskSummary` (defined in `src/types.ts`)
+**Response** `200`: Array of `TaskSummary` (defined in `src/types.ts`).
+`created_at` and `last_active_at` are unix milliseconds (`INTEGER` columns);
+stored timestamps are rendered as ISO-8601 with `Z` only on fields explicitly
+named `createdAt` (for example the task detail below).
 
 ```json
 [
@@ -133,8 +136,8 @@ List all tasks, ordered by `last_active_at` descending. The frontend uses this o
     "mode": "agent",
     "reasoning_effort": null,
     "source": "auto",
-    "created_at": "2025-01-15 10:30:00.123",
-    "last_active_at": "2025-01-15 11:45:22.456",
+    "created_at": 1736937000123,
+    "last_active_at": 1736941522456,
     "workflow_status": "idle",
     "hasUserInput": true
   }
@@ -482,7 +485,7 @@ Use `GET /events` for message history (rendering only) and `GET /snapshot` for r
     "cwd": "/Users/me/proj",
     "model": "gpt-5",
     "mode": "agent",
-    "createdAt": "2026-04-18 17:00:00",
+    "createdAt": "2026-04-18T17:00:00.000Z",
     "lastEventSeq": 1234
   },
   "runtime": {
@@ -559,7 +562,7 @@ Retrieve stored events for a task (history). This is the primary history endpoin
       "seq": 1,
       "type": "user_message",
       "data": "{\"text\":\"Hello\"}",
-      "created_at": "2025-01-15 10:31:00.000"
+      "created_at": 1736937060000
     }
   ],
   "streaming": {
@@ -737,8 +740,8 @@ List recent working directory paths, sorted by last used (most recent first). Pa
 
 ```json
 [
-  { "cwd": "/projects/webagent", "last_used_at": "2025-04-15 10:30:00.000" },
-  { "cwd": "/projects/other", "last_used_at": "2025-04-14 08:00:00.000" }
+  { "cwd": "/projects/webagent", "last_used_at": 1744713000000 },
+  { "cwd": "/projects/other", "last_used_at": 1744624800000 }
 ]
 ```
 
@@ -1387,7 +1390,7 @@ serves the viewer.
 {
   "token": "…",
   "snapshot_seq": 47,
-  "shared_at": "2026-04-28 21:00:00.000",
+  "shared_at": 1777410000000,
   "ttl_hours": 24
 }
 ```
@@ -1436,8 +1439,8 @@ List the caller's active shares (both previews and published).
       "ttl_hours": 24,
       "display_name": "demo",
       "owner_label": null,
-      "shared_at": "2026-04-28 21:00:00.000",
-      "created_at": "2026-04-28 20:55:00.000"
+      "shared_at": 1777410000000,
+      "created_at": 1777409700000
     }
   ]
 }
@@ -1470,7 +1473,7 @@ fetch (no projection cache); `task_id` is stripped from the response.
 ```json
 {
   "display_name": "demo",
-  "shared_at": "2026-04-28 21:00:00.000",
+  "shared_at": 1777410000000,
   "events": [
     { "seq": 1, "type": "user_message", "data": { "text": "…" } }
   ]
@@ -1785,8 +1788,8 @@ SQLite database at `{data_dir}/webagent.db`. WAL mode enabled. See `src/store.ts
 | `mode`             | TEXT    | Current mode                          |
 | `reasoning_effort` | TEXT    | Current reasoning effort              |
 | `source`           | TEXT    | Task origin tag. Default: `"auto"` |
-| `created_at`       | TEXT    | ISO timestamp                         |
-| `last_active_at`   | TEXT    | Updated on each prompt                |
+| `created_at`       | INTEGER | Unix milliseconds                     |
+| `last_active_at`   | INTEGER | Unix milliseconds, updated on each prompt |
 
 ### `events`
 
@@ -1797,7 +1800,7 @@ SQLite database at `{data_dir}/webagent.db`. WAL mode enabled. See `src/store.ts
 | `seq`        | INTEGER    | Per-task sequence number |
 | `type`       | TEXT       | Event type string           |
 | `data`       | TEXT       | JSON payload                |
-| `created_at` | TEXT       | ISO timestamp               |
+| `created_at` | INTEGER    | Unix milliseconds           |
 
 Index: `idx_events_task` on `(task_id, seq)`
 
@@ -1809,4 +1812,4 @@ Index: `idx_events_task` on `(task_id, seq)`
 | `endpoint`   | TEXT UNIQUE | Push endpoint URL |
 | `auth`       | TEXT        | Auth key          |
 | `p256dh`     | TEXT        | P-256 ECDH key    |
-| `created_at` | TEXT        | ISO timestamp     |
+| `created_at` | INTEGER    | Unix milliseconds |

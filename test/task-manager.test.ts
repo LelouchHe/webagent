@@ -674,10 +674,8 @@ describe("TaskManager", () => {
       sm.liveTasks.add("empty-old");
       // Backdate created_at so it's older than the threshold
       store["db"]
-        .prepare(
-          "UPDATE tasks SET created_at = strftime('%Y-%m-%d %H:%M:%f', 'now', '-120 seconds') WHERE id = ?",
-        )
-        .run("empty-old");
+        .prepare("UPDATE tasks SET created_at = ? WHERE id = ?")
+        .run(Date.now() - 120_000, "empty-old");
 
       // Create a task with events — should not be cleaned
       store.createTask("has-events", "/x");

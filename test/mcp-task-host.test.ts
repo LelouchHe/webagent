@@ -53,13 +53,15 @@ describe("MCP Task tool host", () => {
     // Give each member an older and a newer event, then pin both timestamps.
     // `lastEventAt` must come from the newest event, so returning the first
     // event (or a constant) fails this check.
-    const pinLatest = (id: string, at: string) =>
+    const stamp = (second: number, ms: number) =>
+      Date.UTC(2026, 8, 13, 21, 0, second, ms);
+    const pinLatest = (id: string, at: number) =>
       store["db"]
         .prepare(
           "UPDATE events SET created_at = ? WHERE task_id = ? AND seq = (SELECT MAX(seq) FROM events WHERE task_id = ?)",
         )
         .run(at, id, id);
-    const seedEvents = (id: string, older: string, latest: string) => {
+    const seedEvents = (id: string, older: number, latest: number) => {
       store.saveEvent(
         id,
         "assistant_message",
@@ -75,14 +77,10 @@ describe("MCP Task tool host", () => {
       );
       pinLatest(id, latest);
     };
-    seedEvents("alpha", "2026-09-13 21:00:00.001", "2026-09-13 21:00:01.001");
-    seedEvents("root", "2026-09-13 21:00:00.002", "2026-09-13 21:00:01.002");
-    seedEvents(
-      "alpha-child",
-      "2026-09-13 21:00:00.003",
-      "2026-09-13 21:00:01.003",
-    );
-    seedEvents("beta", "2026-09-13 21:00:00.004", "2026-09-13 21:00:01.004");
+    seedEvents("alpha", stamp(0, 1), stamp(1, 1));
+    seedEvents("root", stamp(0, 2), stamp(1, 2));
+    seedEvents("alpha-child", stamp(0, 3), stamp(1, 3));
+    seedEvents("beta", stamp(0, 4), stamp(1, 4));
 
     const host = createMcpTaskToolHost({
       store,
@@ -98,7 +96,7 @@ describe("MCP Task tool host", () => {
         workflowStatus: "running",
         executionState: "idle",
         lastAgentActivityAt: null,
-        lastEventAt: "2026-09-13 21:00:01.001",
+        lastEventAt: "2026-09-13T21:00:01.001Z",
       },
       {
         id: "root",
@@ -107,7 +105,7 @@ describe("MCP Task tool host", () => {
         workflowStatus: "done",
         executionState: "idle",
         lastAgentActivityAt: null,
-        lastEventAt: "2026-09-13 21:00:01.002",
+        lastEventAt: "2026-09-13T21:00:01.002Z",
       },
       {
         id: "alpha-child",
@@ -116,7 +114,7 @@ describe("MCP Task tool host", () => {
         workflowStatus: "blocked",
         executionState: "idle",
         lastAgentActivityAt: null,
-        lastEventAt: "2026-09-13 21:00:01.003",
+        lastEventAt: "2026-09-13T21:00:01.003Z",
       },
       {
         id: "beta",
@@ -125,16 +123,15 @@ describe("MCP Task tool host", () => {
         workflowStatus: "idle",
         executionState: "idle",
         lastAgentActivityAt: null,
-        lastEventAt: "2026-09-13 21:00:01.004",
+        lastEventAt: "2026-09-13T21:00:01.004Z",
       },
     ]);
 
-    // The exposed timestamp is the stored SQLite strftime output: UTC with no
-    // timezone marker.
+    // The exposed timestamp is ISO-8601 UTC with an explicit `Z`.
     for (const item of host.list("alpha")) {
       assert.match(
         item.lastEventAt ?? "",
-        /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}$/,
+        /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/,
       );
     }
   });
@@ -328,7 +325,9 @@ describe("MCP Task tool host", () => {
         type: "tool_call",
         data: '{"id":"tool-1","title":"bash","kind":"execute"}',
         fromRef: "agent",
-        createdAt: store.getEvent("alpha", 1)?.created_at,
+        createdAt: new Date(
+          store.getEvent("alpha", 1)!.created_at,
+        ).toISOString(),
       },
     });
     assert.throws(

@@ -32,6 +32,7 @@ import { abbreviateHomePath } from "./home-path.ts";
 import { log } from "./log.ts";
 import { isLocalCollaborationTarget } from "./task-collaboration.ts";
 import { formatTaskReference } from "./shared/task-reference.ts";
+import { isoFromMillis } from "./shared/time.ts";
 import {
   buildTaskCreatedBroadcast,
   buildTaskCreatedSystemMessage,
@@ -1149,7 +1150,7 @@ export function createRequestHandler(
               cwdDisplay: abbreviateHomePath(task.cwd),
               model: task.model,
               mode: task.mode,
-              createdAt: task.created_at,
+              createdAt: isoFromMillis(task.created_at),
               lastEventSeq,
             },
             runtime: runtimeState.runtime,

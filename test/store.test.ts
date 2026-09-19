@@ -226,15 +226,15 @@ describe("Store", () => {
       assert.equal(list[1].id, "new");
     });
 
-    it("stores last_active_at with fractional-second precision", () => {
+    it("stores last_active_at as unix milliseconds", () => {
       store.createTask("s1", "/x");
+      const before = Date.now();
       store.updateTaskLastActive("s1");
 
       const task = store.getTask("s1")!;
-      assert.match(
-        task.last_active_at,
-        /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}$/,
-      );
+      assert.equal(typeof task.last_active_at, "number");
+      assert.ok(Number.isInteger(task.last_active_at));
+      assert.ok(task.last_active_at >= before);
     });
 
     it("returns undefined for non-existent task", () => {
@@ -484,9 +484,9 @@ describe("Store", () => {
       store.saveEvent("s1", "assistant_message", {}, { from_ref: "agent" });
       store.saveEvent("s2", "user_message", {}, { from_ref: "user" });
       for (const [taskId, seq, at] of [
-        ["s1", 1, "2026-01-01 00:00:00.001"],
-        ["s1", 2, "2026-01-01 00:00:02.001"],
-        ["s2", 1, "2026-01-01 00:00:03.001"],
+        ["s1", 1, Date.UTC(2026, 0, 1, 0, 0, 0, 1)],
+        ["s1", 2, Date.UTC(2026, 0, 1, 0, 0, 2, 1)],
+        ["s2", 1, Date.UTC(2026, 0, 1, 0, 0, 3, 1)],
       ] as const) {
         store["db"]
           .prepare(
@@ -499,8 +499,8 @@ describe("Store", () => {
       // `s1` reports its newest event, `empty`/`missing` are absent, and no
       // unrelated task leaks in.
       assert.deepEqual([...times.entries()].sort(), [
-        ["s1", "2026-01-01 00:00:02.001"],
-        ["s2", "2026-01-01 00:00:03.001"],
+        ["s1", Date.UTC(2026, 0, 1, 0, 0, 2, 1)],
+        ["s2", Date.UTC(2026, 0, 1, 0, 0, 3, 1)],
       ]);
       assert.deepEqual(store.getLatestEventTimes([]), new Map());
     });
@@ -818,8 +818,6 @@ describe("Store", () => {
     it("touchRecentPath updates last_used_at on duplicate", () => {
       store.touchRecentPath("/projects/a");
       const before = store.listRecentPaths()[0].last_used_at;
-      // SQLite fractional-second timestamps — a tight loop may produce the same ms,
-      // so just verify no error and the path is still there.
       store.touchRecentPath("/projects/a");
       const after = store.listRecentPaths()[0].last_used_at;
       assert.equal(store.listRecentPaths().length, 1);
@@ -856,10 +854,8 @@ describe("Store", () => {
       store.touchRecentPath("/old");
       // Manually backdate the path to 60 days ago
       (store as any).db
-        .prepare(
-          "UPDATE recent_paths SET last_used_at = datetime('now', '-60 days')",
-        )
-        .run();
+        .prepare("UPDATE recent_paths SET last_used_at = ?")
+        .run(Date.now() - 60 * 86_400_000);
       store.touchRecentPath("/fresh");
 
       const paths = store.listRecentPaths({ ttlDays: 30 });
@@ -873,10 +869,8 @@ describe("Store", () => {
     it("listRecentPaths with ttlDays=0 skips cleanup", () => {
       store.touchRecentPath("/old");
       (store as any).db
-        .prepare(
-          "UPDATE recent_paths SET last_used_at = datetime('now', '-9999 days')",
-        )
-        .run();
+        .prepare("UPDATE recent_paths SET last_used_at = ?")
+        .run(Date.now() - 9999 * 86_400_000);
       const paths = store.listRecentPaths({ ttlDays: 0 });
       assert.equal(paths.length, 1);
     });
@@ -940,13 +934,13 @@ describe("Store", () => {
       // Force stale row's created_at back by 10 days
       (
         store as unknown as {
-          db: { prepare: (s: string) => { run: () => void } };
+          db: { prepare: (s: string) => { run: (...args: unknown[]) => void } };
         }
       ).db
         .prepare(
-          "UPDATE client_ops SET created_at = datetime('now', '-10 days') WHERE client_op_id = 'stale'",
+          "UPDATE client_ops SET created_at = ? WHERE client_op_id = 'stale'",
         )
-        .run();
+        .run(Date.now() - 10 * 86_400_000);
       store.saveClientOp("s1", "fresh", { status: 200, body: {} });
       store.pruneClientOps(7 * 24 * 3600 * 1000);
       assert.equal(store.getClientOp("s1", "stale"), null);

@@ -163,12 +163,11 @@ report.
 
 `lastEventAt` is the `created_at` of the Task's most recent persisted event, any
 type — the Task's own activity clock, not its user-visible `last_active_at`.
-It uses the same representation as other MCP timestamps: SQLite
-`strftime('%Y-%m-%d %H:%M:%f', 'now')` output, for example
-`2026-09-13 21:05:03.123`, in **UTC with no timezone marker**. It is `null` when
-the Task has no persisted events yet. A stale `lastEventAt` next to
-`workflowStatus: "running"` is a **lag signal, not proof of work**: a long
-silent tool call can look stale while the Task is still running.
+It is an ISO-8601 timestamp with an explicit `Z`, for example
+`2026-09-13T21:05:03.123Z`. It is `null` when the Task has no persisted events
+yet. A stale `lastEventAt` next to `workflowStatus: "running"` is a **lag
+signal, not proof of work**: a long silent tool call can look stale while the
+Task is still running.
 
 `lastAgentActivityAt` is an ISO-8601 timestamp of the Task's latest qualifying
 agent-runtime event (assistant or thinking chunks, tool calls, plans, or
@@ -229,7 +228,7 @@ hidden reasoning or automatically rebuild the previous model context.
 type CompactTaskHistoryRecord = {
   seq: number;
   type: string;
-  createdAt: string;
+  createdAt: string; // ISO-8601 UTC with an explicit `Z`
   text: string;
   truncated?: true;
   rawSize?: number;

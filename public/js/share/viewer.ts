@@ -32,7 +32,7 @@ interface SharePayload {
     token: string;
     task_title: string | null;
     snapshot_seq: number;
-    shared_at: string | null;
+    shared_at: number | null;
     display_name: string | null;
     created_at: string;
   };
