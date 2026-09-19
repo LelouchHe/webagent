@@ -3,15 +3,15 @@ import { extname, join } from "node:path";
 import { homedir } from "node:os";
 import { randomUUID } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import type { Store } from "../store.ts";
+import type { EventRow, Store } from "../store.ts";
 import type { TaskManager } from "../task-manager.ts";
 import type { Config } from "../config.ts";
-import type { StoredEvent } from "../types.ts";
 import type { ShareRow } from "../store.ts";
 import { generateShareToken } from "../tokens.ts";
 import { SanitizeError, sanitizeEventsForShare } from "./sanitize.ts";
 import { buildContentDisposition, isInlineMime } from "../attachments.ts";
 import { enrichStoredEventsForDisplay } from "../attachment-labels.ts";
+import { isoFromMillis, isoFromMillisOrNull } from "../shared/time.ts";
 import { log } from "../log.ts";
 import { HTTP_STATUS } from "../http-status.ts";
 
@@ -386,7 +386,7 @@ async function handlePreviewCreate(
       ttl_hours: result.row.ttl_hours,
       display_name: result.row.display_name,
       owner_label: result.row.owner_label,
-      shared_at: result.row.shared_at,
+      shared_at: isoFromMillisOrNull(result.row.shared_at),
       reused: result.reused,
     });
   } catch (err: unknown) {
@@ -409,7 +409,7 @@ async function handlePreviewCreate(
 }
 
 function runSanitizeGate(
-  events: StoredEvent[],
+  events: EventRow[],
   cwd: string,
   internalHosts: string[],
 ): void {
@@ -497,11 +497,11 @@ async function handlePreviewRead(
         token: row.token,
         task_id: taskId,
         task_title: task.title,
-        shared_at: null,
+        shared_at: isoFromMillisOrNull(row.shared_at),
         snapshot_seq: row.share_snapshot_seq,
         current_last_seq: currentLastSeq,
         events_since_snapshot: eventsSinceSnapshot,
-        created_at: row.created_at,
+        created_at: isoFromMillis(row.created_at),
         display_name: row.display_name,
         owner_label: row.owner_label,
         ttl_hours: row.ttl_hours,
@@ -581,7 +581,7 @@ async function handlePublish(
     json(res, HTTP_STATUS.CONFLICT, {
       error: "share already active",
       token: row.token,
-      shared_at: row.shared_at,
+      shared_at: isoFromMillis(row.shared_at),
     });
     return;
   }
@@ -623,7 +623,7 @@ async function handlePublish(
       json(res, HTTP_STATUS.CONFLICT, {
         error: "share already active",
         token: fresh.token,
-        shared_at: fresh.shared_at,
+        shared_at: isoFromMillisOrNull(fresh.shared_at),
       });
       return;
     }
@@ -652,7 +652,7 @@ async function handlePublish(
   json(res, HTTP_STATUS.OK, {
     token: after.token,
     task_id: taskId,
-    shared_at: after.shared_at,
+    shared_at: isoFromMillisOrNull(after.shared_at),
     display_name: after.display_name,
     owner_label: after.owner_label,
     public_url: `${origin}/s/${after.token}`,
@@ -790,10 +790,10 @@ async function handleSharedEvents(
         share: {
           token: row.token,
           task_title: task.title,
-          shared_at: row.shared_at,
+          shared_at: isoFromMillisOrNull(row.shared_at),
           snapshot_seq: row.share_snapshot_seq,
           display_name: row.display_name,
-          created_at: row.created_at,
+          created_at: isoFromMillis(row.created_at),
           ttl_hours: row.ttl_hours,
         },
         events,
@@ -1175,7 +1175,14 @@ async function handleOwnerList(
   deps: ShareRouteDeps,
 ): Promise<void> {
   const rows = deps.store.listOwnerShares();
-  json(res, HTTP_STATUS.OK, { shares: rows });
+  json(res, HTTP_STATUS.OK, {
+    shares: rows.map((row) => ({
+      ...row,
+      shared_at: isoFromMillisOrNull(row.shared_at),
+      created_at: isoFromMillis(row.created_at),
+      last_accessed_at: isoFromMillisOrNull(row.last_accessed_at),
+    })),
+  });
 }
 
 /**

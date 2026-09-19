@@ -39,13 +39,30 @@ function pad2(n: number): string {
 }
 
 /**
- * Format an ISO timestamp as a short relative-time string. Returns "" on
- * invalid input. `now` is injected so unit tests can fix the reference
- * point; pass `new Date()` in production.
+ * Parse a timestamp in one of the two shapes the API contract produces:
+ * unix milliseconds (store-shaped REST responses) or an ISO-8601 string with
+ * an explicit timezone marker `Z` / offset (presentation and agent-facing
+ * egress). A string without a marker is not part of the contract and is not
+ * supported.
+ *
+ * TODO(timestamp-migration): the helper still *accepts* a bare
+ * `YYYY-MM-DD HH:MM:SS` string because `Date` parses it (as local time), so a
+ * contract violation is mis-rendered instead of refused. Reject unmarked
+ * strings here (return an invalid `Date` so the UI shows `—`) in a follow-up
+ * PR; that is a behaviour change, so it is deliberately not part of this one.
  */
-export function formatRelativeTime(iso: string, now: Date): string {
-  if (!iso) return "";
-  const d = new Date(iso);
+export function parseTimestamp(value: string | number): Date {
+  return new Date(value);
+}
+
+/**
+ * Format an ISO-8601 string or unix milliseconds as a short relative-time
+ * string. Returns "" on invalid input. `now` is injected so unit tests can fix
+ * the reference point; pass `new Date()` in production.
+ */
+export function formatRelativeTime(value: string | number, now: Date): string {
+  if (value === "") return "";
+  const d = parseTimestamp(value);
   const t = d.getTime();
   if (isNaN(t)) return "";
 
@@ -77,13 +94,13 @@ export function formatRelativeTime(iso: string, now: Date): string {
 }
 
 /**
- * Format an ISO timestamp as an exact UTC string for tooltip display:
- * "2026-04-28 05:19 UTC". Companion to formatRelativeTime — readers who
- * want the precise moment hover the relative label.
+ * Format an ISO-8601 string or unix milliseconds as an exact UTC string for
+ * tooltip display: "2026-04-28 05:19 UTC". Companion to formatRelativeTime —
+ * readers who want the precise moment hover the relative label.
  */
-export function formatExactUtc(iso: string): string {
-  if (!iso) return "";
-  const d = new Date(iso);
+export function formatExactUtc(value: string | number): string {
+  if (value === "") return "";
+  const d = parseTimestamp(value);
   if (isNaN(d.getTime())) return "";
   return (
     `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())} ` +

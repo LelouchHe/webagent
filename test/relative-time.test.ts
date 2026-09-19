@@ -25,6 +25,11 @@ describe("formatRelativeTime", () => {
     );
   });
 
+  it("reads unix milliseconds", () => {
+    const ms = Date.UTC(2026, 3, 28, 11, 55, 0);
+    assert.equal(formatRelativeTime(ms, NOW), "5m ago");
+  });
+
   it("returns 'just now' for clock-skew slightly in the future", () => {
     // Clients can have small clock drift; a 30s positive delta should
     // not render as "30s in the future" — degrade to "just now".
@@ -129,6 +134,11 @@ describe("formatExactUtc", () => {
       formatExactUtc(new Date("2026-04-28T05:19:00Z").toISOString()),
       "2026-04-28 05:19 UTC",
     );
+  });
+
+  it("reads unix milliseconds", () => {
+    const ms = Date.UTC(2026, 3, 28, 5, 19, 0);
+    assert.equal(formatExactUtc(ms), "2026-04-28 05:19 UTC");
   });
 
   it("zero-pads single-digit components", () => {

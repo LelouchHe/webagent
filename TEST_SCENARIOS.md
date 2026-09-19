@@ -1,6 +1,6 @@
 # Test Scenarios
 
-Last updated: 2026-08-17
+Last updated: 2026-09-19
 
 This file is a scenario-level map of the current automated test suite.
 It is intentionally higher-level than raw test names so we can review coverage,
@@ -83,10 +83,22 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - task creation / deletion / updates
   - config persistence
   - title persistence
-  - fractional-second `last_active_at` precision for stable ordering
+  - unix-millisecond `last_active_at` for stable ordering
   - deleteEmptyTasks age gating
   - hasInterruptedTurn detection
   - migration idempotency
+
+- `test/timestamp-migration.test.ts`
+  - legacy string timestamps (with and without milliseconds) convert to unix millis, checked against an independent `Date.parse`
+  - per-table row counts and every stored value are preserved (non-vacuous seeds)
+  - boundary values (`1970-01-01`, `9999-12-31`, a real leap day) convert without aborting
+  - the oldest live DDL shape (`datetime('now')` default, nullable `last_active_at`) converts, with a NULL falling back to the row's `created_at`
+  - the real historical `tasks` / `events` DDL layout (quoted table name, out-of-order columns) migrates without rewriting the non-timestamp parts
+  - migrated schema text is byte-identical to a freshly created database; every index on a rebuilt table is recreated byte-identically
+  - a malformed legacy value (`'0'`, empty, `'now'`, `T` separator, out-of-range, or calendar-invalid such as `2026-02-29` / `24:00:00` / `23:59:60`) aborts the migration with the offending row and rolls back with nothing changed
+  - an INTEGER column whose default is still the legacy expression is rebuilt and its values copied through untouched, including `shares.created_at` / `owner_prefs.updated_at` converging from the seconds-aligned default
+  - migration is idempotent and leaves an already-INTEGER database untouched
+  - `foreign_key_check` / `integrity_check` pass after the rebuild
 
 - `test/title-service.test.ts`
   - silent title-task creation

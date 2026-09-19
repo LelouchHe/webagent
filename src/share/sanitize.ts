@@ -25,14 +25,15 @@
  * NOT escape HTML — raw text flows through to the viewer which renders
  * with html:false / DOMPurify.
  */
-import type { StoredEvent } from "../types.ts";
+import type { EventRow } from "../store.ts";
 import { HTTP_STATUS } from "../http-status.ts";
 
 /**
- * Input event shape — either a raw StoredEvent (with JSON-string data)
- * or a pre-parsed event. Sanitizer normalizes internally.
+ * Input event shape — either a raw database row (with JSON-string data) or a
+ * pre-parsed event. Sanitizer normalizes internally. This is the store row,
+ * not the egress shape: egress renders `created_at` as ISO-8601.
  */
-export type SanitizeInputEvent = StoredEvent | ParsedEvent;
+export type SanitizeInputEvent = EventRow | ParsedEvent;
 
 /** Parsed / output event shape: data decoded to plain object. */
 export interface ParsedEvent {
@@ -41,7 +42,8 @@ export interface ParsedEvent {
   seq: number;
   type: string;
   data: Record<string, unknown>;
-  created_at?: string;
+  /** Epoch milliseconds. */
+  created_at?: number;
 }
 
 export interface SanitizeInput {

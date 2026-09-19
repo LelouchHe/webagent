@@ -6,6 +6,17 @@ WebAgent persists state to a single SQLite database at `<data_dir>/webagent.db`
 not a compatibility migration layer: pre-1.0 data directories with an old
 schema must be backed up and removed before starting a new release.
 
+Timestamps are stored as **INTEGER unix milliseconds**. Writers pass
+`Date.now()` explicitly; the `DEFAULT 0` in the DDL is a schema placeholder and
+is never relied on.
+
+**Egress rule.** Every JSON egress renders a stored millisecond value as
+ISO-8601 UTC with an explicit `Z` (`src/shared/time.ts`). Storage stays integer
+milliseconds; no endpoint returns the integer form. Fields that are durations
+or counters rather than instants (`ttl_hours`, `share_snapshot_seq`,
+`upload_seq`, `seq`, …) keep their numeric types. See
+[docs/api.md → Timestamps](./api.md#timestamps).
+
 ## Table of Contents
 
 - [Pragmas & Foreign Key Policy](#pragmas--foreign-key-policy)
@@ -56,8 +67,8 @@ reserved Root Task has id `root` and no parent.
 | `cwd` | TEXT NOT NULL | Working directory passed to the agent |
 | `title` | TEXT | Display/name title; defaults to the stable task id when creation supplies none. User/parent sets it via `+… ` or `/rename` |
 | `workflow_status` | TEXT NOT NULL DEFAULT `'idle'` | `running`, `idle`, `blocked`, or `done` |
-| `created_at` | TEXT NOT NULL DEFAULT now | ISO-ish `%Y-%m-%d %H:%M:%f` |
-| `last_active_at` | TEXT NOT NULL DEFAULT now | Updated on every prompt |
+| `created_at` | INTEGER NOT NULL DEFAULT 0 | Unix milliseconds; writers pass `Date.now()` explicitly |
+| `last_active_at` | INTEGER NOT NULL DEFAULT 0 | Unix milliseconds; updated on every prompt |
 | `model` | TEXT | Last selected model id |
 | `mode` | TEXT | Last mode (`agent` / `plan` / `autopilot`) |
 | `reasoning_effort` | TEXT | Last reasoning effort selection |
@@ -77,7 +88,7 @@ configured agent.
 | `agent_key` | TEXT NOT NULL | Resolved `agent_cmd` executable path; identifies one stable agent/profile |
 | `agent_session_id` | TEXT NOT NULL | Opaque ACP session ID |
 | `task_id` | TEXT REFERENCES `tasks(id)` ON DELETE CASCADE | Current WebAgent Task ID; `NULL` for internal tasks such as title generation. Retired ACP executions (rotated or deleted) have their binding row removed and are explicitly retired via `task/delete`/`task/close` when the agent advertises support |
-| `created_at` | TEXT NOT NULL DEFAULT now | ISO-ish `%Y-%m-%d %H:%M:%f` |
+| `created_at` | INTEGER NOT NULL DEFAULT 0 | Unix milliseconds |
 
 PK: `(agent_key, agent_session_id)`. A partial unique index ensures a non-null
 WebAgent task belongs to exactly one agent task.
@@ -95,7 +106,7 @@ Replayed top-to-bottom on task resume.
 | `seq` | INTEGER NOT NULL | Per-task monotonic ordering |
 | `type` | TEXT NOT NULL | `user_message`, `assistant_message`, `thinking`, `tool_call`, `tool_call_update`, `plan`, `prompt_done`, `permission_request`, `permission_response`, `bash_command`, `bash_result`, `system_message`, … |
 | `data` | TEXT NOT NULL DEFAULT `'{}'` | JSON payload — shape depends on `type` |
-| `created_at` | TEXT NOT NULL DEFAULT now | |
+| `created_at` | INTEGER NOT NULL DEFAULT 0 | Unix milliseconds |
 | `from_ref` | TEXT NOT NULL | Origin marker: `user` / `system` / `agent` / `msg:<id>` |
 
 ### `push_subscriptions`
@@ -108,7 +119,7 @@ Web Push endpoints for browser notifications.
 | `endpoint` | TEXT NOT NULL UNIQUE | Push service URL |
 | `auth` | TEXT NOT NULL | VAPID auth secret (base64url) |
 | `p256dh` | TEXT NOT NULL | Subscriber public key (base64url) |
-| `created_at` | TEXT NOT NULL DEFAULT now | |
+| `created_at` | INTEGER NOT NULL DEFAULT 0 | Unix milliseconds |
 
 Stale endpoints are auto-removed: 410 Gone immediately, other errors after 5
 consecutive failures (`MAX_CONSECUTIVE_FAILURES` in `push-service.ts`).
@@ -199,7 +210,7 @@ effect.
 | `task_id` | TEXT NOT NULL | Part of compound PK |
 | `client_op_id` | TEXT NOT NULL | Client-generated UUID for the op |
 | `result_json` | TEXT NOT NULL | Serialized response body |
-| `created_at` | TEXT NOT NULL DEFAULT now | |
+| `created_at` | INTEGER NOT NULL DEFAULT 0 | Unix milliseconds |
 
 PK: `(task_id, client_op_id)`. Old rows GC'd by age (see `cleanupClientOps`
 in `store.ts`).
@@ -211,7 +222,7 @@ LRU of working directories used by `+` creation and `/clear` path pickers.
 | Column | Type | Notes |
 |---|---|---|
 | `cwd` | TEXT PRIMARY KEY | |
-| `last_used_at` | TEXT NOT NULL DEFAULT now | |
+| `last_used_at` | INTEGER NOT NULL DEFAULT 0 | Unix milliseconds |
 
 TTL-pruned by `limits.recent_paths_ttl` (days).
 
@@ -230,8 +241,8 @@ Revocation is hard-delete; no audit trail.
 | `ttl_hours` | INTEGER | Optional auto-expire window |
 | `display_name` | TEXT | Owner-supplied label shown to viewers |
 | `owner_label` | TEXT | Owner identity label |
-| `created_at` | INTEGER NOT NULL DEFAULT now-ms | |
-| `last_accessed_at` | INTEGER | Bumped on each viewer GET |
+| `created_at` | INTEGER NOT NULL DEFAULT 0 | Unix milliseconds; writers pass `Date.now()` explicitly |
+| `last_accessed_at` | INTEGER | Unix millis; bumped on each viewer GET |
 
 Multi-share per task is allowed, but a partial unique index
 (`shares_one_active_preview`) caps un-activated previews to one per task.
@@ -255,7 +266,7 @@ does, even when the task is tombstoned for an active share.
 | `upload_seq` | INTEGER NOT NULL | `MAX(events.seq)` at insert time — share gate compares against `share_snapshot_seq` |
 | `width` | INTEGER | Server-derived image width in pixels (`NULL` for files/legacy rows) |
 | `height` | INTEGER | Server-derived image height in pixels (`NULL` for files/legacy rows) |
-| `created_at` | TEXT NOT NULL DEFAULT now() | ISO timestamp |
+| `created_at` | INTEGER NOT NULL DEFAULT 0 | Unix milliseconds |
 
 ### `owner_prefs`
 
@@ -266,7 +277,7 @@ selection, etc.). Single-user model = single owner scope.
 |---|---|---|
 | `key` | TEXT PRIMARY KEY | |
 | `value` | TEXT NOT NULL | Free-form (typically JSON) |
-| `updated_at` | INTEGER NOT NULL DEFAULT now-ms | |
+| `updated_at` | INTEGER NOT NULL DEFAULT 0 | Unix milliseconds; writers pass `Date.now()` explicitly |
 
 ---
 
@@ -341,19 +352,94 @@ readers use the current `title`/`body` shape. The retired `tasks.brief` column
 is handled the same way: the schema guard tolerates it and startup drops it
 (see [Pre-1.0 reset policy](#pre-10-reset-policy)).
 
+## Timestamp normalization
+
+Nine tables hold ten timestamp columns. Eight of them (`tasks.created_at`,
+`tasks.last_active_at`, `agent_sessions.created_at`, `events.created_at`,
+`push_subscriptions.created_at`, `client_ops.created_at`,
+`attachments.created_at`, `recent_paths.last_used_at`) were bare UTC strings in
+older databases, in two shapes: `%Y-%m-%d %H:%M:%S` and
+`%Y-%m-%d %H:%M:%S.%f`, neither with a timezone marker. The other two
+(`shares.created_at`, `owner_prefs.updated_at`) were already INTEGER but
+defaulted to `CAST(strftime('%s','now') AS INTEGER) * 1000` (seconds aligned).
+
+At startup, `migrateTimestampsToMillis()` rebuilds each table whose target
+column declarations differ from the canonical DDL (wrong type, extra or missing
+constraints, or a legacy default expression), in one transaction. String
+columns are converted with
+`CAST(ROUND((julianday(col) - 2440587.5) * 86400000) AS INTEGER)` (SQLite reads
+a suffix-less time string as UTC, so no `utc`/`localtime` modifier is applied);
+the two already-INTEGER columns only have their declaration converged and their
+values are copied through untouched.
+Foreign keys are disabled for the rebuild and a `foreign_key_check` must pass
+before the transaction commits. A NULL in a legacy nullable column falls back
+to that row's converted `created_at`, matching what
+`ORDER BY COALESCE(last_active_at, created_at)` already meant.
+
+The migration is **fail-closed**. Before any DDL it scans every target column:
+a legacy column must hold a `YYYY-MM-DD HH:MM:SS[.SSS]` UTC string whose
+numeric instant round-trips back to the same literal date-time (`'0'`, the
+empty string, `'now'`, a `T` separator, and calendar-invalid values such as
+`2026-02-29`, `2026-04-31`, `24:00:00`, or `23:59:60` all fail — SQLite would
+otherwise normalize those silently), and a column already declared INTEGER
+must hold an integer.
+Any offending value aborts the migration with the table, column, row identity
+(`id`, `task_id`/`seq`, …), and original value, and the transaction rolls back —
+a malformed value is never silently coerced to a plausible-looking number.
+
+The rebuild reads the live `CREATE TABLE` / `CREATE INDEX` text from
+`sqlite_master` and replaces only the timestamp declarations, so no second copy
+of the DDL exists. A database whose non-timestamp DDL matches the current
+release therefore ends up with byte-identical schema text to a freshly created
+one; a database carrying an older ALTER-built layout (for example the older
+`tasks` / `events` shapes with quoted table names and reordered columns) keeps
+that layout and only converges the timestamp declarations. Running the
+migration again is a no-op.
+
+This release changes the **JSON egress**: every timestamp field now renders
+ISO-8601 UTC with an explicit `Z` (`docs/api.md` → `Timestamps`). Storage stays
+integer milliseconds; the wire never carries the integer form.
+
+### Migration and rollback
+
+- **When.** The migration runs inside `Store` construction on every server
+  start, before the server accepts requests. It is idempotent: a database whose
+  declarations are already canonical is left untouched.
+- **Atomicity.** Every rebuild happens in one transaction with foreign keys
+  disabled, and `foreign_key_check` must pass before it commits. A malformed
+  value aborts the migration and rolls the whole transaction back.
+- **`VACUUM` is a separate step.** It cannot run inside a transaction, needs
+  roughly twice the database size in free disk, and blocks whatever startup it
+  runs in. The rebuild frees pages but does not shrink the file; run `VACUUM`
+  as a one-off operator step after a successful migration if the file should
+  shrink (the dogfood database went from 269 MB to 14.3 MB).
+- **Rollback = restore the full pre-deploy database backup.** The migration
+  commits inside `Store` construction; `dropLegacyColumns` and
+  `migrateSystemMessagePayloads` then run afterwards as separate statements, so
+  a failure there leaves the database migrated. Reverting the binary alone is
+  **not** sufficient — restore the backup taken before the deploy.
+- **Before deploying.** Take a consistent backup (`.backup`, or checkpoint and
+  copy), run the *full* `Store` startup on the backup copy (not just the
+  migration), and verify `integrity_check`, `foreign_key_check`, that every
+  timestamp column holds integers, the row counts and sampled values, and that
+  the schema and indexes match a freshly created database. Keep the old binary
+  and the backup until the deploy is confirmed.
+
 ## Pre-1.0 reset policy
 
 Schema changes before 1.0 are breaking changes. Server startup never performs
 an implicit compatibility migration for obsolete table schemas: the strict
 schema guard rejects them at boot, and operators must back up and reset their
-data directory before restarting. Two narrow, column-scoped edits are the
-explicit exceptions, and both converge an existing database on the current
+data directory before restarting. Three narrow, column-scoped edits are the
+explicit exceptions, and all converge an existing database on the current
 schema instead of requiring a reset:
 
 - the `system_message` payload normalization described above for the current
   `title`/`body` split;
 - dropping the retired `tasks.brief` column in place (`0.10` replaced one-step
-  child creation with `+<title>` followed by `@<title> <message>`).
+  child creation with `+<title>` followed by `@<title> <message>`);
+- converting the eight legacy string timestamp columns to INTEGER unix
+  milliseconds (see [Timestamp normalization](#timestamp-normalization)).
 
 ---
 

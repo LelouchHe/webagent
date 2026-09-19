@@ -9,6 +9,7 @@ import {
 import type { TaskManager } from "../task-manager.ts";
 import { expandHomePath } from "../home-path.ts";
 import { formatTaskReference } from "../shared/task-reference.ts";
+import { isoFromMillis, isoFromMillisOrNull } from "../shared/time.ts";
 import { buildTaskCreatedSystemMessage } from "../task-created-message.ts";
 import type {
   McpTaskHistoryRecord,
@@ -148,7 +149,7 @@ export function createMcpTaskToolHost(deps: {
           workflowStatus: task.workflow_status,
           executionState: tasks.getExecutionState(task.id),
           lastAgentActivityAt: tasks.getLastAgentActivityAt(task.id),
-          lastEventAt: lastEventTimes.get(task.id) ?? null,
+          lastEventAt: isoFromMillisOrNull(lastEventTimes.get(task.id)),
         }),
       );
     },
@@ -201,7 +202,7 @@ export function createMcpTaskToolHost(deps: {
             seq: event.seq,
             type: event.type,
             data: event.data,
-            createdAt: event.created_at,
+            createdAt: isoFromMillis(event.created_at),
           }),
         )
         .filter((record): record is McpTaskHistoryRecord => record !== null);
@@ -245,7 +246,7 @@ export function createMcpTaskToolHost(deps: {
           type: event.type,
           data: event.data,
           fromRef: event.from_ref,
-          createdAt: event.created_at,
+          createdAt: isoFromMillis(event.created_at),
         },
       };
     },

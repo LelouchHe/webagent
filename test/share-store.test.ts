@@ -34,6 +34,47 @@ describe("shares store", () => {
     assert.equal(row.share_snapshot_seq, 10);
   });
 
+  it("writes created_at at millisecond precision from the caller", () => {
+    // The schema default must not produce a seconds-aligned value; the writer
+    // passes `Date.now()`. Wait out the first 20ms of a second so a
+    // seconds-aligned default would land strictly below `before`.
+    const secondStart = Math.floor(Date.now() / 1000) * 1000;
+    while (Date.now() - secondStart < 20) {
+      // spin into a usable window
+    }
+    const before = Date.now();
+    const row = store.insertSharePreview({
+      token: generateShareToken(),
+      taskId,
+      snapshotSeq: 1,
+    });
+    const after = Date.now();
+    assert.ok(Number.isInteger(row.created_at));
+    assert.ok(row.created_at <= after);
+    if (Math.floor(before / 1000) === Math.floor(after / 1000)) {
+      assert.ok(
+        row.created_at >= before,
+        `created_at ${row.created_at} looks seconds-aligned (before ${before})`,
+      );
+    }
+
+    // The shares DDL no longer computes a default timestamp at all.
+    const db = (
+      store as unknown as {
+        db: {
+          prepare: (sql: string) => {
+            get: () => { sql: string } | undefined;
+          };
+        };
+      }
+    ).db;
+    const ddl = db
+      .prepare("SELECT sql FROM sqlite_master WHERE name = 'shares'")
+      .get()?.sql;
+    assert.ok(ddl !== undefined);
+    assert.ok(!ddl.includes("strftime"), ddl);
+  });
+
   it("partial unique index: second preview insert throws", () => {
     store.insertSharePreview({
       token: generateShareToken(),

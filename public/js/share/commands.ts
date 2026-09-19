@@ -31,13 +31,15 @@ interface PreviewResponse {
   ttl_hours: number | null;
   display_name: string | null;
   owner_label: string | null;
-  shared_at: number | null;
+  /** ISO-8601 UTC with an explicit `Z` (`null` while still a preview). */
+  shared_at: string | null;
   reused: boolean;
 }
 
 interface PublishResponse {
   token: string;
-  shared_at: number;
+  /** ISO-8601 UTC with an explicit `Z`. */
+  shared_at: string;
   public_url: string;
   display_name: string | null;
 }
@@ -46,13 +48,16 @@ export interface ShareListRow {
   token: string;
   task_id: string;
   task_title: string | null;
-  shared_at: number | null;
-  created_at: number;
+  /** ISO-8601 UTC with an explicit `Z` (`null` while still a preview). */
+  shared_at: string | null;
+  /** ISO-8601 UTC with an explicit `Z`. */
+  created_at: string;
   display_name: string | null;
   owner_label: string | null;
   share_snapshot_seq: number;
   ttl_hours: number | null;
-  last_accessed_at: number | null;
+  /** ISO-8601 UTC with an explicit `Z`, or `null` when never opened. */
+  last_accessed_at: string | null;
 }
 
 function publicUrl(rawPath: string, token: string): string {

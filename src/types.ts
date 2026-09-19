@@ -83,7 +83,9 @@ export interface TaskSummary {
   mode: string | null;
   reasoning_effort: string | null;
   source: string;
+  /** ISO-8601 UTC with an explicit `Z`. */
   created_at: string;
+  /** ISO-8601 UTC with an explicit `Z`. */
   last_active_at: string;
   parent_id: string | null;
   /** Current workflow status for task navigation menus. */
@@ -112,6 +114,7 @@ export interface StoredEvent {
   seq: number;
   type: string;
   data: string;
+  /** ISO-8601 UTC with an explicit `Z`. */
   created_at: string;
 }
 

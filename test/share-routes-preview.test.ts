@@ -400,6 +400,8 @@ describe("share preview routes — GET /api/v1/tasks/:id/share/preview", () => {
         snapshot_seq: number;
         current_last_seq: number;
         events_since_snapshot: number;
+        created_at: string;
+        shared_at: string | null;
       };
     };
     assert.equal(b.schema_version, "1.0");
@@ -412,6 +414,13 @@ describe("share preview routes — GET /api/v1/tasks/:id/share/preview", () => {
     assert.equal(b.share.snapshot_seq, 1);
     assert.equal(b.share.current_last_seq, 2);
     assert.equal(b.share.events_since_snapshot, 1);
+    // Same object, same shape: the bundle's `created_at` is ISO and a preview
+    // has no `shared_at` yet (rendered through the same helper).
+    assert.match(
+      b.share.created_at,
+      /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/,
+    );
+    assert.equal(b.share.shared_at, null);
   });
 
   it("409 when share already active", async () => {

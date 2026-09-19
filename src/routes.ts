@@ -32,6 +32,7 @@ import { abbreviateHomePath } from "./home-path.ts";
 import { log } from "./log.ts";
 import { isLocalCollaborationTarget } from "./task-collaboration.ts";
 import { formatTaskReference } from "./shared/task-reference.ts";
+import { isoFromMillis, isoFromMillisOrNull } from "./shared/time.ts";
 import {
   buildTaskCreatedBroadcast,
   buildTaskCreatedSystemMessage,
@@ -718,9 +719,13 @@ export function createRequestHandler(
               ...publicTask
             } = task;
             // Home-abbreviated display form for menus and lists; the raw cwd
-            // stays the canonical round-trip value.
+            // stays the canonical round-trip value. Every timestamp field is
+            // rendered ISO-8601 at egress (DB rows hold integer millis).
             return {
               ...publicTask,
+              created_at: isoFromMillis(task.created_at),
+              last_active_at: isoFromMillis(task.last_active_at),
+              deleted_at: isoFromMillisOrNull(task.deleted_at),
               cwdDisplay: abbreviateHomePath(task.cwd),
               hasUserInput: Boolean(hasUserInput),
             };
@@ -755,6 +760,7 @@ export function createRequestHandler(
           HTTP_STATUS.OK,
           paths.map((entry) => ({
             ...entry,
+            last_used_at: isoFromMillis(entry.last_used_at),
             cwdDisplay: abbreviateHomePath(entry.cwd),
           })),
         );
@@ -824,8 +830,8 @@ export function createRequestHandler(
         const list = visible.map((t) => ({
           name: t.name,
           scope: t.scope,
-          createdAt: t.createdAt,
-          lastUsedAt: t.lastUsedAt,
+          createdAt: isoFromMillis(t.createdAt),
+          lastUsedAt: isoFromMillisOrNull(t.lastUsedAt),
           isSelf: t.name === principal.name,
         }));
         json(res, HTTP_STATUS.OK, list);
@@ -1149,7 +1155,7 @@ export function createRequestHandler(
               cwdDisplay: abbreviateHomePath(task.cwd),
               model: task.model,
               mode: task.mode,
-              createdAt: task.created_at,
+              createdAt: isoFromMillis(task.created_at),
               lastEventSeq,
             },
             runtime: runtimeState.runtime,
@@ -2663,7 +2669,10 @@ export function createRequestHandler(
           }
         }
         const envelope: Record<string, unknown> = {
-          events,
+          events: events.map((event) => ({
+            ...event,
+            created_at: isoFromMillis(event.created_at),
+          })),
           streaming: {
             thinking: streamingThinking,
             assistant: streamingAssistant,
@@ -3054,7 +3063,12 @@ export function createRequestHandler(
 
       // GET /api/v1/messages — list unprocessed
       if (url === "/api/v1/messages" && req.method === "GET") {
-        json(res, HTTP_STATUS.OK, { messages: store.listUnprocessed() });
+        json(res, HTTP_STATUS.OK, {
+          messages: store.listUnprocessed().map((message) => ({
+            ...message,
+            created_at: isoFromMillis(message.created_at),
+          })),
+        });
         return;
       }
 
@@ -3162,7 +3176,10 @@ export function createRequestHandler(
             json(res, HTTP_STATUS.NOT_FOUND, { error: "Message not found" });
             return;
           }
-          json(res, HTTP_STATUS.OK, row);
+          json(res, HTTP_STATUS.OK, {
+            ...row,
+            created_at: isoFromMillis(row.created_at),
+          });
           return;
         }
       }
