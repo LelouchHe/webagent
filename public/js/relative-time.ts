@@ -44,6 +44,12 @@ function pad2(n: number): string {
  * an explicit timezone marker `Z` / offset (presentation and agent-facing
  * egress). A string without a marker is not part of the contract and is not
  * supported.
+ *
+ * TODO(timestamp-migration): the helper still *accepts* a bare
+ * `YYYY-MM-DD HH:MM:SS` string because `Date` parses it (as local time), so a
+ * contract violation is mis-rendered instead of refused. Reject unmarked
+ * strings here (return an invalid `Date` so the UI shows `—`) in a follow-up
+ * PR; that is a behaviour change, so it is deliberately not part of this one.
  */
 export function parseTimestamp(value: string | number): Date {
   return new Date(value);

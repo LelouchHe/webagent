@@ -398,6 +398,38 @@ one; a database carrying an older ALTER-built layout (for example the older
 that layout and only converges the timestamp declarations. Running the
 migration again is a no-op.
 
+This release is a **breaking change for the store-shaped REST responses**:
+`GET /api/v1/tasks` (`created_at`, `last_active_at`),
+`GET /api/v1/tasks/:id/events` (`created_at`) and `GET /api/v1/recent-paths`
+(`last_used_at`) previously returned bare UTC strings and now return integer
+unix milliseconds. See [docs/api.md → Timestamps](./api.md#timestamps) for the
+full egress rule.
+
+### Migration and rollback
+
+- **When.** The migration runs inside `Store` construction on every server
+  start, before the server accepts requests. It is idempotent: a database whose
+  declarations are already canonical is left untouched.
+- **Atomicity.** Every rebuild happens in one transaction with foreign keys
+  disabled, and `foreign_key_check` must pass before it commits. A malformed
+  value aborts the migration and rolls the whole transaction back.
+- **`VACUUM` is a separate step.** It cannot run inside a transaction, needs
+  roughly twice the database size in free disk, and blocks whatever startup it
+  runs in. The rebuild frees pages but does not shrink the file; run `VACUUM`
+  as a one-off operator step after a successful migration if the file should
+  shrink (the dogfood database went from 269 MB to 14.3 MB).
+- **Rollback = restore the full pre-deploy database backup.** The migration
+  commits inside `Store` construction; `dropLegacyColumns` and
+  `migrateSystemMessagePayloads` then run afterwards as separate statements, so
+  a failure there leaves the database migrated. Reverting the binary alone is
+  **not** sufficient — restore the backup taken before the deploy.
+- **Before deploying.** Take a consistent backup (`.backup`, or checkpoint and
+  copy), run the *full* `Store` startup on the backup copy (not just the
+  migration), and verify `integrity_check`, `foreign_key_check`, that every
+  timestamp column holds integers, the row counts and sampled values, and that
+  the schema and indexes match a freshly created database. Keep the old binary
+  and the backup until the deploy is confirmed.
+
 ## Pre-1.0 reset policy
 
 Schema changes before 1.0 are breaking changes. Server startup never performs

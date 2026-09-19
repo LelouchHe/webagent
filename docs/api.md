@@ -91,9 +91,10 @@ Stored timestamps are unix milliseconds (`INTEGER`). How a response exposes
 them depends on the surface:
 
 - **Agent-facing / presentation** — MCP `at` / `createdAt`, the task snapshot
-  (`GET /api/v1/tasks/:id` `createdAt`), and the share bundle's `created_at`
-  (`/share/preview`, `/shared/:token/events`) render **ISO-8601 UTC with an
-explicit `Z`** (for example `2026-04-28T20:55:00.000Z`).
+  (`GET /api/v1/tasks/:id/snapshot` `createdAt`, plus its `runtime.busy.since`),
+  and the share bundle's `created_at` (`/share/preview`,
+  `/shared/:token/events`) render **ISO-8601 UTC with an explicit `Z`** (for
+example `2026-04-28T20:55:00.000Z`).
 - **Same object, same shape** — a `shared_at` that lives in a JSON object next
   to a rendered-ISO `created_at` renders ISO too. That covers the public
   viewer (`/shared/:token/events`) and the preview bundle
@@ -105,6 +106,16 @@ explicit `Z`** (for example `2026-04-28T20:55:00.000Z`).
   `/share/publish`, conflict errors) carry the **stored integer unix
   milliseconds** unchanged (for example `1777410000000`), matching the
   `number` types in `src/types.ts`.
+
+> **Breaking change (timestamp release).** Before this release the store-shaped
+> REST fields returned bare UTC strings (`YYYY-MM-DD HH:MM:SS[.SSS]`, no
+> timezone marker). They now return integer unix milliseconds:
+> `GET /api/v1/tasks` (`created_at`, `last_active_at`),
+> `GET /api/v1/tasks/:id/events` (`created_at`), and
+> `GET /api/v1/recent-paths` (`last_used_at`). The owner share list
+> (`GET /api/v1/shares`) was already integer and is unchanged — only this
+> document's earlier description was wrong. Consumers that parsed the string
+> form must switch to the integer (or render it themselves).
 
 ### Discovery
 
