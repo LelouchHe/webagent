@@ -286,6 +286,7 @@ selection, etc.). Single-user model = single owner scope.
 | Index | Table | Columns | Purpose |
 |---|---|---|---|
 | `idx_events_task` | `events` | `(task_id, seq)` | Replay order per task |
+| `idx_events_task_seq` | `events` | `(task_id, seq)` UNIQUE | Enforces the task-local event address |
 | `idx_events_type` | `events` | `(task_id, type, created_at)` | Inbox/message consume queries |
 | `idx_inbox_messages_created` | `inbox_messages` | `(created_at)` | Age-based GC + ordering |
 | `idx_inbox_messages_dedup` | `inbox_messages` | `(to_ref, dedup_key)` | Idempotency lookup |

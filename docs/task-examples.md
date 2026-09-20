@@ -218,20 +218,19 @@ is also available for the current Task when `compact` or `clear` has moved
 important earlier context out of the active model context:
 
 ```text
-task_query({ limit: 10 })
+task_query({ range: [-50, -1] })
 ```
 
-With no `task_id`, this reads the current Task's persisted history as a
-compact projection. Use the cursor in the result to read older entries. The
-history itself is not compacted or cleared: `/compact` changes the active model
-context, and `/clear` rotates the active execution while keeping the Task's
-history.
+With no `task_id`, this indexes the current Task's persisted history as a flat
+set of rows. Use the returned `max_seq` and absolute ranges to read older rows.
+The history itself is not compacted or cleared: `/compact` changes the active
+model context, and `/clear` rotates the active execution while keeping the
+Task's history.
 
-When one compact entry is not enough, expand the specific sequence returned by
-`task_query`:
+When the index is not enough, read one or more complete rows in one call:
 
 ```text
-task_get_record({ seq: 42 })
+task_read({ task_id: "<task-id-from-query>", seqs: [42, 43] })
 ```
 
 These tools expose persisted history; they do not restore hidden model

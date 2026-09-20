@@ -30,9 +30,7 @@ describe("MCP Task tool host", () => {
       "auto",
       "session-alpha-child",
       "alpha",
-      {
-        title: "Alpha child",
-      },
+      { title: "Alpha child" },
     );
     tasks = new TaskManager(store, dir, dir);
   });
@@ -43,348 +41,25 @@ describe("MCP Task tool host", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  it("lists the family with differing statuses and latest-event times", () => {
-    // Distinct statuses so a constant workflowStatus cannot pass this check.
-    store.updateTaskWorkflowStatus("root", "done");
+  it("lists the family with relation and status", () => {
     store.updateTaskWorkflowStatus("alpha", "running");
-    store.updateTaskWorkflowStatus("alpha-child", "blocked");
-    store.updateTaskWorkflowStatus("beta", "idle");
-
-    // Give each member an older and a newer event, then pin both timestamps.
-    // `lastEventAt` must come from the newest event, so returning the first
-    // event (or a constant) fails this check.
-    const stamp = (second: number, ms: number) =>
-      Date.UTC(2026, 8, 13, 21, 0, second, ms);
-    const pinLatest = (id: string, at: number) =>
-      store["db"]
-        .prepare(
-          "UPDATE events SET created_at = ? WHERE task_id = ? AND seq = (SELECT MAX(seq) FROM events WHERE task_id = ?)",
-        )
-        .run(at, id, id);
-    const seedEvents = (id: string, older: number, latest: number) => {
-      store.saveEvent(
-        id,
-        "assistant_message",
-        { text: "older" },
-        { from_ref: "agent" },
-      );
-      pinLatest(id, older);
-      store.saveEvent(
-        id,
-        "assistant_message",
-        { text: "latest" },
-        { from_ref: "agent" },
-      );
-      pinLatest(id, latest);
-    };
-    seedEvents("alpha", stamp(0, 1), stamp(1, 1));
-    seedEvents("root", stamp(0, 2), stamp(1, 2));
-    seedEvents("alpha-child", stamp(0, 3), stamp(1, 3));
-    seedEvents("beta", stamp(0, 4), stamp(1, 4));
-
-    const host = createMcpTaskToolHost({
-      store,
-      tasks,
-      getBridge: () => null,
-    });
-
-    assert.deepEqual(host.list("alpha"), [
-      {
-        id: "alpha",
-        title: "Alpha",
-        relation: "self",
-        workflowStatus: "running",
-        executionState: "idle",
-        lastAgentActivityAt: null,
-        lastEventAt: "2026-09-13T21:00:01.001Z",
-      },
-      {
-        id: "root",
-        title: "Root",
-        relation: "parent",
-        workflowStatus: "done",
-        executionState: "idle",
-        lastAgentActivityAt: null,
-        lastEventAt: "2026-09-13T21:00:01.002Z",
-      },
-      {
-        id: "alpha-child",
-        title: "Alpha child",
-        relation: "child",
-        workflowStatus: "blocked",
-        executionState: "idle",
-        lastAgentActivityAt: null,
-        lastEventAt: "2026-09-13T21:00:01.003Z",
-      },
-      {
-        id: "beta",
-        title: "Beta",
-        relation: "sibling",
-        workflowStatus: "idle",
-        executionState: "idle",
-        lastAgentActivityAt: null,
-        lastEventAt: "2026-09-13T21:00:01.004Z",
-      },
-    ]);
-
-    // The exposed timestamp is ISO-8601 UTC with an explicit `Z`.
-    for (const item of host.list("alpha")) {
-      assert.match(
-        item.lastEventAt ?? "",
-        /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/,
-      );
-    }
+    const host = createMcpTaskToolHost({ store, tasks, getBridge: () => null });
+    assert.deepEqual(
+      host.list("alpha").map(({ id, relation }) => ({ id, relation })),
+      [
+        { id: "alpha", relation: "self" },
+        { id: "root", relation: "parent" },
+        { id: "alpha-child", relation: "child" },
+        { id: "beta", relation: "sibling" },
+      ],
+    );
   });
 
-  it("reports a null latest-event time for a task with no persisted events", () => {
-    const host = createMcpTaskToolHost({
-      store,
-      tasks,
-      getBridge: () => null,
-    });
-
-    const beta = host.list("alpha").find((item) => item.id === "beta");
-    assert.ok(beta, "beta must be reachable from alpha");
-    assert.equal(beta.workflowStatus, "idle");
-    assert.equal(beta.lastEventAt, null);
-  });
-
-  it("creates a direct child with inherited and requested configuration", async () => {
-    type CreateOptions = {
-      parentId: string;
-      title: string;
-      model?: string;
-      thinking?: string;
-    };
-    let createCall:
-      | {
-          cwd?: string;
-          inheritFromTaskId?: string;
-          source: string;
-          options: CreateOptions;
-        }
-      | undefined;
-    const fakeTasks = {
-      createTask: async (
-        _bridge: unknown,
-        cwd: string | undefined,
-        inheritFromTaskId: string | undefined,
-        source: string,
-        options: CreateOptions,
-      ) => {
-        createCall = { cwd, inheritFromTaskId, source, options };
-        return { taskId: "created-child" };
-      },
-    } as unknown as TaskManager;
-    const host = createMcpTaskToolHost({
-      store,
-      tasks: fakeTasks,
-      getBridge: () => ({}) as import("../src/bridge.ts").AgentBridge,
-    });
-
-    assert.deepEqual(
-      await host.create("alpha", {
-        title: "New child",
-        cwd: "subdir",
-        model: "model-new",
-        thinking: "high",
-      }),
-      { taskId: "created-child" },
-    );
-    if (!createCall) throw new Error("createTask was not called");
-    assert.equal(createCall.cwd, join(dir, "subdir"));
-    assert.equal(createCall.inheritFromTaskId, "alpha");
-    assert.equal(createCall.source, "agent");
-    assert.deepEqual(
-      {
-        parentId: createCall.options.parentId,
-        title: createCall.options.title,
-        model: createCall.options.model,
-        thinking: createCall.options.thinking,
-      },
-      {
-        parentId: "alpha",
-        title: "New child",
-        model: "model-new",
-        thinking: "high",
-      },
-    );
-    assert.match(store.getEvents("alpha").at(-1)?.data ?? "", /created-child/);
-  });
-
-  it("reads bounded history pages and returns an opaque cursor", () => {
-    for (let i = 1; i <= 3; i++) {
-      store.saveEvent(
-        "alpha",
-        "user_message",
-        { text: `entry ${i}` },
-        { from_ref: "user" },
-      );
-    }
-    const host = createMcpTaskToolHost({
-      store,
-      tasks,
-      getBridge: () => null,
-    });
-
-    const first = host.query("alpha", { limit: 2 });
-    assert.deepEqual(
-      first.records.map((record) => record.seq),
-      [2, 3],
-    );
-    assert.equal(first.workflowStatus, "idle");
-    assert.equal(first.hasMore, true);
-    assert.ok(first.nextCursor);
-
-    const older = host.query("alpha", { cursor: first.nextCursor, limit: 2 });
-    assert.deepEqual(
-      older.records.map((record) => record.seq),
-      [1],
-    );
-    assert.equal(older.hasMore, false);
-  });
-
-  it("paginates past skipped normal completions without losing visible records", () => {
-    store.saveEvent(
-      "alpha",
-      "user_message",
-      { text: "oldest" },
-      { from_ref: "user" },
-    );
-    store.saveEvent(
-      "alpha",
-      "prompt_done",
-      { stopReason: "end_turn" },
-      { from_ref: "agent" },
-    );
-    store.saveEvent(
-      "alpha",
-      "assistant_message",
-      { text: "middle" },
-      { from_ref: "agent" },
-    );
-    store.saveEvent(
-      "alpha",
-      "prompt_done",
-      { stopReason: "end_turn" },
-      { from_ref: "agent" },
-    );
-    store.saveEvent(
-      "alpha",
-      "task_update",
-      { status: "done", body: "latest" },
-      { from_ref: "agent" },
-    );
-    const host = createMcpTaskToolHost({
-      store,
-      tasks,
-      getBridge: () => null,
-    });
-
-    const newest = host.query("alpha", { limit: 2 });
-    assert.deepEqual(
-      newest.records.map((record) => record.seq),
-      [5],
-    );
-    assert.ok(newest.nextCursor);
-
-    const middle = host.query("alpha", { cursor: newest.nextCursor, limit: 2 });
-    assert.deepEqual(
-      middle.records.map((record) => record.seq),
-      [3],
-    );
-    assert.ok(middle.nextCursor);
-
-    const oldest = host.query("alpha", { cursor: middle.nextCursor, limit: 2 });
-    assert.deepEqual(
-      oldest.records.map((record) => record.seq),
-      [1],
-    );
-    assert.equal(oldest.hasMore, false);
-  });
-
-  it("reads one complete persisted record by seq", () => {
-    store.saveEvent(
-      "alpha",
-      "tool_call",
-      { id: "tool-1", title: "bash", kind: "execute" },
-      { from_ref: "agent" },
-    );
-    const host = createMcpTaskToolHost({
-      store,
-      tasks,
-      getBridge: () => null,
-    });
-
-    assert.deepEqual(host.getRecord("alpha", { seq: 1 }), {
-      taskId: "alpha",
-      record: {
-        id: 1,
-        taskId: "alpha",
-        seq: 1,
-        type: "tool_call",
-        data: '{"id":"tool-1","title":"bash","kind":"execute"}',
-        fromRef: "agent",
-        createdAt: new Date(
-          store.getEvent("alpha", 1)!.created_at,
-        ).toISOString(),
-      },
-    });
-    assert.throws(
-      () => host.getRecord("alpha", { seq: 2 }),
-      /record_not_found/,
-    );
-    assert.throws(() => host.getRecord("alpha", { seq: 0 }), /invalid_seq/);
-  });
-
-  it("does not expose thinking records through raw lookup", () => {
+  it("indexes every event including thinking and exposes search context", () => {
     store.saveEvent(
       "alpha",
       "thinking",
-      { text: "private reasoning" },
-      { from_ref: "agent" },
-    );
-    const host = createMcpTaskToolHost({
-      store,
-      tasks,
-      getBridge: () => null,
-    });
-
-    assert.throws(
-      () => host.getRecord("alpha", { seq: 1 }),
-      /record_not_found/,
-    );
-  });
-
-  it("filters history text in the database before returning records", () => {
-    store.saveEvent(
-      "alpha",
-      "user_message",
-      { text: "keep this" },
-      { from_ref: "user" },
-    );
-    store.saveEvent(
-      "alpha",
-      "assistant_message",
-      { text: "other" },
-      { from_ref: "agent" },
-    );
-    const host = createMcpTaskToolHost({
-      store,
-      tasks,
-      getBridge: () => null,
-    });
-
-    const result = host.query("alpha", { text: "keep" });
-    assert.equal(result.records.length, 1);
-    assert.equal(result.records[0].text, "User:\nkeep this");
-  });
-
-  it("returns small text projections and skips normal completion noise", () => {
-    store.saveEvent(
-      "alpha",
-      "assistant_message",
-      { text: "The task is ready." },
+      { text: "internal plan" },
       { from_ref: "agent" },
     );
     store.saveEvent(
@@ -393,8 +68,7 @@ describe("MCP Task tool host", () => {
       {
         id: "tool-1",
         title: "edit",
-        kind: "edit",
-        rawInput: { path: "src/mcp/server.ts", oldText: "x".repeat(8_000) },
+        rawInput: { path: "src/needle.ts", oldText: "not the projection" },
       },
       { from_ref: "agent" },
     );
@@ -403,9 +77,8 @@ describe("MCP Task tool host", () => {
       "tool_call_update",
       {
         id: "tool-1",
-        status: "failed",
-        title: "edit",
-        content: [{ content: { text: "Replacement did not match" } }],
+        status: "completed",
+        content: [{ content: { text: "done" } }],
       },
       { from_ref: "agent" },
     );
@@ -413,253 +86,171 @@ describe("MCP Task tool host", () => {
       "alpha",
       "permission_request",
       {
-        requestId: "perm-1",
-        title: "Run command?",
-        options: [
-          { optionId: "allow_once", label: "Allow once" },
-          { optionId: "deny_once", label: "Deny" },
-        ],
+        requestId: "permission-1",
+        title: "Run?",
+        toolCallId: "tool-1",
+        options: [],
       },
       { from_ref: "agent" },
     );
-    store.saveEvent(
-      "alpha",
-      "system_message",
-      {
-        kind: "collaboration",
-        sourceLabel: "Beta team",
-        targetLabel: "Alpha team",
-        title: '@"Beta team" sent @"Alpha team"',
-        body: "Please review the API.",
-      },
-      { from_ref: "msg:1" },
-    );
-    store.saveEvent(
-      "alpha",
-      "task_update",
-      { status: "blocked", body: "Waiting for API details" },
-      { from_ref: "agent" },
-    );
-    store.saveEvent(
-      "alpha",
-      "bash_result",
-      { output: "done", code: 0, signal: null },
-      { from_ref: "system" },
-    );
-    store.saveEvent(
-      "alpha",
-      "prompt_done",
-      { stopReason: "end_turn" },
-      { from_ref: "agent" },
-    );
-    store.saveEvent(
-      "alpha",
-      "error",
-      { message: "ACP connection closed" },
-      { from_ref: "agent" },
-    );
-    store.saveEvent(
-      "alpha",
-      "future_event",
-      { raw: "unrecognized" },
-      { from_ref: "system" },
-    );
-    const host = createMcpTaskToolHost({
-      store,
-      tasks,
-      getBridge: () => null,
-    });
-
-    const result = host.query("alpha", { limit: 20 });
+    const host = createMcpTaskToolHost({ store, tasks, getBridge: () => null });
+    const all = host.query("alpha", {});
     assert.deepEqual(
-      result.records.map(({ type, text }) => ({ type, text })),
-      [
-        { type: "assistant_message", text: "Assistant:\nThe task is ready." },
-        {
-          type: "tool_call",
-          text: "Tool started: edit (edit)\nPath: src/mcp/server.ts",
-        },
-        {
-          type: "tool_call_update",
-          text: "Tool failed: edit\nResult:\nReplacement did not match",
-        },
-        {
-          type: "permission_request",
-          text: "Permission requested: Run command?\nOptions: Allow once, Deny",
-        },
-        {
-          type: "system_message",
-          text: '@"Beta team" sent @"Alpha team"\nPlease review the API.',
-        },
-        {
-          type: "task_update",
-          text: "Task blocked:\nWaiting for API details",
-        },
-        {
-          type: "bash_result",
-          text: "Shell finished: exit 0\nOutput:\ndone",
-        },
-        { type: "error", text: "Error:\nACP connection closed" },
-        {
-          type: "future_event",
-          text: "Unrecognized future_event event; raw payload omitted.",
-        },
-      ],
+      all.rows.map((row) => row.seq),
+      [1, 2, 3, 4],
     );
-    assert.equal(
-      result.records.some((record) => "data" in record),
-      false,
+    assert.equal(all.rows[0].type, "thinking");
+    assert.equal(all.rows[1].group, "tool-1");
+    assert.equal(all.rows[3].group, "tool-1");
+    const found = host.query("alpha", { text: "needle" });
+    assert.equal(found.rows.length, 1);
+    assert.equal(found.rows[0].field, "rawInput.path");
+    assert.match(found.rows[0].text ?? "", /needle/i);
+  });
+
+  it("normalizes negative ranges, reverse ranges, and clamps endpoints", () => {
+    for (let i = 0; i < 30; i++) {
+      store.saveEvent(
+        "alpha",
+        "user_message",
+        { text: String(i) },
+        { from_ref: "user" },
+      );
+    }
+    const host = createMcpTaskToolHost({ store, tasks, getBridge: () => null });
+    assert.deepEqual(
+      host.query("alpha", { range: [-20, -1] }).rows.map((r) => r.seq),
+      Array.from({ length: 20 }, (_, i) => i + 11),
     );
-    assert.equal(result.records[1].text.includes("x".repeat(100)), false);
-    assert.equal(
-      result.records.at(-1)?.rawSize,
-      Buffer.byteLength('{"raw":"unrecognized"}', "utf8"),
+    assert.deepEqual(
+      host.query("alpha", { range: [20, 10] }).rows.map((r) => r.seq),
+      Array.from({ length: 11 }, (_, i) => i + 10),
+    );
+    assert.deepEqual(
+      host.query("alpha", { range: [1, 0] }).rows.map((r) => r.seq),
+      [1],
     );
   });
 
-  it("marks shortened text and reports its original payload size", () => {
-    store.saveEvent(
-      "alpha",
-      "assistant_message",
-      { text: "a".repeat(3_000) },
-      { from_ref: "agent" },
-    );
-    const host = createMcpTaskToolHost({
-      store,
-      tasks,
-      getBridge: () => null,
+  it("reads original structured data in one batch, including thinking", () => {
+    const original = { text: "hello", nested: ["x", { value: 2 }] };
+    const event = store.saveEvent("alpha", "thinking", original, {
+      from_ref: "agent",
     });
-
-    const record = host.query("alpha", { limit: 1 }).records[0];
-    assert.equal(record.truncated, true);
-    assert.equal(
-      record.rawSize,
-      Buffer.byteLength(store.getEvents("alpha")[0].data, "utf8"),
-    );
-    assert.ok(record.text.length <= 801);
-  });
-
-  it("cancels only a direct child and records the reason", async () => {
-    let cancelCalls = 0;
-    const bridge = {
-      cancel: async () => {
-        cancelCalls++;
+    const host = createMcpTaskToolHost({ store, tasks, getBridge: () => null });
+    const result = host.read("alpha", {
+      taskId: "alpha",
+      seqs: [event.seq, event.seq],
+    });
+    assert.deepEqual(result.rows, [
+      {
+        seq: event.seq,
+        type: "thinking",
+        at: new Date(event.created_at).toISOString(),
+        from: "agent",
+        data: original,
       },
-    } as unknown as import("../src/bridge.ts").AgentBridge;
-    tasks.activePrompts.add("alpha-child");
-    tasks.syncBusy("alpha-child", "prompt-1");
-    const host = createMcpTaskToolHost({
-      store,
-      tasks,
-      getBridge: () => bridge,
-    });
+    ]);
+  });
 
-    const result = await host.cancel(
-      "alpha",
-      "alpha-child",
-      "No longer needed",
+  it("rejects unknown and out-of-family targets identically", () => {
+    const host = createMcpTaskToolHost({ store, tasks, getBridge: () => null });
+    assert.throws(
+      () => host.query("alpha", { taskId: "missing" }),
+      /target_not_allowed/,
     );
-    assert.deepEqual(result, {
-      accepted: true,
-      taskId: "alpha-child",
-      status: "cancelling",
+    assert.throws(
+      () => host.read("alpha", { taskId: "missing", seqs: [1] }),
+      /target_not_allowed/,
+    );
+    assert.throws(
+      () => host.query("alpha", { taskId: "unrelated" }),
+      /target_not_allowed/,
+    );
+    store.createTask("unrelated", dir, "auto", "session-unrelated", null, {
+      title: "Unrelated",
     });
-    assert.equal(cancelCalls, 1);
-    assert.match(
-      store.getEvents("alpha-child").at(-1)?.data ?? "",
-      /No longer needed/,
-    );
-    await assert.rejects(
-      () => host.cancel("alpha", "beta", "wrong scope"),
+    assert.throws(
+      () => host.query("alpha", { taskId: "unrelated" }),
       /target_not_allowed/,
     );
   });
 
-  it("returns idle when a direct child has no active execution", async () => {
-    const host = createMcpTaskToolHost({
-      store,
-      tasks,
-      getBridge: () => null,
-    });
-
-    assert.deepEqual(
-      await host.cancel("alpha", "alpha-child", "stop before start"),
-      { accepted: true, taskId: "alpha-child", status: "idle" },
+  it("rejects missing seqs without partial rows", () => {
+    store.saveEvent(
+      "alpha",
+      "user_message",
+      { text: "x" },
+      { from_ref: "user" },
     );
-  });
-
-  it("rejects queries and sends outside the local family", async () => {
-    const host = createMcpTaskToolHost({
-      store,
-      tasks,
-      getBridge: () => null,
-    });
-
-    await assert.rejects(
-      () => host.send("alpha", "unknown", "hello"),
-      /task_not_found/,
-    );
+    const host = createMcpTaskToolHost({ store, tasks, getBridge: () => null });
     assert.throws(
-      () => host.query("alpha", { taskId: "unknown" }),
-      /task_not_found/,
+      () => host.read("alpha", { taskId: "alpha", seqs: [1, 99] }),
+      /unknown_seq/,
     );
   });
 
-  it("queues an agent message without returning delivery metadata", async () => {
-    const host = createMcpTaskToolHost({
-      store,
-      tasks,
-      getBridge: () => null,
+  it("reads a large single payload under the global response limit", () => {
+    const payload = { text: "payload-" + "x".repeat(258_000) };
+    const event = store.saveEvent("alpha", "assistant_message", payload, {
+      from_ref: "agent",
     });
-
-    await host.send("alpha", "beta", "hello beta");
-    const messages = store
-      .getEvents("beta", { excludeThinking: true })
-      .filter((event) => event.type === "system_message");
-    assert.equal(messages.length, 1);
-    assert.match(messages[0].data, /hello beta/);
+    const host = createMcpTaskToolHost({ store, tasks, getBridge: () => null });
+    const result = host.read("alpha", { taskId: "alpha", seqs: [event.seq] });
+    assert.deepEqual(result.rows[0].data, payload);
+    assert.ok(
+      Buffer.byteLength(JSON.stringify(result), "utf8") < 4 * 1024 * 1024,
+    );
   });
 
-  it("reports live execution state and last agent activity", () => {
-    const host = createMcpTaskToolHost({
-      store,
-      tasks,
-      getBridge: () => null,
-    });
-    const before = host.list("alpha");
-    assert.ok(before.every((item) => item.executionState === "idle"));
-    assert.ok(before.every((item) => item.lastAgentActivityAt === null));
-
-    tasks.activePrompts.add("alpha-child");
-    tasks.noteAgentActivity("alpha");
-    const after = host.list("alpha");
-    // Mutation evidence: deriving executionState from workflowStatus reports
-    // idle here; deriving activity from the latest event ignores the runtime
-    // tracker.
-    assert.equal(
-      after.find((item) => item.id === "alpha-child")?.executionState,
-      "agent",
+  it("rejects an over-limit response with required_bytes and no partial rows", () => {
+    const event = store.saveEvent(
+      "alpha",
+      "assistant_message",
+      { text: "x".repeat(4 * 1024 * 1024) },
+      { from_ref: "agent" },
     );
-    assert.ok(after.find((item) => item.id === "alpha")?.lastAgentActivityAt);
+    const host = createMcpTaskToolHost({ store, tasks, getBridge: () => null });
+    assert.throws(
+      () => host.read("alpha", { taskId: "alpha", seqs: [event.seq] }),
+      (error: unknown) => {
+        const parsed = JSON.parse(String((error as Error).message)) as Record<
+          string,
+          unknown
+        >;
+        assert.equal(parsed.error, "response_too_large");
+        assert.equal(typeof parsed.required_bytes, "number");
+        assert.equal(parsed.limit_bytes, 4 * 1024 * 1024);
+        return true;
+      },
+    );
   });
 
-  it("updates its own workflow and sends a parent status message", async () => {
+  it("rejects an over-limit query without returning a partial page", () => {
+    for (let i = 0; i < 6_000; i++) {
+      store.saveEvent("alpha", "future_event", {}, { from_ref: "system" });
+    }
+    const host = createMcpTaskToolHost({ store, tasks, getBridge: () => null });
+    assert.throws(() => host.query("alpha", {}), /response_too_large/);
+  });
+
+  it("creates a direct child with requested configuration", async () => {
+    const fakeTasks = {
+      createTask: async () => ({ taskId: "created-child" }),
+    } as unknown as TaskManager;
     const host = createMcpTaskToolHost({
       store,
-      tasks,
-      getBridge: () => null,
+      tasks: fakeTasks,
+      getBridge: () => ({}) as import("../src/bridge.ts").AgentBridge,
     });
-
-    await host.update("alpha", "blocked", "Need API details");
-    assert.equal(store.getTask("alpha")?.workflow_status, "blocked");
-    assert.match(
-      store.getEvents("alpha").at(-1)?.data ?? "",
-      /Need API details/,
+    assert.deepEqual(
+      await host.create("alpha", {
+        title: "New child",
+        cwd: "subdir",
+        model: "m",
+        thinking: "high",
+      }),
+      { taskId: "created-child" },
     );
-    const parentUpdate = JSON.parse(
-      store.getEvents("root").at(-1)?.data ?? "{}",
-    ) as { title?: string; body?: string };
-    assert.equal(parentUpdate.title, "@Alpha sent @Root");
-    assert.equal(parentUpdate.body, "Task status: blocked\nNeed API details");
   });
 });

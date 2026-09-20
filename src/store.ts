@@ -469,6 +469,7 @@ export class Store {
         from_ref TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS idx_events_task ON events(task_id, seq);
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_events_task_seq ON events(task_id, seq);
       CREATE TABLE IF NOT EXISTS push_subscriptions (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         endpoint TEXT NOT NULL UNIQUE,
@@ -1279,34 +1280,36 @@ export class Store {
     data: Record<string, unknown> = {},
     opts?: { from_ref?: string },
   ): EventRow {
-    const seq = (
+    return this.db.transaction(() => {
+      const seq = (
+        this.db
+          .prepare(
+            "SELECT COALESCE(MAX(seq), 0) + 1 AS next FROM events WHERE task_id = ?",
+          )
+          .get(taskId) as { next: number }
+      ).next;
+
+      // Origin marker is required. Every writer must pass an explicit value;
+      // missing/empty fails loudly so a forgotten retrofit can't silently
+      // mis-bucket a row in production. Valid values:
+      //   'user' | 'system' | 'agent' | 'msg:<id>'.
+      const fromRef = opts?.from_ref;
+      if (!fromRef) {
+        throw new Error(
+          `saveEvent: from_ref is required (type=${type} task=${taskId.slice(0, 8)}) — pass { from_ref: 'user' | 'system' | 'agent' | 'msg:<id>' }`,
+        );
+      }
+
       this.db
         .prepare(
-          "SELECT COALESCE(MAX(seq), 0) + 1 AS next FROM events WHERE task_id = ?",
+          "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
         )
-        .get(taskId) as { next: number }
-    ).next;
+        .run(taskId, seq, type, JSON.stringify(data), fromRef, Date.now());
 
-    // Origin marker is required. Every writer must pass an explicit value;
-    // missing/empty fails loudly so a forgotten retrofit can't silently
-    // mis-bucket a row in production. Valid values:
-    //   'user' | 'system' | 'agent' | 'msg:<id>'.
-    const fromRef = opts?.from_ref;
-    if (!fromRef) {
-      throw new Error(
-        `saveEvent: from_ref is required (type=${type} task=${taskId.slice(0, 8)}) — pass { from_ref: 'user' | 'system' | 'agent' | 'msg:<id>' }`,
-      );
-    }
-
-    this.db
-      .prepare(
-        "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-      )
-      .run(taskId, seq, type, JSON.stringify(data), fromRef, Date.now());
-
-    return this.db
-      .prepare("SELECT * FROM events WHERE task_id = ? AND seq = ?")
-      .get(taskId, seq) as EventRow;
+      return this.db
+        .prepare("SELECT * FROM events WHERE task_id = ? AND seq = ?")
+        .get(taskId, seq) as EventRow;
+    })();
   }
 
   getEvent(taskId: string, seq: number): EventRow | undefined {

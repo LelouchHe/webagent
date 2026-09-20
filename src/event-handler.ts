@@ -253,6 +253,7 @@ function handlePermissionRequest(
     {
       requestId: event.requestId,
       title: event.title,
+      toolCallId: event.toolCallId,
       options: event.options,
     },
     { from_ref: "agent" },

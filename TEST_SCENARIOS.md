@@ -293,6 +293,14 @@ spot gaps, and decide what still needs to be added without reading every spec.
     volatile assistant tail already represented by persisted fragments
   - retryUnconfirmedPermissions after reconnect
 
+- `test/mcp-task-host.test.ts`, `test/mcp.test.ts`, `test/mcp-doc-coverage.test.ts`
+  - flat task_query index includes thinking rows, range normalization, and bounded Unicode projections
+  - fixed-string search returns a visible matching window and real JSON field path
+  - task_read returns batched decoded event data, including large single rows
+  - self/parent/child/sibling authorization, tombstone/nonexistent target convergence, unknown sequence rejection
+  - explicit response_too_large errors report required_bytes without partial rows
+  - MCP registration and documentation expose task_read as the sole raw-history tool
+
 - `test/commands.test.ts`, `test/slash-menu.test.ts`
   - `/new`, `/switch`, `/exit`, `/cancel`, `/rename`
   - `/new` (typed and picker-selected) posts a child create whose parent and

@@ -128,25 +128,14 @@ describe("createMcpEndpoint", () => {
     query: (_sourceTaskId: string, input: unknown) => {
       calls.push({ kind: "query", input });
       return {
-        workflowStatus: "idle" as const,
-        records: [],
-        hasMore: false,
+        task_id: "web-1",
+        max_seq: 0,
+        rows: [],
       };
     },
-    getRecord: (_sourceTaskId: string, input: unknown) => {
-      calls.push({ kind: "getRecord", input });
-      return {
-        taskId: "web-1",
-        record: {
-          id: 1,
-          taskId: "web-1",
-          seq: 1,
-          type: "assistant_message",
-          data: '{"text":"hello"}',
-          fromRef: "agent",
-          createdAt: "2026-01-01T00:00:00.000Z",
-        },
-      };
+    read: (_sourceTaskId: string, input: unknown) => {
+      calls.push({ kind: "read", input });
+      return { task_id: "web-1", rows: [] };
     },
     cancel: async (...args: unknown[]) => {
       calls.push({ kind: "cancel", args });
@@ -329,9 +318,9 @@ describe("createMcpEndpoint", () => {
     assert.deepEqual(names, [
       "task_cancel",
       "task_create",
-      "task_get_record",
       "task_list",
       "task_query",
+      "task_read",
       "task_send",
       "task_update",
     ]);
@@ -351,8 +340,8 @@ describe("createMcpEndpoint", () => {
       false,
       "task_update must not expose a correlation parameter",
     );
-    assert.match(toolDescription(tools, "task_query"), /recorded turn history/);
-    assert.match(toolDescription(tools, "task_query"), /provider errors/);
+    assert.match(toolDescription(tools, "task_query"), /flat event index/);
+    assert.match(toolDescription(tools, "task_query"), /ASCII case folding/);
     // `task_list` is the cheap triage surface: state fields plus the per-turn
     // meaning of `done`, without weakening task_query's no-poll guidance.
     assert.match(toolDescription(tools, "task_list"), /workflowStatus/);
@@ -369,7 +358,7 @@ describe("createMcpEndpoint", () => {
       (tool) => tool.name === "task_query",
     )?.inputSchema;
     assert.deepEqual(querySchema?.required ?? [], []);
-    for (const name of ["task_id", "text", "cursor", "limit"]) {
+    for (const name of ["task_id", "text", "range"]) {
       assert.equal(
         querySchema?.properties?.[name]?.anyOf?.some(
           (variant) => variant.type === "null",
@@ -408,8 +397,7 @@ describe("createMcpEndpoint", () => {
           arguments: {
             task_id: null,
             text: "history",
-            cursor: null,
-            limit: 2,
+            range: [-2, -1],
           },
         },
       },
@@ -417,20 +405,20 @@ describe("createMcpEndpoint", () => {
     );
     assert.equal(query.status, 200);
 
-    const getRecord = await mcpPost(
+    const read = await mcpPost(
       "/mcp",
       {
         jsonrpc: "2.0",
         id: 5,
         method: "tools/call",
         params: {
-          name: "task_get_record",
-          arguments: { task_id: null, seq: 7 },
+          name: "task_read",
+          arguments: { task_id: "web-1", seqs: [7] },
         },
       },
       auth(token),
     );
-    assert.equal(getRecord.status, 200);
+    assert.equal(read.status, 200);
 
     const create = await mcpPost(
       "/mcp",
@@ -502,11 +490,10 @@ describe("createMcpEndpoint", () => {
         input: {
           taskId: undefined,
           text: "history",
-          cursor: undefined,
-          limit: 2,
+          range: [-2, -1],
         },
       },
-      { kind: "getRecord", input: { taskId: undefined, seq: 7 } },
+      { kind: "read", input: { taskId: "web-1", seqs: [7] } },
       {
         kind: "create",
         args: [

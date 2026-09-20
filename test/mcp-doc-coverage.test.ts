@@ -24,13 +24,11 @@ function registeredTools(): Record<string, RegisteredTool> {
   const host = {
     list: () => [],
     query: () => ({
-      workflowStatus: "idle" as const,
-      records: [],
-      hasMore: false,
+      task_id: "current",
+      max_seq: 0,
+      rows: [],
     }),
-    getRecord: () => {
-      throw new Error("not used");
-    },
+    read: () => ({ task_id: "current", rows: [] }),
     cancel: async () => ({
       accepted: true as const,
       taskId: "child",

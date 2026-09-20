@@ -62,7 +62,7 @@ Use task_list to check each reachable Task's workflowStatus, executionState, las
 Use task_send for normal coordination and for continuing or resuming existing Tasks; task_send is not a lifecycle handoff. Use task_update(done|blocked) for typed lifecycle handoffs. A done Task remains available and is not deleted or permanently closed.
 task_update(done|blocked) settles the directed obligation when it comes from the current active turn; there is no correlation parameter to copy back.
 After dispatching work, end the current turn; do not poll with task_query.
-Use task_query and task_get_record only for history recovery, diagnosis, or audit.
+Use task_query for flat history indexes and task_read for complete rows only for history recovery, diagnosis, or audit.
 Omit task_id to inspect the current Task's persisted history.
 ```
 
@@ -123,7 +123,7 @@ WebAgent does not automatically rebroadcast raw child reports to ancestors.
 | --- | --- |
 | `task_list` | List the current task and its locally reachable parent, children, and siblings, each with `workflowStatus`, `executionState`, `lastEventAt`, and `lastAgentActivityAt` for triage. |
 | `task_query` | Read a bounded, compact history page for the current task or one visible relative. |
-| `task_get_record` | Read one complete persisted history record by task-local sequence. |
+| `task_read` | Read complete persisted history rows by task-local sequence. |
 | `task_cancel` | Stop the current execution of a child Task while preserving its history. |
 | `task_create` | Create a direct child Task with optional execution overrides. Use `task_send` for its first instruction. |
 | `task_send` | Send a durable coordination message, including follow-up or resume instructions for an existing Task. Use `task_update` for typed `blocked`/`done` status. |
@@ -177,138 +177,90 @@ agent activity is a silence signal rather than an activity claim.
 
 ### `task_query`
 
-All input fields are optional:
+List a flat index of persisted event rows for the current Task or one visible
+relative. Thinking rows are included. The response is deliberately an index,
+not a payload expansion; use `task_read` for exact event data.
 
 ```ts
 {
-  task_id?: string; // Visible target task; current task when omitted
-  text?: string;    // Literal search term in underlying stored event data
-  cursor?: string;  // Opaque cursor from a prior response
-  limit?: number;   // 1–100; defaults to 5
+  task_id?: string; // visible target; current task when omitted
+  text?: string; // fixed string search; ASCII case folding only
+  range?: [number, number]; // inclusive seq range; negative indexes use max_seq
 }
 ```
 
-For provider compatibility, each optional field also accepts `null`, which has
-exactly the same meaning as omission. MCP clients should normally omit unused
-fields.
-
-#### Provider schema compatibility
-
-Some function-calling providers emit every property in a tool schema even when
-fields are optional. Without a nullable alternative, they may invent placeholder
-values for `task_id` or `cursor`, causing lookup or pagination failures.
-
-For that reason, every optional `task_query` field also accepts `null`, and the
-server treats `null` exactly like omission. The fields remain optional for MCP
-clients that already handle the schema correctly.
-
-Without arguments, the tool examines the latest five non-thinking events from
-the current task. Normal completion events are omitted, so a returned page may
-contain fewer records. A query selects the latest matching events and returns
-that page in chronological order. `nextCursor`, when present, reads older
-events. Search is literal database matching against the original stored
-payload; it is not a semantic or full-text query.
-
-The current Task's persisted history remains available after context
-compaction or `clear`, so omitting `task_id` is also the way to recover earlier
-context for the current Task. The history itself is not compacted by
-`task_query`: that tool only returns a compact projection. `/compact` changes
-the active model context, while `/clear` rotates the active execution and keeps
-the Task's history. These tools expose stored events; they do not restore
-hidden reasoning or automatically rebuild the previous model context.
+Optional fields accept `null` as omission. With no range, all rows are
+returned. Start recovery with `range: [-50, -1]`, then request older absolute
+ranges. Ranges are normalized in either order and clamped to `[1, max_seq]`;
+`[1, 0]` therefore returns only sequence 1 and must not be used as a
+continuation request.
 
 ```ts
 {
-  workflowStatus: "running" | "idle" | "blocked" | "done";
-  records: CompactTaskHistoryRecord[];
-  hasMore: boolean;
-  nextCursor?: string;
+  task_id: string;
+  max_seq: number;
+  rows: Row[];
 }
 
-type CompactTaskHistoryRecord = {
+type Row = {
   seq: number;
   type: string;
-  createdAt: string; // ISO-8601 UTC with an explicit `Z`
-  text: string;
-  truncated?: true;
-  rawSize?: number;
+  bytes: number;
+  group?: string;
+  title?: string;
+  field?: string;
+  text?: string;
+  unprojected?: true;
 };
 ```
 
-`seq` is the event's stable sequence within its task. It is included as an
-identity/reference value; pass it to `task_get_record` when the compact
-projection is not enough.
+Rows are chronological and flat. `group` is the payload's tool call id
+(`id` for tool rows, `toolCallId` for permission requests). `title` and `text`
+are capped at 200 Unicode code points, with `…` marking each truncated side.
+Known event types use deterministic projections; unknown types still appear with
+`seq`, `type`, and `bytes`. Search scans decoded string leaves, not serialized
+JSON, and returns the matching JSON path plus a centered window (radius 100).
+It is fixed-string matching, not regular expression matching; only ASCII
+letters are case-folded. An unprojected search hit carries `unprojected: true`
+so the reason for the hit remains visible.
 
-### Compact history records
+The serialized `{task_id, max_seq, rows}` response is subject to a 256 KiB
+implementation limit. Over-limit responses are rejected, never partially
+returned, with a JSON tool error containing `response_too_large`,
+`required_bytes`, `limit_bytes`, `max_seq`, and a tail-range hint.
 
-Task history remains stored as raw JSON events in SQLite. `task_query` does not
-return that `data` field: tool inputs and results can contain entire source
-files, diffs, or command output and would consume an agent's context budget.
-Instead, it deterministically extracts a small plain-text representation based
-on the event type. It does not invoke an LLM or alter the stored event.
+### `task_read`
 
-| Event type | Included information |
-| --- | --- |
-| `user_message`, `assistant_message` | Message text and attachment count where applicable. |
-| `tool_call` | Tool title, kind, and a bounded command or path when available. |
-| `tool_call_update` | Tool title, status, bounded result text, and a bounded command or path when available. |
-| `plan` | Each plan entry's status and content. |
-| `permission_request`, `permission_response` | Permission title and choices, or allow/deny outcome. |
-| `error` | Error message. |
-| `system_message` | Message title and optional body; collaboration/task details use both fields. |
-| `task_update`, `task_cancel`, `message` | Collaboration route/status and message body. |
-| `bash_command`, `bash_result` | Command, exit code/signal, and bounded output. |
-| `prompt_done` | Non-normal stop reasons only; ordinary `end_turn` is omitted as noise. |
-
-Unknown event types and malformed payloads remain visible as a short notice
-with `rawSize`; they are not silently discarded. Thinking events are excluded.
-
-Text is capped at 800 characters per record; embedded tool result and command
-or shell-output excerpts are capped at 400 characters before being placed in
-the record. When text is shortened, `truncated: true` is set and `rawSize`
-reports the UTF-8 size of the original event payload. A tool input such as a
-large edit diff may be represented only by its title and target path even when
-the resulting text itself does not need truncation.
-
-This compact view is intended for normal task coordination. Raw events are
-retained for the browser transcript and explicit diagnostic lookup; they are not
-sent through `task_query`.
-
-### `task_get_record`
-
-Use this tool to expand exactly one `seq` returned by `task_query`:
+Read one or more complete persisted event rows by task-local sequence. This
+is the sole complete-row history tool; no single-row alias is registered.
 
 ```ts
-{
-  task_id?: string; // Visible target task; current task when omitted
-  seq: number;      // Positive event sequence within that task
-}
-```
+task_read({ task_id: string, seqs: number[] })
 
-The response contains the complete WebAgent-persisted event row:
-
-```ts
 {
-  taskId: string;
-  record: {
-    id: number;
-    taskId: string;
+  task_id: string;
+  rows: Array<{
     seq: number;
     type: string;
-    data: string;      // Exact JSON string stored in SQLite
-    fromRef: string;   // Persistence origin marker
-    createdAt: string;
-  };
+    at: string; // ISO-8601 UTC with Z
+    from: string;
+    data: unknown; // complete decoded stored payload
+  }>;
 }
 ```
 
-`data` is not compacted, parsed, summarized, or rewritten. This is the complete
-stored event record, not necessarily the complete original ACP notification.
-The `fromRef` field is persistence metadata, not an ACP field; clients should
-treat it as an opaque string.
+Duplicate sequences are removed and rows are returned in ascending order. Any
+missing sequence rejects the whole request with
+`{"error":"unknown_seq","missing":[...]}`. A batch is limited by an
+implementation constant; a single sequence is exempt from the item-count
+limit but not the global 4 MiB response limit. Over-limit responses are
+rejected without partial data and report `response_too_large` with the exact
+`required_bytes`. That value is always
+`Buffer.byteLength(JSON.stringify({task_id, rows}), "utf8")`.
 
-The tool reads one record per call and does not support bulk sequence lookup, so
-full payload expansion remains explicit and bounded by the caller's choice.
+Both history tools authorize only the current Task, its parent, direct children,
+or siblings. Tombstones, nonexistent tasks, and out-of-family task IDs all
+return `target_not_allowed`.
 
 ### `task_cancel`
 
