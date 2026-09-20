@@ -226,6 +226,28 @@ describe("createMcpEndpoint", () => {
     return { Authorization: `Bearer ${token}` };
   }
 
+  /** Whether the endpoint accepts this `task_query` search text (schema level). */
+  async function searchTextAccepted(
+    token: string,
+    text: string,
+  ): Promise<boolean> {
+    const response = await mcpPost(
+      "/mcp",
+      {
+        jsonrpc: "2.0",
+        id: 40,
+        method: "tools/call",
+        params: { name: "task_query", arguments: { text } },
+      },
+      auth(token),
+    );
+    const body = (await response.json()) as {
+      result?: { isError?: boolean };
+      error?: unknown;
+    };
+    return body.result?.isError !== true && body.error === undefined;
+  }
+
   it("leaves non-mcp paths for the router (returns false)", async () => {
     const handler = createMcpEndpoint({
       capabilities: caps,
@@ -544,5 +566,16 @@ describe("createMcpEndpoint", () => {
     ]);
 
     live.delete("web-1");
+  });
+
+  it("counts the search-text limit in code points, not UTF-16 units", async () => {
+    const token = caps.mint("web-units");
+    live.add("web-units");
+    // 128 astral code points is 256 UTF-16 units: allowed by the documented
+    // code-point limit, so validation must not reject it, while 129 code
+    // points of any width must be rejected.
+    assert.equal(await searchTextAccepted(token, "😀".repeat(128)), true);
+    assert.equal(await searchTextAccepted(token, "a".repeat(129)), false);
+    live.delete("web-units");
   });
 });

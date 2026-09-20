@@ -174,7 +174,14 @@ export function registerMcpTools(
         text: z
           .string()
           .min(1)
-          .max(128)
+          // Zod's own `.max()` counts UTF-16 code units while the documented
+          // limit is code points (and JSON Schema's `maxLength` is code
+          // points), so validate the unit the contract names and advertise it
+          // for clients separately.
+          .refine((value) => Array.from(value).length <= 128, {
+            message: "Search text must be at most 128 code points",
+          })
+          .meta({ maxLength: 128 })
           .nullable()
           .optional()
           .describe(
