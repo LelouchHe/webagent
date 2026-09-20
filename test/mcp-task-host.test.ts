@@ -77,6 +77,14 @@ describe("MCP Task tool host", () => {
       "running",
     );
     assert.ok(listed.every((item) => item.executionState === "idle"));
+    // Positive case: a constant `idle` would satisfy the check above, so pin
+    // the live runtime source while a turn is active.
+    tasks.activePrompts.add("alpha-child");
+    assert.equal(
+      host.list("alpha").find((item) => item.id === "alpha-child")
+        ?.executionState,
+      "agent",
+    );
     assert.equal(listed.find((item) => item.id === "beta")?.lastEventAt, null);
     assert.equal(
       listed.find((item) => item.id === "beta")?.lastAgentActivityAt,
