@@ -31,6 +31,27 @@ function toolHasProperty(
   return tool?.inputSchema?.properties?.[property] !== undefined;
 }
 
+/** Max length of a nullable input variant, or undefined when it declares none. */
+function nullableVariantMaxLength(
+  tools: Array<{
+    name: string;
+    inputSchema?: {
+      properties?: Record<
+        string,
+        { anyOf?: Array<{ type?: string; maxLength?: number }> }
+      >;
+    };
+  }>,
+  toolName: string,
+  property: string,
+): number | undefined {
+  const variants =
+    tools.find((tool) => tool.name === toolName)?.inputSchema?.properties?.[
+      property
+    ]?.anyOf ?? [];
+  return variants.find((variant) => variant.maxLength !== undefined)?.maxLength;
+}
+
 // --- CapabilityStore ---
 
 describe("CapabilityStore", () => {
@@ -308,7 +329,10 @@ describe("createMcpEndpoint", () => {
           description?: string;
           inputSchema?: {
             required?: string[];
-            properties?: Record<string, { anyOf?: Array<{ type?: string }> }>;
+            properties?: Record<
+              string,
+              { anyOf?: Array<{ type?: string; maxLength?: number }> }
+            >;
           };
         }>;
       };
@@ -366,6 +390,14 @@ describe("createMcpEndpoint", () => {
         true,
       );
     }
+    // The search window only promises "the hit text contains the whole needle"
+    // while the needle fits the 200-code-point budget, so pin the input limit
+    // that keeps the promise reachable instead of leaving it to prose.
+    assert.equal(
+      nullableVariantMaxLength(tools, "task_query", "text"),
+      128,
+      "task_query.text must stay capped at 128 code points",
+    );
 
     const call = await mcpPost(
       "/mcp",
