@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { Store } from "../src/store.ts";
 import { TaskManager } from "../src/task-manager.ts";
 import { createMcpTaskToolHost } from "../src/mcp/task-host.ts";
+import { projectTaskHistoryRow } from "../src/mcp/task-history.ts";
 
 describe("MCP Task tool host", () => {
   let dir: string;
@@ -324,7 +325,7 @@ describe("MCP Task tool host", () => {
     );
   });
 
-  it("reads a large single payload under the global response limit", () => {
+  it("reads a large single payload under the single-row response limit", () => {
     const payload = { text: "payload-" + "x".repeat(258_000) };
     const event = store.saveEvent("alpha", "assistant_message", payload, {
       from_ref: "agent",
@@ -332,18 +333,66 @@ describe("MCP Task tool host", () => {
     const host = createMcpTaskToolHost({ store, tasks, getBridge: () => null });
     const result = host.read("alpha", { taskId: "alpha", seqs: [event.seq] });
     assert.deepEqual(result.rows[0].data, payload);
-    assert.ok(
-      Buffer.byteLength(JSON.stringify(result), "utf8") < 4 * 1024 * 1024,
+    const bytes = Buffer.byteLength(JSON.stringify(result), "utf8");
+    // Over the batch budget, under the single-row exemption.
+    assert.ok(bytes > 128 * 1024, `single row is ${bytes} bytes`);
+    assert.ok(bytes < 1024 * 1024);
+  });
+
+  it("keeps one legitimate event readable while refusing that row in a batch", () => {
+    const payload = { text: "x".repeat(258_000) };
+    const big = store.saveEvent("alpha", "assistant_message", payload, {
+      from_ref: "agent",
+    });
+    const small = store.saveEvent(
+      "alpha",
+      "user_message",
+      { text: "small" },
+      { from_ref: "user" },
+    );
+    const host = createMcpTaskToolHost({ store, tasks, getBridge: () => null });
+    assert.deepEqual(
+      host.read("alpha", { taskId: "alpha", seqs: [big.seq] }).rows[0].data,
+      payload,
+    );
+    assert.throws(
+      () => host.read("alpha", { taskId: "alpha", seqs: [big.seq, small.seq] }),
+      (error: unknown) => {
+        const parsed = JSON.parse(String((error as Error).message)) as {
+          error: string;
+          required_bytes: number;
+          limit_bytes: number;
+        };
+        assert.equal(parsed.error, "response_too_large");
+        assert.equal(parsed.limit_bytes, 128 * 1024);
+        assert.ok(parsed.required_bytes > parsed.limit_bytes);
+        return true;
+      },
     );
   });
 
-  it("rejects an over-limit response with required_bytes and no partial rows", () => {
-    const event = store.saveEvent(
-      "alpha",
-      "assistant_message",
-      { text: "x".repeat(4 * 1024 * 1024) },
-      { from_ref: "agent" },
-    );
+  it("never refuses the recommended tail window on a dense task", () => {
+    for (let i = 0; i < 400; i++) {
+      store.saveEvent(
+        "alpha",
+        "assistant_message",
+        { text: "x".repeat(200) },
+        { from_ref: "agent" },
+      );
+    }
+    const host = createMcpTaskToolHost({ store, tasks, getBridge: () => null });
+    const page = host.query("alpha", { range: [-50, -1] });
+    assert.equal(page.rows.length, 50);
+    const bytes = Buffer.byteLength(JSON.stringify(page), "utf8");
+    // The documented opening window must fit even with maximal row text.
+    assert.ok(bytes < 24 * 1024, `recommended window is ${bytes} bytes`);
+  });
+
+  it("rejects an over-limit response with exact required_bytes and no partial rows", () => {
+    const data = { text: "x".repeat(2 * 1024 * 1024) };
+    const event = store.saveEvent("alpha", "assistant_message", data, {
+      from_ref: "agent",
+    });
     const host = createMcpTaskToolHost({ store, tasks, getBridge: () => null });
     assert.throws(
       () => host.read("alpha", { taskId: "alpha", seqs: [event.seq] }),
@@ -353,8 +402,26 @@ describe("MCP Task tool host", () => {
           unknown
         >;
         assert.equal(parsed.error, "response_too_large");
-        assert.equal(typeof parsed.required_bytes, "number");
-        assert.equal(parsed.limit_bytes, 4 * 1024 * 1024);
+        assert.equal(parsed.limit_bytes, 1024 * 1024);
+        // Exact, not estimated: the bytes of the response it refused to send.
+        assert.equal(
+          parsed.required_bytes,
+          Buffer.byteLength(
+            JSON.stringify({
+              task_id: "alpha",
+              rows: [
+                {
+                  seq: event.seq,
+                  type: "assistant_message",
+                  at: new Date(event.created_at).toISOString(),
+                  from: "agent",
+                  data,
+                },
+              ],
+            }),
+            "utf8",
+          ),
+        );
         return true;
       },
     );
@@ -376,10 +443,23 @@ describe("MCP Task tool host", () => {
           hint: { range: [number, number] };
         };
         assert.equal(parsed.error, "response_too_large");
-        assert.equal(typeof parsed.required_bytes, "number");
-        assert.equal(parsed.limit_bytes, 256 * 1024);
+        assert.equal(parsed.limit_bytes, 24 * 1024);
         assert.equal(parsed.max_seq, 6_000);
         assert.deepEqual(parsed.hint.range, [-50, -1]);
+        // Exact, not estimated: rebuild the refused response and compare.
+        assert.equal(
+          parsed.required_bytes,
+          Buffer.byteLength(
+            JSON.stringify({
+              task_id: "alpha",
+              max_seq: 6_000,
+              rows: store
+                .getEvents("alpha")
+                .map((event) => projectTaskHistoryRow(event)),
+            }),
+            "utf8",
+          ),
+        );
         return true;
       },
     );

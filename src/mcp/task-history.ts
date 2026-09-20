@@ -267,7 +267,22 @@ export function parseTaskHistoryData(data: string): unknown {
 export const TASK_HISTORY_LIMITS = {
   maxTextChars: MAX_TEXT_CHARS,
   matchWindowRadius: MATCH_WINDOW_RADIUS,
-  queryBytes: 256 * 1024,
-  readBytes: 4 * 1024 * 1024,
+  /**
+   * One index page is a decision aid, not a corpus. At ~250-300 bytes per row
+   * this is ~85 rows: more than the recommended 50-row window, still a screen
+   * rather than a transcript (~6k ASCII / ~8k CJK tokens).
+   */
+  queryBytes: 24 * 1024,
+  /**
+   * A batch pull of raw rows the caller already sized from the index. Bounded
+   * so `seqs` filled with many large rows is refused instead of absorbed.
+   */
+  readBytes: 128 * 1024,
+  /**
+   * Single-row exemption (batch size is not exempt from this): keeps one
+   * legitimate event readable instead of permanently blocked, with ~4x margin
+   * over the largest payload observed in the dogfood database (258 KB).
+   */
+  readSingleBytes: 1024 * 1024,
   readSeqs: 100,
 } as const;

@@ -226,9 +226,11 @@ centered window always retains the complete match before allocating context.
 An unprojected search hit carries `unprojected: true` so the reason for the hit
 remains visible.
 
-The serialized `{task_id, max_seq, rows}` response is subject to a 256 KiB
-implementation limit. Over-limit responses are rejected, never partially
-returned, with a JSON tool error containing `response_too_large`,
+The serialized `{task_id, max_seq, rows}` response is subject to a 24 KiB
+implementation limit — one index page is a decision aid, not a corpus, so the
+cap sits just above the recommended 50-row window even when every row carries
+its full 200-code-point text. Over-limit responses are rejected, never
+partially returned, with a JSON tool error containing `response_too_large`,
 `required_bytes`, `limit_bytes`, `max_seq`, and a tail-range hint.
 
 ### `task_read`
@@ -254,10 +256,11 @@ task_read({ task_id: string, seqs: number[] })
 Duplicate sequences are removed and rows are returned in ascending order. Any
 missing sequence rejects the whole request with
 `{"error":"unknown_seq","missing":[...]}`. A batch is limited by an
-implementation constant; a single sequence is exempt from the item-count
-limit but not the global 4 MiB response limit. Over-limit responses are
-rejected without partial data and report `response_too_large` with the exact
-`required_bytes`. That value is always
+implementation constant (128 KiB) together with an item-count limit; a single
+sequence is exempt from both and answers to a separate 1 MiB single-row limit,
+so one legitimate event is never permanently unreadable. Over-limit responses
+are rejected without partial data and report `response_too_large` with the
+exact `required_bytes`. That value is always
 `Buffer.byteLength(JSON.stringify({task_id, rows}), "utf8")`.
 
 Both history tools authorize only the current Task, its parent, direct children,

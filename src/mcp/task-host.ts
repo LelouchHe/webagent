@@ -28,6 +28,7 @@ import {
 const {
   queryBytes: QUERY_LIMIT_BYTES,
   readBytes: READ_LIMIT_BYTES,
+  readSingleBytes: READ_SINGLE_LIMIT_BYTES,
   readSeqs: MAX_READ_SEQS,
 } = TASK_HISTORY_LIMITS;
 
@@ -220,10 +221,12 @@ export function createMcpTaskToolHost(deps: {
         data: parseTaskHistoryData(event!.data),
       }));
       const result: McpTaskReadResult = { task_id: target.id, rows };
-      if (
-        Buffer.byteLength(JSON.stringify(result), "utf8") > READ_LIMIT_BYTES
-      ) {
-        responseTooLarge(result, READ_LIMIT_BYTES, { seqs: uniqueSeqs });
+      // A single-seq request is exempt from the batch byte budget so one
+      // legitimate event is never permanently unreadable.
+      const limitBytes =
+        uniqueSeqs.length === 1 ? READ_SINGLE_LIMIT_BYTES : READ_LIMIT_BYTES;
+      if (Buffer.byteLength(JSON.stringify(result), "utf8") > limitBytes) {
+        responseTooLarge(result, limitBytes, { seqs: uniqueSeqs });
       }
       return result;
     },
