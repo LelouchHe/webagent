@@ -42,16 +42,60 @@ describe("MCP Task tool host", () => {
   });
 
   it("lists the family with relation and status", () => {
+    store.updateTaskWorkflowStatus("root", "done");
     store.updateTaskWorkflowStatus("alpha", "running");
+    store.updateTaskWorkflowStatus("alpha-child", "blocked");
+    const stamp = Date.UTC(2026, 8, 13, 21, 0, 1, 1);
+    for (const id of ["root", "alpha", "alpha-child"]) {
+      store.saveEvent(
+        id,
+        "assistant_message",
+        { text: id },
+        { from_ref: "agent" },
+      );
+      store["db"]
+        .prepare("UPDATE events SET created_at = ? WHERE task_id = ?")
+        .run(stamp, id);
+    }
     const host = createMcpTaskToolHost({ store, tasks, getBridge: () => null });
+    const listed = host.list("alpha");
     assert.deepEqual(
-      host.list("alpha").map(({ id, relation }) => ({ id, relation })),
+      listed.map(({ id, relation }) => ({ id, relation })),
       [
         { id: "alpha", relation: "self" },
         { id: "root", relation: "parent" },
         { id: "alpha-child", relation: "child" },
         { id: "beta", relation: "sibling" },
       ],
+    );
+    assert.equal(
+      listed.find((item) => item.id === "root")?.workflowStatus,
+      "done",
+    );
+    assert.equal(
+      listed.find((item) => item.id === "alpha")?.workflowStatus,
+      "running",
+    );
+    assert.ok(listed.every((item) => item.executionState === "idle"));
+    assert.equal(listed.find((item) => item.id === "beta")?.lastEventAt, null);
+    assert.equal(
+      listed.find((item) => item.id === "beta")?.lastAgentActivityAt,
+      null,
+    );
+    assert.equal(
+      listed.find((item) => item.id === "alpha")?.lastEventAt,
+      "2026-09-13T21:00:01.001Z",
+    );
+    assert.match(
+      listed.find((item) => item.id === "alpha")?.lastEventAt ?? "",
+      /Z$/,
+    );
+    tasks.noteAgentActivity("alpha");
+    const afterActivity = host.list("alpha");
+    assert.match(
+      afterActivity.find((item) => item.id === "alpha")?.lastAgentActivityAt ??
+        "",
+      /Z$/,
     );
   });
 
@@ -130,6 +174,44 @@ describe("MCP Task tool host", () => {
       host.query("alpha", { range: [1, 0] }).rows.map((r) => r.seq),
       [1],
     );
+  });
+
+  it("truncates projections and keeps centered search windows visible", () => {
+    const long = "a".repeat(150) + "Needle" + "b".repeat(150);
+    store.saveEvent(
+      "alpha",
+      "assistant_message",
+      { text: long },
+      { from_ref: "agent" },
+    );
+    store.saveEvent(
+      "alpha",
+      "user_message",
+      { text: "short" },
+      { from_ref: "user" },
+    );
+    store.saveEvent(
+      "alpha",
+      "plan",
+      { entries: [{ content: long }] },
+      { from_ref: "agent" },
+    );
+    const host = createMcpTaskToolHost({ store, tasks, getBridge: () => null });
+    const rows = host.query("alpha", {}).rows;
+    assert.equal(Array.from(rows[0].text ?? "").length, 200);
+    assert.match(rows[0].text ?? "", /…$/);
+    assert.equal((rows[1].text ?? "").includes("…"), false);
+    const found = host.query("alpha", { text: "needle" }).rows;
+    assert.equal(found.length, 2);
+    const projected = found.find((row) => row.type === "assistant_message")!;
+    assert.match(projected.text ?? "", /Needle/);
+    assert.match(projected.text ?? "", /^…/);
+    assert.match(projected.text ?? "", /…$/);
+    assert.ok(Array.from(projected.text ?? "").length <= 200);
+    const unprojected = found.find((row) => row.type === "plan")!;
+    assert.equal(unprojected.unprojected, true);
+    assert.equal(unprojected.field, "entries[0].content");
+    assert.match(unprojected.text ?? "", /Needle/);
   });
 
   it("reads original structured data in one batch, including thinking", () => {
@@ -231,12 +313,91 @@ describe("MCP Task tool host", () => {
       store.saveEvent("alpha", "future_event", {}, { from_ref: "system" });
     }
     const host = createMcpTaskToolHost({ store, tasks, getBridge: () => null });
-    assert.throws(() => host.query("alpha", {}), /response_too_large/);
+    assert.throws(
+      () => host.query("alpha", {}),
+      (error: unknown) => {
+        const parsed = JSON.parse(String((error as Error).message)) as {
+          error: string;
+          required_bytes: number;
+          limit_bytes: number;
+          max_seq: number;
+          hint: { range: [number, number] };
+        };
+        assert.equal(parsed.error, "response_too_large");
+        assert.equal(typeof parsed.required_bytes, "number");
+        assert.equal(parsed.limit_bytes, 256 * 1024);
+        assert.equal(parsed.max_seq, 6_000);
+        assert.deepEqual(parsed.hint.range, [-50, -1]);
+        return true;
+      },
+    );
   });
 
-  it("creates a direct child with requested configuration", async () => {
+  it("cancels only a direct child and records the reason", async () => {
+    let cancelCalls = 0;
+    const bridge = {
+      cancel: async () => {
+        cancelCalls++;
+      },
+    } as unknown as import("../src/bridge.ts").AgentBridge;
+    tasks.activePrompts.add("alpha-child");
+    tasks.syncBusy("alpha-child", "prompt-1");
+    const host = createMcpTaskToolHost({
+      store,
+      tasks,
+      getBridge: () => bridge,
+    });
+    assert.deepEqual(
+      await host.cancel("alpha", "alpha-child", "No longer needed"),
+      {
+        accepted: true,
+        taskId: "alpha-child",
+        status: "cancelling",
+      },
+    );
+    assert.equal(cancelCalls, 1);
+    assert.match(
+      store.getEvents("alpha-child").at(-1)?.data ?? "",
+      /No longer needed/,
+    );
+    await assert.rejects(
+      () => host.cancel("alpha", "beta", "wrong scope"),
+      /target_not_allowed/,
+    );
+  });
+
+  it("returns idle when a direct child has no active execution", async () => {
+    const host = createMcpTaskToolHost({ store, tasks, getBridge: () => null });
+    assert.deepEqual(
+      await host.cancel("alpha", "alpha-child", "stop before start"),
+      {
+        accepted: true,
+        taskId: "alpha-child",
+        status: "idle",
+      },
+    );
+  });
+
+  it("creates a direct child with inherited and requested configuration", async () => {
+    let createCall:
+      | {
+          cwd?: string;
+          inheritFromTaskId?: string;
+          source: string;
+          options: Record<string, unknown>;
+        }
+      | undefined;
     const fakeTasks = {
-      createTask: async () => ({ taskId: "created-child" }),
+      createTask: async (
+        _bridge: unknown,
+        cwd: string,
+        inheritFromTaskId: string,
+        source: string,
+        options: Record<string, unknown>,
+      ) => {
+        createCall = { cwd, inheritFromTaskId, source, options };
+        return { taskId: "created-child" };
+      },
     } as unknown as TaskManager;
     const host = createMcpTaskToolHost({
       store,
@@ -252,5 +413,27 @@ describe("MCP Task tool host", () => {
       }),
       { taskId: "created-child" },
     );
+    assert.deepEqual(createCall, {
+      cwd: join(dir, "subdir"),
+      inheritFromTaskId: "alpha",
+      source: "agent",
+      options: {
+        parentId: "alpha",
+        title: "New child",
+        model: "m",
+        thinking: "high",
+      },
+    });
+    assert.match(store.getEvents("alpha").at(-1)?.data ?? "", /created-child/);
+  });
+
+  it("queues an agent message without returning delivery metadata", async () => {
+    const host = createMcpTaskToolHost({ store, tasks, getBridge: () => null });
+    await host.send("alpha", "beta", "hello beta");
+    const messages = store
+      .getEvents("beta")
+      .filter((event) => event.type === "system_message");
+    assert.equal(messages.length, 1);
+    assert.match(messages[0].data, /hello beta/);
   });
 });
