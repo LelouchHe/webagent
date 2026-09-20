@@ -442,6 +442,40 @@ describe("Store", () => {
       assert.deepEqual(JSON.parse(events[0].data), { text: "hello" });
     });
 
+    it("reports actionable duplicate seqs before creating the unique index", () => {
+      const duplicateDir = mkdtempSync(
+        join(tmpdir(), "webagent-duplicate-events-"),
+      );
+      const duplicateStore = new Store(duplicateDir, "test-agent");
+      duplicateStore.createTask("duplicate-task", "/x");
+      duplicateStore.saveEvent(
+        "duplicate-task",
+        "user_message",
+        { text: "one" },
+        { from_ref: "user" },
+      );
+      duplicateStore["db"].exec("DROP INDEX idx_events_task_seq");
+      duplicateStore["db"]
+        .prepare(
+          "INSERT INTO events (task_id, seq, type, data, created_at, from_ref) VALUES (?, ?, ?, ?, ?, ?)",
+        )
+        .run(
+          "duplicate-task",
+          1,
+          "assistant_message",
+          '{"text":"two"}',
+          Date.now(),
+          "agent",
+        );
+      duplicateStore.close();
+
+      assert.throws(
+        () => new Store(duplicateDir, "test-agent"),
+        /task_id=duplicate-task.*seq=1.*duplicate_rows=2.*Resolve duplicate events before upgrading/,
+      );
+      rmSync(duplicateDir, { recursive: true, force: true });
+    });
+
     it("excludes thinking events when requested", () => {
       store.createTask("s1", "/x");
       store.saveEvent(

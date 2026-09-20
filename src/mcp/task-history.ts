@@ -56,27 +56,36 @@ function windowAround(text: string, query: string): string {
     break;
   }
   if (match < 0) return truncate(text);
+  if (chars.length <= MAX_TEXT_CHARS) return text;
 
-  let start = Math.max(0, match - MATCH_WINDOW_RADIUS);
-  let end = Math.min(chars.length, match + needle.length + MATCH_WINDOW_RADIUS);
-  // Keep the match and as much context as possible inside the same 200-code
-  // point envelope used by ordinary projections.
-  if (end - start > MAX_TEXT_CHARS) {
-    const desiredStart = Math.max(0, match - MATCH_WINDOW_RADIUS);
-    start = desiredStart;
-    end = Math.min(chars.length, start + MAX_TEXT_CHARS);
-    if (end - start < MAX_TEXT_CHARS) {
-      start = Math.max(0, end - MAX_TEXT_CHARS);
-    }
-  }
+  // Reserve the complete match before allocating the remaining budget to
+  // context. The query schema caps the needle at 128 code points, so this
+  // always has room for the match and both possible ellipses.
+  const prefixNeeded = match > 0 ? 1 : 0;
+  const suffixNeeded = match + needle.length < chars.length ? 1 : 0;
+  const contextBudget =
+    MAX_TEXT_CHARS - prefixNeeded - suffixNeeded - needle.length;
+  let left = Math.min(MATCH_WINDOW_RADIUS, match);
+  let right = Math.min(
+    MATCH_WINDOW_RADIUS,
+    chars.length - match - needle.length,
+  );
+  left = Math.min(left, Math.floor(contextBudget / 2));
+  right = Math.min(right, contextBudget - left);
+  // If one side is near a boundary, use its unused share on the other side.
+  const spare = contextBudget - left - right;
+  left = Math.min(MATCH_WINDOW_RADIUS, match, left + spare);
+  right = Math.min(
+    MATCH_WINDOW_RADIUS,
+    chars.length - match - needle.length,
+    right + (contextBudget - left - right),
+  );
+
+  const start = match - left;
+  const end = match + needle.length + right;
   const prefix = start > 0 ? "…" : "";
   const suffix = end < chars.length ? "…" : "";
-  const available = MAX_TEXT_CHARS - Array.from(prefix + suffix).length;
-  let body = chars.slice(start, end).join("");
-  if (Array.from(body).length > available) {
-    body = Array.from(body).slice(0, available).join("");
-  }
-  return `${prefix}${body}${suffix}`;
+  return `${prefix}${chars.slice(start, end).join("")}${suffix}`;
 }
 
 function pathForKey(path: string, key: string): string {

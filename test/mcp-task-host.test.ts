@@ -184,12 +184,53 @@ describe("MCP Task tool host", () => {
     );
   });
 
+  it("pushes a bounded range down to Store.getEvents", () => {
+    for (let i = 0; i < 30; i++) {
+      store.saveEvent(
+        "alpha",
+        "user_message",
+        { text: String(i) },
+        { from_ref: "user" },
+      );
+    }
+    const originalGetEvents = store.getEvents.bind(store);
+    let observed: { afterSeq?: number; beforeSeq?: number } | undefined;
+    store.getEvents = (
+      taskId: string,
+      options?: Parameters<Store["getEvents"]>[1],
+    ) => {
+      observed = options;
+      return originalGetEvents(taskId, options);
+    };
+    try {
+      const host = createMcpTaskToolHost({
+        store,
+        tasks,
+        getBridge: () => null,
+      });
+      assert.deepEqual(
+        host.query("alpha", { range: [-20, -1] }).rows.map((row) => row.seq),
+        Array.from({ length: 20 }, (_, i) => i + 11),
+      );
+      assert.deepEqual(observed, { afterSeq: 10, beforeSeq: 31 });
+    } finally {
+      store.getEvents = originalGetEvents;
+    }
+  });
+
   it("truncates projections and keeps centered search windows visible", () => {
     const long = "a".repeat(150) + "Needle" + "b".repeat(150);
+    const maxNeedle = "N".repeat(128);
     store.saveEvent(
       "alpha",
       "assistant_message",
       { text: long },
+      { from_ref: "agent" },
+    );
+    store.saveEvent(
+      "alpha",
+      "assistant_message",
+      { text: "a".repeat(100) + maxNeedle + "b".repeat(100) },
       { from_ref: "agent" },
     );
     store.saveEvent(
@@ -208,7 +249,7 @@ describe("MCP Task tool host", () => {
     const rows = host.query("alpha", {}).rows;
     assert.equal(Array.from(rows[0].text ?? "").length, 200);
     assert.match(rows[0].text ?? "", /…$/);
-    assert.equal((rows[1].text ?? "").includes("…"), false);
+    assert.equal((rows[2].text ?? "").includes("…"), false);
     const found = host.query("alpha", { text: "needle" }).rows;
     assert.equal(found.length, 2);
     const projected = found.find((row) => row.type === "assistant_message")!;
@@ -216,6 +257,9 @@ describe("MCP Task tool host", () => {
     assert.match(projected.text ?? "", /^…/);
     assert.match(projected.text ?? "", /…$/);
     assert.ok(Array.from(projected.text ?? "").length <= 200);
+    const maxFound = host.query("alpha", { text: maxNeedle }).rows[0];
+    assert.match(maxFound.text ?? "", new RegExp(maxNeedle));
+    assert.ok(Array.from(maxFound.text ?? "").length <= 200);
     const unprojected = found.find((row) => row.type === "plan")!;
     assert.equal(unprojected.unprojected, true);
     assert.equal(unprojected.field, "entries[0].content");

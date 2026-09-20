@@ -469,7 +469,6 @@ export class Store {
         from_ref TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS idx_events_task ON events(task_id, seq);
-      CREATE UNIQUE INDEX IF NOT EXISTS idx_events_task_seq ON events(task_id, seq);
       CREATE TABLE IF NOT EXISTS push_subscriptions (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         endpoint TEXT NOT NULL UNIQUE,
@@ -478,6 +477,27 @@ export class Store {
         created_at INTEGER NOT NULL DEFAULT 0
       );
     `);
+
+    const duplicateEvent = this.db
+      .prepare(
+        `SELECT task_id, seq, COUNT(*) AS duplicate_rows
+         FROM events
+         GROUP BY task_id, seq
+         HAVING COUNT(*) > 1
+         ORDER BY task_id, seq
+         LIMIT 5`,
+      )
+      .get() as
+      | { task_id: string; seq: number; duplicate_rows: number }
+      | undefined;
+    if (duplicateEvent) {
+      throw new Error(
+        `Duplicate event sequence detected: task_id=${duplicateEvent.task_id} seq=${duplicateEvent.seq} duplicate_rows=${duplicateEvent.duplicate_rows}. Resolve duplicate events before upgrading so the unique event address can be created.`,
+      );
+    }
+    this.db.exec(
+      "CREATE UNIQUE INDEX IF NOT EXISTS idx_events_task_seq ON events(task_id, seq)",
+    );
 
     // inbox_messages — pending unbound notifications. POST /api/v1/messages with
     // `to = "user"` lands here; consumeMessageTx transactionally moves the

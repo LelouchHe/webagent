@@ -174,11 +174,11 @@ export function registerMcpTools(
         text: z
           .string()
           .min(1)
-          .max(256)
+          .max(128)
           .nullable()
           .optional()
           .describe(
-            "Fixed string to find; ASCII case folding only; null is omitted",
+            "Fixed string to find (max 128 code points); ASCII case folding only; null is omitted",
           ),
         range: z
           .tuple([z.number().int(), z.number().int()])

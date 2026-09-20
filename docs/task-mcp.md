@@ -149,7 +149,7 @@ type McpTaskListItem = {
 };
 ```
 
-`workflowStatus` uses the same vocabulary as `task_query`'s `workflowStatus`.
+`workflowStatus` uses the same vocabulary as `task_list`; `task_query` returns only `task_id`, `max_seq`, and flat event rows.
 It is **per turn, not a lifecycle terminal**: a `done` Task can be woken by a
 later message and run again, so `done` means the Task reported complete for that
 turn, not that it is finished forever. Use `task_list` to decide whether to act
@@ -221,8 +221,10 @@ Known event types use deterministic projections; unknown types still appear with
 `seq`, `type`, and `bytes`. Search scans decoded string leaves, not serialized
 JSON, and returns the matching JSON path plus a centered window (radius 100).
 It is fixed-string matching, not regular expression matching; only ASCII
-letters are case-folded. An unprojected search hit carries `unprojected: true`
-so the reason for the hit remains visible.
+letters are case-folded. The search term is limited to 128 code points so the
+centered window always retains the complete match before allocating context.
+An unprojected search hit carries `unprojected: true` so the reason for the hit
+remains visible.
 
 The serialized `{task_id, max_seq, rows}` response is subject to a 256 KiB
 implementation limit. Over-limit responses are rejected, never partially

@@ -174,11 +174,16 @@ export function createMcpTaskToolHost(deps: {
     query(sourceTaskId, input): McpTaskQueryResult {
       const targetId = input.taskId ?? sourceTaskId;
       const target = requireHistoryTarget(sourceTaskId, targetId);
-      const events = store.getEvents(target.id);
-      const maxSeq = events.at(-1)?.seq ?? 0;
+      const maxSeq = store.getLastEventSeq(target.id);
       const [start, end] = normalizeRange(input.range, maxSeq);
+      const events =
+        start > end
+          ? []
+          : store.getEvents(target.id, {
+              afterSeq: start - 1,
+              beforeSeq: end + 1,
+            });
       const rows = events
-        .filter((event) => event.seq >= start && event.seq <= end)
         .map((event) => projectTaskHistoryRow(event, input.text))
         .filter((row) => input.text === undefined || row.field !== undefined);
       const result: McpTaskQueryResult = {
