@@ -77,14 +77,14 @@ const COMPACT_HANDOFF_ACCOUNT =
 const COMPACT_HANDOFF_SUMMARY_HEADER = "--- previous execution summary ---";
 const COMPACT_HANDOFF_SUMMARY_FOOTER = "--- end previous execution summary ---";
 const COMPACT_HANDOFF_REQUEST = "The user's new request is:";
-const compactHandoffHeader = (seq: number, previousSeq: number | null) =>
-  previousSeq === null
-    ? `--- previous execution summary (event seq ${seq}; previous summary: none) ---`
-    : `--- previous execution summary (event seq ${seq}; previous summary: seq ${previousSeq}) ---`;
+// Chain position lives only in the pointer below: stating it here too would
+// duplicate one value across two independently written strings.
+const compactHandoffHeader = (seq: number) =>
+  `--- previous execution summary (event seq ${seq}) ---`;
 const compactHandoffPointer = (seq: number, previousSeq: number | null) =>
   previousSeq === null
     ? `Read verbatim: task_read({ seqs: [${seq}] }) · this is the first summary in the chain.`
-    : `Read verbatim: task_read({ seqs: [${seq}] }) · older: data.compact.prev (now ${previousSeq}; null = first).`;
+    : `Read verbatim: task_read({ seqs: [${seq}] }) · older: data.compact.prev = ${previousSeq} (null = first).`;
 
 function prependCompactSummary(
   pending: PendingCompactSummary,
@@ -104,7 +104,7 @@ function prependCompactSummary(
     ].join("\n");
   }
 
-  const header = compactHandoffHeader(pending.seq, previousSeq);
+  const header = compactHandoffHeader(pending.seq);
   const pointer = compactHandoffPointer(pending.seq, previousSeq);
   return [
     COMPACT_HANDOFF_INTRO,

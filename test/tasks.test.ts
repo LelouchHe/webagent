@@ -636,7 +636,10 @@ describe("Task REST API", () => {
       );
       assert.equal(promptRes.status, 202);
       assert.match(promptedText, /previous execution summary/);
-      assert.match(promptedText, /event seq 1; previous summary: none/);
+      assert.match(
+        promptedText,
+        /--- previous execution summary \(event seq 1\) ---/,
+      );
       // The pointer must be callable as written: the summary lives in this
       // Task, so it names no target, and it must not suggest a whole-session
       // range that the 24 KiB page budget rejects.
@@ -674,13 +677,15 @@ describe("Task REST API", () => {
       assert.match(
         promptedText,
         new RegExp(
-          `event seq ${second.seq}; previous summary: seq ${first.seq}`,
+          `--- previous execution summary \\(event seq ${second.seq}\\) ---`,
         ),
       );
+      // The previous summary is named once, next to the path that holds it.
+      assert.doesNotMatch(promptedText, /previous summary/);
       assert.match(
         promptedText,
         new RegExp(
-          `task_read\\(\\{ seqs: \\[${second.seq}\\] \\}\\) · older: data\\.compact\\.prev \\(now ${first.seq}; null = first\\)`,
+          `task_read\\(\\{ seqs: \\[${second.seq}\\] \\}\\) · older: data\\.compact\\.prev = ${first.seq} \\(null = first\\)`,
         ),
       );
     });
