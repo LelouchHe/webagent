@@ -12,18 +12,25 @@ import { formatTaskReference } from "../shared/task-reference.ts";
 import { isoFromMillis, isoFromMillisOrNull } from "../shared/time.ts";
 import { buildTaskCreatedSystemMessage } from "../task-created-message.ts";
 import type {
-  McpTaskHistoryRecord,
   McpTaskQueryResult,
   McpTaskListItem,
   McpTaskToolHost,
-  McpTaskGetRecordResult,
+  McpTaskReadResult,
   McpTaskCreateInput,
   McpTaskCreateResult,
 } from "./tools.ts";
-import { compactTaskHistoryRecord } from "./task-history.ts";
+import {
+  parseTaskHistoryData,
+  projectTaskHistoryRow,
+  TASK_HISTORY_LIMITS,
+} from "./task-history.ts";
 
-const DEFAULT_QUERY_LIMIT = 5;
-const MAX_QUERY_LIMIT = 100;
+const {
+  queryBytes: QUERY_LIMIT_BYTES,
+  readBytes: READ_LIMIT_BYTES,
+  readSingleBytes: READ_SINGLE_LIMIT_BYTES,
+  readSeqs: MAX_READ_SEQS,
+} = TASK_HISTORY_LIMITS;
 
 export interface McpTaskCollaborationEvent {
   messageId: string;
@@ -39,37 +46,6 @@ export interface McpTaskCreatedEvent {
   targetTaskId: string;
   title: string;
   body: string;
-}
-
-type QueryCursor = {
-  taskId: string;
-  beforeSeq: number;
-  text?: string;
-};
-
-function encodeCursor(cursor: QueryCursor): string {
-  return Buffer.from(JSON.stringify(cursor), "utf8").toString("base64url");
-}
-
-function decodeCursor(raw: string): QueryCursor {
-  try {
-    const parsed = JSON.parse(
-      Buffer.from(raw, "base64url").toString("utf8"),
-    ) as Partial<QueryCursor>;
-    const beforeSeq = parsed.beforeSeq;
-    if (
-      typeof parsed.taskId !== "string" ||
-      typeof beforeSeq !== "number" ||
-      !Number.isInteger(beforeSeq) ||
-      beforeSeq < 1 ||
-      (parsed.text !== undefined && typeof parsed.text !== "string")
-    ) {
-      throw new Error("invalid cursor");
-    }
-    return { taskId: parsed.taskId, beforeSeq, text: parsed.text };
-  } catch {
-    throw new Error("invalid_cursor");
-  }
 }
 
 function relationOrder(relation: McpTaskListItem["relation"]): number {
@@ -105,6 +81,48 @@ export function createMcpTaskToolHost(deps: {
       throw new Error("target_not_allowed");
     }
     return { source, target };
+  }
+
+  function requireHistoryTarget(sourceTaskId: string, targetTaskId: string) {
+    const source = store.getTask(sourceTaskId);
+    const target = store.getTask(targetTaskId);
+    if (
+      !source ||
+      !target ||
+      (source.id !== target.id && !isLocalCollaborationTarget(source, target))
+    ) {
+      throw new Error("target_not_allowed");
+    }
+    return target;
+  }
+
+  function responseTooLarge(
+    value: unknown,
+    limitBytes: number,
+    extra: Record<string, unknown>,
+  ): never {
+    const requiredBytes = Buffer.byteLength(JSON.stringify(value), "utf8");
+    throw new Error(
+      JSON.stringify({
+        error: "response_too_large",
+        required_bytes: requiredBytes,
+        limit_bytes: limitBytes,
+        ...extra,
+      }),
+    );
+  }
+
+  function normalizeRange(
+    range: [number, number] | undefined,
+    maxSeq: number,
+  ): [number, number] {
+    if (maxSeq < 1) return [1, 0];
+    const resolveIndex = (value: number) =>
+      value < 0 ? maxSeq + value + 1 : value;
+    const clamp = (value: number) => Math.min(maxSeq, Math.max(1, value));
+    const a = clamp(resolveIndex(range?.[0] ?? 1));
+    const b = clamp(resolveIndex(range?.[1] ?? maxSeq));
+    return a <= b ? [a, b] : [b, a];
   }
 
   function requireChildTarget(sourceTaskId: string, targetTaskId: string) {
@@ -155,100 +173,65 @@ export function createMcpTaskToolHost(deps: {
     },
 
     query(sourceTaskId, input): McpTaskQueryResult {
-      const targetTaskId = input.taskId ?? sourceTaskId;
-      const { target } =
-        targetTaskId === sourceTaskId
-          ? { target: requireTask(sourceTaskId) }
-          : requireLocalTarget(sourceTaskId, targetTaskId);
-      const cursor = input.cursor ? decodeCursor(input.cursor) : undefined;
-      if (cursor && cursor.taskId !== target.id) {
-        throw new Error("invalid_cursor");
-      }
-      if (cursor && input.text !== undefined && cursor.text !== input.text) {
-        throw new Error("invalid_cursor");
-      }
-
-      const text = input.text ?? cursor?.text;
-      const limit = Math.min(
-        Math.max(1, input.limit ?? DEFAULT_QUERY_LIMIT),
-        MAX_QUERY_LIMIT,
-      );
-      const beforeSeq = cursor?.beforeSeq;
-      const events = store.getEvents(target.id, {
-        excludeThinking: true,
-        beforeSeq,
-        limit,
-        text,
-      });
-      if (events.length === 0) {
-        return {
-          workflowStatus: target.workflow_status,
-          records: [],
-          hasMore: false,
-        };
-      }
-      const firstSeq = events[0].seq;
-      const hasMore =
-        store.getEvents(target.id, {
-          excludeThinking: true,
-          beforeSeq: firstSeq,
-          limit: 1,
-          text,
-        }).length > 0;
-
-      const records: McpTaskHistoryRecord[] = events
-        .map((event) =>
-          compactTaskHistoryRecord({
-            seq: event.seq,
-            type: event.type,
-            data: event.data,
-            createdAt: isoFromMillis(event.created_at),
-          }),
-        )
-        .filter((record): record is McpTaskHistoryRecord => record !== null);
-      return {
-        workflowStatus: target.workflow_status,
-        records,
-        hasMore,
-        ...(hasMore
-          ? {
-              nextCursor: encodeCursor({
-                taskId: target.id,
-                beforeSeq: firstSeq,
-                text,
-              }),
-            }
-          : {}),
+      const targetId = input.taskId ?? sourceTaskId;
+      const target = requireHistoryTarget(sourceTaskId, targetId);
+      const maxSeq = store.getLastEventSeq(target.id);
+      const [start, end] = normalizeRange(input.range, maxSeq);
+      const events =
+        start > end
+          ? []
+          : store.getEvents(target.id, {
+              afterSeq: start - 1,
+              beforeSeq: end + 1,
+            });
+      const rows = events
+        .map((event) => projectTaskHistoryRow(event, input.text))
+        .filter((row) => input.text === undefined || row.field !== undefined);
+      const result: McpTaskQueryResult = {
+        task_id: target.id,
+        max_seq: maxSeq,
+        rows,
       };
+      const requiredBytes = Buffer.byteLength(JSON.stringify(result), "utf8");
+      if (requiredBytes > QUERY_LIMIT_BYTES) {
+        responseTooLarge(result, QUERY_LIMIT_BYTES, {
+          max_seq: maxSeq,
+          hint: { range: [-Math.min(50, maxSeq), -1] },
+        });
+      }
+      return result;
     },
 
-    getRecord(sourceTaskId, input): McpTaskGetRecordResult {
-      const targetTaskId = input.taskId ?? sourceTaskId;
-      const { target } =
-        targetTaskId === sourceTaskId
-          ? { target: requireTask(sourceTaskId) }
-          : requireLocalTarget(sourceTaskId, targetTaskId);
-      if (!Number.isInteger(input.seq) || input.seq < 1) {
-        throw new Error("invalid_seq");
+    read(sourceTaskId, input): McpTaskReadResult {
+      const target = requireHistoryTarget(
+        sourceTaskId,
+        input.taskId ?? sourceTaskId,
+      );
+      const uniqueSeqs = [...new Set(input.seqs)].sort((a, b) => a - b);
+      if (uniqueSeqs.length > MAX_READ_SEQS && uniqueSeqs.length !== 1) {
+        throw new Error(`too_many_seqs: maximum is ${MAX_READ_SEQS}`);
       }
-      const event = store.getEvent(target.id, input.seq);
-      // Thinking is deliberately excluded from task_query and must not be
-      // recoverable through the explicit raw-record escape hatch.
-      if (!event || event.type === "thinking") {
-        throw new Error("record_not_found");
+      const events = uniqueSeqs.map((seq) => store.getEvent(target.id, seq));
+      const missing = uniqueSeqs.filter((_, index) => !events[index]);
+      if (missing.length > 0) {
+        throw new Error(JSON.stringify({ error: "unknown_seq", missing }));
       }
-      return {
-        taskId: target.id,
-        record: {
-          id: event.id,
-          taskId: event.task_id,
-          seq: event.seq,
-          type: event.type,
-          data: event.data,
-          fromRef: event.from_ref,
-          createdAt: isoFromMillis(event.created_at),
-        },
-      };
+      const rows = events.map((event) => ({
+        seq: event!.seq,
+        type: event!.type,
+        at: isoFromMillis(event!.created_at),
+        from: event!.from_ref,
+        data: parseTaskHistoryData(event!.data),
+      }));
+      const result: McpTaskReadResult = { task_id: target.id, rows };
+      // A single-seq request is exempt from the batch byte budget so one
+      // legitimate event is never permanently unreadable.
+      const limitBytes =
+        uniqueSeqs.length === 1 ? READ_SINGLE_LIMIT_BYTES : READ_LIMIT_BYTES;
+      if (Buffer.byteLength(JSON.stringify(result), "utf8") > limitBytes) {
+        responseTooLarge(result, limitBytes, { seqs: uniqueSeqs });
+      }
+      return result;
     },
 
     async create(

@@ -1026,6 +1026,44 @@ describe("render-event", () => {
       assert.match(diff.textContent, /\+const value = 2;/);
     });
 
+    it("renders every recognized diff item in a content collection", async () => {
+      const existing = document.createElement("div");
+      existing.className = "tool-call pending";
+      existing.id = "tc-D-multiple";
+      existing.innerHTML = '<span class="icon">·</span>';
+      host.appendChild(existing);
+
+      mod.renderContentEvent(
+        "tool_call_update",
+        {
+          id: "D-multiple",
+          status: "completed",
+          content: [
+            {
+              type: "diff",
+              path: "src/one.ts",
+              oldText: "const one = 1;\n",
+              newText: "const one = 2;\n",
+            },
+            {
+              type: "diff",
+              path: "src/two.ts",
+              oldText: null,
+              newText: "const two = 2;\n",
+            },
+          ],
+        },
+        makeHooks({ findToolCallEl: () => existing }),
+      );
+
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      const diff = existing.querySelector("details.tc-diff .diff-view");
+      assert.ok(diff);
+      assert.match(diff.textContent, /\*\*\* src\/one\.ts/);
+      assert.match(diff.textContent, /\*\*\* src\/two\.ts/);
+    });
+
     it("does not clobber an edit diff details when output arrives", () => {
       // buildToolCall appends a diff <details> for edit kind; the output body
       // must be a separate node, not overwrite the diff.

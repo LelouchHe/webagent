@@ -182,13 +182,13 @@ large files or entire transcripts.
 History inspection is an exception path, but it also applies to the current
 Task. Task history is persisted in the database and is not compacted or cleared.
 The word `compact` has two separate meanings here: `task_query` returns a
-compact projection of history, while `/compact` changes the active model
-context. Likewise, `/clear` rotates the active execution while keeping the
+bounded index of history, while `/compact` changes the active model context. Likewise, `/clear` rotates the active execution while keeping the
 Task's history.
 
-After `/compact` or `/clear`, use `task_query` without a target to read the
-current Task's persisted history, then use `task_get_record` for one specific
-event when the compact entry is not enough. These tools expose stored events;
+After `/compact` or `/clear`, use `task_query` without a target to index the
+current Task's persisted history, then use `task_read` with returned `seq`
+values for complete event rows when the index is not enough; `task_read`
+without a target reads the current Task. These tools expose stored events;
 they do not recreate hidden model reasoning or silently restore the old model
 context. Do not make history queries the normal way of passing results between
 Tasks.

@@ -34,7 +34,8 @@ export const MCP_SERVER_INSTRUCTIONS = [
   "Use task_send for normal coordination and for continuing or resuming existing Tasks; task_send is not a lifecycle handoff. Use task_update(done|blocked) for typed lifecycle handoffs. A done Task remains available and is not deleted or permanently closed.",
   "task_update(done|blocked) settles the directed obligation when it comes from the current active turn; there is no correlation parameter to copy back.",
   "After dispatching work, end the current turn; do not poll with task_query.",
-  "Use task_query and task_get_record only for history recovery, diagnosis, or audit.",
+  "Task history is the event log; summaries and handoffs are self-reports, and the log outranks them.",
+  "Use task_query to index flat event history and task_read to recover complete rows; use them only for history recovery, diagnosis, or audit.",
   "Omit task_id to inspect the current Task's persisted history.",
 ].join("\n");
 

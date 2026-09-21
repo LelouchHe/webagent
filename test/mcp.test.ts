@@ -31,6 +31,55 @@ function toolHasProperty(
   return tool?.inputSchema?.properties?.[property] !== undefined;
 }
 
+/** Max length of a nullable input variant, or undefined when it declares none. */
+function nullableVariantMaxLength(
+  tools: Array<{
+    name: string;
+    inputSchema?: {
+      properties?: Record<
+        string,
+        { anyOf?: Array<{ type?: string; maxLength?: number }> }
+      >;
+    };
+  }>,
+  toolName: string,
+  property: string,
+): number | undefined {
+  const variants =
+    tools.find((tool) => tool.name === toolName)?.inputSchema?.properties?.[
+      property
+    ]?.anyOf ?? [];
+  return variants.find((variant) => variant.maxLength !== undefined)?.maxLength;
+}
+
+/** `required` list of a registered tool, or [] when the tool declares none. */
+function toolRequired(
+  tools: Array<{ name: string; inputSchema?: { required?: string[] } }>,
+  toolName: string,
+): string[] {
+  const required = tools.find((tool) => tool.name === toolName)?.inputSchema
+    ?.required;
+  return required === undefined ? [] : [...required];
+}
+
+/** Whether a property accepts an explicit `null` in addition to its type. */
+function toolHasNullableVariant(
+  tools: Array<{
+    name: string;
+    inputSchema?: {
+      properties?: Record<string, { anyOf?: Array<{ type?: string }> }>;
+    };
+  }>,
+  toolName: string,
+  property: string,
+): boolean {
+  const variants =
+    tools.find((tool) => tool.name === toolName)?.inputSchema?.properties?.[
+      property
+    ]?.anyOf ?? [];
+  return variants.some((variant) => variant.type === "null");
+}
+
 // --- CapabilityStore ---
 
 describe("CapabilityStore", () => {
@@ -128,25 +177,14 @@ describe("createMcpEndpoint", () => {
     query: (_sourceTaskId: string, input: unknown) => {
       calls.push({ kind: "query", input });
       return {
-        workflowStatus: "idle" as const,
-        records: [],
-        hasMore: false,
+        task_id: "web-1",
+        max_seq: 0,
+        rows: [],
       };
     },
-    getRecord: (_sourceTaskId: string, input: unknown) => {
-      calls.push({ kind: "getRecord", input });
-      return {
-        taskId: "web-1",
-        record: {
-          id: 1,
-          taskId: "web-1",
-          seq: 1,
-          type: "assistant_message",
-          data: '{"text":"hello"}',
-          fromRef: "agent",
-          createdAt: "2026-01-01T00:00:00.000Z",
-        },
-      };
+    read: (_sourceTaskId: string, input: unknown) => {
+      calls.push({ kind: "read", input });
+      return { task_id: "web-1", rows: [] };
     },
     cancel: async (...args: unknown[]) => {
       calls.push({ kind: "cancel", args });
@@ -214,6 +252,28 @@ describe("createMcpEndpoint", () => {
 
   function auth(token: string): Record<string, string> {
     return { Authorization: `Bearer ${token}` };
+  }
+
+  /** Whether the endpoint accepts this `task_query` search text (schema level). */
+  async function searchTextAccepted(
+    token: string,
+    text: string,
+  ): Promise<boolean> {
+    const response = await mcpPost(
+      "/mcp",
+      {
+        jsonrpc: "2.0",
+        id: 40,
+        method: "tools/call",
+        params: { name: "task_query", arguments: { text } },
+      },
+      auth(token),
+    );
+    const body = (await response.json()) as {
+      result?: { isError?: boolean };
+      error?: unknown;
+    };
+    return body.result?.isError !== true && body.error === undefined;
   }
 
   it("leaves non-mcp paths for the router (returns false)", async () => {
@@ -319,7 +379,10 @@ describe("createMcpEndpoint", () => {
           description?: string;
           inputSchema?: {
             required?: string[];
-            properties?: Record<string, { anyOf?: Array<{ type?: string }> }>;
+            properties?: Record<
+              string,
+              { anyOf?: Array<{ type?: string; maxLength?: number }> }
+            >;
           };
         }>;
       };
@@ -329,9 +392,9 @@ describe("createMcpEndpoint", () => {
     assert.deepEqual(names, [
       "task_cancel",
       "task_create",
-      "task_get_record",
       "task_list",
       "task_query",
+      "task_read",
       "task_send",
       "task_update",
     ]);
@@ -351,8 +414,8 @@ describe("createMcpEndpoint", () => {
       false,
       "task_update must not expose a correlation parameter",
     );
-    assert.match(toolDescription(tools, "task_query"), /recorded turn history/);
-    assert.match(toolDescription(tools, "task_query"), /provider errors/);
+    assert.match(toolDescription(tools, "task_query"), /flat event index/);
+    assert.match(toolDescription(tools, "task_query"), /ASCII case folding/);
     // `task_list` is the cheap triage surface: state fields plus the per-turn
     // meaning of `done`, without weakening task_query's no-poll guidance.
     assert.match(toolDescription(tools, "task_list"), /workflowStatus/);
@@ -369,14 +432,21 @@ describe("createMcpEndpoint", () => {
       (tool) => tool.name === "task_query",
     )?.inputSchema;
     assert.deepEqual(querySchema?.required ?? [], []);
-    for (const name of ["task_id", "text", "cursor", "limit"]) {
-      assert.equal(
-        querySchema?.properties?.[name]?.anyOf?.some(
-          (variant) => variant.type === "null",
-        ),
-        true,
-      );
+    for (const name of ["task_id", "text", "range"]) {
+      assert.equal(toolHasNullableVariant(tools, "task_query", name), true);
     }
+    // The search window only promises "the hit text contains the whole needle"
+    // while the needle fits the 200-code-point budget, so pin the input limit
+    // that keeps the promise reachable instead of leaving it to prose.
+    assert.equal(
+      nullableVariantMaxLength(tools, "task_query", "text"),
+      128,
+      "task_query.text must stay capped at 128 code points",
+    );
+    // Both history tools must be callable without naming a target: a Task that
+    // has just woken from compact does not know its own id.
+    assert.deepEqual(toolRequired(tools, "task_read"), ["seqs"]);
+    assert.equal(toolHasNullableVariant(tools, "task_read", "task_id"), true);
 
     const call = await mcpPost(
       "/mcp",
@@ -408,8 +478,7 @@ describe("createMcpEndpoint", () => {
           arguments: {
             task_id: null,
             text: "history",
-            cursor: null,
-            limit: 2,
+            range: [-2, -1],
           },
         },
       },
@@ -417,20 +486,40 @@ describe("createMcpEndpoint", () => {
     );
     assert.equal(query.status, 200);
 
-    const getRecord = await mcpPost(
+    const read = await mcpPost(
       "/mcp",
       {
         jsonrpc: "2.0",
         id: 5,
         method: "tools/call",
         params: {
-          name: "task_get_record",
-          arguments: { task_id: null, seq: 7 },
+          name: "task_read",
+          arguments: { task_id: "web-1", seqs: [7] },
         },
       },
       auth(token),
     );
-    assert.equal(getRecord.status, 200);
+    assert.equal(read.status, 200);
+
+    const readSelf = await mcpPost(
+      "/mcp",
+      {
+        jsonrpc: "2.0",
+        id: 10,
+        method: "tools/call",
+        params: {
+          name: "task_read",
+          arguments: { seqs: [7] },
+        },
+      },
+      auth(token),
+    );
+    assert.equal(readSelf.status, 200);
+    assert.notEqual(
+      ((await readSelf.json()) as { result?: { isError?: boolean } }).result
+        ?.isError,
+      true,
+    );
 
     const create = await mcpPost(
       "/mcp",
@@ -502,11 +591,11 @@ describe("createMcpEndpoint", () => {
         input: {
           taskId: undefined,
           text: "history",
-          cursor: undefined,
-          limit: 2,
+          range: [-2, -1],
         },
       },
-      { kind: "getRecord", input: { taskId: undefined, seq: 7 } },
+      { kind: "read", input: { taskId: "web-1", seqs: [7] } },
+      { kind: "read", input: { taskId: undefined, seqs: [7] } },
       {
         kind: "create",
         args: [
@@ -525,5 +614,16 @@ describe("createMcpEndpoint", () => {
     ]);
 
     live.delete("web-1");
+  });
+
+  it("counts the search-text limit in code points, not UTF-16 units", async () => {
+    const token = caps.mint("web-units");
+    live.add("web-units");
+    // 128 astral code points is 256 UTF-16 units: allowed by the documented
+    // code-point limit, so validation must not reject it, while 129 code
+    // points of any width must be rejected.
+    assert.equal(await searchTextAccepted(token, "😀".repeat(128)), true);
+    assert.equal(await searchTextAccepted(token, "a".repeat(129)), false);
+    live.delete("web-units");
   });
 });

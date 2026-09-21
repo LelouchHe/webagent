@@ -1,5 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import type { McpTaskHistoryRow } from "./task-history.ts";
 
 export type McpWorkflowStatus = "running" | "idle" | "blocked" | "done";
 
@@ -35,52 +36,36 @@ export interface McpTaskListItem {
   lastEventAt: string | null;
 }
 
-/** A bounded, human-readable projection of one persisted task event. */
-export interface McpTaskHistoryRecord {
-  /** Stable event sequence within the task; reserved for future raw lookup. */
-  seq: number;
-  type: string;
-  createdAt: string;
-  /** Deterministic text extracted from the event's known schema. */
-  text: string;
-  /** Text was shortened; rawSize is the UTF-8 size of the omitted payload. */
-  truncated?: boolean;
-  rawSize?: number;
-}
+export type McpTaskHistoryRecord = McpTaskHistoryRow;
 
 export interface McpTaskQueryInput {
   taskId?: string;
   text?: string;
-  cursor?: string;
-  limit?: number;
+  range?: [number, number];
 }
 
 export interface McpTaskQueryResult {
-  workflowStatus: McpWorkflowStatus;
-  records: McpTaskHistoryRecord[];
-  nextCursor?: string;
-  hasMore: boolean;
+  task_id: string;
+  max_seq: number;
+  rows: McpTaskHistoryRow[];
 }
 
-export interface McpTaskGetRecordInput {
+export interface McpTaskReadInput {
   taskId?: string;
-  seq: number;
+  seqs: number[];
 }
 
-/** Complete WebAgent-persisted event row, not necessarily the original ACP notification. */
-export interface McpTaskStoredRecord {
-  id: number;
-  taskId: string;
+export interface McpTaskReadRow {
   seq: number;
   type: string;
-  data: string;
-  fromRef: string;
-  createdAt: string;
+  at: string;
+  from: string;
+  data: unknown;
 }
 
-export interface McpTaskGetRecordResult {
-  taskId: string;
-  record: McpTaskStoredRecord;
+export interface McpTaskReadResult {
+  task_id: string;
+  rows: McpTaskReadRow[];
 }
 
 export interface McpTaskCancelResult {
@@ -104,10 +89,7 @@ export interface McpTaskCreateResult {
 export interface McpTaskToolHost {
   list(sourceTaskId: string): McpTaskListItem[];
   query(sourceTaskId: string, input: McpTaskQueryInput): McpTaskQueryResult;
-  getRecord(
-    sourceTaskId: string,
-    input: McpTaskGetRecordInput,
-  ): McpTaskGetRecordResult;
+  read(sourceTaskId: string, input: McpTaskReadInput): McpTaskReadResult;
   cancel(
     sourceTaskId: string,
     targetTaskId: string,
@@ -179,10 +161,10 @@ export function registerMcpTools(
     "task_query",
     {
       description:
-        "Inspect a Task's recorded turn history — what happened and what earlier " +
-        "turns decided. Turn events, including provider errors and attachment " +
-        "metadata, are recorded here. Do not use this tool to wait for work or " +
-        "poll for completion.",
+        "List a flat event index for this Task or a visible relative. " +
+        "Rows include task-local seq, type, byte size, and bounded projections. " +
+        "Use range to page older rows and text for fixed-string search (ASCII case folding only). " +
+        "Thinking rows are included; this is for history recovery, diagnosis, or audit, not polling.",
       inputSchema: {
         task_id: TASK_ID.nullable()
           .optional()
@@ -192,63 +174,59 @@ export function registerMcpTools(
         text: z
           .string()
           .min(1)
-          .max(256)
+          // Zod's own `.max()` counts UTF-16 code units while the documented
+          // limit is code points (and JSON Schema's `maxLength` is code
+          // points), so validate the unit the contract names and advertise it
+          // for clients separately.
+          .refine((value) => Array.from(value).length <= 128, {
+            message: "Search text must be at most 128 code points",
+          })
+          .meta({ maxLength: 128 })
           .nullable()
           .optional()
-          .describe("Literal text to find; null is treated as omitted"),
-        cursor: z
-          .string()
-          .min(1)
-          .max(512)
+          .describe(
+            "Fixed string to find (max 128 code points); ASCII case folding only; null is omitted",
+          ),
+        range: z
+          .tuple([z.number().int(), z.number().int()])
           .nullable()
           .optional()
-          .describe("Opaque cursor from a previous result; null is omitted"),
-        limit: z
-          .number()
-          .int()
-          .min(1)
-          .max(100)
-          .nullable()
-          .optional()
-          .describe("Maximum records to return; null uses the default"),
+          .describe("Inclusive seq range; negative values index from max_seq"),
       },
     },
-    async ({ task_id, text, cursor, limit }) =>
+    async ({ task_id, text, range }) =>
       jsonContent(
         host?.query(taskId, {
           taskId: task_id ?? undefined,
           text: text ?? undefined,
-          cursor: cursor ?? undefined,
-          limit: limit ?? undefined,
+          range: range ?? undefined,
         }) ?? unavailable(),
       ),
   );
 
   server.registerTool(
-    "task_get_record",
+    "task_read",
     {
       description:
-        "Inspect one full history record when the available history summary is insufficient. " +
-        "Use a sequence obtained from task_query.",
+        "Read complete persisted event rows by task-local sequence. " +
+        "Use seqs obtained from task_query; duplicate seqs are removed and rows return in ascending order. " +
+        "Thinking events are included.",
       inputSchema: {
         task_id: TASK_ID.nullable()
           .optional()
           .describe(
-            "Visible target task ID; null or omission defaults to the current task",
+            "Visible Task ID; null or omission defaults to the current Task",
           ),
-        seq: z
-          .number()
-          .int()
+        seqs: z
+          .array(z.number().int().min(1))
           .min(1)
-          .describe("Stable event sequence within the target task"),
+          .describe("Task-local event sequences to read"),
       },
     },
-    async ({ task_id, seq }) =>
+    async ({ task_id, seqs }) =>
       jsonContent(
-        host?.getRecord(taskId, {
-          taskId: task_id ?? undefined,
-          seq,
-        }) ?? unavailable(),
+        host?.read(taskId, { taskId: task_id ?? undefined, seqs }) ??
+          unavailable(),
       ),
   );
 

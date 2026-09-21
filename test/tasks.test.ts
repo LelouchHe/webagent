@@ -609,10 +609,10 @@ describe("Task REST API", () => {
         await new Promise((resolve) => setTimeout(resolve, 10));
       }
 
-      assert.equal(
-        store.getPendingCompactSummary("s1"),
-        "summary of the current work",
-      );
+      const pendingSummary = store.getPendingCompactSummary("s1");
+      assert.ok(pendingSummary);
+      assert.equal(pendingSummary.summary, "summary of the current work");
+      assert.equal(pendingSummary.seq, 1);
       const publicList = JSON.parse(
         (await makeRequest(port, "GET", "/api/v1/tasks")).body,
       ) as Array<Record<string, unknown>>;
@@ -636,6 +636,17 @@ describe("Task REST API", () => {
       );
       assert.equal(promptRes.status, 202);
       assert.match(promptedText, /previous execution summary/);
+      assert.match(
+        promptedText,
+        /--- previous execution summary \(event seq 1\) ---/,
+      );
+      // The pointer must be callable as written: the summary lives in this
+      // Task, so it names no target, and it must not suggest a whole-session
+      // range that the 24 KiB page budget rejects.
+      assert.match(
+        promptedText,
+        /task_read\(\{ seqs: \[1\] \}\) · this is the first summary in the chain\./,
+      );
       assert.match(promptedText, /summary of the current work/);
       assert.match(promptedText, /continue the work/);
       assert.equal(store.getPendingCompactSummary("s1"), null);
@@ -643,6 +654,64 @@ describe("Task REST API", () => {
         .reverse()
         .find((event) => event.type === "user_message");
       assert.equal(JSON.parse(userEvent!.data).text, "continue the work");
+    });
+
+    it("includes the previous compact event address in a chained handoff", async () => {
+      store.createTask("s1", tmpDir, "auto", "agent-old");
+      tasks.liveTasks.add("s1");
+      const first = store.saveCompactSummary("s1", "first summary");
+      const second = store.saveCompactSummary("s1", "second summary");
+      assert.equal(second.seq, first.seq + 1);
+      let promptedText = "";
+      mockBridge.prompt = async (_taskId: string, text: string) => {
+        promptedText = text;
+      };
+
+      const promptRes = await makeRequest(
+        port,
+        "POST",
+        "/api/v1/tasks/s1/prompt",
+        JSON.stringify({ text: "continue" }),
+      );
+      assert.equal(promptRes.status, 202);
+      assert.match(
+        promptedText,
+        new RegExp(
+          `--- previous execution summary \\(event seq ${second.seq}\\) ---`,
+        ),
+      );
+      // The previous summary is named once, next to the path that holds it.
+      assert.doesNotMatch(promptedText, /previous summary/);
+      assert.match(
+        promptedText,
+        new RegExp(
+          `task_read\\(\\{ seqs: \\[${second.seq}\\] \\}\\) · older: data\\.compact\\.prev = ${first.seq} \\(null = first\\)`,
+        ),
+      );
+    });
+
+    it("keeps legacy pending summaries in the old handoff format", async () => {
+      store.createTask("s1", tmpDir, "auto", "agent-old");
+      tasks.liveTasks.add("s1");
+      store["db"]
+        .prepare("UPDATE tasks SET pending_compact_summary = ? WHERE id = ?")
+        .run("legacy summary", "s1");
+      let promptedText = "";
+      mockBridge.prompt = async (_taskId: string, text: string) => {
+        promptedText = text;
+      };
+
+      const promptRes = await makeRequest(
+        port,
+        "POST",
+        "/api/v1/tasks/s1/prompt",
+        JSON.stringify({ text: "continue" }),
+      );
+      assert.equal(promptRes.status, 202);
+      assert.match(promptedText, /--- previous execution summary ---/);
+      assert.doesNotMatch(promptedText, /event seq/);
+      assert.doesNotMatch(promptedText, /task_read\(/);
+      assert.doesNotMatch(promptedText, /task_query\(/);
     });
 
     it("recovers a delivery queued during successful compaction", async () => {
@@ -735,7 +804,7 @@ describe("Task REST API", () => {
     assert.equal(compactRes.status, 202);
     const deadline = Date.now() + 5000;
     while (
-      (store.getPendingCompactSummary("s1") !== "guided summary" ||
+      (store.getPendingCompactSummary("s1")?.summary !== "guided summary" ||
         store.getAgentSessionId("s1") !== "mock-task-1") &&
       Date.now() < deadline
     ) {

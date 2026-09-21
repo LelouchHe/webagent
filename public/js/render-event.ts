@@ -26,6 +26,7 @@ import {
 } from "./event-interpreter.ts";
 import { buildPlanElement } from "./plan-view.ts";
 import { buildStructuredDiffLines } from "./structured-diff.ts";
+import { classifyToolContentItem } from "../../src/shared/tool-content.ts";
 import type {
   RawInput,
   DiffLine,
@@ -80,7 +81,9 @@ function applyStructuredDiff(
   el: HTMLElement,
   content: ToolContentItem[],
 ): void {
-  const diffs = content.filter((item) => item.type === "diff");
+  const diffs = content.filter(
+    (item) => classifyToolContentItem(item).kind === "diff",
+  );
   if (diffs.length === 0) return;
 
   let details = el.querySelector<HTMLDetailsElement>("details.tc-diff");
