@@ -133,8 +133,8 @@ function findMatch(
 
 type ToolContentProjection =
   | { kind: "none" }
-  | { kind: "content"; text: string }
-  | { kind: "diff"; path: string; field: string }
+  | { kind: "content"; text: string; field: string; unrecognized: boolean }
+  | { kind: "diff"; path: string; field: string; unrecognized: boolean }
   | { kind: "unknown" };
 
 function projectToolContent(value: unknown): ToolContentProjection {
@@ -142,9 +142,13 @@ function projectToolContent(value: unknown): ToolContentProjection {
   if (value.length === 0) return { kind: "none" };
 
   const shapes = value.map(classifyToolContentItem);
-  if (shapes.some((shape) => shape.kind === "unknown")) {
-    return { kind: "unknown" };
-  }
+  const hasRecognized = shapes.some((shape) => shape.kind !== "unknown");
+  if (!hasRecognized) return { kind: "unknown" };
+
+  // An unrecognized item is reported, never swallowed — but it must not cost a
+  // recognized sibling its text, so the shape is marked rather than the row
+  // erased.
+  const unrecognized = shapes.some((shape) => shape.kind === "unknown");
 
   const diffs = shapes.flatMap((shape, index) =>
     shape.kind === "diff" ? [{ index, path: shape.path }] : [],
@@ -154,18 +158,26 @@ function projectToolContent(value: unknown): ToolContentProjection {
       kind: "diff",
       path: diffs.map((diff) => diff.path).join("\n"),
       field: `content[${diffs[0].index}].path`,
+      unrecognized,
     };
   }
 
   return {
     kind: "content",
+    // Empty contributions are dropped rather than joined: an unrecognized
+    // sibling must not leave a stray separator behind.
     text: shapes
       .map((shape) => {
         if (shape.kind === "terminal")
           return `[terminal ${shape.terminalId ?? "undefined"}]`;
         return shape.kind === "content" ? shape.text : "";
       })
+      .filter(Boolean)
       .join("\n"),
+    field: shapes.every((shape) => shape.kind === "terminal")
+      ? "content[0].terminalId"
+      : "content[]",
+    unrecognized,
   };
 }
 
@@ -230,11 +242,16 @@ function projected(
     }
     case "tool_call_update": {
       const content = projectToolContent(data.content);
+      const mark =
+        (content.kind === "content" || content.kind === "diff") &&
+        content.unrecognized
+          ? { content_shape: "unknown" as const }
+          : {};
       if (content.kind === "content" && content.text) {
-        return { title, text: content.text, field: "content[]" };
+        return { title, text: content.text, field: content.field, ...mark };
       }
       if (content.kind === "diff") {
-        return { title, text: content.path, field: content.field };
+        return { title, text: content.path, field: content.field, ...mark };
       }
       if (content.kind === "unknown") {
         return { title, content_shape: "unknown" };

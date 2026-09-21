@@ -219,11 +219,16 @@ type Row = {
 Rows are chronological and flat. `group` is the payload's tool call id
 (`id` for tool rows, `toolCallId` for permission requests). `title` and `text`
 are capped at 200 Unicode code points, with `…` marking each truncated side.
-Known event types use deterministic projections; for `tool_call_update`, text
-and terminal content projects as `content[]`, while diff items project their
-file anchor as `content[0].path` (the path itself), without indexing either
-diff body. An unrecognized content-item shape is reported with
-`content_shape: "unknown"` instead of falling back to the status. Unknown event
+Known event types use deterministic projections. For `tool_call_update`, text
+and terminal content projects as `content[]`, while a row made only of terminal
+items names its anchor `content[0].terminalId`; diff items project their file
+anchor as `content[0].path`, where `text` carries the path — every path joined
+by newlines when a row holds several diff items — and `field` names the first
+one's index. Neither diff body is indexed. An unrecognized content-item shape
+is reported as `content_shape: "unknown"` alongside whatever recognized
+siblings project, so an unknown item cannot erase a recognized one; when every
+item is unrecognized the row carries `content_shape: "unknown"` and no text
+rather than falling back to the status. Unknown event
 types still appear with
 `seq`, `type`, and `bytes`. Search scans decoded string leaves, not serialized
 JSON, and returns the matching JSON path plus a centered window (radius 100).

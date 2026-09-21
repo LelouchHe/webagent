@@ -64,5 +64,11 @@ export function classifyToolContentItem(item: unknown): ToolContentItemShape {
     return { kind: "content", text: text.join("") };
   }
 
+  // A bare text block is a recognized shape: the projection this classifier
+  // replaced accepted it, so dropping it here would be a coverage regression.
+  if (typeof item.text === "string" && item.text) {
+    return { kind: "content", text: item.text };
+  }
+
   return { kind: "unknown" };
 }

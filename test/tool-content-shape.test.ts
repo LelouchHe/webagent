@@ -154,4 +154,92 @@ describe("tool content shape coverage", () => {
       }
     }
   });
+
+  it("keeps a recognized sibling's text and still marks the unknown shape", () => {
+    const row = projectTaskHistoryRow({
+      seq: 1,
+      type: "tool_call_update",
+      data: JSON.stringify({
+        id: "tool-1",
+        status: "completed",
+        content: [
+          { type: "content", content: { type: "text", text: "visible" } },
+          { type: "image", data: "png" },
+        ],
+      }),
+    });
+    assert.equal(row.text, "visible");
+    assert.equal(row.field, "content[]");
+    assert.equal(row.content_shape, "unknown");
+  });
+
+  it("keeps the diff anchor when a sibling item is unrecognized", () => {
+    const row = projectTaskHistoryRow({
+      seq: 1,
+      type: "tool_call_update",
+      data: JSON.stringify({
+        id: "tool-1",
+        status: "completed",
+        content: [
+          { type: "diff", path: "src/a.ts", oldText: null, newText: "A\n" },
+          { type: "image", data: "png" },
+        ],
+      }),
+    });
+    assert.equal(row.field, "content[0].path");
+    assert.equal(row.text, "src/a.ts");
+    assert.equal(row.content_shape, "unknown");
+  });
+
+  it("accepts a bare text block instead of dropping it", () => {
+    assert.equal(
+      classifyToolContentItem({ type: "text", text: "legacy output" }).kind,
+      "content",
+    );
+    const row = projectTaskHistoryRow({
+      seq: 1,
+      type: "tool_call_update",
+      data: JSON.stringify({
+        id: "tool-1",
+        content: [{ type: "text", text: "legacy output" }],
+      }),
+    });
+    assert.equal(row.text, "legacy output");
+    assert.equal(row.field, "content[]");
+    assert.equal(
+      extractToolCallContent([
+        { type: "text", text: "legacy output" } as unknown as ToolContentItem,
+      ]),
+      "legacy output",
+    );
+  });
+
+  it("names the terminal leaf for a terminal-only row", () => {
+    const row = projectTaskHistoryRow({
+      seq: 1,
+      type: "tool_call_update",
+      data: JSON.stringify({
+        id: "tool-1",
+        status: "completed",
+        content: [{ type: "terminal", terminalId: "t1" }],
+      }),
+    });
+    assert.equal(row.field, "content[0].terminalId");
+    assert.equal(row.text, "[terminal t1]");
+  });
+
+  it("keeps an empty recognized output on the status projection", () => {
+    const row = projectTaskHistoryRow({
+      seq: 1,
+      type: "tool_call_update",
+      data: JSON.stringify({
+        id: "tool-1",
+        status: "completed",
+        content: [{ type: "content", content: { type: "text", text: "" } }],
+      }),
+    });
+    assert.equal(row.field, "status");
+    assert.equal(row.text, "completed");
+    assert.equal(row.content_shape, undefined);
+  });
 });
