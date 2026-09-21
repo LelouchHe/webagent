@@ -288,6 +288,22 @@ describe("MCP Task tool host", () => {
     ]);
   });
 
+  it("reads own history when the target is omitted", () => {
+    const event = store.saveEvent(
+      "alpha",
+      "assistant_message",
+      { text: "hi" },
+      {
+        from_ref: "agent",
+      },
+    );
+    const host = createMcpTaskToolHost({ store, tasks, getBridge: () => null });
+    const explicit = host.read("alpha", { taskId: "alpha", seqs: [event.seq] });
+    // A waking Task does not know its own id, so reading its own history must
+    // not require one: omitting the target is the same call as naming self.
+    assert.deepEqual(host.read("alpha", { seqs: [event.seq] }), explicit);
+  });
+
   it("rejects unknown and out-of-family targets identically", () => {
     const host = createMcpTaskToolHost({ store, tasks, getBridge: () => null });
     assert.throws(

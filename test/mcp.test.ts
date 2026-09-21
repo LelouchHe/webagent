@@ -52,6 +52,34 @@ function nullableVariantMaxLength(
   return variants.find((variant) => variant.maxLength !== undefined)?.maxLength;
 }
 
+/** `required` list of a registered tool, or [] when the tool declares none. */
+function toolRequired(
+  tools: Array<{ name: string; inputSchema?: { required?: string[] } }>,
+  toolName: string,
+): string[] {
+  const required = tools.find((tool) => tool.name === toolName)?.inputSchema
+    ?.required;
+  return required === undefined ? [] : [...required];
+}
+
+/** Whether a property accepts an explicit `null` in addition to its type. */
+function toolHasNullableVariant(
+  tools: Array<{
+    name: string;
+    inputSchema?: {
+      properties?: Record<string, { anyOf?: Array<{ type?: string }> }>;
+    };
+  }>,
+  toolName: string,
+  property: string,
+): boolean {
+  const variants =
+    tools.find((tool) => tool.name === toolName)?.inputSchema?.properties?.[
+      property
+    ]?.anyOf ?? [];
+  return variants.some((variant) => variant.type === "null");
+}
+
 // --- CapabilityStore ---
 
 describe("CapabilityStore", () => {
@@ -405,12 +433,7 @@ describe("createMcpEndpoint", () => {
     )?.inputSchema;
     assert.deepEqual(querySchema?.required ?? [], []);
     for (const name of ["task_id", "text", "range"]) {
-      assert.equal(
-        querySchema?.properties?.[name]?.anyOf?.some(
-          (variant) => variant.type === "null",
-        ),
-        true,
-      );
+      assert.equal(toolHasNullableVariant(tools, "task_query", name), true);
     }
     // The search window only promises "the hit text contains the whole needle"
     // while the needle fits the 200-code-point budget, so pin the input limit
@@ -420,6 +443,10 @@ describe("createMcpEndpoint", () => {
       128,
       "task_query.text must stay capped at 128 code points",
     );
+    // Both history tools must be callable without naming a target: a Task that
+    // has just woken from compact does not know its own id.
+    assert.deepEqual(toolRequired(tools, "task_read"), ["seqs"]);
+    assert.equal(toolHasNullableVariant(tools, "task_read", "task_id"), true);
 
     const call = await mcpPost(
       "/mcp",
@@ -473,6 +500,26 @@ describe("createMcpEndpoint", () => {
       auth(token),
     );
     assert.equal(read.status, 200);
+
+    const readSelf = await mcpPost(
+      "/mcp",
+      {
+        jsonrpc: "2.0",
+        id: 10,
+        method: "tools/call",
+        params: {
+          name: "task_read",
+          arguments: { seqs: [7] },
+        },
+      },
+      auth(token),
+    );
+    assert.equal(readSelf.status, 200);
+    assert.notEqual(
+      ((await readSelf.json()) as { result?: { isError?: boolean } }).result
+        ?.isError,
+      true,
+    );
 
     const create = await mcpPost(
       "/mcp",
@@ -548,6 +595,7 @@ describe("createMcpEndpoint", () => {
         },
       },
       { kind: "read", input: { taskId: "web-1", seqs: [7] } },
+      { kind: "read", input: { taskId: undefined, seqs: [7] } },
       {
         kind: "create",
         args: [

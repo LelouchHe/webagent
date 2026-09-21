@@ -233,6 +233,8 @@ When the index is not enough, read one or more complete rows in one call:
 task_read({ task_id: "<task-id-from-query>", seqs: [42, 43] })
 ```
 
+Omit `task_id` to read the current Task's own history.
+
 These tools expose persisted history; they do not restore hidden model
 reasoning or automatically recreate the old model context. They are also
 appropriate when a delivery appears to be missing, a Task must be recovered,

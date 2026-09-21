@@ -123,7 +123,7 @@ WebAgent does not automatically rebroadcast raw child reports to ancestors.
 | --- | --- |
 | `task_list` | List the current task and its locally reachable parent, children, and siblings, each with `workflowStatus`, `executionState`, `lastEventAt`, and `lastAgentActivityAt` for triage. |
 | `task_query` | Read a bounded, compact history page for the current task or one visible relative. |
-| `task_read` | Read complete persisted history rows by task-local sequence. |
+| `task_read` | Read complete persisted history rows by task-local sequence from the current task or one visible relative. |
 | `task_cancel` | Stop the current execution of a child Task while preserving its history. |
 | `task_create` | Create a direct child Task with optional execution overrides. Use `task_send` for its first instruction. |
 | `task_send` | Send a durable coordination message, including follow-up or resume instructions for an existing Task. Use `task_update` for typed `blocked`/`done` status. |
@@ -239,7 +239,7 @@ Read one or more complete persisted event rows by task-local sequence. This
 is the sole complete-row history tool; no single-row alias is registered.
 
 ```ts
-task_read({ task_id: string, seqs: number[] })
+task_read({ task_id?: string, seqs: number[] })
 
 {
   task_id: string;
@@ -252,6 +252,9 @@ task_read({ task_id: string, seqs: number[] })
   }>;
 }
 ```
+
+The target defaults to the current Task, so a Task that has just woken from
+`/compact` or `/clear` reads its own history without first learning its id.
 
 Duplicate sequences are removed and rows are returned in ascending order. Any
 missing sequence rejects the whole request with

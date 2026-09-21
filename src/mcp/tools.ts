@@ -51,7 +51,7 @@ export interface McpTaskQueryResult {
 }
 
 export interface McpTaskReadInput {
-  taskId: string;
+  taskId?: string;
   seqs: number[];
 }
 
@@ -212,7 +212,11 @@ export function registerMcpTools(
         "Use seqs obtained from task_query; duplicate seqs are removed and rows return in ascending order. " +
         "Thinking events are included.",
       inputSchema: {
-        task_id: TASK_ID.describe("Visible target Task ID"),
+        task_id: TASK_ID.nullable()
+          .optional()
+          .describe(
+            "Visible Task ID; null or omission defaults to the current Task",
+          ),
         seqs: z
           .array(z.number().int().min(1))
           .min(1)
@@ -221,7 +225,8 @@ export function registerMcpTools(
     },
     async ({ task_id, seqs }) =>
       jsonContent(
-        host?.read(taskId, { taskId: task_id, seqs }) ?? unavailable(),
+        host?.read(taskId, { taskId: task_id ?? undefined, seqs }) ??
+          unavailable(),
       ),
   );
 

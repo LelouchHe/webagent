@@ -187,7 +187,8 @@ Task's history.
 
 After `/compact` or `/clear`, use `task_query` without a target to index the
 current Task's persisted history, then use `task_read` with returned `seq`
-values for complete event rows when the index is not enough. These tools expose stored events;
+values for complete event rows when the index is not enough; `task_read`
+without a target reads the current Task. These tools expose stored events;
 they do not recreate hidden model reasoning or silently restore the old model
 context. Do not make history queries the normal way of passing results between
 Tasks.

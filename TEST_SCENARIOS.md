@@ -298,6 +298,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - fixed-string search returns a visible matching window and real JSON field path
   - task_read returns batched decoded event data, including large single rows
   - self/parent/child/sibling authorization, tombstone/nonexistent target convergence, unknown sequence rejection
+  - omitting the target reads the current Task's own history
   - explicit response_too_large errors report required_bytes without partial rows
   - MCP registration and documentation expose task_read as the sole raw-history tool
 

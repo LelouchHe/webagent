@@ -203,7 +203,10 @@ export function createMcpTaskToolHost(deps: {
     },
 
     read(sourceTaskId, input): McpTaskReadResult {
-      const target = requireHistoryTarget(sourceTaskId, input.taskId);
+      const target = requireHistoryTarget(
+        sourceTaskId,
+        input.taskId ?? sourceTaskId,
+      );
       const uniqueSeqs = [...new Set(input.seqs)].sort((a, b) => a - b);
       if (uniqueSeqs.length > MAX_READ_SEQS && uniqueSeqs.length !== 1) {
         throw new Error(`too_many_seqs: maximum is ${MAX_READ_SEQS}`);
