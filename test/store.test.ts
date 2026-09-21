@@ -164,17 +164,22 @@ describe("Store", () => {
 
       store.saveCompactSummary("web-1", "Current goal and next action");
 
-      assert.equal(
-        store.getPendingCompactSummary("web-1"),
-        "Current goal and next action",
-      );
+      const pending = store.getPendingCompactSummary("web-1");
+      assert.deepEqual(pending, {
+        summary: "Current goal and next action",
+        seq: 1,
+        raw: JSON.stringify({
+          summary: "Current goal and next action",
+          seq: 1,
+        }),
+      });
       const summary = store
         .getEvents("web-1")
         .find((event) => event.type === "assistant_message");
-      assert.equal(
-        JSON.parse(summary!.data).text,
-        "Current goal and next action",
-      );
+      assert.deepEqual(JSON.parse(summary!.data), {
+        text: "Current goal and next action",
+        compact: { prev: null },
+      });
       assert.equal(
         store.clearPendingCompactSummary("web-1", "wrong summary"),
         false,
@@ -182,11 +187,38 @@ describe("Store", () => {
       assert.equal(
         store.clearPendingCompactSummary(
           "web-1",
-          "Current goal and next action",
+          JSON.stringify({
+            summary: "Current goal and next action",
+            seq: 1,
+          }),
         ),
         true,
       );
       assert.equal(store.getPendingCompactSummary("web-1"), null);
+
+      // Plain-text values from before the envelope format remain readable.
+      store["db"]
+        .prepare("UPDATE tasks SET pending_compact_summary = ? WHERE id = ?")
+        .run("legacy summary", "web-1");
+      assert.deepEqual(store.getPendingCompactSummary("web-1"), {
+        summary: "legacy summary",
+        seq: null,
+        raw: "legacy summary",
+      });
+      assert.equal(store.clearPendingCompactSummary("web-1", "wrong"), false);
+      assert.equal(
+        store.clearPendingCompactSummary("web-1", "legacy summary"),
+        true,
+      );
+    });
+
+    it("links compact summaries to the preceding compact event", () => {
+      store.createTask("web-1", "/tmp/root");
+      const first = store.saveCompactSummary("web-1", "first");
+      const second = store.saveCompactSummary("web-1", "second");
+      assert.deepEqual(JSON.parse(first.data).compact, { prev: null });
+      assert.deepEqual(JSON.parse(second.data).compact, { prev: first.seq });
+      assert.equal(store.getPendingCompactSummary("web-1")?.seq, second.seq);
     });
 
     it("binds an ACP execution to an existing Root record", () => {

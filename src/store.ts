@@ -173,6 +173,14 @@ export interface ShareRow {
   last_accessed_at: number | null;
 }
 
+/** One pending compact handoff and its source event address. */
+export interface PendingCompactSummary {
+  summary: string;
+  seq: number | null;
+  /** Exact value stored in tasks.pending_compact_summary. */
+  raw: string;
+}
+
 /** Summary projection for GET /api/v1/shares (joins task title). */
 export interface ShareSummaryRow {
   token: string;
@@ -1220,11 +1228,34 @@ export class Store {
   }
 
   /** Return the hidden summary waiting to be prepended to the next prompt. */
-  getPendingCompactSummary(id: string): string | null {
+  getPendingCompactSummary(id: string): PendingCompactSummary | null {
     const row = this.db
       .prepare("SELECT pending_compact_summary FROM tasks WHERE id = ?")
       .get(id) as { pending_compact_summary: string | null } | undefined;
-    return row?.pending_compact_summary ?? null;
+    const raw = row?.pending_compact_summary;
+    if (raw == null) return null;
+
+    try {
+      const parsed = JSON.parse(raw) as unknown;
+      if (
+        typeof parsed === "object" &&
+        parsed !== null &&
+        typeof (parsed as { summary?: unknown }).summary === "string" &&
+        ((parsed as { seq?: unknown }).seq === null ||
+          (typeof (parsed as { seq?: unknown }).seq === "number" &&
+            Number.isInteger((parsed as { seq?: unknown }).seq) &&
+            (parsed as { seq: number }).seq > 0))
+      ) {
+        return {
+          summary: (parsed as { summary: string }).summary,
+          seq: (parsed as { seq: number | null }).seq,
+          raw,
+        };
+      }
+    } catch {
+      // Values written before the envelope format are plain text summaries.
+    }
+    return { summary: raw, seq: null, raw };
   }
 
   /**
@@ -1240,21 +1271,24 @@ export class Store {
           )
           .get(taskId) as { next: number }
       ).next;
+      const prev =
+        (
+          this.db
+            .prepare(
+              "SELECT seq FROM events WHERE task_id = ? AND type = 'assistant_message' AND json_extract(data, '$.compact') IS NOT NULL ORDER BY seq DESC LIMIT 1",
+            )
+            .get(taskId) as { seq: number } | undefined
+        )?.seq ?? null;
+      const eventData = JSON.stringify({ text: summary, compact: { prev } });
       this.db
         .prepare(
           "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
         )
-        .run(
-          taskId,
-          seq,
-          "assistant_message",
-          JSON.stringify({ text: summary }),
-          "agent",
-          Date.now(),
-        );
+        .run(taskId, seq, "assistant_message", eventData, "agent", Date.now());
+      const pending = JSON.stringify({ summary, seq });
       this.db
         .prepare("UPDATE tasks SET pending_compact_summary = ? WHERE id = ?")
-        .run(summary, taskId);
+        .run(pending, taskId);
       return this.db
         .prepare("SELECT * FROM events WHERE task_id = ? AND seq = ?")
         .get(taskId, seq) as EventRow;

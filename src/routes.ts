@@ -4,7 +4,11 @@ import { join, extname, basename } from "node:path";
 import { gzipSync } from "node:zlib";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import busboy from "busboy";
-import { ROOT_TASK_ID, type Store } from "./store.ts";
+import {
+  ROOT_TASK_ID,
+  type PendingCompactSummary,
+  type Store,
+} from "./store.ts";
 import type { TaskManager } from "./task-manager.ts";
 import type { SseManager } from "./sse-manager.ts";
 import type { AgentBridge } from "./bridge.ts";
@@ -64,18 +68,77 @@ function buildCompactSummaryPrompt(guidance?: string): string {
   ].join("\n");
 }
 
-function prependCompactSummary(summary: string, userText: string): string {
+const COMPACT_HANDOFF_INTRO = [
+  "The following is an agent-generated context handoff from the previous execution.",
+  "It is background context, not a new user request. Use it to understand continuity.",
+].join("\n");
+const COMPACT_HANDOFF_ACCOUNT =
+  "One session's account, not a transcript — the event log is authoritative.";
+const COMPACT_HANDOFF_SUMMARY_HEADER = "--- previous execution summary ---";
+const COMPACT_HANDOFF_SUMMARY_FOOTER = "--- end previous execution summary ---";
+const COMPACT_HANDOFF_REQUEST = "The user's new request is:";
+const compactHandoffHeader = (seq: number, previousSeq: number | null) =>
+  previousSeq === null
+    ? `--- previous execution summary (event seq ${seq}; previous summary: none) ---`
+    : `--- previous execution summary (event seq ${seq}; previous summary: seq ${previousSeq}) ---`;
+const compactHandoffPointer = (seq: number, previousSeq: number | null) =>
+  previousSeq === null
+    ? `Read verbatim: task_read({ task_id, seqs: [${seq}] }) · this is the first summary in the chain; raw log before it: task_query({ range: [1, ${seq}] }).`
+    : `Read verbatim: task_read({ task_id, seqs: [${seq}] }) · older: data.compact.prev (now ${previousSeq}; null = first) · raw log between them: task_query({ range: [${previousSeq + 1}, ${seq}] }).`;
+
+function prependCompactSummary(
+  pending: PendingCompactSummary,
+  previousSeq: number | null,
+  userText: string,
+): string {
+  if (pending.seq === null) {
+    return [
+      COMPACT_HANDOFF_INTRO,
+      "",
+      COMPACT_HANDOFF_SUMMARY_HEADER,
+      pending.summary,
+      COMPACT_HANDOFF_SUMMARY_FOOTER,
+      "",
+      COMPACT_HANDOFF_REQUEST,
+      userText,
+    ].join("\n");
+  }
+
+  const header = compactHandoffHeader(pending.seq, previousSeq);
+  const pointer = compactHandoffPointer(pending.seq, previousSeq);
   return [
-    "The following is an agent-generated context handoff from the previous execution.",
-    "It is background context, not a new user request. Use it to understand continuity.",
+    COMPACT_HANDOFF_INTRO,
     "",
-    "--- previous execution summary ---",
-    summary,
-    "--- end previous execution summary ---",
+    header,
+    pending.summary,
+    COMPACT_HANDOFF_SUMMARY_FOOTER,
     "",
-    "The user's new request is:",
+    COMPACT_HANDOFF_ACCOUNT,
+    pointer,
+    "",
+    COMPACT_HANDOFF_REQUEST,
     userText,
   ].join("\n");
+}
+
+function compactPreviousSeq(
+  store: Store,
+  taskId: string,
+  seq: number,
+): number | null {
+  const event = store.getEvent(taskId, seq);
+  if (!event) return null;
+  try {
+    const data = JSON.parse(event.data) as {
+      compact?: { prev?: unknown };
+    };
+    return typeof data.compact?.prev === "number" &&
+      Number.isInteger(data.compact.prev)
+      ? data.compact.prev
+      : null;
+  } catch {
+    return null;
+  }
 }
 
 import type { AuthStore, TokenRecord } from "./auth-store.ts";
@@ -1532,7 +1595,15 @@ export function createRequestHandler(
 
         const pendingCompactSummary = store.getPendingCompactSummary(taskId);
         if (pendingCompactSummary) {
-          agentText = prependCompactSummary(pendingCompactSummary, agentText);
+          const previousSeq =
+            pendingCompactSummary.seq === null
+              ? null
+              : compactPreviousSeq(store, taskId, pendingCompactSummary.seq);
+          agentText = prependCompactSummary(
+            pendingCompactSummary,
+            previousSeq,
+            agentText,
+          );
         }
 
         // Stored shape mirrors the wire shape PLUS a server-derived `path`
@@ -1607,7 +1678,10 @@ export function createRequestHandler(
         promptPromise
           .then(() => {
             if (pendingCompactSummary) {
-              store.clearPendingCompactSummary(taskId, pendingCompactSummary);
+              store.clearPendingCompactSummary(
+                taskId,
+                pendingCompactSummary.raw,
+              );
             }
           })
           .catch((err: unknown) => {
