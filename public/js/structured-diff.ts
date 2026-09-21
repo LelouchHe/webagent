@@ -1,3 +1,4 @@
+import { classifyToolContentItem } from "../../src/shared/tool-content.ts";
 import type { DiffLine, ToolContentItem } from "../../src/types.ts";
 
 let diffPromise: Promise<typeof import("diff")> | null = null;
@@ -10,20 +11,15 @@ function formatRange(start: number, lines: number): string {
 export async function buildStructuredDiffLines(
   item: ToolContentItem,
 ): Promise<DiffLine[]> {
-  if (
-    item.type !== "diff" ||
-    typeof item.path !== "string" ||
-    typeof item.newText !== "string"
-  ) {
-    return [];
-  }
+  const shape = classifyToolContentItem(item);
+  if (shape.kind !== "diff") return [];
 
   const { structuredPatch } = await getDiff();
   const patch = structuredPatch(
-    item.path,
-    item.path,
-    item.oldText ?? "",
-    item.newText,
+    shape.path,
+    shape.path,
+    shape.oldText ?? "",
+    shape.newText,
     undefined,
     undefined,
     { context: 3 },

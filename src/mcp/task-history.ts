@@ -1,3 +1,5 @@
+import { classifyToolContentItem } from "../shared/tool-content.ts";
+
 const MAX_TEXT_CHARS = 200;
 const MATCH_WINDOW_RADIUS = 100;
 
@@ -11,6 +13,7 @@ export interface McpTaskHistoryRow {
   title?: string;
   field?: string;
   text?: string;
+  content_shape?: "unknown";
   unprojected?: true;
 }
 
@@ -128,19 +131,42 @@ function findMatch(
   return result;
 }
 
-function contentText(value: unknown): string | undefined {
-  if (!Array.isArray(value)) return undefined;
-  const parts: string[] = [];
-  for (const item of value) {
-    if (!isObject(item)) continue;
-    if (isObject(item.content)) {
-      const text = stringValue(item.content.text);
-      if (text) parts.push(text);
-    } else if (typeof item.text === "string" && item.text) {
-      parts.push(item.text);
-    }
+type ToolContentProjection =
+  | { kind: "none" }
+  | { kind: "content"; text: string }
+  | { kind: "diff"; path: string; field: string }
+  | { kind: "unknown" };
+
+function projectToolContent(value: unknown): ToolContentProjection {
+  if (!Array.isArray(value)) return { kind: "none" };
+  if (value.length === 0) return { kind: "none" };
+
+  const shapes = value.map(classifyToolContentItem);
+  if (shapes.some((shape) => shape.kind === "unknown")) {
+    return { kind: "unknown" };
   }
-  return parts.length > 0 ? parts.join("\n") : undefined;
+
+  const diffs = shapes.flatMap((shape, index) =>
+    shape.kind === "diff" ? [{ index, path: shape.path }] : [],
+  );
+  if (diffs.length > 0) {
+    return {
+      kind: "diff",
+      path: diffs.map((diff) => diff.path).join("\n"),
+      field: `content[${diffs[0].index}].path`,
+    };
+  }
+
+  return {
+    kind: "content",
+    text: shapes
+      .map((shape) => {
+        if (shape.kind === "terminal")
+          return `[terminal ${shape.terminalId ?? "undefined"}]`;
+        return shape.kind === "content" ? shape.text : "";
+      })
+      .join("\n"),
+  };
 }
 
 function stringArrayText(value: unknown): string | undefined {
@@ -155,7 +181,12 @@ function stringArrayText(value: unknown): string | undefined {
 function projected(
   data: unknown,
   type: string,
-): { title?: string; text?: string; field?: string } {
+): {
+  title?: string;
+  text?: string;
+  field?: string;
+  content_shape?: "unknown";
+} {
   if (!isObject(data)) return {};
   const title = [
     "tool_call",
@@ -198,10 +229,17 @@ function projected(
       return { title };
     }
     case "tool_call_update": {
-      const text = contentText(data.content);
-      return text
-        ? { title, text, field: "content[]" }
-        : { title, text: stringField(data.status), field: "status" };
+      const content = projectToolContent(data.content);
+      if (content.kind === "content" && content.text) {
+        return { title, text: content.text, field: "content[]" };
+      }
+      if (content.kind === "diff") {
+        return { title, text: content.path, field: content.field };
+      }
+      if (content.kind === "unknown") {
+        return { title, content_shape: "unknown" };
+      }
+      return { title, text: stringField(data.status), field: "status" };
     }
     case "system_message":
     case "message":
@@ -245,6 +283,8 @@ export function projectTaskHistoryRow(
   }
   const projection = projected(data, record.type);
   if (projection.title !== undefined) row.title = truncate(projection.title);
+  if (projection.content_shape !== undefined)
+    row.content_shape = projection.content_shape;
   if (query !== undefined) {
     const match = findMatch(data, query);
     if (!match) return row;

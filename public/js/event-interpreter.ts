@@ -20,6 +20,7 @@ import type {
   ToolContentItem,
   NormalizedEventsResponse,
 } from "../../src/types.ts";
+import { classifyToolContentItem } from "../../src/shared/tool-content.ts";
 
 const MISATTRIBUTED_CANCEL_TEXT = "Info: Operation cancelled by user";
 const FINAL_ANSWER_OPEN = "<final_answer>";
@@ -113,12 +114,11 @@ export function interpretToolCall(
 /** Extract display text from a tool_call_update content array. */
 export function extractToolCallContent(content: ToolContentItem[]): string {
   return content
-    .map((c) => {
-      if (c.type === "terminal") return `[terminal ${c.terminalId}]`;
-      if (c.content && !Array.isArray(c.content) && c.content.text)
-        return c.content.text;
-      if (Array.isArray(c.content))
-        return c.content.map((cc) => cc.text ?? "").join("");
+    .map((item) => {
+      const shape = classifyToolContentItem(item);
+      if (shape.kind === "terminal")
+        return `[terminal ${shape.terminalId ?? "undefined"}]`;
+      if (shape.kind === "content") return shape.text;
       return "";
     })
     .filter(Boolean)
