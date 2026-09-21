@@ -83,8 +83,8 @@ const compactHandoffHeader = (seq: number, previousSeq: number | null) =>
     : `--- previous execution summary (event seq ${seq}; previous summary: seq ${previousSeq}) ---`;
 const compactHandoffPointer = (seq: number, previousSeq: number | null) =>
   previousSeq === null
-    ? `Read verbatim: task_read({ task_id, seqs: [${seq}] }) · this is the first summary in the chain; raw log before it: task_query({ range: [1, ${seq}] }).`
-    : `Read verbatim: task_read({ task_id, seqs: [${seq}] }) · older: data.compact.prev (now ${previousSeq}; null = first) · raw log between them: task_query({ range: [${previousSeq + 1}, ${seq}] }).`;
+    ? `Read verbatim: task_read({ seqs: [${seq}] }) · this is the first summary in the chain.`
+    : `Read verbatim: task_read({ seqs: [${seq}] }) · older: data.compact.prev (now ${previousSeq}; null = first).`;
 
 function prependCompactSummary(
   pending: PendingCompactSummary,
