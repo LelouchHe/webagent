@@ -73,7 +73,7 @@ const COMPACT_HANDOFF_INTRO = [
   "It is background context, not a new user request. Use it to understand continuity.",
 ].join("\n");
 const COMPACT_HANDOFF_ACCOUNT =
-  "One session's account, not a transcript — the event log is authoritative.";
+  "Self-report, not a transcript — the event log outranks it.";
 const COMPACT_HANDOFF_SUMMARY_HEADER = "--- previous execution summary ---";
 const COMPACT_HANDOFF_SUMMARY_FOOTER = "--- end previous execution summary ---";
 const COMPACT_HANDOFF_REQUEST = "The user's new request is:";

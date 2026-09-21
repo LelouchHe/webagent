@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { registerMcpTools } from "../src/mcp/tools.ts";
+import { MCP_SERVER_INSTRUCTIONS } from "../src/mcp/server.ts";
 
 const ROOT = join(import.meta.dirname, "..");
 const MCP_DOC = readFileSync(join(ROOT, "docs/task-mcp.md"), "utf-8");
@@ -94,5 +95,13 @@ describe("MCP documentation coverage", () => {
     );
     assert.match(section, /task_send/);
     assert.doesNotMatch(section, /required title\s+and brief/i);
+  });
+
+  it("quotes the advertised server instructions verbatim", () => {
+    const sectionStart = MCP_DOC.indexOf("## Server instructions");
+    assert.notEqual(sectionStart, -1);
+    const block = MCP_DOC.slice(sectionStart).match(/```text\n([\s\S]*?)```/);
+    assert.ok(block, "docs/task-mcp.md must quote the instructions");
+    assert.equal(block[1].trimEnd(), MCP_SERVER_INSTRUCTIONS);
   });
 });
