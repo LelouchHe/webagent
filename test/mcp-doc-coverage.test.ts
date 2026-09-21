@@ -9,6 +9,42 @@ import { MCP_SERVER_INSTRUCTIONS } from "../src/mcp/server.ts";
 const ROOT = join(import.meta.dirname, "..");
 const MCP_DOC = readFileSync(join(ROOT, "docs/task-mcp.md"), "utf-8");
 
+type Fence = { info: string; content: string; line: number };
+
+/**
+ * Split a Markdown document into the headings and fenced blocks that sit
+ * outside every other fence. Line numbers let a check scope itself to one
+ * section, so a heading quoted inside an example, or an extra fence, can
+ * neither shadow the real quote nor satisfy it on the quote's behalf.
+ */
+function scanMarkdown(markdown: string): {
+  headings: Array<{ text: string; line: number }>;
+  fences: Fence[];
+} {
+  const headings: Array<{ text: string; line: number }> = [];
+  const fences: Fence[] = [];
+  let open: { info: string; line: number; body: string[] } | null = null;
+  markdown.split("\n").forEach((line, index) => {
+    const fence = /^(`{3,})(.*)$/.exec(line);
+    if (open) {
+      if (fence?.[2].trim() === "") {
+        fences.push({
+          info: open.info,
+          content: `${open.body.join("\n")}\n`,
+          line: open.line,
+        });
+        open = null;
+      } else {
+        open.body.push(line);
+      }
+      return;
+    }
+    if (fence) open = { info: fence[2].trim(), line: index, body: [] };
+    else if (/^#{2,3} /.test(line)) headings.push({ text: line, line: index });
+  });
+  return { headings, fences };
+}
+
 type RegisteredTool = {
   inputSchema: {
     properties?: Record<string, unknown>;
@@ -98,10 +134,18 @@ describe("MCP documentation coverage", () => {
   });
 
   it("quotes the advertised server instructions verbatim", () => {
-    const sectionStart = MCP_DOC.indexOf("## Server instructions");
-    assert.notEqual(sectionStart, -1);
-    const block = MCP_DOC.slice(sectionStart).match(/```text\n([\s\S]*?)```/);
-    assert.ok(block, "docs/task-mcp.md must quote the instructions");
-    assert.equal(block[1].trimEnd(), MCP_SERVER_INSTRUCTIONS);
+    const { headings, fences } = scanMarkdown(MCP_DOC);
+    const heading = headings.find(
+      (item) => item.text === "## Server instructions",
+    );
+    assert.ok(heading, "docs/task-mcp.md must document the instructions");
+    const nextSection =
+      headings.find((item) => item.line > heading.line)?.line ?? Infinity;
+    const quoted = fences.filter(
+      (item) => item.line > heading.line && item.line < nextSection,
+    );
+    assert.equal(quoted.length, 1, "expected exactly one quoted block");
+    assert.equal(quoted[0].info, "text");
+    assert.equal(quoted[0].content, `${MCP_SERVER_INSTRUCTIONS}\n`);
   });
 });
