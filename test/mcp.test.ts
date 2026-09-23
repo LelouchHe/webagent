@@ -80,6 +80,31 @@ function toolHasNullableVariant(
   return variants.some((variant) => variant.type === "null");
 }
 
+/**
+ * Paths inside a JSON Schema that use array-form `items` or `prefixItems`.
+ *
+ * Both are valid JSON Schema, but they sit outside the OpenAI function-calling
+ * subset, and providers behind that interface (Xiaomi MiMo, Moonshot) reject
+ * the entire request with a 400 instead of ignoring the field.
+ */
+function arrayFormItemPaths(schema: unknown, path: string): string[] {
+  if (Array.isArray(schema)) {
+    return schema.flatMap((entry, index) =>
+      arrayFormItemPaths(entry, `${path}[${index}]`),
+    );
+  }
+  if (typeof schema !== "object" || schema === null) return [];
+  const record = schema as Record<string, unknown>;
+  const found =
+    Array.isArray(record.items) || record.prefixItems !== undefined
+      ? [path]
+      : [];
+  for (const [key, value] of Object.entries(record)) {
+    found.push(...arrayFormItemPaths(value, `${path}.${key}`));
+  }
+  return found;
+}
+
 // --- CapabilityStore ---
 
 describe("CapabilityStore", () => {
@@ -614,6 +639,49 @@ describe("createMcpEndpoint", () => {
     ]);
 
     live.delete("web-1");
+  });
+
+  it("keeps every tool schema inside the OpenAI function-calling subset", async () => {
+    const token = caps.mint("web-schema");
+    live.add("web-schema");
+    const init = await mcpPost(
+      "/mcp",
+      {
+        jsonrpc: "2.0",
+        id: 29,
+        method: "initialize",
+        params: {
+          protocolVersion: "2025-06-18",
+          capabilities: {},
+          clientInfo: { name: "test", version: "1.0.0" },
+        },
+      },
+      auth(token),
+    );
+    assert.equal(init.status, 200);
+
+    const list = await mcpPost(
+      "/mcp",
+      { jsonrpc: "2.0", id: 30, method: "tools/list" },
+      auth(token),
+    );
+    assert.equal(list.status, 200);
+    const body = (await list.json()) as {
+      result?: { tools?: Array<{ name: string; inputSchema?: unknown }> };
+    };
+    const tools = body.result?.tools ?? [];
+    assert.ok(tools.length > 0);
+    for (const tool of tools) {
+      // Mutation evidence: restoring `z.tuple([...])` for task_query.range
+      // makes this fail with the offending path, which is why the schema uses
+      // an object-form `items` with minItems/maxItems instead.
+      assert.deepEqual(
+        arrayFormItemPaths(tool.inputSchema, tool.name),
+        [],
+        `${tool.name} must not use array-form items/prefixItems`,
+      );
+    }
+    live.delete("web-schema");
   });
 
   it("counts the search-text limit in code points, not UTF-16 units", async () => {

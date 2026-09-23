@@ -187,8 +187,18 @@ export function registerMcpTools(
           .describe(
             "Fixed string to find (max 128 code points); ASCII case folding only; null is omitted",
           ),
+        // Not z.tuple(): that advertises array-form `items` (draft-07) or
+        // `prefixItems` (2020-12), which sit outside the OpenAI
+        // function-calling subset and make OpenAI-compatible providers
+        // (Xiaomi MiMo, Moonshot) reject the whole request with a 400. A
+        // 2-element array carries the identical constraint, and the transform
+        // keeps the tuple type the host contract expects. The MCP SDK converts
+        // input schemas with io: "input", so it sees the array, not the
+        // transform.
         range: z
-          .tuple([z.number().int(), z.number().int()])
+          .array(z.number().int())
+          .length(2)
+          .transform((value): [number, number] => [value[0], value[1]])
           .nullable()
           .optional()
           .describe("Inclusive seq range; negative values index from max_seq"),
