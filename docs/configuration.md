@@ -63,13 +63,13 @@ This is by design in `codex-rs` (Zed's editor spawns one `codex-acp` per project
 
 In auto-allow modes (`bypassPermissions`, `full-access`, `yolo`), the agent itself skips emitting `permission_request` entirely — the agent self-handles it. WebAgent's auto-approve code path is therefore mostly relevant to Copilot-style agents that still emit permission requests in autopilot. Gemini's `autoEdit` is a partial autopilot (auto-approves edits only, still prompts for shell/web) — WebAgent treats it as a default-bucket mode and forwards permission requests as-is.
 
-**Pi (`pi-acp`) — needs the LelouchHe forks, not the npm releases.**
-Pi reaches WebAgent through an adapter, and WebAgent's Pi support depends on two forks maintained alongside this project. Installing the published `pi-acp` and `pi-mcp-adapter` packages is not enough:
+**Pi (`pi-acp`) — needs Pi 0.99+ and the LelouchHe `pi-acp` fork, not the npm release.**
+Pi reaches WebAgent through an adapter, and WebAgent's Pi support depends on a fork maintained alongside this project:
 
-- [`LelouchHe/pi-acp`](https://github.com/LelouchHe/pi-acp) keeps multiple ACP sessions alive on one connection instead of closing the previous `pi` subprocess, and forwards the MCP server definitions from ACP `session/new` and `session/load` into Pi, including the per-server `_meta.directTools` hint. Upstream `pi-acp` replaces the previous session when another one is created — so switching Tasks kills the other Task's agent — and ignores session MCP servers entirely.
-- [`LelouchHe/pi-mcp-adapter`](https://github.com/LelouchHe/pi-mcp-adapter) honors `directTools` on runtime-registered MCP servers and connects them automatically. Upstream treats runtime registrations as proxy-only: the injected `webagent` server still reaches the agent, but its tools stay behind the generic MCP gateway instead of appearing as native tools in Pi's tool surface. The task control plane keeps working either way; this is a presentation preference, not a hard requirement (see [How the server reaches the agent](task-mcp.md#how-the-server-reaches-the-agent)).
+- [`LelouchHe/pi-acp`](https://github.com/LelouchHe/pi-acp) keeps multiple ACP sessions alive on one connection instead of closing the previous `pi` subprocess, and hands the MCP server definitions from ACP `session/new` and `session/load` to Pi's built-in MCP support, mapping the per-server `_meta.directTools` hint to Pi's `direct` exposure. Upstream `pi-acp` replaces the previous session when another one is created — so switching Tasks kills the other Task's agent — and ignores session MCP servers entirely.
+- Pi 0.99 or later provides the built-in MCP support. With it, the injected `webagent` server's tools appear as native tools named `mcp__webagent__<tool>` (for example `mcp__webagent__task_send`). Remove extensions that replace the built-in MCP support, such as `pi-mcp-adapter`: while one is installed, Pi disables its built-in MCP support and the session servers do not attach. The task control plane is optional for the session itself either way (see [How the server reaches the agent](task-mcp.md#how-the-server-reaches-the-agent)).
 
-Neither fork is published to npm, and `npm i -g pi-acp` or `pi install npm:pi-mcp-adapter` install the upstream releases without the behavior above. Each fork's README covers installing it from a checkout; once installed, point `agent_cmd` at the built entry point:
+The fork is not published to npm, and `npm i -g pi-acp` installs the upstream release without the behavior above. The fork's README covers installing it from a checkout; once installed, point `agent_cmd` at the built entry point:
 
 ```toml
 agent_cmd = "/path/to/pi-acp/dist/index.js --approve --extension-commands"
