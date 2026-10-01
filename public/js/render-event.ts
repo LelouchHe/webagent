@@ -498,6 +498,7 @@ function buildToolCall(data: Record<string, unknown>): HTMLElement {
       el.appendChild(details);
     }
   }
+  applyToolCallSource(el, tc.code);
   const detail = el.querySelector(".tc-detail");
   if (detail) {
     el.addEventListener("click", (e) => {
@@ -506,6 +507,19 @@ function buildToolCall(data: Record<string, unknown>): HTMLElement {
     });
   }
   return el;
+}
+
+function applyToolCallSource(el: HTMLElement, code: string | undefined): void {
+  if (code === undefined) return;
+  let details = el.querySelector<HTMLDetailsElement>("details.tc-source");
+  if (!details) {
+    details = document.createElement("details");
+    details.className = "tc-source";
+    details.innerHTML = "<summary>code</summary><pre></pre>";
+    el.appendChild(details);
+  }
+  const body = details.querySelector("pre");
+  if (body) body.textContent = code;
 }
 
 const RAW_OUTPUT_MAX_DEPTH = 6;
@@ -675,6 +689,15 @@ function applyToolCallUpdate(
     }
   }
   if (Object.hasOwn(data, "rawOutput")) applyRawOutput(el, data.rawOutput);
+  // Inputs can arrive after output, including a structured diff after source.
+  // Move existing nodes without rebuilding them so disclosure state survives.
+  const source = el.querySelector<HTMLDetailsElement>("details.tc-source");
+  if (source) {
+    const output = el.querySelector(".tc-output, details.tc-raw-output");
+    el.insertBefore(source, output);
+    const diff = el.querySelector<HTMLDetailsElement>("details.tc-diff");
+    if (diff) el.insertBefore(diff, source);
+  }
   // A raw-only update may arrive before a later content-only update. Re-home
   // the existing inspector after every patch so standard output stays first.
   const raw = el.querySelector<HTMLDetailsElement>("details.tc-raw-output");
@@ -705,6 +728,7 @@ function applyToolCallMetadata(
       ? (el.dataset.initialTitle ?? tc.title)
       : tc.title;
   }
+  applyToolCallSource(el, tc.code);
   if (!tc.detail) return;
 
   let detail = el.querySelector<HTMLElement>(".tc-detail");

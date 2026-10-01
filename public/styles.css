@@ -513,6 +513,23 @@ body {
   color: var(--text);
 }
 
+/* Source disclosure for tool inputs with code */
+.tool-call .tc-source pre {
+  margin: 4px 0 4px 16px;
+  padding: 6px 10px;
+  background: var(--code-bg);
+  border-radius: var(--radius);
+  font-size: 13px;
+  font-family: monospace;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 300px;
+  overflow-y: auto;
+  line-height: 1.4;
+  color: var(--text);
+  cursor: default;
+}
+
 /* Diff view for edit tool calls */
 .diff-view {
   margin: 4px 0 4px 16px;

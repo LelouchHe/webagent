@@ -519,7 +519,7 @@ Both `replayEvent()` and `handleEvent()` call the same interpreter functions, el
 
 | Function                                           | Input                         | Output                                                        |
 | -------------------------------------------------- | ----------------------------- | ------------------------------------------------------------- |
-| `interpretToolCall(kind, title, rawInput)`         | Tool call fields              | `{ icon, title, detail?, detailPrefix?, showDiff }`           |
+| `interpretToolCall(kind, title, rawInput)`         | Tool call fields              | `{ icon, title, detail?, detailPrefix?, code?, showDiff }`           |
 | `extractToolCallContent(content)`                  | ACP content array (3 formats) | Plain text string                                             |
 | `getStatusIcon(status)`                            | Status string                 | `{ icon, className }`                                         |
 | `classifyPermissionOption(kind)`                   | Option kind string            | `{ cssClass: 'allow'\|'deny', apiAction: 'resolve'\|'deny' }` |
@@ -691,7 +691,9 @@ Each tool call gets a `<div id="tc-{id}" class="tool-call">` with an icon derive
 - Completed: ✓
 - Failed: ✗
 
-Edit tool calls render a diff view via `parseDiff()` (structured data) → `renderPatchDiff()` (HTML). Command tool calls show the command string.
+Edit tool calls render a diff view via `parseDiff()` (structured data) → `renderPatchDiff()` (HTML). Command tool calls show the command string, taking precedence over a path detail.
+
+A non-empty string in `rawInput.code` adds an independent, collapsed-by-default `<details class="tc-source">` labeled `code`, regardless of tool title or kind. Its `<pre>` receives the exact source via `textContent`, preserving multiline input without interpreting HTML. Source can arrive in the initial call or a later metadata update; updates reuse the disclosure and preserve its open state. Missing or invalid code does not remove existing source. Tool-call blocks are ordered label/detail → diff → source → output → raw, including when source or diff arrives after output. The app and share viewer use the same renderer.
 
 ### Status Bar
 

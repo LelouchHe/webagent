@@ -67,6 +67,7 @@ export type RawInput =
   | {
       path?: string;
       command?: string;
+      code?: string;
       old_str?: string | null;
       new_str?: string | null;
       file_text?: string | null;
@@ -356,6 +357,7 @@ export interface ToolCallView {
   title: string;
   detail?: string;
   detailPrefix?: string;
+  code?: string;
   showDiff: boolean;
 }
 

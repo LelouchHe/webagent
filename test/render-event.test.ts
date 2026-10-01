@@ -653,6 +653,144 @@ describe("render-event", () => {
     });
   });
 
+  describe("tool-call source", () => {
+    const code =
+      "let sum = 0;\nfor (const n of [1, 2]) {\n  sum += n;\n}\ntext(sum);";
+
+    function build(rawInput: Record<string, unknown> = {}) {
+      return append(
+        mod.renderContentEvent(
+          "tool_call",
+          { id: "source", kind: "read", title: "Inspect data", rawInput },
+          makeHooks(),
+        ),
+      )!;
+    }
+
+    function update(tool: HTMLElement, data: Record<string, unknown>) {
+      mod.renderContentEvent(
+        "tool_call_update",
+        { id: "source", ...data },
+        makeHooks({ findToolCallEl: () => tool }),
+      );
+    }
+
+    function source(tool: HTMLElement) {
+      const nodes =
+        tool.querySelectorAll<HTMLDetailsElement>("details.tc-source");
+      assert.equal(nodes.length, 1, "exactly one source node must exist");
+      return nodes[0];
+    }
+
+    it("renders initial multiline code in one collapsed source disclosure", () => {
+      const tool = build({ code });
+      const details = source(tool);
+      assert.equal(details.open, false);
+      assert.equal(details.querySelector("summary")?.textContent, "code");
+      assert.equal(details.querySelector("pre")?.textContent, code);
+      assert.equal(tool.querySelector(".tc-detail"), null);
+    });
+
+    it("creates source when code arrives only on a tool_call_update", () => {
+      const tool = build();
+      assert.equal(tool.querySelector(".tc-source"), null);
+      update(tool, { rawInput: { code } });
+      assert.equal(source(tool).querySelector("pre")?.textContent, code);
+    });
+
+    it("reuses source across successive code updates and preserves open state", () => {
+      const tool = build();
+      update(tool, { rawInput: { code: "text(1);" } });
+      const details = source(tool);
+      details.open = true;
+      update(tool, { rawInput: { code } });
+      assert.equal(source(tool), details);
+      assert.equal(details.querySelector("pre")?.textContent, code);
+      assert.equal(details.open, true);
+    });
+
+    it("preserves source across content-only, status-only, and omitted-code input updates", () => {
+      const tool = build({ code });
+      const details = source(tool);
+      details.open = true;
+      // The seq-6-shaped content-only patch has no rawInput.
+      update(tool, {
+        content: [{ type: "content", content: { type: "text", text: "3" } }],
+      });
+      update(tool, { status: "completed" });
+      assert.ok(tool.classList.contains("completed"));
+      update(tool, { rawInput: {} });
+      assert.equal(source(tool), details);
+      assert.equal(details.querySelector("pre")?.textContent, code);
+      assert.equal(details.open, true);
+      assert.equal(
+        tool.querySelector(".tc-output .tc-content")?.textContent,
+        "3",
+      );
+    });
+
+    it("keeps late source before output and raw with diff and detail in separate bodies", async () => {
+      const tool = build({ command: "pwd", path: "ignored.ts" });
+      update(tool, { rawOutput: { result: "RAW" } });
+      update(tool, {
+        content: [{ type: "content", content: { type: "text", text: "OUT" } }],
+      });
+      update(tool, { rawInput: { code } });
+      const details = source(tool);
+      assert.deepEqual(
+        [...tool.querySelectorAll("details")].map((node) => node.className),
+        ["tc-source", "tc-output", "tc-raw-output"],
+      );
+      // A diff arriving after both source and output must still lead them.
+      update(tool, {
+        content: [
+          {
+            type: "diff",
+            path: "example.ts",
+            oldText: "old\n",
+            newText: "new\n",
+          },
+        ],
+      });
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      assert.equal(source(tool), details);
+      assert.equal(tool.querySelector(".tc-detail")?.textContent, "$ pwd");
+      assert.equal(tool.querySelector(".tc-source pre")?.textContent, code);
+      assert.match(tool.querySelector(".diff-view")!.textContent, /-old/);
+      assert.match(tool.querySelector(".diff-view")!.textContent, /\+new/);
+      assert.equal(
+        tool.querySelector(".tc-output .tc-content")?.textContent,
+        "OUT",
+      );
+      assert.deepEqual(
+        JSON.parse(
+          tool.querySelector(".tc-raw-output .tc-content")!.textContent,
+        ),
+        { result: "RAW" },
+      );
+      assert.deepEqual(
+        [...tool.querySelectorAll("details")].map((node) => node.className),
+        ["tc-diff", "tc-source", "tc-output", "tc-raw-output"],
+      );
+      assert.equal(
+        tool.querySelector(".tc-detail")!.nextElementSibling?.className,
+        "tc-diff",
+      );
+    });
+
+    it("renders hostile source literally on both initial and update paths", () => {
+      const hostile =
+        '</pre><img src=x onerror="throw 1"><script>throw 2</script>';
+      const initial = build({ code: hostile });
+      const late = build();
+      update(late, { rawInput: { code: hostile } });
+      for (const tool of [initial, late]) {
+        assert.equal(source(tool).querySelector("pre")?.textContent, hostile);
+        assert.equal(tool.querySelectorAll("img, script, [onerror]").length, 0);
+      }
+    });
+  });
+
   describe("tool_call_update", () => {
     it("keeps the initial tool title when a progressive title duplicates the command", () => {
       const tool = append(

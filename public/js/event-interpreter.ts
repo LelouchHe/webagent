@@ -98,8 +98,12 @@ export function interpretToolCall(
   const icon = TOOL_ICONS[kind] || DEFAULT_TOOL_ICON;
   let detail: string | undefined;
   let detailPrefix: string | undefined;
+  let code: string | undefined;
 
   if (rawInput && typeof rawInput === "object") {
+    if (typeof rawInput.code === "string" && rawInput.code.length > 0) {
+      code = rawInput.code;
+    }
     if (rawInput.command) {
       detail = rawInput.command;
       detailPrefix = "$ ";
@@ -108,7 +112,7 @@ export function interpretToolCall(
     }
   }
 
-  return { icon, title, detail, detailPrefix, showDiff: kind === "edit" };
+  return { icon, title, detail, detailPrefix, code, showDiff: kind === "edit" };
 }
 
 /** Extract display text from a tool_call_update content array. */

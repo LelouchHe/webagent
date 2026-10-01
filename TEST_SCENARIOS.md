@@ -348,7 +348,18 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - file picker and paste handling for both image and non-image files
   - send-time upload + AbortController cancel; file chip swap to anchor on success
 
+- `test/event-interpreter.test.ts`
+  - zero-DOM tool-call extraction: exact multiline `rawInput.code`, independent
+    of title/kind and command/path detail, safe rejection of non-string or empty
+    code, and unchanged command-before-path precedence
+
 - `test/render-event.test.ts`
+  - shared app/share tool-call source disclosure: initially collapsed, exact
+    multiline text on initial and update-only paths, one reused node with open
+    state preserved, source retained across content/status/omitted-code updates,
+    stable diff → source → output → raw ordering even with late inputs, and
+    hostile source rendered literally without injected elements
+  - native `<details>` keyboard toggling is unverified (no browser E2E coverage)
   - chat bubble attachment DOM shape: `<img class=user-image>` for a decodable
     image, `<a class=user-file download>` link, `[kind: name]` marker only when
     `path` is missing, thumbnail max-size variables, no upscaling

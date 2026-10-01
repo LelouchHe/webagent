@@ -144,6 +144,52 @@ describe("interpretToolCall", () => {
     assert.equal(result.detailPrefix, "$ ");
   });
 
+  it("extracts exact multiline code without tool title or kind gating", () => {
+    const code =
+      "let sum = 0;\nfor (const n of [1, 2]) {\n  sum += n;\n}\ntext(sum);";
+    const result = interpretToolCall("read", "Inspect data", { code });
+    assert.equal(result.code, code);
+    assert.equal(result.detail, undefined);
+    assert.equal(result.showDiff, false);
+  });
+
+  it("keeps code independent of command and path with legacy detail precedence", () => {
+    const code = "text(1);\ntext(2);";
+    const command = interpretToolCall("execute", "Run", {
+      code,
+      command: "npm test",
+      path: "/tmp",
+    });
+    assert.equal(command.code, code);
+    assert.equal(command.detail, "npm test");
+    assert.equal(command.detailPrefix, "$ ");
+    const path = interpretToolCall("read", "Read", { code, path: "foo.ts" });
+    assert.equal(path.code, code);
+    assert.equal(path.detail, "foo.ts");
+    assert.equal(path.detailPrefix, undefined);
+    const emptyCommand = interpretToolCall("read", "Read", {
+      code,
+      command: "",
+      path: "foo.ts",
+    });
+    assert.equal(emptyCommand.detail, "foo.ts");
+  });
+
+  for (const code of [200, {}, null, "", true]) {
+    it(`ignores invalid or empty code ${JSON.stringify(code)} safely`, () => {
+      // ACP payloads can violate the static RawInput type at runtime.
+      const rawInput = {
+        code,
+        command: "pwd",
+        path: "/tmp",
+      } as unknown as Parameters<typeof interpretToolCall>[2];
+      const result = interpretToolCall("execute", "Run", rawInput);
+      assert.equal(result.code, undefined);
+      assert.equal(result.detail, "pwd");
+      assert.equal(result.detailPrefix, "$ ");
+    });
+  }
+
   it("sets showDiff for edit kind", () => {
     const result = interpretToolCall("edit", "Edit file", { path: "foo.ts" });
     assert.equal(result.showDiff, true);
