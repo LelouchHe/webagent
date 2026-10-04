@@ -294,6 +294,7 @@ export class Store {
       this.assertSupportedSchema();
       this.initializeSchema();
       migrateTimestampsToMillis(this.db);
+      this.migrateAgentSessionUniqueness();
       this.dropLegacyColumns();
       this.migrateSystemMessagePayloads();
     } catch (error) {
@@ -464,8 +465,8 @@ export class Store {
         created_at INTEGER NOT NULL DEFAULT 0,
         PRIMARY KEY (agent_key, agent_session_id)
       );
-      CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_sessions_task
-        ON agent_sessions(task_id)
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_sessions_agent_task
+        ON agent_sessions(agent_key, task_id)
         WHERE task_id IS NOT NULL;
       CREATE TABLE IF NOT EXISTS events (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -670,8 +671,25 @@ export class Store {
     `);
   }
 
-  /** Normalize the pre-title system_message payload in place. This is
-   * idempotent and runs before any event can be replayed or returned. */
+  /**
+   * One binding per (agent, task) instead of one per task: the reserved Root
+   * record must be able to hold a binding for each configured backend, and
+   * switching back to a previous agent must restore that agent's binding and
+   * sessions. Existing databases carry the old task-only unique index; drop it
+   * and create the per-agent one in place. No rows are deleted.
+   */
+  private migrateAgentSessionUniqueness(): void {
+    const legacy = this.db
+      .prepare(
+        "SELECT 1 AS present FROM sqlite_master WHERE type = 'index' AND name = 'idx_agent_sessions_task'",
+      )
+      .get() as { present: number } | undefined;
+    if (legacy) this.db.exec("DROP INDEX idx_agent_sessions_task");
+    this.db.exec(
+      "CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_sessions_agent_task ON agent_sessions(agent_key, task_id) WHERE task_id IS NOT NULL",
+    );
+  }
+
   /**
    * One-shot migrations for columns the current code no longer uses, so every
    * database — fresh or upgraded — ends up with the same shape.
@@ -689,6 +707,8 @@ export class Store {
     }
   }
 
+  /** Normalize the pre-title system_message payload in place. This is
+   * idempotent and runs before any event can be replayed or returned. */
   private migrateSystemMessagePayloads(): void {
     const rows = this.db
       .prepare("SELECT id, data FROM events WHERE type = 'system_message'")

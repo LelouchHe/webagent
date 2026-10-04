@@ -85,6 +85,95 @@ describe("Store", () => {
       assert.equal(store.getTask("web-b"), undefined);
     });
 
+    it("binds the reserved Root record for a second agent and keeps the first binding", () => {
+      store.createTask("root", "/tmp/root", "root", "session-a");
+      store.close();
+
+      // Agent B starts while agent A's Root binding is still present. Before
+      // the per-agent unique index, bindAgentSession inserted a second row for
+      // the same task_id and the task-only unique index rejected it.
+      const other = new Store(tmpDir, "other-agent");
+      other.bindAgentSession("root", "session-b");
+      assert.equal(other.getAgentSessionId("root"), "session-b");
+      assert.equal(other.getTask("root")?.id, "root");
+      other.close();
+
+      // Agent A's binding survived the switch.
+      store = new Store(tmpDir, "test-agent");
+      assert.equal(store.getAgentSessionId("root"), "session-a");
+      assert.equal(store.getTask("root")?.id, "root");
+
+      const rows = store["db"]
+        .prepare(
+          "SELECT agent_key, agent_session_id FROM agent_sessions WHERE task_id = 'root' ORDER BY agent_key",
+        )
+        .all() as Array<{ agent_key: string; agent_session_id: string }>;
+      assert.deepEqual(rows, [
+        { agent_key: "other-agent", agent_session_id: "session-b" },
+        { agent_key: "test-agent", agent_session_id: "session-a" },
+      ]);
+    });
+
+    it("keeps agent-scoped visibility when both Root bindings coexist", () => {
+      store.createTask("root", "/tmp/root", "root", "session-a");
+      store.createTask("web-a", "/a", "auto", "agent-a");
+      store.close();
+
+      const other = new Store(tmpDir, "other-agent");
+      other.bindAgentSession("root", "session-b");
+      other.createTask("web-b", "/b", "auto", "agent-b");
+
+      assert.deepEqual(
+        other
+          .listTasks()
+          .map((task) => task.id)
+          .sort(),
+        ["root", "web-b"],
+      );
+      assert.equal(other.getTask("web-a"), undefined);
+      other.close();
+
+      store = new Store(tmpDir, "test-agent");
+      assert.deepEqual(
+        store
+          .listTasks()
+          .map((task) => task.id)
+          .sort(),
+        ["root", "web-a"],
+      );
+      assert.equal(store.getTask("web-b"), undefined);
+    });
+
+    it("migrates the legacy task-only unique index so a second agent can bind Root", () => {
+      store.createTask("root", "/tmp/root", "root", "session-a");
+      // Simulate the pre-fix schema: one binding per task across all agents.
+      store["db"].exec("DROP INDEX idx_agent_sessions_agent_task");
+      store["db"].exec(
+        "CREATE UNIQUE INDEX idx_agent_sessions_task ON agent_sessions(task_id) WHERE task_id IS NOT NULL",
+      );
+      store.close();
+
+      // The constructor must drop the legacy index and create the per-agent
+      // one; binding a second agent otherwise fails with
+      // `UNIQUE constraint failed: agent_sessions.task_id`.
+      const other = new Store(tmpDir, "other-agent");
+      other.bindAgentSession("root", "session-b");
+      assert.equal(other.getAgentSessionId("root"), "session-b");
+      const indexes = other["db"]
+        .prepare(
+          "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'agent_sessions'",
+        )
+        .all() as Array<{ name: string }>;
+      assert.deepEqual(indexes.map((row) => row.name).sort(), [
+        "idx_agent_sessions_agent_task",
+        "sqlite_autoindex_agent_sessions_1",
+      ]);
+      other.close();
+
+      store = new Store(tmpDir, "test-agent");
+      assert.equal(store.getAgentSessionId("root"), "session-a");
+    });
+
     it("creates and retrieves a task", () => {
       const task = store.createTask("sess-1", "/tmp/cwd");
       assert.equal(task.id, "sess-1");

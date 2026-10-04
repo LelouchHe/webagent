@@ -93,6 +93,9 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - config persistence
   - title persistence
   - unix-millisecond `last_active_at` for stable ordering
+  - per-agent `agent_sessions` uniqueness: binding the reserved Root record for a second agent succeeds and the first agent's binding survives
+  - agent-scoped task visibility is preserved when both Root bindings coexist
+  - the legacy task-only unique index is replaced in place on open, so a second agent can bind Root without a constraint error
   - deleteEmptyTasks age gating
   - hasInterruptedTurn detection
   - migration idempotency

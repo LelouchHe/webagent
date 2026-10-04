@@ -53,7 +53,7 @@ const REBUILT_INDEXES = [
   "idx_events_task",
   "idx_events_type",
   "idx_tasks_parent_title_live",
-  "idx_agent_sessions_task",
+  "idx_agent_sessions_agent_task",
   "idx_attachments_task",
   "idx_shares_task",
   "shares_one_active_preview",

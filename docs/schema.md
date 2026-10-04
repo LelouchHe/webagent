@@ -90,8 +90,11 @@ configured agent.
 | `task_id` | TEXT REFERENCES `tasks(id)` ON DELETE CASCADE | Current WebAgent Task ID; `NULL` for internal tasks such as title generation. Retired ACP executions (rotated or deleted) have their binding row removed and are explicitly retired via `task/delete`/`task/close` when the agent advertises support |
 | `created_at` | INTEGER NOT NULL DEFAULT 0 | Unix milliseconds |
 
-PK: `(agent_key, agent_session_id)`. A partial unique index ensures a non-null
-WebAgent task belongs to exactly one agent task.
+PK: `(agent_key, agent_session_id)`. A partial unique index on
+`(agent_key, task_id)` ensures a WebAgent task holds at most one current
+binding per agent. A task may therefore carry one binding per configured
+backend; this is what lets the reserved Root record survive an agent switch
+and keeps each backend's sessions and URLs when that backend is active again.
 
 ### `events`
 
@@ -298,7 +301,7 @@ selection, etc.). Single-user model = single owner scope.
 | `idx_shares_task` | `shares` | `(task_id, created_at DESC)` | Owner share-list view |
 | `shares_one_active_preview` | `shares` | `(task_id) WHERE shared_at IS NULL` | At most one preview per task (partial UNIQUE) |
 | `idx_attachments_task` | `attachments` | `(task_id)` | Per-task listing + GC sweep |
-| `idx_agent_sessions_task` | `agent_sessions` | `(task_id) WHERE task_id IS NOT NULL` | One current ACP binding per visible WebAgent Task (partial UNIQUE) |
+| `idx_agent_sessions_agent_task` | `agent_sessions` | `(agent_key, task_id) WHERE task_id IS NOT NULL` | At most one current ACP binding per (agent, visible WebAgent Task) (partial UNIQUE) |
 | `idx_tasks_parent` | `tasks` | `(parent_id)` | Root/child Task relationship and future family queries |
 
 ---
@@ -440,7 +443,12 @@ schema instead of requiring a reset:
 - dropping the retired `tasks.brief` column in place (`0.10` replaced one-step
   child creation with `+<title>` followed by `@<title> <message>`);
 - converting the eight legacy string timestamp columns to INTEGER unix
-  milliseconds (see [Timestamp normalization](#timestamp-normalization)).
+  milliseconds (see [Timestamp normalization](#timestamp-normalization));
+- replacing the task-only `agent_sessions` unique index with one on
+  `(agent_key, task_id)`, so the reserved Root record can hold a binding for
+  each configured backend instead of colliding on the second agent. This drops
+  the old index and creates the new one in place; no rows are deleted, and the
+  existing same-agent rebind (delete-then-insert) semantics are unchanged.
 
 ---
 
