@@ -22,6 +22,11 @@ import { log } from "./log.ts";
 
 const blog = log.scope("bridge");
 
+// A default 50 MiB file attachment can produce a larger agent tool-result
+// message. Keep an explicit finite bound while allowing JSON-escaped text and
+// its ACP envelope through.
+const MAX_ACP_MESSAGE_BYTES = 128 * 1024 * 1024;
+
 export interface AgentSessionIds {
   getAgentSessionId(taskId: string): string | undefined;
   getTaskId(agentSessionId: string): string | undefined;
@@ -143,7 +148,9 @@ export class AgentBridge extends EventEmitter {
     const output = Readable.toWeb(
       this.proc.stdout,
     ) as ReadableStream<Uint8Array>;
-    const stream = acp.ndJsonStream(input, output);
+    const stream = acp.ndJsonStream(input, output, {
+      maxMessageBytes: MAX_ACP_MESSAGE_BYTES,
+    });
 
     const client: acp.Client = {
       requestPermission: async (params: acp.RequestPermissionRequest) =>
