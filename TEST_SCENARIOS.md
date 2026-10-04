@@ -1,6 +1,6 @@
 # Test Scenarios
 
-Last updated: 2026-09-19
+Last updated: 2026-10-03
 
 This file is a scenario-level map of the current automated test suite.
 It is intentionally higher-level than raw test names so we can review coverage,
@@ -585,7 +585,10 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - SSE reconnect restores the active task without duplicate replay
 
 - `server-restart-recovery.spec.ts`
-  - full server restart restores task context and history
+  - full server restart restores task context and history through a load-only agent
+  - a resume-only agent (advertises `session.resume`, not `loadSession`) is
+    restored through `session/resume` with no `session/load`; the transcript is
+    rebuilt from local history and the task stays usable afterwards
 
 - `expired-task-recovery.spec.ts`
   - expired hash task falls back to a new task with a warning
