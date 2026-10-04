@@ -103,3 +103,18 @@ Publishing uses the `v*` tag workflow documented in
   reload. The probe's liveness guard fails open on purpose; fixing this means
   clearing only after a successful create, or restoring the previous task on
   failure.
+- A soft-deleted task's active share can never be revoked: the share route
+  requires `ownsTask`, but soft delete removes the binding, so the tombstone is
+  never reaped. Pre-existing; surfaced while adding per-agent Root.
+- The frontend installs the Root authority from `connected`/`task_created` with
+  the default generation, so a queued `replayQueue` event carried across a
+  generation boundary could install the previous connection's Root. Live SSE is
+  guarded by `gen !== streamGen` and any current-connection payload overwrites it.
+- `MAX_ACP_MESSAGE_BYTES` is a hardcoded 128 MiB inbound cap, not derived from
+  configured limits, so raising `file_upload` above ~120 MiB still hits it.
+- `ClientSideConnection`/`AgentSideConnection` are `@deprecated` in ACP SDK
+  1.7.0 in favour of the `client()`/`agent()` app API; that migration is deferred.
+- Restore rejections other than `-32002` (for example `-32601`, or a cwd
+  mismatch) surface raw with no `/new` hint and no `load` fallback.
+- Trip-wire: if a future SDK moves `loadSession` under `sessionCapabilities`,
+  the capability read in `src/bridge.ts` must be revisited.
