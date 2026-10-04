@@ -436,6 +436,7 @@ describe("Operations REST API", () => {
       assert.equal(res.status, 200);
       const body = JSON.parse(res.body);
       assert.ok(Array.isArray(body.configOptions));
+      assert.equal(body.rootTaskId, store.rootTaskId);
       assert.equal(body.cancelTimeout, 10000);
     });
 
@@ -444,6 +445,7 @@ describe("Operations REST API", () => {
       assert.equal(res.status, 200);
       const body = JSON.parse(res.body);
       assert.deepEqual(body.configOptions, []);
+      assert.equal(body.rootTaskId, store.rootTaskId);
     });
   });
 });

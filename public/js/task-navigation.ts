@@ -58,6 +58,7 @@ export async function switchToTask(taskId: string): Promise<NavigationResult> {
     if (!isCurrentNavigation()) return "ignored";
     handleEvent({
       type: "task_created",
+      rootTaskId: task.rootTaskId,
       taskId: task.id,
       cwd: task.cwd,
       cwdDisplay: task.cwdDisplay,

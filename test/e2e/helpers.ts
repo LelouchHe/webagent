@@ -20,10 +20,25 @@ export async function gotoConnected(page: Page, path = "/"): Promise<void> {
   await expect(page.locator("#input")).toBeEnabled();
 }
 
+const rootTaskIds = new WeakMap<Page, Promise<string>>();
+
 export async function currentTaskId(page: Page): Promise<string> {
-  // Root is the canonical clean URL and intentionally carries no hash; resolve
-  // the empty hash to the reserved "root" id so callers see a stable identity.
-  return page.evaluate(() => location.hash.slice(1) || "root");
+  const hash = await page.evaluate(() => location.hash.slice(1));
+  if (hash) return hash;
+
+  // Root is the canonical clean URL. Resolve it from backend authority rather
+  // than assuming a literal id so E2E helpers follow per-agent Root identity.
+  let rootTaskId = rootTaskIds.get(page);
+  if (!rootTaskId) {
+    rootTaskId = page.evaluate(async () => {
+      const response = await fetch("/api/v1/config");
+      if (!response.ok) throw new Error("Could not load canonical Root id");
+      const config = (await response.json()) as { rootTaskId: string };
+      return config.rootTaskId;
+    });
+    rootTaskIds.set(page, rootTaskId);
+  }
+  return rootTaskId;
 }
 
 export async function createNewTask(page: Page): Promise<string> {

@@ -22,6 +22,7 @@ import {
   resetTaskUI,
   requestBootstrapTask,
   setHashTaskId,
+  installRootTaskId,
   updateTaskInfo,
   setConnectionStatus,
   clearCancelTimer,
@@ -109,6 +110,8 @@ setCreatedTaskActivator((task) => {
   if (typeof task.id !== "string") return;
   handleEvent({
     type: "task_created",
+    rootTaskId:
+      typeof task.rootTaskId === "string" ? task.rootTaskId : undefined,
     taskId: task.id,
     cwd: typeof task.cwd === "string" ? task.cwd : undefined,
     cwdDisplay:
@@ -166,10 +169,16 @@ async function fallbackToNextTaskImpl(
   expiredId: string | null,
   preferredTaskId?: string | null,
 ): Promise<void> {
+  if (expiredId === "root" || expiredId?.startsWith("root-")) {
+    addSystem(`err: Task not found (${expiredId})`);
+    return;
+  }
   state.taskSwitchGen++;
   const gen = state.taskSwitchGen;
   try {
-    const tasks = (await api.listTasks()) as Array<{ id: string }>;
+    const catalog = await api.listTasks();
+    installRootTaskId(catalog.rootTaskId);
+    const tasks = catalog.tasks;
     if (gen !== state.taskSwitchGen) return;
     const next =
       (preferredTaskId
@@ -192,6 +201,7 @@ async function fallbackToNextTaskImpl(
       if (!hydrated) throw new Error("Failed to hydrate fallback task");
       handleEvent({
         type: "task_created",
+        rootTaskId: task.rootTaskId,
         taskId: task.id,
         cwd: task.cwd,
         cwdDisplay: task.cwdDisplay,
@@ -1833,6 +1843,9 @@ export function drainNavigationEvents(taskId: string): void {
 
 // eslint-disable-next-line complexity -- TODO: refactor event type switch with helper functions
 export function handleEvent(msg: AgentEvent) {
+  if (msg.type === "connected" || msg.type === "task_created") {
+    installRootTaskId(msg.rootTaskId);
+  }
   if (msg.type === "inbox_count_changed") {
     updateInboxCount(msg.pendingCount);
     return;

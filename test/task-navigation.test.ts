@@ -99,6 +99,45 @@ describe("shared task navigation", () => {
     assert.equal(location.hash, "#message-task");
   });
 
+  it("writes the requested hash before detail fetch and defers Root normalization until authority arrives", async () => {
+    const rootId = "root-derived-canonical";
+    const observations: string[] = [];
+    globalThis.fetch = (async (url: string) => {
+      fetchCalls.push({ url });
+      const response = (body: unknown) => ({
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify(body),
+        json: async () => body,
+      });
+      if (url === `/api/v1/tasks/${rootId}`) {
+        observations.push(location.hash);
+        return response({
+          id: rootId,
+          rootTaskId: rootId,
+          cwd: "/tmp",
+          title: "root",
+          configOptions: [],
+        });
+      }
+      if (url.startsWith(`/api/v1/tasks/${rootId}/events`))
+        return response({ events: [], streaming: {} });
+      if (url === `/api/v1/tasks/${rootId}/snapshot`)
+        return response({
+          version: 1,
+          seq: 0,
+          task: {},
+          runtime: { busy: null },
+        });
+      throw new Error(`Unexpected fetch: ${url}`);
+    }) as typeof fetch;
+
+    assert.equal(await navigation.switchToTask(rootId), "switched");
+    assert.deepEqual(observations, [`#${rootId}`]);
+    assert.equal(state.rootTaskId, rootId);
+    assert.equal(location.hash, "");
+  });
+
   it("routes a task target directly without consuming a message", async () => {
     const result = await navigation.navigateFromNotification({
       taskId: "message-task",

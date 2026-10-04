@@ -8,7 +8,7 @@ import { tmpdir } from "node:os";
 import { Store } from "../src/store.ts";
 import { createRequestHandler } from "../src/routes.ts";
 import { AuthStore } from "../src/auth-store.ts";
-import { signAttachmentUrl } from "../src/auth.ts";
+import { signAttachmentUrl, verifyAttachmentSig } from "../src/auth.ts";
 
 interface Resp {
   status: number;
@@ -163,6 +163,46 @@ describe("image signed URLs", () => {
     // No Authorization — must succeed because sig+exp are present
     const r = await req(port, "GET", url);
     assert.equal(r.status, 200);
+  });
+
+  it("re-signs owner Root history against the derived task attachment path", async () => {
+    const rootId = store.ensureRootTask(tmpDir).id;
+    store.bindAgentSession(rootId, "root-agent-session");
+    const oldPath = `/api/v1/tasks/${rootId}/attachments/history.png`;
+    store.saveEvent(
+      rootId,
+      "assistant_message",
+      { text: "historical image", imageUrl: `${oldPath}?exp=1&sig=deadbeef` },
+      { from_ref: "agent" },
+    );
+
+    const response = await req(port, "GET", `/api/v1/tasks/${rootId}/events`, {
+      Authorization: `Bearer ${token}`,
+    });
+    assert.equal(response.status, 200);
+    const payload = JSON.parse(response.body) as {
+      events: Array<{ data: string }>;
+    };
+    const eventData = JSON.parse(payload.events.at(-1)!.data) as {
+      imageUrl: string;
+    };
+    assert.match(
+      eventData.imageUrl,
+      new RegExp(
+        `/api/v1/tasks/${rootId}/attachments/history\\.png\\?exp=\\d+&sig=[a-f0-9]+`,
+      ),
+    );
+    assert.equal(eventData.imageUrl.includes("/api/v1/tasks/root/"), false);
+    const parsed = new URL(eventData.imageUrl, "http://localhost");
+    assert.equal(
+      verifyAttachmentSig(
+        parsed.pathname,
+        parsed.searchParams.get("exp") ?? "",
+        parsed.searchParams.get("sig") ?? "",
+        attachmentSecret,
+      ),
+      true,
+    );
   });
 
   it("GET image without sig returns 401", async () => {

@@ -78,6 +78,9 @@ export const state = {
   eventSource: null as EventSource | null,
   clientId: null as string | null,
   taskId: null as string | null,
+  // Canonical Root identity is backend authority, refreshed by list/detail/SSE
+  // responses and retained across per-task UI resets.
+  rootTaskId: null as string | null,
   // Monotonic counter incremented by user-initiated task switches (notification
   // click, /switch). initTask() captures the value before async work and bails
   // out if it changed, preventing stale reconnects from overriding deliberate switches.
@@ -914,8 +917,14 @@ export function getHashTaskId(): string | null {
   return h || null;
 }
 
+export function installRootTaskId(rootTaskId: unknown): void {
+  if (typeof rootTaskId === "string" && rootTaskId.length > 0) {
+    state.rootTaskId = rootTaskId;
+  }
+}
+
 export function setHashTaskId(id: string) {
-  if (id === "root") {
+  if (state.rootTaskId !== null && id === state.rootTaskId) {
     const url = new URL(location.href);
     url.hash = "";
     history.replaceState(null, "", `${url.pathname}${url.search}`);

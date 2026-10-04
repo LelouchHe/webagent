@@ -1,7 +1,11 @@
 // REST API client for all server communication.
 // Replaces WebSocket message sends with typed fetch calls.
 
-import type { TaskDetail, TaskSummary } from "../../src/types.ts";
+import type {
+  ConfigOption,
+  TaskDetail,
+  TaskListResponse,
+} from "../../src/types.ts";
 
 export class ApiError extends Error {
   name = "ApiError";
@@ -199,8 +203,15 @@ export function sendCollaborationMessage(
   );
 }
 
-export function listTasks(): Promise<TaskSummary[]> {
+export function listTasks(): Promise<TaskListResponse> {
   return request("/api/v1/tasks");
+}
+
+export function getConfig(): Promise<{
+  rootTaskId: string;
+  configOptions: ConfigOption[];
+}> {
+  return request("/api/v1/config");
 }
 
 export function getTask(id: string): Promise<TaskDetail> {

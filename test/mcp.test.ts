@@ -439,6 +439,11 @@ describe("createMcpEndpoint", () => {
       false,
       "task_update must not expose a correlation parameter",
     );
+    assert.equal(
+      toolHasProperty(tools, "task_create", "id"),
+      false,
+      "MCP callers cannot choose task ids",
+    );
     assert.match(toolDescription(tools, "task_query"), /flat event index/);
     assert.match(toolDescription(tools, "task_query"), /ASCII case folding/);
     // `task_list` is the cheap triage surface: state fields plus the per-turn

@@ -499,6 +499,9 @@ export function handleAgentEvent(
   _clientRegistry?: ClientRegistry,
 ): void {
   tasks.setRecoveryBridge(bridge);
+  if (event.type === "connected" || event.type === "task_created") {
+    event.rootTaskId = store.rootTaskId;
+  }
   if (isAgentActivityEvent(event) && "taskId" in event && event.taskId) {
     tasks.noteAgentActivity(event.taskId);
   }

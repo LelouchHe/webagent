@@ -161,6 +161,23 @@ describe("Task REST API", () => {
   // --- POST /api/v1/tasks ---
 
   describe("POST /api/v1/tasks", () => {
+    it("does not allow REST clients to choose a reserved task id", async () => {
+      const res = await makeRequest(
+        port,
+        "POST",
+        "/api/v1/tasks",
+        JSON.stringify({ id: "root-client-chosen", cwd: tmpDir }),
+      );
+      assert.equal(res.status, 201);
+      const body = JSON.parse(res.body);
+      assert.match(body.id, /^[0-9a-f-]{36}$/);
+      assert.equal(body.id.startsWith("root-"), false);
+      assert.equal(
+        store.getTaskIncludingDeleted("root-client-chosen"),
+        undefined,
+      );
+    });
+
     it("creates a task with default cwd", async () => {
       const res = await makeRequest(port, "POST", "/api/v1/tasks", "{}");
       assert.equal(res.status, 201);
@@ -186,6 +203,7 @@ describe("Task REST API", () => {
       assert.ok(responses.every((response) => response.status === 200));
       const bodies = responses.map((response) => JSON.parse(response.body));
       assert.equal(new Set(bodies.map((body) => body.id)).size, 1);
+      assert.ok(bodies.every((body) => body.rootTaskId === store.rootTaskId));
       assert.equal(store.listTasks().length, 1);
       assert.equal(
         broadcastEvents.filter((event) => event.type === "task_created").length,
@@ -200,10 +218,13 @@ describe("Task REST API", () => {
 
     it("bootstrap reuses the current-agent task while explicit create does not", async () => {
       const first = await makeRequest(port, "POST", "/api/v1/tasks/bootstrap");
-      const bootstrapId = JSON.parse(first.body).id;
+      const bootstrapBody = JSON.parse(first.body);
+      const bootstrapId = bootstrapBody.id;
+      assert.equal(bootstrapBody.rootTaskId, store.rootTaskId);
 
       const second = await makeRequest(port, "POST", "/api/v1/tasks/bootstrap");
       assert.equal(JSON.parse(second.body).id, bootstrapId);
+      assert.equal(JSON.parse(second.body).rootTaskId, store.rootTaskId);
 
       const explicit = await makeRequest(port, "POST", "/api/v1/tasks", "{}");
       assert.notEqual(JSON.parse(explicit.body).id, bootstrapId);
@@ -418,19 +439,19 @@ describe("Task REST API", () => {
     });
 
     it("creates a child task under an existing Root", async () => {
-      store.ensureRootTask(tmpDir);
+      const rootId = store.ensureRootTask(tmpDir).id;
 
       const res = await makeRequest(
         port,
         "POST",
         "/api/v1/tasks",
-        JSON.stringify({ parentId: "root" }),
+        JSON.stringify({ parentId: rootId }),
       );
 
       assert.equal(res.status, 201);
       const body = JSON.parse(res.body);
-      assert.equal(store.getTask(body.id)?.parent_id, "root");
-      assert.equal(body.parentId, "root");
+      assert.equal(store.getTask(body.id)?.parent_id, rootId);
+      assert.equal(body.parentId, rootId);
     });
 
     it("rejects an unknown parent task with 400", async () => {
@@ -523,6 +544,7 @@ describe("Task REST API", () => {
       await makeRequest(port, "POST", "/api/v1/tasks", "{}");
       const created = broadcastEvents.find((e) => e.type === "task_created");
       assert.ok(created, "should broadcast task_created");
+      assert.equal(created.rootTaskId, store.rootTaskId);
     });
 
     it("returns 400 for invalid JSON", async () => {
@@ -587,6 +609,10 @@ describe("Task REST API", () => {
       assert.equal(res.status, 200);
       const body = JSON.parse(res.body);
       assert.equal(body.id, "s1");
+      const created = broadcastEvents.find(
+        (event) => event.type === "task_created",
+      );
+      assert.equal(created?.rootTaskId, store.rootTaskId);
       assert.equal(store.listTasks().length, 1);
       assert.equal(store.getAgentSessionId("s1"), "mock-task-1");
       assert.equal(store.getTaskId("agent-old"), undefined);
@@ -641,8 +667,8 @@ describe("Task REST API", () => {
       assert.equal(pendingSummary.seq, 1);
       const publicList = JSON.parse(
         (await makeRequest(port, "GET", "/api/v1/tasks")).body,
-      ) as Array<Record<string, unknown>>;
-      assert.equal("pending_compact_summary" in publicList[0], false);
+      ) as { tasks: Array<Record<string, unknown>> };
+      assert.equal("pending_compact_summary" in publicList.tasks[0], false);
       assert.equal(store.getAgentSessionId("s1"), "mock-task-1");
       assert.ok(
         broadcastEvents.some(
@@ -650,6 +676,13 @@ describe("Task REST API", () => {
             event.type === "assistant_message" &&
             event.taskId === "s1" &&
             event.text === "summary of the current work",
+        ),
+      );
+      assert.ok(
+        broadcastEvents.some(
+          (event) =>
+            event.type === "task_created" &&
+            event.rootTaskId === store.rootTaskId,
         ),
       );
       assert.equal(tasks.getBusyKind("s1"), null);
@@ -857,13 +890,16 @@ describe("Task REST API", () => {
       assert.equal(res.status, 200);
       const body = JSON.parse(res.body);
       assert.equal(body.id, id);
+      assert.equal(body.rootTaskId, store.rootTaskId);
       assert.equal(body.cwd, tmpDir);
       assert.ok(Array.isArray(body.configOptions));
     });
 
-    it("returns 404 for unknown task", async () => {
-      const res = await makeRequest(port, "GET", "/api/v1/tasks/nonexistent");
-      assert.equal(res.status, 404);
+    it("returns 404 for unknown, obsolete, and foreign reserved ids", async () => {
+      for (const id of ["nonexistent", "root", "root-foreign-derived-id"]) {
+        const res = await makeRequest(port, "GET", `/api/v1/tasks/${id}`);
+        assert.equal(res.status, 404, `${id} must not alias the current Root`);
+      }
     });
 
     it("returns a task's parent relationship", async () => {
@@ -965,9 +1001,9 @@ describe("Task REST API", () => {
     });
 
     it("broadcasts task_deleted with the requested task parent", async () => {
-      store.ensureRootTask(tmpDir);
-      store.bindAgentSession("root", "agent-root");
-      store.createTask("parent", tmpDir, "auto", "agent-parent", "root");
+      const rootId = store.ensureRootTask(tmpDir).id;
+      store.bindAgentSession(rootId, "agent-root");
+      store.createTask("parent", tmpDir, "auto", "agent-parent", rootId);
       broadcastEvents.length = 0;
 
       const res = await makeRequest(port, "DELETE", "/api/v1/tasks/parent");
@@ -978,11 +1014,11 @@ describe("Task REST API", () => {
       assert.ok(deleted, "should broadcast task_deleted");
       /* eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- narrowing after assert.ok */
       if (deleted?.type === "task_deleted") {
-        assert.equal(deleted.parentId, "root");
+        assert.equal(deleted.parentId, rootId);
       }
       assert.deepEqual(JSON.parse(res.body), {
         taskId: "parent",
-        parentId: "root",
+        parentId: rootId,
         reset: false,
       });
     });
@@ -997,11 +1033,11 @@ describe("Task REST API", () => {
     });
 
     it("resets Root, deletes its descendants, and keeps Root as the anchor", async () => {
-      store.ensureRootTask(tmpDir);
-      store.bindAgentSession("root", "agent-root");
-      store.createTask("child", tmpDir, "auto", "agent-child", "root");
+      const rootId = store.ensureRootTask(tmpDir).id;
+      store.bindAgentSession(rootId, "agent-root");
+      store.createTask("child", tmpDir, "auto", "agent-child", rootId);
       store.saveEvent(
-        "root",
+        rootId,
         "user_message",
         { text: "old root" },
         { from_ref: "user" },
@@ -1015,13 +1051,13 @@ describe("Task REST API", () => {
       tasks.liveTasks.add("child");
       broadcastEvents.length = 0;
 
-      const res = await makeRequest(port, "DELETE", "/api/v1/tasks/root");
+      const res = await makeRequest(port, "DELETE", `/api/v1/tasks/${rootId}`);
 
       assert.equal(res.status, 200);
-      assert.deepEqual(JSON.parse(res.body), { taskId: "root", reset: true });
-      assert.equal(store.getTask("root")?.id, "root");
+      assert.deepEqual(JSON.parse(res.body), { taskId: rootId, reset: true });
+      assert.equal(store.getTask(rootId)?.id, rootId);
       assert.equal(store.getTaskIncludingDeleted("child"), undefined);
-      assert.deepEqual(store.getEvents("root"), []);
+      assert.deepEqual(store.getEvents(rootId), []);
       assert.ok(
         broadcastEvents.some(
           (event) => event.type === "task_deleted" && event.taskId === "child",
@@ -1029,7 +1065,7 @@ describe("Task REST API", () => {
       );
       assert.ok(
         broadcastEvents.some(
-          (event) => event.type === "task_reset" && event.taskId === "root",
+          (event) => event.type === "task_reset" && event.taskId === rootId,
         ),
       );
       assert.ok(mockBridge.retireCalls.includes("agent-root"));
@@ -1278,25 +1314,37 @@ describe("Task REST API", () => {
       );
 
       const allRes = await makeRequest(port, "GET", "/api/v1/tasks");
-      assert.equal(JSON.parse(allRes.body).length, 2);
+      const all = JSON.parse(allRes.body);
+      assert.equal(all.rootTaskId, store.rootTaskId);
+      assert.equal(all.tasks.length, 2);
 
       const userRes = await makeRequest(
         port,
         "GET",
         "/api/v1/tasks?source=user",
       );
-      const userTasks = JSON.parse(userRes.body);
-      assert.equal(userTasks.length, 1);
-      assert.equal(userTasks[0].source, "user");
+      const userResponse = JSON.parse(userRes.body);
+      assert.equal(userResponse.rootTaskId, store.rootTaskId);
+      assert.equal(userResponse.tasks.length, 1);
+      assert.equal(userResponse.tasks[0].source, "user");
 
       const autoRes = await makeRequest(
         port,
         "GET",
         "/api/v1/tasks?source=auto",
       );
-      const autoTasks = JSON.parse(autoRes.body);
-      assert.equal(autoTasks.length, 1);
-      assert.equal(autoTasks[0].source, "auto");
+      const autoResponse = JSON.parse(autoRes.body);
+      assert.equal(autoResponse.rootTaskId, store.rootTaskId);
+      assert.equal(autoResponse.tasks.length, 1);
+      assert.equal(autoResponse.tasks[0].source, "auto");
+    });
+
+    it("returns the canonical Root authority with an empty task list", async () => {
+      const res = await makeRequest(port, "GET", "/api/v1/tasks");
+      assert.deepEqual(JSON.parse(res.body), {
+        rootTaskId: store.rootTaskId,
+        tasks: [],
+      });
     });
 
     it("returns all tasks without source filter", async () => {
@@ -1309,7 +1357,9 @@ describe("Task REST API", () => {
       await makeRequest(port, "POST", "/api/v1/tasks", "{}");
 
       const res = await makeRequest(port, "GET", "/api/v1/tasks");
-      assert.equal(JSON.parse(res.body).length, 2);
+      const body = JSON.parse(res.body);
+      assert.equal(body.rootTaskId, store.rootTaskId);
+      assert.equal(body.tasks.length, 2);
     });
   });
 

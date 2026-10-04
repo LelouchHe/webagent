@@ -10,6 +10,7 @@ import {
   clearCancelTimer,
   hydrateTaskRuntime,
   updateInboxCount,
+  installRootTaskId,
 } from "./state.ts";
 import {
   addSystem,
@@ -240,7 +241,7 @@ async function openStream(gen: number, activeTaskId: string | null) {
   // Load task immediately via REST — parallel with SSE connection. Pass the
   // task that was active when this connection attempt began so a hashless
   // Root reconnect cannot be mistaken for a fresh startup.
-  void initializeTaskAndIntent(activeTaskId);
+  void initializeTaskAndIntent(activeTaskId, gen);
 }
 
 async function recoverAfterHandshake(
@@ -270,9 +271,29 @@ async function recoverAfterHandshake(
 
 async function initializeTaskAndIntent(
   reconnectTaskId: string | null,
+  gen: number,
 ): Promise<void> {
+  const navigationGeneration = state.taskSwitchGen;
+  try {
+    const config = await api.getConfig();
+    if (gen !== streamGen || navigationGeneration !== state.taskSwitchGen) {
+      return;
+    }
+    installRootTaskId(config.rootTaskId);
+  } catch {
+    // Task-list, detail, and connected payloads remain authoritative fallback
+    // sources if config cannot be fetched during reconnect.
+    if (gen !== streamGen || navigationGeneration !== state.taskSwitchGen) {
+      return;
+    }
+  }
   await initTask(reconnectTaskId);
+  if (gen !== streamGen || navigationGeneration !== state.taskSwitchGen) return;
   await processStartupMessageIntent();
+}
+
+function isSameBackendRoot(taskId: string): boolean {
+  return !taskId.startsWith("root-") || taskId === state.rootTaskId;
 }
 
 async function initTask(reconnectTaskId: string | null = null) {
@@ -292,7 +313,12 @@ async function initTask(reconnectTaskId: string | null = null) {
   // A hashless reconnect must keep the task already shown in the browser.
   // Root intentionally has no hash, so this guard must precede hashless
   // recent-task selection.
-  if (!existingId && reconnectTaskId && state.taskId === reconnectTaskId) {
+  if (
+    !existingId &&
+    reconnectTaskId &&
+    state.taskId === reconnectTaskId &&
+    isSameBackendRoot(reconnectTaskId)
+  ) {
     await resumeAndLoad(reconnectTaskId, true, gen);
     if (gen !== state.taskSwitchGen) return;
     scrollToBottom(false);
@@ -314,15 +340,14 @@ async function initTask(reconnectTaskId: string | null = null) {
   // The API list is ordered by last_active_at; Root is only the fallback when
   // there is no user history to restore.
   try {
-    const tasks = (await api.listTasks()) as Array<{
-      id: string;
-      hasUserInput?: boolean;
-    }>;
+    const catalog = await api.listTasks();
+    installRootTaskId(catalog.rootTaskId);
+    const tasks = catalog.tasks;
     if (gen !== state.taskSwitchGen) return;
     if (tasks.length > 0) {
       const initialTask =
         tasks.find((task) => task.hasUserInput) ??
-        tasks.find((task) => task.id === "root") ??
+        tasks.find((task) => task.id === state.rootTaskId) ??
         tasks[0];
       resetTaskUI();
       await resumeAndLoad(initialTask.id, false, gen);
@@ -352,6 +377,7 @@ async function resumeAndLoad(
       if (gen !== state.taskSwitchGen) return;
       handleEvent({
         type: "task_created",
+        rootTaskId: task.rootTaskId,
         taskId: task.id,
         cwd: task.cwd,
         cwdDisplay: task.cwdDisplay,
@@ -409,6 +435,7 @@ async function resumeAndLoad(
     }
     handleEvent({
       type: "task_created",
+      rootTaskId: task.rootTaskId,
       taskId: task.id,
       cwd: task.cwd,
       cwdDisplay: task.cwdDisplay,

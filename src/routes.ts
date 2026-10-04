@@ -4,11 +4,7 @@ import { join, extname, basename } from "node:path";
 import { gzipSync } from "node:zlib";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import busboy from "busboy";
-import {
-  ROOT_TASK_ID,
-  type PendingCompactSummary,
-  type Store,
-} from "./store.ts";
+import { type PendingCompactSummary, type Store } from "./store.ts";
 import type { TaskManager } from "./task-manager.ts";
 import type { SseManager } from "./sse-manager.ts";
 import type { AgentBridge } from "./bridge.ts";
@@ -793,13 +789,16 @@ export function createRequestHandler(
               hasUserInput: Boolean(hasUserInput),
             };
           });
-        res.end(JSON.stringify(publicTasks));
+        res.end(
+          JSON.stringify({ rootTaskId: store.rootTaskId, tasks: publicTasks }),
+        );
         return;
       }
 
       // --- GET /api/v1/config ---
       if (url === "/api/v1/config" && req.method === "GET") {
         json(res, HTTP_STATUS.OK, {
+          rootTaskId: store.rootTaskId,
           configOptions: tasks?.cachedConfigOptions ?? [],
           cancelTimeout: deps.limits.cancel_timeout ?? 0,
           recentPathsLimit: deps.limits.recent_paths ?? 10,
@@ -2014,6 +2013,7 @@ export function createRequestHandler(
               cwdDisplay: abbreviateHomePath(existing.cwd),
               title: existing.title,
               source: existing.source,
+              rootTaskId: store.rootTaskId,
               configOptions: [],
               agentCommands: taskManager.getAgentCommands(existing.id),
               created: false,
@@ -2029,12 +2029,14 @@ export function createRequestHandler(
             cwdDisplay: abbreviateHomePath(task?.cwd ?? deps.dataDir),
             title: task?.title ?? null,
             source: task?.source ?? "auto",
+            rootTaskId: store.rootTaskId,
             configOptions,
             agentCommands: taskManager.getAgentCommands(taskId),
             created: true,
           };
           sseManager.broadcast({
             type: "task_created",
+            rootTaskId: store.rootTaskId,
             taskId,
             cwd: result.cwd,
             cwdDisplay: result.cwdDisplay,
@@ -2190,6 +2192,7 @@ export function createRequestHandler(
             if (!fresh) throw new Error("Task disappeared during compaction");
             sseManager.broadcast({
               type: "task_created",
+              rootTaskId: store.rootTaskId,
               taskId,
               cwd: fresh.cwd,
               cwdDisplay: abbreviateHomePath(fresh.cwd),
@@ -2276,6 +2279,7 @@ export function createRequestHandler(
           const fresh = store.getTask(taskId)!;
           const event = {
             type: "task_created",
+            rootTaskId: store.rootTaskId,
             taskId,
             cwd: fresh.cwd,
             cwdDisplay: abbreviateHomePath(fresh.cwd),
@@ -2400,6 +2404,7 @@ export function createRequestHandler(
             HTTP_STATUS.OK,
             {
               id: freshTask.id,
+              rootTaskId: store.rootTaskId,
               cwd: freshTask.cwd,
               cwdDisplay: abbreviateHomePath(freshTask.cwd),
               title: freshTask.title,
@@ -2448,7 +2453,7 @@ export function createRequestHandler(
             }
           }
           try {
-            if (taskId === ROOT_TASK_ID) {
+            if (taskId === store.rootTaskId) {
               const bridge = getBridge?.();
               if (!tasks || !bridge) {
                 json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
@@ -2461,17 +2466,17 @@ export function createRequestHandler(
                 sseManager.broadcast({
                   type: "task_deleted",
                   taskId: entry.id,
-                  parentId: ROOT_TASK_ID,
+                  parentId: store.rootTaskId,
                   ...(clientOpId ? { clientOpId } : {}),
                 });
               }
               sseManager.broadcast({
                 type: "task_reset",
-                taskId: ROOT_TASK_ID,
+                taskId: store.rootTaskId,
                 ...(clientOpId ? { clientOpId } : {}),
               });
               json(res, HTTP_STATUS.OK, {
-                taskId: ROOT_TASK_ID,
+                taskId: store.rootTaskId,
                 reset: true,
                 ...(clientOpId ? { clientOpId } : {}),
               });
@@ -2586,6 +2591,7 @@ export function createRequestHandler(
           const task = store.getTask(taskId);
           const taskCreatedEvent = {
             type: "task_created",
+            rootTaskId: store.rootTaskId,
             taskId,
             cwd: task?.cwd,
             cwdDisplay: task?.cwd ? abbreviateHomePath(task.cwd) : undefined,
@@ -2639,6 +2645,7 @@ export function createRequestHandler(
           }
           json(res, HTTP_STATUS.CREATED, {
             id: taskId,
+            rootTaskId: store.rootTaskId,
             cwd: task?.cwd ?? body.cwd,
             cwdDisplay: task?.cwd ? abbreviateHomePath(task.cwd) : undefined,
             title: task?.title ?? null,
@@ -2809,6 +2816,7 @@ export function createRequestHandler(
         // Send connected event
         sseManager.sendEvent(client, {
           type: "connected",
+          rootTaskId: store.rootTaskId,
           clientId,
           debugLevel: deps.debugLevel ?? "off",
           pendingCount: store.countUnprocessed(),
@@ -2862,6 +2870,7 @@ export function createRequestHandler(
         // Send connected event
         sseManager.sendEvent(client, {
           type: "connected",
+          rootTaskId: store.rootTaskId,
           clientId,
           debugLevel: deps.debugLevel ?? "off",
           pendingCount: store.countUnprocessed(),
@@ -3311,6 +3320,7 @@ export function createRequestHandler(
 
         sseManager.broadcast({
           type: "task_created",
+          rootTaskId: store.rootTaskId,
           taskId,
           cwd: task?.cwd,
           cwdDisplay: task?.cwd ? abbreviateHomePath(task.cwd) : undefined,

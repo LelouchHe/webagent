@@ -552,12 +552,12 @@ describe("timestamp millis migration", () => {
       .prepare(
         "INSERT INTO tasks (id, cwd, created_at, last_active_at) VALUES (?, ?, ?, ?)",
       )
-      .run("root", "/root", NO_MS, MS);
+      .run("legacy-task", "/legacy", NO_MS, MS);
     legacy
       .prepare(
         "INSERT INTO agent_sessions (agent_key, agent_session_id, task_id, created_at) VALUES (?, ?, ?, ?)",
       )
-      .run(AGENT, "sess-root", "root", NO_MS);
+      .run(AGENT, "sess-legacy", "legacy-task", NO_MS);
     legacy.close();
 
     const store = new Store(dir, AGENT);
@@ -578,15 +578,18 @@ describe("timestamp millis migration", () => {
       "sqlite_autoindex_agent_sessions_1",
     ]);
     const converted = migrated
-      .prepare("SELECT created_at FROM agent_sessions WHERE task_id = 'root'")
+      .prepare(
+        "SELECT created_at FROM agent_sessions WHERE task_id = 'legacy-task'",
+      )
       .get() as { created_at: number };
     assert.equal(converted.created_at, expectedMillis(NO_MS));
     migrated.close();
 
-    // A second agent can bind Root after both migrations have run.
+    // Per-(agent_key, task_id) uniqueness remains in force for ordinary task
+    // ids; reserved Root ids have an additional ownership check in Store.
     const other = new Store(dir, "other-agent");
-    other.bindAgentSession("root", "sess-other");
-    assert.equal(other.getAgentSessionId("root"), "sess-other");
+    other.bindAgentSession("legacy-task", "sess-other");
+    assert.equal(other.getAgentSessionId("legacy-task"), "sess-other");
     other.close();
   });
 

@@ -156,26 +156,40 @@ describe("api module", () => {
     });
   });
 
-  it("listTasks sends GET /api/v1/tasks", async () => {
+  it("listTasks returns task catalog plus canonical Root identity", async () => {
+    const catalog = { rootTaskId: "root-canonical", tasks: [] };
     fetchResponse = {
       status: 200,
       ok: true,
-      json: () => Promise.resolve([]),
-      text: () => Promise.resolve("[]"),
+      json: () => Promise.resolve(catalog),
+      text: () => Promise.resolve(JSON.stringify(catalog)),
     };
-    await api.listTasks();
+    assert.deepEqual(await api.listTasks(), catalog);
     assert.equal(fetchCalls[0].url, "/api/v1/tasks");
     assert.equal(fetchCalls[0].init?.method, undefined); // GET
+  });
+
+  it("gets backend config including Root identity", async () => {
+    const config = { rootTaskId: "root-canonical", configOptions: [] };
+    fetchResponse = {
+      status: 200,
+      ok: true,
+      json: () => Promise.resolve(config),
+      text: () => Promise.resolve(JSON.stringify(config)),
+    };
+    assert.deepEqual(await api.getConfig(), config);
+    assert.equal(fetchCalls[0].url, "/api/v1/config");
   });
 
   it("puts every request under an abort deadline", async () => {
     // A request with no deadline can stay pending forever on a stalled
     // connection, and callers latch state on those promises.
+    const catalog = { rootTaskId: "root-canonical", tasks: [] };
     fetchResponse = {
       status: 200,
       ok: true,
-      json: () => Promise.resolve([]),
-      text: () => Promise.resolve("[]"),
+      json: () => Promise.resolve(catalog),
+      text: () => Promise.resolve(JSON.stringify(catalog)),
     };
     await api.listTasks();
     const signal = fetchCalls[0].init?.signal;

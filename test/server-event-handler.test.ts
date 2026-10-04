@@ -1291,7 +1291,7 @@ describe("handleAgentEvent", () => {
   it("caches config options from task_created", () => {
     store.createTask("s1", "/tmp");
     const { bridge } = createMockBridge();
-    const { sseManager } = createMockSseManager();
+    const { sseManager, broadcasted } = createMockSseManager();
     const configOptions = [
       { id: "model", name: "Model", currentValue: "gpt-4", options: [] },
     ];
@@ -1307,6 +1307,8 @@ describe("handleAgentEvent", () => {
 
     assert.deepEqual(tasks.cachedConfigOptions, configOptions);
     assert.equal(store.getTask("s1")?.model, "gpt-4");
+    const created = broadcasted.find((event) => event.type === "task_created");
+    assert.equal(created?.rootTaskId, store.rootTaskId);
   });
 
   it("skips events for restoring tasks", () => {

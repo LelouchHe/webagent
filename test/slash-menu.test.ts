@@ -8,6 +8,7 @@ describe("slash menu — Tab vs Click behavior", () => {
   let commands: any;
   let slashCommands: any;
   let fetchCalls: Array<{ url: string; init?: any }>;
+  const ROOT_ID = "root-slash-menu-test";
 
   before(async () => {
     setupDOM();
@@ -588,7 +589,10 @@ describe("slash menu — Tab vs Click behavior", () => {
       if (url === "/api/v1/tasks" && !init?.method) {
         return Promise.resolve({
           ok: true,
-          text: () => Promise.resolve('[{"id":"s1"}]'),
+          text: () =>
+            Promise.resolve(
+              JSON.stringify({ rootTaskId: ROOT_ID, tasks: [{ id: "s1" }] }),
+            ),
         });
       }
       if (url.startsWith("/api/v1/files/info?")) {
@@ -656,7 +660,10 @@ describe("slash menu — Tab vs Click behavior", () => {
     globalThis.fetch = (async (url: string, init?: any) => {
       fetchCalls.push({ url, init });
       if (url === "/api/v1/tasks" && !init?.method) {
-        return new Response('[{"id":"A"}]', { status: 200 });
+        return new Response(
+          JSON.stringify({ rootTaskId: ROOT_ID, tasks: [{ id: "A" }] }),
+          { status: 200 },
+        );
       }
       if (url.startsWith("/api/v1/files/info?")) {
         await infoGate;
@@ -721,7 +728,10 @@ describe("slash menu — Tab vs Click behavior", () => {
       fetchCalls.push({ url, init });
       if (url === "/api/v1/tasks" && !init?.method) {
         // The launching task was deleted while the probe was pending.
-        return new Response("[]", { status: 200 });
+        return new Response(
+          JSON.stringify({ rootTaskId: ROOT_ID, tasks: [] }),
+          { status: 200 },
+        );
       }
       if (url.startsWith("/api/v1/files/info?")) {
         await infoGate;
@@ -801,7 +811,10 @@ describe("slash menu — Tab vs Click behavior", () => {
       if (url === "/api/v1/tasks" && !init?.method) {
         listRequested = true;
         await listGate;
-        return new Response("[]", { status: 200 });
+        return new Response(
+          JSON.stringify({ rootTaskId: ROOT_ID, tasks: [] }),
+          { status: 200 },
+        );
       }
       if (url.startsWith("/api/v1/recent-paths")) {
         return new Response("[]", { status: 200 });
@@ -996,7 +1009,8 @@ describe("slash menu — Tab vs Click behavior", () => {
       if (url === "/api/v1/tasks") {
         return Promise.resolve({
           ok: true,
-          text: () => Promise.resolve(JSON.stringify(tasks)),
+          text: () =>
+            Promise.resolve(JSON.stringify({ rootTaskId: ROOT_ID, tasks })),
         });
       }
       return Promise.resolve({
@@ -1227,7 +1241,7 @@ describe("slash menu — Tab vs Click behavior", () => {
             text: () => Promise.resolve(JSON.stringify(obj)),
           });
         if (url === "/api/v1/tasks" && !init?.method) {
-          return respond([{ id: "s1" }]);
+          return respond({ rootTaskId: ROOT_ID, tasks: [{ id: "s1" }] });
         }
         if (url === "/api/v1/tasks" && init?.method === "POST") {
           return respond({ id: "new-task" });

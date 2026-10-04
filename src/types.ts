@@ -98,6 +98,7 @@ export interface TaskSummary {
 /** Detailed task record returned by GET /api/v1/tasks/:id. */
 export interface TaskDetail {
   id: string;
+  rootTaskId: string;
   cwd: string;
   cwdDisplay?: string;
   title: string | null;
@@ -106,6 +107,12 @@ export interface TaskDetail {
   mode: string | null;
   parentId: string | null;
   configOptions: ConfigOption[];
+}
+
+/** Task catalog returned by GET /api/v1/tasks, including Root authority. */
+export interface TaskListResponse {
+  rootTaskId: string;
+  tasks: TaskSummary[];
 }
 
 /** Stored event row returned by GET /api/v1/tasks/:id/events. */
@@ -144,6 +151,7 @@ export interface AgentCommandSnapshot {
 export type AgentEvent =
   | {
       type: "connected";
+      rootTaskId?: string;
       agent: { name: string; version: string };
       configOptions: ConfigOption[];
       cancelTimeout?: number;
@@ -152,6 +160,7 @@ export type AgentEvent =
     }
   | {
       type: "task_created";
+      rootTaskId?: string;
       taskId: string;
       cwd?: string;
       cwdDisplay?: string;

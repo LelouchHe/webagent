@@ -1,7 +1,7 @@
 import { test, expect } from "playwright/test";
 import { currentTaskId, expectConnectionStatus } from "./helpers.ts";
 
-test("concurrent clients converge on the shared Root task without creating one", async ({
+test("concurrent clients converge on this backend's Root task without creating one", async ({
   context,
   request,
 }) => {
@@ -14,13 +14,12 @@ test("concurrent clients converge on the shared Root task without creating one",
       taskPosts.push(new URL(browserRequest.url()).pathname);
     }
   });
-  const existing = (await (
-    await request.get("/api/v1/tasks")
-  ).json()) as Array<{
-    id: string;
-  }>;
-  for (const task of existing) {
-    if (task.id === "root") continue;
+  const existing = (await (await request.get("/api/v1/tasks")).json()) as {
+    rootTaskId: string;
+    tasks: Array<{ id: string }>;
+  };
+  for (const task of existing.tasks) {
+    if (task.id === existing.rootTaskId) continue;
     const response = await request.delete(`/api/v1/tasks/${task.id}`);
     expect(response.ok()).toBe(true);
   }
@@ -40,11 +39,13 @@ test("concurrent clients converge on the shared Root task without creating one",
 
   const taskIds = await Promise.all(pages.map((page) => currentTaskId(page)));
   expect(new Set(taskIds).size).toBe(1);
-  expect(taskIds[0]).toBe("root");
+  expect(taskIds[0]).toBe(existing.rootTaskId);
   expect(taskPosts).toEqual([]);
 
-  const tasks = (await (await request.get("/api/v1/tasks")).json()) as Array<{
-    id: string;
-  }>;
-  expect(tasks.map((task) => task.id)).toEqual(["root"]);
+  const catalog = (await (await request.get("/api/v1/tasks")).json()) as {
+    rootTaskId: string;
+    tasks: Array<{ id: string }>;
+  };
+  expect(catalog.rootTaskId).toBe(existing.rootTaskId);
+  expect(catalog.tasks.map((task) => task.id)).toEqual([existing.rootTaskId]);
 });

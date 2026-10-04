@@ -6,6 +6,7 @@
 
 import {
   state,
+  installRootTaskId,
   resetTaskUI,
   requestNewTask,
   getSelectConfigOption,
@@ -128,8 +129,9 @@ async function unsubscribePush(): Promise<void> {
 // --- shared data fetchers (keep call sites identical for /inbox + /inbox dismiss) ---
 
 async function listTasks(): Promise<TaskSummary[]> {
-  const res = await fetch("/api/v1/tasks");
-  return res.json() as Promise<TaskSummary[]>;
+  const catalog = await api.listTasks();
+  installRootTaskId(catalog.rootTaskId);
+  return catalog.tasks;
 }
 
 interface PathItem {

@@ -55,6 +55,7 @@ export function resetState(state: any, dom: any) {
   state.eventSource = null;
   state.clientId = null;
   state.taskId = null;
+  state.rootTaskId = null;
   state.taskSwitchGen = 0;
   state.messageNavigationGen = 0;
   state.pendingNavigationTaskId = null;
