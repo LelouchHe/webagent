@@ -13,10 +13,18 @@ WebAgent uses ACP for the core agent loop: session creation / restore, prompt tu
   preserve config options, stored preferences, and cache warming.
 - Execution retirement reads `agentCapabilities.sessionCapabilities` and
   best-effort prefers advertised `session/delete`, then `session/close`.
-- WebAgent exposes its own stable UUID in REST/SSE and stores the agent's opaque
-  ACP session ID in an internal mapping keyed by the `agent_cmd` executable
-  token (normally an absolute path). Switching backends hides sessions belonging to other agents;
-  switching back restores their original WebAgent URLs.
+- WebAgent exposes its own stable task id in REST/SSE and stores the agent's
+  opaque ACP session ID in an internal mapping keyed by the `agent_cmd`
+  executable token (normally an absolute path). `agentKeyFromCommand()` takes
+  the first whitespace-delimited token of the resolved command; flags and later
+  arguments do not change the key. Each backend has a separate Root id:
+  `root-` + the first 32 lowercase hex characters of SHA-256 over that key.
+  Ordinary tasks use UUIDs and cannot use the reserved `root-` prefix.
+  Concrete deployment examples are Pi `root-c1f4fd9d2e6e6605388eaeeb95418119`
+  and DSH `root-41581a0c53fd362cccce411cd98ea6f7`. Switching backends
+  hides tasks belonging to other agents; switching back restores that backend's
+  original Root, task URLs, history, and resources. A reserved Root id cannot
+  bind to a different backend, and the obsolete literal `root` is not aliased.
 - ACP cancel is a notification rather than an acknowledgement. WebAgent keeps
   the prompt active until its prompt response supplies the terminal stop reason;
   timeout only marks the request unconfirmed.

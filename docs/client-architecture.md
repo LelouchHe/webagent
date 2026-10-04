@@ -167,7 +167,7 @@ initTask()
   ├── Hash has task ID? ──→ resumeAndLoad(id, incremental?)
   │     ├── Same as current task ──→ incremental=true  (reconnect)
   │     └── Different task ──→ incremental=false (full load)
-  ├── No hash? ──→ listTasks() → resume most recent user-input task, otherwise Root
+  ├── No hash? ──→ task catalog + rootTaskId → newest user-input task, then canonical Root
   └── No tasks? ──→ POST /tasks/bootstrap
 ```
 
@@ -378,9 +378,25 @@ Promise.all([api.getTask(targetId), loadHistory(targetId)]).then(
 
 ### Hash Routing
 
-Child Tasks are identified by URL hash: `/#task-id`. Root omits the hash when
-it is active; a hashless startup resumes the most recent user-input Task and
-falls back to Root when no such Task exists. This enables:
+Child Tasks are identified by URL hash: `/#task-id`. The current backend's
+canonical Root omits the hash; it is the derived `root-<sha256-prefix>` id from
+server authority, not the literal string `root` or any id matching a prefix.
+`GET /api/v1/tasks` returns `{rootTaskId, tasks}` (including identity when the
+list is empty), and detail, bootstrap, global/per-task `connected`,
+`task_created`, and `/api/v1/config` payloads provide the same authority. A
+reconnect refreshes it; per-task UI resets preserve it.
+
+The client installs an available Root authority before canonicalizing a hash.
+`switchToTask` writes the requested hash before fetching detail; if authority is
+not available yet, it leaves that provisional hash alone until `TaskDetail`
+arrives, then canonicalizes using the returned `rootTaskId`. Synthetic and live
+`task_created` events install the authority before calling `setHashTaskId`.
+Hashless startup keeps the selection order: newest task with user input first,
+canonical Root second, then the first task. A hashless same-task reconnect
+still resumes the current task without rescanning the list. The obsolete `#root`
+and a foreign `root-*` id are 404s, never aliases to the current Root.
+
+This enables:
 
 - Bookmarking tasks
 - Push notification click → navigate to task

@@ -30,7 +30,9 @@ session (execution layer, internal)
 ```
 
 - `task` never disappears because of `clear`, execution rotation, or server
-  restart. The reserved Root task (id `root`) is the canonical clean URL.
+  restart. Each configured backend has its own reserved Root task, with id
+  `root-` + the first 32 lowercase hex characters of SHA-256 over its
+  `agent_key`. Only the current backend's exact Root id is hashless.
 - `session` is an implementation detail. It is never user-visible and never
   leaks into product vocabulary, UI copy, or the public API naming.
 
@@ -51,7 +53,7 @@ The historical term "WebAgent Session" is **obsolete**; it means `task`.
 | REST | API | `/api/v1/sessions` family | `/api/v1/tasks` family |
 | SSE | product events | `session_created`, `session_deleted`, `session_busy`, `session_expired`, `session_title_updated`, `session_not_found`, `session_manager_unavailable` | `task_*` equivalents |
 | SSE | payload field | payload `session_id` identifying the product entity | `task_id` |
-| Frontend | URL hash | `#<uuid>` (Root: no hash) | unchanged — the hash carries only the id, so bookmarks and deep links survive |
+| Frontend | URL hash | `#<task-id>` (current backend Root: no hash) | unchanged — the hash carries only the id, so bookmarks and deep links survive |
 | Frontend | modules | `session-actions.ts`, `session-navigation.ts`, `session-state.ts`, `sessions-anchor.ts` | `task-actions.ts`, `task-navigation.ts`, `task-state.ts`, `tasks-anchor.ts` |
 | Backend | module | `src/session-manager.ts` | `src/task-manager.ts` (class `SessionManager` → `TaskManager`) |
 | Backend | identifiers | `clearSession`, `loadSession`, `deleteEmptySessions`, `session title generation` | `clearTask`, `loadTask`, `deleteEmptyTasks`, `task title generation` |
@@ -138,14 +140,19 @@ or *settlement* for this mechanism.
 The rename is a mechanical-but-wide refactor (DB → backend → frontend →
 docs → tests). When executing it:
 
-- The S2 storage rename is a pre-1.0 breaking change. Users must back up and
-  remove the old data directory before restarting; a fresh DB creates the
-  current schema and Root (`root`) keeps its reserved id.
+- Per-backend Root identity is an intentional pre-1.0 incompatible change.
+  The required purge/rename/rehearsal for an existing shared literal `root`
+  row is a separate operational follow-up, not startup compatibility code. A
+  fresh database allocates a derived Root per backend; old literal `root`
+  links are not aliased.
 - The REST and SSE rename is a hard break with **no alias** (pre-1.0; the
   frontend and API move together). Route docs are validated by
   `test/doc-coverage.test.ts`, so `docs/api.md` must move in the same
   commit as `src/routes.ts`.
-- URL hashes stay `#<uuid>` / hashless Root — bookmarks survive unchanged.
+- URL hashes stay `#<task-id>` / hashless current-backend Root. Root identity is
+  delivered by task-list/detail/SSE/config payloads; clients compare against the
+  exact canonical id, never a `root-` prefix. Old `#root` and foreign derived
+  Root ids are not aliases.
 - Sweep: `docs/schema.md`, `docs/api.md`, `docs/share.md`, `docs/features.md`,
   `docs/client-architecture.md`, `docs/performance.md`, `README.md`,
   `CLAUDE.md`, `TEST_SCENARIOS.md`, and the unit/e2e suites.
