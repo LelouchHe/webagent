@@ -54,6 +54,9 @@ spot gaps, and decide what still needs to be added without reading every spec.
 - `test/bridge-model-identity.test.ts`
   - pathological pair identities send each selected choice's exact wire value
 
+- `test/bridge-model-category.test.ts`
+  - current model classification controls advertised ids; historical classification keeps only removed ids fail-closed, isolated per session
+
 - `test/bridge-flat-config.test.ts`
   - flat canonical payloads are byte-identical at creation, restore, both setters, mapped notifications, and buffered replay
 

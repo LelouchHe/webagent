@@ -78,6 +78,15 @@ export class AgentBridge extends EventEmitter {
     string,
     Set<string>
   >();
+  private readonly currentModelOptionIdsBySession = new Map<
+    string,
+    Set<string>
+  >();
+  private readonly currentConfigOptionIdsBySession = new Map<
+    string,
+    Set<string>
+  >();
+  private readonly invalidatedSessionCodecs = new Set<string>();
   private readonly codecEpochBySession = new Map<string, number>();
   private codecProcessEpoch = 0;
   private deadReason: string | null = null;
@@ -211,6 +220,7 @@ export class AgentBridge extends EventEmitter {
         cwd,
         mcpServers: opts?.mcpServers ?? [],
       });
+      this.activateSessionConfigCodec(session.sessionId);
       const bufferedUpdates = opts?.silent
         ? (this.pendingSessionUpdates.get(session.sessionId) ?? [])
         : [];
@@ -397,8 +407,15 @@ export class AgentBridge extends EventEmitter {
     agentSessionId: string,
     configOptions: ConfigOption[],
   ): ConfigOption[] {
-    const normalized = normalizeModelConfigOptions(
-      flattenConfigOptions(configOptions),
+    const flattened = flattenConfigOptions(configOptions);
+    const normalized = normalizeModelConfigOptions(flattened);
+    this.currentConfigOptionIdsBySession.set(
+      agentSessionId,
+      new Set(flattened.map((option) => option.id)),
+    );
+    this.currentModelOptionIdsBySession.set(
+      agentSessionId,
+      normalized.modelOptionIds,
     );
     const knownModelOptionIds =
       this.knownModelOptionIdsBySession.get(agentSessionId) ??
@@ -419,11 +436,20 @@ export class AgentBridge extends EventEmitter {
     configId: string,
     value: ConfigValue,
   ): ConfigValue {
+    if (typeof value !== "string") return value;
+    const currentModelOption =
+      this.currentModelOptionIdsBySession.get(agentSessionId)?.has(configId) ??
+      false;
     if (
-      typeof value !== "string" ||
-      (configId !== "model" &&
-        !this.modelOptionIdsBySession.get(agentSessionId)?.has(configId))
+      configId !== "model" &&
+      !currentModelOption &&
+      this.currentConfigOptionIdsBySession.get(agentSessionId)?.has(configId)
     ) {
+      return value;
+    }
+    const previouslyModelOption =
+      this.modelOptionIdsBySession.get(agentSessionId)?.has(configId) ?? false;
+    if (configId !== "model" && !currentModelOption && !previouslyModelOption) {
       return value;
     }
     const canonicalValue = canonicalModelIdentity(value);
@@ -477,19 +503,28 @@ export class AgentBridge extends EventEmitter {
     agentSessionId: string,
     update: acp.SessionNotification["update"],
   ): void {
+    if (this.invalidatedSessionCodecs.has(agentSessionId)) return;
     const configOptions = this.configOptionsFromUpdate(update);
     if (configOptions) {
       this.normalizeSessionConfigOptions(agentSessionId, configOptions);
     }
   }
 
+  private activateSessionConfigCodec(agentSessionId: string): void {
+    this.clearSessionConfigCodec(agentSessionId);
+    this.invalidatedSessionCodecs.delete(agentSessionId);
+  }
+
   private clearSessionConfigCodec(agentSessionId: string): void {
+    this.invalidatedSessionCodecs.add(agentSessionId);
     this.codecEpochBySession.set(
       agentSessionId,
       (this.codecEpochBySession.get(agentSessionId) ?? 0) + 1,
     );
     this.modelOptionIdsBySession.delete(agentSessionId);
     this.knownModelOptionIdsBySession.delete(agentSessionId);
+    this.currentModelOptionIdsBySession.delete(agentSessionId);
+    this.currentConfigOptionIdsBySession.delete(agentSessionId);
     this.modelValuesBySession.delete(agentSessionId);
   }
 
@@ -498,6 +533,8 @@ export class AgentBridge extends EventEmitter {
     this.codecEpochBySession.clear();
     this.modelOptionIdsBySession.clear();
     this.knownModelOptionIdsBySession.clear();
+    this.currentModelOptionIdsBySession.clear();
+    this.currentConfigOptionIdsBySession.clear();
     this.modelValuesBySession.clear();
   }
 
@@ -895,7 +932,9 @@ export class AgentBridge extends EventEmitter {
   private handleSessionUpdate(params: acp.SessionNotification): Promise<void> {
     const update = params.update;
     const agentSessionId = params.sessionId;
-    if (this.deadReason) return Promise.resolve();
+    if (this.deadReason || this.invalidatedSessionCodecs.has(agentSessionId)) {
+      return Promise.resolve();
+    }
 
     if (this.silentSessions.has(agentSessionId)) {
       this.captureSilentText(agentSessionId, update);

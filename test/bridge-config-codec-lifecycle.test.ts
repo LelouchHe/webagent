@@ -85,6 +85,31 @@ describe("session model codec lifecycle", () => {
     assert.equal((bridge as any).modelValuesBySession.has("session-1"), false);
   });
 
+  it("ignores late codec notifications for an invalidated silent session", async () => {
+    const bridge = new AgentBridge("unused", {
+      getAgentSessionId: () => undefined,
+      getTaskId: () => undefined,
+    });
+    (bridge as any).conn = {};
+    (bridge as any).silentSessions.add("session-1");
+    (bridge as any).normalizeSessionConfigOptions("session-1", modelOptions);
+
+    await bridge.retireExecution("session-1");
+    await (bridge as any).handleSessionUpdate({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "config_option_update",
+        configOptions: modelOptions,
+      },
+    });
+
+    assert.equal((bridge as any).modelValuesBySession.has("session-1"), false);
+    assert.equal(
+      (bridge as any).modelOptionIdsBySession.has("session-1"),
+      false,
+    );
+  });
+
   it("clears session codecs when the agent process dies unexpectedly", () => {
     const bridge = new AgentBridge("unused", {
       getAgentSessionId: () => undefined,

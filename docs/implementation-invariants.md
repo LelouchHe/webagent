@@ -69,16 +69,18 @@ and nothing more.
   from each present schema: creation, load/resume, either config setter, and
   mapped/buffered config-option updates (including silent sessions). An absent
   schema does not erase a codec established by that session; a present schema
-  replaces its available wire mappings. Keep model-option ids classified for
-  the lifetime of the session so a removed id fails closed instead of becoming
-  an ordinary passthrough setting. An id never classified as a model option
-  remains passthrough. Never authorize writes from the process-global UI schema
-  cache.
+  replaces its available wire mappings. Remember previously model-classified
+  ids only so an id absent from the current schema still fails closed. If an id
+  is currently advertised, its current classification wins: current model
+  options translate through the map; current non-model options pass through.
+  An id never classified as a model option remains passthrough. Never authorize
+  writes from the process-global UI schema cache.
 - Persist and return canonical model identities, including on reads of older
   rows and stored-config overrides. Reapplying canonicalization must not change
   the value. Reject distinct wire choices that collide on one canonical id.
 - Invalidate session codecs on execution retirement, unexpected agent death,
-  and process replacement. Fence late setter responses so they cannot restore
+  and process replacement. Ignore late config notifications for explicitly
+  invalidated executions, and fence late setter responses so they cannot restore
   a codec after its execution was invalidated.
 - Preserve already-canonical flat option payloads byte-for-byte. Do not rewrite
   ACP event-store payloads.
