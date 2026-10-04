@@ -4,7 +4,15 @@ WebAgent uses ACP for the core agent loop: session creation / restore, prompt tu
 
 ## Core ACP Surface
 
-- Session lifecycle goes through ACP (`newSession`, `loadSession`, `prompt`, `cancel`)
+- Session lifecycle goes through ACP (`newSession`, `resumeSession` / `loadSession`, `prompt`, `cancel`)
+- Restore prefers `session/resume` when advertised at
+  `agentCapabilities.sessionCapabilities.resume`, avoiding transcript replay.
+  Otherwise it uses `session/load` only when `agentCapabilities.loadSession` is
+  advertised. If neither is supported, restore fails with a `/new` recovery
+  message; it never silently creates a replacement session. Both restore paths
+  preserve config options, stored preferences, and cache warming.
+- Execution retirement reads `agentCapabilities.sessionCapabilities` and
+  best-effort prefers advertised `session/delete`, then `session/close`.
 - WebAgent exposes its own stable UUID in REST/SSE and stores the agent's opaque
   ACP session ID in an internal mapping keyed by the `agent_cmd` executable
   token (normally an absolute path). Switching backends hides sessions belonging to other agents;

@@ -164,3 +164,93 @@ test("server restart restores the same task without duplicating history", async 
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("server restart restores through ACP session/resume for a resume-only agent", async ({
+  page,
+}) => {
+  const root = await mkdtemp(join(tmpdir(), "webagent-resume-restore-e2e-"));
+  const dataDir = join(root, "data");
+  const configPath = join(root, "config.toml");
+  const callsPath = join(root, "agent-calls.jsonl");
+  const prompt = "survive a restart through resume";
+  let server: ChildProcess | null = null;
+
+  try {
+    await mkdir(dataDir, { recursive: true });
+    seedAuthFile(join(dataDir, "auth.json"), E2E_TOKEN);
+    await writeFile(callsPath, "");
+    await writeFile(
+      configPath,
+      [
+        `port = ${RESTART_PORT}`,
+        `data_dir = "${dataDir}"`,
+        `public_dir = "dist-dev"`,
+        // Resume-only profile: advertises `session.resume`, does not advertise
+        // `loadSession`, and rejects session/load so a load-preferring client
+        // fails loudly rather than passing through the unadvertised method.
+        `agent_cmd = "node --experimental-strip-types test/e2e/mock-agent.ts resume-only ${callsPath}"`,
+        "",
+        "[limits]",
+        "bash_output = 1_048_576",
+        "image_upload = 10_485_760",
+        "",
+      ].join("\n"),
+    );
+
+    server = await startServer(configPath);
+    await page.context().addInitScript(
+      ({ key, value }) => {
+        try {
+          localStorage.setItem(key, value);
+        } catch {}
+      },
+      { key: "wa_token", value: E2E_TOKEN },
+    );
+    await gotoConnected(page, `${RESTART_ORIGIN}/`);
+
+    await createNewTask(page);
+    await sendPrompt(page, prompt);
+    await expect(page.locator(".msg.assistant").last()).toContainText(
+      `Echo: ${prompt}`,
+    );
+
+    const taskId = await currentTaskId(page);
+    await stopServer(server);
+    server = null;
+
+    await expectConnectionStatus(page, "disconnected");
+
+    server = await startServer(configPath);
+
+    await expectConnectionStatus(page, "connected", { timeout: 15_000 });
+    await expect.poll(() => currentTaskId(page)).toBe(taskId);
+    // resume does not replay agent history, so the transcript must be rebuilt
+    // from the local store on reconnect.
+    await expect(page.locator(".msg.user")).toHaveCount(1);
+    await expect(page.locator(".msg.user").last()).toHaveText(prompt);
+    await expect(page.locator(".msg.assistant").last()).toContainText(
+      `Echo: ${prompt}`,
+    );
+
+    // The mock recorded exactly one restore and it must be session/resume; a
+    // session/load would have been rejected by the resume-only profile (and
+    // recorded as a loud, visible "load" entry).
+    const restoreMethods = (): string[] =>
+      readFileSync(callsPath, "utf8")
+        .trim()
+        .split("\n")
+        .filter(Boolean)
+        .map((line) => JSON.parse(line).method as string);
+    await expect.poll(restoreMethods).toEqual(["resume"]);
+
+    // The restored task stays usable after the resume-only restore.
+    await sendPrompt(page, "still alive");
+    await expect(page.locator(".msg.assistant").last()).toContainText(
+      "Echo: still alive",
+    );
+    await expect.poll(restoreMethods).toEqual(["resume"]);
+  } finally {
+    if (server) await stopServer(server);
+    await rm(root, { recursive: true, force: true });
+  }
+});

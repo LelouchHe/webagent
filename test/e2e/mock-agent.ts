@@ -9,6 +9,8 @@ import {
   type NewSessionResponse,
   type LoadSessionRequest,
   type LoadSessionResponse,
+  type ResumeSessionRequest,
+  type ResumeSessionResponse,
   type PromptRequest,
   type PromptResponse,
   type CancelNotification,
@@ -17,8 +19,23 @@ import {
   type SessionConfigOption,
 } from "@agentclientprotocol/sdk";
 import { randomUUID } from "node:crypto";
+import { appendFileSync } from "node:fs";
 import { Readable, Writable } from "node:stream";
 import type { McpServer, McpServerHttp } from "@agentclientprotocol/sdk";
+
+// Optional capability profile + call log for the resume-restore E2E spec.
+//   node mock-agent.ts resume-only <calls.jsonl>
+// The resume-only profile advertises `session.resume` instead of `loadSession`
+// and rejects `session/load` loudly, so a client that still prefers load fails
+// instead of silently passing through the unadvertised method.
+const MOCK_PROFILE = process.argv[2] ?? "load";
+const MOCK_CALLS_PATH = process.argv[3];
+const RESUME_ONLY = MOCK_PROFILE === "resume-only";
+
+function recordSessionCall(method: "load" | "resume", params: unknown): void {
+  if (!MOCK_CALLS_PATH) return;
+  appendFileSync(MOCK_CALLS_PATH, JSON.stringify({ method, params }) + "\n");
+}
 
 type SessionState = {
   cwd: string;
@@ -383,7 +400,9 @@ class MockAgent implements Agent {
     return {
       protocolVersion: PROTOCOL_VERSION,
       agentInfo: { name: "mock-agent", version: "0.1.0" },
-      agentCapabilities: { loadSession: true },
+      agentCapabilities: RESUME_ONLY
+        ? { loadSession: false, sessionCapabilities: { resume: {} } }
+        : { loadSession: true },
     };
   }
 
@@ -402,6 +421,33 @@ class MockAgent implements Agent {
   }
 
   async loadSession(params: LoadSessionRequest): Promise<LoadSessionResponse> {
+    recordSessionCall("load", { sessionId: params.sessionId, cwd: params.cwd });
+    if (RESUME_ONLY) {
+      throw new Error(
+        "E2E: session/load must not be called against a resume-only agent",
+      );
+    }
+    let session = this.sessions.get(params.sessionId);
+    if (!session) {
+      session = {
+        cwd: params.cwd,
+        configOptions: createConfigOptions(),
+      };
+      this.sessions.set(params.sessionId, session);
+    }
+    await this.advertiseCommands(params.sessionId);
+    return {
+      configOptions: session.configOptions,
+    };
+  }
+
+  async resumeSession(
+    params: ResumeSessionRequest,
+  ): Promise<ResumeSessionResponse> {
+    recordSessionCall("resume", {
+      sessionId: params.sessionId,
+      cwd: params.cwd,
+    });
     let session = this.sessions.get(params.sessionId);
     if (!session) {
       session = {
