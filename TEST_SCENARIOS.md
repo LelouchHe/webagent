@@ -37,6 +37,12 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - available_commands_update translation
   - ACP text file read/write callbacks
 
+- `test/bridge-session-restore.test.ts`
+  - real ACP initialization and restore matrix: resume-only, load-only, both (resume wins), neither (actionable failure with no unadvertised call or fresh session)
+  - both restore methods preserve opaque ACP IDs, cwd/MCP injection, task_created payloads, stored config, and cache warming
+  - advertised close/delete retirement gates read initialize.agentCapabilities, with delete preferred when both exist
+  - resume resource-not-found retains the actionable error without retrying load/new
+
 - `test/server-event-handler.test.ts`
   - event routing: message_chunk, thought_chunk, tool_call, prompt_done, task_created, error
   - thinking↔assistant buffer flush transitions

@@ -252,6 +252,7 @@ describe("AgentBridge", () => {
 
   it("maps WebAgent IDs for load, config, and cancel calls", async () => {
     const bridge = new AgentBridge("fake-agent", mappedTasks);
+    (bridge as any).loadSessionSupported = true;
     const calls: Array<{ method: string; payload: unknown }> = [];
     (bridge as any).conn = {
       loadSession: async (payload: unknown) => {
@@ -294,6 +295,7 @@ describe("AgentBridge", () => {
 
   it("forwards mcpServers to newSession and loadSession when provided", async () => {
     const bridge = new AgentBridge("fake-agent", mappedTasks);
+    (bridge as any).loadSessionSupported = true;
     const calls: Array<{ method: string; payload: unknown }> = [];
     (bridge as any).conn = {
       newSession: async (payload: unknown) => {
@@ -805,6 +807,7 @@ describe("AgentBridge", () => {
 
     it("loadSession rethrows resource-not-found with friendly message", async () => {
       const bridge = new AgentBridge("fake-agent", mappedTasks);
+      (bridge as any).loadSessionSupported = true;
       class FakeReqErr extends Error {
         code = -32002;
         constructor(uri: string) {

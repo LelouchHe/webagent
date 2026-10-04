@@ -60,8 +60,9 @@ export class AgentBridge extends EventEmitter {
   >();
   private readonly pendingAborts = new Map<string, (e: Error) => void>();
   private deadReason: string | null = null;
-  /** Capabilities advertised by the agent at initialize; gates retire calls. */
+  /** Capabilities advertised by the agent at initialize; gates restore/retire calls. */
   private sessionCapabilities: acp.SessionCapabilities | null = null;
+  private loadSessionSupported = false;
   private stderrTail = "";
   private readonly closedProcesses = new WeakSet<ChildProcess>();
   readonly agentCmd: string;
@@ -147,22 +148,18 @@ export class AgentBridge extends EventEmitter {
 
     this.conn = new acp.ClientSideConnection((_agent) => client, stream);
 
-    const init = (await this.conn.initialize({
+    const init = await this.conn.initialize({
       protocolVersion: acp.PROTOCOL_VERSION,
       clientCapabilities: {
         fs: { readTextFile: false, writeTextFile: false },
         terminal: true,
       },
-    })) as {
-      agentInfo?: {
-        name?: string;
-        version?: string;
-        sessionCapabilities?: acp.SessionCapabilities;
-      };
-    };
+    });
 
     const agentInfo = init.agentInfo;
-    this.sessionCapabilities = agentInfo?.sessionCapabilities ?? null;
+    this.sessionCapabilities =
+      init.agentCapabilities?.sessionCapabilities ?? null;
+    this.loadSessionSupported = init.agentCapabilities?.loadSession ?? false;
     this.emit("event", {
       type: "connected",
       agent: {
@@ -246,6 +243,7 @@ export class AgentBridge extends EventEmitter {
     }
   }
 
+  /** Restore without history replay when possible; load is the advertised fallback. */
   async loadSession(
     taskId: string,
     cwd: string,
@@ -253,13 +251,22 @@ export class AgentBridge extends EventEmitter {
   ): Promise<{ taskId: string; configOptions: ConfigOption[] }> {
     if (!this.conn) throw new Error("Not connected");
     const agentSessionId = this.agentSessionId(taskId);
-    let session: acp.LoadSessionResponse;
+    let session: acp.LoadSessionResponse | acp.ResumeSessionResponse;
     try {
-      session = await this.conn.loadSession({
+      const params = {
         sessionId: agentSessionId,
         cwd,
         mcpServers: mcpServers ?? [],
-      });
+      };
+      if (this.sessionCapabilities?.resume) {
+        session = await this.conn.resumeSession(params);
+      } else if (this.loadSessionSupported) {
+        session = await this.conn.loadSession(params);
+      } else {
+        throw new Error(
+          "The agent does not support restoring sessions. Use /new to start a fresh one.",
+        );
+      }
     } catch (err: unknown) {
       // -32002 = Resource not found. Some agents (e.g. claude-agent-acp) don't
       // persist tasks across process restarts, so a session in our DB may
