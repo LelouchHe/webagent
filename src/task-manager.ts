@@ -6,7 +6,6 @@ import { stat } from "node:fs/promises";
 import { join } from "node:path";
 import {
   MessageNotFoundError,
-  ROOT_TASK_ID,
   type CollaborationDeliveryRow,
   type CollaborationMessageRow,
   type TaskDelete,
@@ -430,7 +429,9 @@ export class TaskManager {
    * get another opportunity to run the cleanup.
    */
   private tryCleanupEmptyTasks(bridge: SessionBridge): void {
-    const release = this.treeLock.tryAcquire({ exclusive: [ROOT_TASK_ID] });
+    const release = this.treeLock.tryAcquire({
+      exclusive: [this.store.rootTaskId],
+    });
     if (!release) return;
     try {
       this.cleanupEmptyTasks(bridge);
@@ -466,7 +467,9 @@ export class TaskManager {
   private resolveParentId(parentId?: string | null): string | null {
     return (
       parentId ??
-      (this.store.getTaskIncludingDeleted(ROOT_TASK_ID) ? ROOT_TASK_ID : null)
+      (this.store.getTaskIncludingDeleted(this.store.rootTaskId)
+        ? this.store.rootTaskId
+        : null)
     );
   }
 
@@ -534,8 +537,9 @@ export class TaskManager {
     const parentId = this.resolveParentId(opts?.parentId);
     if (parentId) {
       await this.waitForRootResetIfNeeded(parentId);
-      const parent = this.store.getTaskIncludingDeleted(parentId);
-      if (parent?.deleted_at !== null) throw new TaskNotFoundError(parentId);
+      if (!this.store.getParentTask(parentId)) {
+        throw new TaskNotFoundError(parentId);
+      }
     }
     const result = await this.createTaskImpl(
       bridge,
@@ -573,10 +577,8 @@ export class TaskManager {
         // The reset may have been requested after the wait but before lock
         // acquisition. Drop the lock and wait outside it before retrying.
         if (parentId && this.resettingTasks.has(parentId)) continue;
-        if (parentId) {
-          const parent = this.store.getTaskIncludingDeleted(parentId);
-          if (parent?.deleted_at !== null)
-            throw new TaskNotFoundError(parentId);
+        if (parentId && !this.store.getParentTask(parentId)) {
+          throw new TaskNotFoundError(parentId);
         }
         this.store.createTask(
           taskId,
@@ -915,28 +917,30 @@ export class TaskManager {
 
   /** Bind an ACP execution to the reserved Root record after bridge startup. */
   async ensureRootTask(bridge: SessionBridge): Promise<void> {
-    const root = this.store.getTaskIncludingDeleted(ROOT_TASK_ID);
-    if (!root || this.store.getAgentSessionId(ROOT_TASK_ID)) return;
+    const rootTaskId = this.store.rootTaskId;
+    this.store.assertRootTaskOwnership();
+    const root = this.store.getTaskIncludingDeleted(rootTaskId);
+    if (!root || this.store.getAgentSessionId(rootTaskId)) return;
 
-    const execution = this.buildMcpServerForExecution(ROOT_TASK_ID, false);
+    const execution = this.buildMcpServerForExecution(rootTaskId, false);
     const created = await this.createAgentSession(
       bridge,
-      ROOT_TASK_ID,
+      rootTaskId,
       root.cwd,
       this.buildNewTaskOptions(undefined, execution?.servers),
       execution?.token,
     );
     try {
-      this.store.bindAgentSession(ROOT_TASK_ID, created.sessionId);
+      this.store.bindAgentSession(rootTaskId, created.sessionId);
     } catch (error) {
       bridge.discardUnboundSession?.(created.sessionId);
-      this.creatingTasks.delete(ROOT_TASK_ID);
+      this.creatingTasks.delete(rootTaskId);
       if (execution?.token) this.capabilities?.revoke(execution.token);
       throw error;
     }
-    this.liveTasks.add(ROOT_TASK_ID);
-    this.creatingTasks.delete(ROOT_TASK_ID);
-    this.recordConfigOptions(ROOT_TASK_ID, created.configOptions);
+    this.liveTasks.add(rootTaskId);
+    this.creatingTasks.delete(rootTaskId);
+    this.recordConfigOptions(rootTaskId, created.configOptions);
     bridge.sessionMapped?.(created.sessionId);
   }
 
@@ -1085,6 +1089,7 @@ export class TaskManager {
       const configOptions = this.buildConfigOptions(task);
       return {
         type: "task_created",
+        rootTaskId: this.store.rootTaskId,
         taskId,
         cwd: task.cwd,
         cwdDisplay: abbreviateHomePath(task.cwd),
@@ -1117,6 +1122,7 @@ export class TaskManager {
       slog.info("restored", { taskId: taskId.slice(0, 8) + "…" });
       return {
         type: "task_created",
+        rootTaskId: this.store.rootTaskId,
         taskId,
         cwd: task.cwd,
         cwdDisplay: abbreviateHomePath(task.cwd),
@@ -1320,18 +1326,20 @@ export class TaskManager {
   async resetRootTask(
     bridge: SessionBridge,
   ): Promise<{ affected: TaskDelete[] }> {
-    if (this.resettingTasks.has(ROOT_TASK_ID)) {
+    this.store.assertRootTaskOwnership();
+    const rootTaskId = this.store.rootTaskId;
+    if (this.resettingTasks.has(rootTaskId)) {
       throw new Error("Root task is already being reset");
     }
-    if (this.store.hasActiveShare(ROOT_TASK_ID)) {
+    if (this.store.hasActiveShare(rootTaskId)) {
       throw new Error("Root task has an active share");
     }
     // Mark the currently known tree before waiting for the lock. New tasks
     // cannot be created while the exclusive Root request is queued, because
     // every create request takes a shared lock on its ancestors.
     const protectedIds = [
-      ROOT_TASK_ID,
-      ...this.store.getDescendantTaskIds(ROOT_TASK_ID),
+      rootTaskId,
+      ...this.store.getDescendantTaskIds(rootTaskId),
     ];
     const busyBeforeReset = protectedIds.find(
       (id) => this.getActiveTaskWorkKind(id) !== null,
@@ -1351,14 +1359,14 @@ export class TaskManager {
     for (const id of protectedIds) this.resettingTasks.add(id);
     let release: TaskTreeLockRelease | null = null;
     try {
-      release = await this.acquireTaskTreeMutationLock(ROOT_TASK_ID);
+      release = await this.acquireTaskTreeMutationLock(rootTaskId);
       // A branch mutation that was already holding its lock may have
       // persisted a new descendant while Root was waiting. Re-snapshot after
       // acquiring X(Root), reject any work that began on such a task, and
       // only then extend the reset barrier before the first await.
       const currentIds = [
-        ROOT_TASK_ID,
-        ...this.store.getDescendantTaskIds(ROOT_TASK_ID),
+        rootTaskId,
+        ...this.store.getDescendantTaskIds(rootTaskId),
       ];
       const busyTask = currentIds.find(
         (id) => this.getActiveTaskWorkKind(id) !== null,
@@ -1372,15 +1380,15 @@ export class TaskManager {
         protectedIds.push(id);
         this.resettingTasks.add(id);
       }
-      await this.clearTask(bridge, ROOT_TASK_ID);
+      await this.clearTask(bridge, rootTaskId);
       const result = this.store.resetRootTask();
       for (const entry of result.affected) {
         if (entry.agentSessionId)
           void bridge.retireExecution?.(entry.agentSessionId);
         this.releaseTaskRuntime(entry.id, entry.mode);
       }
-      this.attachmentLabelCache.delete(ROOT_TASK_ID);
-      await rm(join(this.dataDir, "tasks", ROOT_TASK_ID), {
+      this.attachmentLabelCache.delete(rootTaskId);
+      await rm(join(this.dataDir, "tasks", rootTaskId), {
         recursive: true,
         force: true,
       }).catch(() => {});

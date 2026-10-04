@@ -1,6 +1,6 @@
 # Test Scenarios
 
-Last updated: 2026-10-03
+Last updated: 2026-10-04
 
 This file is a scenario-level map of the current automated test suite.
 It is intentionally higher-level than raw test names so we can review coverage,
@@ -93,6 +93,14 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - config persistence
   - title persistence
   - unix-millisecond `last_active_at` for stable ordering
+  - Root allocation uses an independently computed SHA-256 expected id, preserves it across reopen, and keeps each backend's same-title Root parentless
+  - one derived Root cannot bind two agent keys; a foreign/mismatched binding fails closed without changing the row or binding
+  - ensure and rotate validate Root ownership before changing parent/title/cwd or making bridge calls
+  - ordinary `root-*` creation is rejected; foreign/unbound/malformed reserved ids are protected from parent use, delete, GC, descendant cascade, and tombstone reap
+  - adoption is scoped to live, parentless, non-reserved rows with exactly one distinct current-agent owner; foreign tasks, multiply owned tasks, and unbound tombstones stay unadopted
+  - reset sentinels on both Roots cover events, client_ops, attachments, compact summaries, previews, and descendants; resetting A leaves B unchanged
+  - survivor matrix: one B owner reparents under Root(B) (allocating an unbound Root if missing); zero/multiple owners, Root mismatch, or live title collision detaches with NULL while preserving data
+  - active A Root share blocks A reset; active B Root share does not. Share tombstones with no binding are detached, not assigned to the resetter
   - deleteEmptyTasks age gating
   - hasInterruptedTurn detection
   - migration idempotency
@@ -107,6 +115,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - a malformed legacy value (`'0'`, empty, `'now'`, `T` separator, out-of-range, or calendar-invalid such as `2026-02-29` / `24:00:00` / `23:59:60`) aborts the migration with the offending row and rolls back with nothing changed
   - an INTEGER column whose default is still the legacy expression is rebuilt and its values copied through untouched, including `shares.created_at` / `owner_prefs.updated_at` converging from the seconds-aligned default
   - migration is idempotent and leaves an already-INTEGER database untouched
+  - the legacy task-only `agent_sessions` index is dropped during a timestamp table rebuild while per-agent/task uniqueness remains; reserved Root ownership still rejects cross-agent rebinding
   - `foreign_key_check` / `integrity_check` pass after the rebuild
 
 - `test/title-service.test.ts`
@@ -128,9 +137,12 @@ spot gaps, and decide what still needs to be added without reading every spec.
 ### REST API layer
 
 - `test/tasks.test.ts`
-  - task CRUD (create / get / delete / list)
+  - task CRUD (create / get / delete / list), with server-only id assignment and 404 for obsolete `root` / foreign derived Root ids
+  - task list remains an agent-scoped array; detail, bootstrap/create/clear/reset, config, task_created, and connected payloads carry backend Root authority additively
+  - REST and MCP callers cannot choose reserved task ids; bootstrap, clear, compact, and actual/synthetic task_created envelopes preserve Root identity
   - config update (model, mode) and broadcast
   - source filter on task list
+  - agent-scoped parent validation: a parent owned by another agent is rejected and no child or system_message is written into it
   - gzip compression for events endpoint
   - streaming buffer flush on events endpoint
   - auto-resume of non-live tasks
@@ -179,12 +191,13 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - repeated bash cancel escalation (`SIGINT` → `SIGKILL`)
   - local bash cancellation still runs when the agent bridge is unavailable
   - status: idle / busy-agent / busy-bash
-  - `GET /api/v1/config` endpoint
+  - `GET /api/v1/config` includes the backend's canonical `rootTaskId`
   - bridge-not-ready error handling
 
 - `test/sse.test.ts`
   - SSE client ID generation and tracking
-  - global SSE stream (connected event, broadcast from all tasks)
+  - global and per-task SSE streams include the current `rootTaskId` in their initial connected event
+  - global SSE stream (broadcast from all tasks)
   - per-task SSE stream (task filtering, Last-Event-ID replay)
   - `POST /api/beta/clients/:clientId/visibility` (update, taskId, validation)
   - heartbeat delivery
@@ -212,7 +225,10 @@ spot gaps, and decide what still needs to be added without reading every spec.
 - `test/task-navigation.test.ts`, `test/service-worker-click.test.ts`
   - Inbox notification consume reuses the current task as inheritance source
   - direct task targets take priority over unresolved message targets
-  - task switches require successful busy snapshot hydration
+  - task switches require successful busy snapshot hydration; provisional hash is written before detail fetch, then Root canonicalization waits for detail authority
+  - hashless startup preserves user-input-first selection and canonical Root fallback; same-task hashless reconnect skips list rescan
+  - obsolete literal `#root` remains a 404 with no alias; a stale reserved Root hash after config failure consults the current backend's task array/bootstrap
+  - foreign derived Root ids are never route aliases; fallback selection uses the current connection's scoped task array
   - explicit switches, `/new`, and competing notification consumes use ordered navigation ownership
   - existing-window and cold-start service-worker routing
   - terminal startup intents are cleared; retryable intents survive refresh without in-page duplication
@@ -238,7 +254,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - new-task request payloads (with custom cwd)
   - reset-task cleanup (messages, input, title, metadata)
   - global task cancel payloads, including forced cancel when frontend busy state is stale
-  - hash routing and task info updates
+  - exact canonical Root hash removal, with literal `root` retained as an ordinary hash; Root identity survives per-task resets and is cleared/re-authorized across connections
 
 - `test/input.test.ts`
   - normal prompt send flow
@@ -321,8 +337,8 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - version display in `?` / help command
 
 - `test/connection.test.ts`
-  - hash-based task resume
-  - last-task auto-resume
+  - hash-based task resume, using backend Root authority before hash canonicalization
+  - last-task auto-resume with a derived Root fallback
   - new-task creation when no previous task exists
   - reconnect behavior without duplicate history replay
   - incremental sync on reconnect when task matches
@@ -331,6 +347,10 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - no-op sync when no new events
 
 ### Supporting frontend / backend modules
+
+- `test/routes-images-signed.test.ts`
+  - signed upload and image retrieval
+  - owner Root event history refreshes an expired attachment URL against the current derived task path
 
 - `test/routes.test.ts`
   - static file / API route basics
@@ -482,8 +502,8 @@ spot gaps, and decide what still needs to be added without reading every spec.
     ready for input
 
 - `bootstrap-concurrency.spec.ts`
-  - concurrent clients on the root path all converge on the reserved Root
-    task without posting a new task
+  - concurrent clients on the root path converge on this backend's derived
+    Root id without posting a new task
 
 - `task-send-message.spec.ts`
   - normal prompt / assistant reply round-trip
@@ -564,9 +584,10 @@ spot gaps, and decide what still needs to be added without reading every spec.
 - REST delete (`test/tasks.test.ts`, `test/store.test.ts`)
   - deleting a task cascades to every descendant, retires each affected
     ACP execution, and broadcasts one `task_deleted` per removed task
-  - a share-tombstoned descendant survives and is re-parented under Root
+  - survivors reparent only to their unique owner's Root; unknown owner, mismatch, or title collision falls back to `parent_id = NULL` without data loss
+  - `getTaskPath` strips only the current Store's canonical Root anchor; a foreign reserved Root renders as a path segment
   - creating a task under an unknown parent is rejected with `400`
-  - `DELETE /api/v1/tasks/root` is rejected
+  - generic deletion rejects every reserved `root-*` id; only the current backend's exact derived Root endpoint resets it
 
 - `task-clear-command.spec.ts`
   - `/clear` keeps the stable WebAgent task id, history, and cwd; only the
@@ -581,8 +602,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
 ### Resume / reconnect / restart recovery
 
 - `auto-resume-last-task.spec.ts`
-  - the root path opens the canonical Root task instead of the most recent
-    task; existing tasks stay reachable through their stable hash
+  - hashless startup opens the newest task with user input first, then falls back to the backend's derived Root; existing tasks stay reachable through their stable hash
 
 - `sse-reconnect-recovery.spec.ts`
   - SSE reconnect restores the active task without duplicate replay

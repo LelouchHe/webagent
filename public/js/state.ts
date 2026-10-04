@@ -78,6 +78,10 @@ export const state = {
   eventSource: null as EventSource | null,
   clientId: null as string | null,
   taskId: null as string | null,
+  // Canonical Root identity is backend authority, refreshed by list/detail/SSE
+  // responses and retained across per-task UI resets.
+  rootTaskId: null as string | null,
+  rootTaskAuthorityGeneration: 0,
   // Monotonic counter incremented by user-initiated task switches (notification
   // click, /switch). initTask() captures the value before async work and bails
   // out if it changed, preventing stale reconnects from overriding deliberate switches.
@@ -676,6 +680,10 @@ export async function createNewTaskRequest({
   state.taskSwitchGen++;
   state.messageNavigationGen++;
   const generation = state.taskSwitchGen;
+  const rootAuthorityGeneration = state.rootTaskAuthorityGeneration;
+  const isCurrentRequest = () =>
+    generation === state.taskSwitchGen &&
+    rootAuthorityGeneration === state.rootTaskAuthorityGeneration;
   state.pendingNavigationTaskId = null;
   state.pendingNavigationEvents = [];
   state.runtimeHydrationTaskId = null;
@@ -688,7 +696,7 @@ export async function createNewTaskRequest({
       ? await api.bootstrapTask(clientOpId)
       : await api.createTask({ cwd, inheritFromTaskId, parentId }, clientOpId);
     state.newTaskRequestInFlight = false;
-    if (generation !== state.taskSwitchGen) {
+    if (!isCurrentRequest()) {
       if (state.pendingNewTaskOpId === clientOpId) {
         finishNewTaskRequest();
       }
@@ -703,10 +711,7 @@ export async function createNewTaskRequest({
     return true;
   } catch {
     if (confirmedNewTaskOps.delete(clientOpId)) return true;
-    if (
-      generation === state.taskSwitchGen &&
-      state.pendingNewTaskOpId === clientOpId
-    ) {
+    if (isCurrentRequest() && state.pendingNewTaskOpId === clientOpId) {
       // The server broadcasts task_created before writing the HTTP
       // response. Keep ownership briefly so that matching SSE can recover
       // an ambiguously committed create whose response was interrupted.
@@ -716,7 +721,7 @@ export async function createNewTaskRequest({
           newTaskConfirmationWaiters.delete(clientOpId);
           if (state.pendingNewTaskOpId === clientOpId) {
             state.pendingNewTaskOpId = null;
-            if (generation === state.taskSwitchGen) {
+            if (isCurrentRequest()) {
               state.awaitingNewTask = false;
             }
           }
@@ -728,10 +733,7 @@ export async function createNewTaskRequest({
     return false;
   } finally {
     state.newTaskRequestInFlight = false;
-    if (
-      generation !== state.taskSwitchGen &&
-      state.pendingNewTaskOpId === clientOpId
-    ) {
+    if (!isCurrentRequest() && state.pendingNewTaskOpId === clientOpId) {
       finishNewTaskRequest();
     }
   }
@@ -914,8 +916,27 @@ export function getHashTaskId(): string | null {
   return h || null;
 }
 
+export function clearRootTaskAuthority(): number {
+  state.rootTaskId = null;
+  state.rootTaskAuthorityGeneration++;
+  return state.rootTaskAuthorityGeneration;
+}
+
+export function installRootTaskId(
+  rootTaskId: unknown,
+  generation: number = state.rootTaskAuthorityGeneration,
+): void {
+  if (
+    generation === state.rootTaskAuthorityGeneration &&
+    typeof rootTaskId === "string" &&
+    rootTaskId.length > 0
+  ) {
+    state.rootTaskId = rootTaskId;
+  }
+}
+
 export function setHashTaskId(id: string) {
-  if (id === "root") {
+  if (state.rootTaskId !== null && id === state.rootTaskId) {
     const url = new URL(location.href);
     url.hash = "";
     history.replaceState(null, "", `${url.pathname}${url.search}`);

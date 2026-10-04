@@ -53,7 +53,7 @@ const REBUILT_INDEXES = [
   "idx_events_task",
   "idx_events_type",
   "idx_tasks_parent_title_live",
-  "idx_agent_sessions_task",
+  "idx_agent_sessions_agent_task",
   "idx_attachments_task",
   "idx_shares_task",
   "shares_one_active_preview",
@@ -535,6 +535,62 @@ describe("timestamp millis migration", () => {
     }
     assertIntegrity(db);
     db.close();
+  });
+
+  it("drops the legacy agent_sessions index during a timestamp rebuild", () => {
+    const dir = tempDir();
+    createLegacyDatabase(dir, "strftime");
+    const legacy = new Database(dbPath(dir));
+    // The generated database carries the current index; put the pre-fix
+    // task-only index back so the timestamp rebuild replays it and the
+    // uniqueness migration has to remove it.
+    legacy.exec("DROP INDEX idx_agent_sessions_agent_task");
+    legacy.exec(
+      "CREATE UNIQUE INDEX idx_agent_sessions_task ON agent_sessions(task_id) WHERE task_id IS NOT NULL",
+    );
+    legacy
+      .prepare(
+        "INSERT INTO tasks (id, cwd, created_at, last_active_at) VALUES (?, ?, ?, ?)",
+      )
+      .run("legacy-task", "/legacy", NO_MS, MS);
+    legacy
+      .prepare(
+        "INSERT INTO agent_sessions (agent_key, agent_session_id, task_id, created_at) VALUES (?, ?, ?, ?)",
+      )
+      .run(AGENT, "sess-legacy", "legacy-task", NO_MS);
+    legacy.close();
+
+    const store = new Store(dir, AGENT);
+    store.close();
+
+    const migrated = new Database(dbPath(dir));
+    const indexNames = (
+      migrated
+        .prepare(
+          "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'agent_sessions'",
+        )
+        .all() as Array<{ name: string }>
+    )
+      .map((row) => row.name)
+      .sort();
+    assert.deepEqual(indexNames, [
+      "idx_agent_sessions_agent_task",
+      "sqlite_autoindex_agent_sessions_1",
+    ]);
+    const converted = migrated
+      .prepare(
+        "SELECT created_at FROM agent_sessions WHERE task_id = 'legacy-task'",
+      )
+      .get() as { created_at: number };
+    assert.equal(converted.created_at, expectedMillis(NO_MS));
+    migrated.close();
+
+    // Per-(agent_key, task_id) uniqueness remains in force for ordinary task
+    // ids; reserved Root ids have an additional ownership check in Store.
+    const other = new Store(dir, "other-agent");
+    other.bindAgentSession("legacy-task", "sess-other");
+    assert.equal(other.getAgentSessionId("legacy-task"), "sess-other");
+    other.close();
   });
 
   it("converges INTEGER columns that still carry the legacy seconds default", () => {

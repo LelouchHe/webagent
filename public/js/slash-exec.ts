@@ -341,11 +341,7 @@ export async function handleSlashCommand(text: string): Promise<boolean> {
         return true;
       }
       try {
-        const res = await fetch("/api/v1/tasks");
-        const tasks = (await res.json()) as Array<{
-          id: string;
-          title?: string | null;
-        }>;
+        const tasks = await api.listTasks();
         const query = arg.toLowerCase();
         const match = tasks.find(
           (s) => s.id.startsWith(arg) || s.title?.toLowerCase().includes(query),

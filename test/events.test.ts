@@ -11,6 +11,7 @@ describe("events", () => {
   let events: any;
   let stateMod: any;
   let fetchCalls: Array<{ url: string; init?: any }>;
+  const ROOT_ID = "root-events-test";
 
   // eslint-disable-next-line @typescript-eslint/no-redundant-type-constituents
   function setFetch(handler: (url: string, init?: any) => Promise<any> | any) {
@@ -1934,9 +1935,11 @@ describe("events", () => {
       });
 
       it("reloads the preserved Root task after a reset event", async () => {
-        state.taskId = "root";
+        state.taskId = ROOT_ID;
+        state.rootTaskId = ROOT_ID;
         const rootTask = {
-          id: "root",
+          id: ROOT_ID,
+          rootTaskId: ROOT_ID,
           cwd: "/tmp",
           title: "root",
           configOptions: [],
@@ -1949,13 +1952,13 @@ describe("events", () => {
           )
             return {
               ok: true,
-              text: async () => JSON.stringify([{ id: "root" }]),
+              text: async () => JSON.stringify([{ id: ROOT_ID }]),
             };
-          if (url === "/api/v1/tasks/root")
+          if (url === `/api/v1/tasks/${ROOT_ID}`)
             return { ok: true, text: async () => JSON.stringify(rootTask) };
-          if (url.startsWith("/api/v1/tasks/root/events"))
+          if (url.startsWith(`/api/v1/tasks/${ROOT_ID}/events`))
             return { ok: true, text: async () => "[]" };
-          if (url === "/api/v1/tasks/root/snapshot")
+          if (url === `/api/v1/tasks/${ROOT_ID}/snapshot`)
             return {
               ok: true,
               text: async () =>
@@ -1969,10 +1972,10 @@ describe("events", () => {
           return { ok: true, text: async () => "{}" };
         });
 
-        events.handleEvent({ type: "task_reset", taskId: "root" });
+        events.handleEvent({ type: "task_reset", taskId: ROOT_ID });
         for (let i = 0; i < 30; i++) await Promise.resolve();
 
-        assert.equal(state.taskId, "root");
+        assert.equal(state.taskId, ROOT_ID);
       });
 
       it("creates new task when current is deleted and no others exist", async () => {

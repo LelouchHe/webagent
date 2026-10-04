@@ -225,7 +225,7 @@ describe("HTTP routes", () => {
     assert.equal(res.headers["cache-control"], "no-cache");
   });
 
-  it("GET /api/v1/tasks returns empty list", async () => {
+  it("GET /api/v1/tasks returns empty array", async () => {
     const res = await makeRequest(port, "GET", "/api/v1/tasks");
     assert.equal(res.status, 200);
     assert.deepEqual(JSON.parse(res.body), []);

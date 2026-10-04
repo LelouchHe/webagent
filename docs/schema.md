@@ -58,12 +58,14 @@ deletion contract.
 ### `tasks`
 
 WebAgent Tasks. Each row is a stable user-visible work thread created
-via `POST /api/v1/tasks`; its ACP execution can be rotated by clear. The
-reserved Root Task has id `root` and no parent.
+via `POST /api/v1/tasks`; its ACP execution can be rotated by clear. There is
+one reserved Root Task row per configured backend. Its id is
+`root-` + the first 32 lowercase hex characters of SHA-256 over that backend's
+`agent_key`; every Root has `parent_id = NULL` and the default title `root`.
 
 | Column | Type | Notes |
 |---|---|---|
-| `id` | TEXT PRIMARY KEY | Stable WebAgent UUID exposed in URLs and APIs |
+| `id` | TEXT PRIMARY KEY | Ordinary tasks use UUIDs. The reserved `root-` namespace is allocated only by the ownership-safe Root allocator; ordinary task creation rejects every id with that prefix. |
 | `cwd` | TEXT NOT NULL | Working directory passed to the agent |
 | `title` | TEXT | Display/name title; defaults to the stable task id when creation supplies none. User/parent sets it via `+… ` or `/rename` |
 | `workflow_status` | TEXT NOT NULL DEFAULT `'idle'` | `running`, `idle`, `blocked`, or `done` |
@@ -74,7 +76,7 @@ reserved Root Task has id `root` and no parent.
 | `reasoning_effort` | TEXT | Last reasoning effort selection |
 | `source` | TEXT NOT NULL DEFAULT `'auto'` | How the task was created (`auto`, `inbox`, …) |
 | `deleted_at` | INTEGER | Unix-millis tombstone marker; `NULL` = live, set = soft-deleted (kept alive only because shares still reference the row) |
-| `parent_id` | TEXT REFERENCES `tasks(id)` | Optional parent WebAgent Task; `NULL` for Root. Deleting a task cascades to every descendant; a share-tombstoned descendant is re-parented under Root so the FK stays valid |
+| `parent_id` | TEXT REFERENCES `tasks(id)` | Optional parent WebAgent Task; `NULL` for every backend Root. Deletion preserves survivors under their single unambiguous owner's Root, or detaches them with `NULL` when ownership is unknown, the Root conflicts, or a live sibling-title collision exists. |
 | `pending_compact_summary` | TEXT | One-shot agent-generated handoff waiting for the next real prompt; `NULL` when consumed |
 
 ### `agent_sessions`
@@ -90,8 +92,13 @@ configured agent.
 | `task_id` | TEXT REFERENCES `tasks(id)` ON DELETE CASCADE | Current WebAgent Task ID; `NULL` for internal tasks such as title generation. Retired ACP executions (rotated or deleted) have their binding row removed and are explicitly retired via `task/delete`/`task/close` when the agent advertises support |
 | `created_at` | INTEGER NOT NULL DEFAULT 0 | Unix milliseconds |
 
-PK: `(agent_key, agent_session_id)`. A partial unique index ensures a non-null
-WebAgent task belongs to exactly one agent task.
+PK: `(agent_key, agent_session_id)`. A partial unique index on
+`(agent_key, task_id)` ensures a WebAgent task holds at most one current
+binding per agent. Ordinary tasks may have one binding per configured backend,
+but a reserved `root-*` id has exactly one backend owner: its derived id must
+match that backend's key, and bind/rotate/reset paths fail closed if any other
+`agent_key` is bound to it. Distinct derived Roots keep each backend's history,
+resources, and reset lifecycle isolated.
 
 ### `events`
 
@@ -298,7 +305,7 @@ selection, etc.). Single-user model = single owner scope.
 | `idx_shares_task` | `shares` | `(task_id, created_at DESC)` | Owner share-list view |
 | `shares_one_active_preview` | `shares` | `(task_id) WHERE shared_at IS NULL` | At most one preview per task (partial UNIQUE) |
 | `idx_attachments_task` | `attachments` | `(task_id)` | Per-task listing + GC sweep |
-| `idx_agent_sessions_task` | `agent_sessions` | `(task_id) WHERE task_id IS NOT NULL` | One current ACP binding per visible WebAgent Task (partial UNIQUE) |
+| `idx_agent_sessions_agent_task` | `agent_sessions` | `(agent_key, task_id) WHERE task_id IS NOT NULL` | At most one current ACP binding per (agent, visible WebAgent Task) (partial UNIQUE) |
 | `idx_tasks_parent` | `tasks` | `(parent_id)` | Root/child Task relationship and future family queries |
 
 ---
@@ -309,11 +316,15 @@ Events and shares use `NO ACTION`; mappings and attachments cascade from their
 task. The parent/child hierarchy is a hard ownership link: deleting a
 task deletes every descendant recursively (immediate, no confirmation
 until a tree UI exists), each following its own share rules, and a
-share-tombstoned descendant is re-parented under Root so the FK stays valid.
-The reserved Root Task has id `root`, no parent, and cannot be deleted as a
-row; resetting Root clears its own events/attachments and deletes its entire
-live descendant tree while preserving the Root anchor. Three rules govern any
-code that deletes or resets a task:
+share-tombstoned descendant is handled by its own binding: one distinct owner
+gets its Root, while zero/multiple owners, a Root ownership conflict, or a live
+title collision detaches it instead of assigning it to the deleting backend.
+Every `root-*` id is reserved and cannot be generically deleted, garbage
+collected, or tombstone-reaped; a backend may reset only its exact derived Root.
+Reset clears that Root's own events, attachments, client operations, compact
+summary, and previews, then deletes its owned live descendants while preserving
+the Root anchor. The older literal id `root` is not a Root alias. Three rules
+govern any code that deletes or resets a task:
 
 1. **Hard delete** (`deleteTask()` → `"hard"`): drop preview shares + client
    ops, then `DELETE FROM events` then `DELETE FROM tasks`. The final delete
@@ -431,16 +442,25 @@ integer milliseconds; the wire never carries the integer form.
 Schema changes before 1.0 are breaking changes. Server startup never performs
 an implicit compatibility migration for obsolete table schemas: the strict
 schema guard rejects them at boot, and operators must back up and reset their
-data directory before restarting. Three narrow, column-scoped edits are the
-explicit exceptions, and all converge an existing database on the current
-schema instead of requiring a reset:
+data directory before restarting. Four narrow, in-place schema edits are the
+explicit exceptions (three column-scoped and one index swap), and all converge
+an existing database on the current schema instead of requiring a reset:
 
 - the `system_message` payload normalization described above for the current
   `title`/`body` split;
 - dropping the retired `tasks.brief` column in place (`0.10` replaced one-step
   child creation with `+<title>` followed by `@<title> <message>`);
 - converting the eight legacy string timestamp columns to INTEGER unix
-  milliseconds (see [Timestamp normalization](#timestamp-normalization)).
+  milliseconds (see [Timestamp normalization](#timestamp-normalization));
+- replacing the task-only `agent_sessions` unique index with one on
+  `(agent_key, task_id)`, preserving the existing same-agent rebind semantics.
+  This permits ordinary task bindings to be backend-scoped; application code
+  separately enforces that each reserved Root id belongs to one backend.
+
+The one-time purge/rename/rehearsal required to convert a pre-change shared
+literal `root` row to the pi-derived Root is a separate operational task. It is
+not startup compatibility code or an additional schema exception; old literal
+`root` links are not aliased by the product.
 
 ---
 

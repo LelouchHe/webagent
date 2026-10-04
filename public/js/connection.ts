@@ -10,6 +10,8 @@ import {
   clearCancelTimer,
   hydrateTaskRuntime,
   updateInboxCount,
+  installRootTaskId,
+  clearRootTaskAuthority,
 } from "./state.ts";
 import {
   addSystem,
@@ -142,16 +144,21 @@ export function connect() {
   // Supersede any attempt still in flight so its continuation cannot open a
   // stream nobody owns.
   const gen = ++streamGen;
+  const rootAuthorityGeneration = clearRootTaskAuthority();
   const activeTaskId = state.taskId;
   setConnectionStatus("connecting", "connecting");
 
   // SSE for receiving server events. EventSource cannot send Authorization,
   // so we exchange a Bearer for a single-use 60s ticket first, then open
   // the stream with ?ticket=…
-  void openStream(gen, activeTaskId);
+  void openStream(gen, activeTaskId, rootAuthorityGeneration);
 }
 
-async function openStream(gen: number, activeTaskId: string | null) {
+async function openStream(
+  gen: number,
+  activeTaskId: string | null,
+  rootAuthorityGeneration: number,
+) {
   // Arm before the ticket mint so a stream that never opens is also covered.
   noteStreamActivity();
   startWatchdog();
@@ -183,6 +190,7 @@ async function openStream(gen: number, activeTaskId: string | null) {
     const msg = JSON.parse(e.data as string) as {
       type: string;
       clientId?: string;
+      rootTaskId?: string;
       agent?: unknown;
       debugLevel?: string;
       pendingCount?: number;
@@ -205,6 +213,9 @@ async function openStream(gen: number, activeTaskId: string | null) {
       );
       void registerPushEndpoint(msg.clientId);
       // Bridge-originated connected events also carry agent info — pass through
+      if (typeof msg.rootTaskId === "string") {
+        installRootTaskId(msg.rootTaskId, rootAuthorityGeneration);
+      }
       if (!msg.agent) return;
     }
     handleEvent(msg as unknown as import("../../src/types.ts").AgentEvent);
@@ -240,7 +251,7 @@ async function openStream(gen: number, activeTaskId: string | null) {
   // Load task immediately via REST — parallel with SSE connection. Pass the
   // task that was active when this connection attempt began so a hashless
   // Root reconnect cannot be mistaken for a fresh startup.
-  void initializeTaskAndIntent(activeTaskId);
+  void initializeTaskAndIntent(activeTaskId, gen, rootAuthorityGeneration);
 }
 
 async function recoverAfterHandshake(
@@ -270,21 +281,123 @@ async function recoverAfterHandshake(
 
 async function initializeTaskAndIntent(
   reconnectTaskId: string | null,
+  gen: number,
+  rootAuthorityGeneration: number,
 ): Promise<void> {
-  await initTask(reconnectTaskId);
+  const navigationGeneration = state.taskSwitchGen;
+  try {
+    const config = await api.getConfig();
+    if (
+      gen !== streamGen ||
+      rootAuthorityGeneration !== state.rootTaskAuthorityGeneration ||
+      navigationGeneration !== state.taskSwitchGen
+    ) {
+      return;
+    }
+    installRootTaskId(config.rootTaskId, rootAuthorityGeneration);
+  } catch {
+    // Task-list, detail, and connected payloads remain authoritative fallback
+    // sources if config cannot be fetched during reconnect.
+    if (
+      gen !== streamGen ||
+      rootAuthorityGeneration !== state.rootTaskAuthorityGeneration ||
+      navigationGeneration !== state.taskSwitchGen
+    ) {
+      return;
+    }
+  }
+  await initTask(reconnectTaskId, gen, rootAuthorityGeneration);
+  if (
+    gen !== streamGen ||
+    rootAuthorityGeneration !== state.rootTaskAuthorityGeneration ||
+    navigationGeneration !== state.taskSwitchGen
+  ) {
+    return;
+  }
   await processStartupMessageIntent();
 }
 
-async function initTask(reconnectTaskId: string | null = null) {
+function isSameBackendRoot(taskId: string): boolean {
+  return !taskId.startsWith("root-") || taskId === state.rootTaskId;
+}
+
+async function resumeFromTaskList(
+  reconnectTaskId: string | null,
+  gen: number,
+  connectionGeneration: number,
+  rootAuthorityGeneration: number,
+  isCurrent: () => boolean,
+): Promise<boolean> {
+  try {
+    const tasks = await api.listTasks();
+    if (!isCurrent()) return true;
+    if (state.rootTaskId === null) {
+      installRootTaskId(
+        tasks.find((task) => task.id.startsWith("root-"))?.id,
+        rootAuthorityGeneration,
+      );
+    }
+    if (
+      reconnectTaskId &&
+      state.taskId === reconnectTaskId &&
+      reconnectTaskId === state.rootTaskId
+    ) {
+      await resumeAndLoad(
+        reconnectTaskId,
+        true,
+        gen,
+        connectionGeneration,
+        rootAuthorityGeneration,
+      );
+      if (isCurrent()) scrollToBottom(false);
+      return true;
+    }
+    if (tasks.length === 0) return false;
+
+    const initialTask =
+      tasks.find((task) => task.hasUserInput) ??
+      tasks.find((task) => task.id === state.rootTaskId) ??
+      tasks[0];
+    resetTaskUI();
+    await resumeAndLoad(
+      initialTask.id,
+      false,
+      gen,
+      connectionGeneration,
+      rootAuthorityGeneration,
+    );
+    if (isCurrent()) scrollToBottom(true);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function initTask(
+  reconnectTaskId: string | null,
+  connectionGeneration: number,
+  rootAuthorityGeneration: number,
+) {
   setConnectionStatus("connecting", "task loading");
   const gen = state.taskSwitchGen;
+  const isCurrent = () =>
+    gen === state.taskSwitchGen &&
+    connectionGeneration === streamGen &&
+    rootAuthorityGeneration === state.rootTaskAuthorityGeneration;
+  if (!isCurrent()) return;
 
   const existingId = getHashTaskId();
 
   // Incremental reconnect: same task still in memory — skip DOM wipe
   if (existingId && existingId === state.taskId) {
-    await resumeAndLoad(existingId, true, gen);
-    if (gen !== state.taskSwitchGen) return;
+    await resumeAndLoad(
+      existingId,
+      true,
+      gen,
+      connectionGeneration,
+      rootAuthorityGeneration,
+    );
+    if (!isCurrent()) return;
     scrollToBottom(false);
     return;
   }
@@ -292,9 +405,20 @@ async function initTask(reconnectTaskId: string | null = null) {
   // A hashless reconnect must keep the task already shown in the browser.
   // Root intentionally has no hash, so this guard must precede hashless
   // recent-task selection.
-  if (!existingId && reconnectTaskId && state.taskId === reconnectTaskId) {
-    await resumeAndLoad(reconnectTaskId, true, gen);
-    if (gen !== state.taskSwitchGen) return;
+  if (
+    !existingId &&
+    reconnectTaskId &&
+    state.taskId === reconnectTaskId &&
+    isSameBackendRoot(reconnectTaskId)
+  ) {
+    await resumeAndLoad(
+      reconnectTaskId,
+      true,
+      gen,
+      connectionGeneration,
+      rootAuthorityGeneration,
+    );
+    if (!isCurrent()) return;
     scrollToBottom(false);
     return;
   }
@@ -304,8 +428,14 @@ async function initTask(reconnectTaskId: string | null = null) {
     resetTaskUI({
       preserveNavigationTarget: state.pendingNavigationTaskId === existingId,
     });
-    await resumeAndLoad(existingId, false, gen);
-    if (gen !== state.taskSwitchGen) return;
+    await resumeAndLoad(
+      existingId,
+      false,
+      gen,
+      connectionGeneration,
+      rootAuthorityGeneration,
+    );
+    if (!isCurrent()) return;
     scrollToBottom(true);
     return;
   }
@@ -313,28 +443,15 @@ async function initTask(reconnectTaskId: string | null = null) {
   // No task in URL — resume the most recent task with user-originated input.
   // The API list is ordered by last_active_at; Root is only the fallback when
   // there is no user history to restore.
-  try {
-    const tasks = (await api.listTasks()) as Array<{
-      id: string;
-      hasUserInput?: boolean;
-    }>;
-    if (gen !== state.taskSwitchGen) return;
-    if (tasks.length > 0) {
-      const initialTask =
-        tasks.find((task) => task.hasUserInput) ??
-        tasks.find((task) => task.id === "root") ??
-        tasks[0];
-      resetTaskUI();
-      await resumeAndLoad(initialTask.id, false, gen);
-      if (gen !== state.taskSwitchGen) return;
-      scrollToBottom(true);
-      return;
-    }
-  } catch {
-    /* best effort */
-  }
+  const resumed = await resumeFromTaskList(
+    reconnectTaskId,
+    gen,
+    connectionGeneration,
+    rootAuthorityGeneration,
+    isCurrent,
+  );
+  if (!isCurrent() || resumed) return;
 
-  if (gen !== state.taskSwitchGen) return;
   // No previous tasks — create new
   if (getStartupMessageIntent()) return;
   requestBootstrapTask();
@@ -344,14 +461,22 @@ async function resumeAndLoad(
   taskId: string,
   incremental: boolean,
   gen: number,
+  connectionGeneration: number,
+  rootAuthorityGeneration: number,
 ) {
+  const isCurrent = () =>
+    gen === state.taskSwitchGen &&
+    connectionGeneration === streamGen &&
+    rootAuthorityGeneration === state.rootTaskAuthorityGeneration;
+  if (!isCurrent()) return;
   if (incremental) {
     // Incremental: need task details first (for config), then catch-up events
     try {
       const task = await api.getTask(taskId);
-      if (gen !== state.taskSwitchGen) return;
+      if (!isCurrent()) return;
       handleEvent({
         type: "task_created",
+        rootTaskId: task.rootTaskId,
         taskId: task.id,
         cwd: task.cwd,
         cwdDisplay: task.cwdDisplay,
@@ -359,19 +484,31 @@ async function resumeAndLoad(
         configOptions: task.configOptions,
       });
     } catch {
-      if (gen !== state.taskSwitchGen) return;
-      await fallbackToNextTask(taskId, state.taskCwd ?? undefined);
+      if (!isCurrent()) return;
+      await fallbackToNextTask(
+        taskId,
+        state.taskCwd ?? undefined,
+        undefined,
+        undefined,
+        rootAuthorityGeneration,
+      );
       return;
     }
-    if (gen !== state.taskSwitchGen) return;
+    if (!isCurrent()) return;
     // Load snapshot in parallel with catch-up events (runtime state vs history)
     const [hydrated] = await Promise.all([
-      hydrateTaskRuntime(taskId, () => gen === state.taskSwitchGen),
+      hydrateTaskRuntime(taskId, isCurrent),
       loadNewEvents(taskId),
     ]);
-    if (gen !== state.taskSwitchGen) return;
+    if (!isCurrent()) return;
     if (!hydrated) {
-      await fallbackToNextTask(taskId, state.taskCwd ?? undefined);
+      await fallbackToNextTask(
+        taskId,
+        state.taskCwd ?? undefined,
+        undefined,
+        undefined,
+        rootAuthorityGeneration,
+      );
     } else {
       reconcileReplayedPendingTools();
     }
@@ -388,13 +525,16 @@ async function resumeAndLoad(
       ]);
       // History replay drains queued live patches while taskId is null.
       // Fetch afterward so the authoritative snapshot includes that state.
-      const hydrated = await hydrateTaskRuntime(
-        taskId,
-        () => gen === state.taskSwitchGen,
-      );
-      if (gen !== state.taskSwitchGen) return;
+      const hydrated = await hydrateTaskRuntime(taskId, isCurrent);
+      if (!isCurrent()) return;
       if (!hydrated) {
-        await fallbackToNextTask(taskId, state.taskCwd ?? undefined);
+        await fallbackToNextTask(
+          taskId,
+          state.taskCwd ?? undefined,
+          undefined,
+          undefined,
+          rootAuthorityGeneration,
+        );
         return;
       }
       reconcileReplayedPendingTools();
@@ -403,12 +543,20 @@ async function resumeAndLoad(
         addSystem("warn: Failed to load history.");
       }
     } catch {
-      if (gen !== state.taskSwitchGen) return;
-      await fallbackToNextTask(taskId, state.taskCwd ?? undefined);
+      if (!isCurrent()) return;
+      await fallbackToNextTask(
+        taskId,
+        state.taskCwd ?? undefined,
+        undefined,
+        undefined,
+        rootAuthorityGeneration,
+      );
       return;
     }
+    if (!isCurrent()) return;
     handleEvent({
       type: "task_created",
+      rootTaskId: task.rootTaskId,
       taskId: task.id,
       cwd: task.cwd,
       cwdDisplay: task.cwdDisplay,
@@ -420,6 +568,7 @@ async function resumeAndLoad(
 }
 
 function cleanup() {
+  clearRootTaskAuthority();
   setConnectionStatus("disconnected", "disconnected");
   state.eventSource = null;
   state.clientId = null;

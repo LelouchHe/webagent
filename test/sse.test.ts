@@ -273,6 +273,7 @@ describe("SSE REST API", () => {
 
       const connected = JSON.parse(sse.events[0]);
       assert.equal(connected.type, "connected");
+      assert.equal(connected.rootTaskId, store.rootTaskId);
       assert.ok(connected.clientId);
       assert.ok(connected.clientId.startsWith("cl-"));
     });
@@ -314,6 +315,7 @@ describe("SSE REST API", () => {
       sseCleanups.push(sse.close);
       await sse.response;
       await waitFor(() => sse.events.length >= 1);
+      assert.equal(JSON.parse(sse.events[0]).rootTaskId, store.rootTaskId);
 
       // Broadcast events from both tasks
       sseManager.broadcast({

@@ -128,9 +128,13 @@ shows in the meantime — the agent is never silently denied.
 - Disk: the task directory `<data_dir>/tasks/<sid>/` is removed
   recursively, which takes the `attachments/` subdir with it.
 
-When `:id` is Root, the Root row remains as the tree anchor. Its events and
-attachment rows are cleared, its attachment directory is removed, and the
-same descendant deletion rules apply to the rest of the tree.
+When `:id` is the current backend's exact derived Root id, that Root row
+remains as the tree anchor. Its events and attachment rows are cleared, its
+backend-specific attachment directory is removed, and the same descendant
+delete/survivor-ownership rules apply to the rest of its tree. Other backends'
+Root history, attachment rows, files, and shares are not touched. Every
+`root-*` id is protected from generic deletion and GC; literal `root` is not an
+alias.
 
 ### Orphaned `.tmp` files
 
@@ -251,8 +255,10 @@ Three primitives in `src/auth.ts`:
 | `reSignAttachmentUrlsInJson`   | Stored events on the way out — refreshes every URL     |
 
 Stored event JSON in SQLite carries the **unsigned base path**
-(`/api/v1/tasks/<sid>/attachments/<file>`); re-sign happens at
-egress. Two consequences:
+(`/api/v1/tasks/<task-id>/attachments/<file>`); re-sign happens at egress using
+the task id already in that owner event. Thus each backend Root's history is
+re-issued under its own derived task path, not another backend's Root path.
+Two consequences:
 
 - DB rows don't expire — moving the data dir, restoring a backup, or
   rotating the secret invalidates **only the live signed URLs**, not

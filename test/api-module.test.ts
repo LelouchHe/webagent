@@ -156,16 +156,29 @@ describe("api module", () => {
     });
   });
 
-  it("listTasks sends GET /api/v1/tasks", async () => {
+  it("listTasks returns the agent-scoped task array", async () => {
+    const tasks = [{ id: "task-1" }];
     fetchResponse = {
       status: 200,
       ok: true,
-      json: () => Promise.resolve([]),
-      text: () => Promise.resolve("[]"),
+      json: () => Promise.resolve(tasks),
+      text: () => Promise.resolve(JSON.stringify(tasks)),
     };
-    await api.listTasks();
+    assert.deepEqual(await api.listTasks(), tasks);
     assert.equal(fetchCalls[0].url, "/api/v1/tasks");
     assert.equal(fetchCalls[0].init?.method, undefined); // GET
+  });
+
+  it("gets backend config including Root identity", async () => {
+    const config = { rootTaskId: "root-canonical", configOptions: [] };
+    fetchResponse = {
+      status: 200,
+      ok: true,
+      json: () => Promise.resolve(config),
+      text: () => Promise.resolve(JSON.stringify(config)),
+    };
+    assert.deepEqual(await api.getConfig(), config);
+    assert.equal(fetchCalls[0].url, "/api/v1/config");
   });
 
   it("puts every request under an abort deadline", async () => {

@@ -9,6 +9,7 @@ describe("commands", () => {
   let commands: any;
   let events: any;
   let fetchCalls: Array<{ url: string; init?: any }>;
+  const ROOT_ID = "root-commands-test";
 
   before(async () => {
     setupDOM();
@@ -691,10 +692,12 @@ describe("commands", () => {
 
     it("exits Root — reloads the preserved Root task after reset", async () => {
       state.clientId = "cl-1";
-      state.taskId = "root";
+      state.taskId = ROOT_ID;
+      state.rootTaskId = ROOT_ID;
       state.taskCwd = "/home";
       const rootDetail = {
-        id: "root",
+        id: ROOT_ID,
+        rootTaskId: ROOT_ID,
         cwd: "/home",
         title: "root",
         configOptions: [],
@@ -711,12 +714,12 @@ describe("commands", () => {
           };
         };
         if (url === "/api/v1/tasks" && (!init?.method || init.method === "GET"))
-          return body([{ id: "root", title: "root" }]);
-        if (url === "/api/v1/tasks/root" && init?.method === "DELETE")
-          return body({ taskId: "root", reset: true });
-        if (url === "/api/v1/tasks/root") return body(rootDetail);
-        if (url.includes("/api/v1/tasks/root/events")) return body([]);
-        if (url === "/api/v1/tasks/root/snapshot") {
+          return body([{ id: ROOT_ID, title: "root" }]);
+        if (url === `/api/v1/tasks/${ROOT_ID}` && init?.method === "DELETE")
+          return body({ taskId: ROOT_ID, reset: true });
+        if (url === `/api/v1/tasks/${ROOT_ID}`) return body(rootDetail);
+        if (url.includes(`/api/v1/tasks/${ROOT_ID}/events`)) return body([]);
+        if (url === `/api/v1/tasks/${ROOT_ID}/snapshot`) {
           return body({
             version: 1,
             seq: 0,
@@ -729,7 +732,7 @@ describe("commands", () => {
 
       await commands.handleSlashCommand("/exit");
 
-      assert.equal(state.taskId, "root");
+      assert.equal(state.taskId, ROOT_ID);
       assert.equal(state.awaitingNewTask, false);
     });
 
@@ -1013,8 +1016,11 @@ describe("commands", () => {
       ];
       setFetch(async (url: string) => {
         if (url === "/api/v1/tasks") {
+          const tasks = [{ id: "target-1", title: "Target Task" }];
           return {
-            json: async () => [{ id: "target-1", title: "Target Task" }],
+            ok: true,
+            json: async () => tasks,
+            text: async () => JSON.stringify(tasks),
           };
         }
         if (url.startsWith("/api/v1/tasks/target-1/events")) {
@@ -1069,7 +1075,7 @@ describe("commands", () => {
         fetchCalls.some((c) =>
           c.url.startsWith("/api/v1/tasks/target-1/events"),
         ),
-        "should load events",
+        `should load events: ${JSON.stringify(fetchCalls.map((c) => c.url))}`,
       );
       assert.ok(
         fetchCalls.some(

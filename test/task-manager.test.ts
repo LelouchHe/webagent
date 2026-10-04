@@ -1,6 +1,12 @@
 import { describe, it, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 import { join } from "node:path";
@@ -626,7 +632,7 @@ describe("TaskManager", () => {
 
       const created = await sm.createTask(bridge);
 
-      assert.equal(store.getTask(created.taskId)?.parent_id, "root");
+      assert.equal(store.getTask(created.taskId)?.parent_id, store.rootTaskId);
     });
 
     it("expands home shorthand before creating a task", async () => {
@@ -1086,10 +1092,107 @@ describe("TaskManager", () => {
       await sm.ensureRootTask(bridge);
 
       assert.equal(newTaskCalls, 1);
-      assert.equal(store.getAgentSessionId("root"), "agent-root");
+      assert.equal(store.getAgentSessionId(store.rootTaskId), "agent-root");
       assert.deepEqual(
         store.listTasks().map((task) => task.id),
-        ["root"],
+        [store.rootTaskId],
+      );
+    });
+  });
+
+  describe("per-backend Root reset safety", () => {
+    it("rejects a SQL-injected foreign Root binding before mutation or bridge calls", async () => {
+      const rootId = store.ensureRootTask(tmpDir).id;
+      store.bindAgentSession(rootId, "agent-root");
+      store.saveEvent(
+        rootId,
+        "user_message",
+        { text: "must survive" },
+        { from_ref: "user" },
+      );
+      store["db"]
+        .prepare(
+          "INSERT INTO agent_sessions (agent_key, agent_session_id, task_id, created_at) VALUES (?, ?, ?, ?)",
+        )
+        .run("foreign-agent", "foreign-root-session", rootId, Date.now());
+      let bridgeCalls = 0;
+      const bridge = {
+        async newSession() {
+          bridgeCalls++;
+          return { sessionId: "agent-root-new", configOptions: [] };
+        },
+        async setConfigOption() {
+          return [];
+        },
+        async loadSession() {
+          throw new Error("loadSession should not be called");
+        },
+      };
+
+      await assert.rejects(
+        () => sm.resetRootTask(bridge),
+        /ownership mismatch/,
+      );
+      assert.equal(bridgeCalls, 0);
+      assert.equal(store.getAgentSessionId(rootId), "agent-root");
+      assert.equal(store.getEvents(rootId).length, 1);
+      assert.equal(store.getTaskIncludingDeleted(rootId)?.cwd, tmpDir);
+    });
+
+    it("keeps another backend's runtime, disk files, and attachment cache during reset", async () => {
+      const rootA = store.ensureRootTask(tmpDir).id;
+      store.bindAgentSession(rootA, "agent-root-a");
+      const b = new Store(tmpDir, "backend-b");
+      const rootB = b.ensureRootTask(tmpDir).id;
+      b.bindAgentSession(rootB, "agent-root-b");
+      b.saveEvent(
+        rootB,
+        "user_message",
+        { text: "B history" },
+        { from_ref: "user" },
+      );
+      b.insertAttachment({
+        id: "b-attachment",
+        taskId: rootB,
+        kind: "file",
+        name: "B.txt",
+        mime: "text/plain",
+        size: 1,
+        realpath: "/tmp/B.txt",
+      });
+      b.close();
+
+      const rootAPath = join(tmpDir, "tasks", rootA);
+      const rootBPath = join(tmpDir, "tasks", rootB);
+      mkdirSync(rootAPath, { recursive: true });
+      mkdirSync(rootBPath, { recursive: true });
+      writeFileSync(join(rootAPath, "a.txt"), "A");
+      writeFileSync(join(rootBPath, "b.txt"), "B");
+      const bLabels = sm.getLabelMap(rootB);
+      sm.liveTasks.add(rootA);
+      sm.liveTasks.add(rootB);
+      const bridge = {
+        async newSession() {
+          return { sessionId: "agent-root-a-new", configOptions: [] };
+        },
+        async setConfigOption() {
+          return [];
+        },
+        async loadSession() {
+          throw new Error("loadSession should not be called");
+        },
+      };
+
+      await sm.resetRootTask(bridge);
+
+      assert.equal(existsSync(rootAPath), false);
+      assert.equal(existsSync(join(rootBPath, "b.txt")), true);
+      assert.equal(sm.liveTasks.has(rootB), true);
+      assert.equal(sm.getLabelMap(rootB), bLabels);
+      assert.equal(store.getEvents(rootB).length, 1);
+      assert.equal(
+        store.getAttachment(rootB, "b-attachment")?.realpath,
+        "/tmp/B.txt",
       );
     });
   });
@@ -1097,7 +1200,8 @@ describe("TaskManager", () => {
   describe("task-tree mutation locking", () => {
     it("does not hold Root lock while ACP setup is pending", async () => {
       store.ensureRootTask(tmpDir);
-      store.createTask("a", tmpDir, "auto", "agent-a", "root");
+      const rootId = store.rootTaskId;
+      store.createTask("a", tmpDir, "auto", "agent-a", rootId);
 
       let releaseRootCreate!: () => void;
       const rootCreateReleased = new Promise<void>((resolve) => {
@@ -1126,7 +1230,7 @@ describe("TaskManager", () => {
       };
 
       const rootCreate = sm.createTask(bridge, tmpDir, undefined, "auto", {
-        parentId: "root",
+        parentId: rootId,
       });
       await rootCreateStartedPromise;
       const branchTask = await sm.createTask(
@@ -1141,13 +1245,14 @@ describe("TaskManager", () => {
       assert.equal(store.getTask(branchTask.taskId)?.parent_id, "a");
       releaseRootCreate();
       const rootTask = await rootCreate;
-      assert.equal(store.getTask(rootTask.taskId)?.parent_id, "root");
+      assert.equal(store.getTask(rootTask.taskId)?.parent_id, rootId);
     });
 
     it("does not block sibling task creation on another branch", async () => {
       store.ensureRootTask(tmpDir);
-      store.createTask("a", tmpDir, "auto", "agent-a", "root");
-      store.createTask("b", tmpDir, "auto", "agent-b", "root");
+      const rootId = store.rootTaskId;
+      store.createTask("a", tmpDir, "auto", "agent-a", rootId);
+      store.createTask("b", tmpDir, "auto", "agent-b", rootId);
 
       let releaseSessions!: () => void;
       const sessionsReleased = new Promise<void>((resolve) => {
@@ -1193,10 +1298,11 @@ describe("TaskManager", () => {
 
     it("rejects Root reset when a just-created descendant is still initializing", async () => {
       store.ensureRootTask(tmpDir);
-      store.bindAgentSession("root", "agent-root");
-      store.createTask("a", tmpDir, "auto", "agent-a", "root");
+      const rootId = store.rootTaskId;
+      store.bindAgentSession(rootId, "agent-root");
+      store.createTask("a", tmpDir, "auto", "agent-a", rootId);
       store.updateTaskConfig("a", "model", "model-old");
-      sm.liveTasks.add("root");
+      sm.liveTasks.add(rootId);
 
       let releaseInheritance!: () => void;
       const inheritanceReleased = new Promise<void>((resolve) => {
@@ -1247,9 +1353,10 @@ describe("TaskManager", () => {
 
     it("rechecks work that starts while Root reset waits for its lock", async () => {
       store.ensureRootTask(tmpDir);
-      store.createTask("a", tmpDir, "auto", "agent-a", "root");
+      const rootId = store.rootTaskId;
+      store.createTask("a", tmpDir, "auto", "agent-a", rootId);
       const releaseBranch = await sm["treeLock"].acquire({
-        shared: ["root"],
+        shared: [rootId],
         exclusive: ["a"],
       });
       const bridge = {
@@ -1274,8 +1381,9 @@ describe("TaskManager", () => {
 
     it("creates a task after a concurrent Root reset, never during it", async () => {
       store.ensureRootTask(tmpDir);
-      store.bindAgentSession("root", "agent-root");
-      sm.liveTasks.add("root");
+      const rootId = store.rootTaskId;
+      store.bindAgentSession(rootId, "agent-root");
+      sm.liveTasks.add(rootId);
 
       let releaseRotation!: () => void;
       const rotationReleased = new Promise<void>((resolve) => {
@@ -1309,7 +1417,7 @@ describe("TaskManager", () => {
       const reset = sm.resetRootTask(bridge);
       await resetStartedPromise;
       const create = sm.createTask(bridge, tmpDir, undefined, "auto", {
-        parentId: "root",
+        parentId: rootId,
       });
       await new Promise<void>((resolve) => setImmediate(resolve));
       assert.equal(
@@ -1321,7 +1429,7 @@ describe("TaskManager", () => {
       releaseRotation();
       await reset;
       const created = await create;
-      assert.equal(store.getTask(created.taskId)?.parent_id, "root");
+      assert.equal(store.getTask(created.taskId)?.parent_id, rootId);
       assert.ok(store.getTask(created.taskId));
     });
   });

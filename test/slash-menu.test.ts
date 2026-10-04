@@ -588,7 +588,7 @@ describe("slash menu — Tab vs Click behavior", () => {
       if (url === "/api/v1/tasks" && !init?.method) {
         return Promise.resolve({
           ok: true,
-          text: () => Promise.resolve('[{"id":"s1"}]'),
+          text: () => Promise.resolve(JSON.stringify([{ id: "s1" }])),
         });
       }
       if (url.startsWith("/api/v1/files/info?")) {
@@ -656,7 +656,7 @@ describe("slash menu — Tab vs Click behavior", () => {
     globalThis.fetch = (async (url: string, init?: any) => {
       fetchCalls.push({ url, init });
       if (url === "/api/v1/tasks" && !init?.method) {
-        return new Response('[{"id":"A"}]', { status: 200 });
+        return new Response(JSON.stringify([{ id: "A" }]), { status: 200 });
       }
       if (url.startsWith("/api/v1/files/info?")) {
         await infoGate;

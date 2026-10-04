@@ -407,6 +407,7 @@ describe("state", () => {
         name: "x.png",
       });
       mod.state.followMessages = false;
+      mod.state.rootTaskId = "root-derived-authority";
       mod.setBusy(true);
 
       mod.resetTaskUI();
@@ -417,6 +418,7 @@ describe("state", () => {
       assert.equal(mod.state.pendingAttachments.length, 0);
       assert.equal(mod.state.followMessages, true);
       assert.equal(mod.state.busy, false);
+      assert.equal(mod.state.rootTaskId, "root-derived-authority");
     });
 
     it("re-enables input and send button after task deletion", () => {
@@ -589,14 +591,19 @@ describe("state", () => {
       assert.equal(mod.getHashTaskId(), "abc123");
     });
 
-    it("setHashTaskId omits the hash for Root", () => {
+    it("omits only the canonical Root and preserves obsolete literal root hashes", () => {
       history.replaceState(null, "", "/?view=chat#old-task");
+      mod.state.rootTaskId = "root-derived-canonical";
 
-      mod.setHashTaskId("root");
-
+      mod.setHashTaskId("root-derived-canonical");
       assert.equal(location.pathname, "/");
       assert.equal(location.search, "?view=chat");
       assert.equal(location.hash, "");
+
+      mod.setHashTaskId("root");
+      assert.equal(location.hash, "#root");
+      mod.setHashTaskId("root-foreign-derived");
+      assert.equal(location.hash, "#root-foreign-derived");
     });
 
     it("setHashTaskId keeps a hash for child tasks", () => {
