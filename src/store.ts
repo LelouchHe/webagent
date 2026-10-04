@@ -11,7 +11,7 @@ import {
   type CollaborationMessageObserver,
 } from "./collaboration-emitter.ts";
 import { migrateTimestampsToMillis } from "./timestamp-migration.ts";
-import { canonicalModelIdentity } from "./config-options.ts";
+import { canonicalModelIdentity } from "./model-identity.ts";
 import {
   isReservedRootTaskId,
   rootTaskIdFor,

@@ -36,7 +36,7 @@ import {
 } from "./obligation-controller.ts";
 import { buildLabelMap, type LabelMap } from "./attachment-labels.ts";
 import { abbreviateHomePath, expandHomePath } from "./home-path.ts";
-import { canonicalModelIdentity } from "./config-options.ts";
+import { canonicalModelIdentity } from "./model-identity.ts";
 import { log } from "./log.ts";
 import { TaskTreeLock, type TaskTreeLockRelease } from "./task-tree-lock.ts";
 

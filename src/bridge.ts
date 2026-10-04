@@ -18,10 +18,11 @@ import type {
   PromptBlock,
 } from "./attachment-dispatch.ts";
 import { abbreviateHomePath } from "./home-path.ts";
+import { flattenConfigOptions } from "./config-options.ts";
 import {
   canonicalModelIdentity,
-  normalizeConfigOptions,
-} from "./config-options.ts";
+  normalizeModelConfigOptions,
+} from "./model-identity.ts";
 import { log } from "./log.ts";
 
 const blog = log.scope("bridge");
@@ -376,7 +377,9 @@ export class AgentBridge extends EventEmitter {
     agentSessionId: string,
     configOptions: ConfigOption[],
   ): ConfigOption[] {
-    const normalized = normalizeConfigOptions(configOptions);
+    const normalized = normalizeModelConfigOptions(
+      flattenConfigOptions(configOptions),
+    );
     this.modelOptionIdsBySession.set(agentSessionId, normalized.modelOptionIds);
     this.modelValuesBySession.set(
       agentSessionId,
