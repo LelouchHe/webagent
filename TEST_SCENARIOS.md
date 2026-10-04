@@ -43,6 +43,9 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - advertised close/delete retirement gates read initialize.agentCapabilities, with delete preferred when both exist
   - resume resource-not-found retains the actionable error without retrying load/new
 
+- `test/bridge-message-limit.test.ts`
+  - an ACP tool-result update just over the SDK default 32 MiB line limit reaches the bridge under WebAgent's explicit finite 128 MiB cap
+
 - `test/server-event-handler.test.ts`
   - event routing: message_chunk, thought_chunk, tool_call, prompt_done, task_created, error
   - thinking↔assistant buffer flush transitions

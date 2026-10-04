@@ -22,6 +22,11 @@ import { log } from "./log.ts";
 
 const blog = log.scope("bridge");
 
+// A default 50 MiB file attachment can produce a larger agent tool-result
+// message. Keep an explicit finite bound while allowing JSON-escaped text and
+// its ACP envelope through.
+export const MAX_ACP_MESSAGE_BYTES = 128 * 1024 * 1024;
+
 export interface AgentSessionIds {
   getAgentSessionId(taskId: string): string | undefined;
   getTaskId(agentSessionId: string): string | undefined;
@@ -143,7 +148,9 @@ export class AgentBridge extends EventEmitter {
     const output = Readable.toWeb(
       this.proc.stdout,
     ) as ReadableStream<Uint8Array>;
-    const stream = acp.ndJsonStream(input, output);
+    const stream = acp.ndJsonStream(input, output, {
+      maxMessageBytes: MAX_ACP_MESSAGE_BYTES,
+    });
 
     const client: acp.Client = {
       requestPermission: async (params: acp.RequestPermissionRequest) =>
@@ -400,6 +407,29 @@ export class AgentBridge extends EventEmitter {
           stopReason: "cancelled",
           ...(promptId ? { promptId } : {}),
         } satisfies AgentEvent);
+        return;
+      }
+      if (err instanceof acp.MessageTooLargeError) {
+        // The SDK aborts the whole connection when one inbound line exceeds the
+        // configured bound, and caches that error for every later request. Left
+        // unmarked, the session would look alive and repeat the raw error until
+        // a process restart, so retire the agent instead of wedging it.
+        const reason =
+          `An inbound ACP message exceeded the ${MAX_ACP_MESSAGE_BYTES}-byte limit, ` +
+          `so the agent connection was closed. Restart the agent to continue.`;
+        // Retire this turn before retiring the agent: a request that never
+        // reached the wire has no consumer for the abort rejection, and
+        // markAgentDead would raise it as an unhandled rejection.
+        this.pendingAborts.delete(taskId);
+        abortPromise.catch(() => {});
+        this.emit("event", {
+          type: "error",
+          taskId,
+          message: reason,
+          ...(promptId ? { promptId } : {}),
+        } satisfies AgentEvent);
+        this.markAgentDead(reason);
+        if (!handedOver) throw new PromptNotDeliveredError(reason);
         return;
       }
       this.emit("event", {

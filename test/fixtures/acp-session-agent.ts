@@ -74,13 +74,23 @@ const agent: acp.Agent = {
     return {};
   },
   async authenticate() {},
-  async prompt() {
+  async prompt(params) {
+    if (profile === "large-update") {
+      await connection.sessionUpdate({
+        sessionId: params.sessionId,
+        update: {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "large-result",
+          rawOutput: "x".repeat(32 * 1024 * 1024),
+        },
+      });
+    }
     return { stopReason: "end_turn" };
   },
   async cancel() {},
 };
 
-new acp.AgentSideConnection(
+const connection = new acp.AgentSideConnection(
   () => agent,
   acp.ndJsonStream(
     Writable.toWeb(process.stdout),

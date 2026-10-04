@@ -39,6 +39,7 @@ ACP allows the client to inject extra capabilities into the agent on top of its 
 
 ## Current Limits
 
+- Inbound ACP stdio messages are capped at 128 MiB (`MAX_ACP_MESSAGE_BYTES` in `src/bridge.ts`). SDK 1.7.0 defaults to 32 MiB, but WebAgent's default 50 MiB file-upload limit makes a larger read/tool result reachable: a measured 50 MiB text payload with 79-character lines plus newlines serializes as a 53,084,381-byte ACP update. The 128 MiB limit leaves room for ordinary JSON escaping and protocol fields while keeping a finite per-message bound. Larger local files or a user-configured upload limit above the 50 MiB default can still exceed it. An over-limit line aborts the ACP connection; the bridge then marks the agent disconnected rather than leaving a session that looks alive while every later prompt repeats the same raw error, so recovery is a restart.
 - The web UI does not expose native CLI command surfaces such as `/plan`, `/fleet`, `/mcp`, `/agent`, or `/skills`
 - Autopilot mode is supported: permissions are auto-approved server-side using `allow_once`
 - Event handling is intentionally narrower than a native CLI client; only selected ACP updates are rendered/persisted, and the silent title-generation session suppresses normal UI events
