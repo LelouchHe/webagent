@@ -140,6 +140,51 @@ describe("grouped config option boundary", { timeout: 20_000 }, () => {
     );
   });
 
+  it("keeps a same-process creation update when a session id is reused", async (t) => {
+    const { bridge, store, dir } = await startGroupedAgent(t, "grouped-reuse");
+    const first = await bridge.newSession(dir);
+    store.createTask("task-1", dir, "auto", first.sessionId);
+    bridge.sessionMapped(first.sessionId);
+    await bridge.retireExecution(first.sessionId);
+    store.deleteTask("task-1");
+
+    const second = await bridge.newSession(dir);
+    assert.equal(second.sessionId, first.sessionId);
+    store.createTask("task-2", dir, "auto", second.sessionId);
+    bridge.sessionMapped(second.sessionId);
+
+    const selected = await bridge.setConfigOption(
+      "task-2",
+      "model",
+      "vendor-a/model-three",
+    );
+    assert.equal(modelOption(selected).currentValue, "vendor-a/model-three");
+  });
+
+  it("keeps pre-response updates when a new process reuses a retired session id", async (t) => {
+    const { bridge, store, tasks, dir } = await startGroupedAgent(t);
+    const first = await tasks.createTask(bridge, dir);
+    const retiredSessionId = store.getAgentSessionId(first.taskId);
+    assert.ok(retiredSessionId);
+    await tasks.deleteTask(bridge, first.taskId);
+    bridge.discardUnboundSession("previous-process-session");
+
+    await bridge.restart(tasks);
+    assert.equal(
+      (bridge as any).invalidatedSessionCodecs.has("previous-process-session"),
+      false,
+    );
+    const fresh = await tasks.createTask(bridge, dir);
+    assert.equal(store.getAgentSessionId(fresh.taskId), retiredSessionId);
+
+    const selected = await bridge.setConfigOption(
+      fresh.taskId,
+      "model",
+      "vendor-a/model-three",
+    );
+    assert.equal(modelOption(selected).currentValue, "vendor-a/model-three");
+  });
+
   it("drops process-scoped mappings and rebuilds them from a replacement session schema", async (t) => {
     const { bridge, store, tasks, calls, dir } = await startGroupedAgent(t);
     const created = await bridge.newSession(dir);

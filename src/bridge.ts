@@ -531,6 +531,7 @@ export class AgentBridge extends EventEmitter {
   private clearSessionConfigCodecs(): void {
     this.codecProcessEpoch++;
     this.codecEpochBySession.clear();
+    this.invalidatedSessionCodecs.clear();
     this.modelOptionIdsBySession.clear();
     this.knownModelOptionIdsBySession.clear();
     this.currentModelOptionIdsBySession.clear();
@@ -932,7 +933,20 @@ export class AgentBridge extends EventEmitter {
   private handleSessionUpdate(params: acp.SessionNotification): Promise<void> {
     const update = params.update;
     const agentSessionId = params.sessionId;
-    if (this.deadReason || this.invalidatedSessionCodecs.has(agentSessionId)) {
+    if (this.deadReason) return Promise.resolve();
+
+    const taskId = this.sessionIds.getTaskId(agentSessionId);
+    if (
+      !taskId &&
+      (this.pendingNewSessions > 0 ||
+        this.unboundNewSessionIds.has(agentSessionId))
+    ) {
+      const updates = this.pendingSessionUpdates.get(agentSessionId) ?? [];
+      updates.push(update);
+      this.pendingSessionUpdates.set(agentSessionId, updates);
+      return Promise.resolve();
+    }
+    if (this.invalidatedSessionCodecs.has(agentSessionId)) {
       return Promise.resolve();
     }
 
@@ -942,17 +956,7 @@ export class AgentBridge extends EventEmitter {
       return Promise.resolve();
     }
 
-    const taskId = this.sessionIds.getTaskId(agentSessionId);
     if (!taskId) {
-      if (
-        this.pendingNewSessions > 0 ||
-        this.unboundNewSessionIds.has(agentSessionId)
-      ) {
-        const updates = this.pendingSessionUpdates.get(agentSessionId) ?? [];
-        updates.push(update);
-        this.pendingSessionUpdates.set(agentSessionId, updates);
-        return Promise.resolve();
-      }
       blog.warn("ignored event for unmapped ACP session", {
         sessionId: agentSessionId,
       });

@@ -8,6 +8,7 @@ const GROUPED_PROFILES = new Set([
   "grouped-empty-resume",
   "grouped-silent",
   "grouped-alias",
+  "grouped-reuse",
 ]);
 
 function isGroupedProfile(): boolean {
@@ -114,11 +115,16 @@ const agent: acp.Agent = {
   async newSession(params) {
     record("new", params);
     if (isGroupedProfile()) {
-      const sessionId = `grouped-${++nextSession}`;
+      nextSession++;
+      const sessionId =
+        profile === "grouped-reuse" ? "grouped-1" : `grouped-${nextSession}`;
       const options = groupedConfigOptions(sessionId);
       if (profile === "grouped-alias") options.push(groupedAliasOption());
       sessionOptions.set(sessionId, options);
-      if (profile === "grouped-model") {
+      if (
+        profile === "grouped-model" ||
+        (profile === "grouped-reuse" && nextSession > 1)
+      ) {
         const updated = groupedConfigOptions(sessionId, true);
         sessionOptions.set(sessionId, updated);
         await connection.sessionUpdate({
