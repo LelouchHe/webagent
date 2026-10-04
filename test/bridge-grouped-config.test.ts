@@ -10,8 +10,8 @@ import { TaskManager } from "../src/task-manager.ts";
 import { CapabilityStore } from "../src/mcp/capability.ts";
 import type { AgentEvent, ConfigSelectOption } from "../src/types.ts";
 
-async function startGroupedAgent(t: TestContext) {
-  const dir = mkdtempSync(join(tmpdir(), "webagent-grouped-config-"));
+async function startGroupedAgent(t: TestContext, profile = "grouped-model") {
+  const dir = mkdtempSync(join(tmpdir(), "grouped-config-"));
   const callsPath = join(dir, "calls.jsonl");
   writeFileSync(callsPath, "");
   const store = new Store(dir, "grouped-config-test");
@@ -26,7 +26,7 @@ async function startGroupedAgent(t: TestContext) {
     new URL("./fixtures/acp-session-agent.ts", import.meta.url),
   );
   const bridge = new AgentBridge(
-    `${process.execPath} --experimental-strip-types ${fixture} grouped-model ${callsPath}`,
+    `${process.execPath} --experimental-strip-types ${fixture} ${profile} ${callsPath}`,
     store,
   );
   t.after(async () => {
@@ -171,6 +171,93 @@ describe("grouped config option boundary", { timeout: 20_000 }, () => {
         .filter((call) => call.method === "config")
         .map((call) => call.params.value),
       [JSON.stringify(["vendor-a", "model-two"])],
+    );
+  });
+
+  it("keeps a notification-established codec when restore omits configOptions", async (t) => {
+    const { bridge, store, calls, dir } = await startGroupedAgent(
+      t,
+      "grouped-empty-resume",
+    );
+    const created = await bridge.newSession(dir);
+    store.createTask("task-1", dir, "auto", created.sessionId);
+    bridge.sessionMapped(created.sessionId);
+
+    const loaded = await bridge.loadSession("task-1", dir);
+    assert.deepEqual(loaded.configOptions, []);
+    const updated = await bridge.setConfigOption(
+      "task-1",
+      "model",
+      "vendor-a/model-three",
+    );
+
+    assert.equal(modelOption(updated).currentValue, "vendor-a/model-three");
+    assert.equal(
+      calls()
+        .filter((call) => call.method === "config")
+        .at(-1)?.params.value,
+      JSON.stringify(["vendor-a", "model-three"]),
+    );
+  });
+
+  it("updates a silent session codec without emitting config events", async (t) => {
+    const { bridge, store, calls, dir } = await startGroupedAgent(
+      t,
+      "grouped-silent",
+    );
+    const created = await bridge.newSession(dir, { silent: true });
+    store.createTask("task-1", dir, "auto", created.sessionId);
+    bridge.sessionMapped(created.sessionId);
+    const events: AgentEvent[] = [];
+    bridge.on("event", (event: AgentEvent) => events.push(event));
+
+    await bridge.prompt("task-1", "update config schema");
+    const updated = await bridge.setConfigOption(
+      "task-1",
+      "model",
+      "vendor-a/model-three",
+    );
+
+    assert.equal(modelOption(updated).currentValue, "vendor-a/model-three");
+    assert.equal(
+      calls()
+        .filter((call) => call.method === "config")
+        .at(-1)?.params.value,
+      JSON.stringify(["vendor-a", "model-three"]),
+    );
+    assert.equal(
+      events.filter((event) => event.type === "config_option_update").length,
+      0,
+    );
+  });
+
+  it("fails closed for a model-category id removed by a later schema", async (t) => {
+    const { bridge, store, calls, dir } = await startGroupedAgent(
+      t,
+      "grouped-alias",
+    );
+    const created = await bridge.newSession(dir);
+    store.createTask("task-1", dir, "auto", created.sessionId);
+    bridge.sessionMapped(created.sessionId);
+
+    await bridge.prompt("task-1", "remove model alias");
+    const beforeStaleRequest = calls().length;
+    await assert.rejects(
+      bridge.setConfigOption(
+        "task-1",
+        "alternate_model",
+        "vendor-x/alternate-one",
+      ),
+      /cannot resolve model option for this session/,
+    );
+    assert.equal(calls().length, beforeStaleRequest);
+
+    await bridge.setConfigOption("task-1", "ordinary_setting", "plain-value");
+    assert.equal(
+      calls()
+        .filter((call) => call.method === "config")
+        .at(-1)?.params.value,
+      "plain-value",
     );
   });
 

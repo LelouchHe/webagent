@@ -46,6 +46,29 @@ spot gaps, and decide what still needs to be added without reading every spec.
 - `test/bridge-message-limit.test.ts`
   - an ACP tool-result update just over the SDK default 32 MiB line limit reaches the bridge under WebAgent's explicit finite 128 MiB cap
 
+- `test/bridge-grouped-config.test.ts`
+  - grouped choices and per-session canonical-to-wire translation across creation, buffered notifications, restore, setters, retirement, and process replacement
+  - restore responses without configOptions preserve notification-established codecs; silent sessions update codecs without emitting config events
+  - removed model-category ids fail closed while ids never classified as models remain passthrough
+
+- `test/bridge-model-identity.test.ts`
+  - pathological pair identities send each selected choice's exact wire value
+
+- `test/bridge-flat-config.test.ts`
+  - flat canonical payloads are byte-identical at creation, restore, both setters, mapped notifications, and buffered replay
+
+- `test/bridge-config-codec-lifecycle.test.ts`
+  - late setter responses cannot repopulate codecs after retirement or process replacement; unexpected process death clears session codecs
+
+- `test/config-options.test.ts`
+  - generic grouped-select flattening preserves wire values, leaf order, and metadata independently of model policy
+
+- `test/model-identity.test.ts`
+  - value-only, idempotent model identity, regrouping stability, opaque values, and collision rejection
+
+- `test/config-model-persistence.test.ts`
+  - legacy identity migration, stale-snapshot normalization, and stable repeated writes/reopen
+
 - `test/server-event-handler.test.ts`
   - event routing: message_chunk, thought_chunk, tool_call, prompt_done, task_created, error
   - thinking↔assistant buffer flush transitions
@@ -148,6 +171,9 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - auto-resume of non-live tasks
   - restoring an interrupted turn does not auto-continue it (recovery is user-driven)
   - input validation and bridge-not-ready errors
+
+- `test/routes-config-option.test.ts`
+  - config_set broadcasts the value resolved from the response options, not the request encoding
 
 - `test/file-viewer-routes.test.ts`
   - Bearer-gated `info` / `list` and independently HMAC-signed `content`

@@ -90,15 +90,25 @@ describe("model identity codec", () => {
     );
   });
 
-  it("leaves values outside the decomposable pair shape opaque", () => {
-    assert.equal(
-      canonicalModelIdentity('["vendor-a","model-one","extra"]'),
-      '["vendor-a","model-one","extra"]',
-    );
-    assert.equal(
-      canonicalModelIdentity("vendor-a/model-one"),
+  it("is idempotent across pair, canonical, opaque, and malformed values", () => {
+    const pathological = JSON.stringify(['["vendor-a","model', 'two"]']);
+    const corpus = [
+      JSON.stringify(["vendor-a", "model-one"]),
       "vendor-a/model-one",
-    );
+      "opaque-model-id",
+      JSON.stringify(["single"]),
+      JSON.stringify([1, 2]),
+      "not-json",
+      pathological,
+    ];
+    for (const value of corpus) {
+      const canonical = canonicalModelIdentity(value);
+      assert.equal(
+        canonicalModelIdentity(canonical),
+        canonical,
+        `identity must be a fixed point for ${JSON.stringify(value)}`,
+      );
+    }
   });
 
   it("rejects distinct wire choices that collide on canonical identity", () => {

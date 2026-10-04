@@ -38,7 +38,7 @@ function putConfig(port: number, taskId: string, value: string) {
 
 describe("config option route authority", () => {
   it("broadcasts the resolved response value rather than the request encoding", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "webagent-config-route-"));
+    const dir = mkdtempSync(join(tmpdir(), "config-route-"));
     const publicDir = join(dir, "public");
     mkdirSync(publicDir);
     writeFileSync(join(publicDir, "index.html"), "ok");

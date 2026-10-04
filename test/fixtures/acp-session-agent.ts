@@ -3,6 +3,17 @@ import { Readable, Writable } from "node:stream";
 import * as acp from "@agentclientprotocol/sdk";
 
 const [profile, callsPath] = process.argv.slice(2);
+const GROUPED_PROFILES = new Set([
+  "grouped-model",
+  "grouped-empty-resume",
+  "grouped-silent",
+  "grouped-alias",
+]);
+
+function isGroupedProfile(): boolean {
+  return GROUPED_PROFILES.has(profile);
+}
+
 function groupedConfigOptions(
   sessionId: string,
   includeThird = false,
@@ -52,6 +63,18 @@ const configOptions = [
   },
 ] satisfies acp.SessionConfigOption[];
 
+function groupedAliasOption(): acp.SessionConfigOption {
+  const value = JSON.stringify(["vendor-x", "alternate-one"]);
+  return {
+    type: "select",
+    id: "alternate_model",
+    name: "Alternate Model",
+    category: "model",
+    currentValue: value,
+    options: [{ value, name: "Alternate One" }],
+  };
+}
+
 function record(method: string, params: unknown): void {
   appendFileSync(callsPath, JSON.stringify({ method, params }) + "\n");
 }
@@ -62,7 +85,7 @@ let nextSession = 0;
 const sessionOptions = new Map<string, acp.SessionConfigOption[]>();
 
 function optionsForSession(sessionId: string): acp.SessionConfigOption[] {
-  return profile === "grouped-model"
+  return isGroupedProfile()
     ? (sessionOptions.get(sessionId) ?? groupedConfigOptions(sessionId))
     : configOptions;
 }
@@ -74,11 +97,9 @@ const agent: acp.Agent = {
       agentInfo: { name: "session-fixture", version: "1" },
       agentCapabilities: {
         loadSession:
-          profile === "grouped-model" ||
-          profile === "load-only" ||
-          profile === "both",
+          isGroupedProfile() || profile === "load-only" || profile === "both",
         sessionCapabilities: {
-          ...(profile === "grouped-model" ||
+          ...(isGroupedProfile() ||
           profile === "resume-only" ||
           profile === "both" ||
           profile === "resume-missing"
@@ -92,17 +113,22 @@ const agent: acp.Agent = {
   },
   async newSession(params) {
     record("new", params);
-    if (profile === "grouped-model") {
+    if (isGroupedProfile()) {
       const sessionId = `grouped-${++nextSession}`;
       const options = groupedConfigOptions(sessionId);
-      sessionOptions.set(sessionId, groupedConfigOptions(sessionId, true));
-      await connection.sessionUpdate({
-        sessionId,
-        update: {
-          sessionUpdate: "config_option_update",
-          configOptions: groupedConfigOptions(sessionId, true),
-        },
-      });
+      if (profile === "grouped-alias") options.push(groupedAliasOption());
+      sessionOptions.set(sessionId, options);
+      if (profile === "grouped-model") {
+        const updated = groupedConfigOptions(sessionId, true);
+        sessionOptions.set(sessionId, updated);
+        await connection.sessionUpdate({
+          sessionId,
+          update: {
+            sessionUpdate: "config_option_update",
+            configOptions: updated,
+          },
+        });
+      }
       return { sessionId, configOptions: options };
     }
     return { sessionId: "unexpected-new", configOptions };
@@ -115,6 +141,18 @@ const agent: acp.Agent = {
     record("resume", params);
     if (profile === "resume-missing") {
       throw acp.RequestError.resourceNotFound(params.sessionId);
+    }
+    if (profile === "grouped-empty-resume") {
+      const updated = groupedConfigOptions(params.sessionId, true);
+      sessionOptions.set(params.sessionId, updated);
+      await connection.sessionUpdate({
+        sessionId: params.sessionId,
+        update: {
+          sessionUpdate: "config_option_update",
+          configOptions: updated,
+        },
+      });
+      return {};
     }
     return { configOptions: optionsForSession(params.sessionId) };
   },
@@ -134,7 +172,7 @@ const agent: acp.Agent = {
       }
       return option;
     });
-    if (profile === "grouped-model") {
+    if (isGroupedProfile()) {
       sessionOptions.set(params.sessionId, updated);
     }
     return { configOptions: updated };
@@ -149,6 +187,28 @@ const agent: acp.Agent = {
   },
   async authenticate() {},
   async prompt(params) {
+    if (profile === "grouped-silent") {
+      const updated = groupedConfigOptions(params.sessionId, true);
+      sessionOptions.set(params.sessionId, updated);
+      await connection.sessionUpdate({
+        sessionId: params.sessionId,
+        update: {
+          sessionUpdate: "config_option_update",
+          configOptions: updated,
+        },
+      });
+    }
+    if (profile === "grouped-alias") {
+      const updated = groupedConfigOptions(params.sessionId);
+      sessionOptions.set(params.sessionId, updated);
+      await connection.sessionUpdate({
+        sessionId: params.sessionId,
+        update: {
+          sessionUpdate: "config_option_update",
+          configOptions: updated,
+        },
+      });
+    }
     if (profile === "large-update") {
       await connection.sessionUpdate({
         sessionId: params.sessionId,

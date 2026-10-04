@@ -6,23 +6,27 @@ export interface NormalizedModelOptions {
   modelValueToWireValue: Map<string, Map<string, string>>;
 }
 
-/** Derive WebAgent's model identity only from an explicitly encoded value pair. */
-export function canonicalModelIdentity(value: string): string {
+function decodeModelPair(value: string): [string, string] | null {
   let decoded: unknown;
   try {
     decoded = JSON.parse(value) as unknown;
   } catch {
-    return value;
+    return null;
   }
-  if (
-    Array.isArray(decoded) &&
+  return Array.isArray(decoded) &&
     decoded.length === 2 &&
     typeof decoded[0] === "string" &&
     typeof decoded[1] === "string"
-  ) {
-    return `${decoded[0]}/${decoded[1]}`;
-  }
-  return value;
+    ? [decoded[0], decoded[1]]
+    : null;
+}
+
+/** Derive an id only when the value-only pair decomposition is a fixed point. */
+export function canonicalModelIdentity(value: string): string {
+  const pair = decodeModelPair(value);
+  if (!pair) return value;
+  const joined = `${pair[0]}/${pair[1]}`;
+  return decodeModelPair(joined) ? value : joined;
 }
 
 /** Normalize model options and retain their exact protocol values for writes. */

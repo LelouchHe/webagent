@@ -51,7 +51,7 @@ ACP allows the client to inject extra capabilities into the agent on top of its 
 - The web UI does not expose native CLI command surfaces such as `/plan`, `/fleet`, `/mcp`, `/agent`, or `/skills`
 - Autopilot mode is supported: permissions are auto-approved server-side using `allow_once`
 - Event handling is intentionally narrower than a native CLI client; only selected ACP updates are rendered/persisted, and the silent title-generation session suppresses normal UI events
-- Model switching depends on the agent's ACP implementation and currently uses the SDK's unstable session-model API. ACP defines grouped select choices and treats choice values as opaque strings. WebAgent flattens grouped choices and uses group labels only to qualify display names. WebAgent defines a canonical model identity on top of ACP: it interprets a value as `provider/model-id` only when the value is a JSON-encoded two-string pair. Other opaque values remain their own identity; ACP does not supply a provider/model split for them.
+- Model switching depends on the agent's ACP implementation and currently uses the SDK's unstable session-model API. ACP defines grouped select choices and treats choice values as opaque strings. The application flattens grouped choices and uses group labels only to qualify display names. It defines a canonical model identity on top of ACP: it interprets a value as `provider/model-id` only when the value is a JSON-encoded two-string pair. Other opaque values remain their own identity; ACP does not supply a provider/model split for them.
 - ACP does not expose context window usage, token counts, or remaining capacity
 - No method to compact or clear session context; only option is to create a new session
 

@@ -10,7 +10,7 @@ import { CapabilityStore } from "../src/mcp/capability.ts";
 
 describe("persisted model identity", () => {
   it("canonicalizes values written in the previous composite encoding", () => {
-    const dir = mkdtempSync(join(tmpdir(), "webagent-model-identity-"));
+    const dir = mkdtempSync(join(tmpdir(), "model-identity-"));
     const encoded = JSON.stringify(["vendor-a", "model-one"]);
     let store: Store | undefined;
     try {
@@ -45,8 +45,33 @@ describe("persisted model identity", () => {
     }
   });
 
+  it("keeps a pathological model identity stable across writes and reopen", () => {
+    const dir = mkdtempSync(join(tmpdir(), "model-fixed-point-"));
+    const wire = JSON.stringify(['["vendor-a","model', 'two"]']);
+    let store: Store | undefined;
+    try {
+      store = new Store(dir, "model-fixed-point-test");
+      store.createTask("task-1", dir, "auto", "session-1");
+      store.updateTaskConfig("task-1", "model", wire);
+      const firstWrite = store.getTask("task-1")?.model;
+      assert.ok(firstWrite);
+      assert.equal(firstWrite, wire);
+      store.updateTaskConfig("task-1", "model", firstWrite);
+      const secondWrite = store.getTask("task-1")?.model;
+      assert.equal(secondWrite, firstWrite);
+      store.close();
+      store = undefined;
+
+      store = new Store(dir, "model-fixed-point-test");
+      assert.equal(store.getTask("task-1")?.model, firstWrite);
+    } finally {
+      store?.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("normalizes a stale task snapshot before overriding restored options", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "webagent-model-snapshot-"));
+    const dir = mkdtempSync(join(tmpdir(), "model-snapshot-"));
     const encoded = JSON.stringify(["vendor-a", "model-one"]);
     const store = new Store(dir, "model-snapshot-test");
     const tasks = new TaskManager(

@@ -56,6 +56,33 @@ and nothing more.
     3. If notifications stop working after a server update or VAPID key change, re-install the PWA (delete from home screen, re-add), then `/notify on` again. Simply toggling `/notify off` → `/notify on` may not be enough if the Service Worker cache is stale.
   - **iOS PWA quirks**: Apple's push service (`web.push.apple.com`) rejects VAPID subjects with `localhost` domains (`403 BadJwtToken`) — use a real-looking email like `mailto:noreply@example.com`. When changing `push.vapid_subject`, delete `data/vapid.json` to regenerate keys, then all clients must re-subscribe.
 
+## ACP config choices and model identity
+
+- ACP grouped select choices are flattened by `flattenConfigOptions` at the
+  bridge boundary. That helper handles protocol shape and display labels only;
+  group ids/names never contribute to model identity.
+- ACP choice values are opaque strings. `normalizeModelConfigOptions` applies
+  the application's separate model-identity policy: a JSON two-string pair is joined
+  as `provider/model-id` only when that result is a fixed point. Otherwise the
+  value remains its own identity. Identity derivation must be idempotent.
+- Keep a canonical-id → exact-wire-value codec per ACP session. Populate it
+  from each present schema: creation, load/resume, either config setter, and
+  mapped/buffered config-option updates (including silent sessions). An absent
+  schema does not erase a codec established by that session; a present schema
+  replaces its available wire mappings. Keep model-option ids classified for
+  the lifetime of the session so a removed id fails closed instead of becoming
+  an ordinary passthrough setting. An id never classified as a model option
+  remains passthrough. Never authorize writes from the process-global UI schema
+  cache.
+- Persist and return canonical model identities, including on reads of older
+  rows and stored-config overrides. Reapplying canonicalization must not change
+  the value. Reject distinct wire choices that collide on one canonical id.
+- Invalidate session codecs on execution retirement, unexpected agent death,
+  and process replacement. Fence late setter responses so they cannot restore
+  a codec after its execution was invalidated.
+- Preserve already-canonical flat option payloads byte-for-byte. Do not rewrite
+  ACP event-store payloads.
+
 ## Attachment label egress rewrite
 
 When the agent reads a user-uploaded attachment, it sees and emits the internal storage path (`<dataDir>/tasks/<sid>/attachments/<uuid>.<ext>`). Showing that to the user is unhelpful — we have the original filename in the `attachments` table, so we translate it back at egress.
