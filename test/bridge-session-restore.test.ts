@@ -1,5 +1,6 @@
 import { describe, it, type TestContext } from "node:test";
 import assert from "node:assert/strict";
+import { once } from "node:events";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -208,5 +209,28 @@ describe("ACP capability-driven restore", { timeout: 20_000 }, () => {
     assert.equal(params.mcpServers.length, 1);
     assert.equal(tasks.liveTasks.has("web-1"), false);
     assert.equal(tasks.restoringTasks.has("web-1"), false);
+  });
+
+  // A start that fails before initialize must not leave the previous
+  // process's capability flags behind: a later restore would otherwise act on
+  // an advertisement that no live agent ever made, and report a raw transport
+  // error instead of the actionable "does not support restoring" message.
+  it("a failed start clears capability state from the previous process", async (t) => {
+    const { bridge } = await startAgent(t, "resume-only");
+    assert.ok(
+      (bridge as any).sessionCapabilities?.resume,
+      "precondition: the fixture advertised resume",
+    );
+
+    const previous = (bridge as any).proc;
+    previous.kill("SIGKILL");
+    await once(previous, "exit");
+
+    // Spawns successfully and exits without completing the ACP handshake.
+    (bridge as any).agentCmd = `${process.execPath} -e process.exit(0)`;
+    await assert.rejects(() => bridge.start());
+
+    assert.equal((bridge as any).sessionCapabilities, null);
+    assert.equal((bridge as any).loadSessionSupported, false);
   });
 });

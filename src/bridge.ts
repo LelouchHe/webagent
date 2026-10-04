@@ -93,6 +93,12 @@ export class AgentBridge extends EventEmitter {
   }
 
   async start(): Promise<void> {
+    // Capability state belongs to the process this call is about to start.
+    // Clearing it first means a start that fails before initialize cannot
+    // leave the previous process's flags behind for a later restore to act on.
+    this.sessionCapabilities = null;
+    this.loadSessionSupported = false;
+
     const [cmd, ...args] = this.agentCmd.split(/\s+/);
     this.proc = spawn(cmd, args, {
       stdio: ["pipe", "pipe", "pipe"],
