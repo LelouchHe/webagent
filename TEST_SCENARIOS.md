@@ -1,6 +1,6 @@
 # Test Scenarios
 
-Last updated: 2026-10-03
+Last updated: 2026-10-04
 
 This file is a scenario-level map of the current automated test suite.
 It is intentionally higher-level than raw test names so we can review coverage,
@@ -96,6 +96,9 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - per-agent `agent_sessions` uniqueness: binding the reserved Root record for a second agent succeeds and the first agent's binding survives
   - agent-scoped task visibility is preserved when both Root bindings coexist
   - the legacy task-only unique index is replaced in place on open, so a second agent can bind Root without a constraint error
+  - Root reset deletes only the current agent's subtree; another agent's tasks, events, and bindings survive
+  - an unbound Root child (share tombstone with no binding) survives a Root reset and is not reported as affected
+  - deleting an owned task does not cascade into a child owned by another agent; the survivor is re-parented under Root
   - deleteEmptyTasks age gating
   - hasInterruptedTurn detection
   - migration idempotency
@@ -110,6 +113,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - a malformed legacy value (`'0'`, empty, `'now'`, `T` separator, out-of-range, or calendar-invalid such as `2026-02-29` / `24:00:00` / `23:59:60`) aborts the migration with the offending row and rolls back with nothing changed
   - an INTEGER column whose default is still the legacy expression is rebuilt and its values copied through untouched, including `shares.created_at` / `owner_prefs.updated_at` converging from the seconds-aligned default
   - migration is idempotent and leaves an already-INTEGER database untouched
+  - the legacy task-only `agent_sessions` index is dropped during a timestamp table rebuild, and a second agent can then bind Root
   - `foreign_key_check` / `integrity_check` pass after the rebuild
 
 - `test/title-service.test.ts`
@@ -134,6 +138,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - task CRUD (create / get / delete / list)
   - config update (model, mode) and broadcast
   - source filter on task list
+  - agent-scoped parent validation: a parent owned by another agent is rejected and no child or system_message is written into it
   - gzip compression for events endpoint
   - streaming buffer flush on events endpoint
   - auto-resume of non-live tasks

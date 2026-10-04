@@ -679,15 +679,17 @@ export class Store {
    * and create the per-agent one in place. No rows are deleted.
    */
   private migrateAgentSessionUniqueness(): void {
-    const legacy = this.db
-      .prepare(
-        "SELECT 1 AS present FROM sqlite_master WHERE type = 'index' AND name = 'idx_agent_sessions_task'",
-      )
-      .get() as { present: number } | undefined;
-    if (legacy) this.db.exec("DROP INDEX idx_agent_sessions_task");
-    this.db.exec(
-      "CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_sessions_agent_task ON agent_sessions(agent_key, task_id) WHERE task_id IS NOT NULL",
-    );
+    this.db.transaction(() => {
+      const legacy = this.db
+        .prepare(
+          "SELECT 1 AS present FROM sqlite_master WHERE type = 'index' AND name = 'idx_agent_sessions_task'",
+        )
+        .get() as { present: number } | undefined;
+      if (legacy) this.db.exec("DROP INDEX idx_agent_sessions_task");
+      this.db.exec(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_sessions_agent_task ON agent_sessions(agent_key, task_id) WHERE task_id IS NOT NULL",
+      );
+    })();
   }
 
   /**
@@ -850,6 +852,24 @@ export class Store {
          WHERE s.id = ? AND a.agent_key = ? AND s.deleted_at IS NULL`,
       )
       .get(id, this.agentKey) as TaskRow | undefined;
+  }
+
+  /**
+   * A live task the current agent may attach a child to. A parent bound only
+   * to another agent is rejected; the shared Root anchor is accepted even
+   * before SessionManager binds it (a live row is enough, as the create route
+   * already relied on). Tombstoned rows are rejected.
+   */
+  getParentTask(id: string): TaskRow | undefined {
+    const task = this.getTaskIncludingDeleted(id);
+    if (task?.deleted_at !== null) return undefined;
+    if (this.ownsTask(id)) return task;
+    const foreign = this.db
+      .prepare(
+        "SELECT 1 AS present FROM agent_sessions WHERE task_id = ? AND agent_key != ? LIMIT 1",
+      )
+      .get(id, this.agentKey) as { present: number } | undefined;
+    return foreign ? undefined : task;
   }
 
   registerInternalAgentSession(agentSessionId: string): AgentSessionRow {
@@ -1019,26 +1039,38 @@ export class Store {
       .run(ROOT_TASK_ID, parentId, parentId, ROOT_TASK_ID);
   }
 
-  /** Direct child ids of a task (excluding itself and Root), in any order. */
-  private listChildren(parentId: string): string[] {
+  /**
+   * Direct child ids of a task that the current agent owns. Deletion and
+   * Root reset walk this instead of every child so a foreign agent's
+   * subtree is never touched; surviving non-owned children are re-parented
+   * to Root by the ordinary hard-delete path.
+   */
+  private listOwnedChildren(parentId: string): string[] {
     return (
       this.db
         .prepare(
-          "SELECT id FROM tasks WHERE parent_id = ? AND id != ? AND id != ?",
+          `SELECT s.id FROM tasks s
+           JOIN agent_sessions a ON a.task_id = s.id
+           WHERE s.parent_id = ? AND s.id != ? AND s.id != ?
+             AND a.agent_key = ?`,
         )
-        .all(parentId, parentId, ROOT_TASK_ID) as Array<{ id: string }>
+        .all(parentId, parentId, ROOT_TASK_ID, this.agentKey) as Array<{
+        id: string;
+      }>
     ).map((row) => row.id);
   }
 
   /**
-   * Every descendant of a task, transitively (used to gate destructive
-   * operations such as the DELETE busy check against in-flight children).
+   * Every descendant of a task that the current agent owns, transitively
+   * (used to gate destructive operations such as the DELETE busy check
+   * against in-flight children). Foreign and unbound descendants are not
+   * part of the agent's subtree and are left out.
    */
   getDescendantTaskIds(rootId: string): string[] {
     const out: string[] = [];
     const queue = [rootId];
     while (queue.length > 0) {
-      for (const child of this.listChildren(queue.pop()!)) {
+      for (const child of this.listOwnedChildren(queue.pop()!)) {
         queue.push(child);
         out.push(child);
       }
@@ -1070,7 +1102,7 @@ export class Store {
 
     const reset = this.db.transaction(() => {
       const affected: TaskDelete[] = [];
-      for (const childId of this.listChildren(ROOT_TASK_ID)) {
+      for (const childId of this.listOwnedChildren(ROOT_TASK_ID)) {
         affected.push(...this.deleteTask(childId).affected);
       }
       this.db
@@ -1114,7 +1146,7 @@ export class Store {
     const affected: TaskDelete[] = [];
     // Delete descendants first (children before parents) so the FK on
     // parent_id can never block the parent's own row removal.
-    const children = this.listChildren(id);
+    const children = this.listOwnedChildren(id);
     for (const childId of children) {
       affected.push(...this.deleteTask(childId).affected);
     }

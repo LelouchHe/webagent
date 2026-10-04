@@ -446,6 +446,32 @@ describe("Task REST API", () => {
       assert.equal(store.listTasks().length, 0);
     });
 
+    it("rejects a parent task owned by another agent", async () => {
+      const foreign = new Store(tmpDir, "other-agent");
+      foreign.createTask("foreign-parent", tmpDir, "auto", "foreign-session");
+      foreign.close();
+
+      const res = await makeRequest(
+        port,
+        "POST",
+        "/api/v1/tasks",
+        JSON.stringify({ parentId: "foreign-parent", title: "child" }),
+      );
+
+      assert.equal(res.status, 400);
+      assert.match(res.body, /Parent task not found/);
+
+      // No system_message may be written into the foreign parent, and no
+      // child task may be created under it.
+      const check = new Store(tmpDir, "other-agent");
+      assert.equal(check.getEvents("foreign-parent").length, 0);
+      const taskCount = check["db"]
+        .prepare("SELECT COUNT(*) AS n FROM tasks")
+        .get() as { n: number };
+      assert.equal(taskCount.n, 1);
+      check.close();
+    });
+
     it("creates a task with custom cwd", async () => {
       const res = await makeRequest(
         port,

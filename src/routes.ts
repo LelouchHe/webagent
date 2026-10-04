@@ -2558,12 +2558,13 @@ export function createRequestHandler(
           });
           return;
         }
-        // The parent must exist and be live (not tombstoned); the FK would
-        // reject a dangling reference with a raw database error otherwise.
-        // A live parent row is enough — it need not have an ACP binding yet.
+        // The parent must be a live task the current agent owns; the FK would
+        // reject a dangling reference with a raw database error otherwise. A
+        // live row is enough — it need not have an ACP binding yet (Root is
+        // created before SessionManager binds it), but a task bound only to
+        // another agent is rejected so no write can target a foreign parent.
         if (body.parentId) {
-          const parent = store.getTaskIncludingDeleted(body.parentId);
-          if (parent?.deleted_at !== null) {
+          if (!store.getParentTask(body.parentId)) {
             json(res, HTTP_STATUS.BAD_REQUEST, {
               error: "Parent task not found",
             });

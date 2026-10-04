@@ -539,6 +539,100 @@ describe("Store", () => {
     });
   });
 
+  describe("agent-scoped reset and deletion", () => {
+    it("resets only the current agent's Root subtree", () => {
+      store.createTask("root", "/root", "root", "root-a");
+      store.createTask("a-task", "/a", "auto", "agent-a", "root");
+      store.saveEvent(
+        "a-task",
+        "user_message",
+        { text: "a" },
+        { from_ref: "user" },
+      );
+      store.close();
+
+      const other = new Store(tmpDir, "other-agent");
+      other.bindAgentSession("root", "root-b");
+      other.createTask("b-task", "/b", "auto", "agent-b", "root");
+      other.saveEvent(
+        "b-task",
+        "user_message",
+        { text: "b" },
+        { from_ref: "user" },
+      );
+      other.close();
+
+      store = new Store(tmpDir, "test-agent");
+      const result = store.resetRootTask();
+
+      assert.deepEqual(result.affected.map((entry) => entry.id).sort(), [
+        "a-task",
+      ]);
+      assert.equal(store.getTaskIncludingDeleted("a-task"), undefined);
+      assert.equal(store.getEvents("a-task").length, 0);
+
+      // Agent B's task, events, and binding survive untouched.
+      const check = new Store(tmpDir, "other-agent");
+      assert.equal(check.getTask("b-task")?.id, "b-task");
+      assert.equal(check.getEvents("b-task").length, 1);
+      assert.equal(check.getAgentSessionId("b-task"), "agent-b");
+      check.close();
+    });
+
+    it("preserves an unbound Root child when resetting Root", () => {
+      store.createTask("root", "/root", "root", "root-a");
+      store.createTask("a-task", "/a", "auto", "agent-a", "root");
+      // A share tombstone under Root: the row survives, its binding is gone,
+      // so no agent owns it.
+      store.createTask("orphan", "/o", "auto", "agent-orphan", "root");
+      const token = generateShareToken();
+      store.insertSharePreview({ token, taskId: "orphan", snapshotSeq: 1 });
+      store.activateShare(token);
+      assert.equal(store.deleteTask("orphan").mode, "soft");
+
+      const result = store.resetRootTask();
+
+      assert.deepEqual(result.affected.map((entry) => entry.id).sort(), [
+        "a-task",
+      ]);
+      const orphan = store.getTaskIncludingDeleted("orphan")!;
+      assert.equal(orphan.id, "orphan");
+      assert.notEqual(orphan.deleted_at, null);
+    });
+
+    it("does not cascade a delete into another agent's child", () => {
+      store.createTask("root", "/root", "root", "root-a");
+      store.createTask("a-parent", "/a", "auto", "agent-a", "root");
+      store.close();
+
+      const other = new Store(tmpDir, "other-agent");
+      other.createTask("b-child", "/b", "auto", "agent-b", "a-parent");
+      other.saveEvent(
+        "b-child",
+        "user_message",
+        { text: "b" },
+        { from_ref: "user" },
+      );
+      other.close();
+
+      store = new Store(tmpDir, "test-agent");
+      const result = store.deleteTask("a-parent");
+
+      assert.deepEqual(
+        result.affected.map((entry) => entry.id),
+        ["a-parent"],
+      );
+      const survivor = store.getTaskIncludingDeleted("b-child")!;
+      assert.equal(survivor.id, "b-child");
+      assert.equal(survivor.parent_id, "root");
+
+      const check = new Store(tmpDir, "other-agent");
+      assert.equal(check.getTask("b-child")?.id, "b-child");
+      assert.equal(check.getEvents("b-child").length, 1);
+      check.close();
+    });
+  });
+
   describe("events", () => {
     it("saves and retrieves events with auto-incrementing seq", () => {
       store.createTask("s1", "/x");

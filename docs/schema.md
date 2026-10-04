@@ -434,9 +434,9 @@ integer milliseconds; the wire never carries the integer form.
 Schema changes before 1.0 are breaking changes. Server startup never performs
 an implicit compatibility migration for obsolete table schemas: the strict
 schema guard rejects them at boot, and operators must back up and reset their
-data directory before restarting. Three narrow, column-scoped edits are the
-explicit exceptions, and all converge an existing database on the current
-schema instead of requiring a reset:
+data directory before restarting. Four narrow, in-place schema edits are the
+explicit exceptions (three column-scoped and one index swap), and all converge
+an existing database on the current schema instead of requiring a reset:
 
 - the `system_message` payload normalization described above for the current
   `title`/`body` split;

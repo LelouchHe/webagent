@@ -534,8 +534,9 @@ export class TaskManager {
     const parentId = this.resolveParentId(opts?.parentId);
     if (parentId) {
       await this.waitForRootResetIfNeeded(parentId);
-      const parent = this.store.getTaskIncludingDeleted(parentId);
-      if (parent?.deleted_at !== null) throw new TaskNotFoundError(parentId);
+      if (!this.store.getParentTask(parentId)) {
+        throw new TaskNotFoundError(parentId);
+      }
     }
     const result = await this.createTaskImpl(
       bridge,
@@ -573,10 +574,8 @@ export class TaskManager {
         // The reset may have been requested after the wait but before lock
         // acquisition. Drop the lock and wait outside it before retrying.
         if (parentId && this.resettingTasks.has(parentId)) continue;
-        if (parentId) {
-          const parent = this.store.getTaskIncludingDeleted(parentId);
-          if (parent?.deleted_at !== null)
-            throw new TaskNotFoundError(parentId);
+        if (parentId && !this.store.getParentTask(parentId)) {
+          throw new TaskNotFoundError(parentId);
         }
         this.store.createTask(
           taskId,
