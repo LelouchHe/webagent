@@ -101,7 +101,7 @@ export async function isSourceTaskMissing(
 ): Promise<boolean> {
   if (!sourceTaskId) return false;
   try {
-    const { tasks } = await api.listTasks();
+    const tasks = await api.listTasks();
     return !tasks.some((task) => task.id === sourceTaskId);
   } catch {
     return false;

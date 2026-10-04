@@ -1099,9 +1099,8 @@ export class Store {
   getTaskPath(id: string): string | undefined {
     const lineage = this.getTaskLineage(id);
     if (!lineage) return undefined;
-    const segments = isReservedRootTaskId(lineage[0])
-      ? lineage.slice(1)
-      : lineage;
+    const segments =
+      lineage[0] === this.rootTaskId ? lineage.slice(1) : lineage;
     return formatTaskPath(
       segments.map(
         (taskId) =>

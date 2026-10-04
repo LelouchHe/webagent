@@ -31,6 +31,7 @@ export async function switchToTask(taskId: string): Promise<NavigationResult> {
   if (state.taskId === taskId) return "unchanged";
   state.taskSwitchGen++;
   const generation = state.taskSwitchGen;
+  const rootAuthorityGeneration = state.rootTaskAuthorityGeneration;
   const previousTaskId = state.taskId;
   finishNewTaskRequest();
   state.awaitingNewTask = false;
@@ -42,6 +43,7 @@ export async function switchToTask(taskId: string): Promise<NavigationResult> {
   state.pendingNavigationTaskId = taskId;
   const isCurrentNavigation = () =>
     generation === state.taskSwitchGen &&
+    rootAuthorityGeneration === state.rootTaskAuthorityGeneration &&
     state.pendingNavigationTaskId === taskId;
 
   try {

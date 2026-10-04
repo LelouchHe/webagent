@@ -150,9 +150,11 @@ docs → tests). When executing it:
   `test/doc-coverage.test.ts`, so `docs/api.md` must move in the same
   commit as `src/routes.ts`.
 - URL hashes stay `#<task-id>` / hashless current-backend Root. Root identity is
-  delivered by task-list/detail/SSE/config payloads; clients compare against the
-  exact canonical id, never a `root-` prefix. Old `#root` and foreign derived
-  Root ids are not aliases.
+  delivered by detail/create/clear/reset/bootstrap/SSE/config payloads; clients
+  compare against the exact canonical id, never a `root-` prefix. The task list
+  stays an agent-scoped array, so a visible reserved prefix identifies its
+  single Root only when current-connection authority is unavailable. Old `#root`
+  and foreign derived Root ids are not aliases.
 - Sweep: `docs/schema.md`, `docs/api.md`, `docs/share.md`, `docs/features.md`,
   `docs/client-architecture.md`, `docs/performance.md`, `README.md`,
   `CLAUDE.md`, `TEST_SCENARIOS.md`, and the unit/e2e suites.

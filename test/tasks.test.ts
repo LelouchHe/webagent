@@ -161,7 +161,9 @@ describe("Task REST API", () => {
   // --- POST /api/v1/tasks ---
 
   describe("POST /api/v1/tasks", () => {
-    it("does not allow REST clients to choose a reserved task id", async () => {
+    // Lock-in for pre-existing behavior: REST creation selects only the
+    // supported fields and always gets its id from the server.
+    it("keeps REST task ids server-assigned (pre-existing lock-in)", async () => {
       const res = await makeRequest(
         port,
         "POST",
@@ -183,6 +185,7 @@ describe("Task REST API", () => {
       assert.equal(res.status, 201);
       const body = JSON.parse(res.body);
       assert.match(body.id, /^[0-9a-f-]{36}$/);
+      assert.equal(body.rootTaskId, store.rootTaskId);
       assert.equal(store.getAgentSessionId(body.id), "mock-task-1");
       assert.equal(body.cwd, tmpDir);
       assert.equal(
@@ -609,6 +612,7 @@ describe("Task REST API", () => {
       assert.equal(res.status, 200);
       const body = JSON.parse(res.body);
       assert.equal(body.id, "s1");
+      assert.equal(body.rootTaskId, store.rootTaskId);
       const created = broadcastEvents.find(
         (event) => event.type === "task_created",
       );
@@ -667,8 +671,8 @@ describe("Task REST API", () => {
       assert.equal(pendingSummary.seq, 1);
       const publicList = JSON.parse(
         (await makeRequest(port, "GET", "/api/v1/tasks")).body,
-      ) as { tasks: Array<Record<string, unknown>> };
-      assert.equal("pending_compact_summary" in publicList.tasks[0], false);
+      ) as Array<Record<string, unknown>>;
+      assert.equal("pending_compact_summary" in publicList[0], false);
       assert.equal(store.getAgentSessionId("s1"), "mock-task-1");
       assert.ok(
         broadcastEvents.some(
@@ -1054,7 +1058,11 @@ describe("Task REST API", () => {
       const res = await makeRequest(port, "DELETE", `/api/v1/tasks/${rootId}`);
 
       assert.equal(res.status, 200);
-      assert.deepEqual(JSON.parse(res.body), { taskId: rootId, reset: true });
+      assert.deepEqual(JSON.parse(res.body), {
+        taskId: rootId,
+        rootTaskId: rootId,
+        reset: true,
+      });
       assert.equal(store.getTask(rootId)?.id, rootId);
       assert.equal(store.getTaskIncludingDeleted("child"), undefined);
       assert.deepEqual(store.getEvents(rootId), []);
@@ -1065,7 +1073,10 @@ describe("Task REST API", () => {
       );
       assert.ok(
         broadcastEvents.some(
-          (event) => event.type === "task_reset" && event.taskId === rootId,
+          (event) =>
+            event.type === "task_reset" &&
+            event.taskId === rootId &&
+            event.rootTaskId === rootId,
         ),
       );
       assert.ok(mockBridge.retireCalls.includes("agent-root"));
@@ -1315,36 +1326,30 @@ describe("Task REST API", () => {
 
       const allRes = await makeRequest(port, "GET", "/api/v1/tasks");
       const all = JSON.parse(allRes.body);
-      assert.equal(all.rootTaskId, store.rootTaskId);
-      assert.equal(all.tasks.length, 2);
+      assert.equal(all.length, 2);
 
       const userRes = await makeRequest(
         port,
         "GET",
         "/api/v1/tasks?source=user",
       );
-      const userResponse = JSON.parse(userRes.body);
-      assert.equal(userResponse.rootTaskId, store.rootTaskId);
-      assert.equal(userResponse.tasks.length, 1);
-      assert.equal(userResponse.tasks[0].source, "user");
+      const userTasks = JSON.parse(userRes.body);
+      assert.equal(userTasks.length, 1);
+      assert.equal(userTasks[0].source, "user");
 
       const autoRes = await makeRequest(
         port,
         "GET",
         "/api/v1/tasks?source=auto",
       );
-      const autoResponse = JSON.parse(autoRes.body);
-      assert.equal(autoResponse.rootTaskId, store.rootTaskId);
-      assert.equal(autoResponse.tasks.length, 1);
-      assert.equal(autoResponse.tasks[0].source, "auto");
+      const autoTasks = JSON.parse(autoRes.body);
+      assert.equal(autoTasks.length, 1);
+      assert.equal(autoTasks[0].source, "auto");
     });
 
-    it("returns the canonical Root authority with an empty task list", async () => {
+    it("returns an empty task array", async () => {
       const res = await makeRequest(port, "GET", "/api/v1/tasks");
-      assert.deepEqual(JSON.parse(res.body), {
-        rootTaskId: store.rootTaskId,
-        tasks: [],
-      });
+      assert.deepEqual(JSON.parse(res.body), []);
     });
 
     it("returns all tasks without source filter", async () => {
@@ -1357,9 +1362,7 @@ describe("Task REST API", () => {
       await makeRequest(port, "POST", "/api/v1/tasks", "{}");
 
       const res = await makeRequest(port, "GET", "/api/v1/tasks");
-      const body = JSON.parse(res.body);
-      assert.equal(body.rootTaskId, store.rootTaskId);
-      assert.equal(body.tasks.length, 2);
+      assert.equal(JSON.parse(res.body).length, 2);
     });
   });
 

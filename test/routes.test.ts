@@ -225,28 +225,24 @@ describe("HTTP routes", () => {
     assert.equal(res.headers["cache-control"], "no-cache");
   });
 
-  it("GET /api/v1/tasks returns empty catalog with Root authority", async () => {
+  it("GET /api/v1/tasks returns empty array", async () => {
     const res = await makeRequest(port, "GET", "/api/v1/tasks");
     assert.equal(res.status, 200);
-    assert.deepEqual(JSON.parse(res.body), {
-      rootTaskId: store.rootTaskId,
-      tasks: [],
-    });
+    assert.deepEqual(JSON.parse(res.body), []);
   });
 
   it("GET /api/v1/tasks returns created tasks and user-input state", async () => {
     store.createTask("s1", "/x");
     let res = await makeRequest(port, "GET", "/api/v1/tasks");
-    let catalog = JSON.parse(res.body);
-    assert.equal(catalog.rootTaskId, store.rootTaskId);
-    assert.equal(catalog.tasks.length, 1);
-    assert.equal(catalog.tasks[0].id, "s1");
-    assert.equal(catalog.tasks[0].hasUserInput, false);
+    let tasks = JSON.parse(res.body);
+    assert.equal(tasks.length, 1);
+    assert.equal(tasks[0].id, "s1");
+    assert.equal(tasks[0].hasUserInput, false);
 
     store.saveEvent("s1", "user_message", { text: "hi" }, { from_ref: "user" });
     res = await makeRequest(port, "GET", "/api/v1/tasks");
-    catalog = JSON.parse(res.body);
-    assert.equal(catalog.tasks[0].hasUserInput, true);
+    tasks = JSON.parse(res.body);
+    assert.equal(tasks[0].hasUserInput, true);
   });
 
   it("hides tasks owned by another agent from list and direct routes", async () => {
@@ -261,10 +257,7 @@ describe("HTTP routes", () => {
     other.close();
 
     const list = await makeRequest(port, "GET", "/api/v1/tasks");
-    assert.deepEqual(JSON.parse(list.body), {
-      rootTaskId: store.rootTaskId,
-      tasks: [],
-    });
+    assert.deepEqual(JSON.parse(list.body), []);
 
     const task = await makeRequest(port, "GET", "/api/v1/tasks/other-task");
     assert.equal(task.status, 404);

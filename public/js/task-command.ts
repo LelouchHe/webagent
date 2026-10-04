@@ -637,7 +637,7 @@ async function buildMessageCandidates(parsed: {
   if (!state.taskId) return [];
   let tasks: TaskSummary[];
   try {
-    tasks = (await api.listTasks()).tasks;
+    tasks = await api.listTasks();
   } catch {
     return [];
   }
@@ -719,7 +719,7 @@ async function expandBrowseInput(
   path: TaskPath,
 ): Promise<void> {
   try {
-    const tasks = (await api.listTasks()).tasks;
+    const tasks = await api.listTasks();
     const current = buildTaskTree(tasks).get(state.taskId ?? "");
     const resolved = resolveTaskPathNodes(state.taskId, tasks, path);
     if (current && resolved.length === 1) {
@@ -797,7 +797,7 @@ async function executeMessageTask(
   }
   let tasks: TaskSummary[];
   try {
-    tasks = (await api.listTasks()).tasks;
+    tasks = await api.listTasks();
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     addSystem(`err: task list failed — ${msg}`);

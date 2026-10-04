@@ -260,6 +260,11 @@ describe("Store", () => {
       assert.equal(store.getTaskPath("path-child"), '@/Bench/"Review notes"');
       assert.equal(store.getTaskPath("path-parent"), "@/Bench");
       assert.equal(store.getTaskPath(store.rootTaskId), "@/");
+      const foreignRoot = store.ensureRootTaskForAgentKey(
+        "foreign-path-backend",
+        "/tmp/foreign-root",
+      );
+      assert.equal(store.getTaskPath(foreignRoot.id), "@/root");
       assert.equal(store.getTaskPath("missing-task"), undefined);
     });
 

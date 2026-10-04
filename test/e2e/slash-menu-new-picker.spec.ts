@@ -34,16 +34,13 @@ async function findTaskByTitle(
 ): Promise<{ id: string; cwd: string; parent_id: string | null } | null> {
   return page.evaluate(async (needle) => {
     const res = await fetch("/api/v1/tasks");
-    const catalog = (await res.json()) as {
-      rootTaskId: string;
-      tasks: Array<{
-        id: string;
-        title: string | null;
-        cwd: string;
-        parent_id: string | null;
-      }>;
-    };
-    const found = catalog.tasks.find((t) => t.title === needle);
+    const tasks = (await res.json()) as Array<{
+      id: string;
+      title: string | null;
+      cwd: string;
+      parent_id: string | null;
+    }>;
+    const found = tasks.find((t) => t.title === needle);
     return found
       ? { id: found.id, cwd: found.cwd, parent_id: found.parent_id }
       : null;

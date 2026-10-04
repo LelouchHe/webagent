@@ -156,15 +156,15 @@ describe("api module", () => {
     });
   });
 
-  it("listTasks returns task catalog plus canonical Root identity", async () => {
-    const catalog = { rootTaskId: "root-canonical", tasks: [] };
+  it("listTasks returns the agent-scoped task array", async () => {
+    const tasks = [{ id: "task-1" }];
     fetchResponse = {
       status: 200,
       ok: true,
-      json: () => Promise.resolve(catalog),
-      text: () => Promise.resolve(JSON.stringify(catalog)),
+      json: () => Promise.resolve(tasks),
+      text: () => Promise.resolve(JSON.stringify(tasks)),
     };
-    assert.deepEqual(await api.listTasks(), catalog);
+    assert.deepEqual(await api.listTasks(), tasks);
     assert.equal(fetchCalls[0].url, "/api/v1/tasks");
     assert.equal(fetchCalls[0].init?.method, undefined); // GET
   });
@@ -184,12 +184,11 @@ describe("api module", () => {
   it("puts every request under an abort deadline", async () => {
     // A request with no deadline can stay pending forever on a stalled
     // connection, and callers latch state on those promises.
-    const catalog = { rootTaskId: "root-canonical", tasks: [] };
     fetchResponse = {
       status: 200,
       ok: true,
-      json: () => Promise.resolve(catalog),
-      text: () => Promise.resolve(JSON.stringify(catalog)),
+      json: () => Promise.resolve([]),
+      text: () => Promise.resolve("[]"),
     };
     await api.listTasks();
     const signal = fetchCalls[0].init?.signal;

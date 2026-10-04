@@ -36,22 +36,7 @@ describe("commands", () => {
   function setFetch(handler: (url: string, init?: any) => Promise<any> | any) {
     globalThis.fetch = (async (url: string, init?: any) => {
       fetchCalls.push({ url, init });
-      const response = await handler(url, init);
-      if (url === "/api/v1/tasks" && (!init?.method || init.method === "GET")) {
-        const data =
-          typeof response.text === "function"
-            ? JSON.parse(await response.text())
-            : await response.json();
-        if (Array.isArray(data)) {
-          const catalog = { rootTaskId: ROOT_ID, tasks: data };
-          return {
-            ...response,
-            json: async () => catalog,
-            text: async () => JSON.stringify(catalog),
-          };
-        }
-      }
-      return response;
+      return handler(url, init);
     }) as any;
   }
 
@@ -1031,9 +1016,11 @@ describe("commands", () => {
       ];
       setFetch(async (url: string) => {
         if (url === "/api/v1/tasks") {
+          const tasks = [{ id: "target-1", title: "Target Task" }];
           return {
             ok: true,
-            json: async () => [{ id: "target-1", title: "Target Task" }],
+            json: async () => tasks,
+            text: async () => JSON.stringify(tasks),
           };
         }
         if (url.startsWith("/api/v1/tasks/target-1/events")) {

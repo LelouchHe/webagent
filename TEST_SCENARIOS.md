@@ -138,7 +138,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
 
 - `test/tasks.test.ts`
   - task CRUD (create / get / delete / list), with server-only id assignment and 404 for obsolete `root` / foreign derived Root ids
-  - task catalog always returns `{ rootTaskId, tasks }`, including empty/filtered lists; detail, bootstrap, config, task_created, and connected events carry backend authority
+  - task list remains an agent-scoped array; detail, bootstrap/create/clear/reset, config, task_created, and connected payloads carry backend Root authority additively
   - REST and MCP callers cannot choose reserved task ids; bootstrap, clear, compact, and actual/synthetic task_created envelopes preserve Root identity
   - config update (model, mode) and broadcast
   - source filter on task list
@@ -227,7 +227,8 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - direct task targets take priority over unresolved message targets
   - task switches require successful busy snapshot hydration; provisional hash is written before detail fetch, then Root canonicalization waits for detail authority
   - hashless startup preserves user-input-first selection and canonical Root fallback; same-task hashless reconnect skips list rescan
-  - obsolete literal `#root` and a foreign `root-*` hash are 404s and never alias to the current backend Root
+  - obsolete literal `#root` remains a 404 with no alias; a stale reserved Root hash after config failure consults the current backend's task array/bootstrap
+  - foreign derived Root ids are never route aliases; fallback selection uses the current connection's scoped task array
   - explicit switches, `/new`, and competing notification consumes use ordered navigation ownership
   - existing-window and cold-start service-worker routing
   - terminal startup intents are cleared; retryable intents survive refresh without in-page duplication
@@ -253,7 +254,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - new-task request payloads (with custom cwd)
   - reset-task cleanup (messages, input, title, metadata)
   - global task cancel payloads, including forced cancel when frontend busy state is stale
-  - exact canonical Root hash removal, with literal `root` retained as an ordinary hash; Root identity survives per-task resets
+  - exact canonical Root hash removal, with literal `root` retained as an ordinary hash; Root identity survives per-task resets and is cleared/re-authorized across connections
 
 - `test/input.test.ts`
   - normal prompt send flow
@@ -584,6 +585,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - deleting a task cascades to every descendant, retires each affected
     ACP execution, and broadcasts one `task_deleted` per removed task
   - survivors reparent only to their unique owner's Root; unknown owner, mismatch, or title collision falls back to `parent_id = NULL` without data loss
+  - `getTaskPath` strips only the current Store's canonical Root anchor; a foreign reserved Root renders as a path segment
   - creating a task under an unknown parent is rejected with `400`
   - generic deletion rejects every reserved `root-*` id; only the current backend's exact derived Root endpoint resets it
 

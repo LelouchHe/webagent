@@ -789,9 +789,7 @@ export function createRequestHandler(
               hasUserInput: Boolean(hasUserInput),
             };
           });
-        res.end(
-          JSON.stringify({ rootTaskId: store.rootTaskId, tasks: publicTasks }),
-        );
+        res.end(JSON.stringify(publicTasks));
         return;
       }
 
@@ -2290,6 +2288,7 @@ export function createRequestHandler(
           sseManager.broadcast(event);
           json(res, HTTP_STATUS.OK, {
             id: taskId,
+            rootTaskId: store.rootTaskId,
             cwd: fresh.cwd,
             cwdDisplay: abbreviateHomePath(fresh.cwd),
             title: fresh.title,
@@ -2472,11 +2471,13 @@ export function createRequestHandler(
               }
               sseManager.broadcast({
                 type: "task_reset",
+                rootTaskId: store.rootTaskId,
                 taskId: store.rootTaskId,
                 ...(clientOpId ? { clientOpId } : {}),
               });
               json(res, HTTP_STATUS.OK, {
                 taskId: store.rootTaskId,
+                rootTaskId: store.rootTaskId,
                 reset: true,
                 ...(clientOpId ? { clientOpId } : {}),
               });

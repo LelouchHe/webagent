@@ -109,12 +109,6 @@ export interface TaskDetail {
   configOptions: ConfigOption[];
 }
 
-/** Task catalog returned by GET /api/v1/tasks, including Root authority. */
-export interface TaskListResponse {
-  rootTaskId: string;
-  tasks: TaskSummary[];
-}
-
 /** Stored event row returned by GET /api/v1/tasks/:id/events. */
 export interface StoredEvent {
   id: number;
@@ -238,6 +232,7 @@ export type AgentEvent =
     }
   | {
       type: "task_reset";
+      rootTaskId?: string;
       taskId: string;
       /** Correlates the initiating HTTP action with its SSE echo. */
       clientOpId?: string;

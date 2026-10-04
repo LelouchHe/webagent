@@ -8,7 +8,6 @@
 
 import {
   state,
-  installRootTaskId,
   resetTaskUI,
   requestNewTask,
   getSelectConfigOption,
@@ -342,9 +341,7 @@ export async function handleSlashCommand(text: string): Promise<boolean> {
         return true;
       }
       try {
-        const catalog = await api.listTasks();
-        installRootTaskId(catalog.rootTaskId);
-        const tasks = catalog.tasks;
+        const tasks = await api.listTasks();
         const query = arg.toLowerCase();
         const match = tasks.find(
           (s) => s.id.startsWith(arg) || s.title?.toLowerCase().includes(query),

@@ -14,6 +14,7 @@ describe("connection", () => {
   let timeoutFns: (() => void)[];
   let originalSetTimeout: typeof globalThis.setTimeout;
   let configRootId: string;
+  let configFailure: boolean;
 
   class MockEventSource {
     static instances: MockEventSource[] = [];
@@ -79,6 +80,7 @@ describe("connection", () => {
   beforeEach(() => {
     resetState(state, dom);
     configRootId = ROOT_ID;
+    configFailure = false;
     fetchCalls = [];
     timeoutCalls = [];
     timeoutFns = [];
@@ -127,6 +129,14 @@ describe("connection", () => {
         return mockResponse({ ticket: "tkt-test", expiresIn: 60 });
       }
       if (url === "/api/v1/config") {
+        if (configFailure) {
+          return {
+            ok: false,
+            status: 503,
+            json: async () => ({ error: "config unavailable" }),
+            text: async () => '{"error":"config unavailable"}',
+          };
+        }
         return mockResponse({ rootTaskId: configRootId, configOptions: [] });
       }
       // Auto-stub snapshot endpoint so tests that don't care about it don't explode.
@@ -150,7 +160,7 @@ describe("connection", () => {
   const ROOT_ID = "root-canonical-identity";
 
   function listResponse(tasks: unknown[]) {
-    return { rootTaskId: ROOT_ID, tasks };
+    return tasks;
   }
 
   function fireConnected(
@@ -395,7 +405,7 @@ describe("connection", () => {
     );
   });
 
-  it("does not alias a foreign derived Root id", async () => {
+  it("404s a foreign derived Root then falls back to a listed current-backend task", async () => {
     const foreignRootId = "root-foreign-derived-id";
     history.replaceState(null, "", `/#${foreignRootId}`);
     setFetch(async (url: string) => {
@@ -408,15 +418,21 @@ describe("connection", () => {
         };
       if (url.startsWith(`/api/v1/tasks/${foreignRootId}/events`))
         return mockResponse([]);
+      if (url === "/api/v1/tasks")
+        return mockResponse([{ id: "current-backend-task" }]);
+      if (url === "/api/v1/tasks/current-backend-task")
+        return mockResponse(taskResponse("current-backend-task"));
+      if (url.startsWith("/api/v1/tasks/current-backend-task/events"))
+        return mockResponse([]);
       throw new Error(`Unexpected fetch: ${url}`);
     });
 
     connection.connect();
-    await flush(30);
+    await flush(100);
 
-    assert.equal(state.taskId, null);
+    assert.equal(state.taskId, "current-backend-task");
     assert.ok(
-      dom.messages.textContent.includes(`Task not found (${foreignRootId})`),
+      fetchCalls.some((call) => call.url === `/api/v1/tasks/${foreignRootId}`),
     );
     assert.equal(
       fetchCalls.some((call) => call.url === `/api/v1/tasks/${ROOT_ID}`),
@@ -520,6 +536,7 @@ describe("connection", () => {
     state.pendingPromptDone = true;
     state.lastStateSeq = 42;
     state.clientId = "cl-old";
+    state.rootTaskId = ROOT_ID;
 
     es.onerror?.();
 
@@ -532,6 +549,7 @@ describe("connection", () => {
     assert.equal(state.pendingPromptDone, false);
     assert.equal(state.lastStateSeq, 0);
     assert.equal(state.clientId, null);
+    assert.equal(state.rootTaskId, null);
     assert.equal(state.eventSource, null);
     // Filter to the reconnect cadence: request deadlines also arm timers now,
     // and this test's subject is that exactly one reconnect was scheduled.
@@ -608,10 +626,7 @@ describe("connection", () => {
       if (url.startsWith(`/api/v1/tasks/${configRootId}/events`))
         return mockResponse([]);
       if (url === "/api/v1/tasks")
-        return mockResponse({
-          rootTaskId: configRootId,
-          tasks: [{ id: configRootId, hasUserInput: false }],
-        });
+        return mockResponse([{ id: configRootId, hasUserInput: false }]);
       if (url === `/api/v1/tasks/${configRootId}/snapshot`)
         return mockResponse({
           version: 1,
@@ -624,6 +639,7 @@ describe("connection", () => {
     });
 
     connection.connect();
+    assert.equal(state.rootTaskId, null);
     await flush(100);
 
     assert.equal(state.rootTaskId, configRootId);
@@ -631,6 +647,75 @@ describe("connection", () => {
     assert.equal(location.hash, "");
     assert.ok(
       fetchCalls.some((call) => call.url === `/api/v1/tasks/${configRootId}`),
+    );
+  });
+
+  it("recovers a stale reserved Root hash from the list when reconnect config fails", async () => {
+    const oldRootId = "root-old-backend";
+    const newRootId = "root-new-backend";
+    configFailure = true;
+    history.replaceState(null, "", `/#${oldRootId}`);
+    state.taskId = oldRootId;
+    state.rootTaskId = oldRootId;
+    setFetch(async (url: string) => {
+      if (url.includes("/visibility")) return mockResponse({});
+      if (url === `/api/v1/tasks/${oldRootId}`) {
+        return {
+          ok: false,
+          status: 404,
+          json: async () => ({ error: "Task not found" }),
+        };
+      }
+      if (url.startsWith(`/api/v1/tasks/${oldRootId}/events`))
+        return mockResponse({ events: [], streaming: {} });
+      if (url === "/api/v1/tasks")
+        return mockResponse([{ id: newRootId, hasUserInput: false }]);
+      if (url === `/api/v1/tasks/${newRootId}`)
+        return mockResponse(taskResponse(newRootId, { rootTaskId: newRootId }));
+      if (url.startsWith(`/api/v1/tasks/${newRootId}/events`))
+        return mockResponse({ events: [], streaming: {} });
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+
+    connection.connect();
+    await flush(100);
+
+    assert.equal(state.rootTaskId, newRootId);
+    assert.equal(state.taskId, newRootId);
+    assert.equal(location.hash, "");
+    assert.ok(fetchCalls.some((call) => call.url === "/api/v1/tasks"));
+  });
+
+  it("keeps hashless Root active when reconnect config fails but the scoped list contains it", async () => {
+    configFailure = true;
+    state.taskId = ROOT_ID;
+    state.rootTaskId = ROOT_ID;
+    let listCalls = 0;
+    setFetch(async (url: string) => {
+      if (url === "/api/v1/tasks") {
+        listCalls++;
+        return mockResponse([
+          { id: ROOT_ID, hasUserInput: false },
+          { id: "recent-child", hasUserInput: true },
+        ]);
+      }
+      if (url === `/api/v1/tasks/${ROOT_ID}`)
+        return mockResponse(taskResponse(ROOT_ID));
+      if (url.startsWith(`/api/v1/tasks/${ROOT_ID}/events`))
+        return mockResponse({ events: [], streaming: {} });
+      if (url.includes("/visibility")) return mockResponse({});
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+
+    connection.connect();
+    await flush(100);
+
+    assert.equal(state.rootTaskId, ROOT_ID);
+    assert.equal(state.taskId, ROOT_ID);
+    assert.equal(listCalls, 1);
+    assert.equal(
+      fetchCalls.some((call) => call.url === "/api/v1/tasks/recent-child"),
+      false,
     );
   });
 

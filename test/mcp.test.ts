@@ -439,6 +439,8 @@ describe("createMcpEndpoint", () => {
       false,
       "task_update must not expose a correlation parameter",
     );
+    // Lock-in for the pre-existing MCP tool contract; not a red proof for the
+    // derived-Root change because task_create never exposed arbitrary ids.
     assert.equal(
       toolHasProperty(tools, "task_create", "id"),
       false,

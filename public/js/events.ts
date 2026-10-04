@@ -143,43 +143,59 @@ export function fallbackToNextTask(
   _cwd?: string,
   preferredTaskId?: string | null,
   clientOpId?: string,
+  rootAuthorityGeneration = state.rootTaskAuthorityGeneration,
 ): Promise<void> {
   const now = Date.now();
   for (const [key, expiresAt] of completedFallbacks) {
     if (expiresAt <= now) completedFallbacks.delete(key);
   }
-  const key = clientOpId ?? `${expiredId ?? ""}\0${preferredTaskId ?? ""}`;
+  const operationKey =
+    clientOpId ?? `${expiredId ?? ""}\0${preferredTaskId ?? ""}`;
+  const key = `${rootAuthorityGeneration}\0${operationKey}`;
   if (clientOpId && completedFallbacks.has(key)) return Promise.resolve();
 
   const existing = pendingFallbacks.get(key);
   if (existing) return existing;
 
-  const operation = fallbackToNextTaskImpl(expiredId, preferredTaskId).finally(
-    () => {
-      if (pendingFallbacks.get(key) === operation) pendingFallbacks.delete(key);
-      if (clientOpId)
-        completedFallbacks.set(key, Date.now() + FALLBACK_DEDUPE_MS);
-    },
-  );
+  const operation = fallbackToNextTaskImpl(
+    expiredId,
+    preferredTaskId,
+    rootAuthorityGeneration,
+  ).finally(() => {
+    if (pendingFallbacks.get(key) === operation) pendingFallbacks.delete(key);
+    if (clientOpId)
+      completedFallbacks.set(key, Date.now() + FALLBACK_DEDUPE_MS);
+  });
   pendingFallbacks.set(key, operation);
   return operation;
 }
 
 async function fallbackToNextTaskImpl(
   expiredId: string | null,
-  preferredTaskId?: string | null,
+  preferredTaskId: string | null | undefined,
+  rootAuthorityGeneration: number,
 ): Promise<void> {
-  if (expiredId === "root" || expiredId?.startsWith("root-")) {
+  if (rootAuthorityGeneration !== state.rootTaskAuthorityGeneration) return;
+  if (expiredId === "root") {
     addSystem(`err: Task not found (${expiredId})`);
     return;
   }
   state.taskSwitchGen++;
   const gen = state.taskSwitchGen;
   try {
-    const catalog = await api.listTasks();
-    installRootTaskId(catalog.rootTaskId);
-    const tasks = catalog.tasks;
-    if (gen !== state.taskSwitchGen) return;
+    const tasks = await api.listTasks();
+    if (
+      gen !== state.taskSwitchGen ||
+      rootAuthorityGeneration !== state.rootTaskAuthorityGeneration
+    ) {
+      return;
+    }
+    if (state.rootTaskId === null) {
+      installRootTaskId(
+        tasks.find((task) => task.id.startsWith("root-"))?.id,
+        rootAuthorityGeneration,
+      );
+    }
     const next =
       (preferredTaskId
         ? tasks.find((s) => s.id === preferredTaskId)
@@ -192,12 +208,24 @@ async function fallbackToNextTaskImpl(
         api.getTask(next.id),
         loadHistory(next.id),
       ]);
-      if (gen !== state.taskSwitchGen) return;
+      if (
+        gen !== state.taskSwitchGen ||
+        rootAuthorityGeneration !== state.rootTaskAuthorityGeneration
+      ) {
+        return;
+      }
       const hydrated = await hydrateTaskRuntime(
         next.id,
-        () => gen === state.taskSwitchGen,
+        () =>
+          gen === state.taskSwitchGen &&
+          rootAuthorityGeneration === state.rootTaskAuthorityGeneration,
       );
-      if (gen !== state.taskSwitchGen) return;
+      if (
+        gen !== state.taskSwitchGen ||
+        rootAuthorityGeneration !== state.rootTaskAuthorityGeneration
+      ) {
+        return;
+      }
       if (!hydrated) throw new Error("Failed to hydrate fallback task");
       handleEvent({
         type: "task_created",
