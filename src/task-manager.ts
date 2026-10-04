@@ -36,6 +36,7 @@ import {
 } from "./obligation-controller.ts";
 import { buildLabelMap, type LabelMap } from "./attachment-labels.ts";
 import { abbreviateHomePath, expandHomePath } from "./home-path.ts";
+import { canonicalModelIdentity } from "./config-options.ts";
 import { log } from "./log.ts";
 import { TaskTreeLock, type TaskTreeLockRelease } from "./task-tree-lock.ts";
 
@@ -1220,6 +1221,7 @@ export class TaskManager {
 
   /** Build configOptions from cache, overriding currentValue with stored task values. */
   private buildConfigOptions(task: {
+    id?: string;
     model: string | null;
     mode: string | null;
     reasoning_effort: string | null;
@@ -1228,28 +1230,40 @@ export class TaskManager {
   }
 
   /** Override currentValue in configOptions with stored task values. */
-  private applyStoredConfig(
+  applyStoredConfig(
     configOptions: ConfigOption[],
     task: {
+      id?: string;
       model: string | null;
       mode: string | null;
       reasoning_effort: string | null;
     },
   ): ConfigOption[] {
+    const model = task.model ? canonicalModelIdentity(task.model) : task.model;
+    if (task.id && model !== task.model && model !== null) {
+      this.store.updateTaskConfig(task.id, "model", model);
+    }
     if (!configOptions.length) return configOptions;
     const stored: Record<string, string | null> = {
-      model: task.model,
+      model,
       mode: task.mode,
       reasoning_effort: task.reasoning_effort,
       thought_level: task.reasoning_effort,
     };
     return configOptions.map((opt) => {
       const override =
-        opt.category === "thought_level"
-          ? task.reasoning_effort
-          : stored[opt.id];
-      if (override && "options" in opt)
-        return { ...opt, currentValue: override };
+        opt.category === "model" || opt.id === "model"
+          ? model
+          : opt.category === "thought_level"
+            ? task.reasoning_effort
+            : stored[opt.id];
+      if (override && "options" in opt) {
+        const currentValue =
+          opt.category === "model" || opt.id === "model"
+            ? canonicalModelIdentity(override)
+            : override;
+        return { ...opt, currentValue };
+      }
       return opt;
     });
   }

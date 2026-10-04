@@ -657,7 +657,12 @@ spot gaps, and decide what still needs to be added without reading every spec.
     after the separating space
 
 - `model-picker.spec.ts`
-  - `/model` picker changes the selected model
+  - `/model` picker changes a flat model choice without changing its label or canonical status-bar tooltip
+
+- `grouped-model-picker.spec.ts`
+  - grouped choices flatten in order with group-qualified labels and preserve leaf metadata
+  - a grouped model write sends its encoded wire value but returns, persists, and broadcasts the canonical identity
+  - the status bar shows only the model-id portion and keeps the full identity in its tooltip
 
 - `slash-menu-think-picker.spec.ts`
   - `/think` picker changes reasoning effort

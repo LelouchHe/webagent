@@ -11,6 +11,7 @@ import {
   type CollaborationMessageObserver,
 } from "./collaboration-emitter.ts";
 import { migrateTimestampsToMillis } from "./timestamp-migration.ts";
+import { canonicalModelIdentity } from "./config-options.ts";
 import {
   isReservedRootTaskId,
   rootTaskIdFor,
@@ -302,10 +303,26 @@ export class Store {
       this.migrateAgentSessionUniqueness();
       this.dropLegacyColumns();
       this.migrateSystemMessagePayloads();
+      this.canonicalizeStoredModelValues();
     } catch (error) {
       this.db.close();
       throw error;
     }
+  }
+
+  private canonicalizeStoredModelValues(): void {
+    const rows = this.db
+      .prepare("SELECT id, model FROM tasks WHERE model IS NOT NULL")
+      .all() as Array<{ id: string; model: string }>;
+    const update = this.db.prepare(
+      "UPDATE tasks SET model = ? WHERE id = ? AND model = ?",
+    );
+    this.db.transaction(() => {
+      for (const row of rows) {
+        const canonical = canonicalModelIdentity(row.model);
+        if (canonical !== row.model) update.run(canonical, row.id, row.model);
+      }
+    })();
   }
 
   private assertSupportedSchema(): void {
@@ -1523,9 +1540,11 @@ export class Store {
       } as Record<string, string>
     )[configId];
     if (!column) return;
+    const storedValue =
+      configId === "model" ? canonicalModelIdentity(value) : value;
     this.db
       .prepare(`UPDATE tasks SET ${column} = ? WHERE id = ?`)
-      .run(value, id);
+      .run(storedValue, id);
   }
 
   saveEvent(

@@ -51,7 +51,7 @@ ACP allows the client to inject extra capabilities into the agent on top of its 
 - The web UI does not expose native CLI command surfaces such as `/plan`, `/fleet`, `/mcp`, `/agent`, or `/skills`
 - Autopilot mode is supported: permissions are auto-approved server-side using `allow_once`
 - Event handling is intentionally narrower than a native CLI client; only selected ACP updates are rendered/persisted, and the silent title-generation session suppresses normal UI events
-- Model switching depends on the agent's ACP implementation and currently uses the SDK's unstable session-model API
+- Model switching depends on the agent's ACP implementation and currently uses the SDK's unstable session-model API. Grouped config choices are flattened; group labels qualify display names only and do not supply model identity. A grouped model value derives `provider/model-id` only when it is a JSON-encoded two-string pair; other opaque values remain their own identity, so a provider/model split cannot be inferred for them.
 - ACP does not expose context window usage, token counts, or remaining capacity
 - No method to compact or clear session context; only option is to create a new session
 

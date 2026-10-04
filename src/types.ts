@@ -12,7 +12,7 @@ export interface ConfigSelectOption {
   name: string;
   category?: string | null;
   currentValue: string;
-  options: Array<{ value: string; name: string }>;
+  options: Array<{ value: string; name: string; [key: string]: unknown }>;
 }
 
 export interface ConfigBooleanOption {

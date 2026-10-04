@@ -254,14 +254,24 @@ describe("AgentBridge", () => {
     const bridge = new AgentBridge("fake-agent", mappedTasks);
     (bridge as any).loadSessionSupported = true;
     const calls: Array<{ method: string; payload: unknown }> = [];
+    const modelOptions = [
+      {
+        type: "select",
+        id: "model",
+        name: "Model",
+        category: "model",
+        currentValue: "model-1",
+        options: [{ value: "model-1", name: "Model One" }],
+      },
+    ];
     (bridge as any).conn = {
       loadSession: async (payload: unknown) => {
         calls.push({ method: "load", payload });
-        return { configOptions: [] };
+        return { configOptions: modelOptions };
       },
       setSessionConfigOption: async (payload: unknown) => {
         calls.push({ method: "config", payload });
-        return { configOptions: [] };
+        return { configOptions: modelOptions };
       },
       cancel: async (payload: unknown) => {
         calls.push({ method: "cancel", payload });
@@ -670,24 +680,41 @@ describe("AgentBridge", () => {
 
   it("returns updated config options from setConfigOption", async () => {
     const bridge = new AgentBridge("fake-agent", mappedTasks);
+    (bridge as any).loadSessionSupported = true;
+    const modelOptions = [
+      {
+        type: "select",
+        id: "model",
+        name: "Model",
+        category: "model",
+        currentValue: "mock-model",
+        options: [
+          { value: "mock-model", name: "Mock Model" },
+          { value: "mock-model-2", name: "Mock Model 2" },
+        ],
+      },
+    ];
 
     (bridge as any).conn = {
+      loadSession: async () => ({ configOptions: modelOptions }),
       setSessionConfigOption: async () => ({
         configOptions: [
           {
-            id: "model",
-            name: "Model",
+            ...modelOptions[0],
             currentValue: "mock-model-2",
-            options: [],
           },
         ],
       }),
     };
 
+    await bridge.loadSession("s1", "/repo");
     const result = await bridge.setConfigOption("s1", "model", "mock-model-2");
 
     assert.deepEqual(result, [
-      { id: "model", name: "Model", currentValue: "mock-model-2", options: [] },
+      {
+        ...modelOptions[0],
+        currentValue: "mock-model-2",
+      },
     ]);
   });
 

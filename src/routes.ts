@@ -1909,12 +1909,17 @@ export function createRequestHandler(
             taskId,
             configOptions,
           });
-          sseManager.broadcast({
-            type: "config_set",
-            taskId,
-            configId,
-            value: body.value,
-          } as AgentEvent);
+          const resolvedOption = configOptions.find(
+            (option) => option.id === configId,
+          );
+          if (resolvedOption) {
+            sseManager.broadcast({
+              type: "config_set",
+              taskId,
+              configId,
+              value: resolvedOption.currentValue,
+            } as AgentEvent);
+          }
           json(res, HTTP_STATUS.OK, { configOptions });
         } catch (err) {
           json(res, HTTP_STATUS.INTERNAL_SERVER_ERROR, {
@@ -2337,17 +2342,10 @@ export function createRequestHandler(
                 .then(() => {
                   const cur = store.getTask(taskId);
                   if (!cur || !tasks.cachedConfigOptions.length) return;
-                  const opts = tasks.cachedConfigOptions.map((opt) => {
-                    const stored: Record<string, string | null> = {
-                      model: cur.model,
-                      mode: cur.mode,
-                      reasoning_effort: cur.reasoning_effort,
-                    };
-                    const override = stored[opt.id];
-                    return override && "options" in opt
-                      ? { ...opt, currentValue: override }
-                      : opt;
-                  });
+                  const opts = tasks.applyStoredConfig(
+                    tasks.cachedConfigOptions,
+                    cur,
+                  );
                   sseManager.broadcast({
                     type: "config_option_update",
                     taskId,
@@ -2382,21 +2380,7 @@ export function createRequestHandler(
           // Re-read task in case resume mutated stored config
           const freshTask = store.getTask(taskId) ?? task;
           const configOptions = tasks
-            ? (() => {
-                // Build configOptions from cached + stored overrides
-                const opts = tasks.cachedConfigOptions.map((opt) => {
-                  const stored: Record<string, string | null> = {
-                    model: freshTask.model,
-                    mode: freshTask.mode,
-                    reasoning_effort: freshTask.reasoning_effort,
-                  };
-                  const override = stored[opt.id];
-                  return override && "options" in opt
-                    ? { ...opt, currentValue: override }
-                    : opt;
-                });
-                return opts;
-              })()
+            ? tasks.applyStoredConfig(tasks.cachedConfigOptions, freshTask)
             : [];
           json(
             res,
