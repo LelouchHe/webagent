@@ -4,6 +4,33 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/), and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.12.0] - 2026-10-04
+
+### ⚠️ BREAKING
+
+- **Reset the data directory before upgrading.** Back up first (a consistent copy, or `sqlite3 .backup`), then remove the existing data directory and let WebAgent create a fresh one. Pre-1.0, a reset is the supported baseline and the simplest upgrade: it avoids every conversion below. Keeping the history is possible — the timestamp migration runs in place at startup, with the verification and rollback steps in the runbook — but the previous shared literal `root` identity does not migrate, so old Root links stay dead either way.
+- **Update timestamp readers before upgrading.** Timestamp columns now store INTEGER unix milliseconds, and every JSON egress timestamp renders ISO-8601 UTC with an explicit `Z`, for example `2026-10-04T12:00:00.000Z`. REST and MCP consumers must accept this string form instead of bare UTC strings or integer timestamps; durations and sequence counters remain numeric. The timestamp migration runs automatically at startup and refuses malformed values rather than coercing them. Reverting the binary alone cannot undo it: rollback requires the full pre-deploy database backup. Startup also rejects duplicate Task event sequences. See [API timestamps](docs/api.md#timestamps) and the [migration and rollback runbook](docs/schema.md#migration-and-rollback).
+- **Discover Root identity instead of hardcoding `root`.** Each Agent backend now has a derived Root id: `root-` plus the first 32 lowercase SHA-256 hex characters of its `agent_key`. REST and SSE supply the current backend's `rootTaskId`; only that exact Root is hashless. The old literal `root` and foreign Root ids are not compatibility aliases. Existing shared literal-Root data is not automatically converted to the new identity; its conversion or reset must be planned separately. See [database upgrade policy](docs/schema.md#pre-10-reset-policy) and the [API contract](docs/api.md).
+- **Update MCP history calls to the flat-index and batch-read contract.** `task_query` replaces `cursor`/`limit` pagination with inclusive sequence `range` values, including negative tail indexes, and returns `{ task_id, max_seq, rows }`. It indexes thinking rows as well as other events and supports fixed-string search with ASCII case folding. `task_read({ seqs: [...] })` replaces `task_get_record` with no alias, returning complete decoded event payloads in sequence order. Both tools default to the current Task and reject oversized responses rather than returning partial history. See [Task MCP Control Plane](docs/task-mcp.md).
+- **Use the returned canonical model values in integrations.** Model values encoded by an Agent as a JSON provider/model pair now appear as `provider/model-id` in Task configuration, REST, and SSE, and existing saved values are normalized. Other opaque model values retain their identity; group labels are display text, not model ids. WebAgent translates canonical selections back to the exact ACP value for the owning execution. See [ACP model selection](docs/acp.md#current-limits).
+
+### Added
+
+- **Compaction handoffs can trace their own summary chain.** New `/compact` summaries carry their persisted event sequence and a link to the preceding summary. The next execution receives a directly callable `task_read` pointer, so an Agent can recover a summary verbatim and follow older handoffs without loading the entire transcript. Handoffs are explicitly self-reports: the persisted event log outranks them. Existing pending plain-text summaries remain readable.
+- **Tool source code has its own expandable view.** Tool calls with `rawInput.code` show the exact multiline source in a collapsed `code` disclosure, including when source arrives in a later metadata update. The app and public share viewer use the same rendering.
+
+### Changed
+
+- **Switching Agent backends keeps their Root histories and resources separate.** Returning to a backend restores its own Root, Task URLs, history, and attachments. Root reset and descendant deletion are scoped to the current backend; surviving shared Tasks are preserved under their unambiguous owner's Root or detached when safe ownership cannot be established. Agent-session bindings are now unique per backend and Task rather than globally per Task. See [Task lifecycle](docs/schema.md#cascade--lifecycle).
+- **Pi setup now uses its built-in MCP support.** The documented setup requires Pi 0.99 or later and the `LelouchHe/pi-acp` fork. Remove MCP-replacement extensions such as `pi-mcp-adapter`, which disable Pi's built-in support and prevent the injected Task server from attaching. See [Pi configuration](docs/configuration.md).
+- **ACP transport uses SDK 1.7.0 with an explicit inbound message limit.** WebAgent allows individual ACP messages up to 128 MiB rather than the SDK's 32 MiB default, leaving room for tool results from the default 50 MiB uploads. An oversized message closes the Agent connection and reports that a restart is required instead of leaving Tasks apparently connected and repeatedly failing. The cap applies to serialized ACP messages, not just file size, and does not grow with the configured upload limit. See [ACP limits](docs/acp.md#current-limits).
+
+### Fixed
+
+- **Tasks restore on Agents that support `session/resume` without `session/load`.** Restoration now reads advertised ACP capabilities and prefers `session/resume`, avoiding transcript replay; `session/load` is used when resume is unavailable and load is advertised. Saved configuration and preferences are retained. When neither is supported, WebAgent gives a `/new` recovery message instead of silently creating a replacement execution.
+- **Grouped ACP choices work throughout model selection.** Model pickers flatten grouped choices with group-qualified labels, show the canonical model id in the status bar, and preserve selections across restore and child creation. Config updates and writes use the current execution's choices, preventing stale or retired executions from supplying model mappings.
+- **Bare-text tool output is no longer dropped by the app and share viewer.** It is recognized alongside nested text content, terminal references, and structured diffs.
+
 ## [0.11.0] - 2026-09-14
 
 ### Added
@@ -464,6 +491,7 @@ Initial release of WebAgent — a terminal-style web UI for ACP-compatible agent
 - **CI/CD**: GitHub Actions for CI (unit + E2E tests) and npm publishing on tag push
 - **npm package**: Published as `@lelouchhe/webagent`
 
+[0.12.0]: https://github.com/LelouchHe/webagent/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/LelouchHe/webagent/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/LelouchHe/webagent/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/LelouchHe/webagent/compare/v0.8.0...v0.9.0
