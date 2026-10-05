@@ -51,7 +51,7 @@ ACP allows the client to inject extra capabilities into the agent on top of its 
 - The web UI does not expose native CLI command surfaces such as `/plan`, `/fleet`, `/mcp`, `/agent`, or `/skills`
 - Autopilot mode is supported: permissions are auto-approved server-side using `allow_once`
 - Event handling is intentionally narrower than a native CLI client; only selected ACP updates are rendered/persisted, and the silent title-generation session suppresses normal UI events
-- Model switching depends on the agent's ACP implementation and currently uses the SDK's unstable session-model API. ACP defines grouped select choices and treats choice values as opaque strings. The application flattens grouped choices and uses group labels only to qualify display names. It defines a canonical model identity on top of ACP: it interprets a value as `provider/model-id` only when the value is a JSON-encoded two-string pair. Other opaque values remain their own identity; ACP does not supply a provider/model split for them.
+- Model switching depends on the agent's ACP implementation and uses session config options: `configOptions` on the session response, `session/set_config_option`, and `config_option_update`. ACP defines grouped select choices and treats choice values as opaque strings. The application flattens grouped choices and uses group labels only to qualify display names. It defines a canonical model identity on top of ACP: it interprets a value as `provider/model-id` only when the value is a JSON-encoded two-string pair. Other opaque values remain their own identity; ACP does not supply a provider/model split for them.
 - ACP does not expose context window usage, token counts, or remaining capacity
 - No method to compact or clear session context; only option is to create a new session
 
@@ -157,8 +157,8 @@ ACP is a protocol-level abstraction. The trade-off for agent-agnosticism is a th
 - **Context visibility** — no token counts, context usage, or remaining capacity. The agent's context is a black box.
 - **Context management** — no compact, summarize, or fork-session operations. The only reset path is creating a new session.
 - **Cost / usage tracking** — no token usage or cost-per-request data. Users cannot tell how much a prompt costs.
-- **Capability discovery** — `initialize` returns agent name/version but not what tools, models, or features the agent supports. WebAgent's `configOptions` relies on undocumented fields (`(session as any).configOptions`).
-- **Model discovery** — no standard method to query available models. Currently uses the SDK's unstable session-model API.
+- **Capability discovery** — `initialize` returns agent name/version but not what tools, models, or features the agent supports. What a session offers arrives as `configOptions` on the session response, which the SDK types as an optional field.
+- **Model discovery** — no standard method to query available models. A session's `configOptions` report what the agent chooses to expose; the SDK's provider enumeration and mutation methods are still marked unstable and are not used.
 - **Progress / phase signals** — no structured "thinking", "searching", "editing" stage indicators. Only raw streaming chunks; phase information depends on agent-specific event content.
 - **Error semantics** — agent errors have no structured classification (rate limit vs. model error vs. tool failure). All failures are opaque.
 - **Session portability** — sessions remain bound to the backend that created

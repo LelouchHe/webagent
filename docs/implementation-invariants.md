@@ -143,7 +143,7 @@ ACP `clientCapabilities` (`fs`, `terminal`) and `mcpServers` are **opt-in capabi
 - **Task cancel, not host-task cancel**: ACP `cancel` only stops the current task prompt/turn. In this repo we extend that to the task's own local bash/permission/title work, but WebAgent still cannot cancel host-level tasks started outside the server's runtime (for example external Copilot CLI tool invocations or subprocesses it owns).
 - **Browser UI, not full CLI parity**: Direct CLI surfaces such as `/plan`, `/fleet`, `/mcp`, `/agent`, `/skills` are not mirrored as first-class WebAgent controls. The app only renders the ACP events it receives. Autopilot mode is supported via server-side auto-approval of permissions.
 - **Silent internal tasks**: ACP-internal tasks (no WebAgent task row) suppress normal event emission for that agent binding.
-- **Agent-dependent model switching**: Model switching depends on agent support and currently goes through the SDK's unstable task-model API.
+- **Agent-dependent model switching**: Model switching depends on agent support and goes through session config options (`configOptions`, `session/set_config_option`, `config_option_update`). Provider enumeration and mutation (`unstable_listProviders` / `unstable_setProvider` / `unstable_disableProvider`) remain experimental and are unused.
 
 - **No context visibility**: ACP does not expose context window usage, token counts, or remaining capacity. The agent's context state is a black box — no way to query how full the context is.
 - **No compact/clear**: ACP has no method to compact, summarize, or clear task context. The only way to reset context is to create a new task. `unstable_forkTask` exists but is experimental.
