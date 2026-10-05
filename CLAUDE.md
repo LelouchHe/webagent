@@ -13,7 +13,6 @@ SQLite (`better-sqlite3`), Zod, and esbuild.
 - `task-manager.ts` — live tasks, buffers, bash processes, and model cache
 - `bridge.ts` — ACP agent subprocess lifecycle
 - `store.ts` — SQLite persistence
-- `title-service.ts` — asynchronous task title generation
 - `push-service.ts` — Web Push delivery and visibility suppression
 - `daemon.ts` — background service management
 - `types.ts` — shared types and validation schemas

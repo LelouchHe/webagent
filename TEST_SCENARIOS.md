@@ -144,16 +144,6 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - the legacy task-only `agent_sessions` index is dropped during a timestamp table rebuild while per-agent/task uniqueness remains; reserved Root ownership still rejects cross-agent rebinding
   - `foreign_key_check` / `integrity_check` pass after the rebuild
 
-- `test/title-service.test.ts`
-  - silent title-task creation
-  - title cleanup / truncation
-  - title-task reuse
-  - setup failure handling
-  - callback emission only when a title is produced
-  - cancellation of in-flight title generation for the matching source task
-  - in-flight title-generation deduplication and retry after cancellation
-  - user-set title wins over in-flight generation
-
 - `test/daemon.test.ts`
   - subcommand recognition
   - `resolveArgs` config-path resolution
@@ -473,8 +463,9 @@ spot gaps, and decide what still needs to be added without reading every spec.
 
 ### Share links
 
-- `test/share-token.test.ts`
-  - 144-bit token shape, base64url alphabet, uniqueness across many draws
+- `test/tokens.test.ts`
+  - share token: 24-char base64url shape (144 bits), url-safe alphabet, uniqueness over 1000 draws
+  - API token and SSE ticket shapes, alphabet, and uniqueness
 
 - `test/share-store.test.ts`
   - DDL + state machine: preview (`shared_at IS NULL`) → activated (`shared_at` set)
@@ -485,10 +476,6 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - secret detection → hard-reject with `event_id` + `rule`
   - path / hostname soft-redact placeholders
   - markdown raw-HTML disabled; URL allowlist applied
-
-- `test/share-mutex.test.ts`
-  - per-key async mutex serializes same-key callers, parallelizes different keys
-  - propagates exceptions, cleans up Map entries (no leak)
 
 - `test/share-routes-preview.test.ts` / `test/share-routes-publish-viewer.test.ts`
   - preview create / read / staleness flag
